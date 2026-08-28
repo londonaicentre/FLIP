@@ -16,7 +16,8 @@ FLIP/
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
 ├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (all Client-API), fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
-├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,numpy} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871), run by `make -C fl-tutorials test`
+├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion. Shared dataset tooling in fl-tutorials/datasets/ (download/derive/enrich, single copy for both backends — the download-*-data + upload-spleen-labels targets), outputs in the shared gitignored fl-tutorials/data/. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
+├── map-apps/           # MONAI Application Package (MAP) templates for packaging FLIP-trained models for clinical deployment
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
 │   ├── data-access-api/# OMOP database queries (Python/FastAPI)
@@ -46,7 +47,7 @@ backends are also provisioned in-tree (gitignored): `deploy/fl_backend.mk` point
 
 | Layer | Technology |
 | ------- | ----------- |
-| Backend APIs | Python 3.12+, FastAPI, SQLAlchemy/SQLModel, Pydantic |
+| Backend APIs | Python 3.12–3.13, FastAPI, SQLAlchemy/SQLModel, Pydantic |
 | Frontend | Vue 3, TypeScript, Vite, TailwindCSS, Pinia |
 | Database | PostgreSQL (psycopg2 + SQLModel sync sessions; RDS Proxy + IAM auth in prod) |
 | Package mgmt (Python) | UV (`uv sync`, `uv add`) |
@@ -144,44 +145,76 @@ or fl-api change) without re-creating the project and re-pulling DICOM (~6 min/b
 
 **Smoking the spleen segmentation app requires a data-enrichment step (it needs labels).** *Data enrichment*
 is the platform stage where a model developer adds whatever an app needs on top of the pulled imaging data in
-XNAT (`docs/source/user-guides/user-common.rst` — a project cannot start training until enrichment is
-confirmed complete, even when nothing was added). **Segmentation apps need one:** the trust PACS supplies CT
-*images* only, while the spleen apps (`fl-tutorials/<backend>/3d_spleen_segmentation*`) pair each converted
-`input_*.nii.gz` with a sibling `label_*.nii.gz`. Skip it and the smoke pulls, converts, starts training and
-then dies with `num_samples=0` (preceded by `⚠️ No matching segmentation for input_*.nii.gz`) — which reads
-like an app or data-pull bug.
+XNAT (`docs/source/user-guides/user-data-enrichment.rst` — a project cannot start training until enrichment is
+confirmed complete, even when nothing was added).
+
+**Which supervised apps need it:** only those whose labels are **not in OMOP**. A segmentation mask is a 3D
+volume with nowhere to live in the cohort query, so the spleen apps
+(`fl-tutorials/<backend>/3d_spleen_segmentation*`) pair each converted `input_*.nii.gz` with a sibling
+`label_*.nii.gz` that has to be uploaded to XNAT. The xray classification tutorial is the counter-example: its
+labels *are* in OMOP, projected as dataframe columns by `query.sql` (`image_feature` → `observation`), and it
+needs no enrichment. Skip a required enrichment and the smoke pulls, converts, starts training and then fails
+with `No image/label pairs found: N image(s) …, none with a matching label_*.nii.gz` — which names the actual
+cause. (Older app copies die with torch's opaque `num_samples=0` instead.)
 
 `e2e_smoke` has a hook for exactly this: `--data-enrichment-cwd` + `--data-enrichment-cmd` run a shell command
-**between the image pull and training**, with `FLIP_PROJECT_ID` exported. For spleen the enrichment is
-`upload_labels_to_XNAT.py` from the **private** repo `londonaicentre/flip_project_spleen_segmentation` (needs
-its `.xnat1.cfg` / `.xnat2.cfg` — one per trust XNAT — and its MSD labels); it resolves each trust's XNAT
-project by `secondary_ID == <FLIP project_id>` and writes each label into the scan's existing `NIFTI` resource,
-renaming `input_` → `label_`. Invoke the smoke **directly** rather than through `make`, because `make` mangles
-the `$` in `EXTRA_ARGS` before the enrichment command reaches the shell:
+**between the image pull and training**, with `FLIP_PROJECT_ID` exported. Since FLIP#776 the spleen uploader is
+in-tree at `fl-tutorials/datasets/spleen/upload_spleen_labels_to_xnat.py` (the shared dataset-tooling tree)
+— **no private repo required**. It resolves each trust's XNAT project by `secondary_ID == <FLIP project_id>`,
+fetches the accession→MSD-case mapping at run time from the public `aicentreflip/trust-data` dataset
+(`omop-csv/<version>/spleen_project/image_occurrence.csv`, which also carries `source_trust`), and writes each
+label into the scan's existing `NIFTI` resource, renaming `input_` → `label_`. The XNAT protocol work lives in
+`flip.xnat` (`flip-utils/flip/xnat/`), also exposed as the `flip-xnat` CLI.
+
+**Enrich every trust, not one.** Each trust's XNAT holds only its own studies, so a trust left without
+labels takes the run down at the zero-pairs guard. One invocation covers the roster: pass a
+space-separated `XNAT_URLS` (credentials from `XNAT_USER`/`XNAT_PASS`) or repeat `XNAT_CREDENTIALS_FILES`
+for per-trust logins. The whole mapping goes to every server and each ignores the others' studies, so no
+per-trust splitting is needed. A run that resolves **no** destination anywhere now exits non-zero, so the
+smoke can no longer walk past a wholly-skipped enrichment into a doomed training run (`--allow-no-op`
+opts out). `TRUST=N` filters by the OMOP `source_trust` column (1=GSTT, 2=KCH) and is rarely needed —
+note that is the OMOP partition, **not** the FL kit slot of the same `Trust_N` name.
+
+Prereqs: `make -C fl-tutorials download-spleen-data NUM_CASES=41` (a smaller download enriches only part
+of the cohort — the command warns, naming the missing cases) and `XNAT_USER`/`XNAT_PASS`. Standalone,
+outside the smoke:
+
+```bash
+make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid> \
+  XNAT_URLS="http://127.0.0.1:8104 http://127.0.0.1:8106" DRY_RUN=1   # then drop DRY_RUN
+```
+
+The mapping is cached beside the labels dir (so a re-run needs no huggingface.co egress) and
+`HF_TRUST_DATA_REVISION=<sha>` pins the dataset revision instead of the moving `main`.
+
+Through the smoke, `make -C flip-api e2e_smoke_spleen` (or `e2e_smoke_spleen_evaluation`) carries the
+in-tree command already, targeting both dev trusts via `SPLEEN_XNAT_URLS` (override for another roster;
+`SPLEEN_LABELS_DIR` likewise). The enrichment flags ride in `ENRICHMENT_ARGS`, deliberately *not*
+`EXTRA_ARGS` — a command-line variable beats a target-specific one, so folding them together made
+`make e2e_smoke_spleen EXTRA_ARGS="--project-id <uuid>"` silently skip enrichment. To invoke it directly
+instead:
 
 ```bash
 cd flip-api && uv run python -m tests.e2e_smoke \
   --model-files-dir ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/app_files \
   --query-file ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql \
-  --data-enrichment-cwd <path-to>/flip_project_spleen_segmentation \
-  --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id "$FLIP_PROJECT_ID"'
+  --data-enrichment-cwd ../fl-tutorials/datasets/spleen \
+  --data-enrichment-cmd 'uv run --no-project --with ../../../flip-utils python upload_spleen_labels_to_xnat.py --flip-project-id "$FLIP_PROJECT_ID" --labels-dir ../../data/spleen/images --xnat-url http://127.0.0.1:8104 --xnat-url http://127.0.0.1:8106'
 ```
 
-(Through `make` there are two working forms: `make -C flip-api e2e_smoke_spleen`, whose in-Makefile
-`EXTRA_ARGS` carries `$$FLIP_PROJECT_ID` — a `$$` escape survives the single make expansion; or the root
-`make e2e_smoke` with the id passed literally — `--flip-project-id <uuid>` — when reusing a project via
-`--project-id`. The root wrapper re-expands `EXTRA_ARGS` through a second make and shell, so no `$`-escape
-survives it: `$$` lands empty and `$$$$` injects the recipe shell's PID. Note that `e2e_smoke_spleen`
-currently targets the **Flower** tutorial (`../fl-tutorials/flower/3d_spleen_segmentation/{app,query.sql}`),
-not the NVFLARE paths shown in the direct-invocation example above; pair it with `FL_BACKEND=flower`
-or invoke `tests.e2e_smoke` directly with the NVFLARE paths shown above for the NVFLARE tutorial.)
+(The `$`-escaping trap still applies to any hand-written `EXTRA_ARGS`: `make -C flip-api …` expands once, so
+`$$FLIP_PROJECT_ID` survives; the **root** `make e2e_smoke` re-expands through a second make and shell, so no
+`$`-escape survives it — `$$` lands empty and `$$$$` injects the recipe shell's PID. Pass the id literally
+there. The in-Makefile targets handle this for you. Note that `e2e_smoke_spleen` uploads the **Flower**
+tutorial (`../fl-tutorials/flower/3d_spleen_segmentation/{app,query.sql}`), not the NVFLARE paths shown in the
+direct-invocation example above — pair it with `FL_BACKEND=flower`, or invoke `tests.e2e_smoke` directly with
+the NVFLARE paths for the NVFLARE tutorial. The enrichment step itself is backend-agnostic and runs out of the
+shared `fl-tutorials/datasets/spleen/` tree either way.)
 
 Enrichment must land **after** the pull and after DICOM→NIfTI conversion; the hook's position guarantees that.
 The uploader derives each target filename from the converted `input_*.nii.gz`, so with no `NIFTI` resource it
-silently skips every scan (`-> skipped: no NIFTI resource`) and you get the same opaque `num_samples=0` — i.e.
-a broken XNAT Container Service surfaces as "no labels". Removing the private-repo dependency (so spleen is
-runnable outside the org and in CI) is tracked in FLIP#776. The xray classification tutorial reads DICOM
-directly and needs no enrichment.
+skips every scan (reported as *skipped (no image in resource)*) — i.e. a broken XNAT Container Service surfaces
+as "no labels".
 
 **Testing a change on BOTH FL backends in one sitting (the backend switch).** The pulled DICOM lives in
 each trust's Orthanc/XNAT, which `make restart-fl` leaves untouched — so you can pull once on the first
@@ -197,7 +230,8 @@ make e2e_smoke FL_BACKEND=nvflare EXTRA_ARGS="--project-id <UUID>"        # reus
 ```
 
 Before trusting either run, confirm the live container actually carries your code (the stack silently
-runs old images otherwise): `docker exec flip-fl-api-net-1 cat fl_api/utils/upload.py`. See
+runs old images otherwise): `docker exec deploy-fl-api-net-1-1 cat fl_api/utils/upload.py`
+(the compose SERVICE name — dev containers set no `container_name`, so they are named by the project). See
 [Running FL Tutorials Locally](#running-fl-tutorials-locally) for `make build-fl` / `:dev` image details.
 
 ### Running FL Tutorials Locally
@@ -233,6 +267,10 @@ make debug SERVICE=flip-api        # Start a service in debug mode
 make debug SERVICE=trust-api       # Available: flip-api, trust-api, imaging-api, data-access-api
 make debug-off SERVICE=flip-api    # Stop debug mode
 ```
+
+Debug ports (hub `API_DEBUG_PORT`, trust `TRUST/IMAGING/DATA_ACCESS_DEBUG_PORT`) publish on
+`127.0.0.1` only, so the debugger must attach from the same host — for a remote dev box, tunnel the
+port (SSH/SSM) rather than exposing it on the LAN.
 
 ### Test Data
 
@@ -374,6 +412,9 @@ After changes, evaluate if docs need updating:
 - `FL_APP_BASE_DIR` — Local directory holding the base FL application templates (the repo's `fl-apps/` tree), baked into the flip-api image and bind-mounted in dev. flip-api walks `<FL_APP_BASE_DIR>/<backend>/<job_type>/` to bundle an application (uploading those files into `FL_APP_DESTINATION_BUCKET/<model_id>`) and reads each backend's manifest from `<FL_APP_BASE_DIR>/<backend>/required_files.json`. Default `/app/fl-apps`; override to mount operator-provided templates. Replaces the removed `FL_APP_BASE_BUCKET` S3 dependency (FLIP#724): base templates are no longer published to S3 (the `fl-apps-push-s3-*` sync workflows are gone), so a template hotfix now ships by rebuilding + redeploying the flip-api image rather than syncing S3. `fl-apps/` is baked into the image via a BuildKit named build context (`fl_apps=../fl-apps`) since it sits outside flip-api's build context. For the Flower backend, the template pyprojects also steer Flower's **per-run dependency install** (`uv sync` on every app launch; SuperNodes opt in via `--allow-runtime-dependency-installation` in the composes): `[tool.uv.sources]` pins `flip-utils` to the source kept at `/opt/flip-utils` inside the FL images (never PyPI — FLIP#767; a flip-utils change ships by rebuilding the FL images, `make build-fl FL_BACKEND=flower`) and torch/torchvision to the cu128 index (PyPI's default cu130 wheels need driver >=580).
 - `FL_KIT_SLOT_NAMES` — JSON list (e.g. `["Trust_1", "Trust_2"]`) of FL kit-slot names for the hub's `fl_kit_slot` pool that `register_trust` claims from; each name must match a provisioned participant kit (in-tree workspace for dev, `s3://<AICENTRE_BUCKET_NAME>/fl-flare-participant-kits/<FLARE_KIT_DATE>/net-<N>/services/<slot>/` for stag/prod; slot names are global across nets — every net carries a kit per name). The pool is seeded at flip-api boot and **reconciled on demand** when a registration finds it exhausted (`resolve_fl_kit_slot_names`, additive — never deletes or re-assigns rows); only then does `NoFreeKitSlotError` surface. Single source per env: dev = this env var (a `DevSettings`-only field; restart to change, settings load once); stag/prod = the `/flip/fl_kit_slot_names` SSM parameter (Terraform-rendered from this var — the list is plain config, not a secret; deliberately **no env fallback**, so a broken/missing parameter means the pool can't grow, loudly, never masked by stale task-def env). Growing the pool is an env-file edit + `make -C deploy/providers/AWS apply-fl-kit-slots` (targeted plan/apply of just the parameter, plain-text diff) — **no restart, no task-definition change**. One-command workflow: `make -C deploy/providers/AWS add-fl-kits N=<n> PROD=stag|true` (N = "ensure N more live slots": activate spares toward N first, mint only the shortfall on every net → additive S3 upload → env edit → parameter apply); full runbook in `fl-services/nvflare/README.md` ("Onboarding a new client onto an existing network"). NVFLARE-only dynamics — Flower's SuperNode key labelling reads the list at net startup.
 - `PROD` — `true` (production), `stag` (staging), `lza` / `lza-stag` (production / staging on an AWS Landing Zone Accelerator estate, FLIP#749 — meaningful for `deploy/providers/AWS` targets only; select the root `.env.lza-prod` / `.env.lza-stag` and the platform-managed-network Terraform path, see `deploy/providers/AWS/README.md` "Deploying onto an LZA estate"), unset (development)
+- `FLIP_INSTANCE` — names a **second dev hub** so two stacks can run on one host (FLIP#957). Unset (the norm) every derived name is exactly what it was before the knob existed. When set it prefixes four things, all of them names that are global to the docker daemon and so cannot be scoped by `-p`: the hub compose project name (`COMPOSE_PROJECT`), all six hub-side Docker networks, each trust's compose project (`TRUST_PROJECT`, `<instance>-trust<N>`) and each trust's XNAT swarm stack (`XNAT_STACK`, `<instance>-xnat<N>`). The last two carry it for the same reason the trust overlays do — FL kit slots are handed out per hub, so a second hub restarts its numbering at 1 and its first trust would otherwise adopt or deploy over the default stack's `trust1`/`xnat1`. Those six follow **one** name rule — `${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_<name>`, i.e. `deploy_central-hub-network`, `deploy_central-hub-trust-apis-network`, `deploy_fl-net-{1,2}` **and** `deploy_trust-network-{1,2}` — where `deploy_` names the hub compose project that owns the network, which is also exactly what compose would generate (`<project>_<key>`) if it still created them. It stopped generating anything once they became `external: true` ("the `name` field is used as is and is not scoped with the project name"), which is why the prefix is written out by hand in the composes, both Makefiles and `scripts/check_local_status.py`. FLIP#957 renamed **four** of them onto that rule: `central-hub-network` and `central-hub-trust-apis-network` had been left bare, and `shared-net-{1,2}` became `fl-net-{1,2}` — "shared" described who happened to be attached rather than what the network is for, and stopped being true the moment flip-api came off it. The two numbering axes are **not** parallel, which is the trap the new name defuses: `fl-net-<N>` is numbered by **FL net** (the `fl_nets` table, `NET_NUMBER`, `fl-server-net-<N>`) while `trust-network-<N>` is numbered by **trust slot**, so one trust routinely sits on `trust-network-2` and `fl-net-1` at once. `fl-net-<N>` is the FL **data plane**, and its membership is exactly two services — the hub's `fl-server-net-<N>` and every trust's `fl-client-net-<N>`, making it the FL twin of `central-hub-trust-apis-network` (flip-api ↔ trust-api). Everything else hub-side stays on `default` and reaches the FL server there over its control ports: **`flip-api` is deliberately not on it**, and neither are `fl-api-net-<N>` or flower's `register-supernode-keys-net-<N>`: it fronts the database, nothing on the FL data plane calls it (an fl-client carries no hub URL and no hub credential, only `TRUST_INTERNAL_SERVICE_KEY`), and the one callback that exists — fl-server's `FLIP_API_INTERNAL_URL` — goes over `default`, the hub-internal network, which both fl-servers now join. Because these networks are external and pre-created, all four renames are **not** transparent — an existing dev host must re-run `make create-networks`, recreate whatever was attached to the old ones, and `docker network rm` the four leftovers. The project name matters because compose derives it from the directory of the first `-f` file, always `deploy/`, so without it both stacks land in project `deploy` and `up` on one tears down the other. The networks are prefixed *separately* rather than left to `-p` because they are a cross-project contract: the hub project creates them and each trust — its own compose project — joins them `external: true` by literal name, which `-p` cannot scope. The trust overlays carry the prefix like everything else because a trust number alone does not isolate them: slots are handed out per-hub, so a second hub restarts its numbering at 1 and its first trust would otherwise land on the default stack's `deploy_trust-network-1`. Since every network belongs to exactly one instance, `make remove-networks FLIP_INSTANCE=<x>` is instance-scoped and removes that instance's networks *including* its trust overlays. Both values are derived once in [`deploy/instance.mk`](deploy/instance.mk) (`INSTANCE_PREFIX` and `COMPOSE_PROJECT`), included by the root, trust, `trust/xnat`, flip-api and flip-ui Makefiles, which also exports `FLIP_INSTANCE` so the compose files see it; the compose files interpolate `${FLIP_INSTANCE}` rather than the make variable because they are also invoked directly, without make. **Container names are not prefixed and are not set at all** — no hub service declares `container_name`, in the development composes or the production ones, so compose names them from the project. On the default stack that is `deploy-flip-api-1`, `deploy-flip-db-1`, `deploy-flip-ui-1`, `deploy-pgadmin-1`, `deploy-fl-api-net-1-1`, `deploy-fl-server-net-1-1`; on a second stack `<instance>-deploy-…`. Since FLIP normally runs a single hub those default-stack names are deterministic, so **docs spell them out literally** — a concrete name is easier to read, copy and grep than a `docker compose -p deploy exec <service>` form — and only a doc explicitly about a second stack needs the `<instance>-deploy-…` variant. **Tooling must not**: a Makefile or script has to work on either instance, so it addresses the service through compose (`$(DOCKER_COMMAND) logs flip-api`) or resolves the container from the `com.docker.compose.project` / `.service` labels, as [`scripts/check_local_status.py`](scripts/check_local_status.py) does. (None of this reaches AWS: the production composes are a local prod-image harness, never a deployment target — on ECS the container names come from the task definitions in `deploy/providers/AWS/ecs_tasks.tf` and discovery from Cloud Map.) The compose **service keys** are the stable identity instead, and are load-bearing: docker registers each as a network alias on every network the container joins, which is how the FL kits keep resolving `fl-server-net-1` (`fed_client.json`'s `target`, and the SuperLink certificate's SAN) and how `NET_ENDPOINTS` reaches `fl-api-net-1`. Renaming a service key breaks TLS and the provisioned kits; renaming a container name breaks nothing. A second stack also needs its own value for every host port (`UI_PORT`, `API_PORT`, `DB_PORT`, `PGADMIN_PORT`, `FL_API_PORT`, `API_DEBUG_PORT`, `FL_API_DEBUG_PORT`, and on flower `FLOWER_SUPERLINK_NET_{1,2}_PORT`), its own `CENTRAL_HUB_API_URL` (it embeds `API_PORT`, so a copied env file silently points the second stack's UI and trust-api at the *first* stack's API — the one misconfiguration here that still starts cleanly and looks right), its own `XNAT_PORT` per trust kit, and its own trust numbers — all host-global and not covered by the prefix. Two traps when running one: `NET_ENDPOINTS` (which the hub seeds into `fl_nets` at boot) must carry the service name `fl-api-net-1`, never the pre-FLIP#957 `flip-fl-api-net-1`, which is now a DNS name in no stack at all; and `FL_PROVISIONED_DIR` may be given as either a relative or an absolute path (relative resolves against the repo root).
+- `MAIN_ENV_FILE` — which repo-root env file the Makefiles load, as a bare **filename** (never a path). Defaults by `PROD` to `.env.production` / `.env.stag` / `.env.development`; override it to run a second stack from the *same checkout* — `make up MAIN_ENV_FILE=.env.b.development FLIP_INSTANCE=b` — instead of needing a second clone. The root Makefile `export`s it, and the flip-api, flip-ui and trust Makefiles each `include ../$(MAIN_ENV_FILE)`, which is why the value must stay a bare filename: each one prepends its own `../`. Every include is wildcard-guarded, so a value that resolves to nothing is **skipped silently** and the service builds with no environment at all rather than failing — check the `Using MAIN_ENV_FILE:` line each Makefile prints if a second stack comes up with empty config. `scripts/check_local_status.py` honours it too (via the environment), so a status check reports on the stack you are actually running.
+- `DB_PORT` — in **dev** this is the *host* port flip-db is published on (the container side is pinned to 5432, which is what flip-api dials over the docker network); in `.env.stag` / `.env.production` it is the port the RDS Proxy listens on, since nothing is published there. Both default to 5432, so the difference only shows up when a second dev stack moves it.
 - `AES_KEY_BASE64` — encryption key for trust communication
 - A remote trust operator only needs their kit file (`trust/.env.<KIT>`) — no hub `.env.<env>` needed on trust hosts.
   See `trust/README.md` for the standalone-operator quick-start.
@@ -405,7 +446,7 @@ After changes, evaluate if docs need updating:
 
 ## CI/CD
 
-GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `fl-tutorials-tests.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `fl-tutorials-tests.yml`, `test_map_apps.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
 
 ### Docker image builds: gated on tests, manual trigger for branches
 

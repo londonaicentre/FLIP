@@ -49,13 +49,18 @@ classifiers = [
 ]
 dependencies = [
     "boto3>=1.38.31",
-    "nvflare==2.8.0",
+    "nvflare==2.8.1",
     "pandas>=2.3.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
     "requests>=2.33.0",
     "tqdm>=4.67.1",
 ]
+
+[project.scripts]
+# Data-enrichment upload CLI (flip.xnat). Runs on the model developer's workstation inside the
+# Trust network, never in the FL client — see flip/xnat/__init__.py.
+flip-xnat = "flip.xnat.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/londonaicentre/FLIP"
@@ -103,7 +108,10 @@ constraint-dependencies = [
     "click>=8.3.3",              # CVE-2026-7246
     "cryptography>=50.0.0",      # CVE-2026-26007, CVE-2026-39892, CVE-2026-34073
     "filelock>=3.20.3",          # CVE-2025-68146, CVE-2026-22701
-    # flask>=3.1.3 omitted: nvflare==2.8.0 hard-pins flask==3.0.2; unresolvable until nvflare relaxes that pin
+    # flask>=3.1.3 omitted: nvflare==2.8.1 hard-pins flask==3.0.2, so no constraint can lift
+    # it. nvflare 2.9.0rc1 pins flask==3.1.3, so the fix lands with that upgrade (#1037);
+    # until then Dependabot #258/#400 stay open. FLIP imports no flask and never launches
+    # nvflare's dashboard/edge modules, its only flask consumers.
     "fonttools>=4.62.0",         # arbitrary code execution (dev-only, via matplotlib)
     "idna>=3.15",                # CVE-2026-45409
     "pillow>=12.3.0",            # CVE-2026-42311/42310/42309/42308/40192/25990
@@ -112,6 +120,12 @@ constraint-dependencies = [
     "pyjwt>=2.12.0",             # CVE-2026-32597
     "python-dotenv>=1.2.2",      # CVE-2026-28684
     "requests>=2.33.0",          # CVE-2026-25645
+    # setuptools>=83.0.0 (CVE-2026-59890) omitted: torch 2.11.0 declares setuptools<82, and the
+    # torch pin is itself fixed by the cu128 index above, so the floor is unreachable until the
+    # cu130 migration in #826 (torch 2.13.0 drops the ceiling). Dependabot #475 stays open with
+    # #439 for the same reason. Not overridden: the advisory is a MANIFEST.in sdist-exclusion
+    # bypass on macOS APFS/HFS+ and this repo has no MANIFEST.in, no setuptools build backend
+    # outside flip-api (which ships as an image, never an sdist), and no macOS runner.
     "urllib3>=2.7.0",            # CVE-2026-44431, CVE-2025-66471/66418
     "werkzeug>=3.1.6",           # CVE-2026-27199, CVE-2026-21860, CVE-2025-66221, CVE-2024-49767/49766
 ]
@@ -125,8 +139,16 @@ constraint-dependencies = [
 override-dependencies = ["cryptography>=50.0.0"]
 
 # Pull torch from PyTorch's cu128 wheel index instead of PyPI's default cu130
-# build. cu130 needs NVIDIA driver >=580; current dev hosts run 575.x and would
-# fail at torch.cuda.is_available() (a known cu130 driver-version trap).
+# build. cu130 needs NVIDIA driver >=580, and would fail at
+# torch.cuda.is_available() on anything older (a known cu130 driver trap).
+#
+# This line is FLIP's de facto minimum NVIDIA driver, so treat it as a
+# compatibility floor rather than a local convenience. The dev fleet is already
+# mixed -- 575.x and 580.x -- and cu128 runs on both, because a newer driver
+# runs older CUDA. AWS trusts are CPU-only (t3.*), so they do not constrain it;
+# an on-prem trust is operator hardware with no driver floor we can see. Moving
+# to cu130 would silently raise the requirement for every one of them.
+#
 # Mirrors the --extra-index-url flag in the flower fl-base Dockerfile.
 [[tool.uv.index]]
 name = "pytorch-cu128"
@@ -169,6 +191,11 @@ dev = [
     "huggingface-hub>=1.6.0",
     "matplotlib>=3.10.7",
     "mypy>=1.18.2,<2.0",
+    # Test-only: fl-tutorials/tests/ runs in this environment (see fl-tutorials/tests/pytest.ini)
+    # and imports the spleen downloader, which natural-sorts its case list. natsort is a real
+    # dependency of the spleen tutorial itself (3d_spleen_segmentation/pyproject.toml); it is here
+    # only so the test can import the script under test. Deliberately NOT a runtime dep.
+    "natsort>=8.4.0",
     "pyqt5>=5.15.11",
     "pytest>=8.4.2",
     "pytest-cov>=7.0.0",

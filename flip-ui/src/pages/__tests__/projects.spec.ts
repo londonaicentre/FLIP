@@ -19,6 +19,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { ref } from "vue";
 
 import { IProject, IProjectTrust, ProjectStatus } from "@/services/project-service";
+import { TRUST_CHIP_DOTTED_PADDING, TRUST_CHIP_PLAIN_PADDING } from "@/utils/trust-chip";
 
 import Page from "../projects.vue";
 
@@ -135,44 +136,86 @@ describe("Projects Page", () => {
         expect(wrapper.text()).not.toContain("No trusts staged");
     });
 
-    test("staged projects render plain trust chips with no approval dot", async () => {
-        setProject(makeProject("STAGED", [trust("t1", "KCH", true), trust("t2", "GSTT", false)]));
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+    // The dot rule is a small truth table; one row per case beats six near-identical
+    // mounts. Amber is asserted literally here — the Cypress spec is what proves it is
+    // the *same* amber as the row spine, by comparing computed colours.
+    test.each([
+        ["UNSTAGED", true, null, TRUST_CHIP_PLAIN_PADDING, "KCH NHS Foundation Trust", null],
+        ["STAGED", false, "bg-amber-500", TRUST_CHIP_DOTTED_PADDING,
+            "KCH NHS Foundation Trust — awaiting approval", "— awaiting approval"],
+        // A trust that has signed off on a project still awaiting approval stays amber:
+        // green is the project-wide "this trust is in" marker, not a per-trust one.
+        ["STAGED", true, "bg-amber-500", TRUST_CHIP_DOTTED_PADDING,
+            "KCH NHS Foundation Trust — awaiting approval", "— awaiting approval"],
+        ["APPROVED", false, "bg-amber-500", TRUST_CHIP_DOTTED_PADDING,
+            "KCH NHS Foundation Trust — awaiting approval", "— awaiting approval"],
+        ["APPROVED", true, "bg-emerald-500", TRUST_CHIP_DOTTED_PADDING,
+            "KCH NHS Foundation Trust — approved", "— approved"]
+    ] as const)(
+        "%s project + trust.approved=%s → %s dot",
+        async (status, approved, dotClass, chipPadding, title, standing) => {
+            setProject(makeProject(status, [trust("t1", "KCH", approved)]));
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
 
-        // Both linked trusts render; the project is not APPROVED, so even the
-        // trust that has signed off keeps a plain chip.
-        expect(wrapper.findAll("[data-test='trust-chip']")).toHaveLength(2);
-        expect(wrapper.findAll("[data-test='trust-approved-dot']")).toHaveLength(0);
-    });
+            const chips = wrapper.findAll("[data-test='trust-chip']");
+            expect(chips).toHaveLength(1);
+            chipPadding.split(" ").forEach(cls => expect(chips[0].classes()).toContain(cls));
+            expect(chips[0].attributes("title")).toBe(title);
 
-    test("an approved project shows a green dot on each approved trust chip", async () => {
-        setProject(makeProject("APPROVED", [trust("t1", "KCH", true), trust("t2", "GSTT", true)]));
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+            // The sr-only suffix — not the hover-only tooltip — is the accessible channel: the
+            // dot is aria-hidden, and amber/emerald is the pairing colour-vision deficiency
+            // collapses, so the standing has to reach keyboard and screen-reader users in words.
+            const standingText = chips[0].find("[data-test='trust-chip-standing']");
+            expect(standingText.exists()).toBe(standing !== null);
+            if (standing) {
+                expect(standingText.classes()).toContain("sr-only");
+                expect(standingText.text()).toBe(standing);
+            }
 
-        const dots = wrapper.findAll("[data-test='trust-approved-dot']");
-        expect(dots).toHaveLength(2);
-        dots.forEach(dot => expect(dot.classes()).toContain("bg-emerald-500"));
-    });
+            const dots = wrapper.findAll("[data-test='trust-status-dot']");
+            expect(dots).toHaveLength(dotClass ? 1 : 0);
+            if (dotClass) expect(dots[0].classes()).toContain(dotClass);
+        }
+    );
 
-    test("a non-approved trust on an approved project keeps a plain chip", async () => {
+    test("the grid view paints its chips by the same rule", async () => {
         setProject(makeProject("APPROVED", [trust("t1", "KCH", true), trust("t2", "GSTT", false)]));
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
-
-        expect(wrapper.findAll("[data-test='trust-chip']")).toHaveLength(2);
-        expect(wrapper.findAll("[data-test='trust-approved-dot']")).toHaveLength(1);
-    });
-
-    test("renders approved trust dots in the grid view too", async () => {
-        setProject(makeProject("APPROVED", [trust("t1", "KCH", true), trust("t2", "GSTT", true)]));
         const wrapper = mountPage();
         await wrapper.find("[data-test='view-mode-grid']").trigger("click");
 
-        const grid = wrapper.find("[data-test='projects-grid-view']");
-        expect(grid.exists()).toBe(true);
-        expect(grid.findAll("[data-test='trust-approved-dot']")).toHaveLength(2);
+        // Chips sort by trust name: GSTT (pending) then KCH (approved).
+        const dots = wrapper.find("[data-test='projects-grid-view']").findAll("[data-test='trust-status-dot']");
+        expect(dots.map(dot => dot.classes().find(c => c.startsWith("bg-")))).toEqual([
+            "bg-amber-500",
+            "bg-emerald-500"
+        ]);
+    });
+
+    test("an unrecognised status is not painted as staged", async () => {
+        // `status` comes off the wire and can be absent (18 of 21 rows in the
+        // getProjects Cypress fixture have no status) or a value this union does
+        // not know yet. A deny-list (`!== "UNSTAGED"`) would give those an amber
+        // dot claiming "staged"; the allow-list shows nothing instead.
+        setProject({
+            ...makeProject("STAGED", [trust("t1", "KCH", true)]),
+            status: undefined as unknown as ProjectStatus
+        });
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.findAll("[data-test='trust-chip']")).toHaveLength(1);
+        expect(wrapper.findAll("[data-test='trust-status-dot']")).toHaveLength(0);
+    });
+
+    test("grid cards carry the created stamp beside the owner, as the list rows do", async () => {
+        setProject(makeProject("APPROVED", [trust("t1", "KCH", true)]));
+        const wrapper = mountPage();
+        await wrapper.find("[data-test='view-mode-grid']").trigger("click");
+
+        const footer = wrapper.find("[data-test='project-card-meta']");
+        expect(footer.text()).toContain("r.patel");
+        expect(footer.text()).toContain("created");
     });
 
     test("renders the empty-state copy when the API returns zero projects", async () => {
@@ -190,7 +233,7 @@ describe("Projects Page", () => {
 
     test("status indicators show human-friendly labels (Draft / Staged / Approved)", async () => {
         // Three projects, one per status — the sort puts STAGED first, then
-        // APPROVED, then UNSTAGED (see STATUS_SORT_VALUE in projects.vue), so
+        // APPROVED, then UNSTAGED (see STATUS_RANK in projects.vue), so
         // the indicator labels follow that order.
         mockSwrvData.value = {
             data: [
@@ -253,8 +296,9 @@ describe("Projects Page", () => {
 
         const chips = wrapper.findAll("[data-test='trust-chip']");
         expect(chips).toHaveLength(1);
-        // After stripping bloat: "Maple" — well under the 16-char limit.
-        expect(chips[0].text()).toBe("Maple");
+        // After stripping bloat: "Maple" — well under the 16-char limit. Read off the label
+        // element, not the chip: the chip also carries the sr-only standing text.
+        expect(chips[0].find("[data-test='trust-chip-label']").text()).toBe("Maple");
     });
 
     test("caps visible trust chips at 4 and surfaces a +N marker for the overflow", async () => {
@@ -282,21 +326,6 @@ describe("Projects Page", () => {
 
         expect(wrapper.text()).toContain("h ago");
         expect(wrapper.text()).toContain("created");
-    });
-
-    test("only the APPROVED project's chips carry the green approval dot, even when trust.approved is true on a STAGED project", async () => {
-        // showsTrustDot guards on project.status === "APPROVED" too — a
-        // freshly-staged trust that's already signed off must still render
-        // a plain chip until the project itself approves.
-        setProject(makeProject("STAGED", [trust("t1", "KCH", true)]));
-        const stagedWrapper = mountPage();
-        await stagedWrapper.vm.$nextTick();
-        expect(stagedWrapper.findAll("[data-test='trust-approved-dot']")).toHaveLength(0);
-
-        setProject(makeProject("APPROVED", [trust("t1", "KCH", true)]));
-        const approvedWrapper = mountPage();
-        await approvedWrapper.vm.$nextTick();
-        expect(approvedWrapper.findAll("[data-test='trust-approved-dot']")).toHaveLength(1);
     });
 
     test("hides the Create project button when the user lacks CanCreateProjects", async () => {
@@ -499,9 +528,54 @@ describe("Projects Page", () => {
 
         const chips = wrapper.findAll("[data-test='trust-chip']");
         expect(chips).toHaveLength(1);
-        const text = chips[0].text();
+        const text = chips[0].find("[data-test='trust-chip-label']").text();
         expect(text.endsWith("…")).toBe(true);
         // Truncation is 14 chars + ellipsis.
         expect(text.slice(0, -1)).toHaveLength(14);
+    });
+
+    // The row and the card are both <a>, and main.css bolds every non-nav anchor, so
+    // anything inside without its own weight class inherited semibold. jsdom compiles no
+    // Tailwind, so this asserts the guard is on the anchor and the description sits under
+    // it; the rendered weight itself is asserted in the group-6 Cypress spec.
+    test.each([
+        ["list", "project-list-item-0", "project-row-description"],
+        ["grid", "project-card-0", "project-card-description"]
+    ])("the %s view sets body weight on the anchor the description lives in", async (view, anchor, description) => {
+        setProject(makeProject("STAGED", [trust("t1", "KCH", false)]));
+        const wrapper = mountPage();
+        if (view === "grid") await wrapper.find("[data-test='view-mode-grid']").trigger("click");
+        await wrapper.vm.$nextTick();
+
+        const anchorEl = wrapper.find(`[data-test='${anchor}']`);
+        expect(anchorEl.classes()).toContain("font-normal");
+        expect(anchorEl.find(`[data-test='${description}']`).exists()).toBe(true);
+    });
+
+    test("every list row declares the same content-independent column template", async () => {
+        // Each row is its own grid, so a content-sized (`auto`) track resolves to
+        // a different width per row and the description column drifts down the
+        // list. Fixed fr/rem tracks keep every row's columns on the same edges.
+        mockSwrvData.value = {
+            data: [
+                makeProject("STAGED", [trust("t1", "KCH", false)]),
+                makeProject("APPROVED", [])
+            ],
+            totalPages: 1,
+            page: 1
+        };
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        // Every declared track must be content-independent. Checking for the literal
+        // word `auto` is not enough: a bare `1.6fr` means `minmax(auto,1.6fr)` and drifts
+        // just the same, as do min-content/max-content/fit-content.
+        const rows = wrapper.findAll("[data-test='project-row-grid']");
+        expect(rows).toHaveLength(2);
+        expect(new Set(rows.map(row => row.attributes("class")))).toHaveProperty("size", 1);
+
+        const tracks = rows[0].classes().flatMap(c => c.match(/grid-cols-\[(.+)\]$/)?.[1].split("_") ?? []);
+        expect(tracks.length).toBeGreaterThan(0);
+        tracks.forEach(track => expect(track).toMatch(/^(minmax\(0,[\d.]+fr\)|[\d.]+rem)$/));
     });
 });

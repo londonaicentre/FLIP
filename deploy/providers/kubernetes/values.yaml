@@ -293,6 +293,17 @@ flClient:
     repository: ghcr.io/londonaicentre
     tag: stag
     pullPolicy: Always
+  # Node path holding a pre-staged participant kit, used INSTEAD of fetching from
+  # S3. Only consulted when the active backend's kitFromS3.enabled is false: the
+  # fl-client-kit volume is then a hostPath here, rather than an emptyDir that the
+  # kit-init initContainer populates. Nothing enforces that one of the two sources
+  # is configured — kitFromS3 disabled with this left empty renders an empty
+  # emptyDir, and the client starts without credentials, failing only at connect
+  # time. For air-gapped trusts and local kind clusters, where the kit is copied
+  # onto the node out of band. The directory must be readable by the FL image's
+  # runtime user — 49999 (app) for the Flower SuperNode, 1000 (flip) for the
+  # NVFLARE client.
+  kitHostPath: ""
   nvflare:
     kitFromS3:
       enabled: true
@@ -307,6 +318,15 @@ flClient:
       # pins it to the slot in the generated override. The trustName default below
       # only works when trustName == the slot.
       pathTemplate: "fl-flare-participant-kits/{{ .Values.flClient.nvflare.kitFromS3.kitDate }}/net-1/services/{{ .Values.trustName }}"
+    # Site-enforced privacy policy (FLIP#851): rendered into /app/local/privacy.json
+    # at container start by `python -m flip.nvflare.site_policy`. Empty string = unset
+    # = no site policy (previous behavior). policy: "percentile"; the params
+    # mirror the FL_SITE_PRIVACY_* env vars documented in trust/README.md. An invalid
+    # combination fails the pod (fail closed) rather than running unfiltered.
+    sitePrivacy:
+      policy: ""
+      percentile: ""
+      gamma: ""
   flower:
     kitFromS3:
       enabled: true

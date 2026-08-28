@@ -26,7 +26,10 @@ vi.mock("@/router/progress", () => ({
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RouteLocationNormalized } from "vue-router";
 
-import router, { afterEachGuard, beforeEachGuard, handleRouteError, routeChange } from "@/router";
+import router, { afterEachGuard,
+    beforeEachGuard,
+    handleRouteError,
+    routeChange } from "@/router";
 import { doneRouteProgress, startRouteProgress } from "@/router/progress";
 import { authCheck } from "@/utils/auth";
 
@@ -52,11 +55,6 @@ describe("routeChange", () => {
     it("viewProject pushes /project/:id", () => {
         routeChange.viewProject("proj-1");
         expect(pushSpy).toHaveBeenCalledWith({ path: "/project/proj-1" });
-    });
-
-    it("viewModels pushes /project/:id/models", () => {
-        routeChange.viewModels("proj-2");
-        expect(pushSpy).toHaveBeenCalledWith({ path: "/project/proj-2/models" });
     });
 
     it("viewModel pushes /project/:pid/model/:mid", () => {

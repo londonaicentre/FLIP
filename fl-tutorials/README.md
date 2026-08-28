@@ -21,7 +21,7 @@ the model-file contract, run an application locally, or provide the inputs to th
 | Backend | Examples |
 | --- | --- |
 | [`nvflare/`](nvflare/) | Chest X-ray classification, spleen segmentation and evaluation, diffusion, and template tests |
-| [`flower/`](flower/) | Chest X-ray classification, spleen segmentation and evaluation, NumPy, and SuperGrid examples |
+| [`flower/`](flower/) | Chest X-ray classification, spleen segmentation and evaluation |
 
 The root Makefile forwards tutorial commands to `FL_BACKEND=nvflare` by default. Select Flower explicitly with
 `FL_BACKEND=flower`.
@@ -47,9 +47,10 @@ make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
 built `flare-fl-base` image and fail without it. The spleen examples take `download-spleen-data` in place of
 `download-xray-data`.
 
-The simulator requires Docker, and GPU-backed examples require the NVIDIA Container Toolkit. Dataset downloads and
-generated runs are kept in gitignored backend data/output directories. Run `make -C fl-tutorials run-all-tutorials`
-only when you intentionally want the full, heavyweight suite.
+The simulator requires Docker, and GPU-backed examples require the NVIDIA Container Toolkit. Dataset tooling is
+shared across backends in [`datasets/`](datasets/) and downloads land in the shared gitignored `data/` root, so
+one download serves both backends; generated runs stay in gitignored per-backend output directories. Run
+`make -C fl-tutorials run-all-tutorials` only when you intentionally want the full, heavyweight suite.
 
 ## Check the sources without a GPU
 

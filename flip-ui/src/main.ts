@@ -19,7 +19,6 @@ import { Amplify } from "aws-amplify";
 import { createPinia } from "pinia";
 import { createApp } from "vue";
 import VueTippy from "vue-tippy";
-import SmartTable from "vuejs-smart-table";
 
 import { makeServer } from "../mocks/server";
 import App from "./App.vue";
@@ -104,7 +103,6 @@ async function bootstrap(): Promise<void> {
                 theme: "material"
             }
         })
-        .use(SmartTable)
         .mount("#app");
 }
 

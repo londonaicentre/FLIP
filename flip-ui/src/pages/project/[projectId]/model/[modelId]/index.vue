@@ -124,6 +124,7 @@
                                 :model-id="modelData.modelId"
                                 :required-files="requiredFiles"
                                 :job-type="currentJobType"
+                                :job-types-error="jobTypesError"
                                 @uploaded="update"
                                 @deleted-file="onFileDeleted"
                             />
@@ -141,7 +142,10 @@
                                 :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
                                 :job-type="currentJobType"
                                 :fl-backend-label="flBackendLabel"
+                                :job-types-error="jobTypesError"
+                                :job-types-loading="jobTypesLoading"
                                 @started="trainingInitialised"
+                                @retry-job-types="retryJobTypes"
                             />
                         </div>
                     </div>
@@ -198,7 +202,7 @@ import LifecycleTrack from "@/partials/projects/LifecycleTrack.vue";
 import { routeChange } from "@/router";
 import { resolveModelConfigState } from "@/services/file-service";
 import { getFLStatus } from "@/services/fl-service";
-import { buildModelSteps, DEFAULT_JOB_TYPE, editModel, fetchJobTypes, getModel, getRequiredFilesForJobType, getStatusEnumValue, type JobType, type JobTypesResponse, ModelStatusEnum } from "@/services/model-service";
+import { buildModelSteps, clearJobTypesCache, DEFAULT_JOB_TYPE, editModel, fetchJobTypes, getModel, getRequiredFilesForJobType, getStatusEnumValue, type JobType, type JobTypesResponse, ModelStatusEnum } from "@/services/model-service";
 import { useAuthStore, UserPermissions } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 import { useProjectStore } from "@/store/project";
@@ -226,10 +230,51 @@ const jobTypes = ref<JobTypesResponse>({});
 const currentJobType = ref<JobType>(DEFAULT_JOB_TYPE);
 const resolvedConfigFileStatus = ref<FileUploadStatus | null>(null);
 const requiredFiles = ref<string[]>([]);
+// Set when the job-types map could not be loaded. The required-files list is per-backend, so
+// there is no safe list to assume: the page says so and offers a retry rather than showing a
+// plausible-looking list that belongs to the other FL backend.
+const jobTypesError = ref(false);
+const jobTypesLoading = ref(false);
 const editProjectPermissions = ref(["CanManageProjects"] as UserPermissions[]);
 const editDrawerOpen = ref(false);
 const modelUpdating = ref(false);
 
+/**
+ * Loads the job-types map and seeds the default required-files list from it.
+ *
+ * On failure everything derived from the map is reset, which leaves the watcher below unable to
+ * advance `allFilesUploaded` — so training stays disabled while `jobTypesError` explains why.
+ */
+const loadJobTypes = async () => {
+    jobTypesLoading.value = true;
+    try {
+        jobTypes.value = await fetchJobTypes();
+        requiredFiles.value = getRequiredFilesForJobType(jobTypes.value, DEFAULT_JOB_TYPE);
+        jobTypesError.value = false;
+    } catch (err) {
+        console.error("[model page] Unable to load job types:", err);
+        jobTypes.value = {};
+        requiredFiles.value = [];
+        jobTypesError.value = true;
+    } finally {
+        jobTypesLoading.value = false;
+    }
+};
+
+/**
+ * Retries the job-types load. The cache is cleared first: a failure is never cached, but a stale
+ * successful map would be, and a retry should always ask the API again.
+ *
+ * The in-flight guard is load-bearing — AiAlert's action is a bare `<span>` with no disabled
+ * state, so an impatient second click would otherwise fire a second request.
+ */
+const retryJobTypes = async () => {
+    if (jobTypesLoading.value) {
+        return;
+    }
+    clearJobTypesCache();
+    await loadJobTypes();
+};
 
 onBeforeMount(async () => {
     if (!projectStore.isApproved) {
@@ -241,10 +286,7 @@ onBeforeMount(async () => {
 
         return;
     }
-    // Fetch job types from API
-    jobTypes.value = await fetchJobTypes();
-    // Set default required files
-    requiredFiles.value = getRequiredFilesForJobType(jobTypes.value, DEFAULT_JOB_TYPE);
+    await loadJobTypes();
 });
 
 const { data: modelData, error, mutate } = useSWRV(

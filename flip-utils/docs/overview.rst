@@ -127,6 +127,69 @@ The NVFLARE backend additionally ships a template directory under
 layer by ``FL_BACKEND=flower``.
 
 
+Data Enrichment (``flip.xnat``)
+-------------------------------
+
+``flip.xnat`` uploads *data-enrichment* files — segmentation masks and other
+image-derived annotations — into a FLIP project's XNAT, so that supervised apps
+find a label beside each pulled image. Labels that already exist in OMOP (a lab
+result, a coded report finding) do not need this: project them as a column of
+the cohort query instead.
+
+Unlike the rest of this package, ``flip.xnat`` does **not** run in the FL
+client. It runs on the model developer's workstation inside the Trust network
+(or as an XNAT Container Service job), authenticated as their own XNAT account;
+FL clients hold no XNAT credentials. It is the write-side counterpart to
+``get_by_accession_number()``, which reads the same scan resource.
+
+A ``flip-xnat`` console script is installed with the package:
+
+.. code-block:: bash
+
+   export XNAT_HOST=https://xnat.trust.example
+   export XNAT_USER=your-username
+   export XNAT_PASS=your-password
+
+   flip-xnat upload --flip-project-id <project-uuid> --manifest manifest.csv --dry-run
+
+The manifest is a CSV of ``accession_id,file_path`` (plus an optional
+``target_filename``, which must be a bare filename). By default each uploaded
+file is named after the image already in the scan's ``NIFTI`` resource, swapping
+the ``input_`` prefix for ``label_``, which is the pairing the apps rely on.
+Existing files are never replaced unless ``--overwrite`` is passed.
+
+Every Trust in the project needs enriching — each Trust's XNAT holds only its
+own studies — so repeat ``--credentials-file`` to cover the roster in one run:
+
+.. code-block:: bash
+
+   flip-xnat upload --flip-project-id <project-uuid> --manifest manifest.csv \
+     --credentials-file gstt.json --credentials-file kch.json
+
+The same manifest goes to every Trust; an accession exists at exactly one site
+and the others report it as *no matching scan*. A run that resolves no
+destination anywhere exits non-zero, so an automated pipeline cannot mistake a
+wholly-skipped enrichment for a completed one; pass ``--allow-no-op`` when an
+empty run is genuinely expected. A roster where *no* Trust holds the project is
+the one case ``--allow-no-op`` does not cover: the image pull never ran there,
+so the run fails regardless.
+
+The same operations are available as a Python API:
+
+.. code-block:: python
+
+   from flip.xnat import XnatClient, read_manifest, run_enrichment
+
+   clients = [XnatClient.from_config_file("gstt.json"), XnatClient.from_config_file("kch.json")]
+   report = run_enrichment(clients, read_manifest("manifest.csv"), flip_project_id="<project-uuid>")
+   print(report.render())
+   raise SystemExit(report.exit_code())
+
+Run it only after the image pull **and** after DICOM-to-NIfTI conversion: the
+target filename is derived from the converted image, so running earlier skips
+every scan.
+
+
 User Application Requirements
 -----------------------------
 
