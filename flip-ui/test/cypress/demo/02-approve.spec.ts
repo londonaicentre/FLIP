@@ -21,12 +21,11 @@ import { requireEnv } from "./support/demoFlow";
 describe("FLIP demo — administrator approval", () => {
     it("reviews connection status and approves the staged project", () => {
         const email = requireEnv("DEMO_ADMIN_EMAIL");
-        const password = requireEnv("DEMO_ADMIN_PASSWORD");
         const projectId = requireEnv("DEMO_PROJECT_ID");
 
         // Scenic sign-in — the administrator's entrance deserves screen time.
         cy.demoCaption("A FLIP administrator signs in to review the request", 1200);
-        cy.demoLogin(email, password, { scenic: true });
+        cy.demoLogin(email, "DEMO_ADMIN_PASSWORD", { scenic: true });
         cy.demoCaption("The administrator sees every project on the platform", 800);
         cy.demoPause(1600);
 

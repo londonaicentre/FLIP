@@ -104,7 +104,7 @@ published reference dataset on Hugging Face:
 
 This pulls the site-1 / site-2 training splits from
 `aicentreflip/tutorials-arkplus-cxr-classification <https://huggingface.co/datasets/aicentreflip/tutorials-arkplus-cxr-classification>`_
-and lays them out under ``fl-tutorials/nvflare/data/arkplus/`` (gitignored).
+and lays them out under ``fl-tutorials/data/arkplus/`` (gitignored).
 
 To use your own data instead, point the per-site ``.env.app`` values
 (``SITE{1,2}_IMAGES_DIR`` / ``SITE{1,2}_DATAFRAME``) at your directories. The trainer selects a
