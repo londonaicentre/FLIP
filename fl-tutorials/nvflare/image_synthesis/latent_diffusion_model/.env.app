@@ -1,6 +1,6 @@
 JOB_TYPE=diffusion_model
-DEV_IMAGES_DIR=../../data/spleen/images
-DEV_DATAFRAME=../../data/spleen/dataframe.csv
+DEV_IMAGES_DIR=../../../data/spleen/images
+DEV_DATAFRAME=../../../data/spleen/dataframe.csv
 FLIP_PROJECT_ID=
 FLIP_QUERY=
 

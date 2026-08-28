@@ -22,26 +22,7 @@ import { createRouter,
     NavigationGuardNext,
     RouteLocationNormalized } from "vue-router";
 
-/**
- * The per-project models page was merged into the estate-wide list, which carries its scope in a
- * query param. Kept so bookmarks and any external links keep working.
- *
- * A function rather than a `redirect:` in the page's own route block: YAML cannot interpolate
- * `:projectId` into `?project=`, and a redirect stub page would render inside MainLayout's
- * project branch, waiting on a project fetch it does not need before it could redirect.
- */
-export const legacyProjectModelsRedirect = (to: RouteLocationNormalized) => ({
-    path: "/models",
-    query: { project: String(to.params["projectId"]) }
-});
-
-const routes = [
-    ...setupLayouts(generatedRoutes),
-    {
-        path: "/project/:projectId/models",
-        redirect: legacyProjectModelsRedirect
-    }
-];
+const routes = setupLayouts(generatedRoutes);
 
 // import { routes } from "@/router/routes";
 import { IS_DEMO } from "@/demo/bootstrap";

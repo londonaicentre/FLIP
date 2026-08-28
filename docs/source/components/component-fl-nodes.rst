@@ -434,7 +434,7 @@ the description above:
 - for every NVFLARE job type the user upload is intentionally minimal — see :ref:`fl-required-files` for the per-job-type set — and the rest of the app is filled in from
   the static (non-modifiable) templates baked into the flip-api image at `FL_APP_BASE_DIR` (`fl-apps/`, see FLIP#724).
   These templates used to be published to an S3 bucket; that path has been removed. You can check what a fully bundled app looks like by consulting
-  the per-job-type implementations under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`_.
+  the per-job-type implementations under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`__.
 - every NVFLARE job type takes a plain training/evaluation script that calls
   ``nvflare.client`` directly (`fed_opt` reuses `standard`'s trainer contract unchanged).
 
