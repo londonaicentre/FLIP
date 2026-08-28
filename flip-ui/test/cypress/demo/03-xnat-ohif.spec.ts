@@ -19,7 +19,7 @@
 // straight to /VIEWER/ keeps OHIF in the recorded tab — the XNAT UI's own
 // launch link opens a new tab, which Cypress can't follow.
 
-import { requireEnv } from "./support/demoFlow";
+import { requireEnv, requireSecret } from "./support/demoFlow";
 
 // Scroll the viewer to a slice that actually carries the imported segmentation,
 // and prove one was found. The mask occupies a contiguous run of slices that is
@@ -84,7 +84,6 @@ describe("FLIP demo — XNAT + OHIF at the trust", () => {
 
     it("logs in to the trust XNAT and views an imported DICOM in OHIF", () => {
         const username = requireEnv("DEMO_XNAT_USERNAME");
-        const password = requireEnv("DEMO_XNAT_PASSWORD");
         const xnatProjectId = requireEnv("DEMO_XNAT_PROJECT_ID");
         const xnatSubjectId = requireEnv("DEMO_XNAT_SUBJECT_ID");
         const xnatExperimentId = requireEnv("DEMO_XNAT_EXPERIMENT_ID");
@@ -92,9 +91,11 @@ describe("FLIP demo — XNAT + OHIF at the trust", () => {
 
         cy.visit("/");
         cy.demoCaption("Meanwhile, inside the trust: the cohort's imaging has been imported into XNAT", 1200);
-        cy.get("form#login_form", { timeout: 60000 }).within(() => {
-            cy.get("input[name='username']").demoType(username);
-            cy.get("input[name='password']").demoType(password, { log: false });
+        requireSecret("DEMO_XNAT_PASSWORD").then((password) => {
+            cy.get("form#login_form", { timeout: 60000 }).within(() => {
+                cy.get("input[name='username']").demoType(username);
+                cy.get("input[name='password']").demoType(password, { log: false });
+            });
         });
         cy.get("form#login_form [type='submit'], form#login_form button").first().demoClick();
 
@@ -170,8 +171,8 @@ describe("FLIP demo — XNAT + OHIF at the trust", () => {
         // published as a DICOM-SEG ROI collection, which the viewer draws over the
         // images once imported. Classification demos have nothing to import, so the
         // orchestrator only sets this when the session actually carries a collection.
-        if (Cypress.env("DEMO_XNAT_SEG_NAME")) {
-            const collectionName = String(Cypress.env("DEMO_XNAT_SEG_NAME"));
+        if (Cypress.expose("DEMO_XNAT_SEG_NAME")) {
+            const collectionName = String(Cypress.expose("DEMO_XNAT_SEG_NAME"));
             cy.demoCaption("The labels added during data enrichment travel with the imaging", 600);
             cy.contains("Masks").demoClick();
             cy.demoPause(1200);

@@ -50,14 +50,13 @@ function setEditorValue(value: string): void {
 describe("FLIP demo — create project", () => {
     it("creates the project, runs the cohort query and stages the project", () => {
         const email = requireEnv("DEMO_RESEARCHER_EMAIL");
-        const password = requireEnv("DEMO_RESEARCHER_PASSWORD");
         const projectName = requireEnv("DEMO_PROJECT_NAME");
         const projectDescription = requireEnv("DEMO_PROJECT_DESCRIPTION");
         const queryFile = requireEnv("DEMO_QUERY_FILE");
 
         cy.visit("/auth/login");
         cy.demoCaption("A researcher signs in to FLIP — the Federated Learning Interoperability Platform", 1400);
-        cy.demoLogin(email, password, { scenic: true });
+        cy.demoLogin(email, "DEMO_RESEARCHER_PASSWORD", { scenic: true });
 
         // Land on the projects page and let it breathe before acting.
         cy.getBySel("add-project-btn", { timeout: 60000 }).should("be.visible");
