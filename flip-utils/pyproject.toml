@@ -139,8 +139,16 @@ constraint-dependencies = [
 override-dependencies = ["cryptography>=50.0.0"]
 
 # Pull torch from PyTorch's cu128 wheel index instead of PyPI's default cu130
-# build. cu130 needs NVIDIA driver >=580; current dev hosts run 575.x and would
-# fail at torch.cuda.is_available() (a known cu130 driver-version trap).
+# build. cu130 needs NVIDIA driver >=580, and would fail at
+# torch.cuda.is_available() on anything older (a known cu130 driver trap).
+#
+# This line is FLIP's de facto minimum NVIDIA driver, so treat it as a
+# compatibility floor rather than a local convenience. The dev fleet is already
+# mixed -- 575.x and 580.x -- and cu128 runs on both, because a newer driver
+# runs older CUDA. AWS trusts are CPU-only (t3.*), so they do not constrain it;
+# an on-prem trust is operator hardware with no driver floor we can see. Moving
+# to cu130 would silently raise the requirement for every one of them.
+#
 # Mirrors the --extra-index-url flag in the flower fl-base Dockerfile.
 [[tool.uv.index]]
 name = "pytorch-cu128"
