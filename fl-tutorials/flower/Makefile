@@ -15,65 +15,31 @@
 # bind-mounted (LOCAL_DEV), submits the job to the fl-api control plane, waits, and
 # tears down. The root `make -C fl-tutorials … FL_BACKEND=flower` forwards here.
 #
-#   make download-xray-data                    # FLIP-format x-ray data from HF
-#   make download-spleen-data                  # FLIP-format MSD-spleen data from HF
-#   make upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrichment: labels into a Trust's XNAT
 #   make list-tutorials
-#   make run-tutorial TUTORIAL=numpy           # self-contained, no data needed
-#   make run-tutorial TUTORIAL=3d_spleen_segmentation   # needs download-spleen-data
+#   make run-tutorial TUTORIAL=xray_classification
+#   make run-tutorial TUTORIAL=3d_spleen_segmentation
 #   make run-all-tutorials
 #
-# Datasets land (gitignored) under data/ in FLIP accession-resources layout, the
-# same Hugging Face source the NVFLARE tutorials use.
+# Every tutorial needs its dataset downloaded first —
+# `make -C fl-tutorials download-<dataset>-data FL_BACKEND=flower`. The dataset tooling is
+# shared with the NVFLARE harness in fl-tutorials/datasets/ and lands under the shared
+# gitignored fl-tutorials/data/, which run-tutorial.sh bind-mounts into the stack.
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
-HF_DATA_REPO := aicentreflip/flip-fl-base-test-data
 
-# Tutorials = immediate subdirs carrying an app/ (numpy, xray_classification,
+# Tutorials = immediate subdirs carrying an app/ (xray_classification,
 # 3d_spleen_segmentation, 3d_spleen_segmentation_evaluation).
 TUTORIAL_DIRS := $(sort $(patsubst %/app/,%,$(dir $(wildcard */app/.))))
 
-.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data upload-spleen-labels
-
-# Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT.
-#
-# Deliberately delegates to the NVFLARE tree rather than duplicating the script. Enrichment is a
-# one-time, backend-agnostic project step: the labels land in XNAT, and both backends then read
-# them through flip.get_by_accession_number. Only the local label directory differs — Flower pulls
-# a pre-built FLIP-format tree from HF, NVFLARE builds one from MSD — and both use the same
-# subject_N/scans/{input,label}_spleen_N.nii.gz layout, so pointing SPLEEN_LABELS_DIR at ours is
-# the whole difference.
-upload-spleen-labels:
-	@$(MAKE) --no-print-directory -C $(REPO_ROOT)/fl-tutorials/nvflare upload-spleen-labels \
-		SPLEEN_LABELS_DIR=$(abspath data/spleen/accession-resources)
-
-# Download the FLIP-format x-ray dataset from Hugging Face into data/xrays_mini_300/
-# (gitignored). Idempotent. Mirrors fl-tutorials/nvflare's download-xray-data.
-download-xray-data:
-	@echo "⬇️  Downloading x-ray dataset from Hugging Face ($(HF_DATA_REPO))..."
-	@uv run --no-project --with huggingface_hub python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$(HF_DATA_REPO)', repo_type='dataset', local_dir='data/.hf', allow_patterns=['flip-fl-base-test-data/xrays_mini_300/*'])"
-	@rm -rf data/xrays_mini_300 && mkdir -p data/xrays_mini_300
-	@cp -r data/.hf/flip-fl-base-test-data/xrays_mini_300/accession-resources data/xrays_mini_300/accession-resources
-	@cp data/.hf/flip-fl-base-test-data/xrays_mini_300/sample_get_dataframe_response.csv data/xrays_mini_300/sample_get_dataframe_response.csv
-	@echo "✅ x-ray data ready at data/xrays_mini_300/ — make run-tutorial TUTORIAL=xray_classification"
-
-# Download the FLIP-format spleen dataset (accession-resources + dataframe) from HF
-# into data/spleen/ (gitignored), shared by the segmentation + evaluation tutorials.
-download-spleen-data:
-	@echo "⬇️  Downloading spleen dataset from Hugging Face ($(HF_DATA_REPO))..."
-	@uv run --no-project --with huggingface_hub python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$(HF_DATA_REPO)', repo_type='dataset', local_dir='data/.hf', allow_patterns=['flip-fl-base-test-data/spleen/*', 'flip-fl-base-test-data/checkpoints/*'])"
-	@rm -rf data/spleen && mkdir -p data/spleen
-	@cp -r data/.hf/flip-fl-base-test-data/spleen/accession-resources data/spleen/accession-resources
-	@cp data/.hf/flip-fl-base-test-data/spleen/sample_get_dataframe_response.csv data/spleen/sample_get_dataframe_response.csv
-	@mkdir -p data/model_checkpoints && cp data/.hf/flip-fl-base-test-data/checkpoints/model.pt data/model_checkpoints/model.pt
-	@echo "✅ spleen data ready at data/spleen/ (+ checkpoint) — make run-tutorial TUTORIAL=3d_spleen_segmentation"
+.PHONY: list-tutorials run-tutorial run-all-tutorials
 
 list-tutorials:
 	@echo "Available Flower tutorials (pass the name to 'make run-tutorial TUTORIAL=…'):"
 	@for d in $(TUTORIAL_DIRS); do echo "  - $$d"; done
 
 # Run one tutorial on the standalone Flower stack (up → submit → wait → down).
-# numpy is self-contained; spleen/xray need 'make download-<spleen|xray>-data' first.
+# Every tutorial needs its dataset first:
+# `make -C fl-tutorials download-<dataset>-data FL_BACKEND=flower`.
 run-tutorial:
 	@bash $(REPO_ROOT)/fl-tutorials/flower/run-tutorial.sh "$(TUTORIAL)"
 

@@ -99,7 +99,7 @@ make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning
 
 `download-arkplus-finetuning-data` pulls the `site1`/`site2` training splits of
 [`aicentreflip/tutorials-arkplus-cxr-classification`](https://huggingface.co/datasets/aicentreflip/tutorials-arkplus-cxr-classification)
-and normalises them into `fl-tutorials/nvflare/data/arkplus/site{1,2}/` (gitignored), matching this
+and normalises them into `fl-tutorials/data/arkplus/site{1,2}/` (gitignored), matching this
 tutorial's `.env.app` defaults (`SITE{1,2}_IMAGES_DIR` / `SITE{1,2}_DATAFRAME`). Requires a GPU + the
 `flare-fl-base` image to run the simulator. To use your own data instead, point the per-site
 `.env.app` values at it.

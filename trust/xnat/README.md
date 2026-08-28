@@ -93,6 +93,44 @@ make build
 
 This downloads the XNAT WAR and plugins from S3, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${DOCKER_TAG}`.
 
+The DICOM→NIfTI converter the Container Service launches is a fourth, standalone image —
+`ghcr.io/londonaicentre/xnat-dcm2niix` (built from [`dcm2niix/`](dcm2niix/), published by its own
+GitHub workflow). It is referenced by an immutable version tag from
+[`xnat/config/dcm2niix_command.json`](xnat/config/dcm2niix_command.json), the K8s init-job's inline
+copy of that command, and imaging-api's `Settings.DCM2NIIX_IMAGE` — bump all three together with the
+Dockerfile's `DCM2NIIX_VERSION` (see FLIP#980: the Docker Hub `xnat/dcm2niix:latest` it replaces was
+a stale 2021 build that silently dropped slices from valid series).
+[`dcm2niix/check_image_pin_sync.sh`](dcm2niix/check_image_pin_sync.sh) enforces that the four stay in
+sync — it runs as a pre-commit hook and as the `dcm2niix-pin-sync` CI job — because a half-bumped set
+is otherwise silent: the old immutable tag simply keeps being pulled.
+
+#### Operator action: the GHCR package must be public
+
+**After the first publish, and again after any delete-and-recreate of the package, set
+`ghcr.io/londonaicentre/xnat-dcm2niix` to public.** New org packages default to **private**, and
+`GITHUB_TOKEN` cannot change a package's visibility, so the publish workflow cannot do this for you:
+
+> github.com/orgs/londonaicentre/packages/container/xnat-dcm2niix/settings → Danger Zone →
+> Change visibility → Public
+
+This matters because the XNAT Container Service pulls the converter **anonymously** — it holds no
+GHCR credentials, and the `ghcr.io` image host registered below is deliberately credential-less. A
+private package therefore registers fine at deploy time and only fails when a scan is archived at a
+trust, which is exactly the deferred, silent failure this pinning is meant to remove.
+
+The publish workflow's last step is the guard: it re-runs that anonymous manifest fetch against the
+tag it just pushed and fails the run if it is not publicly readable. A red first-publish run is the
+intended signal that the visibility flip is still outstanding — not a broken build.
+
+Because the image now lives on a registry other than Docker Hub, `configure-dcm2niix.sh` also
+registers `ghcr.io` as a credential-less Container Service **image host**. This is load-bearing on
+the swarm backend: container-service 3.8.1 resolves the launch's registry auth by matching an
+image-host `url` against the bare registry hostname parsed from the image string, and with no match
+the null result reaches docker-java's `withAuthConfig` unguarded — every conversion then fails with
+`NullPointerException: authConfig was not specified` even though the public image needs no
+credentials at all. (Found live: a full platform image pull converted nothing until the host entry
+existed. The Kubernetes backend is unaffected — kubelet does the pulling there.)
+
 ### Run XNAT
 
 Run both configured development XNAT instances with:

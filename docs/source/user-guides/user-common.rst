@@ -188,7 +188,9 @@ Users can apply a filters to view only projects based on, for example, the curre
 Cohort Query
 ============
 
-Cohort data is stored within a `PostgreSQL <https://www.postgresql.org/>`_ database conforming to the `standard OMOP data model <http://omop-erd.surge.sh/omop_cdm/index.html>`_, extended with the `MI-CDM medical imaging tables <https://www.ncbi.nlm.nih.gov/pmc/articles/PMC11031512/>`_ (``image_occurrence``, ``image_feature`` — successors of the earlier R-CDM radiology tables). The ``image_occurrence`` table has been modified to include an ``accession_id`` field which contains the reference to the associated DICOM series. As this is the field that XNAT will read from when retrieving the associated DICOM series from PACS, the 'accession_id' needs to be included in all queries if relevant images are to be made available.
+Cohort data is stored within a `PostgreSQL <https://www.postgresql.org/>`_ database conforming to the OMOP Common Data Model, extended with the :term:`MI-CDM` imaging tables — see :ref:`the schema reference <omop-schema>` for the tables a query can draw on, and :ref:`omop-sample-queries` for two worked examples.
+
+The ``image_occurrence`` table has been modified to include an ``accession_id`` field which contains the reference to the associated DICOM study. As this is the field that XNAT will read from when retrieving the associated DICOM series from PACS, the 'accession_id' needs to be included in all queries if relevant images are to be made available.
 
 .. _create-cohort-query:
 
@@ -279,6 +281,8 @@ To view the progress of the imaging data import at each participating Trust, use
 .. note::
 
    Importing large sets of studies from PACS systems can take a very long time and individual imports may fail if the system is under too much strain. Overtime, FLIP will automatically reimport failed studies as indicated by the reimport count.
+
+The counts shown for each Trust are the latest it has reported. If a Trust stops responding — or its XNAT no longer holds the imaging project — its card keeps the last known counts on display, marked **Last known** together with the time they were last confirmed, and shows what went wrong in the card footer: *Trust XNAT not reachable* when the Trust's XNAT did not respond at all, or *Trust XNAT reachable, but project not found* when XNAT answered but the imaging project no longer exists there (for example after the Trust's deployment was reset). The card returns to normal automatically once the Trust reports successfully again.
    Once the reimport cap is reached, failed studies will no longe be reimported. If there are still failures present, please contact an XNAT administrator. Manual intervention may be needed.
 
 .. figure:: ../assets/flip/study-reimport-max.gif
@@ -356,9 +360,10 @@ Model Files
 There is no single list of required files. What a model must contain depends on its **job type**
 — the kind of federated job it runs, such as federated averaging or evaluation — and on which FL
 backend your platform is running. An app declares its job type with the ``job_type`` key in
-``config.json``. Every NVFLARE app carries a ``config.json``, because it is itself a required file
-for those job types; a Flower app only needs one in order to run a job type other than the default.
-Where the key — or the file itself — is absent, the ``standard`` job type is assumed.
+``config.json``. Every app carries a ``config.json``, on either backend, because it is itself a
+required file for every job type. Where the key is absent, the ``standard`` job type is assumed.
+The file itself is not optional: a model without a ``config.json`` is shown as missing it and
+cannot start training, whichever job type it was going to declare.
 
 **You do not need to look this up.** FLIP tells you which files your model needs, in two places on
 the model page:
@@ -452,8 +457,9 @@ Where that configuration lives, and which settings are available, depends on the
 - **NVIDIA FLARE apps** are configured through ``config.json``, which is one of the required files
   for every NVFLARE job type. As well as declaring ``job_type``, it may set platform-recognised
   keys such as ``GLOBAL_ROUNDS`` and ``LOCAL_ROUNDS``.
-- **Flower apps** take their run configuration from the platform's app template, which your app
-  can override with a ``config.toml`` file. Flower apps do not use the NVFLARE keys.
+- **Flower apps** also carry a ``config.json``, but it is read only for ``job_type`` — the run
+  configuration comes from the platform's app template, which your app can override with a
+  ``config.toml`` file. Flower apps do not use the NVFLARE keys.
 
 For NVFLARE apps, any key the platform does not recognise is passed through untouched, for your own
 code to read at runtime — which is how the tutorials carry app-specific settings such as learning

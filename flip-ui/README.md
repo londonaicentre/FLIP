@@ -198,6 +198,16 @@ npm run test:start &       # in one shell — leave running
 npx cypress open           # in another — pick a spec
 ```
 
+#### Typecheck the test tree
+
+```bash
+npm run test:types         # tsc --noEmit -p test/tsconfig.json
+```
+
+The Cypress tree has its own TS project ([`test/tsconfig.json`](test/tsconfig.json)) that `npm run lint`
+(eslint over `src/` only) never sees, so CI runs this as a separate step to keep the custom-command
+declarations honest.
+
 #### Run a single group
 
 ```bash
@@ -219,12 +229,12 @@ make e2e_test               # full suite, end-to-end (boots Vite, runs cypress i
 # Or, if you already have npm run test:start running in another shell:
 docker run --rm --network host \
     -v "$PWD":/e2e -w /e2e --entrypoint cypress \
-    cypress/included:14.5.2 \
+    cypress/included:15.21.0 \
     run --browser electron \
     --spec 'test/cypress/integration/group-3/**/*.spec.ts'
 ```
 
-The image (`cypress/included:14.5.2`) is ~3 GB on first pull and cached
+The image (`cypress/included:15.21.0`) is ~3 GB on first pull and cached
 afterwards. Pin the tag to whatever `cypress` version is in `package.json` so
 the binary in the image matches the project config.
 
@@ -245,7 +255,7 @@ See [`test/cypress/demo/README.md`](test/cypress/demo/README.md) for the full co
 The Cypress suite runs on every PR and on push to `develop` / `main` via the `cypress-e2e` job in
 [`.github/workflows/test_flip_ui.yml`](../.github/workflows/test_flip_ui.yml). The job:
 
-- Uses `cypress-io/github-action@v6`, which caches the Cypress binary and `node_modules` between runs.
+- Uses `cypress-io/github-action@v7`, which caches the Cypress binary and `node_modules` between runs.
 - Fans out across the six spec groups via a `strategy.matrix.group` so wall-clock time stays short.
 - Boots the Vite dev server with the same `.env.e2e` stub shown above.
 - On failure, uploads `test/cypress/screenshots` as an artefact (`cypress-screenshots-<group>`, retained 7 days).

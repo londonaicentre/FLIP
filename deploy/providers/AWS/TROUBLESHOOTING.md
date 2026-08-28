@@ -402,9 +402,9 @@ runs — not on the EC2.
 ```bash
 ssh flip-trust
 DIR=$(docker inspect trust1-orthanc-1 --format '{{range .Mounts}}{{if eq .Destination "/var/lib/orthanc/db"}}{{.Source}}{{end}}{{end}}')
-# Version from trust/orthanc/.data_version (e.g. 20260106); trust slot from the kit (trust1/trust2)
+# Version from trust/orthanc/.data_version (e.g. 20260821); trust slot from the kit (trust1/trust2)
 curl -fSL -o /tmp/orthanc-data.tar \
-  "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/trust1/trust1_orthanc_data_20260106.tar"
+  "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/trust1/trust1_orthanc_data_20260821.tar"
 docker stop trust1-orthanc-1
 sudo rm -rf "$DIR"/*          # wipe the stale empty index
 sudo tar xf /tmp/orthanc-data.tar -C "$DIR"
@@ -644,9 +644,13 @@ Wait ~1–3 min for the CloudFront invalidation to clear, then hard-refresh the 
 
 **Symptom**: flip-api logs show `[Errno -2] Name or service not known` for `fl-api-net-1.flip.local:8000`.
 
-**Root cause**: `NET_ENDPOINTS` points to Service Discovery FQDNs designed for ECS Fargate (PR 2). On EC2 with Docker Compose, containers communicate via Docker's built-in DNS using container names.
+**Root cause**: `NET_ENDPOINTS` points to Service Discovery FQDNs designed for ECS Fargate (PR 2). On a compose-hosted hub, containers communicate via Docker's built-in DNS.
 
-**Fix**: Set `NET_ENDPOINTS={"net-1":"http://flip-fl-api-net-1:8000"}` in `.env.stag` AND update the `fl_nets` table in the database (see Section 3.2).
+**Fix**: Set `NET_ENDPOINTS={"net-1":"http://fl-api-net-1:8000"}` in `.env.stag`. Use the compose
+**service** name `fl-api-net-1` — docker registers it as a network alias on every network the
+container joins. The pre-FLIP#957 spelling `flip-fl-api-net-1` was a `container_name`, which the
+compose files no longer set, so it now resolves nowhere. No manual `fl_nets` update is needed: the
+flip-api startup seed reconciles the row to `NET_ENDPOINTS` (see Section 3.2, which is the ECS case).
 
 ---
 
