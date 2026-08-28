@@ -258,6 +258,7 @@ run the stack on them with `make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`.
 ```bash
 uv run ruff check . --fix  # Lint with auto-fix
 uv run mypy .              # Static type checking
+make checkov-lint          # Static checkov security lint over deploy/providers/AWS (credential-free; FLIP#1052/#1058)
 ```
 
 ### Debugging
@@ -446,7 +447,7 @@ After changes, evaluate if docs need updating:
 
 ## CI/CD
 
-GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `fl-tutorials-tests.yml`, `test_map_apps.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `fl-tutorials-tests.yml`, `test_map_apps.yml`, `docker_build_*.yml`, `validate_terraform.yml` (fmt/validate + a checkov security lint over `deploy/providers/AWS/**` — IAM policy content plus promoted posture checks; static, credential-free; local run `make checkov-lint` **from the repo root** (the AWS Makefile's parse-time env guard blocks the `-C` form for contributors), deliberate breadth/posture suppressed in-code with `# checkov:skip=<ID>:<rationale>` — FLIP#1052, FLIP#1058), `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
 
 ### Docker image builds: gated on tests, manual trigger for branches
 

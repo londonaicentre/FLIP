@@ -14,7 +14,7 @@
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
 		check-aws-access generate-internal-service-key generate-xnat-credentials \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
-		sync-trust-kit sync-trust-kits lock \
+		sync-trust-kit sync-trust-kits lock checkov-lint \
 		deploy-trust-k8s undeploy-trust-k8s \
 		demo-video demo-users seed-demo-projects
 
@@ -297,6 +297,11 @@ restart-no-trust:
 	$(MAKE) -e DEBUG=$(DEBUG) -C flip-api restart
 ci:
 	act --env-file .env.development
+# Runs the script directly (not via deploy/providers/AWS/Makefile) so it stays
+# credential-free: that Makefile's parse-time FL_KIT_DATE guard needs the
+# gitignored deploy env files, which contributors don't have.
+checkov-lint:
+	bash deploy/providers/AWS/scripts/checkov_lint.sh
 ui:
 ifeq ($(strip $(PROD)),)
 	@echo "🚀 Starting UI..."
