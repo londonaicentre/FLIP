@@ -403,3 +403,31 @@ class XNATProjectStatus(SQLModel, table=True):
     query_at_creation: UUID | None = Field(default=None)
     last_reimport: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
     reimport_count: int = Field(default=0)
+
+
+class CohortSnapshotStatus(SQLModel, table=True):
+    """The hub's per-trust record of what cohort was frozen at approval (FLIP#857).
+
+    Aggregates only — the hub never sees a row of the cohort. Written by the PERSIST_COHORT
+    task's post-processing from the trust's snapshot response; one row per (project, trust),
+    updated in place on re-approval (a re-snapshot replaces the trust-side artefact, so the
+    latest facts are the ones that describe what is being served). ``approved_record_count``
+    is the count the project was staged/approved on (from the aggregated cohort statistics);
+    a mismatch with ``row_count`` means the live cohort drifted between submission and
+    approval, and is logged as a warning when the row is written — surfaced, never silently
+    adopted.
+    """
+
+    __tablename__ = "cohort_snapshot_status"  # type: ignore
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    project_id: UUID | None = Field(default=None, foreign_key="projects.id")
+    trust_id: UUID | None = Field(default=None, foreign_key="trust.id")
+    # Which Queries row was frozen — the missing link #857 calls out.
+    query_id: UUID | None = Field(default=None)
+    row_count: int = Field()
+    approved_record_count: int | None = Field(default=None)
+    # False = the frozen cohort has no accession_id column (tabular project; imaging no-ops).
+    has_accessions: bool = Field(default=False)
+    query_hash: str | None = Field(default=None)
+    snapshot_at: datetime = Field()
+    created_at: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]

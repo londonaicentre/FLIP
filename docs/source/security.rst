@@ -130,6 +130,15 @@ trust receives a different value, limiting the effect of disclosure to one trust
 rotation is performed by issuing a new trust kit and restarting the trust-side services
 together so callers and receivers change atomically.
 
+Because the FL client legitimately holds this key — it reads the approved cohort and pulls
+imaging — the key alone cannot separate reading a project's cohort from *defining* it. The
+two ``data-access-api`` routes that materialise or delete the frozen cohort therefore carry a
+second gate on top of the shared key: proof of possessing the trust's payload-encryption key
+(``AES_KEY_BASE64``), which ``trust-api`` and ``data-access-api`` hold but the FL client does
+not. The proof is a one-way digest of the key, not the key itself, so it never appears on the
+wire or in logs. A caller that presents a valid shared key but not this proof is refused. No
+additional secret is provisioned; the control reuses a possession boundary that already exists.
+
 **************************
 The clinical data boundary
 **************************
@@ -151,9 +160,15 @@ independent controls would each have to fail before anything unintended could ex
   reveal that a handful of patients matched — the threshold is the trust's own
   disclosure floor (default 10), set by each trust in its deployment kit: trusts need
   not agree on a shared value, and the hub cannot lower it;
-- cached results are scoped to the requesting project and expire in minutes, so no
-  project is served another's data and no result outlives a withdrawal of consent or a
-  correction to a record.
+- row-level data is released only from the **cohort frozen at project approval**: each
+  Trust materialises the approved query's result once and serves that immutable,
+  project-scoped artefact from then on, ignoring any SQL supplied at request time. The
+  cohort a project trains on is therefore exactly the cohort that was approved — it cannot
+  silently grow as the live database grows — and training code cannot run queries of its
+  own. Withdrawals and record corrections propagate at explicit re-approval events, which
+  atomically replace the frozen artefact, and at project teardown, which deletes it —
+  never mid-training, where a silently shifting dataset would corrupt the model without
+  anyone approving the change.
 
 This is achieved **without restricting researchers to a fixed menu of queries** —
 arbitrary analytical SQL remains available. The constraint is on the shape and privilege

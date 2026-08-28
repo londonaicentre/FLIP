@@ -48,3 +48,6 @@ xnat/plugins/.s3-prefix
 # Image data folder
 data/**/*.dcm
 data/**/*.nii.gz
+
+# Approved-cohort snapshots (FLIP#857): row-level patient data, never committed
+data-access-api/.snapshots/

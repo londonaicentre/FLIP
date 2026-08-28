@@ -79,16 +79,17 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
     """
     # Check if project exists
     try:
-        get_project(project_id, headers)
+        project = get_project(project_id, headers)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Get accession IDs from data access API. The endpoint projects the cohort
-    # query to the accession_id column server-side, so no other columns are
-    # transmitted across the trust boundary.
-    encrypted_project_id = encrypt(project_id)
+    # Get accession IDs from data access API — the frozen approved-cohort pointer set
+    # (FLIP#857), keyed on the HUB project id. XNAT projects mint their own uuid and stash
+    # the hub id in secondary_ID, so that is what data-access-api's snapshot store is
+    # keyed on; sending the XNAT id would never match a snapshot.
+    encrypted_project_id = encrypt(project.secondary_ID)
     try:
         accession_ids: list[str] = await get_accession_ids(encrypted_project_id, query)
     except CohortBelowThresholdError:
@@ -185,17 +186,21 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
         ImportStatus: An object containing the status of study imports.
 
     Raises:
-        HTTPException: 403 if the cohort has fallen below the trust's ``COHORT_QUERY_THRESHOLD``
-            so its accession IDs cannot be released — note the cohort query is re-run against
-            live OMOP on every status check, so a project that imported cleanly can start
-            refusing later if its cohort shrinks (see FLIP#857). Otherwise, if the request
-            cannot be processed.
+        HTTPException: 403 if the frozen cohort is below the trust's ``COHORT_QUERY_THRESHOLD``
+            (or the project has no approved-cohort snapshot) so its accession IDs cannot be
+            released. Otherwise, if the request cannot be processed.
     """
-    # Encrypt project ID to send to the data access API
-    encrypted_project_id = encrypt(project_id)
+    # Resolve the HUB project id: data-access-api serves the frozen approved-cohort
+    # snapshot (FLIP#857) keyed on it, and the XNAT project stores it as secondary_ID.
+    try:
+        project = get_project(project_id, headers)
+    except NotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    encrypted_project_id = encrypt(project.secondary_ID)
 
-    # Get accession IDs from data access API (server-side projection — no other
-    # cohort columns leave the trust).
+    # Get accession IDs from data access API — the frozen pointer set; the query travels
+    # only as an advisory field (the snapshot serve ignores it), so the status poll no
+    # longer re-runs cohort SQL against live OMOP.
     try:
         accession_ids: list[str] = await get_accession_ids(encrypted_project_id, query)
     except CohortBelowThresholdError as e:

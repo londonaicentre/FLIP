@@ -175,6 +175,9 @@ services:
       # kit file to release less. The `:-10` keeps an unset variable from arriving as an
       # empty string, which pydantic would reject against `int`.
       COHORT_QUERY_THRESHOLD: ${COHORT_QUERY_THRESHOLD:-10}
+      # Approved-cohort snapshot store (FLIP#857): the container-side path of the bind
+      # mount below. Fixed here; the HOST side is the kit's COHORT_SNAPSHOT_STORAGE_DIR.
+      COHORT_SNAPSHOT_DIR: /snapshots
       # Dev-on-pull (see `user:` above): import via PYTHONPATH, skip the editable
       # install (UV_NO_SYNC), keep uv's cache + HOME writable.
       HOME: /tmp
@@ -185,6 +188,11 @@ services:
       - ./data-access-api/data_access_api:/app/data_access_api
       - ./data-access-api/tests:/app/tests
       - ./observability/log_config:/app/log_config:ro
+      # Approved-cohort snapshots: per-trust host dir from the kit's Host-local profile
+      # (pre-created by `make up-trust` so it is host-user-owned, not docker-root-owned —
+      # the service runs non-root and disables the store if it cannot write). Holds
+      # row-level patient data; gitignored, never committed.
+      - ${COHORT_SNAPSHOT_STORAGE_DIR:-./data-access-api/.snapshots/Trust_${TRUST_NUMBER}}:/snapshots
 
   trust-api:
     # Pull from GHCR by default; local trust_api/ bind-mount overlays it for live
