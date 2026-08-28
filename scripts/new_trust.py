@@ -31,13 +31,23 @@ import sys
 from pathlib import Path
 
 
+# Kit-file env suffix → the PROD flag that selects it (root Makefile ENV / deploy
+# Makefile KIT_ENV_SUFFIX). Suffixes that spell their own flag are absent.
+_PROD_FLAG_FOR_ENV = {"production": "true", "lza-prod": "lza"}
+
+
 def main() -> None:
     """CLI entry point: scaffold trust/.env.<CODE>.<env> from the base template."""
     parser = argparse.ArgumentParser(description="Scaffold a new trust kit file.")
     parser.add_argument("--code", required=True, help="Trust short code — the kit-file handle (e.g. KCH).")
     parser.add_argument("--name", required=True, help="Trust display name registered on the hub.")
     parser.add_argument("--region", default=None, help="Optional NHS region.")
-    parser.add_argument("--env", required=True, choices=("development", "stag", "production"), help="Target env.")
+    parser.add_argument(
+        "--env",
+        required=True,
+        choices=("development", "stag", "production", "lza-prod", "lza-stag"),
+        help="Target env — the kit-file suffix (lza-prod / lza-stag = the LZA estate, FLIP#749).",
+    )
     parser.add_argument("--template", default=None, help="Base template (default trust/.env.example).")
     parser.add_argument("--trust-dir", default=None, help="Override the trust/ directory (testing).")
     args = parser.parse_args()
@@ -65,7 +75,7 @@ def main() -> None:
     target.write_text("\n".join(identity) + "\n" + template.read_text())
     target.chmod(0o600)
     print(f"✅ Scaffolded {target}")
-    print(f"   Next: make register-trust KIT={args.code} PROD={'true' if args.env == 'production' else args.env}")
+    print(f"   Next: make register-trust KIT={args.code} PROD={_PROD_FLAG_FOR_ENV.get(args.env, args.env)}")
 
 
 if __name__ == "__main__":
