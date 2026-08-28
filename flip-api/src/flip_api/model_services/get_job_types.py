@@ -13,9 +13,12 @@
 """Endpoint for retrieving available job types and their required files (moved to model_services)."""
 
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends
 from sqlmodel import Session
 
+from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.domain.interfaces.fl import JobRequiredFiles
 from flip_api.fl_services.services.fl_scheduler_service import resolve_backend
@@ -25,7 +28,10 @@ router = APIRouter(prefix="/model", tags=["model_services"])
 
 
 @router.get("/job-types", response_model=dict[str, list[str]])
-def get_job_types_endpoint(db: Session = Depends(get_session)) -> dict[str, list[str]]:
+def get_job_types_endpoint(
+    db: Session = Depends(get_session),
+    current_user_id: UUID = Depends(verify_token),
+) -> dict[str, list[str]]:
     """
     Retrieve all available job types and their required files.
 
@@ -34,6 +40,17 @@ def get_job_types_endpoint(db: Session = Depends(get_session)) -> dict[str, list
     which files are required for training based on the config.json job_type.
     The required files are read from the manifest of whichever FL backend the
     nets currently report.
+
+    Authenticated, but not authorised any further: the manifest is the same for every caller and
+    is published verbatim in the platform docs, so there is nothing here to scope to a user or a
+    project. The token is required because this sits alongside the rest of ``/model``, and an
+    unauthenticated route in that namespace is a surprise to the next person adding one.
+
+    Args:
+        db (Session): Database session, provided by dependency injection. Used to resolve which
+            FL backend the nets are running, which selects the manifest.
+        current_user_id (UUID): The authenticated caller, provided by dependency injection.
+            Unused — its presence is the access check.
 
     Returns:
         dict[str, list[str]]: A dictionary where keys are job type names

@@ -411,6 +411,13 @@ and local DP strategies with adaptive clipping). DP provides formal mathematical
 privacy leakage (the epsilon parameter), but clinically useful DP budgets (epsilon ~ 10) do not prevent
 all attacks, while strict guarantees (epsilon < 1) can significantly degrade model performance.
 
+On the NVFLARE backend, FLIP supports a **site-enforced privacy policy**: the operator sets
+``FL_SITE_PRIVACY_POLICY=percentile`` (deterministic percentile clipping) in the trust's kit file,
+and the resulting filter is applied to every
+outgoing update *regardless of what the submitted job configures* — a researcher's app cannot
+disable it. See :doc:`../components/component-fl-nodes` ("Site-enforced privacy policy") for
+the parameters and semantics.
+
 **Secure aggregation**
 
 Some FL frameworks support homomorphic encryption (e.g. NVIDIA FLARE's TenSEAL integration

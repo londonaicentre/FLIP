@@ -21,7 +21,6 @@ import { FileUploadStatus } from "@/interfaces/model/types";
 
 import { _http } from "./api";
 import { DEFAULT_JOB_TYPE,
-    fetchJobTypes,
     getRequiredFilesForJobType,
     isValidJobType,
     type JobType,
@@ -141,15 +140,17 @@ export const getModelConfig = async (modelId: string): Promise<IModelConfig | nu
  * missing, unparseable, missing/invalid `job_type` field). Transient fetch
  * failures from `getModelConfig` propagate so the caller can decide retry
  * policy.
+ *
+ * `jobTypes` is passed in rather than fetched here so the page owns the single
+ * `fetchJobTypes` call and the single place its failure is surfaced.
  */
 export const getJobTypeFromConfig = async (
     modelId: string,
-    jobTypes?: JobTypesResponse
+    jobTypes: JobTypesResponse
 ): Promise<JobType> => {
-    const availableJobTypes = jobTypes ?? await fetchJobTypes();
     const config = await getModelConfig(modelId);
 
-    if (config && config.job_type && isValidJobType(availableJobTypes, config.job_type)) {
+    if (config && config.job_type && isValidJobType(jobTypes, config.job_type)) {
         return config.job_type;
     }
 

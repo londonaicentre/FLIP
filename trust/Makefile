@@ -52,8 +52,9 @@ KIT_FILE := $(if $(wildcard .env.$(KIT).$(ENV)),.env.$(KIT).$(ENV),.env.$(KIT))
 # `make -C trust up-trust …`. Must precede fl_backend.mk so FL_BACKEND is set.
 # Prod kits carry Hub-shared live, so prod stays kit-only (no hub .env include —
 # a remote operator never has the hub env).
+MAIN_ENV_FILE ?= .env.development
 ifeq ($(ENV),development)
--include ../.env.development
+-include ../$(MAIN_ENV_FILE)
 export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER FL_BACKEND \
        FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY \
        DOCKER_FL_TAG DOCKER_FL_REGISTRY NLB_SUBDOMAIN FL_SERVER_PORT
@@ -72,6 +73,10 @@ export UID GID UNAME
 endif
 
 include ../deploy/fl_backend.mk
+# INSTANCE_PREFIX + the export of FLIP_INSTANCE that the trust compose files interpolate.
+# Must follow the kit / ../.env.development includes above, which is where FLIP_INSTANCE
+# comes from on the standalone `make -C trust ...` path.
+include ../deploy/instance.mk
 
 # Host gid for group_add on FL containers reading host-provisioned 640 certs/keys (dev).
 export DOCKER_GID := $(shell id -g)
@@ -79,13 +84,12 @@ export DOCKER_GID := $(shell id -g)
 COMMON_COMPOSE_FILE := deploy/compose_trust.$(__DCKR_SUFFIX).yml
 FL_BACKEND_COMPOSE_FILE := deploy/compose_trust.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
-# Resolve FL_PROVISIONED_DIR (from .env) to an absolute path relative to the repo root.
-# Docker requires absolute paths for volume mounts; the .env value may be relative.
-# Skip if already absolute (the parent Makefile resolves it before invoking sub-make).
+# Resolve FL_PROVISIONED_DIR (from .env) to an absolute path against the repo root — see
+# abs_or_relative_to in ../deploy/fl_backend.mk. Already-absolute values pass through
+# unchanged, which is the normal case here: the parent Makefile resolves it before
+# invoking this sub-make.
 MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
-ifeq ($(patsubst /%,,$(FL_PROVISIONED_DIR)),$(FL_PROVISIONED_DIR))
-override FL_PROVISIONED_DIR := $(abspath $(MAKEFILE_DIR)/../$(FL_PROVISIONED_DIR))
-endif
+override FL_PROVISIONED_DIR := $(call abs_or_relative_to,$(FL_PROVISIONED_DIR),$(MAKEFILE_DIR)/..)
 
 OMOP_DB_CMD=make -C ./omop-db
 ORTHANC_CMD=make -C ./orthanc
@@ -101,7 +105,7 @@ ORTHANC_CMD=make -C ./orthanc
 # (compose tolerates absence of --env-file just fine).
 __ENV_FILE_FLAG := $(if $(wildcard $(KIT_FILE)),--env-file $(KIT_FILE),)
 DOCKER_COMPOSE_CMD=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.debug.override.yml
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.development.debug.override.yml
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the up-trust targets.
 #
@@ -149,7 +153,11 @@ endif
 # the existing scheme. Decoupled from the kit FILENAME (now the trust CODE) so
 # the slot the hub assigned governs the runtime topology, not the handle.
 TRUST_NUM := $(FL_KIT_SLOT_NUMBER)
-TRUST_PROJECT := trust$(TRUST_NUM)
+# Instance-scoped for the same reason the trust network is: FL kit slots are handed out
+# per hub, so a second hub restarts numbering at 1 and its trusts would otherwise land in
+# the default stack's compose projects (`trust1`, `trust2`) — adopting or clobbering another
+# hub's trust rather than standing up their own. Unset FLIP_INSTANCE leaves `trust<N>`.
+TRUST_PROJECT := $(INSTANCE_PREFIX)trust$(TRUST_NUM)
 # Dev only: expose this trust's APIs on the host. The override binds a single
 # fixed host-port set, so only the trust assigned slot Trust_1 claims it.
 TRUST_OVERRIDE := $(if $(filter Trust_1,$(FL_KIT_SLOT)),-f deploy/compose_trust-1_override.yml,)
@@ -172,7 +180,7 @@ GPU_STATUS_MSG := $(if $(GPU_OVERRIDE),🖥️  GPU passthrough on — fl-client
 # `VAR=val cmd` shell prefix ("EC2: not found"); single-quoted it breaks on the
 # apostrophe. Double quotes handle both (trust names never contain $/backtick/").
 TRUST_VARS = \
-	TRUST_NETWORK_NAME=deploy_trust-network-$(TRUST_NUM) \
+	TRUST_NETWORK_NAME=$(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM) \
 	TRUST_NUMBER=$(TRUST_NUM) \
 	TRUST_NAME="$(or $(TRUST_NAME),$(FL_KIT_SLOT),$(KIT))"
 
@@ -249,6 +257,63 @@ define require_kit_file
 	fi
 endef
 
+# Guard: refuse to act on the compose project this kit resolves to when it is already held
+# by a DIFFERENT trust. TRUST_PROJECT is trust$(FL_KIT_SLOT_NUMBER), and slots are handed
+# out by the hub from its own database — so a second hub (FLIP_INSTANCE, FLIP#957)
+# starts again at 1 and its first trust lands on a slot the default stack is already
+# using. Without this, compose treats the running containers as part of the project it
+# was asked to bring up and recreates them, destroying a live trust.
+#
+# Called from EVERY target that drives `-p $(TRUST_PROJECT)` with a kit, not just up-trust:
+# `down --remove-orphans` under the wrong kit destroys the other instance's trust just as
+# thoroughly as `up` does, and restart-trust reaches down-trust first — so guarding only
+# the up path left the whole restart route unprotected.
+#
+# The owning kit is read off compose's own environment_file label, compared by file
+# name so re-running for the SAME kit (the normal restart/update path) still works,
+# including from another checkout. That label is populated whenever compose was given
+# --env-file, which DOCKER_COMPOSE_CMD always passes (see __ENV_FILE_FLAG above);
+# verified live on Docker Compose v5.1.3, where the hub's own --env-file-less project
+# carries it empty and every trust project carries the kit path.
+#
+# Probed with `docker ps -a`, not `docker ps`: a stopped-but-not-removed stack still owns
+# the project name, and `up` would recreate those very containers under the wrong kit —
+# invisible to a running-only probe. Same-kit comparison still lets a legitimate restart
+# through. If the project has containers but no environment_file label to compare (an
+# older compose, or a stack brought up without --env-file), the owner cannot be
+# identified, so refuse rather than let the protection lapse silently.
+define check_slot_not_taken
+	@ids=$$(docker ps -a --filter "label=com.docker.compose.project=$(TRUST_PROJECT)" -q 2>/dev/null); \
+	occupied=$$(docker ps -a --filter "label=com.docker.compose.project=$(TRUST_PROJECT)" \
+		--format '{{.Label "com.docker.compose.project.environment_file"}}' 2>/dev/null | grep -v '^$$' | head -1); \
+	if [ -n "$$ids" ] && [ -z "$$occupied" ]; then \
+		owner=$$(docker ps -a --filter "label=com.docker.compose.project=$(TRUST_PROJECT)" \
+			--format '{{.Label "com.docker.compose.project.working_dir"}}' 2>/dev/null | grep -v '^$$' | head -1); \
+		echo "❌ Compose project '$(TRUST_PROJECT)' (FL kit slot $(TRUST_NUM)) already has containers,"; \
+		echo "   but they carry no com.docker.compose.project.environment_file label, so the kit that"; \
+		echo "   owns them cannot be identified. Refusing rather than risk recreating another"; \
+		echo "   trust's stack under $(KIT_FILE)."; \
+		echo "   Owning project directory: $${owner:-<unknown>}"; \
+		echo "   List them with:"; \
+		echo "       docker ps -a --filter label=com.docker.compose.project=$(TRUST_PROJECT)"; \
+		echo "   then remove them ('docker compose -p $(TRUST_PROJECT) down') if they are stale, or"; \
+		echo "   set FL_KIT_SLOT_NUMBER=<free> in trust/$(KIT_FILE) to move this trust to a free slot."; \
+		exit 1; \
+	fi; \
+	if [ -n "$$occupied" ] && [ "$$(basename "$$occupied")" != "$(KIT_FILE)" ]; then \
+		echo "❌ FL kit slot $(TRUST_NUM) is already in use on this host."; \
+		echo "   Compose project '$(TRUST_PROJECT)' is held by trust $$(basename "$$occupied"),"; \
+		echo "   but you asked to operate on $(KIT_FILE). Acting on this project would hand those"; \
+		echo "   containers to the wrong kit — recreating or tearing down another trust's stack."; \
+		echo ""; \
+		echo "   Slots are assigned per-hub, so a second stack (FLIP_INSTANCE) restarts at 1"; \
+		echo "   and collides with the default stack. Pick a free slot:"; \
+		echo "       docker ps -a --format '{{.Label \"com.docker.compose.project\"}}' | sort -u"; \
+		echo "   then set FL_KIT_SLOT_NUMBER=<free> in trust/$(KIT_FILE) and re-run."; \
+		exit 1; \
+	fi
+endef
+
 build:
 	$(TRUST_VARS) $(TRUST_BUILD_VARS) ${DOCKER_COMPOSE_CMD} -p $(or $(TRUST_PROJECT),trust) build
 
@@ -266,6 +331,7 @@ up-trust: update-omop-data update-orthanc-data create-networks
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/Trust_$(TRUST_NUM)/db_data))
+	$(check_slot_not_taken)
 	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))
 	@echo "$(GPU_STATUS_MSG)"
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
@@ -274,6 +340,7 @@ up-trust: update-omop-data update-orthanc-data create-networks
 
 down-trust:
 	$(require_kit)
+	$(check_slot_not_taken)
 	@echo "🛑 Stopping Trust services (KIT=$(KIT))..."
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) down --remove-orphans
 	@echo "🩻 Stopping XNAT for $(KIT)..."
@@ -298,6 +365,7 @@ restart-trust: down-trust up-trust
 # $(GPU_OVERRIDE) back.
 up-trust-ec2:
 	$(require_kit_file)
+	$(check_slot_not_taken)
 	@echo "🚢 Starting Trust services on EC2 (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -308,6 +376,7 @@ up-trust-ec2:
 
 down-trust-ec2:
 	$(require_kit)
+	$(check_slot_not_taken)
 	@echo "🛑 Stopping Trust services on EC2 (KIT=$(KIT))..."
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) down --remove-orphans
 	@echo "🩻 Stopping XNAT for $(KIT)..."
@@ -347,6 +416,7 @@ up-fl-clients:
 
 up-fl-clients-kit:
 	$(require_kit_file)
+	$(check_slot_not_taken)
 	@echo "$(GPU_STATUS_MSG)"
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --no-deps $(UP_PULL_FLAGS) fl-client-net-1 fl-client-net-2
 
@@ -360,10 +430,16 @@ down-fl-clients:
 
 down-fl-clients-kit:
 	$(require_kit)
+	$(check_slot_not_taken)
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) rm -fs fl-client-net-1 fl-client-net-2
 
+# Forward this kit's OMOP_DATA_DIR as the slot-numbered override the script reads, so the
+# dir populated here is the one check_omop_data_dir inspects and the compose file mounts.
+# Only the invoking kit's slot is set: a KIT-less call (the bare `make -C trust
+# update-omop-data`) sets neither and both trusts fall back to the in-repo default.
 update-omop-data:
-	$(OMOP_DB_CMD) update-omop-data TRUST=$(TRUST)
+	$(OMOP_DB_CMD) update-omop-data TRUST=$(TRUST) \
+	  $(if $(and $(TRUST_NUM),$(OMOP_DATA_DIR)),OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_DIR))
 
 update-orthanc-data:
 	$(ORTHANC_CMD) update-orthanc-data TRUST=$(TRUST)
@@ -373,27 +449,34 @@ tests:
 	cd ../imaging-api && make test && \
 	cd ../trust-api && make test
 
+# Hub-shared network names all follow `$(INSTANCE_PREFIX)deploy_<name>`, where `deploy_` names
+# the hub compose project that owns them — the same string compose would generate itself if it
+# still created them, rather than looked them up `external:` (FLIP#957).
 create-networks-core:
 	@echo "🔧 Ensuring external Docker networks exist..."
-	@{ docker network inspect central-hub-trust-apis-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-trust-apis-network >/dev/null || docker network inspect central-hub-trust-apis-network >/dev/null 2>&1 || { echo "❌ Could not create Docker network central-hub-trust-apis-network — see the daemon error above."; exit 1; }; }
-	@{ docker network inspect deploy_shared-net-1 >/dev/null 2>&1 || docker network create --driver bridge deploy_shared-net-1 >/dev/null || docker network inspect deploy_shared-net-1 >/dev/null 2>&1 || { echo "❌ Could not create Docker network deploy_shared-net-1 — see the daemon error above."; exit 1; }; }
-	@{ docker network inspect deploy_shared-net-2 >/dev/null 2>&1 || docker network create --driver bridge deploy_shared-net-2 >/dev/null || docker network inspect deploy_shared-net-2 >/dev/null 2>&1 || { echo "❌ Could not create Docker network deploy_shared-net-2 — see the daemon error above."; exit 1; }; }
+	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_central-hub-trust-apis-network)
+	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_fl-net-1)
+	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_fl-net-2)
 
+# Overlay, not bridge: XNAT attaches from a swarm stack, so these cannot use the
+# ensure_bridge_network macro. Prefixed like every other per-instance network — a trust
+# number alone does not isolate them, since a second hub hands out slot 1 again.
 create-networks-trust-1:
-	@{ docker network inspect deploy_trust-network-1 >/dev/null 2>&1 || docker network create --driver overlay --attachable deploy_trust-network-1; }
+	@{ docker network inspect $(INSTANCE_PREFIX)deploy_trust-network-1 >/dev/null 2>&1 || docker network create --driver overlay --attachable $(INSTANCE_PREFIX)deploy_trust-network-1; }
 
 create-networks-trust-2:
-	@{ docker network inspect deploy_trust-network-2 >/dev/null 2>&1 || docker network create --driver overlay --attachable deploy_trust-network-2; }
+	@{ docker network inspect $(INSTANCE_PREFIX)deploy_trust-network-2 >/dev/null 2>&1 || docker network create --driver overlay --attachable $(INSTANCE_PREFIX)deploy_trust-network-2; }
 
 create-networks: create-networks-core create-networks-trust-1 create-networks-trust-2
 
+# Every network here carries the instance prefix, so an instance owns all of them and
+# removing them is unconditional. (Before the trust networks were prefixed they were
+# shared across instances, and this target had to refuse to delete them — that guard
+# would now leak one overlay network per instance instead of protecting anything.)
 remove-networks:
 	@echo "🗑️  Removing all trust networks..."
-	@docker network rm central-hub-trust-apis-network 2>/dev/null || true
-	@docker network rm deploy_trust-network-1 2>/dev/null || true
-	@docker network rm deploy_trust-network-2 2>/dev/null || true
-	@docker network rm deploy_shared-net-1 2>/dev/null || true
-	@docker network rm deploy_shared-net-2 2>/dev/null || true
+	@docker network rm $(INSTANCE_PREFIX)deploy_central-hub-trust-apis-network $(INSTANCE_PREFIX)deploy_fl-net-1 $(INSTANCE_PREFIX)deploy_fl-net-2 2>/dev/null || true
+	@docker network rm $(INSTANCE_PREFIX)deploy_trust-network-1 $(INSTANCE_PREFIX)deploy_trust-network-2 2>/dev/null || true
 	@echo "✅ Trust networks removed!"
 
 recreate-networks: remove-networks create-networks
@@ -423,8 +506,11 @@ debug-imaging-api-off:
 debug-trust-api-off:
 	$(MAKE) _debug-service KIT=$(or $(KIT),$(FIRST_DEV_KIT)) DEBUG=false SVC=trust-api
 
-# Internal helper — brings one service up under the debug compose override.
+# Internal helper — brings one service up under the debug compose override. Guarded like the
+# rest: it drives `-p $(TRUST_PROJECT)` with `--remove-orphans`, which under a colliding kit
+# would delete the other instance's containers as "orphans" of this compose file.
 _debug-service:
+	$(check_slot_not_taken)
 	DEBUG=$(DEBUG) $(TRUST_VARS) ${DEBUG_OVERRIDE_COMPOSE_COMMAND} -p $(TRUST_PROJECT) up --remove-orphans -d $(SVC)
 
 
