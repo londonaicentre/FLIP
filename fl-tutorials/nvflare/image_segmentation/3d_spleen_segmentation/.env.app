@@ -1,6 +1,6 @@
 JOB_TYPE=standard
-DEV_IMAGES_DIR=../../data/spleen/images
-DEV_DATAFRAME=../../data/spleen/dataframe.csv
+DEV_IMAGES_DIR=../../../data/spleen/images
+DEV_DATAFRAME=../../../data/spleen/dataframe.csv
 # Any value works for local sim: LOCAL_DEV ignores project_id (data comes from
 # DEV_DATAFRAME/DEV_IMAGES_DIR) and `make sim` runs the job directly, handing the placeholder
 # straight to the trainer. Export paths substitute it into the recipe's "--project_id" task arg,
