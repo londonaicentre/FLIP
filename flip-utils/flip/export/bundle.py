@@ -346,7 +346,11 @@ def _write_directory_bundle(
     torch.save(model.state_dict(), weights)
 
     # Replaced rather than merged: a module the application has since renamed would otherwise
-    # linger from an earlier export and shadow the current one on the bundle's sys.path.
+    # linger from an earlier export and shadow the current one on the bundle's sys.path. This is
+    # the only subtree that needs it — everything else the exporter writes (``.gitignore``, the
+    # network module, ``models/model.pt``, ``configs/*.json``) has a fixed name and is rewritten on
+    # every export. The bundle root itself is merged, never wiped: ``out`` is a caller-supplied
+    # path (``--out .``) that may hold the caller's own files.
     scripts = out / _SCRIPTS_DIR_NAME
     shutil.rmtree(scripts, ignore_errors=True)
     shutil.copytree(app_dir, scripts, ignore=shutil.ignore_patterns(*_SCRIPTS_COPY_EXCLUDES))

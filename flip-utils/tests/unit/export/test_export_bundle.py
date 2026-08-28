@@ -393,11 +393,11 @@ class TestExportBundle:
 
     @pytest.mark.parametrize(("form", "leaf"), [("torchscript", "model.ts"), ("directory", "bundle")])
     def test_unverified_export_is_flagged(self, checkpoint, app, tmp_path, form, leaf):
-        """Without a probe shape the export still succeeds, but says it was not verified."""
+        """Without a probe shape the export still succeeds, but says it was not verified — in either form."""
         result = export_bundle(checkpoint, app, tmp_path / leaf, form=form)
 
         assert result.max_abs_delta == -1.0
-        assert any("not verified" in warning for warning in result.warnings)
+        assert any("numerical equivalence was not verified" in warning for warning in result.warnings)
 
     def test_ineligible_job_type_warns_but_does_not_refuse(self, checkpoint, app, tmp_path):
         """An evaluation job produces no new model — worth flagging, not worth blocking."""
@@ -612,13 +612,6 @@ class TestDirectoryBundle:
         assert record["flip_model_id"] == "abc-123"
         assert record["participating_trusts"] == ["GSTT", "KCH"]
         assert record["source_checkpoint"] == "FL_global_model.pt"
-
-    def test_unverified_export_is_flagged(self, checkpoint, app, tmp_path):
-        """No probe input means no equivalence check, in either form."""
-        result = export_bundle(checkpoint=checkpoint, app_dir=app, out=tmp_path / "bundle", form="directory")
-
-        assert result.max_abs_delta == -1.0
-        assert any("numerical equivalence was not verified" in warning for warning in result.warnings)
 
     def test_no_example_shape_is_needed_even_with_method_trace(self, checkpoint, app, tmp_path):
         """``method`` is a TorchScript concern, so its precondition cannot apply here."""
