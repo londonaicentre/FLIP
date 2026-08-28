@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import call, patch
 
 import pytest
-from nvflare.fuel.flare_api.api_spec import InternalError, SessionClosed
+from nvflare.fuel.flare_api.api_spec import ClientInfo, InternalError, ServerInfo, SessionClosed, SystemInfo
 from nvflare.fuel.flare_api.flare_api import Session
 
 from fl_api.utils.flip_session import FLIP_Session
@@ -399,6 +399,54 @@ def test_system_info_model_keeps_the_attributes_nvflare_reads():
     assert info.client_info[0].last_connect_time == 1.0
 
 
+def test_system_info_models_accept_the_missing_times_nvflare_reports():
+    """The widened fields take None and print "unknown" for it, as NVFLARE's own types do.
+
+    A stopped or restarting server reports no start time (the admin meta is read with a bare
+    ``get``), and a registered client that has never connected has no last connect time
+    (``_wait_for_clients_restart`` skips it with ``if previous_time is None``). Requiring floats
+    here raised ``ValidationError`` on both, inside NVFLARE's own restart and shutdown waits.
+    """
+    server = ServerInfoModel(status="stopped")
+    client = ClientInfoModel(name="c1", status="registered")
+
+    assert server.start_time is None
+    assert client.last_connect_time is None
+    assert str(server) == str(ServerInfo(status="stopped", start_time=None))
+    assert "unknown" in str(client)
+
+
+def test_system_info_models_print_a_real_time_when_they_have_one():
+    """The "unknown" branch is for None only -- a falsy-but-real timestamp must still print as a time."""
+    server = ServerInfoModel(status="running", start_time=0.0)
+    client = ClientInfoModel(name="c1", last_connect_time=0.0, status="online")
+
+    assert "unknown" not in str(server)
+    assert "unknown" not in str(client)
+
+
+def test_get_system_info_survives_the_missing_times_nvflare_reports(session):
+    """The type swap must return a usable object exactly where the base does.
+
+    Only the base call is faked, with NVFLARE's own ``SystemInfo`` shape carrying the two fields
+    unset -- what a restarting server and a never-connected client produce. Before the fields were
+    widened this raised ``ValidationError`` from every path that reaches ``get_system_info``: the
+    four FL API routes, and NVFLARE's ``restart`` and client-shutdown waits.
+    """
+    upstream = SystemInfo(
+        server_info=ServerInfo(status="starting", start_time=None),
+        client_info=[ClientInfo(name="c1", last_connect_time=None)],
+        job_info=[],
+    )
+
+    with patch("nvflare.fuel.flare_api.flare_api.Session.get_system_info", return_value=upstream):
+        info = session.get_system_info()
+
+    assert isinstance(info, SystemInfoModel)
+    assert info.server_info.start_time is None
+    assert info.client_info[0].last_connect_time is None
+
+
 def test_reconnect_preserves_the_session_study(session):
     """Re-initialising without the study would silently change which jobs commands can see.
 
@@ -431,6 +479,11 @@ def test_construction_signature_matches_the_base():
     base already keeps, while dropping the base's `study` parameter and flipping `secure_mode`
     from True to False (FLIP#1032). This asserts the resulting contract rather than the absence
     of an override, so a future override that genuinely forwards is still allowed.
+
+    With no override, ``FLIP_Session.__init__`` resolves to ``Session.__init__`` itself, so today
+    this pins the base's own contract -- the ``study`` keyword and ``secure_mode=True`` default that
+    ``_reconnect`` forwards by keyword -- and only starts exercising FLIP code if an override is
+    reintroduced.
     """
     params = inspect.signature(FLIP_Session.__init__).parameters
     accepts_var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
