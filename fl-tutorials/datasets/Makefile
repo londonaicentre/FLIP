@@ -76,16 +76,15 @@ download-spleen-msd-data:
 
 # Download the pre-built FLIP-format spleen tree (fixed 6-case snapshot; ignores NUM_CASES)
 # plus the evaluation-tutorial checkpoint. Removes only its own outputs, so an MSD build in
-# the same data/spleen/ survives a re-download.
+# the same data/spleen/ survives a re-download. A pure Hugging Face fetch, so it runs via
+# `uv run --no-project --with huggingface_hub` like the xray/arkplus downloads rather than in
+# spleen/'s env — that env exists for the MSD scripts' MONAI/torch, which this needs none of.
 download-spleen-flip-format-data:
-	@echo "⬇️  Downloading FLIP-format spleen dataset from Hugging Face ($(HF_TEST_DATA_REPO))..."
-	@uv run --no-project --with huggingface_hub python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$(HF_TEST_DATA_REPO)', repo_type='dataset', local_dir='$(HF_CACHE)', allow_patterns=['flip-fl-base-test-data/spleen/*', 'flip-fl-base-test-data/checkpoints/*'])"
-	@rm -rf $(DATA_DIR)/spleen/accession-resources $(DATA_DIR)/spleen/sample_get_dataframe_response.csv
-	@mkdir -p $(DATA_DIR)/spleen
-	@cp -r $(HF_CACHE)/flip-fl-base-test-data/spleen/accession-resources $(DATA_DIR)/spleen/accession-resources
-	@cp $(HF_CACHE)/flip-fl-base-test-data/spleen/sample_get_dataframe_response.csv $(DATA_DIR)/spleen/sample_get_dataframe_response.csv
-	@mkdir -p $(DATA_DIR)/model_checkpoints && cp $(HF_CACHE)/flip-fl-base-test-data/checkpoints/model.pt $(DATA_DIR)/model_checkpoints/model.pt
-	@echo "✅ FLIP-format spleen data ready at $(abspath $(DATA_DIR))/spleen/ (+ checkpoint) — make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower"
+	@uv run --no-project --with huggingface_hub python spleen/download_spleen_flip_format_dataset.py \
+		--cache-dir $(HF_CACHE) \
+		--output-dir $(DATA_DIR)/spleen \
+		--checkpoint-dir $(DATA_DIR)/model_checkpoints \
+		--repo-id $(HF_TEST_DATA_REPO)
 
 # Download the Ark+ chest X-ray TRAIN splits from Hugging Face and normalise them into the
 # layout arkplus_fine_tuning/.env.app expects (data/arkplus/site{1,2}/, gitignored).

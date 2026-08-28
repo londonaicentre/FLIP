@@ -58,6 +58,10 @@ pandas, natsort; `uv.lock` is gitignored):
   [spleen tutorial README](../nvflare/image_segmentation/3d_spleen_segmentation/README.md)
   for the full walkthrough, and the repo-root `CLAUDE.md` for its `e2e_smoke` wiring). Runs
   against the in-tree `flip-utils`, not `spleen/`'s env.
+- `download_spleen_flip_format_dataset.py` — fetch the pre-built FLIP-format tree (fixed
+  6-case snapshot) plus the evaluation checkpoint from Hugging Face, replacing only its own
+  outputs in `data/spleen/`. A pure Hugging Face fetch, so like the xray/arkplus scripts it
+  runs via `uv run --no-project --with huggingface_hub`, not in `spleen/`'s env.
 
 [`xrays_mini_300/`](xrays_mini_300/) owns the single x-ray script — no dedicated uv project,
 it runs via `uv run --no-project --with huggingface_hub`, the same way `upload-spleen-labels`
