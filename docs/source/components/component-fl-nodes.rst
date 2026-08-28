@@ -48,9 +48,9 @@ we call an app. Some of these files are required to run the app, and some are op
 are required depends on the job type (see :ref:`fl-required-files` below).
 
 The job type is passed as key `job_type` in the `config.json` file (for both NVFLARE and Flower apps).
-An unrecognised value is rejected at submission. A missing one falls back to ``standard``, as does an
-app carrying no ``config.json`` at all — which is a valid Flower submission, since ``config.json`` is a
-required file for the NVFLARE job types but not for the Flower ones (see :ref:`fl-required-files`).
+An unrecognised value is rejected at submission, and a missing one falls back to ``standard``. The file
+itself is a required file for every job type on both backends (see :ref:`fl-required-files`), so an app
+that omits it is rejected before bundling rather than defaulted.
 
 Once uploaded, the UI will indicate which files are required for the specific job.
 
@@ -112,9 +112,10 @@ manifests through the ``/model/job-types`` endpoint and shows the applicable lis
 
 .. note::
 
-   Every NVFLARE job type lists ``config.json``, which carries ``job_type`` along with the training
-   configuration below. The Flower job types do not require it, but uploading one is still how a
-   Flower app selects a job type other than ``standard``.
+   Every job type on both backends lists ``config.json``, because it is what selects the job type:
+   an app declares ``job_type`` there, and an app without one can only ever run ``standard``. For
+   NVFLARE it also carries the training configuration described below; for Flower it carries
+   nothing else, since Flower apps take their run configuration from ``config.toml``.
 
    ``pyproject.toml`` is **not** a file the researcher supplies for a Flower app. It is part of the
    platform's base template for the job type and is bundled automatically; a ``pyproject.toml``
@@ -417,7 +418,7 @@ Three things to know:
   ``task_result_filters`` entry in the FLIP-owned ``config_fed_client.json`` — a Flower app's
   ``client_app.py`` is uploaded by the model developer, so the template cannot register the mod on the
   developer's behalf. An uploaded app that omits it shares raw updates. The shipped tutorials
-  (``numpy``, ``xray_classification``, ``3d_spleen_segmentation``) wire it as worked examples.
+  (``xray_classification``, ``3d_spleen_segmentation``) wire it as worked examples.
 
 The shipped parameter defaults are utility-first demonstration values, not a defensible privacy budget: a
 real budget calibrates ``dp-sensitivity`` to the local dataset and accounts for composition across rounds,
@@ -433,7 +434,7 @@ the description above:
 - for every NVFLARE job type the user upload is intentionally minimal — see :ref:`fl-required-files` for the per-job-type set — and the rest of the app is filled in from
   the static (non-modifiable) templates baked into the flip-api image at `FL_APP_BASE_DIR` (`fl-apps/`, see FLIP#724).
   These templates used to be published to an S3 bucket; that path has been removed. You can check what a fully bundled app looks like by consulting
-  the per-job-type implementations under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`_.
+  the per-job-type implementations under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`__.
 - every NVFLARE job type takes a plain training/evaluation script that calls
   ``nvflare.client`` directly (`fed_opt` reuses `standard`'s trainer contract unchanged).
 

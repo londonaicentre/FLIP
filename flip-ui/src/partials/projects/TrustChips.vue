@@ -1,0 +1,113 @@
+<!--
+    Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+        http://www.apache.org/licenses/LICENSE-2.0
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+
+<template>
+    <div class="flex flex-wrap items-center gap-1.5 min-w-0">
+        <span
+            v-for="trust in trustsToShow"
+            :key="trust.id"
+            :class="[TRUST_CHIP_CLASS, dotFor(trust) ? TRUST_CHIP_DOTTED_PADDING : TRUST_CHIP_PLAIN_PADDING]"
+            :title="chipTitle(trust)"
+            data-test="trust-chip"
+        >
+            <span
+                v-if="dotFor(trust)"
+                :class="[TRUST_CHIP_DOT_CLASS, dotFor(trust)?.class]"
+                data-test="trust-status-dot"
+                aria-hidden="true"
+            />
+            <span data-test="trust-chip-label">{{ trustChipLabel(trust) }}</span>
+            <!-- The standing in words, for anyone the dot's hue doesn't reach. `sr-only` is
+                 absolutely positioned, so it takes no space and no flex gap of its own. -->
+            <span v-if="dotFor(trust)" class="sr-only" data-test="trust-chip-standing">
+                — {{ dotFor(trust)?.label }}
+            </span>
+        </span>
+        <span v-if="remainingTrustCount > 0" class="text-xs text-gray-500 dark:text-gray-300">
+            +{{ remainingTrustCount }}
+        </span>
+        <span v-if="!sortedTrusts.length" class="text-xs text-gray-400 dark:text-gray-300 italic">
+            No trusts staged
+        </span>
+    </div>
+</template>
+
+<script setup lang="ts">
+import { computed } from "vue";
+
+import { IProject, IProjectTrust } from "@/services/project-service";
+import { TRUST_CHIP_CLASS,
+    TRUST_CHIP_DOT_CLASS,
+    TRUST_CHIP_DOTTED_PADDING,
+    TRUST_CHIP_PLAIN_PADDING,
+    trustChipLabel } from "@/utils/trust-chip";
+
+const props = defineProps<{ project: IProject }>();
+
+// A chip's dot marks that trust's standing in the project. Colour, tooltip and the chip's
+// sr-only suffix all come from one row of this table so they can't disagree — the dot is
+// aria-hidden and the two states differ only by hue, which colour-blind and screen-reader
+// users can't read. The sr-only text after the label is the accessible channel for that
+// distinction: `title` is hover-only, so it reaches neither keyboard nor assistive-technology
+// users (and `aria-label` on a role-less span is not reliably announced either).
+//
+// `pending` is deliberately the same amber as the STAGED row spine in projects.vue
+// (SPINE_BG_CLASS.STAGED): a staged row's dots and its spine should read as one
+// colour. They are separate declarations, so the group-6 Cypress spec compares the
+// two computed colours to catch a drift.
+const TRUST_DOT = {
+    in: {
+        class: "bg-emerald-500",
+        label: "approved"
+    },
+    pending: {
+        class: "bg-amber-500",
+        label: "awaiting approval"
+    }
+} as const;
+
+// Emerald needs the project itself to have reached APPROVED as well as the trust to
+// have signed off — it is the project-wide "this trust is in" marker. Anything short
+// of that is pending, so on an APPROVED row a trust still awaiting sign-off stays
+// amber against an emerald spine: deliberate, so "still pending" reads against its
+// green neighbours. Drafts get no dot at all (`null` below) — their chips are merely
+// linked trusts, with no standing to report yet.
+//
+// Status is allow-listed rather than tested with `!== "UNSTAGED"`: it arrives off the
+// wire, where it can be absent or a value the union doesn't know yet, and an
+// unrecognised status must not be painted as staged.
+const dotFor = (trust: IProjectTrust): typeof TRUST_DOT[keyof typeof TRUST_DOT] | null => {
+    if (props.project.status === "APPROVED") return trust.approved ? TRUST_DOT.in : TRUST_DOT.pending;
+    if (props.project.status === "STAGED") return TRUST_DOT.pending;
+
+    return null;
+};
+
+// `approvedTrusts` is every trust linked to the project (the name predates the
+// staged/approved split) — each carries its own `approved` flag. We show them all so a
+// freshly-staged trust appears straight away; the dot's colour, not chip presence,
+// marks which trusts have approved. Sorted alphabetically so a trust keeps the same
+// slot across reloads.
+const sortedTrusts = computed<IProjectTrust[]>(() =>
+    (props.project.approvedTrusts ?? []).slice().sort((a, b) => a.name.localeCompare(b.name)));
+
+const MAX_TRUST_CHIPS = 4;
+const trustsToShow = computed<IProjectTrust[]>(() => sortedTrusts.value.slice(0, MAX_TRUST_CHIPS));
+const remainingTrustCount = computed<number>(() => Math.max(sortedTrusts.value.length - MAX_TRUST_CHIPS, 0));
+
+const chipTitle = (trust: IProjectTrust): string => {
+    const dot = dotFor(trust);
+
+    return dot ? `${trust.name} — ${dot.label}` : trust.name;
+};
+</script>
