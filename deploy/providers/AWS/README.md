@@ -677,7 +677,9 @@ independently:
 | `LZA_VPC_NAME` | optional (defaults to the prod template name) | **required** in the env file — there is no defaultable staging VPC name, so the Makefile refuses to run without it rather than letting the lookup fail opaquely |
 
 Everything below reads naturally for either value; where it says `PROD=lza`, staging substitutes `lza-stag` and
-its own account-scoped values (state bucket, `flip-lza-stag-*` bucket namespace, pull-through registry URL). Each
+its own account-scoped values (state bucket, `flip-lza-stag-*` bucket namespace, pull-through registry URL); the raw
+`TF_VAR_` exports at the end of the env block below are estate-wide values shared by both (one ingress VPC, one
+LogArchive bucket), except the two edge ones, which stay empty until a staging edge exists. Each
 LZA environment is its **own workload account** — never co-tenant two environments in one account: the stack's
 resource names (`flip-cluster`, `flip-api`, `flip-database-proxy`, the `/flip/networking/*` handoff params) are
 fixed per account by design.
@@ -781,6 +783,19 @@ CF_LOGS_BUCKET_NAME=flip-lza-cf-logs
 MANAGE_DNS=false
 ALB_SUBDOMAIN=app.flip.aicentre.co.uk
 NLB_SUBDOMAIN=fl.app.flip.aicentre.co.uk
+
+# LZA-only Terraform inputs with no Makefile mapping of their own — exported
+# straight from the env file (the Makefile includes it as make syntax, so an
+# `export TF_VAR_…=` line reaches Terraform unchanged). Values come from the
+# networking account.
+#   ingress-VPC subnet CIDRs (edge NLB + CloudFront relay path over the TGW)
+export TF_VAR_networking_ingress_cidrs=["<ingress-vpc-cidr>"]
+#   the LogArchive account's central ELB access-logs bucket (accelerator guardrail)
+export TF_VAR_lza_elb_access_logs_bucket=<log-archive-elb-bucket>
+#   the edge distribution — EMPTY on the first apply (the edge is built from this
+#   stack's outputs, see "Edge wiring is two-phase"), then filled in + re-applied
+export TF_VAR_lza_web_edge_domain=
+export TF_VAR_lza_web_edge_distribution_arn=
 
 # Optional: only needed if the platform VPC template is renamed.
 # LZA_VPC_NAME=AWSAccelerator-eu-west-2-prod
