@@ -420,23 +420,37 @@ def test_trust_makefile_exports_the_artifacts_bucket_to_the_xnat_sub_make() -> N
     have got there through the ``export`` directive under test::
 
         -include'd + export  -> from-env-file      -include'd, no export  -> NOT-EXPORTED
-        --eval'd   + export  -> probe-bucket       --eval'd,   no export  -> NOT-EXPORTED
+        wrapper'd  + export  -> probe-bucket       wrapper'd,  no export  -> NOT-EXPORTED
+
+    The seed and the probe target are delivered as a wrapper makefile on stdin (``-f -``)
+    rather than through ``--eval``, which GNU Make only grew in 3.82: macOS ships 3.81, where
+    ``--eval`` is rejected as an unrecognized option and the probe prints nothing — the test
+    then failed on every Mac while passing in CI. The wrapper is equivalent: an ``include``d
+    assignment is no more auto-exported than an ``--eval``'d one, so the value can still only
+    reach the sub-make environment through the ``export`` directive under test.
     """
+    # `include Makefile` resolves against trust/ because of `-C trust`.
+    probe_makefile = (
+        # Seeds a value for the CI case, where no env file supplies one. On a configured
+        # checkout the env file's real value arrives instead — either proves the export.
+        "FLIP_ARTIFACTS_BUCKET_NAME = probe-bucket\n"
+        "include Makefile\n"
+        "__probe: ; @printenv FLIP_ARTIFACTS_BUCKET_NAME || echo NOT-EXPORTED\n"
+    )
     result = subprocess.run(
         [
             "make",
             "-C",
             "trust",
+            "-f",
+            "-",
             # deploy/fl_backend.mk hard-fails on an unset backend, and a CI checkout has no
             # .env.development to supply one.
             "FL_BACKEND=nvflare",
-            # Seeds a value for the CI case, where no env file supplies one. On a configured
-            # checkout the env file's real value arrives instead — either proves the export.
-            "--eval=FLIP_ARTIFACTS_BUCKET_NAME=probe-bucket",
-            "--eval=__probe: ; @printenv FLIP_ARTIFACTS_BUCKET_NAME || echo NOT-EXPORTED",
             "__probe",
         ],
         cwd=REPO_ROOT,
+        input=probe_makefile,
         check=False,
         capture_output=True,
         text=True,
