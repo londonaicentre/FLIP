@@ -11,6 +11,8 @@
 #
 
 
+from typing import Any
+
 from nvflare.fuel.flare_api.api_spec import InternalError, SessionClosed
 from nvflare.fuel.flare_api.flare_api import Session
 
@@ -19,25 +21,39 @@ from fl_api.utils.schemas import ClientInfoModel, JobInfoModel, ServerInfoModel,
 
 
 class FLIP_Session(Session):
-    def __init__(
-        self,
-        username: str | None = None,
-        startup_path: str | None = None,
-        secure_mode: bool = False,
-        debug: bool = False,
-    ):
-        self._startup_path = startup_path
-        self._secure_mode = secure_mode
-        self._debug = debug
-        super(FLIP_Session, self).__init__(username, startup_path, secure_mode, debug)
-        self._error_buffer = None
+    """NVFLARE admin ``Session`` with reconnect-on-drop, plus FLIP-shaped system info.
+
+    There is deliberately **no** ``__init__`` override. The base already stores everything this
+    subclass needs (``username``, ``startup_path``, ``secure_mode``, ``_debug``, ``_study``), so an
+    override could only re-stash them under private aliases — which is what it used to do, at the
+    cost of dropping the base's ``study`` parameter and flipping the ``secure_mode`` default from
+    ``True`` to ``False`` (FLIP#1032).
+
+    **Rule for anything added here: never narrow a base signature.** Python dispatches to this
+    class, so a parameter the base accepts and this class does not is a ``TypeError`` at whichever
+    upstream call site passes it — a failure mode invisible until that one path is exercised.
+    ``test_flip_session.py`` pins this for every override.
+    """
 
     def _reconnect(self) -> None:
-        """Re-initialise the underlying admin API and log in again after the session was closed."""
-        Session.__init__(self, self.username, self._startup_path, self._secure_mode, self._debug)
+        """Re-initialise the underlying admin API and log in again after the session was closed.
+
+        Reads the connection parameters back off the base class rather than keeping private
+        copies. ``_study`` is passed through deliberately: re-initialising without it would
+        silently drop the session back to the default study, changing which jobs subsequent
+        commands can see.
+        """
+        Session.__init__(
+            self,
+            username=self.username,
+            startup_path=self.startup_path,
+            secure_mode=self.secure_mode,
+            debug=self._debug,
+            study=self._study,
+        )
         self.try_connect(timeout=5.0)
 
-    def _do_command(self, cmd: str):
+    def _do_command(self, command: str, *args: Any, **kwargs: Any) -> Any:
         """
         Override the _do_command method to add error handling for session inactivity or closure.
 
@@ -46,24 +62,41 @@ class FLIP_Session(Session):
         the admin session via ``_reconnect`` and retries once. Any exception on the retry is logged and
         re-raised immediately — there is no further retry loop.
 
+        ``*args`` / ``**kwargs`` are forwarded untouched so this override stays transparent to the
+        base signature (``enforce_meta``, ``props``, and anything a future NVFLARE adds). The first
+        parameter is named ``command`` to match the base exactly: forwarding does not repair a
+        renamed positional, so ``_do_command(command=...)`` would still be a ``TypeError``.
+
+        Accepting only ``cmd`` used to break every caller that passes those keywords. NVFLARE 2.8.0
+        has **eight** such sites — ``_shell_command_on_target``, ``_collect_info``,
+        ``report_resources``, ``report_version``, ``get_job_logs``, ``configure_job_log``,
+        ``configure_site_log`` and ``do_app_command`` — of which four are reachable from this
+        service's routes: ``show_errors``, ``show_stats`` and ``reset_errors`` (via
+        ``_collect_info``) plus ``get_working_directory`` (via ``_shell_command_on_target``). Every
+        other caller passes the command positionally with defaults, which the narrowed signature
+        happened to satisfy, so the fault stayed hidden until someone called one of those four
+        (FLIP#1032).
+
         Args:
-            cmd (str): The command to be executed.
+            command (str): The command to be executed.
+            *args (Any): Positional arguments forwarded to the base implementation.
+            **kwargs (Any): Keyword arguments forwarded to the base implementation.
         """
         try:
-            return super()._do_command(cmd)
+            return super()._do_command(command, *args, **kwargs)
         except InternalError as e:
             if "session_inactive" in str(e):
                 logger.warning("Session inactive, trying to reconnect...")
                 self.try_connect(timeout=5.0)
-                return super()._do_command(cmd)
+                return super()._do_command(command, *args, **kwargs)
             raise e
         except SessionClosed:
             logger.warning("Session closed; attempting to reconnect and retry command.")
             self._reconnect()
             try:
-                return super()._do_command(cmd)
+                return super()._do_command(command, *args, **kwargs)
             except Exception:
-                logger.error("Retry after reconnect failed for command: %s", cmd)
+                logger.error("Retry after reconnect failed for command: %s", command)
                 raise
 
     def check_server_status(self) -> ServerInfoModel:
@@ -112,7 +145,25 @@ class FLIP_Session(Session):
 
     def get_system_info(self) -> SystemInfoModel:
         """
-        Get system info of the FL system.
+        Get system info of the FL system, as FLIP's serialisable schema.
+
+        **This shadows a base method NVFLARE calls internally**, and returns a different type
+        (``SystemInfoModel`` rather than NVFLARE's ``SystemInfo``). Keeping the base's name is a
+        deliberate trade — the FL API's ``/get_system_info`` route serialises the result directly —
+        but it means NVFLARE's own callers get this object instead of theirs. They are
+        ``_client_last_connect_times``, ``_wait_for_clients_shutdown``, ``_wait_for_clients_restart``,
+        ``restart`` and ``get_connected_client_list``, and between them they read exactly four
+        attributes:
+
+        * ``server_info.status``
+        * ``server_info.start_time``
+        * ``client_info[].name``
+        * ``client_info[].last_connect_time``
+
+        That is the whole contract this substitution rests on. It is duck-typed, so nothing enforces
+        it at runtime — ``test_flip_session.py`` pins those four attributes instead. **Renaming or
+        dropping any of them on the models breaks NVFLARE's restart and client-shutdown waits
+        silently**, which is why the pin exists. Widen the models rather than reshape them.
 
         Returns:
             SystemInfoModel: system info of the FL system.
@@ -130,9 +181,14 @@ class FLIP_Session(Session):
 
     def get_connected_client_list(self) -> list[ClientInfoModel]:
         """
-        Get a list of the connected clients.
+        Get a list of the connected clients, as FLIP's serialisable schema.
+
+        Delegates to the base rather than re-implementing its body, so a future upstream change to
+        how "connected" is derived is inherited rather than silently diverging here. The override
+        exists only to re-declare the return type, now that ``get_system_info`` above yields FLIP
+        models. Same duck-typing caveat as that method.
 
         Returns:
             List[ClientInfoModel]: a list of ClientInfoModel objects containing name, last connect time, and status.
         """
-        return self.get_system_info().client_info
+        return super().get_connected_client_list()
