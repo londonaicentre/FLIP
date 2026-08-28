@@ -307,7 +307,9 @@ Deliberate breadth or posture is acknowledged **in-code, with a rationale**, nev
 put `# checkov:skip=<CHECK_ID>:<why this is deliberate>` inside the flagged resource/data block. The check
 list — including the classes triaged in FLIP#1058 and deliberately *not* promoted — lives in
 `deploy/providers/AWS/scripts/checkov_lint.sh`, which self-tests against a canary fixture before scanning so a
-broken checkov install can never produce a vacuous green.
+broken checkov install can never produce a vacuous green. The script's own guards (version pin, unknown check
+IDs, skip rationale, canary) are regression-tested by `scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
+run by the same workflow's `Deploy script tests` job.
 
 ### Running the stack (pull vs. build)
 

@@ -566,8 +566,8 @@ answering. flip-api re-reads the parameter when its slot pool runs dry
 > activation too. Nothing is replaced or destroyed — but read the plan before confirming.
 
 The script has a black-box test harness (`scripts/tests/test_add_fl_kits.sh`, `aws`/`make`/`openssl`
-stubbed — no credentials or network) that CI runs via `validate_terraform.yml` on any
-`deploy/providers/AWS/**` change; it also runs standalone with plain `bash`.
+stubbed — no credentials or network) that CI runs in the `Deploy script tests` job of
+`validate_terraform.yml` on any `deploy/providers/AWS/**` change; it also runs standalone with plain `bash`.
 
 Kit-minting details and the manual fallback:
 [`fl-services/nvflare/README.md`](../../../fl-services/nvflare/README.md#onboarding-a-new-client-onto-an-existing-network).
@@ -817,7 +817,11 @@ data "aws_iam_policy_document" "example" {
 The check list and invocation live in [`scripts/checkov_lint.sh`](scripts/checkov_lint.sh). The script
 first asserts checkov still fails the deliberately broad canary fixture
 (`scripts/tests/checkov_canary/`) before scanning the real tree, so a broken install or an ineffective
-check list fails loudly instead of passing vacuously. Known limitation: the IAM checks only catch a
+check list fails loudly instead of passing vacuously. The script's own guards — the version-pin
+assertion, the unknown-check-ID validation, the mandatory skip rationale and the canary must-fail — are
+regression-tested by a black-box harness (`scripts/tests/test_checkov_lint.sh`, `checkov` stubbed on
+PATH, no install or network) that CI runs in the same `Deploy script tests` job as the `add_fl_kits.sh`
+harness; it also runs standalone with plain `bash`. Known limitation: the IAM checks only catch a
 **literal** `"*"` — an interpolated bucket-root grant (`"${aws_s3_bucket.x.arn}/*"` on `s3:GetObject`) still
 needs human review.
 

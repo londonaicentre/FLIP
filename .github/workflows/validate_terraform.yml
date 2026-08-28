@@ -60,11 +60,16 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-  # Black-box harness for the add-fl-kits deploy script (mints certs and mutates
-  # live S3 kit state in real runs — here aws/make/openssl are stubbed, no
-  # credentials or network). Shares this workflow's deploy/providers/AWS/** path
-  # filter, so it runs whenever the script or its tests change.
-  add-fl-kits-script-tests:
+  # Black-box harnesses for the deploy scripts, every external tool stubbed on
+  # PATH — no credentials, no network, no checkov install. add_fl_kits.sh mints
+  # certs and mutates live S3 kit state in real runs (aws/make/openssl stubbed);
+  # checkov_lint.sh's harness drives its own self-guards — version pin,
+  # unknown-check-ID validation, mandatory skip rationale, canary must-fail —
+  # which the checkov-lint job below only exercises on the happy path (checkov
+  # stubbed). Shares this workflow's deploy/providers/AWS/** path filter, so it
+  # runs whenever a script or its tests change.
+  script-tests:
+    name: Deploy script tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -72,6 +77,9 @@ jobs:
 
       - name: Run add_fl_kits.sh test harness
         run: bash deploy/providers/AWS/scripts/tests/test_add_fl_kits.sh
+
+      - name: Run checkov_lint.sh test harness
+        run: bash deploy/providers/AWS/scripts/tests/test_checkov_lint.sh
 
   # Static checkov security lint (FLIP#1052 + the FLIP#1058 triage): a curated
   # check list over the whole AWS tree — IAM policy content (overly-broad
