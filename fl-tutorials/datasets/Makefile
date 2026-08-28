@@ -39,10 +39,16 @@ NUM_CASES ?= 10
 # The MSD download/derive scripts run in spleen/'s own uv project (MONAI, pandas, natsort) —
 # --project keeps the cwd here while resolving that env.
 SPLEEN_UV := uv run --project spleen
+# PI-CAI folds to fetch for download-prostate-data (each fold zip is ~5GB).
+FOLDS ?= 0 1 2 3 4
+# The PI-CAI download/convert/partition scripts run in prostate/'s own uv project (MONAI,
+# nibabel, SimpleITK, einops, torch) — --project keeps the cwd here while resolving that env.
+PROSTATE_UV := uv run --project prostate
 
 .PHONY: download-xray-data download-spleen-data download-spleen-msd-data \
 	download-spleen-flip-format-data download-arkplus-finetuning-data \
-	download-arkplus-eval-data upload-spleen-labels
+	download-arkplus-eval-data upload-spleen-labels download-prostate-data \
+	convert-prostate-to-dicom convert-prostate-to-nifti partition-prostate-data
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the layout
 # both harnesses read (data/xrays_mini_300/, gitignored). Idempotent — safe to re-run.
@@ -111,6 +117,32 @@ download-arkplus-eval-data:
 		--sites site1_holdoff site2_holdoff \
 		--label hold-out \
 		--next-step "make -C fl-tutorials run-tutorial TUTORIAL=arkplus_baseline_classification_evaluation (or arkplus_multimodel_classification_evaluation)"
+
+# Download the PI-CAI bpMRI dataset (images + whole-gland/zonal labels + clinical marksheet)
+# and convert/partition it for the 3d_prostate_segmentation tutorial (Flower). Script + README
+# live in prostate/ (see its README). Runs in prostate/'s own uv project for MONAI/SimpleITK.
+# FOLDS narrows the download for a tutorial-sized cohort, e.g. FOLDS="0". Idempotent — skips
+# folds/labels already downloaded.
+download-prostate-data:
+	@echo "⬇️  Downloading PI-CAI dataset (folds: $(FOLDS)) — large, runs in prostate/'s uv project..."
+	@DATA_DIR=$(abspath $(DATA_DIR))/prostate FOLDS="$(FOLDS)" $(PROSTATE_UV) python prostate/download_data.py
+	@echo "✅ PI-CAI data ready at $(abspath $(DATA_DIR))/prostate/ — make -C fl-tutorials convert-prostate-to-dicom"
+
+# Convert the downloaded .mha scans to a DICOM series per study, so they can be pulled into a
+# trust's PACS the same way any other study would be.
+convert-prostate-to-dicom:
+	@$(PROSTATE_UV) python prostate/convert_mha_to_dicom.py \
+		--input $(DATA_DIR)/prostate/images --output $(DATA_DIR)/prostate/dicom
+
+# Convert the downloaded .mha scans to .nii.gz.
+convert-prostate-to-nifti:
+	@$(PROSTATE_UV) python prostate/convert_mha_to_nifti.py \
+		--input $(DATA_DIR)/prostate/images --output $(DATA_DIR)/prostate/nifti
+
+# Partition the converted NIfTI scans + labels by acquiring center (RUMC/PCNN/ZGT), ready for
+# PicaiSegDataset per simulated FL client. Needs convert-prostate-to-nifti to have run first.
+partition-prostate-data:
+	@$(PROSTATE_UV) python prostate/partition_by_center.py --data-dir $(DATA_DIR)/prostate
 
 # Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT, so the spleen
 # apps find a label_*.nii.gz beside each pulled input_*.nii.gz. Needs NUM_CASES=41 on the MSD

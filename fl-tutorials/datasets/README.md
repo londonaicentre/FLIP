@@ -32,6 +32,10 @@ make -C fl-tutorials download-spleen-data FL_BACKEND=flower   # pre-built FLIP-f
 make -C fl-tutorials download-arkplus-finetuning-data  # large (~6.3 GB)
 make -C fl-tutorials download-arkplus-eval-data        # (~1.6 GB)
 make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrichment
+make -C fl-tutorials download-prostate-data            # PI-CAI (FOLDS="0 1 2 3 4" by default, ~5GB/fold)
+make -C fl-tutorials convert-prostate-to-dicom
+make -C fl-tutorials convert-prostate-to-nifti
+make -C fl-tutorials partition-prostate-data
 ```
 
 | Dataset | Source | Output under `fl-tutorials/data/` | Consumed by |
@@ -40,6 +44,7 @@ make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrich
 | spleen (MSD build) | MSD Task09_Spleen | `spleen/{images/, dataframe.csv}` | 3d_spleen_segmentation + evaluation + latent_diffusion_model (NVFLARE sim); enrichment labels |
 | spleen (FLIP-format) | HF `aicentreflip/flip-fl-base-test-data` | `spleen/{accession-resources/, sample_get_dataframe_response.csv}` + `model_checkpoints/model.pt` | 3d_spleen_segmentation + evaluation (Flower stack) |
 | arkplus | HF `aicentreflip/tutorials-arkplus-cxr-classification` | `arkplus/site{1,2}[,_holdoff]/` | the three Ark+ tutorials (NVFLARE) |
+| prostate | Zenodo PI-CAI + `picai_labels` (GitHub) | `prostate/{images/, labels/, zonal_labels/, clinical_information/, dicom/, nifti/, sites/<CENTER>/}` | 3d_prostate_segmentation (Flower) |
 
 The two spleen variants coexist in `data/spleen/` — the FLIP-format download removes only
 its own outputs, never an MSD build beside it.
@@ -78,3 +83,15 @@ against `flip-utils` without adopting `spleen/`'s env:
   Hugging Face and normalise each into `accession-resources/` +
   `sample_get_dataframe_response.csv`. Parameterised by `--sites`, so one script backs both
   `download-arkplus-finetuning-data` and `download-arkplus-eval-data`.
+
+[`prostate/`](prostate/) owns the prostate download/preprocessing scripts and their uv project
+(`pyproject.toml` — SimpleITK, tqdm; `uv.lock` is gitignored), the same pattern as `spleen/`.
+`PicaiSegDataset` (the dataset class that reads this data) lives with the tutorial instead, at
+`../flower/3d_prostate_segmentation/picai_dataset.py`:
+
+- `download_data.py` — fetch the PI-CAI bpMRI images + whole-gland/zonal labels + clinical
+  marksheet from Zenodo/GitHub (`FOLDS` narrows which of the 5 ~5GB fold zips to fetch).
+- `convert_mha_to_dicom.py` — convert the downloaded `.mha` scans to a DICOM series per study.
+- `convert_mha_to_nifti.py` — convert the downloaded `.mha` scans to `.nii.gz`.
+- `partition_by_center.py` — split the converted NIfTI scans + labels into one folder per
+  acquiring center (RUMC/PCNN/ZGT), ready for `PicaiSegDataset` per simulated FL client.

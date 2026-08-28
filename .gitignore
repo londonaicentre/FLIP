@@ -463,6 +463,7 @@ flip-utils/dist/
 # - the dataset tooling's uv.lock (intentionally not pinned to a strict lockfile)
 fl-tutorials/data/
 fl-tutorials/datasets/spleen/uv.lock
+fl-tutorials/datasets/prostate/uv.lock
 fl-services/flower/provision/creds/
 fl-services/flower/runs/
 
