@@ -178,6 +178,26 @@ spec:
               # the Job — which is the same reason scrub_args() redacts it from failure output.
               echo "XNAT login succeeded (admin session acquired)."
 
+              # Activate XNAT site (idempotent — safe to call even if already initialized).
+              # siteUrl must be non-empty on XNAT >= 1.10.0: the Restlet create paths NPE on a
+              # null siteUrl while building the response (entity created, request 500s) — see
+              # trust/xnat/xnat/config/configure-xnat.sh for the full explanation.
+              echo "Activating XNAT site..."
+              xnat_curl -X POST "${XNAT_URL}/xapi/siteConfig" \
+                -H "Cookie: JSESSIONID=${JSESSION}" \
+                -H "Content-Type: application/json" \
+                -d "{\"initialized\": true, \"siteUrl\": \"${XNAT_URL}\"}" >/dev/null
+
+              # Site activation must come BEFORE the plugin-route wait, not after it. Until the
+              # site is initialized every plugin route 302s to /setup, so the wait below could
+              # never see a 2xx and burned its whole budget on a state only this call can clear:
+              #
+              #   before POST /xapi/siteConfig -> GET /xapi/dqr/settings = 302
+              #   after  POST /xapi/siteConfig -> GET /xapi/dqr/settings = 200
+              #
+              # The Job then failed on "plugin routes did not register", naming the wait rather
+              # than the ordering that caused it. /xapi/siteConfig is a core route and answers
+              # before the plugins register, so activating first is safe.
               # The readiness loop above accepts 200 *or* 401 from a core route, so it proves only
               # that Tomcat is answering — not that the plugins have registered their routes. Every
               # plugin call below (container service, DICOM SCP, PACS, DQR) would otherwise race a
@@ -213,16 +233,6 @@ spec:
                 echo "  endpoint: ${XNAT_URL}/xapi/dqr/settings" >&2
                 exit 1
               fi
-
-              # Activate XNAT site (idempotent — safe to call even if already initialized).
-              # siteUrl must be non-empty on XNAT >= 1.10.0: the Restlet create paths NPE on a
-              # null siteUrl while building the response (entity created, request 500s) — see
-              # trust/xnat/xnat/config/configure-xnat.sh for the full explanation.
-              echo "Activating XNAT site..."
-              xnat_curl -X POST "${XNAT_URL}/xapi/siteConfig" \
-                -H "Cookie: JSESSIONID=${JSESSION}" \
-                -H "Content-Type: application/json" \
-                -d "{\"initialized\": true, \"siteUrl\": \"${XNAT_URL}\"}" >/dev/null
 
               # Set admin password to configured value if it differs from default
               echo "Setting admin password..."
