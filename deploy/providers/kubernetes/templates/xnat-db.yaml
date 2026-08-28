@@ -94,7 +94,9 @@ spec:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: xnat-datasource-admin-password
             # Consumed by the image's XNAT.sql at first initdb to create the
-            # `xnat` role; also what xnat-web and imaging-api authenticate with.
+            # `xnat` role, and re-applied to the live role on every start by the
+            # postStart hook below; also what xnat-web and imaging-api
+            # authenticate with.
             - name: XNAT_DATASOURCE_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -107,20 +109,35 @@ spec:
                   - /bin/sh
                   - -c
                   - |
-                    until pg_isready -U {{ .Values.xnat.db.datasourceUsername | quote }} 2>/dev/null; do
+                    # The init-time server that runs XNAT.sql (and the rest of
+                    # /docker-entrypoint-initdb.d) listens on the local socket only
+                    # (listen_addresses=''), so a TCP probe only succeeds against the
+                    # final server, once XNAT.sql has already created the role.
+                    tries=0
+                    until pg_isready -h 127.0.0.1 -p 5432 -U {{ .Values.xnat.db.datasourceUsername | quote }} >/dev/null 2>&1; do
+                      tries=$((tries + 1))
+                      if [ "$tries" -ge 600 ]; then
+                        echo "xnat-db postStart: gave up waiting for postgres to become ready over TCP" >>/proc/1/fd/1
+                        exit 0
+                      fi
                       sleep 1
                     done
-                    # ALTER ROLE runs unconditionally so an already-initialized data
-                    # directory (or a restored backup) always ends up with the
-                    # password from XNAT_DATASOURCE_PASSWORD — XNAT.sql only sets it
-                    # at first initdb, so a rotated secret otherwise never reaches
-                    # the live `xnat` role. Mirrors the data_analyst_reader sync in
-                    # omop-db.yaml. Local-socket connection as `xnat` itself (not
-                    # the superuser) — no privilege needed to change one's own
-                    # password, and this keeps working under any future role setup.
-                    psql -U {{ .Values.xnat.db.datasourceUsername | quote }} -d postgres <<-EOSQL
-                      ALTER USER {{ .Values.xnat.db.datasourceUsername }} WITH PASSWORD '${XNAT_DATASOURCE_PASSWORD}';
+                    # Re-apply the `xnat` role's password on every start: XNAT.sql (baked into
+                    # the image under /docker-entrypoint-initdb.d) sets it only at the first
+                    # initdb of an empty PVC, so a rotated xnat-datasource-password otherwise
+                    # never reaches the live role (a PVC snapshot or pg_dumpall restore likewise
+                    # brings back the old hash until the next restart). Same idea as
+                    # omop-db.yaml's data_analyst_reader sync but narrower: that one runs as the
+                    # superuser and CREATEs the role if absent; this one connects as `xnat`
+                    # itself over the local socket (stock-image pg_hba `local all all trust`;
+                    # ALTER ROLE on oneself needs no CREATEROLE) and only ALTERs — hence the
+                    # wait on TCP readiness above: the init-time temp server is socket-only, so
+                    # TCP means XNAT.sql has already run.
+                    psql -X -q -v ON_ERROR_STOP=1 -U {{ .Values.xnat.db.datasourceUsername | quote }} -d xnat \
+                         -v u={{ .Values.xnat.db.datasourceUsername | quote }} -v pw="$XNAT_DATASOURCE_PASSWORD" <<-'EOSQL'
+                      ALTER ROLE :"u" WITH PASSWORD :'pw';
                     EOSQL
+                    echo "xnat-db postStart: xnat role password synced" >>/proc/1/fd/1
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
