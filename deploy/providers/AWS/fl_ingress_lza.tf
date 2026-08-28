@@ -111,7 +111,8 @@ resource "aws_ec2_tag" "fl_internal_nlb_security_group_flip_sg" {
 }
 
 module "fl_server_internal_nlb" {
-  source = "terraform-aws-modules/alb/aws"
+  source  = "terraform-aws-modules/alb/aws"
+  version = "~> 10.0"
   # LZA counterpart of the legacy module.fl_server_nlb above — created on
   # exactly the opposite gate, so precisely one FL NLB exists per environment.
   create             = var.lza_managed_network
@@ -196,6 +197,7 @@ resource "aws_security_group_rule" "alb_ingress_web_from_networking" {
 # configuration (aicentre-lza-iac), replacing the e2e harness's
 # /flip-e2e/networking/ prefix with the real one.
 resource "aws_ssm_parameter" "lza_fl_nlb_private_ips" {
+  # checkov:skip=CKV2_AWS_34:non-secret networking value read CROSS-ACCOUNT by the networking account's edge stack (aicentre-lza-iac) — an AWS-managed CMK cannot be decrypted from another account
   count       = var.lza_managed_network ? 1 : 0
   name        = "/flip/networking/fl_nlb_private_ips"
   description = "Internal FL NLB static private IPs (comma-separated, assigned via subnet_mapping so they are stable by construction; TGW-reachable AZs only) - registered as IP targets on the networking account's edge NLB FL listener"
@@ -204,6 +206,7 @@ resource "aws_ssm_parameter" "lza_fl_nlb_private_ips" {
 }
 
 resource "aws_ssm_parameter" "lza_fl_port" {
+  # checkov:skip=CKV2_AWS_34:non-secret networking value read CROSS-ACCOUNT by the networking account's edge stack (aicentre-lza-iac) — an AWS-managed CMK cannot be decrypted from another account
   count       = var.lza_managed_network ? 1 : 0
   name        = "/flip/networking/fl_port"
   description = "Workload-side FL ingress port (internal NLB listener) - consumed by the networking account's edge configuration"
@@ -212,6 +215,7 @@ resource "aws_ssm_parameter" "lza_fl_port" {
 }
 
 resource "aws_ssm_parameter" "lza_alb_dns_name" {
+  # checkov:skip=CKV2_AWS_34:non-secret networking value read CROSS-ACCOUNT by the networking account's edge stack (aicentre-lza-iac) — an AWS-managed CMK cannot be decrypted from another account
   count       = var.lza_managed_network ? 1 : 0
   name        = "/flip/networking/alb_dns_name"
   description = "Internal web ALB DNS name - the networking account's target-sync Lambda resolves this on a cadence to keep the web relay NLB targets current (ALB IPs rotate)"
@@ -220,6 +224,7 @@ resource "aws_ssm_parameter" "lza_alb_dns_name" {
 }
 
 resource "aws_ssm_parameter" "lza_web_port" {
+  # checkov:skip=CKV2_AWS_34:non-secret networking value read CROSS-ACCOUNT by the networking account's edge stack (aicentre-lza-iac) — an AWS-managed CMK cannot be decrypted from another account
   count       = var.lza_managed_network ? 1 : 0
   name        = "/flip/networking/web_port"
   description = "Workload-side web ingress port (the ALB's main listener; plain HTTP on the zone-less bring-up) - the relay NLB's target port on the networking side"
