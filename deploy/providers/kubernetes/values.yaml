@@ -501,11 +501,17 @@ omopDb:
     dataVersion: "20260729"
     # AWS profile to use for S3 authentication (uses SSO cached credentials)
     awsProfile: "default"
-    # Mount host's ~/.aws directory for SSO-based S3 authentication
-    # Enabled for local K8s clusters; disable for EKS (use IRSA instead)
+    # Mount host's ~/.aws directory for SSO-based S3 authentication.
+    # Enabled for local K8s clusters; disable for EKS (use IRSA instead).
+    # hostPath has NO default: it is the ~/.aws of whoever runs the *node*, so any
+    # shipped value is one developer's home directory and silently wrong on every
+    # other machine. Set it explicitly when enabling, e.g.
+    #   --set omopDb.initJob.hostAwsMount.hostPath=$HOME/.aws
+    # Left empty while enabled, rendering fails with a named error rather than
+    # mounting a path that does not exist on this node.
     hostAwsMount:
       enabled: false
-      hostPath: "/home/rd24/.aws"
+      hostPath: ""
       readOnly: true
 
 # ---------------------------------------------------------------------------
@@ -560,11 +566,17 @@ orthanc:
     dataVersion: "20260106"
     # AWS profile to use for S3 authentication (uses SSO cached credentials)
     awsProfile: "default"
-    # Mount host's ~/.aws directory for SSO-based S3 authentication
-    # Enabled for local K8s clusters; disable for EKS (use IRSA instead)
+    # Mount host's ~/.aws directory for SSO-based S3 authentication.
+    # Enabled for local K8s clusters; disable for EKS (use IRSA instead).
+    # hostPath has NO default: it is the ~/.aws of whoever runs the *node*, so any
+    # shipped value is one developer's home directory and silently wrong on every
+    # other machine. Set it explicitly when enabling, e.g.
+    #   --set omopDb.initJob.hostAwsMount.hostPath=$HOME/.aws
+    # Left empty while enabled, rendering fails with a named error rather than
+    # mounting a path that does not exist on this node.
     hostAwsMount:
       enabled: false
-      hostPath: "/home/rd24/.aws"
+      hostPath: ""
 
 # ---------------------------------------------------------------------------
 # XNAT — Neuroimaging platform (multi-component)
