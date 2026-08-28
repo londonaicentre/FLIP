@@ -61,7 +61,7 @@ DEMO_DIR = FLIP_UI_DIR / "test" / "cypress" / "demo"
 STATE_FILE = DEMO_DIR / "state.json"
 VIDEOS_DIR = DEMO_DIR / "videos"
 OUT_DIR = DEMO_DIR / "out"
-CYPRESS_IMAGE = "cypress/included:14.5.2"
+CYPRESS_IMAGE = "cypress/included:15.21.0"
 
 SEGMENTS = [
     "01-create-project",
