@@ -108,11 +108,9 @@ async def download_and_unzip_images(
     # trusted, because extraction merges member-by-member and a crash can leave a partial folder.
     sentinel = sentinel_path(accession_dir_abs, assessor_type, resource_type)
     if not force_refresh and os.path.isfile(sentinel):
-        size_mb = sum(f.stat().st_size for f in Path(accession_dir_abs).glob("**/*") if f.is_file()) / 1e6
         logger.info(
             f"Cache hit for net={net_id} project={central_hub_project_id} accession={accession_id} "
-            f"({assessor_type}/{resource_type}): reusing {accession_dir_abs} (~{size_mb:.1f} MB, "
-            f"skipping XNAT download)"
+            f"({assessor_type}/{resource_type}): reusing {accession_dir_abs} (skipping XNAT download)"
         )
         return accession_dir_abs
     if force_refresh:
