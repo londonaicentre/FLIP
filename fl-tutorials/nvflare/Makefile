@@ -15,139 +15,18 @@
 # `full` ML extra. Requires a GPU, and the tutorial's dataset downloaded first (see each
 # tutorial's README); `make export` inside a tutorial needs neither.
 #
-#   make download-xray-data                       # fetch the x-ray dataset from HF
-#   make download-spleen-data                      # fetch + build the MSD spleen dataset
-#   make upload-spleen-labels FLIP_PROJECT_ID=<uuid>  # data enrichment: push labels into a Trust's XNAT
-#   make download-arkplus-finetuning-data          # fetch the Ark+ train splits from HF
-#   make download-arkplus-eval-data                # fetch the Ark+ hold-out splits from HF
 #   make list-tutorials
 #   make run-tutorial TUTORIAL=xray_classification
 #   make run-all-tutorials      # runs every tutorial (heavy; stops on first failure)
 #
-# Datasets land (gitignored) under data/ where each tutorial's .env.app expects them:
-#   - xray_classification: reference dataset from Hugging Face (download-xray-data)
-#   - the spleen tutorials (segmentation / evaluation / synthesis) share the MSD
-#     spleen dataset (download-spleen-data); override case count with NUM_CASES=<n>.
-#   - the three Ark+ tutorials share aicentreflip/tutorials-arkplus-cxr-classification:
-#     arkplus_fine_tuning uses download-arkplus-finetuning-data (data/arkplus/site{1,2}/); the two
-#     Ark+ evaluation tutorials use download-arkplus-eval-data (data/arkplus/site{1,2}_holdoff/).
+# Dataset downloads live in fl-tutorials/datasets/ (shared with the Flower harness), and land
+# under the shared gitignored fl-tutorials/data/ where each tutorial's .env.app points —
+# `make -C fl-tutorials download-<dataset>-data` (see fl-tutorials/datasets/README.md).
 
 # Discover tutorials: any <category>/<name>/ that carries a .env.app.
 TUTORIAL_DIRS := $(sort $(patsubst %/,%,$(dir $(wildcard */*/.env.app))))
 
-# Hugging Face dataset backing the xray_classification tutorial.
-XRAY_DATA_REPO := aicentreflip/flip-fl-base-test-data
-# Hugging Face dataset backing the three Ark+ tutorials (site{1,2} train + hold-out splits).
-ARKPLUS_DATA_REPO := aicentreflip/tutorials-arkplus-cxr-classification
-# Number of MSD spleen cases to download for the spleen tutorials (1-41).
-NUM_CASES ?= 10
-SPLEEN_DIR := image_segmentation/3d_spleen_segmentation
-# Where download-spleen-data lands the subject_N/scans/{input,label}_spleen_N.nii.gz trees that
-# upload-spleen-labels reads. Flower's Makefile overrides this to its own spleen download.
-SPLEEN_LABELS_DIR ?= data/spleen/images
-# upload-spleen-labels runs against the in-tree flip-utils, not the PyPI release, so the enrichment
-# CLI always matches this checkout (flip.xnat may be newer here than the last published version).
-FLIP_UTILS_DIR ?= $(abspath ../../flip-utils)
-
-EHR_DIR := tabular_classification/ehr_risk_prediction
-# Where download-synthea-data lands the derived tabular CSVs (gitignored). fl-tutorials/flower/Makefile
-# overrides this to its own data/ tree when it delegates the download here.
-SYNTHEA_OUTPUT_DIR ?= data/synthea
-
-.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data download-synthea-data download-arkplus-finetuning-data download-arkplus-eval-data upload-spleen-labels
-
-# Download the x-ray reference dataset from Hugging Face and normalise it into the
-# layout image_classification/xray_classification/.env.app expects (data/xrays_mini_300/,
-# gitignored). Idempotent — safe to re-run.
-download-xray-data:
-	@echo "⬇️  Downloading x-ray dataset from Hugging Face ($(XRAY_DATA_REPO))..."
-	@uv run --no-project --with huggingface_hub python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$(XRAY_DATA_REPO)', repo_type='dataset', local_dir='data/.hf', allow_patterns=['flip-fl-base-test-data/xrays_mini_300/*'])"
-	@rm -rf data/xrays_mini_300
-	@mkdir -p data/xrays_mini_300
-	@cp -r data/.hf/flip-fl-base-test-data/xrays_mini_300/accession-resources data/xrays_mini_300/accession-resources
-	@cp data/.hf/flip-fl-base-test-data/xrays_mini_300/sample_get_dataframe_response.csv data/xrays_mini_300/dataframe.csv
-	@echo "✅ x-ray data ready at data/xrays_mini_300/ — run: make run-tutorial TUTORIAL=xray_classification"
-
-# Download the Ark+ chest X-ray TRAIN splits from Hugging Face and normalise them into the layout
-# image_classification/arkplus_fine_tuning/.env.app expects (data/arkplus/site{1,2}/, gitignored).
-# Idempotent — safe to re-run. Large (~6.3 GB).
-download-arkplus-finetuning-data:
-	@echo "⬇️  Downloading Ark+ training splits from Hugging Face ($(ARKPLUS_DATA_REPO))..."
-	@uv run --no-project --with huggingface_hub python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$(ARKPLUS_DATA_REPO)', repo_type='dataset', local_dir='data/.hf', allow_patterns=['site1/*', 'site2/*'])"
-	@rm -rf data/arkplus/site1 data/arkplus/site2
-	@mkdir -p data/arkplus/site1 data/arkplus/site2
-	@cp -r data/.hf/site1/accession-resources data/arkplus/site1/accession-resources
-	@cp data/.hf/site1/sample_get_dataframe_response.csv data/arkplus/site1/sample_get_dataframe_response.csv
-	@cp -r data/.hf/site2/accession-resources data/arkplus/site2/accession-resources
-	@cp data/.hf/site2/sample_get_dataframe_response.csv data/arkplus/site2/sample_get_dataframe_response.csv
-	@# Written last, only on a fully successful run: `experiment`'s dataset-present check in
-	@# arkplus_fine_tuning/Makefile looks for this marker (not just directory existence), so an
-	@# interrupted download/copy (e.g. Ctrl+C mid-run) can't be mistaken for complete data on the
-	@# next `make reproduce-overhead`.
-	@touch data/arkplus/site1/.download-complete data/arkplus/site2/.download-complete
-	@echo "✅ Ark+ training data ready at data/arkplus/site{1,2}/ — run: make run-tutorial TUTORIAL=arkplus_fine_tuning"
-
-# Download the Ark+ chest X-ray HOLD-OUT splits from Hugging Face and normalise them into the layout
-# the two Ark+ evaluation tutorials' .env.app expect (data/arkplus/site{1,2}_holdoff/, gitignored).
-# Idempotent — safe to re-run (~1.6 GB).
-download-arkplus-eval-data:
-	@echo "⬇️  Downloading Ark+ hold-out splits from Hugging Face ($(ARKPLUS_DATA_REPO))..."
-	@uv run --no-project --with huggingface_hub python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$(ARKPLUS_DATA_REPO)', repo_type='dataset', local_dir='data/.hf', allow_patterns=['site1_holdoff/*', 'site2_holdoff/*'])"
-	@rm -rf data/arkplus/site1_holdoff data/arkplus/site2_holdoff
-	@mkdir -p data/arkplus/site1_holdoff data/arkplus/site2_holdoff
-	@cp -r data/.hf/site1_holdoff/accession-resources data/arkplus/site1_holdoff/accession-resources
-	@cp data/.hf/site1_holdoff/sample_get_dataframe_response.csv data/arkplus/site1_holdoff/sample_get_dataframe_response.csv
-	@cp -r data/.hf/site2_holdoff/accession-resources data/arkplus/site2_holdoff/accession-resources
-	@cp data/.hf/site2_holdoff/sample_get_dataframe_response.csv data/arkplus/site2_holdoff/sample_get_dataframe_response.csv
-	@echo "✅ Ark+ hold-out data ready at data/arkplus/site{1,2}_holdoff/ — run: make run-tutorial TUTORIAL=arkplus_baseline_classification_evaluation (or arkplus_multimodel_classification_evaluation)"
-
-# Download the MSD spleen dataset and build its accession CSV into data/spleen/ (gitignored),
-# shared by the segmentation / evaluation / synthesis tutorials. Uses the spleen tutorial's own
-# uv project for MONAI. Large download — overridable via NUM_CASES (1-41, default 10).
-download-spleen-data:
-	@echo "⬇️  Downloading MSD spleen dataset ($(NUM_CASES) cases) — large, uses the spleen tutorial's deps..."
-	@cd $(SPLEEN_DIR) && uv run python utils/download_spleen_dataset.py --output_dir ../../data/spleen/images --num_cases $(NUM_CASES)
-	@cd $(SPLEEN_DIR) && uv run python utils/create_spleen_accession_csv.py --images_dir ../../data/spleen/images --output_csv ../../data/spleen/dataframe.csv
-	@echo "✅ spleen data ready at data/spleen/ — run: make run-tutorial TUTORIAL=3d_spleen_segmentation"
-
-# Download three OMOP tables of the public 1k-person Synthea dataset (AWS Open Data Registry,
-# anonymous HTTPS, ~5 MB) and derive the EHR risk-prediction tutorial's dataframe.csv + per-site
-# splits into $(SYNTHEA_OUTPUT_DIR) (gitignored). Idempotent — the raw tables are cached under
-# $(SYNTHEA_OUTPUT_DIR)/.synthea-raw/. Needs only pandas, so it runs outside any project venv.
-# This is the LOCAL-SIM dataset; the on-platform path loads the same data into a trust's OMOP via
-# `make -C trust load-synthea-ehr` (see the tutorial README).
-download-synthea-data:
-	@echo "⬇️  Downloading Synthea-in-OMOP tabular dataset (AWS Open Data Registry)..."
-	@uv run --no-project --with pandas python $(EHR_DIR)/utils/build_synthea_dataframe.py --output-dir $(SYNTHEA_OUTPUT_DIR)
-	@echo "✅ Synthea data ready at $(SYNTHEA_OUTPUT_DIR)/ — run: make run-tutorial TUTORIAL=ehr_risk_prediction"
-
-# Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT, so the spleen
-# apps find a label_*.nii.gz beside each pulled input_*.nii.gz. Needs NUM_CASES=41 on the download
-# above to cover every mapped accession.
-#
-# Enrich EVERY Trust in the project, not one: each Trust's XNAT holds only its own studies, so a
-# Trust left without labels fails training at the zero-pairs guard. One invocation covers the
-# roster — pass a space-separated XNAT_URLS (credentials from XNAT_USER/XNAT_PASS), or repeat
-# XNAT_CREDENTIALS_FILES for per-Trust logins. With neither, it falls back to a single server from
-# XNAT_HOST/XNAT_USER/XNAT_PASS. TRUST=N filters the manifest by the OMOP source_trust column and
-# is rarely needed: the whole mapping goes to every server and each ignores the others' studies.
-#
-# The script is deliberately single-copy and backend-agnostic — enrichment happens once per FLIP
-# project, in XNAT, and both backends read the result. fl-tutorials/flower/Makefile delegates here.
-# It runs via `uv run --no-project --with <flip-utils>` rather than the spleen tutorial's env, so
-# uploading labels never drags in the simulator's MONAI/torch stack.
-upload-spleen-labels:
-	@[ -n "$(FLIP_PROJECT_ID)" ] || (echo "❌  FLIP_PROJECT_ID is required. Usage: make upload-spleen-labels FLIP_PROJECT_ID=<uuid> [XNAT_URLS=\"http://host1 http://host2\"] [DRY_RUN=1]"; exit 1)
-	@uv run --no-project --with $(FLIP_UTILS_DIR) python $(SPLEEN_DIR)/utils/upload_spleen_labels_to_xnat.py \
-		--flip-project-id $(FLIP_PROJECT_ID) \
-		--labels-dir $(SPLEEN_LABELS_DIR) \
-		$(if $(TRUST),--trust $(TRUST)) \
-		$(foreach url,$(XNAT_URLS),--xnat-url $(url)) \
-		$(foreach cfg,$(XNAT_CREDENTIALS_FILES) $(XNAT_CREDENTIALS_FILE),--credentials-file $(cfg)) \
-		$(if $(OVERWRITE),--overwrite) \
-		$(if $(ALLOW_NO_OP),--allow-no-op) \
-		$(if $(REQUIRE_FULL_COVERAGE),--require-full-coverage) \
-		$(if $(DRY_RUN),--dry-run)
+.PHONY: list-tutorials run-tutorial run-all-tutorials
 
 list-tutorials:
 	@echo "Available NVFLARE tutorials (pass the name to 'make run-tutorial TUTORIAL=…'):"

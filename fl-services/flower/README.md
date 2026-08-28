@@ -155,10 +155,10 @@ trains on an empty dataset with no signal that the data is missing. So download 
 point both variables at it when bringing the net up:
 
 ```bash
-make -C fl-tutorials download-xray-data FL_BACKEND=flower   # → fl-tutorials/flower/data/xrays_mini_300/
+make -C fl-tutorials download-xray-data FL_BACKEND=flower   # → fl-tutorials/data/xrays_mini_300/
 make -C fl-services/flower up \
-  DEV_IMAGES_DIR=$(pwd)/fl-tutorials/flower/data/xrays_mini_300/accession-resources \
-  DEV_DATAFRAME=$(pwd)/fl-tutorials/flower/data/xrays_mini_300/sample_get_dataframe_response.csv
+  DEV_IMAGES_DIR=$(pwd)/fl-tutorials/data/xrays_mini_300/accession-resources \
+  DEV_DATAFRAME=$(pwd)/fl-tutorials/data/xrays_mini_300/dataframe.csv
 ```
 
 (Run from the repo root; `data/` is gitignored. `up-secure` takes the same two variables.)

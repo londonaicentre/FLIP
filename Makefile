@@ -33,6 +33,10 @@ ENV=development
 endif
 
 # Print which environment files are being used
+# Exported so `make -C flip-api` / `-C trust` resolve the SAME env file rather than
+# hardcoding .env.development. That is what lets a second hub run from ONE checkout:
+#     make up MAIN_ENV_FILE=.env.b.development
+export MAIN_ENV_FILE
 $(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
 
 # replace environment variables by the values from the .env files
@@ -42,6 +46,7 @@ export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 
 include deploy/fl_backend.mk
+include deploy/instance.mk
 
 # Host gid for group_add on FL containers reading host-provisioned 640 certs/keys (dev).
 export DOCKER_GID := $(shell id -g)
@@ -49,11 +54,11 @@ export DOCKER_GID := $(shell id -g)
 COMMON_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).yml
 FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
-# Resolve FL_PROVISIONED_DIR (from .env) to an absolute path relative to this Makefile
-# Docker requires absolute paths for volume mounts; the .env value may be relative
+# Resolve FL_PROVISIONED_DIR / FL_JOBS_DIR (from .env, or overridden at the CLI) to
+# absolute paths against the repo root — see abs_or_relative_to in deploy/fl_backend.mk.
 MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
-override FL_PROVISIONED_DIR := $(abspath $(MAKEFILE_DIR)/$(FL_PROVISIONED_DIR))
-override FL_JOBS_DIR := $(abspath $(MAKEFILE_DIR)/$(FL_JOBS_DIR))
+override FL_PROVISIONED_DIR := $(call abs_or_relative_to,$(FL_PROVISIONED_DIR),$(MAKEFILE_DIR))
+override FL_JOBS_DIR := $(call abs_or_relative_to,$(FL_JOBS_DIR),$(MAKEFILE_DIR))
 
 # Service configuration
 define SERVICE_CONFIG
@@ -71,9 +76,12 @@ get_service_type = $(word 2,$(subst :, ,$(filter $1:%,$(SERVICE_CONFIG))))
 get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central FL ,$1)))
 
 export COMPOSE_BAKE=true
-DOCKER_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
-SHOW_LOGS_CENTRAL_HUB=docker logs -f flip-api --tail 100 --timestamps --follow
+DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
+# Through compose, addressing the service rather than the container: the containers are
+# named by the project (deploy-flip-api-1, or <instance>-deploy-flip-api-1), so a literal
+# `docker logs flip-api` names nothing on any stack.
+SHOW_LOGS_CENTRAL_HUB=$(DOCKER_COMMAND) logs --follow --tail 100 --timestamps flip-api
 GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the `up` targets.
@@ -319,15 +327,18 @@ debug-off-all:
 	DEBUG=false $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d
 	$(MAKE) -C trust debug-off
 
+# Hub-shared network names all follow `$(INSTANCE_PREFIX)deploy_<name>`, where `deploy_` names
+# the hub compose project that owns them — the same string compose would generate itself if it
+# still created them, rather than looked them up `external:` (FLIP#957).
 create-networks-centralhub:
-	@{ docker network inspect central-hub-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-network >/dev/null || docker network inspect central-hub-network >/dev/null 2>&1 || { echo "❌ Could not create Docker network central-hub-network — see the daemon error above."; exit 1; }; }
+	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_central-hub-network)
 
 create-networks: create-networks-centralhub
 	$(MAKE) -C trust create-networks
 
 remove-networks:
 	@echo "🗑️  Removing all networks..."
-	@docker network rm central-hub-network 2>/dev/null || true
+	@docker network rm $(INSTANCE_PREFIX)deploy_central-hub-network 2>/dev/null || true
 	$(MAKE) -C trust remove-networks
 	@echo "✅ All networks removed!"
 

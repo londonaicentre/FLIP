@@ -30,7 +30,7 @@ is empty throughout), which is why the features are condition-history flags rath
 labs/vitals.
 
 Run via the Makefile (``make -C fl-tutorials download-synthea-data``), which invokes:
-    uv run --no-project --with pandas python utils/build_synthea_dataframe.py --output-dir ../../data/synthea
+    uv run --no-project --with pandas python synthea/build_synthea_dataframe.py --output-dir ../data/synthea
 """
 
 from __future__ import annotations

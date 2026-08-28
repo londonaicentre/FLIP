@@ -54,11 +54,11 @@ For `make run-tutorial` (the NVFLARE simulator), the cohort is a local CSV:
 make -C fl-tutorials download-synthea-data
 ```
 
-That runs [`utils/build_synthea_dataframe.py`](utils/build_synthea_dataframe.py), which downloads
+That runs [`datasets/synthea/build_synthea_dataframe.py`](../../../datasets/synthea/build_synthea_dataframe.py), which downloads
 three OMOP tables (`person`, `condition_occurrence`, `visit_occurrence`), derives **one feature row
-per person**, and writes `data/synthea/dataframe.csv` plus per-site `site1/`/`site2/` splits
+per person**, and writes `fl-tutorials/data/synthea/dataframe.csv` plus per-site `site1/`/`site2/` splits
 (`person_id` modulo — the same convention the mock trusts use). Nothing is committed; the raw tables
-are cached under `data/synthea/.synthea-raw/`.
+are cached under `fl-tutorials/data/synthea/.synthea-raw/`.
 
 ### 2. On the platform — loaded into OMOP
 
@@ -203,7 +203,7 @@ dev mock's imaging-only persons.
 
 ## Swapping the label
 
-[`utils/build_synthea_dataframe.py`](utils/build_synthea_dataframe.py) and `query.sql` pin the label
+[`datasets/synthea/build_synthea_dataframe.py`](../../../datasets/synthea/build_synthea_dataframe.py) and `query.sql` pin the label
 SNOMED code in one constant each. To re-derive with a different label (e.g. another condition in the
 dataset), keep both in lockstep, and prefer labels with ≥30 positives per site — below that the
 builder warns that validation AUROC will be mostly noise.

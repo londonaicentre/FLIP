@@ -1,7 +1,7 @@
 JOB_TYPE=standard
-SITE1_DATAFRAME=../../data/synthea/site1/dataframe.csv
-SITE2_DATAFRAME=../../data/synthea/site2/dataframe.csv
-DEV_DATAFRAME=../../data/synthea/dataframe.csv
+SITE1_DATAFRAME=../../../data/synthea/site1/dataframe.csv
+SITE2_DATAFRAME=../../../data/synthea/site2/dataframe.csv
+DEV_DATAFRAME=../../../data/synthea/dataframe.csv
 FLIP_PROJECT_ID=
 FLIP_QUERY=
 

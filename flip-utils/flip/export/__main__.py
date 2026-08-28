@@ -22,6 +22,9 @@ yet and introducing a top-level ``flip`` command is a decision about the package
         --app-dir    app_files \\
         --out        bundle/model.ts \\
         --input-shape 1,1,96,96,96
+
+``--form directory`` writes a bundle directory instead of a single TorchScript file, which needs
+no ``torch.jit`` to write or to read. ``--out`` is then the directory to write.
 """
 
 from __future__ import annotations
@@ -68,11 +71,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--checkpoint", type=Path, required=True, help="Aggregated checkpoint, e.g. FL_global_model.pt")
     parser.add_argument("--app-dir", type=Path, required=True, help="Application directory containing models.py")
-    parser.add_argument("--out", type=Path, required=True, help="Destination bundle path, conventionally model.ts")
+    parser.add_argument(
+        "--out", type=Path, required=True, help="Destination: a file for --form torchscript, a directory otherwise"
+    )
+    parser.add_argument(
+        "--form",
+        choices=("torchscript", "directory"),
+        default="torchscript",
+        help="Bundle form: a single TorchScript file needing no app code (default), or a directory "
+        "bundle needing no torch.jit",
+    )
     parser.add_argument("--inference-config", type=Path, help="Override <app-dir>/../export/inference.json")
     parser.add_argument("--metadata-config", type=Path, help="Override <app-dir>/../export/metadata.json")
     parser.add_argument(
-        "--method", choices=("script", "trace"), default="script", help="TorchScript method (default: script)"
+        "--method",
+        choices=("script", "trace"),
+        default="script",
+        help="TorchScript method (default: script). Ignored by --form directory, which compiles nothing.",
     )
     parser.add_argument(
         "--input-shape",
@@ -128,14 +143,17 @@ def main(argv: list[str] | None = None) -> int:
             fl_backend=args.fl_backend,
             flip_version=__version__,
         ),
+        form=args.form,
         method=args.method,
         example_input_shape=args.input_shape,
         job_type=args.job_type,
         allow_pickle=args.allow_pickle,
     )
 
-    print(f"Wrote {result.output} ({result.output.stat().st_size / 1e6:.1f} MB)")
-    print(f"  method            : {result.method}")
+    print(f"Wrote {result.output} ({result.size_bytes / 1e6:.1f} MB)")
+    print(f"  form              : {result.form}")
+    if result.method:
+        print(f"  method            : {result.method}")
     print(f"  parameters        : {result.num_parameters:,}")
     print(f"  state dict entries: {result.num_state_entries}")
     if result.max_abs_delta >= 0:
