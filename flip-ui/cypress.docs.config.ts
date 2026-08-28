@@ -20,6 +20,11 @@ import { defineConfig } from "cypress";
 
 export default defineConfig({
     projectId: "881dt2",
+    // Cypress 15: Cypress.env() publishes its values to any page JS in the app
+    // under test. Nothing here uses it any more — non-sensitive run config comes
+    // from Cypress.expose() and secrets from cy.env() — so turn the channel off
+    // rather than leave it open. See test/cypress/plugins/index.ts.
+    allowCypressEnv: false,
     // 1280x800 downscaled to 1200px-wide GIFs maps cleanly to the 600px
     // figure width used throughout docs/source/sys-admin (2x for retina).
     viewportWidth: 1280,
