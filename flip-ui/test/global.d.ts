@@ -42,13 +42,17 @@ declare namespace Cypress {
         /**
          * Get DOM element by data-test attribute.
          *
+         * Yields what the underlying cy.get yields. Declared as such rather than as
+         * Chainable<Subject>: called on `cy` the current subject is `undefined`, so a
+         * `.then(($el) => ...)` off the result would type `$el` as `undefined`.
+         *
          * @param {string} selector - The data-test attribute of the target DOM element.
-         * @return {HTMLElement} - Target DOM element
+         * @return {JQuery<HTMLElement>} - Target DOM element(s)
          */
         getBySel(
             value: string,
             options?: Partial<Loggable & Timeoutable & Withinable & Shadow>
-        ): Chainable<Subject>,
+        ): Chainable<JQuery<HTMLElement>>,
         /**
          * Login in to AWS Cognito via Amplify Auth API bypassing UI.
          *
