@@ -21,6 +21,11 @@ echo "🐛 Debug mode: $DEBUG on port ${DEBUG_PORT}"
 
 # Debug mode uses debugpy + fastapi dev (autoreload) for iteration speed.
 # Normal mode uses uvicorn directly (stable, production-grade).
+#
+# Deliberately no --workers: the image-cache write path relies on imaging-api running as a single
+# worker (see the concurrency invariant in imaging_api/services/download.py). Adding workers here
+# without the per-key locking / temp-dir staging tracked in FLIP#1026 can corrupt in-flight
+# downloads.
 if [ "$ENV" = "production" ] || [ "$ENV" = "staging" ]; then
     FAST_API_CMD="-m fastapi run imaging_api/main.py --host 0.0.0.0 --port 8000"
 else
