@@ -19,13 +19,17 @@
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 
 # Load the env file selected by PROD (dev by default), exactly as
-# fl-services/nvflare/Makefile does — with PROD=stag|true this brings in the
-# upload vars (AICENTRE_BUCKET_NAME, FLOWER_KIT_DATE) used by
-# upload-creds-to-s3.
+# fl-services/nvflare/Makefile does — with PROD=stag|true (or lza|lza-stag for
+# the LZA estate, FLIP#749) this brings in the upload vars (AICENTRE_BUCKET_NAME,
+# FLOWER_KIT_DATE) used by upload-creds-to-s3.
 ifeq ($(PROD),true)
 MAIN_ENV_FILE := $(REPO_ROOT)/.env.production
 else ifeq ($(PROD),stag)
 MAIN_ENV_FILE := $(REPO_ROOT)/.env.stag
+else ifeq ($(PROD),lza)
+MAIN_ENV_FILE := $(REPO_ROOT)/.env.lza-prod
+else ifeq ($(PROD),lza-stag)
+MAIN_ENV_FILE := $(REPO_ROOT)/.env.lza-stag
 else
 MAIN_ENV_FILE := $(REPO_ROOT)/.env.development
 endif
@@ -71,7 +75,7 @@ provision:
 #     make provision NET_NUMBER=1
 #   make upload-creds-to-s3 NET_NUMBER=1 PROD=stag
 upload-creds-to-s3:
-	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true"; exit 1; }
+	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true|lza|lza-stag"; exit 1; }
 	@[ -n "$(FLOWER_KIT_DATE)" ] || { echo "❌ FLOWER_KIT_DATE not set — add it to the env file (e.g. 20260811)"; exit 1; }
 	@echo "⬆️  Uploading Flower creds (net-$(NET_NUMBER)) → s3://$(AICENTRE_BUCKET_NAME)/fl-flower-participant-kits/$(FLOWER_KIT_DATE)/net-$(NET_NUMBER) $(DRYRUN)"
 	aws s3 sync ./provision/creds/net-$(NET_NUMBER) s3://$(AICENTRE_BUCKET_NAME)/fl-flower-participant-kits/$(FLOWER_KIT_DATE)/net-$(NET_NUMBER) --delete --exclude "certificates/ca.key" $(DRYRUN)
