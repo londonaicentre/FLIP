@@ -29,8 +29,8 @@
 # Usage:
 #   KIT=<CODE> register-trusts.sh   # register one kit (trust/.env.<CODE>.<env>)
 #   register-trusts.sh              # register every live trust/.env.*.<env> kit
-# PROD=true selects .production kits, PROD=lza selects .lza-prod kits (FLIP#749);
-# anything else selects .stag.
+# PROD=true selects .production kits, PROD=lza selects .lza-prod kits and
+# PROD=lza-stag selects .lza-stag kits (FLIP#749); anything else selects .stag.
 
 set -eo pipefail
 # Default file mode 077 so any tempfile / redirect this script (or sourced
@@ -52,11 +52,13 @@ TASK_FAMILY="${TASK_FAMILY:-flip-api}"
 LOG_GROUP="${LOG_GROUP:-/ecs/flip-api}"
 
 # Kit-file env suffix: PROD=true → .production kits, PROD=lza → .lza-prod kits,
-# otherwise → .stag. Matches KIT_ENV_SUFFIX in the deploy Makefile and the env
-# file it included (.env.production / .env.lza-prod / .env.stag).
+# PROD=lza-stag → .lza-stag kits, otherwise → .stag. Must match KIT_ENV_SUFFIX in
+# the deploy Makefile (which reads the kit this script writes back) and the env
+# file it included (.env.production / .env.lza-prod / .env.lza-stag / .env.stag).
 case "${PROD:-stag}" in
     true) ENV_SUFFIX="production" ;;
     lza) ENV_SUFFIX="lza-prod" ;;
+    lza-stag) ENV_SUFFIX="lza-stag" ;;
     *) ENV_SUFFIX="stag" ;;
 esac
 
