@@ -282,6 +282,11 @@ flClient:
   netId: "net-1"
   s3EndpointOverride: ""
   imagesDir: /app/data/images
+  # Mounts a node directory holding AWS config + SSO cache at /root/.aws in the
+  # fl-client, as an alternative to the s3-access-key-id / s3-secret-access-key
+  # Secret keys on a local cluster. hostPath is resolved ON THE NODE and has no
+  # default (see omopDb.initJob.hostAwsMount); on kind, map ~/.aws in with an
+  # extraMounts entry first (README, "Local clusters (kind)").
   hostAwsMount:
     enabled: false
     readOnly: true
@@ -509,6 +514,9 @@ omopDb:
     #   --set omopDb.initJob.hostAwsMount.hostPath=$HOME/.aws
     # Left empty while enabled, rendering fails with a named error rather than
     # mounting a path that does not exist on this node.
+    # On kind the node is a container and your ~/.aws is not in it: add an
+    # extraMounts entry to the kind config and point hostPath at the node-side
+    # path (README, "Local clusters (kind)"), or pre-seed and leave this off.
     hostAwsMount:
       enabled: false
       hostPath: ""
@@ -574,6 +582,9 @@ orthanc:
     #   --set omopDb.initJob.hostAwsMount.hostPath=$HOME/.aws
     # Left empty while enabled, rendering fails with a named error rather than
     # mounting a path that does not exist on this node.
+    # On kind the node is a container and your ~/.aws is not in it: add an
+    # extraMounts entry to the kind config and point hostPath at the node-side
+    # path (README, "Local clusters (kind)"), or pre-seed and leave this off.
     hostAwsMount:
       enabled: false
       hostPath: ""

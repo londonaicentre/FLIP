@@ -255,9 +255,84 @@ forwards to the chart's plain `deploy` target, so `KIT=` never reaches the
 per-trust override file.
 
 AWS credentials for the fetch are shared with the init job:
-`omopDb.initJob.awsProfile` and `omopDb.initJob.hostAwsMount` (enable the host
-`~/.aws` mount for local clusters; use IRSA on EKS). Note `awsProfile` only
-reaches this Job when `hostAwsMount` is enabled.
+`omopDb.initJob.awsProfile` and `omopDb.initJob.hostAwsMount` (a host `~/.aws`
+mount for clusters whose node *is* the machine holding your SSO session — k3s,
+minikube's `none` driver; IRSA on EKS). Note `awsProfile` only reaches this Job
+when `hostAwsMount` is enabled.
+
+#### Local clusters (kind): the mount is resolved on the node, not your workstation
+
+`hostAwsMount.hostPath` renders as a `hostPath` volume, which Kubernetes resolves
+**on the node**. On `kind` the node is itself a container and your `~/.aws` is
+not inside it: the path does not exist there, the volume's `type: Directory`
+check fails, and the Job pod never starts (`MountVolume.SetUp failed … is not a
+directory` in its events) while the release waits on the hook until
+`--timeout`. The chart cannot see this at render time, which is why
+`values.yaml` ships no `hostPath` default. Two ways through, neither of which
+puts long-lived keys in the cluster:
+
+**Map `~/.aws` into the node when you create the cluster.** kind's
+`extraMounts` bind-mounts a host directory into the node container; point
+`hostAwsMount.hostPath` at the *node-side* path. The host path must be absolute:
+kind does not expand `~` or `$HOME` — `hostPath: ~/.aws` is taken as a
+*relative* path, resolved against the directory you ran `kind create` from, and
+Docker then creates that `./~/.aws` (root-owned, empty) rather than failing. An
+absolute path is also why this is a snippet and not a checked-in file — a
+committed one is a single developer's home directory, silently wrong on every
+other machine.
+
+```yaml
+# kind-config.yaml (per machine — do not commit)
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraMounts:
+      - hostPath: /home/<you>/.aws   # absolute path on the workstation
+        containerPath: /host-aws
+        readOnly: true
+```
+
+```sh
+kind create cluster --name <name> --config kind-config.yaml
+helm upgrade --install <release> . -n <ns> ... \
+  --set omopDb.initJob.hostAwsMount.enabled=true \
+  --set omopDb.initJob.hostAwsMount.hostPath=/host-aws
+```
+
+The Job sees the mount as `/root/.aws` with `AWS_PROFILE=<omopDb.initJob.awsProfile>`,
+so that profile must exist in your `~/.aws/config` and its SSO session must be
+live on the host (`aws sso login`) before any install or upgrade that has to
+fetch — the mount is read-only, so the CLI inside the Job cannot refresh a
+token itself. One mapping serves `orthanc.initJob.hostAwsMount` and
+`flClient.hostAwsMount` too.
+
+**Or pre-seed the database from the host and leave the hook off.** Keep
+`omopDb.vocabLoad.s3Bucket` empty (the Job is then not rendered at all), fetch
+the bundle on the workstation, and run the loader the hook would have run over
+a port-forward. Needs `psql` on the host and either org S3 access
+(`make fetch-vocab-core`) or a self-built bundle — see `trust/omop-db/README.md`,
+"The core vocabulary bundle".
+
+```sh
+kubectl -n <ns> port-forward svc/omop-db 5999:5432 &
+PW=$(kubectl -n <ns> get secret <secret> \
+       -o jsonpath='{.data.omop-postgres-password}' | base64 -d)
+cd trust/omop-db && make fetch-vocab-core
+OMOP_DB_HOST=127.0.0.1 OMOP_DB_PORT=5999 OMOP_POSTGRES_USER=postgres \
+  OMOP_POSTGRES_PASSWORD="$PW" OMOP_POSTGRES_DB=trustomopdb \
+  ./files/load_core_vocab.sh data/vocab_aicentre_core_20240916 \
+    files/OMOPCDM_postgresql_5.4_constraints.sql
+```
+
+`<secret>` is `secrets.existingName`, or `<release>-flip-trust-secrets` when the
+chart creates it; the database is `dataAccessApi.env.OMOP_POSTGRES_DB` (default
+`trustomopdb`) and the user `omopDb.credentials.user` (`postgres`). The load is
+idempotent and takes ~25 min for the full bundle; afterwards
+`./files/load_core_vocab.sh --check` with the same environment exits 0. Restart
+`data-access-api` if any cohort query ran before the load — it caches results,
+so the empty answer would otherwise be replayed. Later `helm upgrade`s neither
+re-fetch nor undo the seeded vocabulary.
 
 The hook probes before it fetches: `probe-vocab` asks the database what is
 missing, and only if something is does `fetch-bundle` download the bundle. This
@@ -575,6 +650,10 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 - `aws s3 cp` denied in the `fetch-bundle` initContainer → wrong bucket for this
   environment (each env reads its own; no cross-account read), or no credentials
   (`omopDb.initJob.hostAwsMount` for local clusters, IRSA on EKS).
+- Job pod stuck in `ContainerCreating` with `MountVolume.SetUp failed … is not a
+  directory` → `hostAwsMount.hostPath` names a workstation path the node cannot
+  see (the `kind` case). Map it in with `extraMounts` or pre-seed instead — see
+  "Local clusters (kind)" above.
 - `/flip/omop/load_core_vocab.sh: No such file or directory` → the `omopDb.image.tag`
   in use predates FLIP#842; repull a CI-published tag.
 - Re-running `helm upgrade` is safe *and* cheap. The Job runs three stages —

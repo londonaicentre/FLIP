@@ -329,7 +329,7 @@ spec:
 {{- if .Values.flClient.hostAwsMount.enabled }}
         - name: host-aws
           hostPath:
-            path: {{ required "flClient.hostAwsMount.hostPath must be set when hostAwsMount is enabled (the node's ~/.aws, e.g. --set flClient.hostAwsMount.hostPath=$HOME/.aws)" .Values.flClient.hostAwsMount.hostPath | quote }}
+            path: {{ required "flClient.hostAwsMount.hostPath must be set when hostAwsMount is enabled — the AWS config dir ON THE NODE (on kind, the path an extraMounts entry maps ~/.aws to; e.g. --set flClient.hostAwsMount.hostPath=$HOME/.aws only where the node is this machine)" .Values.flClient.hostAwsMount.hostPath | quote }}
             type: Directory
 {{- end }}
 {{- end }}
