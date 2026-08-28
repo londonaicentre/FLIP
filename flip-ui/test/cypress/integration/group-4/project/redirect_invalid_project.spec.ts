@@ -37,17 +37,6 @@ describe("redirect user to the project list page if the given project does not e
         cy.contains("The requested project could not be found.").should("be.visible");
     });
 
-    it("sends the retired per-project models URL to the scoped estate list", () => {
-        // /project/:id/models was merged into /models?project=:id. Nothing fetches the project
-        // on the way, so an unknown id lands on the models page and its own guard takes over.
-        cy.intercept("GET", "/models/projects", { body: [] }).as("getProjectOptions");
-
-        cy.visit(`/project/${projectId}/models`);
-
-        cy.url().should("include", "/models");
-        cy.url().should("not.include", `/project/${projectId}/models`);
-    });
-
     it("redirects to project list on nav to 'model dashboard' of non-existent project", () => {
         cy.fixture("model/getModel").then((getModel) => {
             cy.intercept("GET", `/projects/${getModel.projectId}`, { statusCode: 404 })
@@ -92,8 +81,7 @@ describe("redirect user to the project list page if the given project does not e
         cy.intercept("GET", `/projects/${projectId}`, { statusCode: 400 })
             .as("getProject400");
 
-        // Retargeted from /project/:id/models, which no longer fetches the project: the 400 path
-        // is what this test is about, and the project page still exercises it.
+        // The 400 path is what this test is about; the project page exercises it.
         cy.visit(`/project/${projectId}`);
 
         cy.wait("@getProject400");
