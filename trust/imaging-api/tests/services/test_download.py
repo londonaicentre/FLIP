@@ -14,6 +14,7 @@ import os
 import shutil
 import tempfile
 import zipfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -121,6 +122,42 @@ class TestUnzipFile:
 
             assert result == os.path.join(tmp_dir, "ACC123")
             assert os.path.exists(os.path.join(result, "scan.nii"))
+            assert not os.path.exists(zip_path)  # zip deleted
+
+    def test_real_xnat_layout_merges_into_populated_accession_dir(self):
+        """Re-extracting over a populated accession dir merges; it must not 500.
+
+        Real XNAT scan zips (``/scans/ALL/files?format=zip``) carry the experiment
+        label — the accession id — as their top-level folder, never the zip's own
+        stem. So on a force-refresh / upload-invalidation re-download the rename
+        branch in ``unzip_file`` is skipped (``<extract_dir>/<zip stem>`` never
+        exists) and extraction merges member-by-member into the already-populated
+        accession dir: no ``FileExistsError``/``ENOTEMPTY``. Files absent from the
+        new zip are deliberately left behind — replacing the merge with an
+        extract-to-temp-and-swap is #1026.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            accession_dir = os.path.join(tmp_dir, "ACC123")
+            member_rel = os.path.join("scans", "1", "resources", "NIFTI", "files", "input_1.nii.gz")
+            os.makedirs(os.path.join(accession_dir, os.path.dirname(member_rel)))
+            with open(os.path.join(accession_dir, member_rel), "w") as f:
+                f.write("old-data")
+            stale_file = os.path.join(accession_dir, "old_file.txt")
+            with open(stale_file, "w") as f:
+                f.write("stale")
+
+            # Top-level folder is the accession id, NOT the zip stem "ACC123-scans-NIFTI".
+            zip_path = os.path.join(tmp_dir, "ACC123-scans-NIFTI.zip")
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.writestr(f"ACC123/{member_rel.replace(os.sep, '/')}", "new-data")
+
+            result = unzip_file(zip_path, tmp_dir, "ACC123")
+
+            assert result == accession_dir
+            with open(os.path.join(accession_dir, member_rel)) as f:
+                assert f.read() == "new-data"  # same-name member overwritten
+            assert os.path.exists(stale_file)  # unrelated pre-existing file untouched
+            assert not os.path.exists(os.path.join(tmp_dir, "ACC123-scans-NIFTI"))
             assert not os.path.exists(zip_path)  # zip deleted
 
     def test_not_found_raises_file_not_found_error(self):
@@ -408,6 +445,172 @@ class TestDownloadAndUnzipImages:
             await download_and_unzip_images(
                 "hub-proj-1", "ACC1", "some-net", "scan", "NIFTI", headers
             )
+
+
+# ── download cache (FLIP#953) ──
+
+
+def _fake_unzip(zip_path, extract_dir, new_name):
+    """Stands in for unzip_file: creates and returns the accession dir like the real one."""
+    accession_dir = os.path.join(extract_dir, new_name)
+    os.makedirs(accession_dir, exist_ok=True)
+    return accession_dir
+
+
+def _seed_cached_download(base, net_id, project, accession, assessor="scan", resource="NIFTI"):
+    """Materialises a completed cached download: accession dir + payload + completeness sentinel."""
+    accession_dir = os.path.realpath(os.path.join(base, net_id, project, accession))
+    os.makedirs(accession_dir, exist_ok=True)
+    Path(accession_dir, "scan.nii").write_text("nifti-data")
+    Path(accession_dir, f".flip_complete-{assessor}-{resource}").touch()
+    return accession_dir
+
+
+class TestDownloadCache:
+    """A completed (net, project, accession, assessor, resource) download is served from local
+    disk without touching XNAT; the completeness sentinel — not file presence — is the key,
+    because extraction merges member-by-member and a crash can leave a partial folder."""
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.download.unzip_file")
+    @patch("imaging_api.services.download.download_file")
+    @patch("imaging_api.services.download.get_subject_id_from_experiment_response")
+    @patch("imaging_api.services.download.get_experiment")
+    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
+    async def test_cache_hit_skips_xnat_entirely(
+        self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, mock_unzip, headers, tmp_path
+    ):
+        accession_dir = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+
+        with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)):
+            result = await download_and_unzip_images("hub-proj-1", "ACC123", "net1", "scan", "NIFTI", headers)
+
+        assert result == accession_dir
+        for xnat_mock in (mock_get_project, mock_get_exp, mock_get_subj, mock_download, mock_unzip):
+            xnat_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.download.unzip_file", side_effect=_fake_unzip)
+    @patch("imaging_api.services.download.download_file", side_effect=lambda url, dest, headers: dest)
+    @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
+    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
+    async def test_cache_miss_downloads_then_writes_sentinel(
+        self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, mock_unzip, headers, tmp_path
+    ):
+        mock_get_project.return_value = MagicMock(ID="PROJ1")
+
+        with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)):
+            result = await download_and_unzip_images("hub-proj-1", "ACC123", "net1", "scan", "NIFTI", headers)
+
+        project_dir = os.path.realpath(os.path.join(str(tmp_path), "net1", "hub-proj-1"))
+        assert result == os.path.join(project_dir, "ACC123")
+        assert os.path.isfile(os.path.join(result, ".flip_complete-scan-NIFTI"))
+        # Extraction must be rooted in the per-project dir so the accession folder lands inside it.
+        _, extract_dir, new_name = mock_unzip.call_args[0]
+        assert extract_dir == project_dir
+        assert new_name == "ACC123"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("requested_resource", ["DICOM", "ALL"])
+    @patch("imaging_api.services.download.unzip_file", side_effect=_fake_unzip)
+    @patch("imaging_api.services.download.download_file", side_effect=lambda url, dest, headers: dest)
+    @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
+    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
+    async def test_sentinel_is_exact_match_per_resource_type(
+        self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, mock_unzip,
+        requested_resource, headers, tmp_path
+    ):
+        """A cached NIFTI download must not satisfy a DICOM request, nor an ALL request —
+        sentinels match exactly per (assessor, resource)."""
+        mock_get_project.return_value = MagicMock(ID="PROJ1")
+        _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123", resource="NIFTI")
+
+        with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)):
+            await download_and_unzip_images("hub-proj-1", "ACC123", "net1", "scan", requested_resource, headers)
+
+        mock_download.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.download.unzip_file", side_effect=_fake_unzip)
+    @patch("imaging_api.services.download.download_file", side_effect=lambda url, dest, headers: dest)
+    @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
+    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
+    async def test_sentinel_is_per_project(
+        self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, mock_unzip, headers, tmp_path
+    ):
+        """Two projects sharing an accession must not be served each other's copies — their
+        XNAT content can differ (e.g. per-project label enrichment)."""
+        mock_get_project.return_value = MagicMock(ID="PROJ1")
+        _seed_cached_download(str(tmp_path), "net1", "hub-proj-A", "ACC123")
+
+        with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)):
+            result = await download_and_unzip_images("hub-proj-B", "ACC123", "net1", "scan", "NIFTI", headers)
+
+        mock_download.assert_called_once()
+        assert result == os.path.realpath(os.path.join(str(tmp_path), "net1", "hub-proj-B", "ACC123"))
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.download.unzip_file", side_effect=_fake_unzip)
+    @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
+    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
+    async def test_force_refresh_invalidates_before_redownload(
+        self, mock_get_project, mock_get_exp, mock_get_subj, mock_unzip, headers, tmp_path
+    ):
+        """force_refresh must remove the sentinel BEFORE the re-download starts (a crash
+        mid-refresh must not leave a stale completeness marker) and rewrite it on success."""
+        mock_get_project.return_value = MagicMock(ID="PROJ1")
+        accession_dir = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+        sentinel = os.path.join(accession_dir, ".flip_complete-scan-NIFTI")
+
+        def _download_asserting_sentinel_gone(url, dest, headers):
+            assert not os.path.exists(sentinel), "sentinel must be gone before the re-download starts"
+            return dest
+
+        with (
+            patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)),
+            patch(
+                "imaging_api.services.download.download_file", side_effect=_download_asserting_sentinel_gone
+            ) as mock_download,
+        ):
+            result = await download_and_unzip_images(
+                "hub-proj-1", "ACC123", "net1", "scan", "NIFTI", headers, force_refresh=True
+            )
+
+        mock_download.assert_called_once()
+        assert result == accession_dir
+        assert os.path.isfile(sentinel)
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.download.download_file", side_effect=Exception("connection reset"))
+    @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
+    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
+    async def test_failed_download_leaves_no_sentinel(
+        self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, headers, tmp_path
+    ):
+        mock_get_project.return_value = MagicMock(ID="PROJ1")
+
+        with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)):
+            with pytest.raises(Exception, match="Failed to download file"):
+                await download_and_unzip_images("hub-proj-1", "ACC123", "net1", "scan", "NIFTI", headers)
+
+        sentinel = os.path.join(str(tmp_path), "net1", "hub-proj-1", "ACC123", ".flip_complete-scan-NIFTI")
+        assert not os.path.exists(sentinel)
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
+    async def test_project_id_path_traversal_is_rejected(self, mock_get_project, headers, tmp_path):
+        """The project cache segment is user-controlled; a traversal value must be rejected
+        before any XNAT call."""
+        with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)):
+            with pytest.raises(ValueError, match="Path traversal detected in central hub project ID"):
+                await download_and_unzip_images("../../escape", "ACC1", "net1", "scan", "NIFTI", headers)
+
+        mock_get_project.assert_not_called()
 
 
 class TestDownloadFileLocalWriteFailure:

@@ -186,6 +186,7 @@ The main playbook. It can be run standalone or via the `provision-local-trust` M
 | Variable | Default | Description |
 | --- | --- | --- |
 | `flip_dir` | `/opt/flip` | Root application directory |
+| `fl_backend` | `nvflare` | FL backend this trust will run. Sets the group/mode of the per-net images bind sources (`<flip_dir>/data/images/net-N`) — the Flower client runs as uid/gid 49999, not imaging-api's 1000, so it needs group 49999 + `0775` to write there. `provision-local-trust` passes the deployment's `FL_BACKEND` automatically. |
 
 **Direct usage** (without the Makefile):
 
