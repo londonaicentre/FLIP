@@ -1,7 +1,7 @@
 [project]
-name = "spleen-segmentation-tutorial"
+name = "spleen-dataset-tools"
 version = "0.1.0"
-description = "Local uv environment for the 3D spleen segmentation tutorial utilities."
+description = "Local uv environment for the shared spleen dataset tooling (MSD download + accession CSV)."
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "monai>=1.5.1",

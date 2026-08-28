@@ -16,7 +16,7 @@ FLIP/
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
 ├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (all Client-API), fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
-├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
+├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion. Shared dataset tooling in fl-tutorials/datasets/ (download/derive/enrich, single copy for both backends — the download-*-data + upload-spleen-labels targets), outputs in the shared gitignored fl-tutorials/data/. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
 ├── map-apps/           # MONAI Application Package (MAP) templates for packaging FLIP-trained models for clinical deployment
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
@@ -160,7 +160,7 @@ cause. (Older app copies die with torch's opaque `num_samples=0` instead.)
 
 `e2e_smoke` has a hook for exactly this: `--data-enrichment-cwd` + `--data-enrichment-cmd` run a shell command
 **between the image pull and training**, with `FLIP_PROJECT_ID` exported. Since FLIP#776 the spleen uploader is
-in-tree at `fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/utils/upload_spleen_labels_to_xnat.py`
+in-tree at `fl-tutorials/datasets/spleen/upload_spleen_labels_to_xnat.py` (the shared dataset-tooling tree)
 — **no private repo required**. It resolves each trust's XNAT project by `secondary_ID == <FLIP project_id>`,
 fetches the accession→MSD-case mapping at run time from the public `aicentreflip/trust-data` dataset
 (`omop-csv/<version>/spleen_project/image_occurrence.csv`, which also carries `source_trust`), and writes each
@@ -199,8 +199,8 @@ instead:
 cd flip-api && uv run python -m tests.e2e_smoke \
   --model-files-dir ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/app_files \
   --query-file ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql \
-  --data-enrichment-cwd ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation \
-  --data-enrichment-cmd 'uv run --no-project --with ../../../../flip-utils python utils/upload_spleen_labels_to_xnat.py --flip-project-id "$FLIP_PROJECT_ID" --labels-dir ../../data/spleen/images --xnat-url http://127.0.0.1:8104 --xnat-url http://127.0.0.1:8106'
+  --data-enrichment-cwd ../fl-tutorials/datasets/spleen \
+  --data-enrichment-cmd 'uv run --no-project --with ../../../flip-utils python upload_spleen_labels_to_xnat.py --flip-project-id "$FLIP_PROJECT_ID" --labels-dir ../../data/spleen/images --xnat-url http://127.0.0.1:8104 --xnat-url http://127.0.0.1:8106'
 ```
 
 (The `$`-escaping trap still applies to any hand-written `EXTRA_ARGS`: `make -C flip-api …` expands once, so
@@ -210,7 +210,7 @@ there. The in-Makefile targets handle this for you. Note that `e2e_smoke_spleen`
 tutorial (`../fl-tutorials/flower/3d_spleen_segmentation/{app,query.sql}`), not the NVFLARE paths shown in the
 direct-invocation example above — pair it with `FL_BACKEND=flower`, or invoke `tests.e2e_smoke` directly with
 the NVFLARE paths for the NVFLARE tutorial. The enrichment step itself is backend-agnostic and runs out of the
-NVFLARE tree either way.)
+shared `fl-tutorials/datasets/spleen/` tree either way.)
 
 Enrichment must land **after** the pull and after DICOM→NIfTI conversion; the hook's position guarantees that.
 The uploader derives each target filename from the converted `input_*.nii.gz`, so with no `NIFTI` resource it
@@ -448,7 +448,7 @@ After changes, evaluate if docs need updating:
 
 ## CI/CD
 
-GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `fl-tutorials-tests.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `fl-tutorials-tests.yml`, `test_map_apps.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
 
 ### Docker image builds: gated on tests, manual trigger for branches
 

@@ -30,19 +30,38 @@ declare namespace Cypress {
         pinia: Pinia;
     }
 
-    interface Chainable {
+    /**
+    * Options accepted by cy.login — the type is owned by the implementation in
+    * test/cypress/support/cognito.ts. The inline import() keeps this file a
+    * script: a top-level import would turn it into a module and stop this
+    * `declare namespace Cypress` from merging into the global one.
+    */
+    type LoginOptions = import("./cypress/support/cognito").LoginOptions;
+
+    interface Chainable<Subject = any> {
         /**
          * Get DOM element by data-test attribute.
          *
+         * Yields what the underlying cy.get yields. Declared as such rather than as
+         * Chainable<Subject>: called on `cy` the current subject is `undefined`, so a
+         * `.then(($el) => ...)` off the result would type `$el` as `undefined`.
+         *
          * @param {string} selector - The data-test attribute of the target DOM element.
-         * @return {HTMLElement} - Target DOM element
+         * @return {JQuery<HTMLElement>} - Target DOM element(s)
          */
-        getBySel(value: string): Chainable<Subject>,
+        getBySel(
+            value: string,
+            options?: Partial<Loggable & Timeoutable & Withinable & Shadow>
+        ): Chainable<JQuery<HTMLElement>>,
         /**
          * Login in to AWS Cognito via Amplify Auth API bypassing UI.
-         * @param {string=} [username] - [optional] - The username of the account to login with.
-         * @param {string=} [password] - [optional] - The password of the account to login with.
+         *
+         * Accepts either an options object or, for the legacy call sites that
+         * predate it, a bare username string — matching the implementation in
+         * test/cypress/support/cognito.ts.
+         *
+         * @param {LoginOptions|string=} [options] - [optional] - Login options, or a username.
          */
-        login(username: string = "", password: string = ""): Chainable<Subject>
+        login(options?: LoginOptions | string): Chainable<Subject>
     }
 }
