@@ -11,6 +11,7 @@
 #
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -306,6 +307,42 @@ async def test_report_task_result_includes_error_in_result():
     payload = call_args[1]["json"]
     assert payload["success"] is False
     assert "Something went wrong" in payload["result"]
+
+
+@pytest.mark.asyncio
+async def test_report_task_result_forwards_status_code():
+    """The hub classifies a failed imaging-status refresh on the upstream status code (FLIP#1022),
+    so it has to survive the trip through the result payload."""
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    await _report_task_result(
+        mock_client, "task-123",
+        {"success": False, "error": "404: Project not found", "status_code": 404},
+    )
+
+    payload = json.loads(mock_client.post.call_args[1]["json"]["result"])
+    assert payload["status_code"] == 404
+    assert payload["error"] == "404: Project not found"
+
+
+@pytest.mark.asyncio
+async def test_report_task_result_omits_absent_status_code():
+    """Handlers that report no status code must not gain a null one."""
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    await _report_task_result(
+        mock_client, "task-123",
+        {"success": False, "error": "Something went wrong"},
+    )
+
+    payload = json.loads(mock_client.post.call_args[1]["json"]["result"])
+    assert "status_code" not in payload
 
 
 # ---- _process_task ----

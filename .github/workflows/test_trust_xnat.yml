@@ -16,6 +16,8 @@ name: Trust - XNAT CI
 # guard parity tests read their inputs from outside trust/xnat/tests/, so every
 # file they assert on has to trigger this workflow — otherwise a change to a
 # guard (or to the credential minter) lands with the test that pins it unrun.
+# The dcm2niix-pin-sync job below likewise reads four files scattered across the
+# repo, so each of those triggers the workflow too.
 on:
   push:
     branches: [main, develop]
@@ -30,10 +32,14 @@ on:
       - "Makefile"
       - "flip-api/Makefile"
       - "deploy/fl_backend.mk"
+      - "deploy/instance.mk"
       - "trust/xnat/xnat/wait-for-postgres.sh"
       - "trust/xnat/postgres/guard-xnat-db-passwords.sh"
       - "trust/imaging-api/imaging_api/config.py"
       - "flip-api/src/flip_api/scripts/generate_xnat_credentials.py"
+      - "trust/xnat/dcm2niix/**"
+      - "trust/xnat/xnat/config/dcm2niix_command.json"
+      - "deploy/providers/kubernetes/templates/xnat-init-job.yaml"
       - ".github/workflows/test_trust_xnat.yml"
   pull_request:
     branches: [main, develop]
@@ -48,10 +54,14 @@ on:
       - "Makefile"
       - "flip-api/Makefile"
       - "deploy/fl_backend.mk"
+      - "deploy/instance.mk"
       - "trust/xnat/xnat/wait-for-postgres.sh"
       - "trust/xnat/postgres/guard-xnat-db-passwords.sh"
       - "trust/imaging-api/imaging_api/config.py"
       - "flip-api/src/flip_api/scripts/generate_xnat_credentials.py"
+      - "trust/xnat/dcm2niix/**"
+      - "trust/xnat/xnat/config/dcm2niix_command.json"
+      - "deploy/providers/kubernetes/templates/xnat-init-job.yaml"
       - ".github/workflows/test_trust_xnat.yml"
 
 permissions:
@@ -78,3 +88,16 @@ jobs:
 
       - name: Run XNAT tests
         run: make unit_test
+
+  # Backstop for the xnat-dcm2niix-pin-sync pre-commit hook, for commits made without pre-commit
+  # installed. Kept a separate job (no Python, no uv) because it is a two-second grep and must stay
+  # cheap enough to run on any of the four pin sites changing.
+  dcm2niix-pin-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Check the dcm2niix image pin is in sync
+        run: ./trust/xnat/dcm2niix/check_image_pin_sync.sh

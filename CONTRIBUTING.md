@@ -51,7 +51,11 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
 ### Prerequisites
 
 - A Linux development host; a CUDA-capable GPU is required for GPU-backed tutorials and training
-- [Docker Engine](https://docs.docker.com/engine/install/) with Compose and Swarm mode
+- [Docker Engine](https://docs.docker.com/engine/install/) with Compose and Swarm mode. The trust
+  slot-collision guard identifies a running stack's owning kit through Compose's
+  `com.docker.compose.project.environment_file` container label (verified live on Compose v5.1.3);
+  a Compose too old to record that label does not lose the protection — the guard fails closed,
+  refusing the operation with an explicit "the kit that owns them cannot be identified" stop
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   on GPU hosts
 - GNU Make, `jq`, and `curl`
