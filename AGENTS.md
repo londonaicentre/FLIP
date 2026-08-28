@@ -16,7 +16,7 @@ FLIP/
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
 ├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (all Client-API), fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
-├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
+├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion. Shared dataset tooling in fl-tutorials/datasets/ (download/derive/enrich, single copy for both backends — the download-*-data + upload-spleen-labels targets), outputs in the shared gitignored fl-tutorials/data/. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
 ├── map-apps/           # MONAI Application Package (MAP) templates for packaging FLIP-trained models for clinical deployment
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
@@ -159,7 +159,7 @@ cause. (Older app copies die with torch's opaque `num_samples=0` instead.)
 
 `e2e_smoke` has a hook for exactly this: `--data-enrichment-cwd` + `--data-enrichment-cmd` run a shell command
 **between the image pull and training**, with `FLIP_PROJECT_ID` exported. Since FLIP#776 the spleen uploader is
-in-tree at `fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/utils/upload_spleen_labels_to_xnat.py`
+in-tree at `fl-tutorials/datasets/spleen/upload_spleen_labels_to_xnat.py` (the shared dataset-tooling tree)
 — **no private repo required**. It resolves each trust's XNAT project by `secondary_ID == <FLIP project_id>`,
 fetches the accession→MSD-case mapping at run time from the public `aicentreflip/trust-data` dataset
 (`omop-csv/<version>/spleen_project/image_occurrence.csv`, which also carries `source_trust`), and writes each
@@ -198,8 +198,8 @@ instead:
 cd flip-api && uv run python -m tests.e2e_smoke \
   --model-files-dir ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/app_files \
   --query-file ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql \
-  --data-enrichment-cwd ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation \
-  --data-enrichment-cmd 'uv run --no-project --with ../../../../flip-utils python utils/upload_spleen_labels_to_xnat.py --flip-project-id "$FLIP_PROJECT_ID" --labels-dir ../../data/spleen/images --xnat-url http://127.0.0.1:8104 --xnat-url http://127.0.0.1:8106'
+  --data-enrichment-cwd ../fl-tutorials/datasets/spleen \
+  --data-enrichment-cmd 'uv run --no-project --with ../../../flip-utils python upload_spleen_labels_to_xnat.py --flip-project-id "$FLIP_PROJECT_ID" --labels-dir ../../data/spleen/images --xnat-url http://127.0.0.1:8104 --xnat-url http://127.0.0.1:8106'
 ```
 
 (The `$`-escaping trap still applies to any hand-written `EXTRA_ARGS`: `make -C flip-api …` expands once, so
@@ -209,7 +209,7 @@ there. The in-Makefile targets handle this for you. Note that `e2e_smoke_spleen`
 tutorial (`../fl-tutorials/flower/3d_spleen_segmentation/{app,query.sql}`), not the NVFLARE paths shown in the
 direct-invocation example above — pair it with `FL_BACKEND=flower`, or invoke `tests.e2e_smoke` directly with
 the NVFLARE paths for the NVFLARE tutorial. The enrichment step itself is backend-agnostic and runs out of the
-NVFLARE tree either way.)
+shared `fl-tutorials/datasets/spleen/` tree either way.)
 
 Enrichment must land **after** the pull and after DICOM→NIfTI conversion; the hook's position guarantees that.
 The uploader derives each target filename from the converted `input_*.nii.gz`, so with no `NIFTI` resource it
@@ -258,6 +258,7 @@ run the stack on them with `make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`.
 ```bash
 uv run ruff check . --fix  # Lint with auto-fix
 uv run mypy .              # Static type checking
+make checkov-lint          # Static checkov security lint over deploy/providers/AWS (credential-free; FLIP#1052/#1058)
 ```
 
 ### Debugging
@@ -446,7 +447,7 @@ After changes, evaluate if docs need updating:
 
 ## CI/CD
 
-GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `fl-tutorials-tests.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `fl-tutorials-tests.yml`, `test_map_apps.yml`, `docker_build_*.yml`, `validate_terraform.yml` (fmt/validate + a checkov security lint over `deploy/providers/AWS/**` — IAM policy content plus promoted posture checks; static, credential-free; local run `make checkov-lint` **from the repo root** (the AWS Makefile's parse-time env guard blocks the `-C` form for contributors), deliberate breadth/posture suppressed in-code with `# checkov:skip=<ID>:<rationale>` — FLIP#1052, FLIP#1058), `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
 
 ### Docker image builds: gated on tests, manual trigger for branches
 
@@ -481,6 +482,7 @@ TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict marker
 - Internal service key for fl-server-to-hub auth (separate from trust keys).
 - Trust-internal service key for trust-api / imaging-api / fl-client → imaging-api / data-access-api auth (per-trust, never leaves trust env). See **Trust-internal Service Authentication** below.
 - FL clients intentionally have no Central Hub credentials.
+- Each fl-client mounts only its own net's slice of the images tree (`<BASE_IMAGES_DOWNLOAD_DIR>/net-N`, at the unchanged container path `/app/data/images/net-N`) so training code cannot read another net's cached studies; imaging-api keeps the whole-tree mount. The slice is what bounds the imaging-api download cache below: cached studies now survive across rounds (and, on Flower, across jobs — it has no `CleanupImages`), so a whole-tree mount would hand every client a durable copy of every other net's cohort rather than a within-job one. The `net-N` mount sources must be pre-created writable by imaging-api's uid and the client (which also writes: `flip.add_resource` staging, NVFLARE `CleanupImages`): trust `Makefile` `$(ensure_net_dirs)` (ownership-aware — the on-prem bring-up runs under sudo), AWS `site.yml`, the on-prem `site_local_trust.yml`, K8s `images-init`. A Docker/kubelet/sudo-created root-owned mount source breaks those writes (downloads 500 → `num_samples=0`). Ownership is **backend-aware**: NVFLARE's client shares imaging-api's uid so owner write suffices (`0755`), but Flower's is built on upstream `flwr/base` and runs as `app` (uid/gid 49999), so its `net-N` dirs are group-writable — group `49999` + `0775` on the prod/on-prem/K8s paths, the host GID + `0775` in dev (where the compose already `group_add`s it). All four pre-creation paths fail loudly rather than warn when they cannot apply this.
 - Cohort-query validation is three-layer and **deliberately asymmetric — do not "sync" the layers**. Only the trust-side `data_access_api.services.cohort.validate_query` is authoritative (single parse-validate-emit; length, single-statement, SELECT-only, no `INSERT`/`UPDATE`/`DELETE`/`MERGE` anywhere in the tree — a writable CTE parses as a top-level `Select`, so the shape check alone misses it — `omop`-schema pin, literal `LIMIT`/`OFFSET`; re-emits from the checked AST; backed by the read-only `data_analyst_reader` role — pass its return value to the engine, never the caller's raw string). The hub-side `flip_api.cohort_services.submit_cohort_query.validate_query` is a *fast-feedback validity pre-check only, not a security control*: it exists so a malformed query fails in-hand instead of after an async fan-out to every trust, and enforces only what every trust would reject anyway. The flip-ui cohort form validates required-field only. A trust must stay safe regardless of what the hub checked, so hub drift is safe by construction. **No layer uses a keyword denylist** — the removed one blocked legitimate `SUBSTRING()` while stopping nothing; blind extraction is defeated by the literal-`LIMIT` rule and DDL/DML by the read-only role. See [`trust/data-access-api/README.md`](trust/data-access-api/README.md#cohort-query-validation).
 - Row-level cohort egress is gated on `COHORT_QUERY_THRESHOLD` at **both** row-level routes — `/cohort/dataframe` (FL training data) and `/cohort/accession-ids` (the accession list that decides whose imaging is pulled into XNAT) — sharing one fixed refusal string so a below-threshold cohort is indistinguishable from an empty one. The threshold is the trust's own disclosure floor (default 10, set per trust in its kit file), enforced trust-side rather than relying on the hub's staging guard. Both gates evaluate the **live** cohort on every call: FLIP stores the cohort only as a SQL string and re-runs it against OMOP at every stage, so a project can import cleanly and later start refusing (FLIP#857).
 - Do not hardcode env values in Dockerfiles or compose files.

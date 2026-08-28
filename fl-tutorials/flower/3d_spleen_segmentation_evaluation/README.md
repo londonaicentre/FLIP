@@ -11,13 +11,6 @@
     limitations under the License.
 -->
 
----
-
-tags: [quickstart]
-dataset: [spleen]
-framework: [monai]
----
-
 # Federated Evaluation with MONAI and Flower
 
 This example uses a MONAI UNet for 3D spleen segmentation in an evaluation-only mode. It loads a pre-trained model checkpoint and performs federated evaluation across multiple client nodes.

@@ -282,6 +282,13 @@ For data access:
 
 These calls - among others - communicate with the Imaging API and retrieve the data from the project's XNAT.
 
+The first ``get_by_accession_number`` call per (project, accession, resource type) is a full study download out of
+XNAT onto the trust host. The Imaging API caches it there, so later calls — e.g. the same fetch loop running again on
+the next FL round — return the local copy without touching XNAT. Training code can therefore call it every round
+without penalty and should not build its own on-disk guards around it; to force a re-download after the accession's
+content changed in XNAT, the Imaging API's download route accepts ``force_refresh=true`` (uploads through
+``flip.add_resource`` invalidate the cache automatically).
+
 For communication with the Central Hub:
 - `flip.update_status(model_id, new_model_status)`: these calls will update the Central Hub about status on the specific model that is running (example: when it started training, or if there's an error).
 - `flip.send_metrics(client_name, model_id, label, value, global_round, x_value=None, x_label=None)`: sends a metric to the central hub so that it can plot the training results. ``global_round`` is provenance — always the FL global round the metric is reported in. Where the point is *plotted* is the optional coordinate pair: ``x_value`` is the x-coordinate (any float, e.g. an epoch counter) and ``x_label`` names the x-axis (e.g. ``"epoch"``); both default to the global round on the "Global Rounds" axis. A plot is identified by the ``(label, x_label)`` pair, so the same metric logged against different x-labels is shown as separate plots.
@@ -434,7 +441,7 @@ the description above:
 - for every NVFLARE job type the user upload is intentionally minimal — see :ref:`fl-required-files` for the per-job-type set — and the rest of the app is filled in from
   the static (non-modifiable) templates baked into the flip-api image at `FL_APP_BASE_DIR` (`fl-apps/`, see FLIP#724).
   These templates used to be published to an S3 bucket; that path has been removed. You can check what a fully bundled app looks like by consulting
-  the per-job-type implementations under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`_.
+  the per-job-type implementations under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`__.
 - every NVFLARE job type takes a plain training/evaluation script that calls
   ``nvflare.client`` directly (`fed_opt` reuses `standard`'s trainer contract unchanged).
 
