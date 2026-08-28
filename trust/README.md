@@ -121,6 +121,124 @@ See dedicated README under [omop-db/README.md](omop-db/README.md) for instructio
 
 `make up` (and `make up-trust KIT=<name>`) brings up that trust's XNAT automatically — it is no longer a separate step. See the dedicated README under [xnat/README.md](xnat/README.md) for standalone XNAT management and debugging.
 
+## MONAI Label (optional)
+
+MONAI Label adds AI-assisted annotation to the XNAT OHIF viewer: a **MONAI Label** menu in the
+viewer's Masks panel that runs a segmentation model over the scan on screen and lets a user
+correct the result interactively.
+
+> **Prerequisite: the XNAT OHIF Viewer plugin, which FLIP does not install by default** — it
+> drives the bulk-import livelock in FLIP#662 (see the plugin table in
+> [xnat/README.md](xnat/README.md)). Enabling MONAI Label means accepting it back onto that
+> trust's XNAT.
+
+It is **off by default** — it needs an NVIDIA GPU on the trust host and pulls a large image, so
+a trust that does not want it is unaffected. Enable it per trust:
+
+```sh
+make up-trust KIT=<CODE> MONAI_LABEL=true       # or set MONAI_LABEL=true in trust/.env.<CODE>.<env>
+```
+
+The trust's kit file carries the rest of the settings:
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MONAI_LABEL` | `false` | Master switch. Requires `NUM_AVAILABLE_GPUS>0`. |
+| `MONAI_LABEL_PORT` | `8030` | Host port the server listens on. |
+| `MONAI_LABEL_MODELS` | `deepedit` | Comma-separated radiology models. `all` loads nine, each downloading its own weights. |
+| `MONAI_LABEL_PROJECTS` | *(empty)* | XNAT projects the server may read. Empty means **every** project on this trust. |
+| `MONAI_LABEL_PUBLIC_URL` | `http://localhost:$MONAI_LABEL_PORT` | See below — this one matters. |
+| `MONAI_LABEL_SHM_SIZE` | `8gb` | Shared memory for dataloader workers. |
+| `MONAI_LABEL_BIND_HOST` | `127.0.0.1` | Host interface `MONAI_LABEL_PORT` is published on. Loopback by default — see below. |
+| `MONAI_LABEL_AUTH_ENABLE` | `false` | MONAI Label's own auth. Upstream default; enabling it needs an OAuth realm FLIP does not run. |
+
+**`MONAI_LABEL_PUBLIC_URL` is the setting people get wrong.** XNAT stores this URL and hands it
+to the OHIF viewer, which calls it **from the clinician's browser** — XNAT never proxies the
+request. So it must resolve on the clinician's machine: a Docker service name, or `0.0.0.0`,
+will not work. The default only works when the browser runs on the trust host itself. Two
+further consequences on a real trust:
+
+- If XNAT is served over **HTTPS**, the browser blocks a plain-`http://` MONAI Label URL as
+  mixed content. Terminate TLS in front of MONAI Label, or serve it through the XNAT nginx so
+  it is same-origin.
+- The MONAI Label API is **unauthenticated** and holds this trust's XNAT service-account
+  credentials. Anyone who can reach the port can enumerate every study the server can see,
+  download identifiable DICOM, and write labels back to XNAT as an admin. `MONAI_LABEL_AUTH_ENABLE`
+  is upstream's own switch, but turning it on requires an OAuth realm FLIP does not run — so
+  the containment is the network, not the app.
+
+  Because of that, **`MONAI_LABEL_BIND_HOST` defaults to `127.0.0.1`**: out of the box the port
+  is published on loopback only, and the trust host gains no listener reachable from the
+  network (the trust deployment model is otherwise strictly outbound — see
+  [Deployment Architecture](../CLAUDE.md)). That default is deliberately *not* browser-usable
+  from another machine. To give clinicians access, pick one:
+
+  1. **Serve it through the XNAT nginx** (recommended) — same-origin with XNAT, so it also
+     resolves the mixed-content problem above, and it inherits XNAT's TLS.
+  2. **Set `MONAI_LABEL_BIND_HOST`** to an interface you have explicitly firewalled to the
+     clinical network, and set `MONAI_LABEL_PUBLIC_URL` to match.
+
+**Each user must switch the panel on themselves**, once per browser: in the viewer, *Options →
+Preferences → Experimental*, tick **MONAILabel Tools**. A **MONAI Label** entry then appears in
+the Masks panel. Registering the server is automatic, but this flag is not, and it cannot be
+defaulted from the server — the viewer keeps it in the browser's `localStorage`. Until it is
+ticked, a perfectly working server is simply absent from the viewer; that is the first thing to
+check when it "isn't showing up", followed by `GET /xapi/ohifaiaa/servers` returning the URL and
+that URL opening in the browser.
+
+Two known stock-viewer defects (both client-side — the server returns valid masks throughout,
+verifiable in the monailabel container's logs):
+
+- *"Empty mask was returned by the model run"* from every interactive model (`sam_2d`,
+  `deepgrow_*`) while `deepedit_seg` still works: the tab's segment state has gone stale —
+  **reload the tab**.
+- Interactive (DeepGrow-type) results always land in the **first segment**, regardless of which
+  segment is selected — the viewer routes the mask through an active-segment index that segment
+  selection does not update (observed in the OHIF **viewer frontend** 3.7.2 that ships inside
+  XNAT OHIF **plugin** 3.8.0; the 3.7.0 frontend did not have the reworked segment store —
+  note the frontend and plugin carry separate version numbers). Until fixed upstream, treat
+  SAM/DeepGrow as single-target — rename the first segment afterwards — and use `deepedit_seg`
+  for multi-organ work.
+
+### Getting labels back out: the `export_mask` pipeline
+
+A mask saved in the viewer lands in XNAT as a **DICOM-SEG assessor**, which FL training cannot
+read — it consumes NIfTI. `trust/xnat/xnat/config/configure-export-mask.sh` closes that gap: it
+registers an `export_mask` container-service command plus a site-wide event subscription on
+image-assessor creation, so every saved segmentation is converted to NIfTI and uploaded back to
+the session automatically. Nothing upstream does this step.
+
+Two things to know:
+
+- **It is registered only when `MONAI_LABEL=true`.** `make xnat-configure` gates it (see
+  `xnat-configure-export-mask` in `trust/xnat/Makefile`), so a trust without MONAI Label gets
+  neither the converter command nor the subscription. **If you enable MONAI Label on a trust
+  that was already up, re-run `make -C trust/xnat xnat-configure KIT=<CODE>`** (or bring XNAT
+  up again) — otherwise the annotation UI works but masks are never converted.
+- **The converter image is currently `atriaybagur/aic-ohif-dicomseg-to-nifti:latest`** — a
+  personal Docker Hub namespace on a mutable tag, pulled and run on the trust network with
+  XNAT admin credentials injected by the container service. Moving it to
+  `ghcr.io/londonaicentre` on an immutable digest is outstanding; until then, treat enabling
+  MONAI Label as also trusting that image.
+
+Notes:
+
+- **SAM is always on**, independently of `MONAI_LABEL_MODELS`: the radiology app registers
+  `sam_2d` and `sam_3d` (interactive click-to-segment) whenever the `sam2` package is
+  importable. Their checkpoint is a further ~900 MB fetched from HuggingFace on first start,
+  into the same persisted model directory. Upstream's `--conf sam2 false` would disable them,
+  but `entrypoint.sh` passes only `--conf models`, so there is currently no way to turn SAM off
+  from the kit file — it would need an entrypoint change.
+- The server reads DICOM straight off this trust's XNAT archive (mounted read-only), falling
+  back to HTTP downloads only for scans it cannot resolve there.
+- Pretrained weights are fetched on first start and persisted in the `monailabel-models`
+  volume, so a container recreate does not re-download them.
+- Production (`PROD=true|stag`) runs the published `ghcr.io/londonaicentre/monailabel` image
+  (built by `docker_build_monailabel.yml`; dev builds locally from `trust/monailabel/`).
+  Enabling it under `PROD` prints a warning: it re-introduces the OHIF viewer plugin that trust
+  XNAT deliberately excludes (FLIP#662) — intended for hybrid/on-prem annotation trusts, not
+  high-volume cohort pullers.
+
 ## Running standalone (remote trust operator)
 
 If you are operating a trust on a host that does not have the hub's

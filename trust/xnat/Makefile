@@ -12,6 +12,7 @@
 
 .PHONY: build up down up-xnat down-xnat xnat-shell xnat-stack-down clean \
 	xnat-war-download xnat-plugins-download xnat-reset xnat-configure \
+	xnat-configure-export-mask \
 	create-xnat-network test unit_test local_test
 
 # Mirrors trust/Makefile: no hub `.env.*` include. Runtime config (DOCKER_REGISTRY,
@@ -84,6 +85,11 @@ endif
 # check_network_matches_trust below verifies rather than trusts — an unprefixed XNAT beside a
 # prefixed trust deploys healthily and simply cannot reach imaging-api.
 include ../../deploy/instance.mk
+# Whether this trust runs MONAI Label. Read from the kit file by the -include above, or
+# passed on the command line (which Make forwards to this sub-make automatically). Gates
+# export_mask registration in xnat-configure — see xnat-configure-export-mask. Mirrors the
+# same default in trust/Makefile.
+MONAI_LABEL ?= false
 # Slot NUMBER the hub assigned this trust, read from the kit file — NOT a
 # substring of the CODE. Drives the stack name (xnat<N>) and overlay network
 # ($(INSTANCE_PREFIX)deploy_trust-network-<N>); trust/Makefile derives TRUST_NUM from
@@ -332,7 +338,7 @@ xnat-plugins-download:
 	  echo "   Set it in .env.development (see the 'S3 Buckets' block), or pass it on the command"; \
 	  echo "   line: make xnat-plugins-download FLIP_ARTIFACTS_BUCKET_NAME=<bucket>."; \
 	  exit 1; }
-	@./scripts/ensure_plugins.sh "xnat/plugins" "$(FLIP_ARTIFACTS_BUCKET_NAME)" "xnat-$(XNAT_VERSION)/plugins"
+	@MONAI_LABEL="$(strip $(MONAI_LABEL))" ./scripts/ensure_plugins.sh "xnat/plugins" "$(FLIP_ARTIFACTS_BUCKET_NAME)" "xnat-$(XNAT_VERSION)/plugins"
 
 # Creates the data-volume directory structure for one trust's XNAT stack and
 # wipes any previous data. Docker Swarm requires host directories to exist
@@ -396,6 +402,39 @@ xnat-configure:
 	[ -n "$$CONTAINER" ] || { echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container not found at configure time"; exit 1; }; \
 	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"' && \
 	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
+	$(MAKE) xnat-configure-export-mask XNAT_PROJECT=$(XNAT_PROJECT)
+
+# export_mask (DICOM-SEG -> NIfTI) is registered ONLY when this trust runs MONAI Label.
+#
+# It is deliberately NOT part of the unconditional chain above. The command it registers
+# launches a converter container, and its subscription is site-wide (a DICOM-SEG can be
+# created in any project by anyone using the OHIF viewer, so there is no per-project opt-in
+# like dcm2niix's dicom_to_nifti flag). A trust that never enables MONAI Label has no OHIF
+# viewer plugin installed, so it can never produce the assessors this reacts to — registering
+# it there would add a converter image and a site-wide event subscription that trust never
+# asked for. Gating also keeps the unconditional bring-up path free of a new failure point:
+# in stag/prod the config dir comes from the image (xnat/Dockerfile `ADD config`) — only the
+# development stack bind-mounts it from the host (docker-compose-stack.development.yml) — so
+# against an xnat-web image predating this feature the script simply does not exist there.
+#
+# Consequence of gating (documented in trust/README.md): a trust that turns MONAI Label on
+# later must re-run `make -C trust/xnat xnat-configure KIT=<CODE>` (or bring XNAT up again)
+# to register the command and subscription.
+xnat-configure-export-mask:
+ifeq ($(strip $(MONAI_LABEL)),true)
+	@[ -n "$(XNAT_PROJECT)" ] || (echo "❌ XNAT_PROJECT is required"; exit 1)
+	@echo "🧠 MONAI_LABEL=true — registering the export_mask (DICOM-SEG → NIfTI) command..."
+	CONTAINER=$$(docker ps --filter "name=$(XNAT_PROJECT)_xnat-web" -q); \
+	[ -n "$$CONTAINER" ] || { echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container not found"; exit 1; }; \
+	docker exec $$CONTAINER bash -c 'test -f /data/xnat/config/configure-export-mask.sh' || { \
+		echo "❌ ERROR: configure-export-mask.sh is not in this xnat-web image."; \
+		echo "   The XNAT config dir is baked into the image, so MONAI_LABEL=true needs an"; \
+		echo "   xnat-web image that carries it — rebuild, or bump XNAT_TAG to a newer tag."; \
+		exit 1; }; \
+	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-export-mask-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash configure-export-mask.sh 2>&1 | tee "$$LOG_FILE"'
+else
+	@echo "⏭️  MONAI_LABEL is not true — skipping export_mask registration."
+endif
 
 # Guard: XNAT and the trust core services must share one network. up-trust brings the trust
 # compose up before invoking us, so the trust's real attachment is observable — compare it

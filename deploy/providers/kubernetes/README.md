@@ -210,6 +210,48 @@ Available services:
 | `observability.loki` | Log aggregation | Yes |
 | `observability.alloy` | Log collection agent | No (DaemonSet) |
 | `observability.grafana` | Metrics dashboard | Yes |
+| `monailabel` | Optional AI-assisted annotation in the XNAT OHIF viewer (off by default) | Yes |
+
+### MONAI Label (optional)
+
+Off by default — needs an NVIDIA GPU node and a ~10.4 GB image. Enable with:
+
+```yaml
+monailabel:
+  enabled: true
+  publicUrl: "http://<node-ip>:30030"   # REQUIRED: the clinician's BROWSER calls this —
+                                        # XNAT stores it and never proxies it
+```
+
+Chart-specific notes (the full operational guide, including the stock-viewer quirks, is
+[trust/README.md#monai-label-optional](../../../trust/README.md#monai-label-optional)):
+
+- Reads DICOM straight off xnat-web's archive PVC (read-only `archive` subPath). With the
+  default `ReadWriteOnce` storage the pod is pinned to xnat-web's node
+  (`coScheduleWithXnat: true`); only set it `false` on an RWX storage class.
+- Exposed as a `NodePort` (default `30030`) so the browser can reach it. When
+  `service.allowExternalIngress` and `networkPolicies.enabled` are set, a NetworkPolicy opens
+  the **pod** port (`monailabel.port`, default `8030`) through the namespace's default-deny
+  ingress — NodePort traffic is DNAT'd to the pod port before policy evaluation, so that is
+  the port the rule names, not `30030`.
+- **Scope that policy with `monailabel.allowedIngressCIDRs`.** Left empty (the default) the
+  ingress rule has no `from:`, and a NetworkPolicy rule without `from:` matches **every**
+  source, in and out of cluster. That is the fallback because the chart cannot know where
+  clinicians browse from, but the API behind it is unauthenticated (`monailabel.authEnable`
+  is upstream's own switch and needs an OAuth realm FLIP does not run) and holds the XNAT
+  service-account credentials. Set the subnets your clinicians use, e.g.
+  `allowedIngressCIDRs: ["10.0.0.0/8"]`.
+- Pretrained weights (incl. the ~900 MB SAM checkpoint) persist in the
+  `<release>-monailabel-models` PVC; first start on a cold volume takes minutes (the startup
+  probe allows 30).
+- The chart's XNAT already ships the `ohif-viewer` plugin in its roster (`xnat.web.plugins`),
+  so no extra plugin step — unlike the compose trust, which deliberately excludes it (FLIP#662).
+- **No `export_mask` converter here.** The compose trust registers a container-service command
+  that turns saved DICOM-SEG assessors into the NIfTI that FL training consumes
+  (`trust/xnat/xnat/config/configure-export-mask.sh`, run from `xnat-configure`); the chart's
+  `xnat-init-job` has no equivalent. So on Kubernetes the annotation UI works but masks are
+  not auto-converted — the inverse of the compose trust, which has the converter and excludes
+  the viewer.
 
 ### External Service Override
 
@@ -469,13 +511,14 @@ old install on the previous chart version.
 - **Pod Security & container hardening**: the chart-created namespace
   carries Pod Security Standards labels (`enforce=baseline`, `warn`/`audit=restricted`
   by default — tune via `podSecurity.*`), and the stateless services
-  (trust-api, imaging-api, data-access-api, fl-client)
+  (trust-api, imaging-api, data-access-api, fl-client) plus `monailabel`
   apply a container `securityContext` (`allowPrivilegeEscalation: false`, drop
   `ALL` capabilities, `seccompProfile: RuntimeDefault`) from `.Values.securityContext`.
   `runAsNonRoot` / `readOnlyRootFilesystem` are left opt-in (image-dependent).
-  **Remaining for full `restricted` enforcement:** the stateful images
-  (`xnat-web`, `xnat-db`, `omop-db`, `orthanc`) need `fsGroup`/chown init
-  containers before they can run non-root.
+  **Remaining for full `restricted` enforcement:** the images that own a
+  PersistentVolume (`xnat-web`, `xnat-db`, `omop-db`, `orthanc`, and `monailabel`
+  — whose weights PVC the server writes at model-load time) need `fsGroup`/chown
+  init containers before they can run non-root.
 
 ## Development
 

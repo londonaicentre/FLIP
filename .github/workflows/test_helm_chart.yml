@@ -106,6 +106,35 @@ jobs:
             --set omopDb.external.host=test.example.com \
             > /dev/null
 
+      # monailabel.enabled defaults false, so every other render skips its whole body —
+      # render coverage only: the kind install job must NOT enable it (the image is
+      # ~10.4 GB and needs a GPU, neither of which kind has). Also asserts the
+      # publicUrl `required` guard actually fires, since it is the one setting that
+      # cannot be defaulted (the clinician's browser calls it — see trust/README.md).
+      - name: Render template (monailabel enabled)
+        run: |
+          helm template trust-release deploy/providers/kubernetes/ \
+            --set monailabel.enabled=true \
+            --set monailabel.publicUrl=http://node.example.com:30030 > /tmp/monailabel.yaml
+          if ! grep -q "flip-trust.*-monailabel" /tmp/monailabel.yaml; then
+            echo "::error::monailabel resources did not render with monailabel.enabled=true"
+            exit 1
+          fi
+          # Assert the guard fires AND fires for the right reason. Testing only "helm exited
+          # non-zero" would be satisfied by a typo'd chart path, an unrelated schema error, or
+          # any broken sibling template — a vacuous pass of exactly the kind this workflow
+          # calls out elsewhere. Capture stderr and match the guard's own message.
+          if helm template trust-release deploy/providers/kubernetes/ \
+            --set monailabel.enabled=true > /tmp/monailabel-noguard.out 2>&1; then
+            echo "::error::monailabel rendered without publicUrl — the required guard is gone"
+            exit 1
+          fi
+          if ! grep -q "monailabel.publicUrl is required" /tmp/monailabel-noguard.out; then
+            echo "::error::render without publicUrl failed, but not on the publicUrl guard:"
+            cat /tmp/monailabel-noguard.out
+            exit 1
+          fi
+
       # omopDb.vocabLoad.s3Bucket defaults to "" (the licensed bundle has no public
       # mirror — FLIP#842/843), so every other render in this job skips the
       # vocab-load Job. Without this step its ~110-line body is never rendered in

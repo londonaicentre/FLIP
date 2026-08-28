@@ -615,7 +615,7 @@ xnat:
         container-service: "https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar"
         dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar"
         batch-launch: "https://api.bitbucket.org/2.0/repositories/xnatx/xnatx-batch-launch-plugin/downloads/batch-launch-0.9.0-xpl.jar"
-        ohif-viewer: "https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.7.2.jar"
+        ohif-viewer: "https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.8.0-fat.jar"
     env:
       XNAT_EMAIL: ""
       XNAT_MIN_HEAP: "1024m"
@@ -667,6 +667,63 @@ xnat:
       limits:
         memory: "256Mi"
         cpu: "200m"
+
+# ---------------------------------------------------------------------------
+# MONAI Label — optional AI-assisted annotation in the XNAT OHIF viewer
+# ---------------------------------------------------------------------------
+# Off by default: needs an NVIDIA GPU node and pulls a ~10.4GB image. Mirrors the compose
+# overlay (trust/deploy/compose_trust.*.monailabel.yml); operational caveats — the
+# browser-reachable URL, the unauthenticated API, the stock-viewer quirks — are documented
+# in trust/README.md#monai-label-optional.
+monailabel:
+  enabled: false
+  image:
+    repository: ghcr.io/londonaicentre/monailabel
+    tag: stag
+    pullPolicy: IfNotPresent
+  port: 8030
+  # Radiology models to load. 'all' loads nine, each downloading its own weights; the SAM
+  # tasks (sam_2d/sam_3d) register whenever the sam2 package is importable, independent of
+  # this list.
+  models: "deepedit"
+  # Comma-separated XNAT project allowlist; empty means every project on this trust.
+  projects: ""
+  # REQUIRED when enabled: the URL the clinician's BROWSER uses to reach the service
+  # (e.g. http://<node-ip>:30030). XNAT stores it and hands it to the OHIF viewer — it is
+  # never proxied, so a cluster-internal name will not work.
+  publicUrl: ""
+  # /dev/shm for dataloader workers (emptyDir, medium: Memory).
+  shmSize: 8Gi
+  gpu:
+    enabled: true
+    count: 1
+  # Pin the pod to xnat-web's node so the archive PVC (ReadWriteOnce by default) can be
+  # mounted read-only here too. Set false only on an RWX storage class.
+  coScheduleWithXnat: true
+  service:
+    type: NodePort
+    # Fixed nodePort (30000-32767) so publicUrl stays stable; empty lets the cluster pick.
+    nodePort: 30030
+    # Adds a NetworkPolicy opening the service port on this pod through the namespace's
+    # default-deny ingress — required for browser access when networkPolicies.enabled.
+    allowExternalIngress: true
+  # Sources allowed through that NetworkPolicy, as CIDRs. EMPTY MEANS EVERY SOURCE, in and
+  # out of cluster — a NetworkPolicy ingress rule with no `from:` matches all. That is the
+  # fallback because the clinician's browser calls this pod directly and the chart cannot
+  # know where from, but it is not a good default to leave in place: the API behind it is
+  # unauthenticated (see authEnable) and holds the XNAT service-account credentials. Set the
+  # subnets your clinicians browse from, e.g. ["10.0.0.0/8"].
+  allowedIngressCIDRs: []
+  # MONAI Label's own auth. Its default is False and its RBAC dependencies are no-ops while
+  # it is, so every /datastore route is open to whoever reaches the port. Enabling it needs
+  # an OAuth realm (MONAI_LABEL_AUTH_REALM_URI et al) that FLIP does not run — so treat
+  # allowedIngressCIDRs, not this, as the control until such a realm exists.
+  authEnable: false
+  persistence:
+    # Pretrained weights (incl. the ~900MB SAM checkpoint).
+    size: 20Gi
+    storageClassName: ""
+  resources: {}
 
 # ---------------------------------------------------------------------------
 # Observability Stack — Loki, Alloy, Grafana
