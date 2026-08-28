@@ -9,21 +9,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Backend-aware entrypoint for the FL tutorial runners. The actual runner + harness live
-# per-backend under fl-tutorials/<backend>/ (fl-tutorials/nvflare/ and fl-tutorials/flower/). This thin
-# Makefile forwards every target to fl-tutorials/$(FL_BACKEND)/ so the documented entrypoint
+# Backend-aware entrypoint for the FL tutorial runners. The runner + harness live per-backend
+# under fl-tutorials/<backend>/ (fl-tutorials/nvflare/ and fl-tutorials/flower/); the shared
+# dataset tooling lives in fl-tutorials/datasets/ (outputs in the gitignored fl-tutorials/data/,
+# one download serving both backends). This thin Makefile forwards each target to the right
+# sub-make so the documented entrypoint
 #   make -C fl-tutorials <target> [TUTORIAL=... NUM_CASES=...]
 # keeps working and selects the backend via FL_BACKEND (default nvflare). Command-line
 # variables are forwarded to the sub-make automatically.
 FL_BACKEND ?= nvflare
 
-TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials \
-	download-xray-data download-spleen-data upload-spleen-labels \
+TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials
+# Dataset targets are backend-agnostic (shared data root, single copy in datasets/);
+# FL_BACKEND still selects a per-harness variant where one exists (the two spleen downloads).
+DATASET_TARGETS := download-xray-data download-spleen-data upload-spleen-labels \
 	download-arkplus-finetuning-data download-arkplus-eval-data
 
-.PHONY: $(TUTORIAL_TARGETS)
+.PHONY: $(TUTORIAL_TARGETS) $(DATASET_TARGETS)
 $(TUTORIAL_TARGETS):
 	@$(MAKE) --no-print-directory -C $(FL_BACKEND) $@
+
+$(DATASET_TARGETS):
+	@$(MAKE) --no-print-directory -C datasets $@ FL_BACKEND=$(FL_BACKEND)
 
 # ---------------------------------------------------------------------------
 # Lint / autoformat the tutorial sources. Runs ruff over the whole tree; ruff
