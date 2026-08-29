@@ -11,49 +11,152 @@
 #
 
 import base64
-import binascii
-from unittest.mock import patch
+import json
 
 import pytest
+from cryptography.exceptions import InvalidTag
 
-from flip_api.utils.encryption import decrypt, encrypt, get_aes_key
+from flip_api.utils import encryption
+from flip_api.utils.encryption import SHARED_KID, _reset_caches, decrypt, encrypt, kid_for_trust
 
-# Must be exactly 32 bytes (AES-256)
+# Must be exactly 32 bytes (AES-256).
 RAW_KEY_BYTES = b"ThisIsExactly32BytesLongKey!!!!1"
 ENCODED_KEY = base64.b64encode(RAW_KEY_BYTES).decode()
+TRUST_KEY_B64 = base64.b64encode(b"AnotherExactly32ByteAESKey!!!!!2").decode()
 
 
-@pytest.fixture
-def mock_settings():
-    """Mock settings for AWS region."""
-    with (
-        patch("flip_api.utils.encryption.get_settings") as mock_get_settings,
-        patch("flip_api.utils.encryption._aes_key_cache", None),
-    ):
-        mock_get_settings.return_value.ENV = "production"
-        mock_get_settings.return_value.AES_KEY_BASE64 = ENCODED_KEY
-        yield mock_get_settings
+@pytest.fixture(autouse=True)
+def _shared_key_settings(monkeypatch):
+    """Point the shared key at ``RAW_KEY_BYTES`` and clear key env/caches per test."""
+
+    class _S:
+        ENV = "development"
+        AES_KEY_BASE64 = ENCODED_KEY
+
+    monkeypatch.setattr(encryption, "get_settings", lambda: _S())
+    for var in ("AES_TRUST_KEYS", "TRUST_AES_KID", "TRUST_AES_KEY_BASE64"):
+        monkeypatch.delenv(var, raising=False)
+    _reset_caches()
+    yield
+    _reset_caches()
 
 
-def test_encryption_decryption_roundtrip():
-    plaintext = "This is a test message"
-    encrypted = encrypt(plaintext, RAW_KEY_BYTES)
-    decrypted = decrypt(encrypted, RAW_KEY_BYTES)
-    assert decrypted == plaintext
+def _envelope(payload: str) -> dict:
+    return json.loads(base64.b64decode(payload))
 
 
-def test_get_aes_key_returns_decoded_bytes(mock_settings):
-    with patch("flip_api.utils.encryption.get_secret", return_value=ENCODED_KEY):
-        key = get_aes_key()
-        assert key == RAW_KEY_BYTES
+def _reseal(envelope: dict) -> str:
+    return base64.b64encode(json.dumps(envelope).encode()).decode()
 
 
-def test_get_aes_key_raises_if_secret_invalid_base64(mock_settings):
-    with patch("flip_api.utils.encryption.get_secret", return_value="not-base64"):
-        with pytest.raises(binascii.Error, match="Invalid base64-encoded string"):
-            get_aes_key()
+def test_roundtrip_via_keyring():
+    assert decrypt(encrypt("hello world")) == "hello world"
+
+
+def test_roundtrip_explicit_key():
+    assert decrypt(encrypt("secret", RAW_KEY_BYTES), RAW_KEY_BYTES) == "secret"
+
+
+def test_default_kid_is_shared():
+    envelope = _envelope(encrypt("x"))
+    assert envelope["kid"] == SHARED_KID
+    assert envelope["v"] == 1
+
+
+def test_tampered_ciphertext_fails_closed():
+    envelope = _envelope(encrypt("do not tamper"))
+    raw = bytearray(base64.b64decode(envelope["ct"]))
+    raw[0] ^= 0x01  # flip one bit
+    envelope["ct"] = base64.b64encode(bytes(raw)).decode()
+    with pytest.raises(InvalidTag):
+        decrypt(_reseal(envelope))
+
+
+def test_kid_swap_fails_closed():
+    """The kid is bound into the AAD, so relabelling the envelope must not decrypt."""
+    envelope = _envelope(encrypt("bound to kid", RAW_KEY_BYTES, kid="kid-a"))
+    envelope["kid"] = "kid-b"
+    with pytest.raises(InvalidTag):
+        decrypt(_reseal(envelope), RAW_KEY_BYTES)
+
+
+def test_unknown_kid_raises():
+    with pytest.raises(KeyError):
+        decrypt(encrypt("x", RAW_KEY_BYTES, kid="does-not-exist"))
+
+
+def test_unsupported_version_raises():
+    envelope = _envelope(encrypt("x"))
+    envelope["v"] = 99
+    with pytest.raises(ValueError, match="Unsupported payload version"):
+        decrypt(_reseal(envelope))
+
+
+def test_own_trust_key_is_used_by_default(monkeypatch):
+    """A service configured with its own key encrypts under that kid, no extra flag."""
+    monkeypatch.setenv("TRUST_AES_KID", "trust-GSTT")
+    monkeypatch.setenv("TRUST_AES_KEY_BASE64", TRUST_KEY_B64)
+    _reset_caches()
+    payload = encrypt("per-trust")
+    assert _envelope(payload)["kid"] == "trust-GSTT"
+    assert decrypt(payload) == "per-trust"
+
+
+def test_hub_encrypts_to_a_specific_trust(monkeypatch):
+    monkeypatch.setenv("AES_TRUST_KEYS", json.dumps({"trust-abc": TRUST_KEY_B64}))
+    _reset_caches()
+    assert decrypt(encrypt("to a trust", kid="trust-abc")) == "to a trust"
+
+
+def test_kid_for_trust_uses_per_trust_key_when_present(monkeypatch):
+    monkeypatch.setenv("AES_TRUST_KEYS", json.dumps({"trust-abc": TRUST_KEY_B64}))
+    _reset_caches()
+    assert kid_for_trust(trust_id="abc") == "trust-abc"
+
+
+def test_kid_for_trust_falls_back_when_unprovisioned():
+    assert kid_for_trust(trust_id="abc") == SHARED_KID
 
 
 def test_invalid_key_length_raises():
-    with pytest.raises(ValueError, match="Invalid key size"):
+    with pytest.raises(ValueError, match="key must be 128, 192, or 256 bits"):
         encrypt("data", b"short")
+
+
+# --- temporary AES-CBC compatibility shim (delete with the shim) ---------------
+
+
+def _legacy_cbc_payload(plaintext: str, key: bytes = RAW_KEY_BYTES) -> str:
+    """Produce a payload in the pre-GCM format, exactly as an un-upgraded peer would."""
+    import os
+
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    iv = os.urandom(16)
+    padder = padding.PKCS7(128).padder()
+    padded = padder.update(plaintext.encode()) + padder.finalize()
+    encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+    return base64.b64encode(iv + encryptor.update(padded) + encryptor.finalize()).decode()
+
+
+def test_legacy_cbc_from_unupgraded_peer_still_decrypts():
+    assert decrypt(_legacy_cbc_payload("task payload")) == "task payload"
+
+
+def test_legacy_cbc_accepted_with_explicit_key():
+    assert decrypt(_legacy_cbc_payload("x"), RAW_KEY_BYTES) == "x"
+
+
+def test_legacy_cbc_rejected_once_disabled(monkeypatch):
+    monkeypatch.setenv("AES_ACCEPT_LEGACY_CBC", "false")
+    _reset_caches()
+    with pytest.raises(ValueError, match="Legacy AES-CBC payload rejected"):
+        decrypt(_legacy_cbc_payload("x"))
+
+
+def test_gcm_still_works_when_legacy_disabled(monkeypatch):
+    """Turning the shim off must not affect the real format."""
+    monkeypatch.setenv("AES_ACCEPT_LEGACY_CBC", "false")
+    _reset_caches()
+    assert decrypt(encrypt("still fine")) == "still fine"

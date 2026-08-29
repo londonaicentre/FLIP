@@ -23,6 +23,11 @@ export interface ICreatedTrust {
     // the hub past the response. Surface to the admin in a one-time modal.
     trust_api_key: string;
     trust_internal_service_key: string;
+    // Payload-encryption key + key-id for this trust. Also returned once and stored
+    // nowhere hub-side: unlike the api key, a symmetric key cannot be reduced to a
+    // hash, so an admin who does not record it here must re-register to get another.
+    trust_aes_key: string;
+    trust_aes_kid: string;
     // FL kit slot the hub claimed for this trust from the pre-provisioned pool.
     // The operator's fl-clients mount the matching workspace/net-N/services/<slot>
     // provisioned kit dirs; fl_kit_slot_number picks the Flower supernode key.

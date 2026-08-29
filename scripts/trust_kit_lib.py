@@ -15,10 +15,11 @@ dev distributor, the prod distributor, and the hub-shared sync. Merges a kit
 dict (as emitted by ``flip_api.scripts.register_trust``) into a kit file while
 preserving the operator's host-local edits:
 
-- Credentials (``TRUST_API_KEY`` / ``TRUST_INTERNAL_SERVICE_KEY``) are written
-  only when present in the kit (a new registration). The idempotent skip path
-  omits them, so an existing kit's credentials are never clobbered (the hub
-  stores only hashes and cannot re-emit plaintext).
+- Credentials (``TRUST_API_KEY`` / ``TRUST_INTERNAL_SERVICE_KEY`` /
+  ``TRUST_AES_KEY_BASE64`` / ``TRUST_AES_KID``) are written only when present in
+  the kit (a new registration). The idempotent skip path omits them, so an
+  existing kit's credentials are never clobbered (the hub stores only hashes,
+  and does not retain the AES key at all, so neither can be re-emitted).
 - Metadata (``EXPECTED_TRUST_ID`` / ``FL_KIT_SLOT`` / ``FL_KIT_SLOT_NUMBER``)
   is present on both paths and upserted unconditionally.
 - The hub-shared block is upserted under a sentinel header; the header is added
@@ -70,7 +71,19 @@ HUB_SHARED_KEYS: tuple[str, ...] = (
 )
 
 # Plaintext credentials — written once on a new registration, never on skip.
-CREDENTIAL_KEYS: tuple[str, ...] = ("TRUST_API_KEY", "TRUST_INTERNAL_SERVICE_KEY")
+CREDENTIAL_KEYS: tuple[str, ...] = (
+    "TRUST_API_KEY",
+    "TRUST_INTERNAL_SERVICE_KEY",
+    "TRUST_AES_KEY_BASE64",
+)
+
+# Written commented-out, with its value preserved. Setting TRUST_AES_KID live is what
+# switches a trust onto its own key, and doing that before the hub holds the same key
+# breaks both directions: the trust encrypts to the hub under a kid the hub cannot
+# resolve, and the hub encrypts to the trust under a kid the trust has not loaded.
+# The kit therefore ships the value ready to use but inert — see
+# docs/aes-payload-keys.md for the enablement order.
+COMMENTED_CREDENTIAL_KEYS: tuple[str, ...] = ("TRUST_AES_KID",)
 
 # Metadata — present on both the new-registration and idempotent-skip paths.
 METADATA_KEYS: tuple[str, ...] = ("EXPECTED_TRUST_ID", "FL_KIT_SLOT", "FL_KIT_SLOT_NUMBER")
@@ -79,6 +92,8 @@ METADATA_KEYS: tuple[str, ...] = ("EXPECTED_TRUST_ID", "FL_KIT_SLOT", "FL_KIT_SL
 _FIELD_BY_ENV_KEY: dict[str, str] = {
     "TRUST_API_KEY": "trust_api_key",
     "TRUST_INTERNAL_SERVICE_KEY": "trust_internal_service_key",
+    "TRUST_AES_KEY_BASE64": "trust_aes_key",
+    "TRUST_AES_KID": "trust_aes_kid",
     "EXPECTED_TRUST_ID": "trust_id",
     "FL_KIT_SLOT": "fl_kit_slot",
     "FL_KIT_SLOT_NUMBER": "fl_kit_slot_number",
@@ -109,6 +124,41 @@ def upsert(lines: list[str], key: str, value: str) -> list[str]:
             out.append(line)
     if not replaced:
         out.append(f"{key}={value}")
+    return out
+
+
+def upsert_commented(lines: list[str], key: str, value: str) -> list[str]:
+    """Upsert ``# KEY=value`` — the value is delivered, but inert until uncommented.
+
+    Distinct from :func:`comment_out`, which discards the value. Here the operator
+    needs the value in the file to enable it later, so it must survive; and distinct
+    from :func:`upsert`, which would make it live immediately.
+
+    An existing *live* ``KEY=`` line is left alone: an operator who has deliberately
+    enabled the key must not have it silently switched off by a re-registration.
+
+    Args:
+        lines (list[str]): Current file lines (no trailing newlines).
+        key (str): Env var name to write commented.
+        value (str): Value to preserve behind the comment.
+
+    Returns:
+        list[str]: A new list of lines with the key present as ``# KEY=value``.
+    """
+    if any(not ln.lstrip().startswith("#") and ln.split("=", 1)[0] == key for ln in lines):
+        return lines
+
+    out: list[str] = []
+    replaced = False
+    for line in lines:
+        bare = line.lstrip("#").lstrip()
+        if not replaced and line.lstrip().startswith("#") and bare.split("=", 1)[0] == key:
+            out.append(f"# {key}={value}")
+            replaced = True
+        else:
+            out.append(line)
+    if not replaced:
+        out.append(f"# {key}={value}")
     return out
 
 
@@ -200,6 +250,11 @@ def write_kit(target: Path, kit: dict, example: Path | None = None, hub_shared_c
         value = kit.get(_FIELD_BY_ENV_KEY[env_key])
         if value is not None:
             lines = upsert(lines, env_key, str(value))
+
+    for env_key in COMMENTED_CREDENTIAL_KEYS:
+        value = kit.get(_FIELD_BY_ENV_KEY[env_key])
+        if value is not None:
+            lines = upsert_commented(lines, env_key, str(value))
 
     if hub_shared_commented:
         # Dev kit: document the hub-shared keys under the sentinel but keep them

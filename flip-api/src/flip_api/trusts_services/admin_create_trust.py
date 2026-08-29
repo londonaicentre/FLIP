@@ -103,6 +103,8 @@ def admin_create_trust(
         created_at=registered.trust.created_at,
         trust_api_key=registered.trust_api_key,
         trust_internal_service_key=registered.trust_internal_service_key,
+        trust_aes_key=registered.trust_aes_key,
+        trust_aes_kid=registered.trust_aes_kid,
         fl_kit_slot=registered.fl_kit_slot.slot_name,
         fl_kit_slot_number=registered.fl_kit_slot.slot_number,
     )
