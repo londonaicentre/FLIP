@@ -76,7 +76,7 @@ make up
 ```
 
 If Swarm is already active, `docker swarm init` reports that and can be skipped. Open `https://localhost` for the UI
-and `http://localhost:8080/docs` for the Central Hub API documentation.
+and `http://localhost:8080/api/docs` for the Central Hub API documentation.
 
 ### Load the OMOP vocabulary
 
