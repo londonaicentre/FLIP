@@ -58,11 +58,21 @@ tolerate the DICOM vocab already present in the tarballs):
   in the pgdata volume; rotate via `ALTER ROLE` + kit update, or rebuild volumes with a new `.env.build`
   value (see CONTRIBUTING.md).
 - **Canonical dataset + N-trust split** (`src/omop_db_tools/dataset.py`): mock rows are ONE dataset on
-  HF (`omop-csv/<version>/`), each row tagged `source_trust`. Partition modes: `legacy` (default —
-  reproduces the original two-trust membership; REQUIRED for data consistent with the published mock
-  Orthanc PACS volumes, whose studies match each trust's accession IDs) and `modulo`
-  (`person_id % N`, any trust count, needs regenerated imaging data). All tables carry `person_id`, so
-  person-level partitioning preserves referential integrity.
+  HF (`omop-csv/<version>/`), each row carrying `source_trust` — the trust it belongs to, decided by
+  the dataset's generator. Partition modes: `source_trust` (default; `legacy` is an accepted alias —
+  the old name from when the mode existed only to match the two-trust cut frozen in the Orthanc
+  tarballs) and `modulo` (`person_id % N`, only for a dataset with no partition column). The
+  partition is *data*, and the per-project DICOM sets are keyed on the same column, so OMOP and PACS
+  agree by construction (#1100). All tables carry `person_id`, so person-level partitioning preserves
+  referential integrity. `CANONICAL_TABLES` is in FK-safe order — loads as listed, cleans reversed —
+  because the seed path targets a constrained, vocab-loaded running trust.
+- **Seeding a running trust** (#1100): `make -C trust seed KIT=<CODE> PROJECTS="…"` loads the listed
+  projects' rows (`import_tables --clean projects`, by the projects' own `person_id`s — Synthea rows
+  and other projects untouched, one transaction per project) and their DICOMs (`orthanc/seed_orthanc.py`)
+  into that trust, selected by `source_trust == FL_KIT_SLOT_NUMBER`. Same lifecycle as
+  `load-omop-vocab`: one-time post-snapshot, idempotent, persists in the bind-mounted volume. A
+  `.seeded` marker beside `db_data` makes `update_omop_data.sh` refuse to re-snapshot on a bump
+  without `FORCE=1`. `populate` is the same loader with `--clean all`.
 - The populate scripts run on the **host** against published ports (`OMOP_DB_HOST` defaults to
   localhost) and need postgresql-client (`psql`/`pg_isready`).
 
@@ -77,6 +87,7 @@ make up-build / down-build          # the standalone per-trust build DBs
 make populate [NUM_TRUSTS=N PARTITION=modulo]  # core vocab + DICOM vocab + N trust slices (shipped
                                                # stack is two-trust; N>2 needs a compose service + port)
 make populate CORE_VOCAB=0          # vocab-free flavour for publishable tarballs (skip apply-constraints!)
+make seed-omop TRUST_INDEX=2 OMOP_DB_PORT=5436 PROJECTS="…"  # seed a RUNNING trust; normally via `make -C trust seed KIT=…`
 make export-pgdata                  # tar each volume -> dist/trust<N>_pgdata_<.data_version>.tar
 make apply-constraints              # AFTER a full populate
 make push [OMOP_DB_TAG=...]         # manual publish escape hatch (CI publishes normally); confirms first

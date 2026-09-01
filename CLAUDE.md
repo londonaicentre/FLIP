@@ -280,7 +280,22 @@ make -C flip-api create_testing_projects   # Create test projects
 make -C flip-api delete_testing_projects   # Clean up test data
 make seed-demo-projects                    # Curated radiology catalogue in honest lifecycle states
                                            # (EXTRA_ARGS="--cleanup" removes it again)
+make -C trust seed-trusts PROJECTS="spleen_project cxr_project"   # Seed the RUNNING dev trusts with datasets (#1100)
+make -C trust seed KIT=GSTT PROJECTS="…"   # one trust; seed-omop / seed-orthanc for one half
 ```
+
+**Trust data has two paths.** `make up` mounts pre-built snapshots (`update-omop-data` /
+`update-orthanc-data`, pinned by the two `.data_version` files) — a fixed two-project, two-trust cut.
+**Seeding** loads a chosen set of projects into a *running* trust instead: OMOP rows via
+`omop_db_tools.import_tables` and DICOMs via `trust/orthanc/seed_orthanc.py`, both selected by the
+same `source_trust` column of the published canonical tables, so a trust's OMOP rows and the studies
+in its PACS agree by construction. Same lifecycle as `load-omop-vocab`: one-time after `up-trusts`,
+idempotent, persists in the bind-mounted volumes until a `.data_version` bump — which the update
+scripts then refuse to apply over a seeded volume without `FORCE=1`. Adding a dataset means
+publishing its `omop-csv/<v>/<project>/` tables and `dicom/<v>/<project>.tar.gz`
+(`trust/orthanc/publish_dicom.py` verifies both agree before packaging), not a new pair of tarballs.
+The FL simulator (`make -C fl-tutorials run-tutorial`) is a third, separate path: LOCAL_DEV reads
+`fl-tutorials/data/` straight from disk and touches no trust service.
 
 ### Demo Video Recorder
 

@@ -70,6 +70,35 @@ cd trust/omop-db && OMOP_DB_PORT=5434 OMOP_POSTGRES_USER=… OMOP_POSTGRES_PASSW
   OMOP_POSTGRES_DB=… ./files/load_core_vocab.sh --check
 ```
 
+### Seeding a running trust with datasets (FLIP#1100)
+
+The snapshot above is a fixed two-project, two-trust cut. To load a chosen set of
+projects into a **running** trust — a different set, a third trust, a dataset that
+has no snapshot — seed it. Same lifecycle as the vocab load: one-time, after the
+stack is up, idempotent, and it persists in the bind-mounted volume until a
+`.data_version` bump. Run from `trust/` with the kit, which supplies the slot
+number, the port and the credentials:
+
+```sh
+make -C trust seed-omop KIT=GSTT PROJECTS="spleen_project cxr_project"   # OMOP rows only
+make -C trust seed KIT=GSTT PROJECTS="spleen_project cxr_project"        # + this trust's DICOMs into Orthanc
+make -C trust seed-trusts PROJECTS="spleen_project cxr_project"          # both dev trusts
+```
+
+What it does: fetches the canonical CSVs for the pinned data version
+(`omop-csv/<version>/<project>/`), selects this trust's rows by their
+`source_trust` column, deletes the listed projects' existing rows (by their own
+`person_id`s — Synthea EHR rows and other projects are untouched) and loads the
+slice, one transaction per project, into the constrained, vocab-loaded database
+a running trust is. `seed-orthanc` (see `trust/orthanc/README.md`) puts the same
+trust's studies into its PACS, selected by the same column, so OMOP and PACS
+agree by construction rather than by keeping two snapshots in lockstep.
+
+A seed writes a `.seeded` marker beside the trust's `db_data`. On the next
+`.data_version` bump, `update-omop-data` refuses to re-snapshot over a seeded
+volume — that would discard the seed *and* the vocabulary load — unless
+`FORCE=1`; then re-run `load-omop-vocab` and `seed`.
+
 For database-only debugging (without the rest of the trust stack), `make -C trust/omop-db up-test-omop-trust1` will start just the first dev trust's OMOP container.
 
 Bringing the container up should not run any initialization scripts — the data volume already contains a populated database.
@@ -156,14 +185,18 @@ fetches it anonymously.
 The synthetic mock rows live as **one canonical CSV dataset** on the public
 Hugging Face dataset under `omop-csv/<version>/` (version pinned by
 `OMOP_CSV_DATA_VERSION` in the Makefile). Every row carries a `source_trust`
-provenance column, and standing up N trusts is a deterministic split
-(`src/omop_db_tools/dataset.py`):
+column — the trust it belongs to, decided by the dataset's own generator — and
+standing up N trusts is a deterministic split (`src/omop_db_tools/dataset.py`):
 
-- `legacy` (default): partition by `source_trust` — reproduces the original
-  two-trust membership exactly, keeping each trust's OMOP accession IDs
-  consistent with that trust's published mock PACS (Orthanc) data.
-- `modulo`: partition by `person_id % NUM_TRUSTS` — any trust count, for fresh
-  stand-ups where the imaging data is regenerated to match.
+- `source_trust` (default): partition by that column. The partition is *data*:
+  explicit, inspectable, versioned with the dataset, and the per-project DICOM
+  sets are keyed on it too (`trust/orthanc/seed_orthanc.py`), so a trust's OMOP
+  rows and the studies in its PACS agree by construction. Any trust count the
+  column carries. `legacy` is still accepted as an alias — the mode's old name,
+  from when it existed only to reproduce the two-trust cut frozen in the
+  published Orthanc tarballs.
+- `modulo`: partition by `person_id % NUM_TRUSTS` — for a dataset that carries
+  no partition column, and only then: it ignores whatever the generator decided.
 
 ```sh
 uv sync
@@ -178,7 +211,9 @@ Populating runs from the host and needs `psql`/`pg_isready`
 trusts additionally needs an `omop-db-trust<N>` service in `compose.yml` and
 an `OMOP_DB_PORT_TRUST_<N>` in `.env.build` — `make populate NUM_TRUSTS=3
 PARTITION=modulo` fails fast until they exist (and `modulo` implies
-regenerating the matching imaging data).
+regenerating the matching imaging data). `populate` and `seed-omop` are the
+same loader (`omop_db_tools.import_tables`): `populate` passes `--clean all`
+(empty build databases), `seed-omop` uses the default `--clean projects`.
 
 ### Publishing new pgdata tarballs
 

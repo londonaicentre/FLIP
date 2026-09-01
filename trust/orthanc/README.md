@@ -30,3 +30,59 @@ make update-orthanc-data           # both trusts (default)
 make update-orthanc-data TRUST=1   # Trust_1 only
 make update-orthanc-data TRUST=2   # Trust_2 only
 ```
+
+## Seeding a running Orthanc with datasets (FLIP#1100)
+
+The storage volume above is a fixed two-project, two-trust snapshot. To put a
+chosen set of projects' studies into a **running** trust's PACS — the PACS half
+of `make -C trust seed KIT=<CODE>` — seed it:
+
+```sh
+make -C trust seed-orthanc KIT=GSTT PROJECTS="spleen_project cxr_project"
+make -C trust seed-orthanc KIT=KCH  PROJECTS="spleen_project" CLEAR=1     # replace existing studies first
+make -C trust seed-orthanc KIT=GSTT PROJECTS="cxr_project" DRY_RUN=1      # resolve and count only
+```
+
+`seed_orthanc.py` is the DICOM twin of `omop_db_tools.import_tables`: it reads
+the same published `omop-csv/<version>/<project>/image_occurrence.csv`, takes the
+accession numbers whose `source_trust` is this trust's slot number, streams the
+project's DICOM set (`dicom/<version>/<project>.tar.gz`, one archive per project,
+`<accession>/*.dcm` inside) into `volumes/dicom/` once, and POSTs each matching
+instance to `/instances` on `PACS_UI_PORT`. The studies that land are therefore
+exactly the ones the trust's OMOP rows point at — by construction. It refuses to
+upload anything if an accession in the OMOP slice has no directory in the
+archive. Orthanc dedupes on `SOPInstanceUID` and never overwrites, so a re-run
+is a no-op (`AlreadyStored`) and replacing instances needs `CLEAR=1`.
+
+A seed writes `.seeded` inside the storage dir. On the next `.data_version`
+bump, `update-orthanc-data` refuses to re-snapshot over a seeded volume unless
+`FORCE=1`, before the ~1 GB download.
+
+### Publishing a project's DICOM set
+
+`publish_dicom.py` turns a generator's output (a `.zip` or a directory of
+`*.dcm`, any layout — instances are grouped by their `AccessionNumber` tag) into
+the archive the seeder expects, and refuses to produce one the seeder could not
+later resolve completely: every accession must equal the published
+`image_occurrence.csv` set both ways, every `StudyInstanceUID` and `PatientID`
+must be published, and the per-trust split is reported.
+
+```sh
+uv run trust/orthanc/publish_dicom.py --project spleen_project --data-version 20260729 \
+    --source dicom_output.zip --fill-empty-numbers --out dist/dicom/20260729/spleen_project.tar.gz
+hf upload aicentreflip/trust-data dist/dicom/20260729/spleen_project.tar.gz \
+    dicom/20260729/spleen_project.tar.gz --type dataset
+```
+
+`--fill-empty-numbers` sets a present-but-empty `AcquisitionNumber` /
+`SeriesNumber` to 1 (the spleen generator's output has both empty on every CT
+instance, which makes MONAI Deploy's loader drop the series — see
+`docs/source/working-with-flip-apps/package-model-as-map.rst`). Absent tags stay
+absent; populated ones are untouched. Published sets: `dicom/20260729/`
+`spleen_project` (41 studies, 3,650 instances, filled) and `cxr_project` (8,332
+studies). Both are the original generator outputs, verified against the
+published OMOP — not extractions from the storage tarballs.
+
+To cut a new storage tarball (the snapshot path, for EC2/k8s): seed a fresh
+Orthanc with `seed-orthanc`, then `tar -C <storage dir> -cf trust<N>_orthanc_data_<version>.tar .`
+— the DICOM sets are the source, the tarball is derived from them.
