@@ -23,7 +23,10 @@ TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials
 # Dataset targets are backend-agnostic (shared data root, single copy in datasets/);
 # FL_BACKEND still selects a per-harness variant where one exists (the two spleen downloads).
 DATASET_TARGETS := download-xray-data download-spleen-data upload-spleen-labels \
-	download-arkplus-finetuning-data download-arkplus-eval-data
+	download-arkplus-finetuning-data download-arkplus-eval-data \
+	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
+	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
+	reproduce-spleen-omop
 
 .PHONY: $(TUTORIAL_TARGETS) $(DATASET_TARGETS)
 $(TUTORIAL_TARGETS):

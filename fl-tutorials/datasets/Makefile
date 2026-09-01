@@ -42,7 +42,10 @@ SPLEEN_UV := uv run --project spleen
 
 .PHONY: download-xray-data download-spleen-data download-spleen-msd-data \
 	download-spleen-flip-format-data download-arkplus-finetuning-data \
-	download-arkplus-eval-data upload-spleen-labels
+	download-arkplus-eval-data upload-spleen-labels \
+	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
+	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
+	reproduce-spleen-omop
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the layout
 # both harnesses read (data/xrays_mini_300/, gitignored). Idempotent — safe to re-run.
@@ -145,3 +148,71 @@ upload-spleen-labels:
 		$(if $(ALLOW_NO_OP),--allow-no-op) \
 		$(if $(REQUIRE_FULL_COVERAGE),--require-full-coverage) \
 		$(if $(DRY_RUN),--dry-run)
+
+# The spleen OMOP-generation chain (FLIP#1092). Every script in it uses hardcoded, cwd-relative
+# paths inherited from its original repo, so all these targets run from fl-tutorials/ (one level up)
+# rather than from here — that is the only directory where `data/…`, `tables/` and `dicom_output/`
+# resolve as the scripts expect. Do not "simplify" these by dropping the `cd ..`.
+#
+# There are two ways to reach build-spleen-omop-tables:
+#   fetch-spleen-metadata-table   — the reproducible path. Downloads the published metadata table
+#                                   that actually produced the published OMOP export. No root, no
+#                                   1.5GB download. This is what the verification gate uses.
+#   download-spleen-msd-raw -> convert-spleen-to-dicom -> create-spleen-metadata-table
+#                                 — the full regeneration path. Needs root and re-synthesises
+#                                   patient identities, so its output will NOT match the published
+#                                   export (see the README). Use it to exercise the DICOM stage.
+SPLEEN_OMOP_UV := uv run --project datasets/spleen
+SPLEEN_METADATA_URL := https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/omop-csv/$(shell cat ../../trust/omop-db/.data_version)/spleen_project/source/dicom_metadata.csv
+
+# Reproducible path: fetch the canonical metadata table for the pinned data version.
+fetch-spleen-metadata-table:
+	@cd .. && mkdir -p data && curl -fsSL "$(SPLEEN_METADATA_URL)" -o data/spleen_metadata.csv
+	@echo "✅ metadata table at fl-tutorials/data/spleen_metadata.csv ($(shell cat ../../trust/omop-db/.data_version))"
+
+# Regeneration path, step 0: the RAW MSD extract. NOTE this is NOT `download-spleen-data`, which
+# reorganises the archive into the FLIP accession-resources layout and then rmtree's the raw tree;
+# convert_spleen_dataset.py reads the RAW layout (data/Task09_Spleen/imagesTr). Both downloads are
+# legitimate — they serve different consumers.
+download-spleen-msd-raw:
+	@cd .. && $(SPLEEN_OMOP_UV) python -c "from monai.apps.utils import download_and_extract; \
+		download_and_extract(url='https://msd-for-monai.s3-us-west-2.amazonaws.com/Task09_Spleen.tar', \
+		filepath='data/Task09_Spleen.tar', output_dir='data')"
+	@echo "✅ raw MSD extract at fl-tutorials/data/Task09_Spleen/imagesTr (41 cases)"
+
+# Regeneration path, step 1: NIfTI -> DICOM with synthesised patient identities.
+# WORKSTATION ONLY: pyplastimatch's install_precompiled_binaries() copies to /usr/local/bin, so this
+# needs root and is never run in CI. Run as:
+#   sudo $(shell which uv) run --project datasets/spleen python datasets/spleen/convert_spleen_dataset.py
+# from fl-tutorials/. Create the venv as your normal user first (any other target does it) — a sudo
+# run can leave a root-owned .venv that breaks every later non-sudo invocation.
+convert-spleen-to-dicom:
+	@cd .. && $(SPLEEN_OMOP_UV) python datasets/spleen/convert_spleen_dataset.py
+
+# Regeneration path, step 2: DICOM -> tables/dicom_metadata.csv, then bridge it to where the OMOP
+# converter expects its input. The copy stands in for a step that was manual upstream:
+# create_metadata_table.py came from flip_project_spleen_segmentation and writes
+# tables/dicom_metadata.csv, while omop_convert_spleen.py came from flip-omop-mock-data and reads
+# data/spleen_metadata.csv. A human moved the file between the two repos. Automating that is the
+# point of having both halves in one tree; editing either script's hardcoded path would break the
+# byte-faithfulness the verification gate depends on.
+create-spleen-metadata-table:
+	@cd .. && $(SPLEEN_OMOP_UV) python datasets/spleen/create_metadata_table.py \
+		&& cp tables/dicom_metadata.csv data/spleen_metadata.csv
+
+# Metadata table -> omop/<trust>/spleen_project/*.csv, ready for trust/omop-db's build_canonical +
+# import_tables. Reads data/spleen_metadata.csv, from either path above.
+#
+# PYTHONPATH=datasets is required because omop_convert_spleen.py imports utils.omop_mappings:
+# `python datasets/spleen/x.py` puts datasets/spleen on sys.path, never datasets/.
+build-spleen-omop-tables:
+	@cd .. && PYTHONPATH=datasets $(SPLEEN_OMOP_UV) python datasets/spleen/omop_convert_spleen.py
+
+# Diff the generated tables against the published export for the pinned data version. Re-run this
+# after a .data_version bump, or after any change to the converter or the shared schemas.
+verify-spleen-omop-tables:
+	@cd .. && $(SPLEEN_OMOP_UV) python datasets/spleen/verify_omop_tables.py
+
+# The whole reproducible path in one command: fetch the canonical input, convert, verify.
+# Needs no root and no MSD download.
+reproduce-spleen-omop: fetch-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables
