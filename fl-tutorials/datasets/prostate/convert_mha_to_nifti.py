@@ -14,6 +14,7 @@
 # <patient_id>/<patient_id>_<study_id>_<modality>.nii.gz.
 
 import argparse
+import json
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -21,12 +22,28 @@ from pathlib import Path
 import SimpleITK as sitk
 from tqdm import tqdm
 
+# Acquisition metadata PI-CAI leaves in the .mha headers, mapped to BIDS sidecar field names.
+# NIfTI has nowhere to keep DICOM-style tags, and the marksheet carries no scanner columns, so
+# without the sidecar the scanner that acquired each scan is lost at conversion.
+SIDECAR_TAGS = {
+    "0008|0020": "AcquisitionDate",
+    "0008|0070": "Manufacturer",
+    "0008|1090": "ManufacturersModelName",
+    "0010|0040": "PatientSex",
+    "0010|1010": "PatientAge",
+    "0012|0062": "PatientIdentityRemoved",
+}
+
 
 def _convert_one(mha_path: Path, input_dir: Path, output_dir: Path) -> None:
     nii_path = (output_dir / mha_path.relative_to(input_dir)).with_suffix(".nii.gz")
     nii_path.parent.mkdir(parents=True, exist_ok=True)
     image = sitk.ReadImage(str(mha_path))
     sitk.WriteImage(image, str(nii_path))
+    sidecar = {name: image.GetMetaData(tag) for tag, name in SIDECAR_TAGS.items() if image.HasMetaDataKey(tag)}
+    if sidecar:
+        # <patient>_<study>_<modality>.nii.gz -> <patient>_<study>_<modality>.json
+        nii_path.with_suffix("").with_suffix(".json").write_text(json.dumps(sidecar, indent=2) + "\n")
 
 
 def convert_archive(input_dir: Path, output_dir: Path, workers: int) -> None:

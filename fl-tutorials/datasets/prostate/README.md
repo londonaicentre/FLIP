@@ -72,6 +72,34 @@ the series reconstructs correctly in a PACS viewer. `convert_mha_to_nifti.py` wr
 `.nii.gz` per scan, keeping the same `<patient_id>/<patient_id>_<study_id>_<modality>.nii.gz`
 layout as the source `.mha` files. Both converters run one worker process per CPU by default.
 
+Both also carry through the acquisition metadata PI-CAI leaves in the `.mha` headers — `Manufacturer`,
+`ManufacturersModelName`, the real acquisition date, `PatientSex`, `PatientAge` and
+`PatientIdentityRemoved`. This is the dataset's **only** per-study record of which scanner acquired a
+scan (`marksheet.csv` has no scanner columns), so it is worth keeping: it is what lets you partition
+finer than the three `center` values, and without it every converted study is stamped with the date it
+happened to be converted. The DICOM writer copies the tags across directly; NIfTI has nowhere to put
+them, so `convert_mha_to_nifti.py` writes a BIDS-style `<patient>_<study>_<modality>.json` sidecar
+beside each volume.
+
+`convert_mha_to_dicom.py` additionally writes the acquiring `center` into `ClinicalTrialSiteID`
+(0012,0030), read from `clinical_information/marksheet.csv` via `--marksheet`. The center is the one
+piece of provenance PI-CAI keeps in the marksheet rather than the `.mha` headers, and it is what a
+per-site partition keys on — putting it in the DICOM means the contributing center travels with the
+study into PACS and XNAT, so downstream steps read it off the image instead of re-joining the
+marksheet. A missing marksheet leaves the tag unset and logs a warning rather than failing the
+conversion.
+
+**Not `InstitutionName` (0008,0080).** That tag is defined as the institution where the equipment
+producing the images is located, and `center` is a contributing cohort rather than a hospital: per
+the challenge's [dataset documentation](https://pi-cai.grand-challenge.org/DATA/), the 1500 public
+cases come from **11 sites** across these three centers. PCNN is a regional network (Prostaat Centrum
+Noord-Nederland) whose studies here span six scanner models and both vendors, and ZGT is a hospital
+group. Only RUMC is a single institution, so `InstitutionName` would be a false claim for two values
+out of three. `ClinicalTrialSiteID` belongs to the 0012 research/de-identification group the `.mha` headers
+already use (`0012|0062`, Patient Identity Removed) and carries the right meaning: the site that
+contributed the case. The values are short codes (`RUMC`, `PCNN`, `ZGT`) used as a partition key, so
+the ID form fits better than `ClinicalTrialSiteName` (0012,0031).
+
 `partition_by_center.py` splits the converted NIfTI scans and whole-gland + zonal labels into
 one folder per acquiring center, using the `center` column of
 `clinical_information/marksheet.csv`:
