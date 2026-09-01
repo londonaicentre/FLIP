@@ -27,12 +27,12 @@ import pydicom
 import pyplastimatch as pypla
 from pyplastimatch.utils.install import install_precompiled_binaries
 
-random.seed(42)
-
-# Install precompiled binaries
-install_precompiled_binaries()
-
 if __name__ == "__main__":
+    random.seed(42)
+
+    # Install precompiled binaries
+    install_precompiled_binaries()
+
     # Define input and output directories
     input_dir = "data/Task09_Spleen/imagesTr"
     output_dir = "dicom_output"
