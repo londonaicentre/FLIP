@@ -22,10 +22,12 @@ from flip_api.utils.cors import _origin_from_url, get_cors_allowed_origins
 @pytest.fixture(autouse=True)
 def _reset_cognito_client_cache():
     """
-    `get_cors_allowed_origins` builds its client through the lru_cached
-    `_cognito_client`, so a boto3 client is built once per process. Tests patch
-    `boto3.client` and assume each test starts fresh; clear the cache between
-    tests so a mock from one test doesn't leak into the next.
+    `TestGetCorsAllowedOrigins` builds its client through the lru_cached
+    `_cognito_client`, whose cache is shared with `cognito_helpers` and so with
+    `test_cognito_helpers.py` — the leak this guards is cross-module, not just
+    within this file. Tests patch `boto3.client` and assume each test starts
+    fresh, so clear the cache around every test. (`TestOriginFromUrl` builds no
+    client; autouse simply keeps the guard unconditional.)
     """
     from flip_api.utils.cognito_helpers import _cognito_client
 
@@ -75,7 +77,9 @@ class TestGetCorsAllowedOrigins:
         `get_cors_allowed_origins` reads the pool/client IDs via `cors.get_settings`,
         but the client it calls them on is built by `cognito_helpers._cognito_client`,
         which reads `AWS_REGION` via `cognito_helpers.get_settings`. Patching only one
-        leaves the other resolving real environment config.
+        leaves the other resolving real environment config — green on a dev machine
+        with a real `AWS_REGION`, red only in CI where it is the `<your-aws-region>`
+        placeholder from `.env.development.example`.
         """
         with (
             patch("flip_api.utils.cors.get_settings") as mock_get_settings,

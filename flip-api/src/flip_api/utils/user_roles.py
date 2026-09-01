@@ -10,11 +10,14 @@
 # limitations under the License.
 #
 
-"""Database-backed user profile and role helpers.
+"""User profile and role helpers.
 
-Pure Postgres reads over ``user_profile``, ``roles`` and ``user_role``. Nothing here
-touches AWS — these functions were split out of ``cognito_helpers`` so the Cognito
-module names only code that actually talks to the identity provider.
+Postgres reads over ``user_profile``, ``roles`` and ``user_role``, plus the in-memory
+``validate_roles`` guard that callers apply to what those reads return (it takes the
+role IDs as an argument and queries nothing itself).
+
+Nothing here touches AWS: no ``boto3`` import, and every transitive import is AWS-free.
+Split out of ``cognito_helpers`` so that module stays about the Cognito user directory.
 """
 
 from collections import defaultdict

@@ -12,10 +12,15 @@
 
 """CORS allowlist derivation for the FLIP API.
 
-The allowlist is sourced from the Cognito app client's ``CallbackURLs`` rather than a
-dedicated env var, so "where users can sign in" and "where the UI may call this API"
-cannot drift apart. This is the only reason application startup contacts the identity
-provider — see ``main.py``'s lifespan.
+Sourced from the Cognito app client's ``CallbackURLs`` so there is one Terraform-owned
+list of trusted UI origins per environment rather than two config surfaces that can
+drift. The UI authenticates with ``USER_SRP_AUTH`` rather than an OAuth2 redirect, so
+those URLs are never used as a login callback — flip-api reads them purely as the
+declared UI-origin list.
+
+This is the only Cognito call the ASGI app itself makes at startup (``main.py``'s
+lifespan). The container contacts Cognito earlier too, from the separate seeding
+process ``entrypoint.sh`` runs before uvicorn — see ``db/seed/main_users.py``.
 """
 
 from urllib.parse import urlparse

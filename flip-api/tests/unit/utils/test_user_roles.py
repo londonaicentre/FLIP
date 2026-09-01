@@ -10,7 +10,12 @@
 # limitations under the License.
 #
 
-"""Unit tests for the DB-backed user profile/role helpers (`flip_api.utils.user_roles`)."""
+"""Unit tests for ``apply_user_profile`` (``flip_api.utils.user_roles``).
+
+The module's other three helpers (``get_user_role_data``, ``get_all_roles``,
+``validate_roles``) have no direct unit tests — a gap inherited from before the split,
+where they were only exercised via mocked patches in ``tests/unit/user_services/``.
+"""
 
 from unittest.mock import Mock
 from uuid import uuid4
