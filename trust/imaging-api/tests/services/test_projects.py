@@ -300,6 +300,47 @@ def test_get_command_info_fetch_failure(mock_get, headers):
         get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
 
 
+@patch("imaging_api.services.projects.requests.get")
+def test_get_command_info_mismatch_names_registered_image(mock_get, headers):
+    """A stale registration must name both images, not blame the plugin (FLIP#1093)."""
+    filtered = MagicMock(status_code=200, json=MagicMock(return_value=[]))
+    unfiltered = MagicMock(
+        status_code=200,
+        json=MagicMock(return_value=[{"id": 6, "name": "dcm2niix", "image": "xnat/dcm2niix:latest"}]),
+    )
+    mock_get.side_effect = [filtered, unfiltered]
+
+    with pytest.raises(Exception, match="No commands found for container") as excinfo:
+        get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
+
+    message = str(excinfo.value)
+    assert "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724" in message
+    assert "xnat/dcm2niix:latest" in message
+    assert "configure-dcm2niix.sh" in message
+    # The misleading hypothesis must not appear when commands plainly exist.
+    assert "may not be installed" not in message
+
+
+@patch("imaging_api.services.projects.requests.get")
+def test_get_command_info_no_commands_at_all_keeps_plugin_hypothesis(mock_get, headers):
+    """With nothing registered, the Container Service hypothesis is the accurate one."""
+    empty = MagicMock(status_code=200, json=MagicMock(return_value=[]))
+    mock_get.side_effect = [empty, empty]
+
+    with pytest.raises(Exception, match="may not be installed or configured"):
+        get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
+
+
+@patch("imaging_api.services.projects.requests.get")
+def test_get_command_info_diagnostic_failure_does_not_mask_error(mock_get, headers):
+    """If the diagnostic re-query blows up, still raise the real mismatch error."""
+    filtered = MagicMock(status_code=200, json=MagicMock(return_value=[]))
+    mock_get.side_effect = [filtered, ConnectionError("xnat unreachable")]
+
+    with pytest.raises(Exception, match="No commands found for container"):
+        get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
+
+
 # ===========================================================================
 # create_project_event_subscription
 # ===========================================================================

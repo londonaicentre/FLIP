@@ -263,6 +263,47 @@ def set_project_prearchive_settings(project_id: str, headers: dict[str, str]) ->
         )
 
 
+def _no_command_message(container: str, headers: dict[str, str]) -> str:
+    """Explain why no XNAT command matched ``container``.
+
+    ``get_command_info`` queries ``/xapi/commands?image=<container>``, so an empty
+    result has two very different causes with opposite fixes: the Container Service
+    genuinely has no commands, or it has one registered against a *different* image.
+    The latter is the common case — an XNAT provisioned before ``DCM2NIIX_IMAGE`` was
+    pinned (FLIP#980) still carries ``xnat/dcm2niix:latest`` — and blaming a missing
+    plugin sends the reader to the wrong place entirely.
+
+    Re-queries XNAT unfiltered to say which it is. The diagnostic call runs only on
+    the error path, and is never allowed to mask the original failure.
+
+    Args:
+        container (str): Image that was requested and did not match.
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        str: Message naming the registered images when there are any, otherwise
+        falling back to the Container Service hypothesis.
+    """
+    try:
+        probe = requests.get(f"{XNAT_URL}/xapi/commands", headers=headers)
+        registered = probe.json() if probe.status_code == 200 else []
+    except Exception:  # noqa: BLE001 - diagnostics must never replace the real error
+        registered = []
+
+    images = sorted({c.get("image") for c in registered if c.get("image")})
+    if not images:
+        return (
+            f"No commands found for container '{container}' and no commands are registered at all "
+            "- the XNAT Container Service may not be installed or configured"
+        )
+    return (
+        f"No commands found for container '{container}'. XNAT has command(s) registered against "
+        f"{', '.join(repr(i) for i in images)} instead - this XNAT's registration predates the "
+        "current DCM2NIIX_IMAGE pin. Re-run configure-dcm2niix.sh (compose) or the xnat-init job "
+        "(k8s) to re-register it, and check the trust's imaging-api image is current."
+    )
+
+
 def get_command_info(container: str, headers: dict[str, str]) -> tuple[int, str]:
     """
     Fetches the XNAT command ID and wrapper name for a given container image.
@@ -284,9 +325,7 @@ def get_command_info(container: str, headers: dict[str, str]) -> tuple[int, str]
 
     commands = response.json()
     if not commands:
-        raise Exception(
-            f"No commands found for container '{container}' - Container Service plugin may not be installed"
-        )
+        raise Exception(_no_command_message(container, headers))
     command = commands[0]
     return command["id"], command["xnat"][0]["name"]
 
