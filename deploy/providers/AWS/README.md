@@ -821,6 +821,23 @@ revert by flipping `MANAGE_DNS=true` + `make plan`/`apply` once the zone lands:
 - Trusts polling the hub would need the CloudFront domain as `CENTRAL_HUB_API_URL` — fine for WP3 smoke trusts;
   the real cutover is DNS-only and happens after the zone migrates.
 
+**Fresh-account trap: create a Secrets Manager secret before the first `plan`.** On a
+brand-new workload account `make plan` fails at the very end with
+
+```
+Error: reading KMS Alias (alias/aws/secretsmanager): empty result
+  with data.aws_kms_alias.secretsmanager, on rds_proxy.tf line 37
+```
+
+even though the plan itself computed cleanly. `alias/aws/secretsmanager` is an
+**AWS-managed** key: AWS creates it lazily, the first time the account uses Secrets
+Manager, so in an account that has never held a secret the alias genuinely does not
+exist yet and the data source has nothing to read. Nothing is wrong with the
+configuration — the account is simply too new. Creating *any* secret mints the key,
+and the ECR pull-through credential below is the one every LZA account needs anyway,
+so do that step first and the plan completes. (Verified on the FLIPStaging bring-up,
+2026-09-01.)
+
 **Attaching the real domain to the edge.** CloudFront is never addressed by IP — distribution IPs are anycast
 and rotate — so the domain is wired up DNS-side, in the networking account where the edge lives: a public
 Route 53 hosted zone for the FLIP subdomain (e.g. `flip.example.org`) is created there; a
