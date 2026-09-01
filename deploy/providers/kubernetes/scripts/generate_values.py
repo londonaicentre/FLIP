@@ -29,26 +29,35 @@ ENV_VAR_MAP = {
     "FL_BACKEND": ("flBackend", False),
     "UPLOADED_FEDERATED_DATA_BUCKET": ("uploadedFederatedDataBucket", False),
     # No S3 kit fetch: the chart mounts an already-provisioned kit from the node
-    # (flClient.kitHostPath). A trust holds no FLIP AWS credentials.
+    # (flClient.kitHostPath). A trust holds no FLIP AWS credentials. Falls back to
+    # DEFAULT_KIT_HOST_PATH when the kit omits it — see build_values.
     "FL_KIT_DIR": ("flClient.kitHostPath", False),
     "AICENTRE_BUCKET_NAME": ("omopDb.initJob.s3Bucket", False),
     "OMOP_DATA_VERSION": ("omopDb.initJob.dataVersion", False),
 }
 
+# Where the operator placed this trust's kit ON THE NODE when the kit file does not say.
+# The canonical FLIP kit path: every shipped kit sets FL_KIT_DIR to it, the Ansible
+# EC2/on-prem plays stage to it, and the chart Makefile's stage-kit KIT_DEST defaults to it.
+# Same fallback as sync_k8s_kit.render_override, so both generators of a Helm override
+# agree on what a kit file without FL_KIT_DIR means.
+DEFAULT_KIT_HOST_PATH = "/opt/flip/fl-kit"
+
+# Kit variable -> key name in the Kubernetes Secret. Names, not values; hence the allowlist pragmas.
 SECRET_VAR_MAP = {
-    "AES_KEY_BASE64": "aes-key-base64",
-    "TRUST_API_KEY": "trust-api-key",
-    "TRUST_INTERNAL_SERVICE_KEY_HEADER": "trust-internal-service-key-header",
-    "TRUST_INTERNAL_SERVICE_KEY": "trust-internal-service-key",
-    "OMOP_POSTGRES_PASSWORD": "omop-postgres-password",
-    "DATA_ACCESS_POSTGRES_PASSWORD": "data-access-postgres-password",
-    "ORTHANC_REGISTERED_USERS": "orthanc-registered-users",
-    "XNAT_ADMIN_PASSWORD": "xnat-admin-password",
-    "XNAT_SERVICE_USER": "xnat-service-user",
-    "XNAT_SERVICE_PASSWORD": "xnat-service-password",
-    "XNAT_DATASOURCE_PASSWORD": "xnat-datasource-password",
-    "XNAT_DATASOURCE_ADMIN_PASSWORD": "xnat-datasource-admin-password",
-    "GRAFANA_ADMIN_PASSWORD": "grafana-admin-password",
+    "AES_KEY_BASE64": "aes-key-base64",  # pragma: allowlist secret
+    "TRUST_API_KEY": "trust-api-key",  # pragma: allowlist secret
+    "TRUST_INTERNAL_SERVICE_KEY_HEADER": "trust-internal-service-key-header",  # pragma: allowlist secret
+    "TRUST_INTERNAL_SERVICE_KEY": "trust-internal-service-key",  # pragma: allowlist secret
+    "OMOP_POSTGRES_PASSWORD": "omop-postgres-password",  # pragma: allowlist secret
+    "DATA_ACCESS_POSTGRES_PASSWORD": "data-access-postgres-password",  # pragma: allowlist secret
+    "ORTHANC_REGISTERED_USERS": "orthanc-registered-users",  # pragma: allowlist secret
+    "XNAT_ADMIN_PASSWORD": "xnat-admin-password",  # pragma: allowlist secret
+    "XNAT_SERVICE_USER": "xnat-service-user",  # pragma: allowlist secret
+    "XNAT_SERVICE_PASSWORD": "xnat-service-password",  # pragma: allowlist secret
+    "XNAT_DATASOURCE_PASSWORD": "xnat-datasource-password",  # pragma: allowlist secret
+    "XNAT_DATASOURCE_ADMIN_PASSWORD": "xnat-datasource-admin-password",  # pragma: allowlist secret
+    "GRAFANA_ADMIN_PASSWORD": "grafana-admin-password",  # pragma: allowlist secret
 }
 
 
@@ -89,6 +98,13 @@ def build_values(env):
         if env_var == "FL_BACKEND":
             val = val.lower().replace(" ", "")
         deep_set(overrides, yaml_path, val)
+
+    # flClient.kitHostPath is `required` by the chart, so dropping it like any other
+    # absent value would only move the failure to render time. A kit missing or
+    # blanking FL_KIT_DIR still renders the canonical path — the one the default
+    # `make stage-kit` actually wrote to — exactly as sync_k8s_kit.render_override does.
+    if not env.get("FL_KIT_DIR", "").strip():
+        deep_set(overrides, "flClient.kitHostPath", DEFAULT_KIT_HOST_PATH)
 
     secrets = {}
     for env_var, secret_key in SECRET_VAR_MAP.items():
