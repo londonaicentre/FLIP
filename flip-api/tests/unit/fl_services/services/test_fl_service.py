@@ -381,6 +381,54 @@ def test_bundle_nvflare_application_success(
     )
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_multi_site_template(
+    mock_s3, mock_required, mock_verify, mock_is_valid, model_id, mocked_settings
+):
+    """A per-site ``app_site-N/`` folder beside ``app/`` is bundled and populated like ``app/``.
+
+    The allowlist walk keeps NVFLARE's multi-site layout (FLIP#1008 review): both folders are
+    mirrored from the local tree, and the researcher's files land in each folder's ``custom/``.
+    """
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+    dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+
+    write_base_tree(
+        base_dir,
+        "nvflare",
+        "standard",
+        ["app/config/config_fed_server.json", "app_site-1/config/config_fed_client.json", "meta.json"],
+    )
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_required.return_value = ["trainer.py", "config.json"]
+    mock_client.list_objects.side_effect = [
+        [f"{model_bucket}/{model_id}/trainer.py", f"{model_bucket}/{model_id}/config.json"],
+        [],  # Destination bucket (clear check)
+    ]
+    mock_client.copy_object.return_value = None
+    mock_client.object_exists.return_value = False
+    mock_verify.return_value = None
+
+    fl_service.bundle_nvflare_application(model_id)
+
+    for rel in ("app/config/config_fed_server.json", "app_site-1/config/config_fed_client.json", "meta.json"):
+        mock_client.upload_file.assert_any_call(
+            str(Path(base_dir) / "nvflare/standard" / rel), f"{dest_bucket}/{model_id}/{rel}"
+        )
+    for app in ("app", "app_site-1"):
+        mock_client.copy_object.assert_any_call(
+            f"{model_bucket}/{model_id}/trainer.py", f"{dest_bucket}/{model_id}/{app}/custom/trainer.py"
+        )
+
+
 # "evaluation_client_api" is the pre-rename alias: _normalise_job_type resolves it to
 # "evaluation" BEFORE manifest validation and the base-dir lookup, so a pre-rename model bundles
 # from the plain-name template — the alias directory no longer exists.
@@ -1817,16 +1865,12 @@ def test_abort_model_training_raises_on_invalid_target(
 # --- local base-file helper + local-directory bundling edge cases (FLIP#724) ----------------------
 
 
-FLOWER_ROOT = fl_service.BUNDLED_ROOT_FILES[FLBackend.FLOWER]
-NVFLARE_ROOT = fl_service.BUNDLED_ROOT_FILES[FLBackend.NVFLARE]
-
-
 def test_list_local_base_files_missing_dir_returns_empty(tmp_path):
     # A non-existent base directory yields no files (bundlers turn this into FileNotFoundError).
-    assert fl_service.list_local_base_files(tmp_path / "does-not-exist", FLOWER_ROOT) == []
+    assert fl_service.list_local_base_files(tmp_path / "does-not-exist", FLBackend.FLOWER) == []
 
 
-def test_list_local_base_files_skips_symlinks(tmp_path):
+def test_list_local_base_files_skips_symlinks(tmp_path, caplog):
     # A symlinked file/dir inside FL_APP_BASE_DIR must not pull host files outside the template
     # tree into the uploaded bundle.
     base = tmp_path / "base"
@@ -1843,7 +1887,15 @@ def test_list_local_base_files_skips_symlinks(tmp_path):
     (base / "linked_dir").symlink_to(external_dir)  # symlinked directory
     (base / "app" / "linked_sub").symlink_to(external_dir)  # symlinked dir INSIDE app/
 
-    assert fl_service.list_local_base_files(base, FLOWER_ROOT) == ["app/real.py"]
+    with caplog.at_level(logging.DEBUG):
+        assert fl_service.list_local_base_files(base, FLBackend.FLOWER) == ["app/real.py"]
+
+    # Every one of the three is named in the debug log — including the symlinked directory nested
+    # inside app/, which os.walk(followlinks=False) lists but never enters, so it has to be pruned
+    # explicitly to be recorded rather than vanish silently.
+    assert "'app/link.py'" in caplog.text
+    assert "'linked_dir'" in caplog.text
+    assert "'app/linked_sub/'" in caplog.text
 
 
 def test_list_local_base_files_excludes_local_dev_artefacts(tmp_path):
@@ -1863,7 +1915,7 @@ def test_list_local_base_files_excludes_local_dev_artefacts(tmp_path):
     (base / ".ruff_cache" / "CACHEDIR.TAG").write_text("x")
     (base / ".DS_Store").write_text("x")
 
-    assert fl_service.list_local_base_files(base, FLOWER_ROOT) == ["app/client_app.py", "pyproject.toml"]
+    assert fl_service.list_local_base_files(base, FLBackend.FLOWER) == ["app/client_app.py", "pyproject.toml"]
 
 
 def test_list_local_base_files_excludes_unknown_tool_output(tmp_path):
@@ -1878,7 +1930,7 @@ def test_list_local_base_files_excludes_unknown_tool_output(tmp_path):
         (base / unknown).mkdir()
         (base / unknown / "junk.txt").write_text("x")
 
-    assert fl_service.list_local_base_files(base, FLOWER_ROOT) == ["app/server_app.py", "pyproject.toml"]
+    assert fl_service.list_local_base_files(base, FLBackend.FLOWER) == ["app/server_app.py", "pyproject.toml"]
 
 
 def test_list_local_base_files_excludes_compiled_python_inside_app(tmp_path):
@@ -1892,7 +1944,7 @@ def test_list_local_base_files_excludes_compiled_python_inside_app(tmp_path):
     (base / "app" / "stale.pyo").write_text("x")
     (base / "pyproject.toml").write_text("x")
 
-    assert fl_service.list_local_base_files(base, FLOWER_ROOT) == ["app/client_app.py", "pyproject.toml"]
+    assert fl_service.list_local_base_files(base, FLBackend.FLOWER) == ["app/client_app.py", "pyproject.toml"]
 
 
 def test_list_local_base_files_excludes_developer_files_that_are_not_artefacts(tmp_path):
@@ -1908,7 +1960,7 @@ def test_list_local_base_files_excludes_developer_files_that_are_not_artefacts(t
     (base / "README.md").write_text("x")
     (base / "required_files.json").write_text("[]")
 
-    assert fl_service.list_local_base_files(base, NVFLARE_ROOT) == [
+    assert fl_service.list_local_base_files(base, FLBackend.NVFLARE) == [
         "app/config/config_fed_server.json",
         "meta.json",
     ]
@@ -1923,8 +1975,88 @@ def test_list_local_base_files_root_file_is_per_backend(tmp_path):
     (base / "meta.json").write_text("{}")
     (base / "pyproject.toml").write_text("x")
 
-    assert fl_service.list_local_base_files(base, NVFLARE_ROOT) == ["app/keep.py", "meta.json"]
-    assert fl_service.list_local_base_files(base, FLOWER_ROOT) == ["app/keep.py", "pyproject.toml"]
+    assert fl_service.list_local_base_files(base, FLBackend.NVFLARE) == ["app/keep.py", "meta.json"]
+    assert fl_service.list_local_base_files(base, FLBackend.FLOWER) == ["app/keep.py", "pyproject.toml"]
+
+
+def _multi_site_template(tmp_path: Path) -> Path:
+    """An NVFLARE-style template with per-site app variants beside ``app/``.
+
+    ``meta.json``'s ``deploy_map`` names each folder and NVFLARE deploys it to the sites listed —
+    the layout ``bundle_nvflare_application`` scans for and fl-api-base's job assembly documents.
+    """
+    base = tmp_path / "base"
+    (base / "app" / "config").mkdir(parents=True)
+    (base / "app" / "config" / "config_fed_server.json").write_text("{}")
+    (base / "app_site1" / "config").mkdir(parents=True)
+    (base / "app_site1" / "config" / "config_fed_client.json").write_text("{}")
+    (base / "app_site-2" / "custom").mkdir(parents=True)
+    (base / "app_site-2" / "custom" / "flip.py").write_text("x")
+    (base / "meta.json").write_text("{}")
+    (base / "pyproject.toml").write_text("x")
+    return base
+
+
+def test_list_local_base_files_keeps_nvflare_per_site_app_folders(tmp_path):
+    # NVFLARE's multi-site layout is a documented capability (app_site-N folders named in
+    # meta.json's deploy_map), so the allowlist must keep app_* beside app/ — the positional rule
+    # is "an app folder", not "a directory literally named app".
+    base = _multi_site_template(tmp_path)
+
+    assert fl_service.list_local_base_files(base, FLBackend.NVFLARE) == [
+        "app/config/config_fed_server.json",
+        "app_site-2/custom/flip.py",
+        "app_site1/config/config_fed_client.json",
+        "meta.json",
+    ]
+
+
+def test_list_local_base_files_flower_keeps_only_app(tmp_path, caplog):
+    # A Flower App Bundle has exactly one app package, so the same tree under the Flower rule
+    # bundles app/ alone and records the per-site folders as excluded.
+    base = _multi_site_template(tmp_path)
+
+    with caplog.at_level(logging.DEBUG):
+        kept = fl_service.list_local_base_files(base, FLBackend.FLOWER)
+
+    assert kept == ["app/config/config_fed_server.json", "pyproject.toml"]
+    assert "'app_site1/'" in caplog.text
+    assert "'app_site-2/'" in caplog.text
+
+
+@pytest.mark.parametrize("fl_backend", [FLBackend.NVFLARE, FLBackend.FLOWER])
+def test_list_local_base_files_rejects_app_lookalike_dirs(tmp_path, fl_backend, caplog):
+    # Merely starting with "app" is not enough on either backend: apps/ and application/ are not
+    # app folders and must not ride along under a prefix match.
+    base = tmp_path / "base"
+    (base / "app").mkdir(parents=True)
+    (base / "app" / "keep.py").write_text("x")
+    for lookalike in ("apps", "application", "appendix"):
+        (base / lookalike).mkdir()
+        (base / lookalike / "stray.py").write_text("x")
+    (base / "meta.json").write_text("{}")
+    (base / "pyproject.toml").write_text("x")
+
+    with caplog.at_level(logging.DEBUG):
+        kept = fl_service.list_local_base_files(base, fl_backend)
+
+    assert [p for p in kept if p.startswith("app/")] == ["app/keep.py"]
+    assert not [p for p in kept if p.startswith(("apps/", "application/", "appendix/"))]
+    for lookalike in ("apps", "application", "appendix"):
+        assert f"'{lookalike}/'" in caplog.text
+
+
+def test_is_bundled_app_dir_is_per_backend():
+    assert fl_service.is_bundled_app_dir("app", FLBackend.NVFLARE)
+    assert fl_service.is_bundled_app_dir("app", FLBackend.FLOWER)
+    assert fl_service.is_bundled_app_dir("app_site1", FLBackend.NVFLARE)
+    assert fl_service.is_bundled_app_dir("app_site-1", FLBackend.NVFLARE)
+    assert not fl_service.is_bundled_app_dir("app_site1", FLBackend.FLOWER)
+    for lookalike in ("apps", "application", "app-site1", "myapp", ""):
+        assert not fl_service.is_bundled_app_dir(lookalike, FLBackend.NVFLARE)
+        assert not fl_service.is_bundled_app_dir(lookalike, FLBackend.FLOWER)
+    assert fl_service.describe_bundled_app_dirs(FLBackend.NVFLARE) == "app/ or app_*/"
+    assert fl_service.describe_bundled_app_dirs(FLBackend.FLOWER) == "app/"
 
 
 def test_list_local_base_files_returns_sorted_nested_relpaths(tmp_path):
@@ -1935,7 +2067,7 @@ def test_list_local_base_files_returns_sorted_nested_relpaths(tmp_path):
     (tmp_path / "pyproject.toml").write_text("x")
 
     # Directories are not returned, only files; paths are relative POSIX and sorted.
-    assert fl_service.list_local_base_files(tmp_path, FLOWER_ROOT) == [
+    assert fl_service.list_local_base_files(tmp_path, FLBackend.FLOWER) == [
         "app/config/config_fed_server.json",
         "app/custom/sub/deep.py",
         "pyproject.toml",
@@ -1953,7 +2085,7 @@ def test_list_local_base_files_logs_what_it_dropped(tmp_path, caplog):
     (base / "operator_extra.py").write_text("x")
 
     with caplog.at_level(logging.DEBUG):
-        kept = fl_service.list_local_base_files(base, FLOWER_ROOT)
+        kept = fl_service.list_local_base_files(base, FLBackend.FLOWER)
 
     assert kept == ["app/client_app.py", "pyproject.toml"]
     assert "operator_extra.py" in caplog.text
