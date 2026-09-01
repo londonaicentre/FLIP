@@ -21,6 +21,7 @@
 
 import argparse
 import csv
+import hashlib
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -30,6 +31,46 @@ import SimpleITK as sitk
 from tqdm import tqdm
 
 MODALITY_DESCRIPTIONS = {"t2w": "T2 Weighted", "adc": "ADC Map", "hbv": "High B-Value DWI"}
+
+# Study/series/frame-of-reference UIDs are derived from this root plus stable identifiers
+# (patient_id, study_id, modality) via SHA-256 — never from the machine clock or Python's
+# per-process-salted hash(). That makes re-converting the same study, on any machine, on any day,
+# produce byte-identical UIDs, so re-ingesting it into PACS updates the existing study instead of
+# minting a duplicate with a fresh StudyInstanceUID.
+STUDY_UID_ROOT = "1.2.826.0.1.3680043.2.1125"
+
+# Fixed per-modality UID component. Hashing the modality string (as before) draws from a value
+# space far larger than the handful of modalities PI-CAI actually uses, but "far larger" is not
+# "collision-free": two of the five in practice could still land on the same digits, which a PACS
+# would then merge into one interleaved series. A fixed map removes the collision outright rather
+# than just making it rarer. Raise on an unrecognised modality instead of falling back to a shared
+# bucket, which would silently reintroduce the same collision for whatever wasn't mapped.
+MODALITY_UID_COMPONENT = {
+    "t2w": "1",
+    "adc": "2",
+    "hbv": "3",
+    "sag": "4",  # Sagittal T2W — PI-CAI ships this for some studies alongside axial t2w.
+    "cor": "5",  # Coronal T2W — likewise.
+}
+
+
+def _deterministic_digits(*parts: str, length: int) -> str:
+    """Derive a fixed-length decimal digit string from ``parts`` via SHA-256.
+
+    Unlike Python's builtin ``hash()``, SHA-256 is not salted per interpreter run, so the same
+    ``parts`` always produce the same digits — on any machine, on any day.
+
+    Args:
+        parts: Strings to combine into the digest input. Joined with a separator so that, e.g.,
+            ``("ab", "c")`` and ``("a", "bc")`` never collide.
+        length: Number of decimal digits to return.
+
+    Returns:
+        A ``length``-digit decimal string derived from the SHA-256 digest of ``parts``.
+    """
+    digest = hashlib.sha256("|".join(parts).encode()).hexdigest()
+    return str(int(digest, 16) % 10**length).zfill(length)
+
 
 # Acquisition metadata PI-CAI leaves in the .mha headers (written by its anonymisation script).
 # The marksheet carries no scanner columns, so these headers are the dataset's only per-study
@@ -79,8 +120,10 @@ def write_dicom_series(
 
     modification_date = time.strftime("%Y%m%d")
     modification_time = time.strftime("%H%M%S")
-    study_uid = f"1.2.826.0.1.3680043.2.1125.{modification_date}.{abs(hash((patient_id, study_id))) % 10**10}"
-    series_uid = f"{study_uid}.{abs(hash(modality)) % 1000}"
+    if modality not in MODALITY_UID_COMPONENT:
+        raise ValueError(f"Unrecognised modality {modality!r}; add it to MODALITY_UID_COMPONENT")
+    study_uid = f"{STUDY_UID_ROOT}.{_deterministic_digits(patient_id, study_id, length=10)}"
+    series_uid = f"{study_uid}.{MODALITY_UID_COMPONENT[modality]}"
     frame_of_reference_uid = f"{series_uid}.1"
 
     direction = image.GetDirection()
