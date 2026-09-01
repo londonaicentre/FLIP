@@ -633,6 +633,27 @@
         tar -xf {{ omop_dir }}/{{ pgdata_archive }}
         -C {{ omop_dir }}/db_data
 
+    # The version-stamped destination above means every omop_data_version bump
+    # leaves the previous multi-GB archive behind, and nothing else touches it —
+    # omop_dir would grow by one tarball per bump for the life of the host. Drop
+    # this trust's other archives now that the current one has extracted cleanly.
+    - name: find superseded OMOP PGDATA archives
+      ansible.builtin.find:
+        paths: "{{ omop_dir }}"
+        patterns: "trust{{ trust_num }}_pgdata_*.tar"
+        excludes: "{{ pgdata_archive }}"
+        file_type: file
+        recurse: false
+      register: superseded_pgdata_archives
+
+    - name: remove superseded OMOP PGDATA archives
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ superseded_pgdata_archives.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
     - name: set Postgres ownership and permissions
       shell: |
         chown -R 999:999 {{ omop_dir }}/db_data
@@ -835,6 +856,26 @@
     - name: extract Orthanc data into orthanc-storage
       command: >
         tar -xf {{ base_dir }}/{{ archive }} -C {{ data_dir }}
+
+    # Same accumulation as the OMOP archive: the stamped name keeps each
+    # orthanc_data_version's tarball on disk for good. Keep only the one just
+    # extracted.
+    - name: find superseded Orthanc archives
+      ansible.builtin.find:
+        paths: "{{ base_dir }}"
+        patterns: "trust{{ trust_num }}_orthanc_data_*.tar"
+        excludes: "{{ archive }}"
+        file_type: file
+        recurse: false
+      register: superseded_orthanc_archives
+
+    - name: remove superseded Orthanc archives
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ superseded_orthanc_archives.files }}"
+      loop_control:
+        label: "{{ item.path }}"
 
     - name: ensure Orthanc storage is owned by container UID 999 and writable
       file:
