@@ -100,7 +100,7 @@ from flip_api.user_services import (
     set_user_roles,
     update_user,
 )
-from flip_api.utils.cognito_helpers import get_cors_allowed_origins
+from flip_api.utils.cors import get_cors_allowed_origins
 from flip_api.utils.rate_limiter import limiter
 from flip_api.utils.security_headers import SecurityHeadersMiddleware
 

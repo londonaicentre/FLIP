@@ -159,7 +159,7 @@ Cypress.Commands.add("demoPause", (ms = 600) => {
 declare global {
     // eslint-disable-next-line @typescript-eslint/no-namespace
     namespace Cypress {
-        interface Chainable<Subject = unknown> {
+        interface Chainable<Subject = any> {
             demoClick(options?: Partial<Cypress.ClickOptions>): Chainable<Subject>;
             demoType(text: string, options?: Partial<Cypress.TypeOptions>): Chainable<Subject>;
             demoPause(ms?: number): Chainable<void>;

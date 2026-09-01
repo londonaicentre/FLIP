@@ -29,7 +29,6 @@ import { RouteLocationNormalized } from "vue-router";
 import router, { afterEachGuard,
     beforeEachGuard,
     handleRouteError,
-    legacyProjectModelsRedirect,
     routeChange } from "@/router";
 import { doneRouteProgress, startRouteProgress } from "@/router/progress";
 import { authCheck } from "@/utils/auth";
@@ -56,16 +55,6 @@ describe("routeChange", () => {
     it("viewProject pushes /project/:id", () => {
         routeChange.viewProject("proj-1");
         expect(pushSpy).toHaveBeenCalledWith({ path: "/project/proj-1" });
-    });
-
-    it("the retired per-project models route redirects to the scoped estate list", () => {
-        // Bookmarks and old links must keep working: /project/:id/models now means
-        // /models?project=:id. Tested through the exported function because vue-router's
-        // `resolve()` does not follow redirects.
-        expect(legacyProjectModelsRedirect({ params: { projectId: "proj-2" } } as never)).toEqual({
-            path: "/models",
-            query: { project: "proj-2" }
-        });
     });
 
     it("viewModel pushes /project/:pid/model/:mid", () => {

@@ -148,8 +148,11 @@ class Http {
         return http;
     }
 
+    // axios >=1.19 types each verb as returning AxiosResponseResult<T, R, ...>,
+    // a conditional on R that the compiler cannot collapse while R is still
+    // generic — so each wrapper asserts the Promise<R> it declares.
     get<T = unknown, R = IResponse<T>>(url: string, config?: AxiosRequestConfig): Promise<R> {
-        return this.http.get<T, R>(url, config);
+        return this.http.get<T, R>(url, config) as Promise<R>;
     }
 
     post<T = unknown, I = unknown, R = IResponse<T>>(
@@ -157,7 +160,7 @@ class Http {
         data?: I,
         config?: AxiosRequestConfig
     ): Promise<R> {
-        return this.http.post<I, R>(url, data, config);
+        return this.http.post<I, R>(url, data, config) as Promise<R>;
     }
 
     put<T = unknown, I = unknown, R = IResponse<T>>(
@@ -165,7 +168,7 @@ class Http {
         data?: I,
         config?: AxiosRequestConfig
     ): Promise<R> {
-        return this.http.put<I, R>(url, data, config);
+        return this.http.put<I, R>(url, data, config) as Promise<R>;
     }
 
     patch<T = unknown, I = unknown, R = IResponse<T>>(
@@ -173,14 +176,14 @@ class Http {
         data?: I,
         config?: AxiosRequestConfig
     ): Promise<R> {
-        return this.http.patch<I, R>(url, data, config);
+        return this.http.patch<I, R>(url, data, config) as Promise<R>;
     }
 
     delete<T = unknown, R = IResponse<T>>(
         url: string,
         config?: AxiosRequestConfig
     ): Promise<R> {
-        return this.http.delete<T, R>(url, config);
+        return this.http.delete<T, R>(url, config) as Promise<R>;
     }
 }
 

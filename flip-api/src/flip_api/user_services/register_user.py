@@ -23,11 +23,10 @@ from flip_api.domain.interfaces.user import IRegisterUser, IUserResponse
 from flip_api.utils.cognito_helpers import (
     create_cognito_user,
     delete_cognito_user,
-    get_all_roles,
     get_user_pool_id,
-    validate_roles,
 )
 from flip_api.utils.logger import logger
+from flip_api.utils.user_roles import get_all_roles, validate_roles
 
 router = APIRouter(prefix="/users", tags=["user_services"])
 

@@ -28,8 +28,8 @@ Run this **after** the image pull and **after** DICOM-to-NIfTI conversion — th
 derived from the converted image, so running early skips every scan.
 
 This is backend-agnostic: enrichment happens once per FLIP project, in XNAT, and both the NVFLARE
-and Flower spleen tutorials read the result. Point ``--labels-dir`` at whichever backend's spleen
-download you have.
+and Flower spleen tutorials read the result. Point ``--labels-dir`` at whichever spleen download
+variant you have (see the datasets README).
 """
 
 import argparse
@@ -180,14 +180,14 @@ def fetch_accession_map(url: str | None = None, cache_dir: Path | None = None) -
 
 
 INCOMPLETE_DOWNLOAD_HELP = """   The two spleen downloads differ, so check the one --labels-dir points at:
-     NVFLARE (data/spleen/images)              make -C fl-tutorials/nvflare download-spleen-data NUM_CASES=41
-     Flower  (data/spleen/accession-resources) the HF snapshot ships a fixed 6-case subset, and
-                                               ignores NUM_CASES — point --labels-dir at the
-                                               NVFLARE download for full coverage."""
-"""Remediation text naming both backends.
+     MSD build   (data/spleen/images)              make -C fl-tutorials download-spleen-data NUM_CASES=41
+     FLIP-format (data/spleen/accession-resources) the HF snapshot ships a fixed 6-case subset, and
+                                                   ignores NUM_CASES — point --labels-dir at the
+                                                   MSD download for full coverage."""
+"""Remediation text naming both download variants.
 
 Printed unconditionally rather than inferred from ``--labels-dir``: guessing wrong sends the reader
-to a command that cannot help, and ``NUM_CASES`` genuinely does nothing on the Flower path.
+to a command that cannot help, and ``NUM_CASES`` genuinely does nothing on the FLIP-format path.
 """
 
 
