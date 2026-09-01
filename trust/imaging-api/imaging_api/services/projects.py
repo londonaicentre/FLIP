@@ -267,22 +267,28 @@ def _no_command_message(container: str, headers: dict[str, str]) -> str:
     """Explain why no XNAT command matched ``container``.
 
     ``get_command_info`` queries ``/xapi/commands?image=<container>``, so an empty
-    result has two very different causes with opposite fixes: the Container Service
-    genuinely has no commands, or it has one registered against a *different* image.
-    The latter is the common case — an XNAT provisioned before ``DCM2NIIX_IMAGE`` was
-    pinned (FLIP#980) still carries ``xnat/dcm2niix:latest`` — and blaming a missing
-    plugin sends the reader to the wrong place entirely.
+    result means only that no command is registered against *that exact image*. The
+    previous message asserted a single cause — a missing Container Service plugin —
+    which is the least likely one (FLIP#1093). In practice the plugin is healthy and
+    the command is registered against a different image: an XNAT provisioned before
+    FLIP#980 still carries ``xnat/dcm2niix:latest``.
 
-    Re-queries XNAT unfiltered to say which it is. The diagnostic call runs only on
-    the error path, and is never allowed to mask the original failure.
+    Rather than guess at the cause, list what *is* registered as name→image pairs.
+    That is the datum an operator needs and it cannot be wrong: it neither implies
+    unrelated containers are stale versions of this one, nor hides a same-named
+    command sitting on an older image. Note FLIP#980 changed the repository as well
+    as the tag, so comparing repositories would miss the very case this exists for.
+
+    Re-queries XNAT unfiltered on the error path only, and never lets that
+    diagnostic call mask the original failure.
 
     Args:
         container (str): Image that was requested and did not match.
         headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
-        str: Message naming the registered images when there are any, otherwise
-        falling back to the Container Service hypothesis.
+        str: A message naming what is registered, or the Container Service
+        hypothesis when genuinely nothing is.
     """
     try:
         probe = requests.get(f"{XNAT_URL}/xapi/commands", headers=headers)
@@ -290,17 +296,22 @@ def _no_command_message(container: str, headers: dict[str, str]) -> str:
     except Exception:  # noqa: BLE001 - diagnostics must never replace the real error
         registered = []
 
-    images = sorted({c.get("image") for c in registered if c.get("image")})
-    if not images:
+    if not registered:
         return (
             f"No commands found for container '{container}' and no commands are registered at all "
             "- the XNAT Container Service may not be installed or configured"
         )
+
+    listed = ", ".join(
+        f"{c.get('name', '?')!r} -> {c.get('image', '?')!r}"
+        for c in sorted(registered, key=lambda c: (c.get("name") or "", c.get("image") or ""))
+    )
     return (
-        f"No commands found for container '{container}'. XNAT has command(s) registered against "
-        f"{', '.join(repr(i) for i in images)} instead - this XNAT's registration predates the "
-        "current DCM2NIIX_IMAGE pin. Re-run configure-dcm2niix.sh (compose) or the xnat-init job "
-        "(k8s) to re-register it, and check the trust's imaging-api image is current."
+        f"No commands found for container '{container}'. The Container Service is working and has "
+        f"{len(registered)} command(s) registered: {listed}. If one of those is the same tool on an "
+        "older image, this XNAT's registration predates the current pin - re-run configure-dcm2niix.sh "
+        "(compose) or the xnat-init job (k8s) to re-register it, and check the trust's imaging-api "
+        "image is current."
     )
 
 

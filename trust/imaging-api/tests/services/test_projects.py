@@ -301,8 +301,8 @@ def test_get_command_info_fetch_failure(mock_get, headers):
 
 
 @patch("imaging_api.services.projects.requests.get")
-def test_get_command_info_mismatch_names_registered_image(mock_get, headers):
-    """A stale registration must name both images, not blame the plugin (FLIP#1093)."""
+def test_get_command_info_lists_registered_commands_on_mismatch(mock_get, headers):
+    """The real FLIP#980 case: same tool, different repo AND tag (FLIP#1093)."""
     filtered = MagicMock(status_code=200, json=MagicMock(return_value=[]))
     unfiltered = MagicMock(
         status_code=200,
@@ -315,10 +315,36 @@ def test_get_command_info_mismatch_names_registered_image(mock_get, headers):
 
     message = str(excinfo.value)
     assert "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724" in message
-    assert "xnat/dcm2niix:latest" in message
+    assert "'dcm2niix' -> 'xnat/dcm2niix:latest'" in message
     assert "configure-dcm2niix.sh" in message
     # The misleading hypothesis must not appear when commands plainly exist.
     assert "may not be installed" not in message
+
+
+@patch("imaging_api.services.projects.requests.get")
+def test_get_command_info_lists_unrelated_commands_without_claiming_a_mismatch(mock_get, headers):
+    """Unrelated containers must be shown as-is, not implied to be stale versions."""
+    filtered = MagicMock(status_code=200, json=MagicMock(return_value=[]))
+    unfiltered = MagicMock(
+        status_code=200,
+        json=MagicMock(
+            return_value=[
+                {"id": 2, "name": "some-other-tool", "image": "ghcr.io/someone/other-tool:v3"},
+                {"id": 3, "name": "another", "image": "docker.io/library/busybox:1.36"},
+            ]
+        ),
+    )
+    mock_get.side_effect = [filtered, unfiltered]
+
+    with pytest.raises(Exception, match="No commands found for container") as excinfo:
+        get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
+
+    message = str(excinfo.value)
+    assert "2 command(s) registered" in message
+    assert "'some-other-tool' -> 'ghcr.io/someone/other-tool:v3'" in message
+    assert "'another' -> 'docker.io/library/busybox:1.36'" in message
+    # It is conditional ("If one of those..."), never an assertion about these images.
+    assert "If one of those" in message
 
 
 @patch("imaging_api.services.projects.requests.get")
