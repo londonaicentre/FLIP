@@ -1,0 +1,233 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Nightly Terraform drift detection (FLIP#962).
+#
+# Console changes, half-finished applies and out-of-band fixes accumulate between
+# deploys, and today nothing notices until the next plan surprises whoever ran it.
+# This plans each environment on a schedule and raises one issue per environment
+# when reality has moved away from the code.
+#
+# Uses the read-only plan role and `-lock=false`, so it can never block or disturb
+# an operator mid-apply. `-detailed-exitcode` makes "there is a diff" exit 2,
+# distinct from "the plan failed" (exit 1) — the two want different responses and
+# collapsing them would train people to ignore the issue.
+#
+# Note on prod: scheduled workflows run on the default branch (develop), so the
+# prod job's OIDC token carries `refs/heads/develop`. The aws-prod environment
+# must therefore permit the default branch in its deployment branch policy. That
+# does not weaken the apply guard — the apply role is pinned by IAM to
+# terraform_apply.yml@refs/heads/main, and this workflow can only reach the plan
+# role, which cannot write state.
+
+name: Terraform Drift
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC daily, well clear of working hours
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tf-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: Drift (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: stag
+            environment: aws-stag
+            tf_env: stag
+          - name: prod
+            environment: aws-prod
+            tf_env: prod
+    environment: ${{ matrix.environment }}
+    permissions:
+      contents: read
+      id-token: write # mint the OIDC token
+      issues: write # raise the drift issue
+
+    env:
+      TF_ENV: ${{ matrix.tf_env }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      VPC_NAME: ${{ vars.VPC_NAME }}
+      FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}
+      AICENTRE_BUCKET_NAME: ${{ vars.AICENTRE_BUCKET_NAME }}
+      FLIP_APP_BUNDLES_BUCKET_NAME: ${{ vars.FLIP_APP_BUNDLES_BUCKET_NAME }}
+      FLIP_FL_RESULTS_BUCKET_NAME: ${{ vars.FLIP_FL_RESULTS_BUCKET_NAME }}
+      FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME: ${{ vars.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME }}
+      FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
+      FLIP_BUCKET_NAME: ${{ vars.FLIP_BUCKET_NAME }}
+      API_PORT: ${{ vars.API_PORT }}
+      DB_PORT: ${{ vars.DB_PORT }}
+      UI_PORT: ${{ vars.UI_PORT }}
+      FL_API_PORT: ${{ vars.FL_API_PORT }}
+      FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
+      ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
+      FL_ADMIN_DIRECTORY: ${{ vars.FL_ADMIN_DIRECTORY }}
+      INTERNAL_SERVICE_KEY_HEADER: ${{ vars.INTERNAL_SERVICE_KEY_HEADER }}
+      TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}
+      MIN_CLIENTS: ${{ vars.MIN_CLIENTS }}
+      SES_VERIFIED_EMAIL: ${{ vars.SES_VERIFIED_EMAIL }}
+      ALB_SUBDOMAIN: ${{ vars.ALB_SUBDOMAIN }}
+      NLB_SUBDOMAIN: ${{ vars.NLB_SUBDOMAIN }}
+      DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
+      DOCKER_TAG: ${{ vars.DOCKER_TAG }}
+      DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}
+      FL_BACKEND: ${{ vars.FL_BACKEND }}
+      FL_KIT_SLOT_NAMES: ${{ vars.FL_KIT_SLOT_NAMES }}
+      FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
+      FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
+      DEPLOY_TRUST_EC2: ${{ vars.DEPLOY_TRUST_EC2 }}
+      LOCAL_TRUST_PUBLIC_IPS: ${{ vars.LOCAL_TRUST_PUBLIC_IPS }}
+      K8S_TRUST_PUBLIC_IPS: ${{ vars.K8S_TRUST_PUBLIC_IPS }}
+      JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
+      JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: ${{ vars.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB }}
+      ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
+      AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
+      INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
+      INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.TF_PLAN_ROLE_ARN }}
+          role-session-name: flip-tf-drift-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Compose the Terraform env file
+        run: |
+          deploy/providers/AWS/scripts/compose-ci-env.sh \
+            ".env.${{ matrix.tf_env == 'prod' && 'production' || 'stag' }}"
+
+      - name: Write the EC2 keypair public key
+        run: |
+          mkdir -p "$HOME/.ssh"
+          if ! aws ssm get-parameter \
+            --name /flip/ci/host_aws_public_key \
+            --query Parameter.Value --output text > "$HOME/.ssh/host-aws.pub"; then
+            echo "::error::/flip/ci/host_aws_public_key is missing. Seed it with:" \
+                 "make -C deploy/providers/AWS seed-ci-keypair-param"
+            exit 1
+          fi
+          chmod 600 "$HOME/.ssh/host-aws.pub"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~> 1.13"
+          terraform_wrapper: false
+
+      - name: Export the Terraform variables
+        working-directory: deploy/providers/AWS
+        env:
+          PROD: ${{ matrix.tf_env == 'prod' && 'true' || 'stag' }}
+        run: make --no-print-directory print-tf-env >> "$GITHUB_ENV"
+
+      - name: Terraform init
+        working-directory: deploy/providers/AWS
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.FLIP_TFSTATE_BUCKET_NAME }}" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -reconfigure
+
+      - name: Terraform plan
+        id: plan
+        working-directory: deploy/providers/AWS
+        run: |
+          set +e
+          terraform plan -detailed-exitcode -lock=false -no-color -out=tfplan > plan.txt 2>&1
+          code=$?
+          set -e
+          echo "exitcode=${code}" >> "$GITHUB_OUTPUT"
+          case "${code}" in
+            0) echo "✅ No drift in ${{ matrix.name }}." ;;
+            2) echo "⚠️ Drift detected in ${{ matrix.name }}." ;;
+            *) echo "::error::terraform plan failed for ${{ matrix.name }} (exit ${code})"
+               tail -50 plan.txt
+               exit 1 ;;
+          esac
+
+      # The plan text is a full rendering of the diff. `sensitive` values render as
+      # (sensitive value), but the issue body is still trimmed to the change
+      # summary rather than pasted whole — an issue on a public repository is not
+      # the place for an unbounded dump of infrastructure detail.
+      - name: Summarise the drift
+        if: steps.plan.outputs.exitcode == '2'
+        id: summary
+        working-directory: deploy/providers/AWS
+        run: |
+          terraform show -json tfplan > tfplan.json
+          {
+            echo "changes<<DRIFT_EOF"
+            jq -r '
+              [.resource_changes[]
+               | select(.change.actions | any(. != "no-op" and . != "read"))]
+              | if length == 0 then "No resource changes (provider or output drift only)."
+                else (.[] | "- `\(.change.actions | join("+"))` \(.address)")
+                end
+            ' tfplan.json | head -100
+            echo "DRIFT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # One open issue per environment, updated in place. A new issue per night
+      # would bury the first report — which is the one with the useful timestamp.
+      - name: Raise or update the drift issue
+        if: steps.plan.outputs.exitcode == '2'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: "Terraform drift detected: ${{ matrix.name }}"
+          CHANGES: ${{ steps.summary.outputs.changes }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          body=$(cat <<EOF
+          The nightly drift plan for **${{ matrix.name }}** found differences between the
+          Terraform code on \`${{ github.ref_name }}\` and the live infrastructure.
+
+          ${CHANGES}
+
+          Full plan output: ${RUN_URL}
+
+          Either apply the change (merge to the environment's branch) or reconcile
+          whatever was changed out of band. This issue is updated in place by each
+          nightly run and can be closed once the plan is clean.
+          EOF
+          )
+          existing=$(gh issue list --state open --search "\"${TITLE}\" in:title" \
+            --json number,title --jq ".[] | select(.title == \"${TITLE}\") | .number" | head -1)
+          if [[ -n "${existing}" ]]; then
+            gh issue comment "${existing}" --body "${body}"
+            echo "Updated issue #${existing}."
+          else
+            # --label fails the whole call if the label does not exist yet, which
+            # would lose the drift report over a cosmetic detail. Create it once,
+            # ignore the "already exists" case, and fall back to an unlabelled
+            # issue if label creation is not permitted.
+            gh label create terraform-drift \
+              --description "Raised by the nightly Terraform drift run" \
+              --color D93F0B 2>/dev/null || true
+            gh issue create --title "${TITLE}" --body "${body}" --label terraform-drift \
+              || gh issue create --title "${TITLE}" --body "${body}"
+          fi

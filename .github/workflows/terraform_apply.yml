@@ -1,0 +1,200 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Terraform apply on merge (FLIP#962): develop → staging, main → production.
+#
+# Production applies automatically, on the official release cycle, with no human
+# gate beyond branch protection and PR review on `main`. Two hazards make that
+# safe to switch on, and both are handled here rather than left to a runbook:
+#
+#   Hazard A — an apply un-pins the released image.
+#     ecs_services.tf tracks max(terraform_revision, live_revision), so a no-op
+#     apply preserves what deploy-centralhub deployed. But an apply that *changes*
+#     a task definition mints a revision from the env file's mutable `:stag` /
+#     `:prod` tag, discarding the immutable sha pin from FLIP#751. Solved by
+#     resolving the tag instead of reading it — see scripts/resolve-image-tags.sh.
+#
+#   Hazard B — replacing fl-server-net-1 kills an in-flight training run (FLIP#770).
+#     A runner cannot ask the hub whether a run is in flight (GET /fl/quiesce is
+#     Cognito-gated, CloudFront strips the internal key, and the scheduler state
+#     is in a private subnet), so the gate asks the plan instead: if nothing on
+#     the FL watch list changes, apply; otherwise hold for an operator. See
+#     scripts/check-fl-plan-impact.sh.
+#
+# Re-running after quiescing: use the workflow_dispatch trigger on the same
+# branch. Dispatching from any other branch fails closed — the apply role's trust
+# policy pins job_workflow_ref to this file at refs/heads/{develop,main}.
+
+name: Terraform Apply
+
+on:
+  push:
+    branches: [develop, main]
+    paths:
+      - "deploy/providers/AWS/**"
+      - ".github/workflows/terraform_apply.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancel an apply in progress — a half-applied plan leaves state and
+  # reality disagreeing in a way the next run cannot reason about.
+  group: tf-apply-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: Apply (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'aws-prod' || 'aws-stag' }}
+    permissions:
+      contents: read
+      id-token: write # mint the OIDC token
+      packages: read # probe GHCR for the release image tag
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.TF_APPLY_ROLE_ARN }}
+          role-session-name: flip-tf-apply-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # Hazard A. Waits for this commit's `sha-<short7>` images, which
+      # docker_build_*.yml publishes only after the service's tests pass — so an
+      # apply cannot deploy an image that never went green. When no image was
+      # published (an infrastructure-only merge) it reuses what the services are
+      # already running, never the mutable tag.
+      - name: Resolve the image tags to pin
+        env:
+          GIT_SHA: ${{ github.sha }}
+          DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
+          FALLBACK_DOCKER_TAG: ${{ vars.DOCKER_TAG }}
+          FALLBACK_DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}
+          FL_BACKEND: ${{ vars.FL_BACKEND }}
+          GHCR_WAIT_SECONDS: ${{ vars.GHCR_WAIT_SECONDS || 900 }}
+        run: deploy/providers/AWS/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"
+
+      # DOCKER_TAG / DOCKER_FL_TAG are deliberately absent from this env block:
+      # they are inherited from the step above via $GITHUB_ENV. Setting them from
+      # `vars` here would override the resolved values and reintroduce hazard A.
+      - name: Compose the Terraform env file
+        env:
+          TF_ENV: ${{ github.ref_name == 'main' && 'prod' || 'stag' }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          VPC_NAME: ${{ vars.VPC_NAME }}
+          FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}
+          AICENTRE_BUCKET_NAME: ${{ vars.AICENTRE_BUCKET_NAME }}
+          FLIP_APP_BUNDLES_BUCKET_NAME: ${{ vars.FLIP_APP_BUNDLES_BUCKET_NAME }}
+          FLIP_FL_RESULTS_BUCKET_NAME: ${{ vars.FLIP_FL_RESULTS_BUCKET_NAME }}
+          FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME: ${{ vars.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME }}
+          FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
+          FLIP_BUCKET_NAME: ${{ vars.FLIP_BUCKET_NAME }}
+          API_PORT: ${{ vars.API_PORT }}
+          DB_PORT: ${{ vars.DB_PORT }}
+          UI_PORT: ${{ vars.UI_PORT }}
+          FL_API_PORT: ${{ vars.FL_API_PORT }}
+          FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
+          ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
+          FL_ADMIN_DIRECTORY: ${{ vars.FL_ADMIN_DIRECTORY }}
+          INTERNAL_SERVICE_KEY_HEADER: ${{ vars.INTERNAL_SERVICE_KEY_HEADER }}
+          TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}
+          MIN_CLIENTS: ${{ vars.MIN_CLIENTS }}
+          SES_VERIFIED_EMAIL: ${{ vars.SES_VERIFIED_EMAIL }}
+          ALB_SUBDOMAIN: ${{ vars.ALB_SUBDOMAIN }}
+          NLB_SUBDOMAIN: ${{ vars.NLB_SUBDOMAIN }}
+          DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
+          FL_BACKEND: ${{ vars.FL_BACKEND }}
+          FL_KIT_SLOT_NAMES: ${{ vars.FL_KIT_SLOT_NAMES }}
+          FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
+          FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
+          DEPLOY_TRUST_EC2: ${{ vars.DEPLOY_TRUST_EC2 }}
+          LOCAL_TRUST_PUBLIC_IPS: ${{ vars.LOCAL_TRUST_PUBLIC_IPS }}
+          K8S_TRUST_PUBLIC_IPS: ${{ vars.K8S_TRUST_PUBLIC_IPS }}
+          JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
+          JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: ${{ vars.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB }}
+          ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
+          AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
+          INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
+          INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+        run: |
+          deploy/providers/AWS/scripts/compose-ci-env.sh \
+            ".env.${{ github.ref_name == 'main' && 'production' || 'stag' }}"
+
+      - name: Write the EC2 keypair public key
+        run: |
+          mkdir -p "$HOME/.ssh"
+          if ! aws ssm get-parameter \
+            --name /flip/ci/host_aws_public_key \
+            --query Parameter.Value --output text > "$HOME/.ssh/host-aws.pub"; then
+            echo "::error::/flip/ci/host_aws_public_key is missing. Seed it with:" \
+                 "make -C deploy/providers/AWS seed-ci-keypair-param"
+            exit 1
+          fi
+          chmod 600 "$HOME/.ssh/host-aws.pub"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~> 1.13"
+          terraform_wrapper: false
+
+      - name: Export the Terraform variables
+        working-directory: deploy/providers/AWS
+        env:
+          PROD: ${{ github.ref_name == 'main' && 'true' || 'stag' }}
+        run: make --no-print-directory print-tf-env >> "$GITHUB_ENV"
+
+      # Plan first and apply *that file*, never `apply -auto-approve` against a
+      # fresh plan: the gate below has to inspect the same plan that gets applied,
+      # or it is checking something else.
+      - name: Terraform plan
+        uses: op5dev/tf-via-pr@39ed2635c056ca408ed24cc5c2baf0ef4381a7a5 # v13.7.4
+        with:
+          command: plan
+          working-directory: deploy/providers/AWS
+          arg-backend-config: bucket=${{ vars.FLIP_TFSTATE_BUCKET_NAME }},region=${{ vars.AWS_REGION }}
+          validate: true
+          format: true
+          preserve-plan: true # the gate and the apply both need the file
+          upload-plan: true # keeps the applied plan as a run artifact
+
+      # Hazard B. Exit 1 holds the deploy with the resources named; exit 2 means
+      # the plan could not be read, which is also a hold — never an apply.
+      - name: Check the plan for FL impact
+        working-directory: deploy/providers/AWS
+        run: |
+          terraform show -json tfplan > tfplan.json
+          scripts/check-fl-plan-impact.sh tfplan.json
+
+      # tf-via-pr moves `plan-file` onto its own working path, so hand it a copy
+      # rather than the file it is about to overwrite.
+      - name: Stage the reviewed plan
+        working-directory: deploy/providers/AWS
+        run: cp tfplan tfplan.gated
+
+      - name: Terraform apply
+        uses: op5dev/tf-via-pr@39ed2635c056ca408ed24cc5c2baf0ef4381a7a5 # v13.7.4
+        with:
+          command: apply
+          working-directory: deploy/providers/AWS
+          arg-backend-config: bucket=${{ vars.FLIP_TFSTATE_BUCKET_NAME }},region=${{ vars.AWS_REGION }}
+          plan-file: deploy/providers/AWS/tfplan.gated

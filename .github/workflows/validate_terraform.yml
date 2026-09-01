@@ -18,11 +18,17 @@ on:
     paths:
       - "deploy/providers/AWS/**"
       - ".github/workflows/validate_terraform.yml"
+      - ".github/workflows/terraform_plan.yml"
+      - ".github/workflows/terraform_apply.yml"
+      - ".github/workflows/terraform_drift.yml"
   pull_request:
     branches: [main, develop]
     paths:
       - "deploy/providers/AWS/**"
       - ".github/workflows/validate_terraform.yml"
+      - ".github/workflows/terraform_plan.yml"
+      - ".github/workflows/terraform_apply.yml"
+      - ".github/workflows/terraform_drift.yml"
 
 permissions:
   contents: read
@@ -38,6 +44,10 @@ jobs:
         root:
           - ./deploy/providers/AWS
           - ./deploy/providers/AWS/dev
+          # GitHub Actions OIDC roles for the Terraform pipeline (FLIP#962).
+          # Applied from a laptop, never by CI — see ci/backend.tf — but still
+          # validated here so a broken trust policy is caught before it is applied.
+          - ./deploy/providers/AWS/ci
     defaults:
       run:
         working-directory: ${{ matrix.root }}
@@ -60,15 +70,27 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-  # Black-box harness for the add-fl-kits deploy script (mints certs and mutates
-  # live S3 kit state in real runs — here aws/make/openssl are stubbed, no
-  # credentials or network). Shares this workflow's deploy/providers/AWS/** path
-  # filter, so it runs whenever the script or its tests change.
-  add-fl-kits-script-tests:
+  # Black-box harnesses for the deploy scripts. Each drives the real script with
+  # aws/docker/make/openssl stubbed on PATH — no credentials, no network. They
+  # share this workflow's deploy/providers/AWS/** path filter, so they run
+  # whenever a script or its tests change.
+  #
+  # test_compose_ci_env.sh additionally cross-checks the Makefile and the
+  # Terraform CI workflows against the env manifest, so adding a TF_VAR export
+  # without wiring it through fails here rather than at apply time.
+  deploy-script-tests:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        harness:
+          - test_add_fl_kits.sh
+          - test_compose_ci_env.sh
+          - test_check_fl_plan_impact.sh
+          - test_resolve_image_tags.sh
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Run add_fl_kits.sh test harness
-        run: bash deploy/providers/AWS/scripts/tests/test_add_fl_kits.sh
+      - name: Run ${{ matrix.harness }}
+        run: bash deploy/providers/AWS/scripts/tests/${{ matrix.harness }}
