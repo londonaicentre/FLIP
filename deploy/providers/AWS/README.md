@@ -821,6 +821,16 @@ revert by flipping `MANAGE_DNS=true` + `make plan`/`apply` once the zone lands:
 - Trusts polling the hub would need the CloudFront domain as `CENTRAL_HUB_API_URL` — fine for WP3 smoke trusts;
   the real cutover is DNS-only and happens after the zone migrates.
 
+**Attaching the real domain to the edge.** CloudFront is never addressed by IP — distribution IPs are anycast
+and rotate — so the domain is wired up DNS-side, in the networking account where the edge lives: a public
+Route 53 hosted zone for the FLIP subdomain (e.g. `flip.example.org`) is created there; a
+DNS-validated ACM certificate for the canonical names is minted **in us-east-1** (a CloudFront requirement)
+and attached to the distribution as its alternate domain names; the zone then carries an **A/AAAA alias
+record** — e.g. `app.flip.example.org` → `d111111abcdef8.cloudfront.net` (an alias, never a literal
+IP) — and the parent domain's DNS host delegates the subdomain to the zone's four `ns-*.awsdns-*` name
+servers. The FL name (`fl.app.flip.example.org`) is the same shape aliasing the edge NLB. The
+concrete cutover runbook stays in the private platform repos.
+
 **State of the LZA path** (tracked on #749):
 
 - **Multi-AZ has landed platform-side** (verified against the live account 2026-08-24): both AZs carry an
