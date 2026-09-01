@@ -58,10 +58,42 @@ columns the converter legitimately omits (`wadors_uri` on `image_occurrence`; `a
 in the published export before being excused &mdash; a published-only column carrying real data
 would still fail the gate.
 
-## Run record
+## Run record &mdash; `20260901` (FLIP#1098)
 
-- **Data version compared**: `20260729` (`trust/omop-db/.data_version`)
+- **Data version compared**: `20260901` (`trust/omop-db/.data_version`)
 - **Date run**: 2026-09-01
+- **Environment**: this worktree, no root, no MSD/DICOM download &mdash; the reproducible path only
+- **What changed since `20260729`**: the converter's SliceThickness unit filter was corrected
+  (FLIP#1098 &mdash; it compared against a transposed concept id and never matched, so every
+  published measurement carried `unit_concept_id` 0), and the `spleen_project` export was
+  regenerated from the *same* `source/dicom_metadata.csv` and republished under a new version.
+  Run against the still-pinned `20260729` with the fix applied, this gate failed on exactly that
+  column (`DIFF  measurement: (205, 11) vs (205, 11), first differing column: unit_concept_id`)
+  &mdash; the gate doing its job, and the reason the fix ships as a new data version.
+
+### Result (verbatim)
+
+```
+MATCH person: 41 rows x 10 cols
+MATCH procedure_occurrence: 41 rows x 9 cols
+MATCH visit_occurrence: 41 rows x 8 cols
+MATCH image_occurrence: 41 rows x 11 cols
+MATCH image_feature: 205 rows x 8 cols
+MATCH measurement: 205 rows x 11 cols
+
+GATE PASS — every published table reproduces from 20260901
+```
+
+Exit code: `0`.
+
+No published-only columns this time: the `20260901` export is the chain's own output, so the
+empty optional columns the `20260729` export had materialised are simply absent &mdash; every
+column compared, none excused.
+
+## Run record &mdash; `20260729` (historical; the FLIP#1092 provenance claim)
+
+- **Data version compared**: `20260729`
+- **Date run**: 2026-09-01, before the FLIP#1098 correction
 - **Environment**: this worktree, no root, no MSD/DICOM download &mdash; the reproducible path only
 
 ### Result (verbatim)
@@ -95,11 +127,13 @@ absent upstream for `spleen_project` by design, not a gap.
 
 ## Outcome
 
-**GATE PASS.** Every published `spleen_project` table for data version `20260729` reproduces
-byte-for-byte on the shared columns from the vendored, in-tree conversion chain, starting from
-the published metadata table. This is the evidence that the vendored code under
-`fl-tutorials/datasets/spleen/` (Tasks 1&ndash;7 of this wave) is demonstrably what produced
-FLIP's published spleen mock OMOP data, not merely a plausible reimplementation.
+**GATE PASS**, for both data versions. Every published `spleen_project` table for `20260729`
+reproduced byte-for-byte on the shared columns from the vendored, in-tree conversion chain as
+imported, starting from the published metadata table &mdash; the evidence that the vendored code
+under `fl-tutorials/datasets/spleen/` (Tasks 1&ndash;7 of this wave) is demonstrably what
+produced FLIP's published spleen mock OMOP data, not merely a plausible reimplementation. And
+every table for `20260901` reproduces from the corrected chain, with nothing excused: from that
+version on, the published export *is* this chain's output.
 
 ## Re-running this check
 
