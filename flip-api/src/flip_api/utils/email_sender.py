@@ -50,7 +50,7 @@ def send_templated_email(recipient: str, template_name: str, template_data: dict
     Dispatches on the ``EMAIL_BACKEND`` setting: ``"ses"`` sends through AWS
     SESv2 using the account-level template of that name (prod/stag);
     ``"console"`` logs the would-be email instead (the development default),
-    with ``_REDACTED_TEMPLATE_FIELDS`` values masked.
+    masking the value of any secret-shaped key (see ``_redact``).
 
     The console backend logs and returns — it does no I/O and no
     serialisation — so in development a caller's success-path bookkeeping
