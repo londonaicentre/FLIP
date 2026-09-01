@@ -80,7 +80,13 @@ The kit owns only the per-trust keys. The chart's *other* secrets (XNAT, OMOP,
 Orthanc, Grafana, S3 kit-sync credentials) are deployment-specific — supply them
 via the chart's built-in Secret template (`secrets.create=true` + a
 `values-secrets.yaml`, see the [Secrets Reference](#secrets-reference)) or create
-the Secret externally. `make sync-kit` (next step) patches the per-trust keys
+the Secret externally.
+
+> `values-secrets.yaml` is **generated, gitignored, and must never be committed** —
+> it carries live trust credentials. Produce it with
+> `scripts/generate_values.py --env-file trust/.env.<CODE>.<env>`, which writes it
+> with mode `0600`. The tracked `values-secrets.yaml.example` is a placeholder
+> field reference only; copying it into place without filling it will not deploy. `make sync-kit` (next step) patches the per-trust keys
 *on top* of this Secret without touching the infra keys.
 
 ### 3. Sync the kit into the cluster
