@@ -134,7 +134,7 @@ def transform_dicom_metadata_to_omop_tables(
     image_occurrence["person_id"] = person["person_id"]
     image_occurrence["procedure_occurrence_id"] = procedure_occurrence["procedure_occurrence_id"]
     image_occurrence["visit_occurrence_id"] = visit_occurrence["visit_occurrence_id"]
-    image_occurrence["anatomic_site_concept_id"] = 4302605  # CSV does have BPE
+    image_occurrence["anatomic_site_concept_id"] = 4302605  # not read from DICOM; hardcoded (splenic structure)
     # In spleen_metadata.csv, 'FilePath' contains the full path to the DICOM file,
     # so use `dirname` to get the folder path
     image_occurrence["local_path"] = df["FilePath"].apply(os.path.dirname)

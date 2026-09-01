@@ -109,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
         version = (Path(__file__).resolve().parents[3] / "trust/omop-db/.data_version").read_text().strip()
 
     failed: list[str] = []
+    compared = 0
     for table in TABLES:
         theirs = fetch_published(version, args.project, table)
         if theirs is None:
@@ -123,10 +124,17 @@ def main(argv: list[str] | None = None) -> int:
         mine = pd.concat([pd.read_csv(p) for p in paths], ignore_index=True)
         ok, detail = compare(mine, theirs.drop(columns=["source_trust"], errors="ignore"))
         print(f"{'MATCH' if ok else 'DIFF '} {table}: {detail}")
+        compared += 1
         if not ok:
             failed.append(table)
 
     print()
+    if compared == 0:
+        print(
+            f"GATE FAIL — no tables were compared for {args.project} at version {version}. "
+            "Check --data-version and that the dataset path still exists."
+        )
+        return 1
     if failed:
         print(f"GATE FAIL — {len(failed)} table(s) diverge from the published export: {failed}")
         return 1
