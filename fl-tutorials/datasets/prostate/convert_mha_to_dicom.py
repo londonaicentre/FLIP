@@ -30,9 +30,26 @@ from tqdm import tqdm
 
 MODALITY_DESCRIPTIONS = {"t2w": "T2 Weighted", "adc": "ADC Map", "hbv": "High B-Value DWI"}
 
+# Acquisition metadata PI-CAI leaves in the .mha headers (written by its anonymisation script).
+# The marksheet carries no scanner columns, so these headers are the dataset's only per-study
+# record of which scanner acquired a scan — carry them into the DICOM instead of dropping them.
+PRESERVED_SOURCE_TAGS = (
+    "0008|0070",  # Manufacturer
+    "0008|1090",  # Manufacturer's Model Name
+    "0010|0040",  # Patient's Sex
+    "0010|1010",  # Patient's Age
+    "0012|0062",  # Patient Identity Removed
+)
+
 
 def write_dicom_series(image: sitk.Image, out_dir: Path, patient_id: str, study_id: str, modality: str) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Read the source metadata *before* casting: sitk.Cast returns a new image with an empty
+    # metadata dictionary, so anything read after this line would silently come back missing.
+    source_tags = {tag: image.GetMetaData(tag) for tag in PRESERVED_SOURCE_TAGS if image.HasMetaDataKey(tag)}
+    # PI-CAI writes the acquisition date as YYYY-MM-DD; DICOM DA wants YYYYMMDD. Without this
+    # every study is stamped with the date it happened to be converted.
+    source_study_date = image.GetMetaData("0008|0020").replace("-", "") if image.HasMetaDataKey("0008|0020") else ""
     image = sitk.Cast(image, sitk.sitkInt16)
 
     modification_date = time.strftime("%Y%m%d")
@@ -50,7 +67,7 @@ def write_dicom_series(image: sitk.Image, out_dir: Path, patient_id: str, study_
     series_tag_values = {
         "0008|0050": f"{patient_id}_{study_id}",
         "0008|0060": "MR",
-        "0008|0020": modification_date,
+        "0008|0020": source_study_date or modification_date,
         "0008|0030": modification_time,
         "0008|103e": MODALITY_DESCRIPTIONS.get(modality, modality.upper()),
         "0010|0020": patient_id,
@@ -62,6 +79,7 @@ def write_dicom_series(image: sitk.Image, out_dir: Path, patient_id: str, study_
         "0028|0030": f"{spacing[1]}\\{spacing[0]}",
         "0018|0050": str(spacing[2]),
     }
+    series_tag_values.update(source_tags)
 
     writer = sitk.ImageFileWriter()
     writer.KeepOriginalImageUIDOn()

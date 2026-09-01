@@ -72,6 +72,15 @@ the series reconstructs correctly in a PACS viewer. `convert_mha_to_nifti.py` wr
 `.nii.gz` per scan, keeping the same `<patient_id>/<patient_id>_<study_id>_<modality>.nii.gz`
 layout as the source `.mha` files. Both converters run one worker process per CPU by default.
 
+Both also carry through the acquisition metadata PI-CAI leaves in the `.mha` headers — `Manufacturer`,
+`ManufacturersModelName`, the real acquisition date, `PatientSex`, `PatientAge` and
+`PatientIdentityRemoved`. This is the dataset's **only** per-study record of which scanner acquired a
+scan (`marksheet.csv` has no scanner columns), so it is worth keeping: it is what lets you partition
+finer than the three `center` values, and without it every converted study is stamped with the date it
+happened to be converted. The DICOM writer copies the tags across directly; NIfTI has nowhere to put
+them, so `convert_mha_to_nifti.py` writes a BIDS-style `<patient>_<study>_<modality>.json` sidecar
+beside each volume.
+
 `partition_by_center.py` splits the converted NIfTI scans and whole-gland + zonal labels into
 one folder per acquiring center, using the `center` column of
 `clinical_information/marksheet.csv`:
