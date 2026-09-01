@@ -21,30 +21,36 @@
 
 import argparse
 import csv
-import hashlib
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import SimpleITK as sitk
+from pydicom.uid import generate_uid
 from tqdm import tqdm
 
 MODALITY_DESCRIPTIONS = {"t2w": "T2 Weighted", "adc": "ADC Map", "hbv": "High B-Value DWI"}
 
-# Study/series/frame-of-reference UIDs are derived from this root plus stable identifiers
-# (patient_id, study_id, modality) via SHA-256 — never from the machine clock or Python's
-# per-process-salted hash(). That makes re-converting the same study, on any machine, on any day,
-# produce byte-identical UIDs, so re-ingesting it into PACS updates the existing study instead of
-# minting a duplicate with a fresh StudyInstanceUID.
-STUDY_UID_ROOT = "1.2.826.0.1.3680043.2.1125"
+# Every generated UID (study, series, frame-of-reference, and per-slice SOP instance) is
+# `UID_PREFIX` followed by a SHA-512 digest of stable identifiers — never the machine clock or
+# Python's per-process-salted hash(). pydicom's generate_uid(entropy_srcs=...) does the hashing:
+# passing entropy_srcs makes it deterministic (the docstring's own example shows two calls with
+# the same entropy_srcs returning the same UID), and it independently hashes each call's inputs
+# rather than nesting one UID's digits inside another's, so distinct entropy_srcs (a different
+# modality, a different literal tag, a different slice index — see write_dicom_series) give
+# UIDs that cannot equal each other by construction of the entropy, with SHA-512 collision odds
+# between them. That makes re-converting the same study, on any machine, on any day, produce
+# byte-identical UIDs, so re-ingesting it into PACS updates the existing study and series instead
+# of minting a duplicate — at every UID level, not just StudyInstanceUID.
+UID_PREFIX = "1.2.826.0.1.3680043.2.1125."
 
-# Fixed per-modality UID component. Hashing the modality string (as before) draws from a value
-# space far larger than the handful of modalities PI-CAI actually uses, but "far larger" is not
-# "collision-free": two of the five in practice could still land on the same digits, which a PACS
-# would then merge into one interleaved series. A fixed map removes the collision outright rather
-# than just making it rarer. Raise on an unrecognised modality instead of falling back to a shared
-# bucket, which would silently reintroduce the same collision for whatever wasn't mapped.
+# Fixed per-modality UID component, folded into the entropy_srcs below instead of the raw
+# modality string. The five PI-CAI modality codes are a small, closed set, so hashing the literal
+# string is already effectively collision-free via SHA-512 — but passing the assigned digit
+# keeps modality identity a fixed lookup rather than something several call sites re-derive by
+# hashing, and raising on an unrecognised modality (instead of silently omitting it from the
+# entropy) surfaces a new modality immediately rather than shipping it unmapped.
 MODALITY_UID_COMPONENT = {
     "t2w": "1",
     "adc": "2",
@@ -52,25 +58,6 @@ MODALITY_UID_COMPONENT = {
     "sag": "4",  # Sagittal T2W — PI-CAI ships this for some studies alongside axial t2w.
     "cor": "5",  # Coronal T2W — likewise.
 }
-
-
-def _deterministic_digits(*parts: str, length: int) -> str:
-    """Derive a fixed-length decimal digit string from ``parts`` via SHA-256.
-
-    Unlike Python's builtin ``hash()``, SHA-256 is not salted per interpreter run, so the same
-    ``parts`` always produce the same digits — on any machine, on any day.
-
-    Args:
-        parts: Strings to combine into the digest input. Joined with a separator so that, e.g.,
-            ``("ab", "c")`` and ``("a", "bc")`` never collide.
-        length: Number of decimal digits to return.
-
-    Returns:
-        A ``length``-digit decimal string derived from the SHA-256 digest of ``parts``.
-    """
-    digest = hashlib.sha256("|".join(parts).encode()).hexdigest()
-    return str(int(digest, 16) % 10**length).zfill(length)
-
 
 # Acquisition metadata PI-CAI leaves in the .mha headers (written by its anonymisation script).
 # The marksheet carries no scanner columns, so these headers are the dataset's only per-study
@@ -122,9 +109,16 @@ def write_dicom_series(
     modification_time = time.strftime("%H%M%S")
     if modality not in MODALITY_UID_COMPONENT:
         raise ValueError(f"Unrecognised modality {modality!r}; add it to MODALITY_UID_COMPONENT")
-    study_uid = f"{STUDY_UID_ROOT}.{_deterministic_digits(patient_id, study_id, length=10)}"
-    series_uid = f"{study_uid}.{MODALITY_UID_COMPONENT[modality]}"
-    frame_of_reference_uid = f"{series_uid}.1"
+    modality_component = MODALITY_UID_COMPONENT[modality]
+    study_uid = generate_uid(prefix=UID_PREFIX, entropy_srcs=[patient_id, study_id])
+    series_uid = generate_uid(prefix=UID_PREFIX, entropy_srcs=[patient_id, study_id, modality_component])
+    # A distinct trailing literal ("frame-of-reference" here; "instance" + slice index below) is
+    # what keeps this from ever equalling a SOPInstanceUID of the same series — each is an
+    # independent SHA-512 digest of its own entropy_srcs, not a suffix of series_uid, so there is
+    # no shared branch for two different UID *kinds* to collide on.
+    frame_of_reference_uid = generate_uid(
+        prefix=UID_PREFIX, entropy_srcs=[patient_id, study_id, modality_component, "frame-of-reference"]
+    )
 
     direction = image.GetDirection()
     orientation = "\\".join(
@@ -165,6 +159,14 @@ def write_dicom_series(
         image_slice = image[:, :, i]
         for tag, value in series_tag_values.items():
             image_slice.SetMetaData(tag, value)
+        # SOPInstanceUID (0008|0018): left unset, GDCM mints a fresh one per write — the same
+        # non-determinism bug as the study/series UIDs above, just one level down. Setting it
+        # explicitly here, before Execute(), is what writer.KeepOriginalImageUIDOn() (above)
+        # preserves: without it, the tag GDCM finds in the slice's metadata is the one we set,
+        # not a random one of its own. The slice index is part of the entropy, so every instance
+        # in a series gets its own deterministic, collision-free UID.
+        instance_entropy = [patient_id, study_id, modality_component, "instance", str(i)]
+        image_slice.SetMetaData("0008|0018", generate_uid(prefix=UID_PREFIX, entropy_srcs=instance_entropy))
         image_slice.SetMetaData("0008|0012", modification_date)
         image_slice.SetMetaData("0008|0013", modification_time)
         image_slice.SetMetaData("0020|0013", str(i))
