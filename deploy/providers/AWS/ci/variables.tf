@@ -85,6 +85,18 @@ variable "drift_workflow_file" {
   default     = "terraform_drift.yml"
 }
 
+variable "flip_api_secret_name" {
+  description = <<-EOT
+    Name of the Secrets Manager secret the FLIP root manages
+    (module.flip_api_secret in ../main.tf). The plan role needs an explicit read
+    grant on it — see plan_read_flip_api_secret in main.tf. Kept as a variable
+    rather than hardcoded so the coupling to the other root stays visible, and so
+    a renamed secret is a one-line change here rather than a silent plan failure.
+  EOT
+  type        = string
+  default     = "FLIP_API"
+}
+
 variable "tags" {
   description = "Tags applied to every resource in this root."
   type        = map(string)

@@ -218,6 +218,39 @@ data "aws_iam_policy_document" "apply_assume_role" {
   }
 }
 
+# ReadOnlyAccess deliberately withholds secretsmanager:GetSecretValue — AWS
+# excludes it precisely because it returns secret material, so its absence is a
+# decision in the managed policy rather than an oversight. But `terraform plan`
+# refreshes module.flip_api_secret's aws_secretsmanager_secret_version, and
+# without this grant every plan dies on AccessDeniedException before producing
+# any diff at all.
+#
+# This is not the widening it looks like. To plan at all the role must read the
+# state object, and state already stores this secret's value in clear — the same
+# AES_KEY_BASE64 and internal service key. The containment is unchanged: the
+# role still cannot write anything, here or to state.
+data "aws_iam_policy_document" "plan_read_flip_api_secret" {
+  statement {
+    sid    = "ReadFlipApiSecretForRefresh"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:GetSecretValue",
+    ]
+    # Secrets Manager appends a random six-character suffix to the ARN, so the
+    # name on its own cannot be matched exactly.
+    resources = [
+      "arn:${data.aws_partition.current.partition}:secretsmanager:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:secret:${var.flip_api_secret_name}-*",
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "plan_read_flip_api_secret" {
+  name   = "flip-terraform-plan-read-secret"
+  role   = aws_iam_role.terraform_plan.id
+  policy = data.aws_iam_policy_document.plan_read_flip_api_secret.json
+}
+
 resource "aws_iam_role" "terraform_apply" {
   name                 = "AICentre-FLIPTerraformApplyRole"
   description          = "Role for FLIP Terraform applies from GitHub Actions on ${var.apply_branch} (FLIP#962)"

@@ -87,3 +87,20 @@ name and branch match the pinned `job_workflow_ref` exactly.
   `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN` / `FLIP_TFSTATE_BUCKET_NAME` on the
   GitHub environment. No workflow change — no account ID or ARN is hard-coded in
   workflow YAML.
+
+## The plan role reads one secret, on purpose
+
+`ReadOnlyAccess` withholds `secretsmanager:GetSecretValue` — AWS excludes it
+because it returns secret material. `terraform plan` nonetheless refreshes
+`module.flip_api_secret`'s `aws_secretsmanager_secret_version`, so without an
+explicit grant every plan fails with `AccessDeniedException` before emitting any
+diff. `plan_read_flip_api_secret` grants it, scoped to that one secret.
+
+It does not widen what the role can see: planning requires reading the state
+object, and state already stores the same `AES_KEY_BASE64` and internal service
+key in clear. The role still cannot write anything.
+
+**Re-apply this root after pulling a change to it** — `make -C ci apply` for
+stag, `make -C ci apply PROD=true` for prod. The roles are not managed by the
+pipeline they authorise, so a policy change here reaches AWS only when an
+operator applies it from a laptop.
