@@ -70,6 +70,9 @@ services:
     environment:
       ORTHANC__REGISTERED_USERS: |
           {"${ORTHANC_USERNAME}": "${ORTHANC_PASSWORD}"}
+      # Colon-dash on purpose: Orthanc has no empty-AET check, so a bare-dash pass-through of an
+      # explicitly-empty kit value would register an empty AE title rather than fail. The
+      # explicit empty is refused by trust/Makefile (require-xnat-aetitle) before this runs.
       ORTHANC__DICOM_MODALITIES: |
           {"XNAT": {"AET": "${XNAT_AETITLE:-XNAT}", "Host": "xnat-web", "Port": "${XNAT_PORT}"}}
 
@@ -107,6 +110,11 @@ services:
       XNAT_PORT: ${XNAT_PORT}
       # Must match what configure-xnat.sh registered: this becomes the C-MOVE destination,
       # which DQR matches against a registered SCP receiver by exact AE title and port.
+      # Colon-dash, like the code-defaulted constants above: imaging_api/config.py defaults
+      # XNAT_AETITLE and has no empty-value check, so bare-dash would inject an empty AE title
+      # rather than fail. An explicitly-empty kit value is refused by trust/Makefile
+      # (require-xnat-aetitle) before compose runs; the XNAT stack keeps its own bare-dash
+      # form because configure-xnat.sh guards the empty itself.
       XNAT_AETITLE: ${XNAT_AETITLE:-XNAT}
       XNAT_SERVICE_USER: ${XNAT_SERVICE_USER}
       XNAT_SERVICE_PASSWORD: ${XNAT_SERVICE_PASSWORD}

@@ -17,6 +17,12 @@ in the gap: the Makefile defaulted the web port to a literal that collided with 
 exported an empty AE title, and the compose file's ``${VAR:-default}`` cancelled the script's own
 fail-loud guard. None of those are visible from inside the script.
 
+The AE title also has consumers the script never sees — Orthanc's mocked-modality entry and
+imaging-api, wired in ``trust/deploy/compose_trust.{development,production}.yml`` — and they take
+the opposite form (``${VAR:-default}``) on purpose, because they default the value in code and have
+no empty-value check of their own. The tests at the end cover that layer: the two forms are
+reconciled by ``trust/Makefile`` refusing an explicitly-empty value before either stack runs.
+
 These run make and read the deployment files; they never invoke docker.
 """
 
@@ -32,6 +38,9 @@ REPO_ROOT = XNAT_DIR.parents[1]
 SCRIPT = XNAT_DIR / "xnat" / "config" / "configure-xnat.sh"
 COMPOSE = XNAT_DIR / "docker-compose-stack.yml"
 INIT_JOB = REPO_ROOT / "deploy" / "providers" / "kubernetes" / "templates" / "xnat-init-job.yaml"
+TRUST_DIR = XNAT_DIR.parent
+# The trust-core compose files: the AE title's consumers outside the XNAT stack.
+TRUST_COMPOSES = [TRUST_DIR / "deploy" / f"compose_trust.{env}.yml" for env in ("development", "production")]
 
 
 def make_vars(*names: str, **overrides: str) -> dict[str, str]:
@@ -194,6 +203,91 @@ def test_ae_title_set_empty_stays_empty():
     by any earlier step.
     """
     assert make_vars("XNAT_AETITLE_EFFECTIVE", XNAT_AETITLE="")["XNAT_AETITLE_EFFECTIVE"] == ""
+
+
+# ── The trust compose layer: Orthanc and imaging-api ─────────────────────────────────────────────
+#
+# The XNAT stack passes an empty AE title through (bare-dash, tested above) because
+# configure-xnat.sh guards it. The trust compose does the opposite: imaging_api/config.py defaults
+# XNAT_AETITLE and Orthanc accepts any modality AET, so neither would report an empty value — a
+# bare-dash there would register an empty AE title rather than fail. What makes an explicit empty
+# fail loud for BOTH is trust/Makefile refusing it before either stack runs.
+
+
+def trust_compose_ae_title_references() -> dict[str, list[str]]:
+    """Every ``${XNAT_AETITLE…}`` substitution in each trust compose file, verbatim."""
+    return {compose.name: re.findall(r"\$\{XNAT_AETITLE[^}]*\}", compose.read_text()) for compose in TRUST_COMPOSES}
+
+
+def dry_run_trust_up(tmp_path, kit_lines: str, *overrides: str) -> subprocess.CompletedProcess:
+    """Dry-runs ``make up-trust`` from trust/ against a throwaway kit file.
+
+    ``-n`` prints recipes instead of running them, which is enough here: the guard is a make-level
+    ``$(error)`` evaluated while the recipe is expanded, so it decides under ``-n`` exactly as it
+    does for real, and nothing docker-shaped runs. The kit file is handed in as ``KIT_FILE`` so the
+    value arrives the way an operator's does — ``-include``d, origin ``file`` — rather than on the
+    command line.
+    """
+    kit = tmp_path / ".env.Probe.development"
+    kit.write_text(kit_lines)
+    return subprocess.run(
+        ["make", "-n", "up-trust", "KIT=Probe", f"KIT_FILE={kit}", "PROD=", *overrides],
+        cwd=TRUST_DIR,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+def test_trust_compose_defaults_the_ae_title_for_its_code_defaulting_consumers():
+    """The two consumers outside the XNAT stack take ``${XNAT_AETITLE:-XNAT}`` — colon-dash — by design.
+
+    The reverse of test_compose_defaults_do_not_cancel_the_scripts_empty_check, and for the reverse
+    reason: nothing downstream of these lines checks for an empty AE title, so passing one through
+    would not fail loud, it would hand Orthanc an ``"AET": ""`` modality and imaging-api an empty
+    C-MOVE destination. The default must also be the one the XNAT stack substitutes for an unset
+    value, or the two sides disagree on the title DQR matches the return leg against.
+    """
+    for name, found in trust_compose_ae_title_references().items():
+        assert len(found) == 2, f"{name} should wire XNAT_AETITLE to Orthanc's modality entry and imaging-api: {found}"
+        assert set(found) == {"${XNAT_AETITLE:-XNAT}"}, f"{name} changed the AE title's form: {found}"
+    assert make_vars("XNAT_AETITLE_EFFECTIVE")["XNAT_AETITLE_EFFECTIVE"] == "XNAT"
+
+
+@pytest.mark.parametrize(
+    ("kit_lines", "overrides"),
+    [
+        ("XNAT_AETITLE=\n", ()),
+        ("XNAT_AETITLE=   \n", ()),
+        ("XNAT_AETITLE=FLIPXNAT\n", ("XNAT_AETITLE=",)),
+    ],
+    ids=["kit-empty", "kit-blank", "command-line-empty"],
+)
+def test_explicitly_empty_ae_title_is_refused_before_anything_runs(tmp_path, kit_lines, overrides):
+    """An operator who clears the value gets told so, once, before either stack is touched.
+
+    This is the guard that reconciles the two forms: the XNAT stack would report the empty value
+    from inside configure-xnat.sh after its own deploy, and the trust compose would never report it
+    at all. Refusing at the entrypoint keeps both from running with a title the other did not get.
+    """
+    result = dry_run_trust_up(tmp_path, kit_lines, *overrides)
+    assert result.returncode != 0, "an empty XNAT_AETITLE was accepted:\n" + result.stdout
+    output = result.stdout + result.stderr
+    assert "XNAT_AETITLE" in output
+    source = str(tmp_path / ".env.Probe.development") if not overrides else "command line"
+    assert source in output, f"the refusal does not say where the empty value came from:\n{output}"
+    assert "docker" not in result.stdout, "something was run (or would have been) before the guard:\n" + result.stdout
+
+
+@pytest.mark.parametrize(
+    "kit_lines",
+    ["", "# XNAT_AETITLE=XNAT\n", "XNAT_AETITLE=FLIPXNAT\n"],
+    ids=["absent", "commented-out", "configured"],
+)
+def test_unset_or_configured_ae_title_passes_the_guard(tmp_path, kit_lines):
+    """The guard distinguishes unset from empty: an absent line still takes the XNAT default silently."""
+    result = dry_run_trust_up(tmp_path, kit_lines)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def run_xnat_reset(tmp_path, **overrides: str) -> subprocess.CompletedProcess:
