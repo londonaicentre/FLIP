@@ -46,21 +46,6 @@ class CognitoUserFactory(factory.Factory):
     is_disabled = factory.Faker("boolean")
 
 
-@pytest.fixture(autouse=True)
-def _reset_cognito_client_cache():
-    """
-    `_cognito_client` is lru_cached so a boto3 client is built once per
-    process. Tests patch `boto3.client` and assume each test starts fresh;
-    clear the cache between tests so a mock from one test doesn't leak
-    into the next.
-    """
-    from flip_api.utils.cognito_helpers import _cognito_client
-
-    _cognito_client.cache_clear()
-    yield
-    _cognito_client.cache_clear()
-
-
 @pytest.fixture
 def mock_logger():
     """Mock logger for testing."""

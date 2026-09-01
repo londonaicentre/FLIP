@@ -19,23 +19,6 @@ import pytest
 from flip_api.utils.cors import _origin_from_url, get_cors_allowed_origins
 
 
-@pytest.fixture(autouse=True)
-def _reset_cognito_client_cache():
-    """
-    `TestGetCorsAllowedOrigins` builds its client through the lru_cached
-    `_cognito_client`, whose cache is shared with `cognito_helpers` and so with
-    `test_cognito_helpers.py` — the leak this guards is cross-module, not just
-    within this file. Tests patch `boto3.client` and assume each test starts
-    fresh, so clear the cache around every test. (`TestOriginFromUrl` builds no
-    client; autouse simply keeps the guard unconditional.)
-    """
-    from flip_api.utils.cognito_helpers import _cognito_client
-
-    _cognito_client.cache_clear()
-    yield
-    _cognito_client.cache_clear()
-
-
 class TestOriginFromUrl:
     """Tests for the _origin_from_url normalizer used by the CORS allowlist builder."""
 
