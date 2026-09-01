@@ -96,6 +96,15 @@ because it returns secret material. `terraform plan` nonetheless refreshes
 explicit grant every plan fails with `AccessDeniedException` before emitting any
 diff. `plan_read_flip_api_secret` grants it, scoped to that one secret.
 
+The secret is encrypted with the FLIP application CMK, so the read also needs
+`kms:Decrypt` — without it `GetSecretValue` still fails, with the much less
+obvious `Access to KMS is not allowed`. The key is scoped by a `kms:ViaService`
+condition rather than by ARN: resolving `alias/flip-app-key` here would make this
+root fail to apply until the FLIP root exists, and the ordering runs the other
+way — in a new account these roles must exist before CI can apply anything. The
+effective boundary is the intersection of the two statements: decrypt only
+through Secrets Manager in this region, and only `FLIP_API` is readable.
+
 It does not widen what the role can see: planning requires reading the state
 object, and state already stores the same `AES_KEY_BASE64` and internal service
 key in clear. The role still cannot write anything.

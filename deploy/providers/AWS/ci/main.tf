@@ -230,6 +230,7 @@ data "aws_iam_policy_document" "apply_assume_role" {
 # AES_KEY_BASE64 and internal service key. The containment is unchanged: the
 # role still cannot write anything, here or to state.
 data "aws_iam_policy_document" "plan_read_flip_api_secret" {
+  # checkov:skip=CKV_AWS_356:the kms:Decrypt statement below cannot name the key without making this bootstrap root depend on the FLIP root — see its comment; the kms:ViaService condition plus the scoped GetSecretValue above is the actual boundary
   statement {
     sid    = "ReadFlipApiSecretForRefresh"
     effect = "Allow"
@@ -242,6 +243,32 @@ data "aws_iam_policy_document" "plan_read_flip_api_secret" {
     resources = [
       "arn:${data.aws_partition.current.partition}:secretsmanager:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:secret:${var.flip_api_secret_name}-*",
     ]
+  }
+
+  # The secret is encrypted with the FLIP application CMK (aws_kms_key.flip_app_key,
+  # ../kms.tf), so GetSecretValue alone still fails with "Access to KMS is not
+  # allowed" — ReadOnlyAccess grants no kms:Decrypt.
+  #
+  # The key is deliberately NOT named here. Resolving it (data.aws_kms_alias
+  # "alias/flip-app-key") would make this root fail to apply until the FLIP root
+  # exists, and the ordering runs the other way: in a new account — the LZA
+  # migration in FLIP#749 — these roles have to exist before CI can apply
+  # anything. So it is scoped by condition instead, the same kms:ViaService
+  # pattern ../rds_proxy.tf uses for the RDS master-secret key.
+  #
+  # The effective boundary is the intersection with the statement above: this
+  # role can only decrypt through Secrets Manager in this region, and the only
+  # secret it may read is FLIP_API.
+  statement {
+    sid       = "DecryptFlipApiSecret"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${var.AWS_REGION}.amazonaws.com"]
+    }
   }
 }
 
