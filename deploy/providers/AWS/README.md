@@ -733,16 +733,39 @@ bucket yet) and `local.ui_origin` is a placeholder. Once the edge stack is up, s
 bucket CORS + Cognito URLs at the edge domain. This ordering is why the two variables deliberately carry no
 "required-when-LZA" validation — it would hard-fail the legitimate first apply.
 
-**Prerequisites (already provisioned out-of-band in the account, not Terraform-managed here):**
+**Prerequisites (provisioned out-of-band in each LZA account, not Terraform-managed here).** Every
+`PROD=lza*` account needs these three before its first `plan`; the commands below are the ones the
+FLIPStaging bring-up used (2026-09-01), with `PROD`/profile swapped per environment.
 
-- TF state bucket `flip-terraform-state-lza` (versioned, SSE-KMS, public access blocked). `make create-backend
-  PROD=lza` is idempotent against it.
+- TF state bucket (`flip-terraform-state-lza`, or `-lza-stag`; versioned, SSE-KMS, public access blocked):
+  `make create-backend PROD=lza` — idempotent, reads the bucket name from the env file.
 - ECR **pull-through cache rules** — the account has no internet egress, so images come from in-account mirrors over
   the central `ecr.api`/`ecr.dkr` endpoints: prefix `ghcr/` mirroring `ghcr.io` (upstream auth via a read-only GHCR
   PAT in the `ecr-pullthroughcache/ghcr` Secrets Manager secret) and the credential-less `ecr-public/` prefix
   mirroring `public.ecr.aws` (used for the EFS-provision utility image). The execution role's
   `ecr:BatchImportUpstreamImage`/`ecr:CreateRepository` grant for first-pull imports IS Terraform-managed
-  (`iam_ecs.tf`, LZA-gated).
+  (`iam_ecs.tf`, LZA-gated). **Create the secret before the rule that references it, and both before the first
+  `plan`** (see the KMS-alias trap above):
+
+  ```bash
+  # The GHCR PAT. Copy the existing read-only one from another LZA account (shown),
+  # or mint a fresh token per account for tighter isolation. The value must never
+  # be echoed — write it via a 0600 temp file.
+  TMP=$(mktemp) && chmod 600 "$TMP"
+  aws secretsmanager get-secret-value --profile <source-profile> \
+    --secret-id ecr-pullthroughcache/ghcr --query SecretString --output text > "$TMP"
+  aws secretsmanager create-secret --profile <target-profile> \
+    --name ecr-pullthroughcache/ghcr --secret-string "file://$TMP" --query ARN --output text
+  shred -u "$TMP"
+
+  aws ecr create-pull-through-cache-rule --profile <target-profile> \
+    --ecr-repository-prefix ghcr --upstream-registry-url ghcr.io --credential-arn <arn-from-above>
+  aws ecr create-pull-through-cache-rule --profile <target-profile> \
+    --ecr-repository-prefix ecr-public --upstream-registry-url public.ecr.aws
+  ```
+
+  Nothing is pre-populated: the first pull of each image pays the upstream fetch. Cached **mutable** tags can
+  serve up to ~24h stale, which is why deploys pin the immutable `sha-<short7>` tags.
 - An `lza-prod` profile in `~/.aws/config` for the account's Identity Center `FLIPAdminAccess` permission set (an
   `aws configure sso` against the account, then rename the generated profile — same short-alias convention as
   `prod`/`stag`; override the expected name via `LZA_AWS_PROFILE`).
