@@ -20,7 +20,13 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from omop_db_tools.dataset import SOURCE_TRUST_COLUMN, build_canonical, fetch_canonical, split_for_trust
+from omop_db_tools.dataset import (
+    CANONICAL_TABLES,
+    SOURCE_TRUST_COLUMN,
+    build_canonical,
+    fetch_canonical,
+    split_for_trust,
+)
 
 
 def _canonical_frame() -> pd.DataFrame:
@@ -33,7 +39,53 @@ def _canonical_frame() -> pd.DataFrame:
     )
 
 
+class TestCanonicalTablesOrder:
+    """The list is FK-safe for inserts as written and for deletes reversed (FLIP#1100).
+
+    Pins what a spike against a constrained, vocab-loaded trust database showed: with
+    procedure_occurrence listed before visit_occurrence, the first DELETE of a clean fails with
+    fpk_procedure_occurrence_visit_occurrence_id. The edges asserted here are the ones in the CDM
+    5.4 constraints among the mock-data tables.
+    """
+
+    @pytest.mark.parametrize(
+        ("referencing", "referenced"),
+        [
+            ("visit_occurrence", "person"),
+            ("procedure_occurrence", "person"),
+            ("procedure_occurrence", "visit_occurrence"),
+            ("image_occurrence", "person"),
+            ("image_occurrence", "visit_occurrence"),
+            ("image_occurrence", "procedure_occurrence"),
+            ("image_feature", "person"),
+            ("image_feature", "image_occurrence"),
+            ("measurement", "person"),
+            ("measurement", "visit_occurrence"),
+            ("observation", "person"),
+            ("observation", "visit_occurrence"),
+        ],
+    )
+    def test_referenced_table_is_inserted_first(self, referencing, referenced):
+        assert CANONICAL_TABLES.index(referenced) < CANONICAL_TABLES.index(referencing)
+
+
 class TestSplitForTrust:
+    def test_legacy_is_an_alias_for_source_trust(self):
+        df = _canonical_frame()
+
+        for index in (1, 2):
+            via_alias = split_for_trust(df, num_trusts=2, trust_index=index, mode="legacy")
+            via_name = split_for_trust(df, num_trusts=2, trust_index=index, mode="source_trust")
+            pd.testing.assert_frame_equal(via_alias, via_name)
+
+    def test_default_mode_is_source_trust(self):
+        df = _canonical_frame()
+
+        pd.testing.assert_frame_equal(
+            split_for_trust(df, num_trusts=2, trust_index=1),
+            split_for_trust(df, num_trusts=2, trust_index=1, mode="source_trust"),
+        )
+
     def test_legacy_reproduces_source_membership(self):
         df = _canonical_frame()
         trust_1 = split_for_trust(df, num_trusts=2, trust_index=1, mode="legacy")

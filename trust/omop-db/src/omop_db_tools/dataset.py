@@ -13,16 +13,19 @@
 
 The mock OMOP rows live as ONE canonical dataset (per project/cohort, one CSV per
 table) published to the public Hugging Face dataset ``aicentreflip/trust-data``
-under ``omop-csv/<version>/``. Every row carries a ``source_trust`` provenance
-column recording which of the two originally-generated trusts it came from.
+under ``omop-csv/<version>/``. Every row carries a ``source_trust`` column: the
+trust it belongs to, as decided by the dataset's own generator.
 
 Standing up N trusts is a deterministic split of that single dataset:
 
-- ``legacy`` (default): partition by ``source_trust``. Reproduces the exact
-  original two-trust membership, keeping each trust's OMOP rows consistent with
-  the accession IDs present in that trust's published mock PACS (Orthanc) data.
-- ``modulo``: partition by ``person_id % num_trusts``. Supports any trust count
-  for fresh stand-ups where the imaging data is regenerated to match.
+- ``source_trust`` (default): partition by that column. The partition is *data* —
+  explicit, inspectable and versioned with the dataset — and it is what the
+  per-project DICOM sets are keyed on too (FLIP#1100), so a trust's OMOP rows and
+  the studies in its PACS agree by construction. Any trust count the column
+  carries. ``legacy`` is an accepted alias from when this mode existed only to
+  reproduce the original two-trust cut baked into the published Orthanc tarballs.
+- ``modulo``: partition by ``person_id % num_trusts``. For a dataset that carries
+  no partition column, and only then — it ignores whatever the generator decided.
 
 Every canonical table carries ``person_id``, so partitioning by person preserves
 referential integrity across tables without re-keying.
@@ -38,10 +41,18 @@ import pandas as pd
 # Insert order: person first. Populate targets constraint-free databases
 # (constraints are applied only after the load), so order is convention, not FK
 # correctness.
+# In FK-safe insert order, so the same list serves loading (as listed) and
+# cleaning (reversed) against a database with constraints applied — which is
+# every running trust after `make load-omop-vocab`, and the seed path's target
+# (FLIP#1100). procedure_occurrence references visit_occurrence, so it must come
+# after it; image_occurrence references both; the rest reference person and
+# visit_occurrence only. Verified empirically: with procedure_occurrence listed
+# before visit_occurrence, the first DELETE of a clean fails with
+# fpk_procedure_occurrence_visit_occurrence_id.
 CANONICAL_TABLES = [
     "person",
-    "procedure_occurrence",
     "visit_occurrence",
+    "procedure_occurrence",
     "image_occurrence",
     "image_feature",
     "measurement",
@@ -58,18 +69,20 @@ SOURCE_TRUST_COLUMN = "source_trust"
 
 HF_OMOP_CSV_BASE_URL = "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/omop-csv"
 
-PARTITION_MODES = ["legacy", "modulo"]
+PARTITION_MODES = ["source_trust", "modulo"]
+# The name this mode had before FLIP#1100; still accepted everywhere a mode is.
+LEGACY_MODE_ALIAS = "legacy"
 
 
-def split_for_trust(df: pd.DataFrame, num_trusts: int, trust_index: int, mode: str = "legacy") -> pd.DataFrame:
+def split_for_trust(df: pd.DataFrame, num_trusts: int, trust_index: int, mode: str = "source_trust") -> pd.DataFrame:
     """Return the deterministic slice of a canonical table belonging to one trust.
 
     Args:
         df (pd.DataFrame): One canonical table (may carry the source_trust column).
         num_trusts (int): Total number of trusts being stood up.
         trust_index (int): 1-based index of the trust to extract.
-        mode (str): "legacy" (partition by source_trust) or "modulo" (partition by
-            person_id % num_trusts).
+        mode (str): "source_trust" (partition by that column; "legacy" is an
+            accepted alias) or "modulo" (partition by person_id % num_trusts).
 
     Returns:
         pd.DataFrame: The trust's rows, with the provenance column dropped.
@@ -82,6 +95,8 @@ def split_for_trust(df: pd.DataFrame, num_trusts: int, trust_index: int, mode: s
         raise ValueError(f"num_trusts must be >= 1, got {num_trusts}")
     if not 1 <= trust_index <= num_trusts:
         raise ValueError(f"trust_index must be in [1, {num_trusts}], got {trust_index}")
+    if mode == LEGACY_MODE_ALIAS:
+        mode = "source_trust"
     if mode not in PARTITION_MODES:
         raise ValueError(f"Unknown partition mode {mode!r}; expected one of {PARTITION_MODES}")
 
@@ -94,16 +109,16 @@ def split_for_trust(df: pd.DataFrame, num_trusts: int, trust_index: int, mode: s
             "the canonical CSV is malformed"
         )
 
-    if mode == "legacy":
+    if mode == "source_trust":
         if SOURCE_TRUST_COLUMN not in df.columns:
             raise ValueError(
-                f"Legacy partitioning needs the {SOURCE_TRUST_COLUMN!r} column; "
+                f"source_trust partitioning needs the {SOURCE_TRUST_COLUMN!r} column; "
                 "this frame does not carry it — use mode='modulo' instead"
             )
         sources = set(df[SOURCE_TRUST_COLUMN].unique())
         if sources != set(range(1, num_trusts + 1)):
             raise ValueError(
-                f"Legacy partitioning needs {SOURCE_TRUST_COLUMN} values to be exactly 1..{num_trusts}; "
+                f"source_trust partitioning needs {SOURCE_TRUST_COLUMN} values to be exactly 1..{num_trusts}; "
                 f"this frame carries {sorted(sources)} — rebuild the canonical dataset or use mode='modulo'"
             )
         part = df[df[SOURCE_TRUST_COLUMN] == trust_index]

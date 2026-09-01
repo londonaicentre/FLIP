@@ -13,7 +13,7 @@
 .PHONY: build dev prod clean stop up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
 	create-networks remove-networks recreate-networks tests \
-	update-omop-data update-orthanc-data integration_test
+	update-omop-data update-orthanc-data seed-omop integration_test
 # PROD selects the compose-file suffix (__DCKR_SUFFIX: stag collapses to the
 # production compose) and the kit-file env token (ENV: stag stays distinct, so
 # a stag kit is .env.<CODE>.stag, never confused with .env.<CODE>.production).
@@ -506,6 +506,23 @@ update-omop-data:
 
 update-orthanc-data:
 	$(ORTHANC_CMD) update-orthanc-data TRUST=$(TRUST)
+
+# Seed a running trust with the listed projects (FLIP#1100) — OMOP rows into its
+# omop-db, keyed by `source_trust == FL_KIT_SLOT_NUMBER`, the same value that
+# selects Trust_<N>/db_data for the snapshot path. Everything the sub-make needs
+# comes from the kit: the slot number, the published port, the credentials.
+# A one-time step after `up-trust` + `load-omop-vocab`, idempotent, scoped to the
+# listed projects (Synthea rows and other projects untouched). Persists in the
+# bind-mounted volume until a .data_version bump, which update-omop-data then
+# refuses to apply over a seeded volume without FORCE=1.
+#   make -C trust seed-omop KIT=GSTT PROJECTS="spleen_project cxr_project"
+PROJECTS ?= cxr_project spleen_project
+seed-omop:
+	$(require_kit)
+	$(OMOP_DB_CMD) seed-omop TRUST_INDEX=$(TRUST_NUM) OMOP_DB_PORT=$(OMOP_DB_PORT) \
+	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
+	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB) PROJECTS="$(PROJECTS)" \
+	  $(if $(and $(TRUST_NUM),$(OMOP_DATA_DIR)),OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_DIR))
 
 tests:
 	cd data-access-api && make test && \

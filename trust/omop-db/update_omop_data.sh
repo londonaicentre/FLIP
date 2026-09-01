@@ -99,6 +99,19 @@ update_trust() {
     return
   fi
 
+  # A seeded volume (make seed-omop, FLIP#1100) carries rows the snapshot does not — and the
+  # licensed vocabulary load on top. Replacing it is a decision, not a side effect of a bump, so
+  # refuse here, before any download, unless FORCE=1. The marker sits BESIDE db_data (not in
+  # ./volumes, which is checkout-relative) so it follows the data wherever OMOP_DATA_DIR points
+  # and whichever checkout runs this script.
+  local seed_marker="$(dirname "${dest_dir}")/.seeded"
+  if [[ -f "${seed_marker}" && "${FORCE:-0}" != "1" ]]; then
+    echo "❌ Trust ${trust_num}'s OMOP volume was seeded ($(tr '\n' ' ' < "${seed_marker}")) but the pinned" >&2
+    echo "   version is now ${DATA_VERSION}. Re-snapshotting discards the seed AND the vocabulary load." >&2
+    echo "   Re-run with FORCE=1 to replace it, then re-run load-omop-vocab and seed-omop." >&2
+    exit 1
+  fi
+
   if [[ -z "${local_version}" ]]; then
     echo "❓ Local OMOP data version for Trust ${trust_num} unknown. Will update to version ${DATA_VERSION} just to be safe."
   else
@@ -124,6 +137,7 @@ update_trust() {
   echo "📁 Extracting archive for Trust ${trust_num}..."
   tar -xf "${local_archive}" -C "${dest_dir}"
 
+  rm -f "${seed_marker}"
   echo "${DATA_VERSION}" > "${local_version_file}"
   echo "✅ Done. Local OMOP data for Trust ${trust_num} is now at version ${DATA_VERSION}"
 
