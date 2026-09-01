@@ -1395,6 +1395,37 @@ def test_bundle_nvflare_application_missing_root_file(mock_s3, mock_is_valid, mo
         fl_service.bundle_nvflare_application(model_id)
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_root_file_without_app_folder(mock_s3, mock_is_valid, mocked_settings, model_id):
+    """A template holding only ``meta.json`` — no ``app/`` or ``app_*/`` — is rejected.
+
+    The third malformed-template shape: it passes the "nothing deployable" and "root file" guards,
+    so it needs its own, and it is caught before the destination bucket is touched.
+    """
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "nvflare", "standard", ["meta.json"])  # root file only
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/trainer.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
+    ]
+
+    with pytest.raises(FileNotFoundError, match=r"Base application app folder missing .* app/ or app_\*/"):
+        fl_service.bundle_nvflare_application(model_id)
+
+    mock_client.delete_objects.assert_not_called()
+    mock_client.upload_file.assert_not_called()
+
+
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 def test_bundle_nvflare_application_no_app_folders(mock_s3, mock_required, mocked_settings, model_id):
@@ -1581,6 +1612,37 @@ def test_bundle_flower_application_missing_root_file(mock_s3, mock_is_valid, moc
 
     with pytest.raises(FileNotFoundError, match="Base application root file missing"):
         fl_service.bundle_flower_application(model_id)
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_flower_application_root_file_without_app_folder(mock_s3, mock_is_valid, mocked_settings, model_id):
+    """A template holding only ``pyproject.toml`` — no ``app/`` — is rejected.
+
+    Without this guard a FAB with no app package would be built and only fail at the SuperLink.
+    Caught before the destination bucket is touched.
+    """
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "flower", "standard", ["pyproject.toml"])  # root file only
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/client_app.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
+    ]
+
+    with pytest.raises(FileNotFoundError, match=r"Base application app folder missing .* app/ and one of"):
+        fl_service.bundle_flower_application(model_id)
+
+    mock_client.delete_objects.assert_not_called()
+    mock_client.upload_file.assert_not_called()
 
 
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)

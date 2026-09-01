@@ -252,6 +252,47 @@ def _walk_app_dir(app_dir: Path, base_dir: Path, skipped: list[str]) -> list[str
     return kept
 
 
+def _check_base_template(base_dir: Path, base_rel_paths: list[str], fl_backend: FLBackend) -> set[str]:
+    """Reject a malformed base template before anything is written, naming what it must carry.
+
+    Three shapes of malformed template, one wording. Each would otherwise bundle cleanly and only
+    fail at the FL server, far from the cause — NVFLARE has no ``meta.json`` job definition to
+    deploy, fl-api-flower cannot build a FAB without the run-root ``pyproject.toml``, and neither
+    can run a job with no app package. The debug log from the walk lists exactly what was excluded,
+    so a visibly non-empty template directory reporting "missing" stays diagnosable.
+
+    Args:
+        base_dir (Path): The template root, for the error message.
+        base_rel_paths (list[str]): What :func:`list_local_base_files` kept from it.
+        fl_backend (FLBackend): The backend whose layout applies.
+
+    Returns:
+        set[str]: The app folders the walk kept — ``app`` plus NVFLARE's ``app_*`` variants — which
+        is where the researcher's files are mirrored to.
+
+    Raises:
+        FileNotFoundError: Nothing deployable at all, the backend's root file missing, or no app
+            folder (a root file alone).
+    """
+    allowed_root_files = BUNDLED_ROOT_FILES[fl_backend]
+    where = f"in the local base directory: {base_dir}"
+    needs = f"(a bundle needs {describe_bundled_app_dirs(fl_backend)} and one of {sorted(allowed_root_files)})"
+    if not base_rel_paths:
+        raise FileNotFoundError(f"Base application files missing {where} {needs}")
+    if not allowed_root_files.intersection(base_rel_paths):
+        raise FileNotFoundError(f"Base application root file missing {where} {needs}")
+    # Same predicate as the walk, so this scan cannot drift from what was actually bundled.
+    app_folders = {
+        top
+        for top, sep, _ in (rel.partition("/") for rel in base_rel_paths)
+        if sep and is_bundled_app_dir(top, fl_backend)
+    }
+    if not app_folders:
+        raise FileNotFoundError(f"Base application app folder missing {where} {needs}")
+    logger.debug(f"App folders found: {sorted(app_folders)}")
+    return app_folders
+
+
 def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: str) -> Any:
     """
     Upload the application to the FL server.
@@ -707,43 +748,15 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     # (FLIP#724) — there is no S3 base bucket.
     base_dir = Path(get_settings().FL_APP_BASE_DIR) / FLBackend.NVFLARE / job_type
     logger.debug(f"Base application dir: {base_dir}")
-    allowed_root_files = BUNDLED_ROOT_FILES[FLBackend.NVFLARE]
-    app_dirs_rule = describe_bundled_app_dirs(FLBackend.NVFLARE)
     base_rel_paths = list_local_base_files(base_dir, FLBackend.NVFLARE)
-    if not base_rel_paths:
-        # Reached when the directory exists but holds nothing deployable. Name the rule, so an
-        # operator looking at a visibly non-empty template directory is not left guessing;
-        # the debug log above lists exactly what was excluded.
-        raise FileNotFoundError(
-            f"Base application files missing in the local base directory: {base_dir} "
-            f"(a bundle needs {app_dirs_rule} and one of {sorted(allowed_root_files)})"
-        )
-    if not allowed_root_files.intersection(base_rel_paths):
-        # A template whose app files survived the walk but whose root file did not would bundle
-        # cleanly and only fail at the FL server, far from the cause — NVFLARE has no meta.json
-        # job definition to deploy. Fail here instead, naming what the template must carry.
-        raise FileNotFoundError(
-            f"Base application root file missing in the local base directory: {base_dir} "
-            f"(a bundle needs one of {sorted(allowed_root_files)} beside {app_dirs_rule})"
-        )
+    # Rejects a malformed template (nothing deployable, no meta.json, or no app folder) before the
+    # destination is touched; app/ plus any per-site app_* variant is what the model files go into.
+    app_folders = _check_base_template(base_dir, base_rel_paths, FLBackend.NVFLARE)
 
     # Clear destination if files already exist there (e.g. from a previous training run)
     dest_files = s3.list_objects(dest_bucket_s3_path)
     if dest_files:
         s3.delete_objects(dest_files)
-
-    # The app folders the walk kept — app/ plus any per-site app_* variant. Same predicate as
-    # list_local_base_files, so this scan cannot drift from what was actually bundled.
-    app_folders: set[str] = set()
-    for rel in base_rel_paths:
-        top = rel.split("/", 1)[0]  # e.g. "app" or "app_site1"
-        if is_bundled_app_dir(top, FLBackend.NVFLARE):
-            app_folders.add(top)
-
-    if not app_folders:
-        raise FileNotFoundError(f"No app folders found under base application: {base_dir}")
-
-    logger.debug(f"App folders found: {sorted(app_folders)}")
 
     # Validate required model files exist for the job type before uploading anything, so a bad
     # submission fails fast without leaving a partial bundle in the destination bucket.
@@ -946,26 +959,10 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     # (FLIP#724) — there is no S3 base bucket.
     base_dir = Path(get_settings().FL_APP_BASE_DIR) / FLBackend.FLOWER / job_type
     logger.debug(f"Base application dir: {base_dir}")
-    allowed_root_files = BUNDLED_ROOT_FILES[FLBackend.FLOWER]
-    app_dirs_rule = describe_bundled_app_dirs(FLBackend.FLOWER)
     base_rel_paths = list_local_base_files(base_dir, FLBackend.FLOWER)
-    if not base_rel_paths:
-        # Reached when the directory exists but holds nothing deployable. Name the rule, so an
-        # operator looking at a visibly non-empty template directory is not left guessing;
-        # the debug log above lists exactly what was excluded.
-        raise FileNotFoundError(
-            f"Base application files missing in the local base directory: {base_dir} "
-            f"(a bundle needs {app_dirs_rule} and one of {sorted(allowed_root_files)})"
-        )
-    if not allowed_root_files.intersection(base_rel_paths):
-        # A template whose app/ files survived the walk but whose root file did not would bundle
-        # cleanly and only fail at the FL server, far from the cause — fl-api-flower cannot build
-        # a FAB without the run-root pyproject.toml. Fail here instead, naming what the template
-        # must carry.
-        raise FileNotFoundError(
-            f"Base application root file missing in the local base directory: {base_dir} "
-            f"(a bundle needs one of {sorted(allowed_root_files)} beside {app_dirs_rule})"
-        )
+    # Rejects a malformed template (nothing deployable, no pyproject.toml, or no app/) before the
+    # destination is touched. A FAB has one app package, so the returned folder set is just app/.
+    _check_base_template(base_dir, base_rel_paths, FLBackend.FLOWER)
 
     # Clear destination if files already exist there (e.g. from a previous training run)
     dest_files = s3.list_objects(dest_bucket_s3_path)
