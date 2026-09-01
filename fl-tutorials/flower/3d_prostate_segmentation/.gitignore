@@ -13,3 +13,5 @@
 data/
 .venv/
 uv.lock
+configs/
+cache/

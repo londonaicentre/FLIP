@@ -30,6 +30,25 @@ def load_marksheet(clinical_dir: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(f))
 
 
+def link_to(link: Path, target: Path) -> None:
+    """Point `link` at `target`, replacing a stale symlink if one is already there.
+
+    Links are written as resolved absolute paths, so moving the shared `nifti/`,
+    `labels/` or `zonal_labels/` trees leaves every existing link dangling. A
+    dangling link is invisible to `Path.exists()` (which follows it), so without
+    the `is_symlink()` check re-running would raise `FileExistsError` on the
+    first stale entry instead of repairing it.
+
+    Args:
+        link: Path of the symlink to create inside a site folder.
+        target: File the link should point at.
+    """
+    if link.is_symlink() and not link.exists():
+        link.unlink()
+    if not link.exists():
+        link.symlink_to(target.resolve())
+
+
 def partition(data_dir: Path) -> None:
     nifti_dir = data_dir / "nifti"
     labels_dir = data_dir / "labels"
@@ -63,19 +82,13 @@ def partition(data_dir: Path) -> None:
         for row in center_rows:
             patient_id, study_id = row["patient_id"], row["study_id"]
             for scan_path in sorted((nifti_dir / patient_id).glob(f"{patient_id}_{study_id}_*.nii.gz")):
-                link = site_nifti_dir / scan_path.name
-                if not link.exists():
-                    link.symlink_to(scan_path.resolve())
+                link_to(site_nifti_dir / scan_path.name, scan_path)
 
             label_path = labels_dir / f"{patient_id}_{study_id}.nii.gz"
-            link = site_labels_dir / label_path.name
-            if not link.exists():
-                link.symlink_to(label_path.resolve())
+            link_to(site_labels_dir / label_path.name, label_path)
 
             zonal_label_path = zonal_labels_dir / f"{patient_id}_{study_id}.nii.gz"
-            link = site_zonal_labels_dir / zonal_label_path.name
-            if not link.exists():
-                link.symlink_to(zonal_label_path.resolve())
+            link_to(site_zonal_labels_dir / zonal_label_path.name, zonal_label_path)
 
         manifest_path = sites_dir / center / "manifest.csv"
         with open(manifest_path, "w", newline="") as f:

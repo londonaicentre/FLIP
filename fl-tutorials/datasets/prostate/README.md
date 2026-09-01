@@ -19,9 +19,10 @@ whole-gland + zonal (PZ/TZ) segmentation labels
 ([picai_labels](https://github.com/DIAGNijmegen/picai_labels)), converts the `.mha` scans to
 DICOM (so they can be pulled into a trust's PACS the same way any other study would be) and to
 NIfTI, and partitions the converted data by acquiring center for the `3d_prostate_segmentation`
-tutorial (Flower). Download + preprocessing only — the `PicaiSegDataset` class that reads this
+tutorial (Flower). Download + preprocessing only — the `PicaiDataset` class that reads this
 partitioned data lives with the tutorial itself, at
-[`../../flower/3d_prostate_segmentation/picai_dataset.py`](../../flower/3d_prostate_segmentation/picai_dataset.py).
+[`../../flower/3d_prostate_segmentation/dataset.py`](../../flower/3d_prostate_segmentation/dataset.py),
+as does the nnU-Net planning step described [below](#nnu-net-plans).
 
 Dedicated uv project (`pyproject.toml` — SimpleITK, tqdm; `uv.lock` is gitignored), the same
 pattern as [`../spleen/`](../spleen/).
@@ -87,5 +88,68 @@ Each site folder is symlinked back to the shared `nifti/`/`labels/`/`zonal_label
 rather than copied. A study is skipped (and counted) if its scans or either label aren't
 present locally yet, e.g. a partial download via `FOLDS`. Point each simulated FL client at
 its own `sites/<CENTER>` folder to train on that center's studies only — see
-[`../../flower/3d_prostate_segmentation/picai_dataset.py`](../../flower/3d_prostate_segmentation/picai_dataset.py)
-for `PicaiSegDataset`, which loads one center's partitioned folder end-to-end.
+[`../../flower/3d_prostate_segmentation/dataset.py`](../../flower/3d_prostate_segmentation/dataset.py)
+for `PicaiDataset`, which loads one center's partitioned folder end-to-end.
+
+## nnU-Net plans
+
+Training is configured by a pair of JSON files: a **dataset fingerprint** (per-case voxel
+spacing, shape after cropping to the non-zero region, and foreground intensity statistics) and
+an **experiment plan** derived from it (target spacing, patch and batch size, normalization
+scheme, and the U-Net topology). Both come out of
+[`calculate_dataset_fingerprint_segmentation.py`](../../flower/3d_prostate_segmentation/calculate_dataset_fingerprint_segmentation.py),
+which lives with the tutorial rather than here because it reads the partitioned data through
+`PicaiDataset`:
+
+```bash
+cd fl-tutorials/flower/3d_prostate_segmentation
+uv sync
+
+# one site
+uv run python calculate_dataset_fingerprint_segmentation.py \
+  --site-dir ../../data/prostate/sites/RUMC \
+  --output-dir configs \
+  --modality t2w --num-processes 8 --gpu-memory-GB 8
+
+# or pool several — one fingerprint and one plan over all their studies
+uv run python calculate_dataset_fingerprint_segmentation.py \
+  --site-dir ../../data/prostate/sites/{ZGT,RUMC,PCNN} \
+  --output-dir configs \
+  --modality t2w --num-processes 8 --gpu-memory-GB 8
+```
+
+`--site-dir` takes one or more site folders; several are concatenated into a single dataset, so
+the fingerprint spans every study in them and one plan comes out the other end. Either way this
+writes `dataset_fingerprint_segmentation.json` and `nnUNetPlans_segmentation.json` into
+`--output-dir`. `--modality` picks which scan to plan against (`t2w` by default, matching what
+`PicaiDataset` loads), and `--gpu-memory-GB` is the budget the planner sizes patch and batch
+against.
+
+**Generate the plans once, then give every client the same file.** Each center scans at its own
+resolution, so planning *per site* yields different architectures. Running the single-site form
+once per center over the full cohort (`t2w`, `--gpu-memory-GB 8`) gives:
+
+| site | studies | median spacing (d, h, w) | median shape | patch size |
+| ---- | ------- | ------------------------ | ------------ | ---------- |
+| ZGT  | 350 | `[3.0, 0.5, 0.5]`   | `[21, 383, 383]`  | `[14, 256, 224]` |
+| RUMC | 800 | `[3.6, 0.5, 0.5]`   | `[19, 383, 383]`  | `[12, 192, 192]` |
+| PCNN | 350 | `[3.0, 0.34, 0.34]` | `[27, 1024, 672]` | `[10, 352, 224]` |
+| all three pooled | 1500 | `[3.0, 0.5, 0.5]` | `[21, 383, 383]` | `[10, 192, 160]` |
+
+ZGT and RUMC land on the same topology despite the different patch sizes, but PCNN — the
+highest in-plane resolution of the three — keeps stage 3 anisotropic (`kernel_sizes`
+`[1, 3, 3]` where the others have moved to `[3, 3, 3]`, with matching `strides` differences).
+That changes the shape of the convolution weights, so a client planned on PCNN cannot have its
+updates aggregated with one planned on ZGT or RUMC. Which site is the odd one out is not stable
+either — it shifts with how many studies each center contributes — so it is not something to
+predict from the center alone.
+
+Pooling all three (the last row) lands on the ZGT/RUMC side of that split — stage 3 isotropic,
+`kernel_sizes` `[3, 3, 3]` — with a patch size smaller than any single site's, since the plan has
+to fit the pooled statistics into the same `--gpu-memory-GB` budget.
+
+So pass every participating site to `--site-dir` in a single run and distribute the resulting
+`nnUNetPlans_segmentation.json` to all of them — the same way a real federation would agree the
+model spec centrally before training starts. Note this is a *planning-time* pooling of shape and
+intensity statistics only, which a live federation would have to derive some other way (a secure
+aggregation round, or a published spec); no imaging leaves its site during training itself.

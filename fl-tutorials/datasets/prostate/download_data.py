@@ -107,9 +107,6 @@ def download_labels(data_dir: Path) -> None:
 
 
 if __name__ == "__main__":
-    # fl-tutorials/data/prostate — the shared, gitignored data root (see ../README.md), so a
-    # direct `python download_data.py` lands data in the same place `make download-prostate-data`
-    # does, not an untracked datasets/prostate/data/ beside the script.
     default_data_dir = Path(__file__).parent.parent.parent / "data" / "prostate"
     data_dir = Path(os.environ.get("DATA_DIR", default_data_dir))
     folds = os.environ.get("FOLDS", "0 1 2 3 4").split()
