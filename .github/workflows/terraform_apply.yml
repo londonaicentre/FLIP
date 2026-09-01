@@ -175,8 +175,17 @@ jobs:
           arg-backend-config: bucket=${{ vars.FLIP_TFSTATE_BUCKET_NAME }},region=${{ vars.AWS_REGION }}
           validate: true
           format: true
-          preserve-plan: true # the gate and the apply both need the file
-          upload-plan: true # keeps the applied plan as a run artifact
+          # preserve-plan keeps the file in the working directory, which the FL
+          # gate below and the apply step both read. That is local to the runner.
+          preserve-plan: true
+          # upload-plan is a different thing and MUST stay false: it publishes
+          # the plan as a workflow artifact, and the plan file is a zip
+          # containing the full tfstate — AES_KEY_BASE64, INTERNAL_SERVICE_KEY
+          # and ADMIN_USER_PASSWORD in plaintext. This repository is public, so
+          # that artifact would be a public download of production credentials.
+          # An applied-plan audit trail is not worth that; the run log records
+          # what was applied.
+          upload-plan: false
 
       # Hazard B. Exit 1 holds the deploy with the resources named; exit 2 means
       # the plan could not be read, which is also a hold — never an apply.
@@ -199,3 +208,8 @@ jobs:
           working-directory: deploy/providers/AWS
           arg-backend-config: bucket=${{ vars.FLIP_TFSTATE_BUCKET_NAME }},region=${{ vars.AWS_REGION }}
           plan-file: deploy/providers/AWS/tfplan.gated
+          # Belt and braces. Today tf-via-pr only uploads for `command: plan`, so
+          # this step would not publish anything — but the state-in-plaintext
+          # consequence is severe enough on a public repo that it should not
+          # depend on that staying true. The harness requires it on every step.
+          upload-plan: false

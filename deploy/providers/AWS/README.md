@@ -957,6 +957,23 @@ To revisit, gate the plan job on a maintainer-applied label — one line in
       && contains(github.event.pull_request.labels.*.name, 'terraform-plan')
 ```
 
+### Never publish a plan file as an artifact
+
+`tf-via-pr` defaults `upload-plan` to **true**, and a Terraform plan file is a
+zip containing the full `tfstate` — `AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY` and
+`ADMIN_USER_PASSWORD` in plaintext. **This repository is public**, so an uploaded
+plan is a public download of live credentials.
+
+This happened. The first green CI plan (2026-09-01) left a 357 KB staging plan
+artifact on the run, because omitting the input takes the insecure default. It
+was deleted about an hour later and the staging secrets it contained were
+rotated. Every `tf-via-pr` step now sets `upload-plan: false`, and
+`scripts/tests/test_compose_ci_env.sh` fails the build if any step omits it.
+
+`preserve-plan` is a *different* input and stays `true` in the apply workflow: it
+keeps the plan on the runner's disk so the FL gate and the apply step can read
+it. That never leaves the job.
+
 ### Recovering an environment's true values
 
 The operator `.env` files drift, and seeding GitHub from a stale one bakes that

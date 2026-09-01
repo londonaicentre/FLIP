@@ -171,3 +171,11 @@ jobs:
           validate: true
           format: true
           comment-pr: on-diff
+          # MUST stay false. tf-via-pr defaults this to true, and the plan file
+          # it uploads is a zip containing the full tfstate — which holds
+          # AES_KEY_BASE64, INTERNAL_SERVICE_KEY and ADMIN_USER_PASSWORD in
+          # plaintext. This repository is public, so that artifact is a public
+          # download. Nothing downstream needs it: this job only comments the
+          # diff, and terraform_apply.yml re-plans from scratch rather than
+          # consuming a plan produced here.
+          upload-plan: false

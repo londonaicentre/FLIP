@@ -225,6 +225,41 @@ for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
     fi
 done
 
+# 1b. NO WORKFLOW MAY PUBLISH A PLAN FILE AS AN ARTIFACT.
+#
+#     tf-via-pr defaults upload-plan to true, and a Terraform plan file is a zip
+#     containing the full tfstate — AES_KEY_BASE64, INTERNAL_SERVICE_KEY and
+#     ADMIN_USER_PASSWORD in plaintext. This repository is PUBLIC, so an uploaded
+#     plan is a public download of live credentials. It happened once: the first
+#     green CI plan (2026-09-01) left a 357 KB stag plan artifact behind, because
+#     omitting the input takes the insecure default.
+#
+#     Nothing needs the artifact. terraform_plan.yml only comments the diff, and
+#     terraform_apply.yml re-plans from scratch. `preserve-plan` is a different
+#     input — it keeps the file on the runner for the FL gate — and stays true.
+echo ""
+echo "-- no workflow uploads a plan file as an artifact"
+upload_offenders=""
+for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
+    wf_path="${WORKFLOW_DIR}/${wf}"
+    [[ -f "${wf_path}" ]] || continue
+    grep -q 'tf-via-pr' "${wf_path}" || continue
+    # Every tf-via-pr step must carry an explicit `upload-plan: false`; relying
+    # on the default is the bug this guards.
+    steps="$(grep -c 'uses: op5dev/tf-via-pr' "${wf_path}")"
+    disabled="$(grep -cE '^[[:space:]]+upload-plan:[[:space:]]*false[[:space:]]*$' "${wf_path}")"
+    if [[ "${disabled}" -lt "${steps}" ]]; then
+        upload_offenders="${upload_offenders} ${wf}(${disabled}/${steps})"
+    fi
+done
+if [[ -z "${upload_offenders}" ]]; then
+    ok "every tf-via-pr step sets upload-plan: false"
+else
+    no "every tf-via-pr step sets upload-plan: false" \
+        "a plan artifact on a public repo publishes tfstate in plaintext:" \
+        ${upload_offenders}
+fi
+
 # 2. HAPPY PATH.
 run_case "complete value set composes" 
 expect_rc 0 "exits 0"
