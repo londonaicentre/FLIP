@@ -20,6 +20,7 @@
 # conversion in reverse.
 
 import argparse
+import csv
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -42,7 +43,31 @@ PRESERVED_SOURCE_TAGS = (
 )
 
 
-def write_dicom_series(image: sitk.Image, out_dir: Path, patient_id: str, study_id: str, modality: str) -> None:
+def load_centers(marksheet_path: Path) -> dict[tuple[str, str], str]:
+    """Map each ``(patient_id, study_id)`` to the center that acquired it.
+
+    The acquiring center is the one piece of provenance PI-CAI keeps in the marksheet rather than
+    the ``.mha`` headers, and it is what a per-site partition keys on. Carrying it into
+    ClinicalTrialSiteID means the contributing center travels with the study into PACS and XNAT,
+    so downstream steps read it off the DICOM instead of re-joining the marksheet.
+
+    Args:
+        marksheet_path: ``clinical_information/marksheet.csv`` from the PI-CAI labels archive.
+
+    Returns:
+        dict[tuple[str, str], str]: ``(patient_id, study_id) -> center``. Empty if the marksheet is
+        absent, which leaves InstitutionName unset rather than failing the conversion.
+    """
+    if not marksheet_path.is_file():
+        print(f"⚠️  {marksheet_path} not found — converting without InstitutionName.")
+        return {}
+    with open(marksheet_path, newline="") as handle:
+        return {(row["patient_id"], row["study_id"]): row["center"] for row in csv.DictReader(handle)}
+
+
+def write_dicom_series(
+    image: sitk.Image, out_dir: Path, patient_id: str, study_id: str, modality: str, center: str = ""
+) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     # Read the source metadata *before* casting: sitk.Cast returns a new image with an empty
     # metadata dictionary, so anything read after this line would silently come back missing.
@@ -80,6 +105,15 @@ def write_dicom_series(image: sitk.Image, out_dir: Path, patient_id: str, study_
         "0018|0050": str(spacing[2]),
     }
     series_tag_values.update(source_tags)
+    if center:
+        # ClinicalTrialSiteID, NOT InstitutionName (0008,0080). PI-CAI's `center` is a
+        # contributing cohort, not the institution that owns the scanner: the 1500 public cases come
+        # from 11 sites across these 3 centers, PCNN is a regional network (Prostaat Centrum
+        # Noord-Nederland) whose studies span 6 scanner models and both vendors, and ZGT is a
+        # hospital group. InstitutionName is defined as where the equipment is located, so it would
+        # be a false claim for those two. The 0012 group is the research/de-identification family
+        # the .mha headers already use (0012|0062, Patient Identity Removed).
+        series_tag_values["0012|0030"] = center  # Clinical Trial Site ID
 
     writer = sitk.ImageFileWriter()
     writer.KeepOriginalImageUIDOn()
@@ -98,17 +132,20 @@ def write_dicom_series(image: sitk.Image, out_dir: Path, patient_id: str, study_
         writer.Execute(image_slice)
 
 
-def _convert_one(mha_path: Path, output_dir: Path) -> None:
+def _convert_one(mha_path: Path, output_dir: Path, centers: dict[tuple[str, str], str]) -> None:
     patient_id, study_id, modality = mha_path.stem.rsplit("_", 2)
     series_dir = output_dir / patient_id / study_id / modality
     image = sitk.ReadImage(str(mha_path))
-    write_dicom_series(image, series_dir, patient_id, study_id, modality)
+    write_dicom_series(
+        image, series_dir, patient_id, study_id, modality, centers.get((patient_id, study_id), "")
+    )
 
 
-def convert_archive(input_dir: Path, output_dir: Path, workers: int) -> None:
+def convert_archive(input_dir: Path, output_dir: Path, workers: int, marksheet_path: Path) -> None:
     mha_paths = sorted(input_dir.rglob("*.mha"))
+    centers = load_centers(marksheet_path)
     with ProcessPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(_convert_one, mha_path, output_dir) for mha_path in mha_paths]
+        futures = [pool.submit(_convert_one, mha_path, output_dir, centers) for mha_path in mha_paths]
         for future in tqdm(as_completed(futures), total=len(futures), desc="Converting to DICOM", unit="scan"):
             future.result()
 
@@ -120,5 +157,11 @@ if __name__ == "__main__":
     parser.add_argument("--input", type=Path, default=default_data_dir / "images")
     parser.add_argument("--output", type=Path, default=default_data_dir / "dicom")
     parser.add_argument("--workers", type=int, default=os.cpu_count())
+    parser.add_argument(
+        "--marksheet",
+        type=Path,
+        default=default_data_dir / "clinical_information" / "marksheet.csv",
+        help="Marksheet supplying the acquiring center, written to InstitutionName (0008,0080).",
+    )
     args = parser.parse_args()
-    convert_archive(args.input, args.output, args.workers)
+    convert_archive(args.input, args.output, args.workers, args.marksheet)
