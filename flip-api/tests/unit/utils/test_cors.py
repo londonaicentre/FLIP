@@ -70,7 +70,17 @@ class TestGetCorsAllowedOrigins:
 
     @pytest.fixture
     def mock_settings(self):
-        with patch("flip_api.utils.cors.get_settings") as mock_get_settings:
+        """Patch `get_settings` in *both* modules this path crosses.
+
+        `get_cors_allowed_origins` reads the pool/client IDs via `cors.get_settings`,
+        but the client it calls them on is built by `cognito_helpers._cognito_client`,
+        which reads `AWS_REGION` via `cognito_helpers.get_settings`. Patching only one
+        leaves the other resolving real environment config.
+        """
+        with (
+            patch("flip_api.utils.cors.get_settings") as mock_get_settings,
+            patch("flip_api.utils.cognito_helpers.get_settings", mock_get_settings),
+        ):
             settings = mock_get_settings.return_value
             settings.AWS_REGION = "eu-west-2"
             settings.AWS_COGNITO_USER_POOL_ID = "pool-id"
