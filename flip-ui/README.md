@@ -146,8 +146,8 @@ whatever they reach whichever stanza a package sits in, and every install path i
 the Dockerfile, `make deploy-ui`) installs both stanzas — so a wrong stanza breaks nothing and is invisible
 until it matters. What it changes is the **scope label on a security alert**: a package that ships to users
 but sits in `devDependencies` produces an alert labelled "Development", which reads as *not in the production
-bundle* and invites a wrongly-dismissed alert on code CloudFront is serving. FLIP#1041 corrected 21
-packages: 18 moved out of `devDependencies`, two that were declared nowhere at all (`codemirror`,
+bundle* and invites a wrongly-dismissed alert on code CloudFront is serving. FLIP#1041 corrected 19
+packages: 16 moved out of `devDependencies`, two that were declared nowhere at all (`codemirror`,
 `tippy.js` — they resolved only by hoisting), and `husky`, which had drifted the other way. Correct scoping
 is also the precondition for ever adopting `npm ci --omit=dev` here.
 

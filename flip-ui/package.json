@@ -62,7 +62,6 @@
         "vue": "^3.2.16",
         "vue-router": "^4.0.11",
         "vue-tippy": "^6.3.1",
-        "vuejs-smart-table": "^1.0.0-beta.5",
         "yup": "^0.32.9"
     },
     "devDependencies": {
