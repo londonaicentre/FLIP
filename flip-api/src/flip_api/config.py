@@ -155,13 +155,22 @@ class Settings(BaseSettings):
     # Which email backend send_templated_email (utils/email_sender.py) uses.
     # "ses" sends through AWS SESv2; "console" logs the would-be email
     # instead, so development needs no SES identity, templates or verified
-    # addresses (FLIP#919). Defaults secure ("ses") so any unknown
-    # environment behaves like prod; DevSettings overrides to "console",
-    # and ProdSettings narrows the type to Literal["ses"] so the console
-    # backend is unrepresentable in production. A dedicated flag rather
-    # than an ENV branch (same rationale as ENFORCE_MFA) so tests and
-    # deliberate local experiments can select the SES path without
-    # flipping ENV — which also drives DB auth, encryption and docs.
+    # addresses (FLIP#919). The effective value always comes from the
+    # subclass — DevSettings overrides to "console", ProdSettings narrows
+    # the type to Literal["ses"] so console is rejected at boot there. This
+    # base default is only observed by the ENV probe below and by direct
+    # Settings() construction in tests; unlike ENFORCE_MFA (declared only
+    # here, so an unknown environment inherits the secure value) it is NOT
+    # a fallback for a misconfigured deploy: coerce_empty_env maps an unset
+    # ENV to "development", which selects DevSettings and therefore
+    # "console". A deploy that loses ENV fails on DevSettings' other
+    # required fields (POSTGRES_PASSWORD, AES_KEY_BASE64) rather than
+    # silently logging, but do not rely on this default for that.
+    # A dedicated flag rather than an ENV branch (same rationale as
+    # ENFORCE_MFA) so tests and deliberate local experiments can select the
+    # SES path without flipping ENV — which also drives DB auth, encryption
+    # and docs. See tests/integration/test_console_email_backend.py, which
+    # pins the backend rather than reading the developer's env file.
     EMAIL_BACKEND: Literal["ses", "console"] = "ses"
 
     @field_validator("ENV", mode="before")
@@ -323,10 +332,13 @@ class DevSettings(Settings):
 
     # Development sends no real email: the console backend logs the would-be
     # message instead (FLIP#919), so no SES identity or verified address is
-    # needed to boot. The address fields keep syntactically-valid defaults —
-    # they still appear in the logged output and in tests — and tolerate
-    # empty-string env values so a stale .env.development that still carries
-    # (possibly commented-out) AWS_SES_* lines can't fail EmailStr validation.
+    # needed to boot. Both address fields keep syntactically-valid defaults so
+    # neither is required in dev: the admin address is still read on the dev
+    # path (it is the recipient the console backend logs), while the sender
+    # address is read only by _send_via_ses, so its default exists purely to
+    # keep the field non-required. Both tolerate empty-string env values, so a
+    # stale .env.development still carrying (possibly commented-out)
+    # AWS_SES_* lines can't fail EmailStr validation.
     EMAIL_BACKEND: Literal["ses", "console"] = "console"
     AWS_SES_ADMIN_EMAIL_ADDRESS: EmailStr = "flip-admin@example.com"
     AWS_SES_SENDER_EMAIL_ADDRESS: EmailStr = "flip-no-reply@example.com"

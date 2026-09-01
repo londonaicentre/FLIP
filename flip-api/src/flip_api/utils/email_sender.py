@@ -20,10 +20,28 @@ import boto3
 from flip_api.config import get_settings
 from flip_api.utils.logger import logger
 
-# Template-data keys whose values must never reach the logs. The console
-# backend logs the payload, and flip-xnat-credentials carries the user's
-# decrypted XNAT password.
-_REDACTED_TEMPLATE_FIELDS = frozenset({"password"})
+# Substrings marking a template-data key whose value must never reach the
+# logs. The console backend logs the payload, and flip-xnat-credentials
+# carries the user's decrypted XNAT password. Matched as substrings rather
+# than exact names, and at the top level only (all current ISes*TemplateData
+# payloads are flat): a denylist guarding a live credential has to fail safe,
+# so a future `temp_password`, `api_secret` or `access_token` field is
+# redacted without anyone remembering to update this set.
+_REDACTED_KEY_MARKERS = ("password", "secret", "token", "credential")
+
+# Cap on a single logged template value. reason_for_access arrives on the
+# unauthenticated POST /users/access with no length bound.
+_MAX_LOGGED_VALUE_CHARS = 200
+
+
+class EmailDispatchError(Exception):
+    """Raised when a batch of notifications failed wholesale rather than per-recipient.
+
+    Callers that key a retry off a clean return (see
+    ``private_services/imaging_notifications``) need to tell "this one address
+    was rejected" apart from "nothing can be sent at all", so the latter is
+    surfaced rather than logged and swallowed.
+    """
 
 
 def send_templated_email(recipient: str, template_name: str, template_data: dict[str, Any]) -> None:
@@ -34,10 +52,11 @@ def send_templated_email(recipient: str, template_name: str, template_data: dict
     ``"console"`` logs the would-be email instead (the development default),
     with ``_REDACTED_TEMPLATE_FIELDS`` values masked.
 
-    The console backend never raises, so in development a caller's
-    success-path bookkeeping (e.g. ``AccessRequest.email_notified``) runs as
-    if the email were delivered. The SES backend lets boto3/SES errors
-    propagate unchanged — callers keep their existing best-effort handling.
+    The console backend logs and returns — it does no I/O and no
+    serialisation — so in development a caller's success-path bookkeeping
+    (e.g. ``AccessRequest.email_notified``) runs as if the email were
+    delivered. The SES backend lets boto3/SES errors propagate unchanged —
+    callers keep their existing best-effort handling.
 
     Args:
         recipient (str): Destination email address.
@@ -70,9 +89,30 @@ def _send_via_ses(recipient: str, template_name: str, template_data: dict[str, A
 
 
 def _send_via_console(recipient: str, template_name: str, template_data: dict[str, Any]) -> None:
-    """Log the would-be email (redacting sensitive fields) instead of sending it."""
-    redacted = {
-        key: "***REDACTED***" if key in _REDACTED_TEMPLATE_FIELDS else value
-        for key, value in template_data.items()
-    }
-    logger.info(f"Email suppressed (EMAIL_BACKEND=console): template '{template_name}' to {recipient}, data={redacted}")
+    """Log the would-be email (redacting sensitive fields) instead of sending it.
+
+    Logged at WARNING, not INFO: this records that a requested action was
+    deliberately not performed, and it is the only trace that the email was
+    suppressed. At INFO a developer running LOG_LEVEL=WARNING would get no
+    record at all while callers still flag the notification as sent.
+
+    The payload is logged to make the dev backend useful, so it reaches the
+    logs in clear apart from the redacted keys — for the access-request
+    template that includes the requester's name and email. Values are
+    truncated to keep an unbounded free-text field (reason_for_access, from
+    an unauthenticated endpoint) from dominating the log.
+    """
+    redacted = {key: _redact(key, value) for key, value in template_data.items()}
+    logger.warning(
+        f"Email suppressed (EMAIL_BACKEND=console): template '{template_name}' to {recipient}, data={redacted}"
+    )
+
+
+def _redact(key: str, value: Any) -> str:
+    """Mask a sensitive value, keeping its length as a diagnostic, and truncate the rest."""
+    rendered = str(value)
+    if any(marker in key.lower() for marker in _REDACTED_KEY_MARKERS):
+        # Keep the length: an empty or whitespace-only secret means a broken
+        # decrypt(), which would otherwise be indistinguishable from a good one.
+        return f"***REDACTED*** ({len(rendered)} chars)"
+    return rendered if len(rendered) <= _MAX_LOGGED_VALUE_CHARS else f"{rendered[:_MAX_LOGGED_VALUE_CHARS]}…"

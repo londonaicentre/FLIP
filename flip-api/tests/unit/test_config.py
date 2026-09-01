@@ -93,14 +93,31 @@ def test_suffix_list_passes_through_unexpected_types_for_pydantic_to_reject():
         Settings(ALLOWED_MODEL_FILE_EXTENSIONS=123)
 
 
-def test_email_backend_defaults_secure_but_dev_uses_console():
-    """Unknown environments send real email; development logs instead (#919)."""
-    assert Settings().EMAIL_BACKEND == "ses"
-    assert DevSettings().EMAIL_BACKEND == "console"
+def test_email_backend_defaults_per_environment_class():
+    """Dev logs, prod sends, and prod cannot be narrowed any wider (#919).
+
+    Asserted on the fields rather than instances, for the same reason as
+    ``test_dev_ses_addresses_are_optional_with_defaults`` below: a developer
+    may set ``EMAIL_BACKEND=ses`` in their own ``.env.development`` (the
+    config comment invites exactly that), which an instance would pick up.
+
+    Note the base default is *not* a safety net for a misconfigured deploy —
+    an unset ``ENV`` resolves to ``DevSettings`` and therefore ``console``.
+    It exists so the field is declared for ``ProdSettings`` to narrow.
+    """
+    assert Settings.model_fields["EMAIL_BACKEND"].default == "ses"
+    assert DevSettings.model_fields["EMAIL_BACKEND"].default == "console"
+    assert ProdSettings.model_fields["EMAIL_BACKEND"].default == "ses"
 
 
 def test_email_backend_empty_string_falls_back_to_the_per_class_default():
-    """Same env-file empty-string trap as the scan ints, resolved per class."""
+    """Same env-file empty-string trap as the scan ints, resolved per class.
+
+    Not hypothetical: ``.env.development.example`` carries a commented
+    ``# EMAIL_BACKEND=ses`` line, and the root Makefile's unanchored
+    ``sed 's/=.*//'`` exports the bare name from it, so a copied example
+    hands flip-api an empty ``EMAIL_BACKEND``.
+    """
     assert Settings(EMAIL_BACKEND="").EMAIL_BACKEND == "ses"
     assert DevSettings(EMAIL_BACKEND="").EMAIL_BACKEND == "console"
 

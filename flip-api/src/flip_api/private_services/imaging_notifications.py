@@ -25,7 +25,7 @@ from flip_api.domain.interfaces.trust import (
 )
 from flip_api.private_services.project_images_helpers import insert_status
 from flip_api.utils.constants import IMAGING_CREDENTIALS_TEMPLATE_NAME, IMAGING_PROJECT_ACCESS_TEMPLATE_NAME
-from flip_api.utils.email_sender import send_templated_email
+from flip_api.utils.email_sender import EmailDispatchError, send_templated_email
 from flip_api.utils.encryption import decrypt
 from flip_api.utils.logger import logger
 
@@ -39,12 +39,20 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
     Called after the task result has been committed to the database.
     Any exceptions are expected to be caught by the caller.
 
+    A single recipient failing is logged and skipped, but a run where *every*
+    notification failed raises: both callers (``trust_tasks`` and the
+    ``stale_task_recovery`` sweep) clear ``needs_post_processing`` only on a
+    clean return, so swallowing a systemic failure — a broken AWS region, an
+    SES outage — would silently discard the retry and leave those users with
+    no credentials and no trace in the retry queue.
+
     Args:
         task (TrustTask): The completed CREATE_IMAGING task with result data.
         db (Session): Database session.
 
     Raises:
         ValueError: If the task has no result data.
+        EmailDispatchError: If every attempted notification failed.
     """
     if not task.result:
         raise ValueError(f"Task {task.id} has no result data")
@@ -83,8 +91,12 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
     trust = db.exec(select(Trust).where(Trust.id == task.trust_id)).first()
     trust_name = trust.name if trust else "Unknown Trust"
 
+    attempted = 0
+    failed = 0
+
     # Send credential emails to newly created users
     for user in imaging_project.created_users:
+        attempted += 1
         try:
             decrypted_password = decrypt(user.encrypted_password)
 
@@ -104,10 +116,15 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
             logger.info(f"Sent XNAT credentials email to {user.email} for project '{imaging_project.name}'")
 
         except Exception as e:
-            logger.error(f"Failed to send credentials email to {user.email}: {e}")
+            # exception(), not error(): the botocore traceback is what
+            # distinguishes a client-construction failure (systemic) from a
+            # per-recipient send rejection.
+            failed += 1
+            logger.exception(f"Failed to send credentials email to {user.email}: {e}")
 
     # Send project access notifications to existing users (no password)
     for added_user in imaging_project.added_users:
+        attempted += 1
         try:
             access_template_data = ISesProjectAccessTemplateData(
                 trust_name=trust_name,
@@ -124,7 +141,14 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
             logger.info(f"Sent project access email to {added_user.email} for project '{imaging_project.name}'")
 
         except Exception as e:
-            logger.error(f"Failed to send project access email to {added_user.email}: {e}")
+            failed += 1
+            logger.exception(f"Failed to send project access email to {added_user.email}: {e}")
+
+    if attempted and failed == attempted:
+        raise EmailDispatchError(
+            f"All {attempted} imaging notification email(s) failed for task {task.id} — "
+            "treating as systemic so the task stays queued for retry"
+        )
 
 
 def _get_latest_query_id(project_id: UUID, db: Session) -> UUID | None:

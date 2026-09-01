@@ -24,6 +24,7 @@ import json
 import logging
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import select
 
@@ -41,9 +42,18 @@ from flip_api.utils.encryption import encrypt
 XNAT_PASSWORD = "hunter2-the-password"  # pragma: allowlist secret
 
 
-def test_development_defaults_to_the_console_backend():
-    """Guards the premise of every test below — and of `make up` without SES config."""
-    assert get_settings().EMAIL_BACKEND == "console"
+@pytest.fixture(autouse=True)
+def console_backend(monkeypatch):
+    """Pin the console backend for this module, mirroring ``ses_send_email_recorder``.
+
+    ``DevSettings`` already defaults to ``console`` (asserted on the field
+    itself in ``tests/unit/test_config.py``), but a developer may set
+    ``EMAIL_BACKEND=ses`` in ``.env.development`` — the config comment
+    explicitly invites that — which would otherwise turn this whole module red
+    and attempt real SES calls. Pin the code path under test rather than
+    depending on ambient config.
+    """
+    monkeypatch.setattr(get_settings(), "EMAIL_BACKEND", "console")
 
 
 def test_request_access_succeeds_and_logs_instead_of_sending(client: TestClient, session, caplog):

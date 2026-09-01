@@ -9,13 +9,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Dev-account Terraform root: Cognito + SES + the three FLIP application S3
-# buckets (FLIP#24 — see ../README.md "FLIP application S3 buckets").
+# Dev-account Terraform root: Cognito + the three FLIP application S3 buckets
+# (FLIP#24 — see ../README.md "FLIP application S3 buckets"). No SES: dev
+# email is flip-api's console backend (FLIP#919).
 #
 # Shares the same env file as the local Docker Compose dev stack
 # (../../../.env.development) so developers only maintain one set of
-# credentials. The variables we need — AWS_PROFILE, AWS_REGION,
-# flip_cognito_admin_email, ADMIN_USER_PASSWORD — already live there.
+# credentials. AWS_PROFILE, AWS_REGION, ADMIN_USER_PASSWORD,
+# FLIP_TFSTATE_BUCKET_NAME and the three bucket names already live there;
+# flip_cognito_admin_email ships commented out in the example and must be
+# added — the guard below errors at parse time until it is.
 
 ENV_FILE := ../../../../.env.development
 

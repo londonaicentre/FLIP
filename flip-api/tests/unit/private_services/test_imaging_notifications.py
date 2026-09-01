@@ -17,6 +17,7 @@ from uuid import uuid4
 import pytest
 
 from flip_api.private_services.imaging_notifications import handle_imaging_task_completed
+from flip_api.utils.email_sender import EmailDispatchError
 
 TRUST_ID = uuid4()
 PROJECT_ID = str(uuid4())
@@ -172,8 +173,60 @@ def test_no_emails_when_no_users_at_all(mock_send_email, mock_decrypt, mock_inse
     mock_send_email.assert_not_called()
 
 
+def test_all_emails_failing_raises_so_the_task_stays_retryable(mock_send_email, mock_decrypt, mock_insert_status):
+    """A wholesale failure must NOT return cleanly — that would discard the retry.
+
+    Both callers clear ``needs_post_processing`` only on a clean return
+    (``trust_tasks``, and the ``stale_task_recovery`` sweep), so swallowing a
+    systemic failure — a broken AWS region, an SES outage — would permanently
+    drop the notifications with nothing left in the retry queue.
+    """
+    users = [
+        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},
+        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},
+    ]
+    task = _make_task(users, added_users=[{"username": "existing1", "email": "existing1@test.com"}])
+
+    mock_db = MagicMock()
+    query_result = MagicMock()
+    query_result.first.return_value = _mock_query()
+    trust_result = MagicMock()
+    trust_result.first.return_value = _mock_trust()
+    mock_db.exec.side_effect = [query_result, trust_result]
+
+    mock_send_email.side_effect = Exception("You must specify a region")
+
+    with pytest.raises(EmailDispatchError, match="All 3 imaging notification email"):
+        handle_imaging_task_completed(task, mock_db)
+
+    # Every recipient was still attempted before giving up.
+    assert mock_send_email.call_count == 3
+
+
+def test_partial_failure_does_not_raise(mock_send_email, mock_decrypt, mock_insert_status):
+    """One bad address is not systemic: the run succeeds so the task is not retried forever."""
+    users = [
+        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},
+        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},
+    ]
+    task = _make_task(users)
+
+    mock_db = MagicMock()
+    query_result = MagicMock()
+    query_result.first.return_value = _mock_query()
+    trust_result = MagicMock()
+    trust_result.first.return_value = _mock_trust()
+    mock_db.exec.side_effect = [query_result, trust_result]
+
+    mock_send_email.side_effect = [Exception("bad address"), None]
+
+    handle_imaging_task_completed(task, mock_db)
+
+    assert mock_send_email.call_count == 2
+
+
 def test_ses_failure_for_one_user_continues_to_next(mock_send_email, mock_decrypt, mock_insert_status):
-    """Should continue sending to remaining users if SES fails for one."""
+    """Should continue sending to remaining users if the send fails for one."""
     users = [
         {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},
         {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},

@@ -5,7 +5,7 @@ This directory holds the Terraform stack for the **dev AWS account**. It deploys
 - **Cognito** — user pool, hosted-UI domain, app client, seed admin/researcher users
 - **S3** — the three FLIP application buckets (model-file uploads, FL results, app bundles)
 
-Everything else (VPC, EC2, RDS, ALB, NLB, Route53, ACM, IAM, CloudWatch, SES) is intentionally **not** part of this stack; local development runs those services via Docker Compose in this repository's `deploy/` root compose files. The prod/stag stack at `deploy/providers/AWS/` is the source of truth for every non-dev environment.
+Everything else (VPC, EC2, RDS, ALB, NLB, Route53, ACM, IAM, CloudWatch) is intentionally **not** part of this stack; local development runs those services via Docker Compose in this repository's `deploy/` root compose files. SES is not part of it either, and is not run locally at all — see below. The prod/stag stack at `deploy/providers/AWS/` is the source of truth for every non-dev environment.
 
 **No SES.** Development sends no email: flip-api defaults to `EMAIL_BACKEND=console`, which logs the would-be message instead of calling SES (FLIP#919). The dev account's SES sender identity and three templates were destroyed as part of that change, and this root no longer instantiates `modules/ses` — only prod/stag do. Re-adding SES to dev would mean re-verifying the sender address by email. Cognito's own invite and password-reset emails are unaffected; the user pool uses Cognito's default sender, not SES.
 
@@ -94,9 +94,9 @@ Post-apply:
 
 ### Rebuilding from scratch
 
-To wipe the dev stack and start over: `terraform destroy` is refused by the `prevent_destroy` lifecycle blocks on the shared Cognito module (those blocks exist to protect the prod pool, which uses the same module). Instead:
+To wipe the dev stack and start over: `terraform destroy` is refused by the `prevent_destroy` lifecycle blocks on the shared `cognito` and `flip_s3_bucket` modules (those blocks exist to protect the prod pool and buckets, which use the same modules). Instead:
 
-1. Delete the resources manually in the AWS console / CLI (user pool domain, user pool).
+1. Delete the resources manually in the AWS console / CLI (user pool domain, user pool, and the three application buckets).
 2. `terraform state rm` each resource from the dev state, or delete the state object at `s3://$FLIP_TFSTATE_BUCKET_NAME/flip/dev/terraform.tfstate` for a full reset.
 3. Re-run the **Bootstrapping a fresh dev account** flow above.
 
