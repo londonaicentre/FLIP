@@ -11,9 +11,12 @@
 
 """Build the spleen_project OMOP tables from the DICOM metadata table.
 
-Imported from ``londonaicentre/flip-omop-mock-data`` (FLIP#1092). Behaviour is unchanged, including
-the round-robin trust split — MSD Task09_Spleen is single-source, so the two trusts carry no
-acquisition heterogeneity. Replacing that with a real site split is FLIP#1092 follow-up 2.
+Imported from ``londonaicentre/flip-omop-mock-data`` (FLIP#1092). Behaviour is unchanged bar one
+correction — SliceThickness measurements now carry their millimetre unit (FLIP#1098; the imported
+filter compared against a transposed concept id and never matched, so the ``20260729`` export
+published every measurement with ``unit_concept_id`` 0). The round-robin trust split is kept as is:
+MSD Task09_Spleen is single-source, so the two trusts carry no acquisition heterogeneity. Replacing
+that with a real site split is FLIP#1092 follow-up 2.
 """
 
 import os
@@ -31,6 +34,7 @@ from utils.omop_mappings import (
     MAPPING_MODALITY,
     MAPPING_PROCEDURE_TYPE,
     MAPPING_SEX,
+    MILLIMETER_UNIT_CONCEPT_ID,
     UNKNOWN_CONCEPT_ID,
 )
 from utils.omop_schemas import schemas
@@ -44,6 +48,10 @@ PROJECT = "spleen_project"
 # Per-dataset, not shared: this is a fact about what spleen_project depicts, not an OMOP convention.
 # The prostate follow-up would use a different value (4165732).
 ANATOMIC_SITE_CONCEPT_ID = 4302605
+# SliceThickness (0018,0050) is the one expanded attribute measured in a unit. Resolved through the same
+# map that stamps measurement_concept_id below, so the unit filter and the concept can never disagree
+# again — a hand-typed literal here (2128100808 for 2128000817) is what FLIP#1098 was.
+SLICE_THICKNESS_CONCEPT_ID = MAPPING_DICOM[f"{tag_for_keyword('SliceThickness'):08x}"]
 
 
 def nhs_number_to_integer(s):
@@ -222,18 +230,12 @@ def transform_dicom_metadata_to_omop_tables(
     )
     measurement["value_as_number"] = pd.to_numeric(df_feat["value_source_value"], errors="coerce")
     measurement["unit_concept_id"] = UNKNOWN_CONCEPT_ID  # default to unknown, otherwise filled with NaN and dtype=float
-    # NOTE: this filter never matches. 2128100808 is not a value MAPPING_DICOM produces — Slice Thickness
-    # (MAPPING_DICOM["00180050"]) is 2128000817, a different number, almost certainly a transposition typo
-    # upstream. But the published OMOP export was generated with this bug present: all 205 measurement
-    # rows keep unit_concept_id == UNKNOWN_CONCEPT_ID, none becomes 8588. Correcting the filter would
-    # change output that no longer matches the published export and fail the verification gate, so leave
-    # both literals below exactly as bare, unnamed numbers.
-    measurement.loc[measurement["measurement_concept_id"].eq(2128100808), "unit_concept_id"] = (
-        8588  # SliceThickness in millimeter
-    )
+    # Only SliceThickness has a unit; Manufacturer, model name, Rows and Columns are unitless (FLIP#1098).
+    is_slice_thickness = measurement["measurement_concept_id"].eq(SLICE_THICKNESS_CONCEPT_ID)
+    measurement.loc[is_slice_thickness, "unit_concept_id"] = MILLIMETER_UNIT_CONCEPT_ID
     measurement["visit_occurrence_id"] = df_feat["visit_occurrence_id"].copy()
     measurement["measurement_source_value"] = df_feat["measurement_source_value"].copy()
-    measurement.loc[measurement["measurement_concept_id"].eq(2128100808), "unit_source_value"] = "millimeter"
+    measurement.loc[is_slice_thickness, "unit_source_value"] = "millimeter"
     measurement["value_source_value"] = df_feat["value_source_value"].astype(str)
     # Validate, add trust column, and store
     measurement = schemas["measurement"].validate(measurement)

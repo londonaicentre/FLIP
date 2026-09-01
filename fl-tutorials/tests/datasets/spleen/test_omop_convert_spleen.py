@@ -145,3 +145,25 @@ def test_split_is_round_robin_over_the_row_index(converter: ModuleType, tmp_path
     assert trusts[0] != trusts[1], "adjacent rows alternate trusts"
     assert trusts[0] == trusts[2], "the cycle repeats every len(TRUSTS) rows"
     assert trusts[1] == trusts[3], "the cycle repeats every len(TRUSTS) rows"
+
+
+def test_slice_thickness_measurements_carry_the_millimetre_unit(converter: ModuleType, tmp_path: Path) -> None:
+    """SliceThickness (0018,0050) is the one attribute here measured in a unit; the rest are unitless.
+
+    FLIP#1098: the filter that stamped the unit compared against a transposed concept id, so every
+    published measurement row carried unit_concept_id 0 ("unknown") and no unit_source_value.
+    """
+    csv_path = _write_metadata_csv(tmp_path / "dicom_metadata.csv", count=3)
+
+    measurement = converter.transform_dicom_metadata_to_omop_tables(str(csv_path))["measurement"]
+
+    is_slice_thickness = measurement["measurement_source_value"].eq("00180050")
+    slice_thickness = measurement[is_slice_thickness]
+    others = measurement[~is_slice_thickness]
+    assert len(slice_thickness) == 3, "one SliceThickness row per subject"
+    assert slice_thickness["measurement_concept_id"].eq(2128000817).all(), "MAPPING_DICOM['00180050']"
+    assert slice_thickness["unit_concept_id"].eq(8588).all(), "UCUM millimeter"
+    assert slice_thickness["unit_source_value"].eq("millimeter").all()
+    assert slice_thickness["value_as_number"].eq(5.0).all()
+    assert others["unit_concept_id"].eq(0).all(), "Manufacturer/model/rows/columns have no unit"
+    assert others["unit_source_value"].isna().all()
