@@ -13,7 +13,7 @@
 .PHONY: build dev prod clean stop up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
 	create-networks remove-networks recreate-networks tests \
-	update-omop-data update-orthanc-data seed-omop integration_test
+	update-omop-data update-orthanc-data seed-omop seed-orthanc seed seed-trusts integration_test
 # PROD selects the compose-file suffix (__DCKR_SUFFIX: stag collapses to the
 # production compose) and the kit-file env token (ENV: stag stays distinct, so
 # a stag kit is .env.<CODE>.stag, never confused with .env.<CODE>.production).
@@ -523,6 +523,29 @@ seed-omop:
 	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
 	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB) PROJECTS="$(PROJECTS)" \
 	  $(if $(and $(TRUST_NUM),$(OMOP_DATA_DIR)),OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_DIR))
+
+# The PACS half: this trust's slice of each project's DICOMs into its running
+# Orthanc, selected by the same source_trust column, so OMOP and PACS agree by
+# construction. CLEAR=1 removes these projects' existing studies first (Orthanc
+# never overwrites an AlreadyStored instance); DRY_RUN=1 resolves and counts.
+#   make -C trust seed-orthanc KIT=GSTT PROJECTS="spleen_project cxr_project"
+seed-orthanc:
+	$(require_kit)
+	$(ORTHANC_CMD) seed-orthanc TRUST_INDEX=$(TRUST_NUM) PACS_UI_PORT=$(PACS_UI_PORT) \
+	  ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
+	  ORTHANC_STORAGE_DIR_TRUST_$(TRUST_NUM)=$(ORTHANC_STORAGE_DIR) PROJECTS="$(PROJECTS)" \
+	  $(if $(CLEAR),CLEAR=$(CLEAR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
+
+# Both halves for one trust, then for the shipped dev roster. Run after
+# `up-trust` + `load-omop-vocab`; idempotent; see the omop-db and orthanc
+# READMEs for what a .data_version bump does to a seeded volume.
+#   make -C trust seed KIT=GSTT PROJECTS="spleen_project cxr_project"
+#   make -C trust seed-trusts PROJECTS="spleen_project cxr_project"
+seed: seed-omop seed-orthanc
+
+seed-trusts:
+	$(MAKE) seed KIT=GSTT PROJECTS="$(PROJECTS)"
+	$(MAKE) seed KIT=KCH PROJECTS="$(PROJECTS)"
 
 tests:
 	cd data-access-api && make test && \

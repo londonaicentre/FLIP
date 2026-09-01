@@ -105,6 +105,18 @@ update_trust() {
     return
   fi
 
+  # A seeded PACS (make seed-orthanc, FLIP#1100) holds studies the snapshot does not. Replacing it
+  # is a decision, not a side effect of a bump, so refuse here — before the ~1 GB download —
+  # unless FORCE=1. The marker lives INSIDE the storage dir (the two default dirs share a parent),
+  # so it follows the data and is removed with it.
+  local seed_marker="${storage_dir}/.seeded"
+  if [[ -f "${seed_marker}" && "${FORCE:-0}" != "1" ]]; then
+    echo "❌ Trust ${trust_num}'s Orthanc storage was seeded ($(tr '\n' ' ' < "${seed_marker}")) but the pinned" >&2
+    echo "   version is now ${DATA_VERSION}. Re-snapshotting discards every seeded study." >&2
+    echo "   Re-run with FORCE=1 to replace it, then re-run seed-orthanc." >&2
+    exit 1
+  fi
+
   if [[ -z "${local_version}" ]]; then
     echo "❓ Local Orthanc data version for Trust ${trust_num} unknown. Will update to version ${DATA_VERSION} just to be safe."
   else

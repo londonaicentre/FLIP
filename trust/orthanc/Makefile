@@ -50,3 +50,31 @@ update-orthanc-data:
 	ORTHANC_STORAGE_DIR_TRUST_1=$(ORTHANC_STORAGE_DIR_TRUST_1) \
 	ORTHANC_STORAGE_DIR_TRUST_2=$(ORTHANC_STORAGE_DIR_TRUST_2) \
 	./update_orthanc_data.sh
+
+# Seed a RUNNING trust Orthanc with this trust's slice of each listed project's
+# DICOMs (FLIP#1100) — the PACS twin of `make -C omop-db seed-omop`. Both select
+# the trust's studies by the same `source_trust` column of the published OMOP
+# tables, so the studies landing here are exactly the ones the trust's
+# image_occurrence rows point at. Streams dicom/<v>/<project>.tar.gz from HF
+# into volumes/dicom/ once (cached), then POSTs /instances; Orthanc dedupes on
+# SOPInstanceUID, so a re-run is a no-op. CLEAR=1 deletes these projects'
+# existing studies first (e.g. to replace unpatched instances — Orthanc never
+# overwrites an AlreadyStored one). Normally via `make -C trust seed-orthanc
+# KIT=<CODE>`, which supplies the slot, port and credentials from the kit:
+#   make seed-orthanc TRUST_INDEX=2 PACS_UI_PORT=8044 PROJECTS="spleen_project"
+# Writes <storage dir>/.seeded (inside — the two default storage dirs share a
+# parent) so update_orthanc_data.sh refuses to re-snapshot over it without FORCE=1.
+TRUST_INDEX ?= 1
+PROJECTS ?= cxr_project spleen_project
+SEED_STORAGE_DIR = $(or $(ORTHANC_STORAGE_DIR_TRUST_$(TRUST_INDEX)),$(ORTHANC_STORAGE_DIR))
+seed-orthanc:
+	PACS_UI_PORT=$(PACS_UI_PORT) ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
+	  uv run seed_orthanc.py --trust-index $(TRUST_INDEX) --projects $(PROJECTS) \
+	  $(if $(filter 1,$(CLEAR)),--clear-projects) $(if $(filter 1,$(DRY_RUN)),--dry-run)
+	@$(if $(filter 1,$(DRY_RUN)),true,printf 'projects=%s\nversion=%s\n' "$(PROJECTS)" "$$(tr -d ' \n\r\t' < ../omop-db/.data_version)" > "$(SEED_STORAGE_DIR)/.seeded" && echo "✅ marker: $(SEED_STORAGE_DIR)/.seeded")
+
+# seed_orthanc.py's unit tests (pure selection/guard logic + the upload contract
+# against a scripted session). PEP 723 script, no project: pytest via uv.
+test:
+	uv run --no-project --with pytest --with 'requests>=2.32.5' pytest tests -q
+	uvx ruff@0.14.7 check . && uvx ruff@0.14.7 format --check .
