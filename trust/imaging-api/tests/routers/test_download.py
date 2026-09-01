@@ -35,6 +35,36 @@ def test_download_images_success(client):
     assert response.json()["path"] == "/tmp/images/net1/ACC123"
 
 
+def test_download_images_force_refresh_threads_through(client):
+    with (
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
+        patch(
+            "imaging_api.routers.download.download_and_unzip_images",
+            new_callable=AsyncMock,
+            return_value="/tmp/images/net1/decrypted-project-id/ACC123",
+        ) as mock_service,
+    ):
+        response = client.post("/download/images/net1?force_refresh=true", json=_REQUEST_BODY)
+
+    assert response.status_code == 200
+    assert mock_service.await_args.kwargs["force_refresh"] is True
+
+
+def test_download_images_force_refresh_defaults_to_false(client):
+    with (
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
+        patch(
+            "imaging_api.routers.download.download_and_unzip_images",
+            new_callable=AsyncMock,
+            return_value="/tmp/images/net1/decrypted-project-id/ACC123",
+        ) as mock_service,
+    ):
+        response = client.post("/download/images/net1", json=_REQUEST_BODY)
+
+    assert response.status_code == 200
+    assert mock_service.await_args.kwargs["force_refresh"] is False
+
+
 def test_download_images_not_found(client):
     with (
         patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),

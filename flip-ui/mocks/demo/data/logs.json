@@ -1,0 +1,72 @@
+[
+  {
+    "id": "61f1946b-5680-42f6-b325-dde3900e0ded",
+    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
+    "logDate": "2026-07-13T09:30:29.557734",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": null,
+    "log": "This model has been added to the queue."
+  },
+  {
+    "id": "0dec1c16-d903-4cd8-b2e9-fcfc2db21b0e",
+    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
+    "logDate": "2026-07-13T09:30:29.575040",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": null,
+    "log": "Selected trusts for training: King's College London, Bangkok Dusit Medical Services"
+  },
+  {
+    "id": "e12f748e-50fd-4db5-9ab6-66d26782dffd",
+    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
+    "logDate": "2026-07-13T09:31:26.293808",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": null,
+    "log": "Model training assigned to 'net-1'"
+  },
+  {
+    "id": "dad98cba-1010-4d55-b8bf-4eb79eb7a4f5",
+    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
+    "logDate": "2026-07-13T09:31:46.206279",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": null,
+    "log": "This model has been selected from the queue and will be prepared for training."
+  },
+  {
+    "id": "54f0cff4-7a8e-4b17-8202-5886bf27152e",
+    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
+    "logDate": "2026-07-13T09:31:52.024454",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": null,
+    "log": "This model has been prepared and will begin training."
+  },
+  {
+    "id": "9efd1a39-65ca-429d-9b95-cfd70816f031",
+    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
+    "logDate": "2026-07-13T09:31:52.066860",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": null,
+    "log": "Training has started for this model."
+  },
+  {
+    "id": "b460cfe6-44dd-4bc7-90f3-e427e6cff4ca",
+    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
+    "logDate": "2026-07-13T20:56:11.423716",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": null,
+    "log": "The results of this model have been uploaded and can now be downloaded."
+  }
+]

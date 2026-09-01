@@ -11,13 +11,6 @@
     limitations under the License.
 -->
 
----
-
-tags: [quickstart]
-dataset: [spleen]
-framework: [monai]
----
-
 # Federated Evaluation with MONAI and Flower
 
 This example uses a MONAI UNet for 3D spleen segmentation in an evaluation-only mode. It loads a pre-trained model checkpoint and performs federated evaluation across multiple client nodes.
@@ -68,9 +61,9 @@ pip install -e .
 From the repository root:
 
 ```bash
-make build                # build the fl-base / superlink / supernode images
-make -C tutorials/3d_spleen_segmentation_evaluation download-checkpoints  # fetch model.pt into the app
-make up                   # start fl-api, superlink, supernode-1, supernode-2
+make -C fl-tutorials/flower/3d_spleen_segmentation_evaluation download-checkpoints  # fetch model.pt into the app
+make -C fl-services/flower build   # build the fl-base / superlink / supernode images
+make -C fl-services/flower up      # start fl-api, superlink, supernode-1, supernode-2
 ```
 
 `download-checkpoints` places `model.pt` in the `app/` folder, where the
@@ -79,7 +72,7 @@ evaluation ServerApp reads it (via the `flip-job-dir` run-config value).
 Submit the evaluation run against the `fl-api` control plane:
 
 ```bash
-make submit APP=3d_spleen_segmentation_evaluation
+make -C fl-services/flower submit APP=3d_spleen_segmentation_evaluation
 ```
 
 The default stack publishes no host ports; `make submit` execs into the fl-api

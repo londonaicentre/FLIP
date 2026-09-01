@@ -32,6 +32,11 @@ import { defineConfig } from "cypress";
 const videoScale = Math.max(1, Number(process.env.DEMO_VIDEO_SCALE || "1") || 1);
 
 export default defineConfig({
+    // Cypress 15: Cypress.env() publishes its values to any page JS in the app
+    // under test. Nothing here uses it any more — non-sensitive run config comes
+    // from Cypress.expose() and secrets from cy.env() — so turn the channel off
+    // rather than leave it open. See test/cypress/plugins/index.ts.
+    allowCypressEnv: false,
     // 1280x800 viewport rendered 1:1 inside a 1920x1200 Chrome window; the
     // assembly script crops the AUT viewport back out of the capture.
     viewportWidth: 1280,

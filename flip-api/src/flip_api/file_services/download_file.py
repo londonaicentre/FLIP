@@ -50,7 +50,7 @@ def download_file(
 
     Args:
         model_id (UUID): The ID of the model to retrieve the file for.
-        file_name (str): The name of the file to download.
+        file_name (SafeFileName): The name of the file to download.
         db (Session): Database session.
         user_id (UUID): User ID from authentication.
 

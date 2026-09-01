@@ -70,23 +70,28 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-  # Black-box harnesses for the deploy scripts. Each drives the real script with
-  # aws/docker/make/openssl stubbed on PATH — no credentials, no network. They
-  # share this workflow's deploy/providers/AWS/** path filter, so they run
+  # Black-box harnesses for the deploy scripts, every external tool stubbed on
+  # PATH — no credentials, no network, no checkov install. add_fl_kits.sh mints
+  # certs and mutates live S3 kit state in real runs (aws/make/openssl stubbed);
+  # checkov_lint.sh's harness drives its own self-guards — version pin,
+  # unknown-check-ID validation, mandatory skip rationale, canary must-fail —
+  # which the checkov-lint job below only exercises on the happy path (checkov
+  # stubbed). test_compose_ci_env.sh additionally cross-checks the Makefile and
+  # the Terraform CI workflows against the env manifest, so adding a TF_VAR
+  # export without wiring it through fails here rather than at apply time.
+  # Shares this workflow's deploy/providers/AWS/** path filter, so it runs
   # whenever a script or its tests change.
-  #
-  # test_compose_ci_env.sh additionally cross-checks the Makefile and the
-  # Terraform CI workflows against the env manifest, so adding a TF_VAR export
-  # without wiring it through fails here rather than at apply time.
-  deploy-script-tests:
+  script-tests:
+    name: Deploy script tests
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         harness:
           - test_add_fl_kits.sh
-          - test_compose_ci_env.sh
+          - test_checkov_lint.sh
           - test_check_fl_plan_impact.sh
+          - test_compose_ci_env.sh
           - test_resolve_image_tags.sh
     steps:
       - name: Checkout code
@@ -94,3 +99,30 @@ jobs:
 
       - name: Run ${{ matrix.harness }}
         run: bash deploy/providers/AWS/scripts/tests/${{ matrix.harness }}
+
+  # Static checkov security lint (FLIP#1052 + the FLIP#1058 triage): a curated
+  # check list over the whole AWS tree — IAM policy content (overly-broad
+  # statements fmt/validate can't see) plus promoted infrastructure-posture
+  # checks. Runs on raw .tf with no credentials, no init, no plan —
+  # fork-PR-safe. Deliberate breadth/posture is acknowledged in-code via
+  # `# checkov:skip=<ID>:<rationale>`, never by weakening the check list. The
+  # script self-tests against a canary fixture first, so a broken install
+  # can't produce a vacuous green.
+  checkov-lint:
+    name: Checkov Security Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install checkov
+        # Keep in sync with CHECKOV_VERSION in scripts/checkov_lint.sh.
+        run: pip install checkov==3.3.14
+
+      - name: Run checkov lint
+        run: bash deploy/providers/AWS/scripts/checkov_lint.sh

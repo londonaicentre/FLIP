@@ -61,7 +61,7 @@ DEMO_DIR = FLIP_UI_DIR / "test" / "cypress" / "demo"
 STATE_FILE = DEMO_DIR / "state.json"
 VIDEOS_DIR = DEMO_DIR / "videos"
 OUT_DIR = DEMO_DIR / "out"
-CYPRESS_IMAGE = "cypress/included:14.5.2"
+CYPRESS_IMAGE = "cypress/included:15.21.0"
 
 SEGMENTS = [
     "01-create-project",
@@ -135,15 +135,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--data-enrichment-cwd",
         default=None,
-        help="Directory to run --data-enrichment-cmd in (e.g. the spleen label-upload repo checkout)",
+        help="Directory to run --data-enrichment-cmd in (e.g. fl-tutorials/datasets/spleen)",
     )
     parser.add_argument(
         "--data-enrichment-cmd",
         default=None,
         help=(
             "Shell command run OFF-camera between the imaging import and the model segments, with "
-            "FLIP_PROJECT_ID exported — e.g. the spleen tutorial's upload_labels_to_XNAT.py (labels must be "
-            "in place before training)"
+            "FLIP_PROJECT_ID exported — e.g. fl-tutorials/datasets/spleen/upload_spleen_labels_to_xnat.py "
+            "(labels must be in place before training)"
         ),
     )
     parser.add_argument("--project-id", default=None, help="Reuse an existing project (skips segment 1 context)")

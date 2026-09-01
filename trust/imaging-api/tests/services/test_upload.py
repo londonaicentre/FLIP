@@ -204,6 +204,129 @@ class TestUploadDataToXnat:
 
             assert len(result) == 1
 
+    @staticmethod
+    def _seed_upload_file(tmp_dir: str) -> None:
+        upload_dir = os.path.join(tmp_dir, "net1", "upload")
+        os.makedirs(upload_dir, exist_ok=True)
+        with open(os.path.join(upload_dir, "scan.nii"), "w") as f:
+            f.write("nifti-data")
+
+    @staticmethod
+    def _seed_download_sentinel(tmp_dir: str, net_id: str, project: str, accession: str) -> str:
+        accession_dir = os.path.join(tmp_dir, net_id, project, accession)
+        os.makedirs(accession_dir, exist_ok=True)
+        sentinel = os.path.join(accession_dir, ".flip_complete-scan-NIFTI")
+        with open(sentinel, "w"):
+            pass
+        return sentinel
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.upload.upload_file_to_xnat", return_value="url")
+    @patch("imaging_api.services.upload.create_xnat_resource")
+    @patch("imaging_api.services.upload.create_xnat_scan")
+    @patch("imaging_api.services.upload.get_subject_id_from_experiment_response", return_value="SUBJ1")
+    @patch("imaging_api.services.upload.get_experiment", return_value={})
+    @patch("imaging_api.services.upload.get_project_from_central_hub_project_id")
+    async def test_upload_invalidates_cached_downloads_across_nets(
+        self, mock_get_project, mock_get_exp, mock_get_subj, mock_create_scan, mock_create_res, mock_upload, headers
+    ):
+        """An upload changes the accession's XNAT content, so every net's cached download of
+        (project, accession) must be invalidated; other accessions' caches must survive."""
+        mock_get_project.return_value = MagicMock(ID="PROJ1")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            self._seed_upload_file(tmp_dir)
+            stale_net1 = self._seed_download_sentinel(tmp_dir, "net1", "hub-proj-1", "ACC123")
+            stale_net2 = self._seed_download_sentinel(tmp_dir, "net2", "hub-proj-1", "ACC123")
+            survivor = self._seed_download_sentinel(tmp_dir, "net1", "hub-proj-1", "ACC999")
+
+            with patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", tmp_dir):
+                result = await upload_data_to_xnat(
+                    central_hub_project_id="hub-proj-1",
+                    accession_id="ACC123",
+                    net_id="net1",
+                    scan_id="SCAN1",
+                    resource_id="NIFTI",
+                    files_relative_paths_to_upload=["scan.nii"],
+                    exist_ok=False,
+                    headers=headers,
+                )
+
+            assert len(result) == 1
+            assert not os.path.exists(stale_net1)
+            assert not os.path.exists(stale_net2)
+            assert os.path.exists(survivor)
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.upload.upload_file_to_xnat", return_value="url")
+    @patch("imaging_api.services.upload.create_xnat_resource")
+    @patch("imaging_api.services.upload.create_xnat_scan")
+    @patch("imaging_api.services.upload.get_subject_id_from_experiment_response", return_value="SUBJ1")
+    @patch("imaging_api.services.upload.get_experiment", return_value={})
+    @patch("imaging_api.services.upload.get_project_from_central_hub_project_id")
+    async def test_upload_with_no_cached_downloads_succeeds(
+        self, mock_get_project, mock_get_exp, mock_get_subj, mock_create_scan, mock_create_res, mock_upload, headers
+    ):
+        mock_get_project.return_value = MagicMock(ID="PROJ1")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            self._seed_upload_file(tmp_dir)
+
+            with patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", tmp_dir):
+                result = await upload_data_to_xnat(
+                    central_hub_project_id="hub-proj-1",
+                    accession_id="ACC123",
+                    net_id="net1",
+                    scan_id="SCAN1",
+                    resource_id="NIFTI",
+                    files_relative_paths_to_upload=["scan.nii"],
+                    exist_ok=False,
+                    headers=headers,
+                )
+
+            assert len(result) == 1
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.upload.invalidate_accession", side_effect=OSError("stale NFS handle"))
+    @patch("imaging_api.services.upload.upload_file_to_xnat", return_value="url")
+    @patch("imaging_api.services.upload.create_xnat_resource")
+    @patch("imaging_api.services.upload.create_xnat_scan")
+    @patch("imaging_api.services.upload.get_subject_id_from_experiment_response", return_value="SUBJ1")
+    @patch("imaging_api.services.upload.get_experiment", return_value={})
+    @patch("imaging_api.services.upload.get_project_from_central_hub_project_id")
+    async def test_invalidation_failure_does_not_fail_completed_upload(
+        self,
+        mock_get_project,
+        mock_get_exp,
+        mock_get_subj,
+        mock_create_scan,
+        mock_create_res,
+        mock_upload,
+        mock_invalidate,
+        headers,
+    ):
+        """Invalidation is best-effort: the XNAT upload already succeeded, and failing the
+        request would push the client into retrying a completed upload."""
+        mock_get_project.return_value = MagicMock(ID="PROJ1")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            self._seed_upload_file(tmp_dir)
+
+            with patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", tmp_dir):
+                result = await upload_data_to_xnat(
+                    central_hub_project_id="hub-proj-1",
+                    accession_id="ACC123",
+                    net_id="net1",
+                    scan_id="SCAN1",
+                    resource_id="NIFTI",
+                    files_relative_paths_to_upload=["scan.nii"],
+                    exist_ok=False,
+                    headers=headers,
+                )
+
+            assert len(result) == 1
+            mock_invalidate.assert_called_once()
+
     @pytest.mark.asyncio
     async def test_file_not_found(self, headers):
         with tempfile.TemporaryDirectory() as tmp_dir:

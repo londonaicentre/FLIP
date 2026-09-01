@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import stat
 from unittest.mock import patch
 
 import pytest
@@ -164,3 +165,16 @@ class TestGenerateXnatCredentials:
 
         # The only file under tmp_path is the env file we created.
         assert [p.name for p in tmp_path.iterdir()] == [env_file.name]
+
+
+class TestKitFilePermissions:
+    def test_written_kit_file_is_owner_only(self, tmp_path):
+        """Three live database passwords land here, so the mode must not be left to the umask."""
+        env_file = tmp_path / ".env.test"
+        env_file.write_text(ENV_TEMPLATE)
+        env_file.chmod(0o644)
+
+        with patch("sys.argv", ["generate_xnat_credentials", "--env-file", str(env_file)]):
+            main()
+
+        assert stat.S_IMODE(env_file.stat().st_mode) == 0o600

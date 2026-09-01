@@ -35,8 +35,11 @@
                     </AiButton>
                 </div>
                 <div class="flex flex-col flex-1 min-h-0 border-t border-gray-200 dark:border-dark-border">
+                    <!-- Suppressed while the job types are unknown: `jobType` is still the
+                         "standard" default then, so stating it would be a guess. Training.vue
+                         carries the explanation and the retry. -->
                     <AiAlert
-                        v-if="canUpload"
+                        v-if="canUpload && !jobTypesError"
                         variant="info"
                         class="w-full"
                         :rounded="false"
@@ -181,6 +184,7 @@ import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import { usePermissions } from "@/composables/usePermissions";
+import { DEMO_MODEL_FILES_ZIP_URLS, IS_DEMO } from "@/demo/bootstrap";
 import { BanditFinding, FileInfo, FileUploadStatus } from "@/interfaces/model/types";
 import { deleteModelFile,
     downloadModelFile,
@@ -200,9 +204,12 @@ interface IModelUploadProps {
     modelId: string;
     requiredFiles: string[];
     jobType: JobType;
+    // True when the job-types map could not be loaded, so `jobType` is a default rather than this
+    // model's actual job type.
+    jobTypesError?: boolean;
 }
 
-const props = defineProps<IModelUploadProps>();
+const props = withDefaults(defineProps<IModelUploadProps>(), { jobTypesError: false });
 
 const emits = defineEmits(["uploaded", "deletedFile"]);
 
@@ -431,6 +438,38 @@ const DOWNLOAD_ALL_CONCURRENCY = 3;
 
 const downloadAllAsZip = async () => {
     if (downloadingAll.value) return;
+
+    // Public Ark+ demo: each recorded run's file bundle (including the ~795 MB
+    // checkpoints) is a pre-built zip served through the CloudFront
+    // demo-assets behaviour — the in-browser mock can't stream file bodies of
+    // that size. Vite inlines IS_DEMO, so normal builds keep the JSZip path only.
+    if (IS_DEMO) {
+        const zipUrl = DEMO_MODEL_FILES_ZIP_URLS[props.modelId];
+        if (!zipUrl) {
+            // An id missing from the map means the bundle was never staged for
+            // this model. Say so: silently returning left the button looking
+            // broken, with no snackbar and no spinner, unlike the real path
+            // directly below (FLIP#794 review).
+            Snackbar.error({
+                title: "Download unavailable",
+                text: "No file bundle was staged for this model in the demo."
+            });
+
+            return;
+        }
+
+        const link = document.createElement("a");
+        link.href = zipUrl;
+        // Without `download` the browser follows Content-Disposition, and any
+        // response served as HTML (e.g. a mis-provisioned behaviour falling
+        // through to the SPA rewrite) navigates the tab instead of downloading.
+        link.download = zipUrl.split("/").pop() ?? "model-files.zip";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+
+        return;
+    }
     downloadingAll.value = true;
     try {
         const all = internalFiles.value.concat(uploadingFiles.value);

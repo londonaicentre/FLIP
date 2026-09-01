@@ -462,7 +462,7 @@ def configure_server(
             workflow["args"]["participating_clients"] = trusts
         if "args" in workflow and "ignore_result_error" in workflow["args"]:
             workflow["args"]["ignore_result_error"] = ignore_result_error
-        # Recipe-generated templates (standard_client_api) carry LITERAL num_rounds/min_clients
+        # Recipe-generated templates (standard) carry LITERAL num_rounds/min_clients
         # baked in by FedJob serialisation instead of the executor templates' "{global_rounds}" /
         # "{min_clients}" placeholders, so the top-level keys set above never reach the workflow.
         # Override them directly or every deployed client_api job silently runs the template
@@ -551,7 +551,7 @@ def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
     # ``custom_props`` is NVFLARE's officially-sanctioned channel for job-scoped metadata
     # (``JobMetaKey.CUSTOM_PROPS``; surfaced to components via ``FLContextKey.JOB_META``). We
     # publish the FLIP ``model_id`` (== ``app_name``) here so recipe-built job types whose
-    # component configs carry no ``model_id`` (e.g. ``standard_client_api``, built before the UUID is
+    # component configs carry no ``model_id`` (e.g. ``standard``, built before the UUID is
     # known) can resolve it lazily at runtime via ``flip.nvflare.runtime.get_flip_model_id``.
     # Legacy job types still receive ``model_id`` through their component args and ignore this
     # key, so populating it unconditionally is safe and keeps both paths consistent.

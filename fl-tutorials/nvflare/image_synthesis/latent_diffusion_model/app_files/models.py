@@ -10,8 +10,9 @@
 # limitations under the License.
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from monai.networks.nets import AutoencoderKL, DiffusionModelUNet, PatchDiscriminator
 from torch import nn
@@ -98,5 +99,4 @@ def get_model() -> nn.Module:
     NOTE: This function needs to exist and cannot take any input arguments. If you would like to parameterize the
     configuration of your model, for example loaded from a config file, do it when instantiating the model above.
     """
-    return _net
     return _net

@@ -17,9 +17,28 @@ services:
 
   fl-client-net-1:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # No capability is added back. The image runs non-root (GHSA-8465) and Docker
+    # grants effective capabilities only to root, so a cap_add here would land in
+    # the bounding set and never take effect (CapEff stays 0). provision/workspace-dev/
+    # (gitignored) is written by `make provision` as the host user and the image's UID
+    # is baked in at build time (fl-base's UID/GID build args) from that same user's
+    # .env.development, so build+provision by the same developer already match. When
+    # they don't (CI, a shared devbox, a teammate's prebuilt :dev image) the fix is to
+    # chown the provisioned kit dirs to the container UID — see fl-services/nvflare/README.md
+    # — not a capability grant. What aborts the entrypoint in that case is the envsubst
+    # write into the bind-mounted local/ (guarded by `|| exit 1`); the `chmod +x` calls
+    # on startup/*.sh are unguarded and do not crash-loop.
     volumes:
-      # Mount the base images download directory to share images downloaded from XNAT with FL clients
-      - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+      # This net's slice of the images download directory, at the unchanged container
+      # path — see compose_trust.production.nvflare.yml for the least-privilege
+      # rationale; `make up-trust` / `up-fl-clients` pre-create the host net dirs.
+      # The :? guard keeps an unset var loud — a bare ${VAR}/net-1 would silently
+      # mount a root-created /net-1 from the host's filesystem root.
+      - ${BASE_IMAGES_DOWNLOAD_DIR:?set in the trust kit file}/net-1:/app/data/images/net-1
       # Provisioned NVFLARE secrets (certificates, fed_client.json) — mounted from the
       # FL kit slot assigned by the hub, NOT the trust's friendly name. The slot dir's
       # fed_client.json baked-in CN is the identity the FL server sees on registration.
@@ -42,17 +61,28 @@ services:
       # This key is per-trust and never leaves the trust environment.
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
+      # Site-enforced NVFLARE privacy policy (FLIP#851) — set in the trust's kit file
+      # (Host-local profile) and rendered into /app/local/privacy.json by the fl-client
+      # entrypoint at container start. Unset/empty = no site policy (previous behavior).
+      - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
+      - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
+      - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
     networks:
       - default
-      - deploy_shared-net-1
+      - fl-net-1
     shm_size: '32gb'
     # GPU passthrough via compose_trust.development.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
 
   fl-client-net-2:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # No capability added back — see fl-client-net-1 above.
     volumes:
-      # Mount the base images download directory to share images downloaded from XNAT with FL clients
-      - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+      # This net's slice of the images download directory (see fl-client-net-1 above)
+      - ${BASE_IMAGES_DOWNLOAD_DIR:?set in the trust kit file}/net-2:/app/data/images/net-2
       # Provisioned NVFLARE secrets (certificates, fed_client.json)
       - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/local:/app/local
       - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/startup:/app/startup
@@ -73,8 +103,12 @@ services:
       # This key is per-trust and never leaves the trust environment.
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
+      # Site-enforced NVFLARE privacy policy (FLIP#851) — see the fl-client-net-1 note.
+      - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
+      - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
+      - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
     networks:
       - default
-      - deploy_shared-net-2
+      - fl-net-2
     shm_size: '32gb'
     # GPU passthrough via compose_trust.development.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)

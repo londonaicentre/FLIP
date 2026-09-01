@@ -104,7 +104,7 @@ published reference dataset on Hugging Face:
 
 This pulls the site-1 / site-2 training splits from
 `aicentreflip/tutorials-arkplus-cxr-classification <https://huggingface.co/datasets/aicentreflip/tutorials-arkplus-cxr-classification>`_
-and lays them out under ``fl-tutorials/nvflare/data/arkplus/`` (gitignored).
+and lays them out under ``fl-tutorials/data/arkplus/`` (gitignored).
 
 To use your own data instead, point the per-site ``.env.app`` values
 (``SITE{1,2}_IMAGES_DIR`` / ``SITE{1,2}_DATAFRAME``) at your directories. The trainer selects a
@@ -210,11 +210,11 @@ completes.
 4. Upload the model files
 =========================
 
-Navigate to the project's **Models** tab and create a new model. Upload the application files —
+On the project's page, use **Create Model** in the Models card (or open the **Models** page,
+filter it to the project, and create from there). Upload the application files —
 the minimum set the FLIP platform expects is listed in
-``fl-apps/nvflare/standard_client_api/required_files.json`` in the repository (this app is a
-``standard_client_api`` job type — the plain ``standard`` manifest also requires a
-``validator.py`` this app doesn't have). For the Ark+ app the key files are:
+``fl-apps/nvflare/standard/required_files.json`` in the repository (this app is a
+``standard`` job type — the Client-API template, which needs no ``validator.py``). For the Ark+ app the key files are:
 
 * ``config.json`` — model configuration (lesion labels, training hyperparameters, Ark+
   architecture settings, finetuning controls)
@@ -235,7 +235,7 @@ in the client app bundle. Set ``SERVER_CHECKPOINT`` in ``config.json`` to the fi
    :caption: config.json (relevant keys)
 
    {
-     "job_type": "standard_client_api",
+     "job_type": "standard",
      "SERVER_CHECKPOINT": "pretrained_weights.pt",
      "AGGREGATE_ONLY_REGEX": "omni_heads",
      "GLOBAL_ROUNDS": 50,

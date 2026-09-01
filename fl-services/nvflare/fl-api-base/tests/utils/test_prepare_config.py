@@ -545,7 +545,7 @@ class TestConfigureServer:
     def test_configure_server_diffusion_recipe_overrides_min_clients_only(
         self, mock_isfile, mock_read_config, mock_write_config
     ):
-        """The diffusion_model_client_api template's ScatterAndGatherLDM workflows carry literal
+        """The diffusion_model template's ScatterAndGatherLDM workflows carry literal
         min_clients (must be overridden to the trust count, as for the other recipe templates) but
         num_rounds_ae/num_rounds_dm instead of num_rounds — those must pass through untouched:
         the controller re-reads GLOBAL_ROUNDS_AE/GLOBAL_ROUNDS_DM from the app config.json at
@@ -837,10 +837,10 @@ class TestConfigureServer:
                 aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
             )
 
-    def test_configure_server_evaluation_client_api_recipe_config(
+    def test_configure_server_evaluation_recipe_config(
         self, mock_isfile, mock_read_config, mock_write_config
     ):
-        """The recipe-generated ``evaluation_client_api`` server config has no aggregator component and
+        """The recipe-generated ``evaluation`` server config has no aggregator component and
         workflows without ``participating_clients``/``ignore_result_error`` (GlobalModelEval discovers
         clients at runtime). The generic assembly must still set model_id/global_rounds/min_clients and
         leave those args untouched — i.e. a new recipe job type needs no prepare_config changes."""
@@ -934,7 +934,7 @@ class TestConfigureMeta:
 
     def test_configure_meta_publishes_model_id_in_custom_props(self, mock_write_config, mock_get_settings):
         # custom_props.model_id is the lazy-resolution channel for recipe-built job types
-        # (e.g. standard_client_api) whose component configs carry no model_id. app_name is the model_id.
+        # (e.g. standard) whose component configs carry no model_id. app_name is the model_id.
         mock_get_settings.return_value.JOB_RESOURCE_SPEC_NUM_GPUS = 0
         mock_get_settings.return_value.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = 16
 

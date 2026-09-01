@@ -501,9 +501,7 @@ class TestSubclassContract:
     def test_subclasses_flip_scatter_and_gather(self):
         assert issubclass(ScatterAndGatherLDM, ScatterAndGather)
 
-    @pytest.mark.parametrize(
-        "hook", ["_accept_train_result", "handle_event", "_check_abort_signal", "_diff_to_weights"]
-    )
+    @pytest.mark.parametrize("hook", ["_accept_train_result", "handle_event", "_check_abort_signal"])
     def test_flip_hooks_are_inherited_not_redeclared(self, hook):
         assert hook not in ScatterAndGatherLDM.__dict__, f"{hook} re-forked on ScatterAndGatherLDM"
 

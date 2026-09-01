@@ -40,7 +40,7 @@ async def process_trust(request: Request, project_id: UUID, trust: Any, db: Sess
         user_id (UUID): The ID of the current user.
 
     Returns:
-        dict: A dictionary containing the result of the imaging creation for the trust.
+        dict[str, Any]: A dictionary containing the result of the imaging creation for the trust.
     """
     try:
         # Start creating an imaging project for this trust

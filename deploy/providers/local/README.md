@@ -13,6 +13,11 @@
 
 # FLIP Local (On-Premises) Trust Deployment
 
+> **Deploys: trust only.** This playbook provisions the *host*; the trust container stack itself comes from
+> [`trust/deploy/`](../../../trust/deploy/README.md). The AWS provider must already be deployed — this
+> playbook depends on its Terraform outputs, the FL participant kits in S3, and the hub NLB security-group
+> rules. See [`../README.md`](../README.md) for how this provider relates to the other two.
+
 Ansible playbook and supporting files to provision an on-premises Ubuntu host as a FLIP Trust node. The provisioned host polls the Central Hub (running in AWS) for tasks — all communication is outbound from the trust.
 
 This is the **local provider** counterpart to the [AWS provider](../AWS/README.md), which manages the Central Hub and
@@ -116,12 +121,15 @@ it explicitly for the command.) Any direct `docker`, `docker compose`, or
 
 ### Provision the trust host
 
-Run this **on the trust host** — there is no SSH path:
+Run this **on the trust host** — there is no SSH path. The target lives in the
+AWS provider Makefile (which orchestrates both cloud and local infrastructure),
+so run it from `deploy/providers/AWS/`:
 
 ```bash
 # Set the sudo password (fish shell; bash: read -rsp ... && export ANSIBLE_BECOME_PASS)
 set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')
 
+cd deploy/providers/AWS       # first time only, if you didn't `cd` earlier
 make provision-local-trust
 ```
 
@@ -178,6 +186,7 @@ The main playbook. It can be run standalone or via the `provision-local-trust` M
 | Variable | Default | Description |
 | --- | --- | --- |
 | `flip_dir` | `/opt/flip` | Root application directory |
+| `fl_backend` | `nvflare` | FL backend this trust will run. Sets the group/mode of the per-net images bind sources (`<flip_dir>/data/images/net-N`) — the Flower client runs as uid/gid 49999, not imaging-api's 1000, so it needs group 49999 + `0775` to write there. `provision-local-trust` passes the deployment's `FL_BACKEND` automatically. |
 
 **Direct usage** (without the Makefile):
 

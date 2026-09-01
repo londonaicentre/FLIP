@@ -12,28 +12,49 @@
 
 """Turning a FLIP training checkpoint into a MONAI Bundle.
 
-The exported artefact is a single TorchScript file carrying ``inference.json`` and
-``metadata.json`` as TorchScript *extra files*. That is the shape
-``MonaiBundleInferenceOperator`` consumes, and it is what removes the dependency on FLIP
-application code — a MONAI Application Package built from it needs no ``models.py``.
+Two bundle forms are written, and the choice is a real trade rather than a preference:
+
+* ``form="torchscript"`` (the default) writes a single TorchScript file carrying ``inference.json``
+  and ``metadata.json`` as TorchScript *extra files*. A MONAI Application Package built from it
+  needs no FLIP application code — which is the whole reason this form exists.
+* ``form="directory"`` writes a directory bundle — plain weights under ``models/``, the configs
+  under ``configs/``, and the application's own code under ``scripts/``. It touches ``torch.jit``
+  at no point, at the cost of shipping the application alongside the weights *and* of rebuilding
+  the architecture at inference time, under whatever MONAI the consuming container has. Scripting
+  freezes the network into a graph; this form does not, so a MONAI release that renames a submodule
+  of the network breaks the strict ``load_state_dict``. See the packaging guide.
+
+``MonaiBundleInferenceOperator`` can load both, but only the TorchScript form survives MAP
+packaging today: the SDK's ``ModelFactory`` does not recognise a directory bundle yet still claims
+``HOLOSCAN_MODEL_PATH`` with a predictor-less placeholder, which the operator prefers over its own
+directory branch. The packaging guide has the detail. PyTorch has TorchScript on a removal path — it is
+deprecated on Python 3.12 and reports itself unsupported on 3.14+ — so the directory form is the
+escape hatch, and the one to reach for when a model will not script. ``torch.export`` is *not* an
+option: no released MONAI Deploy App SDK can load an ``ExportedProgram``. See FLIP#1019.
 
 **This function consumes the bundle configuration; it does not generate it.** The preprocessing
 chain cannot be derived from a free-form training application, so the app author writes
 ``inference.json`` and ``metadata.json`` once, at authoring time, and they are read from disk
-here. See ``docs/source/working-with-flip-apps/package-model-as-map.rst`` for how to transcribe
-them, and why a mismatch is dangerous.
+here. The one exception is the directory form's ``network_def`` entry, which names the generated
+entry point described in :data:`_NETWORK_MODULE_SOURCE`. See
+``docs/source/working-with-flip-apps/package-model-as-map.rst`` for how to transcribe the configs,
+and why a mismatch is dangerous.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import shutil
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
 import torch
+from torch import nn
 
 from flip.export.checkpoint import load_weights_into_app_model
 from flip.export.provenance import Provenance
@@ -41,15 +62,100 @@ from flip.export.provenance import Provenance
 logger = logging.getLogger(__name__)
 
 ExportMethod = Literal["script", "trace"]
+BundleForm = Literal["torchscript", "directory"]
 
 #: Filenames the bundle configuration is read from, and embedded under.
 INFERENCE_CONFIG_NAME = "inference.json"
 METADATA_CONFIG_NAME = "metadata.json"
 
+# Directory-form layout, which ``MonaiBundleInferenceOperator`` fixes: it reads
+# ``configs/metadata.json`` and ``configs/inference.json``, and loads ``models/model.ts`` falling
+# back to ``models/model.pt``. ``scripts/`` is MONAI's convention for bundle-local code. The
+# operator puts the bundle *root* on ``sys.path`` before instantiating the network, so a config can
+# name a module shipped in the bundle — which is what ``network_def`` below does.
+_SCRIPTS_DIR_NAME = "scripts"
+
+#: Config keys the operator resolves a network from, in the order it tries them. When the author has
+#: declared either, the exporter leaves the config alone rather than overriding their architecture.
+_NETWORK_CONFIG_KEYS = ("network", "network_def")
+
+#: The generated module ``network_def`` points at, written to the bundle root. Kept as a literal so
+#: the string in a bundle's ``inference.json`` greps back to here.
+_NETWORK_MODULE_NAME = "flip_network"
+_NETWORK_TARGET = "flip_network.get_model"
+
+#: Source of that module. It exists so the copied application stays **verbatim**: rather than
+#: editing the researcher's files to make them importable, the one piece of generated code lives in
+#: one named file. FLIP application modules import one another flatly (``import
+#: arkplus_flat_models``), exactly as they do under the FL executors, and ``get_model`` may read a
+#: sidecar next to its own module (the spleen tutorial reads ``config.json``) — so ``scripts/``
+#: itself has to be importable, not merely reachable as ``scripts.``.
+_NETWORK_MODULE_SOURCE = """\
+# Generated by flip.export: this bundle's entry point to its own architecture.
+#
+# network_def in inference.json names flip_network.get_model. Importing this module puts the
+# bundled application directory on sys.path, so the application's flat sibling imports resolve
+# inside the bundle exactly as they do in a FLIP app.
+#
+# Appended rather than prepended: nothing else in a MONAI Application Package provides these
+# modules, and FLIP apps ship common names (transforms.py, utils.py) that must not shadow a real
+# dependency for the rest of the process.
+import os
+import sys
+
+sys.path.append(os.path.join(os.path.dirname(__file__), "scripts"))
+
+from scripts.models import get_model  # noqa: E402, F401
+"""
+
+#: Written into the bundle so a directory bundle exported inside any repository — FLIP's or the
+#: researcher's own — cannot be committed. The whole application is copied into ``scripts/``, which
+#: no weights-shaped ignore rule catches, and ``--out`` is free-form so no central rule can cover it.
+_BUNDLE_GITIGNORE = "# Written by flip.export: a bundle is a build artefact.\n*\n"
+
+#: Copying more than this from the application directory is worth mentioning: it is source code
+#: that belongs in the bundle, and anything on this scale is more likely to be a dataset a
+#: researcher left beside their app than an architecture.
+_SCRIPTS_SIZE_WARN_BYTES = 50_000_000
+
+#: Never copied into ``scripts/``: build artefacts and tool caches carry no architecture.
+_SCRIPTS_COPY_EXCLUDES = (
+    "__pycache__",
+    "*.pyc",
+    "*.pyo",
+    ".venv",
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+)
+
 #: Job types that produce a new model and are therefore worth exporting. A job type outside this
 #: set is warned about rather than rejected: this runs as a deliberate, manual step, so refusing
 #: to package a checkpoint the caller has explicitly pointed at would be unhelpful.
+# "standard_client_api" is the pre-rename alias of the standard job type, kept for models
+# created before the Client-API templates took over the plain names.
 EXPORTABLE_JOB_TYPES = frozenset({"standard", "standard_client_api", "fed_opt"})
+
+#: Emitted whenever no probe input was supplied, in either form.
+_UNVERIFIED_WARNING = "no example_input_shape given, so numerical equivalence was not verified"
+
+#: :attr:`ExportResult.max_abs_delta` when no probe input was supplied.
+_UNVERIFIED_DELTA = -1.0
+
+
+def _tree_bytes(path: Path) -> int:
+    """Total size of a file, or of everything under a directory.
+
+    Args:
+        path (Path): A file or directory.
+
+    Returns:
+        int: Size in bytes.
+    """
+    if not path.is_dir():
+        return path.stat().st_size
+    return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
 
 
 @dataclass
@@ -57,21 +163,36 @@ class ExportResult:
     """Outcome of an export.
 
     Attributes:
-        output (Path): Where the bundle was written.
-        method (ExportMethod): Which TorchScript method succeeded.
-        max_abs_delta (float): Largest absolute difference between the scripted and eager model on
-            a probe input. Zero means the exported artefact is numerically identical.
+        output (Path): Where the bundle was written — a file for ``"torchscript"``, a directory for
+            ``"directory"``.
+        form (BundleForm): Which bundle form was written. It governs both the shape of ``output``
+            and whether ``method`` is set, so it is declared before them.
+        method (ExportMethod | None): Which TorchScript method succeeded, or ``None`` for the
+            directory form, which compiles nothing.
+        max_abs_delta (float): Largest absolute difference between the exported and eager model on
+            a probe input, or ``-1.0`` when no probe input was given. Zero means the
+            exported artefact is numerically identical.
         num_parameters (int): Parameter count of the exported model.
         num_state_entries (int): Number of entries loaded from the checkpoint.
         warnings (list[str]): Non-fatal concerns raised during export.
     """
 
     output: Path
-    method: ExportMethod
+    form: BundleForm
+    method: ExportMethod | None
     max_abs_delta: float
     num_parameters: int
     num_state_entries: int
     warnings: list[str] = field(default_factory=list)
+
+    @property
+    def size_bytes(self) -> int:
+        """Size of the exported bundle, whichever form it took.
+
+        Returns:
+            int: Size in bytes.
+        """
+        return _tree_bytes(self.output)
 
 
 def _read_config(explicit: Path | None, app_dir: Path, name: str) -> dict:
@@ -98,6 +219,176 @@ def _read_config(explicit: Path | None, app_dir: Path, name: str) -> dict:
     return config
 
 
+@contextmanager
+def _explaining_jit_failure(operation: str) -> Iterator[None]:
+    """Translate a ``torch.jit`` failure into advice the caller can act on.
+
+    Two quite different things arrive here as the same exception: a model using constructs
+    TorchScript cannot compile, and a PyTorch release that has removed or broken ``torch.jit``
+    altogether. The remedy is the same for both — the directory form compiles nothing — so they are
+    worth naming together rather than surfacing as a bare ``AttributeError`` from inside the
+    exporter.
+
+    Args:
+        operation (str): The ``torch.jit`` operation being attempted, for the message.
+
+    Yields:
+        None: While the guarded call runs.
+
+    Raises:
+        RuntimeError: If the guarded call failed, with the directory form named as the way out.
+    """
+    try:
+        yield
+    except Exception as exc:
+        raise RuntimeError(
+            f"TorchScript {operation} failed: {exc}\n"
+            f"TorchScript is deprecated in PyTorch and reports itself unsupported on Python 3.14+, "
+            f"and this is also what a model it cannot compile looks like. Export with "
+            f"form='directory' instead: it writes a MONAI Bundle carrying plain weights and the "
+            f"application's own code, and touches torch.jit at no point."
+        ) from exc
+
+
+def _max_abs_delta(candidate: nn.Module, reference: nn.Module, example: torch.Tensor) -> float:
+    """Largest absolute difference between two models on one probe input.
+
+    Args:
+        candidate (nn.Module): The exported model, reloaded or compiled.
+        reference (nn.Module): The eager model the export came from.
+        example (torch.Tensor): Probe input.
+
+    Returns:
+        float: The largest absolute difference. Zero means the export changed nothing.
+    """
+    with torch.no_grad():
+        delta: float = (candidate(example) - reference(example)).abs().max().item()
+    return delta
+
+
+def _write_torchscript_bundle(
+    model: nn.Module,
+    out: Path,
+    *,
+    method: ExportMethod,
+    example: torch.Tensor | None,
+    inference: dict,
+    metadata: dict,
+) -> float:
+    """Compile the model and write it as a single TorchScript file with the configs embedded.
+
+    Args:
+        model (nn.Module): The weight-loaded model.
+        out (Path): Destination file, conventionally ``model.ts``.
+        method (ExportMethod): ``"script"`` or ``"trace"``.
+        example (torch.Tensor | None): Probe input, when one was requested.
+        inference (dict): The author's inference configuration.
+        metadata (dict): The metadata configuration, provenance already merged.
+
+    Returns:
+        float: Largest absolute difference from the eager model, or ``-1.0``.
+    """
+    with _explaining_jit_failure("scripting" if method == "script" else "tracing"):
+        exported = torch.jit.script(model) if method == "script" else torch.jit.trace(model, example, strict=False)
+
+    max_abs_delta = _max_abs_delta(exported, model, example) if example is not None else _UNVERIFIED_DELTA
+
+    extra_files = {
+        INFERENCE_CONFIG_NAME: json.dumps(inference, indent=2).encode(),
+        METADATA_CONFIG_NAME: json.dumps(metadata, indent=2).encode(),
+    }
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with _explaining_jit_failure("save"):
+        torch.jit.save(exported, str(out), _extra_files=extra_files)
+    return max_abs_delta
+
+
+def _write_directory_bundle(
+    model: nn.Module,
+    app_dir: Path,
+    out: Path,
+    *,
+    example: torch.Tensor | None,
+    inference: dict,
+    metadata: dict,
+) -> tuple[float, list[str]]:
+    """Write a directory-form MONAI Bundle, which needs no ``torch.jit`` to write or to read.
+
+    The layout is the one ``MonaiBundleInferenceOperator`` looks for: ``configs/metadata.json`` and
+    ``configs/inference.json``, weights at ``models/model.pt``. The operator tries ``torch.jit.load``
+    on those weights, finds a plain state dict, and falls back to instantiating the network its
+    config names and applying the state dict to it — which is why the application is copied into
+    ``scripts/`` and ``network_def`` points at the generated ``flip_network`` module beside it.
+
+    **This is the one piece of configuration the exporter writes rather than reads.** It is the
+    architecture, which the exporter already had to resolve to load the weights at all, and it is
+    injected only when the author has declared neither ``network`` nor ``network_def`` — a config
+    that names its own architecture is left exactly as written.
+
+    Args:
+        model (nn.Module): The weight-loaded model.
+        app_dir (Path): Application directory, copied wholesale into ``scripts/``.
+        out (Path): Destination directory for the bundle.
+        example (torch.Tensor | None): Probe input, when one was requested. Supplying one costs a
+            second instantiation of the architecture, which matters for a very large model.
+        inference (dict): The author's inference configuration.
+        metadata (dict): The metadata configuration, provenance already merged.
+
+    Returns:
+        tuple[float, list[str]]: Largest absolute difference from the eager model (or
+        ``-1.0``), and any non-fatal concerns.
+    """
+    warnings: list[str] = []
+
+    weights = out / "models" / "model.pt"
+    weights.parent.mkdir(parents=True, exist_ok=True)
+    (out / ".gitignore").write_text(_BUNDLE_GITIGNORE)
+    torch.save(model.state_dict(), weights)
+
+    # Replaced rather than merged: a module the application has since renamed would otherwise
+    # linger from an earlier export and shadow the current one on the bundle's sys.path. This is
+    # the only subtree that needs it — everything else the exporter writes (``.gitignore``, the
+    # network module, ``models/model.pt``, ``configs/*.json``) has a fixed name and is rewritten on
+    # every export. The bundle root itself is merged, never wiped: ``out`` is a caller-supplied
+    # path (``--out .``) that may hold the caller's own files.
+    scripts = out / _SCRIPTS_DIR_NAME
+    shutil.rmtree(scripts, ignore_errors=True)
+    shutil.copytree(app_dir, scripts, ignore=shutil.ignore_patterns(*_SCRIPTS_COPY_EXCLUDES))
+    # The only file added to the copy, and only when the application is not already a package —
+    # ``scripts.models`` has to resolve for the generated entry point to import it.
+    (scripts / "__init__.py").touch()
+    (out / f"{_NETWORK_MODULE_NAME}.py").write_text(_NETWORK_MODULE_SOURCE)
+
+    copied_bytes = _tree_bytes(scripts)
+    if copied_bytes > _SCRIPTS_SIZE_WARN_BYTES:
+        warnings.append(
+            f"copied {copied_bytes / 1e6:.0f} MB from {app_dir.name}/ into {_SCRIPTS_DIR_NAME}/ — the whole "
+            f"application directory travels with the bundle, so move any data out of it before exporting"
+        )
+
+    declared = next((key for key in _NETWORK_CONFIG_KEYS if key in inference), None)
+    if declared:
+        warnings.append(
+            f"{INFERENCE_CONFIG_NAME} already declares {declared!r}, so the bundle will build its network from "
+            f"your config rather than from the copied {app_dir.name}/models.py"
+        )
+    else:
+        inference = {**inference, "network_def": {"_target_": _NETWORK_TARGET}}
+
+    configs = out / "configs"
+    configs.mkdir(parents=True, exist_ok=True)
+    (configs / INFERENCE_CONFIG_NAME).write_text(json.dumps(inference, indent=2))
+    (configs / METADATA_CONFIG_NAME).write_text(json.dumps(metadata, indent=2))
+
+    if example is None:
+        return _UNVERIFIED_DELTA, warnings
+
+    # Verify what was actually written, the way the operator reads it: a fresh architecture from
+    # the application, with the saved state dict applied. This catches a state dict that no longer
+    # fits its own models.py, which is the failure the directory form is uniquely exposed to.
+    return _max_abs_delta(load_weights_into_app_model(weights, app_dir), model, example), warnings
+
+
 def export_bundle(
     checkpoint: Path,
     app_dir: Path,
@@ -106,28 +397,34 @@ def export_bundle(
     inference_config: Path | None = None,
     metadata_config: Path | None = None,
     provenance: Provenance | None = None,
+    form: BundleForm = "torchscript",
     method: ExportMethod = "script",
     example_input_shape: tuple[int, ...] | None = None,
     job_type: str = "",
     allow_pickle: bool = False,
     exported_at: datetime | None = None,
 ) -> ExportResult:
-    """Export a FLIP checkpoint as a MONAI Bundle in TorchScript form.
+    """Export a FLIP checkpoint as a MONAI Bundle.
 
     Args:
         checkpoint (Path): The aggregated checkpoint, e.g. ``FL_global_model.pt``.
         app_dir (Path): Application directory holding ``models.py``.
-        out (Path): Destination for the bundle, conventionally ``model.ts``.
+        out (Path): Destination. A file for ``form="torchscript"``, conventionally ``model.ts``; a
+            directory for ``form="directory"``.
         inference_config (Path | None): Path to ``inference.json``. Defaults to
             ``<app_dir>/../export/inference.json``.
         metadata_config (Path | None): Path to ``metadata.json``. Defaults to
             ``<app_dir>/../export/metadata.json``.
         provenance (Provenance | None): Federated-run record to embed. When omitted, a minimal
             record is still written so the artefact is never untraceable.
+        form (BundleForm): ``"torchscript"`` (default) for a single self-contained file that needs
+            no FLIP application code, or ``"directory"`` for a bundle directory that needs no
+            ``torch.jit``. See the module docstring for the trade-off.
         method (ExportMethod): ``"script"`` (default) or ``"trace"``. Scripting needs no example
-            input, which matters because packaging runs where no imaging data exists.
+            input, which matters because packaging runs where no imaging data exists. Ignored by
+            ``form="directory"``, which compiles nothing.
         example_input_shape (tuple[int, ...] | None): Probe input shape. Required for ``"trace"``;
-            optional for ``"script"``, where it enables the numerical equivalence check.
+            optional otherwise, where it enables the numerical equivalence check.
         job_type (str): Originating job type, used only to warn when a checkpoint is unlikely to
             be worth packaging.
         allow_pickle (bool): Load the checkpoint with ``weights_only=False``. Only for checkpoints
@@ -139,9 +436,19 @@ def export_bundle(
 
     Raises:
         FileNotFoundError: If the checkpoint, ``models.py`` or a config is missing.
-        RuntimeError: If the weights do not load into the declared architecture.
+        NotADirectoryError: If ``form="directory"`` and ``out`` is an existing file.
+        RuntimeError: If the weights do not load into the declared architecture, or TorchScript
+            compilation fails.
         ValueError: If ``method="trace"`` without an ``example_input_shape``.
     """
+    # Both preconditions are cheap and decide nothing later, so they run before the checkpoint is
+    # read: a wrong --out should not cost a multi-gigabyte load to discover.
+    if form == "directory":
+        if out.exists() and not out.is_dir():
+            raise NotADirectoryError(f"form='directory' writes a bundle directory, but {out} is an existing file.")
+    elif method == "trace" and example_input_shape is None:
+        raise ValueError("method='trace' requires example_input_shape; tracing needs a concrete input.")
+
     warnings: list[str] = []
     if job_type and job_type not in EXPORTABLE_JOB_TYPES:
         warnings.append(
@@ -156,43 +463,38 @@ def export_bundle(
     num_state_entries = len(model.state_dict())
     num_parameters = sum(parameter.numel() for parameter in model.parameters())
 
-    if method == "trace" and example_input_shape is None:
-        raise ValueError("method='trace' requires example_input_shape; tracing needs a concrete input.")
-
     example = torch.randn(*example_input_shape) if example_input_shape else None
-
-    if method == "script":
-        exported = torch.jit.script(model)
-    else:
-        exported = torch.jit.trace(model, example, strict=False)
-
-    max_abs_delta = -1.0
-    if example is not None:
-        with torch.no_grad():
-            max_abs_delta = (exported(example) - model(example)).abs().max().item()
-        if max_abs_delta > 0:
-            warnings.append(f"exported model differs from eager by {max_abs_delta:.3e} on the probe input")
-    else:
-        warnings.append("no example_input_shape given, so numerical equivalence was not verified")
+    if example is None:
+        warnings.append(_UNVERIFIED_WARNING)
 
     resolved = provenance or Provenance()
     if not resolved.source_checkpoint:
         resolved.source_checkpoint = checkpoint.name
+    stamped_metadata = resolved.merged_into(metadata, exported_at)
 
-    extra_files = {
-        INFERENCE_CONFIG_NAME: json.dumps(inference, indent=2).encode(),
-        METADATA_CONFIG_NAME: json.dumps(resolved.merged_into(metadata, exported_at), indent=2).encode(),
-    }
-    out.parent.mkdir(parents=True, exist_ok=True)
-    torch.jit.save(exported, str(out), _extra_files=extra_files)
+    if form == "directory":
+        used_method = None
+        max_abs_delta, form_warnings = _write_directory_bundle(
+            model, app_dir, out, example=example, inference=inference, metadata=stamped_metadata
+        )
+        warnings.extend(form_warnings)
+    else:
+        used_method = method
+        max_abs_delta = _write_torchscript_bundle(
+            model, out, method=method, example=example, inference=inference, metadata=stamped_metadata
+        )
 
-    logger.info("Exported bundle to %s (%s, %d parameters)", out, method, num_parameters)
+    if max_abs_delta > 0:
+        warnings.append(f"exported model differs from eager by {max_abs_delta:.3e} on the probe input")
+
+    logger.info("Exported %s bundle to %s (%d parameters)", form, out, num_parameters)
     for warning in warnings:
         logger.warning("%s", warning)
 
     return ExportResult(
         output=out,
-        method=method,
+        form=form,
+        method=used_method,
         max_abs_delta=max_abs_delta,
         num_parameters=num_parameters,
         num_state_entries=num_state_entries,

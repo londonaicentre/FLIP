@@ -62,7 +62,11 @@ shell:
 # Fetched anonymously from the public Hugging Face dataset (no AWS CLI / credentials needed)
 # Pass TRUST=1 or TRUST=2 to update only a single trust; defaults to all.
 update-omop-data:
-	TRUST=$(TRUST) CLEAN_AFTER_UPDATE=True ./update_omop_data.sh
+	TRUST=$(TRUST) \
+	CLEAN_AFTER_UPDATE=True \
+	OMOP_DATA_DIR_TRUST_1=$(OMOP_DATA_DIR_TRUST_1) \
+	OMOP_DATA_DIR_TRUST_2=$(OMOP_DATA_DIR_TRUST_2) \
+	./update_omop_data.sh
 
 # Load the licensed core vocabulary into a RUNNING trust omop-db and apply the
 # FK constraints. The published pgdata tarballs are vocab-free, so after

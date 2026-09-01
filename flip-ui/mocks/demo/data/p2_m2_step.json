@@ -1,0 +1,103 @@
+{
+  "modelId": "fcf8cb36-5685-4085-abc1-14bd25151566",
+  "modelName": "Ark+ Multimodel Eval client_api (finetune 24985ec3) ",
+  "modelDescription": "Multi-model run of the federated evaluation application, comparing the pretrained Ark+ baseline against the federated fine-tuned checkpoint produced by the companion training project (model 24985ec3). Both models are packaged behind the shared inference interface; the evaluator broadcasts each checkpoint as a named validation task, computes per-class AUROC on each site's holdout cohort, and reports pairwise two-sided DeLong tests with Benjamini-Hochberg FDR correction to determine the best model per class-site pairing. Results are written to a structured evaluation_results.json per site; per-sample predictions never leave the trust.",
+  "projectId": "8e404e78-40f6-4dd9-8ab9-caa01f8c7b40",
+  "status": "RESULTS_UPLOADED",
+  "query": {
+    "id": "fee92deb-369c-4b21-86ab-d18be2e8b661",
+    "name": "Ark+ Baseline Eval (2-trust): Cohort Query",
+    "query": "-- Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London\n-- Licensed under the Apache License, Version 2.0 (the \"License\");\n-- you may not use this file except in compliance with the License.\n-- You may obtain a copy of the License at\n--     http://www.apache.org/licenses/LICENSE-2.0\n-- Unless required by applicable law or agreed to in writing, software\n-- distributed under the License is distributed on an \"AS IS\" BASIS,\n-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n-- See the License for the specific language governing permissions and\n-- limitations under the License.\n\nWITH project_images AS (\n    SELECT io.image_occurrence_id, io.accession_id, io.image_occurrence_date, io.modality_concept_id\n    FROM omop.image_occurrence io\n    JOIN omop.procedure_occurrence pr ON pr.procedure_occurrence_id = io.procedure_occurrence_id\n    WHERE pr.procedure_source_value = 'Chest X-ray (holdout)'\n),\nfeature_observation AS (\n    -- image_feature rows that link to the observation table (carry the Yes/No labels)\n    SELECT ife.image_occurrence_id, ife.image_feature_concept_id, ife.image_feature_event_id\n    FROM omop.image_feature ife\n),\nobservation_value AS (\n    -- pivot the per-label observations to one row per image occurrence\n    SELECT fo.image_occurrence_id,\n        MAX(CASE WHEN image_feature_concept_id = 4215818  THEN vc.concept_name END) AS effusion,\n        MAX(CASE WHEN image_feature_concept_id = 4196943  THEN vc.concept_name END) AS edema,\n        MAX(CASE WHEN image_feature_concept_id = 4319884  THEN vc.concept_name END) AS consolidation,\n        MAX(CASE WHEN image_feature_concept_id = 4264333  THEN vc.concept_name END) AS infiltration,\n        MAX(CASE WHEN image_feature_concept_id = 4214641  THEN vc.concept_name END) AS lung_nodule_or_mass,\n        MAX(CASE WHEN image_feature_concept_id = 253796   THEN vc.concept_name END) AS pneumothorax,\n        MAX(CASE WHEN image_feature_concept_id = 40481136 THEN vc.concept_name END) AS normal_lungs\n    FROM feature_observation fo\n    JOIN omop.observation o ON o.observation_id = fo.image_feature_event_id\n    JOIN omop.concept vc ON vc.concept_id = o.value_as_concept_id\n    GROUP BY fo.image_occurrence_id\n)\nSELECT\n    pi.accession_id,\n    pi.image_occurrence_date AS \"Image date\",\n    modality.concept_name    AS \"Modality\",\n    ov.effusion              AS \"Effusion\",\n    ov.edema                 AS \"Edema\",\n    ov.consolidation         AS \"Consolidation\",\n    ov.infiltration          AS \"Infiltration\",\n    ov.lung_nodule_or_mass   AS \"Lung Nodule or Mass\",\n    ov.pneumothorax          AS \"Pneumothorax\",\n    ov.normal_lungs          AS \"Lungs in normal arrangement\"\nFROM project_images pi\nJOIN observation_value ov ON ov.image_occurrence_id = pi.image_occurrence_id\nJOIN omop.concept modality ON modality.concept_id = pi.modality_concept_id\nORDER BY pi.accession_id\n",
+    "results": null
+  },
+  "files": [
+    {
+      "id": "c2b48d39-325e-478e-b03e-fab03a4b35a5",
+      "name": "arkplus_finetuned_weights.pt",
+      "status": "COMPLETED",
+      "size": 795539335.0,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "fcf8cb36-5685-4085-abc1-14bd25151566"
+    },
+    {
+      "id": "b8749850-4a31-42af-af09-32f422714bac",
+      "name": "arkplus_flat_models.py",
+      "status": "COMPLETED",
+      "size": 3285.0,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "fcf8cb36-5685-4085-abc1-14bd25151566"
+    },
+    {
+      "id": "32feaae6-0234-494f-9b7a-e1fab5303254",
+      "name": "arkplus_pretrained_weights.pt",
+      "status": "COMPLETED",
+      "size": 795823544.0,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "fcf8cb36-5685-4085-abc1-14bd25151566"
+    },
+    {
+      "id": "3e8017f3-7183-4b6e-a1e3-d536a17e7c2c",
+      "name": "config.json",
+      "status": "COMPLETED",
+      "size": 1425.0,
+      "type": "application/json",
+      "tag": null,
+      "model_id": "fcf8cb36-5685-4085-abc1-14bd25151566"
+    },
+    {
+      "id": "c27f3216-51ad-4042-9321-0a630de5eddf",
+      "name": "data_utils.py",
+      "status": "COMPLETED",
+      "size": 15460.0,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "fcf8cb36-5685-4085-abc1-14bd25151566"
+    },
+    {
+      "id": "f7021525-a6c1-4c0a-87e7-8a245c4fb152",
+      "name": "evaluator.py",
+      "status": "COMPLETED",
+      "size": 19384.0,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "fcf8cb36-5685-4085-abc1-14bd25151566"
+    },
+    {
+      "id": "8e76f50b-753d-4709-a4f7-109f3b7e1079",
+      "name": "metrics_utils.py",
+      "status": "COMPLETED",
+      "size": 13615.0,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "fcf8cb36-5685-4085-abc1-14bd25151566"
+    },
+    {
+      "id": "1a51a415-316e-4800-9120-878c4a467bcc",
+      "name": "models.py",
+      "status": "COMPLETED",
+      "size": 4886.0,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "fcf8cb36-5685-4085-abc1-14bd25151566"
+    }
+  ],
+  "creationTimestamp": "2026-07-17T18:09:24.475",
+  "preparedAt": null,
+  "trainingStartedAt": null,
+  "resultsUploadedAt": "2026-07-17T18:35:59.625",
+  "trusts": [
+    {
+      "id": "f43abcd0-be77-4dc8-89c6-4b8aa98b6183",
+      "name": "Bangkok Dusit Medical Services",
+      "code": "BDMS"
+    },
+    {
+      "id": "16f5b300-8ff4-4f1a-9a60-1989b3b54489",
+      "name": "King's College London",
+      "code": "KCL"
+    }
+  ]
+}

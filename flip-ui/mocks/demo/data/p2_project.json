@@ -1,0 +1,60 @@
+{
+  "id": "8e404e78-40f6-4dd9-8ab9-caa01f8c7b40",
+  "name": "Ark+ Baseline Eval (2-trust)",
+  "description": "Federated evaluation of chest X-ray classifiers on each site's held-out synthetic cohort (the 20% split withheld from the Ark+ fine-tuning project), covering the same five findings: pleural effusion, consolidation, infiltration, lung nodule or mass, and pneumothorax.\n\nCandidate models will be packaged behind a common inference interface so a single shared evaluator can score any of them without model-specific integration code. At each participating site the evaluator will compute per-class AUROC on the local holdout set for every configured model, and model pairs will be compared with two-sided DeLong tests under Benjamini-Hochberg false-discovery-rate correction, following the significance-ranking protocol of the Medical Segmentation Decathlon. Only aggregate scores and test statistics leave the trust; per-sample predictions are never exported. The project will first establish the pretrained Ark+ baseline and then extend the model list to the federated fine-tuned checkpoint, exercising FLIP's evaluation job type end to end on both sites.",
+  "ownerId": "00000000-0000-4000-8000-000000000002",
+  "ownerName": null,
+  "userCount": 1,
+  "deleted": false,
+  "approved": null,
+  "creationtimestamp": "2026-07-17T16:36:39.549Z",
+  "stagedAt": "2026-07-17T16:38:29.337Z",
+  "status": "APPROVED",
+  "approvedTrusts": [
+    {
+      "id": "f43abcd0-be77-4dc8-89c6-4b8aa98b6183",
+      "name": "Bangkok Dusit Medical Services",
+      "code": "BDMS",
+      "approved": true,
+      "approvedAt": "2026-07-17T16:38:35.635"
+    },
+    {
+      "id": "16f5b300-8ff4-4f1a-9a60-1989b3b54489",
+      "name": "King's College London",
+      "code": "KCL",
+      "approved": true,
+      "approvedAt": "2026-07-17T16:38:35.642"
+    }
+  ],
+  "query": {
+    "id": "fee92deb-369c-4b21-86ab-d18be2e8b661",
+    "name": "Ark+ Baseline Eval (2-trust): Cohort Query",
+    "query": "-- Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London\n-- Licensed under the Apache License, Version 2.0 (the \"License\");\n-- you may not use this file except in compliance with the License.\n-- You may obtain a copy of the License at\n--     http://www.apache.org/licenses/LICENSE-2.0\n-- Unless required by applicable law or agreed to in writing, software\n-- distributed under the License is distributed on an \"AS IS\" BASIS,\n-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n-- See the License for the specific language governing permissions and\n-- limitations under the License.\n\nWITH project_images AS (\n    SELECT io.image_occurrence_id, io.accession_id, io.image_occurrence_date, io.modality_concept_id\n    FROM omop.image_occurrence io\n    JOIN omop.procedure_occurrence pr ON pr.procedure_occurrence_id = io.procedure_occurrence_id\n    WHERE pr.procedure_source_value = 'Chest X-ray (holdout)'\n),\nfeature_observation AS (\n    -- image_feature rows that link to the observation table (carry the Yes/No labels)\n    SELECT ife.image_occurrence_id, ife.image_feature_concept_id, ife.image_feature_event_id\n    FROM omop.image_feature ife\n),\nobservation_value AS (\n    -- pivot the per-label observations to one row per image occurrence\n    SELECT fo.image_occurrence_id,\n        MAX(CASE WHEN image_feature_concept_id = 4215818  THEN vc.concept_name END) AS effusion,\n        MAX(CASE WHEN image_feature_concept_id = 4196943  THEN vc.concept_name END) AS edema,\n        MAX(CASE WHEN image_feature_concept_id = 4319884  THEN vc.concept_name END) AS consolidation,\n        MAX(CASE WHEN image_feature_concept_id = 4264333  THEN vc.concept_name END) AS infiltration,\n        MAX(CASE WHEN image_feature_concept_id = 4214641  THEN vc.concept_name END) AS lung_nodule_or_mass,\n        MAX(CASE WHEN image_feature_concept_id = 253796   THEN vc.concept_name END) AS pneumothorax,\n        MAX(CASE WHEN image_feature_concept_id = 40481136 THEN vc.concept_name END) AS normal_lungs\n    FROM feature_observation fo\n    JOIN omop.observation o ON o.observation_id = fo.image_feature_event_id\n    JOIN omop.concept vc ON vc.concept_id = o.value_as_concept_id\n    GROUP BY fo.image_occurrence_id\n)\nSELECT\n    pi.accession_id,\n    pi.image_occurrence_date AS \"Image date\",\n    modality.concept_name    AS \"Modality\",\n    ov.effusion              AS \"Effusion\",\n    ov.edema                 AS \"Edema\",\n    ov.consolidation         AS \"Consolidation\",\n    ov.infiltration          AS \"Infiltration\",\n    ov.lung_nodule_or_mass   AS \"Lung Nodule or Mass\",\n    ov.pneumothorax          AS \"Pneumothorax\",\n    ov.normal_lungs          AS \"Lungs in normal arrangement\"\nFROM project_images pi\nJOIN observation_value ov ON ov.image_occurrence_id = pi.image_occurrence_id\nJOIN omop.concept modality ON modality.concept_id = pi.modality_concept_id\nORDER BY pi.accession_id\n",
+    "queriedTrustIds": [
+      "f43abcd0-be77-4dc8-89c6-4b8aa98b6183",
+      "16f5b300-8ff4-4f1a-9a60-1989b3b54489"
+    ],
+    "pendingTrustIds": [],
+    "cancelledTrustIds": [],
+    "respondedTrustIds": [
+      "16f5b300-8ff4-4f1a-9a60-1989b3b54489",
+      "f43abcd0-be77-4dc8-89c6-4b8aa98b6183"
+    ],
+    "erroredTrustIds": [],
+    "emptyTrustIds": [],
+    "totalCohort": 946,
+    "created": "2026-07-17T16:37:05.424Z",
+    "createdBy": "FLIP Demo"
+  },
+  "ownerEmail": "demo@flip.local",
+  "users": [
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "email": "demo@flip.local",
+      "name": "",
+      "organisation": "",
+      "isDisabled": false
+    }
+  ],
+  "dicom_to_nifti": true
+}

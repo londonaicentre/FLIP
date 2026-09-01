@@ -46,6 +46,45 @@ class UnknownJobTypeError(Exception):
     pass
 
 
+# Pre-rename aliases: the Client-API templates originally lived under ``*_client_api`` names and
+# took over the plain names when the legacy Executor templates were retired. Models created before
+# the rename still carry the old string in their uploaded config.json, so the bundlers normalise it
+# here — BEFORE manifest validation, which knows only the plain names — keeping those models
+# trainable without a config edit and re-upload.
+JOB_TYPE_ALIASES = {
+    "standard_client_api": "standard",
+    "evaluation_client_api": "evaluation",
+    "diffusion_model_client_api": "diffusion_model",
+}
+
+
+def _normalise_job_type(job_type: str, fl_backend: FLBackend) -> str:
+    """Resolve a pre-rename job-type alias to its plain name and validate against the manifest.
+
+    Args:
+        job_type (str): The job type as declared in the model's uploaded config.json.
+        fl_backend (FLBackend): The backend whose manifest defines the valid set.
+
+    Returns:
+        str: The manifest-valid job type (alias-resolved when applicable).
+
+    Raises:
+        UnknownJobTypeError: If the (resolved) job type is not in the backend's manifest. The
+            message names the valid set and the fix, since this surfaces at training start —
+            long after upload, scanning and approval all succeeded.
+    """
+    resolved = JOB_TYPE_ALIASES.get(job_type, job_type)
+    if resolved != job_type:
+        logger.info(f"job_type '{job_type}' is a pre-rename alias — normalised to '{resolved}'.")
+    if not JobRequiredFiles.is_valid_job_type(resolved, fl_backend):
+        valid = sorted(JobRequiredFiles.get_all_job_types_with_files(fl_backend))
+        raise UnknownJobTypeError(
+            f"Unknown job_type in config.json: {job_type}. Valid {fl_backend} job types: "
+            f"{', '.join(valid)}. Update job_type in the model's config.json and re-upload it."
+        )
+    return resolved
+
+
 def list_local_base_files(base_dir: Path) -> list[str]:
     """List every file under a local base-application directory, recursively.
 
@@ -476,7 +515,11 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     Raises:
         EnvironmentError: If the S3 bucket environment variables are not set.
         FileNotFoundError: If the base or model files are missing.
+        FileNotFoundError: If no config.json is among the scanned model files — it is required for
+            every job type, and declares the job_type that selects the base application.
         FileNotFoundError: If required files for the job type are missing.
+        RuntimeError: If the required-files manifest lookup returns no files for the job type,
+            i.e. the manifest under FL_APP_BASE_DIR is missing or malformed.
 
     Returns:
         str: The destination bucket S3 path where the bundled application is located.
@@ -498,29 +541,32 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     if not model_files:
         raise FileNotFoundError("Model files missing on the S3 bucket")
 
-    # Determine job_type from config.json if present
+    # Determine job_type from config.json. The file itself is non-negotiable — every nvflare job
+    # type requires it — so refuse here rather than logging a doomed job_type=standard guess that
+    # the required-files check below would reject anyway (FLIP#1053).
     input_config: dict = {}
     config_file = next((k for k in model_files if k.endswith("/config.json")), None)
     if not config_file:
-        logger.info("No config.json file was found in the scanned files. Using job_type=standard.")
-    else:
-        # We download the file
-        try:
-            s3_config_object = s3.get_object(config_file)
-            config_object = s3_config_object["Body"].read()
-            input_config = json.loads(config_object) if config_object else {}
-        except Exception as e:
-            logger.error(f"Error reading config.json from S3: {str(e)}. Using job_type=standard.")
-            raise ValueError("Error reading config.json from S3") from e
+        raise FileNotFoundError(
+            "No config.json found in the scanned model files. config.json is a required file for every "
+            "nvflare job type — it declares the job_type that selects the base application. Upload it "
+            "and let the scan complete, then start training again."
+        )
+    # We download the file
+    try:
+        s3_config_object = s3.get_object(config_file)
+        config_object = s3_config_object["Body"].read()
+        input_config = json.loads(config_object) if config_object else {}
+    except Exception as e:
+        logger.error(f"Error reading config.json from S3: {str(e)}.")
+        raise ValueError("Error reading config.json from S3") from e
 
-        jt = input_config.get("job_type")
-        if not jt:
-            logger.info("No 'job_type' found in config.json. Using job_type=standard.")
-        else:
-            if not JobRequiredFiles.is_valid_job_type(jt, FLBackend.NVFLARE):
-                raise UnknownJobTypeError(f"Unknown job_type argument found in config.json: {jt}")
-            job_type = jt
-            logger.info(f"job_type in config.json: {job_type}. Using it to select base application.")
+    jt = input_config.get("job_type")
+    if not jt:
+        logger.info("No 'job_type' found in config.json. Using job_type=standard.")
+    else:
+        job_type = _normalise_job_type(jt, FLBackend.NVFLARE)
+        logger.info(f"job_type in config.json: {job_type}. Using it to select base application.")
 
     # Locate the base application for this job_type on the local FL_APP_BASE_DIR tree. This
     # bundler is the nvflare-specific path, so the backend segment is fixed:
@@ -552,6 +598,14 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     # Validate required model files exist for the job type before uploading anything, so a bad
     # submission fails fast without leaving a partial bundle in the destination bucket.
     required_files = JobRequiredFiles.get_required_files(job_type, FLBackend.NVFLARE)
+    if not required_files:
+        # No real job type has an empty file list, so [] means the manifest lookup itself failed —
+        # without this guard the bundle would sail through with zero required-file validation.
+        raise RuntimeError(
+            f"Required-files manifest for nvflare defines no files for job type '{job_type}' — the "
+            "manifest under FL_APP_BASE_DIR is missing or malformed. This is a deployment "
+            "misconfiguration, not a problem with the uploaded model files."
+        )
     model_rel = {
         k.replace(f"{model_bucket_s3_path}/", "", 1) for k in model_files
     }  # relative paths of model files (i.e. without the bucket prefix)
@@ -574,7 +628,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
         s3.copy_object(src_meta_path, dest_meta_path)
 
     # Some jobs load a large model checkpoint SERVER-SIDE and don't need it on the clients:
-    #   - evaluation jobs: the models[*].checkpoint files, loaded by EvaluationPTModelLocator;
+    #   - evaluation jobs: the models[*].checkpoint files, loaded by EvaluationModelLocator;
     #   - training jobs: a pretrained backbone declared via top-level SERVER_CHECKPOINT (str or
     #     list), loaded by InitialCheckpointPTModelPersistor and broadcast as the round-0 model.
     # Divert those to a server-only `server_checkpoints/` prefix so they are staged for the
@@ -582,7 +636,8 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     # app*/custom/ and shipped to every client by NVFLARE's deploy_map (a large bundled file
     # collapses app-deploy). Mirrors the Flower backend, which keeps the checkpoint server-side.
     server_checkpoints: set[str] = set()
-    if job_type in ("evaluation", "evaluation_client_api"):
+    # job_type is already alias-normalised (_normalise_job_type), so the plain name is exhaustive.
+    if job_type == "evaluation":
         server_checkpoints = {
             m["checkpoint"]
             for m in input_config.get("models", {}).values()
@@ -683,7 +738,11 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     Raises:
         EnvironmentError: If the S3 bucket environment variables are not set.
         FileNotFoundError: If the base or model files are missing.
+        FileNotFoundError: If no config.json is among the scanned model files — it is required for
+            every job type, and declares the job_type that selects the base application.
         FileNotFoundError: If required files for the job type are missing.
+        RuntimeError: If the required-files manifest lookup returns no files for the job type,
+            i.e. the manifest under FL_APP_BASE_DIR is missing or malformed.
 
     Returns:
         str: The destination bucket S3 path where the bundled application is located.
@@ -705,28 +764,31 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     if not model_files:
         raise FileNotFoundError("Model files missing on the S3 bucket")
 
-    # Determine job_type from config.json if present
+    # Determine job_type from config.json. The file itself is non-negotiable — every flower job
+    # type requires it — so refuse here rather than logging a doomed job_type=standard guess that
+    # the required-files check below would reject anyway (FLIP#1053).
     config_file = next((k for k in model_files if k.endswith("/config.json")), None)
     if not config_file:
-        logger.info("No config.json file was found in the scanned files. Using job_type=standard.")
-    else:
-        # We download the file
-        try:
-            s3_config_object = s3.get_object(config_file)
-            config_object = s3_config_object["Body"].read()
-            input_config = json.loads(config_object) if config_object else {}
-        except Exception as e:
-            logger.error(f"Error reading config.json from S3: {str(e)}. Using job_type=standard.")
-            raise ValueError("Error reading config.json from S3") from e
+        raise FileNotFoundError(
+            "No config.json found in the scanned model files. config.json is a required file for every "
+            "flower job type — it declares the job_type that selects the base application. Upload it "
+            "and let the scan complete, then start training again."
+        )
+    # We download the file
+    try:
+        s3_config_object = s3.get_object(config_file)
+        config_object = s3_config_object["Body"].read()
+        input_config = json.loads(config_object) if config_object else {}
+    except Exception as e:
+        logger.error(f"Error reading config.json from S3: {str(e)}.")
+        raise ValueError("Error reading config.json from S3") from e
 
-        jt = input_config.get("job_type")
-        if not jt:
-            logger.info("No 'job_type' found in config.json. Using job_type=standard.")
-        else:
-            if not JobRequiredFiles.is_valid_job_type(jt, FLBackend.FLOWER):
-                raise UnknownJobTypeError(f"Unknown job_type argument found in config.json: {jt}")
-            job_type = jt
-            logger.info(f"job_type in config.json: {job_type}. Using it to select base application.")
+    jt = input_config.get("job_type")
+    if not jt:
+        logger.info("No 'job_type' found in config.json. Using job_type=standard.")
+    else:
+        job_type = _normalise_job_type(jt, FLBackend.FLOWER)
+        logger.info(f"job_type in config.json: {job_type}. Using it to select base application.")
 
     # Locate the base application for this job_type on the local FL_APP_BASE_DIR tree. This
     # bundler is the flower-specific path, so the backend segment is fixed:
@@ -746,6 +808,14 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     # Validate required model files exist for the job type before uploading anything, so a bad
     # submission fails fast without leaving a partial bundle in the destination bucket.
     required_files = JobRequiredFiles.get_required_files(job_type, FLBackend.FLOWER)
+    if not required_files:
+        # No real job type has an empty file list, so [] means the manifest lookup itself failed —
+        # without this guard the bundle would sail through with zero required-file validation.
+        raise RuntimeError(
+            f"Required-files manifest for flower defines no files for job type '{job_type}' — the "
+            "manifest under FL_APP_BASE_DIR is missing or malformed. This is a deployment "
+            "misconfiguration, not a problem with the uploaded model files."
+        )
     model_rel = {
         k.replace(f"{model_bucket_s3_path}/", "", 1) for k in model_files
     }  # relative paths of model files (i.e. without the bucket prefix)
@@ -780,7 +850,7 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
 
 def verify_bundle_paths(
     *,
-    s3: "S3Client",
+    s3: S3Client,
     base_rel_paths: list[str],
     model_files: list[str],
     app_folders: set[str],

@@ -1,0 +1,18 @@
+[
+  {
+    "id": "16f5b300-8ff4-4f1a-9a60-1989b3b54489",
+    "name": "King's College London",
+    "code": "KCL",
+    "region": "London",
+    "last_heartbeat": "2026-07-17T14:33:14.208Z",
+    "project_count": 2
+  },
+  {
+    "id": "f43abcd0-be77-4dc8-89c6-4b8aa98b6183",
+    "name": "Bangkok Dusit Medical Services",
+    "code": "BDMS",
+    "region": "Thailand",
+    "last_heartbeat": "2026-07-17T14:33:14.470Z",
+    "project_count": 2
+  }
+]

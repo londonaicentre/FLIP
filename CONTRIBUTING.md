@@ -51,11 +51,15 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
 ### Prerequisites
 
 - A Linux development host; a CUDA-capable GPU is required for GPU-backed tutorials and training
-- [Docker Engine](https://docs.docker.com/engine/install/) with Compose and Swarm mode
+- [Docker Engine](https://docs.docker.com/engine/install/) with Compose and Swarm mode. The trust
+  slot-collision guard identifies a running stack's owning kit through Compose's
+  `com.docker.compose.project.environment_file` container label (verified live on Compose v5.1.3);
+  a Compose too old to record that label does not lose the protection — the guard fails closed,
+  refusing the operation with an explicit "the kit that owns them cannot be identified" stop
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   on GPU hosts
 - GNU Make, `jq`, and `curl`
-- [Python 3.12+](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/)
+- [Python 3.12 or 3.13](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/)
 - The AWS CLI configured for SSO access to the development environment
 - [act](https://github.com/nektos/act) if you want to run GitHub Actions locally
 - **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:
@@ -290,6 +294,27 @@ lint, type-checking, unit and integration tests, docs, Terraform validation, Hel
 Coverage upload to Codecov is non-blocking (`fail_ci_if_error: false`), so a missing `CODECOV_TOKEN` on your fork
 never fails an otherwise-green job.
 
+### Checkov security lint (Terraform)
+
+`validate_terraform.yml` carries a `Checkov Security Lint` job (FLIP#1052 + the FLIP#1058 triage) alongside
+`fmt`/`validate`: a curated checkov check list runs statically over `deploy/providers/AWS/**` and **fails the
+PR's CI** on a regression. It covers IAM policy content — overly-broad statements such as a wildcard `Resource`/`Action` on a
+restrictable data-access action, data exfiltration or privilege-escalation shapes, on both policy syntaxes
+(`data "aws_iam_policy_document"` blocks and `jsonencode()` policies) — plus a small promoted set of
+infrastructure-posture checks (IMDSv2-only EC2, module version pinning, HSTS, WAF Log4j rule, SSM/KMS posture).
+No cloud credentials are needed, and checkov already knows which AWS actions support no resource-level scoping
+(e.g. `ssmmessages:*`, `ec2:Describe*`) — those wildcards pass without ceremony. Run it locally with
+`make checkov-lint` from the repo root (deliberately not the `deploy/providers/AWS` Makefile, whose parse-time
+env guard needs the gitignored deploy env files).
+
+Deliberate breadth or posture is acknowledged **in-code, with a rationale**, never by weakening the check list:
+put `# checkov:skip=<CHECK_ID>:<why this is deliberate>` inside the flagged resource/data block. The check
+list — including the classes triaged in FLIP#1058 and deliberately *not* promoted — lives in
+`deploy/providers/AWS/scripts/checkov_lint.sh`, which self-tests against a canary fixture before scanning so a
+broken checkov install can never produce a vacuous green. The script's own guards (version pin, unknown check
+IDs, skip rationale, canary) are regression-tested by `scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
+run by the same workflow's `Deploy script tests` job.
+
 ### Running the stack (pull vs. build)
 
 In development (`PROD` unset), `make up` **pulls** the repo-built service images
@@ -458,6 +483,14 @@ If your test mocks **all** external dependencies (database session, HTTP client,
 FastAPI `TestClient` on its own does **not** make a test "integration" — what matters is whether the dependencies it transitively hits are real or mocked. A `TestClient`-based test that overrides every dependency (via `app.dependency_overrides`) and patches the DB session is a unit test; one that runs against an un-overridden real Postgres is an integration test.
 
 This rule applies across all services: `flip-api/tests/`, `trust/trust-api/tests/`, `trust/imaging-api/tests/`, `trust/data-access-api/tests/`, etc.
+
+##### Tests for FL tutorials and app templates
+
+Two trees sit outside any service and have their own home:
+
+- **`fl-tutorials/tests/`** — the CPU-only suite over the tutorial apps' transform chains (`make -C fl-tutorials test`, and `.github/workflows/fl-tutorials-tests.yml` on every PR touching `fl-tutorials/**`). A test belongs here if it can assert on tutorial code with **no GPU, no dataset download, no FL image and no network** — transform composition, import-time correctness, and what the preprocessing chain actually feeds the model. Fixtures are synthesised in-process (see `fl-tutorials/tests/dicom_phantom.py`), never committed as data. Anything that needs real training to observe — convergence, metric values, multi-round behaviour — belongs instead with the GPU simulator harness (`make -C fl-tutorials run-tutorial`), which is not run in CI.
+  The suite runs in **flip-utils' environment** (`flip-utils[full]`), which is what the FL images give these apps at runtime; it deliberately has no `pyproject.toml` of its own, and the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tuning/pyproject.toml` does not declare `monai`, so that environment cannot import its own `data_utils.py`).
+- **`fl-apps/`** — has no pytest suite; its invariant is the required-files manifest, checked by `fl-apps/check_required_files.sh` (pre-commit + `.github/workflows/fl-apps-check-required-files.yml`). Files that must stay byte-identical to another file — the Flower tutorial copies of the `fl-apps/flower/` templates, and the shared Ark+ evaluation sources — are pinned in `scripts/check_tutorial_sync.sh`.
 
 ##### flip-api: real-Postgres integration tests via Testcontainers
 

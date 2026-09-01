@@ -32,7 +32,7 @@ differs. The `evaluation_results.json` output contract is unchanged.
 
 ## Compatible job type
 
-This tutorial is designed for `JOB_TYPE=evaluation_client_api`.
+This tutorial is designed for `JOB_TYPE=evaluation`.
 
 ## Prerequisites
 
@@ -56,7 +56,7 @@ make -C fl-tutorials run-tutorial TUTORIAL=arkplus_baseline_classification_evalu
 
 `download-arkplus-eval-data` pulls the `site1_holdoff`/`site2_holdoff` hold-out splits of
 [`aicentreflip/tutorials-arkplus-cxr-classification`](https://huggingface.co/datasets/aicentreflip/tutorials-arkplus-cxr-classification)
-and normalises them into `fl-tutorials/nvflare/data/arkplus/site{1,2}_holdoff/` (gitignored), matching
+and normalises them into `fl-tutorials/data/arkplus/site{1,2}_holdoff/` (gitignored), matching
 this tutorial's `.env.app` defaults.
 
 For local development, per-site paths are set in `.env.app`:
@@ -121,7 +121,7 @@ Ark6 training output (`Ark6_swinLarge768_ep50.pth.tar`) in two steps:
 
 Default local development settings are in `.env.app`:
 
-- `JOB_TYPE=evaluation_client_api`
+- `JOB_TYPE=evaluation`
 - `RAW_CHECKPOINT=models/Ark6_swinLarge768_ep50.pth.tar`
 - `DEV_IMAGES_DIR` / `DEV_DATAFRAME` and the per-site `SITE{1,2}_*` paths
 - `FLIP_PROJECT_ID` / `FLIP_QUERY` (injected into the recipe for SimEnv; ignored under `LOCAL_DEV`)

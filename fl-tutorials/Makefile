@@ -9,21 +9,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Backend-aware entrypoint for the FL tutorial runners. The actual runner + harness live
-# per-backend under fl-tutorials/<backend>/ (NVFLARE today; Flower lands via #622). This thin
-# Makefile forwards every target to fl-tutorials/$(FL_BACKEND)/ so the documented entrypoint
-#   make -C fl-tutorials <target> [TUTORIAL=... NUM_CASES=... TEMPLATE=...]
+# Backend-aware entrypoint for the FL tutorial runners. The runner + harness live per-backend
+# under fl-tutorials/<backend>/ (fl-tutorials/nvflare/ and fl-tutorials/flower/); the shared
+# dataset tooling lives in fl-tutorials/datasets/ (outputs in the gitignored fl-tutorials/data/,
+# one download serving both backends). This thin Makefile forwards each target to the right
+# sub-make so the documented entrypoint
+#   make -C fl-tutorials <target> [TUTORIAL=... NUM_CASES=...]
 # keeps working and selects the backend via FL_BACKEND (default nvflare). Command-line
 # variables are forwarded to the sub-make automatically.
 FL_BACKEND ?= nvflare
 
-TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials \
-	download-xray-data download-spleen-data \
-	download-arkplus-finetuning-data download-arkplus-eval-data test-template
+TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials
+# Dataset targets are backend-agnostic (shared data root, single copy in datasets/);
+# FL_BACKEND still selects a per-harness variant where one exists (the two spleen downloads).
+DATASET_TARGETS := download-xray-data download-spleen-data upload-spleen-labels \
+	download-arkplus-finetuning-data download-arkplus-eval-data
 
-.PHONY: $(TUTORIAL_TARGETS)
+.PHONY: $(TUTORIAL_TARGETS) $(DATASET_TARGETS)
 $(TUTORIAL_TARGETS):
 	@$(MAKE) --no-print-directory -C $(FL_BACKEND) $@
+
+$(DATASET_TARGETS):
+	@$(MAKE) --no-print-directory -C datasets $@ FL_BACKEND=$(FL_BACKEND)
 
 # ---------------------------------------------------------------------------
 # Lint / autoformat the tutorial sources. Runs ruff over the whole tree; ruff
@@ -45,3 +52,21 @@ lint:
 format:
 	$(RUFF) format .
 	$(RUFF) check --fix .
+
+# ---------------------------------------------------------------------------
+# CPU-only pytest suite over the tutorial transform chains (fl-tutorials/tests/).
+# No GPU, no dataset, no FL image — unlike run-tutorial, which needs all three.
+#
+# It runs in flip-utils' environment (`flip-utils[full]`: monai, pydicom, torch),
+# which is what the FL images give these apps at runtime, rather than in a
+# per-tutorial venv — arkplus_fine_tuning/pyproject.toml does not even declare
+# monai, so that env cannot import its own data_utils.py. See tests/README.md.
+PYTEST ?= uv run --project ../flip-utils --extra full --group dev pytest
+
+.PHONY: pytest test unit_test
+pytest:
+	$(PYTEST) tests
+
+test: lint pytest
+
+unit_test: test

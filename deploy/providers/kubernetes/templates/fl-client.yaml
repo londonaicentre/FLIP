@@ -92,8 +92,59 @@ spec:
           operator: Exists
           effect: NoSchedule
       {{- end }}
-      {{- if or (and (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.kitFromS3.enabled) (and (eq .Values.flBackend "flower") .Values.flClient.flower.kitFromS3.enabled) }}
       initContainers:
+        # Pre-create this net's slice of the shared images volume: the fl-client
+        # container below mounts only <imagesDir>/<netId> via subPath — least
+        # privilege, so training code cannot read another net's cached studies —
+        # and kubelet creates a missing subPath dir as root, which the writers
+        # could then never use. Owner is the uid imaging-api writes as (1000,
+        # the image-baked `flip` user — GHSA-8465, same anchor as kit-init's
+        # chown below); on Flower the group is the SuperNode's `app` uid (49999)
+        # with group-write, because the client itself must also write inside the
+        # net dir (`flip.add_resource` stages files under <netId>/upload/;
+        # NVFLARE's CleanupImages deletes the dir's children — both need write,
+        # read-only is NOT sufficient for the client). Without this, every
+        # imaging-api download would 500 with EACCES and training would die
+        # later with a misleading num_samples=0.
+        # Runs unconditionally, unlike kit-init below. Reuses the fl-client's
+        # own image (already required by this pod — no extra registry
+        # dependency) with an explicit root securityContext: chown/chmod need
+        # root, but privilege is scoped to exactly the three file capabilities.
+        - name: images-init
+          image: {{ include "flip-trust.flClientImage" . }}
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - DAC_OVERRIDE
+                - FOWNER
+            seccompProfile:
+              type: RuntimeDefault
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              NET_DIR="{{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}"
+              echo "Pre-creating ${NET_DIR} for imaging-api (uid 1000) — a root-owned dir here breaks every image download."
+              mkdir -p "${NET_DIR}"
+              {{- if eq .Values.flBackend "flower" }}
+              chown 1000:49999 "${NET_DIR}"
+              chmod 0775 "${NET_DIR}"
+              {{- else }}
+              chown 1000:1000 "${NET_DIR}"
+              chmod 0755 "${NET_DIR}"
+              {{- end }}
+              echo "Images net dir ready: $(ls -ld "${NET_DIR}")"
+          volumeMounts:
+            - name: images
+              mountPath: {{ .Values.flClient.imagesDir }}
+      {{- if include "flip-trust.flClientKitFromS3" . }}
         - name: kit-init
           image: amazon/aws-cli:2.22.0
           command:
@@ -101,15 +152,10 @@ spec:
             - -c
             - |
               set -euo pipefail
-              {{- if eq .Values.flBackend "nvflare" }}
-              S3_PATH="{{ tpl .Values.flClient.nvflare.kitFromS3.pathTemplate . }}"
-              S3_BUCKET="{{ .Values.flClient.nvflare.kitFromS3.bucket }}"
+              {{- $kitFromS3 := (index .Values.flClient .Values.flBackend).kitFromS3 }}
+              S3_PATH="{{ tpl $kitFromS3.pathTemplate . }}"
+              S3_BUCKET="{{ $kitFromS3.bucket }}"
               DEST_DIR="/opt/fl-client/kit"
-              {{- else }}
-              S3_PATH="{{ tpl .Values.flClient.flower.kitFromS3.pathTemplate . }}"
-              S3_BUCKET="{{ .Values.flClient.flower.kitFromS3.bucket }}"
-              DEST_DIR="/opt/fl-client/kit"
-              {{- end }}
               echo "Syncing s3://${S3_BUCKET}/${S3_PATH} to ${DEST_DIR}..."
               {{- if .Values.flClient.s3EndpointOverride }}
               aws s3 sync "s3://${S3_BUCKET}/${S3_PATH}" "${DEST_DIR}" --delete --endpoint-url {{ .Values.flClient.s3EndpointOverride | quote }}
@@ -203,6 +249,10 @@ spec:
               # envsubst needed: the values are already correct for this deployment).
               cp /app/local/resources.json.default /app/local/resources.json 2>/dev/null || true
               cp /app/local/log_config.json.default /app/local/log_config.json 2>/dev/null || true
+              # Site privacy policy (FLIP#851): render or remove /app/local/privacy.json from
+              # FL_SITE_PRIVACY_*. `set -euo pipefail` above makes an invalid configuration
+              # fail the pod (fail closed) rather than run an unfiltered client.
+              python -m flip.nvflare.site_policy /app/local/privacy.json
               pkill -f nvflare 2>/dev/null || true
               rm -f /app/pid.fl /app/daemon_pid.fl
               cd /app/startup
@@ -214,6 +264,16 @@ spec:
           env:
             - name: UPLOADED_FEDERATED_DATA_BUCKET
               value: {{ .Values.uploadedFederatedDataBucket | default "" | quote }}
+            {{- if eq .Values.flBackend "nvflare" }}
+            # Keep policy values in the pod template, rather than only the ConfigMap,
+            # so a Helm value change triggers a Deployment rollout.
+            - name: FL_SITE_PRIVACY_POLICY
+              value: {{ .Values.flClient.nvflare.sitePrivacy.policy | quote }}
+            - name: FL_SITE_PRIVACY_PERCENTILE
+              value: {{ .Values.flClient.nvflare.sitePrivacy.percentile | quote }}
+            - name: FL_SITE_PRIVACY_GAMMA
+              value: {{ .Values.flClient.nvflare.sitePrivacy.gamma | quote }}
+            {{- end }}
             {{- if .Values.flClient.gpu.enabled }}
             - name: CUDA_VISIBLE_DEVICES
               value: "0"
@@ -231,8 +291,12 @@ spec:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: trust-internal-service-key
           volumeMounts:
+            # Only this net's slice of the shared images volume, at the
+            # unchanged container path so imaging-api's returned paths still
+            # resolve (see images-init above).
             - name: images
-              mountPath: {{ .Values.flClient.imagesDir }}
+              mountPath: {{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}
+              subPath: {{ .Values.flClient.netId }}
             - name: dshm
               mountPath: /dev/shm
           {{- if eq .Values.flBackend "nvflare" }}
@@ -310,9 +374,7 @@ spec:
             medium: Memory
             sizeLimit: {{ .Values.flClient.shmSize }}
         - name: fl-client-kit
-{{- if .Values.flClient.nvflare.kitFromS3.enabled }}
-          emptyDir: {}
-{{- else if .Values.flClient.kitHostPath }}
+{{- if and (not (include "flip-trust.flClientKitFromS3" .)) .Values.flClient.kitHostPath }}
           hostPath:
             path: {{ .Values.flClient.kitHostPath | quote }}
             type: Directory
