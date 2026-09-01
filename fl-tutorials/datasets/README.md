@@ -65,7 +65,7 @@ pandas, natsort; `uv.lock` is gitignored):
 
 [`cxr/`](cxr/) owns the `cxr_project` OMOP converter and its uv project (`pyproject.toml` —
 pandas, pandera, sqlglot, tqdm; `uv.lock` is gitignored). It has no download script: the images
-come from `londonaicentre/xraycat`, not from a public dataset. See
+come from the private `londonaicentre/xraycat`, not from a public dataset. See
 [OMOP mock-data generation](#omop-mock-data-generation-flip1092) below.
 
 [`xrays_mini_300/`](xrays_mini_300/) owns the single x-ray script — no dedicated uv project,
