@@ -15,9 +15,7 @@
 # Shares the same env file as the local Docker Compose dev stack
 # (../../../.env.development) so developers only maintain one set of
 # credentials. The variables we need — AWS_PROFILE, AWS_REGION,
-# SES_VERIFIED_EMAIL, ADMIN_USER_PASSWORD — already live there.
-# Cognito admin/researcher emails are usually set in .env.development as
-# well for seeding the local stack; reuse them here.
+# flip_cognito_admin_email, ADMIN_USER_PASSWORD — already live there.
 
 ENV_FILE := ../../../../.env.development
 
@@ -59,12 +57,8 @@ $(error Set FLIP_TFSTATE_BUCKET_NAME in $(ENV_FILE))
 endif
 
 # Terraform variables picked up via the TF_VAR_ env var convention.
-# Seed the admin email from SES_VERIFIED_EMAIL by default — in dev that's
-# usually the developer's own mailbox, which is what you want for
-# receiving the Cognito invite. Override by setting
-# flip_cognito_admin_email in .env.development.
-TF_VAR_flip_cognito_admin_email ?= $(SES_VERIFIED_EMAIL)
-
+# The Cognito seed-admin email is required and guarded below (next to the
+# bucket guards, after unset_or_placeholder is defined).
 export TF_VAR_AWS_REGION ?= $(AWS_REGION)
 export TF_VAR_flip_user_pool_name ?= flip-user-pool-dev
 export TF_VAR_flip_cognito_client ?= flip-cognito-client-dev
@@ -72,13 +66,19 @@ export TF_VAR_sign_in_hostname ?= localhost
 export TF_VAR_flip_cognito_admin_email
 export TF_VAR_flip_cognito_researcher_email ?= $(flip_cognito_researcher_email)
 export TF_VAR_ADMIN_USER_PASSWORD := $(ADMIN_USER_PASSWORD)
-export TF_VAR_SES_VERIFIED_EMAIL := $(SES_VERIFIED_EMAIL)
 
 # A copied-but-unedited .env leaves `<your-...>` placeholders in place. Those are non-empty, so an
 # emptiness check passes them straight through to Terraform, which fails much later with an opaque
 # AWS bucket-name error. Treat a placeholder as unset — same idea as XNAT_CREDENTIAL_PLACEHOLDER in
 # trust/xnat/Makefile.
 unset_or_placeholder = $(if $(1),$(if $(filter <%>,$(patsubst <%,<%>,$(1))),placeholder,),unset)
+
+# Cognito seed-admin mailbox — receives the dev pool's invite email. Required,
+# no default: set flip_cognito_admin_email in $(ENV_FILE) (usually the
+# developer's own mailbox). It previously defaulted from SES_VERIFIED_EMAIL,
+# which FLIP#919 removed along with the dev SES module.
+$(if $(call unset_or_placeholder,$(flip_cognito_admin_email)),$(error 📧 flip_cognito_admin_email must be set to a real mailbox in $(ENV_FILE) — it seeds the Cognito admin user (previously defaulted from the removed SES_VERIFIED_EMAIL)),)
+TF_VAR_flip_cognito_admin_email := $(flip_cognito_admin_email)
 
 # FLIP application S3 buckets (FLIP#24). Required, no defaults — value lives
 # in $(ENV_FILE). Fail fast with a useful message if missing.
@@ -107,7 +107,6 @@ validate:
 fmt:
 	terraform fmt -recursive .
 	terraform fmt -recursive ../modules/cognito
-	terraform fmt -recursive ../modules/ses
 
 plan:
 	terraform plan

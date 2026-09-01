@@ -50,8 +50,6 @@ class Settings(BaseSettings):
     AWS_COGNITO_USER_POOL_ID: str
     AWS_COGNITO_APP_CLIENT_ID: str
     AWS_SECRET_NAME: str
-    AWS_SES_ADMIN_EMAIL_ADDRESS: EmailStr  # e.g. admin@example.com
-    AWS_SES_SENDER_EMAIL_ADDRESS: EmailStr  # e.g. no-reply@example.com, but can be same as admin email
 
     # S3 bucket settings
     UPLOADED_MODEL_FILES_BUCKET: str
@@ -154,6 +152,18 @@ class Settings(BaseSettings):
     # it on locally to verify MFA end-to-end without pretending to be prod.
     ENFORCE_MFA: bool = True
 
+    # Which email backend send_templated_email (utils/email_sender.py) uses.
+    # "ses" sends through AWS SESv2; "console" logs the would-be email
+    # instead, so development needs no SES identity, templates or verified
+    # addresses (FLIP#919). Defaults secure ("ses") so any unknown
+    # environment behaves like prod; DevSettings overrides to "console",
+    # and ProdSettings narrows the type to Literal["ses"] so the console
+    # backend is unrepresentable in production. A dedicated flag rather
+    # than an ENV branch (same rationale as ENFORCE_MFA) so tests and
+    # deliberate local experiments can select the SES path without
+    # flipping ENV — which also drives DB auth, encryption and docs.
+    EMAIL_BACKEND: Literal["ses", "console"] = "ses"
+
     @field_validator("ENV", mode="before")
     @classmethod
     def coerce_empty_env(cls, v: str) -> str:
@@ -171,6 +181,21 @@ class Settings(BaseSettings):
         if isinstance(v, bool):
             return v
         return v.lower() in ("true", "1")    # type: ignore[union-attr]
+
+    @field_validator("EMAIL_BACKEND", mode="before")
+    @classmethod
+    def coerce_empty_email_backend(cls, v: object, info: ValidationInfo) -> object:
+        """Treat empty-string EMAIL_BACKEND as the per-class field default.
+
+        Same rationale as ``coerce_empty_scan_int``: a name that merely
+        appears in an env file (even commented out) is exported as an empty
+        string by the Makefile's ``export $(shell sed ...)``. Resolving via
+        ``model_fields`` keeps the coercion right per class: "ses" on the
+        base/ProdSettings, "console" on DevSettings.
+        """
+        if v is None or v == "":
+            return cls.model_fields[info.field_name].default  # type: ignore[index]
+        return v
 
     @field_validator("LOG_LEVEL", mode="before")
     @classmethod
@@ -296,6 +321,16 @@ class DevSettings(Settings):
     ENV: Literal["development"] = "development"
     POSTGRES_PASSWORD: str  # in dev, get DB password from env variable
 
+    # Development sends no real email: the console backend logs the would-be
+    # message instead (FLIP#919), so no SES identity or verified address is
+    # needed to boot. The address fields keep syntactically-valid defaults —
+    # they still appear in the logged output and in tests — and tolerate
+    # empty-string env values so a stale .env.development that still carries
+    # (possibly commented-out) AWS_SES_* lines can't fail EmailStr validation.
+    EMAIL_BACKEND: Literal["ses", "console"] = "console"
+    AWS_SES_ADMIN_EMAIL_ADDRESS: EmailStr = "flip-admin@example.com"
+    AWS_SES_SENDER_EMAIL_ADDRESS: EmailStr = "flip-no-reply@example.com"
+
     AES_KEY_BASE64: str  # in dev, get AES key from env variable
 
     INTERNAL_SERVICE_KEY_HASH: str  # in dev, get internal service auth key hash from env variable
@@ -310,6 +345,14 @@ class DevSettings(Settings):
     # the admin provisions kits and adds them here.
     FL_KIT_SLOT_NAMES: list[str] = []
 
+    @field_validator("AWS_SES_ADMIN_EMAIL_ADDRESS", "AWS_SES_SENDER_EMAIL_ADDRESS", mode="before")
+    @classmethod
+    def coerce_empty_ses_address(cls, v: object, info: ValidationInfo) -> object:
+        """Treat an empty-string SES address as the dev default (same shape as ``coerce_empty_scan_int``)."""
+        if v is None or v == "":
+            return cls.model_fields[info.field_name].default  # type: ignore[index]
+        return v
+
 
 class ProdSettings(Settings):
     """Settings specific to production environment.
@@ -319,6 +362,15 @@ class ProdSettings(Settings):
     """
 
     ENV: Literal["production"] = "production"
+
+    # Production email always goes through SES. The Literal narrowing makes
+    # EMAIL_BACKEND=console a boot-time ValidationError (same pattern as ENV
+    # above), so the dev console backend cannot be enabled in production by
+    # accident (FLIP#919). The addresses are required with no defaults —
+    # prod/stag keep failing fast at boot when the env vars are missing.
+    EMAIL_BACKEND: Literal["ses"] = "ses"
+    AWS_SES_ADMIN_EMAIL_ADDRESS: EmailStr  # e.g. admin@example.com
+    AWS_SES_SENDER_EMAIL_ADDRESS: EmailStr  # e.g. no-reply@example.com, but can be same as admin email
 
 
 # Eager load once (for app use)

@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-"""Settings parsing for the model-file scan pipeline (#52).
+"""Settings parsing for the model-file scan pipeline (#52) and the email backend (#919).
 
 The suffix-list fields carry ``NoDecode`` so the env value reaches the
 validator raw — these tests pin every accepted input shape (JSON list,
@@ -21,7 +21,7 @@ normalisation the suffix matching relies on.
 import pytest
 from pydantic import ValidationError
 
-from flip_api.config import Settings
+from flip_api.config import DevSettings, ProdSettings, Settings
 
 
 def test_allowed_extensions_default():
@@ -91,6 +91,64 @@ def test_suffix_list_passes_through_unexpected_types_for_pydantic_to_reject():
     """
     with pytest.raises(ValidationError):
         Settings(ALLOWED_MODEL_FILE_EXTENSIONS=123)
+
+
+def test_email_backend_defaults_secure_but_dev_uses_console():
+    """Unknown environments send real email; development logs instead (#919)."""
+    assert Settings().EMAIL_BACKEND == "ses"
+    assert DevSettings().EMAIL_BACKEND == "console"
+
+
+def test_email_backend_empty_string_falls_back_to_the_per_class_default():
+    """Same env-file empty-string trap as the scan ints, resolved per class."""
+    assert Settings(EMAIL_BACKEND="").EMAIL_BACKEND == "ses"
+    assert DevSettings(EMAIL_BACKEND="").EMAIL_BACKEND == "console"
+
+
+def test_console_email_backend_is_rejected_in_production():
+    """The dev substitute must be impossible to enable in production (#919).
+
+    ``ProdSettings`` narrows ``EMAIL_BACKEND`` to ``Literal["ses"]``, so the
+    console backend is a boot-time validation error rather than a silently
+    accepted setting that would drop every production email.
+    """
+    with pytest.raises(ValidationError) as exc_info:
+        ProdSettings(
+            EMAIL_BACKEND="console",
+            AWS_SES_ADMIN_EMAIL_ADDRESS="admin@example.com",
+            AWS_SES_SENDER_EMAIL_ADDRESS="sender@example.com",
+        )
+    assert "EMAIL_BACKEND" in str(exc_info.value)
+
+
+def test_dev_ses_addresses_are_optional_with_defaults():
+    """Development boots with no SES configuration at all (#919).
+
+    Asserted on the fields rather than an instance: a developer's own
+    ``.env.development`` may still hold real addresses, which legitimately
+    override these defaults. What must hold everywhere is that neither field
+    is *required* in dev, so a checkout with no SES lines still starts.
+    """
+    for name, expected in (
+        ("AWS_SES_ADMIN_EMAIL_ADDRESS", "flip-admin@example.com"),
+        ("AWS_SES_SENDER_EMAIL_ADDRESS", "flip-no-reply@example.com"),
+    ):
+        assert DevSettings.model_fields[name].is_required() is False
+        assert DevSettings.model_fields[name].default == expected
+        # ...while production still demands an explicit address.
+        assert ProdSettings.model_fields[name].is_required() is True
+
+
+def test_dev_ses_addresses_tolerate_empty_strings():
+    """Empty strings matter as much as absent values.
+
+    A stale ``.env.development`` that still carries (even commented-out)
+    ``AWS_SES_*`` lines exports the bare name, and ``EmailStr`` would otherwise
+    reject the empty value and take flip-api down at import.
+    """
+    blanked = DevSettings(AWS_SES_ADMIN_EMAIL_ADDRESS="", AWS_SES_SENDER_EMAIL_ADDRESS="")
+    assert blanked.AWS_SES_ADMIN_EMAIL_ADDRESS == "flip-admin@example.com"
+    assert blanked.AWS_SES_SENDER_EMAIL_ADDRESS == "flip-no-reply@example.com"
 
 
 @pytest.mark.parametrize("blank", [",,,", " , ", " ", ",", "[]"])

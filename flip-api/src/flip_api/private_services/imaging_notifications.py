@@ -15,10 +15,8 @@
 import json
 from uuid import UUID
 
-import boto3
 from sqlmodel import Session, col, select
 
-from flip_api.config import get_settings
 from flip_api.db.models.main_models import Queries, Trust, TrustTask, XNATImageStatus, XNATProjectStatus
 from flip_api.domain.interfaces.trust import (
     ICreatedImagingProject,
@@ -27,6 +25,7 @@ from flip_api.domain.interfaces.trust import (
 )
 from flip_api.private_services.project_images_helpers import insert_status
 from flip_api.utils.constants import IMAGING_CREDENTIALS_TEMPLATE_NAME, IMAGING_PROJECT_ACCESS_TEMPLATE_NAME
+from flip_api.utils.email_sender import send_templated_email
 from flip_api.utils.encryption import decrypt
 from flip_api.utils.logger import logger
 
@@ -84,9 +83,6 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
     trust = db.exec(select(Trust).where(Trust.id == task.trust_id)).first()
     trust_name = trust.name if trust else "Unknown Trust"
 
-    sesv2 = boto3.client("sesv2", region_name=get_settings().AWS_REGION)
-    sender_email = get_settings().AWS_SES_SENDER_EMAIL_ADDRESS
-
     # Send credential emails to newly created users
     for user in imaging_project.created_users:
         try:
@@ -100,15 +96,10 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
                 password=decrypted_password,
             )
 
-            sesv2.send_email(
-                FromEmailAddress=sender_email,
-                Destination={"ToAddresses": [user.email]},
-                Content={
-                    "Template": {
-                        "TemplateName": IMAGING_CREDENTIALS_TEMPLATE_NAME,
-                        "TemplateData": json.dumps(template_data.model_dump(mode="json"), default=str),
-                    }
-                },
+            send_templated_email(
+                recipient=user.email,
+                template_name=IMAGING_CREDENTIALS_TEMPLATE_NAME,
+                template_data=template_data.model_dump(mode="json"),
             )
             logger.info(f"Sent XNAT credentials email to {user.email} for project '{imaging_project.name}'")
 
@@ -125,15 +116,10 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
                 username=added_user.username,
             )
 
-            sesv2.send_email(
-                FromEmailAddress=sender_email,
-                Destination={"ToAddresses": [added_user.email]},
-                Content={
-                    "Template": {
-                        "TemplateName": IMAGING_PROJECT_ACCESS_TEMPLATE_NAME,
-                        "TemplateData": json.dumps(access_template_data.model_dump(mode="json"), default=str),
-                    }
-                },
+            send_templated_email(
+                recipient=added_user.email,
+                template_name=IMAGING_PROJECT_ACCESS_TEMPLATE_NAME,
+                template_data=access_template_data.model_dump(mode="json"),
             )
             logger.info(f"Sent project access email to {added_user.email} for project '{imaging_project.name}'")
 

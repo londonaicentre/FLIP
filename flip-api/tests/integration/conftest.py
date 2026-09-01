@@ -370,7 +370,12 @@ def ses_send_email_recorder(aws_mock, monkeypatch) -> list[dict]:
     Switching to a real moto round-trip is a one-line fixture change once
     moto implements sesv2 templates upstream
     (https://github.com/getmoto/moto/issues — search ``sesv2 template``).
+
+    Also pins ``EMAIL_BACKEND`` to ``"ses"``: development defaults to the
+    console backend (FLIP#919), so without this the SES path under test would
+    never be reached and the recorder would stay empty.
     """
+    monkeypatch.setattr(get_settings(), "EMAIL_BACKEND", "ses")
     recorded: list[dict] = []
     real_client_factory = boto3.client
 

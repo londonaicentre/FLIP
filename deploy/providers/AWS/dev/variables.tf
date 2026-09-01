@@ -53,11 +53,6 @@ variable "ADMIN_USER_PASSWORD" {
   sensitive   = true
 }
 
-variable "SES_VERIFIED_EMAIL" {
-  type        = string
-  description = "Verified SES sender address for the dev account."
-}
-
 variable "cognito_callback_urls" {
   type        = list(string)
   description = "OAuth callback URLs for the dev Cognito app client. Doubles as the source for flip-api's CORS allowlist (see flip_api/utils/cognito_helpers.py:get_cors_allowed_origins), so every UI origin that calls the API in dev must be listed here. Cognito only accepts http:// for the localhost host."
