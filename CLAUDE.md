@@ -400,7 +400,31 @@ After changes, evaluate if docs need updating:
 
 ## CI/CD
 
-GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `terraform_plan.yml`, `terraform_apply.yml`, `terraform_drift.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+
+### Terraform runs in CI (FLIP#962)
+
+`validate_terraform.yml` still does the credential-free `fmt`/`validate` pass. On top of that, three
+OIDC-authenticated workflows drive real state — no long-lived AWS keys in GitHub:
+`terraform_plan.yml` (plan staging on every PR touching `deploy/providers/AWS/**`, read-only role,
+`-lock=false`), `terraform_apply.yml` (push to `develop` → stag, push to `main` → **prod**), and
+`terraform_drift.yml` (nightly plan, one issue per environment). **Merging to `main` now changes
+production infrastructure** — the previous "don't `make apply` for prod" rule is superseded.
+
+Two guards make the unattended apply safe, and both live in `deploy/providers/AWS/scripts/`:
+`resolve-image-tags.sh` pins this commit's `sha-<short7>` (falling back to the tag the service is
+already running — the configured `:stag`/`:prod` never *replaces* a deployed tag, which would
+discard the FLIP#751 pin), and
+`check-fl-plan-impact.sh` holds any apply whose plan touches `fl-server-net-1` / `fl-api-net-1` or
+deletes EFS, because that would kill an in-flight training run (FLIP#770).
+
+Terraform inputs reach CI through `scripts/compose-ci-env.sh`, which composes `.env.stag` /
+`.env.production` from the `aws-stag` / `aws-prod` GitHub environments so the Makefile stays the one
+definition of the env-to-`TF_VAR_` mapping. Consequence: **adding an `export TF_VAR_…` line means
+also updating that script's manifest, all three workflow `env:` blocks, and both GitHub
+environments** — `scripts/tests/test_compose_ci_env.sh` fails the build otherwise. The OIDC roles are
+a separate Terraform root, `deploy/providers/AWS/ci/`, applied from a laptop only. Full flow, one-time
+setup and break-glass: [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md).
 
 ### Docker image builds: gated on tests, manual trigger for branches
 

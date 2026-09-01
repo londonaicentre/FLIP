@@ -20,6 +20,7 @@
 | `parameter_store.tf` | SSM Parameter Store entries |
 | `backend.tf` | S3 backend with S3 native locking (`use_lockfile`) |
 | `variables.tf` | All Terraform variables with defaults |
+| `ci/` | Separate root (`flip/ci/terraform.tfstate`): the GitHub Actions OIDC plan/apply roles. Applied from a laptop only — see `ci/README.md` |
 
 ## AWS Profiles
 
@@ -52,7 +53,57 @@ make add-fl-kits N=<n> PROD=<stag|true>       # Ensure N more claimable FL kit s
 make apply-fl-kit-slots                       # Targeted plan/apply of the /flip/fl_kit_slot_names SSM parameter (slot activation path)
 make destroy                                  # Selective destroy (preserves Cognito, Secrets, S3)
 make aws-login                                # AWS SSO login
+make print-tf-env                             # Print resolved TF_VAR_* as KEY=value (consumed by the CI workflows)
+make seed-ci-keypair-param                    # Publish the aws_key_pair public key from state to SSM, for CI plans
+make -C ci init/plan/apply                    # GitHub Actions OIDC roles (laptop only — see ci/README.md)
 ```
+
+## Terraform CI (FLIP#962)
+
+Terraform runs in GitHub Actions as well as from a laptop. `terraform_plan.yml`
+plans staging on every PR touching `deploy/providers/AWS/**`; `terraform_apply.yml`
+applies on push to `develop` (stag) and `main` (prod); `terraform_drift.yml` plans
+nightly and raises one issue per environment. All three authenticate via OIDC —
+no long-lived AWS keys in GitHub. **Merging to `main` now changes production
+infrastructure**; the old "don't `make apply` for prod" rule is superseded.
+
+Things worth knowing before touching any of it:
+
+- **The Makefile stays the single source of truth for Terraform inputs.** CI
+  composes `.env.stag` / `.env.production` from GitHub environment secrets and
+  variables (`scripts/compose-ci-env.sh`), then runs `make print-tf-env >> $GITHUB_ENV`.
+  Adding an `export TF_VAR_…` line therefore also means adding the key to that
+  script's manifest, to all three workflow `env:` blocks, and to both GitHub
+  environments — `scripts/tests/test_compose_ci_env.sh` fails the build otherwise.
+- **Env values now live in two places** (the operator `.env.<env>` file and the
+  GitHub environment) with no automatic link. Missing keys fail loudly; drifted
+  ones show up as an unexpected plan diff.
+- **Use `aws-stag` / `aws-prod`, never the existing `flip` environment** — `flip`
+  holds *test* values for `AES_KEY_BASE64` / `POSTGRES_PASSWORD` / `SES_VERIFIED_EMAIL`.
+- **An apply resolves the image tag rather than reading it** (`scripts/resolve-image-tags.sh`):
+  this commit's `sha-<short7>` once published, else the tag the service is already
+  running. The configured `:stag`/`:prod` can never *replace* a deployed tag —
+  that would discard the FLIP#751 pin. (Reusing `:stag` when that is genuinely
+  what stag runs is a no-op, and expected.)
+- **An apply holds if the plan touches FL** (`scripts/check-fl-plan-impact.sh`):
+  `fl-server-net-1` / `fl-api-net-1` task definitions or services, or any EFS
+  deletion. `flip-api` is deliberately not watched. The hub cannot be asked
+  whether a run is in flight — `/fl/quiesce` is Cognito-gated, CloudFront strips
+  the internal key, and the DB is in a private subnet — so the plan is asked instead.
+
+- **Seed the GitHub environments with `scripts/setup-github-environments.sh`** (repo
+  admin, `--dry-run` first). It derives the secret-vs-variable split from
+  `terraform_plan.yml` rather than hard-coding it — a key stored as a variable but
+  read as `secrets.X` resolves to empty and fails the run pointing at the wrong
+  cause — and refuses when `ci/` is initialised for the other account.
+- **Never seed a GitHub environment from a laptop `.env` file without checking it.**
+  `scripts/reconcile_ci_env.py --env <e> --compare <file>` rebuilds the Terraform
+  inputs from deployed state and reports drift (secrets shown as digests, never
+  values). Staging's checked-out file was 13 values stale, including a renamed UI
+  bucket that plans as a `prevent_destroy` violation. Its `--out` writes only the
+  Terraform inputs, so it refuses to overwrite a real operator env file.
+
+Full flow, one-time setup and break-glass: [README.md](README.md#terraform-ci-plan-on-pr-apply-on-merge).
 
 ## Infrastructure
 
@@ -65,7 +116,7 @@ make aws-login                                # AWS SSO login
 - **CloudFront + S3**: flip-ui static hosting
 - **Secrets Manager**: `FLIP_API` secret (AES key, DB password, key hashes)
 - **Cognito**: `flip-user-pool` with email auth
-- **Container registry**: **GHCR** (`ghcr.io/londonaicentre/`) for every FLIP image (flip-api, flare-fl-api, flare-fl-server, flower-superlink, trust-api, imaging-api, data-access-api, orthanc, omop-db, XNAT). ECS Fargate task definitions pull directly from GHCR — `var.docker_registry` in `variables.tf` defaults to it; trust EC2 / on-prem hosts do too. **There is no ECR mirror.** A surgical centralhub redeploy (per `project_prod_ecs_deploy.md` — don't `make apply` for prod) is now one command: GH workflow `workflow_dispatch` to build the branch image to GHCR (publishes `sha-<short7>`) → `make deploy-centralhub TAG=sha-<short7>`, which registers new task-definition revisions and repoints the services (FLIP#751 — the previously manual register-task-definition + update-service runbook). The flip-ui bundle ships separately via `make deploy-ui` (it's static assets in S3, not a container image).
+- **Container registry**: **GHCR** (`ghcr.io/londonaicentre/`) for every FLIP image (flip-api, flare-fl-api, flare-fl-server, flower-superlink, trust-api, imaging-api, data-access-api, orthanc, omop-db, XNAT). ECS Fargate task definitions pull directly from GHCR — `var.docker_registry` in `variables.tf` defaults to it; trust EC2 / on-prem hosts do too. **There is no ECR mirror.** A surgical centralhub redeploy is now one command: GH workflow `workflow_dispatch` to build the branch image to GHCR (publishes `sha-<short7>`) → `make deploy-centralhub TAG=sha-<short7>`, which registers new task-definition revisions and repoints the services (FLIP#751 — the previously manual register-task-definition + update-service runbook). The flip-ui bundle ships separately via `make deploy-ui` (it's static assets in S3, not a container image).
 
 ## Verifying a Central-Hub FL redeploy
 

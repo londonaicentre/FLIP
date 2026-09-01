@@ -689,6 +689,235 @@ Verify the trust can poll the hub (check trust-api logs for successful task poll
 
 Full details are in the [local provider README](../local/README.md).
 
+## Terraform CI: plan on PR, apply on merge
+
+Terraform runs in GitHub Actions as well as from a laptop (FLIP#962). Three
+workflows, all authenticating through OIDC — there are no long-lived AWS keys in
+GitHub:
+
+| Workflow | Trigger | Role | What it does |
+| --- | --- | --- | --- |
+| `terraform_plan.yml` | PR touching `deploy/providers/AWS/**` | plan (read-only) | Posts the staging plan as a PR comment |
+| `terraform_apply.yml` | Push to `develop` / `main` | apply | Applies to staging / production |
+| `terraform_drift.yml` | Nightly 03:00 UTC | plan (read-only) | Raises one issue per environment when reality has drifted |
+
+`validate_terraform.yml` still runs `fmt`/`validate` with `-backend=false` on every
+change; it catches HCL errors without credentials and is the fast gate.
+
+### Where the values come from
+
+The Makefile is the only definition of how env values map onto Terraform inputs,
+and CI does not duplicate it. Each workflow:
+
+1. composes `.env.stag` / `.env.production` from GitHub environment secrets and
+   variables (`scripts/compose-ci-env.sh`),
+2. writes `~/.ssh/host-aws.pub` from SSM (see below),
+3. runs `make print-tf-env >> "$GITHUB_ENV"` to hand the resolved `TF_VAR_*` to
+   Terraform.
+
+**The contract this creates: changing an environment value now means changing it
+in two places** — the operator's `.env.<env>` file *and* the matching GitHub
+environment. There is no automatic link between them. What catches a slip:
+
+- `compose-ci-env.sh` fails the build naming every missing key, rather than
+  letting Terraform plan a destructive diff from an empty string;
+- `scripts/tests/test_compose_ci_env.sh` cross-checks the key manifest against
+  the Makefile's `export TF_VAR_…` lines *and* against all three workflows, so
+  adding a Terraform input without wiring it through fails in the PR;
+- a value that has merely drifted (not gone missing) shows up as an unexpected
+  plan diff — compare against a laptop `AWS_PROFILE=stag make plan` on the same
+  commit when a CI plan looks wrong.
+
+### GitHub environments
+
+Two environments hold the inputs. Do **not** reuse the existing `flip`
+environment — it carries *test* values for `AES_KEY_BASE64`, `POSTGRES_PASSWORD`
+and `SES_VERIFIED_EMAIL` for the unit-test workflows, and feeding those into a
+plan or apply would be a genuine incident.
+
+| Environment | Deployment branch policy | Used by |
+| --- | --- | --- |
+| `aws-stag` | none (PRs must be able to plan) | plan, apply-to-stag, stag drift |
+| `aws-prod` | `main`, plus the default branch for the nightly drift job | apply-to-prod, prod drift |
+
+Each holds `TF_PLAN_ROLE_ARN` and `TF_APPLY_ROLE_ARN` (from `make -C ci output`)
+alongside the Terraform inputs. Stored as environment *secrets*:
+`ADMIN_USER_PASSWORD`, `AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY`,
+`INTERNAL_SERVICE_KEY_HASH`, `POSTGRES_DB`, `POSTGRES_USER`. Everything else is a variable — the authoritative list is
+`REQUIRED_KEYS` / `OPTIONAL_KEYS` in `scripts/compose-ci-env.sh`.
+
+`AWS_PROFILE` is deliberately *not* stored: it is derived from the target
+environment, so a mis-set variable cannot point a stag run at the prod account.
+
+**Know what this exposes — this is a recorded decision, not an oversight.** The
+plan job declares `environment: aws-stag`, because that is the only way a workflow
+can read environment secrets, and the plan needs real values to be truthful. It
+runs on the pull request's own code. So **anyone with write access to this
+repository can read the staging secrets** (`AES_KEY_BASE64`,
+`INTERNAL_SERVICE_KEY`, `ADMIN_USER_PASSWORD`, the DB user) by adding a step that
+prints them. GitHub masks registered secrets in logs, but base64 or splitting the
+string defeats masking trivially — do not count on it.
+
+Fork PRs cannot: GitHub withholds both the OIDC token and environment secrets from
+them, and the job skips outright on the same-repo guard.
+
+Note the apply routing gives no protection here, because nothing is being applied —
+the exposure is in the plan, before any merge.
+
+Weighed and accepted on 2026-09-01: write access to this repository already implies
+trust with staging, and the alternative costs a round trip on every infrastructure
+PR. Dummy values were considered and rejected — they feed the Secrets Manager
+version, the Cognito admin user and the task definitions, so wrong ones add four to
+six spurious "must be replaced" lines to every plan, which trains reviewers to skim
+the diff and would mask a real change to exactly those resources.
+
+To revisit, gate the plan job on a maintainer-applied label — one line in
+`terraform_plan.yml`:
+
+```yaml
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && contains(github.event.pull_request.labels.*.name, 'terraform-plan')
+```
+
+### Recovering an environment's true values
+
+The operator `.env` files drift, and seeding GitHub from a stale one bakes that
+drift into every future CI plan. `scripts/reconcile_ci_env.py` rebuilds the
+Terraform inputs from what is actually deployed — live state, plus the things
+state cannot answer (the running image tags, the FL kit-slot list, the live
+secret material):
+
+```bash
+python3 scripts/reconcile_ci_env.py --env prod --profile prod --compare ../../../.env.production
+python3 scripts/reconcile_ci_env.py --env stag --profile stag --out /tmp/stag-tf-inputs.env
+```
+
+Secret values are written to `--out` but never printed; the summary shows a
+truncated SHA-256 so two copies can be compared without either being disclosed.
+`--compare` reports drift against an existing file without writing anything.
+
+**`--out` emits only the ~39 Terraform inputs, not a complete operator env file** —
+the trust, XNAT, Orthanc and OMOP settings are not recoverable from AWS. It
+refuses to overwrite an existing file for that reason.
+
+Run against staging on 2026-08-19 this found 13 differences from the checked-out
+`.env.stag`, including a renamed UI bucket (`flipstag` → `flip-ui-stag`) that
+plans as `must be replaced` against a `prevent_destroy` lifecycle rule, a stale
+`FLARE_KIT_DATE`, an out-of-date `API_PORT`, and rotated service keys. Six of the
+thirteen were not stale but **absent**, which is worse: the Makefile exports
+`DEPLOY_TRUST_EC2`, `LOCAL_TRUST_PUBLIC_IPS`, `K8S_TRUST_PUBLIC_IPS`,
+`JOB_RESOURCE_SPEC_*` and `FL_KIT_SLOT_NAMES` unconditionally, so an absent key
+arrives at Terraform as `""` and **does not** fall back to the `variables.tf`
+default — the same trap as `UI_PORT`. `LOCAL_TRUST_PUBLIC_IPS` empty would have
+dropped the on-prem trust's NLB ingress rule. `.env.stag` was reconciled on
+2026-09-01 and both environments now compose cleanly.
+
+Do not trust a recovered value you have not seen a plan agree with. The staging
+plan caught this tool getting `DEPLOY_TRUST_EC2` wrong: it was derived from the
+root `aws_instance.ec2_instance`, which is the SSM bastion and exists in every
+environment, so it always read `true` — and staging, which runs no cloud trust,
+would have had a `t3.xlarge` trust host created under it. The cloud trust host is
+`module.trust_ec2[0].aws_instance.trust_host`, and state keys a module's
+resources under a separate `module` field that the root-level lookup never sees.
+
+Planning **staging** from a laptop needs staging's EC2 public key. The two
+accounts hold different keypairs, both Terraform resources read the one path
+`~/.ssh/host-aws.pub`, and `public_key` is ForceNew — so whichever account your
+local file does not match plans a keypair replacement that ripples into the
+bastion. CI is unaffected (each workflow writes the file from its own account's
+`/flip/ci/host_aws_public_key`). To reproduce that locally without touching your
+`~/.ssh`:
+
+```bash
+aws ssm get-parameter --name /flip/ci/host_aws_public_key --profile stag \
+  --query Parameter.Value --output text > /tmp/stagkey/host-aws.pub
+AWS_PROFILE=stag LOCK=false make plan \
+  TF_VAR_flip_keypair=/tmp/stagkey/host-aws \
+  TF_VAR_ec2_public_key_path=/tmp/stagkey/host-aws.pub
+```
+
+### One-time setup
+
+```bash
+# 1. Publish the EC2 keypair public key so CI reproduces it byte for byte.
+#    Read from state, not from ~/.ssh: a laptop key that has drifted would make
+#    CI plan a replacement of both aws_key_pair resources — and because
+#    public_key is ForceNew, that ripples into aws_instance.ec2_instance.
+make seed-ci-keypair-param                 # stag
+make seed-ci-keypair-param PROD=true       # prod
+
+# 2. Create the OIDC roles, from a laptop (see ci/README.md).
+make -C ci init && make -C ci plan && make -C ci apply
+make -C ci init PROD=true && make -C ci plan PROD=true && make -C ci apply PROD=true
+
+# 3. Create and populate the two GitHub environments. Run --dry-run first.
+#    Reads the secret-vs-variable split out of terraform_plan.yml, so it cannot
+#    disagree with what the workflows dereference, and refuses to run when ci/ is
+#    initialised for the other account (which would wire in the wrong role ARNs).
+bash scripts/setup-github-environments.sh --env stag --env-file ../../../.env.stag --dry-run
+bash scripts/setup-github-environments.sh --env stag --env-file ../../../.env.stag
+bash scripts/setup-github-environments.sh --env prod --env-file ../../../.env.production
+```
+
+Requires repo admin. It prints key names only — values go from the local env file
+straight to GitHub.
+
+### What an automated apply will not do
+
+Two hazards would make an unattended apply unsafe. Both are handled in the
+pipeline rather than left to a runbook.
+
+**It will not un-pin the released image.** `ecs_services.tf` tracks
+`max(terraform_revision, live_revision)`, so a *no-op* apply preserves whatever
+`make deploy-centralhub` deployed. But an apply that changes a task definition
+mints a revision from `var.docker_image_tag` — and the env files set that to the
+mutable `:stag` / `:prod`, which would silently discard the immutable
+`sha-<short7>` pin from FLIP#751. So `scripts/resolve-image-tags.sh` resolves the
+tag instead of reading it: this commit's `sha-<short7>` once published, else the
+tag the service is already running, and only on an empty account the configured
+tag. The guarantee is about substitution: the configured tag can never replace a
+deployed one. An environment genuinely running `:stag` (staging, today) gets
+`:stag` back, which is a no-op; what cannot happen is a sha-pinned service being
+moved onto a mutable tag.
+
+**It will not disturb a training run.** Replacing `fl-server-net-1` kills any
+in-flight run (FLIP#770). A runner cannot ask the hub whether one is in flight —
+`GET /fl/quiesce` needs a Cognito session (and prod runs `ENFORCE_MFA=true`),
+CloudFront strips `X-Internal-Service-Key` at the edge, and the scheduler state
+is in a private subnet. So `scripts/check-fl-plan-impact.sh` asks the plan
+instead: if the plan changes `fl-server-net-1` / `fl-api-net-1` (task definition
+or service), or deletes any EFS resource, the job **holds** and names what it
+found. Everything else — VPC, IAM, S3, SSM, CloudFront, ALB, and a plain
+`flip-api` roll — applies unattended.
+
+When it holds:
+
+1. Enable deployment mode on the hub (pauses FL job pickup; queued jobs hold, the
+   running job finishes and frees its net).
+2. Wait until `GET /fl/quiesce` reports deployment mode ON and no BUSY net.
+3. Re-run `terraform_apply.yml` via `workflow_dispatch` on the same branch.
+4. Disable deployment mode.
+
+`flip-api` is deliberately outside the watch list: its deploy is a rolling
+replacement (`desired_count` 1, `deployment_minimum_healthy_percent` 100) and the
+run is held by fl-server, not the hub. Watching it would hold nearly every apply,
+since any image-tag change updates the task definition.
+
+### Break-glass
+
+The pipeline is additive — the laptop workflow is unchanged and remains the
+recovery path.
+
+- **CI is wedged / the role is broken.** `AWS_PROFILE=stag make init plan apply`
+  as before. The CI roles live in their own state (`flip/ci/terraform.tfstate`)
+  and are applied only from a laptop, so a bad main-state apply cannot lock CI
+  out of the apply that would fix it.
+- **A plan is stuck on the state lock.** PR plans run with `-lock=false` and never
+  take it. An apply does; `make force-unlock LOCK_ID=<id>` releases it.
+- **An apply must not run.** Disable `terraform_apply.yml` in the Actions tab, or
+  revert the merge — the workflow only acts on `deploy/providers/AWS/**` changes.
+
 ## Troubleshooting
 
 ### Quick Diagnosis
