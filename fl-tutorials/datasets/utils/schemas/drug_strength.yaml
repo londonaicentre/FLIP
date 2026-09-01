@@ -1,0 +1,44 @@
+schema_type: dataframe
+columns:
+  drug_concept_id:
+    dtype: int64
+  ingredient_concept_id:
+    dtype: int64
+  amount_value:
+    dtype: float64
+    nullable: true
+    required: false
+  amount_unit_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  numerator_value:
+    dtype: float64
+    nullable: true
+    required: false
+  numerator_unit_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  denominator_value:
+    dtype: float64
+    nullable: true
+    required: false
+  denominator_unit_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  box_size:
+    dtype: int64
+    nullable: true
+    required: false
+  valid_start_date:
+    dtype: datetime64[ns]
+  valid_end_date:
+    dtype: datetime64[ns]
+  invalid_reason:
+    dtype: string[python]
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

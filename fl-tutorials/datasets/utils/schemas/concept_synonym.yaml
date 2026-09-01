@@ -1,0 +1,10 @@
+schema_type: dataframe
+columns:
+  concept_id:
+    dtype: int64
+  concept_synonym_name:
+    dtype: string[python]
+  language_concept_id:
+    dtype: int64
+strict: true
+drop_invalid_rows: false

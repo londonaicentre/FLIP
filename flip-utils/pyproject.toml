@@ -196,10 +196,12 @@ dev = [
     # dependency of the spleen tutorial itself (3d_spleen_segmentation/pyproject.toml); it is here
     # only so the test can import the script under test. Deliberately NOT a runtime dep.
     "natsort>=8.4.0",
+    "pandera[pandas]>=0.28.1",
     "pyqt5>=5.15.11",
     "pytest>=8.4.2",
     "pytest-cov>=7.0.0",
     "ruff>=0.14.2",
+    "sqlglot>=28.6.0",
     "types-requests>=2.32.4.20260107",
 ]
 
