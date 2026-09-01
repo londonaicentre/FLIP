@@ -203,8 +203,7 @@ module "cognito" {
   #
   # The UI signs in with USER_SRP_AUTH (Cognito's native flow, not an OAuth2
   # redirect), so Cognito itself never redirects to these URLs. flip-api reads
-  # them back instead: get_cors_allowed_origins()
-  # (flip-api/src/flip_api/utils/cognito_helpers.py) calls
+  # them back instead: its get_cors_allowed_origins() calls
   # describe_user_pool_client, normalizes each CallbackURL to a
   # scheme://host[:port] origin, and CORSMiddleware serves that list with
   # allow_credentials=true. Every browser origin that must call the API in
