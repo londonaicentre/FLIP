@@ -61,20 +61,6 @@ module "cognito" {
   mfa_configuration  = var.cognito_mfa_configuration
 }
 
-# FLIP#919 phase 5: development email is flip-api's console backend, so the
-# dev account no longer carries an SES identity or templates. This removed
-# block destroys the previously-managed resources (the sender identity + 3
-# templates) from the shared dev state on the next apply; it is inert
-# afterwards and safe to delete once applied. Re-adding SES to dev would
-# mean re-verifying the sender address by email.
-removed {
-  from = module.ses
-
-  lifecycle {
-    destroy = true
-  }
-}
-
 module "flip_model_files_uploads_bucket" {
   source      = "../modules/flip_s3_bucket"
   bucket_name = var.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME

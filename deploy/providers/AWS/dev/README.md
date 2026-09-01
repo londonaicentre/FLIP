@@ -7,7 +7,7 @@ This directory holds the Terraform stack for the **dev AWS account**. It deploys
 
 Everything else (VPC, EC2, RDS, ALB, NLB, Route53, ACM, IAM, CloudWatch, SES) is intentionally **not** part of this stack; local development runs those services via Docker Compose in this repository's `deploy/` root compose files. The prod/stag stack at `deploy/providers/AWS/` is the source of truth for every non-dev environment.
 
-**No SES.** Development sends no email: flip-api defaults to `EMAIL_BACKEND=console`, which logs the would-be message instead of calling SES (FLIP#919). The dev account's SES identity and templates were removed in that change — the `removed` block in `main.tf` destroys them on the next apply and is safe to delete once applied. Cognito's own invite and password-reset emails are unaffected; the user pool uses Cognito's default sender, not SES.
+**No SES.** Development sends no email: flip-api defaults to `EMAIL_BACKEND=console`, which logs the would-be message instead of calling SES (FLIP#919). The dev account's SES sender identity and three templates were destroyed as part of that change, and this root no longer instantiates `modules/ses` — only prod/stag do. Re-adding SES to dev would mean re-verifying the sender address by email. Cognito's own invite and password-reset emails are unaffected; the user pool uses Cognito's default sender, not SES.
 
 The Cognito and S3 resource definitions are shared with the prod stack via the modules under `deploy/providers/AWS/modules/{cognito,flip_s3_bucket}/`, so any change to either service lands in both environments from the same code.
 
