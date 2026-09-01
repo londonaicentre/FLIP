@@ -13,18 +13,21 @@ limitations under the License.
 
 # fl-tutorials tests
 
-CPU-only pytest suite over the tutorial apps: their transform chains, plus a static drift guard on
-the Flower apps' `min_clients` wiring (which also covers `fl-apps/flower/`, the templates that
-actually deploy). No GPU, no dataset download, no FL image, no network — the fixtures are synthetic
-DICOMs built in-process, and the whole suite runs in a couple of seconds.
+CPU-only pytest suites over `fl-tutorials/`: the tutorial apps' transform chains plus a static
+drift guard on the Flower apps' `min_clients` wiring (which also covers `fl-apps/flower/`, the
+templates that actually deploy), and a second, dataset-tooling suite over `datasets/**`. No GPU,
+no dataset download, no FL image, no network — fixtures are synthesised in-process (synthetic
+DICOMs, or for the dataset-tooling tests, small in-memory DICOM/CSV fixtures), and each suite
+runs in well under a second.
 
 ```bash
-make -C fl-tutorials test        # ruff over fl-tutorials/ + this suite
-make -C fl-tutorials pytest      # this suite only
-make -C fl-tutorials lint        # ruff only
+make -C fl-tutorials test              # ruff over fl-tutorials/ + both suites below
+make -C fl-tutorials pytest            # tutorial-app suite only (tests/, minus tests/datasets/)
+make -C fl-tutorials pytest-datasets   # dataset-tooling suite only (tests/datasets/)
+make -C fl-tutorials lint              # ruff only
 ```
 
-CI runs the same two commands on every pull request touching `fl-tutorials/**`, `fl-apps/flower/**`
+CI runs the same commands on every pull request touching `fl-tutorials/**`, `fl-apps/flower/**`
 or the flip-utils source/environment, and on pushes to main/develop
 (`.github/workflows/fl-tutorials-tests.yml`), for both backends.
 
@@ -39,6 +42,17 @@ Cross-cutting guards that assert a property across several source files
 (`test_dicom_orientation.py`, `test_flower_min_clients_wiring.py`,
 `test_spleen_inference_config_parity.py`) stay at the root of `tests/`, because
 no single source path describes what they cover.
+
+**Two environments, split at `tests/datasets/`.** Everything else under `tests/` covers the
+tutorial apps themselves and runs in flip-utils' environment (`flip-utils[full]` — monai,
+pydicom, torch, timm, sklearn), which is what the FL images give those apps at runtime — see
+"What it runs" below (`make -C fl-tutorials pytest`, which passes `--ignore=tests/datasets`).
+`tests/datasets/` instead covers `fl-tutorials/datasets/**`, which is workstation tooling that
+never runs on an FL image — it has no business pulling `pandera`/`sqlglot` (needed to validate
+the OMOP tables that tooling generates) into flip-utils' runtime environment. Those tests run
+against `datasets/spleen`'s own project instead, which already declares everything they need
+(`pandera[pandas,io]`, `sqlglot`, `pandas`, `pydicom`, `natsort`, `monai`) — its `dev` dependency
+group adds only `pytest` on top: `make -C fl-tutorials pytest-datasets`.
 
 ## Why this exists
 

@@ -57,19 +57,29 @@ format:
 	$(RUFF) check --fix .
 
 # ---------------------------------------------------------------------------
-# CPU-only pytest suite over the tutorial transform chains (fl-tutorials/tests/).
-# No GPU, no dataset, no FL image — unlike run-tutorial, which needs all three.
+# CPU-only pytest over fl-tutorials/tests/, split across two environments because the two
+# halves of that tree need different dependencies.
 #
-# It runs in flip-utils' environment (`flip-utils[full]`: monai, pydicom, torch),
-# which is what the FL images give these apps at runtime, rather than in a
-# per-tutorial venv — arkplus_fine_tuning/pyproject.toml does not even declare
-# monai, so that env cannot import its own data_utils.py. See tests/README.md.
+# Tutorial-app tests (everything under tests/ except tests/datasets/) run in flip-utils'
+# environment (`flip-utils[full]`: monai, pydicom, torch), which is what the FL images give
+# these apps at runtime, rather than in a per-tutorial venv — arkplus_fine_tuning/pyproject.toml
+# does not even declare monai, so that env cannot import its own data_utils.py. See
+# tests/README.md.
 PYTEST ?= uv run --project ../flip-utils --extra full --group dev pytest
 
-.PHONY: pytest test unit_test
-pytest:
-	$(PYTEST) tests
+# Dataset-tooling tests (tests/datasets/) exercise datasets/**, which is workstation tooling,
+# not FL-runtime code — flip-utils has no use for pandera/sqlglot, so those tests run against
+# datasets/spleen's own project instead, which already declares everything they need
+# (pandera[pandas,io], sqlglot, pandas, pydicom, natsort, monai). See tests/README.md.
+DATASETS_PYTEST ?= uv run --project datasets/spleen --group dev pytest
 
-test: lint pytest
+.PHONY: pytest pytest-datasets test unit_test
+pytest:
+	$(PYTEST) tests --ignore=tests/datasets
+
+pytest-datasets:
+	$(DATASETS_PYTEST) tests/datasets
+
+test: lint pytest pytest-datasets
 
 unit_test: test

@@ -18,5 +18,13 @@ dependencies = [
     "tqdm>=4.67.3",
 ]
 
+[dependency-groups]
+# Test-only: fl-tutorials/tests/datasets/ runs in this project's environment (see
+# fl-tutorials/tests/README.md) rather than flip-utils', because pandera/sqlglot are needed
+# only to test this workstation tooling, not to run FL jobs.
+dev = [
+    "pytest>=8.4.2",
+]
+
 [tool.uv]
 package = false
