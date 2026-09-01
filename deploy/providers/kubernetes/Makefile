@@ -19,10 +19,38 @@ NAMESPACE ?= flip-trust
 # Ansible EC2/on-prem plays stage to — so that is the default here too. Overriding
 # it means also passing --set flClient.kitHostPath=<same path> at deploy, or the pod
 # stays Pending on a `hostPath type check failed` event naming the mounted path.
-# KIT_UID follows the backend's image user: Flower's upstream base runs as 49999,
-# the NVFLARE image as 1000.
 KIT_DEST ?= /opt/flip/fl-kit
-KIT_UID ?= $(if $(filter flower,$(FL_BACKEND)),49999,1000)
+# KIT_UID follows the backend's image user: Flower's upstream base runs as 49999,
+# the NVFLARE image as 1000. Which backend is read from the kit ITSELF — an NVFLARE
+# startup kit carries startup/ (with local/ and transfer/), a Flower kit carries
+# certificates/ and keys/ — never from an FL_BACKEND that nothing here derives:
+# defaulting to one backend when the variable is unset would chown a Flower kit to
+# uid 1000 and leave the SuperNode unable to read its own certs, with nothing
+# saying so until the pod logs. FL_BACKEND=<backend> on the command line still
+# overrides the shape, and so does an explicit KIT_UID=. Resolved at parse time,
+# scoped to the stage-kit goal, so `make -n stage-kit` shows the real chown and an
+# unrecognisable kit fails before anything is copied.
+KIT_SHAPE_NVFLARE := $(if $(wildcard $(KIT_SRC)/startup/),nvflare,)
+KIT_SHAPE_FLOWER := $(if $(wildcard $(KIT_SRC)/certificates/ $(KIT_SRC)/keys/),flower,)
+KIT_BACKEND := $(or $(FL_BACKEND),$(KIT_SHAPE_NVFLARE),$(KIT_SHAPE_FLOWER))
+ifneq ($(filter stage-kit,$(MAKECMDGOALS)),)
+ifeq ($(strip $(KIT_SRC)),)
+$(error ❌  KIT_SRC is required — the local directory holding this trust's kit)
+endif
+ifeq ($(wildcard $(KIT_SRC)/.),)
+$(error ❌  KIT_SRC $(KIT_SRC) is not a directory)
+endif
+ifneq ($(FL_BACKEND),)
+ifeq ($(filter nvflare flower,$(FL_BACKEND)),)
+$(error ❌  FL_BACKEND=$(FL_BACKEND) is not a backend — nvflare or flower)
+endif
+else ifeq ($(KIT_BACKEND),)
+$(error ❌  cannot tell which backend the kit at $(KIT_SRC) is for: an NVFLARE kit carries startup/, a Flower kit certificates/ and keys/, and this has neither. Point KIT_SRC at the slot's kit directory, or pass FL_BACKEND=nvflare|flower to override)
+else ifneq ($(and $(KIT_SHAPE_NVFLARE),$(KIT_SHAPE_FLOWER)),)
+$(error ❌  the kit at $(KIT_SRC) has both an NVFLARE shape (startup/) and a Flower shape (certificates/ or keys/) — stage one slot's kit only, or pass FL_BACKEND=nvflare|flower to say which it is)
+endif
+endif
+KIT_UID ?= $(if $(filter flower,$(KIT_BACKEND)),49999,1000)
 # Which cluster to act on. Defaults to kubectl's current context, but stage-kit
 # REQUIRES it explicitly: it writes to a node's filesystem, and a machine running
 # several kind clusters will otherwise silently stage into whichever one kubectl
@@ -90,15 +118,15 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	## flClient.kitHostPath (from the kit's FL_KIT_DIR) — pass it only alongside a
 	## matching --set flClient.kitHostPath at deploy time.
 	## KIT_SRC contents are the slot's own kit: for NVFLARE local/ startup/ transfer/,
-	## for Flower certificates/ and keys/ holding THIS slot's credential only.
+	## for Flower certificates/ and keys/ holding THIS slot's credential only. That
+	## shape is also how the owning uid is chosen (KIT_UID above) — no FL_BACKEND
+	## needed; a kit with neither or both shapes is refused before anything is copied.
 	## On a real cluster the operator places it by whatever means the site allows; this
 	## target implements the kind case, which is what dev and stag use.
-	@[ -n "$(KIT_SRC)" ] || (echo "❌  KIT_SRC is required — the local directory holding this trust's kit"; exit 1)
-	@[ -d "$(KIT_SRC)" ] || (echo "❌  KIT_SRC $(KIT_SRC) is not a directory"; exit 1)
 	@[ -n "$(KUBE_CONTEXT)" ] || (echo "❌  KUBE_CONTEXT is required — this writes to a node's filesystem, and defaulting to kubectl's current context ($$(kubectl config current-context 2>/dev/null || echo none)) would stage into whichever cluster that happens to be. e.g. KUBE_CONTEXT=kind-flip-kch"; exit 1)
 	@node=$$(kubectl --context $(KUBE_CONTEXT) get nodes -o jsonpath='{.items[0].metadata.name}') && \
 	  [ -n "$$node" ] || { echo "❌  no node found in context $(KUBE_CONTEXT) — is the cluster reachable?"; exit 1; }; \
-	  echo "📦 Staging $(KIT_SRC) → [$(KUBE_CONTEXT)] $$node:$(KIT_DEST)"; \
+	  echo "📦 Staging $(KIT_SRC) ($(KIT_BACKEND) kit, owner uid $(KIT_UID)) → [$(KUBE_CONTEXT)] $$node:$(KIT_DEST)"; \
 	  docker exec "$$node" mkdir -p "$(KIT_DEST)" && \
 	  docker cp "$(KIT_SRC)/." "$$node:$(KIT_DEST)/" && \
 	  docker exec "$$node" sh -c 'chmod -R go-rwx "$(KIT_DEST)" && chown -R $(KIT_UID):$(KIT_UID) "$(KIT_DEST)"' && \

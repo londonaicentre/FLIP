@@ -112,8 +112,13 @@ here is what is deployed in production.
 
 `KIT_SRC` is the slot's own kit directory: for NVFLARE `local/`, `startup/`,
 `transfer/`; for Flower `certificates/` and `keys/` holding **only this slot's**
-credential. `KUBE_CONTEXT` is required — this writes to a node's filesystem, and
-on a host running several clusters, defaulting to the current context stages into
+credential. That shape is also how the target picks the uid the staged kit is
+chowned to — 1000 for an NVFLARE kit, 49999 (the SuperNode's `app` user) for a
+Flower one — so the command above is complete for either backend with no
+`FL_BACKEND` to remember. A directory with neither shape, or both, is refused
+before anything is copied; `FL_BACKEND=nvflare|flower` overrides the detection.
+`KUBE_CONTEXT` is required — this writes to a node's filesystem, and on a host
+running several clusters, defaulting to the current context stages into
 whichever one `kubectl` happens to point at.
 
 The target implements the kind case (`docker cp` into the node). On a managed
@@ -531,11 +536,12 @@ The chart is validated in CI via:
 | **Missing secrets** | `kubectl logs <pod> -n <ns>` shows auth/connection errors | Verify the Secret exists: `kubectl get secret -n <ns>`. Compare keys against the [Secrets Reference](#secrets-reference). |
 | **Bad env vars** | `kubectl exec <pod> -n <ns> -- env` shows empty/wrong URLs | Check ConfigMap values. For trust-api, verify `CENTRAL_HUB_API_URL` is reachable. |
 | **DB unreachable** | trust-api / imaging-api logs show DB connection errors | If using external DB: verify `external.host:port` is correct and firewall allows. For in-cluster DB: check the StatefulSet pod is running. |
-| **Init container failed** | `kubectl logs <pod> -c <init-container> -n <ns>` | For fl-client: check S3 bucket exists and access keys are valid. For omop-db-init: verify PVC is bound. |
+| **Init container failed** | `kubectl logs <pod> -c <init-container> -n <ns>` | For fl-client (`images-init`): the shared images volume must be writable by the init's root user — check the PVC is bound. For omop-db-init: verify PVC is bound. |
 
 ### FL client won't connect
 
 1. **Kit not on the node**: The pod stays `Pending` with a `hostPath type check failed` event naming `flClient.kitHostPath`. Stage the kit first — `make stage-kit KIT_SRC=<local kit dir> KUBE_CONTEXT=<context>` — then re-deploy. The chart holds no AWS credentials and cannot fetch it.
+   A kit that IS on the node but was staged with the wrong owner (a Flower SuperNode logging `Permission denied` on `/certs` or `/keys`) means `stage-kit` chowned it for the other backend — it reads the backend off the kit's shape, so re-stage from the slot's own kit directory (or pass `FL_BACKEND=flower` explicitly).
 2. **Kit path mismatch**: Verify `flClient.kitHostPath` points at the directory ON THE NODE holding this trust's provisioned kit, and that it contains the slot's contents (NVFLARE: `local/`, `startup/`, `transfer/`; Flower: `certificates/` and `keys/` with this slot's credential). The chart never fetches the kit — it is delivered out-of-band and placed on the node before the workload starts. A missing path fails scheduling with the path named.
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
 4. **GPU not visible**: Verify `nvidia.com/gpu` annotation on the fl-client pod. Check CUDA env vars (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`) are set via `flClient.gpu.enabled: true`.
