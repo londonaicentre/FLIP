@@ -121,6 +121,56 @@ XNAT_DATA_DIR ?= $(if $(filter true stag,$(PROD)),/opt/flip/xnat-trust$(TRUST_NU
 XNAT_DATA_DIR := $(abspath $(XNAT_DATA_DIR))
 export XNAT_DATA_DIR
 
+# uid/gid every XNAT bind-mount source must be owned by. `xnat-web` runs as the
+# in-image `xnat` user, created with a fixed id in trust/xnat/xnat/Dockerfile
+# (`useradd --system --uid 1001 --gid xnat`). That is a property of the image,
+# not of the host, so it can neither be derived from $(USER) nor assumed to be
+# the conventional 1000 that the FLIP-built Python services use.
+#
+# XNAT ingests DICOM into archive/, stages it through build/ and cache/, and
+# rotates its logs into tomcat_logs/. If any of those is not writable it accepts
+# the inbound association, fails the write, and aborts it — so the PACS reports a
+# *network* fault ("Peer aborted Association"), pointing at ports and AE titles
+# rather than at permissions. The same failure stops XNAT writing the application
+# logs that would name the real cause, so the evidence goes with it (FLIP#1095).
+#
+# xnat-db runs as root and is unaffected; its dir is included on stag/prod only
+# so the whole tree carries one owner, matching the playbooks.
+# deploy/providers/AWS/site.yml and deploy/providers/local/site_local_trust.yml
+# provision these same paths with this same id — keep the three in step.
+XNAT_CONTAINER_UID := 1001
+XNAT_CONTAINER_GID := 1001
+XNAT_DIR_OWNER := $(XNAT_CONTAINER_UID):$(XNAT_CONTAINER_GID)
+
+# The bind-mount sources xnat-reset provisions. xnat-db-data is stag/prod-only:
+# the development stack gives xnat-db no persistent bind mount.
+XNAT_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive build cache) \
+                  $(if $(filter true stag,$(PROD)),$(XNAT_DATA_DIR)/xnat-db-data)
+
+# Verify every bind-mount source is owned by the container uid, and fail naming
+# the exact remedy when it is not. Fatal rather than a warning because the
+# symptom surfaces layers away from the cause (see above) and a warning is easy
+# to lose in long bring-up output — the same reasoning, and the same shape, as
+# $(ensure_net_dirs) in trust/Makefile. Checked after the chown rather than
+# instead of it: a non-root non-owner gets EPERM from chown even when the
+# metadata already matches, and that must not abort an already-correct host.
+# Counting matches (rather than testing the chown's exit status) also catches a
+# dir that is missing entirely, since stat then prints nothing for it.
+#
+# $(1) is a command printing "<uid>:<gid>" per source, one line each — run
+# locally, or over ssh when the swarm host is remote.
+define check_xnat_dir_owner
+	owned="$$($(1) 2>/dev/null | grep -cx '$(XNAT_DIR_OWNER)' || true)"; \
+	if [ "$$owned" != "$(words $(XNAT_DATA_DIRS))" ]; then \
+		echo "❌  XNAT bind-mount sources under $(XNAT_DATA_DIR) are not all owned by $(XNAT_DIR_OWNER)."; \
+		echo "    xnat-web runs as uid $(XNAT_CONTAINER_UID) and cannot write them, so DICOM"; \
+		echo "    retrieval fails with the PACS reporting 'Peer aborted Association' and XNAT"; \
+		echo "    writes no logs to explain it (FLIP#1095)."; \
+		echo "    Fix: sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)"; \
+		exit 1; \
+	fi
+endef
+
 # Path to the dev XNAT folder on the Docker host (bind mounts resolve there, not locally).
 export XNAT_PATH=$(realpath .)
 
@@ -348,7 +398,8 @@ xnat-reset:
 	@if ! echo "$(XNAT_PORT_EFFECTIVE)" | grep -qE '^[0-9]+$$'; then \
 		echo "ERROR: XNAT_PORT must be numeric for KIT=$(KIT), got '$(XNAT_PORT_EFFECTIVE)'"; exit 1; \
 	fi
-	@echo "Deleting previous XNAT data and creating new directories for $(KIT) ..."; \
+	@set -e; \
+	echo "Deleting previous XNAT data and creating new directories for $(KIT) ..."; \
 	if [ "$(PROD)" = "true" ] || [ "$(PROD)" = "stag" ]; then \
 		echo "  📍 Using prod data dir: $(XNAT_DATA_DIR)/"; \
 		xnat_ctx="$$(docker context show)"; \
@@ -356,26 +407,23 @@ xnat-reset:
 		case "$$xnat_endpoint" in \
 			ssh://*) \
 				echo "  🛰️  remote swarm deploy (context '$$xnat_ctx') — resetting XNAT dirs on the trust host via ssh"; \
-				ssh "$$xnat_ctx" "sudo rm -rf $(XNAT_DATA_DIR) && sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/tomcat_logs $(XNAT_DATA_DIR)/xnat-data/archive $(XNAT_DATA_DIR)/xnat-data/build $(XNAT_DATA_DIR)/xnat-data/cache $(XNAT_DATA_DIR)/xnat-db-data && sudo chown -R 1000:1000 $(XNAT_DATA_DIR)"; \
+				ssh "$$xnat_ctx" "sudo rm -rf $(XNAT_DATA_DIR) && sudo mkdir -p $(XNAT_DATA_DIRS) && sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)"; \
+				$(call check_xnat_dir_owner,ssh "$$xnat_ctx" "stat -c '%u:%g' $(XNAT_DATA_DIRS)"); \
 				;; \
 			*) \
 				echo "  💻 local docker context '$$xnat_ctx' ($$xnat_endpoint) — resetting XNAT dirs on this host"; \
 				sudo rm -rf $(XNAT_DATA_DIR); \
-				sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/tomcat_logs; \
-				sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/archive; \
-				sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/build; \
-				sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/cache; \
-				sudo mkdir -p $(XNAT_DATA_DIR)/xnat-db-data; \
-				sudo chown -R $(USER):$$(id -gn) $(XNAT_DATA_DIR); \
+				sudo mkdir -p $(XNAT_DATA_DIRS); \
+				sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
+				$(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_DATA_DIRS)); \
 				;; \
 		esac; \
 	else \
 		echo "  📍 Using dev data dir: $(XNAT_DATA_DIR)/"; \
 		sudo rm -rf $(XNAT_DATA_DIR); \
-		mkdir -p $(XNAT_DATA_DIR)/xnat-data/tomcat_logs; \
-		mkdir -p $(XNAT_DATA_DIR)/xnat-data/archive; \
-		mkdir -p $(XNAT_DATA_DIR)/xnat-data/build; \
-		mkdir -p $(XNAT_DATA_DIR)/xnat-data/cache; \
+		mkdir -p $(XNAT_DATA_DIRS); \
+		chown $(XNAT_DIR_OWNER) $(XNAT_DATA_DIRS) 2>/dev/null || true; \
+		$(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_DATA_DIRS)); \
 	fi
 
 # Configure an XNAT instance with initial settings and run dcm2niix setup.
