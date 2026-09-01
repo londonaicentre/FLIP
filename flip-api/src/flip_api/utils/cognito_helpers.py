@@ -13,11 +13,9 @@
 import logging
 import threading
 import time
-from collections import defaultdict
 from collections.abc import Sequence
 from functools import lru_cache
 from typing import Any
-from urllib.parse import urlparse
 from uuid import UUID
 
 import boto3
@@ -25,13 +23,10 @@ from botocore.exceptions import ClientError
 from fastapi import HTTPException, Request, status
 from pydantic import TypeAdapter, ValidationError
 from pydantic.networks import EmailStr
-from sqlmodel import Session, col, select
 
 from flip_api.config import get_settings
-from flip_api.db.models.user_models import Role, UserProfile, UserRole
-from flip_api.domain.schemas.users import CognitoUser, Disabled, IRole, IUser
+from flip_api.domain.schemas.users import CognitoUser, Disabled
 from flip_api.utils.logger import logger
-from flip_api.utils.paging_utils import PagingInfo
 
 _EMAIL_VALIDATOR: TypeAdapter[str] = TypeAdapter(EmailStr)
 
@@ -44,55 +39,6 @@ def _cognito_client() -> Any:
     and expensive to construct; sharing one avoids paying endpoint-resolution
     cost on every authenticated request."""
     return boto3.client("cognito-idp", region_name=get_settings().AWS_REGION)
-
-
-_DEFAULT_PORTS = {"http": 80, "https": 443}
-
-
-def _origin_from_url(url: str) -> str | None:
-    """Return ``scheme://host[:port]`` for ``url``, omitting ports that match the scheme default.
-
-    Browsers strip default ports from the ``Origin`` header (RFC 6454), so an allowlist entry
-    like ``https://localhost:443`` would never match an actual request — normalize before use.
-    Returns ``None`` for URLs without a usable scheme/host.
-    """
-    parsed = urlparse(url)
-    if not parsed.scheme or not parsed.hostname:
-        return None
-    host = parsed.hostname
-    port = parsed.port
-    if port is None or port == _DEFAULT_PORTS.get(parsed.scheme):
-        return f"{parsed.scheme}://{host}"
-    return f"{parsed.scheme}://{host}:{port}"
-
-
-def get_cors_allowed_origins() -> list[str]:
-    """Derive the CORS allowlist from the Cognito user pool client's CallbackURLs.
-
-    The same Cognito app client that authenticates UI logins already enumerates the trusted UI
-    origins per environment (see ``deploy/providers/AWS/services.tf``). Reusing it as the CORS
-    allowlist keeps "where users can sign in" and "where the UI may call this API" in lockstep,
-    without a separate env var.
-
-    Returns:
-        list[str]: Unique normalized origins (``scheme://host[:port]``) suitable for
-        ``CORSMiddleware(allow_origins=...)``.
-    """
-    settings = get_settings()
-    response = _cognito_client().describe_user_pool_client(
-        UserPoolId=settings.AWS_COGNITO_USER_POOL_ID,
-        ClientId=settings.AWS_COGNITO_APP_CLIENT_ID,
-    )
-    callback_urls: list[str] = response.get("UserPoolClient", {}).get("CallbackURLs", []) or []
-
-    seen: set[str] = set()
-    origins: list[str] = []
-    for url in callback_urls:
-        origin = _origin_from_url(url)
-        if origin and origin not in seen:
-            seen.add(origin)
-            origins.append(origin)
-    return origins
 
 
 def get_pool_id(request: Request) -> str:
@@ -294,24 +240,6 @@ def get_user_by_email_or_id(
         )
 
     return users[0]
-
-
-def apply_user_profile(user: CognitoUser, session: Session) -> CognitoUser:
-    """Attach DB-backed profile fields to a Cognito user response."""
-    if not hasattr(session, "get"):
-        return user
-
-    profile = session.get(UserProfile, user.id)
-    if not profile:
-        return user
-
-    return CognitoUser(
-        id=user.id,
-        email=user.email,
-        name=profile.name,
-        organisation=profile.organisation,
-        is_disabled=user.is_disabled,
-    )  # type: ignore[call-arg]
 
 
 def get_username(user_id: str, user_pool_id: str) -> str:
@@ -554,117 +482,6 @@ def revoke_token(refresh_token: str, client_id: str) -> None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to revoke token"
         ) from e
-
-
-def get_user_role_data(
-    paging_info: PagingInfo,
-    users: list[CognitoUser],
-    session: Session,
-) -> list[IUser]:
-    """
-    Get user role data with pagination and filtering.
-
-    Args:
-        paging_info (PagingInfo): Pagination and filtering information.
-        users (list[CognitoUser]): List of Cognito users.
-        session (Session): Database session.
-
-    Returns:
-        list[IUser]: List of IUser objects with roles.
-    """
-    # Fetch roles for users
-    user_ids = [user.id for user in users]
-    statement = (
-        select(col(UserRole.user_id), Role)
-        .join(Role, col(Role.id) == col(UserRole.role_id))
-        .where(col(UserRole.user_id).in_(user_ids))
-    )
-    role_results = session.exec(statement).all()
-    profiles = session.exec(select(UserProfile).where(col(UserProfile.user_id).in_(user_ids))).all()
-    user_profiles_map = {str(profile.user_id): profile for profile in profiles}
-
-    # Group roles by user_id
-    user_roles_map: dict[str, list[IRole]] = defaultdict(list)
-    for user_id, role in role_results:
-        if role and role.id is not None:
-            user_roles_map[str(user_id)].append(
-                IRole(
-                    id=role.id,
-                    rolename=role.name,
-                    roledescription=role.description,
-                )
-            )
-
-    # Filter by email and apply pagination
-    search_str = paging_info.search_str.lower()
-    filtered_users = [
-        user
-        for user in users
-        if search_str in user.email.lower()
-        or search_str in user_profiles_map.get(str(user.id), UserProfile(user_id=user.id)).name.lower()
-        or search_str in user_profiles_map.get(str(user.id), UserProfile(user_id=user.id)).organisation.lower()
-    ]
-    sorted_users = sorted(filtered_users, key=lambda u: u.email)
-    paged_users = sorted_users[paging_info.offset : paging_info.offset + paging_info.page_size]
-
-    # Reconstruct IUser objects with roles
-    final_users = [
-        IUser(
-            id=user.id,
-            email=user.email,
-            name=user_profiles_map.get(str(user.id), UserProfile(user_id=user.id)).name,
-            organisation=user_profiles_map.get(str(user.id), UserProfile(user_id=user.id)).organisation,
-            is_disabled=user.is_disabled,
-            roles=user_roles_map.get(str(user.id), []),
-        )  # type: ignore[call-arg]
-        for user in paged_users
-    ]
-
-    return final_users
-
-
-def get_all_roles(db: Session) -> list[UUID]:
-    """
-    Get all role IDs from the database.
-
-    Args:
-        db (Session): Database session
-
-    Returns:
-        list[UUID]: List of role IDs
-    """
-    logger.debug("Attempting to get the list of roles from the database...")
-
-    result = db.exec(select(Role.id)).all()
-
-    role_ids = [role_id for role_id in result]
-
-    logger.info(f"Found {len(role_ids)} roles: {role_ids}")
-
-    return role_ids
-
-
-def validate_roles(user_roles: list[UUID], roles_from_db: list[UUID]) -> None:
-    """
-    Validate that all user roles exist in the database.
-
-    Args:
-        user_roles (list[UUID]): List of role IDs to validate
-        roles_from_db (list[UUID]): List of valid role IDs from the database
-
-    Returns:
-        None
-
-    Raises:
-        HTTPException: If any role is invalid
-    """
-    logger.debug(f"Attempting to validate user roles: {user_roles}")
-
-    invalid_roles = [role for role in user_roles if role not in roles_from_db]
-
-    if invalid_roles:
-        logger.error(f"Invalid role(s): {invalid_roles}. They do not match the roles in the database: {roles_from_db}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid role(s): {invalid_roles}")
 
 
 def create_cognito_user(email: str, user_pool_id: str) -> UUID:

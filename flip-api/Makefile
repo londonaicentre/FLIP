@@ -10,10 +10,13 @@
 # limitations under the License.
 #
 
-# Load environment variables for development
-ifneq ("$(wildcard ../.env.development)","")
-include ../.env.development
-export $(shell sed 's/=.*//' ../.env.development)
+# Load environment variables. MAIN_ENV_FILE is exported by the root Makefile, so
+# `make up MAIN_ENV_FILE=.env.b.development` reaches here too; the default keeps a
+# standalone `make -C flip-api …` working exactly as before.
+MAIN_ENV_FILE ?= .env.development
+ifneq ("$(wildcard ../$(MAIN_ENV_FILE))","")
+include ../$(MAIN_ENV_FILE)
+export $(shell sed 's/=.*//' ../$(MAIN_ENV_FILE))
 endif
 # Load GITHUB secrets if they exist
 ifneq ("$(wildcard ../.env.github)","")
@@ -21,13 +24,21 @@ include ../.env.github
 export $(shell sed 's/=.*//' ../.env.github)
 endif
 
+# COMPOSE_PROJECT for the -p below. Must follow the .env includes above, which is where
+# FLIP_INSTANCE comes from.
+include ../deploy/instance.mk
+
 service_name = flip-api
 lint_command = uv run ruff check . --fix
 test_args = --tb=short --disable-warnings --cov=src/ --cov-report=term-missing
 test_coverage_html_command = uv run pytest $(test_args) --cov-report=html --cov-report=xml:coverage.xml
 test_coverage_html_command_unit = uv run pytest ./tests/unit ./tests/step_functions_services $(test_args) --cov-report=html:htmlcov-unit --cov-report=xml:coverage-unit.xml
 test_coverage_html_command_integration = uv run pytest ./tests/integration $(test_args) --cov-report=html:htmlcov-integration --cov-report=xml:coverage-integration.xml
-docker_command = DEBUG=$(DEBUG) docker compose -f ../deploy/compose.development.yml
+# -p is explicit rather than inherited: compose would otherwise derive the project from the
+# directory of the first -f file (always deploy/), pinning every instance to `deploy` and, on
+# a second stack, running these targets — including the alembic ones that write into the
+# bind-mounted source tree — against the default stack's containers (FLIP#957).
+docker_command = DEBUG=$(DEBUG) docker compose -p $(COMPOSE_PROJECT) -f ../deploy/compose.development.yml
 run_clean = run --rm --remove-orphans
 mypy_command = uv run mypy . --ignore-missing-imports
 
@@ -162,14 +173,15 @@ e2e_smoke:
 # NUM_CASES=41`) and XNAT credentials in the environment (XNAT_USER / XNAT_PASS, or XNAT_HOST too
 # when not using SPLEEN_XNAT_URLS). The accession-to-case mapping is fetched at run time from the
 # public aicentreflip/trust-data dataset, so no private repo is required (FLIP#776).
-# Absolute paths: the command runs with cwd=SPLEEN_ENRICHMENT_CWD (four levels below the repo
-# root), so relative paths written from flip-api/ would not resolve there.
-SPLEEN_ENRICHMENT_CWD := ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation
+# Absolute paths: the command runs with cwd=SPLEEN_ENRICHMENT_CWD (the shared dataset-tooling
+# dir, two levels below the repo root), so relative paths written from flip-api/ would not
+# resolve there.
+SPLEEN_ENRICHMENT_CWD := ../fl-tutorials/datasets/spleen
 SPLEEN_XNAT_URLS ?= http://127.0.0.1:8104 http://127.0.0.1:8106
-# The NVFLARE tree by default even though the uploaded app is Flower's: enrichment is
-# backend-agnostic, and only the NVFLARE download can reach all 41 mapped cases.
-SPLEEN_LABELS_DIR ?= $(abspath ../fl-tutorials/nvflare/data/spleen/images)
-SPLEEN_ENRICHMENT_CMD := uv run --no-project --with $(abspath ../flip-utils) python utils/upload_spleen_labels_to_xnat.py --flip-project-id $$FLIP_PROJECT_ID --labels-dir $(SPLEEN_LABELS_DIR) $(foreach url,$(SPLEEN_XNAT_URLS),--xnat-url $(url))
+# The MSD build by default even though the uploaded app is Flower's: enrichment is
+# backend-agnostic, and only the MSD download can reach all 41 mapped cases.
+SPLEEN_LABELS_DIR ?= $(abspath ../fl-tutorials/data/spleen/images)
+SPLEEN_ENRICHMENT_CMD := uv run --no-project --with $(abspath ../flip-utils) python upload_spleen_labels_to_xnat.py --flip-project-id $$FLIP_PROJECT_ID --labels-dir $(SPLEEN_LABELS_DIR) $(foreach url,$(SPLEEN_XNAT_URLS),--xnat-url $(url))
 SPLEEN_ENRICHMENT_ARGS := --data-enrichment-cwd $(SPLEEN_ENRICHMENT_CWD) --data-enrichment-cmd '$(SPLEEN_ENRICHMENT_CMD)'
 
 e2e_smoke_spleen: MODEL_FILES_DIR := ../fl-tutorials/flower/3d_spleen_segmentation/app

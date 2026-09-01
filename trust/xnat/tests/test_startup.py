@@ -478,10 +478,13 @@ def _kit_tree(tmp_path: Path) -> Path:
     """Stage a fixture trust tree whose kit files drive the per-trust `up` loops.
 
     Kit files are gitignored, so a CI checkout has none and the loops would otherwise not run.
-    fl_backend.mk is copied rather than restated so the fixture cannot drift from the real one.
+    The shared .mk fragments trust/Makefile includes are copied rather than restated so the fixture
+    cannot drift from the real ones; make resolves those includes against the CWD, so one missing
+    here aborts the parse and reads as a loop that never ran.
     """
     (tmp_path / "deploy").mkdir()
-    shutil.copy(REPO_ROOT / "deploy" / "fl_backend.mk", tmp_path / "deploy" / "fl_backend.mk")
+    for fragment in ("fl_backend.mk", "instance.mk"):
+        shutil.copy(REPO_ROOT / "deploy" / fragment, tmp_path / "deploy" / fragment)
     trust_dir = tmp_path / "trust"
     (trust_dir / "xnat").mkdir(parents=True)
     for slot, code in enumerate(("AAA", "BBB"), start=1):
@@ -553,3 +556,317 @@ def test_up_loops_succeed_when_every_trust_starts(tmp_path: Path) -> None:
 
     assert status == 0
     assert calls == 2, "both fixture kits should have been started"
+
+
+# The fixture kit `_kit_tree` stages for slot 1 is .env.AAA.development, so a colliding stack is
+# any OTHER kit file name and a legitimate restart is the same name from a different checkout.
+OCCUPYING_KIT_FILE = "/elsewhere/checkout/trust/.env.ZZZ.development"
+SAME_KIT_OTHER_CHECKOUT = "/elsewhere/checkout/trust/.env.AAA.development"
+OCCUPYING_WORKING_DIR = "/elsewhere/checkout/trust"
+# Guarded targets that drive `-p $(TRUST_PROJECT)` with a kit. up-trust is excluded only because
+# its OMOP-data-dir guard runs first and would decide the exit status; it was never the gap.
+SLOT_GUARDED_TARGETS = [
+    "down-trust",
+    "up-trust-ec2",
+    "down-trust-ec2",
+    "up-fl-clients-kit",
+    "down-fl-clients-kit",
+]
+
+
+def _make_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Environment for a nested `make`, with the outer make's own variables stripped.
+
+    This suite is itself normally run from `make unit_test`, and an inherited MAKELEVEL makes the
+    nested make announce "Entering directory …" on stdout — which breaks an exact-output assertion
+    only when the suite runs through make, i.e. exactly how CI runs it and not how a bare
+    `pytest` invocation does.
+    """
+    env = dict(os.environ if base is None else base)
+    for name in ("MAKEFLAGS", "MAKELEVEL", "MFLAGS", "MAKE_TERMOUT", "MAKE_TERMERR"):
+        env.pop(name, None)
+    return env
+
+
+def _docker_stub(
+    tmp_path: Path,
+    *,
+    container_ids: str = "",
+    environment_file: str = "",
+    working_dir: str = "",
+    networks: str = "",
+    require_ps_all: bool = False,
+    owning_project: str = "",
+) -> dict[str, str]:
+    """Put a fake `docker` first on PATH answering exactly the probes the makefile guards run.
+
+    The guards shell out for three facts: which containers a compose project owns (`ps … -q`), one
+    compose label off them (`ps … --format '{{.Label …}}'`), and a container's attached networks
+    (`inspect … --format`). Every other docker call the recipes make — `docker compose …`, `docker
+    network …` — has to succeed silently, so a non-zero exit can only have come from a guard and
+    never from the absence of a daemon.
+
+    `require_ps_all` makes the stub answer `ps` only when `-a` was passed, standing in for a
+    stopped-but-not-removed stack: a guard that probed running containers alone would see an empty
+    project and wave the collision through.
+
+    `owning_project` makes the stub answer `ps … -q` only when the compose-project filter names
+    that project, so a guard querying the wrong one sees an empty project instead of being handed
+    these containers regardless. Without it the stub cannot distinguish `trust1` from `b-trust1`.
+    """
+    bin_dir = tmp_path / "docker-stub-bin"
+    bin_dir.mkdir(exist_ok=True)
+    emit_ids = f"printf '%s\\n' '{container_ids}'" if container_ids else ":"
+    if owning_project:
+        emit_ids = (
+            f'case "$*" in *"com.docker.compose.project={owning_project} "*|'
+            f'*"com.docker.compose.project={owning_project}") {emit_ids} ;; esac'
+        )
+    all_gate = (
+        '  seen_all=0; for arg in "$@"; do if [ "$arg" = "-a" ]; then seen_all=1; fi; done\n'
+        '  [ "$seen_all" = 1 ] || exit 0\n'
+        if require_ps_all
+        else ""
+    )
+    _write_executable(
+        bin_dir / "docker",
+        "#!/bin/sh\n"
+        'if [ "$1" = "ps" ]; then\n'
+        f"{all_gate}"
+        '  for arg in "$@"; do\n'
+        f'    if [ "$arg" = "-q" ]; then {emit_ids}; exit 0; fi\n'
+        "  done\n"
+        '  case "$*" in\n'
+        f"    *environment_file*) printf '%s\\n' '{environment_file}' ;;\n"
+        f"    *working_dir*) printf '%s\\n' '{working_dir}' ;;\n"
+        "  esac\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = "inspect" ]; then\n'
+        f"  printf '%s\\n' '{networks}'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
+    )
+    return _make_env({**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FLIP_INSTANCE": ""})
+
+
+def _run_kit_target(
+    makefile: Path, target: str, cwd: Path, env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    """Run one KIT-selected target against the fixture tree, with docker stubbed out."""
+    return subprocess.run(
+        ["make", "-f", str(makefile), target, "KIT=AAA", "FL_BACKEND=nvflare"],
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+    )
+
+
+@pytest.mark.parametrize("target", SLOT_GUARDED_TARGETS)
+def test_slot_guard_refuses_every_kit_target_when_another_kit_holds_the_project(
+    tmp_path: Path, target: str
+) -> None:
+    """A slot held by a different kit must stop every target that drives that compose project.
+
+    Guarding only `up-trust` left `restart-trust` (which reaches `down-trust` first) able to run
+    `down --remove-orphans` against another instance's live trust before any check ran.
+    """
+    trust_dir = _kit_tree(tmp_path)
+    env = _docker_stub(
+        tmp_path,
+        container_ids="c0ffeec0ffee",
+        environment_file=OCCUPYING_KIT_FILE,
+        working_dir=OCCUPYING_WORKING_DIR,
+    )
+
+    result = _run_kit_target(REPO_ROOT / "trust" / "Makefile", target, trust_dir, env)
+
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, f"{target} proceeded onto a slot held by another kit\n{combined}"
+    assert "FL kit slot 1 is already in use" in combined, combined
+    assert ".env.ZZZ.development" in combined, combined
+
+
+def test_slot_guard_allows_the_same_kit_from_another_checkout(tmp_path: Path) -> None:
+    """Positive control: the refusal must key on the kit, not on merely finding containers.
+
+    Restarting a trust — including from a second checkout of the repo — is the normal path and has
+    to keep working, which is why the comparison is by kit-file basename.
+    """
+    trust_dir = _kit_tree(tmp_path)
+    env = _docker_stub(
+        tmp_path, container_ids="c0ffeec0ffee", environment_file=SAME_KIT_OTHER_CHECKOUT
+    )
+
+    result = _run_kit_target(REPO_ROOT / "trust" / "Makefile", "down-fl-clients-kit", trust_dir, env)
+
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "already in use" not in combined, combined
+
+
+def test_slot_guard_passes_when_the_project_is_empty(tmp_path: Path) -> None:
+    """Positive control: an unoccupied slot must not be mistaken for an unidentifiable one."""
+    trust_dir = _kit_tree(tmp_path)
+    env = _docker_stub(tmp_path)
+
+    result = _run_kit_target(REPO_ROOT / "trust" / "Makefile", "down-fl-clients-kit", trust_dir, env)
+
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "❌" not in combined, combined
+
+
+def test_slot_guard_refuses_a_project_whose_owning_kit_cannot_be_identified(tmp_path: Path) -> None:
+    """Containers with no environment_file label must refuse, not silently wave the collision on.
+
+    That label is what names the owning kit; treating its absence as "slot free" is how the whole
+    protection would disappear on a compose upgrade without anything going red.
+    """
+    trust_dir = _kit_tree(tmp_path)
+    env = _docker_stub(
+        tmp_path,
+        container_ids="c0ffeec0ffee",
+        environment_file="",
+        working_dir=OCCUPYING_WORKING_DIR,
+    )
+
+    result = _run_kit_target(REPO_ROOT / "trust" / "Makefile", "down-fl-clients-kit", trust_dir, env)
+
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, f"an unidentifiable project was treated as free\n{combined}"
+    assert "environment_file" in combined, combined
+    assert OCCUPYING_WORKING_DIR in combined, combined
+
+
+def test_slot_guard_sees_a_stopped_colliding_stack(tmp_path: Path) -> None:
+    """The occupancy probe must be `docker ps -a`: a stopped stack still owns the project name.
+
+    `up` would recreate those very containers under the wrong kit, so a running-only probe protects
+    nothing in exactly the case where the other stack was left stopped rather than torn down.
+    """
+    trust_dir = _kit_tree(tmp_path)
+    env = _docker_stub(
+        tmp_path,
+        container_ids="c0ffeec0ffee",
+        environment_file=OCCUPYING_KIT_FILE,
+        working_dir=OCCUPYING_WORKING_DIR,
+        require_ps_all=True,
+    )
+
+    result = _run_kit_target(REPO_ROOT / "trust" / "Makefile", "up-fl-clients-kit", trust_dir, env)
+
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, f"a stopped colliding stack went unnoticed\n{combined}"
+    assert "FL kit slot 1 is already in use" in combined, combined
+
+
+def test_xnat_network_guard_refuses_a_trust_on_a_different_instance(tmp_path: Path) -> None:
+    """XNAT must refuse to attach to a network the live trust core services are not on.
+
+    Both sides derive the network from FLIP_INSTANCE, and the standalone `make -C trust/xnat` path
+    can easily miss it — producing a healthy-looking XNAT that imaging-api simply cannot reach.
+    """
+    trust_dir = _kit_tree(tmp_path)
+    env = _docker_stub(
+        tmp_path,
+        container_ids="c0ffeec0ffee",
+        networks="deploy_trust-network-1 ",
+        owning_project="b-trust1",
+    )
+    env["FLIP_INSTANCE"] = "b"
+
+    result = _run_kit_target(
+        REPO_ROOT / "trust" / "xnat" / "Makefile", "create-xnat-network", trust_dir / "xnat", env
+    )
+
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, f"XNAT attached to a network the trust is not on\n{combined}"
+    assert "XNAT would use b-deploy_trust-network-1" in combined, combined
+    assert "b-trust1 is on: deploy_trust-network-1" in combined, combined
+
+
+def test_xnat_network_guard_ignores_another_instances_trust(tmp_path: Path) -> None:
+    """The guard must read *our* instance's trust, not whoever owns the unprefixed project.
+
+    FL kit slots are handed out per hub, so both instances run a `trust1`. Filtering on the
+    unprefixed name reads the other hub's trust: it refuses a correctly-placed deploy whenever
+    the default instance holds that number, and passes vacuously when nothing holds it.
+    """
+    trust_dir = _kit_tree(tmp_path)
+    env = _docker_stub(
+        tmp_path,
+        container_ids="c0ffeec0ffee",
+        networks="deploy_trust-network-1 ",
+        owning_project="trust1",
+    )
+    env["FLIP_INSTANCE"] = "b"
+
+    result = _run_kit_target(
+        REPO_ROOT / "trust" / "xnat" / "Makefile", "create-xnat-network", trust_dir / "xnat", env
+    )
+
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, f"guard judged instance b against the default instance\n{combined}"
+
+
+def test_xnat_network_guard_passes_when_the_trust_is_on_the_same_network(tmp_path: Path) -> None:
+    """Positive control: a matching attachment must not be refused."""
+    trust_dir = _kit_tree(tmp_path)
+    env = _docker_stub(
+        tmp_path,
+        container_ids="c0ffeec0ffee",
+        networks="b-deploy_trust-network-1 bridge ",
+        owning_project="b-trust1",
+    )
+    env["FLIP_INSTANCE"] = "b"
+
+    result = _run_kit_target(
+        REPO_ROOT / "trust" / "xnat" / "Makefile", "create-xnat-network", trust_dir / "xnat", env
+    )
+
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "❌" not in combined, combined
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("fl-services/flower/provision/creds", "/base/repo/fl-services/flower/provision/creds"),
+        ("./workspace-dev", "/base/repo/workspace-dev"),
+        ("/opt/kits", "/opt/kits"),
+        ("/opt/kits/../kits", "/opt/kits"),
+    ],
+)
+def test_abs_or_relative_to_only_joins_relative_values(
+    tmp_path: Path, value: str, expected: str
+) -> None:
+    """An already-absolute path must pass through, not be welded onto the base.
+
+    `$(abspath)` only normalises the string it is handed, so joining unconditionally turned
+    `FL_PROVISIONED_DIR=/opt/kits` into `<repo>/opt/kits` and reported a "not provisioned" error
+    naming a path the caller never asked for.
+    """
+    probe = tmp_path / "probe.mk"
+    probe.write_text(
+        f"include {REPO_ROOT / 'deploy' / 'fl_backend.mk'}\n"
+        "probe:\n"
+        "\t@echo '$(call abs_or_relative_to,$(VALUE),$(BASE))'\n"
+    )
+
+    result = subprocess.run(
+        ["make", "-f", str(probe), "probe", f"VALUE={value}", "BASE=/base/repo"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_make_env(),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == expected

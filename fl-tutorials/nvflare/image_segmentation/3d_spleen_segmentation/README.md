@@ -26,17 +26,18 @@ upload) step was skipped (the trust PACS supplies CT images only; see
 
 ### Dataset setup (local runs)
 
-This directory owns the shared MSD spleen download tooling (`utils/`, with its own `uv` project in
-`pyproject.toml`) used by every spleen tutorial. From the repo root:
+The shared MSD spleen download tooling used by every spleen tutorial lives in
+[`fl-tutorials/datasets/spleen/`](../../../datasets/spleen) (with its own `uv` project in
+`pyproject.toml`). From the repo root:
 
 ```bash
 make -C fl-tutorials download-spleen-data          # NUM_CASES=<1-41> to control size (default 10)
 ```
 
-which runs `utils/download_spleen_dataset.py` (downloads MSD spleen data and reorganises it so each
-subject folder holds both the image and its label) followed by `utils/create_spleen_accession_csv.py`
-(builds the `accession_id` dataframe the trainer reads in LOCAL_DEV). Data lands under
-`fl-tutorials/nvflare/data/spleen/` (gitignored):
+which runs `download_spleen_dataset.py` (downloads MSD spleen data and reorganises it so each
+subject folder holds both the image and its label) followed by `create_spleen_accession_csv.py`
+(builds the `accession_id` dataframe the trainer reads in LOCAL_DEV). Data lands under the shared
+`fl-tutorials/data/spleen/` (gitignored):
 
 ```text
 data/spleen/

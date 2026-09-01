@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 
 from fastapi import HTTPException, status
 
-# Tutorial folders are submitted by name (e.g. "numpy", "3d_spleen_segmentation_evaluation"),
+# Tutorial folders are submitted by name (e.g. "xray_classification", "3d_spleen_segmentation_evaluation"),
 # so the tutorial submit path can't be UUID-only; this guards the name instead.
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 
@@ -37,7 +37,7 @@ _SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 def validate_tutorial_folder_name(name: str) -> str:
     """Reject tutorial folder names that could escape the source root.
 
-    Accepts the pre-baked tutorial folder names (e.g. ``numpy``); rejects path separators,
+    Accepts the pre-baked tutorial folder names (e.g. ``xray_classification``); rejects path separators,
     parent references, hidden names and empty values. Production submit takes a ``UUID``-typed
     path param instead, so it needs no separate name guard.
 

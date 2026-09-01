@@ -23,8 +23,9 @@ Consortium copyright retained).
 ## Why this template needs almost no editing
 
 Inference is bundle-driven: `MonaiBundleInferenceOperator` reads the preprocessing, inferer and
-postprocessing from the `inference.json` embedded in your `model.ts`. Retargeting to a different
-segmentation model therefore means changing the **bundle**, not the operator graph.
+postprocessing from your bundle's `inference.json` — embedded in `model.ts`, or under `configs/`
+in a directory bundle. Retargeting to a different segmentation model therefore means changing the
+**bundle**, not the operator graph.
 
 Only two blocks in `app.py` are application-specific:
 
@@ -35,7 +36,7 @@ Only two blocks in `app.py` are application-specific:
 
 ## The bundle is where correctness lives
 
-The `inference.json` embedded in `model.ts` must declare the **same preprocessing the model was
+Your bundle's `inference.json` must declare the **same preprocessing the model was
 trained with** — orientation, spacing, intensity window, channel handling — and the inferer ROI
 must match the patch size used in training.
 

@@ -456,16 +456,15 @@ flip-utils/dist/
 # version control (covered by .claude/* above, listed explicitly for clarity).
 .claude/worktrees/
 
-# fl-tutorials generated / uncommitted artifacts (data/, the spleen-seg uv.lock), scoped under the
-# per-backend tutorial trees (fl-tutorials/<backend>/) so a bare `data/` doesn't over-match
-# other data/ dirs in the monorepo:
-# - generated tutorial datasets (spleen/xray images + accession CSVs)
-# - tutorial uv.lock (tutorials intentionally don't pin a strict lockfile)
-fl-tutorials/nvflare/data/
-fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/uv.lock
+# fl-tutorials generated / uncommitted artifacts, scoped (not a bare `data/`, which would
+# over-match other data/ dirs in the monorepo):
+# - the shared tutorial-dataset root both backends' harnesses read (fl-tutorials/datasets/
+#   downloads land here: spleen/xray/arkplus images + accession CSVs + the HF cache)
+# - the dataset tooling's uv.lock (intentionally not pinned to a strict lockfile)
+fl-tutorials/data/
+fl-tutorials/datasets/spleen/uv.lock
 fl-services/flower/provision/creds/
 fl-services/flower/runs/
-fl-tutorials/flower/data/
 
 # Round-timing extraction output (scripts/fl_round_metrics/ extractors and the
 # tutorials' `make round-metrics` write

@@ -20,9 +20,10 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.schemas.users import IUser
-from flip_api.utils.cognito_helpers import get_cognito_users, get_pool_id, get_user_role_data
+from flip_api.utils.cognito_helpers import get_cognito_users, get_pool_id
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import IPagedData, get_paging_details, get_total_pages
+from flip_api.utils.user_roles import get_user_role_data
 
 router = APIRouter(prefix="/users", tags=["user_services"])
 

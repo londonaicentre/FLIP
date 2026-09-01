@@ -566,8 +566,8 @@ answering. flip-api re-reads the parameter when its slot pool runs dry
 > activation too. Nothing is replaced or destroyed — but read the plan before confirming.
 
 The script has a black-box test harness (`scripts/tests/test_add_fl_kits.sh`, `aws`/`make`/`openssl`
-stubbed — no credentials or network) that CI runs via `validate_terraform.yml` on any
-`deploy/providers/AWS/**` change; it also runs standalone with plain `bash`.
+stubbed — no credentials or network) that CI runs in the `Deploy script tests` job of
+`validate_terraform.yml` on any `deploy/providers/AWS/**` change; it also runs standalone with plain `bash`.
 
 Kit-minting details and the manual fallback:
 [`fl-services/nvflare/README.md`](../../../fl-services/nvflare/README.md#onboarding-a-new-client-onto-an-existing-network).
@@ -776,6 +776,54 @@ This prints a list of URLs you can paste into your browser:
 | Grafana | `http://localhost:3000` | Observability dashboards |
 
 Press Ctrl+C to stop all forwards. The Central Hub UI and API are accessed via the CloudFront distribution at the canonical subdomain (e.g. `https://app.flip.aicentre.co.uk`) — no port forwarding needed. The ALB is internal (private subnets, no public IP); CloudFront reaches it through a VPC origin.
+
+## Checkov Security Lint
+
+CI goes red on PRs that regress this tree's security posture (FLIP#1052 + the FLIP#1058 triage): the
+`Checkov Security Lint` job in `validate_terraform.yml` runs a curated checkov check list statically over
+`deploy/providers/AWS/**` — no credentials, no `terraform init`, no plan. Two families are promoted:
+
+- **IAM policy content** — wildcard `Resource`/`Action` on restrictable data-access actions plus the
+  data-exfiltration / privilege-escalation / permissions-management shapes, on both policy syntaxes
+  (`data "aws_iam_policy_document"` blocks and `jsonencode()` policies). Checkov knows which AWS actions
+  support no resource-level scoping (`ssmmessages:*`, `ec2:Describe*`, …), so those deliberate
+  `resources = ["*"]` statements pass without suppression.
+- **Infrastructure posture** (promoted per the FLIP#1058 triage) — IMDSv2-only EC2 instances, registry-module
+  version pinning, HSTS on CloudFront response-header policies, the WAF Log4j managed rule, SSM parameter and
+  KMS key-policy posture. Every existing instance is either fixed or carries an inline suppression with its
+  rationale; classes deliberately *not* promoted are recorded in the script.
+
+```bash
+make checkov-lint                          # from the REPO ROOT (env-free)
+bash scripts/checkov_lint.sh               # or directly, from this directory
+```
+
+(The `checkov-lint` target in *this* directory's Makefile works too, but only with a populated deploy env
+file — the Makefile's parse-time `FL_KIT_DATE` guard fires before any target runs. The repo-root target and
+the direct script invocation need nothing.)
+
+Deliberate breadth or posture is acknowledged **in-code with a rationale**, never by weakening the check list
+globally — add inside the flagged resource/data block:
+
+```hcl
+data "aws_iam_policy_document" "example" {
+  # checkov:skip=CKV_AWS_356:<why this breadth is deliberate — e.g. dedicated single-purpose bucket>
+  statement {
+    ...
+  }
+}
+```
+
+The check list and invocation live in [`scripts/checkov_lint.sh`](scripts/checkov_lint.sh). The script
+first asserts checkov still fails the deliberately broad canary fixture
+(`scripts/tests/checkov_canary/`) before scanning the real tree, so a broken install or an ineffective
+check list fails loudly instead of passing vacuously. The script's own guards — the version-pin
+assertion, the unknown-check-ID validation, the mandatory skip rationale and the canary must-fail — are
+regression-tested by a black-box harness (`scripts/tests/test_checkov_lint.sh`, `checkov` stubbed on
+PATH, no install or network) that CI runs in the same `Deploy script tests` job as the `add_fl_kits.sh`
+harness; it also runs standalone with plain `bash`. Known limitation: the IAM checks only catch a
+**literal** `"*"` — an interpolated bucket-root grant (`"${aws_s3_bucket.x.arn}/*"` on `s3:GetObject`) still
+needs human review.
 
 ## Hybrid Deployment: Adding an On-Premises Trust
 

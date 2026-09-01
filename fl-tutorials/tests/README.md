@@ -13,9 +13,10 @@ limitations under the License.
 
 # fl-tutorials tests
 
-CPU-only pytest suite over the tutorial apps' transform chains. No GPU, no dataset download, no FL
-image, no network — the fixtures are synthetic DICOMs built in-process, and the whole suite runs in
-a couple of seconds.
+CPU-only pytest suite over the tutorial apps: their transform chains, plus a static drift guard on
+the Flower apps' `min_clients` wiring (which also covers `fl-apps/flower/`, the templates that
+actually deploy). No GPU, no dataset download, no FL image, no network — the fixtures are synthetic
+DICOMs built in-process, and the whole suite runs in a couple of seconds.
 
 ```bash
 make -C fl-tutorials test        # ruff over fl-tutorials/ + this suite
@@ -23,9 +24,9 @@ make -C fl-tutorials pytest      # this suite only
 make -C fl-tutorials lint        # ruff only
 ```
 
-CI runs the same two commands on every pull request touching `fl-tutorials/**` or the flip-utils
-source/environment, and on pushes to main/develop (`.github/workflows/fl-tutorials-tests.yml`),
-for both backends.
+CI runs the same two commands on every pull request touching `fl-tutorials/**`, `fl-apps/flower/**`
+or the flip-utils source/environment, and on pushes to main/develop
+(`.github/workflows/fl-tutorials-tests.yml`), for both backends.
 
 ## Why this exists
 
@@ -53,6 +54,10 @@ reconstructed here, so the test asserts on the shipped code.
 
 | Test | Asserts |
 | --- | --- |
+| `test_discovery_actually_finds_the_flip_flower_apps` | Both `fl-apps` and `fl-tutorials` contribute apps, so a moved tree cannot leave the rest silently green. |
+| `test_fl_api_writes_the_key_the_apps_read` | fl-api-flower writes the same `flip-min-clients` key the apps read — the two live in different packages. |
+| `test_strategy_gets_min_clients_from_the_injected_trust_count` | Every FLIP Flower app passes `min_clients` sourced from `min_clients_from_run_config(run_config)`, not a constant. |
+| `test_app_config_declares_flip_min_clients` | Each app declares the key in `[tool.flwr.app.config]` (flwr rejects undeclared overrides) at flwr's default of 2 or more. |
 | `test_phantom_has_no_dihedral_symmetry` | The fixture is non-square **and** distinguishable from all eight of its dihedral variants. |
 | `test_phantom_dicom_round_trips` | Each synthetic encoding decodes back to the phantom. |
 | `test_loader_prefix_matches_pixel_data` | The chain up to the first resampling transform is `np.array_equal` to `pydicom`'s `PixelData`. |
@@ -78,6 +83,21 @@ The fixture is synthesised, not committed: ~12 KB against ~640 KB for a downsamp
 provenance or PHI question, and the identical code path — the axis order is a property of the
 reader's convention, wholly independent of pixel content. It is parametrised over `MONOCHROME1`,
 `MONOCHROME2` and RLE Lossless, where the array path genuinely differs.
+
+## Bundle-export parity
+
+`test_spleen_inference_config_parity.py` pins the spleen tutorial's exported
+`export/inference.json` preprocessing to `app_files/transforms.py::get_val_transforms()`. That
+drift shipped once already (fixed in e4981613): the bundle resampled before windowing and dropped
+`CropForegroundd`, so a MAP built from it fed the model a field of view it never saw in training —
+quietly worse on five of six MSD cases, invisible without ground truth. The bundle is the
+deliberate image-only projection of the training chain, so the comparison normalises exactly three
+asymmetries (image-only `keys`, interpolation `mode` at the image slot, numbers as floats) and is
+strict about everything else: transform order by class name, declared parameter names, and values —
+with the load-bearing values (pixdim, the CT window, RAS, `allow_smaller`) pinned literally on
+both sides so even a consistent retune stops there. The bundle side is read as plain JSON, never
+instantiated via `monai.bundle`, so the check stays hermetic. This is a config-parity check, not a
+`DICOM_APPS` entry — the paragraph below still applies.
 
 ## What it does **not** cover
 

@@ -223,6 +223,10 @@ check-ssm-ready: ## Verify SSM Session Manager prerequisites are installed
 prettier: ## Format Terraform files. YAML files are formatted by the prettier pre-commit hook.
 	terraform fmt -recursive
 
+.PHONY: checkov-lint
+checkov-lint: ## Static checkov security lint (IAM policy content + promoted posture checks) over this Terraform tree — no credentials or init needed (FLIP#1052, FLIP#1058)
+	bash scripts/checkov_lint.sh
+
 .PHONY: create-backend
 create-backend: ## Create Terraform backend S3 bucket - Only run once
 	@echo "🚀 Creating Terraform backend resources..."
@@ -939,6 +943,7 @@ provision-local-trust: ## Provision the on-prem (local) trust host: install Dock
 			-i "localhost," \
 			-e ansible_connection=local \
 			-e ansible_python_interpreter=/usr/bin/python3 \
+			-e fl_backend=$(FL_BACKEND) \
 			../../../deploy/providers/local/site_local_trust.yml; \
 		PLAY_RC=$$?; \
 		exit $$PLAY_RC

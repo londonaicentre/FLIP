@@ -27,21 +27,29 @@ list() { for d in "$HERE"/*/app; do basename "$(dirname "$d")"; done; }
 if [ -z "$TUTORIAL" ]; then echo "Set TUTORIAL=<name>. Available:"; list | sed 's/^/  - /'; exit 1; fi
 if [ ! -d "$HERE/$TUTORIAL/app" ]; then echo "❌ Unknown tutorial '$TUTORIAL'. Available:"; list | sed 's/^/  - /'; exit 1; fi
 
-# Per-tutorial dev data (LOCAL_DEV reads DEV_IMAGES_DIR / DEV_DATAFRAME). numpy is
-# self-contained; spleen + xray need their HF dataset downloaded first.
+# Per-tutorial dev data (LOCAL_DEV reads DEV_IMAGES_DIR / DEV_DATAFRAME), served from the
+# shared gitignored fl-tutorials/data/ root (see fl-tutorials/datasets/). Every tutorial
+# needs its dataset downloaded first.
+DATA_ROOT="$(cd "$HERE/.." && pwd)/data"
 case "$TUTORIAL" in
-  numpy) : ;;
   3d_spleen_segmentation|3d_spleen_segmentation_evaluation)
-    export DEV_IMAGES_DIR="$HERE/data/spleen/accession-resources"
-    export DEV_DATAFRAME="$HERE/data/spleen/sample_get_dataframe_response.csv" ;;
+    export DEV_IMAGES_DIR="$DATA_ROOT/spleen/accession-resources"
+    export DEV_DATAFRAME="$DATA_ROOT/spleen/sample_get_dataframe_response.csv"
+    DATASET_TARGET=spleen ;;
   xray_classification)
-    export DEV_IMAGES_DIR="$HERE/data/xrays_mini_300/accession-resources"
-    export DEV_DATAFRAME="$HERE/data/xrays_mini_300/sample_get_dataframe_response.csv" ;;
+    export DEV_IMAGES_DIR="$DATA_ROOT/xrays_mini_300/accession-resources"
+    export DEV_DATAFRAME="$DATA_ROOT/xrays_mini_300/dataframe.csv"
+    DATASET_TARGET=xray ;;
   *) echo "❌ No data mapping for '$TUTORIAL'"; exit 1 ;;
 esac
 if [ -n "${DEV_IMAGES_DIR:-}" ] && [ ! -d "$DEV_IMAGES_DIR" ]; then
   echo "❌ Dataset missing: $DEV_IMAGES_DIR"
-  echo "   Run: make -C $REPO_ROOT/fl-tutorials download-$( [ "${TUTORIAL#xray}" != "$TUTORIAL" ] && echo xray || echo spleen )-data FL_BACKEND=flower"
+  echo "   Run: make -C $REPO_ROOT/fl-tutorials download-$DATASET_TARGET-data FL_BACKEND=flower"
+  exit 1
+fi
+if [ -n "${DEV_DATAFRAME:-}" ] && [ ! -f "$DEV_DATAFRAME" ]; then
+  echo "❌ Dataset missing: $DEV_DATAFRAME"
+  echo "   Run: make -C $REPO_ROOT/fl-tutorials download-$DATASET_TARGET-data FL_BACKEND=flower"
   exit 1
 fi
 

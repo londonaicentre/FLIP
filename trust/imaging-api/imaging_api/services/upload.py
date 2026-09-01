@@ -17,6 +17,7 @@ import requests
 from fastapi import APIRouter
 
 from imaging_api.config import get_settings
+from imaging_api.services.image_cache import invalidate_accession
 from imaging_api.services.projects import (
     get_experiment,
     get_project_from_central_hub_project_id,
@@ -137,6 +138,21 @@ async def upload_data_to_xnat(
             headers=headers,
         )
         uploaded_files.append(uploaded_file)
+
+    # The upload changed this accession's content in XNAT, so every net's cached download of
+    # (project, accession) is stale — drop the completeness sentinels so the next request
+    # re-downloads. Best-effort: the XNAT upload already succeeded, and failing here would
+    # push the client into retrying a completed upload; a swallowed error only costs one
+    # extra (harmless, merging) re-download later.
+    try:
+        removed = invalidate_accession(BASE_IMAGES_DOWNLOAD_DIR, central_hub_project_id, accession_id)
+        if removed:
+            logger.info(
+                f"Invalidated {removed} cached download sentinel(s) for "
+                f"project={central_hub_project_id} accession={accession_id} after upload"
+            )
+    except (ValueError, OSError) as e:
+        logger.warning(f"Could not invalidate download-cache sentinels for accession {accession_id}: {e}")
 
     return uploaded_files
 
