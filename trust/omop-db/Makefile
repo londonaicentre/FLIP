@@ -129,7 +129,25 @@ check-build-env:
 build:
 	$(build_compose) build
 
-up-build: check-build-env build
+# Docker creates a missing bind-mount source itself — as root — so a build stack
+# started before anything else touched volumes/ leaves volumes/ and
+# volumes/Trust_<N>/ root-owned, and update_omop_data.sh, which downloads its
+# archives and writes its per-trust markers into volumes/, then fails with
+# "Permission denied". Create the sources as the invoking user first; postgres
+# still chowns db_data itself to uid 999 at init, only the parents need to be
+# ours. A parent we cannot write to fails loudly here rather than one target
+# later, with the fix spelled out.
+ensure-build-volumes: check-num-trusts
+	@for d in volumes $(addprefix volumes/Trust_,$(shell seq 1 $(NUM_TRUSTS))); do \
+		if [ -e "$$d" ] && [ ! -w "$$d" ]; then \
+			echo "❌ $$d exists but is not writable by $$(id -un) — created by Docker as root?"; \
+			echo "   Fix: docker run --rm -v \"$$(pwd)/volumes:/v\" alpine sh -c 'chown $$(id -u):$$(id -g) /v /v/Trust_*'"; \
+			exit 1; \
+		fi; \
+	done
+	@mkdir -p $(addsuffix /db_data,$(addprefix volumes/Trust_,$(shell seq 1 $(NUM_TRUSTS))))
+
+up-build: check-build-env build ensure-build-volumes
 	$(build_compose) up -d omop-db-trust1 omop-db-trust2
 
 down-build:
@@ -234,8 +252,10 @@ apply-constraints-trust-%:
 # run the pipeline with `make populate CORE_VOCAB=0` (and WITHOUT
 # apply-constraints — the FKs reference the absent vocab), then export each
 # populated volume. Tar runs in a root container because the pgdata trees are
-# uid-999-owned; the archive root is the db_data CONTENTS, matching what
-# update_omop_data.sh extracts.
+# uid-999-owned (mode 700); the archive root is the db_data CONTENTS, matching
+# what update_omop_data.sh extracts. The archive is handed back to the invoking
+# user before the container exits — otherwise it leaves a root-owned file in
+# dist/ that the user can neither overwrite on the next export nor delete.
 PGDATA_VERSION = $(DATA_VERSION)
 
 export-pgdata: check-num-trusts $(addprefix export-pgdata-trust-,$(shell seq 1 $(NUM_TRUSTS)))
@@ -243,7 +263,8 @@ export-pgdata: check-num-trusts $(addprefix export-pgdata-trust-,$(shell seq 1 $
 export-pgdata-trust-%:
 	@mkdir -p dist
 	docker run --rm -v "$$(pwd)/volumes/Trust_$*/db_data:/d:ro" -v "$$(pwd)/dist:/out" alpine \
-		tar -czf "/out/trust$*_pgdata_$(PGDATA_VERSION).tar" -C /d .
+		sh -c 'tar -czf "/out/trust$*_pgdata_$(PGDATA_VERSION).tar" -C /d . \
+			&& chown $(shell id -u):$(shell id -g) "/out/trust$*_pgdata_$(PGDATA_VERSION).tar"'
 	@echo "📦 dist/trust$*_pgdata_$(PGDATA_VERSION).tar"
 
 # Push the already-built image to GHCR. Do `docker login ghcr.io` first if
