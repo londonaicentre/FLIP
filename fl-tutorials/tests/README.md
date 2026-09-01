@@ -28,6 +28,18 @@ CI runs the same two commands on every pull request touching `fl-tutorials/**`, 
 or the flip-utils source/environment, and on pushes to main/develop
 (`.github/workflows/fl-tutorials-tests.yml`), for both backends.
 
+## Layout
+
+Tests mirror the source tree and are named for the file they cover —
+`tests/datasets/spleen/test_download_spleen_dataset.py` covers
+`datasets/spleen/download_spleen_dataset.py`, the same convention as
+`trust/imaging-api/tests/routers/test_imaging.py`.
+
+Cross-cutting guards that assert a property across several source files
+(`test_dicom_orientation.py`, `test_flower_min_clients_wiring.py`,
+`test_spleen_inference_config_parity.py`) stay at the root of `tests/`, because
+no single source path describes what they cover.
+
 ## Why this exists
 
 A preprocessing defect fed the Ark+ foundation model **sideways** radiographs. It survived three
