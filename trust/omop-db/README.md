@@ -91,14 +91,17 @@ make -C trust/omop-db load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # Trust
 make -C trust/omop-db load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # Trust_2 (KCH)
 ```
 
-Design (see `src/omop_db_tools/synthea_ehr.py`): Synthea ids are shifted into a reserved high band
-(`PERSON_ID_OFFSET`) so they never collide with the imaging cohorts' existing keys, and the
-tutorial's `query.sql` scopes to persons that have at least one condition — i.e. exactly the rows
-loaded here, transparently excluding the imaging-only persons. The load is FK-safe (it keeps
-Synthea's standard gender concepts and zeroes the rest, matching conditions on their SNOMED
-`condition_source_value`) and idempotent (the reserved band is cleared before each reload). It is a
-dev/demo convenience: a real trust already holds real condition data, so `query.sql` runs against it
-unchanged.
+Design (see `src/omop_db_tools/synthea_ehr.py`): Synthea ids are shifted by `PERSON_ID_OFFSET` so
+they never collide with the imaging cohorts' existing keys at insert time, and the tutorial's
+`query.sql` scopes to persons that have at least one condition — i.e. exactly the rows loaded here,
+transparently excluding the imaging-only persons. That offset is not what makes reloading safe,
+though: imaging `person_id` is derived from a real NHS number and scatters across the whole 9-digit
+range, so idempotency deletes by **provenance** (the `synthea-` prefix each loaded row carries in
+`person_source_value`) rather than by an id-range threshold — the latter was tried first and
+silently deleted a chunk of the imaging cohort (and its cascaded rows) on every reload. The load is
+FK-safe (it keeps Synthea's standard gender concepts and zeroes the rest, matching conditions on
+their SNOMED `condition_source_value`) and idempotent. It is a dev/demo convenience: a real trust
+already holds real condition data, so `query.sql` runs against it unchanged.
 
 ## Building the image
 

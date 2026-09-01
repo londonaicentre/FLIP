@@ -83,8 +83,10 @@ load-omop-vocab: fetch-vocab-core
 # (fl-tutorials/{nvflare/tabular_classification,flower}/ehr_risk_prediction). The shipped mock OMOP
 # carries no condition rows, so that tutorial's query.sql returns nothing until this runs. Downloads
 # ~5 MB from the AWS Open Data Registry at run time (anonymous HTTPS, cached under data/synthea-ehr/,
-# never committed) and appends a per-trust person_id-modulo slice (ids shifted into a reserved band
-# so they never collide with the imaging cohorts). Idempotent. Run once per trust, giving that
+# never committed) and appends a per-trust person_id-modulo slice (ids shifted clear of the imaging
+# cohorts' person_id range at insert time). Idempotent: reloads delete by provenance
+# (person_source_value, never by id range — see synthea_ehr.py's clean_reserved_band), so an imaging
+# cohort person is never at risk regardless of where its id falls. Run once per trust, giving that
 # trust's index + published port (same shape as load-omop-vocab):
 #   make load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT
 #   make load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH

@@ -67,12 +67,19 @@ tolerate the DICOM vocab already present in the tarballs):
   side of the EHR risk-prediction tutorial. The shipped mock OMOP has NO `condition_occurrence` rows,
   so that tutorial's `query.sql` returns nothing until this loads the public 1k-person Synthea-in-OMOP
   set (AWS Open Data Registry, anonymous HTTPS, downloaded at run time, never committed) into a running
-  DB. Synthea ids are shifted into a reserved high band (`PERSON_ID_OFFSET`, even → per-trust modulo
-  split unchanged) so they never collide with the imaging cohorts' keys, and the tutorial's `query.sql`
-  scopes to persons that HAVE a condition — i.e. exactly these rows. FK-safe: `gender_concept_id` keeps
+  DB. Synthea ids are shifted by `PERSON_ID_OFFSET` (even → per-trust modulo split unchanged) so they
+  never collide with the imaging cohorts' keys at INSERT time — but that offset is not what makes
+  reloading safe: imaging `person_id` is `nhs_number_to_integer(PatientID)`, the first 9 digits of a
+  real NHS number, so it scatters across the whole 9-digit range rather than staying "small", and a
+  plain id-range delete silently destroys imaging persons (and, via `ON DELETE CASCADE`, their
+  `image_occurrence`/`procedure_occurrence` rows) that happen to land above the threshold — confirmed
+  live at ~10% of one trust's imaging cohort per reload before this was fixed. `clean_reserved_band`
+  therefore deletes by **provenance**: only rows whose `person_source_value` carries this loader's
+  `synthea-` prefix are ever removed, never by `person_id` range. The tutorial's `query.sql` scopes to
+  persons that HAVE a condition — i.e. exactly these rows. FK-safe: `gender_concept_id` keeps
   Synthea's standard 8507/8532 (`query.sql` reads it), every other `*_concept_id` is zeroed to `0`
-  ("No matching concept"), conditions match on the `condition_source_value` SNOMED string. Idempotent
-  (reserved band deleted before reload); unit-tested in `tests/unit/test_synthea_ehr.py`.
+  ("No matching concept"), conditions match on the `condition_source_value` SNOMED string. Idempotent;
+  unit-tested in `tests/unit/test_synthea_ehr.py`.
 - The populate scripts run on the **host** against published ports (`OMOP_DB_HOST` defaults to
   localhost) and need postgresql-client (`psql`/`pg_isready`).
 

@@ -23,10 +23,16 @@ anonymous HTTPS, no credentials, ~5 MB total, static since 2023) and append them
 Design notes:
 
 * **Coexistence with the imaging cohorts.** The mock OMOP already holds the imaging tutorials'
-  persons (they carry visits but no conditions). Synthea ids are therefore shifted into a reserved
-  high band (``PERSON_ID_OFFSET``) so they never collide with an existing primary key, and the
-  tutorial's ``query.sql`` selects only persons that have a condition — i.e. exactly the rows
-  loaded here. Re-running is idempotent: the reserved band is deleted first, then re-inserted.
+  persons (they carry visits but no conditions). Synthea ids are shifted by ``PERSON_ID_OFFSET`` so
+  they never collide with an existing primary key at insert time, and the tutorial's ``query.sql``
+  selects only persons that have a condition — i.e. exactly the rows loaded here. **The id shift is
+  not what makes reloading safe.** The imaging cohorts' ``person_id`` is not sequentially generated —
+  it is derived from a real (effectively random) NHS number — so it scatters across the whole 9-digit
+  space and a plain "delete every person_id above a threshold" band silently deletes a chunk of the
+  imaging cohort (and, via ``ON DELETE CASCADE``, its ``image_occurrence``/``procedure_occurrence``
+  rows) on every reload. Idempotency instead deletes by **provenance**: only rows whose
+  ``person_source_value`` carries this loader's ``synthea-`` prefix (written only by
+  ``build_person_rows``) are ever removed — see ``clean_reserved_band``.
 * **FK safety.** FK constraints are absent from a freshly-initialised DB but present once
   ``load-omop-vocab`` has run. Every ``*_concept_id`` that would reference the vocabulary is set
   to ``0`` ("No matching concept", always present in a loaded vocab) **except** ``gender_concept_id``
@@ -62,10 +68,22 @@ REQUIRED_SOURCE_COLUMNS = {
     "visit_occurrence": ["person_id", "visit_start_date"],
 }
 
-# Shift Synthea ids into a reserved high band so they never collide with the imaging cohorts'
-# existing primary keys. Must be large (Synthea 1k ids are <2000; imaging ids are far smaller) and
-# even, so the person_id-modulo per-trust split is unchanged by the shift.
-PERSON_ID_OFFSET = 900_000_000
+# Shift Synthea ids clear of the imaging cohorts' person_id range at INSERT time. This offset is
+# *not* what makes clean_reserved_band's delete safe (see that function and the module docstring) —
+# it only has to satisfy: (1) large enough that no shifted Synthea id can equal an imaging person_id,
+# and (2) even, so the person_id-modulo per-trust split (computed on the raw, unshifted id in
+# _trust_person_ids) is unchanged when read back off the shifted id. The imaging cohorts' person_id
+# is nhs_number_to_integer(PatientID) — the first 9 digits of a real NHS number — so it is bounded
+# above by 999_999_999; any offset >= 1_000_000_000 therefore satisfies (1) by construction. This is
+# the one place that bound is load-bearing: if NHS-number generation ever changes to emit more than
+# 9 digits, this offset must be revisited. Stays far below the int32 ceiling (2_147_483_647) to leave
+# ample room for Synthea's persons.
+PERSON_ID_OFFSET = 1_000_000_000
+
+# Written into person_source_value by build_person_rows and nowhere else — the actual ownership
+# marker clean_reserved_band deletes by. See the module docstring's "Coexistence with the imaging
+# cohorts" note for why this, rather than PERSON_ID_OFFSET, is what makes reloading safe.
+SYNTHEA_SOURCE_VALUE_PREFIX = "synthea-"
 
 # Standard OMOP Gender concepts, present in every vocabulary export — safe to keep even with FK
 # constraints applied. query.sql reads gender_concept_id == 8532 for the is_female feature.
@@ -120,7 +138,7 @@ def _trust_person_ids(person: pd.DataFrame, num_trusts: int, trust_index: int) -
 
 
 def build_person_rows(person: pd.DataFrame, person_ids: set[int]) -> pd.DataFrame:
-    """Project the Synthea person table onto the OMOP columns, shifted into the reserved id band."""
+    """Project the Synthea person table onto the OMOP columns, id-shifted clear of the imaging cohorts."""
     subset = person[person["person_id"].isin(person_ids)]
     gender = subset["gender_concept_id"].where(
         subset["gender_concept_id"].isin(_STANDARD_GENDER_CONCEPT_IDS), _NO_MATCHING_CONCEPT_ID
@@ -136,7 +154,9 @@ def build_person_rows(person: pd.DataFrame, person_ids: set[int]) -> pd.DataFram
             "birth_datetime": pd.to_datetime(subset["birth_datetime"]),
             "race_concept_id": _NO_MATCHING_CONCEPT_ID,
             "ethnicity_concept_id": _NO_MATCHING_CONCEPT_ID,
-            "person_source_value": subset["person_id"].astype(int).map(lambda pid: f"synthea-{pid}"),
+            "person_source_value": subset["person_id"]
+            .astype(int)
+            .map(lambda pid: f"{SYNTHEA_SOURCE_VALUE_PREFIX}{pid}"),
         }
     )
 
@@ -174,21 +194,37 @@ def build_visit_rows(visit: pd.DataFrame, person_ids: set[int]) -> pd.DataFrame:
 
 
 def clean_reserved_band(engine: Engine) -> None:
-    """Delete any previously loaded Synthea rows (the reserved id band) — makes reloads idempotent.
+    """Delete any previously loaded Synthea rows, identified by provenance — makes reloads idempotent.
 
-    Child tables are cleared before ``person`` so the delete is safe whether or not FK constraints
-    have been applied (``load-omop-vocab``). Only the reserved band is touched, never imaging rows.
+    Deliberately does **not** filter on ``PERSON_ID_OFFSET`` (an id-range threshold): the imaging
+    cohorts' ``person_id`` is derived from a real, effectively random NHS number
+    (``nhs_number_to_integer``), so it scatters across the whole 9-digit range and a plain
+    "person_id >= offset" delete would remove a chunk of the imaging cohort along with its cascaded
+    ``image_occurrence``/``procedure_occurrence`` rows on every reload — confirmed live on a trust
+    holding 4187 imaging persons, of which 422 had ``person_id >= 900_000_000`` and were destroyed by
+    the old band delete (``fpk_image_occurrence_person_id`` is ``ON DELETE CASCADE``).
+
+    Instead, ownership is established the only way this loader actually has it: rows are deleted iff
+    their ``person_id`` belongs to a person this loader itself wrote, identified by the
+    ``SYNTHEA_SOURCE_VALUE_PREFIX`` marker in ``person_source_value`` (set only by
+    ``build_person_rows``). Child tables are scoped by joining back to those owned persons rather than
+    trusting their own id range, since nothing here can prove ``condition_occurrence_id`` /
+    ``visit_occurrence_id`` stay outside whatever range the imaging loader used for them. Child tables
+    are cleared before ``person`` so the delete is safe whether or not FK constraints have been
+    applied (``load-omop-vocab``).
     """
+    marker = f"{SYNTHEA_SOURCE_VALUE_PREFIX}%"
+    owned_persons_subquery = "SELECT person_id FROM omop.person WHERE person_source_value LIKE :marker"
     with engine.begin() as conn:
         conn.execute(
-            text("DELETE FROM omop.condition_occurrence WHERE condition_occurrence_id >= :offset"),
-            {"offset": PERSON_ID_OFFSET},
+            text(f"DELETE FROM omop.condition_occurrence WHERE person_id IN ({owned_persons_subquery})"),
+            {"marker": marker},
         )
         conn.execute(
-            text("DELETE FROM omop.visit_occurrence WHERE visit_occurrence_id >= :offset"),
-            {"offset": PERSON_ID_OFFSET},
+            text(f"DELETE FROM omop.visit_occurrence WHERE person_id IN ({owned_persons_subquery})"),
+            {"marker": marker},
         )
-        conn.execute(text("DELETE FROM omop.person WHERE person_id >= :offset"), {"offset": PERSON_ID_OFFSET})
+        conn.execute(text("DELETE FROM omop.person WHERE person_source_value LIKE :marker"), {"marker": marker})
 
 
 def load_synthea_ehr(engine: Engine, tables: dict[str, pd.DataFrame], num_trusts: int, trust_index: int) -> int:
