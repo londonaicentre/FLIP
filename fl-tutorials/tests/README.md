@@ -56,11 +56,19 @@ Those tests run against **each dataset's own uv project**, one pytest invocation
 (`DATASET_TEST_PROJECTS` in `fl-tutorials/Makefile`, currently `spleen cxr`), each declaring what
 that dataset's tooling actually needs. `make -C fl-tutorials pytest-datasets` runs them all.
 
-Every project also runs `tests/datasets/utils/`, the shared OMOP contract. That repetition is the
-point rather than an accident: `datasets/utils/` has no environment of its own, so running its
-tests once per consumer is what checks the contract resolves in each environment that imports it.
-It earned its keep immediately — adding `datasets/cxr` surfaced a missing `requests` dependency
-(imported at module scope by `omop_schemas.py`) that a single-environment run would have missed.
+The split is not just tidiness: it is the only thing in CI that checks a dataset's
+`pyproject.toml` declares what its code actually imports. A dataset's tests import its converter,
+which imports the shared contract in `datasets/utils/`, so an undeclared transitive dependency
+fails that dataset's own run. It earned that immediately — adding `datasets/cxr` surfaced a
+missing `requests`, imported at module scope by `omop_schemas.py`. (Verified rather than assumed:
+deleting `requests` from `datasets/cxr/pyproject.toml` against a clean venv errors all 13 cxr
+tests. Note a *stale* venv hides this — `uv run` does not prune an already-installed package, so
+re-test with `rm -rf datasets/<name>/.venv` first.)
+
+`tests/datasets/utils/` — the shared contract itself — runs **once**, in the first listed
+project's environment (`DATASET_UTILS_PROJECT`). Any dataset environment can host it, and
+re-running it per project would only repeat the same assertions; it is not what catches the drift
+above.
 
 `tests/datasets/pytest.ini` is a second inifile, deliberately: it anchors this subtree's rootdir
 at `tests/datasets/`, which is what keeps `tests/conftest.py` out of these runs. That conftest
