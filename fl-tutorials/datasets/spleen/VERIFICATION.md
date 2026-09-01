@@ -81,6 +81,7 @@ MATCH visit_occurrence: 41 rows x 8 cols
 MATCH image_occurrence: 41 rows x 11 cols
 MATCH image_feature: 205 rows x 8 cols
 MATCH measurement: 205 rows x 11 cols
+skip  observation: not published for spleen_project
 
 GATE PASS — every published table reproduces from 20260901
 ```
@@ -89,7 +90,9 @@ Exit code: `0`.
 
 No published-only columns this time: the `20260901` export is the chain's own output, so the
 empty optional columns the `20260729` export had materialised are simply absent &mdash; every
-column compared, none excused.
+column compared, none excused. (`observation` is skipped for the reason given under the
+`20260729` record below.) The `cxr_project` tables were carried over to `20260901` unchanged,
+and `reproduce-cxr-omop` passes against it too &mdash; see `../cxr/VERIFICATION.md`.
 
 ## Run record &mdash; `20260729` (historical; the FLIP#1092 provenance claim)
 

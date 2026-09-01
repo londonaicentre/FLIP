@@ -52,9 +52,35 @@ generated output merged, sorted by primary key, compared column by column).
 
 Needs no root, no image download, and no access to `xraycat`.
 
-## Run record
+## Run record &mdash; `20260901` (FLIP#1098)
 
-- **Data version compared**: `20260729` (`trust/omop-db/.data_version`)
+- **Data version compared**: `20260901` (`trust/omop-db/.data_version`)
+- **Date run**: 2026-09-01
+- **Environment**: this worktree, `uv run --project datasets/cxr`
+- **What changed since `20260729`**: nothing on the cxr side. FLIP#1098 corrected the spleen
+  converter's SliceThickness unit and republished the whole dataset under a new version; the
+  `cxr_project` tables and their `source/dicom_metadata.csv` were carried over byte-for-byte, and
+  this run is the check that the carry-over is what the converter still produces.
+
+### Result (verbatim)
+
+```
+MATCH person: 8332 rows x 10 cols
+MATCH procedure_occurrence: 8332 rows x 9 cols
+MATCH visit_occurrence: 8332 rows x 8 cols
+MATCH image_occurrence: 8332 rows x 11 cols
+MATCH image_feature: 11660 rows x 8 cols
+skip  measurement: not published for cxr_project
+MATCH observation: 11660 rows x 7 cols
+
+GATE PASS — every published table reproduces from 20260901
+```
+
+Exit code: `0`.
+
+## Run record &mdash; `20260729` (the FLIP#1092 provenance claim)
+
+- **Data version compared**: `20260729`
 - **Date run**: 2026-09-01
 - **Environment**: this worktree, `uv run --project datasets/cxr`
 
@@ -107,10 +133,10 @@ produced by different scripts against different schema subsets; nothing is being
 
 ## Outcome
 
-**GATE PASS.** Every published `cxr_project` table for data version `20260729` reproduces
-byte-for-byte on the shared columns from the in-tree converter, starting from the published metadata
-table. This is the evidence that `fl-tutorials/datasets/cxr/omop_convert_cxr.py` is demonstrably what
-produced FLIP's published cxr mock OMOP data.
+**GATE PASS**, for both data versions. Every published `cxr_project` table for `20260729` and
+`20260901` reproduces byte-for-byte on the shared columns from the in-tree converter, starting from
+the published metadata table. This is the evidence that `fl-tutorials/datasets/cxr/omop_convert_cxr.py`
+is demonstrably what produced FLIP's published cxr mock OMOP data.
 
 ## Re-running this check
 
