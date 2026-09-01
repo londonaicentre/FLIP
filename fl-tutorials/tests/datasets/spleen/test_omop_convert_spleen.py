@@ -35,6 +35,17 @@ METADATA_COLUMNS = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def _isolate_cwd(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Keep every test's output inside tmp_path.
+
+    ``transform_dicom_metadata_to_omop_tables`` writes ``omop/<project>/*.csv`` relative to the
+    current directory, so a test that calls it without chdir'ing first leaves those files in the
+    repository. Autouse rather than per-test, so a new test cannot forget.
+    """
+    monkeypatch.chdir(tmp_path)
+
+
 @pytest.fixture(scope="module")
 def converter() -> ModuleType:
     """Import the converter with datasets/ on sys.path so `utils` resolves."""
@@ -107,11 +118,10 @@ def test_image_occurrence_carries_the_accession_and_uids(converter: ModuleType, 
 
 
 def test_split_writes_one_directory_per_trust_without_the_trust_column(
-    converter: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    converter: ModuleType, tmp_path: Path
 ) -> None:
     csv_path = _write_metadata_csv(tmp_path / "dicom_metadata.csv", count=4)
     tables = converter.transform_dicom_metadata_to_omop_tables(str(csv_path))
-    monkeypatch.chdir(tmp_path)
 
     converter.split_data_into_trusts_and_copy_dicoms(tables, COPY_DICOM=False)
 
