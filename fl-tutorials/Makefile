@@ -26,7 +26,8 @@ DATASET_TARGETS := download-xray-data download-spleen-data upload-spleen-labels 
 	download-arkplus-finetuning-data download-arkplus-eval-data \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
 	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
-	reproduce-spleen-omop
+	reproduce-spleen-omop \
+	fetch-cxr-metadata-table build-cxr-omop-tables verify-cxr-omop-tables reproduce-cxr-omop
 
 .PHONY: $(TUTORIAL_TARGETS) $(DATASET_TARGETS)
 $(TUTORIAL_TARGETS):
@@ -68,17 +69,31 @@ format:
 PYTEST ?= uv run --project ../flip-utils --extra full --group dev pytest
 
 # Dataset-tooling tests (tests/datasets/) exercise datasets/**, which is workstation tooling,
-# not FL-runtime code — flip-utils has no use for pandera/sqlglot, so those tests run against
-# datasets/spleen's own project instead, which already declares everything they need
-# (pandera[pandas,io], sqlglot, pandas, pydicom, natsort, monai). See tests/README.md.
-DATASETS_PYTEST ?= uv run --project datasets/spleen --group dev pytest
+# not FL-runtime code — flip-utils has no use for pandera/sqlglot — so each dataset's tests run
+# against that dataset's own uv project, which declares what it needs. See tests/README.md.
+#
+# The per-project split is what checks each dataset's pyproject declares what its code actually
+# imports: a dataset's converter tests import the converter, which imports the shared contract, so
+# an undeclared transitive dependency fails that dataset's own run. Verified by deleting `requests`
+# from datasets/cxr/pyproject.toml against a clean venv -- all 13 cxr tests error.
+#
+# tests/datasets/utils/ is the shared contract and runs ONCE, in the first listed project's
+# environment. Any dataset environment can host it; re-running it per project would just repeat the
+# same assertions, and is not what catches the dependency drift above.
+DATASET_TEST_PROJECTS ?= spleen cxr
+DATASET_UTILS_PROJECT ?= $(firstword $(DATASET_TEST_PROJECTS))
 
 .PHONY: pytest pytest-datasets test unit_test
 pytest:
 	$(PYTEST) tests --ignore=tests/datasets
 
 pytest-datasets:
-	$(DATASETS_PYTEST) tests/datasets
+	@echo "==> tests/datasets/utils (env: datasets/$(DATASET_UTILS_PROJECT))"
+	@uv run --project datasets/$(DATASET_UTILS_PROJECT) --group dev pytest tests/datasets/utils
+	@for project in $(DATASET_TEST_PROJECTS); do \
+		echo "==> tests/datasets/$$project (env: datasets/$$project)"; \
+		uv run --project datasets/$$project --group dev pytest tests/datasets/$$project || exit 1; \
+	done
 
 test: lint pytest pytest-datasets
 

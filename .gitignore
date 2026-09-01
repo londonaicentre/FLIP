@@ -463,8 +463,9 @@ flip-utils/dist/
 # - the dataset tooling's uv.lock (intentionally not pinned to a strict lockfile)
 fl-tutorials/data/
 fl-tutorials/datasets/spleen/uv.lock
+fl-tutorials/datasets/cxr/uv.lock
 
-# Output of the spleen OMOP generation chain (FLIP#1092). Regenerated on demand and verified against
+# Output of the spleen and cxr OMOP generation chains (FLIP#1092). Regenerated on demand and verified against
 # the published export — never committed. The scripts write cwd-relative, and the Make recipes run
 # from fl-tutorials/datasets/; the second set covers a hand-run from fl-tutorials/.
 fl-tutorials/datasets/dicom_output/

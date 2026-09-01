@@ -49,9 +49,10 @@ make -C fl-tutorials verify-spleen-omop-tables
 ```
 
 (equivalently `make -C fl-tutorials reproduce-spleen-omop`, which chains all three). The last
-step runs `fl-tutorials/datasets/spleen/verify_omop_tables.py`, which fetches the published CSVs
-for the pinned data version from `aicentreflip/trust-data` and diffs them against the locally
-generated tables (per-trust generated output merged, sorted by primary key, compared column by
+step runs `fl-tutorials/datasets/utils/verify_omop_tables.py --project spleen_project` &mdash; one
+gate script shared by every dataset, since nothing in it is spleen-specific. It fetches the
+published CSVs for the pinned data version from `aicentreflip/trust-data` and diffs them against
+the locally generated tables (per-trust generated output merged, sorted by primary key, compared column by
 column). Two categories of published-only column are tolerated as known-benign: optional schema
 columns the converter legitimately omits (`wadors_uri` on `image_occurrence`; `alg_datetime`,
 `alg_system`, `image_finding_concept_id`, `image_finding_id` on `image_feature`), verified empty
@@ -105,14 +106,18 @@ MATCH visit_occurrence: 41 rows x 8 cols
 MATCH image_occurrence: 41 rows x 11 cols  (+1 empty published-only col(s))
 MATCH image_feature: 205 rows x 8 cols  (+4 empty published-only col(s))
 MATCH measurement: 205 rows x 11 cols
+skip  observation: not published for spleen_project
 
 GATE PASS — every published table reproduces from 20260729
 ```
 
 Exit code: `0`.
 
-`observation` is not compared: it is an `OPTIONAL_TABLE` that only `cxr_project` ships, so it is
-absent upstream for `spleen_project` by design, not a gap.
+`observation` is skipped, not failed: the gate's table list is the union across datasets, and
+`observation` is the one only `cxr_project` publishes (spleen publishes `measurement`, which cxr
+does not). A table absent upstream is absent by design. The guard that stops this being a way to
+pass vacuously is the compared-count check &mdash; a run that skips *everything* is a `GATE FAIL`,
+verified by pointing the gate at a nonexistent data version.
 
 ### Per-table detail
 

@@ -60,12 +60,12 @@ and runs in CI on every PR touching `fl-tutorials/**`:
 ```bash
 make -C fl-tutorials test              # ruff over fl-tutorials/ + both suites below
 make -C fl-tutorials pytest            # tutorial-app suite only (fl-tutorials/tests/, minus tests/datasets/)
-make -C fl-tutorials pytest-datasets   # dataset-tooling suite only (fl-tutorials/tests/datasets/)
+make -C fl-tutorials pytest-datasets   # dataset-tooling suites only (fl-tutorials/tests/datasets/, one env per dataset)
 make -C fl-tutorials lint              # ruff only
 ```
 
 It pins what each app's preprocessing chain actually feeds its model against the raw DICOM `PixelData` — see
-[`tests/README.md`](tests/README.md) for what it does and does not cover, and for why the two suites run in
+[`tests/README.md`](tests/README.md) for what it does and does not cover, and for why the suites run in
 different environments.
 
 For network provisioning and standalone service operation, use the
