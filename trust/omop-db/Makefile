@@ -100,7 +100,13 @@ VOCAB_S3_BUCKET ?= flipdev-aicentre
 # image is vocab-free).
 VOCAB_CORE_BUNDLE = vocab_aicentre_core_20240916
 VOCAB_DICOM_BUNDLE = vocab_dicom_paulnagy_20260109
-OMOP_CSV_DATA_VERSION = 20260729
+# One version string names both halves of the published dataset — the canonical
+# CSVs under omop-csv/<version>/ and the pgdata tarballs built from them — so
+# both read .data_version (FLIP#1098 retired the separate CSV pin, which had to
+# be bumped in lockstep by hand). Override OMOP_CSV_DATA_VERSION at the CLI only
+# to fetch a different CSV version deliberately.
+DATA_VERSION = $(shell tr -d ' \n\r\t' < .data_version)
+OMOP_CSV_DATA_VERSION ?= $(DATA_VERSION)
 HF_TRUST_DATA_BASE = https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main
 
 # The shipped build stack is two-trust: compose.yml defines omop-db-trust1/2 and
@@ -230,7 +236,7 @@ apply-constraints-trust-%:
 # populated volume. Tar runs in a root container because the pgdata trees are
 # uid-999-owned; the archive root is the db_data CONTENTS, matching what
 # update_omop_data.sh extracts.
-PGDATA_VERSION = $(shell tr -d ' \n\r\t' < .data_version)
+PGDATA_VERSION = $(DATA_VERSION)
 
 export-pgdata: check-num-trusts $(addprefix export-pgdata-trust-,$(shell seq 1 $(NUM_TRUSTS)))
 

@@ -154,8 +154,9 @@ fetches it anonymously.
 ## Populating (the canonical dataset and N-trust splitting)
 
 The synthetic mock rows live as **one canonical CSV dataset** on the public
-Hugging Face dataset under `omop-csv/<version>/` (version pinned by
-`OMOP_CSV_DATA_VERSION` in the Makefile). Every row carries a `source_trust`
+Hugging Face dataset under `omop-csv/<version>/` (the version is `.data_version`,
+the same string that names the pgdata tarballs built from those CSVs; pass
+`OMOP_CSV_DATA_VERSION=<other>` to fetch a different one deliberately). Every row carries a `source_trust`
 provenance column, and standing up N trusts is a deterministic split
 (`src/omop_db_tools/dataset.py`):
 
@@ -180,21 +181,44 @@ an `OMOP_DB_PORT_TRUST_<N>` in `.env.build` — `make populate NUM_TRUSTS=3
 PARTITION=modulo` fails fast until they exist (and `modulo` implies
 regenerating the matching imaging data).
 
-### Publishing new pgdata tarballs
+### Publishing a new data version
 
-The published tarballs must be **vocab-free** (they are public): run the
-pipeline with the core-vocabulary step skipped and WITHOUT `apply-constraints`
-(the FKs reference the absent vocab tables — they are applied at seed time by
-the vocab load instead):
+`.data_version` names both halves of the published dataset: the canonical CSVs
+(`omop-csv/<version>/`) and the pgdata tarballs built from them
+(`trust<N>/trust<N>_pgdata_<version>.tar`). Any change to the CSVs — even a
+one-column fix such as FLIP#1098 — is a **new** version, never an overwrite:
+deployments that already fetched the old tarballs would otherwise silently
+disagree with the CSVs, and the faithfulness gate in `fl-tutorials/datasets/`
+pins the published behaviour of each version. In order:
 
-```sh
-make up-build && make populate CORE_VOCAB=0
-make export-pgdata                   # dist/trust<N>_pgdata_<.data_version>.tar
-```
+1. Regenerate the per-project, per-trust CSVs (spleen:
+   `make -C fl-tutorials reproduce-spleen-omop`, see
+   `fl-tutorials/datasets/README.md`) and merge them into the canonical layout
+   with `uv run python -m omop_db_tools.dataset build --trust-dirs <dir1> <dir2>
+   --dest <out>/omop-csv/<version> --projects <project>`. Carry the untouched
+   projects and every project's `source/dicom_metadata.csv` over from the
+   previous version unchanged — a version directory is a complete snapshot.
+2. Upload the CSV tree: `hf upload aicentreflip/trust-data
+   <out>/omop-csv/<version> omop-csv/<version> --repo-type dataset`.
+3. Bump `.data_version`; every step below reads it.
+4. Build the tarballs from the CSVs just published. They must be
+   **vocab-free** (they are public): skip the core-vocabulary step and do NOT
+   `apply-constraints` (the FKs reference the absent vocab tables — they are
+   applied at seed time by the vocab load instead):
 
-Upload each archive under `trust<N>/` in the Hugging Face dataset and bump
-`.data_version`. The DICOM vocabulary and the synthetic cohort stay in the
-tarball (both freely redistributable); the archives are ~11 MB.
+   ```sh
+   make up-build && make populate CORE_VOCAB=0
+   make export-pgdata                   # dist/trust<N>_pgdata_<.data_version>.tar
+   ```
+
+5. Upload each archive under `trust<N>/`: `hf upload aicentreflip/trust-data
+   dist/trust1_pgdata_<version>.tar trust1/trust1_pgdata_<version>.tar
+   --repo-type dataset`, likewise for trust2.
+6. Re-run the faithfulness gate against the new version:
+   `make -C fl-tutorials verify-spleen-omop-tables`.
+
+The DICOM vocabulary and the synthetic cohort stay in the tarball (both freely
+redistributable); the archives are ~11 MB.
 
 To publish the image manually (CI normally does this): `make push`
 (GHCR write access required; `OMOP_DB_TAG` overrides the tag, and the target
