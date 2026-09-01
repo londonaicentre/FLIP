@@ -1,0 +1,27 @@
+[project]
+name = "cxr-dataset-tools"
+version = "0.1.0"
+description = "Local uv environment for the cxr_project OMOP conversion (FLIP#1092 wave 2)."
+requires-python = ">=3.12,<3.14"
+# Deliberately narrower than spleen's: only the OMOP conversion lives in-tree for cxr, so there is
+# no DICOM-writing or image-download stage to carry dependencies for. The images themselves come
+# from londonaicentre/xraycat, outside this repo.
+dependencies = [
+    "pandas>=2.3.2",
+    "pandera[pandas,io]>=0.28.1",
+    # utils/omop_schemas.py imports requests at module scope for its --regenerate path, so every
+    # consumer of the shared contract needs it even though no conversion run reaches the network.
+    "requests>=2.32.5",
+    "sqlglot>=28.6.0",
+    "tqdm>=4.67.3",
+]
+
+[dependency-groups]
+# Test-only: fl-tutorials/tests/datasets/cxr/ and tests/datasets/utils/ run in this project's
+# environment as well as spleen's (see fl-tutorials/tests/README.md).
+dev = [
+    "pytest>=8.4.2",
+]
+
+[tool.uv]
+package = false

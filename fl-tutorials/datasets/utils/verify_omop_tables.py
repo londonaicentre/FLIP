@@ -9,11 +9,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Check that the generated spleen OMOP tables reproduce the published export.
+"""Check that generated OMOP tables reproduce the published export.
 
 Fetches the published CSVs for the pinned data version and diffs them against locally generated
 ones. This is the check that makes the vendored chain's faithfulness demonstrable rather than
 assumed — see the design spec's "What is and is not reproducible" (FLIP#1092).
+
+Project-agnostic: every dataset under ``fl-tutorials/datasets/`` gates through this one script,
+selected with ``--project``. Tables absent from a project's published export are skipped rather
+than failed (spleen ships ``measurement`` and no ``observation``; cxr the reverse), which is why
+``TABLES`` is the union across projects and why a run that compares nothing is a hard failure.
 """
 
 from __future__ import annotations
@@ -34,6 +39,7 @@ TABLES = (
     "image_occurrence",
     "image_feature",
     "measurement",
+    "observation",
 )
 
 
@@ -95,7 +101,11 @@ def main(argv: list[str] | None = None) -> int:
     """Run the comparison and return a process exit code."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--generated-dir", type=Path, default=Path("omop"))
-    parser.add_argument("--project", default="spleen_project")
+    parser.add_argument(
+        "--project",
+        required=True,
+        help="Project directory on the dataset and under omop/<trust>/, e.g. spleen_project.",
+    )
     parser.add_argument("--trusts", nargs="+", default=["trust_1", "trust_2"])
     parser.add_argument(
         "--data-version",

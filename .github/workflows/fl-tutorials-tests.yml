@@ -80,8 +80,9 @@ jobs:
       - name: Run the tutorial transform tests
         run: make pytest
 
-      # Dataset-tooling tests run against datasets/spleen's own project instead -- flip-utils
-      # has no use for pandera/sqlglot. `uv run --project` resolves and syncs that environment
-      # on demand, so no separate sync step is needed here.
+      # Dataset-tooling tests run against each dataset's own uv project instead -- flip-utils
+      # has no use for pandera/sqlglot. One pytest invocation per project (DATASET_TEST_PROJECTS
+      # in the Makefile); `uv run --project` resolves and syncs each environment on demand, so no
+      # separate sync step is needed here.
       - name: Run the dataset-tooling tests
         run: make pytest-datasets

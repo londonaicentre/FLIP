@@ -26,7 +26,8 @@ DATASET_TARGETS := download-xray-data download-spleen-data upload-spleen-labels 
 	download-arkplus-finetuning-data download-arkplus-eval-data \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
 	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
-	reproduce-spleen-omop
+	reproduce-spleen-omop \
+	fetch-cxr-metadata-table build-cxr-omop-tables verify-cxr-omop-tables reproduce-cxr-omop
 
 .PHONY: $(TUTORIAL_TARGETS) $(DATASET_TARGETS)
 $(TUTORIAL_TARGETS):
@@ -68,17 +69,24 @@ format:
 PYTEST ?= uv run --project ../flip-utils --extra full --group dev pytest
 
 # Dataset-tooling tests (tests/datasets/) exercise datasets/**, which is workstation tooling,
-# not FL-runtime code — flip-utils has no use for pandera/sqlglot, so those tests run against
-# datasets/spleen's own project instead, which already declares everything they need
-# (pandera[pandas,io], sqlglot, pandas, pydicom, natsort, monai). See tests/README.md.
-DATASETS_PYTEST ?= uv run --project datasets/spleen --group dev pytest
+# not FL-runtime code — flip-utils has no use for pandera/sqlglot — so each dataset's tests run
+# against that dataset's own uv project, which declares what it needs. See tests/README.md.
+#
+# Every project also runs tests/datasets/utils/, the shared OMOP contract. That is not redundant
+# repetition: datasets/utils has no environment of its own, so running its tests once per consumer
+# is what checks that the contract actually resolves in each environment that imports it.
+DATASET_TEST_PROJECTS ?= spleen cxr
 
 .PHONY: pytest pytest-datasets test unit_test
 pytest:
 	$(PYTEST) tests --ignore=tests/datasets
 
 pytest-datasets:
-	$(DATASETS_PYTEST) tests/datasets
+	@for project in $(DATASET_TEST_PROJECTS); do \
+		echo "==> tests/datasets/$$project + tests/datasets/utils (env: datasets/$$project)"; \
+		uv run --project datasets/$$project --group dev pytest \
+			tests/datasets/utils tests/datasets/$$project || exit 1; \
+	done
 
 test: lint pytest pytest-datasets
 

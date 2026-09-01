@@ -23,7 +23,7 @@ runs in well under a second.
 ```bash
 make -C fl-tutorials test              # ruff over fl-tutorials/ + both suites below
 make -C fl-tutorials pytest            # tutorial-app suite only (tests/, minus tests/datasets/)
-make -C fl-tutorials pytest-datasets   # dataset-tooling suite only (tests/datasets/)
+make -C fl-tutorials pytest-datasets   # dataset-tooling suites only (tests/datasets/, one env per dataset)
 make -C fl-tutorials lint              # ruff only
 ```
 
@@ -35,7 +35,8 @@ or the flip-utils source/environment, and on pushes to main/develop
 
 Tests mirror the source tree and are named for the file they cover —
 `tests/datasets/spleen/test_download_spleen_dataset.py` covers
-`datasets/spleen/download_spleen_dataset.py`, the same convention as
+`datasets/spleen/download_spleen_dataset.py`, and `tests/datasets/cxr/test_omop_convert_cxr.py`
+covers `datasets/cxr/omop_convert_cxr.py` — the same convention as
 `trust/imaging-api/tests/routers/test_imaging.py`.
 
 Cross-cutting guards that assert a property across several source files
@@ -43,16 +44,29 @@ Cross-cutting guards that assert a property across several source files
 `test_spleen_inference_config_parity.py`) stay at the root of `tests/`, because
 no single source path describes what they cover.
 
-**Two environments, split at `tests/datasets/`.** Everything else under `tests/` covers the
-tutorial apps themselves and runs in flip-utils' environment (`flip-utils[full]` — monai,
+**Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
+the tutorial apps themselves and runs in flip-utils' environment (`flip-utils[full]` — monai,
 pydicom, torch, timm, sklearn), which is what the FL images give those apps at runtime — see
 "What it runs" below (`make -C fl-tutorials pytest`, which passes `--ignore=tests/datasets`).
 `tests/datasets/` instead covers `fl-tutorials/datasets/**`, which is workstation tooling that
 never runs on an FL image — it has no business pulling `pandera`/`sqlglot` (needed to validate
-the OMOP tables that tooling generates) into flip-utils' runtime environment. Those tests run
-against `datasets/spleen`'s own project instead, which already declares everything they need
-(`pandera[pandas,io]`, `sqlglot`, `pandas`, `pydicom`, `natsort`, `monai`) — its `dev` dependency
-group adds only `pytest` on top: `make -C fl-tutorials pytest-datasets`.
+the OMOP tables that tooling generates) into flip-utils' runtime environment.
+
+Those tests run against **each dataset's own uv project**, one pytest invocation per project
+(`DATASET_TEST_PROJECTS` in `fl-tutorials/Makefile`, currently `spleen cxr`), each declaring what
+that dataset's tooling actually needs. `make -C fl-tutorials pytest-datasets` runs them all.
+
+Every project also runs `tests/datasets/utils/`, the shared OMOP contract. That repetition is the
+point rather than an accident: `datasets/utils/` has no environment of its own, so running its
+tests once per consumer is what checks the contract resolves in each environment that imports it.
+It earned its keep immediately — adding `datasets/cxr` surfaced a missing `requests` dependency
+(imported at module scope by `omop_schemas.py`) that a single-environment run would have missed.
+
+`tests/datasets/pytest.ini` is a second inifile, deliberately: it anchors this subtree's rootdir
+at `tests/datasets/`, which is what keeps `tests/conftest.py` out of these runs. That conftest
+imports monai and pydicom at module scope to build the tutorial-app fixtures, and pytest loads
+every conftest between rootdir and the collected tests — so without the second inifile, a dataset
+project that does not declare monai fails during *collection*, before running a single test.
 
 ## Why this exists
 
