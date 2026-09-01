@@ -124,6 +124,29 @@ class TestStateLookup:
     def test_absent_for_each_resource_yields_no_keys(self, state):
         assert state.instance_keys("aws_security_group_rule", "k8s_trust_fl_server_nlb") == []
 
+    def test_data_attrs_reads_the_data_source_the_managed_lookup_skips(self, state):
+        # The mirror of the mode trap: DEMO_ASSETS_BUCKET_NAME is only recoverable
+        # from data.aws_s3_bucket.demo_assets, because the demo bucket is not
+        # Terraform-managed. attrs() must not see it, data_attrs() must.
+        st = rce.State(
+            {
+                "resources": [
+                    {
+                        "mode": "data",
+                        "type": "aws_s3_bucket",
+                        "name": "demo_assets",
+                        "instances": [{"attributes": {"bucket": "flipprod-demo-assets"}}],
+                    }
+                ]
+            }
+        )
+        assert st.attrs("aws_s3_bucket", "demo_assets") == {}
+        assert st.data_attrs("aws_s3_bucket", "demo_assets")["bucket"] == "flipprod-demo-assets"
+
+    def test_data_attrs_ignores_the_managed_resource(self, state):
+        # flip_ui is managed; asking data_attrs for it must not silently return it.
+        assert state.data_attrs("aws_vpc", "this") == {}
+
     def test_module_resource_is_not_visible_to_the_root_lookup(self, state):
         # attrs() only walks the root module, so it cannot answer questions about
         # module.trust_ec2 — hence has_module_resource.

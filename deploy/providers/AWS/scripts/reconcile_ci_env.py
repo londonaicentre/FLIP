@@ -100,6 +100,20 @@ class State:
                 return [i.get("index_key") for i in r.get("instances", []) if i.get("index_key") is not None]
         return []
 
+    def data_attrs(self, rtype: str, name: str) -> dict:
+        """Attributes of a `data` source — the mirror of `attrs`.
+
+        Needed where the deployed value only exists as a lookup: the Ark+ demo
+        bucket is not Terraform-managed, so `data.aws_s3_bucket.demo_assets` is
+        the only record of the name that was passed in.
+        """
+        for r in self.doc.get("resources", []):
+            if r.get("mode") == "data" and r.get("type") == rtype and r.get("name") == name:
+                instances = r.get("instances") or []
+                if instances:
+                    return instances[0].get("attributes") or {}
+        return {}
+
     def has_module_resource(self, module_prefix: str, rtype: str, name: str) -> bool:
         """Whether a managed resource of this type/name exists inside a module.
 
@@ -227,6 +241,9 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "VPC_NAME": st.attrs("aws_vpc", "this").get("tags", {}).get("Name", ""),
         "AICENTRE_BUCKET_NAME": st.attrs("aws_s3_bucket", "aicentre_bucket").get("bucket", ""),
         "FLIP_UI_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_ui").get("bucket", ""),
+        # Read from the *data* source: the demo bucket is not Terraform-managed
+        # (objects are staged by hand), so only the lookup records its name.
+        "DEMO_ASSETS_BUCKET_NAME": st.data_attrs("aws_s3_bucket", "demo_assets").get("bucket", ""),
         "FLIP_APP_BUNDLES_BUCKET_NAME": bucket_of("flip_app_bundles_bucket"),
         "FLIP_FL_RESULTS_BUCKET_NAME": bucket_of("flip_fl_results_bucket"),
         "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": bucket_of("flip_model_files_uploads_bucket"),
@@ -330,7 +347,7 @@ def main() -> None:
     # Legitimately empty: ENFORCE_MFA (unset means "use flip-api's secure
     # default"), and the kit date of the backend this environment does not run —
     # only one of the two is ever provisioned.
-    expected_empty = {"ENFORCE_MFA"}
+    expected_empty = {"ENFORCE_MFA", "DEMO_ASSETS_BUCKET_NAME"}
     expected_empty.add("FLOWER_KIT_DATE" if values.get("FL_BACKEND") == "nvflare" else "FLARE_KIT_DATE")
     empties = [k for k, val in values.items() if not val and k not in expected_empty]
     if empties:
@@ -369,7 +386,7 @@ def main() -> None:
             fh.write("# NOT a complete operator env file: the trust/XNAT/Orthanc/OMOP settings\n")
             fh.write("# are not recoverable from AWS and are absent here.\n")
             for key in sorted(values):
-                if values[key] or key == "ENFORCE_MFA":
+                if values[key] or key in ("ENFORCE_MFA", "DEMO_ASSETS_BUCKET_NAME"):
                     fh.write(f"{key}={values[key]}\n")
         print(f"\n✅ Wrote {args.out} (0600).")
 

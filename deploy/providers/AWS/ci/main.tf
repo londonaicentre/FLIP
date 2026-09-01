@@ -240,6 +240,9 @@ resource "aws_iam_role_policy_attachment" "apply_power_user" {
 # another name: an apply cannot widen its own permissions or relax its own trust
 # policy. Changing these roles stays a laptop operation against this root.
 data "aws_iam_policy_document" "apply_iam" {
+  # checkov:skip=CKV_AWS_109:IAM write is the point of this statement — the FLIP root owns the ECS task/execution and instance roles (iam_ecs.tf), so an apply cannot run without it; the containment is the NoSelfEscalation Deny below, not a narrower Allow
+  # checkov:skip=CKV_AWS_110:iam:PassRole and the role-mutation verbs are escalation primitives by nature; they are bounded by the Deny on both CI roles, so an apply can create service roles but cannot widen or re-trust the role it is running as
+  # checkov:skip=CKV_AWS_356:role ARNs are not knowable at policy-authoring time — Terraform creates them, and naming them here would be a cycle; PowerUserAccess already withholds IAM, so this statement is the whole IAM grant and is denied against itself
   statement {
     sid    = "ManageServiceRoles"
     effect = "Allow"

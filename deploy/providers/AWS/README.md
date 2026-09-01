@@ -990,6 +990,14 @@ default — the same trap as `UI_PORT`. `LOCAL_TRUST_PUBLIC_IPS` empty would hav
 dropped the on-prem trust's NLB ingress rule. `.env.stag` was reconciled on
 2026-09-01 and both environments now compose cleanly.
 
+The same trap was then found on **production**: `DEMO_ASSETS_BUCKET_NAME` was
+absent from `.env.production` while prod state carried the Ark+ demo resources.
+`cloudfront.tf` gates them on `var.DEMO_ASSETS_BUCKET_NAME != ""`, so an apply
+with the key absent destroys the demo's bucket policy, public-access block, OAC
+and `/ark_demo/*` behaviour. It is `OPTIONAL` in the manifest because empty is
+the *correct* value on stag, which hosts no demo — which is exactly why it is
+also recovered from state here, so prod cannot be seeded without it.
+
 Do not trust a recovered value you have not seen a plan agree with. The staging
 plan caught this tool getting `DEPLOY_TRUST_EC2` wrong: it was derived from the
 root `aws_instance.ec2_instance`, which is the SSM bastion and exists in every
