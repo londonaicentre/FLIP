@@ -21,11 +21,17 @@ import shutil
 
 import pandas as pd
 from pydicom.datadict import tag_for_keyword
+from utils.omop_ids import surrogate_ids
 from utils.omop_mappings import (
+    DICOM_ATTRIBUTE_CONCEPT_CLASS_ID,
+    EHR_TYPE_CONCEPT_ID,
+    IMAGE_FEATURE_EVENT_FIELD_CONCEPT_ID,
+    INPATIENT_VISIT_CONCEPT_ID,
     MAPPING_DICOM,
     MAPPING_MODALITY,
     MAPPING_PROCEDURE_TYPE,
     MAPPING_SEX,
+    UNKNOWN_CONCEPT_ID,
 )
 from utils.omop_schemas import schemas
 
@@ -35,6 +41,9 @@ TRUSTS = {
 }
 DICOM_FOLDER_PATH = "./dicom_output"
 PROJECT = "spleen_project"
+# Per-dataset, not shared: this is a fact about what spleen_project depicts, not an OMOP convention.
+# The prostate follow-up would use a different value (4165732).
+ANATOMIC_SITE_CONCEPT_ID = 4302605
 
 
 def nhs_number_to_integer(s):
@@ -71,8 +80,8 @@ def transform_dicom_metadata_to_omop_tables(
     )  # pandas default is int32 but pandera expects int64
     person["month_of_birth"] = person["birth_datetime"].dt.month.astype("int64")
     person["day_of_birth"] = person["birth_datetime"].dt.day.astype("int64")
-    person["race_concept_id"] = 0  # set as unknown
-    person["ethnicity_concept_id"] = 0  # set as unknown
+    person["race_concept_id"] = UNKNOWN_CONCEPT_ID  # set as unknown
+    person["ethnicity_concept_id"] = UNKNOWN_CONCEPT_ID  # set as unknown
     person["gender_source_value"] = df["PatientSex"]
     person["person_source_value"] = df["PatientID"]
 
@@ -86,16 +95,18 @@ def transform_dicom_metadata_to_omop_tables(
     # --------- Visit Occurrence table -------------
     # ----------------------------------------------
     visit_occurrence = pd.DataFrame()
-    visit_occurrence["visit_occurrence_id"] = range(2000001, len(df) + 2000001)
+    visit_occurrence["visit_occurrence_id"] = surrogate_ids(PROJECT, len(df))
     visit_occurrence["person_id"] = person["person_id"]
-    visit_occurrence["visit_concept_id"] = 9201  # Inpatient visit https://athena.ohdsi.org/search-terms/terms/9201
+    visit_occurrence["visit_concept_id"] = (
+        INPATIENT_VISIT_CONCEPT_ID  # Inpatient visit https://athena.ohdsi.org/search-terms/terms/9201
+    )
     visit_occurrence["visit_start_date"] = pd.to_datetime(df["StudyDate"], format="%Y%m%d")
     df["StudyTime"] = [f"{int(i):06d}" for i in list(df["StudyTime"])]
     visit_occurrence["visit_start_datetime"] = pd.to_datetime(df["StudyDate"] + df["StudyTime"], format="%Y%m%d%H%M%S")
     visit_occurrence["visit_end_date"] = visit_occurrence["visit_start_date"]
     visit_occurrence["visit_end_datetime"] = visit_occurrence["visit_start_datetime"]
     visit_occurrence["visit_type_concept_id"] = (
-        32817  # EHR, copying https://github.com/paulnagy/DICOM2OMOP/blob/main/demonstration/transform_imaging_metadata.ipynb
+        EHR_TYPE_CONCEPT_ID  # EHR, copying https://github.com/paulnagy/DICOM2OMOP/blob/main/demonstration/transform_imaging_metadata.ipynb
     )
 
     # Validate, add trust column, and store
@@ -108,14 +119,16 @@ def transform_dicom_metadata_to_omop_tables(
     # --------- Procedure Occurrence table ---------
     # ----------------------------------------------
     procedure_occurrence = pd.DataFrame()
-    procedure_occurrence["procedure_occurrence_id"] = range(2000001, len(df) + 2000001)
+    procedure_occurrence["procedure_occurrence_id"] = surrogate_ids(PROJECT, len(df))
     procedure_occurrence["person_id"] = person["person_id"]
     procedure_occurrence["procedure_concept_id"] = df["StudyDescription"].str.lower().map(MAPPING_PROCEDURE_TYPE)
     procedure_occurrence["procedure_date"] = pd.to_datetime(df["StudyDate"], format="%Y%m%d")
     procedure_occurrence["procedure_datetime"] = pd.to_datetime(
         df["StudyDate"] + df["StudyTime"], format="%Y%m%d%H%M%S"
     )
-    procedure_occurrence["procedure_type_concept_id"] = 32817  # EHR as per https://doi.org/10.1007/s10278-024-00982-6
+    procedure_occurrence["procedure_type_concept_id"] = (
+        EHR_TYPE_CONCEPT_ID  # EHR as per https://doi.org/10.1007/s10278-024-00982-6
+    )
     procedure_occurrence["quantity"] = 1  # Could be number of series if available?
     procedure_occurrence["visit_occurrence_id"] = visit_occurrence["visit_occurrence_id"]
     procedure_occurrence["procedure_source_value"] = df["StudyDescription"]
@@ -130,11 +143,13 @@ def transform_dicom_metadata_to_omop_tables(
     # --------- Image Occurrence table -------------
     # ----------------------------------------------
     image_occurrence = pd.DataFrame()
-    image_occurrence["image_occurrence_id"] = range(2000001, len(df) + 2000001)
+    image_occurrence["image_occurrence_id"] = surrogate_ids(PROJECT, len(df))
     image_occurrence["person_id"] = person["person_id"]
     image_occurrence["procedure_occurrence_id"] = procedure_occurrence["procedure_occurrence_id"]
     image_occurrence["visit_occurrence_id"] = visit_occurrence["visit_occurrence_id"]
-    image_occurrence["anatomic_site_concept_id"] = 4302605  # not read from DICOM; hardcoded (splenic structure)
+    image_occurrence["anatomic_site_concept_id"] = (
+        ANATOMIC_SITE_CONCEPT_ID  # not read from DICOM; hardcoded (splenic structure)
+    )
     # In spleen_metadata.csv, 'FilePath' contains the full path to the DICOM file,
     # so use `dirname` to get the folder path
     image_occurrence["local_path"] = df["FilePath"].apply(os.path.dirname)
@@ -179,20 +194,20 @@ def transform_dicom_metadata_to_omop_tables(
     ]
     df_feat = df_feat.melt(id_vars=my_id_vars, var_name="measurement_source_value", value_name="value_source_value")
     df_feat["measurement_concept_id"] = df_feat["measurement_source_value"].map(MAPPING_DICOM)
-    df_feat["image_feature_id"] = range(2000001, len(df_feat) + 2000001)
+    df_feat["image_feature_id"] = surrogate_ids(PROJECT, len(df_feat))
 
     # Image Feature
     c = ["image_feature_id", "person_id", "image_occurrence_id"]
     image_feature = df_feat[c].copy()
-    image_feature["image_feature_event_field_concept_id"] = 1147330
+    image_feature["image_feature_event_field_concept_id"] = IMAGE_FEATURE_EVENT_FIELD_CONCEPT_ID
     image_feature["image_feature_event_id"] = df_feat[
         "image_feature_id"
     ].copy()  # in this case, the measurement_id is the same
     image_feature["image_feature_concept_id"] = df_feat["measurement_concept_id"].copy()
     image_feature["image_feature_type_concept_id"] = (
-        2128000001  # Custom concept class code for DICOM Attributes https://github.com/paulnagy/DICOM2OMOP/blob/main/dicom_standard_to_omop/load_dicom_to_omop.ipynb
+        DICOM_ATTRIBUTE_CONCEPT_CLASS_ID  # Custom concept class code for DICOM Attributes https://github.com/paulnagy/DICOM2OMOP/blob/main/dicom_standard_to_omop/load_dicom_to_omop.ipynb
     )
-    image_feature["anatomic_site_concept_id"] = 4302605  # splenic structure
+    image_feature["anatomic_site_concept_id"] = ANATOMIC_SITE_CONCEPT_ID  # splenic structure
     # Validate, add trust column, and store
     image_feature = schemas["image_feature"].validate(image_feature)
     print("Created and validated table: image_feature")
@@ -202,9 +217,17 @@ def transform_dicom_metadata_to_omop_tables(
     c = ["person_id", "measurement_concept_id", "measurement_date"]
     measurement = df_feat[c].copy()
     measurement["measurement_id"] = df_feat["image_feature_id"].copy()
-    measurement["measurement_type_concept_id"] = 32817  # EHR as per https://doi.org/10.1007/s10278-024-00982-6
+    measurement["measurement_type_concept_id"] = (
+        EHR_TYPE_CONCEPT_ID  # EHR as per https://doi.org/10.1007/s10278-024-00982-6
+    )
     measurement["value_as_number"] = pd.to_numeric(df_feat["value_source_value"], errors="coerce")
-    measurement["unit_concept_id"] = 0  # default to unknown, otherwise filled with NaN and dtype=float
+    measurement["unit_concept_id"] = UNKNOWN_CONCEPT_ID  # default to unknown, otherwise filled with NaN and dtype=float
+    # NOTE: this filter never matches. 2128100808 is not a value MAPPING_DICOM produces — Slice Thickness
+    # (MAPPING_DICOM["00180050"]) is 2128000817, a different number, almost certainly a transposition typo
+    # upstream. But the published OMOP export was generated with this bug present: all 205 measurement
+    # rows keep unit_concept_id == UNKNOWN_CONCEPT_ID, none becomes 8588. Correcting the filter would
+    # change output that no longer matches the published export and fail the verification gate, so leave
+    # both literals below exactly as bare, unnamed numbers.
     measurement.loc[measurement["measurement_concept_id"].eq(2128100808), "unit_concept_id"] = (
         8588  # SliceThickness in millimeter
     )

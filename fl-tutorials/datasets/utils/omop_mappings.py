@@ -73,3 +73,13 @@ MAPPING_CXR = {
     "lung_structure": 4213162,
     "plain_xray": 4163872,
 }
+
+# Shared OMOP concept ids used by more than one dataset converter (FLIP#1092 task 9). Each is an OMOP
+# convention rather than a per-dataset judgement call, so it lives here instead of being repeated —
+# and re-diverging — across converters. Each call site keeps its own citation comment; see
+# omop_convert_spleen.py for the source links these values were copied from.
+UNKNOWN_CONCEPT_ID = 0
+INPATIENT_VISIT_CONCEPT_ID = 9201
+EHR_TYPE_CONCEPT_ID = 32817
+IMAGE_FEATURE_EVENT_FIELD_CONCEPT_ID = 1147330
+DICOM_ATTRIBUTE_CONCEPT_CLASS_ID = 2128000001
