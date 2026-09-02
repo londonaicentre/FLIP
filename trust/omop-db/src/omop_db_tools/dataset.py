@@ -24,7 +24,10 @@ Standing up N trusts is a deterministic split of that single dataset:
 - ``source_trust`` (default): partition by that column. The partition is *data* —
   explicit, inspectable and versioned with the dataset — and it is what the
   per-project DICOM sets are keyed on too (FLIP#1100), so a trust's OMOP rows and
-  the studies in its PACS agree by construction. Any trust count the column
+  the studies in its PACS agree by construction. A dataset may carry more
+  sources than the stack has trusts (one center per trust, the surplus waiting
+  for a trust that does not exist yet); every trust being stood up must have
+  rows. Any trust count the column
   carries. ``legacy`` is an accepted alias from when this mode existed only to
   reproduce the original two-trust cut baked into the published Orthanc tarballs.
 - ``modulo``: partition by ``person_id % num_trusts``. For a dataset that carries
@@ -140,10 +143,19 @@ def split_for_trust(df: pd.DataFrame, num_trusts: int, trust_index: int, mode: s
                 "this frame does not carry it — use mode='modulo' instead"
             )
         sources = set(df[SOURCE_TRUST_COLUMN].unique())
-        if sources != set(range(1, num_trusts + 1)):
+        # Every trust being stood up must have rows (1..num_trusts all present, contiguous from 1); a
+        # dataset may carry MORE sources than that — a center left for a trust that does not exist
+        # yet — and those rows are simply not loaded anywhere until it does.
+        if sources != set(range(1, len(sources) + 1)) or len(sources) < num_trusts:
             raise ValueError(
-                f"source_trust partitioning needs {SOURCE_TRUST_COLUMN} values to be exactly 1..{num_trusts}; "
-                f"this frame carries {sorted(sources)} — rebuild the canonical dataset or use mode='modulo'"
+                f"source_trust partitioning needs {SOURCE_TRUST_COLUMN} values to be 1..K, contiguous, with "
+                f"K >= {num_trusts} (every trust must have rows); this frame carries {sorted(sources)} — "
+                "rebuild the canonical dataset or use mode='modulo'"
+            )
+        if len(sources) > num_trusts and trust_index == 1:
+            print(
+                f"ℹ️  {SOURCE_TRUST_COLUMN} carries {len(sources)} sources but {num_trusts} trust(s) are being "
+                f"stood up: sources {num_trusts + 1}..{len(sources)} wait for a future trust"
             )
         part = df[df[SOURCE_TRUST_COLUMN] == trust_index]
     else:
