@@ -93,6 +93,20 @@ def test_get_project_returns_project_for_existing_id(session, project_payload, u
     assert session.get(Projects, new_project_id).deleted is False
 
 
+def test_create_project_persists_has_imaging_false_and_returns_it(session, project_payload, user_factory):
+    """A tabular-only project keeps has_imaging=False through create and get_project (FLIP#1071)."""
+    creator_id = user_factory().id
+    payload = project_payload.model_copy(update={"has_imaging": False})
+
+    new_project_id = create_project(payload=payload, current_user_id=creator_id, session=session)
+
+    assert session.get(Projects, new_project_id).has_imaging is False
+    assert get_project(new_project_id, session).has_imaging is False
+    # The default stays imaging-on for every existing caller.
+    default_id = create_project(payload=project_payload, current_user_id=creator_id, session=session)
+    assert session.get(Projects, default_id).has_imaging is True
+
+
 def test_list_projects_returns_only_undeleted(session, project_payload, user_factory):
     """A simple SELECT-with-deleted=False against real Postgres — the kind of query the
     --skip-db CI used to silently let drift."""
