@@ -320,6 +320,11 @@ idempotent, persists in the bind-mounted volumes until a `.data_version` bump �
 scripts then refuse to apply over a seeded volume without `FORCE=1`. Adding a dataset means
 publishing its `omop-csv/<project>/` tables and `dicom/<project>.tar.gz`
 (`trust/orthanc/publish_dicom.py` verifies both agree before packaging), not a new pair of tarballs.
+`prostate_project` (PI-CAI fold 0, 300 bpMRI studies, `source_trust` decided by scanner vendor —
+Siemens → 1, Philips → 2 — in `fl-tutorials/datasets/prostate/`) is the first cohort that exists
+only this way: `make -C trust seed-trusts PROJECTS=prostate_project`, its masks reach a project via
+`upload_prostate_labels_to_xnat.py`, and `make -C flip-api e2e_smoke_prostate` drives cohort →
+pull → enrichment (`--stop-after-enrichment`: no prostate training app exists yet).
 The FL simulator (`make -C fl-tutorials run-tutorial`) is a third, separate path: LOCAL_DEV reads
 `fl-tutorials/data/` straight from disk and touches no trust service.
 
