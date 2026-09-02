@@ -14,24 +14,35 @@
 Most of these need no database. TestCleanReservedBandProvenance is the exception: it exercises
 clean_reserved_band's actual DELETE statements against an in-memory SQLite database standing in for
 Postgres (attached under the "omop" schema alias so the loader's schema-qualified SQL is unchanged) —
-still no external service, so it stays a unit test.
+still no external service, so it stays a unit test. TestFetchSourceTables stubs urllib.request.urlopen
+(cache reuse, download, and both loud failure modes — no network), and TestParseArgs / TestMain cover
+the CLI wiring with main's collaborators stubbed.
 """
 
 import sqlite3
+import urllib.request
+from pathlib import Path
 
 import pandas as pd
 import pytest
+from pydantic import SecretStr
 from sqlalchemy import create_engine, text
 
+from omop_db_tools import synthea_ehr
 from omop_db_tools.synthea_ehr import (
+    DEFAULT_BASE_URL,
     PERSON_ID_OFFSET,
     REQUIRED_SOURCE_COLUMNS,
+    SOURCE_TABLES,
     SYNTHEA_SOURCE_VALUE_PREFIX,
     _trust_person_ids,
     build_condition_rows,
     build_person_rows,
     build_visit_rows,
+    fetch_source_tables,
     load_synthea_ehr,
+    main,
+    parse_args,
 )
 
 
@@ -257,3 +268,197 @@ class TestCleanReservedBandProvenance:
                 {"marker": f"{SYNTHEA_SOURCE_VALUE_PREFIX}%"},
             ).one()
         assert total == len(person)  # not doubled by the reload
+
+
+# ---------------------------------------------------------------------------------------------
+# fetch_source_tables: cache reuse, download, and the two loud failure modes — no network.
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def source_tables(person: pd.DataFrame, condition: pd.DataFrame, visit: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    return {"person": person, "condition_occurrence": condition, "visit_occurrence": visit}
+
+
+def _write_cache(cache_dir: Path, tables: dict[str, pd.DataFrame]) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    for name, frame in tables.items():
+        frame.to_csv(cache_dir / f"{name}.csv", index=False)
+
+
+class _FakeResponse:
+    """Stands in for urlopen's response context manager: ``read()`` returns the body or raises it."""
+
+    def __init__(self, body: bytes | Exception):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        if isinstance(self._body, Exception):
+            raise self._body
+        return self._body
+
+
+class TestFetchSourceTables:
+    BASE_URL = "https://example.test/synthea1k"
+
+    def test_reuses_cached_csvs_without_touching_the_network(
+        self, tmp_path: Path, source_tables: dict[str, pd.DataFrame], monkeypatch: pytest.MonkeyPatch
+    ):
+        cache_dir = tmp_path / "cache"
+        # A SNOMED code with a leading zero proves the string dtype pin is load-bearing: read as an
+        # int it would come back as 44054006 and the tutorial's condition_source_value match would lie.
+        source_tables["condition_occurrence"].loc[0, "condition_source_value"] = "044054006"
+        _write_cache(cache_dir, source_tables)
+
+        def no_network(*args: object, **kwargs: object) -> None:
+            raise AssertionError("urlopen must not be called when every table is already cached")
+
+        monkeypatch.setattr(urllib.request, "urlopen", no_network)
+
+        tables = fetch_source_tables(self.BASE_URL, cache_dir)
+
+        assert set(tables) == set(SOURCE_TABLES)
+        for name, frame in source_tables.items():
+            assert len(tables[name]) == len(frame)
+        assert tables["condition_occurrence"].loc[0, "condition_source_value"] == "044054006"
+
+    def test_downloads_only_the_missing_tables_into_the_cache(
+        self, tmp_path: Path, source_tables: dict[str, pd.DataFrame], monkeypatch: pytest.MonkeyPatch
+    ):
+        cache_dir = tmp_path / "cache"
+        _write_cache(cache_dir, {"person": source_tables["person"]})  # person is already cached
+        requested: list[str] = []
+
+        def fake_urlopen(url: str, timeout: float) -> _FakeResponse:
+            requested.append(url)
+            table = url.rsplit("/", 1)[1].removesuffix(".csv")
+            return _FakeResponse(source_tables[table].to_csv(index=False).encode())
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+        tables = fetch_source_tables(self.BASE_URL, cache_dir)
+
+        assert requested == [f"{self.BASE_URL}/condition_occurrence.csv", f"{self.BASE_URL}/visit_occurrence.csv"]
+        assert {path.name for path in cache_dir.iterdir()} == {f"{table}.csv" for table in SOURCE_TABLES}
+        assert set(tables) == set(SOURCE_TABLES)
+        assert list(tables["visit_occurrence"]["person_id"]) == [1, 2, 4]
+
+    def test_download_failure_exits_loudly_and_leaves_no_partial_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        cache_dir = tmp_path / "cache"
+        # The response opens fine but dies mid-read: by then the output file already exists, and a
+        # truncated person.csv left behind would be silently "cached" and reused on the next run.
+        monkeypatch.setattr(
+            urllib.request, "urlopen", lambda url, timeout: _FakeResponse(OSError("connection reset"))
+        )
+
+        with pytest.raises(SystemExit, match=r"Could not download .*/person\.csv: connection reset") as excinfo:
+            fetch_source_tables(self.BASE_URL, cache_dir)
+
+        assert isinstance(excinfo.value.__cause__, OSError)
+        assert "registry.opendata.aws/synthea-omop" in str(excinfo.value)
+        assert not (cache_dir / "person.csv").exists()
+
+    @pytest.mark.parametrize("table", SOURCE_TABLES)
+    def test_missing_required_column_exits_naming_it(
+        self, tmp_path: Path, source_tables: dict[str, pd.DataFrame], table: str
+    ):
+        cache_dir = tmp_path / "cache"
+        dropped = REQUIRED_SOURCE_COLUMNS[table][-1]
+        source_tables[table] = source_tables[table].drop(columns=[dropped])
+        _write_cache(cache_dir, source_tables)
+
+        expected = rf"{table}\.csv is missing expected column\(s\) \['{dropped}'\]"
+        with pytest.raises(SystemExit, match=expected):
+            fetch_source_tables(self.BASE_URL, cache_dir)
+
+
+# ---------------------------------------------------------------------------------------------
+# CLI: argument parsing and main's wiring (collaborators stubbed — no network, no database).
+# ---------------------------------------------------------------------------------------------
+
+
+class TestParseArgs:
+    def test_defaults(self):
+        args = parse_args(["--trust-index", "1"])
+        assert args.trust_index == 1
+        assert args.num_trusts == 2
+        assert args.base_url == DEFAULT_BASE_URL
+        assert args.cache_dir == Path("data/synthea-ehr")
+
+    def test_overrides_are_typed(self, tmp_path: Path):
+        args = parse_args(
+            ["--trust-index", "2", "--num-trusts", "3", "--base-url", "https://example.test/x"]
+            + ["--cache-dir", str(tmp_path)]
+        )
+        assert (args.trust_index, args.num_trusts) == (2, 3)
+        assert args.base_url == "https://example.test/x"
+        assert args.cache_dir == tmp_path  # a Path, not the raw string
+
+    def test_trust_index_is_required(self):
+        with pytest.raises(SystemExit) as excinfo:
+            parse_args([])
+        assert excinfo.value.code == 2  # argparse usage error
+
+
+class TestMain:
+    @pytest.fixture
+    def wiring(self, monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str, object], dict[str, pd.DataFrame], object]:
+        """Stub main's collaborators and record how each was called."""
+        calls: dict[str, object] = {}
+        tables = {"person": pd.DataFrame({"person_id": [1]})}
+        engine = object()
+
+        def fake_fetch(base_url: str, cache_dir: Path) -> dict[str, pd.DataFrame]:
+            calls["fetch"] = (base_url, cache_dir)
+            return tables
+
+        class FakeSettings:
+            OMOP_DATABASE_URL = SecretStr("postgresql://omop-host:5434/omop")
+
+        def fake_create_engine(url: str, echo: bool) -> object:
+            calls["create_engine"] = (url, echo)
+            return engine
+
+        def fake_load(
+            engine_arg: object, tables_arg: dict[str, pd.DataFrame], num_trusts: int, trust_index: int
+        ) -> int:
+            calls["load"] = (engine_arg, tables_arg, num_trusts, trust_index)
+            return 1
+
+        monkeypatch.setattr(synthea_ehr, "fetch_source_tables", fake_fetch)
+        monkeypatch.setattr(synthea_ehr, "get_settings", lambda: FakeSettings())
+        monkeypatch.setattr(synthea_ehr, "create_engine", fake_create_engine)
+        monkeypatch.setattr(synthea_ehr, "load_synthea_ehr", fake_load)
+        return calls, tables, engine
+
+    def test_wires_fetch_engine_and_load_from_the_cli_arguments(self, wiring, tmp_path: Path, capsys):
+        calls, tables, engine = wiring
+
+        main(
+            ["--trust-index", "2", "--num-trusts", "3", "--base-url", "https://example.test/synthea"]
+            + ["--cache-dir", str(tmp_path)]
+        )
+
+        assert calls["fetch"] == ("https://example.test/synthea", tmp_path)
+        # The engine gets the unwrapped connection string, never the SecretStr wrapper.
+        assert calls["create_engine"] == ("postgresql://omop-host:5434/omop", False)
+        assert calls["load"] == (engine, tables, 3, 2)
+        assert "Synthea EHR cohort loaded" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(("trust_index", "num_trusts"), [(0, 2), (3, 2), (1, 0)])
+    def test_rejects_an_out_of_range_trust_index_before_any_download(self, wiring, trust_index: int, num_trusts: int):
+        calls, _, _ = wiring
+
+        expected = rf"Need 1 <= --trust-index <= --num-trusts \(got {trust_index}/{num_trusts}\)"
+        with pytest.raises(SystemExit, match=expected):
+            main(["--trust-index", str(trust_index), "--num-trusts", str(num_trusts)])
+
+        assert calls == {}  # neither the download nor the engine was reached
