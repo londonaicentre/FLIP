@@ -604,10 +604,9 @@ class FLIPStandardDev(FLIPBase):
         self.check_project_id(project_id)
         self.check_query(query)
 
+        # No accession_id requirement (FLIP#1071): a tabular-only cohort has none, and the prod
+        # client never checked — it returns whatever columns the trust's cohort query projects.
         df = pd.read_csv(FlipConstants.DEV_DATAFRAME)
-
-        if "accession_id" not in df.columns:
-            raise ValueError("The provided dataframe does not contain an 'accession_id' column.")
 
         self.logger.info("Successfully fetched dataframe")
 
