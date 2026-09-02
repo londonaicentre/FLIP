@@ -189,32 +189,18 @@ class PacsStatus(BaseModel):
 
 
 class Patient(BaseModel):
-    """The patient block of a DQR study result.
-
-    Only ``id`` is required: anonymised research DICOM routinely carries no PatientName (DQR sends
-    ``null``) and may omit PatientSex, and the import needs neither (FLIP#1123).
-    """
-
     id: str
-    name: str | None = None
-    sex: str | None = None
+    name: str
+    sex: str
 
 
 class Study(BaseModel):
-    """One study as XNAT DQR reports it from a C-FIND.
-
-    The descriptive tags are optional — DQR omits a key whose tag the PACS did not return, and a study
-    without a StudyDescription or ReferringPhysicianName is the norm for anonymised data and common in
-    real PACS. The import (:class:`ImportStudy`) needs only the UID and the accession number; before
-    FLIP#1123 a missing descriptive tag failed validation and the study was silently never queued.
-    """
-
     study_instance_uid: str = Field(..., alias="studyInstanceUid")
-    study_description: str | None = Field(None, alias="studyDescription")
+    study_description: str = Field(..., alias="studyDescription")
     accession_number: str = Field(..., alias="accessionNumber")
     study_date: str = Field(..., alias="studyDate")
     modalities_in_study: list[str] = Field(..., alias="modalitiesInStudy")
-    referring_physician_name: str | None = Field(None, alias="referringPhysicianName")
+    referring_physician_name: str = Field(..., alias="referringPhysicianName")
     patient: Patient
 
 
