@@ -11,6 +11,7 @@
 #
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,6 +19,8 @@ from fastapi import HTTPException, Request
 
 from flip_api.cohort_services.submit_cohort_query import (
     MAX_QUERY_LENGTH,
+    MISSING_ACCESSION_ID_DETAIL,
+    projection_lacks_accession_id,
     submit_cohort_query,
     validate_query,
 )
@@ -102,6 +105,16 @@ def mock_unstaged():
     is actually asserting.
     """
     with patch("flip_api.cohort_services.submit_cohort_query.has_project_status", return_value=True) as mock:
+        yield mock
+
+
+@pytest.fixture(autouse=True)
+def mock_project_row():
+    """Default every test's project to has_imaging=True (the pre-FLIP#1071 behaviour)."""
+    with patch(
+        "flip_api.cohort_services.submit_cohort_query.get_project_by_id",
+        return_value=SimpleNamespace(has_imaging=True),
+    ) as mock:
         yield mock
 
 
@@ -236,7 +249,9 @@ def test_submit_cohort_query_dispatches_the_persisted_query_not_the_body(
     Queries.query is what the UI renders and what approval is granted against, so allowing the
     body to differ means the audit record and what actually ran against patient data can diverge.
     """
-    persisted_sql = "SELECT person_id FROM omop.person"
+    # Projects accession_id: the autouse project row is an imaging project, whose explicit SELECT
+    # list must name that column (FLIP#1071) — otherwise this test would hit that 400 instead.
+    persisted_sql = "SELECT person_id, accession_id FROM omop.image_occurrence"
     mock_trust = MagicMock(id=uuid.uuid4())
     mock_trust.name = "Trust A"
     mock_db = _db(row=_persisted_row(sql=persisted_sql), trusts=[mock_trust])
@@ -346,3 +361,51 @@ def test_submit_cohort_query_task_payload_contains_query(
     # Payload should be a JSON string containing the query
     assert "SELECT * FROM patients" in added_task.payload
     assert "encrypted_project_id" in added_task.payload
+
+
+@pytest.mark.parametrize(
+    ("sql", "lacks"),
+    [
+        ("SELECT person_id FROM omop.person", True),
+        ("SELECT person_id, accession_id FROM omop.image_occurrence", False),
+        ("SELECT io.accession_number AS accession_id FROM omop.image_occurrence io", False),
+        ('SELECT "Accession_ID" FROM omop.image_occurrence', False),  # identifier match is case-insensitive
+        ("SELECT * FROM omop.image_occurrence", False),  # unknowable here: the trust stays the authority
+        ("SELECT io.* FROM omop.image_occurrence io", False),
+        ("SELECT person_id, COUNT(*) FROM omop.person GROUP BY person_id", False),  # star inside a call
+        ("WITH c AS (SELECT accession_id FROM omop.image_occurrence) SELECT person_id FROM c", True),
+        ("SELECT person_id FROM omop.a UNION SELECT person_id FROM omop.b", True),
+        ("SELECT accession_id FROM omop.a UNION SELECT accession_id FROM omop.b", False),
+    ],
+)
+def test_projection_lacks_accession_id(sql, lacks):
+    assert projection_lacks_accession_id(sql) is lacks
+
+
+def test_submit_rejects_an_imaging_project_query_without_accession_id(
+    mock_request, sample_query, mock_encrypt, mock_can_modify
+):
+    """Fast feedback: an imaging project's explicit SELECT list must name accession_id (FLIP#1071)."""
+    mock_trust = MagicMock(id="trust_1", endpoint="http://trust-a.com")
+    mock_db = _db(row=_persisted_row("SELECT person_id FROM omop.person"), trusts=[mock_trust])
+
+    with pytest.raises(HTTPException) as excinfo:
+        submit_cohort_query(mock_request, sample_query, mock_db, user_id)
+
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.detail == MISSING_ACCESSION_ID_DETAIL
+    assert not mock_db.add.called  # nothing was dispatched
+
+
+def test_submit_accepts_a_query_without_accession_id_when_the_project_has_no_imaging(
+    mock_request, sample_query, mock_encrypt, mock_can_modify, mock_project_row
+):
+    mock_project_row.return_value = SimpleNamespace(has_imaging=False)
+    mock_trust = MagicMock(id="trust_1", endpoint="http://trust-a.com")
+    mock_trust.name = "Trust A"
+    mock_db = _db(row=_persisted_row("SELECT person_id FROM omop.person"), trusts=[mock_trust])
+
+    response = submit_cohort_query(mock_request, sample_query, mock_db, user_id)
+
+    assert response.trust[0].statusCode == 202
+    assert mock_db.add.called

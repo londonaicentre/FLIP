@@ -32,7 +32,7 @@ from flip_api.domain.schemas.cohort import (
 from flip_api.domain.schemas.status import ProjectStatus, TaskType
 from flip_api.utils.encryption import encrypt
 from flip_api.utils.logger import logger
-from flip_api.utils.project_manager import has_project_status
+from flip_api.utils.project_manager import get_project_by_id, has_project_status
 
 router = APIRouter(prefix="/cohort", tags=["cohort_services"])
 
@@ -116,6 +116,47 @@ def validate_query(query: str) -> None:
         raise ValueError("Only SELECT statements are allowed.")
 
 
+ACCESSION_ID_COLUMN = "accession_id"
+MISSING_ACCESSION_ID_DETAIL = (
+    "This project includes imaging, so its cohort query must return an accession_id column. "
+    "Add it to the SELECT list, or create the project with 'Includes imaging data' turned off "
+    "for a tabular-only cohort."
+)
+
+
+def projection_lacks_accession_id(query: str) -> bool:
+    """Whether the query's outermost SELECT list is fully explicit and names no ``accession_id``.
+
+    Fast-feedback companion to :func:`validate_query` for *imaging* projects (FLIP#1071): the trust's
+    accession-ids route wraps the cohort as ``SELECT accession_id FROM (<query>)``, so a query that
+    provably lacks that output column would fail at every trust — but only after approval, as an
+    opaque status error. Catching it here turns that into a 400 at submission. Anything this cannot
+    prove (a ``*`` / ``t.*`` projection, a star inside a call) passes through: the trust remains the
+    authority, exactly as for the rest of the pre-check.
+
+    Args:
+        query (str): A query that already passed :func:`validate_query`.
+
+    Returns:
+        bool: True only when the outermost SELECT list is explicit and has no ``accession_id`` output name.
+    """
+    statement = sqlglot.parse(query, read="postgres")[0]
+    if statement is None:
+        return False
+    select: sqlglot.expressions.Select | None
+    if isinstance(statement, sqlglot.expressions.Select):
+        select = statement
+    else:
+        # A set operation (UNION & co.) takes its output columns from its left-most SELECT, which is
+        # what a breadth-first find reaches first.
+        select = statement.find(sqlglot.expressions.Select)
+    if select is None:
+        return False
+    if any(projection.find(sqlglot.expressions.Star) for projection in select.expressions):
+        return False
+    return ACCESSION_ID_COLUMN not in {name.lower() for name in select.named_selects}
+
+
 # TODO [#114] This endpoint was not defined in the old repo. The old repo defined a step function that ran the
 # following steps: (1) getProject, (2) save_cohort_query, (3) submit_cohort_query
 @router.post("/submit", response_model=SubmitCohortQueryOutput)
@@ -193,6 +234,12 @@ def submit_cohort_query(
             validate_query(query_row.query)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+
+        # Imaging projects need an accession_id output column (the trusts' accession-ids route
+        # selects it by name). Fast feedback only — see projection_lacks_accession_id.
+        project = get_project_by_id(cohort_query.project_id, db)
+        if project is not None and project.has_imaging and projection_lacks_accession_id(query_row.query):
+            raise HTTPException(status_code=400, detail=MISSING_ACCESSION_ID_DETAIL)
 
         # Query database for trusts
         statement = select(Trust)
