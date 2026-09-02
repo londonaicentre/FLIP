@@ -227,11 +227,25 @@ def dry_run_trust_up(tmp_path, kit_lines: str, *overrides: str) -> subprocess.Co
     does for real, and nothing docker-shaped runs. The kit file is handed in as ``KIT_FILE`` so the
     value arrives the way an operator's does — ``-include``d, origin ``file`` — rather than on the
     command line.
+
+    Hermetic on purpose: ``MAIN_ENV_FILE`` is pointed at nothing, so a developer's gitignored hub
+    ``.env.development`` cannot supply values CI does not have. ``FL_BACKEND`` is the one such value
+    the Makefile cannot even parse without (``deploy/fl_backend.mk`` validates it at include time),
+    and a real kit carries it in its Hub-shared block, so the throwaway kit does too.
     """
     kit = tmp_path / ".env.Probe.development"
-    kit.write_text(kit_lines)
+    kit.write_text("FL_BACKEND=nvflare\n" + kit_lines)
     return subprocess.run(
-        ["make", "-n", "up-trust", "KIT=Probe", f"KIT_FILE={kit}", "PROD=", *overrides],
+        [
+            "make",
+            "-n",
+            "up-trust",
+            "KIT=Probe",
+            f"KIT_FILE={kit}",
+            "PROD=",
+            "MAIN_ENV_FILE=.env.absent-for-deploy-wiring-test",
+            *overrides,
+        ],
         cwd=TRUST_DIR,
         capture_output=True,
         text=True,
