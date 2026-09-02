@@ -55,5 +55,7 @@ jobs:
       - name: PACS seeder — unit tests + lint
         run: make -C trust/orthanc test
 
+      # trust/Makefile includes deploy/fl_backend.mk at parse time, which refuses an unset
+      # FL_BACKEND; a dev checkout gets it from .env.development, CI has no such file.
       - name: Dataset publisher — unit tests + lint
-        run: make -C trust test-trust-data-tools
+        run: make -C trust test-trust-data-tools FL_BACKEND=nvflare
