@@ -24,6 +24,7 @@ from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
 from flip_api.project_services.approve_project import approve_project_endpoint
 from flip_api.trusts_services.start_project_imaging_creation import start_project_imaging_creation
 from flip_api.utils.logger import logger
+from flip_api.utils.project_manager import get_project_by_id
 
 router = APIRouter(prefix="/step", tags=["step_functions_services"])
 
@@ -64,7 +65,8 @@ async def approve_project_step_function_endpoint(
     user_id: UUID = Depends(verify_token),
 ) -> dict[str, Any]:
     """
-    Approves a project and starts image creation on all connected trusts
+    Approves a project and starts image creation on all connected trusts — unless the project was
+    created without imaging (``has_imaging=False``, FLIP#1071), in which case the imaging stage is skipped.
 
     This mimics the AWS Step Functions workflow defined in approveProject.yml
 
@@ -99,6 +101,20 @@ async def approve_project_step_function_endpoint(
         if not trusts:
             logger.warning("No trusts found for project")
             return {"message": "Project approved but no trusts to process"}
+
+        # FLIP#1071: the ONE enforcement point for tabular-only projects. The project is approved
+        # above exactly as before; what changes is that no CREATE_IMAGING task is dispatched, so no
+        # trust creates an XNAT project or calls the accession-ids route. The flag never leaves the hub.
+        project = get_project_by_id(project_id, db)
+        if project is not None and not project.has_imaging:
+            logger.info(f"Project {project_id} has no imaging: skipping the imaging fan-out to {len(trusts)} trust(s)")
+            return {
+                "message": "Project approved; imaging stage skipped (project has no imaging)",
+                "projectId": project_id,
+                "successful": True,
+                "trusts": {"processed": 0, "succeeded": 0, "failed": 0},
+                "details": [],
+            }
 
         logger.info(f"Processing {len(trusts)} trusts for project {project_id}")
 

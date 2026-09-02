@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -63,6 +64,16 @@ def override_dependencies():
     yield mock_session, user_id
 
     app.dependency_overrides = {}
+
+
+@pytest.fixture(autouse=True)
+def mock_project_row():
+    """Default every test's project to has_imaging=True so the existing fan-out assertions hold (FLIP#1071)."""
+    with patch(
+        "flip_api.step_functions_services.approve_project_step_function.get_project_by_id",
+        return_value=SimpleNamespace(has_imaging=True),
+    ) as mock:
+        yield mock
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
@@ -143,3 +154,27 @@ def test_approve_project_with_empty_trusts(
     data = response.json()
 
     assert data["message"] == "Project approved but no trusts to process"
+
+
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+@patch(
+    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    new_callable=AsyncMock,
+)
+def test_approve_project_skips_imaging_fan_out_when_project_has_no_imaging(
+    mock_start_imaging, mock_approve_project, project_id, request_body, mock_trusts, mock_project_row
+):
+    """A tabular-only project is approved but no CREATE_IMAGING task is dispatched to any trust (FLIP#1071)."""
+    mock_approve_project.return_value = mock_trusts
+    mock_project_row.return_value = SimpleNamespace(has_imaging=False)
+
+    response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["successful"] is True
+    assert data["trusts"] == {"processed": 0, "succeeded": 0, "failed": 0}
+    assert data["details"] == []
+    assert "no imaging" in data["message"]
+    mock_approve_project.assert_called_once()  # the project still becomes APPROVED
+    assert mock_start_imaging.await_count == 0
