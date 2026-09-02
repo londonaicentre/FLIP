@@ -76,6 +76,37 @@ class TestLoadTables:
             pub.load_tables("prostate_project", "20260729", tmp_path)
 
 
+class TestPackage:
+    def test_archive_paths_are_accession_then_sop_so_multi_series_studies_cannot_collide(self, pub, tmp_path):
+        """Three series of one study all start at 0000.dcm; the archive must not care."""
+        source_dir = tmp_path / "src"
+        members = {}
+        for series, sop in (("t2w", "1.1"), ("adc", "1.2"), ("hbv", "1.3")):
+            path = source_dir / "10000" / "1000000" / series / "0000.dcm"
+            path.parent.mkdir(parents=True)
+            path.write_bytes(b"DICM" + series.encode())
+            members[series] = str(path.relative_to(source_dir))
+        instances = [
+            instance(pub, "10000_1000000", "1.2.3", "10000", sop) for sop in ("1.1", "1.2", "1.3")
+        ]
+        for inst, series in zip(instances, ("t2w", "adc", "hbv")):
+            inst.member = members[series]
+
+        assert [pub.arcname(i) for i in instances] == [
+            "10000_1000000/1.1.dcm",
+            "10000_1000000/1.2.dcm",
+            "10000_1000000/1.3.dcm",
+        ]
+        out = tmp_path / "out.tar.gz"
+        written, filled = pub.package(pub.Source(source_dir), instances, out, fill=False)
+        assert (written, filled) == (3, 0)
+        import tarfile
+
+        with tarfile.open(out) as tar:
+            assert sorted(tar.getnames()) == ["10000_1000000/1.1.dcm", "10000_1000000/1.2.dcm", "10000_1000000/1.3.dcm"]
+            assert tar.extractfile("10000_1000000/1.2.dcm").read() == b"DICMadc"
+
+
 class TestVerify:
     def test_exact_match_passes_and_reports_the_split(self, pub, tmp_path):
         tables = pub.load_tables("prostate_project", None, canonical_tree(tmp_path))
