@@ -64,6 +64,24 @@ same `picai_labels` archive, so one download covers all three. Re-running the do
 folds/labels/zonal labels/clinical info already downloaded (marked by a `.done` file dropped in
 `images/`/`labels/`/`zonal_labels/`/`clinical_information/` after a successful extract).
 
+**Zonal labels are padded onto the T2W grid at download.** picai_labels publishes the HeviAI23
+zonal labels as the model's argmax on PI-CAI's preprocessing grid —
+[picai_prep](https://github.com/DIAGNijmegen/picai_prep)'s
+`crop_or_pad(physical_size=[81, 192, 192], crop_only=True)`, a centre crop of the T2W at native
+spacing. A scan that already fits in 192 × 192 × 81 mm comes out unchanged (233 of the 300 fold-0
+studies); a larger acquisition, e.g. PCNN's 350 mm field of view, loses its outer rows, columns or
+slices, so its zonal file is smaller than the T2W and every viewer that pairs by dimensions (ITK-SNAP
+among them) refuses it. The whole-gland label is on the full T2W grid for every study, so
+`download_data.py` pads each zonal label onto its whole-gland sibling's grid. The pad is exact —
+the crop sits on the T2W lattice, and the model's own softmax
+([Zenodo 7615350](https://zenodo.org/record/7615350)) is zero outside the box, so no voxel moves
+and none is invented — and it is what `PicaiDataset`'s loader was already doing on the fly, so
+training tensors are unchanged. The published file is kept as `zonal_labels_raw/<patient_id>_<study_id>.nii.gz`;
+`zonal_labels/` is what everything downstream reads, including the XNAT enrichment uploader, so
+image, whole-gland mask and zonal mask share one set of dimensions on disk, in XNAT and in any viewer.
+A zonal label that is *not* a sub-lattice of its sibling (different spacing, off the lattice, or
+outside the box) is refused rather than resampled. Re-running is a no-op once the tree is padded.
+
 `convert_mha_to_dicom.py` is adapted from [picai_prep](https://github.com/DIAGNijmegen/picai_prep),
 which converts DICOM to `.mha` via SimpleITK; it runs that conversion in reverse, writing one
 `.dcm` file per slice with correct `PatientID`, `StudyInstanceUID`, `SeriesInstanceUID`,
