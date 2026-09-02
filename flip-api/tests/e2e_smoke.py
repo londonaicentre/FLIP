@@ -784,10 +784,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--model-files-dir",
         type=Path,
-        required=True,
+        default=None,
         help="Directory whose files are uploaded to the model. Flower: "
         "../fl-tutorials/flower/xray_classification/app. "
-        "NVFLARE: ../fl-tutorials/nvflare/image_classification/xray_classification/app_files.",
+        "NVFLARE: ../fl-tutorials/nvflare/image_classification/xray_classification/app_files. "
+        "Required unless --stop-after-enrichment.",
+    )
+    parser.add_argument(
+        "--stop-after-enrichment",
+        action="store_true",
+        help="Run cohort → approval → image pull → data enrichment and stop there, creating no model "
+        "and training nothing. For a dataset whose tutorial app does not exist yet (prostate): it "
+        "verifies the data path end to end without one.",
     )
     parser.add_argument(
         "--query-file",
@@ -885,6 +893,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--data-enrichment-cmd and --data-enrichment-cwd must be used together")
     if args.data_enrichment_cwd is not None and not args.data_enrichment_cwd.exists():
         parser.error(f"--data-enrichment-cwd does not exist: {args.data_enrichment_cwd}")
+    if args.model_files_dir is None and not args.stop_after_enrichment:
+        parser.error("--model-files-dir is required unless --stop-after-enrichment")
 
     return args
 
@@ -938,9 +948,10 @@ def main(argv: list[str] | None = None) -> int:
         # surfaces model-creation / upload errors immediately instead of after
         # 5–15 minutes of XNAT pulling, and the FL pipeline only consumes the
         # images at training time anyway.
-        model_name = resolve_model_name(args.model_name, args.abort_midway)
-        model_id = create_model(client, headers, project_id, model_name)
-        upload_files(client, headers, model_id, args.model_files_dir)
+        if not args.stop_after_enrichment:
+            model_name = resolve_model_name(args.model_name, args.abort_midway)
+            model_id = create_model(client, headers, project_id, model_name)
+            upload_files(client, headers, model_id, args.model_files_dir)
         # Always wait for image pull, including on --project-id reuse: a prior
         # run on this project may have left pulls in flight (aborted midway,
         # failed, or simply queued back-to-back before the first pull finished),
@@ -956,6 +967,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.data_enrichment_cmd:
             run_data_enrichment(args.data_enrichment_cwd, args.data_enrichment_cmd, project_id)
+        if args.stop_after_enrichment:
+            _log("\n" + "=" * 60)
+            _log("🛑 --stop-after-enrichment: cohort, image pull and enrichment done; no model, no training")
+            _log(f"   project_id   = {project_id}")
+            _log("=" * 60)
+            return 0
         initiate_training(client, headers, model_id, trusts)
         wait_for_model_advanced(client, headers, model_id, args.training_start_timeout)
         if args.abort_midway:
