@@ -41,7 +41,10 @@
                         <div class="w-screen max-w-4xl">
                             <Form
                                 :validation-schema="schema"
-                                :initial-values="{ dicom_to_nifti: dicomToNifti ? 'true' : undefined }"
+                                :initial-values="{
+                                    dicom_to_nifti: dicomToNifti ? 'true' : undefined,
+                                    has_imaging: hasImaging ? 'true' : undefined
+                                }"
                                 class="flex flex-col h-full bg-white divide-y divide-gray-100 shadow-xl dark:bg-dark-surface dark:divide-dark-border dark:ring-1 dark:ring-white/20"
                                 @submit="updateProject"
                             >
@@ -103,6 +106,26 @@
                                                 />
                                             </div>
                                             <div>
+                                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                                    Includes imaging data
+                                                </label>
+                                                <p class="text-xs text-gray-500 dark:text-gray-300 mb-1">
+                                                    Off for a tabular-only cohort: no imaging is pulled from PACS, no XNAT project is
+                                                    created at the trusts, and the project page shows no imaging status.
+                                                </p>
+                                                <p class="text-xs italic text-gray-400 dark:text-gray-300 mb-2">
+                                                    This option is set when the project is created and cannot be changed.
+                                                </p>
+                                                <AiSwitch
+                                                    name="has_imaging"
+                                                    value="true"
+                                                    :disabled="true"
+                                                    :label="{ enabled: 'Enabled', disabled: 'Disabled' }"
+                                                    data-test="has-imaging-toggle"
+                                                />
+                                            </div>
+                                            <!-- Conversion only exists for imaging projects. -->
+                                            <div v-if="hasImaging">
                                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                                                     Convert DICOMs to NIfTI
                                                 </label>
@@ -238,6 +261,9 @@ interface IEditProjectDrawerProps {
     // Current DICOM-to-NIfTI setting, shown read-only. It's fixed at project
     // creation and cannot be edited, so the toggle is always disabled.
     dicomToNifti: boolean;
+    // Whether the project has an imaging stage, shown read-only: fixed at creation
+    // (FLIP#1071). Off hides the DICOM-to-NIfTI setting, which only exists for imaging.
+    hasImaging: boolean;
 }
 
 const schema = projectSchema;
