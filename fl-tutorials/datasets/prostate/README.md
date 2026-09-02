@@ -188,10 +188,10 @@ pinned data-version tag, rebuilds the OMOP tables and diffs them against the pub
 (`verify-prostate-omop-tables`, the shared gate; the run record is in
 [`VERIFICATION.md`](VERIFICATION.md)).
 
-**Seeding and enrichment.** With `prostate_project` published,
-`make -C trust seed-trusts PROJECTS="prostate_project"` loads each dev trust's slice (OMOP rows
-and DICOMs alike, by `source_trust`) — set `HF_TRUST_DATA_REVISION=<tag>` if `trust/.data_version`
-does not yet name a tag that carries it. A project's cohort query then pulls the studies into XNAT,
+**Seeding and enrichment.** `prostate_project` is published from data-version tag `20260902` on,
+so `HF_TRUST_DATA_REVISION=20260902 make -C trust seed-trusts PROJECTS="prostate_project"` loads
+each dev trust's slice (OMOP rows and DICOMs alike, by `source_trust`; drop the override once
+`trust/.data_version` names that tag or a later one). A project's cohort query then pulls the studies into XNAT,
 and the labels follow as data enrichment: `upload_prostate_labels_to_xnat.py` puts the whole-gland
 mask (`label_<image>.nii.gz`) and the zonal mask (`zonal_<image>.nii.gz`) into every scan's NIFTI
 resource — the mapping is the identity, since the DICOM accession *is* the `picai_labels` file
