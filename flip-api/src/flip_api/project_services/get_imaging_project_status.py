@@ -40,7 +40,7 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
     responses={
         status.HTTP_200_OK: {
             "model": list[IImagingStatus],
-            "description": "The status of the imaging project.",
+            "description": "The status of the imaging project (an empty list for a project created without imaging).",
         },
         status.HTTP_403_FORBIDDEN: {
             "model": None,
@@ -67,6 +67,7 @@ async def get_imaging_project_status(
 
     Returns:
         list[IImagingStatus]: A list of imaging project statuses associated with the project (one status per trust).
+        Empty for a project created without imaging (``has_imaging=False``, FLIP#1071).
 
     Raises:
         HTTPException: If the user does not have permission to access the project, if the project is not found, or if
@@ -83,6 +84,11 @@ async def get_imaging_project_status(
 
     # Get the project from the database
     project_response = get_project(project_id, session)
+
+    # FLIP#1071: a project without imaging has nothing to report. 200 [] rather than 404 so a
+    # non-polling client's probe never reads as an error; the UI never polls for such projects.
+    if not project_response.has_imaging:
+        return []
 
     # Check if the project query exists
     if not project_response.query:

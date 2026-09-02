@@ -45,7 +45,7 @@ MOCK_USER_ID = uuid4()
 MOCK_PROJECT_ID = uuid4()
 MOCK_QUERY_ID = uuid4()
 MOCK_QUERY_STRING = "SELECT * FROM studies WHERE modality='MRI'"
-MOCK_ENCODED_QUERY = "U0VMRUNUICogRlJPTSBzdHVkaWVzIFdIRVJFIG1vZGFsaXR5PSdNUkkn"  # base64 of MOCK_QUERY_STRING
+MOCK_ENCODED_QUERY = "U0VMRUNUICogRlJPTSBzdHVkaWVzIFdIRVJFIG1vZGFsaXR5PSdNUkkn"  # base64 of MOCK_QUERY_STRING  # pragma: allowlist secret
 
 # Mock for project_response.query
 mock_project_query_obj = DbQueries(id=MOCK_QUERY_ID, query=MOCK_QUERY_STRING, project_id=MOCK_PROJECT_ID)
@@ -290,5 +290,29 @@ def test_get_imaging_project_status_invalid_project_id_format(client: TestClient
     response = client.get(f"/api/projects/{project_id}/image/status")
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    app_fixture.dependency_overrides.clear()
+
+
+def test_get_imaging_project_status_returns_empty_when_project_has_no_imaging(client: TestClient, app_fixture: FastAPI):
+    """A tabular-only project has no imaging to report: 200 [] without touching the imaging tables (FLIP#1071)."""
+    mock_db_session = MagicMock()
+    app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
+    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
+    no_imaging_project = MagicMock()
+    no_imaging_project.id = MOCK_PROJECT_ID
+    no_imaging_project.has_imaging = False
+    no_imaging_project.query = None  # would 404 today — the flag must short-circuit before the query checks
+
+    with (
+        patch("flip_api.project_services.get_imaging_project_status.can_access_project", return_value=True),
+        patch("flip_api.project_services.get_imaging_project_status.get_project", return_value=no_imaging_project),
+        patch("flip_api.project_services.get_imaging_project_status.get_imaging_projects") as mock_imaging_projects,
+    ):
+        response = client.get(f"/api/projects/{str(MOCK_PROJECT_ID)}/image/status")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == []
+        mock_imaging_projects.assert_not_called()
 
     app_fixture.dependency_overrides.clear()
