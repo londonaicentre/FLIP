@@ -116,8 +116,9 @@ Create Project
 
 1. Click the 'Create Project' button on the top right-hand corner of the page
 2. Enter the project name and description
-3. If necessary, enter the email addresses of other FLIP users and click the 'Add' button to enable them to view, edit, and/or contribute to the project
-4. Click the 'Create Project' button
+3. Leave 'Includes imaging data' on for an imaging cohort. Turn it off for a tabular-only cohort (for example EHR data): no imaging is pulled from PACS, no XNAT project is created at the trusts, and the project page shows no imaging status. Like 'Convert DICOMs to NIfTI', this is fixed when the project is created
+4. If necessary, enter the email addresses of other FLIP users and click the 'Add' button to enable them to view, edit, and/or contribute to the project
+5. Click the 'Create Project' button
 
 .. figure:: ../assets/flip/create-project.gif
    :width: 600
@@ -190,7 +191,7 @@ Cohort Query
 
 Cohort data is stored within a `PostgreSQL <https://www.postgresql.org/>`_ database conforming to the OMOP Common Data Model, extended with the :term:`MI-CDM` imaging tables — see :ref:`the schema reference <omop-schema>` for the tables a query can draw on, and :ref:`omop-sample-queries` for two worked examples.
 
-The ``image_occurrence`` table has been modified to include an ``accession_id`` field which contains the reference to the associated DICOM study. As this is the field that XNAT will read from when retrieving the associated DICOM series from PACS, the 'accession_id' needs to be included in all queries if relevant images are to be made available.
+The ``image_occurrence`` table has been modified to include an ``accession_id`` field which contains the reference to the associated DICOM study. As this is the field that XNAT will read from when retrieving the associated DICOM series from PACS, the 'accession_id' needs to be included in all queries if relevant images are to be made available. This applies to projects that include imaging: a project created with 'Includes imaging data' turned off needs no ``accession_id`` column, while an imaging project whose query lists its columns explicitly and omits it is rejected at submission with a message naming the fix.
 
 .. _create-cohort-query:
 
