@@ -371,7 +371,8 @@ class TestFLIPStandardProdGetDataframe:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.DATA_ACCESS_API_URL = "https://data.example.com"
-            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key" # pragma: allowlist secret
+            # pragma: allowlist nextline secret
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
             mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"  # pragma: allowlist secret
 
             df = flip_prod.get_dataframe(project_id="proj-1", query="SELECT * FROM table")
@@ -412,7 +413,8 @@ class TestFLIPStandardProdGetDataframe:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.DATA_ACCESS_API_URL = HttpUrl("http://data-access-api:8000")
-            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key" # pragma: allowlist secret
+            # pragma: allowlist nextline secret
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
             mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"  # pragma: allowlist secret
 
             flip_prod.get_dataframe(project_id="proj-1", query="SELECT * FROM table")
@@ -439,7 +441,8 @@ class TestFLIPStandardProdGetDataframe:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.DATA_ACCESS_API_URL = "https://data.example.com"
-            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key" # pragma: allowlist secret
+            # pragma: allowlist nextline secret
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
             mock_constants.TRUST_INTERNAL_SERVICE_KEY = ""
 
             with pytest.raises(HTTPError):
@@ -472,7 +475,8 @@ class TestFLIPStandardProdGetByAccessionNumber:
         ):
             mock_constants.IMAGING_API_URL = "https://imaging.example.com"
             mock_constants.NET_ID = "net-1"
-            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key" # pragma: allowlist secret
+            # pragma: allowlist nextline secret
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
             mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"  # pragma: allowlist secret
 
             result = flip_prod.get_by_accession_number(
@@ -512,7 +516,8 @@ class TestFLIPStandardProdAddResource:
         ):
             mock_constants.IMAGING_API_URL = "https://imaging.example.com"
             mock_constants.NET_ID = "net-1"
-            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key" # pragma: allowlist secret
+            # pragma: allowlist nextline secret
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
             mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"  # pragma: allowlist secret
 
             flip_prod.add_resource(
