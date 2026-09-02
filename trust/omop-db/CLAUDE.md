@@ -14,7 +14,7 @@ Two halves of one pipeline (merged from the retired private `flip-omop-db` repo,
    services). FK **constraints are deliberately absent from init** — they are applied only AFTER data
    load (loading after constraints fails).
 2. **Consumer harness** for the dev trust stacks: `update_omop_data.sh` downloads ready-populated,
-   **vocab-free** pgdata volumes (~11 MB each, versioned by `.data_version`) from the public HF dataset
+   **vocab-free** pgdata volumes (~11 MB each, fetched at the tag pinned by `trust/.data_version`) from the public HF dataset
    `aicentreflip/trust-data` into `volumes/Trust_<N>/db_data`, which
    `trust/deploy/compose_trust.<env>.yml` mounts.
 
@@ -40,9 +40,14 @@ tolerate the DICOM vocab already present in the tarballs):
 
 ## Load-bearing facts
 
-- **`.data_version` must not move**: its path is hardcoded in `deploy/providers/AWS/Makefile`, which
-  passes the value on to Ansible (`-e omop_data_version=`); the Helm chart consumes it via the
-  `OMOP_DATA_VERSION` env var in `generate_values.py`.
+- **`trust/.data_version` is THE pin and must not move**: one value for the OMOP and Orthanc mock
+  data together, a git tag on `aicentreflip/trust-data` (the dataset holds one copy of every artefact
+  at an unversioned path; consumers fetch `resolve/<tag>/<path>`). Its path is hardcoded in
+  `deploy/providers/AWS/Makefile` (→ Ansible `-e trust_data_version=`), both update scripts, this
+  Makefile, `seed_orthanc.py` and the spleen uploader; the Helm chart carries the same value as
+  `trustData.version` (`TRUST_DATA_VERSION` in `generate_values.py`). Publish with
+  `make -C trust publish-trust-data VERSION=<tag> …`, then bump the pin. Never upload a versioned
+  filename or `omop-csv/<v>/` directory again.
 - **Vocabulary licensing**: the core vocab bundle — an OHDSI Athena export, 59 vocabularies incl.
   SNOMED CT, LOINC, Read, dm+d (roster + versions in README "The core vocabulary bundle") — is licensed
   material: `data/` is gitignored and must never be committed or published. Acquisition: org members via
@@ -58,7 +63,7 @@ tolerate the DICOM vocab already present in the tarballs):
   in the pgdata volume; rotate via `ALTER ROLE` + kit update, or rebuild volumes with a new `.env.build`
   value (see CONTRIBUTING.md).
 - **Canonical dataset + N-trust split** (`src/omop_db_tools/dataset.py`): mock rows are ONE dataset on
-  HF (`omop-csv/<version>/`), each row carrying `source_trust` — the trust it belongs to, decided by
+  HF (`omop-csv/<project>/`, read at the pinned tag), each row carrying `source_trust` — the trust it belongs to, decided by
   the dataset's generator. Partition modes: `source_trust` (default; `legacy` is an accepted alias —
   the old name from when the mode existed only to match the two-trust cut frozen in the Orthanc
   tarballs) and `modulo` (`person_id % N`, only for a dataset with no partition column). The
@@ -88,7 +93,7 @@ make populate [NUM_TRUSTS=N PARTITION=modulo]  # core vocab + DICOM vocab + N tr
                                                # stack is two-trust; N>2 needs a compose service + port)
 make populate CORE_VOCAB=0          # vocab-free flavour for publishable tarballs (skip apply-constraints!)
 make seed-omop TRUST_INDEX=2 OMOP_DB_PORT=5436 PROJECTS="…"  # seed a RUNNING trust; normally via `make -C trust seed KIT=…`
-make export-pgdata                  # tar each volume -> dist/trust<N>_pgdata_<.data_version>.tar
+make export-pgdata                  # tar each volume -> dist/trust<N>_pgdata.tar (version = the tag publish-trust-data puts on it)
 make apply-constraints              # AFTER a full populate
 make push [OMOP_DB_TAG=...]         # manual publish escape hatch (CI publishes normally); confirms first
 make local_test                     # ruff + mypy + pytest tests/unit (no DB needed)

@@ -29,7 +29,7 @@ use.
 ## Using the database (dev trust stacks)
 
 We have prepared mock data for each of the 2 dev trusts (GSTT and KCH) as postgres data volumes, published to the public Hugging Face dataset [`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data). In order to set up the database locally, these data volumes need to be downloaded/extracted. They are fetched anonymously over HTTPS — no AWS CLI or credentials required. This will be handled automatically when
-creating the trust containers, and similarly they will be updated locally when the desired version changes (note for devs: this is controlled by the `.data_version` file in this directory).
+creating the trust containers, and similarly they will be updated locally when the desired version changes (note for devs: this is controlled by `trust/.data_version` — a git tag on that dataset, one pin for the OMOP and Orthanc data together; see "Data versions" in `trust/README.md`).
 
 ```sh
 make update-omop-data           # both trusts (default)
@@ -85,8 +85,9 @@ make -C trust seed KIT=GSTT PROJECTS="spleen_project cxr_project"        # + thi
 make -C trust seed-trusts PROJECTS="spleen_project cxr_project"          # both dev trusts
 ```
 
-What it does: fetches the canonical CSVs for the pinned data version
-(`omop-csv/<version>/<project>/`), selects this trust's rows by their
+What it does: fetches the canonical CSVs at the pinned data version
+(`omop-csv/<project>/` at the tag in `trust/.data_version`; `HF_TRUST_DATA_REVISION`
+overrides), selects this trust's rows by their
 `source_trust` column, deletes the listed projects' existing rows (by their own
 `person_id`s — Synthea EHR rows and other projects are untouched) and loads the
 slice, one transaction per project, into the constrained, vocab-loaded database
@@ -183,8 +184,9 @@ fetches it anonymously.
 ## Populating (the canonical dataset and N-trust splitting)
 
 The synthetic mock rows live as **one canonical CSV dataset** on the public
-Hugging Face dataset under `omop-csv/<version>/` (version pinned by
-`OMOP_CSV_DATA_VERSION` in the Makefile). Every row carries a `source_trust`
+Hugging Face dataset at `omop-csv/<project>/` — one copy, read at the data-version
+tag pinned in `trust/.data_version` (`HF_TRUST_DATA_REVISION` overrides, e.g.
+`main` for tables uploaded but not tagged yet). Every row carries a `source_trust`
 column — the trust it belongs to, decided by the dataset's own generator — and
 standing up N trusts is a deterministic split (`src/omop_db_tools/dataset.py`):
 
@@ -224,12 +226,20 @@ the vocab load instead):
 
 ```sh
 make up-build && make populate CORE_VOCAB=0
-make export-pgdata                   # dist/trust<N>_pgdata_<.data_version>.tar
+make export-pgdata                   # dist/trust<N>_pgdata.tar (no version in the name)
 ```
 
-Upload each archive under `trust<N>/` in the Hugging Face dataset and bump
-`.data_version`. The DICOM vocabulary and the synthetic cohort stay in the
-tarball (both freely redistributable); the archives are ~11 MB.
+Then publish them as part of a new data version — one commit on the dataset
+that replaces `trust<N>/trust<N>_pgdata.tar`, plus a tag — and bump
+`trust/.data_version` to that tag:
+
+```sh
+make -C trust publish-trust-data VERSION=20261001 PGDATA="omop-db/dist/trust1_pgdata.tar omop-db/dist/trust2_pgdata.tar"
+```
+
+The DICOM vocabulary and the synthetic cohort stay in the tarball (both freely
+redistributable); the archives are ~11 MB. The previous version's bytes remain
+at the previous tag; nothing is copied or renamed.
 
 To publish the image manually (CI normally does this): `make push`
 (GHCR write access required; `OMOP_DB_TAG` overrides the tag, and the target

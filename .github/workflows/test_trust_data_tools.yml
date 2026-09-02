@@ -1,0 +1,59 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Trust - Data tools CI
+
+# The trust-level data tooling that has no service container: the PACS seeder
+# (trust/orthanc/seed_orthanc.py) and the dataset publisher
+# (trust/publish_trust_data.py). Both are PEP 723 scripts with their own pytest
+# suites; nothing here needs Orthanc, Postgres or Hugging Face credentials.
+# Deliberately its own workflow rather than a job on "Trust - OMOP DB CI": the
+# omop-db image build is gated on THAT workflow's success and inherits its path
+# filter, so wiring these paths in there would rebuild the image on a seeder change.
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "trust/orthanc/seed_orthanc.py"
+      - "trust/orthanc/publish_dicom.py"
+      - "trust/orthanc/tests/**"
+      - "trust/orthanc/Makefile"
+      - "trust/publish_trust_data.py"
+      - "trust/tests/**"
+      - "trust/Makefile"
+      - ".github/workflows/test_trust_data_tools.yml"
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  trust-data-tools:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: PACS seeder — unit tests + lint
+        run: make -C trust/orthanc test
+
+      - name: Dataset publisher — unit tests + lint
+        run: make -C trust test-trust-data-tools

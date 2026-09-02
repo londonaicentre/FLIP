@@ -13,7 +13,8 @@
 .PHONY: build dev prod clean stop up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
 	create-networks remove-networks recreate-networks tests \
-	update-omop-data update-orthanc-data seed-omop seed-orthanc seed seed-trusts integration_test
+	update-omop-data update-orthanc-data seed-omop seed-orthanc seed seed-trusts \
+	publish-trust-data test-trust-data-tools integration_test
 # PROD selects the compose-file suffix (__DCKR_SUFFIX: stag collapses to the
 # production compose) and the kit-file env token (ENV: stag stays distinct, so
 # a stag kit is .env.<CODE>.stag, never confused with .env.<CODE>.production).
@@ -546,6 +547,27 @@ seed: seed-omop seed-orthanc
 seed-trusts:
 	$(MAKE) seed KIT=GSTT PROJECTS="$(PROJECTS)"
 	$(MAKE) seed KIT=KCH PROJECTS="$(PROJECTS)"
+
+# Publish a new data version to aicentreflip/trust-data (FLIP#1100): ONE commit on
+# main that replaces exactly the artefacts passed, then ONE tag = VERSION. The
+# dataset holds one copy of everything at unversioned paths — the version is the
+# tag, which trust/.data_version pins (bump it afterwards). Needs `hf auth login`
+# with write access. DRY_RUN=1 lists the operations and stops.
+#   make publish-trust-data VERSION=20261001 \
+#     PGDATA="omop-db/dist/trust1_pgdata.tar omop-db/dist/trust2_pgdata.tar" \
+#     OMOP_CSV=omop-db/data/canonical DICOM=orthanc/dist/dicom/prostate_project.tar.gz
+publish-trust-data:
+	@[ -n "$(VERSION)" ] || (echo "❌ VERSION=<new data-version tag> is required"; exit 1)
+	uv run publish_trust_data.py --version $(VERSION) \
+	  $(if $(PGDATA),--pgdata $(PGDATA)) $(if $(ORTHANC),--orthanc $(ORTHANC)) \
+	  $(if $(OMOP_CSV),--omop-csv $(OMOP_CSV)) $(if $(DICOM),--dicom $(DICOM)) \
+	  $(if $(CARD),--card $(CARD)) $(if $(filter 1,$(DRY_RUN)),--dry-run)
+
+# Unit tests + lint for the trust-level data tooling (publish_trust_data.py). The
+# seeders' own suites are `make -C orthanc test` and `make -C omop-db local_test`.
+test-trust-data-tools:
+	uv run --no-project --with pytest --with 'huggingface_hub>=1.6' pytest tests -q
+	uvx ruff@0.14.7 check publish_trust_data.py tests && uvx ruff@0.14.7 format --check publish_trust_data.py tests
 
 tests:
 	cd data-access-api && make test && \

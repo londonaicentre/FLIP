@@ -44,10 +44,12 @@ make -C trust seed-orthanc KIT=GSTT PROJECTS="cxr_project" DRY_RUN=1      # reso
 ```
 
 `seed_orthanc.py` is the DICOM twin of `omop_db_tools.import_tables`: it reads
-the same published `omop-csv/<version>/<project>/image_occurrence.csv`, takes the
-accession numbers whose `source_trust` is this trust's slot number, streams the
-project's DICOM set (`dicom/<version>/<project>.tar.gz`, one archive per project,
-`<accession>/*.dcm` inside) into `volumes/dicom/` once, and POSTs each matching
+the same published `omop-csv/<project>/image_occurrence.csv` at the pinned data
+version (the tag in `trust/.data_version`; `--revision` / `HF_TRUST_DATA_REVISION`
+override), takes the accession numbers whose `source_trust` is this trust's slot
+number, streams the project's DICOM set (`dicom/<project>.tar.gz` at that tag —
+one archive per project, one copy, `<accession>/*.dcm` inside) into
+`volumes/dicom/<revision>/` once, and POSTs each matching
 instance to `/instances` on `PACS_UI_PORT`. The studies that land are therefore
 exactly the ones the trust's OMOP rows point at — by construction. It refuses to
 upload anything if an accession in the OMOP slice has no directory in the
@@ -68,21 +70,28 @@ later resolve completely: every accession must equal the published
 must be published, and the per-trust split is reported.
 
 ```sh
-uv run trust/orthanc/publish_dicom.py --project spleen_project --data-version 20260729 \
-    --source dicom_output.zip --fill-empty-numbers --out dist/dicom/20260729/spleen_project.tar.gz
-hf upload aicentreflip/trust-data dist/dicom/20260729/spleen_project.tar.gz \
-    dicom/20260729/spleen_project.tar.gz --type dataset
+uv run trust/orthanc/publish_dicom.py --project spleen_project --revision 20260729 \
+    --source dicom_output.zip --fill-empty-numbers --out dist/dicom/spleen_project.tar.gz
+make -C trust publish-trust-data VERSION=20261001 DICOM=orthanc/dist/dicom/spleen_project.tar.gz
 ```
+
+`--revision` names the dataset revision whose `omop-csv/<project>` tables the
+source is checked against: an existing tag, or `main` right after uploading new
+tables and before tagging them together with the archive. The archive name
+carries no version — `publish-trust-data` puts it on the dataset in one commit
+and tags that commit, and `trust/.data_version` is then bumped to the tag.
 
 `--fill-empty-numbers` sets a present-but-empty `AcquisitionNumber` /
 `SeriesNumber` to 1 (the spleen generator's output has both empty on every CT
 instance, which makes MONAI Deploy's loader drop the series — see
 `docs/source/working-with-flip-apps/package-model-as-map.rst`). Absent tags stay
-absent; populated ones are untouched. Published sets: `dicom/20260729/`
-`spleen_project` (41 studies, 3,650 instances, filled) and `cxr_project` (8,332
-studies). Both are the original generator outputs, verified against the
-published OMOP — not extractions from the storage tarballs.
+absent; populated ones are untouched. Published sets (`dicom/`, at every tag
+from `20260729` on): `spleen_project` (41 studies, 3,650 instances, filled) and
+`cxr_project` (8,332 studies). Both are the original generator outputs, verified
+against the published OMOP — not extractions from the storage tarballs.
 
 To cut a new storage tarball (the snapshot path, for EC2/k8s): seed a fresh
-Orthanc with `seed-orthanc`, then `tar -C <storage dir> -cf trust<N>_orthanc_data_<version>.tar .`
-— the DICOM sets are the source, the tarball is derived from them.
+Orthanc with `seed-orthanc`, then `tar -C <storage dir> -cf trust<N>_orthanc_data.tar .`
+and publish it with `make -C trust publish-trust-data VERSION=… ORTHANC=…` — the
+DICOM sets are the source, the tarball is derived from them, and the version is
+the tag, not the filename.

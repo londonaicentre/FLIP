@@ -30,18 +30,12 @@
           - fl_kit_date is defined
           - fl_kit_date | length > 0
         fail_msg: "The fl_kit_date variable must be defined to proceed."
-    - name: ensure omop_data_version variable is defined
+    - name: ensure trust_data_version variable is defined
       assert:
         that:
-          - omop_data_version is defined
-          - omop_data_version | length > 0
-        fail_msg: "omop_data_version must be defined (contents of trust/omop-db/.data_version, e.g. 20260129)."
-    - name: ensure orthanc_data_version variable is defined
-      assert:
-        that:
-          - orthanc_data_version is defined
-          - orthanc_data_version | length > 0
-        fail_msg: "orthanc_data_version must be defined (contents of trust/orthanc/.data_version, e.g. 20260106)."
+          - trust_data_version is defined
+          - trust_data_version | length > 0
+        fail_msg: "trust_data_version must be defined (contents of trust/.data_version, a tag on the trust-data dataset, e.g. 20260729)."
     - name: initialize Terraform backend for validation
       command: >
         terraform init
@@ -485,15 +479,16 @@
     # Pass via -e trust_num=2 for Trust_2 hosts. Defaults to "1" for
     # backwards-compat with single-trust deployments.
     trust_num: "{{ trust_num | default('1') }}"
-    # omop_data_version is the version string from trust/omop-db/.data_version.
-    # Passed as an extra-var by the Makefile seed-trust-data target.
+    # trust_data_version is the tag from trust/.data_version, passed as an extra-var
+    # by the Makefile seed-trust-data target. One copy of each archive lives at an
+    # unversioned path on the dataset; the version is the revision the URL resolves at.
     pgdata_trust_dir: "trust{{ trust_num }}"
-    pgdata_archive: "trust{{ trust_num }}_pgdata_{{ omop_data_version }}.tar"
+    pgdata_archive: "trust{{ trust_num }}_pgdata.tar"
     # Mock data is fetched anonymously over HTTPS from the public Hugging Face
     # dataset (no AWS CLI / credentials needed). Laid out per trust; archives are
     # gzip-compressed tarballs named .tar (tar auto-detects gzip on extraction).
     hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
-    hf_trust_data_revision: "{{ trust_data_hf_revision | default('main') }}"
+    hf_trust_data_revision: "{{ trust_data_hf_revision | default(trust_data_version) }}"
     hf_base_url: "https://huggingface.co/datasets/{{ hf_trust_data_repo }}/resolve/{{ hf_trust_data_revision }}"
   tasks:
     - name: install tar
@@ -672,17 +667,18 @@
     # trust_num selects which trust's data package to load (e.g. "1" or "2").
     # Passed via -e trust_num=2 for Trust_2 hosts. Defaults to "1".
     trust_num: "{{ trust_num | default('1') }}"
-    # orthanc_data_version is the version string from trust/orthanc/.data_version.
-    # Passed as an extra-var by the Makefile seed-trust-data target.
+    # trust_data_version is the tag from trust/.data_version (the same pin the OMOP
+    # play uses), passed as an extra-var by the Makefile seed-trust-data target.
+    # The archive path carries no version; the revision the URL resolves at does.
     orthanc_trust_dir: "trust{{ trust_num }}"
-    archive: "trust{{ trust_num }}_orthanc_data_{{ orthanc_data_version }}.tar"
+    archive: "trust{{ trust_num }}_orthanc_data.tar"
     base_dir: "/opt/flip/orthanc"
     data_dir: "/opt/flip/orthanc/orthanc-storage"
     # Mock data is fetched anonymously over HTTPS from the public Hugging Face
     # dataset (no AWS CLI / credentials needed). Laid out per trust; archives are
     # gzip-compressed tarballs named .tar (tar auto-detects gzip on extraction).
     hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
-    hf_trust_data_revision: "{{ trust_data_hf_revision | default('main') }}"
+    hf_trust_data_revision: "{{ trust_data_hf_revision | default(trust_data_version) }}"
     hf_base_url: "https://huggingface.co/datasets/{{ hf_trust_data_repo }}/resolve/{{ hf_trust_data_revision }}"
   tasks:
     - name: install tar
