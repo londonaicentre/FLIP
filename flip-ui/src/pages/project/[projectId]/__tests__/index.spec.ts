@@ -415,4 +415,31 @@ describe("Project page (/project/[id]/index.vue)", () => {
         expect(editBtn.text()).toContain("View Project");
         expect(editBtn.text()).not.toContain("Edit Project");
     });
+
+    test("keeps the three-column layout with the imaging status card by default", () => {
+        const wrapper = mountProjectPage();
+        expect(wrapper.find("[data-test=stub-project-status]").exists()).toBe(true);
+        expect(wrapper.find("[data-test=project-workspace]").classes()).toContain(
+            "lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,1.5fr)_minmax(17rem,0.75fr)]"
+        );
+    });
+
+    test("removes the imaging status card and widens Models into the workspace for a project without imaging", () => {
+        const project = baseProject();
+        project.has_imaging = false;
+        const wrapper = mountProjectPage({ project });
+
+        // Nothing replaces the card: two columns, Models takes the whole main workspace.
+        expect(wrapper.find("[data-test=stub-project-status]").exists()).toBe(false);
+        const workspace = wrapper.find("[data-test=project-workspace]");
+        expect(workspace.classes()).toContain("lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,2.25fr)]");
+        expect(workspace.classes()).not.toContain(
+            "lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,1.5fr)_minmax(17rem,0.75fr)]"
+        );
+        expect(wrapper.find("[data-test=stub-lifecycle]").element.parentElement?.className).toContain("lg:col-span-2");
+        // With no sibling card defining a row height, the list flows naturally instead of being pinned.
+        const card = wrapper.find("[data-test=stub-latest-models]");
+        expect(card.classes()).not.toContain("lg:absolute");
+        expect(card.element.parentElement?.className).toContain("lg:sticky");
+    });
 });
