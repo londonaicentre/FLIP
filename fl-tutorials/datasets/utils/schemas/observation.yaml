@@ -1,0 +1,79 @@
+schema_type: dataframe
+columns:
+  observation_id:
+    dtype: int64
+    unique: true
+  person_id:
+    dtype: int64
+  observation_concept_id:
+    dtype: int64
+  observation_date:
+    dtype: datetime64[ns]
+  observation_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  observation_type_concept_id:
+    dtype: int64
+  value_as_number:
+    dtype: float64
+    nullable: true
+    required: false
+  value_as_string:
+    dtype: string[python]
+    nullable: true
+    required: false
+  value_as_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  qualifier_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  unit_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  provider_id:
+    dtype: int64
+    nullable: true
+    required: false
+  visit_occurrence_id:
+    dtype: int64
+    nullable: true
+    required: false
+  visit_detail_id:
+    dtype: int64
+    nullable: true
+    required: false
+  observation_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  observation_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  unit_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  qualifier_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  value_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  observation_event_id:
+    dtype: int64
+    nullable: true
+    required: false
+  obs_event_field_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

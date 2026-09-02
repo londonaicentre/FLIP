@@ -9,19 +9,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# CPU-only checks over fl-tutorials/: ruff across the whole tree, then the transform-chain
-# pytest suite in fl-tutorials/tests/. Neither needs a GPU, a dataset download or an FL image
-# -- unlike the simulator harness (`make -C fl-tutorials run-tutorial`), which needs all three
-# and therefore cannot run here.
+# CPU-only checks over fl-tutorials/: ruff across the whole tree, then fl-tutorials/tests/,
+# split across two pytest runs in two different environments (see tests/README.md for why).
+# Neither needs a GPU, a dataset download or an FL image -- unlike the simulator harness
+# (`make -C fl-tutorials run-tutorial`), which needs all three and therefore cannot run here.
 #
 # fl-apps/flower/** is here because test_flower_min_clients_wiring.py polices the deployed
 # templates too -- flip-api discards an uploaded server_app.py, so fl-apps/flower is the code
 # that actually runs. Without this filter the guard never fires on the files that matter most.
 # Path filters cover BOTH backends, plus the flip-utils environment AND source: the Ark+ apps
-# import `flip` at module-exec time, so a flip-utils source change can break this suite and must
-# trigger it. The pre-existing tutorial workflow (fl-apps-check-tutorial-sync.yml) was filtered to
-# flower only until this PR, so nothing in CI fired on an nvflare-only tutorial change.
-# See fl-tutorials/tests/README.md.
+# import `flip` at module-exec time, so a flip-utils source change can break the tutorial-app
+# suite and must trigger it. The pre-existing tutorial workflow (fl-apps-check-tutorial-sync.yml)
+# was filtered to flower only until this PR, so nothing in CI fired on an nvflare-only tutorial
+# change. See fl-tutorials/tests/README.md.
 name: FL Tutorials CI
 
 on:
@@ -70,12 +70,19 @@ jobs:
       - name: Lint fl-tutorials
         run: make lint
 
-      # The suite runs in flip-utils' environment (`flip-utils[full]`), which is what the FL
-      # images give these apps at runtime. Synced as its own step so an environment failure is
-      # distinguishable from a test failure in the log.
+      # Tutorial-app tests run in flip-utils' environment (`flip-utils[full]`), which is what
+      # the FL images give these apps at runtime. Synced as its own step so an environment
+      # failure is distinguishable from a test failure in the log.
       - name: Sync the flip-utils environment
         working-directory: ./flip-utils
         run: uv sync --extra full --group dev
 
       - name: Run the tutorial transform tests
         run: make pytest
+
+      # Dataset-tooling tests run against each dataset's own uv project instead -- flip-utils
+      # has no use for pandera/sqlglot. One pytest invocation per project (DATASET_TEST_PROJECTS
+      # in the Makefile) plus one for the shared contract; `uv run --project` resolves and syncs
+      # each environment on demand, so no separate sync step is needed here.
+      - name: Run the dataset-tooling tests
+        run: make pytest-datasets

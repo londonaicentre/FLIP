@@ -13,20 +13,68 @@ limitations under the License.
 
 # fl-tutorials tests
 
-CPU-only pytest suite over the tutorial apps: their transform chains, plus a static drift guard on
-the Flower apps' `min_clients` wiring (which also covers `fl-apps/flower/`, the templates that
-actually deploy). No GPU, no dataset download, no FL image, no network — the fixtures are synthetic
-DICOMs built in-process, and the whole suite runs in a couple of seconds.
+CPU-only pytest suites over `fl-tutorials/`: the tutorial apps' transform chains plus a static
+drift guard on the Flower apps' `min_clients` wiring (which also covers `fl-apps/flower/`, the
+templates that actually deploy), and a second, dataset-tooling suite over `datasets/**`. No GPU,
+no dataset download, no FL image, no network — fixtures are synthesised in-process (synthetic
+DICOMs, or for the dataset-tooling tests, small in-memory DICOM/CSV fixtures), and each suite
+runs in well under a second.
 
 ```bash
-make -C fl-tutorials test        # ruff over fl-tutorials/ + this suite
-make -C fl-tutorials pytest      # this suite only
-make -C fl-tutorials lint        # ruff only
+make -C fl-tutorials test              # ruff over fl-tutorials/ + both suites below
+make -C fl-tutorials pytest            # tutorial-app suite only (tests/, minus tests/datasets/)
+make -C fl-tutorials pytest-datasets   # dataset-tooling suites only (tests/datasets/, one env per dataset)
+make -C fl-tutorials lint              # ruff only
 ```
 
-CI runs the same two commands on every pull request touching `fl-tutorials/**`, `fl-apps/flower/**`
+CI runs the same commands on every pull request touching `fl-tutorials/**`, `fl-apps/flower/**`
 or the flip-utils source/environment, and on pushes to main/develop
 (`.github/workflows/fl-tutorials-tests.yml`), for both backends.
+
+## Layout
+
+Tests mirror the source tree and are named for the file they cover —
+`tests/datasets/spleen/test_download_spleen_dataset.py` covers
+`datasets/spleen/download_spleen_dataset.py`, and `tests/datasets/cxr/test_omop_convert_cxr.py`
+covers `datasets/cxr/omop_convert_cxr.py` — the same convention as
+`trust/imaging-api/tests/routers/test_imaging.py`.
+
+Cross-cutting guards that assert a property across several source files
+(`test_dicom_orientation.py`, `test_flower_min_clients_wiring.py`,
+`test_spleen_inference_config_parity.py`) stay at the root of `tests/`, because
+no single source path describes what they cover.
+
+**Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
+the tutorial apps themselves and runs in flip-utils' environment (`flip-utils[full]` — monai,
+pydicom, torch, timm, sklearn), which is what the FL images give those apps at runtime — see
+"What it runs" below (`make -C fl-tutorials pytest`, which passes `--ignore=tests/datasets`).
+`tests/datasets/` instead covers `fl-tutorials/datasets/**`, which is workstation tooling that
+never runs on an FL image — it has no business pulling `pandera`/`sqlglot` (needed to validate
+the OMOP tables that tooling generates) into flip-utils' runtime environment.
+
+Those tests run against **each dataset's own uv project**, one pytest invocation per project
+(`DATASET_TEST_PROJECTS` in `fl-tutorials/Makefile`, currently `spleen cxr`), each declaring what
+that dataset's tooling actually needs. `make -C fl-tutorials pytest-datasets` runs them all.
+
+The split is not just tidiness: it is the only thing in CI that checks a dataset's
+`pyproject.toml` declares what its code actually imports. A dataset's tests import its converter,
+which imports the shared contract in `datasets/utils/`, so an undeclared transitive dependency
+fails that dataset's own run. It earned that immediately — adding `datasets/cxr` surfaced a
+missing `requests`, imported at module scope by `omop_schemas.py`. (Verified rather than assumed:
+deleting `requests` from `datasets/cxr/pyproject.toml` against a clean venv errors all 13 cxr
+tests. Note a *stale* venv hides this — `uv run` does not prune an already-installed package, so
+re-test with `rm -rf datasets/<name>/.venv` first.)
+
+`tests/datasets/utils/` — the shared contract itself — runs **once**, in the first listed
+project's environment (`DATASET_UTILS_PROJECT`). Any dataset environment can host it, and
+re-running it per project would only repeat the same assertions; it is not what catches the drift
+above.
+
+`tests/datasets/pytest.ini` is a second inifile, deliberately: it anchors this subtree's rootdir
+at `tests/datasets/`, which is what keeps `tests/conftest.py` out of these runs. That conftest
+imports monai and pydicom at module scope to build the tutorial-app fixtures, and pytest loads
+every conftest between rootdir and the collected tests — so without the second inifile, a dataset
+project that does not declare monai fails during *collection*, before running a single test.
 
 ## Why this exists
 
