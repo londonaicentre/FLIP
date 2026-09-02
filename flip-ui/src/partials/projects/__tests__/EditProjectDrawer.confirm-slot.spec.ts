@@ -16,6 +16,7 @@ import { mountComponent } from "@test/helper";
 import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
+import AiSwitch from "@/components/AiSwitch/AiSwitch.vue";
 import EditProjectDrawer from "@/partials/projects/EditProjectDrawer.vue";
 
 vi.mock("vue-router", async (importOriginal) => {
@@ -140,10 +141,11 @@ describe("EditProjectDrawer DICOM-to-NIfTI read-only field", () => {
         updating: false,
         users: [],
         ownerId: "owner-1",
-        dicomToNifti: true
+        dicomToNifti: true,
+        hasImaging: true
     };
 
-    const mountDrawer = (dicomToNifti: boolean) =>
+    const mountDrawer = (dicomToNifti: boolean, hasImaging = true) =>
         mountComponent(EditProjectDrawer, {
             global: {
                 renderStubDefaultSlot: true,
@@ -151,7 +153,8 @@ describe("EditProjectDrawer DICOM-to-NIfTI read-only field", () => {
             },
             props: {
                 ...baseProps,
-                dicomToNifti
+                dicomToNifti,
+                hasImaging
             }
         });
 
@@ -174,11 +177,54 @@ describe("EditProjectDrawer DICOM-to-NIfTI read-only field", () => {
     });
 
     it("shows 'Disabled' when the project's dicom_to_nifti is off", () => {
-        const text = mountDrawer(false).text();
+        // The drawer now carries a second switch (imaging, on here), so the assertion is scoped
+        // to the DICOM switch's own rendered label rather than the whole drawer text.
+        const dicomSwitch = mountDrawer(false)
+            .findAllComponents(AiSwitch)
+            .find(c => c.props("name") === "dicom_to_nifti");
 
-        expect(text).toContain("Disabled");
-        // The capitalised "Enabled" label only renders when the toggle is on;
-        // the descriptive copy uses lowercase "enabled", so this stays exact.
-        expect(text).not.toContain("Enabled");
+        expect(dicomSwitch?.text()).toContain("Disabled");
+        expect(dicomSwitch?.text()).not.toContain("Enabled");
+    });
+});
+
+describe("EditProjectDrawer 'Includes imaging data' read-only field", () => {
+    const baseProps = {
+        show: true,
+        name: "Acme",
+        id: "proj-1",
+        description: "desc",
+        projectUnstaged: true,
+        updating: false,
+        users: [],
+        ownerId: "owner-1",
+        dicomToNifti: true
+    };
+
+    const mountDrawer = (hasImaging: boolean) =>
+        mountComponent(EditProjectDrawer, {
+            global: {
+                renderStubDefaultSlot: true,
+                stubs: { AiConfirmModal: confirmModalStub }
+            },
+            props: {
+                ...baseProps,
+                hasImaging
+            }
+        });
+
+    it("renders the imaging section read-only with the immutability hint", () => {
+        const wrapper = mountDrawer(true);
+
+        expect(wrapper.html()).toContain("Includes imaging data");
+        expect(wrapper.find("[data-test=has-imaging-toggle]").attributes("aria-disabled")).toBe("true");
+    });
+
+    it("hides the DICOM-to-NIfTI section when the project has no imaging", () => {
+        const wrapper = mountDrawer(false);
+
+        expect(wrapper.find("[data-test=has-imaging-toggle]").exists()).toBe(true);
+        expect(wrapper.find("[data-test=dicom-to-nifti-toggle]").exists()).toBe(false);
+        expect(wrapper.html()).not.toContain("Convert DICOMs to NIfTI");
     });
 });
