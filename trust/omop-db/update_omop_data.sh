@@ -24,19 +24,21 @@ set -euo pipefail
 # Set TRUST=1 or TRUST=2 to update only a single trust; defaults to "all" (both trusts).
 
 # These paths are relative to the location of this script
-REPO_DATA_VERSION_FILE=".data_version"  # committed in repo
-VOLUMES_DIR="./volumes"                  # local dir for omop-db volumes
+# ONE pin for the whole trust dataset (OMOP and Orthanc): a git tag on the HF dataset.
+REPO_DATA_VERSION_FILE="../.data_version"  # committed in repo
+VOLUMES_DIR="./volumes"                    # local dir for omop-db volumes
 # Pre-per-trust marker. Older versions of this script tracked a single shared
 # version here; both trusts now use per-trust markers (.local_data_version_trust<N>).
 LEGACY_DATA_VERSION_FILE="${VOLUMES_DIR}/.local_data_version"
 
 # Mock data is fetched anonymously over HTTPS from a public Hugging Face dataset
-# (no AWS CLI or credentials required). The dataset is laid out per trust:
-#   <repo>/resolve/<revision>/trust1/trust1_pgdata_<version>.tar
-# Both the repo and revision can be overridden via the environment.
+# (no AWS CLI or credentials required). There is ONE copy of each archive, at an
+# unversioned path; the data version is a git TAG on the dataset, so the pin
+# selects the revision, never a filename:
+#   <repo>/resolve/<data version>/trust1/trust1_pgdata.tar
+# Both the repo and the revision can be overridden via the environment
+# (HF_TRUST_DATA_REVISION=main to test content that is not tagged yet).
 HF_TRUST_DATA_REPO="${HF_TRUST_DATA_REPO:-aicentreflip/trust-data}"
-HF_TRUST_DATA_REVISION="${HF_TRUST_DATA_REVISION:-main}"
-HF_BASE_URL="https://huggingface.co/datasets/${HF_TRUST_DATA_REPO}/resolve/${HF_TRUST_DATA_REVISION}"
 
 # TRUST controls which trust(s) to update: "1", "2", or "all" (default).
 TRUST="${TRUST:-all}"
@@ -66,6 +68,8 @@ resolve_data_dir() {
 
 # --- read desired data version from repo file ---
 DATA_VERSION="$(tr -d ' \n\r\t' < "${REPO_DATA_VERSION_FILE}")"
+HF_TRUST_DATA_REVISION="${HF_TRUST_DATA_REVISION:-${DATA_VERSION}}"
+HF_BASE_URL="https://huggingface.co/datasets/${HF_TRUST_DATA_REPO}/resolve/${HF_TRUST_DATA_REVISION}"
 
 mkdir -p "${VOLUMES_DIR}"
 
@@ -76,9 +80,10 @@ mkdir -p "${VOLUMES_DIR}"
 update_trust() {
   local trust_num="$1"
   local local_version_file="${VOLUMES_DIR}/.local_data_version_trust${trust_num}"
-  local archive="trust${trust_num}_pgdata_${DATA_VERSION}.tar"
-  local hf_url="${HF_BASE_URL}/trust${trust_num}/${archive}"
-  local local_archive="${VOLUMES_DIR}/${archive}"
+  # Unversioned on the dataset (the revision IS the version); versioned in the local cache so a
+  # bump can never reuse the previous version's bytes.
+  local hf_url="${HF_BASE_URL}/trust${trust_num}/trust${trust_num}_pgdata.tar"
+  local local_archive="${VOLUMES_DIR}/trust${trust_num}_pgdata_${DATA_VERSION}.tar"
   local dest_dir_var="OMOP_DATA_DIR_TRUST_${trust_num}"
   local dest_dir; dest_dir="$(resolve_data_dir "${!dest_dir_var}")"
 

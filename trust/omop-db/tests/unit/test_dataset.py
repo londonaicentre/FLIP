@@ -24,6 +24,7 @@ from omop_db_tools.dataset import (
     CANONICAL_TABLES,
     SOURCE_TRUST_COLUMN,
     build_canonical,
+    canonical_table_url,
     fetch_canonical,
     split_for_trust,
 )
@@ -268,6 +269,28 @@ def _fake_urlopen(responses: dict[str, bytes]):
 class TestFetchCanonical:
     CSV = b"person_id,source_trust\n1,1\n"
 
+    def test_url_is_revision_then_unversioned_path(self):
+        """The version is the revision the URL resolves at, never a directory in the path."""
+        assert canonical_table_url("20260729", "cxr_project", "person") == (
+            "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/20260729/omop-csv/cxr_project/person.csv"
+        )
+        assert canonical_table_url("main", "spleen_project", "measurement", repo="org/other").startswith(
+            "https://huggingface.co/datasets/org/other/resolve/main/omop-csv/spleen_project/"
+        )
+
+    def test_fetches_every_table_at_the_given_revision(self, tmp_path, monkeypatch):
+        seen: list[str] = []
+
+        def opener(url, timeout=0):
+            seen.append(url)
+            return _fake_response(self.CSV)
+
+        monkeypatch.setattr(urllib.request, "urlopen", opener)
+
+        fetch_canonical("20260901", tmp_path, projects=["spleen_project"])
+
+        assert seen == [canonical_table_url("20260901", "spleen_project", t) for t in CANONICAL_TABLES]
+
     def test_optional_404_skipped_required_fetched(self, tmp_path, monkeypatch):
         required = ["person", "procedure_occurrence", "visit_occurrence", "image_occurrence", "image_feature"]
         served = {f"/{table}.csv": self.CSV for table in required}
@@ -279,10 +302,10 @@ class TestFetchCanonical:
         assert not (tmp_path / "cxr_project" / "measurement.csv").exists()
         assert not (tmp_path / "cxr_project" / "observation.csv").exists()
 
-    def test_required_404_raises_with_version_hint(self, tmp_path, monkeypatch):
+    def test_required_404_raises_with_revision_hint(self, tmp_path, monkeypatch):
         monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen({}))
 
-        with pytest.raises(RuntimeError, match="version 'v9'"):
+        with pytest.raises(RuntimeError, match="revision 'v9'"):
             fetch_canonical("v9", tmp_path, projects=["cxr_project"])
 
     def test_non_404_error_on_optional_table_raises(self, tmp_path, monkeypatch):

@@ -13,8 +13,11 @@
 
 The mock OMOP rows live as ONE canonical dataset (per project/cohort, one CSV per
 table) published to the public Hugging Face dataset ``aicentreflip/trust-data``
-under ``omop-csv/<version>/``. Every row carries a ``source_trust`` column: the
-trust it belongs to, as decided by the dataset's own generator.
+at ``omop-csv/<project>/``. There is exactly one copy of each table; a data
+version is a git *tag* on that dataset (FLIP pins one in ``trust/.data_version``),
+so a version is the revision a fetch resolves at, never a directory in the path.
+Every row carries a ``source_trust`` column: the trust it belongs to, as decided
+by the dataset's own generator.
 
 Standing up N trusts is a deterministic split of that single dataset:
 
@@ -32,6 +35,7 @@ referential integrity across tables without re-keying.
 """
 
 import argparse
+import os
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -67,7 +71,27 @@ DEFAULT_PROJECTS = ["cxr_project", "spleen_project"]
 
 SOURCE_TRUST_COLUMN = "source_trust"
 
-HF_OMOP_CSV_BASE_URL = "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/omop-csv"
+HF_TRUST_DATA_REPO = os.environ.get("HF_TRUST_DATA_REPO", "aicentreflip/trust-data")
+
+
+def canonical_table_url(revision: str, project: str, table: str, repo: str = HF_TRUST_DATA_REPO) -> str:
+    """URL of one published canonical table at a data version.
+
+    The dataset holds one copy of every table at ``omop-csv/<project>/<table>.csv``; the version is
+    the revision the URL resolves at — a data-version tag, ``main`` for content not tagged yet, or a
+    commit sha — and is never part of the path.
+
+    Args:
+        revision (str): Git revision on the dataset, normally the tag in ``trust/.data_version``.
+        project (str): Project directory, e.g. ``spleen_project``.
+        table (str): Canonical table name, e.g. ``person``.
+        repo (str): Hugging Face dataset id.
+
+    Returns:
+        str: The ``resolve`` URL (which follows the LFS/plain-file redirect on download).
+    """
+    return f"https://huggingface.co/datasets/{repo}/resolve/{revision}/omop-csv/{project}/{table}.csv"
+
 
 PARTITION_MODES = ["source_trust", "modulo"]
 # The name this mode had before FLIP#1100; still accepted everywhere a mode is.
@@ -178,24 +202,24 @@ def build_canonical(trust_dirs: list[Path], dest_dir: Path, projects: list[str] 
 
 
 def fetch_canonical(
-    version: str,
+    revision: str,
     dest_dir: Path,
     projects: list[str] | None = None,
-    base_url: str = HF_OMOP_CSV_BASE_URL,
+    repo: str = HF_TRUST_DATA_REPO,
 ) -> None:
-    """Download one version of the canonical dataset (anonymous HTTPS, no credentials).
+    """Download the canonical dataset at one revision (anonymous HTTPS, no credentials).
 
     Args:
-        version (str): Dataset version (the omop-csv/<version>/ prefix on Hugging Face).
+        revision (str): Data-version tag (or any git revision) on the Hugging Face dataset.
         dest_dir (Path): Output directory for the canonical <project>/<table>.csv files.
         projects (list[str] | None): Projects to fetch; defaults to DEFAULT_PROJECTS.
-        base_url (str): Base URL holding the versioned dataset tree.
+        repo (str): Hugging Face dataset id.
     """
     for project in projects or DEFAULT_PROJECTS:
         out_dir = dest_dir / project
         out_dir.mkdir(parents=True, exist_ok=True)
         for table in CANONICAL_TABLES:
-            url = f"{base_url}/{version}/{project}/{table}.csv"
+            url = canonical_table_url(revision, project, table, repo)
             try:
                 with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310
                     content = response.read()
@@ -204,7 +228,7 @@ def fetch_canonical(
                     print(f"⚠️  Optional table not in dataset, skipping: {project}/{table}")
                     continue
                 raise RuntimeError(
-                    f"Failed to fetch {url}: HTTP {error.code} (is version {version!r} published?)"
+                    f"Failed to fetch {url}: HTTP {error.code} (is revision {revision!r} tagged on {repo}?)"
                 ) from error
             if content.lstrip()[:1] == b"<":
                 raise RuntimeError(
@@ -231,16 +255,18 @@ def main(argv: list[str] | None = None) -> None:
     build_parser.add_argument("--projects", nargs="+", default=None, help="Projects to merge (default: all).")
 
     fetch_parser = subparsers.add_parser("fetch", help="Download the canonical dataset from Hugging Face.")
-    fetch_parser.add_argument("--version", required=True, help="Dataset version (omop-csv/<version>/ prefix).")
+    fetch_parser.add_argument(
+        "--revision", required=True, help="Data-version tag on the dataset (trust/.data_version), or any git revision."
+    )
     fetch_parser.add_argument("--dest", type=Path, required=True, help="Output directory.")
     fetch_parser.add_argument("--projects", nargs="+", default=None, help="Projects to fetch (default: all).")
-    fetch_parser.add_argument("--base-url", default=HF_OMOP_CSV_BASE_URL, help="Override the dataset base URL.")
+    fetch_parser.add_argument("--repo", default=HF_TRUST_DATA_REPO, help="Hugging Face dataset id.")
 
     args = parser.parse_args(argv)
     if args.command == "build":
         build_canonical(args.trust_dirs, args.dest, args.projects)
     else:
-        fetch_canonical(args.version, args.dest, args.projects, args.base_url)
+        fetch_canonical(args.revision, args.dest, args.projects, args.repo)
 
 
 if __name__ == "__main__":

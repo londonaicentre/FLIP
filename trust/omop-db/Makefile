@@ -102,7 +102,7 @@ seed-omop: fetch-dataset
 	OMOP_DB_PORT=$(OMOP_DB_PORT) uv run python -m omop_db_tools.import_tables \
 		--trust-index $(TRUST_INDEX) --num-trusts $(NUM_TRUSTS) --partition $(PARTITION) \
 		--clean projects --projects $(PROJECTS) --data-dir data/canonical
-	@mkdir -p $(dir $(SEED_MARKER)) && printf 'projects=%s\nversion=%s\n' "$(PROJECTS)" "$(OMOP_CSV_DATA_VERSION)" > $(SEED_MARKER)
+	@mkdir -p $(dir $(SEED_MARKER)) && printf 'projects=%s\nversion=%s\n' "$(PROJECTS)" "$(HF_TRUST_DATA_REVISION)" > $(SEED_MARKER)
 	@echo "✅ Seeded trust $(TRUST_INDEX) on port $(OMOP_DB_PORT) with: $(PROJECTS) (marker: $(SEED_MARKER))"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -127,8 +127,13 @@ VOCAB_S3_BUCKET ?= flipdev-aicentre
 # image is vocab-free).
 VOCAB_CORE_BUNDLE = vocab_aicentre_core_20240916
 VOCAB_DICOM_BUNDLE = vocab_dicom_paulnagy_20260109
-OMOP_CSV_DATA_VERSION = 20260729
-HF_TRUST_DATA_BASE = https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main
+# The trust dataset is ONE copy at unversioned paths on aicentreflip/trust-data; a data version
+# is a git tag there, pinned by trust/.data_version. Everything fetched from the dataset
+# resolves at that tag. HF_TRUST_DATA_REVISION overrides it (e.g. main, to build against content
+# that is not tagged yet).
+DATA_VERSION = $(shell tr -d ' \n\r\t' < ../.data_version)
+HF_TRUST_DATA_REVISION ?= $(DATA_VERSION)
+HF_TRUST_DATA_BASE = https://huggingface.co/datasets/aicentreflip/trust-data/resolve/$(HF_TRUST_DATA_REVISION)
 
 # The shipped build stack is two-trust: compose.yml defines omop-db-trust1/2 and
 # .env.build carries their ports. For NUM_TRUSTS>2, add an omop-db-trust<N>
@@ -206,7 +211,7 @@ fetch-vocab-dicom:
 	fi
 
 fetch-dataset:
-	uv run python -m omop_db_tools.dataset fetch --version $(OMOP_CSV_DATA_VERSION) --dest data/canonical
+	uv run python -m omop_db_tools.dataset fetch --revision $(HF_TRUST_DATA_REVISION) --dest data/canonical
 
 # Every fan-out below is `$(addprefix …,$(shell seq 1 $(NUM_TRUSTS)))`. `$(shell)`
 # is expanded at parse time and make never fails on its exit status, so a
@@ -259,16 +264,17 @@ apply-constraints-trust-%:
 # apply-constraints — the FKs reference the absent vocab), then export each
 # populated volume. Tar runs in a root container because the pgdata trees are
 # uid-999-owned; the archive root is the db_data CONTENTS, matching what
-# update_omop_data.sh extracts.
-PGDATA_VERSION = $(shell tr -d ' \n\r\t' < .data_version)
+# update_omop_data.sh extracts. The archive name carries no version: the
+# version is the tag `make -C trust publish-trust-data VERSION=…` puts on the
+# commit that uploads it.
 
 export-pgdata: check-num-trusts $(addprefix export-pgdata-trust-,$(shell seq 1 $(NUM_TRUSTS)))
 
 export-pgdata-trust-%:
 	@mkdir -p dist
 	docker run --rm -v "$$(pwd)/volumes/Trust_$*/db_data:/d:ro" -v "$$(pwd)/dist:/out" alpine \
-		tar -czf "/out/trust$*_pgdata_$(PGDATA_VERSION).tar" -C /d .
-	@echo "📦 dist/trust$*_pgdata_$(PGDATA_VERSION).tar"
+		tar -czf "/out/trust$*_pgdata.tar" -C /d .
+	@echo "📦 dist/trust$*_pgdata.tar"
 
 # Push the already-built image to GHCR. Do `docker login ghcr.io` first if
 # needed. Interactive confirmation: OMOP_DB_TAG defaults to :latest here, which

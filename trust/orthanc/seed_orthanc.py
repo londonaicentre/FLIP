@@ -20,11 +20,12 @@ select this trust's rows by ``source_trust``, so the studies this puts into a tr
 the ones its OMOP ``image_occurrence`` rows point at — by construction, not by keeping two snapshots
 in lockstep by hand.
 
-Per project::
+Per project, at one revision of the dataset (the data-version tag pinned in ``trust/.data_version``
+unless ``--revision`` / ``HF_TRUST_DATA_REVISION`` says otherwise)::
 
-    omop-csv/<v>/<project>/image_occurrence.csv  →  accession_id WHERE source_trust == <trust>
-    dicom/<v>/<project>.tar.gz                   →  <accession>/*.dcm, streamed once into a cache
-    each matching <accession>/*.dcm              →  POST /instances on this trust's Orthanc
+    omop-csv/<project>/image_occurrence.csv  →  accession_id WHERE source_trust == <trust>
+    dicom/<project>.tar.gz                   →  <accession>/*.dcm, streamed once into a cache
+    each matching <accession>/*.dcm          →  POST /instances on this trust's Orthanc
 
 Idempotent by construction: Orthanc dedupes on SOPInstanceUID and answers ``AlreadyStored`` for a
 re-POST, so a re-run uploads nothing and changes nothing. Refuses to upload anything at all if any
@@ -52,13 +53,22 @@ from pathlib import Path
 import requests
 
 HF_TRUST_DATA_REPO = os.environ.get("HF_TRUST_DATA_REPO", "aicentreflip/trust-data")
-HF_TRUST_DATA_REVISION = os.environ.get("HF_TRUST_DATA_REVISION", "main")
-HF_BASE = f"https://huggingface.co/datasets/{HF_TRUST_DATA_REPO}/resolve/{HF_TRUST_DATA_REVISION}"
 
 DEFAULT_PROJECTS = ["cxr_project", "spleen_project"]
-# The same pin the OMOP side reads, so the CSVs and the DICOM set are always the same version.
-DATA_VERSION_FILE = Path(__file__).resolve().parents[1] / "omop-db" / ".data_version"
+# The one pin for the whole trust dataset — a git tag on the HF dataset. The OMOP side reads the
+# same file, so the CSVs and the DICOM set are always the same version.
+DATA_VERSION_FILE = Path(__file__).resolve().parents[1] / ".data_version"
 COMPLETE_MARKER = ".complete"
+
+
+def hf_url(revision: str, path: str, repo: str = HF_TRUST_DATA_REPO) -> str:
+    """URL of one dataset file at a revision. The version is the revision, never part of the path."""
+    return f"https://huggingface.co/datasets/{repo}/resolve/{revision}/{path}"
+
+
+def resolve_revision(explicit: str | None) -> str:
+    """The revision to fetch at: ``--revision``, else ``HF_TRUST_DATA_REVISION``, else the pinned tag."""
+    return explicit or os.environ.get("HF_TRUST_DATA_REVISION") or DATA_VERSION_FILE.read_text().strip()
 
 
 def select_accessions(rows: list[dict[str, str]], trust_index: int) -> list[str]:
@@ -83,11 +93,11 @@ def missing_accessions(project_dir: Path, accessions: list[str]) -> list[str]:
     return [a for a in accessions if not (project_dir / a).is_dir()]
 
 
-def fetch_image_occurrence(version: str, project: str, cache_dir: Path) -> list[dict[str, str]]:
-    """The published ``image_occurrence.csv`` for a project, cached beside the DICOMs."""
-    cache = cache_dir / version / project / "image_occurrence.csv"
+def fetch_image_occurrence(revision: str, project: str, cache_dir: Path) -> list[dict[str, str]]:
+    """The published ``image_occurrence.csv`` for a project at ``revision``, cached beside the DICOMs."""
+    cache = cache_dir / revision / project / "image_occurrence.csv"
     if not cache.is_file():
-        url = f"{HF_BASE}/omop-csv/{version}/{project}/image_occurrence.csv"
+        url = hf_url(revision, f"omop-csv/{project}/image_occurrence.csv")
         response = requests.get(url, timeout=120)
         response.raise_for_status()
         cache.parent.mkdir(parents=True, exist_ok=True)
@@ -96,16 +106,18 @@ def fetch_image_occurrence(version: str, project: str, cache_dir: Path) -> list[
         return list(csv.DictReader(handle))
 
 
-def ensure_dicoms(version: str, project: str, cache_dir: Path) -> Path:
-    """Stream ``dicom/<version>/<project>.tar.gz`` into the cache once; return the project directory.
+def ensure_dicoms(revision: str, project: str, cache_dir: Path) -> Path:
+    """Stream ``dicom/<project>.tar.gz`` at ``revision`` into the cache once; return the project directory.
 
-    Extracts as it downloads (no 2× disk, no waiting for the whole archive), and marks completion
-    with a file so a run interrupted mid-extract is redone rather than trusted.
+    The cache is keyed by revision (``<cache_dir>/<revision>/<project>/``), so a bump never reuses
+    the previous version's instances. Extracts as it downloads (no 2× disk, no waiting for the whole
+    archive), and marks completion with a file so a run interrupted mid-extract is redone rather
+    than trusted.
     """
-    project_dir = cache_dir / version / project
+    project_dir = cache_dir / revision / project
     if (project_dir / COMPLETE_MARKER).is_file():
         return project_dir
-    url = f"{HF_BASE}/dicom/{version}/{project}.tar.gz"
+    url = hf_url(revision, f"dicom/{project}.tar.gz")
     print(f"📦 {project}: streaming {url} into {project_dir}", flush=True)
     project_dir.mkdir(parents=True, exist_ok=True)
     with requests.get(url, stream=True, timeout=300) as response:
@@ -161,20 +173,20 @@ def delete_studies(session: requests.Session, orthanc_url: str, accessions: list
 def seed_project(
     session: requests.Session,
     orthanc_url: str,
-    version: str,
+    revision: str,
     project: str,
     trust_index: int,
     cache_dir: Path,
     clear: bool,
     dry_run: bool,
 ) -> Counter:
-    rows = fetch_image_occurrence(version, project, cache_dir)
+    rows = fetch_image_occurrence(revision, project, cache_dir)
     accessions = select_accessions(rows, trust_index)
-    project_dir = ensure_dicoms(version, project, cache_dir)
+    project_dir = ensure_dicoms(revision, project, cache_dir)
     if missing := missing_accessions(project_dir, accessions):
         raise SystemExit(
             f"❌ {project}: {len(missing)} of trust {trust_index}'s {len(accessions)} accessions have no DICOM "
-            f"directory in dicom/{version}/{project}.tar.gz (e.g. {missing[:3]}). The OMOP slice and the DICOM "
+            f"directory in dicom/{project}.tar.gz @ {revision} (e.g. {missing[:3]}). The OMOP slice and the DICOM "
             "set disagree — nothing uploaded. Re-publish the DICOM set with publish_dicom.py --verify-only."
         )
     files = [p for a in accessions for p in sorted((project_dir / a).glob("*.dcm"))]
@@ -196,14 +208,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--trust-index", type=int, required=True, help="1-based; matched against source_trust")
     parser.add_argument("--projects", nargs="+", default=DEFAULT_PROJECTS)
-    parser.add_argument("--data-version", default=None, help=f"default: contents of {DATA_VERSION_FILE}")
+    parser.add_argument(
+        "--revision",
+        default=None,
+        help=f"dataset revision to seed from: a data-version tag, main, or a sha. Default: $HF_TRUST_DATA_REVISION, "
+        f"else the pinned tag in {DATA_VERSION_FILE}",
+    )
     parser.add_argument("--orthanc-url", default=None, help="default: http://127.0.0.1:$PACS_UI_PORT")
     parser.add_argument("--cache-dir", type=Path, default=Path(__file__).resolve().parent / "volumes" / "dicom")
     parser.add_argument("--clear-projects", action="store_true", help="delete these projects' studies first")
     parser.add_argument("--dry-run", action="store_true", help="resolve and count; upload nothing")
     args = parser.parse_args(argv)
 
-    version = args.data_version or DATA_VERSION_FILE.read_text().strip()
+    revision = resolve_revision(args.revision)
     orthanc_url = args.orthanc_url or f"http://127.0.0.1:{os.environ['PACS_UI_PORT']}"
     session = requests.Session()
     session.auth = (os.environ["ORTHANC_USERNAME"], os.environ["ORTHANC_PASSWORD"])
@@ -214,9 +231,9 @@ def main(argv: list[str] | None = None) -> int:
     total: Counter = Counter()
     for project in args.projects:
         total += seed_project(
-            session, orthanc_url, version, project, args.trust_index, args.cache_dir, args.clear_projects, args.dry_run
+            session, orthanc_url, revision, project, args.trust_index, args.cache_dir, args.clear_projects, args.dry_run
         )
-    print(f"\n✅ trust {args.trust_index} @ {orthanc_url}: {dict(total)} across {args.projects} (data {version})")
+    print(f"\n✅ trust {args.trust_index} @ {orthanc_url}: {dict(total)} across {args.projects} (revision {revision})")
     return 0
 
 

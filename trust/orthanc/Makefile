@@ -55,8 +55,9 @@ update-orthanc-data:
 # DICOMs (FLIP#1100) — the PACS twin of `make -C omop-db seed-omop`. Both select
 # the trust's studies by the same `source_trust` column of the published OMOP
 # tables, so the studies landing here are exactly the ones the trust's
-# image_occurrence rows point at. Streams dicom/<v>/<project>.tar.gz from HF
-# into volumes/dicom/ once (cached), then POSTs /instances; Orthanc dedupes on
+# image_occurrence rows point at. Streams dicom/<project>.tar.gz at the pinned
+# data version (a tag on the HF dataset; HF_TRUST_DATA_REVISION overrides) into
+# volumes/dicom/<revision>/ once (cached), then POSTs /instances; Orthanc dedupes on
 # SOPInstanceUID, so a re-run is a no-op. CLEAR=1 deletes these projects'
 # existing studies first (e.g. to replace unpatched instances — Orthanc never
 # overwrites an AlreadyStored one). Normally via `make -C trust seed-orthanc
@@ -71,7 +72,7 @@ seed-orthanc:
 	PACS_UI_PORT=$(PACS_UI_PORT) ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
 	  uv run seed_orthanc.py --trust-index $(TRUST_INDEX) --projects $(PROJECTS) \
 	  $(if $(filter 1,$(CLEAR)),--clear-projects) $(if $(filter 1,$(DRY_RUN)),--dry-run)
-	@$(if $(filter 1,$(DRY_RUN)),true,printf 'projects=%s\nversion=%s\n' "$(PROJECTS)" "$$(tr -d ' \n\r\t' < ../omop-db/.data_version)" > "$(SEED_STORAGE_DIR)/.seeded" && echo "✅ marker: $(SEED_STORAGE_DIR)/.seeded")
+	@$(if $(filter 1,$(DRY_RUN)),true,printf 'projects=%s\nversion=%s\n' "$(PROJECTS)" "$${HF_TRUST_DATA_REVISION:-$$(tr -d ' \n\r\t' < ../.data_version)}" > "$(SEED_STORAGE_DIR)/.seeded" && echo "✅ marker: $(SEED_STORAGE_DIR)/.seeded")
 
 # seed_orthanc.py's unit tests (pure selection/guard logic + the upload contract
 # against a scripted session). PEP 723 script, no project: pytest via uv.

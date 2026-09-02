@@ -36,6 +36,29 @@ def seed() -> ModuleType:
     return module
 
 
+class TestRevisionAndUrls:
+    def test_url_is_revision_then_unversioned_path(self, seed):
+        """The data version is the revision the URL resolves at, never a directory or a suffix."""
+        assert seed.hf_url("20260729", "dicom/cxr_project.tar.gz") == (
+            "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/20260729/dicom/cxr_project.tar.gz"
+        )
+
+    def test_explicit_revision_wins_over_env_and_pin(self, seed, monkeypatch):
+        monkeypatch.setenv("HF_TRUST_DATA_REVISION", "main")
+        assert seed.resolve_revision("abc123") == "abc123"
+
+    def test_env_overrides_the_pin(self, seed, monkeypatch):
+        monkeypatch.setenv("HF_TRUST_DATA_REVISION", "main")
+        assert seed.resolve_revision(None) == "main"
+
+    def test_pinned_tag_is_the_default(self, seed, monkeypatch, tmp_path):
+        monkeypatch.delenv("HF_TRUST_DATA_REVISION", raising=False)
+        pin = tmp_path / ".data_version"
+        pin.write_text("20260729\n")
+        monkeypatch.setattr(seed, "DATA_VERSION_FILE", pin)
+        assert seed.resolve_revision(None) == "20260729"
+
+
 class TestSelectAccessions:
     def test_selects_only_this_trusts_rows_in_table_order(self, seed):
         rows = [

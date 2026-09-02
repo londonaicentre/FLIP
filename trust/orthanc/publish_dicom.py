@@ -16,18 +16,23 @@
 """Verify a project's DICOM source against its published OMOP tables, then package it for HF.
 
 The per-project DICOM sets that ``seed_orthanc.py`` loads are published to ``aicentreflip/trust-data``
-as ``dicom/<version>/<project>.tar.gz`` — one archive per project, ``<accession>/*.dcm`` inside, the
+as ``dicom/<project>.tar.gz`` — one archive per project, one copy (the data version is the tag on the
+dataset commit that carries it, see ``trust/publish_trust_data.py``), ``<accession>/*.dcm`` inside, the
 partition deliberately NOT baked into the layout (the seeder selects a trust's slice from the OMOP
 ``source_trust`` column). This is the tool that produces those archives, and it refuses to produce one
 that the seeder could not later resolve completely (FLIP#1100).
 
+``--revision`` names the dataset revision whose ``omop-csv/<project>`` tables the source is checked
+against: a data-version tag for an existing version, or ``main`` right after uploading new tables
+and before tagging them together with this archive.
+
 Usage::
 
-    uv run trust/orthanc/publish_dicom.py --project spleen_project --data-version 20260729 \\
+    uv run trust/orthanc/publish_dicom.py --project spleen_project --revision 20260729 \\
         --source /path/to/dicom_output.zip --fill-empty-numbers \\
-        --out dist/dicom/20260729/spleen_project.tar.gz
+        --out dist/dicom/spleen_project.tar.gz
 
-    uv run trust/orthanc/publish_dicom.py --project cxr_project --data-version 20260729 \\
+    uv run trust/orthanc/publish_dicom.py --project cxr_project --revision main \\
         --source /path/to/omop_cxr.zip --verify-only
 
 ``--source`` is a ``.zip`` or a directory; every ``*.dcm`` under it is read and grouped by its
@@ -61,8 +66,12 @@ from pathlib import Path
 import pydicom
 
 HF_TRUST_DATA_REPO = os.environ.get("HF_TRUST_DATA_REPO", "aicentreflip/trust-data")
-HF_TRUST_DATA_REVISION = os.environ.get("HF_TRUST_DATA_REVISION", "main")
-HF_BASE = f"https://huggingface.co/datasets/{HF_TRUST_DATA_REPO}/resolve/{HF_TRUST_DATA_REVISION}"
+
+
+def hf_url(revision: str, path: str, repo: str = HF_TRUST_DATA_REPO) -> str:
+    """URL of one dataset file at a revision. The version is the revision, never part of the path."""
+    return f"https://huggingface.co/datasets/{repo}/resolve/{revision}/{path}"
+
 
 # The two tags the 2026-08-21 in-place patch of the published Orthanc data filled (commit 113b13db),
 # and the value the MAP guide documents for the same workaround.
@@ -118,16 +127,20 @@ def read_instances(source: Source) -> Iterator[Instance]:
             print(f"  read {i}/{len(members)} instances", file=sys.stderr)
 
 
-def fetch_csv(version: str, project: str, table: str) -> list[dict[str, str]]:
-    url = f"{HF_BASE}/omop-csv/{version}/{project}/{table}.csv"
+def fetch_csv(revision: str, project: str, table: str) -> list[dict[str, str]]:
+    url = hf_url(revision, f"omop-csv/{project}/{table}.csv")
     with urllib.request.urlopen(url, timeout=120) as response:  # noqa: S310
         return list(csv.DictReader(io.TextIOWrapper(response, encoding="utf-8")))
 
 
-def verify(instances: list[Instance], version: str, project: str) -> tuple[bool, dict[str, int]]:
-    """Check the source is exactly the published project's imaging. Returns (ok, per-trust counts)."""
-    published = fetch_csv(version, project, "image_occurrence")
-    persons = fetch_csv(version, project, "person")
+def verify(instances: list[Instance], revision: str, project: str) -> tuple[bool, dict[str, int]]:
+    """Check the source is exactly the project's imaging as published at ``revision``.
+
+    Returns:
+        tuple[bool, dict[str, int]]: ``(ok, per-trust study counts)``.
+    """
+    published = fetch_csv(revision, project, "image_occurrence")
+    persons = fetch_csv(revision, project, "person")
     pub_acc = {r["accession_id"] for r in published}
     pub_uid = {r["image_study_uid"] for r in published}
     pub_pid = {r["person_source_value"] for r in persons}
@@ -201,9 +214,14 @@ def package(source: Source, instances: list[Instance], out: Path, fill: bool) ->
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--project", required=True, help="e.g. spleen_project")
-    parser.add_argument("--data-version", required=True, help="omop-csv/<version> this DICOM set pairs with")
+    parser.add_argument(
+        "--revision",
+        required=True,
+        help="dataset revision whose omop-csv/<project> tables this DICOM set pairs with: a data-version tag, "
+        "or main right after uploading new tables and before tagging",
+    )
     parser.add_argument("--source", required=True, type=Path, help="a .zip or a directory of *.dcm")
-    parser.add_argument("--out", type=Path, help="archive to write, e.g. dist/dicom/<v>/<project>.tar.gz")
+    parser.add_argument("--out", type=Path, help="archive to write, e.g. dist/dicom/<project>.tar.gz")
     parser.add_argument("--fill-empty-numbers", action="store_true", help=f"set empty {FILLABLE_TAGS} to {FILL_VALUE}")
     parser.add_argument("--verify-only", action="store_true", help="check the source and stop")
     args = parser.parse_args(argv)
@@ -213,11 +231,11 @@ def main(argv: list[str] | None = None) -> int:
     source = Source(args.source)
     print(f"reading {args.source} …", file=sys.stderr)
     instances = list(read_instances(source))
-    ok, _ = verify(instances, args.data_version, args.project)
+    ok, _ = verify(instances, args.revision, args.project)
     if not ok:
-        print(f"\nVERIFY FAIL — {args.source} is not exactly {args.project} @ {args.data_version}; nothing written")
+        print(f"\nVERIFY FAIL — {args.source} is not exactly {args.project} @ {args.revision}; nothing written")
         return 1
-    print(f"\nVERIFY PASS — {args.source} is exactly {args.project} @ {args.data_version}")
+    print(f"\nVERIFY PASS — {args.source} is exactly {args.project} @ {args.revision}")
     if args.verify_only:
         return 0
 
