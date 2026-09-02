@@ -22,15 +22,21 @@ partition deliberately NOT baked into the layout (the seeder selects a trust's s
 ``source_trust`` column). This is the tool that produces those archives, and it refuses to produce one
 that the seeder could not later resolve completely (FLIP#1100).
 
-``--revision`` names the dataset revision whose ``omop-csv/<project>`` tables the source is checked
-against: a data-version tag for an existing version, or ``main`` right after uploading new tables
-and before tagging them together with this archive.
+What the source is checked against is either the tables already published at a dataset revision
+(``--revision``: a data-version tag, or ``main``) or, for a project that is not published yet, the
+locally generated canonical tree (``--tables-dir <dir>`` holding ``<project>/<table>.csv``). The
+latter is the pre-publish check: verify against the tables you are about to upload, then publish
+tables and archive together in one commit (``trust/publish_trust_data.py``).
 
 Usage::
 
     uv run trust/orthanc/publish_dicom.py --project spleen_project --revision 20260729 \\
         --source /path/to/dicom_output.zip --fill-empty-numbers \\
         --out dist/dicom/spleen_project.tar.gz
+
+    uv run trust/orthanc/publish_dicom.py --project prostate_project \\
+        --tables-dir ../../fl-tutorials/data/prostate/canonical \\
+        --source ../../fl-tutorials/data/prostate/dicom --out dist/dicom/prostate_project.tar.gz
 
     uv run trust/orthanc/publish_dicom.py --project cxr_project --revision main \\
         --source /path/to/omop_cxr.zip --verify-only
@@ -127,20 +133,57 @@ def read_instances(source: Source) -> Iterator[Instance]:
             print(f"  read {i}/{len(members)} instances", file=sys.stderr)
 
 
+VERIFY_TABLES = ("image_occurrence", "person")
+
+
 def fetch_csv(revision: str, project: str, table: str) -> list[dict[str, str]]:
     url = hf_url(revision, f"omop-csv/{project}/{table}.csv")
     with urllib.request.urlopen(url, timeout=120) as response:  # noqa: S310
         return list(csv.DictReader(io.TextIOWrapper(response, encoding="utf-8")))
 
 
-def verify(instances: list[Instance], revision: str, project: str) -> tuple[bool, dict[str, int]]:
-    """Check the source is exactly the project's imaging as published at ``revision``.
+def load_tables(project: str, revision: str | None, tables_dir: Path | None) -> dict[str, list[dict[str, str]]]:
+    """The canonical tables the source is checked against: published at a revision, or a local tree.
+
+    Args:
+        project (str): Project directory, e.g. ``spleen_project``.
+        revision (str | None): Dataset revision to read the published tables at.
+        tables_dir (Path | None): A local canonical tree, ``<tables_dir>/<project>/<table>.csv`` — the
+            pre-publish check for a project that is not on the dataset yet.
+
+    Returns:
+        dict[str, list[dict[str, str]]]: Rows of ``image_occurrence`` and ``person``.
+
+    Raises:
+        SystemExit: If a local table is missing, or neither/both sources are given.
+    """
+    if (revision is None) == (tables_dir is None):
+        raise SystemExit("give exactly one of --revision (published tables) or --tables-dir (a local canonical tree)")
+    if tables_dir is not None:
+        tables = {}
+        for table in VERIFY_TABLES:
+            path = tables_dir / project / f"{table}.csv"
+            if not path.is_file():
+                raise SystemExit(f"missing canonical table: {path}")
+            with path.open(newline="", encoding="utf-8") as handle:
+                tables[table] = list(csv.DictReader(handle))
+        return tables
+    assert revision is not None
+    return {table: fetch_csv(revision, project, table) for table in VERIFY_TABLES}
+
+
+def verify(instances: list[Instance], tables: dict[str, list[dict[str, str]]]) -> tuple[bool, dict[str, int]]:
+    """Check the source is exactly the project's imaging as the canonical tables describe it.
+
+    Args:
+        instances (list[Instance]): Every instance read from the source.
+        tables (dict[str, list[dict[str, str]]]): ``image_occurrence`` and ``person`` rows (:func:`load_tables`).
 
     Returns:
         tuple[bool, dict[str, int]]: ``(ok, per-trust study counts)``.
     """
-    published = fetch_csv(revision, project, "image_occurrence")
-    persons = fetch_csv(revision, project, "person")
+    published = tables["image_occurrence"]
+    persons = tables["person"]
     pub_acc = {r["accession_id"] for r in published}
     pub_uid = {r["image_study_uid"] for r in published}
     pub_pid = {r["person_source_value"] for r in persons}
@@ -216,9 +259,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project", required=True, help="e.g. spleen_project")
     parser.add_argument(
         "--revision",
-        required=True,
-        help="dataset revision whose omop-csv/<project> tables this DICOM set pairs with: a data-version tag, "
-        "or main right after uploading new tables and before tagging",
+        default=None,
+        help="dataset revision whose published omop-csv/<project> tables this DICOM set pairs with: a data-version "
+        "tag, or main. Exactly one of --revision / --tables-dir",
+    )
+    parser.add_argument(
+        "--tables-dir",
+        type=Path,
+        default=None,
+        help="local canonical tree (<dir>/<project>/<table>.csv) to verify against instead — the pre-publish check "
+        "for a project not on the dataset yet",
     )
     parser.add_argument("--source", required=True, type=Path, help="a .zip or a directory of *.dcm")
     parser.add_argument("--out", type=Path, help="archive to write, e.g. dist/dicom/<project>.tar.gz")
@@ -228,14 +278,16 @@ def main(argv: list[str] | None = None) -> int:
     if not args.verify_only and not args.out:
         parser.error("--out is required unless --verify-only")
 
+    tables = load_tables(args.project, args.revision, args.tables_dir)
+    against = f"@ {args.revision}" if args.revision else f"in {args.tables_dir}"
     source = Source(args.source)
     print(f"reading {args.source} …", file=sys.stderr)
     instances = list(read_instances(source))
-    ok, _ = verify(instances, args.revision, args.project)
+    ok, _ = verify(instances, tables)
     if not ok:
-        print(f"\nVERIFY FAIL — {args.source} is not exactly {args.project} @ {args.revision}; nothing written")
+        print(f"\nVERIFY FAIL — {args.source} is not exactly {args.project} {against}; nothing written")
         return 1
-    print(f"\nVERIFY PASS — {args.source} is exactly {args.project} @ {args.revision}")
+    print(f"\nVERIFY PASS — {args.source} is exactly {args.project} {against}")
     if args.verify_only:
         return 0
 

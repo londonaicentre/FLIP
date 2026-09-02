@@ -75,7 +75,8 @@ seed-orthanc:
 	@$(if $(filter 1,$(DRY_RUN)),true,printf 'projects=%s\nversion=%s\n' "$(PROJECTS)" "$${HF_TRUST_DATA_REVISION:-$$(tr -d ' \n\r\t' < ../.data_version)}" > "$(SEED_STORAGE_DIR)/.seeded" && echo "✅ marker: $(SEED_STORAGE_DIR)/.seeded")
 
 # seed_orthanc.py's unit tests (pure selection/guard logic + the upload contract
-# against a scripted session). PEP 723 script, no project: pytest via uv.
+# against a scripted session) and publish_dicom.py's (the both-ways verification).
+# PEP 723 scripts, no project: pytest via uv.
 test:
-	uv run --no-project --with pytest --with 'requests>=2.32.5' pytest tests -q
+	uv run --no-project --with pytest --with 'requests>=2.32.5' --with 'pydicom>=3.0.1' pytest tests -q
 	uvx ruff@0.14.7 check . && uvx ruff@0.14.7 format --check .
