@@ -111,14 +111,18 @@ spec:
                   - |
                     # The init-time server that runs XNAT.sql (and the rest of
                     # /docker-entrypoint-initdb.d) listens on the local socket only
-                    # (listen_addresses=''), so a TCP probe only succeeds against the
-                    # final server, once XNAT.sql has already created the role.
+                    # (listen_addresses=''), so a TCP probe only succeeds against the final
+                    # server. On a first init that means XNAT.sql has already created the role;
+                    # on an already-populated PVC the entrypoint skips
+                    # /docker-entrypoint-initdb.d altogether, so the role is whatever the volume
+                    # already held — the restore case the next block is here to cover.
                     tries=0
                     until pg_isready -h 127.0.0.1 -p 5432 -U {{ .Values.xnat.db.datasourceUsername | quote }} >/dev/null 2>&1; do
                       tries=$((tries + 1))
                       if [ "$tries" -ge 600 ]; then
-                        echo "xnat-db postStart: gave up waiting for postgres to become ready over TCP" >>/proc/1/fd/1
-                        exit 0
+                        echo "xnat-db postStart: gave up waiting for postgres to accept TCP after ${tries} attempts;" \
+                             "xnat role password NOT synced" >&2
+                        exit 1
                       fi
                       sleep 1
                     done
@@ -130,14 +134,31 @@ spec:
                     # omop-db.yaml's data_analyst_reader sync but narrower: that one runs as the
                     # superuser and CREATEs the role if absent; this one connects as `xnat`
                     # itself over the local socket (stock-image pg_hba `local all all trust`;
-                    # ALTER ROLE on oneself needs no CREATEROLE) and only ALTERs — hence the
-                    # wait on TCP readiness above: the init-time temp server is socket-only, so
-                    # TCP means XNAT.sql has already run.
-                    psql -X -q -v ON_ERROR_STOP=1 -U {{ .Values.xnat.db.datasourceUsername | quote }} -d xnat \
-                         -v u={{ .Values.xnat.db.datasourceUsername | quote }} -v pw="$XNAT_DATASOURCE_PASSWORD" <<-'EOSQL'
-                      ALTER ROLE :"u" WITH PASSWORD :'pw';
-                    EOSQL
-                    echo "xnat-db postStart: xnat role password synced" >>/proc/1/fd/1
+                    # ALTER ROLE on oneself needs no CREATEROLE) and only ALTERs.
+                    #
+                    # The outcome is reported by psql rather than by the shell. postStart stdout
+                    # goes nowhere (the kubelet surfaces it only in a FailedPostStartHook event)
+                    # and /proc/1/fd/1 is not writable in this image: PID 1 is postgres under
+                    # uid 70 via su-exec, and dropping credentials clears the process's dumpable
+                    # flag, so /proc/1/fd is ptrace-gated and Docker grants no CAP_SYS_PTRACE —
+                    # writing there fails as both root and uid 70. RAISE WARNING instead goes to
+                    # the postgres server log, which is the container's own log stream. psql is
+                    # the `if` condition so ON_ERROR_STOP=1 is load-bearing: a missing `xnat`
+                    # role (a PVC restored without globals) must fail the hook loudly, not print
+                    # success. The `\set pw` backtick keeps the password out of psql's argv (the
+                    # idiom XNAT.sql itself uses), and the heredoc body is tab-indented so `<<-`
+                    # does the stripping rather than YAML's de-indent.
+                    if ! psql -X -q -v ON_ERROR_STOP=1 -U {{ .Values.xnat.db.datasourceUsername | quote }} -d xnat \
+                           -v u={{ .Values.xnat.db.datasourceUsername | quote }} <<-'EOSQL'
+                    	\set pw `echo "$XNAT_DATASOURCE_PASSWORD"`
+                    	ALTER ROLE :"u" WITH PASSWORD :'pw';
+                    	DO $$ BEGIN RAISE WARNING 'xnat-db postStart: xnat role password synced'; END $$;
+                    	EOSQL
+                    then
+                      echo "xnat-db postStart: FAILED to sync the xnat role password;" \
+                           "xnat-web and imaging-api will not authenticate" >&2
+                      exit 1
+                    fi
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data

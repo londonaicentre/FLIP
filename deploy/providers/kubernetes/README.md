@@ -402,15 +402,45 @@ image's baked `XNAT.sql`, which runs from `/docker-entrypoint-initdb.d`.
 > mount replaces the directory, hiding `XNAT.sql`, and the two roles silently
 > collapse into one. Per-file mounts need an explicit `subPath`.
 
-**Both passwords apply only at the first initdb of an empty PVC.** A StatefulSet
-PVC survives `helm upgrade` and `helm uninstall`, so changing either secret
-afterwards leaves the database on the old credential while the pods start using
-the new one, and authentication fails. To rotate on a live install, update the
-database to match the secret:
+**`XNAT.sql` applies both passwords only at the first initdb of an empty PVC**,
+and a StatefulSet PVC survives `helm upgrade` and `helm uninstall` — so a
+rotated secret would otherwise leave the database on the old credential while
+the pods start using the new one, and authentication fails. (A PVC snapshot or
+`pg_dumpall` restore has the same effect: it brings back the old hash.) The two
+roles are handled differently from here:
+
+| Role | Secret key | Rotation |
+| ---- | ---------- | -------- |
+| `xnat` application role | `xnat-datasource-password` | **Automatic.** A `postStart` hook on the xnat-db container re-applies it to the live role on every pod start, so rotating the secret and restarting the pod is enough. |
+| `postgres` superuser | `xnat-datasource-admin-password` | **Manual.** Still first-initdb only — rotate it by hand as below. |
+
+Rotating the `xnat` role therefore only needs the secret updated and the pod
+restarted:
 
 ```bash
-kubectl exec -it <xnat-db-pod> -- \
-  psql -U postgres -c "ALTER ROLE xnat WITH PASSWORD '<xnat-datasource-password>'"
+kubectl rollout restart statefulset/<release>-flip-trust-xnat-db
+```
+
+The hook connects as `xnat` itself over the local socket and only `ALTER`s, so
+it needs no superuser and no `CREATEROLE`. It reports its outcome through the
+Postgres server log — the container's own log stream — because `postStart`
+stdout is not surfaced anywhere on success:
+
+```bash
+kubectl logs <xnat-db-pod> | grep 'postStart'
+# WARNING:  xnat-db postStart: xnat role password synced
+```
+
+If the `xnat` role does not exist (a PVC restored without globals, since the
+entrypoint skips `/docker-entrypoint-initdb.d` on an already-populated volume),
+the hook fails loudly and the kubelet reports a `FailedPostStartHook` event
+rather than letting the pod go Ready on a stale credential. Note that
+`pg_isready` does not authenticate, so a readiness probe alone would not catch
+this.
+
+The superuser still needs the manual runbook:
+
+```bash
 kubectl exec -it <xnat-db-pod> -- \
   psql -U postgres -c "ALTER ROLE postgres WITH PASSWORD '<xnat-datasource-admin-password>'"
 ```
