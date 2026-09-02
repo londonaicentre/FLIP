@@ -106,6 +106,8 @@ class ProjectDetails(BaseModel, from_attributes=True):
     description: str | None = Field(max_length=250, default=None)
     users: list[UUID] = Field(default_factory=list)
     dicom_to_nifti: bool = Field(default=True)
+    # Creation-time only, like dicom_to_nifti: False = tabular-only cohort with no imaging stage (FLIP#1071).
+    has_imaging: bool = Field(default=True)
 
     @field_validator("description")
     @classmethod

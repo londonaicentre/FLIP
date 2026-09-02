@@ -194,6 +194,9 @@ class Projects(SQLModel, table=True):
     creation_timestamp: Annotated[datetime, Field(default_factory=datetime.utcnow)]
     status: ProjectStatus = Field(default=ProjectStatus.UNSTAGED)
     dicom_to_nifti: bool = Field(default=True)
+    # Creation-time and immutable, like dicom_to_nifti. False = tabular-only cohort: the hub skips the
+    # imaging stage entirely (no CREATE_IMAGING fan-out, no XNAT project, no accession-ids call). FLIP#1071.
+    has_imaging: bool = Field(default=True)
 
 
 class ProjectsAudit(SQLModel, table=True):

@@ -90,6 +90,9 @@ class IProjectResponse(BaseModel):
     status: ProjectStatus = Field(default=ProjectStatus.UNSTAGED)
     query_id: UUID | None = Field(default=None)
     dicom_to_nifti: bool = Field(default=True)
+    # Whether the project has an imaging stage at all. Fixed at creation (the edit endpoint ignores
+    # it); surfaced so the UI and tooling can skip imaging-only views/waits. FLIP#1071.
+    has_imaging: bool = Field(default=True)
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -161,6 +164,9 @@ class IReturnedProject(IProject):  # Extends IProject
     # DICOM->NIfTI setting. Fixed at creation and immutable afterwards (the
     # edit endpoint ignores it), so the UI renders the toggle disabled.
     dicom_to_nifti: bool = Field(default=True)
+    # Whether the project has an imaging stage at all. Fixed at creation (the edit endpoint ignores
+    # it); surfaced so the UI and tooling can skip imaging-only views/waits. FLIP#1071.
+    has_imaging: bool = Field(default=True)
     model_config = ConfigDict(populate_by_name=True)
 
 
