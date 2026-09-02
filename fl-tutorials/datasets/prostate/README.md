@@ -182,6 +182,12 @@ the highest lesion PI-RADS as `observation`
 3,000,000 block. The masks are **not** in OMOP — a segmentation has nowhere to live in a cohort
 query — which is what the uploader below is for.
 
+**The published set is fold 0 only** (300 of PI-CAI's 1,500 studies: ZGT 76, PCNN 69, RUMC 155),
+deliberately, for the size of the dev seed and the XNAT pull. The chain does not care which folds it
+is given: `FOLDS="0 1 2 3 4"` (25 GB download, ~13 GB DICOM set, 350 / 350 / 800 studies) followed
+by the same steps and a `publish-trust-data` under a new tag would replace `prostate_project` with
+the full cohort in place. Not done yet, by choice.
+
 The reproducible path, as for spleen and cxr, needs neither the download nor the conversion:
 `make -C fl-tutorials reproduce-prostate-omop` fetches the two published `source/` tables at the
 pinned data-version tag, rebuilds the OMOP tables and diffs them against the published ones
