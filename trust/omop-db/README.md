@@ -207,6 +207,13 @@ make populate                        # core vocab + DICOM vocab + each trust's d
 make apply-constraints               # FK constraints go on AFTER the load
 ```
 
+`up-build` creates the bind-mount sources (`volumes/Trust_<N>/db_data`) as you before starting
+anything: left to Docker, a missing source is created by the daemon as root, and
+`update_omop_data.sh` — which downloads into `volumes/` — then fails with "Permission denied" on a
+checkout where the build stack ran first. A `volumes/` you cannot write to fails that target loudly,
+with the `chown` to run. `export-pgdata` likewise hands each archive back to you; the `tar` itself
+has to run as root because postgres owns the data tree.
+
 Populating runs from the host and needs `psql`/`pg_isready`
 (postgresql-client). The shipped build stack is **two-trust**: `NUM_TRUSTS` /
 `PARTITION` thread through to the split tooling, but standing up more than two

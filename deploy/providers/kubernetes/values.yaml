@@ -33,7 +33,7 @@ flBackend: "nvflare"
 # fetched at that tag from an unversioned path. Also the version suffix of the default S3 archive
 # names below, which is where a version still has to live in a filename.
 trustData:
-  version: "20260729"
+  version: "20260901"
   hfRepo: "aicentreflip/trust-data"
 
 # Global image pull secrets (optional — for private registries)
