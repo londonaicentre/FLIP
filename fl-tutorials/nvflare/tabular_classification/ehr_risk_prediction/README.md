@@ -164,19 +164,16 @@ off a single file. Override the round/client counts inline, e.g.
 1. Upload [`app_files/`](app_files) as the model files of a **`standard`**-job-type model.
 2. Submit [`query.sql`](query.sql) as the project's cohort query.
 
-The cohort fetches no imaging, but the platform does not yet know that: every project runs the
-imaging stage, so the trusts create an (empty) XNAT project and attempt a PACS pull for each
-`accession_id` — here person ids, so every pull fails, by design and harmlessly. The e2e smoke's
-image-pull guard must therefore be disabled with `--image-pull-threshold 0` (the wait returns as
-soon as the trusts report their task totals). On the dev stack, run
-`make -C trust load-synthea-ehr` (above) first so the query has data. As an end-to-end smoke
-against a running stack — **no enrichment flags**:
+The cohort fetches no imaging, so create the project with **"Includes imaging data" turned off**
+(`has_imaging=false`): the hub then skips the imaging stage entirely — no XNAT project at the trusts,
+no PACS pull — and the project page shows no imaging status. (The `accession_id` column in
+`query.sql` is a leftover from before that option existed; the platform no longer needs it for such
+projects.) On the dev stack, run `make -C trust load-synthea-ehr` (above) first so the query has
+data. As an end-to-end smoke against a running stack — the `e2e_smoke_ehr` target passes
+`--no-imaging` for you, **no enrichment flags**:
 
 ```bash
-make e2e_smoke \
-  MODEL_FILES_DIR=fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files \
-  QUERY_FILE=fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql \
-  EXTRA_ARGS="--image-pull-threshold 0"
+make e2e_smoke_ehr
 ```
 
 ### FLIP-specific values

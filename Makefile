@@ -430,6 +430,9 @@ lock:
 # See flip-api/Makefile for overrides (MODEL_FILES_DIR, QUERY_FILE, EXTRA_ARGS).
 e2e_smoke:
 	$(MAKE) -C flip-api e2e_smoke $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(MODEL_FILES_DIR),MODEL_FILES_DIR="$(abspath $(MODEL_FILES_DIR))") $(if $(QUERY_FILE),QUERY_FILE="$(abspath $(QUERY_FILE))") $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
+# EHR risk-prediction tutorial (tabular-only, no imaging stage — FLIP#1071) on the FL_BACKEND stack.
+e2e_smoke_ehr:
+	$(MAKE) -C flip-api e2e_smoke_ehr $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
 # Record the end-to-end demo video against the running dev stack: six
 # Dockerised Cypress segments over the live UI (real Cognito, trusts, S3,
