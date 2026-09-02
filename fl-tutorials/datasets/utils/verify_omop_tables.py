@@ -24,6 +24,7 @@ than failed (spleen ships ``measurement`` and no ``observation``; cxr the revers
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -31,7 +32,12 @@ from pathlib import Path
 
 import pandas as pd
 
-HF_BASE = "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/omop-csv"
+HF_TRUST_DATA_REPO = os.environ.get("HF_TRUST_DATA_REPO", "aicentreflip/trust-data")
+# The dataset holds ONE copy of every table at omop-csv/<project>/; a data version is a git tag on it,
+# and the pin names that tag. trust/.data_version once FLIP#1101 lands (one tag for the whole
+# dataset), trust/omop-db/.data_version until then.
+PIN_FILES = ("trust/.data_version", "trust/omop-db/.data_version")
+REPO_ROOT = Path(__file__).resolve().parents[3]
 TABLES = (
     "person",
     "procedure_occurrence",
@@ -43,11 +49,25 @@ TABLES = (
 )
 
 
-def fetch_published(version: str, project: str, table: str) -> pd.DataFrame | None:
+def pinned_revision() -> str:
+    """The data-version tag this checkout pins (the first PIN_FILES entry that exists)."""
+    for rel in PIN_FILES:
+        path = REPO_ROOT / rel
+        if path.is_file():
+            return path.read_text().strip()
+    raise SystemExit(f"no data-version pin found under {REPO_ROOT}: {PIN_FILES}")
+
+
+def published_url(revision: str, project: str, table: str) -> str:
+    """URL of one published table at a revision — the version is the revision, never the path."""
+    return f"https://huggingface.co/datasets/{HF_TRUST_DATA_REPO}/resolve/{revision}/omop-csv/{project}/{table}.csv"
+
+
+def fetch_published(revision: str, project: str, table: str) -> pd.DataFrame | None:
     """Fetch one published table, or None when it is absent upstream.
 
     Args:
-        version: Data version, e.g. the contents of ``trust/omop-db/.data_version``.
+        revision: Dataset revision — a data-version tag such as ``20260729``, ``main``, or a sha.
         project: Project directory on the dataset, e.g. ``spleen_project``.
         table: OMOP table name.
 
@@ -55,7 +75,7 @@ def fetch_published(version: str, project: str, table: str) -> pd.DataFrame | No
         pd.DataFrame | None: The published table, or None if it 404s (optional tables such as
         ``observation`` are not shipped by every project).
     """
-    url = f"{HF_BASE}/{version}/{project}/{table}.csv"
+    url = published_url(revision, project, table)
     try:
         with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310
             return pd.read_csv(response)
@@ -108,20 +128,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--trusts", nargs="+", default=["trust_1", "trust_2"])
     parser.add_argument(
-        "--data-version",
+        "--revision",
         default=None,
-        help="Defaults to the contents of trust/omop-db/.data_version.",
+        help="Dataset revision to compare against: a data-version tag, main, or a sha. "
+        "Defaults to $HF_TRUST_DATA_REVISION, else the pinned tag.",
     )
     args = parser.parse_args(argv)
 
-    version = args.data_version
-    if version is None:
-        version = (Path(__file__).resolve().parents[3] / "trust/omop-db/.data_version").read_text().strip()
+    revision = args.revision or os.environ.get("HF_TRUST_DATA_REVISION") or pinned_revision()
 
     failed: list[str] = []
     compared = 0
     for table in TABLES:
-        theirs = fetch_published(version, args.project, table)
+        theirs = fetch_published(revision, args.project, table)
         if theirs is None:
             print(f"skip  {table}: not published for {args.project}")
             continue
@@ -141,14 +160,14 @@ def main(argv: list[str] | None = None) -> int:
     print()
     if compared == 0:
         print(
-            f"GATE FAIL — no tables were compared for {args.project} at version {version}. "
-            "Check --data-version and that the dataset path still exists."
+            f"GATE FAIL — no tables were compared for {args.project} at revision {revision}. "
+            "Check --revision (a tag on the dataset) and that the project is published there."
         )
         return 1
     if failed:
         print(f"GATE FAIL — {len(failed)} table(s) diverge from the published export: {failed}")
         return 1
-    print(f"GATE PASS — every published table reproduces from {version}")
+    print(f"GATE PASS — every published table reproduces from {revision}")
     return 0
 
 

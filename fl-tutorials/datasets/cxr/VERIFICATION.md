@@ -32,7 +32,7 @@ This matches the acceptance criterion in FLIP#1092: *"the `cxr_project` OMOP con
 (image generation is out of scope &mdash; those images come from a synthetic model outside this
 pipeline)"*. The provenance chain recorded here therefore starts at the DICOM metadata table, which
 is published beside its outputs at
-`omop-csv/<version>/cxr_project/source/dicom_metadata.csv` and is the actual input that produced the
+`omop-csv/cxr_project/source/dicom_metadata.csv` (at the pinned data-version tag) and is the actual input that produced the
 published export &mdash; its 8332 rows yield exactly the 8332 `person_id`s in the published
 `person.csv`, which is what makes it the canonical input rather than a plausible one.
 
