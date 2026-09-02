@@ -91,9 +91,7 @@ class TestPackage:
             path.parent.mkdir(parents=True)
             path.write_bytes(b"DICM" + series.encode())
             members[series] = str(path.relative_to(source_dir))
-        instances = [
-            instance(pub, "10000_1000000", "1.2.3", "10000", sop) for sop in ("1.1", "1.2", "1.3")
-        ]
+        instances = [instance(pub, "10000_1000000", "1.2.3", "10000", sop) for sop in ("1.1", "1.2", "1.3")]
         for inst, series in zip(instances, ("t2w", "adc", "hbv")):
             inst.member = members[series]
 
