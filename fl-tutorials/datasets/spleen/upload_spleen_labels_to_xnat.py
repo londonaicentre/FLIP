@@ -20,7 +20,7 @@ scan holding the matching image, and uploads it as a ``label_*.nii.gz`` sibling.
 named by case (``label_spleen_2.nii.gz``). The mock DICOMs were generated from MSD but carry fully
 synthetic identity, so nothing in the imaging data links a scan back to its MSD case. The join is
 published alongside the mock data itself, in the trust-data OMOP export for the same data version
-this checkout deploys (``trust/omop-db/.data_version``): ``image_occurrence.csv`` carries
+this checkout deploys (``trust/.data_version``): ``image_occurrence.csv`` carries
 ``accession_id`` next to a ``local_path`` ending in the MSD case name, plus a ``source_trust``
 column saying which Trust holds each study.
 
@@ -47,24 +47,23 @@ logger = logging.getLogger(__name__)
 
 HF_TRUST_DATA_REPO = "aicentreflip/trust-data"
 
-HF_TRUST_DATA_REVISION = os.environ.get("HF_TRUST_DATA_REVISION", "main")
-"""Dataset revision to read the mapping at.
+HF_TRUST_DATA_REVISION = os.environ.get("HF_TRUST_DATA_REVISION")
+"""Override of the dataset revision to read the mapping at (a sha, ``main``, or another tag).
 
-``main`` by default, overridable so a run can be pinned to a commit sha. This mirrors
-``trust/omop-db/update_omop_data.sh`` and ``trust/orthanc/update_orthanc_data.sh``, which read the
-same variable — the mock DICOMs, the pgdata and this mapping all come from that one dataset, so
-pinning them together is the only way to pin them coherently.
+Unset by default, which means the data-version tag pinned in ``trust/.data_version`` — the same
+pin ``trust/omop-db/update_omop_data.sh`` and ``trust/orthanc/update_orthanc_data.sh`` read, so the
+mock DICOMs, the pgdata and this mapping are all read at one revision of that one dataset.
 """
 
 MAPPING_CACHE_FILENAME = ".accession_map.csv"
 """Cached mapping, written beside the labels directory so re-runs and offline runs work."""
 
-# The OMOP CSV export is published per data version alongside the pgdata tars the trusts are
-# seeded from, so the mapping is read at whatever version this checkout deploys — one pin, in
-# trust/omop-db/.data_version, rather than a second copy that could silently drift from it.
-# Note this pins the *path*, not the bytes: HF_TRUST_DATA_REVISION above pins the revision those
-# bytes are read at, and defaults to a moving `main` like every other dataset read in this repo.
-OMOP_DATA_VERSION_FILE = Path(__file__).resolve().parents[5] / "trust" / "omop-db" / ".data_version"
+# The OMOP CSV export lives at one unversioned path on the dataset; a data version is a git tag
+# there, and this checkout pins one in trust/.data_version — the same pin the trusts are seeded
+# from, rather than a second copy that could silently drift from it. The mapping is read at that
+# tag unless HF_TRUST_DATA_REVISION says otherwise. parents[3]: spleen/ -> datasets/ ->
+# fl-tutorials/ -> the repository root.
+OMOP_DATA_VERSION_FILE = Path(__file__).resolve().parents[3] / "trust" / ".data_version"
 
 DOWNLOAD_TIMEOUT_SECONDS = 60
 
@@ -88,18 +87,20 @@ def omop_data_version() -> str:
     return version
 
 
-def mapping_csv_url(version: str | None = None) -> str:
+def mapping_csv_url(revision: str | None = None) -> str:
     """Build the URL of the OMOP image_occurrence export carrying the accession mapping.
 
     Args:
-        version (str | None): Data version; defaults to :func:`omop_data_version`.
+        revision (str | None): Dataset revision to read at — a data-version tag, ``main``, or a sha.
+            Defaults to ``HF_TRUST_DATA_REVISION``, else the pinned tag (:func:`omop_data_version`).
 
     Returns:
         str: The download URL.
     """
+    revision = revision or HF_TRUST_DATA_REVISION or omop_data_version()
     return (
-        f"https://huggingface.co/datasets/{HF_TRUST_DATA_REPO}/resolve/{HF_TRUST_DATA_REVISION}/"
-        f"omop-csv/{version or omop_data_version()}/spleen_project/image_occurrence.csv"
+        f"https://huggingface.co/datasets/{HF_TRUST_DATA_REPO}/resolve/{revision}/"
+        "omop-csv/spleen_project/image_occurrence.csv"
     )
 
 
@@ -133,12 +134,12 @@ def fetch_accession_map(url: str | None = None, cache_dir: Path | None = None) -
 
     Cached on disk when ``cache_dir`` is given, so a re-run — and the second Trust of a two-Trust
     enrichment — needs no further egress to huggingface.co, and an offline run still works. The
-    cache key is the URL, which already carries the data version and revision, so a version bump
-    fetches afresh rather than serving a stale mapping.
+    cache key is the URL, which carries the revision, so a version bump fetches afresh rather than
+    serving a stale mapping.
 
     Args:
         url (str | None): URL of the OMOP ``image_occurrence.csv`` export; defaults to the export
-            for the version in ``trust/omop-db/.data_version``.
+            at the data-version tag in ``trust/.data_version``.
         cache_dir (Path | None): Directory to cache the CSV in. No caching when ``None``.
 
     Returns:

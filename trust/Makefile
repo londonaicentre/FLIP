@@ -13,7 +13,8 @@
 .PHONY: build dev prod clean stop up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
 	create-networks remove-networks recreate-networks tests \
-	update-omop-data update-orthanc-data integration_test
+	update-omop-data update-orthanc-data seed-omop seed-orthanc seed seed-trusts \
+	publish-trust-data test-trust-data-tools integration_test
 # PROD selects the compose-file suffix (__DCKR_SUFFIX: stag collapses to the
 # production compose) and the kit-file env token (ENV: stag stays distinct, so
 # a stag kit is .env.<CODE>.stag, never confused with .env.<CODE>.production).
@@ -506,6 +507,67 @@ update-omop-data:
 
 update-orthanc-data:
 	$(ORTHANC_CMD) update-orthanc-data TRUST=$(TRUST)
+
+# Seed a running trust with the listed projects (FLIP#1100) — OMOP rows into its
+# omop-db, keyed by `source_trust == FL_KIT_SLOT_NUMBER`, the same value that
+# selects Trust_<N>/db_data for the snapshot path. Everything the sub-make needs
+# comes from the kit: the slot number, the published port, the credentials.
+# A one-time step after `up-trust` + `load-omop-vocab`, idempotent, scoped to the
+# listed projects (Synthea rows and other projects untouched). Persists in the
+# bind-mounted volume until a .data_version bump, which update-omop-data then
+# refuses to apply over a seeded volume without FORCE=1.
+#   make -C trust seed-omop KIT=GSTT PROJECTS="spleen_project cxr_project"
+PROJECTS ?= cxr_project spleen_project
+seed-omop:
+	$(require_kit)
+	$(OMOP_DB_CMD) seed-omop TRUST_INDEX=$(TRUST_NUM) OMOP_DB_PORT=$(OMOP_DB_PORT) \
+	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
+	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB) PROJECTS="$(PROJECTS)" \
+	  $(if $(and $(TRUST_NUM),$(OMOP_DATA_DIR)),OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_DIR))
+
+# The PACS half: this trust's slice of each project's DICOMs into its running
+# Orthanc, selected by the same source_trust column, so OMOP and PACS agree by
+# construction. CLEAR=1 removes these projects' existing studies first (Orthanc
+# never overwrites an AlreadyStored instance); DRY_RUN=1 resolves and counts.
+#   make -C trust seed-orthanc KIT=GSTT PROJECTS="spleen_project cxr_project"
+seed-orthanc:
+	$(require_kit)
+	$(ORTHANC_CMD) seed-orthanc TRUST_INDEX=$(TRUST_NUM) PACS_UI_PORT=$(PACS_UI_PORT) \
+	  ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
+	  ORTHANC_STORAGE_DIR_TRUST_$(TRUST_NUM)=$(ORTHANC_STORAGE_DIR) PROJECTS="$(PROJECTS)" \
+	  $(if $(CLEAR),CLEAR=$(CLEAR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
+
+# Both halves for one trust, then for the shipped dev roster. Run after
+# `up-trust` + `load-omop-vocab`; idempotent; see the omop-db and orthanc
+# READMEs for what a .data_version bump does to a seeded volume.
+#   make -C trust seed KIT=GSTT PROJECTS="spleen_project cxr_project"
+#   make -C trust seed-trusts PROJECTS="spleen_project cxr_project"
+seed: seed-omop seed-orthanc
+
+seed-trusts:
+	$(MAKE) seed KIT=GSTT PROJECTS="$(PROJECTS)"
+	$(MAKE) seed KIT=KCH PROJECTS="$(PROJECTS)"
+
+# Publish a new data version to aicentreflip/trust-data (FLIP#1100): ONE commit on
+# main that replaces exactly the artefacts passed, then ONE tag = VERSION. The
+# dataset holds one copy of everything at unversioned paths — the version is the
+# tag, which trust/.data_version pins (bump it afterwards). Needs `hf auth login`
+# with write access. DRY_RUN=1 lists the operations and stops.
+#   make publish-trust-data VERSION=20261001 \
+#     PGDATA="omop-db/dist/trust1_pgdata.tar omop-db/dist/trust2_pgdata.tar" \
+#     OMOP_CSV=omop-db/data/canonical DICOM=orthanc/dist/dicom/prostate_project.tar.gz
+publish-trust-data:
+	@[ -n "$(VERSION)" ] || (echo "❌ VERSION=<new data-version tag> is required"; exit 1)
+	uv run publish_trust_data.py --version $(VERSION) \
+	  $(if $(PGDATA),--pgdata $(PGDATA)) $(if $(ORTHANC),--orthanc $(ORTHANC)) \
+	  $(if $(OMOP_CSV),--omop-csv $(OMOP_CSV)) $(if $(DICOM),--dicom $(DICOM)) \
+	  $(if $(CARD),--card $(CARD)) $(if $(filter 1,$(DRY_RUN)),--dry-run)
+
+# Unit tests + lint for the trust-level data tooling (publish_trust_data.py). The
+# seeders' own suites are `make -C orthanc test` and `make -C omop-db local_test`.
+test-trust-data-tools:
+	uv run --no-project --with pytest --with 'huggingface_hub>=1.6' pytest tests -q
+	uvx ruff@0.14.7 check publish_trust_data.py tests && uvx ruff@0.14.7 format --check publish_trust_data.py tests
 
 tests:
 	cd data-access-api && make test && \

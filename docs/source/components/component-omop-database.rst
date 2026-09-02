@@ -284,17 +284,19 @@ Getting the data
 
 Dev stacks do not build the database — they download a ready-populated PostgreSQL data volume per
 Trust from the same public dataset, roughly 11 MB each, at
-``https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/trust<N>/trust<N>_pgdata_<version>.tar``
-(gzip-compressed despite the ``.tar`` name). The version is pinned by ``trust/omop-db/.data_version``
-and the download is anonymous — no AWS credentials. Bringing a Trust up syncs it automatically; to do
-it by hand:
+``https://huggingface.co/datasets/aicentreflip/trust-data/resolve/<version>/trust<N>/trust<N>_pgdata.tar``
+(gzip-compressed despite the ``.tar`` name). There is one copy of each archive; a data version is a
+git tag on the dataset, pinned by ``trust/.data_version`` (one pin for OMOP and Orthanc together), and
+the download is anonymous — no AWS credentials. Bringing a Trust up syncs it automatically; to do it
+by hand:
 
 .. code-block:: bash
 
    make -C trust update-omop-data            # both dev Trusts
    make -C trust update-omop-data TRUST=1    # Trust_1 (GSTT) only
 
-The canonical CSVs behind those volumes live under ``omop-csv/<version>/`` in the same dataset. Every
+The canonical CSVs behind those volumes live under ``omop-csv/<project>/`` in the same dataset, at
+the same tag. Every
 row carries a ``source_trust`` column, and standing up N Trusts is a deterministic split of that one
 dataset — see ``trust/omop-db/README.md`` for the partition modes and for rebuilding the volumes.
 

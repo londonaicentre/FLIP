@@ -13,22 +13,29 @@
 
 The mock OMOP rows live as ONE canonical dataset (per project/cohort, one CSV per
 table) published to the public Hugging Face dataset ``aicentreflip/trust-data``
-under ``omop-csv/<version>/``. Every row carries a ``source_trust`` provenance
-column recording which of the two originally-generated trusts it came from.
+at ``omop-csv/<project>/``. There is exactly one copy of each table; a data
+version is a git *tag* on that dataset (FLIP pins one in ``trust/.data_version``),
+so a version is the revision a fetch resolves at, never a directory in the path.
+Every row carries a ``source_trust`` column: the trust it belongs to, as decided
+by the dataset's own generator.
 
 Standing up N trusts is a deterministic split of that single dataset:
 
-- ``legacy`` (default): partition by ``source_trust``. Reproduces the exact
-  original two-trust membership, keeping each trust's OMOP rows consistent with
-  the accession IDs present in that trust's published mock PACS (Orthanc) data.
-- ``modulo``: partition by ``person_id % num_trusts``. Supports any trust count
-  for fresh stand-ups where the imaging data is regenerated to match.
+- ``source_trust`` (default): partition by that column. The partition is *data* —
+  explicit, inspectable and versioned with the dataset — and it is what the
+  per-project DICOM sets are keyed on too (FLIP#1100), so a trust's OMOP rows and
+  the studies in its PACS agree by construction. Any trust count the column
+  carries. ``legacy`` is an accepted alias from when this mode existed only to
+  reproduce the original two-trust cut baked into the published Orthanc tarballs.
+- ``modulo``: partition by ``person_id % num_trusts``. For a dataset that carries
+  no partition column, and only then — it ignores whatever the generator decided.
 
 Every canonical table carries ``person_id``, so partitioning by person preserves
 referential integrity across tables without re-keying.
 """
 
 import argparse
+import os
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -38,10 +45,18 @@ import pandas as pd
 # Insert order: person first. Populate targets constraint-free databases
 # (constraints are applied only after the load), so order is convention, not FK
 # correctness.
+# In FK-safe insert order, so the same list serves loading (as listed) and
+# cleaning (reversed) against a database with constraints applied — which is
+# every running trust after `make load-omop-vocab`, and the seed path's target
+# (FLIP#1100). procedure_occurrence references visit_occurrence, so it must come
+# after it; image_occurrence references both; the rest reference person and
+# visit_occurrence only. Verified empirically: with procedure_occurrence listed
+# before visit_occurrence, the first DELETE of a clean fails with
+# fpk_procedure_occurrence_visit_occurrence_id.
 CANONICAL_TABLES = [
     "person",
-    "procedure_occurrence",
     "visit_occurrence",
+    "procedure_occurrence",
     "image_occurrence",
     "image_feature",
     "measurement",
@@ -56,20 +71,42 @@ DEFAULT_PROJECTS = ["cxr_project", "spleen_project"]
 
 SOURCE_TRUST_COLUMN = "source_trust"
 
-HF_OMOP_CSV_BASE_URL = "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/omop-csv"
-
-PARTITION_MODES = ["legacy", "modulo"]
+HF_TRUST_DATA_REPO = os.environ.get("HF_TRUST_DATA_REPO", "aicentreflip/trust-data")
 
 
-def split_for_trust(df: pd.DataFrame, num_trusts: int, trust_index: int, mode: str = "legacy") -> pd.DataFrame:
+def canonical_table_url(revision: str, project: str, table: str, repo: str = HF_TRUST_DATA_REPO) -> str:
+    """URL of one published canonical table at a data version.
+
+    The dataset holds one copy of every table at ``omop-csv/<project>/<table>.csv``; the version is
+    the revision the URL resolves at — a data-version tag, ``main`` for content not tagged yet, or a
+    commit sha — and is never part of the path.
+
+    Args:
+        revision (str): Git revision on the dataset, normally the tag in ``trust/.data_version``.
+        project (str): Project directory, e.g. ``spleen_project``.
+        table (str): Canonical table name, e.g. ``person``.
+        repo (str): Hugging Face dataset id.
+
+    Returns:
+        str: The ``resolve`` URL (which follows the LFS/plain-file redirect on download).
+    """
+    return f"https://huggingface.co/datasets/{repo}/resolve/{revision}/omop-csv/{project}/{table}.csv"
+
+
+PARTITION_MODES = ["source_trust", "modulo"]
+# The name this mode had before FLIP#1100; still accepted everywhere a mode is.
+LEGACY_MODE_ALIAS = "legacy"
+
+
+def split_for_trust(df: pd.DataFrame, num_trusts: int, trust_index: int, mode: str = "source_trust") -> pd.DataFrame:
     """Return the deterministic slice of a canonical table belonging to one trust.
 
     Args:
         df (pd.DataFrame): One canonical table (may carry the source_trust column).
         num_trusts (int): Total number of trusts being stood up.
         trust_index (int): 1-based index of the trust to extract.
-        mode (str): "legacy" (partition by source_trust) or "modulo" (partition by
-            person_id % num_trusts).
+        mode (str): "source_trust" (partition by that column; "legacy" is an
+            accepted alias) or "modulo" (partition by person_id % num_trusts).
 
     Returns:
         pd.DataFrame: The trust's rows, with the provenance column dropped.
@@ -82,6 +119,8 @@ def split_for_trust(df: pd.DataFrame, num_trusts: int, trust_index: int, mode: s
         raise ValueError(f"num_trusts must be >= 1, got {num_trusts}")
     if not 1 <= trust_index <= num_trusts:
         raise ValueError(f"trust_index must be in [1, {num_trusts}], got {trust_index}")
+    if mode == LEGACY_MODE_ALIAS:
+        mode = "source_trust"
     if mode not in PARTITION_MODES:
         raise ValueError(f"Unknown partition mode {mode!r}; expected one of {PARTITION_MODES}")
 
@@ -94,16 +133,16 @@ def split_for_trust(df: pd.DataFrame, num_trusts: int, trust_index: int, mode: s
             "the canonical CSV is malformed"
         )
 
-    if mode == "legacy":
+    if mode == "source_trust":
         if SOURCE_TRUST_COLUMN not in df.columns:
             raise ValueError(
-                f"Legacy partitioning needs the {SOURCE_TRUST_COLUMN!r} column; "
+                f"source_trust partitioning needs the {SOURCE_TRUST_COLUMN!r} column; "
                 "this frame does not carry it — use mode='modulo' instead"
             )
         sources = set(df[SOURCE_TRUST_COLUMN].unique())
         if sources != set(range(1, num_trusts + 1)):
             raise ValueError(
-                f"Legacy partitioning needs {SOURCE_TRUST_COLUMN} values to be exactly 1..{num_trusts}; "
+                f"source_trust partitioning needs {SOURCE_TRUST_COLUMN} values to be exactly 1..{num_trusts}; "
                 f"this frame carries {sorted(sources)} — rebuild the canonical dataset or use mode='modulo'"
             )
         part = df[df[SOURCE_TRUST_COLUMN] == trust_index]
@@ -163,24 +202,24 @@ def build_canonical(trust_dirs: list[Path], dest_dir: Path, projects: list[str] 
 
 
 def fetch_canonical(
-    version: str,
+    revision: str,
     dest_dir: Path,
     projects: list[str] | None = None,
-    base_url: str = HF_OMOP_CSV_BASE_URL,
+    repo: str = HF_TRUST_DATA_REPO,
 ) -> None:
-    """Download one version of the canonical dataset (anonymous HTTPS, no credentials).
+    """Download the canonical dataset at one revision (anonymous HTTPS, no credentials).
 
     Args:
-        version (str): Dataset version (the omop-csv/<version>/ prefix on Hugging Face).
+        revision (str): Data-version tag (or any git revision) on the Hugging Face dataset.
         dest_dir (Path): Output directory for the canonical <project>/<table>.csv files.
         projects (list[str] | None): Projects to fetch; defaults to DEFAULT_PROJECTS.
-        base_url (str): Base URL holding the versioned dataset tree.
+        repo (str): Hugging Face dataset id.
     """
     for project in projects or DEFAULT_PROJECTS:
         out_dir = dest_dir / project
         out_dir.mkdir(parents=True, exist_ok=True)
         for table in CANONICAL_TABLES:
-            url = f"{base_url}/{version}/{project}/{table}.csv"
+            url = canonical_table_url(revision, project, table, repo)
             try:
                 with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310
                     content = response.read()
@@ -189,7 +228,7 @@ def fetch_canonical(
                     print(f"⚠️  Optional table not in dataset, skipping: {project}/{table}")
                     continue
                 raise RuntimeError(
-                    f"Failed to fetch {url}: HTTP {error.code} (is version {version!r} published?)"
+                    f"Failed to fetch {url}: HTTP {error.code} (is revision {revision!r} tagged on {repo}?)"
                 ) from error
             if content.lstrip()[:1] == b"<":
                 raise RuntimeError(
@@ -216,16 +255,18 @@ def main(argv: list[str] | None = None) -> None:
     build_parser.add_argument("--projects", nargs="+", default=None, help="Projects to merge (default: all).")
 
     fetch_parser = subparsers.add_parser("fetch", help="Download the canonical dataset from Hugging Face.")
-    fetch_parser.add_argument("--version", required=True, help="Dataset version (omop-csv/<version>/ prefix).")
+    fetch_parser.add_argument(
+        "--revision", required=True, help="Data-version tag on the dataset (trust/.data_version), or any git revision."
+    )
     fetch_parser.add_argument("--dest", type=Path, required=True, help="Output directory.")
     fetch_parser.add_argument("--projects", nargs="+", default=None, help="Projects to fetch (default: all).")
-    fetch_parser.add_argument("--base-url", default=HF_OMOP_CSV_BASE_URL, help="Override the dataset base URL.")
+    fetch_parser.add_argument("--repo", default=HF_TRUST_DATA_REPO, help="Hugging Face dataset id.")
 
     args = parser.parse_args(argv)
     if args.command == "build":
         build_canonical(args.trust_dirs, args.dest, args.projects)
     else:
-        fetch_canonical(args.version, args.dest, args.projects, args.base_url)
+        fetch_canonical(args.revision, args.dest, args.projects, args.repo)
 
 
 if __name__ == "__main__":

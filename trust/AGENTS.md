@@ -10,7 +10,7 @@ Trust services run at each healthcare institution (cloud EC2 or on-prem). All tr
 | imaging-api | 8001 | DICOM image retrieval from PACS |
 | data-access-api | 8010 | OMOP database queries for cohort analysis |
 | fl-client | — | FL participant (connects outbound to FL server via NLB) |
-| omop-db | 5432 | Mocked OMOP patient database (PostgreSQL); dir also holds the image build source + populate tooling (#834, see `omop-db/AGENTS.md`) |
+| omop-db | 5432 | Mocked OMOP patient database (PostgreSQL); dir also holds the image build source + populate tooling (#834, see `omop-db/AGENTS.md`) and the `seed-omop` loader (#1100) |
 | orthanc | 8042 | Mocked DICOM PACS server (UI/REST behind HTTP basic auth — kit file's `ORTHANC_USERNAME`/`ORTHANC_PASSWORD`; DICOM port 4242 is internal to the trust network and not bound to the host) |
 | xnat | 8104 | Mocked neuroimaging platform |
 | observability | 3000/3100 | Grafana + Loki monitoring stack |
@@ -124,6 +124,9 @@ make update-omop-data          # Download/extract mock OMOP data (both trusts)
 make update-omop-data TRUST=1  # Trust_1 only
 make update-orthanc-data       # Download/extract mock DICOM data (both trusts)
 make update-orthanc-data TRUST=1  # Trust_1 only
+make seed KIT=GSTT PROJECTS="spleen_project cxr_project"  # Seed a RUNNING trust: OMOP rows + DICOMs by source_trust (#1100)
+make seed-trusts PROJECTS="…"  # Both dev trusts; seed-omop / seed-orthanc for one half; CLEAR=1, DRY_RUN=1 on the PACS half
+make publish-trust-data VERSION=<tag> [PGDATA=… ORTHANC=… OMOP_CSV=… DICOM=…]  # ONE commit on aicentreflip/trust-data + ONE tag; then bump trust/.data_version (the single pin, OMOP + Orthanc)
 ```
 
 ## Environment

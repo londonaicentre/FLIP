@@ -27,6 +27,15 @@ uploadedFederatedDataBucket: ""
 # Supported values: "nvflare" | "flower"
 flBackend: "nvflare"
 
+# Mock trust data (the public aicentreflip/trust-data dataset on Hugging Face), restored by the
+# OMOP and Orthanc init jobs when no S3 bucket is configured. One value covers both: a data
+# version is a git TAG on that dataset (FLIP pins it in trust/.data_version) and every archive is
+# fetched at that tag from an unversioned path. Also the version suffix of the default S3 archive
+# names below, which is where a version still has to live in a filename.
+trustData:
+  version: "20260729"
+  hfRepo: "aicentreflip/trust-data"
+
 # Global image pull secrets (optional — for private registries)
 imagePullSecrets: []
 #   - name: my-registry-credentials
@@ -483,12 +492,13 @@ omopDb:
   initJob:
     enabled: true
     s3Bucket: ""
-    # Archive file name. When empty, derived from trust name + dataVersion:
-    #   {trustName}_pgdata_{dataVersion}.tar.gz
+    # S3 archive file name. When empty, derived from trust name + trustData.version:
+    #   {trustName}_pgdata_{trustData.version}.tar.gz
     # Override to point at a different archive (e.g. reuse Trust_2's data):
     #   archiveName: "trust2_pgdata_20260729.tar.gz"
+    # (Only the S3 path uses it; the Hugging Face fallback fetches trust<N>_pgdata.tar
+    # at the trustData.version tag.)
     archiveName: ""
-    dataVersion: "20260729"
     # AWS profile to use for S3 authentication (uses SSO cached credentials)
     awsProfile: "default"
     # Mount host's ~/.aws directory for SSO-based S3 authentication
@@ -542,12 +552,13 @@ orthanc:
   initJob:
     enabled: false
     s3Bucket: ""
-    # Archive file name. When empty, derived from trust name + dataVersion:
-    #   {trustName}_orthanc_data_{dataVersion}.tar.gz
+    # S3 archive file name. When empty, derived from trust name + trustData.version:
+    #   {trustName}_orthanc_data_{trustData.version}.tar.gz
     # Override to point at a different archive (e.g. reuse Trust_2's data):
-    #   archiveName: "trust2_orthanc_data_20260106.tar.gz"
+    #   archiveName: "trust2_orthanc_data_20260729.tar.gz"
+    # (Only the S3 path uses it; the Hugging Face fallback fetches trust<N>_orthanc_data.tar
+    # at the trustData.version tag.)
     archiveName: ""
-    dataVersion: "20260106"
     # AWS profile to use for S3 authentication (uses SSO cached credentials)
     awsProfile: "default"
     # Mount host's ~/.aws directory for SSO-based S3 authentication
