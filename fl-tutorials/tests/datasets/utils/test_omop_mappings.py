@@ -73,3 +73,8 @@ def test_modality_map_covers_the_modalities_the_converters_emit(mappings: Module
     assert {"CT", "CR", "DX", "MR"} <= set(mappings.MAPPING_MODALITY)
     assert mappings.MAPPING_MODALITY["CT"] == 4300757
     assert mappings.MAPPING_MODALITY["MR"] == 4013636
+
+
+def test_millimetre_unit_is_the_ucum_concept(mappings: ModuleType) -> None:
+    """UCUM millimeter — the unit SliceThickness (0018,0050) is measured in (FLIP#1098)."""
+    assert mappings.MILLIMETER_UNIT_CONCEPT_ID == 8588
