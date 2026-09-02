@@ -51,12 +51,17 @@ def canonical_tree(root: Path) -> Path:
             {"accession_id": "10001_1000001", "image_study_uid": "1.2.4", "source_trust": "2"},
         ],
     )
-    write_csv(root / "prostate_project" / "person.csv", [{"person_source_value": "10000"}, {"person_source_value": "10001"}])
+    write_csv(
+        root / "prostate_project" / "person.csv",
+        [{"person_source_value": "10000"}, {"person_source_value": "10001"}],
+    )
     return root
 
 
 def instance(pub, accession: str, study: str, patient: str, sop: str):
-    return pub.Instance(member=f"{accession}/{sop}.dcm", accession=accession, study_uid=study, patient_id=patient, sop_uid=sop)
+    return pub.Instance(
+        member=f"{accession}/{sop}.dcm", accession=accession, study_uid=study, patient_id=patient, sop_uid=sop
+    )
 
 
 class TestLoadTables:
