@@ -91,6 +91,15 @@ which converts DICOM to `.mha` via SimpleITK; it runs that conversion in reverse
 `ImagePositionPatient`, `ImageOrientationPatient`, `PixelSpacing`, and `SliceThickness` tags so
 the series reconstructs correctly in a PACS viewer. It runs one worker process per CPU by default.
 
+What PI-CAI anonymised away is **synthesised**, as the spleen and cxr sets do: a `PatientName`, a
+`PatientBirthDate` on which the patient was exactly the recorded `PatientAge` on the study date, a
+`ReferringPhysicianName`, and a `StudyDescription` matching the LOINC procedure the OMOP export records
+(`synthetic_identity.py`). A study without those tags is not what a hospital PACS hands over, and the
+trusts' imaging-api does not import one. Unlike spleen's generators every value is a pure function of
+the PI-CAI ids — the same name, birthday and referrer on every run, on any machine — so the published
+DICOM set stays reproducible, as its UIDs already were. PI-CAI's own `PatientID`, `AccessionNumber`,
+sex, age and acquisition metadata are untouched. None of it belongs to a real person.
+
 `convert_dicom_to_nifti.py` then produces the simulator's
 `<patient_id>/<patient_id>_<study_id>_<modality>.nii.gz` **from those DICOM series**, not from the
 `.mha` files — with the platform's own pinned dcm2niix image, read from the same

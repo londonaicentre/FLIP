@@ -24,10 +24,12 @@ import csv
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import date
 from pathlib import Path
 
 import SimpleITK as sitk
 from pydicom.uid import generate_uid
+from synthetic_identity import STUDY_DESCRIPTION, birth_date, patient_name, referring_physician_name
 from tqdm import tqdm
 
 MODALITY_DESCRIPTIONS = {"t2w": "T2 Weighted", "adc": "ADC Map", "hbv": "High B-Value DWI"}
@@ -59,6 +61,11 @@ MODALITY_UID_COMPONENT = {
     "cor": "5",  # Coronal T2W — likewise.
 }
 
+# What PI-CAI anonymised away — patient name, birth date, referring physician, study description —
+# is synthesised per study, deterministically from the PI-CAI ids (synthetic_identity.py), for the
+# same reason spleen and cxr synthesise a patient population: a study without those tags is not
+# what a hospital PACS hands over, and the trusts' imaging-api refuses to import one.
+#
 # Acquisition metadata PI-CAI leaves in the .mha headers (written by its anonymisation script).
 # The marksheet carries no scanner columns, so these headers are the dataset's only per-study
 # record of which scanner acquired a scan — carry them into the DICOM instead of dropping them.
@@ -91,6 +98,13 @@ def load_centers(marksheet_path: Path) -> dict[tuple[str, str], str]:
         return {}
     with open(marksheet_path, newline="") as handle:
         return {(row["patient_id"], row["study_id"]): row["center"] for row in csv.DictReader(handle)}
+
+
+def _age_in_years(patient_age: str) -> int | None:
+    """PatientAge (0010,1010) as whole years — ``"073Y"`` → 73 — or ``None`` when absent or not in years."""
+    if len(patient_age) == 4 and patient_age.endswith("Y") and patient_age[:3].isdigit():
+        return int(patient_age[:3])
+    return None
 
 
 def write_dicom_series(
@@ -147,6 +161,17 @@ def write_dicom_series(
         "0018|0050": str(spacing[2]),
     }
     series_tag_values.update(source_tags)
+    series_tag_values.setdefault("0010|0040", "M")  # a prostate cohort; PI-CAI's headers carry it anyway
+    # The synthetic identity (see the module header): per patient for the name and birth date, so a
+    # patient's two studies agree; per study for the referrer.
+    series_tag_values["0010|0010"] = patient_name(patient_id)
+    series_tag_values["0008|0090"] = referring_physician_name(patient_id, study_id)
+    series_tag_values["0008|1030"] = STUDY_DESCRIPTION
+    age_years = _age_in_years(source_tags.get("0010|1010", ""))
+    if source_study_date and age_years is not None:
+        study_date = time.strptime(source_study_date, "%Y%m%d")
+        dob = birth_date(date(study_date.tm_year, study_date.tm_mon, study_date.tm_mday), age_years, patient_id)
+        series_tag_values["0010|0030"] = dob.strftime("%Y%m%d")
     if center:
         # ClinicalTrialSiteID, NOT InstitutionName (0008,0080). PI-CAI's `center` is a
         # contributing cohort, not the institution that owns the scanner: the 1500 public cases come
@@ -175,9 +200,7 @@ def write_dicom_series(
         image_slice.SetMetaData("0008|0012", modification_date)
         image_slice.SetMetaData("0008|0013", modification_time)
         image_slice.SetMetaData("0020|0013", str(i))
-        image_slice.SetMetaData(
-            "0020|0032", "\\".join(str(v) for v in image.TransformIndexToPhysicalPoint((0, 0, i)))
-        )
+        image_slice.SetMetaData("0020|0032", "\\".join(str(v) for v in image.TransformIndexToPhysicalPoint((0, 0, i))))
         writer.SetFileName(str(out_dir / f"{i:04d}.dcm"))
         writer.Execute(image_slice)
 
@@ -186,9 +209,7 @@ def _convert_one(mha_path: Path, output_dir: Path, centers: dict[tuple[str, str]
     patient_id, study_id, modality = mha_path.stem.rsplit("_", 2)
     series_dir = output_dir / patient_id / study_id / modality
     image = sitk.ReadImage(str(mha_path))
-    write_dicom_series(
-        image, series_dir, patient_id, study_id, modality, centers.get((patient_id, study_id), "")
-    )
+    write_dicom_series(image, series_dir, patient_id, study_id, modality, centers.get((patient_id, study_id), ""))
 
 
 def convert_archive(
