@@ -39,7 +39,9 @@ def builder() -> ModuleType:
     return module
 
 
-def write_series(root: Path, patient: str, study: str, modality: str, manufacturer: str, instances: int = 2) -> Path:
+def write_series(
+    root: Path, patient: str, study: str, modality: str, center: str, instances: int = 2, manufacturer: str = "SIEMENS"
+) -> Path:
     """A tiny DICOM series in the converter's <patient>/<study>/<modality>/ layout, headers only."""
     series_dir = root / patient / study / modality
     series_dir.mkdir(parents=True)
@@ -65,7 +67,7 @@ def write_series(root: Path, patient: str, study: str, modality: str, manufactur
         ds.Rows = 4
         ds.Columns = 4
         ds.PixelSpacing = ["0.5", "0.5"]
-        ds.ClinicalTrialSiteID = "PCNN"
+        ds.ClinicalTrialSiteID = center
         ds.SOPInstanceUID = ds.file_meta.MediaStorageSOPInstanceUID
         ds.SOPClassUID = ds.file_meta.MediaStorageSOPClassUID
         ds.InstanceNumber = i
@@ -83,20 +85,22 @@ def write_marksheet(path: Path, rows: list[tuple[str, str, str]]) -> Path:
 
 
 class TestSourceTrust:
-    def test_siemens_is_trust_1_and_philips_trust_2(self, builder):
-        assert builder.source_trust_for("SIEMENS") == 1
-        assert builder.source_trust_for("Philips Medical Systems") == 2
+    def test_one_center_per_trust_with_rumc_left_for_a_third(self, builder):
+        assert builder.source_trust_for("ZGT") == 1
+        assert builder.source_trust_for("PCNN") == 2
+        assert builder.source_trust_for("RUMC") == 3
 
-    def test_an_unknown_vendor_is_an_error_not_a_third_trust(self, builder):
+    def test_an_unknown_center_is_an_error_not_an_extra_trust(self, builder):
         with pytest.raises(SystemExit, match="no trust"):
-            builder.source_trust_for("GE MEDICAL SYSTEMS")
+            builder.source_trust_for("UMCG")
 
 
 class TestBuildTable:
     def test_one_row_per_series_with_the_header_and_the_trust(self, builder, tmp_path):
-        write_series(tmp_path, "10000", "1000000", "t2w", "SIEMENS", instances=3)
-        write_series(tmp_path, "10000", "1000000", "adc", "SIEMENS")
-        write_series(tmp_path, "10540", "1000550", "t2w", "Philips Medical Systems")
+        write_series(tmp_path, "10000", "1000000", "t2w", "PCNN", instances=3)
+        write_series(tmp_path, "10000", "1000000", "adc", "PCNN")
+        write_series(tmp_path, "10540", "1000550", "t2w", "ZGT", manufacturer="Philips Medical Systems")
+        write_series(tmp_path, "11087", "1001109", "t2w", "RUMC")
 
         rows = builder.build_table(tmp_path)
 
@@ -104,6 +108,7 @@ class TestBuildTable:
             ("10000", "1000000", "adc"),
             ("10000", "1000000", "t2w"),
             ("10540", "1000550", "t2w"),
+            ("11087", "1001109", "t2w"),
         ]
         t2w = rows[1]
         assert t2w["AccessionNumber"] == "10000_1000000"
@@ -111,7 +116,8 @@ class TestBuildTable:
         assert t2w["PixelSpacing"] == "0.5\\0.5"
         assert t2w["ClinicalTrialSiteID"] == "PCNN"
         assert t2w["NumberOfInstances"] == "3"
-        assert [r["source_trust"] for r in rows] == ["1", "1", "2"]
+        # The trust follows the center, never the vendor: the Philips scan at ZGT is trust 1.
+        assert [r["source_trust"] for r in rows] == ["2", "2", "1", "3"]
         assert list(rows[0]) == list(builder.COLUMNS)
 
     def test_an_empty_tree_is_refused(self, builder, tmp_path):

@@ -36,13 +36,14 @@ MARKSHEET_COLUMNS = [
     "lesion_PIRADS", "lesion_GS", "lesion_ISUP", "case_ISUP", "case_csPCa", "center",
 ]  # fmt: skip
 
-# Three studies over two patients: 10000 has two Siemens studies (trust 1), 10540 one Philips (trust 2).
+# Three studies over two patients: 10000 has two ZGT studies (trust 1), 10540 one PCNN study (trust 2).
 STUDIES = [
-    # patient, study, date,       age, psa,  psad,  vol,  pirads, isup, cspca, vendor
-    ("10000", "1000000", "20190702", "73", "7.7", "", "55", "N/A", "0", "NO", "SIEMENS"),
-    ("10000", "1000001", "20200811", "74", "9.1", "0.15", "60", "5,2", "2", "YES", "SIEMENS"),
-    ("10540", "1000550", "20180301", "65", "", "", "", "3", "0", "NO", "Philips Medical Systems"),
+    # patient, study, date,       age, psa,  psad,  vol,  pirads, isup, cspca, center
+    ("10000", "1000000", "20190702", "73", "7.7", "", "55", "N/A", "0", "NO", "ZGT"),
+    ("10000", "1000001", "20200811", "74", "9.1", "0.15", "60", "5,2", "2", "YES", "ZGT"),
+    ("10540", "1000550", "20180301", "65", "", "", "", "3", "0", "NO", "PCNN"),
 ]
+SOURCE_TRUST = {"ZGT": "1", "PCNN": "2", "RUMC": "3"}
 MODALITIES = ("t2w", "adc", "hbv")
 
 
@@ -64,7 +65,7 @@ def write_sources(root: Path) -> tuple[Path, Path]:
     with metadata.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=METADATA_COLUMNS)
         writer.writeheader()
-        for i, (patient, study, date, age, *_rest, vendor) in enumerate(STUDIES):
+        for i, (patient, study, date, age, *_rest, center) in enumerate(STUDIES):
             for j, modality in enumerate(MODALITIES):
                 writer.writerow(
                     {
@@ -72,22 +73,22 @@ def write_sources(root: Path) -> tuple[Path, Path]:
                         "PatientSex": "M", "PatientAge": f"{age.zfill(3)}Y", "StudyDate": date,
                         "StudyInstanceUID": f"1.2.{i}", "SeriesInstanceUID": f"1.2.{i}.{j}",
                         "SeriesDescription": modality, "AccessionNumber": f"{patient}_{study}", "Modality": "MR",
-                        "Manufacturer": vendor, "ManufacturerModelName": "Skyra", "SliceThickness": "3.0",
-                        "Rows": "640", "Columns": "640", "PixelSpacing": "0.5\\0.5", "ClinicalTrialSiteID": "PCNN",
-                        "NumberOfInstances": "31", "source_trust": "1" if vendor == "SIEMENS" else "2",
+                        "Manufacturer": "SIEMENS", "ManufacturerModelName": "Skyra", "SliceThickness": "3.0",
+                        "Rows": "640", "Columns": "640", "PixelSpacing": "0.5\\0.5", "ClinicalTrialSiteID": center,
+                        "NumberOfInstances": "31", "source_trust": SOURCE_TRUST[center],
                     }  # fmt: skip
                 )
     marksheet = root / "marksheet.csv"
     with marksheet.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=MARKSHEET_COLUMNS)
         writer.writeheader()
-        for patient, study, date, age, psa, psad, vol, pirads, isup, cspca, _vendor in STUDIES:
+        for patient, study, date, age, psa, psad, vol, pirads, isup, cspca, center in STUDIES:
             writer.writerow(
                 {
                     "patient_id": patient, "study_id": study, "mri_date": f"{date[:4]}-{date[4:6]}-{date[6:]}",
                     "patient_age": age, "psa": psa, "psad": psad, "prostate_volume": vol, "histopath_type": "MRBx",
                     "lesion_PIRADS": pirads, "lesion_GS": "", "lesion_ISUP": "", "case_ISUP": isup,
-                    "case_csPCa": cspca, "center": "PCNN",
+                    "case_csPCa": cspca, "center": center,
                 }  # fmt: skip
             )
     return metadata, marksheet

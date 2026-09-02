@@ -19,12 +19,13 @@ the instance count. Written to ``source/dicom_metadata.csv`` beside a copy of th
 to the studies present (``source/marksheet.csv``); both are published with the OMOP tables so the
 conversion is reproducible from the published inputs alone, as spleen's and cxr's are.
 
-**``source_trust`` is decided here, from the scanner vendor.** The dev stack has two trusts and
-PI-CAI three centers, so the partition that makes a realistic two-site federation is the one real
-domain shift in the data: Siemens (RUMC, ZGT and a few PCNN studies) → trust 1, Philips (the rest of
-PCNN) → trust 2. Every series of a study — and every study of a patient (no patient in the public
-set was scanned on both vendors) — lands on one trust. A manufacturer this table does not know is an
-error, not a silent third trust.
+**``source_trust`` is decided here, one contributing center per trust.** A federation is one
+institution per site, so centers are never merged: ZGT → trust 1 and PCNN → trust 2 (the two closest
+in size — 76 and 69 studies in fold 0 — and, as it happens, an all-Siemens site against a mostly
+Philips one), and RUMC (155 studies) → trust 3, which the two-trust dev stack does not load; those
+rows wait for a third trust. The center is read from ``ClinicalTrialSiteID``, which
+``convert_mha_to_dicom.py`` wrote from the marksheet. Every series of a study and every study of a
+patient lands on one trust. A center this table does not know is an error, not a silent extra trust.
 """
 
 from __future__ import annotations
@@ -35,10 +36,12 @@ from pathlib import Path
 
 import pydicom
 
-# Vendor → trust slot. Keys are the exact Manufacturer (0008,0070) values PI-CAI's headers carry.
-SOURCE_TRUST_BY_MANUFACTURER = {
-    "SIEMENS": 1,
-    "Philips Medical Systems": 2,
+# Center → trust slot. Keys are the exact ClinicalTrialSiteID (0012,0030) values the DICOM carries,
+# i.e. the marksheet's `center` codes. Slot 3 has no dev trust yet.
+SOURCE_TRUST_BY_CENTER = {
+    "ZGT": 1,
+    "PCNN": 2,
+    "RUMC": 3,
 }
 
 # Keyword → column. Read once per series from its first instance; per-instance tags are not here.
@@ -63,14 +66,14 @@ HEADER_KEYWORDS = (
 COLUMNS = ("patient_id", "study_id", "modality", *HEADER_KEYWORDS, "NumberOfInstances", "source_trust")
 
 
-def source_trust_for(manufacturer: str) -> int:
-    """The trust slot a series belongs to, from its scanner vendor."""
+def source_trust_for(center: str) -> int:
+    """The trust slot a series belongs to, from the center that contributed it."""
     try:
-        return SOURCE_TRUST_BY_MANUFACTURER[manufacturer.strip()]
+        return SOURCE_TRUST_BY_CENTER[center.strip()]
     except KeyError:
         raise SystemExit(
-            f"Manufacturer {manufacturer!r} has no trust in SOURCE_TRUST_BY_MANUFACTURER "
-            f"({sorted(SOURCE_TRUST_BY_MANUFACTURER)}) — add it deliberately rather than guessing a slot"
+            f"Center {center!r} has no trust in SOURCE_TRUST_BY_CENTER ({sorted(SOURCE_TRUST_BY_CENTER)}) — "
+            "add it deliberately rather than guessing a slot"
         ) from None
 
 
@@ -97,7 +100,7 @@ def series_row(series_dir: Path) -> dict[str, str]:
     }
     row.update({keyword: _value(ds, keyword) for keyword in HEADER_KEYWORDS})
     row["NumberOfInstances"] = str(len(instances))
-    row["source_trust"] = str(source_trust_for(row["Manufacturer"]))
+    row["source_trust"] = str(source_trust_for(row["ClinicalTrialSiteID"]))
     return row
 
 
@@ -142,8 +145,11 @@ def main(argv: list[str] | None = None) -> int:
     write_csv(args.output / "dicom_metadata.csv", rows, COLUMNS)
     write_csv(args.output / "marksheet.csv", marksheet_rows, list(marksheet_rows[0].keys()))
     studies = {(r["patient_id"], r["study_id"]) for r in rows}
-    by_trust = {t: len({(r["patient_id"], r["study_id"]) for r in rows if r["source_trust"] == t}) for t in ("1", "2")}
-    print(f"✅ {len(rows)} series / {len(studies)} studies → {args.output} (source_trust studies: {by_trust})")
+    by_trust = {
+        t: len({(r["patient_id"], r["study_id"]) for r in rows if r["source_trust"] == str(t)})
+        for t in sorted(SOURCE_TRUST_BY_CENTER.values())
+    }
+    print(f"✅ {len(rows)} series / {len(studies)} studies → {args.output} (studies per source_trust: {by_trust})")
     return 0
 
 

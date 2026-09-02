@@ -257,10 +257,11 @@ make -C fl-tutorials package-prostate-dicom               # verified both ways a
 
 Three shape differences from the other two, each inherited from what the dataset is:
 
-- **`source_trust` is decided from the scanner vendor** (Siemens → 1, Philips → 2), in the metadata
-  table, not by row index. The two-trust dev stack gets a realistic two-site federation out of
-  three PI-CAI centers — the vendor is the real domain shift in the data — and an unknown vendor
-  is an error rather than a silent third trust.
+- **`source_trust` is one contributing center per trust** (ZGT → 1, PCNN → 2, RUMC → 3), decided
+  in the metadata table from `ClinicalTrialSiteID`, never by row index and never by merging
+  centers. The two dev trusts take the two centers closest in size (76 and 69 studies); RUMC's
+  155 are published as source 3 and wait for a third trust — the seed loader accepts a dataset
+  with more sources than the stack has trusts. An unknown center is an error.
 - **One `image_occurrence` per series.** A study is three series (t2w, adc, hbv) sharing one
   accession, visit and procedure; spleen and cxr are single-series studies.
 - **The marksheet is published as clinical rows** — PSA, PSA density, prostate volume as

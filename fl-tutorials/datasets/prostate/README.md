@@ -160,12 +160,14 @@ make -C fl-tutorials package-prostate-dicom                  # verified both way
 make -C trust publish-trust-data VERSION=<tag> OMOP_CSV=... DICOM=... CARD=...   # one commit + one tag
 ```
 
-**`source_trust` is decided by scanner vendor**, in `create_prostate_metadata_table.py`: Siemens
-→ trust 1, Philips → trust 2. PI-CAI has three centers but the dev stack has two trusts, and the one
-real domain shift in the data is the vendor — RUMC and ZGT are all Siemens, PCNN is mostly Philips
-— so fold 0 splits 242 / 58 studies, every series of a study and every study of a patient on one
-side. An unknown manufacturer is an error, never a silent third trust. The center still travels in
-every DICOM (`ClinicalTrialSiteID`) and in the published `source/marksheet.csv`.
+**`source_trust` is one contributing center per trust**, decided in
+`create_prostate_metadata_table.py` from the `ClinicalTrialSiteID` the DICOM carries: ZGT → trust 1,
+PCNN → trust 2, RUMC → trust 3. A federation is one institution per site, so centers are never
+merged; the two dev trusts get the two centers closest in size (fold 0: ZGT 76 studies, PCNN 69 — an
+all-Siemens site against a mostly-Philips one, so the vendor shift comes for free), and RUMC (155
+studies) is written as source 3, which a two-trust stack does not load: those rows and DICOMs wait
+for a third trust. Every series of a study and every study of a patient lands on one trust, and an
+unknown center is an error, never a silent extra trust.
 
 **What goes into OMOP** (`omop_convert_prostate.py`, on the shared contract in
 [`../utils/`](../utils/)): one `person` per patient (male; year of birth from the MRI date minus

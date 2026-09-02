@@ -302,8 +302,8 @@ reproduce-cxr-omop: fetch-cxr-metadata-table build-cxr-omop-tables verify-cxr-om
 # prostate_project OMOP tables + DICOM set (the seed pipeline's third dataset — FLIP#1100 follow-on)
 #
 # The first dataset published with no snapshot at all: the trusts load it through `make -C trust
-# seed`, by the source_trust column the metadata table decides from the scanner vendor (Siemens ->
-# trust 1, Philips -> trust 2). Full chain, from the fold download:
+# seed`, by the source_trust column the metadata table decides from the contributing center (ZGT ->
+# trust 1, PCNN -> trust 2, RUMC -> trust 3, waiting for a third trust). Full chain, from the fold download:
 #   download-prostate-data -> convert-prostate-to-dicom -> create-prostate-metadata-table
 #     -> build-prostate-omop-tables -> build-prostate-canonical -> package-prostate-dicom
 #     -> make -C trust publish-trust-data VERSION=... OMOP_CSV=... DICOM=...
@@ -336,9 +336,10 @@ build-prostate-omop-tables:
 		--omop-root $(PROSTATE_DATA)
 
 # The faithfulness gate, same script as spleen/cxr.
+# Three source trusts (one center each: ZGT, PCNN, RUMC), so the gate concatenates three per-trust dirs.
 verify-prostate-omop-tables:
 	@cd .. && $(PROSTATE_OMOP_UV) python datasets/utils/verify_omop_tables.py --project prostate_project \
-		--generated-dir $(PROSTATE_DATA)/omop --revision $(TRUST_DATA_REVISION)
+		--generated-dir $(PROSTATE_DATA)/omop --trusts trust_1 trust_2 trust_3 --revision $(TRUST_DATA_REVISION)
 
 reproduce-prostate-omop: fetch-prostate-metadata-table build-prostate-omop-tables verify-prostate-omop-tables
 
@@ -347,7 +348,7 @@ reproduce-prostate-omop: fetch-prostate-metadata-table build-prostate-omop-table
 # from the dataset alone. This directory is what publish-trust-data's OMOP_CSV= takes.
 build-prostate-canonical:
 	@cd ../../trust/omop-db && uv run python -m omop_db_tools.dataset build \
-		--trust-dirs $(PROSTATE_DATA)/omop/trust_1 $(PROSTATE_DATA)/omop/trust_2 \
+		--trust-dirs $(PROSTATE_DATA)/omop/trust_1 $(PROSTATE_DATA)/omop/trust_2 $(PROSTATE_DATA)/omop/trust_3 \
 		--dest $(PROSTATE_DATA)/canonical --projects prostate_project
 	@mkdir -p $(PROSTATE_DATA)/canonical/prostate_project/source && cp \
 		$(PROSTATE_DATA)/source/dicom_metadata.csv $(PROSTATE_DATA)/source/marksheet.csv \
