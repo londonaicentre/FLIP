@@ -15,7 +15,33 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from imaging_api.routers.schemas import CentralHubProject, ImportStudyRequest
+from imaging_api.routers.schemas import CentralHubProject, ImportStudyRequest, Study
+
+
+def test_study_validates_without_the_descriptive_tags():
+    """Anonymised research DICOM carries no StudyDescription, ReferringPhysicianName or PatientName.
+
+    XNAT DQR omits the absent keys and sends ``null`` for the name; before FLIP#1123 every such study
+    failed validation and nothing was ever queued.
+    """
+    study = Study(
+        **{
+            "studyInstanceUid": "1.2.3",
+            "accessionNumber": "10000_1000000",
+            "studyDate": "2019-07-02",
+            "modalitiesInStudy": ["MR"],
+            "patient": {"id": "10000", "name": None, "sex": "M"},
+        }
+    )
+    assert study.study_description is None
+    assert study.referring_physician_name is None
+    assert study.patient.name is None
+    assert study.accession_number == "10000_1000000"
+
+
+def test_study_still_requires_what_the_import_needs():
+    with pytest.raises(ValidationError):
+        Study(**{"studyDescription": "described but unidentifiable", "patient": {"id": "1"}})
 
 
 def test_central_hub_project_defaults_dicom_to_nifti_true():
