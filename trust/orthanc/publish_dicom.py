@@ -229,22 +229,32 @@ def fill_empty_numbers(data: bytes) -> bytes:
     return out.getvalue()
 
 
+def arcname(inst: Instance) -> str:
+    """``<accession>/<SOPInstanceUID>.dcm`` — unique by construction (verify() rejects duplicate SOPs).
+
+    Named by the instance, not the source file: a multi-series study (prostate: t2w, adc, hbv, each
+    starting at ``0000.dcm``) has repeated basenames, and the seeder only ever globs ``*.dcm`` under
+    the accession directory, so the basename carries no meaning worth keeping.
+    """
+    return f"{inst.accession}/{inst.sop_uid}.dcm"
+
+
 def package(source: Source, instances: list[Instance], out: Path, fill: bool) -> tuple[int, int]:
-    """Write ``<accession>/<basename>`` for every instance into a gzipped tar. Returns (written, filled)."""
+    """Write every instance as :func:`arcname` into a gzipped tar. Returns (written, filled)."""
     names_seen: set[str] = set()
     written = filled = 0
     out.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(out, "w:gz") as tar:
         for i, inst in enumerate(instances, 1):
-            arcname = f"{inst.accession}/{Path(inst.member).name}"
-            if arcname in names_seen:
-                raise SystemExit(f"two instances would land on the same archive path: {arcname}")
-            names_seen.add(arcname)
+            name = arcname(inst)
+            if name in names_seen:
+                raise SystemExit(f"two instances would land on the same archive path: {name}")
+            names_seen.add(name)
             data = source.read(inst.member)
             if fill and inst.empty_tags:
                 data = fill_empty_numbers(data)
                 filled += 1
-            info = tarfile.TarInfo(arcname)
+            info = tarfile.TarInfo(name)
             info.size = len(data)
             info.mtime = 0  # reproducible archives: content decides the bytes, not the clock
             tar.addfile(info, io.BytesIO(data))
