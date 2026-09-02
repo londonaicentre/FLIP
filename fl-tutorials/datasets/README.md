@@ -128,12 +128,17 @@ reads this data lives with the tutorial instead, at
 - `partition_by_center.py` — split the converted NIfTI scans + labels into one folder per
   acquiring center (RUMC/PCNN/ZGT), ready for `PicaiDataset` per simulated FL client. Re-running
   it repairs stale symlinks, so it is safe over an existing `sites/` tree.
+- `create_prostate_metadata_table.py`, `omop_convert_prostate.py` — the `prostate_project` OMOP
+  tables for the trust seed pipeline (see "Prostate" under the OMOP section below), and
+  `upload_prostate_labels_to_xnat.py` — the data-enrichment step that puts both PI-CAI masks
+  beside every pulled image in XNAT.
 ## OMOP mock-data generation (FLIP#1092)
 
 The mock OMOP CDM data that backs the tutorials — and the trust `omop-db` seed data it feeds —
-is generated in-tree, per dataset. Two projects are covered so far: `spleen_project` (the whole
-chain, from the MSD download) and `cxr_project` (the OMOP conversion only; see below for why).
-Both share one contract in [`utils/`](utils/) and one verification gate.
+is generated in-tree, per dataset. Three projects are covered: `spleen_project` (the whole chain,
+from the MSD download), `cxr_project` (the OMOP conversion only; see below for why) and
+`prostate_project` (the whole chain, from the PI-CAI download, published for the seed pipeline
+alone). All share one contract in [`utils/`](utils/) and one verification gate.
 
 ### Spleen: the full chain
 
@@ -229,6 +234,45 @@ Two shape differences from spleen, both inherited from what the dataset is:
   `image_occurrence_id` with a two-digit finding index appended, which puts them around 100,000,000,
   outside every project's reserved block in `utils/omop_ids.py`. Nothing collides today, but do not
   assume that band is reserved. It is annotated at the line that builds it.
+
+### Prostate: a cohort published from the fold download
+
+[`prostate/`](prostate/) is the third converter and the first cohort published for the trust
+**seed pipeline** alone (`make -C trust seed`, FLIP#1100) — there is no pgdata/Orthanc snapshot of
+it, the trusts load it from `omop-csv/prostate_project/` and `dicom/prostate_project.tar.gz` on
+the dataset. The chain starts at a public download (PI-CAI fold 0, 300 bpMRI studies) rather than
+at a private generator, so unlike cxr every stage is in-tree and reproducible:
+
+```bash
+make -C fl-tutorials download-prostate-data FOLDS="0"     # regeneration path, step 1 (5 GB)
+make -C fl-tutorials convert-prostate-to-dicom            # step 2: t2w/adc/hbv -> DICOM series (SeriesNumber set)
+make -C fl-tutorials create-prostate-metadata-table       # step 3: data/prostate/source/{dicom_metadata,marksheet}.csv
+make -C fl-tutorials fetch-prostate-metadata-table        # reproducible path: the published source/ tables instead
+make -C fl-tutorials build-prostate-omop-tables           # -> data/prostate/omop/{prostate_project,trust_1,trust_2}/
+make -C fl-tutorials verify-prostate-omop-tables          # faithfulness gate
+make -C fl-tutorials reproduce-prostate-omop              # fetch + build + verify
+make -C fl-tutorials build-prostate-canonical             # the source_trust form to publish (+ source/ beside it)
+make -C fl-tutorials package-prostate-dicom               # verified both ways against those tables -> tar.gz
+```
+
+Three shape differences from the other two, each inherited from what the dataset is:
+
+- **`source_trust` is decided from the scanner vendor** (Siemens → 1, Philips → 2), in the metadata
+  table, not by row index. The two-trust dev stack gets a realistic two-site federation out of
+  three PI-CAI centers — the vendor is the real domain shift in the data — and an unknown vendor
+  is an error rather than a silent third trust.
+- **One `image_occurrence` per series.** A study is three series (t2w, adc, hbv) sharing one
+  accession, visit and procedure; spleen and cxr are single-series studies.
+- **The marksheet is published as clinical rows** — PSA, PSA density, prostate volume as
+  `measurement`; ISUP grade group, csPCa and PI-RADS as `observation` — so a cohort query can
+  narrow on them. The masks are not in OMOP; `upload_prostate_labels_to_xnat.py` is the
+  enrichment step, and the identity of accession and label stem means it fetches nothing.
+
+`person_id` is PI-CAI's numeric `patient_id` (five digits), clear of the nine-digit NHS-number
+prefixes of spleen/cxr and of Synthea's band. The recorded gate run is in
+[`prostate/VERIFICATION.md`](prostate/VERIFICATION.md). PI-CAI is **CC BY-NC 4.0** (images and
+labels), which the dataset card records — the prostate-derived content is the one non-commercial
+part of `aicentreflip/trust-data`.
 
 ### The shared contract
 

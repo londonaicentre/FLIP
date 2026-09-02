@@ -35,6 +35,9 @@ prostate
 ├── convert_mha_to_dicom.py # Converts .mha scans to a DICOM series per study
 ├── convert_dicom_to_nifti.py # Converts the DICOM series to .nii.gz with the platform's pinned dcm2niix
 ├── partition_by_center.py  # Splits nifti/labels by acquiring center (RUMC/PCNN/ZGT)
+├── create_prostate_metadata_table.py  # DICOM tree -> source/dicom_metadata.csv (+ marksheet); decides source_trust
+├── omop_convert_prostate.py           # source/ -> the prostate_project OMOP tables (the seed pipeline's input)
+├── upload_prostate_labels_to_xnat.py  # Data enrichment: both masks into every trust's XNAT
 └── README.md
 ```
 
@@ -138,6 +141,61 @@ present locally yet, e.g. a partial download via `FOLDS`. Point each simulated F
 its own `sites/<CENTER>` folder to train on that center's studies only — see
 [`../../flower/3d_prostate_segmentation/dataset.py`](../../flower/3d_prostate_segmentation/dataset.py)
 for `PicaiDataset`, which loads one center's partitioned folder end-to-end.
+
+## The `prostate_project` seed dataset (platform path)
+
+The simulator reads `sites/<CENTER>` from disk. The **platform** gets the same studies the way it
+gets everything: from a trust's OMOP database and PACS, which the seed pipeline
+(`make -C trust seed`, FLIP#1100) loads from the public `aicentreflip/trust-data` dataset. The
+scripts here produce `prostate_project`'s share of that dataset — the first cohort published with no
+snapshot at all — and the chain, from a fold download, is:
+
+```bash
+make -C fl-tutorials download-prostate-data FOLDS="0"        # 300 studies, 5 GB
+make -C fl-tutorials convert-prostate-to-dicom               # t2w/adc/hbv only (PROSTATE_MODALITIES)
+make -C fl-tutorials create-prostate-metadata-table          # data/prostate/source/{dicom_metadata,marksheet}.csv
+make -C fl-tutorials build-prostate-omop-tables              # data/prostate/omop/{prostate_project,trust_1,trust_2}/
+make -C fl-tutorials build-prostate-canonical                # data/prostate/canonical/prostate_project/ (+ source/)
+make -C fl-tutorials package-prostate-dicom                  # verified both ways -> dist/dicom/prostate_project.tar.gz
+make -C trust publish-trust-data VERSION=<tag> OMOP_CSV=... DICOM=... CARD=...   # one commit + one tag
+```
+
+**`source_trust` is decided by scanner vendor**, in `create_prostate_metadata_table.py`: Siemens
+→ trust 1, Philips → trust 2. PI-CAI has three centers but the dev stack has two trusts, and the one
+real domain shift in the data is the vendor — RUMC and ZGT are all Siemens, PCNN is mostly Philips
+— so fold 0 splits 242 / 58 studies, every series of a study and every study of a patient on one
+side. An unknown manufacturer is an error, never a silent third trust. The center still travels in
+every DICOM (`ClinicalTrialSiteID`) and in the published `source/marksheet.csv`.
+
+**What goes into OMOP** (`omop_convert_prostate.py`, on the shared contract in
+[`../utils/`](../utils/)): one `person` per patient (male; year of birth from the MRI date minus
+the marksheet age), one `visit_occurrence` and `procedure_occurrence` (LOINC *MR Prostate WO
+contrast*) per study, one `image_occurrence` **per series** (three per study, sharing the study's
+accession `<patient>_<study>`), the DICOM-attribute `image_feature`/`measurement` rows spleen
+publishes too, and the marksheet as rows a cohort query can select on — PSA, PSA density and
+prostate volume as `measurement`; ISUP grade group, clinically significant cancer (yes/no) and
+the highest lesion PI-RADS as `observation`
+(`../../flower/3d_prostate_segmentation/query.sql` joins them). `person_id` is PI-CAI's numeric
+`patient_id`, clear of every other cohort's ids; surrogate keys use `prostate_project`'s reserved
+3,000,000 block. The masks are **not** in OMOP — a segmentation has nowhere to live in a cohort
+query — which is what the uploader below is for.
+
+The reproducible path, as for spleen and cxr, needs neither the download nor the conversion:
+`make -C fl-tutorials reproduce-prostate-omop` fetches the two published `source/` tables at the
+pinned data-version tag, rebuilds the OMOP tables and diffs them against the published ones
+(`verify-prostate-omop-tables`, the shared gate; the run record is in
+[`VERIFICATION.md`](VERIFICATION.md)).
+
+**Seeding and enrichment.** With `prostate_project` published,
+`make -C trust seed-trusts PROJECTS="prostate_project"` loads each dev trust's slice (OMOP rows
+and DICOMs alike, by `source_trust`) — set `HF_TRUST_DATA_REVISION=<tag>` if `trust/.data_version`
+does not yet name a tag that carries it. A project's cohort query then pulls the studies into XNAT,
+and the labels follow as data enrichment: `upload_prostate_labels_to_xnat.py` puts the whole-gland
+mask (`label_<image>.nii.gz`) and the zonal mask (`zonal_<image>.nii.gz`) into every scan's NIFTI
+resource — the mapping is the identity, since the DICOM accession *is* the `picai_labels` file
+stem. `make -C flip-api e2e_smoke_prostate` drives cohort → approval → pull → enrichment against a
+running stack and stops there (`--stop-after-enrichment`), because no prostate training app
+exists yet.
 
 ## nnU-Net plans
 

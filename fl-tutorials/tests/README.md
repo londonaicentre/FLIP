@@ -53,7 +53,7 @@ never runs on an FL image — it has no business pulling `pandera`/`sqlglot` (ne
 the OMOP tables that tooling generates) into flip-utils' runtime environment.
 
 Those tests run against **each dataset's own uv project**, one pytest invocation per project
-(`DATASET_TEST_PROJECTS` in `fl-tutorials/Makefile`, currently `spleen cxr`), each declaring what
+(`DATASET_TEST_PROJECTS` in `fl-tutorials/Makefile`, currently `spleen cxr prostate`), each declaring what
 that dataset's tooling actually needs. `make -C fl-tutorials pytest-datasets` runs them all.
 
 The split is not just tidiness: it is the only thing in CI that checks a dataset's

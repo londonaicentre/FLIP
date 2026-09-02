@@ -136,6 +136,11 @@ def write_dicom_series(
         "0020|000d": study_uid,
         "0020|0010": study_id,
         "0020|000e": series_uid,
+        # SeriesNumber: the modality's fixed digit (t2w 1, adc 2, hbv 3 …). Left unset, GDCM writes
+        # the tag present-but-EMPTY on every instance, the defect that makes MONAI Deploy's loader
+        # drop a series (see trust/orthanc/publish_dicom.py --fill-empty-numbers for the spleen
+        # data, which had to be patched after the fact). Set it at the source instead.
+        "0020|0011": modality_component,
         "0020|0052": frame_of_reference_uid,
         "0020|0037": orientation,
         "0028|0030": f"{spacing[1]}\\{spacing[0]}",
@@ -186,8 +191,24 @@ def _convert_one(mha_path: Path, output_dir: Path, centers: dict[tuple[str, str]
     )
 
 
-def convert_archive(input_dir: Path, output_dir: Path, workers: int, marksheet_path: Path) -> None:
+def convert_archive(
+    input_dir: Path, output_dir: Path, workers: int, marksheet_path: Path, modalities: list[str] | None = None
+) -> None:
+    """Convert every ``.mha`` under ``input_dir`` (optionally only some modalities) to a DICOM series.
+
+    Args:
+        input_dir: The PI-CAI ``images/`` tree, ``<patient>/<patient>_<study>_<modality>.mha``.
+        output_dir: Root of the DICOM tree, ``<patient>/<study>/<modality>/<i>.dcm``.
+        workers: Process pool size.
+        marksheet_path: ``clinical_information/marksheet.csv`` (for ClinicalTrialSiteID).
+        modalities: Keep only these modality suffixes (e.g. ``["t2w", "adc", "hbv"]``); ``None`` converts all.
+    """
     mha_paths = sorted(input_dir.rglob("*.mha"))
+    if modalities is not None:
+        unknown = sorted(set(modalities) - set(MODALITY_UID_COMPONENT))
+        if unknown:
+            raise ValueError(f"Unrecognised modalities {unknown}; known: {sorted(MODALITY_UID_COMPONENT)}")
+        mha_paths = [p for p in mha_paths if p.stem.rsplit("_", 1)[-1] in modalities]
     centers = load_centers(marksheet_path)
     with ProcessPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(_convert_one, mha_path, output_dir, centers) for mha_path in mha_paths]
@@ -206,7 +227,14 @@ if __name__ == "__main__":
         "--marksheet",
         type=Path,
         default=default_data_dir / "clinical_information" / "marksheet.csv",
-        help="Marksheet supplying the acquiring center, written to InstitutionName (0008,0080).",
+        help="Marksheet supplying the acquiring center, written to ClinicalTrialSiteID (0012,0030).",
+    )
+    parser.add_argument(
+        "--modalities",
+        nargs="+",
+        default=None,
+        help="Convert only these modalities (e.g. t2w adc hbv — the axial series the tutorial reads; sag/cor are "
+        "unused and double the bytes). Default: every .mha found.",
     )
     args = parser.parse_args()
-    convert_archive(args.input, args.output, args.workers, args.marksheet)
+    convert_archive(args.input, args.output, args.workers, args.marksheet, args.modalities)
