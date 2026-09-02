@@ -205,7 +205,8 @@ members only), along with the DICOM write and the metadata extraction. That is t
 FLIP#1092 set, since those images do not come from a public dataset the way MSD spleen does.
 
 So the provenance chain recorded here starts at the DICOM metadata table, published beside its
-outputs at `omop-csv/<version>/cxr_project/source/dicom_metadata.csv` on `aicentreflip/trust-data`.
+outputs at `omop-csv/cxr_project/source/dicom_metadata.csv` on `aicentreflip/trust-data`, read at
+the pinned data-version tag.
 There is no regeneration path to offer and no root needed:
 
 ```bash

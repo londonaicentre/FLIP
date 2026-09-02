@@ -32,7 +32,7 @@ reproducible"), only one stage of the chain is exactly reproducible:
 
 This run therefore starts from the **published metadata table** &mdash; the actual input that
 produced the published export, fetched from
-`omop-csv/<version>/spleen_project/source/dicom_metadata.csv` &mdash; rather than regenerating
+`omop-csv/spleen_project/source/dicom_metadata.csv` at the pinned data-version tag &mdash; rather than regenerating
 DICOMs from the raw MSD download. Regenerating would synthesise a new, non-matching patient
 population, so it could never reproduce the published tables and is not what this gate checks.
 The DICOM-generation stage is verified only structurally (the vendored script runs, produces

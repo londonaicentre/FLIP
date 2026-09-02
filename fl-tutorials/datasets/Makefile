@@ -202,12 +202,18 @@ upload-spleen-labels:
 #                                   patient identities, so its output will NOT match the published
 #                                   export (see the README). Use it to exercise the DICOM stage.
 SPLEEN_OMOP_UV := uv run --project datasets/spleen
-SPLEEN_METADATA_URL := https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/omop-csv/$(shell cat ../../trust/omop-db/.data_version)/spleen_project/source/dicom_metadata.csv
+# The published tables are read at a data-version TAG on aicentreflip/trust-data: the dataset holds
+# one copy of every table at omop-csv/<project>/, and the version is the revision, never the path.
+# HF_TRUST_DATA_REVISION overrides; otherwise the pin — trust/.data_version once FLIP#1101 lands
+# (one tag for the whole dataset), trust/omop-db/.data_version until then.
+TRUST_DATA_REVISION ?= $(or $(HF_TRUST_DATA_REVISION),$(shell cat ../../trust/.data_version 2>/dev/null),$(shell cat ../../trust/omop-db/.data_version 2>/dev/null))
+HF_TRUST_DATA_BASE := https://huggingface.co/datasets/aicentreflip/trust-data/resolve/$(TRUST_DATA_REVISION)
+SPLEEN_METADATA_URL := $(HF_TRUST_DATA_BASE)/omop-csv/spleen_project/source/dicom_metadata.csv
 
 # Reproducible path: fetch the canonical metadata table for the pinned data version.
 fetch-spleen-metadata-table:
 	@cd .. && mkdir -p data && curl -fsSL "$(SPLEEN_METADATA_URL)" -o data/spleen_metadata.csv
-	@echo "✅ metadata table at fl-tutorials/data/spleen_metadata.csv ($(shell cat ../../trust/omop-db/.data_version))"
+	@echo "✅ metadata table at fl-tutorials/data/spleen_metadata.csv (revision $(TRUST_DATA_REVISION))"
 
 # Regeneration path, step 0: the RAW MSD extract. NOTE this is NOT `download-spleen-data`, which
 # reorganises the archive into the FLIP accession-resources layout and then rmtree's the raw tree;
@@ -250,7 +256,7 @@ build-spleen-omop-tables:
 # Diff the generated tables against the published export for the pinned data version. Re-run this
 # after a .data_version bump, or after any change to the converter or the shared schemas.
 verify-spleen-omop-tables:
-	@cd .. && $(SPLEEN_OMOP_UV) python datasets/utils/verify_omop_tables.py --project spleen_project
+	@cd .. && $(SPLEEN_OMOP_UV) python datasets/utils/verify_omop_tables.py --project spleen_project --revision $(TRUST_DATA_REVISION)
 
 # The whole reproducible path in one command: fetch the canonical input, convert, verify.
 # Needs no root and no MSD download.
@@ -265,13 +271,13 @@ reproduce-spleen-omop: fetch-spleen-metadata-table build-spleen-omop-tables veri
 #   fetch-cxr-metadata-table -> build-cxr-omop-tables -> verify-cxr-omop-tables
 # or `reproduce-cxr-omop` for all three. Needs no root and no image download.
 CXR_OMOP_UV := uv run --project datasets/cxr
-CXR_METADATA_URL := https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/omop-csv/$(shell cat ../../trust/omop-db/.data_version)/cxr_project/source/dicom_metadata.csv
+CXR_METADATA_URL := $(HF_TRUST_DATA_BASE)/omop-csv/cxr_project/source/dicom_metadata.csv
 
 # Fetch the canonical metadata table for the pinned data version. This is the table that actually
 # produced the published cxr_project export -- its 8332 rows yield exactly the published person_ids.
 fetch-cxr-metadata-table:
 	@cd .. && mkdir -p data && curl -fsSL "$(CXR_METADATA_URL)" -o data/cxr_metadata.csv
-	@echo "✅ metadata table at fl-tutorials/data/cxr_metadata.csv ($(shell cat ../../trust/omop-db/.data_version))"
+	@echo "✅ metadata table at fl-tutorials/data/cxr_metadata.csv (revision $(TRUST_DATA_REVISION))"
 
 # Metadata table -> omop/<trust>/cxr_project/*.csv, ready for trust/omop-db's build_canonical +
 # import_tables. PYTHONPATH=datasets for the same reason as the spleen target: the converter imports
@@ -282,6 +288,6 @@ build-cxr-omop-tables:
 # Diff the generated tables against the published export for the pinned data version. Same gate
 # script as spleen, selected by --project; tables a project does not publish are skipped.
 verify-cxr-omop-tables:
-	@cd .. && $(CXR_OMOP_UV) python datasets/utils/verify_omop_tables.py --project cxr_project
+	@cd .. && $(CXR_OMOP_UV) python datasets/utils/verify_omop_tables.py --project cxr_project --revision $(TRUST_DATA_REVISION)
 
 reproduce-cxr-omop: fetch-cxr-metadata-table build-cxr-omop-tables verify-cxr-omop-tables
