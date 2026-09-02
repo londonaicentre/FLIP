@@ -82,6 +82,18 @@ is byte-for-byte what an fl-client receives after image pull — the same dcm2ni
 which a direct SimpleITK conversion does not reproduce. It needs Docker, runs one container per
 series (8 in parallel by default), and skips series whose output already exists.
 
+That orientation handling is a real difference, not a detail. dcm2niix stores every volume with the
+DICOM row axis reversed (its `isFlipY` default, which the XNAT registration does not override) and
+corrects the affine to match, so its voxel array is the `picai_labels` array mirrored along one axis
+while both files describe the same physical volume. Pairing image and label by array index therefore
+lands the mask flipped against the image (whole-gland Dice 0.52 against its true position on
+`10000_1000000`), and the old direct `.mha` conversion only hid that because SimpleITK writes in the
+labels' order. `PicaiDataset` in the tutorial loads the image and both masks through MONAI's
+`LoadImaged` + `Orientationd` and resamples the masks onto the image grid by affine, which makes the
+platform's files and the simulator's interchangeable —
+[`../../tests/test_prostate_dataset_orientation.py`](../../tests/test_prostate_dataset_orientation.py)
+pins both storage orders.
+
 The DICOM writer carries through the acquisition metadata PI-CAI leaves in the `.mha` headers —
 `Manufacturer`, `ManufacturersModelName`, the real acquisition date, `PatientSex`, `PatientAge` and
 `PatientIdentityRemoved`. This is the dataset's **only** per-study record of which scanner acquired a
