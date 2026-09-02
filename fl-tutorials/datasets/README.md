@@ -249,7 +249,7 @@ at a private generator, so unlike cxr every stage is in-tree and reproducible:
 
 ```bash
 make -C fl-tutorials download-prostate-data FOLDS="0"     # regeneration path, step 1 (5 GB)
-make -C fl-tutorials convert-prostate-to-dicom            # step 2: t2w/adc/hbv -> DICOM series (SeriesNumber set)
+make -C fl-tutorials convert-prostate-to-dicom            # step 2: t2w/adc/hbv -> DICOM series (SeriesNumber set, synthetic identity)
 make -C fl-tutorials create-prostate-metadata-table       # step 3: data/prostate/source/{dicom_metadata,marksheet}.csv
 make -C fl-tutorials fetch-prostate-metadata-table        # reproducible path: the published source/ tables instead
 make -C fl-tutorials build-prostate-omop-tables           # -> data/prostate/omop/{prostate_project,trust_1,trust_2}/
