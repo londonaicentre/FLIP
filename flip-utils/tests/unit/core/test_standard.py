@@ -52,17 +52,20 @@ class TestFLIPStandardDevGetDataframe:
             assert "accession_id" in df.columns
             assert "label" in df.columns
 
-    def test_get_dataframe_validates_accession_id_column(self, flip_dev, tmp_path):
-        """get_dataframe should raise error if accession_id column is missing."""
-        # Create a CSV without accession_id column
-        csv_path = tmp_path / "invalid_dataframe.csv"
-        test_data = pd.DataFrame({"some_column": ["val1", "val2"], "label": [0, 1]})
-        test_data.to_csv(csv_path, index=False)
+    def test_get_dataframe_accepts_a_frame_without_accession_id(self, flip_dev, tmp_path):
+        """Tabular-only cohorts (FLIP#1071) have no accession_id; the dev client must not require one.
+
+        The prod client never did — it returns whatever columns the trust's cohort query projects.
+        """
+        csv_path = tmp_path / "tabular_dataframe.csv"
+        pd.DataFrame({"person_id": [1, 2], "label": [0, 1]}).to_csv(csv_path, index=False)
 
         with patch("flip.core.standard.FlipConstants") as mock_constants:
             mock_constants.DEV_DATAFRAME = str(csv_path)
-            with pytest.raises(ValueError, match="does not contain an 'accession_id' column"):
-                flip_dev.get_dataframe(project_id="test-project", query="SELECT * FROM table")
+            df = flip_dev.get_dataframe(project_id="test-project", query="SELECT person_id, label FROM omop.person")
+
+        assert list(df.columns) == ["person_id", "label"]
+        assert len(df) == 2
 
 
 class TestFLIPStandardDevGetByAccessionNumber:
@@ -195,8 +198,8 @@ class TestFLIPStandardProdSendEvent:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_event(
                 model_id=valid_model_id,
@@ -228,8 +231,8 @@ class TestFLIPStandardProdSendEvent:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_event(
                 model_id=valid_model_id,
@@ -257,8 +260,8 @@ class TestFLIPStandardProdSendEvent:
             patch("flip.core.standard.requests.post", side_effect=ConnectionError("down")),
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_event(model_id=valid_model_id, event_type=FLLogEvent.ROUND_STARTED, global_round=1)
 
@@ -272,8 +275,8 @@ class TestFLIPStandardProdSendEvent:
             patch("flip.core.standard.requests.post") as mock_post,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_event(model_id=valid_model_id, event_type=FLLogEvent.ROUND_STARTED, global_round=0)
 
@@ -312,8 +315,8 @@ class TestFLIPStandardProdSendEvent:
             patch(f"flip.core.standard.requests.{verb}", return_value=mock_response) as mock_request,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             call(flip_prod)
 
@@ -339,8 +342,8 @@ class TestFLIPStandardProdSendHandledExceptionSuccessFlag:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_handled_exception("Error message", "client-1", valid_model_id)
 
@@ -368,8 +371,8 @@ class TestFLIPStandardProdGetDataframe:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.DATA_ACCESS_API_URL = "https://data.example.com"
-            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
-            mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key" # pragma: allowlist secret
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"  # pragma: allowlist secret
 
             df = flip_prod.get_dataframe(project_id="proj-1", query="SELECT * FROM table")
 
@@ -409,8 +412,8 @@ class TestFLIPStandardProdGetDataframe:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.DATA_ACCESS_API_URL = HttpUrl("http://data-access-api:8000")
-            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
-            mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key" # pragma: allowlist secret
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"  # pragma: allowlist secret
 
             flip_prod.get_dataframe(project_id="proj-1", query="SELECT * FROM table")
 
@@ -436,7 +439,7 @@ class TestFLIPStandardProdGetDataframe:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.DATA_ACCESS_API_URL = "https://data.example.com"
-            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key" # pragma: allowlist secret
             mock_constants.TRUST_INTERNAL_SERVICE_KEY = ""
 
             with pytest.raises(HTTPError):
@@ -469,8 +472,8 @@ class TestFLIPStandardProdGetByAccessionNumber:
         ):
             mock_constants.IMAGING_API_URL = "https://imaging.example.com"
             mock_constants.NET_ID = "net-1"
-            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
-            mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key" # pragma: allowlist secret
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"  # pragma: allowlist secret
 
             result = flip_prod.get_by_accession_number(
                 project_id="proj-1", accession_id="ACC001", resource_type=ResourceType.DICOM
@@ -509,8 +512,8 @@ class TestFLIPStandardProdAddResource:
         ):
             mock_constants.IMAGING_API_URL = "https://imaging.example.com"
             mock_constants.NET_ID = "net-1"
-            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
-            mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key" # pragma: allowlist secret
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"  # pragma: allowlist secret
 
             flip_prod.add_resource(
                 project_id="proj-1",
@@ -552,8 +555,8 @@ class TestFLIPStandardProdUpdateStatus:
             patch("flip.core.standard.requests.put", return_value=mock_response) as mock_put,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.update_status(valid_model_id, ModelStatus.RUNNING)
 
@@ -592,8 +595,8 @@ class TestFLIPStandardProdSendHandledException:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_handled_exception("Error message", "client-1", valid_model_id)
 
@@ -630,8 +633,8 @@ class TestFLIPStandardProdSendMetrics:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_metrics(
                 client_name="client-1",
@@ -669,8 +672,8 @@ class TestFLIPStandardProdSendMetrics:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_metrics(
                 client_name="client-1",
@@ -696,8 +699,8 @@ class TestFLIPStandardProdSendMetrics:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_metrics(
                 client_name="client-1",
