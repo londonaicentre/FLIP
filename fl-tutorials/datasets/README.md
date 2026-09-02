@@ -118,8 +118,10 @@ use it to exercise the DICOM stage, not to check faithfulness. `verify-spleen-om
 (`utils/verify_omop_tables.py --project spleen_project`) is the faithfulness check: it diffs the
 locally generated tables against the published ones for the pinned data version and prints a
 `MATCH`/`DIFF` per table, exiting non-zero on any divergence. Re-run it after a `.data_version`
-bump or after any change to the converter or the shared schemas. The recorded run is in
-[`spleen/VERIFICATION.md`](spleen/VERIFICATION.md).
+bump or after any change to the converter or the shared schemas. Five published-only columns are
+excused as known-benign because they are empty in the published export (`wadors_uri` on
+`image_occurrence`; `alg_datetime`, `alg_system`, `image_finding_concept_id`, `image_finding_id` on
+`image_feature`) — a published-only column carrying data still fails the gate.
 
 ```bash
 make -C fl-tutorials fetch-spleen-metadata-table   # reproducible path, step 1
@@ -172,7 +174,8 @@ make -C fl-tutorials verify-cxr-omop-tables         # faithfulness gate
 make -C fl-tutorials reproduce-cxr-omop             # the three above, chained
 ```
 
-The recorded run is in [`cxr/VERIFICATION.md`](cxr/VERIFICATION.md).
+cxr needs no published-only column excusals, where spleen needs five: the two exports were produced by
+different scripts against different schema subsets, and nothing is relaxed for either.
 
 Two shape differences from spleen, both inherited from what the dataset is:
 
@@ -201,7 +204,11 @@ of one dataset:
   collide. `person_id` is deliberately *not* blocked: it derives from a random NHS number.
 - `verify_omop_tables.py` — the verification gate, shared because nothing in it is dataset-specific.
   `--project` selects which published export to diff against; tables a project does not publish are
-  skipped, and a run that compares *nothing* fails rather than passing vacuously.
+  skipped, and a run that compares *nothing* fails rather than passing vacuously. The gate is the
+  provenance claim: the output of the run that backed each published tag is recorded in the PR that
+  published it, not in a committed log (a run record goes stale at the next tag). A `DIFF` or
+  `GATE FAIL` on a re-run means a real regression in a converter or published data that no longer
+  matches the code — investigate and resolve, don't relax the gate to match.
 
 Converters import this as `utils.*`, which is why the Make recipes set `PYTHONPATH=datasets` when
 invoking them — `python datasets/<name>/x.py` puts `datasets/<name>` on `sys.path`, never
