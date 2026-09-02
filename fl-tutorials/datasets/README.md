@@ -118,10 +118,11 @@ use it to exercise the DICOM stage, not to check faithfulness. `verify-spleen-om
 (`utils/verify_omop_tables.py --project spleen_project`) is the faithfulness check: it diffs the
 locally generated tables against the published ones for the pinned data version and prints a
 `MATCH`/`DIFF` per table, exiting non-zero on any divergence. Re-run it after a `.data_version`
-bump or after any change to the converter or the shared schemas. Five published-only columns are
-excused as known-benign because they are empty in the published export (`wadors_uri` on
-`image_occurrence`; `alg_datetime`, `alg_system`, `image_finding_concept_id`, `image_finding_id` on
-`image_feature`) — a published-only column carrying data still fails the gate.
+bump or after any change to the converter or the shared schemas. The gate excuses a published-only
+column only when it is empty in the published export — the `20260729` spleen tables carried five such
+(`wadors_uri` on `image_occurrence`; `alg_datetime`, `alg_system`, `image_finding_concept_id`,
+`image_finding_id` on `image_feature`), the `20260901` republish none — and a published-only column
+carrying data still fails the gate.
 
 ```bash
 make -C fl-tutorials fetch-spleen-metadata-table   # reproducible path, step 1
@@ -174,8 +175,8 @@ make -C fl-tutorials verify-cxr-omop-tables         # faithfulness gate
 make -C fl-tutorials reproduce-cxr-omop             # the three above, chained
 ```
 
-cxr needs no published-only column excusals, where spleen needs five: the two exports were produced by
-different scripts against different schema subsets, and nothing is relaxed for either.
+cxr has never needed a published-only column excusal: the two exports were produced by different
+scripts against different schema subsets, and nothing is relaxed for either.
 
 Two shape differences from spleen, both inherited from what the dataset is:
 
