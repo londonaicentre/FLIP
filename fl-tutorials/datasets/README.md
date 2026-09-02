@@ -270,10 +270,9 @@ Three shape differences from the other two, each inherited from what the dataset
   enrichment step, and the identity of accession and label stem means it fetches nothing.
 
 `person_id` is PI-CAI's numeric `patient_id` (five digits), clear of the nine-digit NHS-number
-prefixes of spleen/cxr and of Synthea's band. The recorded gate run is in
-[`prostate/VERIFICATION.md`](prostate/VERIFICATION.md). PI-CAI is **CC BY-NC 4.0** (images and
-labels), which the dataset card records — the prostate-derived content is the one non-commercial
-part of `aicentreflip/trust-data`.
+prefixes of spleen/cxr and of Synthea's band. PI-CAI is **CC BY-NC 4.0** (images and labels),
+which the dataset card records — the prostate-derived content is the one non-commercial part of
+`aicentreflip/trust-data`.
 
 ### The shared contract
 

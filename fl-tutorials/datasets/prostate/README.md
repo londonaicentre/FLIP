@@ -209,8 +209,8 @@ the full cohort in place. Not done yet, by choice.
 The reproducible path, as for spleen and cxr, needs neither the download nor the conversion:
 `make -C fl-tutorials reproduce-prostate-omop` fetches the two published `source/` tables at the
 pinned data-version tag, rebuilds the OMOP tables and diffs them against the published ones
-(`verify-prostate-omop-tables`, the shared gate; the run record is in
-[`VERIFICATION.md`](VERIFICATION.md)).
+(`verify-prostate-omop-tables`, the shared gate). The run that backed tag `20260902` passed on all
+seven tables; its output is in the pull request that published the tag, not in a committed log.
 
 **Seeding and enrichment.** `prostate_project` is published from data-version tag `20260902` on,
 so `HF_TRUST_DATA_REVISION=20260902 make -C trust seed-trusts PROJECTS="prostate_project"` loads
