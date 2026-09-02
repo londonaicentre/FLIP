@@ -159,8 +159,26 @@ class TestSplitForTrust:
     def test_legacy_with_gapped_source_values_rejected(self):
         df = _canonical_frame()
         df[SOURCE_TRUST_COLUMN] = [1, 1, 1, 3, 3, 3]
-        with pytest.raises(ValueError, match=r"exactly 1\.\.2"):
+        with pytest.raises(ValueError, match="contiguous"):
             split_for_trust(df, num_trusts=2, trust_index=1, mode="legacy")
+
+    def test_surplus_sources_wait_for_a_future_trust(self, capsys):
+        """One center per trust: a third center is written as source 3 and loaded by nobody on a two-trust stack."""
+        df = _canonical_frame()
+        df[SOURCE_TRUST_COLUMN] = [1, 1, 2, 2, 3, 3]
+        first = split_for_trust(df, num_trusts=2, trust_index=1)
+        second = split_for_trust(df, num_trusts=2, trust_index=2)
+        assert list(first["person_id"]) == [1, 2]
+        assert list(second["person_id"]) == [3, 4]
+        assert "sources 3..3 wait for a future trust" in capsys.readouterr().out
+        # And a third trust, once it exists, gets exactly the surplus.
+        assert list(split_for_trust(df, num_trusts=3, trust_index=3)["person_id"]) == [5, 6]
+
+    def test_a_trust_with_no_rows_is_still_rejected(self):
+        df = _canonical_frame()
+        df[SOURCE_TRUST_COLUMN] = [1, 1, 1, 1, 1, 1]
+        with pytest.raises(ValueError, match="every trust must have rows"):
+            split_for_trust(df, num_trusts=2, trust_index=2)
 
     def test_nan_person_id_rejected(self):
         df = _canonical_frame()
