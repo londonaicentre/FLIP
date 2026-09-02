@@ -27,7 +27,8 @@ const aiSwitchStub = {
 
 function mountTrainingOptions(
     approvedTrusts: { name: string; id: string; approved: boolean; code?: string | null }[],
-    disabled = false
+    disabled = false,
+    hasImaging: boolean | undefined = undefined
 ) {
     return mount(TrainingOptions, {
         global: {
@@ -35,7 +36,14 @@ function mountTrainingOptions(
                 createTestingPinia({
                     createSpy: vi.fn,
                     stubActions: false,
-                    initialState: { project: { project: { approvedTrusts } } }
+                    initialState: {
+                        project: {
+                            project: {
+                                approvedTrusts,
+                                has_imaging: hasImaging
+                            }
+                        }
+                    }
                 })
             ],
             stubs: { AiSwitch: aiSwitchStub }
@@ -181,5 +189,18 @@ describe("TrainingOptions disabled", () => {
         const comp = mountTrainingOptions(trust);
 
         expect(comp.findAll("button").every((s) => s.attributes("disabled") === undefined)).toBe(true);
+    });
+});
+
+describe("TrainingOptions enrichment copy", () => {
+    it("asks to confirm dataset enrichment for an imaging project", () => {
+        const wrapper = mountTrainingOptions([], false, true);
+        expect(wrapper.text()).toContain("Confirm your dataset has been enriched as required before training");
+    });
+
+    it("explains there is no imaging to enrich for a tabular-only project", () => {
+        const wrapper = mountTrainingOptions([], false, false);
+        expect(wrapper.text()).toContain("This project has no imaging to enrich");
+        expect(wrapper.find("[data-test=data-enrichment-btn]").exists()).toBe(true); // the gate itself stays
     });
 });
