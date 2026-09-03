@@ -214,13 +214,23 @@ fi
 # 3. Everything the workflows dereference
 # ---------------------------------------------------------------------------
 
+# What is collected is the name on the GitHub side, not the environment-variable
+# name the workflow binds it to. Usually they are the same, but not always:
+# `FALLBACK_DOCKER_TAG: ${{ vars.DOCKER_TAG }}` feeds the image-tag resolver, and
+# the object that has to exist in the GitHub environment is `DOCKER_TAG`. Reading
+# the left-hand side would invent a `FALLBACK_DOCKER_TAG` variable that nothing
+# reads, while leaving the one that is actually dereferenced unchecked.
+#
+# Still anchored to a `KEY: ${{ … }}` line inside an `env:` block, which is what
+# keeps `role-to-assume: ${{ vars.TF_PLAN_ROLE_ARN }}` out of the list — that one
+# is set from ci/ output above, not from the operator's env file.
 mapfile -t SECRET_KEYS < <(
-    grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*:[[:space:]]+\$\{\{[[:space:]]*secrets\.' "${PLAN_WORKFLOW}" |
-        sed -E 's/^[[:space:]]+([A-Z0-9_]+):.*/\1/' | sort -u
+    grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*:[[:space:]]+\$\{\{[[:space:]]*secrets\.[A-Z0-9_]+' "${PLAN_WORKFLOW}" |
+        sed -E 's/.*secrets\.//' | sort -u
 )
 mapfile -t VARIABLE_KEYS < <(
-    grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*:[[:space:]]+\$\{\{[[:space:]]*vars\.' "${PLAN_WORKFLOW}" |
-        sed -E 's/^[[:space:]]+([A-Z0-9_]+):.*/\1/' | sort -u
+    grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*:[[:space:]]+\$\{\{[[:space:]]*vars\.[A-Z0-9_]+' "${PLAN_WORKFLOW}" |
+        sed -E 's/.*vars\.//' | sort -u
 )
 ((${#SECRET_KEYS[@]} > 0)) || die "found no 'secrets.' references in ${PLAN_WORKFLOW} — has its env block changed shape?"
 
