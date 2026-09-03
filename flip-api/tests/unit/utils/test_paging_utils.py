@@ -12,6 +12,7 @@
 
 import pytest
 
+from flip_api.domain.schemas.status import ProjectType
 from flip_api.utils.paging_utils import get_filter_details, get_total_pages
 
 # Absolute import of function to test
@@ -59,8 +60,8 @@ def test_get_total_pages_total_records_negative():
 @pytest.mark.parametrize(
     ("params", "expected"),
     [
-        ({"projectType": "imaging"}, "imaging"),
-        ({"projectType": "omop_only"}, "omop_only"),
+        ({"projectType": "imaging"}, ProjectType.IMAGING),
+        ({"projectType": "omop_only"}, ProjectType.OMOP_ONLY),
         ({"projectType": "bogus"}, None),  # a UI convenience: unknown values mean "every type"
         ({}, None),
     ],

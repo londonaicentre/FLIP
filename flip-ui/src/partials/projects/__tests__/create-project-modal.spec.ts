@@ -149,7 +149,8 @@ describe("Create Project Modal", () => {
                 })],
                 stubs: {
                     ...stubs,
-                    // The real vee-validate Form drops an unmounted field from `values`; mirror that: no dicom_to_nifti key.
+                    // The real vee-validate Form drops an unmounted field from `values` (and AiSwitch reports an
+                    // unchecked switch as undefined, which coerces the same way as ""): mirror that — no dicom_to_nifti key.
                     Form: { template: "<form @submit.prevent=\"$emit('submit', { has_imaging: '' })\"><slot :values=\"{ has_imaging: '' }\" /></form>" }
                 }
             }

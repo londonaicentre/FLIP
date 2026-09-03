@@ -52,8 +52,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import requests
 
@@ -67,53 +68,67 @@ from tests.integration.utils import admin_authentication
 # --query-file explicitly, so this default only kicks in for direct invocation.
 DEFAULT_QUERY_FILE = Path(__file__).parent / "example_query.sql"
 ABORT_MIDWAY_NAME_SUFFIX = " (abort-midway)"
-# Human-readable tutorial names for the smoke's default project/model naming, keyed by the tutorial
-# directory (the parent of app/ or app_files/). Anything else falls back to a title-cased form of the
-# directory name, so a custom app still gets an honest label rather than a hardcoded one.
-TUTORIAL_LABELS: dict[str, str] = {
-    "xray_classification": "Chest X-ray classification",
-    "ehr_risk_prediction": "EHR risk prediction",
-    "3d_spleen_segmentation": "3D spleen segmentation",
-    "3d_spleen_segmentation_evaluation": "3D spleen segmentation evaluation",
-    "arkplus_fine_tuning": "Ark+ fine-tuning",
-    "arkplus_baseline_classification_evaluation": "Ark+ baseline classification evaluation",
-    "arkplus_multimodel_classification_evaluation": "Ark+ multi-model classification evaluation",
-}
-# Plain-language statements of each tutorial's clinical task, for the default project description —
-# what a clinician reading the projects list should understand the project is for, not how it was run.
-TUTORIAL_TASKS: dict[str, str] = {
-    "ehr_risk_prediction": (
+
+
+@dataclass(frozen=True)
+class TutorialCopy:
+    """Human-readable copy for one tutorial: its name, and its clinical task in plain language."""
+
+    label: str
+    task: str
+
+
+# Keyed by the tutorial directory (the parent of app/ or app_files/). The task is what a clinician
+# reading the projects list should understand the project is for — not how it was run. Anything not
+# listed falls back to a capitalised, de-hyphenated form of the directory name and a generic task.
+TUTORIALS: dict[str, TutorialCopy] = {
+    "ehr_risk_prediction": TutorialCopy(
+        "EHR risk prediction",
         "Predicting which patients will go on to develop type 2 diabetes from their routine electronic "
         "health records — demographics plus the conditions and hospital visits recorded before diagnosis — "
-        "with a model trained across the participating trusts without moving any patient data."
+        "with a model trained across the participating trusts without moving any patient data.",
     ),
-    "xray_classification": (
+    "xray_classification": TutorialCopy(
+        "Chest X-ray classification",
         "Detecting pleural effusion and pulmonary oedema on chest X-rays with an image classifier trained "
-        "across the participating trusts' radiographs."
+        "across the participating trusts' radiographs.",
     ),
-    "3d_spleen_segmentation": (
+    "3d_spleen_segmentation": TutorialCopy(
+        "3D spleen segmentation",
         "Outlining the spleen on abdominal CT scans, so its size and shape can be measured automatically, "
-        "with a 3D segmentation model trained across the participating trusts."
+        "with a 3D segmentation model trained across the participating trusts.",
     ),
-    "3d_spleen_segmentation_evaluation": (
+    "3d_spleen_segmentation_evaluation": TutorialCopy(
+        "3D spleen segmentation evaluation",
         "Checking how accurately an existing spleen-outlining model traces the spleen on each participating "
-        "trust's abdominal CT scans, without retraining it."
+        "trust's abdominal CT scans, without retraining it.",
     ),
-    "arkplus_fine_tuning": (
+    "arkplus_fine_tuning": TutorialCopy(
+        "Ark+ fine-tuning",
         "Adapting the Ark+ chest X-ray foundation model to the participating trusts' own radiographs so it "
-        "recognises the chest conditions seen locally."
+        "recognises the chest conditions seen locally.",
     ),
-    "arkplus_baseline_classification_evaluation": (
+    "arkplus_baseline_classification_evaluation": TutorialCopy(
+        "Ark+ baseline classification evaluation",
         "Measuring how well the existing Ark+ chest X-ray model recognises chest conditions on each "
-        "participating trust's radiographs, without retraining it."
+        "participating trust's radiographs, without retraining it.",
     ),
-    "arkplus_multimodel_classification_evaluation": (
+    "arkplus_multimodel_classification_evaluation": TutorialCopy(
+        "Ark+ multi-model classification evaluation",
         "Comparing several existing Ark+ chest X-ray models on each participating trust's radiographs to "
-        "see which recognises chest conditions best, without retraining them."
+        "see which recognises chest conditions best, without retraining them.",
     ),
 }
 APP_DIR_NAMES = ("app", "app_files")
-FL_BACKEND_DISPLAY = {"flower": "Flower", "nvflare": "NVFLARE"}
+
+
+class TutorialInfo(NamedTuple):
+    """What the smoke infers about the tutorial under ``--model-files-dir``."""
+
+    dir: str
+    label: str
+    task: str
+
 
 # How long to wait for uploaded files to clear malware scanning (#52). The
 # scan runs server-side as a background task; tutorial-sized files finish in
@@ -138,41 +153,30 @@ def _log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def describe_tutorial(model_files_dir: Path) -> tuple[str, str, str | None]:
-    """Identify the tutorial an app directory belongs to, and the FL backend its path sits under.
+def describe_tutorial(model_files_dir: Path) -> TutorialInfo:
+    """Identify the tutorial an app directory belongs to.
 
-    The result drives the smoke's default project/model names and description, so a run is named
-    for what it actually trained rather than a hardcoded "Xrays".
+    The result drives the smoke's default project name, model name and description, so a run is
+    named for what it actually trained rather than a hardcoded "Xrays".
 
     Args:
         model_files_dir (Path): The ``--model-files-dir`` argument (``…/<tutorial>/app`` or ``app_files``).
 
     Returns:
-        tuple[str, str, str | None]: The tutorial directory name, its human-readable label, and
-        ``"flower"``/``"nvflare"`` when the path runs through a backend directory (None otherwise).
+        TutorialInfo: The tutorial directory name, its human-readable label, and its clinical task.
     """
     parts = list(model_files_dir.resolve().parts)
     tutorial_dirs = [part for part in parts if part not in APP_DIR_NAMES]
     tutorial_dir = tutorial_dirs[-1] if tutorial_dirs else model_files_dir.name
-    label = TUTORIAL_LABELS.get(tutorial_dir) or tutorial_dir.replace("_", " ").replace("-", " ").strip().capitalize()
-    backend = next((part for part in parts if part in FL_BACKEND_DISPLAY), None)
-    return tutorial_dir, label, backend
+    copy = TUTORIALS.get(tutorial_dir)
+    label = copy.label if copy else tutorial_dir.replace("_", " ").replace("-", " ").strip().capitalize()
+    task = copy.task if copy else f"Training the {label} application across the participating trusts' data."
+    return TutorialInfo(tutorial_dir, label, task)
 
 
 def default_project_name(label: str) -> str:
     """The default project name: the tutorial label plus an epoch so repeated runs stay distinct."""
     return f"{label} E2E smoke {int(time.time())}"
-
-
-def default_project_description(tutorial_dir: str, label: str) -> str:
-    """The default project description: the tutorial's clinical task in plain language.
-
-    Deliberately non-technical — the projects list is read by clinicians and reviewers, so it says
-    what the project is for, not which backend or harness produced it (that is in the name and logs).
-    """
-    return TUTORIAL_TASKS.get(
-        tutorial_dir, f"Training the {label} application across the participating trusts' data."
-    )
 
 
 def default_model_name(label: str) -> str:
@@ -299,6 +303,15 @@ def create_project_with_query(
         _post(client, "/projects", project_payload, headers), "create project"
     ).json()["id"]
     _log(f"  ✅ project_id={project_id}")
+    if not has_imaging:
+        # A hub predating FLIP#1071 ignores the unknown field and creates an imaging project; fail
+        # here rather than 20 minutes later on an image-pull wait that cannot succeed.
+        created = _ensure_ok(_get(client, f"/projects/{project_id}", headers), "read project").json()
+        if created.get("has_imaging", True):
+            raise SmokeFailure(
+                f"Hub ignored has_imaging=false for project {project_id} (it predates FLIP#1071): the project "
+                "was created WITH imaging — aborting rather than waiting for a pull that cannot succeed."
+            )
 
     _log("📝 Adding cohort query")
     add_resp = _ensure_ok(
@@ -1023,9 +1036,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    tutorial_dir, tutorial_label, _tutorial_backend = describe_tutorial(args.model_files_dir)
-    project_name = args.project_name or default_project_name(tutorial_label)
-    project_description = args.project_description or default_project_description(tutorial_dir, tutorial_label)
+    tutorial = describe_tutorial(args.model_files_dir)
+    project_name = args.project_name or default_project_name(tutorial.label)
+    # The description is the tutorial's clinical task in plain language: the projects list is read by
+    # clinicians and reviewers, so it says what the project is for, not which harness produced it.
+    project_description = args.project_description or tutorial.task
 
     if not args.query_file.exists():
         _log(f"❌ Query file not found: {args.query_file}")
@@ -1056,6 +1071,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.project_id:
             project_id = args.project_id
             _log(f"♻️  Reusing existing project_id={project_id} (skipping cohort + approval)")
+            if args.no_imaging or args.no_dicom_to_nifti:
+                _log("  ℹ️  --no-imaging / --no-dicom-to-nifti apply at creation only: the project is reused as created")
             trusts = _ensure_ok(_get(client, "/trust", headers), "list trusts").json()
             if not trusts:
                 raise SmokeFailure("No trusts registered with the hub")
@@ -1078,14 +1095,15 @@ def main(argv: list[str] | None = None) -> int:
         # surfaces model-creation / upload errors immediately instead of after
         # 5–15 minutes of XNAT pulling, and the FL pipeline only consumes the
         # images at training time anyway.
-        model_name = resolve_model_name(args.model_name or default_model_name(tutorial_label), args.abort_midway)
+        model_name = resolve_model_name(args.model_name or default_model_name(tutorial.label), args.abort_midway)
         model_id = create_model(client, headers, project_id, model_name)
         upload_files(client, headers, model_id, args.model_files_dir)
-        # Always wait for image pull, including on --project-id reuse: a prior
-        # run on this project may have left pulls in flight (aborted midway,
-        # failed, or simply queued back-to-back before the first pull finished),
-        # in which case skipping the wait here would have wait_for_model_advanced
-        # sit blocked on the (still pulling) FL clients until it times out.
+        # Wait for the image pull whenever the project has imaging — including on
+        # --project-id reuse: a prior run on this project may have left pulls in
+        # flight (aborted midway, failed, or simply queued back-to-back before the
+        # first pull finished), in which case skipping the wait here would have
+        # wait_for_model_advanced sit blocked on the (still pulling) FL clients
+        # until it times out.
         # A project created without imaging (FLIP#1071) dispatched nothing to XNAT, so there is
         # nothing to wait for — read the flag off the project so --project-id reuse honours it too.
         if project_has_imaging(client, headers, project_id):

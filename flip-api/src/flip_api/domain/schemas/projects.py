@@ -122,6 +122,7 @@ class ProjectDetails(BaseModel, from_attributes=True):
                 "name": "Cardiovascular Research Initiative",
                 "description": "A project to study cardiovascular diseases using federated learning.",
                 "users": ["05137965-8f5a-4752-b07f-d986289eac14", "ddde758d-d51e-4d50-bc3d-c639eb3775f0"],
+                "has_imaging": True,
             }
         }
     )

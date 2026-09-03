@@ -61,7 +61,11 @@ const stubs = {
         emits: ["update:modelValue"],
         template: "<input data-test='project-search' :value='modelValue' @input='$emit(\"update:modelValue\", $event.target.value)' />"
     },
-    AiPagination: { template: "<div />" },
+    AiPagination: {
+        // A single stubbed control that moves to page 2, so tests can see a filter reset the page.
+        template: "<button data-test='go-page-2' @click=\"$emit('page-update', 2)\" />",
+        emits: ["page-update"]
+    },
     CreateProjectModal: { template: "<div data-test='create-project-modal' />" },
     // The global test setup stubs router-link with an empty (no-slot) stub;
     // override it so project rows actually render their content.
@@ -633,8 +637,13 @@ describe("Projects Page", () => {
         await wrapper.vm.$nextTick();
         expect(capturedKey?.()).not.toContain("projectType");
 
+        // Move off page 1 first, so "resets to page 1" is observed rather than assumed.
+        await wrapper.find("[data-test='go-page-2']").trigger("click");
+        await vi.waitFor(() => expect(capturedKey?.()).toContain("pageNumber=2"));
+
         await wrapper.find("[data-test='type-filter-omop-only']").trigger("click");
         expect(wrapper.find("[data-test='type-filter-omop-only']").attributes("aria-selected")).toBe("true");
+        expect(wrapper.find("[data-test='type-filter-all']").attributes("aria-selected")).toBe("false");
         await vi.waitFor(() => expect(capturedKey?.()).toContain("projectType=omop_only"));
         expect(capturedKey?.()).toContain("pageNumber=1");
 

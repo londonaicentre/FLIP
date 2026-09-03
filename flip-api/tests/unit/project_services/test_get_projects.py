@@ -447,27 +447,24 @@ def test_get_projects_paginated_orm_picks_latest_audit_per_project(user_id):
 
 
 def test_get_projects_paginated_orm_applies_project_type_filter(user_id):
-    """FLIP#1071: ``projectType`` narrows the WHERE clause on ``has_imaging``; absent, it adds nothing."""
+    """FLIP#1071: ``projectType`` narrows the WHERE clause on ``has_imaging`` — with the right polarity."""
     session = MagicMock(spec=Session)
     session.exec.return_value.all.return_value = []
     session.exec.return_value.one_or_none.return_value = None
 
-    get_projects_paginated_orm(
-        session=session,
-        user_id=user_id,
-        paging_details=paging_details,
-        filter_details=get_filter_details({"projectType": "omop_only"}),
-    )
-    # The SELECT list always names the column, so look at the WHERE clause only.
-    filtered_where = re.split(r"\swhere\s", str(session.exec.call_args_list[0].args[0].compile()).lower(), 1)[1]
-    assert "has_imaging is" in filtered_where
+    def where_clause_for(project_type: str | None) -> str:
+        session.exec.reset_mock()
+        params: dict[str, str | uuid.UUID] = {"projectType": project_type} if project_type else {}
+        get_projects_paginated_orm(
+            session=session,
+            user_id=user_id,
+            paging_details=paging_details,
+            filter_details=get_filter_details(params),
+        )
+        # The SELECT list always names the column, so look at the WHERE clause only.
+        compiled = str(session.exec.call_args_list[0].args[0].compile()).lower()
+        return re.split(r"\swhere\s", compiled, maxsplit=1)[1]
 
-    session.exec.reset_mock()
-    get_projects_paginated_orm(
-        session=session,
-        user_id=user_id,
-        paging_details=paging_details,
-        filter_details=get_filter_details(),
-    )
-    unfiltered_where = re.split(r"\swhere\s", str(session.exec.call_args_list[0].args[0].compile()).lower(), 1)[1]
-    assert "has_imaging" not in unfiltered_where
+    assert "has_imaging is false" in where_clause_for("omop_only")
+    assert "has_imaging is true" in where_clause_for("imaging")
+    assert "has_imaging" not in where_clause_for(None)

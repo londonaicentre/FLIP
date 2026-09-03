@@ -167,7 +167,7 @@
             :project-unstaged="isProjectUnstaged() && !isViewer"
             :description="project.description"
             :dicom-to-nifti="project.dicom_to_nifti ?? true"
-            :has-imaging="project.has_imaging ?? true"
+            :has-imaging="projectHasImaging(project)"
             :updating="projectUpdating"
             :owner-id="project.ownerId"
             @close="closeEditProjectDrawer"
@@ -194,6 +194,7 @@ import LifecycleTrack from "@/partials/projects/LifecycleTrack.vue";
 import ProjectApproval from "@/partials/projects/ProjectApproval.vue";
 import ProjectStaging from "@/partials/projects/ProjectStaging.vue";
 import ProjectStatus from "@/partials/projects/ProjectStatus.vue";
+import { projectHasImaging } from "@/partials/projects/projectType";
 import { approveProject, editProject, stageProject as stageProjectWithTrusts, unstageProject } from "@/services/project-service";
 import { useAuthStore, UserPermissions } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
@@ -273,7 +274,7 @@ const unstageProjectPermissions: UserPermissions[] = ["CanUnstageProjects"];
 const { isViewer, canCreateProjects } = usePermissions();
 
 // Creation-time flag (FLIP#1071). Absent on a hub predating it, which means imaging.
-const hasImaging = computed(() => project.value?.has_imaging ?? true);
+const hasImaging = computed(() => (project.value ? projectHasImaging(project.value) : true));
 
 const projectApproved = computed(() => {
     return project?.value?.status === "APPROVED";

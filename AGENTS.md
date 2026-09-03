@@ -221,9 +221,9 @@ off (`has_imaging=false`, creation-time and immutable like `dicom_to_nifti`) is 
 CREATE_IMAGING fan-out: no XNAT project, no accession-ids call, no pull, and `GET /projects/{id}/image/status`
 returns `200 []`. `make e2e_smoke EXTRA_ARGS="--no-imaging"` creates the project with the flag off and skips
 the image-pull wait; the smoke reads `has_imaging` back off the project, so `--project-id` reuse honours it
-too. A tutorial-specific variant target pins the flag through `TARGET_ARGS`, the third recipe slot after
-`ENRICHMENT_ARGS`, for the same reason enrichment does not use `EXTRA_ARGS` — a command-line `EXTRA_ARGS`
-cannot clobber it. Imaging projects get fast feedback instead: submitting a cohort whose explicit SELECT list
+too. A tutorial-specific variant target pins the flag through `TARGET_ARGS`, a third recipe slot placed
+between `ENRICHMENT_ARGS` and `EXTRA_ARGS`, for the same reason enrichment does not use `EXTRA_ARGS` — a
+command-line `EXTRA_ARGS` cannot clobber it. Imaging projects get fast feedback instead: submitting a cohort whose explicit SELECT list
 has no `accession_id` column is a 400 at submission (hub pre-check, not a security control — `SELECT *` passes
 through to the trust's authoritative check).
 

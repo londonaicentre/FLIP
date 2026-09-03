@@ -92,6 +92,14 @@ async def approve_project_step_function_endpoint(
         )
         logger.debug(f"Starting approval for project {project_id} with trusts: {trust_ids}")
 
+        # FLIP#1071: read the project's kind before approval commits, so the fan-out decision below
+        # needs no post-commit round-trip (a DB blip there would report "failed to approve" on a
+        # project that IS approved). A missing row is loud — approve_project would reject it anyway.
+        project = get_project_by_id(project_id, db)
+        if project is None:
+            raise HTTPException(status_code=404, detail=f"Project with ID: {project_id} not found.")
+        has_imaging = project.has_imaging
+
         # Step 1: Approve Project
         logger.info(f"Approving project with ID: {project_id}")
         trusts = approve_project_endpoint(project_id=project_id, payload=payload, user_id=user_id, db=db)
@@ -102,11 +110,11 @@ async def approve_project_step_function_endpoint(
             logger.warning("No trusts found for project")
             return {"message": "Project approved but no trusts to process"}
 
-        # FLIP#1071: the ONE enforcement point for tabular-only projects. The project is approved
-        # above exactly as before; what changes is that no CREATE_IMAGING task is dispatched, so no
-        # trust creates an XNAT project or calls the accession-ids route. The flag never leaves the hub.
-        project = get_project_by_id(project_id, db)
-        if project is not None and not project.has_imaging:
+        # FLIP#1071: the only place the hub decides what it dispatches for a tabular-only project. The
+        # project is approved above exactly as before; what changes is that no CREATE_IMAGING task is
+        # queued, so no trust creates an XNAT project or calls the accession-ids route — the flag is
+        # never sent to a trust.
+        if not has_imaging:
             logger.info(f"Project {project_id} has no imaging: skipping the imaging fan-out to {len(trusts)} trust(s)")
             return {
                 "message": "Project approved; imaging stage skipped (project has no imaging)",

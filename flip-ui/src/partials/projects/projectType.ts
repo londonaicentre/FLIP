@@ -11,14 +11,20 @@
 
 import { IProject } from "@/services/project-service";
 
-// Project-type vocabulary (FLIP#1071, design handoff "Non-Imaging Project Page"). Both kinds are
-// named — imaging projects use structured data too, so "Structured data" was rejected in review.
+// Project-type vocabulary (FLIP#1071). Both kinds are named: imaging projects use OMOP data too,
+// so "Structured data" alone would misdescribe them.
 export const IMAGING_LABEL = "Imaging + OMOP";
 export const OMOP_ONLY_LABEL = "OMOP only";
 
-// The list's Type segmented filter; "all" sends no query parameter, the others map onto the
-// hub's `projectType=` filter verbatim.
-export type ProjectTypeFilter = "all" | "imaging" | "omop_only";
+// The hub's `projectType=` wire vocabulary (`ProjectType` in flip-api), and the list's Type
+// segmented filter on top of it — "all" is UI-only and sends no query parameter.
+export type ProjectTypeParam = "imaging" | "omop_only";
+export type ProjectTypeFilter = "all" | ProjectTypeParam;
+// DOM ids (data-test hooks, option keys) for the same two kinds.
+export type ProjectTypeId = "imaging" | "omop-only";
 
 // `has_imaging` is absent on a hub predating the flag, which means imaging (the old behaviour).
+// Every "absent means imaging" decision in the UI goes through here.
 export const projectHasImaging = (project: Pick<IProject, "has_imaging">): boolean => project.has_imaging ?? true;
+
+export const projectTypeId = (hasImaging: boolean): ProjectTypeId => (hasImaging ? "imaging" : "omop-only");

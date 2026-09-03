@@ -288,8 +288,8 @@ const closeDrawer = () => {
 
 const updateProject = (values: unknown) => {
     // Only name/description are editable; users comes from the ProjectUsers
-    // child. dicom_to_nifti is intentionally excluded — it's read-only and
-    // immutable after creation (the edit endpoint ignores it regardless).
+    // child. dicom_to_nifti and has_imaging are intentionally excluded — both are
+    // read-only, fixed at creation (the edit endpoint ignores them regardless).
     const { name, description } = values as IEditProject;
 
     emit("save", {

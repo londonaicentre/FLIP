@@ -80,6 +80,15 @@ async def start_project_imaging_creation(
             logger.error(error_message)
             raise HTTPException(status_code=404, detail=error_message)
 
+        # FLIP#1071: a project created without imaging has no imaging stage. Refuse here too, so a
+        # direct call cannot create XNAT projects and queue pulls that the UI never shows (the
+        # status route returns [] for such projects).
+        if not project.has_imaging:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Project {project_id} was created without imaging; there is no imaging stage to start.",
+            )
+
         # Get project users
         user_pool_id = get_user_pool_id(request)
         users_with_access = [uid for uid in get_users_with_access(project_id, db)]
