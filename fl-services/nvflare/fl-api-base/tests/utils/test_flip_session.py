@@ -126,6 +126,27 @@ def test_do_command_retries_once_on_no_connection(session):
     assert result == "ok"
 
 
+def test_try_connect_sets_connected(session):
+    """✅ try_connect success flips _connected True; is_connected reflects it."""
+    assert session.is_connected is True  # fixture starts connected
+    session._connected = False
+    with patch("nvflare.fuel.flare_api.flare_api.Session.try_connect", return_value=None):
+        session.try_connect(timeout=5.0)
+    assert session.is_connected is True
+
+
+def test_try_connect_leaves_disconnected_on_failure(session):
+    """✅ try_connect failure leaves _connected False ("currently connected", not "ever")."""
+    session._connected = True
+    with patch(
+        "nvflare.fuel.flare_api.flare_api.Session.try_connect",
+        side_effect=NoConnection("cannot connect to server"),
+    ):
+        with pytest.raises(NoConnection):
+            session.try_connect(timeout=5.0)
+    assert session.is_connected is False
+
+
 def test_check_server_status_reports_stopped_when_unreachable(session):
     with patch.object(session, "get_system_info", side_effect=NoConnection("cannot connect to server")):
         out = session.check_server_status()
