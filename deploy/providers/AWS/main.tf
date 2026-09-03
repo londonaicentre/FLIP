@@ -297,11 +297,13 @@ module "flip_api_secret" {
 # Fargate and use the task roles in iam_ecs.tf; the bastion needs no access to
 # application secrets, buckets, Cognito, SES, or CloudWatch Logs.
 module "ec2_role" {
-  source                = "terraform-aws-modules/iam/aws//modules/iam-assumable-role"
-  version               = "~> 5.0"
-  role_name             = "ec2-role"
-  create_role           = "true"
-  trusted_role_services = ["ec2.amazonaws.com"]
+  source      = "terraform-aws-modules/iam/aws//modules/iam-assumable-role"
+  version     = "~> 5.0"
+  role_name   = "ec2-role"
+  create_role = "true"
+  # FLIP#962: the CI apply role may only create a boundary-carrying role.
+  role_permissions_boundary_arn = local.iam_permissions_boundary_arn
+  trusted_role_services         = ["ec2.amazonaws.com"]
   custom_role_policy_arns = [
     "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
   ]
@@ -340,11 +342,13 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 #      pattern to AWS-hosted trusts would remove S3 entirely from the Trust
 #      role's blast radius.
 module "trust_ec2_role" {
-  source                = "terraform-aws-modules/iam/aws//modules/iam-assumable-role"
-  version               = "~> 5.0"
-  role_name             = "trust-ec2-role"
-  create_role           = "true"
-  trusted_role_services = ["ec2.amazonaws.com"]
+  source      = "terraform-aws-modules/iam/aws//modules/iam-assumable-role"
+  version     = "~> 5.0"
+  role_name   = "trust-ec2-role"
+  create_role = "true"
+  # FLIP#962: the CI apply role may only create a boundary-carrying role.
+  role_permissions_boundary_arn = local.iam_permissions_boundary_arn
+  trusted_role_services         = ["ec2.amazonaws.com"]
   custom_role_policy_arns = [
     "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
     "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",

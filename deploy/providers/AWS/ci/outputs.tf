@@ -40,6 +40,21 @@ output "expected_oidc_sub" {
   value       = local.oidc_sub
 }
 
+# The FLIP root composes this ARN itself, from the account ID and
+# `var.iam_permissions_boundary_name`, rather than reading it from here — the two
+# roots share no state. Printed so a mismatch is visible without an AWS call:
+# if this does not equal what `terraform console` in ../ reports for
+# `local.iam_permissions_boundary_arn`, every apply that creates a role fails.
+output "permissions_boundary_arn" {
+  description = "Permissions boundary every role the FLIP root creates must carry."
+  value       = aws_iam_policy.apply_boundary.arn
+}
+
+output "expected_drift_job_workflow_ref" {
+  description = "The job_workflow_ref the nightly drift run must present — the branch it is loaded from, not the apply branch."
+  value       = "${local.workflow_ref_prefix}/${var.drift_workflow_file}@refs/heads/${var.drift_branch}"
+}
+
 output "expected_apply_job_workflow_ref" {
   description = "The job_workflow_ref claim the apply role requires — exactly this workflow file at exactly this ref."
   value       = local.apply_workflow_ref

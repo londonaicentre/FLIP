@@ -5,8 +5,12 @@ per AWS account:
 
 | Role | Assumed by | Permissions |
 | --- | --- | --- |
-| `AICentre-FLIPTerraformPlanRole` | PR plans, nightly drift | `ReadOnlyAccess`, plus an explicit `Deny` on state writes |
-| `AICentre-FLIPTerraformApplyRole` | Applies on the environment's branch | `PowerUserAccess`, the IAM actions `iam_ecs.tf` needs, state read/write — and an explicit `Deny` on changing either CI role |
+| `AICentre-FLIPTerraformPlanRole` | PR plans (stag only), nightly drift | `ReadOnlyAccess`, plus an explicit `Deny` on every write to the state bucket |
+| `AICentre-FLIPTerraformApplyRole` | Applies on the environment's branch | `PowerUserAccess`, plus IAM write bounded four ways (below) |
+
+There is also a third object: `AICentre-FLIPTerraformBoundary`, the permissions
+boundary. It is declared here and *carried* by every IAM role the FLIP root owns
+(`iam_permissions_boundary_name` in `../variables.tf`).
 
 ## Applying
 
@@ -19,6 +23,15 @@ apply that would fix it.
 make init && make plan && make apply                          # stag
 make init PROD=true && make plan PROD=true && make apply PROD=true   # prod
 ```
+
+**Order matters when the boundary is introduced or renamed.** `iam:PutRolePolicy`
+and `iam:AttachRolePolicy` are conditioned on the *target role's current*
+boundary, so a role that does not yet carry one cannot be given an inline policy
+by the pipeline. Terraform gets this right on its own — `aws_iam_role_policy`
+depends on the role, so `PutRolePermissionsBoundary` runs first — but it means the
+first apply after this change must be run somewhere it can be watched, and that
+`make -C ci apply` has to land in each account **before** an apply that creates a
+new role there.
 
 `make output` prints the two ARNs and the OIDC claims they expect. Put the ARNs
 on the matching GitHub environment (`aws-stag` / `aws-prod`) as the variables
@@ -47,13 +60,34 @@ So:
 - the apply role requires **exactly** `…/terraform_apply.yml@refs/heads/main`
   (prod) or `@refs/heads/develop` (stag) — a PR editing the apply workflow is
   denied, which is what makes automatic apply on merge safe to switch on;
-- the plan role accepts `terraform_plan.yml@refs/pull/*/merge`,
-  `terraform_plan.yml@refs/heads/<branch>` and
-  `terraform_drift.yml@refs/heads/<branch>`, and can only read.
+- the plan role accepts exactly two shapes, and only the ones a run can actually
+  present:
+  - `terraform_plan.yml@refs/pull/*/merge` — **staging only**. `terraform_plan.yml`
+    declares `environment: aws-stag` unconditionally, so no pull request can reach
+    the production plan role; listing the merge-ref pattern there would be dead
+    weight that reads like a permission.
+  - `terraform_drift.yml@refs/heads/${drift_branch}` — the nightly run.
+
+`terraform_plan.yml@refs/heads/<branch>` is deliberately absent: that workflow has
+no push trigger, so no run can present it.
+
+**`drift_branch` is not `apply_branch`, and conflating them breaks prod drift.**
+`job_workflow_ref` names the branch the workflow *file was loaded from*. GitHub
+only fires a `schedule` from the repository default branch, so a scheduled run
+always presents `@refs/heads/develop` whatever environment it targets. Deriving
+the drift entry from `apply_branch` therefore left the production drift job
+presenting `@refs/heads/develop` against a policy trusting `@refs/heads/main`, and
+it could assume nothing at all. Production sets `drift_branch = main` and the
+workflow earns it: the develop-scheduled run dispatches
+`terraform_drift.yml --ref main`, and the production leg runs from there.
 
 The environment's own deployment branch policy is a second, independent control
-on the same thing. Keep `aws-prod` restricted to `main` (plus the default branch,
-so the nightly drift job can plan); `aws-stag` must stay open so PRs can plan.
+on the same thing, and it is the one that gates the *secrets* rather than AWS.
+Keep `aws-prod` restricted to **`main` alone** — a GitHub environment's secrets
+are readable by any workflow that names the environment and runs on an admitted
+branch, before it makes any AWS call, so admitting the default branch would hand
+the production secrets to every workflow merged to develop. `aws-stag` must stay
+open so PRs can plan; that exposure is recorded in `../README.md`.
 
 ## Debugging an AssumeRole denial
 
@@ -79,14 +113,27 @@ name and branch match the pinned `job_workflow_ref` exactly.
   cross-account chain. The LZA management role trusts `repo:${org}/${repo}:*`
   with `AdministratorAccess`; adding FLIP to it would grant org-wide admin to
   every branch of a public repository.
-- `ReadOnlyAccess` on the plan role does let it read every S3 object in the
-  account, state included. That is not incidental: `terraform plan` cannot run
-  without reading state, and state holds `AES_KEY_BASE64` and the DB credentials
-  either way. The containment is that the role cannot write.
+- `ReadOnlyAccess` on the plan role is a one-hour read session over the whole
+  account, not just the four inputs the plan needs: state, the Cognito user list,
+  CloudWatch log groups, every ECS task definition and its environment. That is
+  not incidental — `terraform plan` cannot run without reading state, and state
+  holds `AES_KEY_BASE64` and the internal service key in the clear either way.
+  The containment is that the role cannot write anything.
+
+  It does **not** extend to the KMS-encrypted buckets (model files, FL
+  participant kits, FL results). `ReadOnlyAccess` carries no `kms:Decrypt`, and
+  the grant added here is pinned by a `kms:ViaService` condition to Secrets
+  Manager in one region — so a `GetObject` on those buckets fails at the KMS step.
+  It is worth being precise in both directions: the read surface is wider than
+  four secrets, and narrower than "every S3 object".
 - For the LZA cutover (#749): apply this root into the new account and repoint
   `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN` / `FLIP_TFSTATE_BUCKET_NAME` on the
   GitHub environment. No workflow change — no account ID or ARN is hard-coded in
-  workflow YAML.
+  workflow YAML. Two *scripts* do default the state bucket to
+  `flip-terraform-state-<env>`, which the cutover keeps; if a new account ever
+  uses another name, override it (`CI_STATE_BUCKET=` for
+  `scripts/setup-github-environments.sh`, `--bucket` for
+  `scripts/reconcile_ci_env.py`).
 
 ## The plan role reads one secret, on purpose
 
@@ -108,6 +155,37 @@ through Secrets Manager in this region, and only `FLIP_API` is readable.
 It does not widen what the role can see: planning requires reading the state
 object, and state already stores the same `AES_KEY_BASE64` and internal service
 key in clear. The role still cannot write anything.
+
+## What bounds the apply role
+
+`PowerUserAccess` is everything except IAM, and the FLIP root owns IAM roles
+(`iam_ecs.tf`, `rds_proxy.tf`, `security.tf`, and the two EC2 roles in `main.tf`),
+so the apply role needs IAM write. Four separate limits keep that from being
+`AdministratorAccess` under another name:
+
+1. **A permissions boundary.** `iam:CreateRole` and `iam:PutRolePolicy` are
+   granted only under an `iam:PermissionsBoundary` condition naming
+   `AICentre-FLIPTerraformBoundary`, so a role the pipeline mints is capped at
+   what the pipeline itself holds and can never be given IAM write.
+2. **A managed-policy allowlist.** `iam:AttachRolePolicy` additionally carries an
+   `iam:PolicyARN` condition naming the three AWS-managed policies this root
+   actually attaches, so `AttachRolePolicy AdministratorAccess` is denied.
+3. **Scoped escalation primitives.** `iam:PassRole` and
+   `iam:UpdateAssumeRolePolicy` — the two verbs that make a role usable by
+   something else — are restricted to the eight roles the FLIP root owns, all of
+   which have literal names (`var.managed_role_names`).
+4. **Two Denies.** One on both CI roles, so an apply cannot re-trust or re-permit
+   itself; one on the boundary policy, so it cannot raise its own ceiling.
+
+**What this still does not prevent, stated plainly rather than claimed away:** an
+apply can create a role that trusts an external principal and give it everything
+under the boundary — roughly PowerUser. It cannot exceed itself, but it can lend
+itself out. The control for that is the same one that authorises the apply at
+all: review on the environment's branch, plus the trust policy pinning
+`job_workflow_ref` to `terraform_apply.yml` at that branch. Adding a role to the
+FLIP root means adding its name to `var.managed_role_names` and re-applying this
+root from a laptop *first* — deliberate coupling, so a human is in the loop on
+every new principal the pipeline can hand to a service.
 
 **Re-apply this root after pulling a change to it** — `make -C ci apply` for
 stag, `make -C ci apply PROD=true` for prod. The roles are not managed by the

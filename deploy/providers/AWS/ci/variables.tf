@@ -56,6 +56,25 @@ variable "apply_branch" {
   type        = string
 }
 
+# The branch the *drift* workflow is loaded from, which is NOT `apply_branch`.
+#
+# GitHub only ever fires a `schedule` from the repository's default branch, so a
+# scheduled job presents `terraform_drift.yml@refs/heads/<default branch>`
+# whatever environment it targets. Deriving this from `apply_branch` is how the
+# prod drift job silently stopped being able to assume anything: it presented
+# `@refs/heads/develop` against a policy trusting `@refs/heads/main` only.
+#
+# Production sets this to `main` for a different reason than apply does: the
+# nightly run on the default branch re-dispatches terraform_drift.yml onto
+# `main` (see the workflow), so that `aws-prod` need not admit the default
+# branch in its deployment branch policy. The two values coincide; the reasons
+# do not, which is why this is its own variable.
+variable "drift_branch" {
+  description = "Branch the drift workflow is loaded from (the repo default branch, unless the job is re-dispatched)."
+  type        = string
+  default     = "develop"
+}
+
 variable "state_bucket_name" {
   description = "S3 bucket holding this environment's Terraform state."
   type        = string
@@ -95,6 +114,56 @@ variable "flip_api_secret_name" {
   EOT
   type        = string
   default     = "FLIP_API"
+}
+
+# Every IAM role the FLIP root manages, by literal name. All of them are named
+# rather than generated, which is what makes it possible to scope the escalation
+# primitives — iam:PassRole and iam:UpdateAssumeRolePolicy — to a list instead of
+# granting them on "*".
+#
+# Adding a role to the FLIP root therefore means adding it here and re-applying
+# this root from a laptop first, or the apply that creates it cannot pass or
+# re-trust it. That coupling is deliberate: it puts a human in the loop on every
+# new principal the pipeline can hand to a service.
+variable "managed_role_names" {
+  description = "Names of the IAM roles the FLIP root owns, which an apply may pass and re-trust."
+  type        = list(string)
+  default = [
+    # iam_ecs.tf
+    "ecs-task-execution-role",
+    "ecs-flip-api-task-role",
+    "ecs-fl-api-task-role",
+    "ecs-fl-server-task-role",
+    # rds_proxy.tf
+    "flip-rds-proxy-role",
+    # security.tf
+    "flip-sg-drift-lambda-role",
+    # main.tf, via terraform-aws-modules/iam//modules/iam-assumable-role
+    "ec2-role",
+    "trust-ec2-role",
+  ]
+}
+
+# The only AWS-managed policies the FLIP root attaches to anything. Bound to
+# iam:AttachRolePolicy as an iam:PolicyARN condition, so an apply cannot attach
+# AdministratorAccess (or anything else) to a role it has just created.
+variable "attachable_managed_policies" {
+  description = "AWS-managed policy names (path included) an apply may attach to a role."
+  type        = list(string)
+  default = [
+    "service-role/AmazonECSTaskExecutionRolePolicy", # iam_ecs.tf, execution role
+    "AmazonSSMManagedInstanceCore",                  # main.tf, both EC2 roles
+    "CloudWatchAgentServerPolicy",                   # main.tf, trust EC2 role
+  ]
+}
+
+# The permissions boundary every role an apply creates must carry. Declared in
+# this root (laptop-applied) and referenced by name from the FLIP root, which
+# sets it on each of its roles — see `iam_permissions_boundary_name` there.
+variable "permissions_boundary_name" {
+  description = "Name of the managed policy used as the permissions boundary on roles the pipeline creates."
+  type        = string
+  default     = "AICentre-FLIPTerraformBoundary"
 }
 
 variable "tags" {

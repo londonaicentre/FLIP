@@ -18,16 +18,30 @@
 #     make init && make plan && make apply             # stag account
 #     make init PROD=true && make plan PROD=true ...   # prod account
 
+# DRIFT_BRANCH is the branch terraform_drift.yml is *loaded from*, and is a
+# separate axis from APPLY_BRANCH even where the two happen to agree.
+#
+#   stag  develop — the schedule fires on the repository default branch.
+#   prod  main    — the scheduled run on the default branch re-dispatches the
+#                   workflow onto main (`gh workflow run … --ref main`), so the
+#                   aws-prod environment does not have to admit develop and hand
+#                   the production secrets to every workflow on it.
+#
+# Deriving this from APPLY_BRANCH is what left the production drift job unable to
+# assume the plan role: it presented `terraform_drift.yml@refs/heads/develop`
+# against a policy trusting `@refs/heads/main`.
 ifeq ($(PROD),true)
 MAIN_ENV_FILE = ../../../../.env.production
 TF_ENVIRONMENT = prod
 APPLY_BRANCH = main
+DRIFT_BRANCH = main
 GITHUB_ENVIRONMENT = aws-prod
 else
 PROD = stag
 MAIN_ENV_FILE = ../../../../.env.stag
 TF_ENVIRONMENT = stag
 APPLY_BRANCH = develop
+DRIFT_BRANCH = develop
 GITHUB_ENVIRONMENT = aws-stag
 endif
 
@@ -64,6 +78,7 @@ endif
 export TF_VAR_AWS_REGION = $(AWS_REGION)
 export TF_VAR_environment = $(TF_ENVIRONMENT)
 export TF_VAR_apply_branch = $(APPLY_BRANCH)
+export TF_VAR_drift_branch = $(DRIFT_BRANCH)
 export TF_VAR_github_environment = $(GITHUB_ENVIRONMENT)
 export TF_VAR_state_bucket_name = $(FLIP_TFSTATE_BUCKET_NAME)
 
