@@ -425,16 +425,31 @@ def test_trust_makefile_exports_the_artifacts_bucket_to_the_xnat_sub_make() -> N
     The seed and the probe target are delivered as a wrapper makefile on stdin (``-f -``)
     rather than through ``--eval``, which GNU Make only grew in 3.82: macOS ships 3.81, where
     ``--eval`` is rejected as an unrecognized option and the probe prints nothing — the test
-    then failed on every Mac while passing in CI. The wrapper is equivalent: an ``include``d
-    assignment is no more auto-exported than an ``--eval``'d one, so the value can still only
-    reach the sub-make environment through the ``export`` directive under test.
+    then failed on every Mac while passing in CI. An ``-f``'d assignment is no more auto-exported
+    than an ``--eval``'d one, so the value can still only reach the sub-make environment through
+    the ``export`` directive under test.
+
+    **The ``-f`` order is load-bearing.** ``trust/Makefile`` derives
+    ``MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))`` and resolves
+    ``FL_PROVISIONED_DIR`` against it. Make materialises a stdin makefile as a temp file, so
+    passing the wrapper first (``-f -`` alone, with the real makefile pulled in by an ``include``)
+    puts ``/tmp/GmXXXXXX`` at the head of ``MAKEFILE_LIST``; ``MAKEFILE_DIR`` becomes ``/tmp/`` and
+    ``FL_PROVISIONED_DIR`` resolves against ``/`` — measured as
+    ``/fl-services/nvflare/provision/workspace-dev``. ``--eval`` left ``MAKEFILE_LIST`` untouched,
+    so this is the one axis on which the two are *not* equivalent, and the harness was parsing
+    ``trust/Makefile`` in a state no real invocation produces. Passing the real makefile first and
+    the wrapper second keeps ``$(firstword …)`` as ``Makefile`` and ``MAKEFILE_DIR`` correct. The
+    wrapper must then NOT ``include Makefile`` itself, or make reads it twice and emits an
+    "overriding recipe for target" warning per duplicated rule (29 of them, measured).
+
+    Reading the wrapper second also flips which assignment wins: its seed is parsed after the
+    ``-include``d env file, so ``probe-bucket`` now wins on a configured checkout too. The
+    assertion stays on *presence* rather than the value, so it proves the same thing either way.
     """
-    # `include Makefile` resolves against trust/ because of `-C trust`.
     probe_makefile = (
-        # Seeds a value for the CI case, where no env file supplies one. On a configured
-        # checkout the env file's real value arrives instead — either proves the export.
+        # Seeds a value for the CI case, where no env file supplies one. Read after the real
+        # makefile, so this seed wins; presence is what is asserted, so either value proves it.
         "FLIP_ARTIFACTS_BUCKET_NAME = probe-bucket\n"
-        "include Makefile\n"
         "__probe: ; @printenv FLIP_ARTIFACTS_BUCKET_NAME || echo NOT-EXPORTED\n"
     )
     result = subprocess.run(
@@ -442,6 +457,10 @@ def test_trust_makefile_exports_the_artifacts_bucket_to_the_xnat_sub_make() -> N
             "make",
             "-C",
             "trust",
+            # Real makefile first so MAKEFILE_DIR points at trust/; wrapper second so its seed
+            # still wins. See the docstring — the order is not cosmetic.
+            "-f",
+            "Makefile",
             "-f",
             "-",
             # deploy/fl_backend.mk hard-fails on an unset backend, and a CI checkout has no
