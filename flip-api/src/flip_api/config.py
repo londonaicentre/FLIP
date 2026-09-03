@@ -61,11 +61,16 @@ class Settings(BaseSettings):
 
     # Local directory holding the base FL application templates (the repo's fl-apps/ tree),
     # baked into the flip-api image and bind-mounted in dev. The bundler walks
-    # <FL_APP_BASE_DIR>/<backend>/<job_type>/ and uploads those files into
+    # <FL_APP_BASE_DIR>/<backend>/<job_type>/ and uploads into
     # FL_APP_DESTINATION_BUCKET/<model_id>; the per-backend required_files.json manifest is
     # read from <FL_APP_BASE_DIR>/<backend>/required_files.json. Defaults to the baked-in
     # image path; override to mount operator-provided templates. Replaces the former
     # FL_APP_BASE_BUCKET S3 dependency (FLIP#724).
+    #
+    # That walk is an allowlist, not a mirror (FLIP#1008): the bundle is the backend's app
+    # folder(s) plus its single root file, and everything else in the template directory is
+    # excluded and listed at debug level. An operator pointing this at their own template tree
+    # should know it fails closed — an unrecognised file is dropped, not shipped.
     FL_APP_BASE_DIR: str = "/app/fl-apps"
 
     # Hard cap on model-file uploads. Bound on the presigned POST policy so
