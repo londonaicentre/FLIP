@@ -45,7 +45,8 @@ MOCK_USER_ID = uuid4()
 MOCK_PROJECT_ID = uuid4()
 MOCK_QUERY_ID = uuid4()
 MOCK_QUERY_STRING = "SELECT * FROM studies WHERE modality='MRI'"
-MOCK_ENCODED_QUERY = "U0VMRUNUICogRlJPTSBzdHVkaWVzIFdIRVJFIG1vZGFsaXR5PSdNUkkn"  # base64 of MOCK_QUERY_STRING  # pragma: allowlist secret
+# pragma: allowlist nextline secret
+MOCK_ENCODED_QUERY = "U0VMRUNUICogRlJPTSBzdHVkaWVzIFdIRVJFIG1vZGFsaXR5PSdNUkkn"  # base64 of MOCK_QUERY_STRING
 
 # Mock for project_response.query
 mock_project_query_obj = DbQueries(id=MOCK_QUERY_ID, query=MOCK_QUERY_STRING, project_id=MOCK_PROJECT_ID)
