@@ -251,9 +251,14 @@ runs old images otherwise): `docker exec deploy-fl-api-net-1-1 cat fl_api/utils/
 The NVFLARE tutorials live in `fl-tutorials/` and are all **Client-API** apps (the legacy Executor
 tutorials, templates and their Docker `testing/` harness are removed; the pre-rename `*_client_api`
 job-type names survive only as accepted aliases for models created before the rename). Each tutorial carries a `.env.app` and a `job.py` driving a FLIP recipe;
-`make run` delegates to `make sim`, which runs the NVFLARE simulator (SimEnv) in the flip-utils venv
-with the `full` ML extra (needs a GPU; per-tutorial `make export` builds the full job config with no
-GPU). From the repo root:
+`make run` delegates to `make sim` — a pure alias, kept because the auto-discovering harness
+hardcodes `make run`; `sim` is the real target and runs the NVFLARE simulator (SimEnv) in the
+flip-utils venv with the `full` ML extra. **The GPU requirement is per-tutorial, not universal** —
+each tutorial's Makefile states its own ("requires GPU + data" for the imaging ones, but
+`tabular_classification/ehr_risk_prediction` says "CPU is enough", its model being a ~350-parameter
+MLP, so that tutorial's full SimEnv run needs no GPU, no containers and no platform). Per-tutorial
+`make export` builds the full job config with no GPU and no data at all, which is also how you
+inspect the rendered `config_fed_client.json` a trust would receive. From the repo root:
 
 ```bash
 make -C fl-tutorials list-tutorials
