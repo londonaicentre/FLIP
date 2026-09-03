@@ -92,6 +92,11 @@ def get_projects_paginated_orm(
     if filter_owner_id:
         base_conditions.append(Projects.owner_id == filter_owner_id)
 
+    # Project-type filter (FLIP#1071): imaging projects vs tabular-only ones.
+    if filter_details.project_type is not None:
+        wants_imaging = filter_details.project_type == "imaging"
+        base_conditions.append(Projects.has_imaging.is_(wants_imaging))  # type: ignore[attr-defined]
+
     # User access condition (user can see projects they own or have access to)
     if user_id:
         user_access_condition = or_(
@@ -148,6 +153,7 @@ def get_projects_paginated_orm(
             creation_timestamp=project.creation_timestamp.isoformat(timespec="milliseconds") + "Z",
             staged_at=staged_at_by_project.get(project.id),
             status=project.status,
+            has_imaging=project.has_imaging,
             approved_trusts=trusts_by_project.get(project.id, []),
             query=queries_by_project.get(project.id),
         )  # type: ignore[call-arg]

@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import re
 import uuid
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -58,6 +59,7 @@ def test_get_projects_paginated_orm_some_results(user_id):
         owner_id=user_id,
         status=ProjectStatus.APPROVED,
         creation_timestamp=datetime.utcnow(),
+        has_imaging=False,  # FLIP#1071: a tabular-only project
     )
     # get_projects_paginated_orm fires six SELECTs when projects exist:
     # projects (LEFT-joined to UserProfile so owner_name comes back in
@@ -94,6 +96,8 @@ def test_get_projects_paginated_orm_some_results(user_id):
 
     assert len(project_response.data) == 2
     assert project_response.total_rows == 2
+    # The list carries the type so the UI can render the chip + filter without a per-row round-trip.
+    assert [p.has_imaging for p in project_response.data] == [True, False]
 
 
 def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
@@ -440,3 +444,30 @@ def test_get_projects_paginated_orm_picks_latest_audit_per_project(user_id):
     # `Z`-suffixed so the browser parses the naive UTC audit_date as UTC, matching creation_timestamp.
     assert response.data[0].staged_at == newer.isoformat(timespec="milliseconds") + "Z"
     assert response.data[0].staged_at.endswith("Z")
+
+
+def test_get_projects_paginated_orm_applies_project_type_filter(user_id):
+    """FLIP#1071: ``projectType`` narrows the WHERE clause on ``has_imaging``; absent, it adds nothing."""
+    session = MagicMock(spec=Session)
+    session.exec.return_value.all.return_value = []
+    session.exec.return_value.one_or_none.return_value = None
+
+    get_projects_paginated_orm(
+        session=session,
+        user_id=user_id,
+        paging_details=paging_details,
+        filter_details=get_filter_details({"projectType": "omop_only"}),
+    )
+    # The SELECT list always names the column, so look at the WHERE clause only.
+    filtered_where = re.split(r"\swhere\s", str(session.exec.call_args_list[0].args[0].compile()).lower(), 1)[1]
+    assert "has_imaging is" in filtered_where
+
+    session.exec.reset_mock()
+    get_projects_paginated_orm(
+        session=session,
+        user_id=user_id,
+        paging_details=paging_details,
+        filter_details=get_filter_details(),
+    )
+    unfiltered_where = re.split(r"\swhere\s", str(session.exec.call_args_list[0].args[0].compile()).lower(), 1)[1]
+    assert "has_imaging" not in unfiltered_where
