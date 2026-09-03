@@ -163,8 +163,9 @@ Two traps when auditing this by hand:
 - **A `from "..."` grep under-reports.** `highlight.js` is loaded lazily via
   `import("highlight.js/lib/core")` and `import("highlight.js/lib/languages/json")` in
   [`src/utils/highlightJson.ts`](src/utils/highlightJson.ts), and is correctly a `dependency` despite having
-  no static import. Test files also live under `src/` (107 in `__tests__/` directories plus two flat
-  `*.spec.ts`), and their imports — `vitest`, `@vue/test-utils`, `@pinia/testing` — are genuinely dev-only.
+  no static import. Test files also live under `src/` (most under `__tests__/` directories, plus two flat
+  `*.spec.ts` and the `src/unit-tests/` tree), and their imports — `vitest`, `@vue/test-utils`,
+  `@pinia/testing` — are genuinely dev-only.
 - **A static import of a side-effecting module is never dropped, even from a branch that folds.** Neither
   mock server may be imported statically from [`src/main.ts`](src/main.ts); both are loaded through dynamic
   `import()` inside their own folded branch. `mocks/server` was static until FLIP#1041 and shipped ~230

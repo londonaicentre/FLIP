@@ -158,7 +158,7 @@ export default defineConfigWithVueTs(
         // /ark_demo bundle, so its imports are production imports.
         name: "flip-ui/dependency-scoping",
         files: ["src/**/*.ts", "src/**/*.vue", "mocks/**/*.ts"],
-        ignores: ["**/*.spec.ts", "**/__tests__/**"],
+        ignores: ["**/*.spec.ts", "**/__tests__/**", "src/unit-tests/**"],
         plugins: { "import-x": importX },
         rules: {
             "import-x/no-extraneous-dependencies": ["error", {
@@ -182,7 +182,43 @@ export default defineConfigWithVueTs(
         // fold failure — the class no source lint can see — would land.
         name: "flip-ui/no-static-mirage",
         files: ["src/**/*.ts", "src/**/*.vue"],
-        ignores: ["**/*.spec.ts", "**/__tests__/**"],
+        // src/demo/DemoBanner.vue is the one sanctioned exception — its own block follows.
+        ignores: ["**/*.spec.ts", "**/__tests__/**", "src/unit-tests/**", "src/demo/DemoBanner.vue"],
+        rules: {
+            "no-restricted-imports": ["error", {
+                patterns: [{
+                    group: [
+                        "miragejs",
+                        "miragejs/*",
+                        "pretender",
+                        "pretender/*",
+                        "**/mocks/**",
+                    ],
+                    message: "Mirage must not be statically imported from production source — load it via a "
+                        + "dynamic import() inside a folded branch. See bootstrap() in src/main.ts.",
+                }],
+            }],
+        },
+    },
+
+    {
+        // The single sanctioned static import across the src/ <- mocks/ boundary.
+        // src/demo/DemoBanner.vue reads DEMO_CAPTURE_DATE from
+        // mocks/demo/ark-plus-register.ts — scrubbed capture constants with no imports
+        // of its own, so it cannot reach Mirage, and those identity constants are meant
+        // to ship in the demo bundle (see the isDemoBuild comment in src/App.vue, and
+        // scripts/assert-no-demo-artefacts.mjs, which reads that same file by path).
+        //
+        // The exception is scoped to the file that owns it rather than widened into the
+        // group above, so the rule above stays a rule about the tree: every other src/
+        // file importing anything under mocks/ — this register included — is an error.
+        // The narrower spellings are not available: these are gitignore-style patterns,
+        // where excluding the mocks/demo directory also excludes its contents and "!"
+        // cannot re-include a file whose parent directory is excluded.
+        //
+        // The mock servers stay barred here, so this exception cannot grow into one.
+        name: "flip-ui/no-static-mirage-demo-banner",
+        files: ["src/demo/DemoBanner.vue"],
         rules: {
             "no-restricted-imports": ["error", {
                 patterns: [{
