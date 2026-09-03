@@ -13,10 +13,10 @@
 
 """quickstart-monai: A Flower / MONAI evaluation-only app."""
 
-import os
 from logging import INFO
 
 import torch
+from flip.flower.identity import client_identity
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from flwr.common import log
@@ -39,7 +39,7 @@ def evaluate(msg: Message, context: Context) -> Message:
     run_config = context.run_config
 
     # NOTE this needs to match the name of the trust in the central hub database
-    client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
+    client_name = client_identity(context)
 
     # Configure FLIP
     flip_utils = FLIP_BASE()

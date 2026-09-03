@@ -20,10 +20,10 @@ hub credential. Per-epoch granularity is preserved via the
 ``flip.flower.metrics.handle_client_metrics`` (FLIP#148).
 """
 
-import os
 from logging import INFO
 
 import torch
+from flip.flower.identity import client_identity
 from flip.flower.privacy import flip_local_dp_mod
 from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
@@ -59,7 +59,7 @@ def train(msg: Message, context: Context) -> Message:
     batch_size = int(run_config.get("batch-size", 2))
 
     # NOTE this needs to match the name of the trust in the central hub database
-    client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
+    client_name = client_identity(context)
 
     # global_round from server is 1-based - convert to 0-based for easier calculations of round numbers during training
     global_round = int(msg.content["config"]["server-round"]) - 1
@@ -190,7 +190,7 @@ def evaluate(msg: Message, context: Context) -> Message:
     test_split = float(run_config.get("test-split", 0.2))
 
     # NOTE this needs to match the name of the trust in the central hub database
-    client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
+    client_name = client_identity(context)
 
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

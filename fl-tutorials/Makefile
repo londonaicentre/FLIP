@@ -19,7 +19,7 @@
 # variables are forwarded to the sub-make automatically.
 FL_BACKEND ?= nvflare
 
-TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials
+TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials sim-tutorial
 # Dataset targets are backend-agnostic (shared data root, single copy in datasets/);
 # FL_BACKEND still selects a per-harness variant where one exists (the two spleen downloads).
 DATASET_TARGETS := download-xray-data download-spleen-data upload-spleen-labels \

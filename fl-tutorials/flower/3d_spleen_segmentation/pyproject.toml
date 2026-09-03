@@ -98,6 +98,37 @@ best-model-metric = "test_dice"
 best-model-metric-minimize = false
 
 # Linter
+# Federations this app can be launched against. `flwr run . local-simulation` runs every
+# ClientApp in-process — no SuperLink, no SuperNodes, no fl-api, no Docker — which is the
+# fast path for iterating on app code. The container stack (`make run-tutorial`) stays the
+# pre-merge check, since it is the only thing exercising the real deployment wiring.
+#
+# The app code is IDENTICAL either way: the simulator populates context.node_config with
+# `partition-id` / `num-partitions`, the same keys a deployed SuperNode takes via
+# `--node-config`, and flip.flower.identity.client_identity reads whichever is present.
+
+#######################################################################
+# CONFIGURATION MIGRATION NOTICE:
+#
+# What was previously called "federation config" for SuperLink
+# connections in pyproject.toml has been renamed and moved.
+#
+# These settings are now **SuperLink connection configuration**
+# and are defined in the Flower configuration file.
+#
+# The entries below are commented out intentionally and are kept
+# only as a migration reference.
+#
+# Docs: https://flower.ai/docs/framework/ref-flower-configuration.html
+#######################################################################
+
+# [tool.flwr.federations]
+# default = "local-simulation"
+
+# [tool.flwr.federations.local-simulation]
+# # Keep in step with flip-min-clients above: both describe the number of participating sites.
+# options.num-supernodes = 2
+
 [tool.ruff]
 line-length = 120
 
