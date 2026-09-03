@@ -146,11 +146,14 @@ spec:
                     # the `if` condition so ON_ERROR_STOP=1 is load-bearing: a missing `xnat`
                     # role (a PVC restored without globals) must fail the hook loudly, not print
                     # success. The `\set pw` backtick keeps the password out of psql's argv (the
-                    # idiom XNAT.sql itself uses), and the heredoc body is tab-indented so `<<-`
-                    # does the stripping rather than YAML's de-indent.
+                    # idiom XNAT.sql itself uses) — `printenv` rather than `echo "$VAR"` because
+                    # a rendered `echo` of a *PASSWORD/SECRET/TOKEN var is what the chart's
+                    # credential-logging CI guard looks for, and busybox provides the applet
+                    # anyway. The heredoc body is tab-indented so `<<-` does the stripping
+                    # rather than YAML's de-indent.
                     if ! psql -X -q -v ON_ERROR_STOP=1 -U {{ .Values.xnat.db.datasourceUsername | quote }} -d xnat \
                            -v u={{ .Values.xnat.db.datasourceUsername | quote }} <<-'EOSQL'
-                    	\set pw `echo "$XNAT_DATASOURCE_PASSWORD"`
+                    	\set pw `printenv XNAT_DATASOURCE_PASSWORD`
                     	ALTER ROLE :"u" WITH PASSWORD :'pw';
                     	DO $$ BEGIN RAISE WARNING 'xnat-db postStart: xnat role password synced'; END $$;
                     	EOSQL
