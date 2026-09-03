@@ -42,15 +42,13 @@ spec:
       #
       # Both used to run concurrently in containers[], with configure-dcm2niix
       # polling /xapi/siteConfig for up to 300s waiting for the activation that
-      # configure-xnat-web performs. On a slow host that budget expires first;
-      # configure-dcm2niix then exits 1, and restartPolicy: OnFailure restarts
-      # the whole pod — killing configure-xnat-web PART-WAY THROUGH the very
-      # activation being waited for. Every retry kills it again, so the site is
-      # never activated and the Job burns its backoffLimit:
-      #
-      #   "initialized": false          (still false 96 minutes later)
-      #   Job ... Failed  0/1
-      #   helm: failed post-install: Job in progress / context deadline exceeded
+      # configure-xnat-web performs. On a slow host that budget expires first and
+      # configure-dcm2niix exits 1. Under restartPolicy: OnFailure the kubelet
+      # restarts only the FAILED container, so configure-xnat-web keeps running
+      # (verified: it held restartCount=0 and its original startedAt across a
+      # configure-dcm2niix restart) — but the retry re-enters the same race, and
+      # a waiter that outlives the activation it is waiting for is a timing
+      # accident rather than a guarantee.
       #
       # An initContainer runs to completion before containers[] start, which
       # removes the race by construction rather than by widening the timeout.
@@ -194,6 +192,12 @@ spec:
               #
               #   before POST /xapi/siteConfig -> GET /xapi/dqr/settings = 302
               #   after  POST /xapi/siteConfig -> GET /xapi/dqr/settings = 200
+              #
+              # This ordering, not the container topology, is what hung a fresh-volume install:
+              #
+              #   "initialized": false          (still false 96 minutes later)
+              #   Job ... Failed  0/1
+              #   helm: failed post-install: Job in progress / context deadline exceeded
               #
               # The Job then failed on "plugin routes did not register", naming the wait rather
               # than the ordering that caused it. /xapi/siteConfig is a core route and answers
