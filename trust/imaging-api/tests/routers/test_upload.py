@@ -47,6 +47,20 @@ def test_upload_data_decrypt_failure(client):
     assert "Failed to decrypt" in response.json()["detail"]
 
 
+def test_upload_data_rejects_accession_id_traversal_before_service_call(client):
+    """A traversal accession_id must fail body validation (422) and never reach
+    the upload service, which would issue an admin-authenticated XNAT request."""
+    body = {**_REQUEST_BODY, "accession_id": "../../etc/passwd"}
+    with patch(
+        "imaging_api.routers.upload.upload_data_to_xnat",
+        new_callable=AsyncMock,
+    ) as mock_service:
+        response = client.put("/upload/images/net1", json=body)
+
+    assert response.status_code == 422
+    mock_service.assert_not_called()
+
+
 def test_upload_data_not_found(client):
     with (
         patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),

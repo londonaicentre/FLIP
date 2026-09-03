@@ -15,7 +15,12 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from imaging_api.routers.schemas import CentralHubProject, ImportStudyRequest
+from imaging_api.routers.schemas import (
+    CentralHubProject,
+    DownloadImagesRequestData,
+    ImportStudyRequest,
+    UploadDataRequest,
+)
 
 
 def test_central_hub_project_defaults_dicom_to_nifti_true():
@@ -52,6 +57,51 @@ def test_central_hub_project_rejects_xml_control_chars_in_name(bad_name: str):
             query="SELECT 1",
             users=[],
         )
+
+
+@pytest.mark.parametrize(
+    "bad_accession_id",
+    [
+        "../../etc/passwd",
+        "ACC/123",
+        "ACC\\123",
+        "ACC%2F123",
+        "ACC 123",
+        "ACC?format=json",
+        "ACC#frag",
+        "..",
+        "ACC..123",
+    ],
+)
+def test_accession_id_rejects_traversal_and_url_metacharacters(bad_accession_id: str):
+    """Traversal/URL-injection payloads must fail validation before any XNAT call."""
+    with pytest.raises(ValidationError, match="accession_id"):
+        DownloadImagesRequestData(encrypted_central_hub_project_id="enc", accession_id=bad_accession_id)
+
+    with pytest.raises(ValidationError, match="accession_id"):
+        UploadDataRequest(
+            encrypted_central_hub_project_id="enc",
+            accession_id=bad_accession_id,
+            scan_id="SCAN1",
+            resource_id="NIFTI",
+            files=["scan.nii"],
+            exist_ok=False,
+        )
+
+
+@pytest.mark.parametrize(
+    "good_accession_id",
+    [
+        "ACC123",
+        "ACC-123",
+        "ACC_123",
+        "ACC.123",
+        "1.2.840.113619.2.55.3",
+    ],
+)
+def test_accession_id_accepts_safe_charset(good_accession_id: str):
+    request = DownloadImagesRequestData(encrypted_central_hub_project_id="enc", accession_id=good_accession_id)
+    assert request.accession_id == good_accession_id
 
 
 def test_import_study_request_deduplicates_studies():

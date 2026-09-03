@@ -11,7 +11,7 @@
 #
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
@@ -29,6 +29,53 @@ XNAT_PORT = get_settings().XNAT_PORT
 # defence; this validator is the trust-boundary fail-fast that returns a 422
 # instead of letting the corrupted entity reach XNAT.
 _XML_FORBIDDEN_CHARS = ("<", ">", "&")
+
+# Accession IDs are interpolated directly into XNAT URLs issued with the XNAT
+# service-admin session, so a traversal payload ("../../") would reach XNAT
+# before any filesystem guard could run. Keep the charset conservative until
+# the production PACS accession distribution is confirmed (see #908): letters,
+# digits, dot, underscore and hyphen only — no path separators, percent escapes,
+# whitespace, query/fragment delimiters, or double-dot segments.
+_ACCESSION_ID_ALLOWED_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
+
+# Known XNAT resource labels accepted on the download route. Deliberately a
+# closed list for now — custom resource labels were previously accepted and
+# should be re-confirmed against production XNAT projects before widening.
+ResourceType = Literal["DICOM", "NIFTI", "SEG", "ALL"]
+
+
+def _validate_accession_id(value: str) -> str:
+    """Rejects accession IDs that could traverse or inject into an XNAT URL.
+
+    Args:
+        value (str): The caller-supplied accession ID.
+
+    Returns:
+        str: The unchanged accession ID when it is safe.
+
+    Raises:
+        ValueError: If the value is empty, contains a character outside the
+            conservative ``[A-Za-z0-9._-]`` set, or contains a double-dot
+            segment.
+    """
+    if not value:
+        raise ValueError("accession_id must not be empty")
+    if any(char not in _ACCESSION_ID_ALLOWED_CHARS for char in value):
+        raise ValueError("accession_id must contain only [A-Za-z0-9._-]")
+    if ".." in value:
+        raise ValueError("accession_id must not contain '..'")
+    return value
+
+
+class _AccessionIdRequest(BaseModel):
+    """Shared shape and validation for request bodies carrying a PACS accession ID."""
+
+    accession_id: str
+
+    @field_validator("accession_id")
+    @classmethod
+    def _reject_unsafe_accession_id(cls, v: str) -> str:
+        return _validate_accession_id(v)
 
 # #########################
 # Users
@@ -318,11 +365,10 @@ class ProjectRetrieval(BaseModel):
 # #########################
 
 
-class DownloadImagesRequestData(BaseModel):
+class DownloadImagesRequestData(_AccessionIdRequest):
     """Represents a request to download images."""
 
     encrypted_central_hub_project_id: str
-    accession_id: str
 
 
 class DownloadImagesResponse(BaseModel):
@@ -332,11 +378,10 @@ class DownloadImagesResponse(BaseModel):
 # ##########################
 # Upload
 # ##########################
-class UploadDataRequest(BaseModel):
+class UploadDataRequest(_AccessionIdRequest):
     """Represents a request to upload data."""
 
     encrypted_central_hub_project_id: str
-    accession_id: str
     scan_id: str
     resource_id: str
     files: list[str]
