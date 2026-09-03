@@ -82,16 +82,40 @@ Things worth knowing before touching any of it:
   ones show up as an unexpected plan diff.
 - **Use `aws-stag` / `aws-prod`, never the existing `flip` environment** — `flip`
   holds *test* values for `AES_KEY_BASE64` / `POSTGRES_PASSWORD` / `SES_VERIFIED_EMAIL`.
-- **An apply resolves the image tag rather than reading it** (`scripts/resolve-image-tags.sh`):
-  this commit's `sha-<short7>` once published, else the tag the service is already
-  running. The configured `:stag`/`:prod` can never *replace* a deployed tag —
-  that would discard the FLIP#751 pin. (Reusing `:stag` when that is genuinely
-  what stag runs is a no-op, and expected.)
+- **Every workflow resolves the image tag rather than reading it**
+  (`scripts/resolve-image-tags.sh`): an apply takes this commit's `sha-<short7>`
+  once published, else the tag the service is already running; plan and drift run
+  it with `RESOLVE_SHA_TAG=false`, which reads only the running tag and never
+  touches the registry. The configured `:stag`/`:prod` can never *replace* a
+  deployed tag — that would discard the FLIP#751 pin — and a plan that read the
+  configured tag would report a permanent `sha-… → :prod` diff nobody can clear.
+  (Reusing `:stag` when that is genuinely what stag runs is a no-op, and expected.)
+  Every lookup **fails closed**: absence is recognised only from ECS's own
+  `failures[].reason == "MISSING"`, so an expired session or a wrong `ECS_CLUSTER`
+  stops the run instead of reading as "empty account" and emitting the mutable tag.
 - **An apply holds if the plan touches FL** (`scripts/check-fl-plan-impact.sh`):
   `fl-server-net-1` / `fl-api-net-1` task definitions or services, or any EFS
   deletion. `flip-api` is deliberately not watched. The hub cannot be asked
   whether a run is in flight — `/fl/quiesce` is Cognito-gated, CloudFront strips
   the internal key, and the DB is in a private subnet — so the plan is asked instead.
+  Release a held apply by re-dispatching `terraform_apply.yml` with the
+  `fl_quiesced: true` input; a plain re-run reads the same plan and holds again.
+- **`aws-prod` admits `main` alone.** An environment's secrets are readable by any
+  workflow that names it and runs on an admitted branch, before any AWS call, so
+  admitting the default branch would hand the production secrets to every workflow
+  merged to develop. The nightly drift run reaches prod by dispatching itself onto
+  `main` rather than by widening the policy.
+- **Every IAM role this root owns carries a permissions boundary**
+  (`var.iam_permissions_boundary_name`, the policy declared in `ci/`). The CI apply
+  role may only create a role, or write an inline policy onto one, when the role
+  carries it — which is what keeps `PowerUserAccess` + IAM write from being
+  administrator-equivalent. Adding a role means adding its literal name to
+  `var.managed_role_names` in `ci/variables.tf` and re-applying `ci/` from a laptop
+  first, or the apply cannot pass or re-trust it.
+- **The pytest suite under `tests/` runs in CI** as the `Deploy Python tests` job in
+  `validate_terraform.yml`. The root `make unit_test` does not reach this directory
+  and `make -C deploy/providers/AWS test` cannot be used (parse-time env guard), so
+  run it locally with `uv run --frozen pytest tests` from this directory.
 
 - **Seed the GitHub environments with `scripts/setup-github-environments.sh`** (repo
   admin, `--dry-run` first). It derives the secret-vs-variable split from
@@ -101,9 +125,11 @@ Things worth knowing before touching any of it:
 - **Never seed a GitHub environment from a laptop `.env` file without checking it.**
   `scripts/reconcile_ci_env.py --env <e> --compare <file>` rebuilds the Terraform
   inputs from deployed state and reports drift (secrets shown as digests, never
-  values). Staging's checked-out file was 13 values stale, including a renamed UI
-  bucket that plans as a `prevent_destroy` violation. Its `--out` writes only the
-  Terraform inputs, so it refuses to overwrite a real operator env file.
+  values). Staging's checked-out file was a batch of values stale, including a
+  renamed UI bucket that plans as a `prevent_destroy` violation. Its `--out` writes
+  only the Terraform inputs, so it refuses to overwrite a real operator env file,
+  and on `--env prod` it treats an empty `DEMO_ASSETS_BUCKET_NAME` as a failed
+  recovery rather than a value — empty there destroys the Ark+ demo resources.
 
 Full flow, one-time setup and break-glass: [README.md](README.md#terraform-ci-plan-on-pr-apply-on-merge).
 

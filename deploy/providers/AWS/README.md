@@ -880,6 +880,15 @@ GitHub:
 | `terraform_apply.yml` | Push to `develop` / `main` | apply | Applies to staging / production |
 | `terraform_drift.yml` | Nightly 03:00 UTC | plan (read-only) | Raises one issue per environment when reality has drifted |
 
+The drift workflow runs **twice**, and which environment a run checks is decided
+by the ref it was loaded from. GitHub only fires a `schedule` from the default
+branch, so the nightly run is a `develop` run and checks staging; it then
+dispatches `terraform_drift.yml --ref main`, and that second run checks
+production. Two things fall out of doing it that way rather than running both
+legs in one matrix: `aws-prod` stays restricted to `main` (see below), and the
+production plan compares **main's** HCL against production's state instead of
+reporting every unreleased develop change as drift.
+
 `validate_terraform.yml` still runs `fmt`/`validate` with `-backend=false` on every
 change; it catches HCL errors without credentials and is the fast gate.
 
@@ -917,13 +926,25 @@ plan or apply would be a genuine incident.
 | Environment | Deployment branch policy | Used by |
 | --- | --- | --- |
 | `aws-stag` | none (PRs must be able to plan) | plan, apply-to-stag, stag drift |
-| `aws-prod` | `main`, plus the default branch for the nightly drift job | apply-to-prod, prod drift |
+| `aws-prod` | `main` only | apply-to-prod, prod drift |
+
+**`aws-prod` admits `main` and nothing else, and that is load-bearing.** A GitHub
+environment's secrets are readable by *any* workflow that declares the environment
+and runs on an admitted branch — before it makes a single AWS call, so the OIDC
+trust policies do not constrain it. Admitting the default branch, as an earlier
+revision of this did so the scheduled drift job could reach the prod plan role,
+would have collapsed "merged to `main`" into "merged to `develop`" for the
+production secrets. The drift job reaches them by being dispatched onto `main`
+instead.
 
 Each holds `TF_PLAN_ROLE_ARN` and `TF_APPLY_ROLE_ARN` (from `make -C ci output`)
 alongside the Terraform inputs. Stored as environment *secrets*:
 `ADMIN_USER_PASSWORD`, `AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY`,
-`INTERNAL_SERVICE_KEY_HASH`, `POSTGRES_DB`, `POSTGRES_USER`. Everything else is a variable — the authoritative list is
-`REQUIRED_KEYS` / `OPTIONAL_KEYS` in `scripts/compose-ci-env.sh`.
+`INTERNAL_SERVICE_KEY_HASH`. Everything else is a variable, including
+`POSTGRES_DB` / `POSTGRES_USER` — they are configuration rather than credentials
+and are rendered in the clear into the public plan comment either way
+(`variables.tf` explains the decision). The authoritative list is `REQUIRED_KEYS`
+/ `OPTIONAL_KEYS` in `scripts/compose-ci-env.sh`.
 
 `AWS_PROFILE` is deliberately *not* stored: it is derived from the target
 environment, so a mis-set variable cannot point a stag run at the prod account.
@@ -933,9 +954,21 @@ plan job declares `environment: aws-stag`, because that is the only way a workfl
 can read environment secrets, and the plan needs real values to be truthful. It
 runs on the pull request's own code. So **anyone with write access to this
 repository can read the staging secrets** (`AES_KEY_BASE64`,
-`INTERNAL_SERVICE_KEY`, `ADMIN_USER_PASSWORD`, the DB user) by adding a step that
-prints them. GitHub masks registered secrets in logs, but base64 or splitting the
-string defeats masking trivially — do not count on it.
+`INTERNAL_SERVICE_KEY`, `ADMIN_USER_PASSWORD`) by adding a step that prints them.
+GitHub masks registered secrets in logs, but base64 or splitting the string
+defeats masking trivially — do not count on it.
+
+It is wider than those secrets, and worth stating exactly. The same job holds a
+one-hour `ReadOnlyAccess` session over the whole staging account: the state file,
+the Cognito user list, every CloudWatch log group, every ECS task definition and
+its environment. It is also narrower than "everything": the KMS-encrypted buckets
+(model files, FL participant kits, FL results) stay closed, because
+`ReadOnlyAccess` carries no `kms:Decrypt` and the one grant the plan role has is
+pinned by a `kms:ViaService` condition to Secrets Manager.
+
+The same reasoning applies to **any** workflow, not only PR plans: a workflow file
+merged to a branch an environment admits can name that environment and read its
+secrets. That is why `aws-prod` admits `main` alone.
 
 Fork PRs cannot: GitHub withholds both the OIDC token and environment secrets from
 them, and the job skips outright on the same-repo guard.
@@ -993,21 +1026,32 @@ Secret values are written to `--out` but never printed; the summary shows a
 truncated SHA-256 so two copies can be compared without either being disclosed.
 `--compare` reports drift against an existing file without writing anything.
 
-**`--out` emits only the ~39 Terraform inputs, not a complete operator env file** —
+**`--out` emits only the Terraform inputs, not a complete operator env file** —
 the trust, XNAT, Orthanc and OMOP settings are not recoverable from AWS. It
-refuses to overwrite an existing file for that reason.
+refuses to overwrite an existing file for that reason, and its refusal message
+counts the keys it would have written rather than quoting a figure that goes
+stale in this README.
 
-Run against staging on 2026-08-19 this found 13 differences from the checked-out
+Run against staging this found a batch of differences from the checked-out
 `.env.stag`, including a renamed UI bucket (`flipstag` → `flip-ui-stag`) that
 plans as `must be replaced` against a `prevent_destroy` lifecycle rule, a stale
-`FLARE_KIT_DATE`, an out-of-date `API_PORT`, and rotated service keys. Six of the
-thirteen were not stale but **absent**, which is worse: the Makefile exports
+`FLARE_KIT_DATE`, an out-of-date `API_PORT`, and rotated service keys. Several
+were not stale but **absent**, which is worse: the Makefile exports
 `DEPLOY_TRUST_EC2`, `LOCAL_TRUST_PUBLIC_IPS`, `K8S_TRUST_PUBLIC_IPS`,
-`JOB_RESOURCE_SPEC_*` and `FL_KIT_SLOT_NAMES` unconditionally, so an absent key
-arrives at Terraform as `""` and **does not** fall back to the `variables.tf`
-default — the same trap as `UI_PORT`. `LOCAL_TRUST_PUBLIC_IPS` empty would have
-dropped the on-prem trust's NLB ingress rule. `.env.stag` was reconciled on
-2026-09-01 and both environments now compose cleanly.
+`JOB_RESOURCE_SPEC_*` and `FL_KIT_SLOT_NAMES` either unconditionally or behind a
+`?=` default, so an absent key arrives at Terraform as `""` or as the Makefile's
+own default and **does not** fall back to the `variables.tf` one — the same trap
+as `UI_PORT`. `LOCAL_TRUST_PUBLIC_IPS` empty would have dropped the on-prem
+trust's NLB ingress rule.
+
+The three whose Makefile default is *destructive* rather than merely wrong —
+`DEPLOY_TRUST_EC2` (`?= true`, i.e. create a cloud trust host) and
+`LOCAL_TRUST_PUBLIC_IPS` / `K8S_TRUST_PUBLIC_IPS` (`?= []`, i.e. delete every
+on-prem and K8s NLB ingress rule) — are **required** in
+`scripts/compose-ci-env.sh` for that reason. An explicit `false` or `[]` is a
+decision; an absent key is an accident that reads identically to Terraform, and
+none of the three is on `check-fl-plan-impact.sh`'s watch list, so an unattended
+apply would make the change silently. Both environments now compose cleanly.
 
 The same trap was then found on **production**: `DEMO_ASSETS_BUCKET_NAME` was
 absent from `.env.production` while prod state carried the Ark+ demo resources.
@@ -1085,6 +1129,25 @@ deployed one. An environment genuinely running `:stag` (staging, today) gets
 `:stag` back, which is a no-op; what cannot happen is a sha-pinned service being
 moved onto a mutable tag.
 
+Every lookup in that script **fails closed**. An expired session, a throttle, an
+AccessDenied or a wrong `ECS_CLUSTER` all used to look exactly like "there is no
+service here", which is the one answer that reaches the configured-tag fallback —
+so an API error on an unattended production apply would have un-pinned the
+release. Absence is now recognised only from ECS's own `failures[].reason ==
+"MISSING"`, and every other outcome stops the run.
+
+**Plan and drift resolve the tags too**, with `RESOLVE_SHA_TAG=false`: read what
+the services are running, never probe the registry. Without that, once the first
+CI apply has written a `sha-…` pin every PR plan and every nightly run would
+report a permanent `sha-… → :prod` diff on the task definitions — including the FL
+ones, which the FL gate would then hold every apply on.
+
+**An infrastructure-only apply does not wait for images that cannot exist.** The
+apply fires on `deploy/providers/AWS/**` while the image builds fire on service
+paths, so the commonest apply publishes no `sha-…` image at all. The workflow
+diffs the push against its predecessor and spends the `GHCR_WAIT_SECONDS` budget
+only when a path that builds one of the two images actually changed.
+
 **It will not disturb a training run.** Replacing `fl-server-net-1` kills any
 in-flight run (FLIP#770). A runner cannot ask the hub whether one is in flight —
 `GET /fl/quiesce` needs a Cognito session (and prod runs `ENFORCE_MFA=true`),
@@ -1100,8 +1163,17 @@ When it holds:
 1. Enable deployment mode on the hub (pauses FL job pickup; queued jobs hold, the
    running job finishes and frees its net).
 2. Wait until `GET /fl/quiesce` reports deployment mode ON and no BUSY net.
-3. Re-run `terraform_apply.yml` via `workflow_dispatch` on the same branch.
+3. Re-run `terraform_apply.yml` via `workflow_dispatch` on the same branch **with
+   the `fl_quiesced` input set to `true`**.
 4. Disable deployment mode.
+
+Step 3's input is what makes the remedy work. The gate reads the plan, and the
+plan has not changed between the held run and the re-run — so a plain re-run finds
+the same FL change and holds again, indefinitely. `fl_quiesced: true` skips the
+gate, and nothing verifies it: the runner cannot reach `GET /fl/quiesce`, so it is
+an operator attestation, recorded as a warning annotation naming whoever
+dispatched the run. Setting it when FL is *not* quiesced kills the in-flight
+training run, which is exactly what the gate exists to prevent.
 
 `flip-api` is deliberately outside the watch list: its deploy is a rolling
 replacement (`desired_count` 1, `deployment_minimum_healthy_percent` 100) and the

@@ -458,12 +458,24 @@ OIDC-authenticated workflows drive real state — no long-lived AWS keys in GitH
 `terraform_drift.yml` (nightly plan, one issue per environment). **Merging to `main` now changes
 production infrastructure** — the previous "don't `make apply` for prod" rule is superseded.
 
+Drift runs **twice**, and the ref decides the environment: a `schedule` only ever fires from the
+default branch, so the nightly run is a develop run checking stag, and it dispatches
+`terraform_drift.yml --ref main` for the prod leg. That keeps the `aws-prod` GitHub environment
+restricted to `main` alone — an environment's secrets are readable by any workflow that names it and
+runs on an admitted branch, before any AWS call — and makes the prod plan compare main's HCL rather
+than reporting every unreleased develop change as drift.
+
 Two guards make the unattended apply safe, and both live in `deploy/providers/AWS/scripts/`:
 `resolve-image-tags.sh` pins this commit's `sha-<short7>` (falling back to the tag the service is
 already running — the configured `:stag`/`:prod` never *replaces* a deployed tag, which would
-discard the FLIP#751 pin), and
+discard the FLIP#751 pin; every lookup fails **closed**, absence recognised only from ECS's own
+`failures[].reason == "MISSING"`, because an AWS error that reads as "no service" is exactly what
+un-pins the release). Plan and drift run it too, in its `RESOLVE_SHA_TAG=false` mode, or they would
+report a permanent `sha-… → :prod` diff against the pin an apply has written.
 `check-fl-plan-impact.sh` holds any apply whose plan touches `fl-server-net-1` / `fl-api-net-1` or
-deletes EFS, because that would kill an in-flight training run (FLIP#770).
+deletes EFS, because that would kill an in-flight training run (FLIP#770); the held apply is
+released by re-dispatching `terraform_apply.yml` with the `fl_quiesced: true` input, an operator
+attestation nothing on the runner can verify.
 
 Terraform inputs reach CI through `scripts/compose-ci-env.sh`, which composes `.env.stag` /
 `.env.production` from the `aws-stag` / `aws-prod` GitHub environments so the Makefile stays the one
