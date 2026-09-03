@@ -262,7 +262,9 @@ class TestDevBranchProvisionsTheContainerUid:
     def test_provisions_a_tree_the_container_uid_owns(self, tmp_path: Path) -> None:
         """The achievable case: the sequence creates the tree and its own guard then passes."""
         result = self._run(tmp_path, os.getuid(), os.getgid())
-        assert result.returncode == 0, f"development branch failed on an achievable uid:\n{result.stdout}{result.stderr}"
+        assert result.returncode == 0, (
+            f"development branch failed on an achievable uid:\n{result.stdout}{result.stderr}"
+        )
         for name in ("tomcat_logs", "archive", "build", "cache"):
             created = tmp_path / "data" / "xnat-data" / name
             assert created.is_dir(), f"{name} was not provisioned"
