@@ -1136,6 +1136,8 @@ def keep_fl_api_session_alive() -> None:
     TODO This was developed for the NVFLARE backend and might need to be revisited for the Flower backend.
     See https://github.com/NVIDIA/NVFlare/discussions/3526#discussioncomment-13574644
     """
+    from flip_api.db.models.main_models import FLScheduler
+    from flip_api.domain.schemas.status import NetStatus
     from flip_api.fl_services.get_status import fetch_server_status
     from flip_api.fl_services.services import fl_scheduler_service
 
@@ -1148,6 +1150,15 @@ def keep_fl_api_session_alive() -> None:
     # might all have the same FLARE_API endpoint, if the FLARE_API controls all controllers/clients.
     with Session(get_engine()) as db:
         nets = fl_scheduler_service.get_nets(db)
+
+        # PER_JOB_FL_SERVER (FLIP#735 Phase 0): an idle net's fl-server is scaled to zero, so
+        # there is no session to keep alive. When the flag is on and no net is BUSY, skip the
+        # pings rather than logging "no response" every 2 minutes for servers down by design.
+        if get_settings().PER_JOB_FL_SERVER:
+            busy = db.exec(select(FLScheduler).where(FLScheduler.status == NetStatus.BUSY).limit(1)).first()
+            if not busy:
+                logger.debug("PER_JOB_FL_SERVER on and no net is BUSY; skipping keep-alive pings.")
+                return
 
         for net in nets:
             try:

@@ -13,7 +13,8 @@
 
 from typing import Any
 
-from nvflare.fuel.flare_api.api_spec import InternalError, SessionClosed
+from nvflare.apis.fl_exception import FLCommunicationError
+from nvflare.fuel.flare_api.api_spec import InternalError, NoConnection, SessionClosed
 from nvflare.fuel.flare_api.flare_api import Session
 
 from fl_api.utils.logger import logger
@@ -34,6 +35,24 @@ class FLIP_Session(Session):
     upstream call site passes it — a failure mode invisible until that one path is exercised.
     ``test_flip_session.py`` pins this for every override.
     """
+
+    # Defaults False so a bare ``FLIP_Session(...)`` (no ``__init__`` override, FLIP#1032) starts
+    # disconnected; ``try_connect`` flips it True on success. "Currently connected", not "ever
+    # connected": a failed reconnect must leave it False so the next command re-connects instead
+    # of reusing a half-built session.
+    _connected: bool = False
+
+    def try_connect(self, timeout: float) -> None:
+        """Connect the underlying admin API, tracking success for ``_do_command``'s lazy
+        first-use connect (see ``PER_JOB_FL_SERVER`` in ``session_manager.py``)."""
+        self._connected = False
+        super().try_connect(timeout)
+        self._connected = True
+
+    @property
+    def is_connected(self) -> bool:
+        """Whether the admin session is currently connected (not merely ever-was)."""
+        return self._connected
 
     def _reconnect(self) -> None:
         """Re-initialise the underlying admin API and log in again after the session was closed.
@@ -82,6 +101,14 @@ class FLIP_Session(Session):
             *args (Any): Positional arguments forwarded to the base implementation.
             **kwargs (Any): Keyword arguments forwarded to the base implementation.
         """
+        if not self._connected:
+            # Lazy first-use connect (PER_JOB_FL_SERVER let boot proceed with the server down).
+            # ``_reconnect`` (fresh ``Session.__init__``), not ``try_connect``: a failed boot-time
+            # connect already assigned+started the cell before auth raised, so ``try_connect``'s
+            # ``if self.cell: return`` would short-circuit re-authentication on the stale cell.
+            logger.info("Session not connected; connecting now before command: %s", command)
+            self._reconnect()
+
         try:
             return super()._do_command(command, *args, **kwargs)
         except InternalError as e:
@@ -90,6 +117,15 @@ class FLIP_Session(Session):
                 self.try_connect(timeout=5.0)
                 return super()._do_command(command, *args, **kwargs)
             raise e
+        except NoConnection:
+            logger.warning("No connection to FL server; reconnecting and retrying command.")
+            self._connected = False
+            self._reconnect()
+            try:
+                return super()._do_command(command, *args, **kwargs)
+            except Exception:
+                logger.error("Retry after reconnect failed for command: %s", command)
+                raise
         except SessionClosed:
             logger.warning("Session closed; attempting to reconnect and retry command.")
             self._reconnect()
@@ -109,7 +145,11 @@ class FLIP_Session(Session):
         Returns:
             ServerInfoModel: a ServerInfoModel object containing the server status and start time.
         """
-        return self.get_system_info().server_info
+        try:
+            return self.get_system_info().server_info
+        except (NoConnection, SessionClosed, InternalError, FLCommunicationError) as e:
+            logger.warning("FL server unreachable; reporting STOPPED: %s", e)
+            return ServerInfoModel(status="STOPPED")
 
     def check_client_status(self, target: list[str] | None = None) -> list[ClientInfoModel]:
         """

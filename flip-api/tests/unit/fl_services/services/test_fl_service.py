@@ -1209,6 +1209,44 @@ def test_keep_fl_api_session_alive_swallows_errors(mock_session, mock_get_nets, 
     mock_fetch.assert_called_once_with("http://net1:8000")
 
 
+@patch("flip_api.fl_services.services.fl_service.get_settings")
+@patch("flip_api.fl_services.get_status.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_nets")
+@patch("flip_api.fl_services.services.fl_service.Session")
+def test_keep_fl_api_session_alive_skips_idle_when_flag_on(
+    mock_session, mock_get_nets, mock_fetch, mock_get_settings
+):
+    # PER_JOB_FL_SERVER on + no BUSY net: servers are scaled to zero, nothing to keep alive.
+    mock_get_settings.return_value.PER_JOB_FL_SERVER = True
+    db = MagicMock()
+    db.exec.return_value.first.return_value = None
+    mock_session.return_value.__enter__.return_value = db
+    mock_get_nets.return_value = [MagicMock(endpoint="http://net1:8000")]
+
+    fl_service.keep_fl_api_session_alive()
+
+    mock_fetch.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.get_settings")
+@patch("flip_api.fl_services.get_status.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_nets")
+@patch("flip_api.fl_services.services.fl_service.Session")
+def test_keep_fl_api_session_alive_pings_busy_when_flag_on(
+    mock_session, mock_get_nets, mock_fetch, mock_get_settings
+):
+    # PER_JOB_FL_SERVER on + a BUSY net: the live server's session is still worth keeping alive.
+    mock_get_settings.return_value.PER_JOB_FL_SERVER = True
+    db = MagicMock()
+    db.exec.return_value.first.return_value = MagicMock()
+    mock_session.return_value.__enter__.return_value = db
+    mock_get_nets.return_value = [MagicMock(endpoint="http://net1:8000")]
+
+    fl_service.keep_fl_api_session_alive()
+
+    mock_fetch.assert_called_once_with("http://net1:8000")
+
+
 # --- submit_job success path ---------------------------------------------------------------------
 
 

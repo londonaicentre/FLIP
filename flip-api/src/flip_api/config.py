@@ -154,6 +154,22 @@ class Settings(BaseSettings):
     # it on locally to verify MFA end-to-end without pretending to be prod.
     ENFORCE_MFA: bool = True
 
+    # Per-job fl-server scale-to-zero (FLIP#735 Phase 0). Default off. When on, the keep-alive
+    # scheduler skips nets whose fl-server is scaled to zero. Parsed leniently so the empty string
+    # the root Makefile can export for a commented .env line means False — and so
+    # "yes"/"on"/"true"/"1" mean True identically in BOTH flip-api and fl-api-base.
+    PER_JOB_FL_SERVER: bool = False
+
+    @field_validator("PER_JOB_FL_SERVER", mode="before")
+    @classmethod
+    def coerce_empty_per_job_fl_server(cls, v: str | bool | None) -> bool:
+        """Treat empty/None as False; accept true/1/yes/on (matching fl-api-base)."""
+        if v is None or v == "":
+            return False
+        if isinstance(v, bool):
+            return v
+        return v.lower() in ("true", "1", "yes", "on")    # type: ignore[union-attr]
+
     @field_validator("ENV", mode="before")
     @classmethod
     def coerce_empty_env(cls, v: str) -> str:

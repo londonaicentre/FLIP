@@ -30,6 +30,7 @@ services:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
+      - PER_JOB_FL_SERVER=${PER_JOB_FL_SERVER:-false}
       # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       # Per-job GPU request written into meta.json resource_spec by configure_meta. Default 0 =>

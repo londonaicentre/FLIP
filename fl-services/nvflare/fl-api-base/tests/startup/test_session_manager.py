@@ -14,6 +14,8 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+from nvflare.apis.fl_exception import FLCommunicationError
+from nvflare.fuel.flare_api.api_spec import NoConnection
 
 from fl_api.startup.session_manager import create_fl_session
 
@@ -30,6 +32,7 @@ def fake_settings(tmp_path):
         JOB_RESOURCE_SPEC_NUM_GPUS = 2
         JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = 8
         TIMEOUT_SESSION_CONNECT = 5.0
+        PER_JOB_FL_SERVER = False
 
     os.makedirs(Settings.FL_ADMIN_DIRECTORY, exist_ok=True)
     return Settings()
@@ -50,3 +53,47 @@ def test_create_fl_session_success(fake_settings):
     assert session == mock_session
     assert session.upload_dir == "/tmp/upload"
     assert session.download_dir == "/tmp/download"
+
+
+def test_create_fl_session_tolerates_unreachable_server_when_flag_on(fake_settings):
+    """✅ PER_JOB_FL_SERVER on: transport-down at boot is tolerated (lazy connect later)."""
+    fake_settings.PER_JOB_FL_SERVER = True
+    mock_session = MagicMock()
+    mock_session.upload_dir = "/tmp/upload"
+    mock_session.download_dir = "/tmp/download"
+    mock_session.try_connect.side_effect = NoConnection("cannot connect to server")
+
+    with (
+        patch("fl_api.startup.session_manager.get_settings", return_value=fake_settings),
+        patch("fl_api.startup.session_manager.FLIP_Session", return_value=mock_session),
+    ):
+        session = create_fl_session()
+
+    assert session == mock_session
+
+
+def test_create_fl_session_raises_unreachable_when_flag_off(fake_settings):
+    """✅ PER_JOB_FL_SERVER off (default): transport-down at boot stays fatal."""
+    mock_session = MagicMock()
+    mock_session.try_connect.side_effect = NoConnection("cannot connect to server")
+
+    with (
+        patch("fl_api.startup.session_manager.get_settings", return_value=fake_settings),
+        patch("fl_api.startup.session_manager.FLIP_Session", return_value=mock_session),
+    ):
+        with pytest.raises(NoConnection):
+            create_fl_session()
+
+
+def test_create_fl_session_raises_on_identity_mismatch_even_when_flag_on(fake_settings):
+    """✅ PER_JOB_FL_SERVER on: identity mismatch is a misconfiguration, always fatal."""
+    fake_settings.PER_JOB_FL_SERVER = True
+    mock_session = MagicMock()
+    mock_session.try_connect.side_effect = FLCommunicationError("rejected registration")
+
+    with (
+        patch("fl_api.startup.session_manager.get_settings", return_value=fake_settings),
+        patch("fl_api.startup.session_manager.FLIP_Session", return_value=mock_session),
+    ):
+        with pytest.raises(FLCommunicationError):
+            create_fl_session()

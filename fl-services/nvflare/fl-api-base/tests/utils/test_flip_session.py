@@ -16,7 +16,14 @@ from types import SimpleNamespace
 from unittest.mock import call, patch
 
 import pytest
-from nvflare.fuel.flare_api.api_spec import ClientInfo, InternalError, ServerInfo, SessionClosed, SystemInfo
+from nvflare.fuel.flare_api.api_spec import (
+    ClientInfo,
+    InternalError,
+    NoConnection,
+    ServerInfo,
+    SessionClosed,
+    SystemInfo,
+)
 from nvflare.fuel.flare_api.flare_api import Session
 
 from fl_api.utils.flip_session import FLIP_Session
@@ -32,7 +39,10 @@ def session(mock_session_init):
     Create a FLIP_Session without invoking real NVFlare Session initialization.
     """
     mock_session_init.return_value = None
-    return FLIP_Session(username="u", startup_path="p", secure_mode=False, debug=False)
+    s = FLIP_Session(username="u", startup_path="p", secure_mode=False, debug=False)
+    # Most tests exercise post-connect behaviour; the lazy first-use connect is tested separately.
+    s._connected = True
+    return s
 
 
 def test_do_command_retries_once_on_session_inactive(session):
@@ -84,6 +94,44 @@ def test_do_command_propagates_exception_if_retry_fails_after_reconnect(session)
 
     mock_reconnect.assert_called_once_with()
     assert parent_do_command.call_count == 2
+
+
+def test_do_command_lazy_connects_when_not_connected(session):
+    """✅ Never-connected session (PER_JOB_FL_SERVER boot) reconnects before first command."""
+    session._connected = False
+    with (
+        patch("nvflare.fuel.flare_api.flare_api.Session._do_command", return_value="ok") as parent_do_command,
+        patch.object(session, "_reconnect") as mock_reconnect,
+    ):
+        result = session._do_command("CMD")
+
+    mock_reconnect.assert_called_once_with()
+    parent_do_command.assert_called_once_with("CMD")
+    assert result == "ok"
+
+
+def test_do_command_retries_once_on_no_connection(session):
+    """✅ NoConnection (server went away) → full reconnect + retry once."""
+    with (
+        patch(
+            "nvflare.fuel.flare_api.flare_api.Session._do_command",
+            side_effect=[NoConnection("cannot connect to server"), "ok"],
+        ) as parent_do_command,
+        patch.object(session, "_reconnect") as mock_reconnect,
+    ):
+        result = session._do_command("CMD")
+
+    mock_reconnect.assert_called_once_with()
+    assert parent_do_command.call_count == 2
+    assert result == "ok"
+
+
+def test_check_server_status_reports_stopped_when_unreachable(session):
+    with patch.object(session, "get_system_info", side_effect=NoConnection("cannot connect to server")):
+        out = session.check_server_status()
+
+    assert isinstance(out, ServerInfoModel)
+    assert out.status == "STOPPED"
 
 
 def test_check_server_status_returns_server_info(session):
