@@ -46,7 +46,7 @@ dev = [
     "simpleeval>=1.0.4",
     "taskipy>=1.14.1",
     "terraform-local>=0.24.1",
-    "tornado>=6.5.2",
+    "tornado>=6.5.8",
 ]
 
 
