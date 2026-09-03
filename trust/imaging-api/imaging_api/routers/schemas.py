@@ -236,7 +236,15 @@ class ImportStudy(BaseModel):
 class ImportStudyRequest(BaseModel):
     """Represents an image import request for DQR."""
 
-    pacs_id: int = Field(default=PACS_ID, alias="pacsId")
+    # Resolved from XNAT at request time and overwritten in services/imaging.py before the request
+    # is sent, so a caller-supplied value has no effect. Kept on the model because the resolved id
+    # is assigned here and serialised onward to DQR; the description says so in the OpenAPI schema
+    # rather than leaving a knob that silently does nothing.
+    pacs_id: int = Field(
+        default=PACS_ID,
+        alias="pacsId",
+        description="Resolved from XNAT server-side; any value supplied here is ignored.",
+    )
     # The C-MOVE destination the PACS is told to send to. DQR matches this against a registered
     # SCP receiver by exact AE title and port, so it must equal what configure-xnat.sh registered.
     ae_title: str = Field(default=XNAT_AETITLE, alias="aeTitle")

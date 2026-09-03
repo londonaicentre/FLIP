@@ -247,7 +247,13 @@ def query_by_accession_number(accession_number: str, headers: dict[str, str]) ->
         json=study_query.model_dump(by_alias=True),
         timeout=XNAT_DQR_REQUEST_TIMEOUT,
     )
-    logger.debug(f"Query response: {response.text} - {response.status_code} - {response.reason}")
+    # Status and reason only. The DQR query response body is a study list carrying patient id, name,
+    # sex, referring physician, accession number and study date (see routers/schemas.py), so logging
+    # it verbatim writes patient identifiers into the trust's container logs — mock data until this
+    # XNAT is pointed at a real hospital PACS, real patients afterwards. Dev trusts run at
+    # LOG_LEVEL=DEBUG, so this line is emitted today. The study count is logged after parsing below,
+    # which is the part that is actually useful when debugging a retrieval.
+    logger.debug(f"Query response: {response.status_code} - {response.reason}")
 
     if response.status_code == 200:
         logger.info("Successfully queried PACS via DQR")
