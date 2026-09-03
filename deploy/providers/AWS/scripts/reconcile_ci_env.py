@@ -51,12 +51,17 @@ import sys
 
 # Written to the output file, never echoed. Anything whose name matches is
 # summarised as a digest.
+#
+# POSTGRES_USER and POSTGRES_DB are deliberately absent: they are configuration,
+# not credentials (../variables.tf says why at length), they are stored as GitHub
+# environment variables rather than secrets, and they are rendered in the clear
+# into every plan comment. Digesting them here would only make this tool's output
+# harder to compare against a plan for no protection at all.
 SECRET_KEYS = {
     "ADMIN_USER_PASSWORD",
     "AES_KEY_BASE64",
     "INTERNAL_SERVICE_KEY",
     "INTERNAL_SERVICE_KEY_HASH",
-    "POSTGRES_USER",
 }
 
 
@@ -117,23 +122,33 @@ class State:
     def has_module_resource(self, module_prefix: str, rtype: str, name: str) -> bool:
         """Whether a managed resource of this type/name exists inside a module.
 
-        `attrs` and `instance_keys` only ever see the root module: state keys a
-        module's resources under a separate `module` field, which those two do
-        not look at. The cloud trust host is `module.trust_ec2[0]`, so a
-        root-level lookup misses it — and substituting the root's
-        `aws_instance.ec2_instance` is not a near-enough proxy but a different
-        question: that is the SSM bastion, which exists in every environment, so
-        the answer came back "true" whether or not a trust host was deployed.
-        Observed on stag, which runs no cloud trust: the recovered value said
-        `DEPLOY_TRUST_EC2=true` and the resulting plan created one.
+        `attrs` does *not* filter on `module` — it matches a type/name pair
+        wherever it sits, which is why the Cognito and SES module resources
+        recover through it perfectly well. The bug this method was written for
+        was not a missed module but a **wrong resource name**: `DEPLOY_TRUST_EC2`
+        was read from the root's `aws_instance.ec2_instance`, which is the SSM
+        bastion and exists in every environment, so the answer came back "true"
+        whether or not a trust host was deployed. Observed on stag, which runs no
+        cloud trust: the recovered value said `DEPLOY_TRUST_EC2=true` and the
+        resulting plan created one.
+
+        The right resource is `module.trust_ec2[0].aws_instance.trust_host`, and
+        this method exists to say *which module* as well as which name — the
+        module is the part that distinguishes it, so it is checked rather than
+        ignored.
+
+        The prefix has to match on a module boundary. A plain `startswith` would
+        accept `module.trust_ec2_role`, which is present even in a hub-only
+        deployment, so the very lookup that fixed one false "true" would hand
+        back another.
         """
         for r in self.doc.get("resources", []):
-            if (
-                r.get("mode") == "managed"
-                and r.get("type") == rtype
-                and r.get("name") == name
-                and (r.get("module") or "").startswith(module_prefix)
-            ):
+            if r.get("mode") != "managed" or r.get("type") != rtype or r.get("name") != name:
+                continue
+            module = r.get("module") or ""
+            # `module.trust_ec2`, `module.trust_ec2[0]`, `module.trust_ec2.module.inner`
+            # — but never `module.trust_ec2_role`.
+            if module == module_prefix or module.startswith((f"{module_prefix}[", f"{module_prefix}.")):
                 return bool(r.get("instances"))
         return False
 
@@ -299,6 +314,29 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
     return v, sources
 
 
+def keys_expected_empty(env: str) -> set[str]:
+    """Keys whose empty value is a real answer rather than a failed recovery.
+
+    ``ENFORCE_MFA`` unset means "use flip-api's secure Pydantic default", and
+    only one of the two FL kit dates is ever provisioned.
+
+    ``DEMO_ASSETS_BUCKET_NAME`` is the asymmetric one, and getting it wrong is
+    destructive rather than merely wrong. Empty is correct on **stag**, which
+    hosts no public Ark+ demo. On **prod** it gates four live resources plus the
+    ``/ark_demo/*`` CloudFront behaviour (``demo_assets_enabled =
+    var.DEMO_ASSETS_BUCKET_NAME != ""``), so an empty recovered value there means
+    the lookup failed, not that there is no demo — and seeding the GitHub
+    environment from it would destroy the demo on the next apply. Treated as
+    not-recovered on prod, and omitted from ``--out`` rather than written blank,
+    so ``setup-github-environments.sh`` reports it as required-but-absent instead
+    of filing it under "optional, which is fine".
+    """
+    expected = {"ENFORCE_MFA"}
+    if env != "prod":
+        expected.add("DEMO_ASSETS_BUCKET_NAME")
+    return expected
+
+
 def shown(key: str, value: str) -> str:
     if not value:
         return "(empty)"
@@ -344,10 +382,7 @@ def main() -> None:
         src = sources.get(key, "terraform state")
         print(f"  {key:<{width}}  {shown(key, values[key]):<28}  [{src}]")
 
-    # Legitimately empty: ENFORCE_MFA (unset means "use flip-api's secure
-    # default"), and the kit date of the backend this environment does not run —
-    # only one of the two is ever provisioned.
-    expected_empty = {"ENFORCE_MFA", "DEMO_ASSETS_BUCKET_NAME"}
+    expected_empty = keys_expected_empty(args.env)
     expected_empty.add("FLOWER_KIT_DATE" if values.get("FL_BACKEND") == "nvflare" else "FLARE_KIT_DATE")
     empties = [k for k, val in values.items() if not val and k not in expected_empty]
     if empties:
@@ -386,7 +421,7 @@ def main() -> None:
             fh.write("# NOT a complete operator env file: the trust/XNAT/Orthanc/OMOP settings\n")
             fh.write("# are not recoverable from AWS and are absent here.\n")
             for key in sorted(values):
-                if values[key] or key in ("ENFORCE_MFA", "DEMO_ASSETS_BUCKET_NAME"):
+                if values[key] or key in keys_expected_empty(args.env):
                     fh.write(f"{key}={values[key]}\n")
         print(f"\n✅ Wrote {args.out} (0600).")
 

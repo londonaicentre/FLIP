@@ -149,9 +149,12 @@ cat >&2 <<'EOF'
      1. Enable deployment mode on the hub — this pauses FL job pickup. Queued jobs
         hold; a running job finishes and frees its net.
      2. Wait until GET /fl/quiesce reports deployment mode ON and no BUSY net.
-     3. Re-run this workflow.
+     3. Re-run terraform_apply.yml on this branch via workflow_dispatch, with the
+        `fl_quiesced` input set to true. That input is what skips this gate — a
+        plain re-run reads the same plan and holds again.
      4. Disable deployment mode afterwards.
 
-   Runbook: deploy/providers/AWS/README.md ("FL quiesce before a Central Hub deploy").
+   Runbook: deploy/providers/AWS/README.md, "Terraform CI: plan on PR, apply on
+   merge" > "What an automated apply will not do".
 EOF
 exit 1

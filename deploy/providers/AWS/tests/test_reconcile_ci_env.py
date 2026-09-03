@@ -23,6 +23,7 @@ against an environment and diffing (`--compare`).
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -190,23 +191,48 @@ class TestStateLookup:
         )
         assert not st.has_module_resource("module.trust_ec2", "aws_instance", "trust_host")
 
-    def test_module_lookup_rejects_a_resource_in_a_different_module(self, state):
-        # module.trust_ec2_role sorts adjacent to module.trust_ec2 and is present
-        # even in a hub-only deployment; a substring match would confuse them.
+    def test_module_lookup_rejects_a_resource_in_a_different_module(self):
+        # The prefix must match on a module boundary. `module.trust_ec2_role` is
+        # present even in a hub-only deployment, so a bare startswith() answers
+        # "yes, a cloud trust exists" for an environment that has none — the same
+        # false "true" the root-bastion lookup used to give.
+        #
+        # The type and name here deliberately MATCH what is being asked for, so
+        # the module check is the only thing that can reject it. A fixture that
+        # differed in type or name would pass whatever the prefix logic did.
         st = rce.State(
             {
                 "resources": [
                     {
                         "mode": "managed",
                         "module": "module.trust_ec2_role",
-                        "type": "aws_iam_role",
-                        "name": "this",
-                        "instances": [{"attributes": {}}],
+                        "type": "aws_instance",
+                        "name": "trust_host",
+                        "instances": [{"attributes": {"instance_type": "t3.xlarge"}}],
                     }
                 ]
             }
         )
         assert not st.has_module_resource("module.trust_ec2", "aws_instance", "trust_host")
+
+    @pytest.mark.parametrize("module", ["module.trust_ec2", "module.trust_ec2[0]", "module.trust_ec2.module.inner"])
+    def test_module_lookup_accepts_every_real_address_shape(self, module):
+        # count/for_each add `[0]`, nesting adds `.module.<name>`; all three are
+        # the module being asked about.
+        st = rce.State(
+            {
+                "resources": [
+                    {
+                        "mode": "managed",
+                        "module": module,
+                        "type": "aws_instance",
+                        "name": "trust_host",
+                        "instances": [{"attributes": {}}],
+                    }
+                ]
+            }
+        )
+        assert st.has_module_resource("module.trust_ec2", "aws_instance", "trust_host")
 
 
 class TestSplitImage:
@@ -269,3 +295,232 @@ class TestEnvFileParsing:
         assert parsed["FL_KIT_SLOT_NAMES"] == '["Trust_1", "Trust_2"]'
         assert parsed["EMPTY"] == ""
         assert "not a variable line" not in parsed
+
+
+# The state-mining helpers above are pure functions, and testing them alone left
+# the two entry points — build() and main() — with no coverage at all: reverting
+# either the module-boundary fix or the DEMO_ASSETS_BUCKET_NAME one still left the
+# suite green. These drive both, with every AWS call stubbed.
+
+
+def _minimal_state(*, with_trust_host: bool, demo_bucket: str | None) -> dict:
+    """Just enough state for build() to run end to end."""
+    resources: list[dict] = [
+        _task_definition(
+            "flip_api",
+            [
+                {
+                    "name": "flip-api",
+                    "image": "ghcr.io/londonaicentre/flip-api:prod",
+                    "portMappings": [{"containerPort": 8000}],
+                    "environment": [
+                        {"name": "POSTGRES_DB", "value": "centralhub"},
+                        {"name": "POSTGRES_USER", "value": "flipuser"},
+                        {"name": "FL_BACKEND", "value": "nvflare"},
+                    ],
+                }
+            ],
+        ),
+        _task_definition(
+            "fl_api_net_1",
+            [{"name": "fl-api-net-1", "image": "ghcr.io/londonaicentre/flare-fl-api:prod"}],
+        ),
+        _task_definition(
+            "fl_server_net_1",
+            [{"name": "fl-server-net-1", "image": "ghcr.io/londonaicentre/flare-fl-server:prod"}],
+        ),
+        {
+            "mode": "managed",
+            "type": "aws_vpc",
+            "name": "this",
+            "instances": [{"attributes": {"tags": {"Name": "flip-vpc"}}}],
+        },
+        # The SSM bastion, present whether or not a cloud trust is deployed.
+        {
+            "mode": "managed",
+            "type": "aws_instance",
+            "name": "ec2_instance",
+            "instances": [{"attributes": {}}],
+        },
+    ]
+    if with_trust_host:
+        resources.append(
+            {
+                "mode": "managed",
+                "module": "module.trust_ec2[0]",
+                "type": "aws_instance",
+                "name": "trust_host",
+                "instances": [{"attributes": {}}],
+            }
+        )
+    else:
+        # Present in a hub-only deployment, and the near-miss the module-boundary
+        # check has to reject.
+        resources.append(
+            {
+                "mode": "managed",
+                "module": "module.trust_ec2_role",
+                "type": "aws_iam_role",
+                "name": "this",
+                "instances": [{"attributes": {}}],
+            }
+        )
+    if demo_bucket is not None:
+        resources.append(
+            {
+                "mode": "data",
+                "type": "aws_s3_bucket",
+                "name": "demo_assets",
+                "instances": [{"attributes": {"bucket": demo_bucket}}],
+            }
+        )
+    return {"resources": resources}
+
+
+@pytest.fixture
+def stub_aws(monkeypatch):
+    """Stub every AWS call build() makes. Returns a mutable state-document dict."""
+    doc = {"resources": []}
+
+    class _Completed:
+        def __init__(self, stdout):
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(argv, **kwargs):
+        # The only direct subprocess.run in build() is the state download.
+        assert argv[:3] == ["aws", "s3", "cp"], argv
+        return _Completed(json.dumps(doc))
+
+    def fake_aws(args, profile, region):
+        if args[0] == "secretsmanager":
+            return json.dumps(
+                {
+                    "aes_key": "not-a-real-key",  # pragma: allowlist secret
+                    "internal_service_key": "not-a-real-service-key",  # pragma: allowlist secret
+                    "internal_service_key_hash": "0" * 64,
+                }
+            )
+        if args[0] == "ssm":
+            return '["Trust_1", "Trust_2"]'
+        if args[0] == "ecs":
+            # describe-services then describe-task-definition; the live tag is a
+            # sha pin, which is exactly what must survive into the output.
+            return "flip-api:41" if args[1] == "describe-services" else "ghcr.io/londonaicentre/flip-api:sha-abc1234"
+        raise AssertionError(f"unexpected aws call: {args}")
+
+    monkeypatch.setattr(rce.subprocess, "run", fake_run)
+    monkeypatch.setattr(rce, "aws", fake_aws)
+    return doc
+
+
+class TestBuild:
+    def test_hub_only_deployment_recovers_deploy_trust_ec2_false(self, stub_aws):
+        stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket=None))
+        values, _ = rce.build("stag", "stag", "eu-west-2", "flip-terraform-state-stag", "flip-cluster")
+        # The regression, at the level the tool actually runs: staging has a
+        # bastion and a trust_ec2_role but no trust host, and must not be told to
+        # create a t3.xlarge one.
+        assert values["DEPLOY_TRUST_EC2"] == "false"
+
+    def test_a_deployed_trust_host_recovers_true(self, stub_aws):
+        stub_aws.update(_minimal_state(with_trust_host=True, demo_bucket=None))
+        values, _ = rce.build("prod", "prod", "eu-west-2", "flip-terraform-state-prod", "flip-cluster")
+        assert values["DEPLOY_TRUST_EC2"] == "true"
+
+    def test_live_image_tag_beats_the_tag_recorded_in_state(self, stub_aws):
+        # State records `:prod` (the bootstrap default); the service is running a
+        # sha pin registered outside Terraform by deploy-centralhub. Reading state
+        # here would hand CI the mutable tag and undo the FLIP#751 pin.
+        stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket=None))
+        values, sources = rce.build("prod", "prod", "eu-west-2", "flip-terraform-state-prod", "flip-cluster")
+        assert values["DOCKER_TAG"] == "sha-abc1234"
+        assert sources["DOCKER_TAG"] == "live ECS service"
+
+    def test_demo_bucket_comes_from_the_data_source(self, stub_aws):
+        stub_aws.update(_minimal_state(with_trust_host=True, demo_bucket="flipprod-demo-assets"))
+        values, _ = rce.build("prod", "prod", "eu-west-2", "flip-terraform-state-prod", "flip-cluster")
+        assert values["DEMO_ASSETS_BUCKET_NAME"] == "flipprod-demo-assets"
+
+
+class TestExpectedEmpty:
+    def test_demo_bucket_may_be_empty_on_stag(self):
+        assert "DEMO_ASSETS_BUCKET_NAME" in rce.keys_expected_empty("stag")
+
+    def test_demo_bucket_may_not_be_empty_on_prod(self):
+        # Prod carries the Ark+ demo, and cloudfront.tf gates four resources plus
+        # the /ark_demo/* behaviour on the value being non-empty. An empty
+        # recovery there is a failed lookup, and seeding from it destroys them.
+        assert "DEMO_ASSETS_BUCKET_NAME" not in rce.keys_expected_empty("prod")
+
+    def test_enforce_mfa_may_be_empty_anywhere(self):
+        assert "ENFORCE_MFA" in rce.keys_expected_empty("prod")
+        assert "ENFORCE_MFA" in rce.keys_expected_empty("stag")
+
+
+class TestMain:
+    @staticmethod
+    def _run(monkeypatch, env, values, extra_argv=()):
+        monkeypatch.setattr(rce, "build", lambda *a, **k: (dict(values), {}))
+        monkeypatch.setattr(sys, "argv", ["reconcile_ci_env.py", "--env", env, *extra_argv])
+        rce.main()
+
+    BASE = {
+        "AWS_REGION": "eu-west-2",
+        "FL_BACKEND": "nvflare",
+        "FLARE_KIT_DATE": "20260512",
+        "FLOWER_KIT_DATE": "",
+        "ENFORCE_MFA": "",
+        "VPC_NAME": "flip-vpc",
+        "DEMO_ASSETS_BUCKET_NAME": "",
+    }
+
+    def test_prod_reports_an_absent_demo_bucket_as_not_recovered(self, monkeypatch, capsys):
+        self._run(monkeypatch, "prod", self.BASE)
+        out = capsys.readouterr().out
+        assert "Not recovered" in out
+        assert "DEMO_ASSETS_BUCKET_NAME" in out.split("Not recovered", 1)[1]
+
+    def test_stag_does_not_flag_an_absent_demo_bucket(self, monkeypatch, capsys):
+        self._run(monkeypatch, "stag", self.BASE)
+        out = capsys.readouterr().out
+        # Nothing is missing on stag: the only empties are the legitimately empty
+        # ones, so the warning block must not appear at all.
+        assert "Not recovered" not in out
+
+    def test_only_the_running_backends_kit_date_is_required(self, monkeypatch, capsys):
+        # Only one backend is ever provisioned, so the other's kit date is
+        # legitimately empty. A genuinely missing key alongside it proves the
+        # warning block is being produced at all.
+        values = {**self.BASE, "VPC_NAME": ""}
+        self._run(monkeypatch, "stag", values)
+        warning = capsys.readouterr().out.split("Not recovered", 1)[1]
+        assert "VPC_NAME" in warning
+        assert "FLOWER_KIT_DATE" not in warning
+
+    def test_out_omits_an_unrecovered_prod_demo_bucket(self, monkeypatch, tmp_path):
+        out_file = tmp_path / "recovered.env"
+        self._run(monkeypatch, "prod", self.BASE, ("--out", str(out_file)))
+        written = rce.read_env_file(str(out_file))
+        # Writing it blank would have setup-github-environments.sh file it under
+        # "optional, which is fine" and seed prod without it.
+        assert "DEMO_ASSETS_BUCKET_NAME" not in written
+        assert written["ENFORCE_MFA"] == ""
+
+    def test_out_writes_an_empty_demo_bucket_on_stag(self, monkeypatch, tmp_path):
+        out_file = tmp_path / "recovered.env"
+        self._run(monkeypatch, "stag", self.BASE, ("--out", str(out_file)))
+        assert rce.read_env_file(str(out_file))["DEMO_ASSETS_BUCKET_NAME"] == ""
+
+    def test_out_refuses_to_overwrite(self, monkeypatch, tmp_path):
+        out_file = tmp_path / "recovered.env"
+        out_file.write_text("TRUST_API_KEY=irreplaceable\n")
+        with pytest.raises(SystemExit):
+            self._run(monkeypatch, "stag", self.BASE, ("--out", str(out_file)))
+        assert "irreplaceable" in out_file.read_text()
+
+    def test_out_is_written_0600(self, monkeypatch, tmp_path):
+        out_file = tmp_path / "recovered.env"
+        self._run(monkeypatch, "stag", self.BASE, ("--out", str(out_file)))
+        assert oct(out_file.stat().st_mode & 0o777) == "0o600"

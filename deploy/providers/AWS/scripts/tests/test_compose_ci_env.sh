@@ -90,6 +90,11 @@ BASE_ENV=(
     FL_BACKEND=nvflare
     FL_KIT_SLOT_NAMES='["Trust_1", "Trust_2"]'
     FLARE_KIT_DATE=20260429
+    # Required, not optional: their Makefile `?=` defaults create a trust host
+    # and delete the trust NLB ingress rules respectively.
+    DEPLOY_TRUST_EC2=false
+    LOCAL_TRUST_PUBLIC_IPS='["203.0.113.10"]'
+    K8S_TRUST_PUBLIC_IPS=[]
 )
 
 # Run the script under `env -i` with BASE_ENV plus any overrides given as
@@ -212,8 +217,12 @@ for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
     # Keys appearing as `KEY: ${{ vars.X }}` / `${{ secrets.X }}` in the workflow.
     wf_keys="$(grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*:[[:space:]]+\$\{\{[[:space:]]*(vars|secrets)\.' "${wf_path}" |
         sed -E 's/^[[:space:]]+([A-Z0-9_]+):.*/\1/' | LC_ALL=C sort -u)"
-    exempt='^(TF_ENV|FLARE_KIT_DATE|FLOWER_KIT_DATE)$'
-    [[ "${wf}" == "terraform_apply.yml" ]] && exempt='^(TF_ENV|FLARE_KIT_DATE|FLOWER_KIT_DATE|DOCKER_TAG|DOCKER_FL_TAG)$'
+    # DOCKER_TAG / DOCKER_FL_TAG are exempt in all three: every workflow now runs
+    # resolve-image-tags.sh and inherits its output through $GITHUB_ENV, so a
+    # `vars.DOCKER_TAG` line in the compose step would override the resolved tag
+    # and put the mutable one back. The assertion below requires the resolver
+    # instead, so the exemption cannot be used to simply drop the key.
+    exempt='^(TF_ENV|FLARE_KIT_DATE|FLOWER_KIT_DATE|DOCKER_TAG|DOCKER_FL_TAG)$'
     wanted="$(echo "${manifest}" | grep -vE "${exempt}")"
     absent="$(LC_ALL=C comm -23 <(echo "${wanted}") <(echo "${wf_keys}"))"
     if [[ -z "${absent}" ]]; then
@@ -225,7 +234,42 @@ for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
     fi
 done
 
-# 1b. NO WORKFLOW MAY PUBLISH A PLAN FILE AS AN ARTIFACT.
+# 1c. EVERY WORKFLOW MUST RESOLVE THE IMAGE TAGS, AND NONE MAY OVERRIDE THEM.
+#
+#     `vars.DOCKER_TAG` is the mutable `:stag` / `:prod`; an apply writes the
+#     immutable `sha-<short7>` pin (FLIP#751) into the task definitions. A plan or
+#     drift run that read the configured value would report a permanent
+#     `sha-… -> :prod` diff on the FL task definitions — which the apply's own FL
+#     gate then holds every apply on. So all three run resolve-image-tags.sh, and
+#     the exemption above is only safe while they do.
+echo ""
+echo "-- every Terraform CI workflow resolves the image tags"
+resolver_missing=""
+override_offenders=""
+for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
+    wf_path="${WORKFLOW_DIR}/${wf}"
+    [[ -f "${wf_path}" ]] || continue
+    grep -q 'resolve-image-tags.sh' "${wf_path}" || resolver_missing="${resolver_missing} ${wf}"
+    # `FALLBACK_DOCKER_TAG: ${{ vars.DOCKER_TAG }}` is how the resolver is *fed*
+    # and is fine; a bare `DOCKER_TAG:` line is the override that is not.
+    if grep -qE '^[[:space:]]+DOCKER_(FL_)?TAG:[[:space:]]+\$\{\{' "${wf_path}"; then
+        override_offenders="${override_offenders} ${wf}"
+    fi
+done
+if [[ -z "${resolver_missing}" ]]; then
+    ok "all three run resolve-image-tags.sh"
+else
+    no "all three run resolve-image-tags.sh" \
+        "these would plan against the mutable tag:" ${resolver_missing}
+fi
+if [[ -z "${override_offenders}" ]]; then
+    ok "none re-supplies DOCKER_TAG / DOCKER_FL_TAG from vars"
+else
+    no "none re-supplies DOCKER_TAG / DOCKER_FL_TAG from vars" \
+        "this overrides the resolved tag and reintroduces the un-pin:" ${override_offenders}
+fi
+
+# 1d. NO WORKFLOW MAY PUBLISH A PLAN FILE AS AN ARTIFACT.
 #
 #     tf-via-pr defaults upload-plan to true, and a Terraform plan file is a zip
 #     containing the full tfstate — AES_KEY_BASE64, INTERNAL_SERVICE_KEY and
@@ -314,6 +358,29 @@ if [[ -f "${OUT_FILE}" ]]; then
     no "writes no file on failure" "a partial file would let make proceed with an empty value"
 else
     ok "writes no file on failure"
+fi
+
+# 5b. THE DESTRUCTIVE DEFAULTS. `?=` in the Makefile means an absent key does not
+#     reach variables.tf at all — it reaches Terraform as the Makefile's own
+#     default, and for these three that default destroys something: a trust host
+#     appears on stag, or every on-prem/K8s NLB ingress rule is deleted. None of
+#     them is on check-fl-plan-impact.sh's watch list, so an unattended apply
+#     would do it silently. Required, so the value has to be written down.
+for key in DEPLOY_TRUST_EC2 LOCAL_TRUST_PUBLIC_IPS K8S_TRUST_PUBLIC_IPS; do
+    run_case "${key} is required, not defaulted" "${key}"
+    expect_rc 1 "exits 1"
+    expect_stderr "${key}" "names it"
+done
+
+# ...and `[]` / `false` are legitimate values that must compose, not be mistaken
+# for absence. This is the whole point of requiring them: an explicit empty list
+# is a decision, an absent key is an accident.
+run_case "an explicit empty list composes" LOCAL_TRUST_PUBLIC_IPS='[]'
+expect_rc 0 "exits 0"
+if grep -qFx 'LOCAL_TRUST_PUBLIC_IPS=[]' "${OUT_FILE}"; then
+    ok "writes the explicit empty list through"
+else
+    no "writes the explicit empty list through" "file: $(grep '^LOCAL_TRUST' "${OUT_FILE}")"
 fi
 
 # 6. ALL missing keys are reported at once — a one-at-a-time script costs a CI

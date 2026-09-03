@@ -76,11 +76,16 @@ REQUIRED_KEYS=(
     FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME
     FLIP_UI_BUCKET_NAME
 
-    # Secrets
+    # Secrets — stored as GitHub environment secrets
     ADMIN_USER_PASSWORD
     AES_KEY_BASE64
     INTERNAL_SERVICE_KEY
     INTERNAL_SERVICE_KEY_HASH
+
+    # Database identifiers — configuration, stored as GitHub environment
+    # *variables*. They are rendered in the clear into the public plan comment
+    # either way (../variables.tf explains the decision), and production does not
+    # authenticate with them: RDS Proxy mints a per-connection IAM token.
     POSTGRES_DB
     POSTGRES_USER
 
@@ -116,18 +121,31 @@ REQUIRED_KEYS=(
     # FL
     FL_BACKEND
     FL_KIT_SLOT_NAMES
+
+    # The three keys whose Makefile default is DESTRUCTIVE rather than inert.
+    #
+    #   DEPLOY_TRUST_EC2       ?= true  — absent means "create a t3.xlarge cloud
+    #                                     trust host", which staging does not run.
+    #   LOCAL_TRUST_PUBLIC_IPS ?= []    — absent means "no on-prem trust may reach
+    #   K8S_TRUST_PUBLIC_IPS   ?= []      the FL-server NLB", i.e. delete every
+    #                                     ingress rule those trusts connect through.
+    #
+    # None of the three is on check-fl-plan-impact.sh's watch list, so an
+    # unattended apply would make all of it silently. They are required here with
+    # an explicit literal — `false` / `[]` written down is a decision; an absent
+    # key is an accident that reads identically to Terraform.
+    DEPLOY_TRUST_EC2
+    K8S_TRUST_PUBLIC_IPS
+    LOCAL_TRUST_PUBLIC_IPS
 )
 
 # Keys the Makefile exports only when set, or supplies a `?=` default for. Passed
 # through when present; their absence is not an error, because the Makefile or
 # variables.tf already has a defined fallback.
 OPTIONAL_KEYS=(
-    DEPLOY_TRUST_EC2
     FLIP_BUCKET_NAME
     JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB
     JOB_RESOURCE_SPEC_NUM_GPUS
-    K8S_TRUST_PUBLIC_IPS
-    LOCAL_TRUST_PUBLIC_IPS
 
     # Empty is meaningful and NOT symmetric with the rest of this list: it is the
     # correct value on stag, which hosts no public Ark+ demo, and a destructive
@@ -169,12 +187,20 @@ case "${FL_BACKEND:-}" in
         ;;
 esac
 
-# AWS_PROFILE is *not* a stored value. The Makefile refuses to run unless it
-# matches the target environment (Makefile's PROD_AWS_PROFILE / STAG_AWS_PROFILE
-# guard), and the CI workflow writes an ~/.aws/config profile of the same name
-# backed by the OIDC web identity token. Deriving it here keeps the two in step
-# and makes it impossible for a mis-set GitHub variable to point a stag run at
-# the prod account.
+# AWS_PROFILE is *not* a stored value, and in CI it does not name a profile at
+# all. It exists solely to satisfy the Makefile's account guard, which refuses to
+# parse unless AWS_PROFILE equals PROD_AWS_PROFILE / STAG_AWS_PROFILE — a guard
+# written for laptops, where the profile really is how you choose an account.
+#
+# On a runner the account comes from the OIDC role that
+# aws-actions/configure-aws-credentials has already assumed into AWS_ACCESS_KEY_ID
+# and friends; no ~/.aws/config is written by any workflow, and nothing would read
+# one if it were. The value never leaves the Makefile either: `make print-tf-env`
+# emits only `TF_VAR_*` lines, so AWS_PROFILE does not reach the terraform steps.
+#
+# Deriving it from TF_ENV rather than storing it is still what stops a mis-set
+# GitHub variable from pointing a stag run's Makefile at the prod branch of that
+# guard — which is the only decision the value drives.
 AWS_PROFILE_VALUE="${TF_ENV}"
 
 # ---------------------------------------------------------------------------
@@ -253,8 +279,8 @@ if ((${#missing[@]} > 0)) || ((${#placeholder[@]} > 0)) || ((${#malformed[@]} > 
 
    Each name above must exist as a secret or variable on the GitHub environment
    'aws-${TF_ENV}', with the same value as the matching key in the operator's
-   .env.${TF_ENV/prod/production} file. See deploy/providers/AWS/README.md
-   ("Terraform CI: where the values come from").
+   .env.${TF_ENV/prod/production} file. See deploy/providers/AWS/README.md,
+   "Terraform CI: plan on PR, apply on merge" > "Where the values come from".
 EOF
     exit 1
 fi
