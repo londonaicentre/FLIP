@@ -51,6 +51,10 @@ Check the stack is up:
     stays empty. Nothing errors — training just finds no data and dies with
     num_samples=0.
 
-    For a functional FL trust, set sharedImagesPvc.enabled=true (RWX-capable
-    storage class) and re-run `helm upgrade`.
+    For a functional FL trust, set sharedImagesPvc.enabled=true and re-run
+    `helm upgrade`. The shipped default is ReadWriteOnce, which every storage
+    class this chart is validated on provides; the fl-client is pinned to
+    imaging-api's node (flClient.affinity) so the single-node mount that RWO
+    implies is satisfied. Only move to an RWX-capable class if you need the two
+    pods on different nodes, and relax that affinity if you do.
 {{- end }}
