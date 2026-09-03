@@ -11,7 +11,7 @@
 #
 
 import math
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -34,8 +34,15 @@ class PagingInfo(BaseModel):
     )
 
 
+ProjectTypeFilter = Literal["imaging", "omop_only"]
+PROJECT_TYPE_FILTERS: tuple[str, ...] = ("imaging", "omop_only")
+
+
 class FilterInfo(BaseModel):
     owner: UUID | None = Field(default=None)  # Assuming owner is a UUID
+    # FLIP#1071: restrict the list to imaging projects (has_imaging) or tabular-only ones.
+    # None = every type (the default the UI's "All types" segment sends nothing for).
+    project_type: ProjectTypeFilter | None = Field(default=None)
 
     model_config = ConfigDict(
         populate_by_name=True,  # Allows using alias in constructor and for export
@@ -135,7 +142,11 @@ def get_filter_details(query_string_parameters: dict[str, str | UUID] | None = N
             owner_param = None
 
     # The Pydantic model FilterInfo will handle the validation of owner_param to UUID
-    return FilterInfo(owner=owner_param)
+    raw_project_type = query_string_parameters.get("projectType")
+    # Unknown values fall back to "every type" rather than 400: the filter is a UI convenience.
+    project_type = raw_project_type if raw_project_type in PROJECT_TYPE_FILTERS else None
+
+    return FilterInfo(owner=owner_param, project_type=project_type)  # type: ignore[arg-type]
 
 
 def get_total_pages(total_records: int, page_size_int: int) -> int:

@@ -134,6 +134,9 @@ class IProject(BaseModel):  # Base for IProject to avoid repetition
     # handling reason as creation_timestamp.
     staged_at: str | None = Field(default=None, alias="stagedAt")
     status: ProjectStatus = Field(default=ProjectStatus.UNSTAGED)
+    # Whether the project has an imaging stage at all (FLIP#1071). Creation-time and immutable;
+    # on the base so the list can render the type chip + filter without a per-row round-trip.
+    has_imaging: bool = Field(default=True)
     # Participating trusts + most-recent cohort query. Optional so the list
     # endpoint can omit them when batch-loading isn't worth it; the detail
     # endpoint always populates both. Lives on IProject (not just IReturnedProject)
@@ -164,9 +167,6 @@ class IReturnedProject(IProject):  # Extends IProject
     # DICOM->NIfTI setting. Fixed at creation and immutable afterwards (the
     # edit endpoint ignores it), so the UI renders the toggle disabled.
     dicom_to_nifti: bool = Field(default=True)
-    # Whether the project has an imaging stage at all. Fixed at creation (the edit endpoint ignores
-    # it); surfaced so the UI and tooling can skip imaging-only views/waits. FLIP#1071.
-    has_imaging: bool = Field(default=True)
     model_config = ConfigDict(populate_by_name=True)
 
 
