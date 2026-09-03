@@ -795,15 +795,27 @@ deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and dep
 	@# provisioned distribution and waved the demo through on an unprovisioned
 	@# one (precisely the silent-detach this check exists to prevent).
 	@DIST_ID=$$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId); \
-	DEMO_BEHAVIOURS=$$($(_AWS_ENV) aws cloudfront get-distribution-config --id "$$DIST_ID" \
-		--query "DistributionConfig.CacheBehaviors.Items[?PathPattern=='/ark_demo/*'] | length(@)" \
-		--output text 2>/dev/null); \
-	if [ -z "$$DEMO_BEHAVIOURS" ] || [ "$$DEMO_BEHAVIOURS" = "0" ]; then \
-		echo "❌ No /ark_demo/* cache behaviour on distribution $$DIST_ID."; \
-		echo "   DEMO_ASSETS_BUCKET_NAME is set but not applied — run a terraform apply first."; \
-		echo "   (An empty result also lands here — a failed describe call fails closed.)"; \
+	[ -n "$$DIST_ID" ] || { \
+		echo "❌ Terraform output CloudfrontDistributionId is empty."; \
+		echo "   The state has no distribution to check — run a terraform apply first."; \
 		exit 1; \
-	fi
+	}; \
+	if ! DEMO_BEHAVIOURS=$$($(_AWS_ENV) aws cloudfront get-distribution-config --id "$$DIST_ID" \
+		--query "DistributionConfig.CacheBehaviors.Items[?PathPattern=='/ark_demo/*'] | length(@)" \
+		--output text 2>&1); then \
+		echo "❌ Could not read the CloudFront distribution config for $$DIST_ID."; \
+		echo "   aws said: $$DEMO_BEHAVIOURS"; \
+		echo "   That is a lookup failure — an expired SSO session, the wrong profile, or no"; \
+		echo "   network — NOT a missing behaviour. Fix the credential or connectivity and"; \
+		echo "   re-run; a terraform apply is not the remedy here."; \
+		exit 1; \
+	fi; \
+	case "$$DEMO_BEHAVIOURS" in \
+		''|0|None) \
+			echo "❌ No /ark_demo/* cache behaviour on distribution $$DIST_ID."; \
+			echo "   DEMO_ASSETS_BUCKET_NAME is set but not applied — run a terraform apply first."; \
+			exit 1;; \
+	esac
 	@echo "🖼️  Building flip-ui Ark+ demo bundle from working tree..."
 	@# npm run build:demo's postbuild hook regenerates dist/js/window.js itself
 	@# (scripts/generate-demo-window-js.sh) — no separate window.js step needed,
