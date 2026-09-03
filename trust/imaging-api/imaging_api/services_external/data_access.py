@@ -42,8 +42,13 @@ async def get_accession_ids(encrypted_project_id: str, query: str) -> list[str]:
         encrypted_project_id (str): The encrypted project ID.
         query (str): The SQL query to execute.
 
+    A cohort query may return several rows per study — one ``image_occurrence`` per series, say — and
+    an accession is one study, imported once: the ids are de-duplicated here, first occurrence wins,
+    query order kept, so the same accession is neither queried and queued once per row nor counted
+    once per row in the import status (FLIP#1123).
+
     Returns:
-        list[str]: The accession IDs returned by the cohort query, in query order.
+        list[str]: The distinct accession IDs returned by the cohort query, in query order.
 
     Raises:
         CohortBelowThresholdError: If the cohort is smaller than the trust's
@@ -68,7 +73,13 @@ async def get_accession_ids(encrypted_project_id: str, query: str) -> list[str]:
             )
 
         response.raise_for_status()
-        return list(response.json().get("accession_ids", []))
+        rows = list(response.json().get("accession_ids", []))
+        accession_ids = list(dict.fromkeys(rows))
+        if len(accession_ids) != len(rows):
+            logger.info(
+                f"get_accession_ids: {len(rows)} cohort rows collapse to {len(accession_ids)} distinct accession(s)"
+            )
+        return accession_ids
 
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == httpx.codes.FORBIDDEN:
