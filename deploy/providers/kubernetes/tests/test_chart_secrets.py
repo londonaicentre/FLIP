@@ -131,6 +131,22 @@ def test_secret_var_map_targets_exist_in_the_secret_template():
     assert orphaned == set(), f"SECRET_VAR_MAP entries with no key in templates/secrets.yaml: {sorted(orphaned)}"
 
 
+def test_chart_key_slots_have_no_duplicate_entries():
+    """``SECRET_VAR_MAP`` is ``dict(CHART_KEY_SLOTS)``, which swallows duplicates.
+
+    A repeated env var silently keeps only the last pair, and a repeated Secret
+    key means two env vars race for one slot. Either reads as a working mapping
+    and deploys an empty or wrong credential, so check the tuple itself rather
+    than the dict built from it.
+    """
+    env_vars = [env_var for env_var, _key in generate_values.CHART_KEY_SLOTS]
+    keys = [key for _env_var, key in generate_values.CHART_KEY_SLOTS]
+
+    assert len(env_vars) == len(set(env_vars)), "duplicate env var in CHART_KEY_SLOTS"
+    assert len(keys) == len(set(keys)), "duplicate Secret key in CHART_KEY_SLOTS"
+    assert len(generate_values.SECRET_VAR_MAP) == len(generate_values.CHART_KEY_SLOTS)
+
+
 def test_xnat_db_superuser_and_app_role_use_distinct_secret_keys():
     """xnat-db's two passwords must not resolve to the same Secret key.
 

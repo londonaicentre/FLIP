@@ -47,27 +47,35 @@ ENV_VAR_MAP = {
     "OMOP_DATA_VERSION": ("omopDb.initJob.dataVersion", False),
 }
 
-# Env var name -> Secret key name. Both sides are identifiers; no value appears
-# here, which is why the entries detect-secrets' keyword rule matches carry an
-# inline pragma. Nothing in this file is ever a credential.
-SECRET_VAR_MAP = {
-    "AES_KEY_BASE64": "aes-key-base64",
-    "TRUST_API_KEY": "trust-api-key",  # pragma: allowlist secret
-    "TRUST_INTERNAL_SERVICE_KEY_HEADER": "trust-internal-service-key-header",  # pragma: allowlist secret
-    "TRUST_INTERNAL_SERVICE_KEY": "trust-internal-service-key",  # pragma: allowlist secret
-    "OMOP_POSTGRES_PASSWORD": "omop-postgres-password",  # pragma: allowlist secret
-    "DATA_ACCESS_POSTGRES_PASSWORD": "data-access-postgres-password",  # pragma: allowlist secret
-    "ORTHANC_REGISTERED_USERS": "orthanc-registered-users",
-    "XNAT_ADMIN_PASSWORD": "xnat-admin-password",  # pragma: allowlist secret
-    "XNAT_SERVICE_USER": "xnat-service-user",
-    "XNAT_SERVICE_PASSWORD": "xnat-service-password",  # pragma: allowlist secret
-    "XNAT_DATASOURCE_PASSWORD": "xnat-datasource-password",  # pragma: allowlist secret
-    "XNAT_DATASOURCE_ADMIN_PASSWORD": "xnat-datasource-admin-password",  # pragma: allowlist secret
-    "GRAFANA_ADMIN_PASSWORD": "grafana-admin-password",  # pragma: allowlist secret
-    "AWS_ACCESS_KEY_ID": "s3-access-key-id",
-    "AWS_SECRET_ACCESS_KEY": "s3-secret-access-key",  # pragma: allowlist secret
-    "AWS_SESSION_TOKEN": "aws-session-token",
-}
+# The chart's credential slots, as (env var name, Secret key name) pairs. Both
+# sides are identifiers; no value appears here, which is why the entries
+# detect-secrets' keyword rule matches carry an inline pragma. Nothing in this
+# file is ever a credential.
+#
+# The pairs are kept here, rather than inline in SECRET_VAR_MAP below, so that
+# the "which slots are unfilled" report in main() can be built from a plain list
+# of names that never held a value and cannot be confused - by a reader or by a
+# static analyser - with the map the values are read into.
+CHART_KEY_SLOTS = (
+    ("AES_KEY_BASE64", "aes-key-base64"),
+    ("TRUST_API_KEY", "trust-api-key"),  # pragma: allowlist secret
+    ("TRUST_INTERNAL_SERVICE_KEY_HEADER", "trust-internal-service-key-header"),  # pragma: allowlist secret
+    ("TRUST_INTERNAL_SERVICE_KEY", "trust-internal-service-key"),  # pragma: allowlist secret
+    ("OMOP_POSTGRES_PASSWORD", "omop-postgres-password"),  # pragma: allowlist secret
+    ("DATA_ACCESS_POSTGRES_PASSWORD", "data-access-postgres-password"),  # pragma: allowlist secret
+    ("ORTHANC_REGISTERED_USERS", "orthanc-registered-users"),
+    ("XNAT_ADMIN_PASSWORD", "xnat-admin-password"),  # pragma: allowlist secret
+    ("XNAT_SERVICE_USER", "xnat-service-user"),
+    ("XNAT_SERVICE_PASSWORD", "xnat-service-password"),  # pragma: allowlist secret
+    ("XNAT_DATASOURCE_PASSWORD", "xnat-datasource-password"),  # pragma: allowlist secret
+    ("XNAT_DATASOURCE_ADMIN_PASSWORD", "xnat-datasource-admin-password"),  # pragma: allowlist secret
+    ("GRAFANA_ADMIN_PASSWORD", "grafana-admin-password"),  # pragma: allowlist secret
+    ("AWS_ACCESS_KEY_ID", "s3-access-key-id"),
+    ("AWS_SECRET_ACCESS_KEY", "s3-secret-access-key"),  # pragma: allowlist secret
+    ("AWS_SESSION_TOKEN", "aws-session-token"),
+)
+
+SECRET_VAR_MAP = dict(CHART_KEY_SLOTS)
 
 
 def deep_set(d, key_path, value):
@@ -233,7 +241,7 @@ def main():
         # Say which slots the env file could not fill. templates/secrets.yaml omits
         # an empty key, so the pod that mounts it dies with CreateContainerConfigError
         # — better to hear it here than from a crash-looping container.
-        unfilled = sorted(key for key in SECRET_VAR_MAP.values() if key not in secrets)
+        unfilled = sorted(key for _env_var, key in CHART_KEY_SLOTS if key not in secrets)
         if unfilled:
             print(
                 "WARNING: no value in the env file for: {}".format(", ".join(unfilled)),
