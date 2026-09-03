@@ -33,26 +33,40 @@ describe("DemoBanner", () => {
         expect(comp.find("button").exists()).toBe(false);
     });
 
-    it("stamps the register's capture date, human-readable", () => {
-        const comp = mountComponent(DemoBanner);
-
-        // DEMO_CAPTURE_DATE is "YYYY-MM-DD"; assert against the same
-        // formatting the component uses so this doesn't hardcode a date
-        // string that drifts the moment the register is re-captured.
-        expect(comp.text()).toContain(humanised(DEMO_CAPTURE_DATE));
-        expect(comp.text()).toContain("Read-only demo");
+    // Guard the inputs before anything is formatted from them. `humanised()`
+    // below re-implements the component's own formatter, so on a malformed
+    // constant both sides produce "Invalid Date" and every toContain agrees
+    // with it. An ISO-shape check is what makes the assertions load-bearing.
+    it("exposes both capture dates as ISO calendar dates", () => {
+        for (const iso of [DEMO_CAPTURE_DATE, DEMO_EVALUATION_CAPTURE_DATE]) {
+            expect(iso).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+            expect(Number.isNaN(new Date(`${iso}T00:00:00Z`).getTime())).toBe(false);
+        }
     });
 
-    it("names BOTH capture dates while the two projects are captured apart", () => {
+    it("names BOTH capture dates, in order, human-readable", () => {
         const comp = mountComponent(DemoBanner);
+        const text = comp.text().replace(/\s+/g, " ").trim();
 
         // The register spans two captures (the fine-tuning project was
         // re-captured alone after the FLIP#821 orientation fix). Showing only
         // one date silently misdates half the exhibit, which is exactly what
-        // the register's provenance discipline exists to prevent — so the
-        // evaluation date is asserted, not merely rendered.
-        expect(comp.text()).toContain(humanised(DEMO_EVALUATION_CAPTURE_DATE));
-        expect(comp.text()).toContain("fine-tuning");
-        expect(comp.text()).toContain("evaluation");
+        // the register's provenance discipline exists to prevent.
+        //
+        // Assert the whole sentence rather than two independent substrings:
+        // order-insensitive toContain calls pass just as happily with the two
+        // dates swapped, which would misdate both halves at once.
+        expect(text).toBe(
+            "Read-only demo — snapshot of the Ark+ federated experiments: fine-tuning captured "
+            + `${humanised(DEMO_CAPTURE_DATE)}, evaluation ${humanised(DEMO_EVALUATION_CAPTURE_DATE)}.`
+        );
+
+        // And pin the rendered shape independently of the formatter, so a
+        // change that still round-trips through humanised() cannot pass.
+        const DAY_MON_YEAR = String.raw`\d{2} [A-Z][a-z]{2} \d{4}`;
+        expect(text).toMatch(new RegExp(
+            String.raw`^Read-only demo — snapshot of the Ark\+ federated experiments: `
+            + String.raw`fine-tuning captured ${DAY_MON_YEAR}, evaluation ${DAY_MON_YEAR}\.$`
+        ));
     });
 });
