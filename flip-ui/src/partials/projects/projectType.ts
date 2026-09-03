@@ -23,8 +23,9 @@ export type ProjectTypeFilter = "all" | ProjectTypeParam;
 // DOM ids (data-test hooks, option keys) for the same two kinds.
 export type ProjectTypeId = "imaging" | "omop-only";
 
-// `has_imaging` is absent on a hub predating the flag, which means imaging (the old behaviour).
-// Every "absent means imaging" decision in the UI goes through here.
-export const projectHasImaging = (project: Pick<IProject, "has_imaging">): boolean => project.has_imaging ?? true;
+// `has_imaging` is absent on a hub predating the flag, which means imaging (the old behaviour), as
+// does a project that has not loaded yet. Every "absent means imaging" decision goes through here.
+export const projectHasImaging = (project?: Pick<IProject, "has_imaging"> | null): boolean =>
+    project?.has_imaging ?? true;
 
 export const projectTypeId = (hasImaging: boolean): ProjectTypeId => (hasImaging ? "imaging" : "omop-only");

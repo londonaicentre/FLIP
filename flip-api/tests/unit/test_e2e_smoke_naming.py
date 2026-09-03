@@ -19,7 +19,6 @@ import pytest
 
 from tests.e2e_smoke import (
     SmokeFailure,
-    TutorialInfo,
     create_project_with_query,
     default_model_name,
     default_project_name,
@@ -29,32 +28,20 @@ from tests.e2e_smoke import (
 
 
 @pytest.mark.parametrize(
-    ("path", "tutorial_dir", "label"),
+    ("path", "label"),
     [
-        ("../fl-tutorials/flower/ehr_risk_prediction/app", "ehr_risk_prediction", "EHR risk prediction"),
-        (
-            "../fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files",
-            "ehr_risk_prediction",
-            "EHR risk prediction",
-        ),
-        (
-            "../fl-tutorials/nvflare/image_classification/xray_classification/app_files",
-            "xray_classification",
-            "Chest X-ray classification",
-        ),
-        (
-            "../fl-tutorials/flower/3d_spleen_segmentation_evaluation/app",
-            "3d_spleen_segmentation_evaluation",
-            "3D spleen segmentation evaluation",
-        ),
+        ("../fl-tutorials/flower/ehr_risk_prediction/app", "EHR risk prediction"),
+        ("../fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files", "EHR risk prediction"),
+        ("../fl-tutorials/nvflare/image_classification/xray_classification/app_files", "Chest X-ray classification"),
+        ("../fl-tutorials/flower/3d_spleen_segmentation_evaluation/app", "3D spleen segmentation evaluation"),
         # An unknown app: capitalised, de-hyphenated directory name.
-        ("/srv/my_custom-app/app", "my_custom-app", "My custom app"),
+        ("/srv/my_custom-app/app", "My custom app"),
+        # The tutorial directory itself, without its app/ leaf.
+        ("../fl-tutorials/flower/ehr_risk_prediction", "EHR risk prediction"),
     ],
 )
-def test_describe_tutorial_reads_the_tutorial_off_the_app_path(path, tutorial_dir, label):
-    info = describe_tutorial(Path(path))
-    assert isinstance(info, TutorialInfo)
-    assert (info.dir, info.label) == (tutorial_dir, label)
+def test_describe_tutorial_reads_the_tutorial_off_the_app_path(path, label):
+    assert describe_tutorial(Path(path)).label == label
 
 
 def test_defaults_name_the_tutorial_not_xrays():

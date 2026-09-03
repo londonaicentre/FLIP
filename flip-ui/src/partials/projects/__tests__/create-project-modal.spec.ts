@@ -33,14 +33,27 @@ vi.mock("@/services/project-service", async (importOriginal) => {
 
 vi.mock("@/router", () => ({ routeChange: { viewProject: vi.fn() } }));
 
+// vee-validate's Form, reduced to what these tests need: it submits its values and exposes the live
+// `values` to its default slot. `emitted` overrides what a submit carries, standing in for the real
+// component's behaviour of dropping a field whose input has unmounted.
+const formStub = (emitted?: Record<string, string>) => ({
+    computed: {
+        // `emitted` stands in for the values the real Form would carry: it drops a field whose input
+        // has unmounted, and AiSwitch reports an unchecked switch as an empty value.
+        submitted(): unknown {
+            return emitted ?? (this as unknown as { $attrs: Record<string, unknown> }).$attrs["initial-values"];
+        }
+    },
+    template: "<form @submit.prevent=\"$emit('submit', submitted)\"><slot :values=\"submitted\" /></form>"
+});
+
 const stubs = {
     TransitionRoot: { template: "<div><slot /></div>" },
     Dialog: { template: "<div><slot /></div>" },
     DialogPanel: { template: "<div><slot /></div>" },
     DialogTitle: { template: "<div><slot /></div>" },
     TransitionChild: { template: "<div><slot /></div>" },
-    // The scoped slot mirrors vee-validate's Form, which exposes the live `values` to its default slot.
-    Form: { template: "<form @submit.prevent=\"$emit('submit', $attrs['initial-values'])\"><slot :values=\"$attrs['initial-values']\" /></form>" },
+    Form: formStub(),
     "icon-mdi-close": { template: "<span>×</span>" },
     "ProjectUsers": { template: "<div>Project Users Component</div>" }
 };
@@ -104,14 +117,11 @@ describe("Create Project Modal", () => {
                 })],
                 stubs: {
                     ...stubs,
-                    Form: {
-                        template: "<form @submit.prevent=\"$emit('submit', $attrs['initial-values'])\"><slot :values=\"$attrs['initial-values']\" /></form>",
-                        mounted() {
-                            // Override initial-values to simulate unchecked toggle
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            (this as any).$attrs["initial-values"].dicom_to_nifti = "";
-                        }
-                    }
+                    // Imaging on, the DICOM switch unchecked (AiSwitch reports that as an empty value).
+                    Form: formStub({
+                        has_imaging: "true",
+                        dicom_to_nifti: ""
+                    })
                 }
             }
         });
@@ -149,9 +159,9 @@ describe("Create Project Modal", () => {
                 })],
                 stubs: {
                     ...stubs,
-                    // The real vee-validate Form drops an unmounted field from `values` (and AiSwitch reports an
-                    // unchecked switch as undefined, which coerces the same way as ""): mirror that — no dicom_to_nifti key.
-                    Form: { template: "<form @submit.prevent=\"$emit('submit', { has_imaging: '' })\"><slot :values=\"{ has_imaging: '' }\" /></form>" }
+                    // The real Form drops an unmounted field from `values` (AiSwitch reports an
+                    // unchecked switch as undefined): mirror that — no dicom_to_nifti key.
+                    Form: formStub({ has_imaging: "" })
                 }
             }
         });
