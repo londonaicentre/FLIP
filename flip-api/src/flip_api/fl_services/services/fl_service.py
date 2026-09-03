@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
 
+import httpx
 from fastapi import Request
 from sqlalchemy import Column
 from sqlmodel import Session, col, select
@@ -1057,13 +1058,28 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         add_log(model_id, "Training job aborted before start; training slot released.", session)
         return
 
-    server_status = fetch_server_status(net_endpoint)
-    logger.debug(f"Server status: {server_status}")
+    try:
+        server_status = fetch_server_status(net_endpoint)
+        logger.debug(f"Server status: {server_status}")
+    except httpx.RequestError as e:
+        # The FL server is unreachable (e.g. scaled to zero). The queue was already dequeued
+        # above, so there is nothing to abort — release the slot rather than failing the stop.
+        released = fl_scheduler_service.release_scheduler_for_model(model_id, session)
+        logger.info(
+            f"FL server unreachable for model {model_id} (endpoint={net_endpoint}); "
+            f"nothing to abort (released {released} scheduler(s)). Reason: {e}"
+        )
+        add_log(model_id, "FL server unreachable; nothing to abort — training slot released.", session)
+        return
 
     if not server_status:  # or server_status.status != FLStatus.SUCCESS.value:
-        error_msg = f"FL Server not running for {model_id=}. Server status: {server_status}"
-        logger.error(error_msg)
-        raise ValueError(error_msg)
+        released = fl_scheduler_service.release_scheduler_for_model(model_id, session)
+        logger.info(
+            f"FL server not running for model {model_id} (endpoint={net_endpoint}); "
+            f"nothing to abort (released {released} scheduler(s))."
+        )
+        add_log(model_id, "FL server unreachable; nothing to abort — training slot released.", session)
+        return
 
     # If there is no running job for this model, it is already terminal — abort is an
     # idempotent no-op. The jobs were just dequeued above, so free the net promptly instead of

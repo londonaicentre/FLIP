@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 
 from flip_api.config import Settings
@@ -1691,7 +1692,7 @@ def test_abort_model_training_db_error_propagates(
 @patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
 @patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
 @patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
-def test_abort_model_training_raises_when_server_not_running(
+def test_abort_model_training_server_not_running_frees_net(
     mock_release,
     mock_remove,
     mock_get_net,
@@ -1709,14 +1710,49 @@ def test_abort_model_training_raises_when_server_not_running(
     request = MagicMock()
     request.path_params = {"target": "server", "clients": None}
 
-    with pytest.raises(ValueError, match="FL Server not running"):
-        fl_service.abort_model_training(request, model_id, fake_session)
+    # Server down is the normal idle state under scale-to-zero: stop must succeed as a no-op.
+    fl_service.abort_model_training(request, model_id, fake_session)
 
     # The abort must short-circuit before consulting the job list or issuing an abort.
     mock_extract_current_job_data.assert_not_called()
     mock_abort.assert_not_called()
-    # The abort was never delivered, so the net must NOT be released — the job may still be live.
-    mock_release.assert_not_called()
+    # The job was dequeued and the slot released — nothing to abort on a down server.
+    mock_remove.assert_called_once_with(model_id, fake_session)
+    mock_release.assert_called_once_with(model_id, fake_session)
+
+
+@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
+def test_abort_model_training_unreachable_server_frees_net(
+    mock_release,
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_extract_current_job_data,
+    model_id,
+    fake_session,
+):
+    mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
+    mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
+    mock_fetch_server_status.side_effect = httpx.RequestError("connection refused")
+
+    request = MagicMock()
+    request.path_params = {"target": "server", "clients": None}
+
+    # An unreachable FL server must not fail the stop: treat it as nothing to abort.
+    fl_service.abort_model_training(request, model_id, fake_session)
+
+    mock_extract_current_job_data.assert_not_called()
+    mock_abort.assert_not_called()
+    mock_remove.assert_called_once_with(model_id, fake_session)
+    mock_release.assert_called_once_with(model_id, fake_session)
 
 
 @patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
