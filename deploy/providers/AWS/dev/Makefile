@@ -52,11 +52,32 @@ ifneq ($(AWS_PROFILE),$(DEV_AWS_PROFILE))
 $(error AWS_PROFILE='$(AWS_PROFILE)' is not the expected dev profile '$(DEV_AWS_PROFILE)' (override via DEV_AWS_PROFILE))
 endif
 
+# Which goals actually need credentials-shaped configuration. A file-scope
+# $(error) aborts the whole Makefile on *every* invocation, so an unguarded one
+# takes `fmt`, `validate` and `status` down with it — targets that read no
+# variable and reach no AWS account. Since FLIP_TFSTATE_BUCKET_NAME and
+# flip_cognito_admin_email both ship commented out in .env.development.example
+# (and the bucket names ship as `<placeholder>`), that turned a fresh checkout's
+# first `make fmt` into a hard failure. The guards below are kept — seeding an
+# empty admin address or a placeholder bucket silently would be worse — but
+# scoped to the goals that consume the value (FLIP#1081 review).
+#
+# MAKECMDGOALS is empty for a bare `make`, which runs the first target below
+# (create-backend), so treat that case as create-backend rather than as "no
+# goals" and skip nothing it needs.
+DEV_TF_GOALS := $(if $(MAKECMDGOALS),$(MAKECMDGOALS),create-backend)
+# Terraform needs the state backend to init, plan or change anything.
+DEV_TF_BACKEND_GOALS := $(filter create-backend init plan apply destroy,$(DEV_TF_GOALS))
+# The TF_VAR_* values are only read when Terraform evaluates the configuration.
+DEV_TF_APPLY_GOALS := $(filter plan apply destroy,$(DEV_TF_GOALS))
+
 # Backend bucket for dev state. The bucket name comes from the shared
 # FLIP_TFSTATE_BUCKET_NAME env var, but dev writes to its own backend key
 # so it cannot collide with prod/stag state.
+ifneq ($(DEV_TF_BACKEND_GOALS),)
 ifeq ($(strip $(FLIP_TFSTATE_BUCKET_NAME)),)
 $(error Set FLIP_TFSTATE_BUCKET_NAME in $(ENV_FILE))
+endif
 endif
 
 # Terraform variables picked up via the TF_VAR_ env var convention.
@@ -80,14 +101,18 @@ unset_or_placeholder = $(if $(1),$(if $(filter <%>,$(patsubst <%,<%>,$(1))),plac
 # no default: set flip_cognito_admin_email in $(ENV_FILE) (usually the
 # developer's own mailbox). It previously defaulted from SES_VERIFIED_EMAIL,
 # which FLIP#919 removed along with the dev SES module.
+ifneq ($(DEV_TF_APPLY_GOALS),)
 $(if $(call unset_or_placeholder,$(flip_cognito_admin_email)),$(error 📧 flip_cognito_admin_email must be set to a real mailbox in $(ENV_FILE) — it seeds the Cognito admin user (previously defaulted from the removed SES_VERIFIED_EMAIL)),)
+endif
 TF_VAR_flip_cognito_admin_email := $(flip_cognito_admin_email)
 
 # FLIP application S3 buckets (FLIP#24). Required, no defaults — value lives
 # in $(ENV_FILE). Fail fast with a useful message if missing.
+ifneq ($(DEV_TF_APPLY_GOALS),)
 $(if $(call unset_or_placeholder,$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)),$(error 🪣 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME must be set to a real bucket name in $(ENV_FILE)),)
 $(if $(call unset_or_placeholder,$(FLIP_FL_RESULTS_BUCKET_NAME)),$(error 🪣 FLIP_FL_RESULTS_BUCKET_NAME must be set to a real bucket name in $(ENV_FILE)),)
 $(if $(call unset_or_placeholder,$(FLIP_APP_BUNDLES_BUCKET_NAME)),$(error 🪣 FLIP_APP_BUNDLES_BUCKET_NAME must be set to a real bucket name in $(ENV_FILE)),)
+endif
 export TF_VAR_FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME := $(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)
 export TF_VAR_FLIP_FL_RESULTS_BUCKET_NAME          := $(FLIP_FL_RESULTS_BUCKET_NAME)
 export TF_VAR_FLIP_APP_BUNDLES_BUCKET_NAME         := $(FLIP_APP_BUNDLES_BUCKET_NAME)

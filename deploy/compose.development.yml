@@ -165,6 +165,16 @@ services:
       - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
       - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
+      # Email dispatch. Dev needs no SES: left unset these three reach DevSettings
+      # as empty strings, which it coerces to the console backend and the
+      # placeholder addresses. They are passed anyway so the documented
+      # `EMAIL_BACKEND=ses` override in .env.development actually reaches the app —
+      # this service has an explicit environment list and no env_file, so a
+      # variable absent here is invisible to it no matter what the env file says,
+      # and the override would silently keep logging to the console (FLIP#1081).
+      - EMAIL_BACKEND=${EMAIL_BACKEND:-}
+      - AWS_SES_ADMIN_EMAIL_ADDRESS=${AWS_SES_ADMIN_EMAIL_ADDRESS:-}
+      - AWS_SES_SENDER_EMAIL_ADDRESS=${AWS_SES_SENDER_EMAIL_ADDRESS:-}
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - DB_HOST=${DB_HOST}

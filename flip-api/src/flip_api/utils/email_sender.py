@@ -35,12 +35,16 @@ _MAX_LOGGED_VALUE_CHARS = 200
 
 
 class EmailDispatchError(Exception):
-    """Raised when a batch of notifications failed wholesale rather than per-recipient.
+    """Raised when dispatch failed systemically rather than for one recipient.
 
     Callers that key a retry off a clean return (see
     ``private_services/imaging_notifications``) need to tell "this one address
     was rejected" apart from "nothing can be sent at all", so the latter is
-    surfaced rather than logged and swallowed.
+    surfaced rather than logged and swallowed. The distinction is drawn on the
+    exception type — a ``BotoCoreError`` (no region, no credentials, dead
+    endpoint) is systemic, a ``ClientError`` is that address's own problem —
+    not on how many recipients happened to fail, because the common batch here
+    is a single recipient and the two are indistinguishable by count.
     """
 
 

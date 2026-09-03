@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from botocore.exceptions import ClientError, NoCredentialsError, NoRegionError
 
 from flip_api.private_services.imaging_notifications import handle_imaging_task_completed
 from flip_api.utils.email_sender import EmailDispatchError
@@ -73,8 +74,8 @@ def mock_insert_status():
 def test_sends_email_to_each_created_user(mock_send_email, mock_decrypt, mock_insert_status):
     """Should send one SES email per created user with correct template data."""
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},
-        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},
+        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
+        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},  # pragma: allowlist secret
     ]
     task = _make_task(users)
 
@@ -97,7 +98,7 @@ def test_sends_email_to_each_created_user(mock_send_email, mock_decrypt, mock_in
     assert template_data["trust_name"] == "Trust_1"
     assert template_data["project_name"] == "Test Imaging Project"
     assert template_data["username"] == "user1"
-    assert template_data["password"] == "decrypted_enc1"
+    assert template_data["password"] == "decrypted_enc1"  # pragma: allowlist secret
 
     # Verify second user's email
     second_call = mock_send_email.call_args_list[1]
@@ -109,7 +110,7 @@ def test_inserts_xnat_project_status(mock_send_email, mock_decrypt, mock_insert_
     from flip_api.db.models.main_models import XNATImageStatus
 
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},
+        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
     ]
     task = _make_task(users)
 
@@ -138,7 +139,7 @@ def test_inserts_xnat_project_status(mock_send_email, mock_decrypt, mock_insert_
 def test_inserts_status_with_no_query(mock_send_email, mock_decrypt, mock_insert_status):
     """Should pass query_id=None when project has no queries."""
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},
+        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
     ]
     task = _make_task(users)
 
@@ -173,17 +174,19 @@ def test_no_emails_when_no_users_at_all(mock_send_email, mock_decrypt, mock_inse
     mock_send_email.assert_not_called()
 
 
-def test_all_emails_failing_raises_so_the_task_stays_retryable(mock_send_email, mock_decrypt, mock_insert_status):
-    """A wholesale failure must NOT return cleanly — that would discard the retry.
+def test_systemic_failure_raises_so_the_task_stays_retryable(mock_send_email, mock_decrypt, mock_insert_status):
+    """A systemic failure must NOT return cleanly — that would discard the retry.
 
     Both callers clear ``needs_post_processing`` only on a clean return
     (``trust_tasks``, and the ``stale_task_recovery`` sweep), so swallowing a
     systemic failure — a broken AWS region, an SES outage — would permanently
-    drop the notifications with nothing left in the retry queue.
+    drop the notifications with nothing left in the retry queue. It aborts on
+    the first recipient rather than working through the rest: a client that
+    cannot be constructed cannot send to anyone.
     """
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},
-        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},
+        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
+        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},  # pragma: allowlist secret
     ]
     task = _make_task(users, added_users=[{"username": "existing1", "email": "existing1@test.com"}])
 
@@ -194,20 +197,89 @@ def test_all_emails_failing_raises_so_the_task_stays_retryable(mock_send_email, 
     trust_result.first.return_value = _mock_trust()
     mock_db.exec.side_effect = [query_result, trust_result]
 
-    mock_send_email.side_effect = Exception("You must specify a region")
+    mock_send_email.side_effect = NoRegionError()
 
-    with pytest.raises(EmailDispatchError, match="All 3 imaging notification email"):
+    with pytest.raises(EmailDispatchError, match="failed systemically"):
         handle_imaging_task_completed(task, mock_db)
 
-    # Every recipient was still attempted before giving up.
-    assert mock_send_email.call_count == 3
+    assert mock_send_email.call_count == 1
+
+
+def test_single_recipient_rejection_does_not_raise(mock_send_email, mock_decrypt, mock_insert_status):
+    """The common batch is one created user and no added users (FLIP#1081 review).
+
+    A rejected address there — a typo, or ``MessageRejected`` under a sandboxed
+    SES identity (#592) — must not be mistaken for an outage. Counting failures
+    could not tell the two apart at this size, and because
+    ``retry_failed_post_processing`` has no attempt cap and never increments
+    ``retry_count``, raising would re-send every sweep indefinitely with the
+    task never reaching a terminal state.
+    """
+    task = _make_task([
+        {"username": "user1", "encrypted_password": "enc1", "email": "typo@test.com"},  # pragma: allowlist secret
+    ])
+
+    mock_db = MagicMock()
+    query_result = MagicMock()
+    query_result.first.return_value = _mock_query()
+    trust_result = MagicMock()
+    trust_result.first.return_value = _mock_trust()
+    mock_db.exec.side_effect = [query_result, trust_result]
+
+    mock_send_email.side_effect = ClientError(
+        {"Error": {"Code": "MessageRejected", "Message": "Email address is not verified"}}, "SendEmail"
+    )
+
+    handle_imaging_task_completed(task, mock_db)
+
+    assert mock_send_email.call_count == 1
+
+
+def test_single_recipient_systemic_failure_raises(mock_send_email, mock_decrypt, mock_insert_status):
+    """The counterpart: at the same batch size, a systemic fault still aborts.
+
+    This is the pair that pins the semantics — same one-recipient shape, and
+    the outcome is decided by the exception type rather than the count.
+    """
+    task = _make_task([
+        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
+    ])
+
+    mock_db = MagicMock()
+    query_result = MagicMock()
+    query_result.first.return_value = _mock_query()
+    trust_result = MagicMock()
+    trust_result.first.return_value = _mock_trust()
+    mock_db.exec.side_effect = [query_result, trust_result]
+
+    mock_send_email.side_effect = NoCredentialsError()
+
+    with pytest.raises(EmailDispatchError, match="failed systemically"):
+        handle_imaging_task_completed(task, mock_db)
+
+
+def test_added_user_systemic_failure_raises(mock_send_email, mock_decrypt, mock_insert_status):
+    """The added-user loop classifies identically to the created-user loop."""
+    task = _make_task([], added_users=[{"username": "existing1", "email": "existing1@test.com"}])
+
+    mock_db = MagicMock()
+    query_result = MagicMock()
+    query_result.first.return_value = _mock_query()
+    trust_result = MagicMock()
+    trust_result.first.return_value = _mock_trust()
+    mock_db.exec.side_effect = [query_result, trust_result]
+
+    mock_send_email.side_effect = NoRegionError()
+
+    with pytest.raises(EmailDispatchError, match="failed systemically"):
+        handle_imaging_task_completed(task, mock_db)
 
 
 def test_partial_failure_does_not_raise(mock_send_email, mock_decrypt, mock_insert_status):
     """One bad address is not systemic: the run succeeds so the task is not retried forever."""
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},
-        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},
+        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
+        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},  # pragma: allowlist secret
     ]
     task = _make_task(users)
 
@@ -228,8 +300,8 @@ def test_partial_failure_does_not_raise(mock_send_email, mock_decrypt, mock_inse
 def test_ses_failure_for_one_user_continues_to_next(mock_send_email, mock_decrypt, mock_insert_status):
     """Should continue sending to remaining users if the send fails for one."""
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},
-        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},
+        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
+        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},  # pragma: allowlist secret
     ]
     task = _make_task(users)
 
@@ -250,8 +322,8 @@ def test_ses_failure_for_one_user_continues_to_next(mock_send_email, mock_decryp
 def test_decryption_failure_continues_to_next_user(mock_send_email, mock_insert_status):
     """Should continue to next user if decryption fails for one."""
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},
-        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},
+        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
+        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},  # pragma: allowlist secret
     ]
     task = _make_task(users)
 
@@ -348,7 +420,7 @@ def test_sends_project_access_email_to_added_users(mock_send_email, mock_decrypt
 def test_sends_both_credential_and_access_emails(mock_send_email, mock_decrypt, mock_insert_status):
     """Should send credential emails to created users AND access emails to added users."""
     created_users = [
-        {"username": "new1", "encrypted_password": "enc1", "email": "new1@test.com"},
+        {"username": "new1", "encrypted_password": "enc1", "email": "new1@test.com"},  # pragma: allowlist secret
     ]
     added_users = [
         {"username": "existing1", "email": "existing1@test.com"},
