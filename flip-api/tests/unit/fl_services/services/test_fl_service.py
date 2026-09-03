@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 
 from flip_api.config import Settings
@@ -1243,6 +1244,20 @@ def test_check_server_status_returns_none_when_no_response(mock_http_get):
     mock_http_get.return_value = None
 
     assert fl_service.check_server_status("endpoint") is None
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_check_server_status_returns_none_when_request_fails(mock_http_get):
+    mock_http_get.side_effect = httpx.RequestError("connection refused")
+
+    assert fl_service.check_server_status("endpoint") is None
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_check_client_status_returns_none_when_request_fails(mock_http_get):
+    mock_http_get.side_effect = httpx.RequestError("connection refused")
+
+    assert fl_service.check_client_status("endpoint") is None
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
