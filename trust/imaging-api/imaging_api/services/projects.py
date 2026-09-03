@@ -263,6 +263,29 @@ def set_project_prearchive_settings(project_id: str, headers: dict[str, str]) ->
         )
 
 
+# Cap on the name->image pairs embedded in the raised message. That string becomes an
+# imaging-api 500 detail, and trust-api truncates the relayed body at 1000 characters before it
+# reaches the hub as the task's error. A 40-command registry renders ~2600 characters, so the cut
+# lands mid-image-name and drops the remediation sentence entirely - the actionable half never
+# arrives. Cap the raised message here and log the full listing trust-side, where nothing truncates.
+_MAX_LISTED_COMMANDS = 10
+
+
+def _sorted_command_pairs(commands: list[dict[str, Any]]) -> list[str]:
+    """Renders each registered command as a ``'name' -> 'image'`` pair, name-ordered.
+
+    Args:
+        commands (list[dict[str, Any]]): Command objects as returned by ``/xapi/commands``.
+
+    Returns:
+        list[str]: One rendered pair per command, ordered by name then image.
+    """
+    return [
+        f"{c.get('name', '?')!r} -> {c.get('image', '?')!r}"
+        for c in sorted(commands, key=lambda c: (c.get("name") or "", c.get("image") or ""))
+    ]
+
+
 def _no_command_message(container: str, headers: dict[str, str]) -> str:
     """Explain why no XNAT command matched ``container``.
 
@@ -282,19 +305,60 @@ def _no_command_message(container: str, headers: dict[str, str]) -> str:
     Re-queries XNAT unfiltered on the error path only, and never lets that
     diagnostic call mask the original failure.
 
+    Three outcomes are reported distinctly, because collapsing them is how the
+    previous message misdiagnosed. A 200 carrying an empty array is the only one
+    that supports the Container-Service hypothesis. A non-200 or a transport
+    error means the listing could not be *obtained*, which establishes nothing
+    about the plugin: XNAT answers ``/xapi/commands`` with 401 and an HTML body
+    when the service account's credentials are wrong or its session has expired,
+    and reporting that as a missing plugin sends the operator to reinstall a
+    plugin that is present and healthy.
+
     Args:
         container (str): Image that was requested and did not match.
         headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
-        str: A message naming what is registered, or the Container Service
-        hypothesis when genuinely nothing is.
+        str: A message naming what is registered, the Container Service
+        hypothesis when the registry is genuinely empty, or a statement that the
+        listing could not be obtained when it could not.
     """
     try:
         probe = requests.get(f"{XNAT_URL}/xapi/commands", headers=headers)
-        registered = probe.json() if probe.status_code == 200 else []
-    except Exception:  # noqa: BLE001 - diagnostics must never replace the real error
+        if probe.status_code != 200:
+            listing_failure: str | None = f"HTTP {probe.status_code}"
+            registered: Any = []
+        else:
+            listing_failure = None
+            registered = probe.json()
+    except Exception as exc:  # diagnostics must never replace the real error
+        listing_failure = f"{type(exc).__name__}: {exc}"
         registered = []
+
+    # A 200 whose body is not an array of objects must not crash this helper. The formatting
+    # below assumes mappings, and `sorted()` over a dict yields its string keys, so `c.get(...)`
+    # would raise AttributeError out of a function whose whole contract is never to replace the
+    # underlying error. Live XNAT answers this endpoint with a JSON array and signals faults with
+    # a non-200, so this is defensive: it is reachable through an intermediary that rewrites the
+    # body (the Helm chart's nginx, a site proxy), not from XNAT itself. Treat it as "could not
+    # list" rather than "nothing registered" - an unparseable body is not evidence of an empty
+    # registry.
+    if not isinstance(registered, list):
+        listing_failure = listing_failure or "unexpected response body"
+        registered = []
+    else:
+        usable = [c for c in registered if isinstance(c, dict)]
+        if registered and not usable:
+            listing_failure = listing_failure or "unexpected response body"
+        registered = usable
+
+    if listing_failure is not None:
+        return (
+            f"No commands found for container '{container}', and the registered commands could not "
+            f"be listed to narrow it down ({listing_failure}). This says nothing about whether the "
+            "XNAT Container Service is installed - check the service account's XNAT credentials and "
+            "that /xapi/commands is reachable, then retry."
+        )
 
     if not registered:
         return (
@@ -302,12 +366,30 @@ def _no_command_message(container: str, headers: dict[str, str]) -> str:
             "- the XNAT Container Service may not be installed or configured"
         )
 
-    listed = ", ".join(
-        f"{c.get('name', '?')!r} -> {c.get('image', '?')!r}"
-        for c in sorted(registered, key=lambda c: (c.get("name") or "", c.get("image") or ""))
+    pairs = _sorted_command_pairs(registered)
+    # Trust-side the full listing is never truncated, so keep it where an operator can read it.
+    logger.error(
+        "No XNAT command matched image %r; %d command(s) registered: %s",
+        container,
+        len(registered),
+        ", ".join(pairs),
     )
+    listed = ", ".join(pairs[:_MAX_LISTED_COMMANDS])
+    if len(pairs) > _MAX_LISTED_COMMANDS:
+        listed += f", and {len(pairs) - _MAX_LISTED_COMMANDS} more"
+
+    if any(c.get("image") == container for c in registered):
+        return (
+            f"No commands found for container '{container}', yet that exact image is registered: "
+            f"{listed}. The filtered lookup (/xapi/commands?image=<image>) returned nothing while "
+            "the unfiltered listing shows it, so the registration is not stale and re-registering "
+            "the same image will not change anything - suspect the lookup instead: a case or "
+            "encoding difference in the image string, an 'image' field carrying a digest, or a "
+            "command with no 'xnat' wrapper."
+        )
+
     return (
-        f"No commands found for container '{container}'. The Container Service is working and has "
+        f"No commands found for container '{container}'. The Container Service is installed and has "
         f"{len(registered)} command(s) registered: {listed}. If one of those is the same tool on an "
         "older image, this XNAT's registration predates the current pin - re-run configure-dcm2niix.sh "
         "(compose) or the xnat-init job (k8s) to re-register it, and check the trust's imaging-api "

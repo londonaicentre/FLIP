@@ -319,6 +319,13 @@ def test_get_command_info_lists_registered_commands_on_mismatch(mock_get, header
     assert "configure-dcm2niix.sh" in message
     # The misleading hypothesis must not appear when commands plainly exist.
     assert "may not be installed" not in message
+    # The second call must be the UNFILTERED listing. Driving these tests purely by side_effect
+    # ordering would stay green if a regression re-queried the filtered URL, which always comes
+    # back empty and would silently degrade every mismatch into the plugin hypothesis.
+    first_url, second_url = (call.args[0] for call in mock_get.call_args_list)
+    assert "image=" in first_url
+    assert second_url.endswith("/xapi/commands")
+    assert "image=" not in second_url
 
 
 @patch("imaging_api.services.projects.requests.get")
@@ -359,12 +366,121 @@ def test_get_command_info_no_commands_at_all_keeps_plugin_hypothesis(mock_get, h
 
 @patch("imaging_api.services.projects.requests.get")
 def test_get_command_info_diagnostic_failure_does_not_mask_error(mock_get, headers):
-    """If the diagnostic re-query blows up, still raise the real mismatch error."""
+    """A failed re-query must raise the real mismatch error AND not invent a cause.
+
+    Asserting only the generic prefix left this test passing even when the code claimed an empty
+    registry, so it could not hold the branch it exists for.
+    """
     filtered = MagicMock(status_code=200, json=MagicMock(return_value=[]))
     mock_get.side_effect = [filtered, ConnectionError("xnat unreachable")]
 
-    with pytest.raises(Exception, match="No commands found for container"):
+    with pytest.raises(Exception, match="No commands found for container") as excinfo:
         get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
+
+    message = str(excinfo.value)
+    assert "could not be listed" in message
+    assert "ConnectionError" in message
+    # A failure to list is not evidence about the plugin.
+    assert "may not be installed" not in message
+    assert "registered at all" not in message
+
+
+@patch("imaging_api.services.projects.requests.get")
+def test_get_command_info_unauthorised_listing_is_not_a_missing_plugin(mock_get, headers):
+    """The live failure this distinction exists for.
+
+    XNAT answers /xapi/commands with 401 and an HTML body when the service account's credentials
+    are wrong or its session expired. Reporting that as a missing Container Service sends the
+    operator to reinstall a plugin that is installed and healthy.
+    """
+    filtered = MagicMock(status_code=200, json=MagicMock(return_value=[]))
+    unauthorised = MagicMock(status_code=401, text="<html>login</html>")
+    mock_get.side_effect = [filtered, unauthorised]
+
+    with pytest.raises(Exception, match="No commands found for container") as excinfo:
+        get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
+
+    message = str(excinfo.value)
+    assert "HTTP 401" in message
+    assert "may not be installed" not in message
+
+
+@patch("imaging_api.services.projects.requests.get")
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"detail": "not an array"},
+        ["a bare string", 42],
+    ],
+    ids=["object-body", "list-of-non-objects"],
+)
+def test_get_command_info_malformed_listing_body_still_reports_the_mismatch(mock_get, headers, body):
+    """A 200 that is not an array of objects must not raise out of the diagnostic helper.
+
+    `sorted()` over a dict yields its string keys, so formatting would hit
+    `AttributeError: 'str' object has no attribute 'get'` and replace the mismatch message with a
+    crash on its way to the hub. Live XNAT does not emit this shape (faults come back as non-200),
+    so it guards against an intermediary that rewrites the body.
+    """
+    filtered = MagicMock(status_code=200, json=MagicMock(return_value=[]))
+    malformed = MagicMock(status_code=200, json=MagicMock(return_value=body))
+    mock_get.side_effect = [filtered, malformed]
+
+    with pytest.raises(Exception, match="No commands found for container") as excinfo:
+        get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
+
+    message = str(excinfo.value)
+    assert "unexpected response body" in message
+    assert "may not be installed" not in message
+
+
+@patch("imaging_api.services.projects.requests.get")
+def test_get_command_info_exact_image_match_drops_the_stale_pin_advice(mock_get, headers):
+    """Re-registering cannot help when the requested image is already registered.
+
+    The filtered lookup returning nothing while the unfiltered listing shows the same image means
+    the lookup is at fault, not the registration.
+    """
+    container = "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724"
+    filtered = MagicMock(status_code=200, json=MagicMock(return_value=[]))
+    unfiltered = MagicMock(
+        status_code=200,
+        json=MagicMock(return_value=[{"id": 6, "name": "dcm2niix", "image": container}]),
+    )
+    mock_get.side_effect = [filtered, unfiltered]
+
+    with pytest.raises(Exception, match="No commands found for container") as excinfo:
+        get_command_info(container, headers)
+
+    message = str(excinfo.value)
+    assert "that exact image is registered" in message
+    assert "configure-dcm2niix.sh" not in message
+    assert "predates the current pin" not in message
+
+
+@patch("imaging_api.services.projects.requests.get")
+def test_get_command_info_caps_the_listed_commands(mock_get, headers):
+    """The raised string reaches the hub through a 1000-character truncation.
+
+    A large registry otherwise pushes the remediation sentence past the cut, so the hub-side error
+    ends mid-image-name with nothing actionable in it.
+    """
+    filtered = MagicMock(status_code=200, json=MagicMock(return_value=[]))
+    many = [{"id": i, "name": f"tool-{i:02d}", "image": f"ghcr.io/example/tool-{i:02d}:v1"} for i in range(40)]
+    unfiltered = MagicMock(status_code=200, json=MagicMock(return_value=many))
+    mock_get.side_effect = [filtered, unfiltered]
+
+    with pytest.raises(Exception, match="No commands found for container") as excinfo:
+        get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
+
+    message = str(excinfo.value)
+    assert "and 30 more" in message
+    assert "'tool-09' -> 'ghcr.io/example/tool-09:v1'" in message
+    assert "tool-10" not in message
+    # The count still reports the whole registry, and the remediation survives the truncation.
+    assert "40 command(s) registered" in message
+    assert "configure-dcm2niix.sh" in message
+    assert len(message) < 1000
 
 
 # ===========================================================================
