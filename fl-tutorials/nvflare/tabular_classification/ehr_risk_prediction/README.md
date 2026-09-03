@@ -93,13 +93,36 @@ order is the input layout, and the model sizes its first layer from the list len
 | `has_prediabetes` | SNOMED `15777000`, before first T2DM diagnosis |
 | `has_obesity` | SNOMED `162864005` |
 | `has_severe_obesity` | SNOMED `408512008` |
-| `has_hypertension` | SNOMED `38341003` |
+| `has_hypertension` | SNOMED `38341003` **or** `59621000` (see below) |
 | `has_hyperlipidemia` | SNOMED `55822004` |
 | `n_prior_conditions` | Distinct pre-diagnosis condition codes |
 | `n_prior_visits` | Pre-diagnosis visit count |
 
-Conditions are matched on `condition_source_value` (the raw SNOMED code, as Synthea emits it), so the
-query needs **no concept/vocabulary tables** and runs on a vocabulary-free trust.
+Codes are matched on the raw SNOMED `*_source_value` strings, as Synthea emits them, so the query
+needs **no concept/vocabulary tables** and runs on a vocabulary-free trust.
+
+### Why the query reads two tables and accepts two hypertension codes
+
+Two properties of a SNOMED code are decided by whoever built the OMOP dataset rather than by the
+clinical record, and getting either wrong costs a feature **silently** — the cohort still returns
+the right number of rows, and the column is simply `0` for every person:
+
+- **Which table a code lands in.** The BMI codes (`162864005`, `408512008`) are SNOMED *findings*, so
+  a domain-aware ETL such as [OHDSI ETL-Synthea](https://github.com/OHDSI/ETL-Synthea) routes them to
+  `OBSERVATION`, whereas the published AWS export puts every code in `CONDITION_OCCURRENCE` with
+  `concept_id = 0`. The risk-factor lookups therefore read a `UNION ALL` of both tables.
+- **Which code a concept carries.** Essential hypertension is `38341003` in the published 1k export
+  and `59621000` from Synthea v3.3.0 onwards, so both are accepted.
+
+`n_prior_conditions` deliberately stays `CONDITION_OCCURRENCE`-only: Synthea emits socioeconomic
+findings (employment, housing, social isolation) as observations, and counting those as comorbidities
+would change the feature's meaning between datasets.
+
+**Held-out AUROC does not catch this class of breakage** — measured against a regenerated dataset, a
+query missing both fixes left three of the nine features dead for every person and still scored
+0.941, because Synthea's scripted prediabetes→T2DM progression carries most of the signal.
+`fl-tutorials/tests/test_ehr_query_portability.py` therefore asserts the structure directly, and
+checks that `query.sql` and the local-simulation builder accept exactly the same codes.
 
 `LABEL_COLUMN` (`label_t2dm`) is 1 for persons with a type-2-diabetes diagnosis (SNOMED `44054006`).
 Features count only events **strictly before** each positive person's first diagnosis, so the label

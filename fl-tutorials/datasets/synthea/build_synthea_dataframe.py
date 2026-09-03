@@ -54,14 +54,18 @@ REQUIRED_COLUMNS = {
     "visit_occurrence": ["person_id", "visit_start_date"],
 }
 
-# SNOMED codes as Synthea emits them in *_source_value. Keep in lockstep with query.sql.
+# SNOMED codes as Synthea emits them in *_source_value. Keep in lockstep with query.sql —
+# tests/test_ehr_query_portability.py fails if the two drift apart.
 T2DM_CODE = "44054006"
+# A feature may accept SEVERAL codes: which code a Synthea version emits for a concept is not
+# stable. Essential hypertension is 38341003 in this published 1k export and 59621000 from
+# Synthea v3.3.0 onwards, so both are accepted and the feature survives a dataset swap (#1148).
 CONDITION_FLAGS = {
-    "has_prediabetes": "15777000",
-    "has_obesity": "162864005",  # Body mass index 30+ - obesity
-    "has_severe_obesity": "408512008",  # Body mass index 40+ - severely obese
-    "has_hypertension": "38341003",  # Hypertensive disorder (this export does not use 59621000)
-    "has_hyperlipidemia": "55822004",
+    "has_prediabetes": ("15777000",),
+    "has_obesity": ("162864005",),  # Body mass index 30+ - obesity
+    "has_severe_obesity": ("408512008",),  # Body mass index 40+ - severely obese
+    "has_hypertension": ("38341003", "59621000"),  # Hypertensive disorder / Essential hypertension
+    "has_hyperlipidemia": ("55822004",),
 }
 FEMALE_GENDER_CONCEPT_ID = 8532
 # The dataset was exported in January 2023; ages are computed against that year (not "today")
@@ -145,8 +149,10 @@ def derive_features(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
     pre_dx_conditions = conditions[
         conditions["dx_date"].isna() | (conditions["condition_start_date"] < conditions["dx_date"])
     ]
-    for feature, code in CONDITION_FLAGS.items():
-        flagged = pre_dx_conditions.loc[pre_dx_conditions["condition_source_value"] == code, "person_id"].unique()
+    for feature, codes in CONDITION_FLAGS.items():
+        flagged = pre_dx_conditions.loc[
+            pre_dx_conditions["condition_source_value"].isin(codes), "person_id"
+        ].unique()
         frame[feature] = frame["person_id"].isin(flagged).astype(int)
     frame["n_prior_conditions"] = (
         frame["person_id"]
