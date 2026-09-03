@@ -112,6 +112,36 @@ BUNDLED_ROOT_FILES: dict[str, frozenset[str]] = {
 }
 
 
+def _assert_backends_have_bundling_rules() -> None:
+    """Fail at import if a backend has no bundling rule, naming it and the map that lacks it.
+
+    Both maps above are indexed directly, so a member of :class:`FLBackend` missing from either
+    surfaced as a bare ``KeyError(<backend>)`` raised from inside the bundler — the one error in
+    this module that did not name the rule it was enforcing. ``FLBackend``'s own docstring invites
+    adding a backend "in this one place", which makes forgetting these two maps a realistic
+    mistake, so the check runs at import: the drift fails in CI at collection time rather than at a
+    trust, mid-bundle.
+
+    Raises:
+        RuntimeError: If any :class:`FLBackend` member is absent from either map.
+    """
+    for map_name, mapping in (
+        ("BUNDLED_APP_DIR_PREFIXES", BUNDLED_APP_DIR_PREFIXES),
+        ("BUNDLED_ROOT_FILES", BUNDLED_ROOT_FILES),
+    ):
+        missing = sorted(str(backend) for backend in FLBackend if backend not in mapping)
+        if missing:
+            raise RuntimeError(
+                f"FL backend(s) {missing} have no bundling rule: add them to {map_name} in "
+                f"{__name__}. Every FLBackend member needs an entry in both BUNDLED_APP_DIR_PREFIXES "
+                f"(which top-level directories are app folders) and BUNDLED_ROOT_FILES (the single "
+                f"root file that ships beside them)."
+            )
+
+
+_assert_backends_have_bundling_rules()
+
+
 def is_bundled_app_dir(name: str, fl_backend: FLBackend) -> bool:
     """Whether a top-level template directory is an app folder that this backend deploys.
 
@@ -142,10 +172,42 @@ def describe_bundled_app_dirs(fl_backend: FLBackend) -> str:
     return " or ".join([f"{BUNDLED_APP_DIR_NAME}/", *(f"{p}*/" for p in BUNDLED_APP_DIR_PREFIXES[fl_backend])])
 
 
-# Compiled Python is the one artefact that appears *inside* ``app/`` rather than at the template
-# root, so positional allowlisting alone cannot exclude it — it needs naming.
+# Artefacts that appear *inside* an app folder rather than at the template root. Positional
+# allowlisting cannot exclude these — the app folder is the thing being allowed — so within it the
+# rule is inverted: drop anything dot-prefixed plus the named exceptions below.
+#
+# Compiled Python is not the only such artefact, and treating it as the only one left the allowlist
+# closed at depth 0 only. A template directory is a live uv project root, so the tools that run
+# there write *into* ``app/`` too: ``.venv/``, ``.flwr/``, ``.ruff_cache/``, ``.pytest_cache/``, a
+# stray ``.env``, and ``.DS_Store`` in every directory the Finder displays. The counter-evidence is
+# in-tree — ``fl-tutorials/flower/3d_spleen_segmentation_evaluation/app/.gitignore`` exists
+# precisely to ignore ``.flwr/``, ``.venv/`` and ``uv.lock`` *inside* an ``app/`` directory. The
+# dot rule catches all but ``uv.lock``, which is named because it is not dot-prefixed: it is a
+# resolved lock for the developer's machine, and the Flower run-root ``pyproject.toml`` is what the
+# per-run ``uv sync`` at a trust resolves from.
 EXCLUDED_APP_DIR_NAMES = frozenset({"__pycache__"})
+EXCLUDED_APP_FILE_NAMES = frozenset({"uv.lock"})
 EXCLUDED_APP_FILE_SUFFIXES = (".pyc", ".pyo")
+
+
+def is_excluded_app_entry(name: str) -> bool:
+    """Whether a name inside an app folder is a development artefact rather than deployable content.
+
+    Applies at every depth under the app folder, to both files and directories: anything
+    dot-prefixed, plus the explicitly named exceptions that carry no leading dot.
+
+    Args:
+        name (str): The entry's name (not a path).
+
+    Returns:
+        bool: True if the entry must be excluded from the bundle.
+    """
+    return (
+        name.startswith(".")
+        or name in EXCLUDED_APP_DIR_NAMES
+        or name in EXCLUDED_APP_FILE_NAMES
+        or name.endswith(EXCLUDED_APP_FILE_SUFFIXES)
+    )
 
 
 def list_local_base_files(base_dir: Path, fl_backend: FLBackend) -> list[str]:
@@ -238,14 +300,14 @@ def _walk_app_dir(app_dir: Path, base_dir: Path, skipped: list[str]) -> list[str
         # In place, so os.walk does not descend (os.walk contract for topdown=True). A symlinked
         # directory is listed in dirnames but never entered under followlinks=False, so it is
         # pruned here too — otherwise it would vanish without being recorded as skipped.
-        pruned = [d for d in dirnames if d in EXCLUDED_APP_DIR_NAMES or (here / d).is_symlink()]
+        pruned = [d for d in dirnames if is_excluded_app_entry(d) or (here / d).is_symlink()]
         dirnames[:] = [d for d in dirnames if d not in pruned]
         skipped.extend(f"{here.relative_to(base_dir).as_posix()}/{d}/" for d in pruned)
 
         for name in filenames:
             path = here / name
             rel = path.relative_to(base_dir).as_posix()
-            if path.is_symlink() or name.endswith(EXCLUDED_APP_FILE_SUFFIXES):
+            if path.is_symlink() or is_excluded_app_entry(name):
                 skipped.append(rel)
                 continue
             kept.append(rel)
@@ -961,8 +1023,10 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     logger.debug(f"Base application dir: {base_dir}")
     base_rel_paths = list_local_base_files(base_dir, FLBackend.FLOWER)
     # Rejects a malformed template (nothing deployable, no pyproject.toml, or no app/) before the
-    # destination is touched. A FAB has one app package, so the returned folder set is just app/.
-    _check_base_template(base_dir, base_rel_paths, FLBackend.FLOWER)
+    # destination is touched. A FAB has one app package, so the returned set is exactly {app}; take
+    # the destination folder from it rather than restating the name at the copy loop below, which
+    # is the drift the shared is_bundled_app_dir predicate exists to prevent.
+    (flower_app_dir,) = sorted(_check_base_template(base_dir, base_rel_paths, FLBackend.FLOWER))
 
     # Clear destination if files already exist there (e.g. from a previous training run)
     dest_files = s3.list_objects(dest_bucket_s3_path)
@@ -994,11 +1058,11 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
         logger.debug(f"Uploading base {src_path} -> {dest_file_path}")
         s3.upload_file(str(src_path), dest_file_path)
 
-    # Copy model files into app/
+    # Copy model files into the template's app folder
     for src_key in model_files:
         rel = src_key.replace(f"{model_bucket_s3_path}/", "", 1)
 
-        dst_key = f"{dest_bucket_s3_path}/app/{rel}"
+        dst_key = f"{dest_bucket_s3_path}/{flower_app_dir}/{rel}"
         # Check if destination key exists
         if s3.object_exists(dst_key):
             logger.warning(

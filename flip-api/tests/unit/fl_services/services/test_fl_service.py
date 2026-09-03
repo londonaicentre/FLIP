@@ -12,6 +12,7 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
@@ -1996,8 +1997,8 @@ def test_list_local_base_files_excludes_unknown_tool_output(tmp_path):
 
 
 def test_list_local_base_files_excludes_compiled_python_inside_app(tmp_path):
-    # __pycache__/*.pyc is the one artefact that appears INSIDE app/, so position alone cannot
-    # exclude it — it is named explicitly.
+    # __pycache__/*.pyc appears INSIDE app/, so position alone cannot exclude it — the app folder
+    # is the thing being allowed. Within it the rule inverts to a name-based exclusion.
     base = tmp_path / "base"
     (base / "app" / "__pycache__").mkdir(parents=True)
     (base / "app" / "client_app.py").write_text("x")
@@ -2007,6 +2008,44 @@ def test_list_local_base_files_excludes_compiled_python_inside_app(tmp_path):
     (base / "pyproject.toml").write_text("x")
 
     assert fl_service.list_local_base_files(base, FLBackend.FLOWER) == ["app/client_app.py", "pyproject.toml"]
+
+
+@pytest.mark.parametrize("fl_backend", [FLBackend.NVFLARE, FLBackend.FLOWER])
+def test_list_local_base_files_excludes_tooling_artefacts_inside_app(tmp_path, fl_backend):
+    """Compiled Python is not the only artefact that lands inside ``app/``.
+
+    A template directory is a live uv project root, so the tools that run there write into the app
+    folder as well as beside it: ``.venv/``, ``.flwr/``, ``.ruff_cache/``, a stray ``.env``, a
+    resolved ``uv.lock``, and ``.DS_Store`` in every directory the Finder displays — at any depth,
+    including ``app/config/``. Before this rule the walk kept all of them, so the allowlist was
+    closed at the template root only and the incident that motivated FLIP#1008 (a ``.venv``
+    reaching the run directory) remained reachable one level down.
+    """
+    base = tmp_path / "base"
+    (base / "app" / "config").mkdir(parents=True)
+    (base / "app" / ".venv" / "lib").mkdir(parents=True)
+    (base / "app" / ".flwr").mkdir()
+    (base / "app" / ".ruff_cache").mkdir()
+    # Deployable content, at both depths.
+    (base / "app" / "client_app.py").write_text("x")
+    (base / "app" / "config" / "settings.json").write_text("{}")
+    # Artefacts.
+    (base / "app" / ".venv" / "pyvenv.cfg").write_text("x")
+    (base / "app" / ".venv" / "lib" / "thing.py").write_text("x")
+    (base / "app" / ".flwr" / "cache.db").write_text("x")
+    (base / "app" / ".ruff_cache" / "x.json").write_text("{}")
+    (base / "app" / ".DS_Store").write_text("x")
+    (base / "app" / ".env").write_text("SECRET=1")
+    (base / "app" / "uv.lock").write_text("x")
+    (base / "app" / "config" / ".DS_Store").write_text("x")
+    root_file = "meta.json" if fl_backend == FLBackend.NVFLARE else "pyproject.toml"
+    (base / root_file).write_text("{}")
+
+    assert fl_service.list_local_base_files(base, fl_backend) == [
+        "app/client_app.py",
+        "app/config/settings.json",
+        root_file,
+    ]
 
 
 def test_list_local_base_files_excludes_developer_files_that_are_not_artefacts(tmp_path):
@@ -2026,6 +2065,79 @@ def test_list_local_base_files_excludes_developer_files_that_are_not_artefacts(t
         "app/config/config_fed_server.json",
         "meta.json",
     ]
+
+
+# Files a committed template may carry that the bundle deliberately leaves behind. Anything else
+# appearing in fl-apps/ must either ship or be added here as a considered decision.
+KNOWN_UNBUNDLED_TEMPLATE_FILES = frozenset({"README.md", "recipe.py", "required_files.json"})
+
+
+def _committed_fl_apps_dir() -> Path:
+    """Locate the committed ``fl-apps/`` tree, which sits at a different depth per run context.
+
+    Running from a checkout the tree is at the repo root, two levels above ``flip-api/``; inside
+    the flip-api image it is baked at ``/app/fl-apps`` (Dockerfile), one level up from the tests.
+    ``FL_APP_BASE_DIR`` overrides both, matching what the bundler itself reads.
+
+    Returns:
+        Path: The first candidate that exists.
+
+    Raises:
+        AssertionError: If no candidate resolves, rather than skipping — a guard that cannot find
+            the tree must fail loudly instead of passing vacuously.
+    """
+    here = Path(__file__).resolve()
+    candidates = [
+        *([Path(os.environ["FL_APP_BASE_DIR"])] if os.environ.get("FL_APP_BASE_DIR") else []),
+        here.parents[5] / "fl-apps",
+        here.parents[4] / "fl-apps",
+    ]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    raise AssertionError(f"committed fl-apps tree not found; tried {[str(c) for c in candidates]}")
+
+
+@pytest.mark.parametrize("fl_backend", [FLBackend.NVFLARE, FLBackend.FLOWER])
+def test_every_committed_template_file_either_ships_or_is_known_unbundled(fl_backend):
+    """Bind the allowlist to the templates actually shipped, not only to synthesised trees.
+
+    Every other test here builds its own tree under ``tmp_path``, so the rule is verified against
+    fixtures rather than against ``fl-apps/``. That leaves the failure mode this change is meant to
+    prevent: a template gains a root-level file the rule does not recognise — a run-root
+    ``config.toml``, a second config, a new non-``app_`` directory — and it is dropped with only a
+    ``logger.debug`` line, surfacing at a trust instead of in CI. Asserting the complement here
+    means a new file either ships or forces a deliberate entry in
+    :data:`KNOWN_UNBUNDLED_TEMPLATE_FILES`.
+    """
+    backend_dir = _committed_fl_apps_dir() / fl_backend
+    assert backend_dir.is_dir(), f"no committed templates for {fl_backend} at {backend_dir}"
+
+    templates = sorted(p for p in backend_dir.iterdir() if p.is_dir())
+    # Guard the guard: an empty roster would make every assertion below vacuous.
+    assert templates, f"no job-type templates found under {backend_dir}"
+
+    for template in templates:
+        bundled = set(fl_service.list_local_base_files(template, fl_backend))
+        committed = {p.relative_to(template).as_posix() for p in template.rglob("*") if p.is_file()}
+        assert committed, f"template {template.name} has no committed files"
+        unaccounted = {rel for rel in committed - bundled if Path(rel).name not in KNOWN_UNBUNDLED_TEMPLATE_FILES}
+        assert not unaccounted, (
+            f"{fl_backend}/{template.name}: committed but not bundled and not a known exclusion: "
+            f"{sorted(unaccounted)}. Either the allowlist should keep it, or add it to "
+            f"KNOWN_UNBUNDLED_TEMPLATE_FILES."
+        )
+
+
+@pytest.mark.parametrize("fl_backend", list(FLBackend))
+def test_every_backend_has_bundling_rules(fl_backend):
+    """A backend added to FLBackend without both maps raised a bare KeyError from inside the bundler.
+
+    FLBackend's docstring invites adding a backend "in this one place", so the omission is a
+    realistic mistake; this fails in CI instead.
+    """
+    assert fl_backend in fl_service.BUNDLED_APP_DIR_PREFIXES
+    assert fl_backend in fl_service.BUNDLED_ROOT_FILES
 
 
 def test_list_local_base_files_root_file_is_per_backend(tmp_path):
