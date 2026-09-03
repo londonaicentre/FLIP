@@ -50,6 +50,17 @@ if [[ -z "${current}" ]]; then
   exit 1
 fi
 
+# Require a plain numeric X.Y.Z. The numeric sort below parses the third field with -k3,3n,
+# which stops at the first non-digit: "0.10.0rc1" reads as 0.10.0, ties with the floor, and the
+# tie is then broken by string length in the shorter value's favour — so a pre-release of the
+# minimum version would pass as if it were the release. uv has never shipped a pre-release tag,
+# so this is a guard against a shape the comparison cannot rank, not a known case.
+if [[ ! "${current}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "❌ Unexpected uv version '${current}' — expected a plain X.Y.Z." >&2
+  echo "   A pre-release cannot be ordered against the ${MIN_UV_VERSION} floor; install a release." >&2
+  exit 1
+fi
+
 # Sort the two versions and check the minimum really is the lower one.
 lowest="$(printf '%s\n%s\n' "${MIN_UV_VERSION}" "${current}" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)"
 if [[ "${lowest}" != "${MIN_UV_VERSION}" ]]; then
