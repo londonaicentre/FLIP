@@ -24,6 +24,19 @@
 locals {
   flip_local_domain = "flip.local"
 
+  # Permissions boundary carried by every IAM role in this root (FLIP#962).
+  #
+  # Composed rather than looked up: the policy lives in the ci/ root, the two
+  # roots share no state, and a `data "aws_iam_policy"` here would make every
+  # plan fail in an account where ci/ has not been applied yet — including the
+  # `terraform validate` a contributor runs with no credentials at all.
+  # `make -C ci output permissions_boundary_arn` prints the ARN to compare.
+  iam_permissions_boundary_arn = (
+    var.iam_permissions_boundary_name == ""
+    ? null
+    : "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.iam_permissions_boundary_name}"
+  )
+
   # Service Discovery names (FQDN under the private hosted zone).
   service_discovery_names = {
     flip_api  = "flip-api.${local.flip_local_domain}"

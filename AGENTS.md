@@ -447,7 +447,43 @@ After changes, evaluate if docs need updating:
 
 ## CI/CD
 
-GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `fl-tutorials-tests.yml`, `test_map_apps.yml`, `docker_build_*.yml`, `validate_terraform.yml` (fmt/validate + a checkov security lint over `deploy/providers/AWS/**` — IAM policy content plus promoted posture checks; static, credential-free; local run `make checkov-lint` **from the repo root** (the AWS Makefile's parse-time env guard blocks the `-C` form for contributors), deliberate breadth/posture suppressed in-code with `# checkov:skip=<ID>:<rationale>` — FLIP#1052, FLIP#1058; plus an `AWS deploy tests` job running the credential-free pytest suite in `deploy/providers/AWS/tests/` over the stack's static artefacts — rendered templates, deploy scripts, and Terraform source itself, including the Cognito `callback_urls` = browser CORS allowlist invariants), `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `fl-tutorials-tests.yml`, `test_map_apps.yml`, `docker_build_*.yml`, `validate_terraform.yml` (fmt/validate + a checkov security lint over `deploy/providers/AWS/**` — IAM policy content plus promoted posture checks; static, credential-free; local run `make checkov-lint` **from the repo root** (the AWS Makefile's parse-time env guard blocks the `-C` form for contributors), deliberate breadth/posture suppressed in-code with `# checkov:skip=<ID>:<rationale>` — FLIP#1052, FLIP#1058; plus an `AWS deploy tests` job running the credential-free pytest suite in `deploy/providers/AWS/tests/` over the stack's static artefacts — rendered templates, deploy scripts, and Terraform source itself, including the Cognito `callback_urls` = browser CORS allowlist invariants), `terraform_plan.yml`, `terraform_apply.yml`, `terraform_drift.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+
+### Terraform runs in CI (FLIP#962)
+
+`validate_terraform.yml` still does the credential-free `fmt`/`validate` pass. On top of that, three
+OIDC-authenticated workflows drive real state — no long-lived AWS keys in GitHub:
+`terraform_plan.yml` (plan staging on every PR touching `deploy/providers/AWS/**`, read-only role,
+`-lock=false`), `terraform_apply.yml` (push to `develop` → stag, push to `main` → **prod**), and
+`terraform_drift.yml` (nightly plan, one issue per environment). **Merging to `main` now changes
+production infrastructure** — the previous "don't `make apply` for prod" rule is superseded.
+
+Drift runs **twice**, and the ref decides the environment: a `schedule` only ever fires from the
+default branch, so the nightly run is a develop run checking stag, and it dispatches
+`terraform_drift.yml --ref main` for the prod leg. That keeps the `aws-prod` GitHub environment
+restricted to `main` alone — an environment's secrets are readable by any workflow that names it and
+runs on an admitted branch, before any AWS call — and makes the prod plan compare main's HCL rather
+than reporting every unreleased develop change as drift.
+
+Two guards make the unattended apply safe, and both live in `deploy/providers/AWS/scripts/`:
+`resolve-image-tags.sh` pins this commit's `sha-<short7>` (falling back to the tag the service is
+already running — the configured `:stag`/`:prod` never *replaces* a deployed tag, which would
+discard the FLIP#751 pin; every lookup fails **closed**, absence recognised only from ECS's own
+`failures[].reason == "MISSING"`, because an AWS error that reads as "no service" is exactly what
+un-pins the release). Plan and drift run it too, in its `RESOLVE_SHA_TAG=false` mode, or they would
+report a permanent `sha-… → :prod` diff against the pin an apply has written.
+`check-fl-plan-impact.sh` holds any apply whose plan touches `fl-server-net-1` / `fl-api-net-1` or
+deletes EFS, because that would kill an in-flight training run (FLIP#770); the held apply is
+released by re-dispatching `terraform_apply.yml` with the `fl_quiesced: true` input, an operator
+attestation nothing on the runner can verify.
+
+Terraform inputs reach CI through `scripts/compose-ci-env.sh`, which composes `.env.stag` /
+`.env.production` from the `aws-stag` / `aws-prod` GitHub environments so the Makefile stays the one
+definition of the env-to-`TF_VAR_` mapping. Consequence: **adding an `export TF_VAR_…` line means
+also updating that script's manifest, all three workflow `env:` blocks, and both GitHub
+environments** — `scripts/tests/test_compose_ci_env.sh` fails the build otherwise. The OIDC roles are
+a separate Terraform root, `deploy/providers/AWS/ci/`, applied from a laptop only. Full flow, one-time
+setup and break-glass: [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md).
 
 ### Docker image builds: gated on tests, manual trigger for branches
 
