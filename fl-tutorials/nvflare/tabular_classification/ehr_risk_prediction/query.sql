@@ -93,4 +93,11 @@ FROM
     LEFT JOIN first_dx fd ON fd.person_id = p.person_id
 WHERE
     EXISTS (SELECT 1 FROM omop.condition_occurrence coe WHERE coe.person_id = p.person_id)
+-- Load-bearing, not cosmetic: without it the LIMIT below picks an unspecified 5000 rows in an
+-- unspecified order, so two fetches of the same cohort can disagree. The Flower app fetches once
+-- for training and again for evaluation and splits on person_id, so a differing row set would
+-- shrink the held-out split rather than corrupt it -- but a stable order keeps the two fetches
+-- identical, which is what makes a run reproducible.
+ORDER BY
+    p.person_id
 LIMIT 5000

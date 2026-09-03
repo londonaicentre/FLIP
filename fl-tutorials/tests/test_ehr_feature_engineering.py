@@ -98,6 +98,30 @@ def test_split_frame_is_deterministic_and_covering(cohort: pd.DataFrame):
     assert len(test) == 8
 
 
+def test_split_membership_is_independent_of_row_order(cohort: pd.DataFrame):
+    """A person must land in the same split however the rows arrive.
+
+    The Flower ClientApp fetches the cohort separately for training and for evaluation, and the two
+    fetches can return the same persons in a different order. A positional shuffle would then put a
+    person in train on one call and in test on the next, so the "held-out" test metric would be
+    scored partly on rows the model had just trained on.
+    """
+    train, val, test = fe.split_frame(cohort, val_split=0.2, test_split=0.2, seed=42)
+    reordered = cohort.iloc[::-1].reset_index(drop=True)
+    train2, val2, test2 = fe.split_frame(reordered, val_split=0.2, test_split=0.2, seed=42)
+
+    for first, second in ((train, train2), (val, val2), (test, test2)):
+        assert set(first["person_id"]) == set(second["person_id"])
+    # The property that actually matters: no row trained on in one fetch is evaluated in the other.
+    assert not set(train["person_id"]) & set(test2["person_id"])
+    assert not set(train2["person_id"]) & set(test["person_id"])
+
+
+def test_split_frame_needs_person_id_to_be_reproducible(cohort: pd.DataFrame):
+    with pytest.raises(KeyError, match="person_id"):
+        fe.split_frame(cohort.drop(columns="person_id"), val_split=0.2, test_split=0.2, seed=42)
+
+
 def test_split_frame_rejects_degenerate_splits(cohort: pd.DataFrame):
     with pytest.raises(ValueError, match="val_split"):
         fe.split_frame(cohort, val_split=0.6, test_split=0.5, seed=0)

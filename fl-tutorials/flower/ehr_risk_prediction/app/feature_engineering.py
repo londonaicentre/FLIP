@@ -26,6 +26,7 @@ with federated statistics; per-site scaling is the deliberate, simple choice her
 
 from __future__ import annotations
 
+import hashlib
 import re
 import warnings
 
@@ -63,13 +64,34 @@ def select_features(
     return features, labels
 
 
+def _split_key(person_id: object, seed: int) -> str:
+    """A stable pseudo-random ordering key for one person.
+
+    ``hashlib`` rather than the built-in ``hash()``: Python salts that per process, so the same
+    person would sort differently in two invocations of the same app.
+    """
+    return hashlib.blake2b(f"{seed}:{person_id}".encode(), digest_size=8).hexdigest()
+
+
 def split_frame(
     dataframe: pd.DataFrame, val_split: float, test_split: float, seed: int
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Deterministic person-level train/val/test split (each row is one person)."""
+    """Deterministic person-level train/val/test split (each row is one person).
+
+    Which split a person lands in is a pure function of their ``person_id`` and ``seed``, never of
+    their position in the frame. That is load-bearing for Flower, whose ClientApp fetches the cohort
+    separately for training and for evaluation: two fetches can return the same persons in a
+    different order, and a positional shuffle would then put a person in train on one call and in
+    test on the next, leaking trained-on rows into the held-out metric with nothing to show for it.
+    Sorting by a stable per-person key keeps the split sizes exact and the membership reproducible.
+    """
     if val_split + test_split >= 1.0:
         raise ValueError("Invalid split configuration: val_split + test_split must be < 1.0")
-    shuffled = dataframe.sample(frac=1.0, random_state=seed).reset_index(drop=True)
+    if "person_id" not in dataframe.columns:
+        raise KeyError("split_frame needs a 'person_id' column to split deterministically")
+    keys = dataframe["person_id"].map(lambda person_id: _split_key(person_id, seed))
+    shuffled = dataframe.assign(_split_key=keys).sort_values("_split_key", kind="mergesort")
+    shuffled = shuffled.drop(columns="_split_key").reset_index(drop=True)
     n_total = len(shuffled)
     n_train = int(n_total * (1 - val_split - test_split))
     n_val = int(n_total * (1 - test_split))

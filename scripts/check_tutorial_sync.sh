@@ -49,6 +49,7 @@ PAIRS=(
   # fl-apps-check-tutorial-sync.yml's path filters must include (see the NOTE below).
   "fl-tutorials/flower/ehr_risk_prediction/app/feature_engineering.py:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files/feature_engineering.py"
   "fl-tutorials/flower/ehr_risk_prediction/app/models.py:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files/models.py"
+  "fl-tutorials/flower/ehr_risk_prediction/query.sql:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql"
   # The two Ark+ evaluation apps differ only in how many checkpoints they score; their data
   # loading and their flattened model definitions are meant to be the same file -- and they have
   # already drifted once (the Client-API port landed in the baseline copy days before the
