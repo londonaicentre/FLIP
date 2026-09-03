@@ -41,7 +41,7 @@ NUM_CASES ?= 10
 SPLEEN_UV := uv run --project spleen
 
 .PHONY: download-xray-data download-spleen-data download-spleen-msd-data \
-	download-spleen-flip-format-data download-arkplus-finetuning-data \
+	download-spleen-checkpoint download-arkplus-finetuning-data \
 	download-arkplus-eval-data upload-spleen-labels
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the layout
@@ -54,17 +54,15 @@ download-xray-data:
 		--output-dir $(DATA_DIR)/xrays_mini_300 \
 		--repo-id $(HF_TEST_DATA_REPO)
 
-# The spleen dataset has two variants sharing data/spleen/: the raw MSD build (images/ +
-# dataframe.csv — what the NVFLARE simulator reads, and where the enrichment labels come
-# from) and the pre-built FLIP-format tree (accession-resources/ +
-# sample_get_dataframe_response.csv — what the Flower compose stack mounts). The plain
-# download-spleen-data entrypoint keeps its historical per-backend meaning; call the
-# explicit variant targets directly to fetch a specific one.
-ifeq ($(FL_BACKEND),flower)
-download-spleen-data: download-spleen-flip-format-data
-else
-download-spleen-data: download-spleen-msd-data
-endif
+# ONE spleen dataset for BOTH backends (FLIP#1158): the MSD build, honouring NUM_CASES —
+# exactly as xray and arkplus already work. Flower used to read a pre-built "FLIP-format"
+# tree instead: a fixed 6-case snapshot that ignored NUM_CASES, so the two backends trained
+# on different data. The trees were structurally identical
+# (subject_N/scans/{input,label}_spleen_N.nii.gz), so nothing is lost by dropping it — and
+# six cases could not support a partitioned simulation (three per site, then a 40/30/30
+# split leaves a split empty). The evaluation-tutorial checkpoint was the one thing only the
+# snapshot carried, so it keeps its own target.
+download-spleen-data: download-spleen-msd-data download-spleen-checkpoint
 
 # Download the MSD spleen dataset and build its accession CSV (large; NUM_CASES caps the
 # subject count). Runs in spleen/'s own uv project for MONAI.
@@ -74,15 +72,12 @@ download-spleen-msd-data:
 	@$(SPLEEN_UV) python spleen/create_spleen_accession_csv.py --images_dir $(DATA_DIR)/spleen/images --output_csv $(DATA_DIR)/spleen/dataframe.csv
 	@echo "✅ MSD spleen data ready at $(abspath $(DATA_DIR))/spleen/ — make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation"
 
-# Download the pre-built FLIP-format spleen tree (fixed 6-case snapshot; ignores NUM_CASES)
-# plus the evaluation-tutorial checkpoint. Removes only its own outputs, so an MSD build in
-# the same data/spleen/ survives a re-download. A pure Hugging Face fetch, so it runs via
+# Fetch the spleen evaluation-tutorial checkpoint. A pure Hugging Face fetch, so it runs via
 # `uv run --no-project --with huggingface_hub` like the xray/arkplus downloads rather than in
 # spleen/'s env — that env exists for the MSD scripts' MONAI/torch, which this needs none of.
-download-spleen-flip-format-data:
-	@uv run --no-project --with huggingface_hub python spleen/download_spleen_flip_format_dataset.py \
+download-spleen-checkpoint:
+	@uv run --no-project --with huggingface_hub python spleen/download_spleen_checkpoint.py \
 		--cache-dir $(HF_CACHE) \
-		--output-dir $(DATA_DIR)/spleen \
 		--checkpoint-dir $(DATA_DIR)/model_checkpoints \
 		--repo-id $(HF_TEST_DATA_REPO)
 
@@ -125,10 +120,11 @@ download-arkplus-eval-data:
 #
 # The script is single-copy and backend-agnostic — enrichment happens once per FLIP project, in
 # XNAT, and both backends read the result. Only the label source differs per variant, so
-# SPLEEN_LABELS_DIR defaults by FL_BACKEND (MSD build vs FLIP-format tree) and can be overridden.
+# SPLEEN_LABELS_DIR points at the one spleen tree both backends read, and can be overridden.
 # It runs via `uv run --no-project --with <flip-utils>` rather than spleen/'s env, so uploading
 # labels never drags in the simulator's MONAI/torch stack.
-SPLEEN_LABELS_DIR ?= $(abspath $(if $(filter flower,$(FL_BACKEND)),$(DATA_DIR)/spleen/accession-resources,$(DATA_DIR)/spleen/images))
+# One tree for both backends since FLIP#1158, so no per-backend branch here any more.
+SPLEEN_LABELS_DIR ?= $(abspath $(DATA_DIR)/spleen/images)
 # upload-spleen-labels runs against the in-tree flip-utils, not the PyPI release, so the enrichment
 # CLI always matches this checkout (flip.xnat may be newer here than the last published version).
 FLIP_UTILS_DIR ?= $(abspath ../../flip-utils)

@@ -33,8 +33,10 @@ if [ ! -d "$HERE/$TUTORIAL/app" ]; then echo "❌ Unknown tutorial '$TUTORIAL'. 
 DATA_ROOT="$(cd "$HERE/.." && pwd)/data"
 case "$TUTORIAL" in
   3d_spleen_segmentation|3d_spleen_segmentation_evaluation)
-    export DEV_IMAGES_DIR="$DATA_ROOT/spleen/accession-resources"
-    export DEV_DATAFRAME="$DATA_ROOT/spleen/sample_get_dataframe_response.csv"
+    # The same MSD build the NVFLARE tutorials read, honouring NUM_CASES (FLIP#1158). Flower
+    # used to read a separate fixed 6-case "FLIP-format" snapshot here.
+    export DEV_IMAGES_DIR="$DATA_ROOT/spleen/images"
+    export DEV_DATAFRAME="$DATA_ROOT/spleen/dataframe.csv"
     DATASET_TARGET=spleen ;;
   xray_classification)
     export DEV_IMAGES_DIR="$DATA_ROOT/xrays_mini_300/accession-resources"

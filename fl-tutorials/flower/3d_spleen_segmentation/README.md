@@ -242,5 +242,8 @@ the full walkthrough and options.
 
 By default, the app reads from the shared gitignored `fl-tutorials/data/` root:
 
-- `data/spleen/sample_get_dataframe_response.csv`
-- `data/spleen/accession-resources`
+- `data/spleen/dataframe.csv`
+- `data/spleen/images`
+
+Both are the MSD build the NVFLARE tutorials read, so the two backends train on the same cases
+(`NUM_CASES`, default 10 — see `fl-tutorials/datasets/README.md`).

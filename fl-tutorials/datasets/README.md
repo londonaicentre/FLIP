@@ -37,8 +37,8 @@ make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrich
 | Dataset | Source | Output under `fl-tutorials/data/` | Consumed by |
 | --- | --- | --- | --- |
 | xray | HF `aicentreflip/flip-fl-base-test-data` | `xrays_mini_300/{accession-resources/, dataframe.csv}` | xray_classification (both backends) |
-| spleen (MSD build) | MSD Task09_Spleen | `spleen/{images/, dataframe.csv}` | 3d_spleen_segmentation + evaluation + latent_diffusion_model (NVFLARE sim); enrichment labels |
-| spleen (FLIP-format) | HF `aicentreflip/flip-fl-base-test-data` | `spleen/{accession-resources/, sample_get_dataframe_response.csv}` + `model_checkpoints/model.pt` | 3d_spleen_segmentation + evaluation (Flower stack) |
+| spleen | MSD Task09_Spleen (`NUM_CASES`, default 10) | `spleen/{images/, dataframe.csv}` | 3d_spleen_segmentation + evaluation + latent_diffusion_model (**both backends**); enrichment labels |
+| spleen checkpoint | HF `aicentreflip/flip-fl-base-test-data` | `model_checkpoints/model.pt` | 3d_spleen_segmentation_evaluation |
 | arkplus | HF `aicentreflip/tutorials-arkplus-cxr-classification` | `arkplus/site{1,2}[,_holdoff]/` | the three Ark+ tutorials (NVFLARE) |
 
 The two spleen variants coexist in `data/spleen/` — the FLIP-format download removes only
@@ -58,10 +58,11 @@ pandas, natsort; `uv.lock` is gitignored):
   [spleen tutorial README](../nvflare/image_segmentation/3d_spleen_segmentation/README.md)
   for the full walkthrough, and the repo-root `CLAUDE.md` for its `e2e_smoke` wiring). Runs
   against the in-tree `flip-utils`, not `spleen/`'s env.
-- `download_spleen_flip_format_dataset.py` — fetch the pre-built FLIP-format tree (fixed
-  6-case snapshot) plus the evaluation checkpoint from Hugging Face, replacing only its own
-  outputs in `data/spleen/`. A pure Hugging Face fetch, so like the xray/arkplus scripts it
-  runs via `uv run --no-project --with huggingface_hub`, not in `spleen/`'s env.
+- `download_spleen_checkpoint.py` — fetch the evaluation-tutorial checkpoint from Hugging
+  Face. A pure Hugging Face fetch, so like the xray/arkplus scripts it runs via
+  `uv run --no-project --with huggingface_hub`, not in `spleen/`'s env. It used to also
+  download a fixed 6-case "FLIP-format" spleen tree for the Flower tutorials; both backends
+  now read the one MSD build (FLIP#1158), which honours `NUM_CASES`.
 
 [`xrays_mini_300/`](xrays_mini_300/) owns the single x-ray script — no dedicated uv project,
 it runs via `uv run --no-project --with huggingface_hub`, the same way `upload-spleen-labels`
