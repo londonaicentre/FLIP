@@ -208,12 +208,16 @@ module "cognito" {
   # scheme://host[:port] origin, and CORSMiddleware serves that list with
   # allow_credentials=true. Every browser origin that must call the API in
   # stag/prod therefore has to be listed here, and removing one silently blocks
-  # that origin. Nothing in the test suite catches it — the value is read from
-  # live Cognito at runtime, not from this file.
+  # that origin. No runtime test can catch it — the API reads the list from live
+  # Cognito at start-up, not from this file — so the guard is static, over this
+  # source (see tests/test_cognito_callback_urls.py).
   #
   # Operationally: a change here takes effect at the NEXT flip-api start, not at
   # apply time. main.py's lifespan reads the list once and CORSMiddleware holds
-  # it by reference, so restart the flip-api service after applying.
+  # it by reference, so restart the flip-api service after applying. The full
+  # runbook — targeted apply (never a full stag/prod apply), restart, and the two
+  # verification steps — is in README.md, "Changing the browser CORS allowlist
+  # (Cognito callback_urls)".
   #
   # localhost is deliberately absent: this root stack is stag/prod only. Local
   # development uses the separate ./dev root, whose var.cognito_callback_urls
