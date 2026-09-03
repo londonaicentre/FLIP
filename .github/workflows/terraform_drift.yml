@@ -41,6 +41,11 @@
 #
 # So: dispatching this workflow on `develop` checks staging, and on `main` checks
 # production. There is no leg for the environment a run cannot reach.
+#
+# Until this file exists on `main` — i.e. until the first release after FLIP#962 —
+# the dispatch fails, loudly, and the staging leg still reports. That is the right
+# way round: production drift silently not being checked is the failure this
+# arrangement exists to avoid.
 
 name: Terraform Drift
 
