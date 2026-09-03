@@ -52,7 +52,11 @@ const projectsModel: ModelDefinition<IProject> = Model.extend({});
 const usersModel: ModelDefinition<IUser> = Model.extend({});
 const detailsModel: ModelDefinition<ISiteDetails> = Model.extend({});
 
-// eslint-disable-next-line @typescript-eslint/ban-types
+// Mirage's Registry is parameterised by the model and factory maps; this app
+// registers neither, so both are genuinely empty. `ban-types` was removed in
+// typescript-eslint v8 and split into `no-empty-object-type` (FLIP#1041 — the
+// old disable named a rule that no longer exists, so it suppressed nothing).
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export type AppRegistry = Registry<{}, {}>;
 
 type AppSchema = Schema<AppRegistry>
@@ -270,7 +274,11 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
                 // Mirror the hub: name and organisation are withheld from this route.
                 const { id, email, isDisabled } = user;
 
-                return new Response(200, undefined, { id, email, isDisabled });
+                return new Response(200, undefined, {
+                    id,
+                    email,
+                    isDisabled
+                });
             });
 
             // #endregion
