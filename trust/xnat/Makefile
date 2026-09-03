@@ -269,12 +269,27 @@ endif
 # the compose-deployed hub and trust services run fine under emulation.
 #
 # `--resolve-image never` skips the registry manifest query that feeds that check, so
-# a locally-present amd64 image is scheduled and runs emulated. Default it to `never`
-# only when the node arch differs from amd64, so Linux/amd64 hosts keep the digest
-# pinning `always` gives them. Override explicitly if needed:
+# a locally-present amd64 image is scheduled and runs emulated. Opt out of digest
+# pinning only for a KNOWN non-amd64 arch, so anything else — including an empty
+# probe result — keeps the `always` that Linux/amd64 hosts rely on. Override
+# explicitly if needed:
 #   make up-xnat KIT=<CODE> XNAT_RESOLVE_IMAGE=always
-XNAT_NODE_ARCH := $(shell docker info --format '{{.Architecture}}' 2>/dev/null)
-XNAT_RESOLVE_IMAGE ?= $(if $(filter x86_64 amd64,$(XNAT_NODE_ARCH)),always,never)
+#
+# The filter-out direction is deliberate. `docker info` returns empty for plenty of
+# reasons unrelated to architecture: the daemon not up yet, the user not in the
+# `docker` group (reachable only via sudo), a rootless or remote DOCKER_HOST/context
+# that is momentarily unreachable, or a DOCKER_CONTEXT needing auth. Testing for a
+# known-amd64 value instead would hand every one of those `never` on an amd64 Linux
+# host — losing digest pinning, a supply-chain posture change, as a side effect of
+# detection failing quietly rather than as an explicit decision.
+#
+# Recursive `=`, not `:=`: the probe then runs only when XNAT_RESOLVE_IMAGE is actually
+# expanded, in the up-xnat recipe. Simply-expanded, the `docker info` ran at parse time
+# on EVERY invocation of this Makefile — measured firing on `down-xnat` and
+# `xnat-configure`, neither of which consumes the value, and on each sub-make the
+# trust/xnat/tests suite spawns.
+XNAT_NODE_ARCH = $(shell docker info --format '{{.Architecture}}' 2>/dev/null)
+XNAT_RESOLVE_IMAGE ?= $(if $(filter-out x86_64 amd64,$(XNAT_NODE_ARCH)),never,always)
 
 down:
 	@for f in ../.env.*.$(ENV); do \

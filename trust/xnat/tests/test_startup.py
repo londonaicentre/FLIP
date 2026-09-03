@@ -364,6 +364,44 @@ def test_dev_up_xnat_validates_the_plugin_cache_before_tearing_xnat_down() -> No
     assert stdout.index("ensure_plugins.sh") < stdout.index("xnat-reset")
 
 
+@pytest.mark.parametrize(
+    ("arch", "expected"),
+    [
+        pytest.param("x86_64", "always", id="amd64-keeps-digest-pinning"),
+        pytest.param("aarch64", "never", id="known-non-amd64-opts-out"),
+        # `docker info` returns empty whenever the daemon cannot be reached — not yet up, caller
+        # not in the `docker` group, an unreachable rootless/remote DOCKER_HOST, a context needing
+        # auth. Testing for a known-amd64 value would hand all of those `never` on an amd64 Linux
+        # host, dropping digest pinning as a side effect of detection failing quietly.
+        pytest.param("", "always", id="undetected-arch-fails-safe"),
+    ],
+)
+def test_resolve_image_opts_out_only_for_a_known_non_amd64_arch(arch: str, expected: str) -> None:
+    """Losing digest pinning must be an explicit decision, not a silent detection failure."""
+    resolved = subprocess.run(
+        [
+            "make",
+            "-f",
+            "Makefile",
+            "-f",
+            "-",
+            f"XNAT_NODE_ARCH={arch}",
+            "KIT=Trust_1",
+            "__probe_resolve",
+        ],
+        cwd=XNAT_DIR,
+        input="__probe_resolve: ; @echo $(XNAT_RESOLVE_IMAGE)\n",
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert resolved.returncode == 0, resolved.stdout + resolved.stderr
+    assert resolved.stdout.strip() == expected, (
+        f"arch {arch!r} resolved --resolve-image to {resolved.stdout.strip()!r}, expected {expected!r}"
+    )
+
+
 def test_up_xnat_skips_the_host_plugin_cache_outside_development() -> None:
     """Only the development stack bind-mounts plugins; elsewhere they are baked into the image.
 
