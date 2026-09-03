@@ -24,7 +24,7 @@ _stub_models.get_model = lambda: object()
 sys.modules.setdefault("models", _stub_models)
 
 from flip.nvflare.recipes import FlipFedAvgRecipe  # noqa: E402
-from flip.nvflare.recipes.flip_fedavg_recipe import _DEV_MODEL_ID, PercentilePrivacy  # noqa: E402
+from flip.nvflare.recipes.flip_fedavg_recipe import _DEV_MODEL_ID, LocalDp, PercentilePrivacy  # noqa: E402
 from flip.nvflare.runtime import FLIP_CUSTOM_PROPS_KEY, FLIP_MODEL_ID_KEY  # noqa: E402
 
 
@@ -302,3 +302,56 @@ class TestFlipFedAvgRecipeBestModel:
         """num_rounds=2 is the minimum where selection can fire; the selector is wired normally."""
         server_cfg = self._export_server_cfg(tmp_path, num_rounds=2, best_model_metric="VAL_DICE")
         assert any("IntimeModelSelector" in c.get("path", "") for c in server_cfg["components"])
+
+
+class TestLocalDifferentialPrivacyWiring:
+    """FLIP#1145: the recipe can wire a formal (epsilon, delta) mechanism instead of the sparsifier."""
+
+    @staticmethod
+    def _train_result_filters(tmp_path, recipe) -> list[dict]:
+        import torch
+
+        sys.modules["models"].get_model = lambda: torch.nn.Linear(1, 1)
+        recipe.export(tmp_path)
+        client_cfg = json.loads(
+            (tmp_path / recipe.job.name / "app" / "config" / "config_fed_client.json").read_text()
+        )
+        return [
+            entry
+            for chain in client_cfg["task_result_filters"]
+            if "train" in chain["tasks"]
+            for entry in chain["filters"]
+        ]
+
+    def test_percentile_sparsifier_is_still_the_default(self, tmp_path: Path):
+        """Existing jobs are untouched: no local_dp means exactly the filter chain shipped today."""
+        paths = [f["path"] for f in self._train_result_filters(tmp_path, FlipFedAvgRecipe())]
+        assert any(path.endswith("PercentilePrivacy") for path in paths)
+        assert not any(path.endswith("LocalDifferentialPrivacy") for path in paths)
+
+    def test_local_dp_replaces_the_sparsifier_and_carries_its_parameters(self, tmp_path: Path):
+        """The two are alternatives — stacking them would muddy which guarantee the update carries."""
+        recipe = FlipFedAvgRecipe(local_dp=LocalDp(clipping_norm=2.0, sensitivity=1e-3, epsilon=0.5, delta=1e-6))
+        filters = self._train_result_filters(tmp_path, recipe)
+        paths = [f["path"] for f in filters]
+
+        assert any(path.endswith("LocalDifferentialPrivacy") for path in paths)
+        assert not any(path.endswith("PercentilePrivacy") for path in paths)
+        args = next(f["args"] for f in filters if f["path"].endswith("LocalDifferentialPrivacy"))
+        assert args["clipping_norm"] == 2.0
+        assert args["sensitivity"] == 1e-3
+        assert args["epsilon"] == 0.5
+        assert args["delta"] == 1e-6
+
+    def test_local_dp_defaults_match_the_flower_mechanism(self):
+        """Same knobs and same values on both backends, or the parity claim is empty."""
+        pytest.importorskip("flwr")
+        from flip.flower.privacy import LocalDpConfig
+
+        flower, nvflare = LocalDpConfig(), LocalDp()
+        assert (nvflare.clipping_norm, nvflare.sensitivity, nvflare.epsilon, nvflare.delta) == (
+            flower.clipping_norm,
+            flower.sensitivity,
+            flower.epsilon,
+            flower.delta,
+        )
