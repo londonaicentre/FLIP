@@ -31,6 +31,17 @@ extracting the shell the recipe will actually execute (via ``make -n``) and runn
 it against real directories. It needs neither root nor Docker: rather than
 chown-ing to a foreign id, it overrides ``XNAT_CONTAINER_UID``/``GID`` on the make
 command line, which is what the recipe compares against.
+
+That override is also its blind spot, and ``TestDevBranchProvisionsTheContainerUid``
+exists because of it. Expecting the invoker's own id, and running only the extracted
+``owned=`` line, together remove the one condition that matters — provisioning for a
+uid the caller is not. Those tests therefore pass whether or not the recipe can
+actually reach the ownership it demands. The second class runs the whole generated
+development branch (wipe, mkdir, chown, check) with a ``sudo`` shim that drops the
+privilege, so an unreachable owner fails there as it would on a developer's machine.
+Note that this host and the GitHub runner are both uid 1001, the same id the XNAT
+image uses, so any test written against that literal is vacuous in both places it
+runs; the uid is always derived from ``os.getuid()``.
 """
 
 from __future__ import annotations
@@ -94,7 +105,15 @@ class TestUidIsConsistent:
     def test_playbooks_provision_the_same_uid(self, playbook: Path) -> None:
         uid = _make_var("XNAT_CONTAINER_UID")
         text = playbook.read_text()
-        task = re.search(r"name:.*XNAT bind-mount directories.*?(?=\n    - name:)", text, re.DOTALL)
+        # Anchored on the task's own indent and ended by the next sibling at that indent (or EOF),
+        # so reindenting the play, reordering it, or making this the last task in the file does not
+        # turn a real drift check into "no XNAT bind-mount directory task" — a failure that accuses
+        # the playbook when the fault is in this regex.
+        task = re.search(
+            r"^(?P<indent>[ \t]*)- name:.*XNAT bind-mount directories.*?(?=^(?P=indent)- |\Z)",
+            text,
+            re.DOTALL | re.MULTILINE,
+        )
         assert task, f"no XNAT bind-mount directory task in {playbook}"
         assert re.search(rf'owner:\s*"{uid}"', task.group(0)), (
             f"{playbook.name} provisions the XNAT bind mounts as a different uid than "
@@ -182,3 +201,88 @@ class TestOwnershipGuardFires:
         (data / "xnat-data" / "cache").rmdir()
         guard = self._guard(data, os.getuid(), os.getgid())
         assert subprocess.run(["sh", "-c", guard], capture_output=True, timeout=TIMEOUT_SECONDS).returncode == 1
+
+
+class TestDevBranchProvisionsTheContainerUid:
+    """Execute the development branch end to end: mkdir, chown and check together.
+
+    ``TestOwnershipGuardFires`` runs only the extracted ``owned=`` line and overrides the expected
+    uid to the invoker's, so between them those two choices remove exactly the condition this issue
+    is about — provisioning directories for a uid that is *not* the caller's. That is why the suite
+    stayed green while the development branch could not reach the ownership it demands.
+
+    These run the whole generated sequence instead. Neither needs root: a ``sudo`` shim on PATH
+    ``exec``s its arguments unprivileged, which is precisely the constraint a normal developer runs
+    under, so a chown to a foreign id fails here exactly as it would on their machine.
+
+    The uid is derived as ``os.getuid() + 1`` rather than written as a literal. This host and the
+    GitHub runner both happen to be uid 1001 — the same id the XNAT image uses — so a literal would
+    make these vacuous in exactly the two places they run.
+    """
+
+    @staticmethod
+    def _sudo_shim(root: Path) -> Path:
+        """A PATH entry whose `sudo` runs the command unprivileged, modelling a non-root developer."""
+        bin_dir = root / "shim"
+        bin_dir.mkdir()
+        shim = bin_dir / "sudo"
+        shim.write_text('#!/bin/sh\nexec "$@"\n')
+        shim.chmod(0o755)
+        return bin_dir
+
+    @staticmethod
+    def _dev_recipe(data_dir: Path, expected_uid: int, expected_gid: int) -> str:
+        """The full shell the development branch of xnat-reset runs (PROD unset)."""
+        result = subprocess.run(
+            [
+                "make", "-n", "--no-print-directory", "xnat-reset",
+                "KIT=GSTT",
+                f"XNAT_DATA_DIR={data_dir}",
+                f"XNAT_CONTAINER_UID={expected_uid}",
+                f"XNAT_CONTAINER_GID={expected_gid}",
+            ],
+            cwd=XNAT_DIR,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT_SECONDS,
+        )
+        assert result.returncode == 0, f"make -n xnat-reset failed:\n{result.stderr}"
+        lines = result.stdout.splitlines()
+        start = next((i for i, ln in enumerate(lines) if ln.strip().startswith("set -e;")), None)
+        assert start is not None, "xnat-reset emitted no `set -e` provisioning block"
+        return "\n".join(lines[start:])
+
+    def _run(self, tmp_path: Path, uid: int, gid: int) -> subprocess.CompletedProcess[str]:
+        env = dict(os.environ, PATH=f"{self._sudo_shim(tmp_path)}:{os.environ['PATH']}")
+        recipe = self._dev_recipe(tmp_path / "data", uid, gid)
+        return subprocess.run(
+            ["sh", "-c", recipe], capture_output=True, text=True, timeout=TIMEOUT_SECONDS, env=env
+        )
+
+    def test_provisions_a_tree_the_container_uid_owns(self, tmp_path: Path) -> None:
+        """The achievable case: the sequence creates the tree and its own guard then passes."""
+        result = self._run(tmp_path, os.getuid(), os.getgid())
+        assert result.returncode == 0, f"development branch failed on an achievable uid:\n{result.stdout}{result.stderr}"
+        for name in ("tomcat_logs", "archive", "build", "cache"):
+            created = tmp_path / "data" / "xnat-data" / name
+            assert created.is_dir(), f"{name} was not provisioned"
+            assert created.stat().st_uid == os.getuid()
+
+    def test_an_unreachable_owner_stops_at_the_chown_not_the_guard(self, tmp_path: Path) -> None:
+        """A chown the caller cannot perform must fail *as itself*, not as wrong ownership.
+
+        Both the suppressed and the fatal form exit non-zero, so the exit status alone proves
+        nothing — this asserts on *which* step reported. With ``chown ... 2>/dev/null || true`` the
+        EPERM was discarded and the recipe walked on to a guard that could never pass, so the
+        operator was told the directories had the wrong owner with no hint that the chown meant to
+        fix it had silently failed. Failing at the chown names the cause instead.
+        """
+        result = self._run(tmp_path, os.getuid() + 1, os.getgid() + 1)
+        assert result.returncode != 0, "a chown the developer cannot perform was swallowed"
+        assert "Operation not permitted" in result.stderr, (
+            "the chown's EPERM is being discarded; the recipe reports a symptom, not the cause"
+        )
+        assert "❌" not in result.stdout, (
+            "the recipe continued past a failed chown to the ownership guard, which reports the "
+            "wrong owner rather than the chown that could not set it"
+        )

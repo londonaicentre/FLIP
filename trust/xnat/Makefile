@@ -158,15 +158,25 @@ XNAT_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive bu
 # dir that is missing entirely, since stat then prints nothing for it.
 #
 # $(1) is a command printing "<uid>:<gid>" per source, one line each — run
-# locally, or over ssh when the swarm host is remote.
+# locally, or over ssh when the swarm host is remote. $(2) is the prefix that
+# makes the printed remedy runnable where the directories actually are: empty on
+# the local branches, `ssh <ctx>` on the remote-swarm one, where the paths live
+# on the trust host and an operator pasting a bare `sudo chown` would either get
+# "no such file or directory" or chown a same-named path on their own machine.
+#
+# stat's stderr is deliberately not discarded. A stat that fails for a reason
+# other than a missing directory — an unreadable parent, or a non-GNU stat that
+# rejects `-c` — otherwise counts zero and is reported as wrong ownership, which
+# sends the reader after the wrong fault. A missing directory still counts zero
+# and still fires the guard, now with stat naming the path it could not read.
 define check_xnat_dir_owner
-	owned="$$($(1) 2>/dev/null | grep -cx '$(XNAT_DIR_OWNER)' || true)"; \
+	owned="$$($(1) | grep -cx '$(XNAT_DIR_OWNER)' || true)"; \
 	if [ "$$owned" != "$(words $(XNAT_DATA_DIRS))" ]; then \
 		echo "❌  XNAT bind-mount sources under $(XNAT_DATA_DIR) are not all owned by $(XNAT_DIR_OWNER)."; \
 		echo "    xnat-web runs as uid $(XNAT_CONTAINER_UID) and cannot write them, so DICOM"; \
 		echo "    retrieval fails with the PACS reporting 'Peer aborted Association' and XNAT"; \
 		echo "    writes no logs to explain it (FLIP#1095)."; \
-		echo "    Fix: sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)"; \
+		echo "    Fix: $(if $(2),$(2) ,)sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)"; \
 		exit 1; \
 	fi
 endef
@@ -390,6 +400,21 @@ xnat-plugins-download:
 # (the second xnat-web otherwise crash-loops on a locked SQLite index).
 # Data dir defaults vary by PROD — see the XNAT_DATA_DIR comment above
 # for the resolution rule and how to override per-host.
+#
+# All three branches provision under sudo, development included. An unprivileged
+# `mkdir -p` creates the tree owned by the invoking user, and the chown to 1001
+# that follows then fails with EPERM on every host whose developer is not
+# themselves uid 1001 — so the ownership the guard requires could never be
+# reached, and `make up` would abort here. sudo costs nothing extra: the wipe on
+# the line above already needs it, so dev bring-up already prompts, and sudo's
+# credential cache means the mkdir and chown ride the same authentication.
+#
+# `set -e` also makes the two `docker context` probes fatal, which is deliberate.
+# Letting them fall through to the local branch (the pre-FLIP#1095 behaviour) means
+# a mistyped or unreachable DOCKER_CONTEXT silently runs `sudo rm -rf
+# $(XNAT_DATA_DIR)` against the *operator's own machine* while they believe they
+# are resetting a remote trust host. Aborting on an unresolvable context is the
+# safer failure.
 xnat-reset:
 	$(require_kit)
 	@case "$$(pwd)" in */trust/xnat) ;; *) \
@@ -408,7 +433,7 @@ xnat-reset:
 			ssh://*) \
 				echo "  🛰️  remote swarm deploy (context '$$xnat_ctx') — resetting XNAT dirs on the trust host via ssh"; \
 				ssh "$$xnat_ctx" "sudo rm -rf $(XNAT_DATA_DIR) && sudo mkdir -p $(XNAT_DATA_DIRS) && sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)"; \
-				$(call check_xnat_dir_owner,ssh "$$xnat_ctx" "stat -c '%u:%g' $(XNAT_DATA_DIRS)"); \
+				$(call check_xnat_dir_owner,ssh "$$xnat_ctx" "stat -c '%u:%g' $(XNAT_DATA_DIRS)",ssh $$xnat_ctx); \
 				;; \
 			*) \
 				echo "  💻 local docker context '$$xnat_ctx' ($$xnat_endpoint) — resetting XNAT dirs on this host"; \
@@ -421,8 +446,8 @@ xnat-reset:
 	else \
 		echo "  📍 Using dev data dir: $(XNAT_DATA_DIR)/"; \
 		sudo rm -rf $(XNAT_DATA_DIR); \
-		mkdir -p $(XNAT_DATA_DIRS); \
-		chown $(XNAT_DIR_OWNER) $(XNAT_DATA_DIRS) 2>/dev/null || true; \
+		sudo mkdir -p $(XNAT_DATA_DIRS); \
+		sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
 		$(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_DATA_DIRS)); \
 	fi
 
