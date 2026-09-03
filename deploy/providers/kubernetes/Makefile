@@ -49,6 +49,17 @@ endif
 ifeq ($(wildcard $(KIT_SRC)/.),)
 $(error ❌  KIT_SRC $(KIT_SRC) is not a directory)
 endif
+# stage-kit empties KIT_DEST before copying (see the recipe), so refuse the two values
+# where that would reach beyond the kit directory. An empty KIT_DEST would make the wipe
+# `find  -mindepth 1 -delete`, which walks the working directory, and `/` would walk the
+# node's root filesystem. Both are only reachable by an explicit override, but the wipe is
+# the one step here that destroys rather than writes, so it gets a parse-time guard.
+ifeq ($(strip $(KIT_DEST)),)
+$(error ❌  KIT_DEST must not be empty — stage-kit clears it before copying)
+endif
+ifeq ($(strip $(KIT_DEST)),/)
+$(error ❌  KIT_DEST must not be / — stage-kit clears it before copying)
+endif
 ifneq ($(FL_BACKEND),)
 ifeq ($(filter nvflare flower,$(FL_BACKEND)),)
 $(error ❌  FL_BACKEND=$(FL_BACKEND) is not a backend — nvflare or flower)
@@ -132,11 +143,20 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	## needed; a kit with neither or both shapes is refused before anything is copied.
 	## On a real cluster the operator places it by whatever means the site allows; this
 	## target implements the kind case, which is what dev and stag use.
+	##
+	## KIT_DEST is emptied before the copy, for the same reason the EC2 play wipes before
+	## its sync: `docker cp` merges into whatever is already there, so re-staging after a
+	## kit-date bump, a backend switch, or a corrected over-broad sync would leave the
+	## previous kit's files in place beside the new ones — including credentials that
+	## should no longer be on the node. `find -mindepth 1 -delete` clears the contents
+	## without removing the directory the chart mounts, and fails the recipe if it cannot,
+	## rather than staging on top of a stale kit.
 	@[ -n "$(KUBE_CONTEXT)" ] || (echo "❌  KUBE_CONTEXT is required — this writes to a node's filesystem, and defaulting to kubectl's current context ($$(kubectl config current-context 2>/dev/null || echo none)) would stage into whichever cluster that happens to be. e.g. KUBE_CONTEXT=kind-flip-kch"; exit 1)
 	@node=$$(kubectl --context $(KUBE_CONTEXT) get nodes -o jsonpath='{.items[0].metadata.name}') && \
 	  [ -n "$$node" ] || { echo "❌  no node found in context $(KUBE_CONTEXT) — is the cluster reachable?"; exit 1; }; \
 	  echo "📦 Staging $(KIT_SRC) ($(KIT_BACKEND) kit, owner uid $(KIT_UID)) → [$(KUBE_CONTEXT)] $$node:$(KIT_DEST)"; \
 	  docker exec "$$node" mkdir -p "$(KIT_DEST)" && \
+	  docker exec "$$node" find "$(KIT_DEST)" -mindepth 1 -delete && \
 	  docker cp "$(KIT_SRC)/." "$$node:$(KIT_DEST)/" && \
 	  docker exec "$$node" mkdir -p $(addprefix "$(KIT_DEST)"/,$(KIT_SUBDIRS)) && \
 	  docker exec "$$node" sh -c 'chmod -R go-rwx "$(KIT_DEST)" && chown -R $(KIT_UID):$(KIT_UID) "$(KIT_DEST)"' && \

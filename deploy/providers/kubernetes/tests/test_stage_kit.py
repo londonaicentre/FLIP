@@ -112,6 +112,43 @@ def test_mounted_subdirectories_are_created_before_the_chown(request, fixture_na
     )
 
 
+def test_the_destination_is_emptied_before_the_copy(nvflare_kit):
+    """``docker cp`` merges into the destination, so a re-stage must clear it first.
+
+    Without the wipe, re-staging after a kit-date bump, a backend switch, or a corrected
+    over-broad Flower sync leaves the previous kit's files beside the new ones — including
+    credentials that should no longer be on the node. That is the same wipe-then-fetch
+    property the EC2 play establishes for the Ansible path (FLIP#1009 review). The wipe has
+    to precede the copy, or it deletes what was just staged.
+    """
+    result = make_n_stage_kit(nvflare_kit)
+    assert result.returncode == 0, result.stderr
+
+    # `make -n` echoes the recipe's own `##` doc comments, which mention both commands by
+    # name — so compare positions among the command lines only.
+    commands = [ln for ln in result.stdout.splitlines() if not ln.lstrip().startswith("##")]
+
+    wipe = next((i for i, ln in enumerate(commands) if "-mindepth 1 -delete" in ln), None)
+    assert wipe is not None, f"destination is never cleared: {result.stdout}"
+    assert "/opt/flip/fl-kit" in commands[wipe], f"the wipe does not name KIT_DEST: {commands[wipe]}"
+
+    copy = next(i for i, ln in enumerate(commands) if "docker cp" in ln)
+    assert wipe < copy, "the wipe must run before the copy, or it removes the kit it just staged"
+
+
+@pytest.mark.parametrize("bad_dest", ["", "/"])
+def test_a_destination_the_wipe_must_not_touch_is_refused(nvflare_kit, bad_dest):
+    """The wipe is the one destructive step here, so its two escape values fail at parse time.
+
+    An empty KIT_DEST would make it ``find  -mindepth 1 -delete``, walking the working
+    directory; ``/`` would walk the node's root filesystem.
+    """
+    result = make_n_stage_kit(nvflare_kit, f"KIT_DEST={bad_dest}")
+    assert result.returncode != 0
+    assert "KIT_DEST must not be" in result.stderr
+    assert "docker cp" not in result.stdout
+
+
 def test_keys_alone_mark_a_flower_kit(tmp_path):
     """A Flower kit is recognised by either of its directories, not only by both."""
     kit = tmp_path / "keys-only"
