@@ -207,6 +207,7 @@ moved {
 ############################
 
 resource "aws_s3_bucket" "cloudfront_logs" {
+  count = var.lza_managed_network ? 0 : 1
   # Derived-name-with-override, same rationale as access_logs_bucket_name in
   # s3_logging.tf (global bucket names vs the shared subdomain, FLIP#749).
   bucket = var.CF_LOGS_BUCKET_NAME != "" ? var.CF_LOGS_BUCKET_NAME : "flip-cf-logs-${var.flip_alb_subdomain}"
@@ -217,15 +218,17 @@ resource "aws_s3_bucket" "cloudfront_logs" {
 }
 
 resource "aws_s3_bucket_ownership_controls" "cloudfront_logs" {
-  bucket = aws_s3_bucket.cloudfront_logs.id
+  count  = var.lza_managed_network ? 0 : 1
+  bucket = aws_s3_bucket.cloudfront_logs[0].id
   rule {
     object_ownership = "BucketOwnerPreferred"
   }
 }
 
 resource "aws_s3_bucket_acl" "cloudfront_logs" {
-  depends_on = [aws_s3_bucket_ownership_controls.cloudfront_logs]
-  bucket     = aws_s3_bucket.cloudfront_logs.id
+  count      = var.lza_managed_network ? 0 : 1
+  depends_on = [aws_s3_bucket_ownership_controls.cloudfront_logs[0]]
+  bucket     = aws_s3_bucket.cloudfront_logs[0].id
 
   access_control_policy {
     owner {
@@ -256,7 +259,8 @@ resource "aws_s3_bucket_acl" "cloudfront_logs" {
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "cloudfront_logs" {
-  bucket = aws_s3_bucket.cloudfront_logs.id
+  count  = var.lza_managed_network ? 0 : 1
+  bucket = aws_s3_bucket.cloudfront_logs[0].id
 
   rule {
     id     = "expire-cf-logs-after-30-days"
@@ -271,7 +275,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "cloudfront_logs" {
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "cloudfront_logs" {
-  bucket = aws_s3_bucket.cloudfront_logs.id
+  count  = var.lza_managed_network ? 0 : 1
+  bucket = aws_s3_bucket.cloudfront_logs[0].id
 
   rule {
     apply_server_side_encryption_by_default {
@@ -285,7 +290,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "cloudfront_logs" 
 # Neither is "public" under PAB semantics, so blocking public ACLs and
 # policies is safe regardless of which delivery mechanism is in use.
 resource "aws_s3_bucket_public_access_block" "cloudfront_logs" {
-  bucket                  = aws_s3_bucket.cloudfront_logs.id
+  count                   = var.lza_managed_network ? 0 : 1
+  bucket                  = aws_s3_bucket.cloudfront_logs[0].id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true
@@ -295,7 +301,8 @@ resource "aws_s3_bucket_public_access_block" "cloudfront_logs" {
 # Enforce HTTPS-only access to the CloudFront logs bucket.
 # CloudFront log delivery uses HTTPS only, so this is safe.
 resource "aws_s3_bucket_policy" "cloudfront_logs_https_only" {
-  bucket = aws_s3_bucket.cloudfront_logs.id
+  count  = var.lza_managed_network ? 0 : 1
+  bucket = aws_s3_bucket.cloudfront_logs[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -305,8 +312,8 @@ resource "aws_s3_bucket_policy" "cloudfront_logs_https_only" {
       Principal = "*"
       Action    = "s3:*"
       Resource = [
-        aws_s3_bucket.cloudfront_logs.arn,
-        "${aws_s3_bucket.cloudfront_logs.arn}/*",
+        aws_s3_bucket.cloudfront_logs[0].arn,
+        "${aws_s3_bucket.cloudfront_logs[0].arn}/*",
       ]
       Condition = {
         Bool = {
@@ -561,6 +568,7 @@ resource "aws_cloudfront_origin_request_policy" "flip_api" {
 # with no false positives, flip its `override_action` (for managed groups)
 # or `action` (for the custom rate-limit) to `block` / `none` + `block`.
 resource "aws_wafv2_web_acl" "flip_ui_cloudfront" {
+  count = var.lza_managed_network ? 0 : 1
   # checkov:skip=CKV_AWS_192:AWSManagedRulesKnownBadInputsRuleSet (the Log4j AMR) is attached; count-mode rollout is deliberate — flip to block after sampled-traffic review
   provider = aws.us_east_1
   name     = "flip-ui-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
@@ -674,15 +682,17 @@ resource "aws_wafv2_web_acl" "flip_ui_cloudfront" {
 # WAF logging destination. Name MUST start with `aws-waf-logs-` per AWS —
 # otherwise PutLoggingConfiguration rejects it.
 resource "aws_cloudwatch_log_group" "flip_ui_waf" {
+  count             = var.lza_managed_network ? 0 : 1
   provider          = aws.us_east_1
   name              = "aws-waf-logs-flip-ui-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
   retention_in_days = 30
 }
 
 resource "aws_wafv2_web_acl_logging_configuration" "flip_ui_cloudfront" {
+  count                   = var.lza_managed_network ? 0 : 1
   provider                = aws.us_east_1
-  resource_arn            = aws_wafv2_web_acl.flip_ui_cloudfront.arn
-  log_destination_configs = [aws_cloudwatch_log_group.flip_ui_waf.arn]
+  resource_arn            = aws_wafv2_web_acl.flip_ui_cloudfront[0].arn
+  log_destination_configs = [aws_cloudwatch_log_group.flip_ui_waf[0].arn]
 }
 
 ############################
@@ -961,7 +971,7 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   # MANAGE_DNS flips to true.
   aliases    = var.manage_dns ? [var.flip_alb_subdomain] : []
   comment    = "flip-ui at ${var.flip_alb_subdomain}"
-  web_acl_id = aws_wafv2_web_acl.flip_ui_cloudfront.arn
+  web_acl_id = aws_wafv2_web_acl.flip_ui_cloudfront[0].arn
 
   origin {
     domain_name              = aws_s3_bucket.flip_ui.bucket_regional_domain_name
@@ -1078,7 +1088,7 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   }
 
   logging_config {
-    bucket          = aws_s3_bucket.cloudfront_logs.bucket_domain_name
+    bucket          = aws_s3_bucket.cloudfront_logs[0].bucket_domain_name
     include_cookies = false
     prefix          = "standard-logs/"
   }
@@ -1163,4 +1173,61 @@ output "CloudfrontDistributionDomain" {
 output "FlipUiBucketName" {
   description = "S3 bucket holding the UI static assets"
   value       = aws_s3_bucket.flip_ui.bucket
+}
+
+# State migration for the counts added above (FLIP#749): keeps existing legacy
+# states aligned without a manual `terraform state mv`. Adding `count` renames
+# each resource from X to X[0], which Terraform would otherwise plan as
+# destroy-and-recreate — harmless on LZA where these are orphans, destructive on
+# legacy where the WAF fronts live production traffic and the log bucket holds
+# real objects under a 30-day lifecycle. Safe to remove once every live state
+# file has been migrated.
+moved {
+  from = aws_wafv2_web_acl.flip_ui_cloudfront
+  to   = aws_wafv2_web_acl.flip_ui_cloudfront[0]
+}
+
+moved {
+  from = aws_wafv2_web_acl_logging_configuration.flip_ui_cloudfront
+  to   = aws_wafv2_web_acl_logging_configuration.flip_ui_cloudfront[0]
+}
+
+moved {
+  from = aws_cloudwatch_log_group.flip_ui_waf
+  to   = aws_cloudwatch_log_group.flip_ui_waf[0]
+}
+
+moved {
+  from = aws_s3_bucket.cloudfront_logs
+  to   = aws_s3_bucket.cloudfront_logs[0]
+}
+
+moved {
+  from = aws_s3_bucket_ownership_controls.cloudfront_logs
+  to   = aws_s3_bucket_ownership_controls.cloudfront_logs[0]
+}
+
+moved {
+  from = aws_s3_bucket_acl.cloudfront_logs
+  to   = aws_s3_bucket_acl.cloudfront_logs[0]
+}
+
+moved {
+  from = aws_s3_bucket_lifecycle_configuration.cloudfront_logs
+  to   = aws_s3_bucket_lifecycle_configuration.cloudfront_logs[0]
+}
+
+moved {
+  from = aws_s3_bucket_server_side_encryption_configuration.cloudfront_logs
+  to   = aws_s3_bucket_server_side_encryption_configuration.cloudfront_logs[0]
+}
+
+moved {
+  from = aws_s3_bucket_public_access_block.cloudfront_logs
+  to   = aws_s3_bucket_public_access_block.cloudfront_logs[0]
+}
+
+moved {
+  from = aws_s3_bucket_policy.cloudfront_logs_https_only
+  to   = aws_s3_bucket_policy.cloudfront_logs_https_only[0]
 }
