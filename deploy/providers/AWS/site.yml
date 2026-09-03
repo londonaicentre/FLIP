@@ -179,27 +179,37 @@
         owner: ubuntu
         group: ubuntu
         mode: "0755"
-      loop:
-        - /opt/flip
-        # Holds the per-trust kit file (.env.<slot>) that register-trusts scp's
-        # to the EC2; the trust compose -include's it. Without this dir the scp
-        # in register-trusts.sh fails with "No such file or directory".
-        - /opt/flip/trust
-        # Bind-mount sources for the imaging-api / fl-client images dir.
-        # Both compose projects (trust1-, trust2-) bind-mount one of these
-        # onto /app/data/images via BASE_IMAGES_DOWNLOAD_DIR_TRUST{1,2}, then
-        # imaging-api creates /app/data/images/net-1/ inside it as uid 1000
-        # (the `flip` user in the container).
-        # If we don't pre-create them here Docker creates the missing source
-        # path as root at first startup, leaving the container unable to
-        # mkdir net-1 inside it - imaging-api then 500s every download with
-        # `[Errno 13] Permission denied: '/app/data/images/net-1'`, and the
-        # FL training run fails downstream with `num_samples=0` because the
-        # whole cohort's image fetches errored out.
-        # The net-N children must be pre-created too — see the separate,
-        # backend-aware task below.
-        - /opt/flip/data/trust-1
-        - /opt/flip/data/trust-2
+      # /opt/flip/trust holds the per-trust kit file (.env.<slot>) that register-trusts
+      # scp's to the EC2; the trust compose -include's it. Without this dir the scp in
+      # register-trusts.sh fails with "No such file or directory".
+      #
+      # /opt/flip/data/trust-<N> are the bind-mount sources for the imaging-api / fl-client
+      # images dir. Each trust compose project bind-mounts one of these onto
+      # /app/data/images via BASE_IMAGES_DOWNLOAD_DIR, then imaging-api creates
+      # /app/data/images/net-1/ inside it as uid 1000 (the `flip` user in the container).
+      # If we don't pre-create them here Docker creates the missing source path as root at
+      # first startup, leaving the container unable to mkdir net-1 inside it - imaging-api
+      # then 500s every download with `[Errno 13] Permission denied:
+      # '/app/data/images/net-1'`, and the FL training run fails downstream with
+      # `num_samples=0` because the whole cohort's image fetches errored out.
+      # The net-N children must be pre-created too — see the separate, backend-aware task
+      # below.
+      vars:
+        # Slots 1 and 2 unconditionally, so the pre-registration ansible-init pass — which
+        # has no assigned slot to read yet — still lays down the common case. The registered
+        # slot is added on top: FL_KIT_SLOT_NUMBER is handed out by the hub and is not bounded
+        # by 2, while the production composes default BASE_IMAGES_DOWNLOAD_DIR to
+        # /opt/flip/data/trust-<slot> and prod kits deliberately leave that variable unset. A
+        # host on slot 3 would otherwise have Docker create the path root-owned, which is
+        # exactly the failure the comment above describes. `unique` keeps the list flat when
+        # the registered slot is 1 or 2.
+        trust_data_dirs: >-
+          {{ ['/opt/flip/data/trust-1', '/opt/flip/data/trust-2']
+             + (['/opt/flip/data/trust-' ~ trust_num]
+                if trust_num is defined and trust_num | string | length > 0
+                else []) }}
+      loop: "{{ (['/opt/flip', '/opt/flip/trust'] + trust_data_dirs) | unique }}"
+      tags: flkit
 
     # Each fl-client bind-mounts only its own net's slice (<base>/net-N — least
     # privilege, so training code can't read another net's cached studies), so
@@ -225,11 +235,16 @@
         owner: ubuntu
         group: "{{ '49999' if fl_backend == 'flower' else 'ubuntu' }}"
         mode: "{{ '0775' if fl_backend == 'flower' else '0755' }}"
-      loop:
-        - /opt/flip/data/trust-1/net-1
-        - /opt/flip/data/trust-1/net-2
-        - /opt/flip/data/trust-2/net-1
-        - /opt/flip/data/trust-2/net-2
+      vars:
+        # Same slot derivation as the parent-directory task above: fixed slots 1 and 2 for
+        # the pre-registration pass, plus the registered slot once one is assigned.
+        net_trust_dirs: >-
+          {{ ['/opt/flip/data/trust-1', '/opt/flip/data/trust-2']
+             + (['/opt/flip/data/trust-' ~ trust_num]
+                if trust_num is defined and trust_num | string | length > 0
+                else []) }}
+      loop: "{{ net_trust_dirs | product(['/net-1', '/net-2']) | map('join') | list | unique }}"
+      tags: flkit
 
     # XNAT containers run as the in-image `xnat` user (UID 1001) after the
     # Docker-hardening pass on `trust/xnat/xnat/Dockerfile`. Bind-mounted host
@@ -362,28 +377,56 @@
       # pre-created parent's ownership above — the closing chown fixes that
       # up for the non-root fl-client (GHSA-8465).
       #
-      # transfer/ is re-created after the sync: the `find -delete` above removes the
-      # pre-created copy, and aws s3 sync mirrors objects rather than empty prefixes, so
+      # local/ and transfer/ are re-created after the sync: the `find -delete` above removes
+      # the pre-created copies, and aws s3 sync mirrors objects rather than empty prefixes, so
       # the provisioner's empty transfer/ never comes back. Docker would then create the
       # bind-mount source as root and the non-root fl-client could not write its trained
-      # model at the END of a run. package-onprem-trust-kit.sh does the same mkdir.
+      # model at the END of a run. local/ gets the same treatment because site policy writes
+      # privacy.json into it at container start. package-onprem-trust-kit.sh does the same mkdir.
       #
-      # The assertion that follows is the same durable guard as the Flower branch below
-      # (FLIP#965): the wipe means a no-op sync leaves the host with no kit at all.
+      # The wipe is scoped to net-1/, not to $dest, so the host ends up holding exactly one
+      # slot's kit — matching the Flower play below. ansible-init deliberately stages Trust_1
+      # before registration (there is no assigned slot to read yet), so a host that later
+      # registers as any other slot would otherwise keep a complete startup kit for Trust_1 —
+      # client.key, client.crt, rootCA.pem, fed_client.json — indefinitely. Nothing mounts it,
+      # but it is another trust's FL identity sitting on this host's disk, which is the same
+      # exposure class the narrowed Flower sync closes.
+      #
+      # No `|| true` on the wipe: `find -mindepth 1 -delete` already exits 0 on an empty or
+      # freshly created directory, so the guard could only ever mask a genuine failure — and a
+      # failed wipe is exactly the staleness the wipe exists to prevent, which `aws s3 sync`
+      # would then skip past on size+mtime equivalence.
+      #
+      # The assertions that follow are the same durable guard as the Flower branch below
+      # (FLIP#965): the wipe means a no-op sync leaves the host with no kit at all. The second
+      # one additionally proves the kit belongs to the slot being staged rather than merely
+      # that some kit is present — fed_client.json carries the client's own fully-qualified
+      # site name, so a mis-slotted or half-wiped stage is caught here rather than at the first
+      # training run.
       shell: |
         set -euo pipefail
         dest="{{ fl_kit_dir }}/net-1/services/{{ fl_kit_slot }}"
+        mkdir -p "{{ fl_kit_dir }}/net-1"
+        find "{{ fl_kit_dir }}/net-1" -mindepth 1 -delete
         mkdir -p "$dest"
-        find "$dest" -mindepth 1 -delete 2>/dev/null || true
         aws s3 sync \
           "{{ trust_s3_source }}" \
           "$dest"
-        mkdir -p "$dest/transfer"
+        mkdir -p "$dest/local" "$dest/transfer"
         if [ ! -s "$dest/startup/fed_client.json" ]; then
           echo "ERROR: NVFLARE kit staging produced no fed_client.json in $dest." >&2
           echo "       Source: {{ trust_s3_source }}" >&2
           echo "       Check FLARE_KIT_DATE matches an S3 prefix, and that the instance role" >&2
           echo "       can kms:Decrypt the bucket CMK." >&2
+          exit 1
+        fi
+        if ! grep -Eq '"fqsn"[[:space:]]*:[[:space:]]*"{{ fl_kit_slot }}"' \
+             "$dest/startup/fed_client.json"; then
+          echo "ERROR: the kit staged in $dest is not {{ fl_kit_slot }}'s." >&2
+          echo "       Source: {{ trust_s3_source }}" >&2
+          echo "       fed_client.json names a different site, so this host would register with" >&2
+          echo "       the federation under the wrong identity. Check FL_KIT_SLOT_NUMBER in the" >&2
+          echo "       kit file and that FLARE_KIT_DATE holds a kit for this slot." >&2
           exit 1
         fi
         chown -R ubuntu:ubuntu "$dest"
@@ -459,10 +502,14 @@
       # regenerated whenever the kit date changes; without a wipe
       # `aws s3 sync` can leave a previous rootCA in place and the
       # client fails the TLS handshake to fl-server.
+      #
+      # No `|| true` on the wipe, for the reason given in the NVFLARE play above:
+      # `find -mindepth 1 -delete` exits 0 on an empty directory anyway, so it could
+      # only mask a real failure and leave the staleness the wipe exists to remove.
       shell: |
         set -euo pipefail
         mkdir -p "{{ fl_kit_dir }}/net-1"
-        find "{{ fl_kit_dir }}/net-1" -mindepth 1 -delete 2>/dev/null || true
+        find "{{ fl_kit_dir }}/net-1" -mindepth 1 -delete
         aws s3 sync \
           "{{ trust_s3_source }}" \
           "{{ fl_kit_dir }}/net-1/" \
