@@ -100,17 +100,22 @@ jobs:
       - name: Run ${{ matrix.harness }}
         run: bash deploy/providers/AWS/scripts/tests/${{ matrix.harness }}
 
-  # The pytest suite over the deploy tooling: reconcile_ci_env.py's state mining
-  # (which decides what a CI plan is handed), check_status.py, the CloudWatch and
-  # email templates, update_ssm_ssh_config.py and verify_deploy_readiness.py.
+  # Credential-free pytest checks over the stack's static artefacts: rendered
+  # Jinja templates, the deploy helper scripts, and Terraform source itself
+  # (e.g. the Cognito callback_urls / CORS allowlist invariants, which no runtime
+  # suite can see — flip-api reads that list from live Cognito, not from this
+  # tree; and reconcile_ci_env.py's state mining, which decides what a CI plan is
+  # handed). No AWS calls, no init, no plan. Deps are named explicitly rather than
+  # synced from the lockfile: the tests need only pytest, jinja2 and click,
+  # while the project's dev group pulls ansible-core and pyqt5.
   #
-  # It has its own job because the root `make unit_test` does not reach here —
-  # deploy/providers/AWS is not one of the service directories it walks — and
-  # `make -C deploy/providers/AWS test` cannot be used either: that Makefile
-  # errors at parse time unless AWS_PROFILE matches the target environment.
-  # Run locally with `uv run --project deploy/providers/AWS pytest deploy/providers/AWS/tests`.
+  # This is the only place the suite runs: the root `make unit_test` does not
+  # reach here — deploy/providers/AWS is not one of the service directories it
+  # walks — and `make -C deploy/providers/AWS test` cannot be used either, since
+  # that Makefile errors at parse time unless AWS_PROFILE matches the target
+  # environment.
   python-tests:
-    name: Deploy Python tests
+    name: AWS deploy tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -124,9 +129,9 @@ jobs:
       - name: Install uv
         run: pip install uv
 
-      - name: Run the deploy test suite
+      - name: Run AWS deploy test suite
         working-directory: deploy/providers/AWS
-        run: uv run --frozen pytest tests -v
+        run: uv run --no-project --with pytest --with jinja2 --with click pytest tests/ -v
 
   # Static checkov security lint (FLIP#1052 + the FLIP#1058 triage): a curated
   # check list over the whole AWS tree — IAM policy content (overly-broad

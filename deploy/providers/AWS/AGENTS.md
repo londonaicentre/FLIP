@@ -58,6 +58,7 @@ make print-tf-env                             # Print resolved TF_VAR_* as KEY=v
 make seed-ci-keypair-param                    # Publish the aws_key_pair public key from state to SSM, for CI plans
 make -C ci init/plan/apply                    # GitHub Actions OIDC roles (laptop only — see ci/README.md)
 make checkov-lint                             # Static checkov security lint (IAM policy content + promoted posture checks) — CI counterpart is the Checkov Security Lint job in validate_terraform.yml (FLIP#1052, FLIP#1058); suppress deliberate breadth/posture in-code with `# checkov:skip=<ID>:<rationale>`. NB this Makefile's parse-time env guard needs the deploy env file — the REPO-ROOT `make checkov-lint` (or `bash scripts/checkov_lint.sh`) runs env-free
+uv run --no-project --with pytest --with jinja2 --with click pytest tests/   # Credential-free static checks over the stack's artefacts (rendered templates, deploy scripts, and Terraform source itself — incl. the Cognito `callback_urls` = browser CORS allowlist invariants). CI counterpart: the AWS deploy tests job in validate_terraform.yml. Deps named explicitly rather than `uv sync`d: the dev group pulls ansible-core + pyqt5, the tests need three packages
 ```
 
 ## Terraform CI (FLIP#962)
@@ -112,10 +113,12 @@ Things worth knowing before touching any of it:
   administrator-equivalent. Adding a role means adding its literal name to
   `var.managed_role_names` in `ci/variables.tf` and re-applying `ci/` from a laptop
   first, or the apply cannot pass or re-trust it.
-- **The pytest suite under `tests/` runs in CI** as the `Deploy Python tests` job in
+- **The pytest suite under `tests/` runs in CI** as the `AWS deploy tests` job in
   `validate_terraform.yml`. The root `make unit_test` does not reach this directory
   and `make -C deploy/providers/AWS test` cannot be used (parse-time env guard), so
-  run it locally with `uv run --frozen pytest tests` from this directory.
+  run it locally with the `uv run --no-project --with …` line above, from this
+  directory — that is what CI runs, and `--frozen` would pull the dev group's
+  ansible-core and pyqt5 for a suite that needs three packages.
 
 - **Seed the GitHub environments with `scripts/setup-github-environments.sh`** (repo
   admin, `--dry-run` first). It derives the secret-vs-variable split from
