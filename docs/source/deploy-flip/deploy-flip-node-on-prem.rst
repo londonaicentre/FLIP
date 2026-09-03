@@ -193,6 +193,17 @@ at any point — including before the kit is fully staged — just to read off t
 The prod trust compose mounts the extracted ``net-1/`` hierarchy into the
 fl-client container, so preserve it as extracted.
 
+.. note::
+
+   **Upgrading a trust deployed before the XNAT port split (FLIP#993).**
+   ``XNAT_PORT`` used to mean both the DICOM SCP receiver and the web UI. It
+   now means the receiver only, and the web UI has its own ``XNAT_WEB_PORT``.
+   An existing kit that sets only ``XNAT_PORT`` keeps working — the web port
+   derives from it — but a trust connecting a **real** PACS publishes both on
+   the host, and ``up-onprem-trust`` refuses to start when the two collide.
+   Add ``XNAT_WEB_PORT`` to the Host-local profile in that case; the shipped
+   allocation is 8104 for DICOM and 8105 for the web UI.
+
 **Optional — set your site privacy policy (NVFLARE backend).** As the data
 holder you can enforce your own update-privacy filter on everything the
 fl-client sends to the FL server, independently of the researcher's app

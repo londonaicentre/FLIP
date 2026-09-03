@@ -777,6 +777,15 @@ This prints a list of URLs you can paste into your browser:
 
 Press Ctrl+C to stop all forwards. The Central Hub UI and API are accessed via the CloudFront distribution at the canonical subdomain (e.g. `https://app.flip.aicentre.co.uk`) — no port forwarding needed. The ALB is internal (private subnets, no public IP); CloudFront reaches it through a VPC origin.
 
+> **Upgrading a trust deployed before the XNAT port split (FLIP#993):** `XNAT_PORT` used to mean
+> both the DICOM receiver and the web UI. It now means the DICOM receiver only, and the web UI has
+> its own `XNAT_WEB_PORT`. A kit file that sets only `XNAT_PORT` still works — the web port derives
+> from it — but a trust connecting a **real** PACS publishes both on the host, and the deploy
+> refuses to start if the two collide. Add `XNAT_WEB_PORT` to that trust's kit file (the shipped dev
+> allocation is 8104 DICOM / 8105 web for the first trust, 8106/8107 for the second). The
+> `forward-trust` URL above is 8105 by convention, not by enforcement; a trust that chose different
+> numbers forwards its own.
+
 ## Checkov Security Lint
 
 CI goes red on PRs that regress this tree's security posture (FLIP#1052 + the FLIP#1058 triage): the
