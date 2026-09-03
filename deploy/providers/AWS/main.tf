@@ -390,7 +390,7 @@ resource "aws_iam_role_policy" "trust_ec2_s3" {
 # logs through its CloudWatch agent. The Central Hub bastion has no app logs.
 resource "aws_cloudwatch_log_group" "flip_trust_log_group" {
   name              = "/aws/ec2/flip-trust"
-  retention_in_days = 7
+  retention_in_days = local.log_retention_days
 }
 
 # Retain the keypair for SSH-over-SSM (`ssh flip`) and Ansible. No inbound SSH
