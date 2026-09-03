@@ -487,6 +487,63 @@ def test_trust_makefile_exports_the_artifacts_bucket_to_the_xnat_sub_make() -> N
     assert result.stdout.strip(), f"the probe target produced no output at all\n{combined}"
 
 
+def _aws_export_probe(**caller_env: str) -> str:
+    """Runs a probe target under ``trust/Makefile`` and reports the child's AWS environment.
+
+    Args:
+        **caller_env: Variables to set in make's own environment, as an operator's shell would.
+            Both AWS names are stripped first so the host's real values cannot mask the result.
+
+    Returns:
+        str: The probe target's stdout.
+    """
+    probe_makefile = "__probe: ; @env | grep -E '^AWS_(PROFILE|REGION)=' || echo NONE-EXPORTED\n"
+    env = {k: v for k, v in os.environ.items() if k not in ("AWS_PROFILE", "AWS_REGION")}
+    env.update(caller_env)
+    result = subprocess.run(
+        ["make", "-C", "trust", "-f", "Makefile", "-f", "-", "FL_BACKEND=nvflare", "__probe"],
+        cwd=REPO_ROOT,
+        input=probe_makefile,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result.stdout
+
+
+def test_undefined_aws_names_are_not_exported_as_empty() -> None:
+    """A bare ``export`` on an undefined name defines it empty and exports ``AWS_PROFILE=``.
+
+    ``-include ../$(MAIN_ENV_FILE)`` silently skips a missing file, and a developer may comment
+    either key out to fall through to the default profile or to ambient SSO credentials — so both
+    are routinely undefined here. Empty is worse than absent for the AWS CLI, and the two fail
+    differently: ``AWS_PROFILE=`` gives "The config profile () could not be found" instead of
+    falling back to the default credential chain, and ``AWS_REGION=`` shadows the region the
+    profile defines in ``~/.aws/config``, giving "Invalid endpoint: https://s3..amazonaws.com".
+    Both land on the ``make -C trust up-trust`` path this export exists to repair.
+    """
+    assert "NONE-EXPORTED" in _aws_export_probe(), (
+        "an undefined AWS_PROFILE/AWS_REGION reached the sub-make environment as an empty value — "
+        "the ifdef guards in trust/Makefile are missing, and a bare `export` DEFINES an undefined "
+        "name as empty (origin=file) rather than passing a value through"
+    )
+
+
+def test_defined_aws_names_still_reach_the_sub_make() -> None:
+    """The ifdef guards must not cost the pass-through the export exists for.
+
+    Without these in the child environment the artifacts bucket NAME reaches the XNAT sub-make but
+    the credentials to read it do not, and the dev plugin sync dies on "Unable to locate
+    credentials".
+    """
+    out = _aws_export_probe(AWS_PROFILE="probe-profile", AWS_REGION="eu-west-2")
+    assert "AWS_PROFILE=probe-profile" in out, f"AWS_PROFILE did not reach the sub-make\n{out}"
+    assert "AWS_REGION=eu-west-2" in out, f"AWS_REGION did not reach the sub-make\n{out}"
+
+
 def test_root_smoke_target_resolves_relative_paths_from_repo_root() -> None:
     result = subprocess.run(
         [
