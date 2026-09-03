@@ -94,10 +94,10 @@ common pattern:
 
 **Output review**
 
-- Operating the TRE's standard output-checking (airlock) process for aggregate metrics
-  leaving the TRE during federated evaluation.
-- Agreeing a project-specific governance process for federated training if weight egress
-  is in scope (see :ref:`tre-deployment` Use Case 2).
+- Operating the TRE's standard output-checking (airlock) process for the aggregate metrics
+  that leave the TRE during federated evaluation.
+- Deciding, per project, whether federated training may release model artefacts and on what
+  conditions -- see `What leaves the TRE, and under what policy`_.
 
 Architecture
 ============
@@ -341,9 +341,9 @@ Why evaluation is TRE-friendly
   many rounds, evaluation produces a single set of results that can go through standard TRE
   output review.
 
-- **No disclosure risk from model weights**: Since no locally-trained model weights are
-  exported, there is no risk of patient data leakage through model memorisation or
-  gradient-based reconstruction attacks.
+- **No model artefact leaves the TRE**: because no locally-trained model is exported on this
+  path, the disclosure risks specific to model artefacts do not arise. Only the summary
+  metrics need reviewing.
 
 Evaluation data flow
 ---------------------
@@ -377,75 +377,145 @@ Training data flow
    updated global model.
 5. Steps 2-4 repeat for the configured number of global rounds until convergence.
 
-.. warning:: **Model weight egress is an open governance problem**
+What leaves the TRE, and under what policy
+-------------------------------------------
 
-   Federated training requires model weights to leave the TRE on every global round. This
-   creates a tension with TRE governance:
+The weights sent back at step 3 above are what this section calls a **model update**: a set of
+numbers derived from the local data, not the records themselves. Two things follow, and they
+are what a TRE's output-checking policy has to account for. An output checker cannot read a
+model update and judge whether it is safe to release, the way they can read a table or a chart.
+And a training run produces one update per round -- tens to hundreds of them -- rather than one
+output per project.
 
-   - **TRE output-checking** processes are designed for human review of statistical outputs
-     (tables, charts). Model weights are opaque numerical tensors that cannot be manually
-     inspected for disclosure risk.
+`SATRE v2.0.1 <https://satre-specification.readthedocs.io/en/v2.0.1/specification.html#satre-3-3-07>`_
+addresses this case directly. Requirement **3.3.07** (Mandatory) asks a TRE for a documented
+policy covering outputs that cannot be manually checked, and names trained model weights as its
+example: the policy "must address whether model artefacts may be exported, and if so, what
+technical controls are required before egress is approved". This supersedes the position in
+SATRE v1, where declining such egress outright was offered as a complete answer.
 
-   - **Model weights can encode patient information.** Research has demonstrated membership
-     inference attacks, gradient inversion attacks, and model memorisation that can
-     reconstruct training data from model parameters.
+FLIP's position, which a TRE operator can adopt or adapt:
 
-   - **No UK TRE currently permits automated egress of model weights** through standard
-     output-checking processes.
+- **Federated evaluation releases no model artefact at all.** Only summary metrics leave, and
+  they go through your existing output-checking process. Where a project's question can be
+  answered by evaluation, this is the path to prefer.
 
-   - **Iterative exchange** compounds the problem -- a typical FL training run involves
-     tens to hundreds of global rounds, each requiring model weights to cross the TRE
-     boundary.
+- **Federated training does release model artefacts**, once per round, and is therefore a
+  per-project decision taken by the TRE operator together with the Data Access Committee,
+  against the controls set out below. It is a decision to be made -- neither a blanket
+  prohibition nor an automatic approval.
 
-Mitigations for training egress
---------------------------------
+The reason the decision needs controls attached is that a model trained on sensitive records
+can retain traces of them. A model update is not equivalent to an aggregate statistic, even
+though it looks like a block of numbers.
 
-Several technical mitigations can reduce the disclosure risk of model weight egress. These
-do not eliminate the governance challenge but may support a risk-based approval process:
+Controls applied before anything leaves
+----------------------------------------
 
-**Differential privacy (DP-SGD)**
+This is the answer to the second half of SATRE 3.3.07 -- what technical controls apply before
+egress is approved. Read the "Who controls it" column closely: some of these are yours to set,
+and one of them does nothing until you turn it on.
 
-FL frameworks provide differential privacy filters that add calibrated noise to model weight
-updates before they leave the client (e.g. NVIDIA FLARE's privacy filters, Flower's central
-and local DP strategies with adaptive clipping). DP provides formal mathematical bounds on
-privacy leakage (the epsilon parameter), but clinically useful DP budgets (epsilon ~ 10) do not prevent
-all attacks, while strict guarantees (epsilon < 1) can significantly degrade model performance.
+.. list-table::
+   :header-rows: 1
+   :widths: 24 14 38 24
 
-On the NVFLARE backend, FLIP supports a **site-enforced privacy policy**: the operator sets
-``FL_SITE_PRIVACY_POLICY=percentile`` (deterministic percentile clipping) in the trust's kit file,
-and the resulting filter is applied to every
-outgoing update *regardless of what the submitted job configures* — a researcher's app cannot
-disable it. See :doc:`../components/component-fl-nodes` ("Site-enforced privacy policy") for
-the parameters and semantics.
+   * - What leaves
+     - When
+     - What constrains it
+     - Who controls it
+   * - Evaluation results
+     - Once per job
+     - Aggregate metrics only -- accuracy, Dice scores, sensitivity, specificity, confusion
+       matrices. Ordinary summary statistics of the kind your output-checking process already
+       handles.
+     - You, through your existing airlock
+   * - Model updates, NVFLARE backend
+     - Every round
+     - Each update is reduced before it leaves the node: a share of the values is discarded
+       rather than transmitted. FLIP applies this itself, and the researcher's uploaded code
+       cannot switch it off or weaken it.
+     - FLIP, on every training job
+   * - Model updates, Flower backend
+     - Every round
+     - The equivalent protection is part of the application the researcher uploads, so it is
+       assured by reviewing that code before approval rather than by the platform. Establish
+       which backend your node runs before approving a training project.
+     - Project review, not the platform
+   * - Model updates, your own site rule
+     - Every round
+     - **The control you own.** On the NVFLARE backend a trust can apply its own reduction to
+       every update leaving its node. It is set in the configuration file the trust holds
+       locally, no submitted job can override or weaken it, and a node whose setting is
+       invalid refuses to start rather than sending updates unprotected.
+     - You -- **inactive until enabled**
+   * - Cohort results
+     - On each query
+     - Suppressed below a minimum group size that you set locally. The Central Hub cannot
+       lower it, and the suppression runs on your own deployment next to the data.
+     - You, in your node's configuration
+   * - All of the above
+     - Continuously
+     - The channel is mutually authenticated and outbound-only. FLIP nodes deliberately hold
+       no Central Hub credentials, so a compromised node yields no access to the platform.
+     - FLIP
 
-**Secure aggregation**
+.. admonition:: If you permit training, enable your own site control
 
-Some FL frameworks support homomorphic encryption (e.g. NVIDIA FLARE's TenSEAL integration
-using the CKKS scheme) which allows weight aggregation on encrypted values, so the FL server
-never sees individual client weights. This prevents a curious aggregation server from
-inspecting any single client's contribution.
+   The "your own site rule" row is the one item on this page that needs an action from you. On
+   the NVFLARE backend, set the following in your node's kit file and restart the FL clients:
 
-**Gradient clipping**
+   .. code-block:: shell
 
-FL frameworks typically provide gradient clipping filters that bound the contribution of any
-single training example to the model update, limiting the information any one patient's
-data can encode in the shared weights.
+      FL_SITE_PRIVACY_POLICY=percentile
 
-.. admonition:: Current recommendation
+   It is not on by default, so a node that has never been configured for it is sending updates
+   constrained only by the platform-side reduction. See
+   :doc:`../components/component-fl-nodes` for the parameters and exact semantics.
 
-   For TRE deployments where federated training is required, work with the TRE operator
-   and the Data Access Committee to establish a project-specific governance agreement
-   covering model weight egress. This should specify:
+What these controls do not do
+------------------------------
 
-   - The privacy-enhancing technologies to be applied (DP, secure aggregation).
-   - The DP budget (epsilon) and clipping parameters.
-   - Audit and logging requirements for all egress events.
-   - Whether the TRE airlock process needs to be adapted for automated weight review
-     (e.g. using SACRO-ML tools for post-hoc attack simulation).
+State these alongside the controls when you document your policy. They are the residual risks
+that a project-specific approval accepts, or mitigates by other means.
 
-   This is an active area of development in the UK TRE ecosystem. DARE UK's TREvolution
-   programme is working toward standardised egress policies for federated learning
-   workflows.
+- **The reduction applied on the NVFLARE backend is not differential privacy.** It lowers how
+  much any single update reveals, but it adds no calibrated noise, carries no privacy budget,
+  and most of each update still leaves the node. Describing it as differential privacy to an
+  ethics committee or information governance panel would misstate it. The Flower backend does
+  offer a formal mechanism, but its shipped settings are demonstration values rather than a
+  defensible privacy budget, and the cumulative cost of repeated rounds is not accounted for.
+
+- **Updates are not hidden from the aggregating server.** FLIP does not implement secure
+  aggregation or homomorphic encryption, so the Central Hub sees each contributing node's
+  update. The hub is operated by the platform, not by the other participating sites.
+
+- **FLIP does not inspect results on the way out.** Downloading a trained model is restricted
+  to authorised users of that project, but no content check is applied at that point.
+
+- **Researcher-supplied training code runs on your hardware and is not sandboxed at runtime.**
+  Uploaded files are scanned before use and the container that runs them is hardened, but the
+  accepted control for this class of risk is review of the uploaded code. See :doc:`/security`
+  for the full reasoning.
+
+.. admonition:: Approving a training project -- a checklist
+
+   Where federated training is proposed, agree the following with the FLIP team and record the
+   outcome alongside your usual project documentation:
+
+   1. **Confirm evaluation would not answer the question.** If it would, prefer it -- it
+      releases no model artefact and needs no new policy.
+   2. **Enable your own site control** if your node runs the NVFLARE backend (see above), and
+      note the settings you applied.
+   3. **Record the decision**: which controls were applied, what was permitted to leave, and
+      who approved it. SATRE 3.3.09 points towards keeping this as a structured,
+      machine-readable record linked to the released output. FLIP does not yet produce one
+      automatically, so this remains a documentation step on your side.
+   4. **Agree the artefact plan before the project starts**, as SATRE 3.1.16 recommends: what
+      will be trained, whether the result may be exported, and on what conditions.
+   5. **Optionally, test the released model.** SACRO-ML (see below) can simulate attacks
+      against a trained model after the fact, which some operators use as supporting evidence
+      for a release decision.
 
 Differences from On-Premise Deployment
 ========================================
@@ -482,8 +552,8 @@ Differences from On-Premise Deployment
      - Aggregate metrics via FL channel
      - Aggregate metrics via FL channel (TRE airlock review)
    * - Training egress
-     - Model weights via FL channel
-     - Model weights via FL channel (**governance approval required**)
+     - Model updates via FL channel
+     - Model updates via FL channel (**per-project approval; see the egress policy above**)
    * - GPU access
      - Trust-managed DGX / GPU servers
      - TRE-provided GPU compute with NVIDIA Container Toolkit
@@ -509,9 +579,15 @@ around workflow outputs) and
 tools, including an ML extension for attack simulation against trained models).
 
 FLIP's TRE deployment model aligns with this direction. As TREvolution matures, its Patterns
-framework could formalise different egress rules for different federated workflows (e.g.
-metrics-only for evaluation vs. DP-protected weights for training), providing the governance
-pathway that FLIP's TRE training use case currently lacks.
+framework could formalise different egress rules for different federated workflows -- for
+example metrics-only for evaluation, against a protected-update rule for training -- building
+on the policy position that SATRE 3.3.07 already establishes.
+
+SATRE v2 also added a **Federation** pillar. Its requirement 5.6.01 asks a federation to agree
+one definition of a safe output that every member implements, covering both data moving between
+members and results leaving the federation altogether. That is the shape of a FLIP deployment
+spanning several TREs, and a useful frame for operators agreeing terms with each other rather
+than only with the platform.
 
 GPU Resource Management
 ------------------------

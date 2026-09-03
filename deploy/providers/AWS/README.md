@@ -397,7 +397,9 @@ Two stag-specific watch-outs:
 
 For a **future fresh prod or dev** account that needs the same migration, the flow is the stag runbook above minus step 1 (`make import-persistent` is only needed on environments with the stag-style state gap) and with `PROD=true` on every `make` call for prod (dev uses the separate `deploy/providers/AWS/dev/` Terraform root, no `PROD=` flag).
 
-> **Do not `aws s3 rb s3://flipdev` on the legacy dev bucket.** The `test-data/` prefix in there (~42 objects) is consumed by external CI fixtures, so it is outside the scope of the FLIP#24 migration and must survive. Either leave the `flipdev` bucket alive solely for `test-data/`, or move `test-data/` to a dedicated bucket and update those references in lockstep before any `aws s3 rb`. The same constraint may apply to a `test-data/` prefix in `flipstag` / `flipprod` if one exists — check with `aws s3 ls s3://flipstag/test-data/` before decommissioning either.
+> **None of the legacy buckets has a keep-set** (re-verified 2026-09-02). Earlier revisions of this runbook warned against `aws s3 rb s3://flipdev` because its `test-data/` prefix (42 objects, ~280 MB) was read by CI in the `flip-fl-base` / `flip-fl-base-flower` repos. Both repos were **archived** in June 2026, and GitHub disables Actions on archived repositories, so that CI can no longer run; the surviving `make download-test-data` in them fetches from HuggingFace (`aicentreflip/flip-fl-base-test-data`), not S3. The objects were last written 2026-02-05 and were deleted on 2026-09-02. `flipstag` and `flipprod` never had a `test-data/` prefix. So all three legacy buckets can now be decommissioned by the flow above with no carve-out.
+>
+> The same archived-CI reasoning retired the `base-application/` and `base-application-dev/` prefixes across all six legacy buckets (deleted 2026-09-02): those repos' `push-app-to-s3-*` / `push-pr-to-s3` workflows were what wrote them, and base FL templates have shipped inside the flip-api image since FLIP#724.
 
 Once a decommission is complete in every environment, drop the `FLIP_BUCKET_NAME` line from `.env.*`, the `removed` blocks in `services.tf`, and the `migrate-flip-bucket` / `verify-flip-bucket-migration` Makefile targets in a follow-up PR.
 
@@ -518,6 +520,58 @@ the image back — re-run `make plan` after any `make deploy-centralhub`.
 
 > **Prod rollout note:** switch *production* deploys to this flow only after the 24 Jul 2026 DECAF
 > deadline (BDMS is live on legacy prod until then). Staging can adopt it immediately.
+
+### Changing the browser CORS allowlist (Cognito `callback_urls`)
+
+The Cognito app client's `callback_urls` **is** this environment's browser CORS allowlist. The UI
+signs in with `USER_SRP_AUTH`, so Cognito never redirects to these URLs; flip-api reads them back
+instead — `get_cors_allowed_origins()` (`flip_api/utils/cors.py`) calls `describe_user_pool_client`,
+normalizes each entry to `scheme://host[:port]`, and `CORSMiddleware` serves that list with
+`allow_credentials=true`. Every browser origin that must call the API has to be listed, and removing
+one silently blocks that origin — in the browser only, with nothing red in CI or in the ECS console.
+
+The value is set per Terraform root: `module "cognito"` in `services.tf` for stag/prod,
+`var.cognito_callback_urls` in `dev/variables.tf` for the dev account. **Deleting the argument does
+not empty the list** — `modules/cognito` defaults it to `["https://localhost:443"]`, so an omission
+puts a localhost origin into the production allowlist. `tests/test_cognito_callback_urls.py` guards
+both directions, and runs in CI as the `AWS deploy tests` job of `validate_terraform.yml`.
+
+To change it:
+
+```bash
+# 1. Edit the list for the environment's root:
+#      stag/prod → services.tf, module "cognito" → callback_urls
+#      dev       → dev/variables.tf, var.cognito_callback_urls
+# 2. Apply — TARGETED at the app client. Never run a full `make apply` on stag/prod for
+#    this: AMI drift in the same plan can force-replace the trust EC2s. Same reasoning
+#    as `apply-fl-kit-slots` above. The apply updates Cognito immediately …
+make init PROD=stag
+terraform plan -target=module.cognito.aws_cognito_user_pool_client.client -out=cognito.tfplan
+terraform apply cognito.tfplan
+
+# 3. … but flip-api does NOT pick it up until it restarts: main.py's lifespan reads the
+#    list once at start-up and CORSMiddleware holds it by reference. Restart flip-api.
+#    Quiesce FIRST if the deploy will also replace fl-server-net-1 — see "Central Hub
+#    deploys and rollback" above (Admin → Deployments, then GET /fl/quiesce).
+make deploy-centralhub PROD=stag
+#    Or, to restart flip-api alone without moving any image tag:
+aws ecs update-service --cluster flip-cluster --service flip-api --force-new-deployment
+
+# 4. Confirm Cognito actually carries the new list …
+aws cognito-idp describe-user-pool-client \
+  --user-pool-id "$AWS_COGNITO_USER_POOL_ID" --client-id "$AWS_COGNITO_APP_CLIENT_ID" \
+  --query 'UserPoolClient.CallbackURLs'
+
+# 5. … and that the running API serves it, with a preflight from the canonical origin.
+#    A correct response echoes access-control-allow-origin for that origin; a blocked
+#    origin simply omits the header (it is not an error status).
+curl -sSi -X OPTIONS "https://<api-host>/api/projects" \
+  -H "Origin: https://<ui-host>" \
+  -H "Access-Control-Request-Method: GET" | grep -i "^access-control-allow-origin"
+```
+
+Step 5 is the one that matters: steps 2–4 can all look right while the browser is still blocked,
+because the allowlist the API is *serving* only changes at the restart in step 3.
 
 ### Growing the FL kit-slot pool (`add-fl-kits`)
 
