@@ -219,6 +219,19 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
     actions   = ["ssm:GetParameter"]
     resources = [aws_ssm_parameter.fl_kit_slot_names.arn]
   }
+
+  # Per-job fl-server scale-to-zero (#735): flip-api will call ECS UpdateService
+  # to set desired_count to 0 between FL jobs and back to 1 when a job lands,
+  # plus DescribeServices to read the current scale state first. Scoped to the
+  # single fl-server ECS service ARN — deliberately no ecs:* and no
+  # Resource="*", matching the rest of this policy's least-privilege shape.
+  statement {
+    sid     = "EcsFlServerScale"
+    actions = ["ecs:UpdateService", "ecs:DescribeServices"]
+    resources = [
+      "arn:aws:ecs:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:service/${aws_ecs_cluster.flip.name}/fl-server-net-1",
+    ]
+  }
 }
 
 resource "aws_iam_role_policy" "ecs_flip_api_task" {

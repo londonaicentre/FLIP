@@ -996,7 +996,8 @@ the direction of the request flow.
 ### Central Hub Infrastructure
 
 - **VPC**: Custom VPC (`10.0.0.0/16` by default) across 2 AZs, with public + private subnets and a single shared NAT Gateway
-- **ECS Fargate cluster**: Runs the Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) as awsvpc tasks in **private subnets**. Task definitions, services, and per-service security groups live in `ecs*.tf` and `iam_ecs.tf`.
+- **ECS Fargate cluster**: Runs the Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) as awsvpc tasks in **private subnets**. Task definitions, services, and per-service security groups live in `ecs*.tf` and `iam_ecs.tf`. The `fl-server-net-1` service declares `lifecycle { ignore_changes = [desired_count] }` — once flip-api scales it to zero between FL jobs (#735), its runtime scale state is app-managed, not Terraform-owned, so an unrelated `terraform apply` cannot spin it back up mid-idle.
+- **ECS task-role IAM**: `iam_ecs.tf` gives flip-api's task role a scoped `ecs:UpdateService` + `ecs:DescribeServices` grant on the single `fl-server-net-1` service ARN (no `ecs:*`, no `Resource="*"`) so the future per-job scale-to-zero call is authorised.
 - **Central Hub SSM bastion**: t3.micro instance with a 10 GB root volume in a **private subnet**. It carries only the SSM managed IAM policy and a PostgreSQL client for ad-hoc RDS operations; application workloads run on ECS Fargate.
 - **Trust EC2**: Separate t3.xlarge instance in a **private subnet**, running Trust services via Docker Compose
   - Deployed using custom Terraform module (`modules/trust_ec2`)
