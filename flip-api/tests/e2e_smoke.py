@@ -165,8 +165,7 @@ def describe_tutorial(model_files_dir: Path) -> TutorialInfo:
     Returns:
         TutorialInfo: The tutorial directory name, its human-readable label, and its clinical task.
     """
-    parts = list(model_files_dir.resolve().parts)
-    tutorial_dirs = [part for part in parts if part not in APP_DIR_NAMES]
+    tutorial_dirs = [part for part in model_files_dir.resolve().parts if part not in APP_DIR_NAMES]
     tutorial_dir = tutorial_dirs[-1] if tutorial_dirs else model_files_dir.name
     copy = TUTORIALS.get(tutorial_dir)
     label = copy.label if copy else tutorial_dir.replace("_", " ").replace("-", " ").strip().capitalize()
@@ -303,15 +302,13 @@ def create_project_with_query(
         _post(client, "/projects", project_payload, headers), "create project"
     ).json()["id"]
     _log(f"  ✅ project_id={project_id}")
-    if not has_imaging:
-        # A hub predating FLIP#1071 ignores the unknown field and creates an imaging project; fail
-        # here rather than 20 minutes later on an image-pull wait that cannot succeed.
-        created = _ensure_ok(_get(client, f"/projects/{project_id}", headers), "read project").json()
-        if created.get("has_imaging", True):
-            raise SmokeFailure(
-                f"Hub ignored has_imaging=false for project {project_id} (it predates FLIP#1071): the project "
-                "was created WITH imaging — aborting rather than waiting for a pull that cannot succeed."
-            )
+    # A hub predating FLIP#1071 ignores the unknown field and creates an imaging project; fail here
+    # rather than 20 minutes later on an image-pull wait that cannot succeed.
+    if not has_imaging and project_has_imaging(client, headers, project_id):
+        raise SmokeFailure(
+            f"Hub ignored has_imaging=false for project {project_id} (it predates FLIP#1071): the project "
+            "was created WITH imaging — aborting rather than waiting for a pull that cannot succeed."
+        )
 
     _log("📝 Adding cohort query")
     add_resp = _ensure_ok(

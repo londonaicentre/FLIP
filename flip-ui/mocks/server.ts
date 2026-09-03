@@ -20,10 +20,10 @@ import Schema from "miragejs/orm/schema";
 import { v4 } from "uuid";
 
 import { FileUploadStatus } from "@/interfaces/model/types";
+import { projectHasImaging } from "@/partials/projects/projectType";
 import { IGenericResponse, IPaginatedResponse } from "@/services/api";
 import { IModel } from "@/services/model-service";
 import { IProject } from "@/services/project-service";
-import { projectHasImaging } from "@/partials/projects/projectType";
 import { IUser } from "@/services/user-service";
 import { ISiteDetails } from "@/store/siteDetailsStore";
 
