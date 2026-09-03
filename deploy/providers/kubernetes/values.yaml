@@ -286,9 +286,12 @@ flClient:
   # fl-client, as an alternative to the s3-access-key-id / s3-secret-access-key
   # Secret keys on a local cluster. hostPath is resolved ON THE NODE and has no
   # default (see omopDb.initJob.hostAwsMount); on kind, map ~/.aws in with an
-  # extraMounts entry first (README, "Local clusters (kind)").
+  # extraMounts entry first (README, "Local clusters (kind)"). Set it explicitly
+  # when enabling, e.g.
+  #   --set flClient.hostAwsMount.hostPath=$HOME/.aws
   hostAwsMount:
     enabled: false
+    hostPath: ""
     readOnly: true
   hostAliases:
     - ip: "13.43.162.56"
@@ -587,7 +590,7 @@ orthanc:
     # hostPath has NO default: it is the ~/.aws of whoever runs the *node*, so any
     # shipped value is one developer's home directory and silently wrong on every
     # other machine. Set it explicitly when enabling, e.g.
-    #   --set omopDb.initJob.hostAwsMount.hostPath=$HOME/.aws
+    #   --set orthanc.initJob.hostAwsMount.hostPath=$HOME/.aws
     # Left empty while enabled, rendering fails with a named error rather than
     # mounting a path that does not exist on this node.
     # On kind the node is a container and your ~/.aws is not in it: add an
