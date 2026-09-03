@@ -130,6 +130,55 @@ Client ID are required for a production deployment.
 > [`vite.config.mts`](vite.config.mts)). Use `VITE_LOCAL` only with `npm run dev` against a mocked API, and never
 > set `VITE_DEMO` at all — the demo build gets it from `--mode demo`. Keep both out of CI and deploy environments.
 
+### Dependency scoping
+
+**Production source may not import a package that is only declared in `devDependencies`, nor one that is
+declared nowhere and resolves through npm's hoisting of a parent's tree.** "Production source" is everything
+the deployed bundles reach: `src/`, minus its test files, plus `mocks/` — which `build:demo` pulls into the
+public `/ark_demo` bundle.
+
+This is enforced, not just documented: the `flip-ui/dependency-scoping` block in
+[`eslint.config.mjs`](eslint.config.mjs) runs `import-x/no-extraneous-dependencies` over exactly that file
+set, so `npm run lint` fails in CI the moment an import lands in the wrong stanza.
+
+The rule exists for **Dependabot**, not the build. `vite build` tree-shakes from the entry points and bundles
+whatever they reach whichever stanza a package sits in, and every install path in the repo (`npm ci` in CI,
+the Dockerfile, `make deploy-ui`) installs both stanzas — so a wrong stanza breaks nothing and is invisible
+until it matters. What it changes is the **scope label on a security alert**: a package that ships to users
+but sits in `devDependencies` produces an alert labelled "Development", which reads as *not in the production
+bundle* and invites a wrongly-dismissed alert on code CloudFront is serving. FLIP#1041 corrected 19
+packages: 16 moved out of `devDependencies`, two that were declared nowhere at all (`codemirror`,
+`tippy.js` — they resolved only by hoisting), and `husky`, which had drifted the other way. Correct scoping
+is also the precondition for ever adopting `npm ci --omit=dev` here.
+
+Note the rule keys off the **import graph, not the bundle**: a package imported by production source is a
+`dependency` even if tree-shaking currently drops it. What production code imports is stable, whereas what
+survives tree-shaking silently flips the correct answer whenever an unrelated component starts or stops being
+used. (`@popperjs/core` was the worked example of this until FLIP#1063 removed its only importer along with
+the dead `AiSelect`/`AiChipSelect` components, at which point it left the manifest entirely — the honest
+resolution, and the one a lint rule cannot reach, since nothing flags an import that is merely unreachable.)
+
+Two traps when auditing this by hand:
+
+- **A `from "..."` grep under-reports.** `highlight.js` is loaded lazily via
+  `import("highlight.js/lib/core")` and `import("highlight.js/lib/languages/json")` in
+  [`src/utils/highlightJson.ts`](src/utils/highlightJson.ts), and is correctly a `dependency` despite having
+  no static import. Test files also live under `src/` (most under `__tests__/` directories, plus two flat
+  `*.spec.ts` and the `src/unit-tests/` tree), and their imports — `vitest`, `@vue/test-utils`,
+  `@pinia/testing` — are genuinely dev-only.
+- **A static import of a side-effecting module is never dropped, even from a branch that folds.** Neither
+  mock server may be imported statically from [`src/main.ts`](src/main.ts); both are loaded through dynamic
+  `import()` inside their own folded branch. `mocks/server` was static until FLIP#1041 and shipped ~230
+  modules — Mirage, Pretender, route-recognizer, inflected and all of lodash — in the production entry
+  chunk of every build, because miragejs patches `Error.prototype` at module scope. Making it dynamic cut
+  the entry chunk from 331 KB to 182 KB. See the comment above `bootstrap()`. This is enforced twice, because
+  `miragejs` is a legitimate `dependency` (the demo bundle ships it) and so invisible to the scoping rule
+  above: the `flip-ui/no-static-mirage` block in [`eslint.config.mjs`](eslint.config.mjs) fails `npm run
+  lint` on any static import of `miragejs`/`pretender`/the mock servers from `src/` (dynamic `import()`
+  stays legal), and [`scripts/assert-no-demo-artefacts.mjs`](scripts/assert-no-demo-artefacts.mjs) carries
+  Mirage/Pretender sentinels so the built artefact is checked too — the only guard that also catches a
+  folded branch that stops folding.
+
 ## Testing
 
 ### Unit tests (Vitest)

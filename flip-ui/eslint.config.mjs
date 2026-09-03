@@ -13,6 +13,7 @@
 
 import stylistic from "@stylistic/eslint-plugin";
 import { defineConfigWithVueTs, vueTsConfigs } from "@vue/eslint-config-typescript";
+import importX from "eslint-plugin-import-x";
 import simpleImportSort from "eslint-plugin-simple-import-sort";
 import pluginVue from "eslint-plugin-vue";
 
@@ -139,6 +140,100 @@ export default defineConfigWithVueTs(
                 afterAll: "readonly",
                 afterEach: "readonly",
             },
+        },
+    },
+
+    {
+        // Dependency scoping guard (FLIP#1041). Production source may not import a
+        // package that is only declared in `devDependencies`, nor one that is declared
+        // nowhere and resolves solely through npm's hoisting of a parent's tree.
+        //
+        // The point is not the build - vite bundles whatever the entry points reach,
+        // whichever stanza a package sits in. It is that Dependabot derives a security
+        // alert's scope label from the stanza, so a shipped package left in
+        // `devDependencies` yields an alert labelled "Development" that reads as
+        // not-user-facing. See flip-ui/README.md -> Dependency scoping.
+        //
+        // `mocks/` is deliberately NOT exempt: mocks/demo-server.ts ships in the public
+        // /ark_demo bundle, so its imports are production imports.
+        name: "flip-ui/dependency-scoping",
+        files: ["src/**/*.ts", "src/**/*.vue", "mocks/**/*.ts"],
+        ignores: ["**/*.spec.ts", "**/__tests__/**", "src/unit-tests/**"],
+        plugins: { "import-x": importX },
+        rules: {
+            "import-x/no-extraneous-dependencies": ["error", {
+                devDependencies: false,
+                optionalDependencies: false,
+                peerDependencies: true,
+                includeTypes: false,
+            }],
+        },
+    },
+
+    {
+        // Static-import guard for Mirage (FLIP#1041 review). `miragejs` is a
+        // legitimate `dependency` — build:demo ships it — so the scoping rule above
+        // cannot flag a static re-import from production source, which is exactly the
+        // regression that put ~230 modules (Mirage, Pretender and all of lodash) in
+        // the production entry chunk. Both mock servers must stay behind a dynamic
+        // import() inside their folded branch (see the bootstrap() comment in
+        // src/main.ts); this rule ignores dynamic imports, so those stay legal.
+        // assert-no-demo-artefacts.mjs backstops this at the artefact level, where a
+        // fold failure — the class no source lint can see — would land.
+        name: "flip-ui/no-static-mirage",
+        files: ["src/**/*.ts", "src/**/*.vue"],
+        // src/demo/DemoBanner.vue is the one sanctioned exception — its own block follows.
+        ignores: ["**/*.spec.ts", "**/__tests__/**", "src/unit-tests/**", "src/demo/DemoBanner.vue"],
+        rules: {
+            "no-restricted-imports": ["error", {
+                patterns: [{
+                    group: [
+                        "miragejs",
+                        "miragejs/*",
+                        "pretender",
+                        "pretender/*",
+                        "**/mocks/**",
+                    ],
+                    message: "Mirage must not be statically imported from production source — load it via a "
+                        + "dynamic import() inside a folded branch. See bootstrap() in src/main.ts.",
+                }],
+            }],
+        },
+    },
+
+    {
+        // The single sanctioned static import across the src/ <- mocks/ boundary.
+        // src/demo/DemoBanner.vue reads DEMO_CAPTURE_DATE from
+        // mocks/demo/ark-plus-register.ts — scrubbed capture constants with no imports
+        // of its own, so it cannot reach Mirage, and those identity constants are meant
+        // to ship in the demo bundle (see the isDemoBuild comment in src/App.vue, and
+        // scripts/assert-no-demo-artefacts.mjs, which reads that same file by path).
+        //
+        // The exception is scoped to the file that owns it rather than widened into the
+        // group above, so the rule above stays a rule about the tree: every other src/
+        // file importing anything under mocks/ — this register included — is an error.
+        // The narrower spellings are not available: these are gitignore-style patterns,
+        // where excluding the mocks/demo directory also excludes its contents and "!"
+        // cannot re-include a file whose parent directory is excluded.
+        //
+        // The mock servers stay barred here, so this exception cannot grow into one.
+        name: "flip-ui/no-static-mirage-demo-banner",
+        files: ["src/demo/DemoBanner.vue"],
+        rules: {
+            "no-restricted-imports": ["error", {
+                patterns: [{
+                    group: [
+                        "miragejs",
+                        "miragejs/*",
+                        "pretender",
+                        "pretender/*",
+                        "**/mocks/server",
+                        "**/mocks/demo-server",
+                    ],
+                    message: "Mirage must not be statically imported from production source — load it via a "
+                        + "dynamic import() inside a folded branch. See bootstrap() in src/main.ts.",
+                }],
+            }],
         },
     },
 );

@@ -18,7 +18,7 @@ import { mount } from "@vue/test-utils";
 import { vi } from "vitest";
 import { nextTick } from "vue";
 
-import { IOption } from "@/components/AiSelect/interfaces";
+import { IOption } from "@/interfaces/select";
 import RegisterUserModal from "@/partials/users/RegisterUserModal.vue";
 import { IRole } from "@/services/role-service";
 
@@ -95,9 +95,10 @@ describe("Register User Modal", () => {
                 })]
             }
         });
-        // AiChipSelect tags its trigger with data-test="chip-select"; the new
-        // single-select tags its trigger with data-test="role-select".
-        expect(component.find("[data-test=\"chip-select\"]").exists()).toBe(false);
+        // The role chooser is a single-select Listbox, tagged data-test="role-select".
+        // (It was a multi-select AiChipSelect until 84a2004f; that component was
+        // deleted as dead code in FLIP#1063, so the old negative assertion against
+        // data-test="chip-select" could no longer fail and has been dropped.)
         expect(component.find("[data-test=\"role-select\"]").exists()).toBe(true);
         component.unmount();
     });
