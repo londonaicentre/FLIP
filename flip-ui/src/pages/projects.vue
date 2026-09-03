@@ -81,6 +81,34 @@
                         </button>
                     </div>
 
+                    <!-- Type filter (FLIP#1071): the same segmented pattern as the My/All toggle;
+                         the two typed labels are long, so they collapse to their icons below md. -->
+                    <div
+                        role="tablist"
+                        aria-label="Project type"
+                        class="inline-flex bg-white dark:bg-dark-canvas border border-gray-200 dark:border-dark-border rounded-lg p-1"
+                        data-test="type-filter"
+                    >
+                        <button
+                            v-for="opt in typeOptions"
+                            :key="opt.id"
+                            type="button"
+                            role="tab"
+                            :aria-selected="typeFilter === opt.value"
+                            :title="opt.label"
+                            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-semibold transition-colors"
+                            :class="typeFilter === opt.value
+                                ? 'bg-gray-100 dark:bg-dark-surface text-gray-900 dark:text-gray-100'
+                                : 'bg-transparent text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
+                            :data-test="`type-filter-${opt.id}`"
+                            @click="typeFilter = opt.value"
+                        >
+                            <icon-ph-scan v-if="opt.id === 'imaging'" class="w-4 h-4 shrink-0" aria-hidden="true" />
+                            <icon-ph-database v-else-if="opt.id === 'omop-only'" class="w-4 h-4 shrink-0" aria-hidden="true" />
+                            <span :class="opt.id === 'all' ? '' : 'hidden md:inline'">{{ opt.label }}</span>
+                        </button>
+                    </div>
+
                     <select
                         v-model="sortKey"
                         class="rounded-md border-gray-200 dark:border-dark-border dark:bg-dark-canvas text-sm py-2 pl-3 pr-8"
@@ -176,8 +204,9 @@
                                     <div class="font-heading font-semibold text-base text-gray-900 dark:text-gray-100 truncate" data-test="project-name">
                                         {{ project.name }}
                                     </div>
-                                    <div class="text-xs text-gray-500 dark:text-gray-300 mt-0.5 truncate">
-                                        {{ ownerLabel(project) }} · {{ relativeUpdated(project) }}
+                                    <div class="flex items-center gap-2 mt-0.5 min-w-0 text-xs text-gray-500 dark:text-gray-300">
+                                        <ProjectTypeChip :has-imaging="projectHasImaging(project)" />
+                                        <span class="truncate">{{ ownerLabel(project) }} · {{ relativeUpdated(project) }}</span>
                                     </div>
                                 </div>
                                 <!-- Below md the row is two columns: this drops under the name and
@@ -235,13 +264,16 @@
                         <!-- Top status stripe (3px) -->
                         <div class="absolute top-0 inset-x-0 h-[3px]" :class="spineBgClass(project.status)" />
 
-                        <div class="flex items-start justify-between gap-2">
-                            <span
-                                class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold tracking-wide uppercase"
-                                :class="pillClass(project.status)"
-                            >
-                                {{ statusLabel(project.status) }}
-                            </span>
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="flex items-center gap-2 min-w-0">
+                                <span
+                                    class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold tracking-wide uppercase"
+                                    :class="pillClass(project.status)"
+                                >
+                                    {{ statusLabel(project.status) }}
+                                </span>
+                                <ProjectTypeChip :has-imaging="projectHasImaging(project)" />
+                            </div>
                         </div>
 
                         <div>
@@ -311,6 +343,8 @@ import AiSearch from "@/components/AiSearch/AiSearch.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
 import { usePermissions } from "@/composables/usePermissions";
 import CreateProjectModal from "@/partials/projects/CreateProjectModal.vue";
+import { IMAGING_LABEL, OMOP_ONLY_LABEL, projectHasImaging, ProjectTypeFilter } from "@/partials/projects/projectType";
+import ProjectTypeChip from "@/partials/projects/ProjectTypeChip.vue";
 import TrustChips from "@/partials/projects/TrustChips.vue";
 import { getProjects, IProject, ProjectStatus } from "@/services/project-service";
 import { useAuthStore } from "@/store/auth";
@@ -328,6 +362,9 @@ const searchQueryParam = ref("");
 const ownerQueryParam = ref("");
 // `ownerFilter=true` = "My projects" only; false = all accessible.
 const ownerFilter = ref(false);
+// Type filter (FLIP#1071): "all" sends no parameter; the others map onto `projectType=`.
+const typeFilter = ref<ProjectTypeFilter>("all");
+const typeQueryParam = ref("");
 const userId = authStore.user?.userId;
 
 // Every list row is its own grid, so a content-sized (`auto`) track resolves to a
@@ -363,9 +400,27 @@ const accessOptions = [
     }
 ];
 
+const typeOptions: { id: string; label: string; value: ProjectTypeFilter }[] = [
+    {
+        id: "all",
+        label: "All types",
+        value: "all"
+    },
+    {
+        id: "imaging",
+        label: IMAGING_LABEL,
+        value: "imaging"
+    },
+    {
+        id: "omop-only",
+        label: OMOP_ONLY_LABEL,
+        value: "omop_only"
+    }
+];
+
 const { data, error } = useSWRV(
     () =>
-        `/projects?pageNumber=${pageNumber.value}&pageSize=${pageSize}${searchQueryParam.value}${ownerQueryParam.value}`,
+        `/projects?pageNumber=${pageNumber.value}&pageSize=${pageSize}${searchQueryParam.value}${ownerQueryParam.value}${typeQueryParam.value}`,
     getProjects,
     {
         dedupingInterval: 5_000,
@@ -386,6 +441,15 @@ debouncedWatch(
     ownerFilter,
     () => {
         ownerQueryParam.value = ownerFilter.value ? `&owner=${userId}` : "";
+        pageNumber.value = 1;
+    },
+    { debounce: 300 }
+);
+
+debouncedWatch(
+    typeFilter,
+    () => {
+        typeQueryParam.value = typeFilter.value === "all" ? "" : `&projectType=${typeFilter.value}`;
         pageNumber.value = 1;
     },
     { debounce: 300 }

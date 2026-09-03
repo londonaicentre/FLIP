@@ -178,7 +178,7 @@ Project List
 
 All projects which you are able to access are visible on the project list, including those which you have created or have been granted access to. Users with the ``admin`` role will be able to view all projects.
 
-Users can apply a filters to view only projects based on, for example, the current user, keywords found in the project and/or project description.
+Users can apply a filters to view only projects based on, for example, the current user, keywords found in the project and/or project description. Every project also carries a type chip — **Imaging + OMOP**, or **OMOP only** for a project created with 'Includes imaging data' turned off — and the toolbar's **Type** control narrows the list to either kind.
 
 .. figure:: ../assets/flip/filter-project.gif
    :width: 600

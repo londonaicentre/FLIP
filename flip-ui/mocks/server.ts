@@ -87,6 +87,12 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
             // #region Project Routes
 
             this.get(baseUrl + "/projects", (schema: AppSchema, request) => {
+                // FLIP#1071: the Type filter — has_imaging is absent on older fixtures, which means imaging.
+                const projectType = request?.queryParams?.["projectType"];
+                const byType = (projects: IProject[]): IProject[] => projectType
+                    ? projects.filter(project => (project.has_imaging ?? true) === (projectType === "imaging"))
+                    : projects;
+
                 if (request?.queryParams?.["owner"]) {
                     const response: IPaginatedResponse<IProject> = {
                         ...paginatedProjectData1,
@@ -100,7 +106,7 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
                     case "1": {
                         const page1: IPaginatedResponse<IProject> = {
                             ...paginatedProjectData1,
-                            data: schema.db.projects
+                            data: byType([...schema.db.projects])
                         };
 
                         return new Response(200, undefined, page1);
@@ -108,9 +114,9 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
                     case "2": {
                         const page2: IPaginatedResponse<IProject> = {
                             ...paginatedProjectData2,
-                            data: schema.db.projects.filter(project =>
+                            data: byType(schema.db.projects.filter(project =>
                                 projectDataPage2.map(p => p.id).includes(project.id)
-                            )
+                            ))
                         };
 
                         return new Response(200, undefined, page2);
