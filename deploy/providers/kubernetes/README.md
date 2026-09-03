@@ -128,6 +128,23 @@ path as `flClient.kitHostPath`; nothing else changes.
 Skipping this step leaves the fl-client pod `Pending` with a `hostPath type check
 failed` event naming the missing path.
 
+**Upgrading an install that fetched its kit from S3:** the chart no longer holds AWS
+credentials or fetches the kit itself, so a values file written for the previous version
+will fail to render. The kit is staged onto the node out-of-band instead, by step 4 above.
+Removed values — delete them from your overrides, they no longer exist:
+
+| Removed | Replacement |
+| ------- | ----------- |
+| `flClient.kitFromS3`, `flClient.nvflare.kitFromS3.*`, `flClient.flower.kitFromS3.*` | `flClient.kitHostPath` (now **required** when `flClient.enabled`) |
+| `flClient.hostAwsMount.enabled` / `.readOnly` | none — the fl-client mounts no AWS credentials |
+| `flClient.s3EndpointOverride` | none |
+| the `aws-access-key-id` / `aws-secret-access-key` / `aws-session-token` secret keys | none — drop them from `values-secrets.yaml` and from any existing Secret |
+| `make patch-aws-creds` | `make stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>` |
+
+The failure mode if you miss one is loud rather than silent: an unknown value is ignored by
+Helm, but a missing `flClient.kitHostPath` fails the render by name, and a kit that never
+reached the node leaves the pod `Pending` on the `hostPath type check failed` event above.
+
 ### 5. Install / upgrade the chart
 
 ```bash

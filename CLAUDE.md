@@ -28,7 +28,7 @@ FLIP/
 ├── deploy/             # Docker Compose files (dev/prod, flower/nvflare); FL network provisioning now lives under fl-services/<backend>/, not here
 │   └── providers/
 │       ├── AWS/        # Terraform/OpenTofu IaC + Ansible for AWS deployment
-│       ├── kubernetes/ # Helm chart for Kubernetes trust deployment
+│       ├── kubernetes/ # Helm chart for Kubernetes trust deployment. The chart holds no AWS credentials and never fetches the FL participant kit: stage it onto the node first with `make -C deploy/providers/kubernetes stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then deploy with `flClient.kitHostPath` pointing at it (required whenever flClient.enabled). On the AWS side the EC2 equivalent is `make stage-fl-kit KIT=<CODE>`, which re-stages for the trust's REGISTERED slot after `register-trusts`
 │       └── local/      # Ansible playbooks for on-premises trust deployment
 ├── docs/               # Sphinx documentation (ReadTheDocs)
 └── scripts/            # Utility scripts (incl. check-fl-provisioned.sh — the `make up` FL-kit guard)
