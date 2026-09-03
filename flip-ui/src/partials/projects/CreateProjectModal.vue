@@ -213,10 +213,12 @@ const submitForm = async(v: unknown) => {
             return u.id;
         });
 
-        values.has_imaging = !!values.has_imaging;
+        // AiSwitch reports "true" when on and undefined when off (its unchecked value); compare with
+        // the string rather than truthiness so a future unchecked sentinel cannot read as "on".
+        values.has_imaging = (values.has_imaging as unknown) === "true";
         // The DICOM→NIfTI toggle is hidden (and unregistered by vee-validate) when imaging is off:
         // submit its default rather than the absent value.
-        values.dicom_to_nifti = values.has_imaging ? !!values.dicom_to_nifti : true;
+        values.dicom_to_nifti = values.has_imaging ? (values.dicom_to_nifti as unknown) === "true" : true;
 
         const { id: projectId } = await createProject("/projects", values as IProjectCreate);
 

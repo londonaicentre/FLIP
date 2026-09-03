@@ -22,12 +22,12 @@
 -- WHERE EXISTS). On a real trust that is a sensible "has clinical history" inclusion
 -- criterion; on the FLIP dev mock it also excludes the imaging-only persons the other
 -- tutorials seed (they carry visits but no conditions), so this query returns exactly the
--- Synthea EHR cohort loaded by `make -C trust load-synthea-ehr-data`. build_synthea_dataframe.py
+-- Synthea EHR cohort loaded by `make -C trust load-synthea-ehr`. build_synthea_dataframe.py
 -- applies the same has-a-condition filter, so the local-sim CSV and the deployed query agree.
 --
--- accession_id is the person_id cast to text: this cohort fetches no imaging, but the FLIP
--- dev client requires the column (flip-utils FLIPStandardDev.get_dataframe) and the
--- imaging-api's accession listing selects it; the app itself ignores it.
+-- accession_id is the person_id cast to text. Nothing reads it any more for a project created
+-- with "Includes imaging data" off (the hub dispatches no imaging stage and the dev client no
+-- longer requires the column); it is kept only until #1130 removes it. The app itself ignores it.
 -- Ages are computed against 2023, the Synthea dataset's export year, so results are
 -- deterministic (see utils/build_synthea_dataframe.py, which mirrors this feature logic).
 WITH first_dx AS (

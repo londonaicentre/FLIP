@@ -11,33 +11,31 @@
   limitations under the License.
 -->
 <template>
-    <!-- Project-type chip (FLIP#1071, design handoff "Non-Imaging Project Page"): every project
-         gets one — imaging projects use structured data too, so the labels are "Imaging + OMOP"
-         (primary tint, scan icon) and "OMOP only" (steel blue, database icon). Informational only. -->
+    <!-- Project-type chip (FLIP#1071): every project gets one — imaging projects use OMOP data too,
+         so the labels are "Imaging + OMOP" (primary tint, scan icon) and "OMOP only" (steel blue,
+         database icon). Informational only. -->
     <span
-        class="inline-flex items-center gap-1 rounded-full font-semibold whitespace-nowrap shrink-0"
-        :class="[hasImaging ? IMAGING_CLASS : OMOP_ONLY_CLASS, size === 'md' ? 'px-2.5 py-1 text-xs' : 'px-2 py-px text-[10.5px]']"
-        :data-test="`project-type-chip-${hasImaging ? 'imaging' : 'omop-only'}`"
+        class="inline-flex items-center gap-1 rounded-full px-2 py-px text-[10.5px] font-semibold whitespace-nowrap shrink-0"
+        :class="hasImaging ? IMAGING_CLASS : OMOP_ONLY_CLASS"
+        :data-test="`project-type-chip-${projectTypeId(hasImaging)}`"
     >
-        <icon-ph-scan v-if="hasImaging" class="shrink-0" :class="size === 'md' ? 'w-3.5 h-3.5' : 'w-3 h-3'" aria-hidden="true" />
-        <icon-ph-database v-else class="shrink-0" :class="size === 'md' ? 'w-3.5 h-3.5' : 'w-3 h-3'" aria-hidden="true" />
+        <icon-ph-scan v-if="hasImaging" class="w-3 h-3 shrink-0" aria-hidden="true" />
+        <icon-ph-database v-else class="w-3 h-3 shrink-0" aria-hidden="true" />
         {{ hasImaging ? IMAGING_LABEL : OMOP_ONLY_LABEL }}
     </span>
 </template>
 
 <script setup lang="ts">
-import { IMAGING_LABEL, OMOP_ONLY_LABEL } from "@/partials/projects/projectType";
+import { IMAGING_LABEL, OMOP_ONLY_LABEL, projectTypeId } from "@/partials/projects/projectType";
 
 interface IProjectTypeChipProps {
-    // `Projects.has_imaging` — a hub predating the flag omits it, which means imaging.
+    // Resolved by the caller (see `projectHasImaging`), so the "absent means imaging" rule lives in one place.
     hasImaging: boolean;
-    // "sm" = list rows / cards (10.5px, as designed); "md" = page headers.
-    size?: "sm" | "md";
 }
 
-withDefaults(defineProps<IProjectTypeChipProps>(), { size: "sm" });
+defineProps<IProjectTypeChipProps>();
 
-// Design tokens: primary tint #F7F3F9 / #61366E and steel blue #EBF0F5 / #2C3E6B (tailwind.config).
+// Design tokens from tailwind.config: the primary tint for imaging, the steel-blue accent for data-only.
 const IMAGING_CLASS = "bg-primary-100 text-primary-500 dark:bg-primary-900/60 dark:text-primary-200";
 const OMOP_ONLY_CLASS = "bg-steel-100 text-steel-700 dark:bg-steel-700/40 dark:text-steel-100";
 </script>

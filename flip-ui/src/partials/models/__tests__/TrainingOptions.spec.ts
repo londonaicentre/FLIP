@@ -198,6 +198,11 @@ describe("TrainingOptions enrichment copy", () => {
         expect(wrapper.text()).toContain("Confirm your dataset has been enriched as required before training");
     });
 
+    it("keeps the imaging copy when the hub omits has_imaging (a hub predating the flag)", () => {
+        const wrapper = mountTrainingOptions([], false);
+        expect(wrapper.text()).toContain("Confirm your dataset has been enriched as required before training");
+    });
+
     it("explains there is no imaging to enrich for a tabular-only project", () => {
         const wrapper = mountTrainingOptions([], false, false);
         expect(wrapper.text()).toContain("This project has no imaging to enrich");

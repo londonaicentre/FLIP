@@ -91,6 +91,7 @@
 import { computed, ComputedRef } from "vue";
 
 import AiSwitch from "@/components/AiSwitch/AiSwitch.vue";
+import { projectHasImaging } from "@/partials/projects/projectType";
 import { useProjectStore } from "@/store/project";
 
 interface ITrainingOptionsProps {
@@ -119,7 +120,7 @@ const approvedTrusts = projectStore.project?.approvedTrusts;
 
 // The enrichment attestation stays for every project; only its wording depends on whether there
 // is imaging to enrich (FLIP#1071). Absent on a hub predating the flag, which means imaging.
-const hasImaging = computed(() => projectStore.project?.has_imaging ?? true);
+const hasImaging = computed(() => (projectStore.project ? projectHasImaging(projectStore.project) : true));
 
 const trustsToSelect: ComputedRef<ITrustsToTrain[] | undefined> = computed(() =>
     approvedTrusts?.filter(t => t.approved)

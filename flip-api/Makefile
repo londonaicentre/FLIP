@@ -204,7 +204,8 @@ e2e_smoke_spleen_evaluation: e2e_smoke
 # EHR risk-prediction (tabular-only) variant of e2e_smoke: the tutorial matching FL_BACKEND,
 # created with has_imaging=false so the hub skips the imaging stage and the smoke skips the
 # image-pull wait (FLIP#1071). TARGET_ARGS rather than EXTRA_ARGS so a command-line EXTRA_ARGS
-# (e.g. --project-id) cannot clobber the flag. Prereq: `make -C trust load-synthea-ehr` on every trust.
+# (e.g. --project-id) cannot clobber the flag. Prereq: `make -C trust load-synthea-ehr` on every trust and,
+# if the EHR query was already submitted before that load, a data-access-api restart (results are cached by query text).
 EHR_FLOWER_DIR := ../fl-tutorials/flower/ehr_risk_prediction
 EHR_NVFLARE_DIR := ../fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction
 e2e_smoke_ehr: MODEL_FILES_DIR := $(if $(filter flower,$(FL_BACKEND)),$(EHR_FLOWER_DIR)/app,$(EHR_NVFLARE_DIR)/app_files)

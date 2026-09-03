@@ -199,3 +199,27 @@ def test_edit_project_db_commit_generic_exception(
     mock_can_access.assert_called_once()
     mock_db_session.rollback.assert_called_once()
     app_fixture.dependency_overrides = {}
+
+
+def test_edit_project_ignores_has_imaging(
+    client: TestClient, app_fixture: FastAPI, mock_get_user_pool_id, mock_filter_enabled_users
+):
+    """FLIP#1071: has_imaging is creation-time only — an edit carrying it is accepted but the flag stays put."""
+    mock_db_session = MagicMock()
+    mock_project_instance = Projects(id=TEST_PROJECT_ID, name="Old Name", description="Old Desc", has_imaging=True)
+    mock_db_session.get.return_value = mock_project_instance
+
+    app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
+    app_fixture.dependency_overrides[verify_token] = lambda: uuid.uuid4()
+
+    with patch("flip_api.project_services.edit_project.can_modify_project", return_value=True):
+        response = client.put(
+            f"/projects/{str(TEST_PROJECT_ID)}",
+            json={"name": "New Name", "description": "New Desc", "has_imaging": False},
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert mock_project_instance.has_imaging is True
+    assert response.json()["has_imaging"] is True
+
+    app_fixture.dependency_overrides = {}

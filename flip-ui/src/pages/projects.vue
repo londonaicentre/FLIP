@@ -343,7 +343,7 @@ import AiSearch from "@/components/AiSearch/AiSearch.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
 import { usePermissions } from "@/composables/usePermissions";
 import CreateProjectModal from "@/partials/projects/CreateProjectModal.vue";
-import { IMAGING_LABEL, OMOP_ONLY_LABEL, projectHasImaging, ProjectTypeFilter } from "@/partials/projects/projectType";
+import { IMAGING_LABEL, OMOP_ONLY_LABEL, projectHasImaging, ProjectTypeFilter, ProjectTypeId } from "@/partials/projects/projectType";
 import ProjectTypeChip from "@/partials/projects/ProjectTypeChip.vue";
 import TrustChips from "@/partials/projects/TrustChips.vue";
 import { getProjects, IProject, ProjectStatus } from "@/services/project-service";
@@ -400,7 +400,8 @@ const accessOptions = [
     }
 ];
 
-const typeOptions: { id: string; label: string; value: ProjectTypeFilter }[] = [
+// `id` is the DOM vocabulary (data-test hooks, icon dispatch); `value` is what goes on the wire.
+const typeOptions: { id: "all" | ProjectTypeId; label: string; value: ProjectTypeFilter }[] = [
     {
         id: "all",
         label: "All types",

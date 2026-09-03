@@ -369,17 +369,36 @@ def test_submit_cohort_query_task_payload_contains_query(
         ("SELECT person_id FROM omop.person", True),
         ("SELECT person_id, accession_id FROM omop.image_occurrence", False),
         ("SELECT io.accession_number AS accession_id FROM omop.image_occurrence io", False),
-        ('SELECT "Accession_ID" FROM omop.image_occurrence', False),  # identifier match is case-insensitive
+        # Unquoted identifiers fold to lower case in Postgres, so this IS the column the trust selects.
+        ("SELECT Accession_ID FROM omop.image_occurrence", False),
+        ('SELECT "accession_id" FROM omop.image_occurrence', False),
+        # A quoted mixed-case identifier is NOT folded: the trust's unquoted accession_id would not find it.
+        ('SELECT "Accession_ID" FROM omop.image_occurrence', True),
+        ('SELECT accession_number AS "Accession_ID" FROM omop.image_occurrence', True),
         ("SELECT * FROM omop.image_occurrence", False),  # unknowable here: the trust stays the authority
         ("SELECT io.* FROM omop.image_occurrence io", False),
         ("SELECT person_id, COUNT(*) FROM omop.person GROUP BY person_id", False),  # star inside a call
+        # Postgres names these itself (function / scalar subquery): unknowable, pass through.
+        ("SELECT lower(person_source_value) FROM omop.person", False),
+        ("SELECT (SELECT accession_id FROM omop.image_occurrence LIMIT 1) FROM omop.person", False),
         ("WITH c AS (SELECT accession_id FROM omop.image_occurrence) SELECT person_id FROM c", True),
         ("SELECT person_id FROM omop.a UNION SELECT person_id FROM omop.b", True),
         ("SELECT accession_id FROM omop.a UNION SELECT accession_id FROM omop.b", False),
+        # Nested set operations take their output names from the LEFT-most branch.
+        ("SELECT accession_id FROM omop.a UNION SELECT x FROM omop.b UNION SELECT y FROM omop.c", False),
+        ("SELECT person_id FROM omop.a UNION SELECT x FROM omop.b UNION SELECT accession_id FROM omop.c", True),
+        ("(SELECT accession_id FROM omop.a) UNION SELECT x FROM omop.b INTERSECT SELECT y FROM omop.c", False),
+        ("SELECT person_id FROM omop.a EXCEPT SELECT person_id FROM omop.b", True),
     ],
 )
 def test_projection_lacks_accession_id(sql, lacks):
-    assert projection_lacks_accession_id(sql) is lacks
+    # The route passes the statement validate_query already parsed, so the test does the same.
+    assert projection_lacks_accession_id(validate_query(sql)) is lacks
+
+
+def test_validate_query_returns_the_parsed_statement():
+    statement = validate_query("SELECT person_id FROM omop.person")
+    assert statement.sql(dialect="postgres") == "SELECT person_id FROM omop.person"
 
 
 def test_submit_rejects_an_imaging_project_query_without_accession_id(
@@ -409,3 +428,17 @@ def test_submit_accepts_a_query_without_accession_id_when_the_project_has_no_ima
 
     assert response.trust[0].statusCode == 202
     assert mock_db.add.called
+
+
+def test_submit_refuses_when_the_project_row_is_gone(
+    mock_request, sample_query, mock_encrypt, mock_can_modify, mock_project_row
+):
+    """A soft-delete racing the request: refuse rather than dispatch a deleted project's cohort."""
+    mock_project_row.return_value = None
+    mock_db = _db(trusts=[MagicMock(id="trust_1")])
+
+    with pytest.raises(HTTPException) as excinfo:
+        submit_cohort_query(mock_request, sample_query, mock_db, user_id)
+
+    assert excinfo.value.status_code == 404
+    assert not mock_db.add.called

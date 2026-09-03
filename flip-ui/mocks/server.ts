@@ -23,6 +23,7 @@ import { FileUploadStatus } from "@/interfaces/model/types";
 import { IGenericResponse, IPaginatedResponse } from "@/services/api";
 import { IModel } from "@/services/model-service";
 import { IProject } from "@/services/project-service";
+import { projectHasImaging } from "@/partials/projects/projectType";
 import { IUser } from "@/services/user-service";
 import { ISiteDetails } from "@/store/siteDetailsStore";
 
@@ -83,16 +84,21 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
             // #region Project Routes
 
             this.get(baseUrl + "/projects", (schema: AppSchema, request) => {
-                // FLIP#1071: the Type filter — has_imaging is absent on older fixtures, which means imaging.
+                // FLIP#1071: the Type filter, mirroring the hub — an unknown value means every type,
+                // and has_imaging is absent on older fixtures, which means imaging.
                 const projectType = request?.queryParams?.["projectType"];
-                const byType = (projects: IProject[]): IProject[] => projectType
-                    ? projects.filter(project => (project.has_imaging ?? true) === (projectType === "imaging"))
-                    : projects;
+                const byType = (projects: IProject[]): IProject[] => {
+                    if (projectType !== "imaging" && projectType !== "omop_only") {
+                        return projects;
+                    }
+
+                    return projects.filter(project => projectHasImaging(project) === (projectType === "imaging"));
+                };
 
                 if (request?.queryParams?.["owner"]) {
                     const response: IPaginatedResponse<IProject> = {
                         ...paginatedProjectData1,
-                        data: schema.db.projects.where({ ownerid: request.queryParams["owner"] })
+                        data: byType([...schema.db.projects.where({ ownerid: request.queryParams["owner"] })])
                     };
 
                     return new Response(200, undefined, response);

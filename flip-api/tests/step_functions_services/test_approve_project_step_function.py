@@ -178,3 +178,21 @@ def test_approve_project_skips_imaging_fan_out_when_project_has_no_imaging(
     assert "no imaging" in data["message"]
     mock_approve_project.assert_called_once()  # the project still becomes APPROVED
     assert mock_start_imaging.await_count == 0
+
+
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+@patch(
+    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    new_callable=AsyncMock,
+)
+def test_approve_project_404s_before_approving_when_the_project_row_is_missing(
+    mock_start_imaging, mock_approve_project, project_id, request_body, mock_project_row
+):
+    """The flag is read before approval commits; a missing row stops the workflow loudly, unapproved."""
+    mock_project_row.return_value = None
+
+    response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
+
+    assert response.status_code == 404
+    mock_approve_project.assert_not_called()
+    assert mock_start_imaging.await_count == 0

@@ -222,12 +222,11 @@ CREATE_IMAGING fan-out: no XNAT project, no accession-ids call, no pull, and `GE
 returns `200 []`. The EHR risk-prediction tutorials are the first such cohort: `make e2e_smoke_ehr [FL_BACKEND=flower]`
 (root or `-C flip-api`) picks that tutorial for the backend and pins `--no-imaging`, which creates the project
 with the flag off and skips the image-pull wait (the smoke reads `has_imaging` back off the project, so
-`--project-id` reuse honours it too). The flag rides in `TARGET_ARGS`, the third recipe slot after
-`ENRICHMENT_ARGS`, for the same reason enrichment does not use `EXTRA_ARGS`. Imaging projects get fast
-feedback instead: submitting a cohort whose explicit SELECT list has no `accession_id` column is a 400 at
-submission (hub pre-check, not a security control — `SELECT *` passes through to the trust's authoritative
-check). Prereq for the EHR smoke: `make -C trust load-synthea-ehr` on every trust, then restart the
-data-access-apis (query cache).
+`--project-id` reuse honours it too). The flag rides in `TARGET_ARGS`, a third recipe slot placed between
+`ENRICHMENT_ARGS` and `EXTRA_ARGS`, for the same reason enrichment does not use `EXTRA_ARGS`. Imaging projects
+get fast feedback instead: submitting a cohort whose explicit SELECT list has no `accession_id` column is a
+400 at submission (hub pre-check, not a security control — `SELECT *` passes through to the trust's
+authoritative check). Prereq for the EHR smoke: `make -C trust load-synthea-ehr` on every trust and, if the EHR query was already submitted before that load, restart each data-access-api (results are cached by query text).
 
 **Testing a change on BOTH FL backends in one sitting (the backend switch).** The pulled DICOM lives in
 each trust's Orthanc/XNAT, which `make restart-fl` leaves untouched — so you can pull once on the first

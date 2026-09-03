@@ -166,9 +166,8 @@ off a single file. Override the round/client counts inline, e.g.
 
 The cohort fetches no imaging, so create the project with **"Includes imaging data" turned off**
 (`has_imaging=false`): the hub then skips the imaging stage entirely — no XNAT project at the trusts,
-no PACS pull — and the project page shows no imaging status. (The `accession_id` column in
-`query.sql` is a leftover from before that option existed; the platform no longer needs it for such
-projects.) On the dev stack, run `make -C trust load-synthea-ehr` (above) first so the query has
+no PACS pull — and the project page shows no imaging status. (The `accession_id` column in `query.sql` is kept only until #1130 removes it; the platform no
+longer reads it for a project created with imaging off.) On the dev stack, run `make -C trust load-synthea-ehr` (above) first so the query has
 data. As an end-to-end smoke against a running stack — the `e2e_smoke_ehr` target passes
 `--no-imaging` for you, **no enrichment flags**:
 

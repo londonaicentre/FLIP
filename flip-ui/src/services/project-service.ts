@@ -85,7 +85,8 @@ export type IProject = {
     dicom_to_nifti?: boolean;
     // Whether the project has an imaging stage at all. Set at creation and immutable
     // thereafter (FLIP#1071). Off = tabular-only cohort: no XNAT project, no image
-    // pull, no imaging status card. Optional for the same reason as dicom_to_nifti.
+    // pull, no imaging status card. Unlike dicom_to_nifti the list endpoint does return
+    // it; optional only because a hub predating the flag omits it (absent = imaging).
     has_imaging?: boolean;
 }
 

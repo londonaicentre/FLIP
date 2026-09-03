@@ -132,7 +132,8 @@ class FLIPStandardProd(FLIPBase):
             query (str): SQL query
 
         Returns:
-            pd.DataFrame: Dataframe containing the resulting accession ids and additional data.
+            pd.DataFrame: The cohort rows the trust's query projects — accession ids plus any other
+            columns for an imaging cohort, whatever the query selects for a tabular-only one.
         """
         self.check_query(query)
         self.check_project_id(project_id)
