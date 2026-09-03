@@ -81,6 +81,32 @@ jobs:
       - name: Run checkov_lint.sh test harness
         run: bash deploy/providers/AWS/scripts/tests/test_checkov_lint.sh
 
+  # Credential-free pytest checks over the stack's static artefacts: rendered
+  # Jinja templates, the deploy helper scripts, and Terraform source itself
+  # (e.g. the Cognito callback_urls / CORS allowlist invariants, which no runtime
+  # suite can see — flip-api reads that list from live Cognito, not from this
+  # tree). No AWS calls, no init, no plan. Deps are named explicitly rather than
+  # synced from the lockfile: the tests need only pytest, jinja2 and click,
+  # while the project's dev group pulls ansible-core and pyqt5.
+  python-tests:
+    name: AWS deploy tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Run AWS deploy test suite
+        working-directory: deploy/providers/AWS
+        run: uv run --no-project --with pytest --with jinja2 --with click pytest tests/ -v
+
   # Static checkov security lint (FLIP#1052 + the FLIP#1058 triage): a curated
   # check list over the whole AWS tree — IAM policy content (overly-broad
   # statements fmt/validate can't see) plus promoted infrastructure-posture
