@@ -77,6 +77,41 @@ def test_flower_kit_is_chowned_to_the_supernode_uid_without_fl_backend(flower_ki
     assert "flower kit" in result.stdout
 
 
+@pytest.mark.parametrize(
+    ("fixture_name", "expected", "not_expected"),
+    [
+        ("nvflare_kit", ("local", "startup", "transfer"), ("certificates", "keys")),
+        ("flower_kit", ("certificates", "keys"), ("local", "startup", "transfer")),
+    ],
+)
+def test_mounted_subdirectories_are_created_before_the_chown(request, fixture_name, expected, not_expected):
+    """Every subPath the chart mounts must exist under KIT_DEST before the pod starts.
+
+    A subPath missing from the hostPath is created by kubelet as root:root 0700 and the
+    non-root fl-client cannot write it, while the pod still reports Running — so the failure
+    only surfaces when NVFLARE writes the trained model into ``transfer/`` at the end of a run,
+    or when site policy writes ``privacy.json`` into ``local/`` at container start. Neither
+    ``aws s3 sync`` nor ``docker cp`` recreates an empty directory, so a sync-assembled kit
+    arrives without them. The mkdir has to precede the chown or the created directories keep
+    root's ownership, which is the bug it exists to prevent.
+    """
+    kit = request.getfixturevalue(fixture_name)
+    result = make_n_stage_kit(kit)
+    assert result.returncode == 0, result.stderr
+
+    mkdir_lines = [ln for ln in result.stdout.splitlines() if "mkdir -p" in ln and "fl-kit" in ln]
+    subdir_line = next((ln for ln in mkdir_lines if any(f"/{d}" in ln for d in expected)), None)
+    assert subdir_line is not None, f"no mkdir for the mounted subdirectories: {mkdir_lines}"
+    for name in expected:
+        assert f"/{name}" in subdir_line, f"{name} not pre-created: {subdir_line}"
+    for name in not_expected:
+        assert f"/{name}" not in subdir_line, f"{name} belongs to the other backend: {subdir_line}"
+
+    assert result.stdout.index(subdir_line) < result.stdout.index("chown -R"), (
+        "the subdirectory mkdir must run before the chown, or the new dirs stay root-owned"
+    )
+
+
 def test_keys_alone_mark_a_flower_kit(tmp_path):
     """A Flower kit is recognised by either of its directories, not only by both."""
     kit = tmp_path / "keys-only"

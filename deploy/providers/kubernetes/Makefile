@@ -33,6 +33,15 @@ KIT_DEST ?= /opt/flip/fl-kit
 KIT_SHAPE_NVFLARE := $(if $(wildcard $(KIT_SRC)/startup/),nvflare,)
 KIT_SHAPE_FLOWER := $(if $(wildcard $(KIT_SRC)/certificates/ $(KIT_SRC)/keys/),flower,)
 KIT_BACKEND := $(or $(FL_BACKEND),$(KIT_SHAPE_NVFLARE),$(KIT_SHAPE_FLOWER))
+# The subdirectories the chart mounts out of the kit by subPath (templates/fl-client.yaml).
+# They must exist under KIT_DEST before the pod starts: a subPath that is missing from the
+# hostPath is created by kubelet as root:root 0700, and the non-root fl-client then cannot
+# write it — while the pod still reports Running, so nothing surfaces until NVFLARE writes the
+# trained model into transfer/ at the END of a run, or site policy writes privacy.json into
+# local/ at container start. `aws s3 sync` and `docker cp` both mirror objects rather than
+# empty prefixes, so transfer/ in particular never survives a sync-assembled kit. This is the
+# same defect the EC2 play fixes with its post-sync `mkdir -p "$$dest/transfer"`.
+KIT_SUBDIRS := $(if $(filter flower,$(KIT_BACKEND)),certificates keys,local startup transfer)
 ifneq ($(filter stage-kit,$(MAKECMDGOALS)),)
 ifeq ($(strip $(KIT_SRC)),)
 $(error ❌  KIT_SRC is required — the local directory holding this trust's kit)
@@ -129,6 +138,7 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	  echo "📦 Staging $(KIT_SRC) ($(KIT_BACKEND) kit, owner uid $(KIT_UID)) → [$(KUBE_CONTEXT)] $$node:$(KIT_DEST)"; \
 	  docker exec "$$node" mkdir -p "$(KIT_DEST)" && \
 	  docker cp "$(KIT_SRC)/." "$$node:$(KIT_DEST)/" && \
+	  docker exec "$$node" mkdir -p $(addprefix "$(KIT_DEST)"/,$(KIT_SUBDIRS)) && \
 	  docker exec "$$node" sh -c 'chmod -R go-rwx "$(KIT_DEST)" && chown -R $(KIT_UID):$(KIT_UID) "$(KIT_DEST)"' && \
 	  echo "✅ Kit staged. Deploy with --set flClient.kitHostPath=$(KIT_DEST)"
 
