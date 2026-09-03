@@ -210,6 +210,27 @@ jobs:
             echo "::error::a real PACS with the Service left ClusterIP rendered successfully — the receiver is unreachable"
             exit 1
           fi
+          # Same refusal with NetworkPolicy turned off. This guard began inside network-policy.yaml
+          # and so inherited `if .Values.networkPolicies.enabled`, which made it silently absent for
+          # a supported configuration — policies disabled is the right call on a CNI that does not
+          # enforce them, and rendering unenforced policies is worse than rendering none. It now
+          # lives in the flip-trust.validatePacsReachable partial, evaluated from xnat-web.yaml
+          # beside the Service it is about, so it fires either way. No egress/ingress rules are set
+          # here on purpose: with policies off those checks do not apply, and this asserts the
+          # exposure guard stands on its own.
+          # Assert on the refusal *message*, not just a non-zero exit: any unrelated render error
+          # would otherwise make this pass while proving nothing.
+          if helm template trust-release deploy/providers/kubernetes/ \
+               --set networkPolicies.enabled=false \
+               --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 > /dev/null 2> /tmp/nopolicy.err; then
+            echo "::error::a real PACS on ClusterIP rendered successfully with networkPolicies.enabled=false — the reachability guard is gated on NetworkPolicy again"
+            exit 1
+          fi
+          if ! grep -q "xnat.web.service.type is ClusterIP" /tmp/nopolicy.err; then
+            echo "::error::render failed for some other reason than the ClusterIP reachability guard:"
+            cat /tmp/nopolicy.err
+            exit 1
+          fi
           # And the LoadBalancer allowance must keep rendering, or on-prem MetalLB trusts break.
           helm template trust-release deploy/providers/kubernetes/ \
             --set xnat.web.service.type=LoadBalancer \

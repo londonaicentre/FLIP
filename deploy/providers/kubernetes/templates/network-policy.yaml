@@ -58,8 +58,16 @@ spec:
 {{- range .Values.networkPolicies.allowedEgressPorts }}
   {{- if eq (.port | int) $pacsPort }}{{ $egressOk = true }}{{ end }}
 {{- end }}
+{{- /*
+A non-empty allowedEgressCIDRs satisfies this check whatever is in it: those entries are all-ports
+rules, and Helm cannot do CIDR containment, so the chart cannot tell whether one of them actually
+covers the PACS. That is a deliberate escape hatch rather than an oversight — but it means the
+guarantee here is "either a port-scoped rule names the PACS port, or you have taken an all-ports
+rule on trust", not "a PACS with no egress rule is always refused". Said plainly in the message
+below and at networkPolicies.allowedEgressCIDRs in values.yaml.
+*/ -}}
 {{- if and (not $egressOk) (not .Values.networkPolicies.allowedEgressCIDRs) }}
-{{- fail (printf "pacs.host is %s but no egress rule reaches its query/retrieve port %v. XNAT could not issue C-FIND or C-MOVE, so retrieval would fail before it began. Add the PACS to networkPolicies.allowedEgressCIDRsWithPorts." .Values.pacs.host .Values.pacs.qrPort) }}
+{{- fail (printf "pacs.host is %s but no egress rule reaches its query/retrieve port %v. XNAT could not issue C-FIND or C-MOVE, so retrieval would fail before it began. Add the PACS to networkPolicies.allowedEgressCIDRsWithPorts. (Note: a non-empty networkPolicies.allowedEgressCIDRs also satisfies this check — those are all-ports rules and the chart cannot verify one covers the PACS, so it assumes it does.)" .Values.pacs.host .Values.pacs.qrPort) }}
 {{- end }}
 {{- $dicomPort := .Values.xnat.web.dicomPort | int }}
 {{- $ingressOk := false }}
@@ -79,16 +87,13 @@ side. Both directions now fail equally loudly, at render, naming the values to s
 {{- end }}
 {{- /*
 The NetworkPolicy admits the C-STORE leg only as far as the pod; the packet still needs a route from
-outside the cluster to that pod. templates/xnat-web.yaml publishes the DICOM receiver beyond the
-cluster only when service.type is NodePort AND dicomNodePort is set — on ClusterIP both blocks
-silently no-op, so a chart could satisfy every guard above and still render with no path a PACS
-packet can take: the same queries-succeed/retrievals-time-out failure, one layer up. Refuse
-ClusterIP specifically rather than demanding NodePort, because a LoadBalancer service (MetalLB and
-friends) is an equally valid way to make the receiver reachable and must not be rejected.
+outside the cluster to that pod. That check is deliberately NOT here: it is a statement about the
+Service's exposure rather than about NetworkPolicy, and inside this file it inherited the
+`networkPolicies.enabled` condition above, so an install with policies disabled rendered cleanly on
+ClusterIP with no path a PACS packet could take. It now lives in the
+`flip-trust.validatePacsReachable` partial in _helpers.tpl, included from templates/xnat-web.yaml,
+where it fires either way.
 */ -}}
-{{- if eq .Values.xnat.web.service.type "ClusterIP" }}
-{{- fail (printf "pacs.host is %s but xnat.web.service.type is ClusterIP, so the DICOM receiver is unreachable from outside the cluster and the C-STORE return leg the PACS opens after C-MOVE can never arrive. Set xnat.web.service.type: NodePort plus xnat.web.dicomNodePort (equal to xnat.web.dicomPort), or expose the receiver through a LoadBalancer service." .Values.pacs.host) }}
-{{- end }}
 {{- end }}
 {{- if .Values.networkPolicies.allowedIngressCIDRsWithPorts }}
 # Allow inbound DICOM from the trust PACS.

@@ -10,6 +10,11 @@
 # limitations under the License.
 
 {{- if and .Values.xnat.enabled .Values.xnat.web.enabled }}
+{{- /*
+Refuse a real-PACS install whose receiver has no route in from outside the cluster. Evaluated here,
+beside the Service this is a statement about, so it fires whether or not NetworkPolicy is enabled.
+*/ -}}
+{{- include "flip-trust.validatePacsReachable" . }}
 ---
 apiVersion: v1
 kind: ConfigMap

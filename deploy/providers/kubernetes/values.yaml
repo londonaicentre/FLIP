@@ -801,7 +801,13 @@ networkPolicies:
   # - cidrs:
   #     - 10.0.0.10/32
   #   port: 8104
-  # CIDRs allowed for all-ports egress (in addition to intra-namespace)
+  # CIDRs allowed for all-ports egress (in addition to intra-namespace).
+  #
+  # Setting this to anything non-empty also satisfies the real-PACS egress guard in
+  # templates/network-policy.yaml. Helm cannot test CIDR containment, so the chart cannot check that
+  # one of these entries actually reaches the PACS — it assumes an all-ports rule does. If you rely
+  # on that, the PACS route is yours to verify; the port-scoped
+  # allowedEgressCIDRsWithPorts is what makes the chart check it for you.
   allowedEgressCIDRs: []
   #   - 10.0.0.0/8
   # CIDRs allowed for egress on a specific port, e.g. fl-server gRPC (port 8002)

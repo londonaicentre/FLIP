@@ -143,3 +143,31 @@ drops a staged kit silently (#999) — so both call this helper.
 {{- define "flip-trust.flClientKitFromS3" -}}
 {{- if (index .Values.flClient .Values.flBackend).kitFromS3.enabled }}true{{ end }}
 {{- end }}
+
+{{/*
+Refuse a real-PACS install whose DICOM receiver has no route from outside the cluster.
+
+Retrieval is two connections in opposite directions: XNAT dials the PACS to C-FIND and C-MOVE, then
+the PACS opens a *new* association back to XNAT to C-STORE the studies. templates/xnat-web.yaml
+publishes the receiver beyond the cluster only when service.type is NodePort AND dicomNodePort is
+set — on ClusterIP both blocks silently no-op, so the render succeeds and produces the failure this
+chart calls the hardest to diagnose: queries succeed, retrievals silently time out with nothing
+logged on either side.
+
+This lives here, and is included from xnat-web.yaml, rather than in network-policy.yaml where it
+started: it is a statement about the Service's exposure, not about NetworkPolicy. Inside that file
+it inherited `if .Values.networkPolicies.enabled`, so an install that turns policies off — supported,
+and the right call on a CNI that does not enforce them — rendered cleanly on ClusterIP with no path
+a PACS packet could take, which is precisely the case the guard exists to stop.
+
+Refuses ClusterIP specifically rather than demanding NodePort, because a LoadBalancer service
+(MetalLB and friends) is an equally valid way to make the receiver reachable and must not be
+rejected.
+*/}}
+{{- define "flip-trust.validatePacsReachable" -}}
+{{- if and .Values.xnat.enabled .Values.xnat.web.enabled (ne .Values.pacs.host "orthanc") }}
+{{- if eq .Values.xnat.web.service.type "ClusterIP" }}
+{{- fail (printf "pacs.host is %s but xnat.web.service.type is ClusterIP, so the DICOM receiver is unreachable from outside the cluster and the C-STORE return leg the PACS opens after C-MOVE can never arrive. Set xnat.web.service.type: NodePort plus xnat.web.dicomNodePort (equal to xnat.web.dicomPort), or expose the receiver through a LoadBalancer service." .Values.pacs.host) }}
+{{- end }}
+{{- end }}
+{{- end }}
