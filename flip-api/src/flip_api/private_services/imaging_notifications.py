@@ -122,7 +122,9 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
                 template_name=IMAGING_CREDENTIALS_TEMPLATE_NAME,
                 template_data=template_data.model_dump(mode="json"),
             )
-            logger.info(f"Sent XNAT credentials email to {user.email} for project '{imaging_project.name}'")
+            logger.info(
+                f"XNAT credentials notification dispatched to {user.email} for project '{imaging_project.name}'"
+            )
 
         except BotoCoreError as e:
             raise EmailDispatchError(
@@ -150,7 +152,10 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
                 template_name=IMAGING_PROJECT_ACCESS_TEMPLATE_NAME,
                 template_data=access_template_data.model_dump(mode="json"),
             )
-            logger.info(f"Sent project access email to {added_user.email} for project '{imaging_project.name}'")
+            logger.info(
+                f"Project access notification dispatched to {added_user.email} "
+                f"for project '{imaging_project.name}'"
+            )
 
         except BotoCoreError as e:
             raise EmailDispatchError(
