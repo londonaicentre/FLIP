@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+#
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """
 generate_values.py - Env-to-Helm-values mapping script.
 
@@ -6,10 +17,10 @@ Reads a .env file and generates:
   - values-override.yaml  (non-sensitive Helm values)
   - values-secrets.yaml   (sensitive values, never printed to stdout)
 
-Usage:
-  python3 scripts/generate_values.py \\
-      --env-file ../../.env.development \\
-      --output-dir .
+Usage (from the repo root):
+  python3 deploy/providers/kubernetes/scripts/generate_values.py \\
+      --env-file trust/.env.<CODE>.<env> \\
+      --output-dir deploy/providers/kubernetes
 
 No third-party dependencies (stdlib only).
 """
@@ -36,24 +47,35 @@ ENV_VAR_MAP = {
     "OMOP_DATA_VERSION": ("omopDb.initJob.dataVersion", False),
 }
 
-SECRET_VAR_MAP = {
-    "AES_KEY_BASE64": "aes-key-base64",
-    "TRUST_API_KEY": "trust-api-key",
-    "TRUST_INTERNAL_SERVICE_KEY_HEADER": "trust-internal-service-key-header",
-    "TRUST_INTERNAL_SERVICE_KEY": "trust-internal-service-key",
-    "OMOP_POSTGRES_PASSWORD": "omop-postgres-password",
-    "DATA_ACCESS_POSTGRES_PASSWORD": "data-access-postgres-password",
-    "ORTHANC_REGISTERED_USERS": "orthanc-registered-users",
-    "XNAT_ADMIN_PASSWORD": "xnat-admin-password",
-    "XNAT_SERVICE_USER": "xnat-service-user",
-    "XNAT_SERVICE_PASSWORD": "xnat-service-password",
-    "XNAT_DATASOURCE_PASSWORD": "xnat-datasource-password",
-    "XNAT_DATASOURCE_ADMIN_PASSWORD": "xnat-datasource-admin-password",
-    "GRAFANA_ADMIN_PASSWORD": "grafana-admin-password",
-    "AWS_ACCESS_KEY_ID": "s3-access-key-id",
-    "AWS_SECRET_ACCESS_KEY": "s3-secret-access-key",
-    "AWS_SESSION_TOKEN": "aws-session-token",
-}
+# The chart's credential slots, as (env var name, Secret key name) pairs. Both
+# sides are identifiers; no value appears here, which is why the entries
+# detect-secrets' keyword rule matches carry an inline pragma. Nothing in this
+# file is ever a credential.
+#
+# The pairs are kept here, rather than inline in SECRET_VAR_MAP below, so that
+# the "which slots are unfilled" report in main() can be built from a plain list
+# of names that never held a value and cannot be confused - by a reader or by a
+# static analyser - with the map the values are read into.
+CHART_KEY_SLOTS = (
+    ("AES_KEY_BASE64", "aes-key-base64"),
+    ("TRUST_API_KEY", "trust-api-key"),  # pragma: allowlist secret
+    ("TRUST_INTERNAL_SERVICE_KEY_HEADER", "trust-internal-service-key-header"),  # pragma: allowlist secret
+    ("TRUST_INTERNAL_SERVICE_KEY", "trust-internal-service-key"),  # pragma: allowlist secret
+    ("OMOP_POSTGRES_PASSWORD", "omop-postgres-password"),  # pragma: allowlist secret
+    ("DATA_ACCESS_POSTGRES_PASSWORD", "data-access-postgres-password"),  # pragma: allowlist secret
+    ("ORTHANC_REGISTERED_USERS", "orthanc-registered-users"),
+    ("XNAT_ADMIN_PASSWORD", "xnat-admin-password"),  # pragma: allowlist secret
+    ("XNAT_SERVICE_USER", "xnat-service-user"),
+    ("XNAT_SERVICE_PASSWORD", "xnat-service-password"),  # pragma: allowlist secret
+    ("XNAT_DATASOURCE_PASSWORD", "xnat-datasource-password"),  # pragma: allowlist secret
+    ("XNAT_DATASOURCE_ADMIN_PASSWORD", "xnat-datasource-admin-password"),  # pragma: allowlist secret
+    ("GRAFANA_ADMIN_PASSWORD", "grafana-admin-password"),  # pragma: allowlist secret
+    ("AWS_ACCESS_KEY_ID", "s3-access-key-id"),
+    ("AWS_SECRET_ACCESS_KEY", "s3-secret-access-key"),  # pragma: allowlist secret
+    ("AWS_SESSION_TOKEN", "aws-session-token"),
+)
+
+SECRET_VAR_MAP = dict(CHART_KEY_SLOTS)
 
 
 def deep_set(d, key_path, value):
@@ -211,9 +233,25 @@ def main():
         print("Wrote secrets values to: {} (permissions: 0o600)".format(secrets_path))
         print("WARNING: values-secrets.yaml contains sensitive data.", file=sys.stderr)
         print(
-            "   Do not commit it to version control. Add it to .gitignore.",
+            "   Do not commit it. Inside this repository .gitignore already matches "
+            "**/values-secrets.yaml; elsewhere, add the same rule.",
             file=sys.stderr,
         )
+
+        # Say which slots the env file could not fill. templates/secrets.yaml omits
+        # an empty key, so the pod that mounts it dies with CreateContainerConfigError
+        # — better to hear it here than from a crash-looping container.
+        unfilled = sorted(key for _env_var, key in CHART_KEY_SLOTS if key not in secrets)
+        if unfilled:
+            print(
+                "WARNING: no value in the env file for: {}".format(", ".join(unfilled)),
+                file=sys.stderr,
+            )
+            print(
+                "   Fill by hand whichever your deployment needs — an omitted key fails the pod "
+                "at container creation, not at render.",
+                file=sys.stderr,
+            )
     else:
         print("No secrets env vars found; no secrets file written.")
 
