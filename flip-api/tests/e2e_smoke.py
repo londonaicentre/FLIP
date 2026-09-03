@@ -54,7 +54,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
 import requests
 
@@ -122,14 +122,6 @@ TUTORIALS: dict[str, TutorialCopy] = {
 APP_DIR_NAMES = ("app", "app_files")
 
 
-class TutorialInfo(NamedTuple):
-    """What the smoke infers about the tutorial under ``--model-files-dir``."""
-
-    dir: str
-    label: str
-    task: str
-
-
 # How long to wait for uploaded files to clear malware scanning (#52). The
 # scan runs server-side as a background task; tutorial-sized files finish in
 # seconds, but a multi-GB checkpoint has to be downloaded and structurally
@@ -153,8 +145,8 @@ def _log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def describe_tutorial(model_files_dir: Path) -> TutorialInfo:
-    """Identify the tutorial an app directory belongs to.
+def describe_tutorial(model_files_dir: Path) -> TutorialCopy:
+    """The copy for the tutorial an app directory belongs to.
 
     The result drives the smoke's default project name, model name and description, so a run is
     named for what it actually trained rather than a hardcoded "Xrays".
@@ -163,14 +155,15 @@ def describe_tutorial(model_files_dir: Path) -> TutorialInfo:
         model_files_dir (Path): The ``--model-files-dir`` argument (``…/<tutorial>/app`` or ``app_files``).
 
     Returns:
-        TutorialInfo: The tutorial directory name, its human-readable label, and its clinical task.
+        TutorialCopy: The tutorial's human-readable label and its clinical task.
     """
-    tutorial_dirs = [part for part in model_files_dir.resolve().parts if part not in APP_DIR_NAMES]
-    tutorial_dir = tutorial_dirs[-1] if tutorial_dirs else model_files_dir.name
+    app_dir = model_files_dir.resolve()
+    tutorial_dir = app_dir.parent.name if app_dir.name in APP_DIR_NAMES else app_dir.name
     copy = TUTORIALS.get(tutorial_dir)
-    label = copy.label if copy else tutorial_dir.replace("_", " ").replace("-", " ").strip().capitalize()
-    task = copy.task if copy else f"Training the {label} application across the participating trusts' data."
-    return TutorialInfo(tutorial_dir, label, task)
+    if copy is not None:
+        return copy
+    label = tutorial_dir.replace("_", " ").replace("-", " ").strip().capitalize()
+    return TutorialCopy(label, f"Training the {label} application across the participating trusts' data.")
 
 
 def default_project_name(label: str) -> str:

@@ -157,7 +157,9 @@ def projection_lacks_accession_id(statement: sqlglot.expressions.Expression) -> 
     the SELECT list (``*``, ``t.*``, even ``COUNT(*)``), and any item whose output name Postgres
     chooses itself (a function call, a scalar subquery). Names are compared the way Postgres resolves
     the trust's unquoted ``accession_id``: unquoted identifiers fold to lower case, quoted ones must
-    match exactly — so ``"Accession_ID"`` counts as lacking the column.
+    match exactly — so ``"Accession_ID"`` counts as lacking the column. That last rule is why sqlglot's
+    own ``named_selects`` is not used here: it returns bare strings, discarding the quoting this
+    depends on.
 
     Args:
         statement (sqlglot.expressions.Expression): The parsed statement :func:`validate_query` returned.

@@ -61,19 +61,14 @@
                         />
                     </div>
 
-                    <div
-                        role="tablist"
-                        class="inline-flex bg-white dark:bg-dark-canvas border border-gray-200 dark:border-dark-border rounded-lg p-1"
-                    >
+                    <div role="tablist" :class="SEGMENTED_GROUP_CLASS">
                         <button
                             v-for="opt in accessOptions"
                             :key="opt.id"
                             type="button"
                             role="tab"
-                            class="px-3 py-1.5 rounded-md text-sm font-semibold transition-colors"
-                            :class="ownerFilter === opt.value
-                                ? 'bg-gray-100 dark:bg-dark-surface text-gray-900 dark:text-gray-100'
-                                : 'bg-transparent text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
+                            :aria-selected="ownerFilter === opt.value"
+                            :class="segmentClass(ownerFilter === opt.value)"
                             :data-test="`access-filter-${opt.id}`"
                             @click="ownerFilter = opt.value"
                         >
@@ -83,12 +78,7 @@
 
                     <!-- Type filter (FLIP#1071): the same segmented pattern as the My/All toggle;
                          the two typed labels are long, so they collapse to their icons below md. -->
-                    <div
-                        role="tablist"
-                        aria-label="Project type"
-                        class="inline-flex bg-white dark:bg-dark-canvas border border-gray-200 dark:border-dark-border rounded-lg p-1"
-                        data-test="type-filter"
-                    >
+                    <div role="tablist" aria-label="Project type" :class="SEGMENTED_GROUP_CLASS" data-test="type-filter">
                         <button
                             v-for="opt in typeOptions"
                             :key="opt.id"
@@ -96,12 +86,9 @@
                             role="tab"
                             :aria-selected="typeFilter === opt.value"
                             :title="opt.label"
-                            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-semibold transition-colors"
-                            :class="typeFilter === opt.value
-                                ? 'bg-gray-100 dark:bg-dark-surface text-gray-900 dark:text-gray-100'
-                                : 'bg-transparent text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
+                            :class="segmentClass(typeFilter === opt.value)"
                             :data-test="`type-filter-${opt.id}`"
-                            @click="typeFilter = opt.value"
+                            @click="selectType(opt.value)"
                         >
                             <icon-ph-scan v-if="opt.id === 'imaging'" class="w-4 h-4 shrink-0" aria-hidden="true" />
                             <icon-ph-database v-else-if="opt.id === 'omop-only'" class="w-4 h-4 shrink-0" aria-hidden="true" />
@@ -362,9 +349,15 @@ const searchQueryParam = ref("");
 const ownerQueryParam = ref("");
 // `ownerFilter=true` = "My projects" only; false = all accessible.
 const ownerFilter = ref(false);
-// Type filter (FLIP#1071): "all" sends no parameter; the others map onto `projectType=`.
+// Type filter (FLIP#1071): "all" sends no parameter; the others map onto `projectType=`. Derived
+// rather than watched — a segmented control is a click, so there is no keystroke storm to debounce.
 const typeFilter = ref<ProjectTypeFilter>("all");
-const typeQueryParam = ref("");
+const typeQueryParam = computed(() => (typeFilter.value === "all" ? "" : `&projectType=${typeFilter.value}`));
+
+const selectType = (value: ProjectTypeFilter): void => {
+    typeFilter.value = value;
+    pageNumber.value = 1;
+};
 const userId = authStore.user?.userId;
 
 // Every list row is its own grid, so a content-sized (`auto`) track resolves to a
@@ -386,6 +379,17 @@ const viewMode = ref<ViewMode>("list");
 
 type SortKey = "created" | "status" | "name" | "cohort";
 const sortKey = ref<SortKey>("created");
+
+// The two toolbar segmented controls (My/All, Type) share one look; keep the class strings in one
+// place so they cannot drift apart.
+const SEGMENTED_GROUP_CLASS = "inline-flex bg-white dark:bg-dark-canvas border border-gray-200 "
+    + "dark:border-dark-border rounded-lg p-1";
+const segmentClass = (active: boolean): string[] => [
+    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-semibold transition-colors",
+    active
+        ? "bg-gray-100 dark:bg-dark-surface text-gray-900 dark:text-gray-100"
+        : "bg-transparent text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200"
+];
 
 const accessOptions = [
     {
@@ -447,14 +451,6 @@ debouncedWatch(
     { debounce: 300 }
 );
 
-debouncedWatch(
-    typeFilter,
-    () => {
-        typeQueryParam.value = typeFilter.value === "all" ? "" : `&projectType=${typeFilter.value}`;
-        pageNumber.value = 1;
-    },
-    { debounce: 300 }
-);
 
 const addProject = () => {
     modalsStore.toggleCreateProject();

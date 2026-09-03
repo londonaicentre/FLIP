@@ -120,7 +120,7 @@ const approvedTrusts = projectStore.project?.approvedTrusts;
 
 // The enrichment attestation stays for every project; only its wording depends on whether there
 // is imaging to enrich (FLIP#1071). Absent on a hub predating the flag, which means imaging.
-const hasImaging = computed(() => (projectStore.project ? projectHasImaging(projectStore.project) : true));
+const hasImaging = computed(() => projectHasImaging(projectStore.project));
 
 const trustsToSelect: ComputedRef<ITrustsToTrain[] | undefined> = computed(() =>
     approvedTrusts?.filter(t => t.approved)

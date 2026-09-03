@@ -110,38 +110,33 @@ async def approve_project_step_function_endpoint(
             logger.warning("No trusts found for project")
             return {"message": "Project approved but no trusts to process"}
 
-        # FLIP#1071: the only place the hub decides what it dispatches for a tabular-only project. The
-        # project is approved above exactly as before; what changes is that no CREATE_IMAGING task is
-        # queued, so no trust creates an XNAT project or calls the accession-ids route — the flag is
-        # never sent to a trust.
-        if not has_imaging:
+        # Step 3: For Each Trust — unless the project has no imaging. FLIP#1071: this is the only
+        # place the hub decides what it dispatches for a tabular-only project. The project is
+        # approved above exactly as before; what changes is that no CREATE_IMAGING task is queued, so
+        # no trust creates an XNAT project or calls the accession-ids route — the flag is never sent
+        # to a trust. An empty result set then reports zero trusts processed through the one response
+        # contract below.
+        if has_imaging:
+            logger.info(f"Processing {len(trusts)} trusts for project {project_id}")
+            # Execute trust processing in parallel
+            trust_tasks = [process_trust(request, project_id, trust, db, user_id) for trust in trusts]
+            start_image_results = await asyncio.gather(*trust_tasks)
+            message = "Project approval workflow completed"
+        else:
             logger.info(f"Project {project_id} has no imaging: skipping the imaging fan-out to {len(trusts)} trust(s)")
-            return {
-                "message": "Project approved; imaging stage skipped (project has no imaging)",
-                "projectId": project_id,
-                "successful": True,
-                "trusts": {"processed": 0, "succeeded": 0, "failed": 0},
-                "details": [],
-            }
-
-        logger.info(f"Processing {len(trusts)} trusts for project {project_id}")
-
-        # Step 3: For Each Trust
-        start_image_results = []
-
-        # Execute trust processing in parallel
-        trust_tasks = [process_trust(request, project_id, trust, db, user_id) for trust in trusts]
-        start_image_results = await asyncio.gather(*trust_tasks)
+            start_image_results = []
+            message = "Project approved; imaging stage skipped (project has no imaging)"
 
         # Check if any trust processing failed
         failures = [result for result in start_image_results if not result.get("success")]
+        processed = len(start_image_results)
 
         # Return final response
         return {
-            "message": "Project approval workflow completed",
+            "message": message,
             "projectId": project_id,
             "successful": len(failures) == 0,
-            "trusts": {"processed": len(trusts), "succeeded": len(trusts) - len(failures), "failed": len(failures)},
+            "trusts": {"processed": processed, "succeeded": processed - len(failures), "failed": len(failures)},
             "details": start_image_results,
         }
 

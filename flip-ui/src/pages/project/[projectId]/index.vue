@@ -136,26 +136,20 @@
                     </Transition>
                 </div>
 
-                <template v-if="hasImaging">
-                    <div class="lg:sticky top-16">
-                        <ProjectStatus
-                            :can-load="projectApproved"
-                            :cohort-size="project.query?.totalCohort"
-                        />
-                    </div>
+                <div v-if="hasImaging" class="lg:sticky top-16">
+                    <ProjectStatus
+                        :can-load="projectApproved"
+                        :cohort-size="project.query?.totalCohort"
+                    />
+                </div>
 
-                    <!-- Stretched cell + absolutely positioned card: the model list can't
-                         inflate the row, so the card matches the height the imaging
-                         project status card defines and scrolls internally instead. -->
-                    <div class="relative lg:self-stretch">
-                        <LatestModels class="lg:absolute lg:inset-0" />
-                    </div>
-                </template>
-                <!-- FLIP#1071: a project without imaging has no status card. Nothing replaces
-                     it — the model list widens into the main workspace and flows to its own
-                     height, since there is no sibling card defining a row to pin to. -->
-                <div v-else class="lg:sticky top-16">
-                    <LatestModels />
+                <!-- With imaging: a stretched cell + absolutely positioned card, so the model list
+                     can't inflate the row — it matches the height the imaging project status card
+                     defines and scrolls internally instead. Without imaging (FLIP#1071) nothing
+                     replaces that card, so the list widens into the main workspace and flows to its
+                     own height, there being no sibling card defining a row to pin to. -->
+                <div :class="hasImaging ? 'relative lg:self-stretch' : 'lg:sticky top-16'">
+                    <LatestModels :class="hasImaging ? 'lg:absolute lg:inset-0' : ''" />
                 </div>
             </div>
         </div>
@@ -167,7 +161,7 @@
             :project-unstaged="isProjectUnstaged() && !isViewer"
             :description="project.description"
             :dicom-to-nifti="project.dicom_to_nifti ?? true"
-            :has-imaging="projectHasImaging(project)"
+            :has-imaging="hasImaging"
             :updating="projectUpdating"
             :owner-id="project.ownerId"
             @close="closeEditProjectDrawer"
@@ -274,7 +268,7 @@ const unstageProjectPermissions: UserPermissions[] = ["CanUnstageProjects"];
 const { isViewer, canCreateProjects } = usePermissions();
 
 // Creation-time flag (FLIP#1071). Absent on a hub predating it, which means imaging.
-const hasImaging = computed(() => (project.value ? projectHasImaging(project.value) : true));
+const hasImaging = computed(() => projectHasImaging(project.value));
 
 const projectApproved = computed(() => {
     return project?.value?.status === "APPROVED";
