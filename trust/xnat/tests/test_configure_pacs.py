@@ -101,10 +101,10 @@ exit 0
 
 BASE_ENV = {
     "XNAT_ADMIN_USER": "admin",
-    "XNAT_ADMIN_INITIAL_PASSWORD": "initial",
-    "XNAT_ADMIN_PASSWORD": "rotated",
+    "XNAT_ADMIN_INITIAL_PASSWORD": "initial",  # pragma: allowlist secret
+    "XNAT_ADMIN_PASSWORD": "rotated",  # pragma: allowlist secret
     "XNAT_SERVICE_USER": "flipServiceAccount",
-    "XNAT_SERVICE_PASSWORD": "service",
+    "XNAT_SERVICE_PASSWORD": "service",  # pragma: allowlist secret
     "XNAT_PORT": "8104",
     # The plugin-readiness wait polls until a DQR route answers, bounded only by wall clock. With
     # sleep stubbed out, a test that makes that route fail would spin at full speed for the default
@@ -134,6 +134,9 @@ STOCK_RECEIVER = '{"id":1,"aeTitle":"XNAT","port":8104,"identifier":"dicomObject
 # An operator's, registered by hand for some other local DICOM source: neither marker, so nothing
 # here owns it.
 OPERATOR_RECEIVER = '{"id":9,"aeTitle":"WARDCT","port":11113,"identifier":"dicomObjectIdentifier"}'
+# The same unowned receiver, but squatting the port this deployment is about to bind. XNAT rejects a
+# second receiver on a bound port, so this one cannot be worked around by registering alongside it.
+SQUATTING_RECEIVER = '{"id":9,"aeTitle":"WARDCT","port":8104,"identifier":"dicomObjectIdentifier"}'
 
 
 def run_configure(tmp_path, env_overrides=None, pacs_state=None, scp_state=None):
@@ -391,6 +394,26 @@ def test_a_receiver_this_script_does_not_own_survives_the_reconcile(tmp_path):
     # The two it does own still go, or the re-created receiver fights the old one for the port.
     assert any(u.endswith("/xapi/dicomscp/3") for u in deleted), "left FLIP's own stale receiver behind"
     assert any(u.endswith("/xapi/dicomscp/1") for u in deleted), "left XNAT's stock receiver behind"
+
+
+def test_a_receiver_squatting_our_port_is_refused_before_anything_is_deleted(tmp_path):
+    """Refusing has to happen before the reclamation loop, not at the POST.
+
+    An unowned receiver on the port this deployment binds is left alone by the reclamation above
+    (correctly — it is not ours), and the POST that follows is then rejected by XNAT as a duplicate
+    port. If the deletes have already run by that point, a redeploy that changed nothing else ends
+    with FLIP's own working receiver gone and no replacement: strictly worse than the state it
+    started in, and on Kubernetes the only record is a Job pod log discarded on success. The
+    PACS-side guard further down refuses ahead of its deletes; this asserts the SCP side matches.
+    """
+    code, payloads, output = run_configure(
+        tmp_path,
+        scp_state=f"[{FLIP_OWNED_RECEIVER}, {SQUATTING_RECEIVER}]",
+    )
+    assert code != 0, "a squatted port should abort the run"
+    assert not deletes(payloads), f"deleted something before refusing: {deletes(payloads)}"
+    assert "WARDCT" in output, "the refusal must name the receiver holding the port"
+    assert "8104" in output
 
 
 def test_foreign_pacs_registrations_are_removed(tmp_path):

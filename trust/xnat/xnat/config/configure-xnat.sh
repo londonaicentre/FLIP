@@ -183,12 +183,17 @@ xnat_curl() {
 # registration, availability intervals) carry their own already-configured
 # guards instead of relying on this short-circuit.
 # (These probes check status codes explicitly — a non-200 here is a signal,
-# not an error, so they intentionally stay bare curl rather than xnat_curl.)
-init_pw_status=$(curl -s -o /dev/null -w '%{http_code}' \
+# not an error, so they intentionally stay bare curl rather than xnat_curl.
+# They carry xnat_curl's deadlines even so: the wall-clock wait above proves XNAT serves the login
+# page, not that an authenticated route answers, so an XNAT wedged on its database — the documented
+# "reverted to uninitialized Setup mode" failure — would otherwise hang the deploy here with no
+# output and no timeout.)
+init_pw_status=$(curl -s --connect-timeout 5 --max-time 15 -o /dev/null -w '%{http_code}' \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
   "$XNAT_URL/xapi/siteConfig/initialized")
 if [[ "${init_pw_status}" != "200" ]]; then
-  initialized=$(curl -s -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+  initialized=$(curl -s --connect-timeout 5 --max-time 15 \
+    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
     "$XNAT_URL/xapi/siteConfig/initialized")
   if [[ "${initialized}" == "true" ]]; then
     echo "XNAT already configured (initialized=true, initial password no longer works) — skipping."
@@ -345,10 +350,14 @@ xnat_curl -X PUT "$XNAT_URL/xapi/anonymize/site/enabled" \
 #
 # A receiver an operator registered for some other local DICOM source carries neither marker and is
 # left alone — it would otherwise be deleted on every redeploy and `helm upgrade`, with the deletion
-# visible only in a Job pod log that is discarded on success. If such a receiver is squatting the
-# port we are about to bind, it survives to the POST below, which then fails loud through xnat_curl:
-# deliberately the same choice the PACS-side guard makes further down — refuse rather than silently
-# delete configuration this deployment may not own.
+# visible only in a Job pod log that is discarded on success.
+#
+# If such a receiver is squatting the port we are about to bind, refuse BEFORE deleting anything.
+# The POST below does fail loud on the duplicate port, but by then the reclamation loop has already
+# removed FLIP's own working receiver, so a redeploy that changed nothing else leaves XNAT with no
+# DICOM receiver at all — worse than the state it started in. The PACS-side guard further down gets
+# this ordering right (it refuses ahead of its deletes), and the listing this check needs has
+# already been fetched, so the check is free.
 #
 # Both markers are literals in the filter, so nothing operator-supplied is spliced into jq.
 response=$(xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" "$XNAT_URL/xapi/dicomscp")
@@ -356,6 +365,25 @@ response=$(xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" "$XNAT_URL/xapi/
 if [[ -z "$response" || "$response" == "[]" ]]; then
     echo "No SCP receivers found."
 else
+    # Pre-flight: a receiver carrying neither ownership marker, already bound to the port this
+    # deployment is about to register, blocks the POST below. Refuse now, while FLIP's own receiver
+    # is still in place.
+    squatters=$(printf '%s' "$response" \
+      | jq -r --argjson port "${XNAT_PORT}" \
+              '.[] | select(.port == $port)
+                   | select(.identifier != "dqrObjectIdentifier" and .aeTitle != "XNAT")
+                   | "\(.aeTitle):\(.port) (id \(.id))"')
+    if [[ -n "$squatters" ]]; then
+        echo "ERROR: another DICOM SCP receiver already holds port ${XNAT_PORT}, and it carries" >&2
+        echo "       neither FLIP ownership marker (identifier 'dqrObjectIdentifier', AE title" >&2
+        echo "       'XNAT'). Refusing to delete this deployment's receiver for a registration" >&2
+        echo "       that would then be rejected as a duplicate port, which would leave XNAT with" >&2
+        echo "       no receiver at all. Free the port or remove the receiver in XNAT's admin UI," >&2
+        echo "       or point this deployment at another port via XNAT_PORT. Found:" >&2
+        printf '         %s\n' "$squatters" >&2
+        exit 1
+    fi
+
     stale_ids=$(printf '%s' "$response" \
       | jq -r '.[] | select(.identifier == "dqrObjectIdentifier" or .aeTitle == "XNAT")
                    | "\(.id):\(.aeTitle):\(.port)"')
