@@ -792,14 +792,34 @@ deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and dep
 	fi
 	@# The variable being set is necessary but not sufficient — it must actually
 	@# be applied. Confirm the behaviour exists on the live distribution.
+	@# Capture the count into a variable rather than testing `if ! … | grep -qv`:
+	@# _AWS_ENV expands to `unset …; AWS_PROFILE=…`, so the embedded `;` bound the
+	@# `!` to the `unset` and left the `if` condition as the *un-negated* grep —
+	@# inverting the guard, which then refused to publish on a correctly
+	@# provisioned distribution and waved the demo through on an unprovisioned
+	@# one (precisely the silent-detach this check exists to prevent).
 	@DIST_ID=$$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId); \
-	if ! $(_AWS_ENV) aws cloudfront get-distribution-config --id "$$DIST_ID" \
-		--query "DistributionConfig.CacheBehaviors.Items[?PathPattern=='/ark_demo/*'] | length(@)" \
-		--output text 2>/dev/null | grep -qv '^0$$'; then \
-		echo "❌ No /ark_demo/* cache behaviour on distribution $$DIST_ID."; \
-		echo "   DEMO_ASSETS_BUCKET_NAME is set but not applied — run a terraform apply first."; \
+	[ -n "$$DIST_ID" ] || { \
+		echo "❌ Terraform output CloudfrontDistributionId is empty."; \
+		echo "   The state has no distribution to check — run a terraform apply first."; \
 		exit 1; \
-	fi
+	}; \
+	if ! DEMO_BEHAVIOURS=$$($(_AWS_ENV) aws cloudfront get-distribution-config --id "$$DIST_ID" \
+		--query "DistributionConfig.CacheBehaviors.Items[?PathPattern=='/ark_demo/*'] | length(@)" \
+		--output text 2>&1); then \
+		echo "❌ Could not read the CloudFront distribution config for $$DIST_ID."; \
+		echo "   aws said: $$DEMO_BEHAVIOURS"; \
+		echo "   That is a lookup failure — an expired SSO session, the wrong profile, or no"; \
+		echo "   network — NOT a missing behaviour. Fix the credential or connectivity and"; \
+		echo "   re-run; a terraform apply is not the remedy here."; \
+		exit 1; \
+	fi; \
+	case "$$DEMO_BEHAVIOURS" in \
+		''|0|None) \
+			echo "❌ No /ark_demo/* cache behaviour on distribution $$DIST_ID."; \
+			echo "   DEMO_ASSETS_BUCKET_NAME is set but not applied — run a terraform apply first."; \
+			exit 1;; \
+	esac
 	@echo "🖼️  Building flip-ui Ark+ demo bundle from working tree..."
 	@# npm run build:demo's postbuild hook regenerates dist/js/window.js itself
 	@# (scripts/generate-demo-window-js.sh) — no separate window.js step needed,
