@@ -19,9 +19,15 @@ therefore use a plain stand-in rather than importing ``flwr``.
 
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 
-from flip.flower.identity import UNKNOWN_CLIENT, client_identity
+from flip.flower.identity import (
+    UNKNOWN_CLIENT,
+    check_splits_are_populated,
+    client_identity,
+    partition_cohort,
+)
 
 
 def _context(node_config: dict | None = None) -> SimpleNamespace:
@@ -78,3 +84,86 @@ def test_context_without_node_config_is_tolerated(monkeypatch: pytest.MonkeyPatc
     """Older/!simulated contexts may not carry node_config at all."""
     monkeypatch.delenv("SUPERNODE_NAME", raising=False)
     assert client_identity(SimpleNamespace()) == UNKNOWN_CLIENT
+
+
+def _cohort(n: int, column: str = "accession_id") -> pd.DataFrame:
+    if column == "accession_id":
+        return pd.DataFrame({column: [f"subject_{i}" for i in range(n)]})
+    return pd.DataFrame({column: list(range(n))})
+
+
+def test_partitions_are_disjoint_and_covering(monkeypatch: pytest.MonkeyPatch):
+    """Every row lands in exactly one partition — the property the whole helper exists for."""
+    monkeypatch.delenv("SUPERNODE_NAME", raising=False)
+    cohort = _cohort(40)
+    parts = [
+        partition_cohort(cohort, _context({"partition-id": str(i), "num-partitions": "2"}))
+        for i in (0, 1)
+    ]
+    seen = pd.concat(parts).accession_id.tolist()
+    assert sorted(seen) == sorted(cohort.accession_id.tolist())
+    assert not set(parts[0].accession_id) & set(parts[1].accession_id)
+
+
+def test_string_keys_partition_stably_across_processes(monkeypatch: pytest.MonkeyPatch):
+    """accession_id is a string, and Python's hash() is salted per interpreter.
+
+    Two ClientApp processes using hash() would disagree about who owns a row, so partitions
+    would overlap and lose data. The bucket must be a fixed function of the id.
+    """
+    monkeypatch.delenv("SUPERNODE_NAME", raising=False)
+    ctx = _context({"partition-id": "0", "num-partitions": "2"})
+    first = partition_cohort(_cohort(40), ctx).accession_id.tolist()
+    assert first == partition_cohort(_cohort(40), ctx).accession_id.tolist()
+    assert first, "partition 0 should not be empty for 40 rows"
+
+
+def test_numeric_keys_keep_the_modulo_convention(monkeypatch: pytest.MonkeyPatch):
+    """person_id keeps `id % n`, matching the tabular tutorial and the trust loader's split."""
+    monkeypatch.delenv("SUPERNODE_NAME", raising=False)
+    part = partition_cohort(_cohort(10, "person_id"), _context({"partition-id": "1", "num-partitions": "2"}))
+    assert part.person_id.tolist() == [1, 3, 5, 7, 9]
+
+
+def test_supernode_name_selects_the_same_partition_as_node_config(monkeypatch: pytest.MonkeyPatch):
+    """The compose stack and the simulator must agree, or a cohort splits differently per runtime."""
+    monkeypatch.delenv("SUPERNODE_NAME", raising=False)
+    by_config = partition_cohort(_cohort(20), _context({"partition-id": "0", "num-partitions": "2"}))
+    monkeypatch.setenv("SUPERNODE_NAME", "Trust_1")
+    by_env = partition_cohort(_cohort(20), _context({}), num_partitions=2)
+    assert by_env.accession_id.tolist() == by_config.accession_id.tolist()
+
+
+def test_single_partition_and_unknown_key_return_the_cohort_unchanged(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("SUPERNODE_NAME", raising=False)
+    cohort = _cohort(5)
+    assert partition_cohort(cohort, _context({"partition-id": "0", "num-partitions": "1"})) is cohort
+    assert partition_cohort(pd.DataFrame({"other": [1, 2]}), _context({"partition-id": "0"})).shape == (2, 1)
+
+
+def test_unidentifiable_client_gets_the_cohort_unchanged(monkeypatch: pytest.MonkeyPatch):
+    """partition_cohort is permissive by design; client_identity's guard is what raises."""
+    monkeypatch.delenv("SUPERNODE_NAME", raising=False)
+    cohort = _cohort(4)
+    assert partition_cohort(cohort, _context({})) is cohort
+
+
+def test_populated_splits_pass_silently():
+    check_splits_are_populated({"train": 3, "val": 1}, cohort_rows=5, client_name="site-1")
+
+
+def test_empty_split_names_the_real_cause():
+    """Flower would otherwise surface this as InconsistentMessageReplies, which says nothing."""
+    with pytest.raises(ValueError, match="split val is empty"):
+        check_splits_are_populated(
+            {"train": 2, "val": 0}, cohort_rows=3, client_name="site-1", num_partitions=2
+        )
+
+
+def test_message_mentions_partitioning_only_when_partitioned():
+    with pytest.raises(ValueError, match="split val is empty") as partitioned:
+        check_splits_are_populated({"val": 0}, cohort_rows=3, client_name="site-1", num_partitions=2)
+    assert "partitioning a shared cohort 2 ways" in str(partitioned.value)
+    with pytest.raises(ValueError, match="split val is empty") as whole:
+        check_splits_are_populated({"val": 0}, cohort_rows=3, client_name="site-1")
+    assert "partitioning" not in str(whole.value)

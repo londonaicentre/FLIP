@@ -109,12 +109,19 @@ command — `sim-tutorial.sh` handles all three:
 FLIP's `DevSettings` singleton is pinned at import time, so all of the above must be set *before*
 the process starts; the script does that, but it does mean you cannot change them mid-run.
 
-**One honest limitation for the imaging tutorials.** Under the compose stack each SuperNode mounts
-its own `net-N` slice of the images tree, so the sites hold genuinely disjoint data. A single
-simulator process cannot reproduce that, so both simulated clients read the same
-`DEV_IMAGES_DIR`. The mechanics — rounds, aggregation, metrics, best-model selection — are
-exercised faithfully; the data partitioning is not. Treat simulator results as a smoke test of the
-code, not as a federated experiment.
+**The sites hold genuinely disjoint data.** Historically that came from each SuperNode mounting
+its own `net-N` slice of the images tree — which one simulator process cannot reproduce, so both
+clients would have read the same `DEV_IMAGES_DIR`. The cohort is therefore partitioned in the app
+instead: `flip.flower.identity.partition_cohort` slices the fetched dataframe by this client's
+`partition-id`, so the split is the same under the simulator and under the compose stack. It is
+gated on `FlipConstants.LOCAL_DEV` — deployed, each trust's data-access-api already serves that
+trust its own cohort, and partitioning again would silently discard most of it.
+
+`accession_id` is a string, so the bucket is a SHA-256 of the id rather than Python's `hash()`,
+which is salted per interpreter — two ClientApp processes using `hash()` would disagree about who
+owns a row and the partitions would overlap and lose data. Numeric ids (`person_id`) keep the
+`id % n` convention the tabular tutorial and the trust loader already use, so a cohort splits the
+same way however it is partitioned.
 
 The first run is slow: `flwr run` builds a per-run environment under `~/.flwr/runtime-envs/` and
 installs the app's dependencies (MONAI, torch) into it. Later runs reuse it.
