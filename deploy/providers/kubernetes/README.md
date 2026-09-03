@@ -82,12 +82,29 @@ via the chart's built-in Secret template (`secrets.create=true` + a
 `values-secrets.yaml`, see the [Secrets Reference](#secrets-reference)) or create
 the Secret externally.
 
-> `values-secrets.yaml` is **generated, gitignored, and must never be committed** —
-> it carries live trust credentials. Produce it with
-> `scripts/generate_values.py --env-file trust/.env.<CODE>.<env>`, which writes it
-> with mode `0600`. The tracked `values-secrets.yaml.example` is a placeholder
-> field reference only; copying it into place without filling it will not deploy. `make sync-kit` (next step) patches the per-trust keys
-*on top* of this Secret without touching the infra keys.
+> **`values-secrets.yaml` is generated, gitignored, and must never be committed.**
+> It carries live trust credentials. The tracked `values-secrets.yaml.example` is a
+> field reference with every slot empty — not a working file.
+
+Generate it from the repo root:
+
+```bash
+python3 deploy/providers/kubernetes/scripts/generate_values.py \
+  --env-file trust/.env.<CODE>.<env> \
+  --output-dir deploy/providers/kubernetes
+```
+
+That writes `values-secrets.yaml` with mode `0600` (and `values-override.yaml`
+beside it). Four slots it **cannot** fill, because no trust kit carries the source
+env var: `orthanc-registered-users`, `s3-access-key-id`, `s3-secret-access-key`
+and `aws-session-token`. Hand-fill whichever your deployment needs. An empty slot
+is omitted from the Secret by `templates/secrets.yaml` and the pod that mounts it
+then fails with `CreateContainerConfigError` — deliberate (it is why copying the
+example into place does not deploy), and also why Orthanc will not start until
+`orthanc-registered-users` is filled.
+
+`make sync-kit` (next step) patches the per-trust keys *on top* of this Secret
+without touching the infra keys.
 
 ### 3. Sync the kit into the cluster
 
