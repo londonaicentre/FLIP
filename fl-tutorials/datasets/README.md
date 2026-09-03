@@ -117,7 +117,9 @@ reads this data lives with the tutorial instead, at
 - `download_data.py` — fetch the PI-CAI bpMRI images + whole-gland/zonal labels + clinical
   marksheet from Zenodo/GitHub (`FOLDS` narrows which of the 5 ~5GB fold zips to fetch).
 - `convert_mha_to_dicom.py` — convert the downloaded `.mha` scans to a DICOM series per study.
-- `convert_mha_to_nifti.py` — convert the downloaded `.mha` scans to `.nii.gz`.
+- `convert_dicom_to_nifti.py` — convert those DICOM series to `.nii.gz` with the platform's own
+  pinned dcm2niix image (read from `trust/xnat/xnat/config/dcm2niix_command.json`), so the
+  simulator trains on the same bytes an fl-client gets from XNAT. Needs Docker.
 - `partition_by_center.py` — split the converted NIfTI scans + labels into one folder per
   acquiring center (RUMC/PCNN/ZGT), ready for `PicaiDataset` per simulated FL client. Re-running
   it repairs stale symlinks, so it is safe over an existing `sites/` tree.

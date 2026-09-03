@@ -25,13 +25,14 @@ from tqdm import tqdm
 
 ZENODO_FOLD_URL = "https://zenodo.org/records/6624726/files/picai_public_images_fold{fold}.zip?download=1"
 LABELS_URL = "https://github.com/DIAGNijmegen/picai_labels/archive/refs/heads/main.zip"
-LABELS_SUBDIR = "picai_labels-main/anatomical_delineations/whole_gland/AI/Bosma22b"
-ZONAL_LABELS_SUBDIR = "picai_labels-main/anatomical_delineations/zonal_pz_tz/AI/HeviAI23"
+LABELS_SUBDIR = "picai_labels-main/anatomical_delineations/whole_gland/AI/Guerbet23"
+ZONAL_LABELS_SUBDIR = "picai_labels-main/anatomical_delineations/zonal_pz_tz/AI/Yuan23"
 CLINICAL_INFO_FILE = "picai_labels-main/clinical_information/marksheet.csv"
 
 
 def download(url: str, dest: Path) -> None:
     with tqdm(unit="B", unit_scale=True, unit_divisor=1024, desc=dest.name) as bar:
+
         def report(block_num: int, block_size: int, total_size: int) -> None:
             if bar.total is None and total_size > 0:
                 bar.total = total_size

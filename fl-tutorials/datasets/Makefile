@@ -134,10 +134,13 @@ convert-prostate-to-dicom:
 	@$(PROSTATE_UV) python prostate/convert_mha_to_dicom.py \
 		--input $(DATA_DIR)/prostate/images --output $(DATA_DIR)/prostate/dicom
 
-# Convert the downloaded .mha scans to .nii.gz.
+# Convert the DICOM series (above) to .nii.gz with the platform's own pinned dcm2niix image —
+# the same conversion an fl-client gets from XNAT after image pull, so the simulator trains on
+# identical bytes. Scanner metadata rides in the DICOM and comes back as a BIDS sidecar; there
+# is no second .mha → NIfTI path to drift. Needs Docker. Runs after convert-prostate-to-dicom.
 convert-prostate-to-nifti:
-	@$(PROSTATE_UV) python prostate/convert_mha_to_nifti.py \
-		--input $(DATA_DIR)/prostate/images --output $(DATA_DIR)/prostate/nifti
+	@$(PROSTATE_UV) python prostate/convert_dicom_to_nifti.py \
+		--input $(DATA_DIR)/prostate/dicom --output $(DATA_DIR)/prostate/nifti
 
 # Partition the converted NIfTI scans + labels by acquiring center (RUMC/PCNN/ZGT), ready for
 # PicaiSegDataset per simulated FL client. Needs convert-prostate-to-nifti to have run first.

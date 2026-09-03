@@ -15,6 +15,7 @@ version = "0.1.0"
 description = "Local uv environment for the shared prostate dataset tooling (PI-CAI download + DICOM/NIfTI conversion + center partitioning)."
 requires-python = ">=3.12,<3.14"
 dependencies = [
+    "nibabel>=5.3.2",
     "pydicom>=3.0.2",
     "simpleitk>=2.5.6",
     "tqdm>=4.67.0",

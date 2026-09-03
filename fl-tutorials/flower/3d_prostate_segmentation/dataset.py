@@ -14,15 +14,57 @@
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import monai
+import monai.transforms as mt
 import nibabel as nib
 import numpy as np
 import pandas as pd
 import torch
-from einops import rearrange
-from nibabel.processing import resample_from_to
+from monai.data import MetaTensor
+
+IMAGE_KEY = "image"
+WHOLE_GLAND_KEY = "whole_gland"
+PZ_TZ_KEY = "pz_tz"
+# Every volume is reoriented to this before use — see build_loader.
+AXCODES = "RAS"
+
+
+def build_loader() -> mt.Compose:
+    """The transform chain that reads one study's image and two masks onto one grid.
+
+    Image and masks are paired by affine, never by array index. On the platform the image an
+    fl-client receives is dcm2niix output from XNAT, which stores each volume with the DICOM row
+    axis reversed (dcm2niix's ``isFlipY``, on by default and not exposed in the command XNAT
+    registers), while the PI-CAI masks uploaded at enrichment are in the ``.mha`` convention
+    SimpleITK writes — the same voxels, the other row order. Each file's affine is correct, so
+    reading both through ``Orientationd`` lands them on one grid; reading raw arrays mirrors the
+    mask across the image's anterior-posterior midline (Dice 0.52 against its true position on
+    10000_1000000). The simulator's own data goes through the same chain, so the two paths produce
+    identical tensors — ``tests/test_prostate_dataset_orientation.py`` pins both.
+
+    The zonal (HeviAI23) and whole-gland (Bosma22b) labels are independent AI submissions and do
+    not always share a grid, so both masks are resampled onto the *image's* grid by affine
+    (nearest, zero-padded — a label must not bleed past its own extent). When a mask already sits
+    on that grid the resample is the identity.
+
+    Returns:
+        mt.Compose: ``{IMAGE_KEY, WHOLE_GLAND_KEY, PZ_TZ_KEY}`` paths in; channel-first ``AXCODES``
+        MetaTensors on the image grid out.
+    """
+    keys = [IMAGE_KEY, WHOLE_GLAND_KEY, PZ_TZ_KEY]
+    return mt.Compose(
+        [
+            mt.LoadImaged(keys=keys, ensure_channel_first=True, image_only=True),
+            # labels=None is MONAI's announced default (axis labels from the tensor's own space); passing
+            # it now opts in rather than tripping the FutureWarning the test suite escalates.
+            mt.Orientationd(keys=keys, axcodes=AXCODES, labels=None),
+            mt.ResampleToMatchd(
+                keys=[WHOLE_GLAND_KEY, PZ_TZ_KEY], key_dst=IMAGE_KEY, mode="nearest", padding_mode="zeros"
+            ),
+        ]
+    )
 
 
 class PicaiDataset(monai.data.Dataset):
@@ -57,43 +99,36 @@ class PicaiDataset(monai.data.Dataset):
         self.modality = modality
         self.transform = transform
         self.fingerprint = fingerprint
+        self.loader = build_loader()
         self.df = pd.read_csv(self.site_dir / "manifest.csv", dtype=str)
 
     def __len__(self) -> int:
         return len(self.df)
 
-    def combine_masks(self, wp_mask_path: Path, pz_tz_mask_path: Path) -> np.ndarray:
+    @staticmethod
+    def combine_masks(whole_gland: torch.Tensor, pz_tz: torch.Tensor) -> torch.Tensor:
         """Combine the whole-prostate and PZ/TZ masks into one 3-channel mask.
 
-        The whole-gland (Bosma22b) and PZ/TZ (HeviAI23) labels are independent
-        AI submissions and don't always share a grid for the same study; the
-        PZ/TZ mask is resampled (nearest-neighbor) onto the whole-gland grid
-        when their shapes disagree.
+        Both arrive from the loader already on the image grid (see build_loader), so this is
+        purely a relabelling.
 
         Args:
-            wp_mask_path: Path to the whole-gland mask.
-            pz_tz_mask_path: Path to the PZ/TZ mask (1=PZ, 2=TZ).
+            whole_gland: (1, H, W, D) whole-gland mask, 1 inside the gland.
+            pz_tz: (1, H, W, D) zonal mask (1=PZ, 2=TZ).
 
         Returns:
-            np.ndarray: (H, W, D, 3) mask, channels [whole_gland, pz, tz].
+            torch.Tensor: (3, H, W, D) mask, channels [whole_gland, pz, tz].
         """
-        wp_nii = nib.load(wp_mask_path)
-        pz_tz_nii = nib.load(pz_tz_mask_path)
-        if pz_tz_nii.shape != wp_nii.shape:
-            pz_tz_nii = resample_from_to(pz_tz_nii, wp_nii, order=0)
-
-        wp_data = np.round(wp_nii.get_fdata()).astype(np.int8)
-        pz_tz_data = np.round(pz_tz_nii.get_fdata()).astype(np.int8)
-
-        mask = np.zeros(wp_data.shape + (3,))
-        mask[wp_data == 1, 0] = 1
-        mask[pz_tz_data == 1, 1] = 1  # pz
-        mask[pz_tz_data == 2, 2] = 1  # tz
+        whole_gland_labels = torch.round(whole_gland[0]).to(torch.int8)
+        pz_tz_labels = torch.round(pz_tz[0]).to(torch.int8)
+        mask = torch.zeros((3, *whole_gland_labels.shape), dtype=torch.float32)
+        mask[0][whole_gland_labels == 1] = 1
+        mask[1][pz_tz_labels == 1] = 1  # pz
+        mask[2][pz_tz_labels == 2] = 1  # tz
         return mask
 
-    def as_fingerprint_pair(
-        self, img_nii: nib.Nifti1Image, mask: np.ndarray
-    ) -> dict[str, nib.Nifti1Image]:
+    @staticmethod
+    def as_fingerprint_pair(image: MetaTensor, mask: torch.Tensor) -> dict[str, nib.Nifti1Image]:
         """Wrap a loaded scan and its combined mask as the NIfTI pair the fingerprint wants.
 
         Both arrays carry a leading channel axis, so the header gets a matching
@@ -104,19 +139,17 @@ class PicaiDataset(monai.data.Dataset):
         `c h w d -> c d h w` rearrange it applies to the arrays.
 
         Args:
-            img_nii: The scan as loaded from `nifti/`.
+            image: (1, H, W, D) scan as the loader returns it; its affine is the pair's affine.
             mask: (3, H, W, D) combined mask, channels [whole_gland, pz, tz].
 
         Returns:
             dict: `{"image": (1, H, W, D) NIfTI, "mask": (3, H, W, D) NIfTI}`.
         """
-        zooms = (1.0,) + tuple(img_nii.header.get_zooms()[:3])
-
-        image = np.expand_dims(img_nii.get_fdata(), axis=0)
+        affine = np.asarray(image.affine, dtype=np.float64)
+        zooms = (1.0, *(float(z) for z in nib.affines.voxel_sizes(affine)))
         pair = {}
-        for name, array in (("image", image), ("mask", mask)):
-            nii = img_nii.__class__(array, img_nii.affine, img_nii.header)
-            nii.header.set_data_shape(array.shape)
+        for name, array in (("image", image.cpu().numpy()), ("mask", mask.cpu().numpy())):
+            nii = nib.Nifti1Image(array, affine)
             nii.header.set_zooms(zooms)
             pair[name] = nii
         return pair
@@ -126,23 +159,22 @@ class PicaiDataset(monai.data.Dataset):
         patient_id, study_id = row["patient_id"], row["study_id"]
         accession_id = f"{patient_id}_{study_id}"
 
-        img_path = self.nifti_dir / f"{accession_id}_{self.modality}.nii.gz"
-        wp_mask_path = self.wp_mask_dir / f"{accession_id}.nii.gz"
-        pz_tz_mask_path = self.pz_tz_mask_dir / f"{accession_id}.nii.gz"
-
-        img_nii = cast(nib.Nifti1Image, nib.load(img_path))
-        mask = rearrange(
-            self.combine_masks(wp_mask_path, pz_tz_mask_path), "h w d c -> c h w d"
+        loaded = self.loader(
+            {
+                IMAGE_KEY: self.nifti_dir / f"{accession_id}_{self.modality}.nii.gz",
+                WHOLE_GLAND_KEY: self.wp_mask_dir / f"{accession_id}.nii.gz",
+                PZ_TZ_KEY: self.pz_tz_mask_dir / f"{accession_id}.nii.gz",
+            }
         )
+        image = loaded[IMAGE_KEY]
+        mask = self.combine_masks(loaded[WHOLE_GLAND_KEY], loaded[PZ_TZ_KEY])
 
         if self.fingerprint:
-            return self.as_fingerprint_pair(img_nii, mask)
-
-        image = np.expand_dims(img_nii.get_fdata(), axis=0)
+            return self.as_fingerprint_pair(image, mask)
 
         data = {
-            "image": torch.as_tensor(image, dtype=torch.float32),
-            "mask": torch.as_tensor(mask, dtype=torch.float16),
+            "image": image.as_tensor().to(torch.float32),
+            "mask": mask.to(torch.float16),
             "accession_id": accession_id,
         }
 

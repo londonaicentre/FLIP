@@ -33,7 +33,7 @@ pattern as [`../spleen/`](../spleen/).
 prostate
 ├── download_data.py        # Downloads PI-CAI images + whole-gland/zonal labels + clinical marksheet
 ├── convert_mha_to_dicom.py # Converts .mha scans to a DICOM series per study
-├── convert_mha_to_nifti.py # Converts .mha scans to .nii.gz
+├── convert_dicom_to_nifti.py # Converts the DICOM series to .nii.gz with the platform's pinned dcm2niix
 ├── partition_by_center.py  # Splits nifti/labels by acquiring center (RUMC/PCNN/ZGT)
 └── README.md
 ```
@@ -68,18 +68,38 @@ folds/labels/zonal labels/clinical info already downloaded (marked by a `.done` 
 which converts DICOM to `.mha` via SimpleITK; it runs that conversion in reverse, writing one
 `.dcm` file per slice with correct `PatientID`, `StudyInstanceUID`, `SeriesInstanceUID`,
 `ImagePositionPatient`, `ImageOrientationPatient`, `PixelSpacing`, and `SliceThickness` tags so
-the series reconstructs correctly in a PACS viewer. `convert_mha_to_nifti.py` writes one
-`.nii.gz` per scan, keeping the same `<patient_id>/<patient_id>_<study_id>_<modality>.nii.gz`
-layout as the source `.mha` files. Both converters run one worker process per CPU by default.
+the series reconstructs correctly in a PACS viewer. It runs one worker process per CPU by default.
 
-Both also carry through the acquisition metadata PI-CAI leaves in the `.mha` headers — `Manufacturer`,
-`ManufacturersModelName`, the real acquisition date, `PatientSex`, `PatientAge` and
+`convert_dicom_to_nifti.py` then produces the simulator's
+`<patient_id>/<patient_id>_<study_id>_<modality>.nii.gz` **from those DICOM series**, not from the
+`.mha` files — with the platform's own pinned dcm2niix image, read from the same
+`trust/xnat/xnat/config/dcm2niix_command.json` the trusts' XNAT registers, so there is no second
+pin to drift. Two things follow. The scanner metadata below is written exactly once (into the
+DICOM) and read back by dcm2niix into a BIDS `<patient>_<study>_<modality>.json` sidecar, instead
+of two parallel converters each carrying a copy of the tag list. And what the simulator trains on
+is byte-for-byte what an fl-client receives after image pull — the same dcm2niix, the same flags
+(`-z y`; the sidecar's `-b y -ba n` adds a file, not bytes) — including its orientation handling,
+which a direct SimpleITK conversion does not reproduce. It needs Docker, runs one container per
+series (8 in parallel by default), and skips series whose output already exists.
+
+That orientation handling is a real difference, not a detail. dcm2niix stores every volume with the
+DICOM row axis reversed (its `isFlipY` default, which the XNAT registration does not override) and
+corrects the affine to match, so its voxel array is the `picai_labels` array mirrored along one axis
+while both files describe the same physical volume. Pairing image and label by array index therefore
+lands the mask flipped against the image (whole-gland Dice 0.52 against its true position on
+`10000_1000000`), and the old direct `.mha` conversion only hid that because SimpleITK writes in the
+labels' order. `PicaiDataset` in the tutorial loads the image and both masks through MONAI's
+`LoadImaged` + `Orientationd` and resamples the masks onto the image grid by affine, which makes the
+platform's files and the simulator's interchangeable —
+[`../../tests/test_prostate_dataset_orientation.py`](../../tests/test_prostate_dataset_orientation.py)
+pins both storage orders.
+
+The DICOM writer carries through the acquisition metadata PI-CAI leaves in the `.mha` headers —
+`Manufacturer`, `ManufacturersModelName`, the real acquisition date, `PatientSex`, `PatientAge` and
 `PatientIdentityRemoved`. This is the dataset's **only** per-study record of which scanner acquired a
 scan (`marksheet.csv` has no scanner columns), so it is worth keeping: it is what lets you partition
 finer than the three `center` values, and without it every converted study is stamped with the date it
-happened to be converted. The DICOM writer copies the tags across directly; NIfTI has nowhere to put
-them, so `convert_mha_to_nifti.py` writes a BIDS-style `<patient>_<study>_<modality>.json` sidecar
-beside each volume.
+happened to be converted. NIfTI has nowhere to put them, which is what the sidecar is for.
 
 `convert_mha_to_dicom.py` additionally writes the acquiring `center` into `ClinicalTrialSiteID`
 (0012,0030), read from `clinical_information/marksheet.csv` via `--marksheet`. The center is the one
