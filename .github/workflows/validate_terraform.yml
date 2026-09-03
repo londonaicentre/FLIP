@@ -100,6 +100,34 @@ jobs:
       - name: Run ${{ matrix.harness }}
         run: bash deploy/providers/AWS/scripts/tests/${{ matrix.harness }}
 
+  # The pytest suite over the deploy tooling: reconcile_ci_env.py's state mining
+  # (which decides what a CI plan is handed), check_status.py, the CloudWatch and
+  # email templates, update_ssm_ssh_config.py and verify_deploy_readiness.py.
+  #
+  # It has its own job because the root `make unit_test` does not reach here —
+  # deploy/providers/AWS is not one of the service directories it walks — and
+  # `make -C deploy/providers/AWS test` cannot be used either: that Makefile
+  # errors at parse time unless AWS_PROFILE matches the target environment.
+  # Run locally with `uv run --project deploy/providers/AWS pytest deploy/providers/AWS/tests`.
+  python-tests:
+    name: Deploy Python tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Run the deploy test suite
+        working-directory: deploy/providers/AWS
+        run: uv run --frozen pytest tests -v
+
   # Static checkov security lint (FLIP#1052 + the FLIP#1058 triage): a curated
   # check list over the whole AWS tree — IAM policy content (overly-broad
   # statements fmt/validate can't see) plus promoted infrastructure-posture

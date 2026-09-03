@@ -29,9 +29,13 @@
 #     the FL watch list changes, apply; otherwise hold for an operator. See
 #     scripts/check-fl-plan-impact.sh.
 #
-# Re-running after quiescing: use the workflow_dispatch trigger on the same
-# branch. Dispatching from any other branch fails closed — the apply role's trust
-# policy pins job_workflow_ref to this file at refs/heads/{develop,main}.
+# Re-running after quiescing: dispatch this workflow on the same branch with
+# `fl_quiesced: true`. That input is the operator's attestation that FL job
+# pickup is paused and no net is BUSY, and it is the only thing that skips the
+# gate — without it the re-run re-reads the same plan, finds the same FL change
+# and holds again, forever. Dispatching from any other branch fails closed: the
+# apply role's trust policy pins job_workflow_ref to this file at
+# refs/heads/{develop,main}.
 
 name: Terraform Apply
 
@@ -42,6 +46,14 @@ on:
       - "deploy/providers/AWS/**"
       - ".github/workflows/terraform_apply.yml"
   workflow_dispatch:
+    inputs:
+      fl_quiesced:
+        description: >-
+          FL is quiesced (deployment mode on, no BUSY net) — skip the FL-impact
+          gate. This is an operator attestation, not a check: the runner cannot
+          reach GET /fl/quiesce, so nothing verifies it.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -64,10 +76,14 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # Full history: the image-wait decision below diffs this push against
+          # its predecessor, which a shallow clone cannot reach.
+          fetch-depth: 0
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
         with:
           role-to-assume: ${{ vars.TF_APPLY_ROLE_ARN }}
           role-session-name: flip-tf-apply-${{ github.run_id }}
@@ -75,6 +91,46 @@ jobs:
 
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # This workflow fires on `deploy/providers/AWS/**`; the image builds fire on
+      # service paths. An infrastructure-only merge therefore publishes no
+      # `sha-<short7>` image at all, and waiting the full budget for one that
+      # cannot exist adds up to GHCR_WAIT_SECONDS per image — half an hour of
+      # idle runner on the commonest kind of apply. So the budget is spent only
+      # when this push actually touched a path that builds one of the two images
+      # the resolver looks for.
+      - name: Decide how long to wait for this commit's images
+        id: wait
+        env:
+          BEFORE: ${{ github.event.before }}
+          CONFIGURED_WAIT: ${{ vars.GHCR_WAIT_SECONDS || 900 }}
+        run: |
+          set -euo pipefail
+          # flip-api        <- test_flip_api.yml -> docker_build_flip_api.yml
+          # flare-fl-server
+          # flower-superlink <- fl-docker-build-{nvflare,flower}.yml
+          paths=(
+            flip-api
+            fl-services
+            flip-utils
+            .github/workflows/test_flip_api.yml
+            .github/workflows/docker_build_flip_api.yml
+            .github/workflows/fl-docker-build-nvflare.yml
+            .github/workflows/fl-docker-build-flower.yml
+          )
+          seconds="${CONFIGURED_WAIT}"
+          reason="cannot tell what changed — waiting the full budget"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${BEFORE}" =~ ^[0-9a-f]{40}$ ]] &&
+            git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            if [[ -z "$(git diff --name-only "${BEFORE}" "${GITHUB_SHA}" -- "${paths[@]}")" ]]; then
+              seconds=0
+              reason="no service path changed in ${BEFORE:0:7}..${GITHUB_SHA:0:7} — probing once instead of waiting"
+            else
+              reason="a service path changed — waiting up to ${CONFIGURED_WAIT}s for its image"
+            fi
+          fi
+          echo "GHCR wait: ${seconds}s (${reason})."
+          echo "seconds=${seconds}" >> "$GITHUB_OUTPUT"
 
       # Hazard A. Waits for this commit's `sha-<short7>` images, which
       # docker_build_*.yml publishes only after the service's tests pass — so an
@@ -88,7 +144,7 @@ jobs:
           FALLBACK_DOCKER_TAG: ${{ vars.DOCKER_TAG }}
           FALLBACK_DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}
           FL_BACKEND: ${{ vars.FL_BACKEND }}
-          GHCR_WAIT_SECONDS: ${{ vars.GHCR_WAIT_SECONDS || 900 }}
+          GHCR_WAIT_SECONDS: ${{ steps.wait.outputs.seconds }}
         run: deploy/providers/AWS/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"
 
       # DOCKER_TAG / DOCKER_FL_TAG are deliberately absent from this env block:
@@ -134,8 +190,8 @@ jobs:
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
           INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
           INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
-          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_DB: ${{ vars.POSTGRES_DB }}
+          POSTGRES_USER: ${{ vars.POSTGRES_USER }}
         run: |
           deploy/providers/AWS/scripts/compose-ci-env.sh \
             ".env.${{ github.ref_name == 'main' && 'production' || 'stag' }}"
@@ -153,7 +209,7 @@ jobs:
           chmod 600 "$HOME/.ssh/host-aws.pub"
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: "~> 1.13"
           terraform_wrapper: false
@@ -190,10 +246,24 @@ jobs:
       # Hazard B. Exit 1 holds the deploy with the resources named; exit 2 means
       # the plan could not be read, which is also a hold — never an apply.
       - name: Check the plan for FL impact
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.fl_quiesced) }}
         working-directory: deploy/providers/AWS
         run: |
           terraform show -json tfplan > tfplan.json
           scripts/check-fl-plan-impact.sh tfplan.json
+
+      # The documented remedy for a held apply — quiesce FL, then re-run — needs
+      # a way to say "I have quiesced it", or the re-run holds on the same plan
+      # forever. Nothing here verifies the claim: the runner cannot reach
+      # GET /fl/quiesce. It is recorded as a warning annotation with the actor's
+      # name so the attestation is attributable after the fact.
+      - name: Record the FL-quiesce attestation
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.fl_quiesced }}
+        env:
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          echo "::warning title=FL gate skipped::${ACTOR} dispatched this apply with fl_quiesced=true, so scripts/check-fl-plan-impact.sh was not run. An in-flight training run is killed if that attestation is wrong."
 
       # tf-via-pr moves `plan-file` onto its own working path, so hand it a copy
       # rather than the file it is about to overwrite.

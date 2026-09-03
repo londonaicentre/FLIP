@@ -29,6 +29,14 @@
 #     from assuming the *apply* role is the `job_workflow_ref` condition in
 #     deploy/providers/AWS/ci/main.tf, not the ref in `sub`.
 #
+# The image tags are resolved, not read from configuration. `vars.DOCKER_TAG` is
+# the mutable `:stag`, while an apply writes the immutable `sha-<short7>` pin
+# (FLIP#751) into the task definition — so a plan that read the configured tag
+# would report a permanent `sha-… -> :stag` diff on every task definition,
+# including the FL ones, which the apply workflow's FL gate then holds on. The
+# resolver runs here in its `RESOLVE_SHA_TAG=false` mode: read the tag each
+# service is running, never wait on a registry.
+#
 # Known limitation: this plans staging for every PR, including a release PR into
 # `main`. Staging and production hold different input values, so a staging plan
 # is a good proxy for a production one but not a substitute — read a prod diff
@@ -69,14 +77,30 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
         with:
           role-to-assume: ${{ vars.TF_PLAN_ROLE_ARN }}
           role-session-name: flip-tf-plan-${{ github.run_id }}
           aws-region: ${{ vars.AWS_REGION }}
+
+      # Read the tags the staging services are running, rather than the
+      # configured mutable ones. RESOLVE_SHA_TAG=false skips the GHCR probe
+      # entirely: a PR's merge commit has no published image and never will, so
+      # there is nothing to wait for and no registry credential is needed.
+      # DOCKER_TAG / DOCKER_FL_TAG reach the compose step below through
+      # $GITHUB_ENV, which is why they are absent from its `env:` block.
+      - name: Resolve the image tags the services are running
+        env:
+          GIT_SHA: ${{ github.event.pull_request.head.sha }}
+          DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
+          FALLBACK_DOCKER_TAG: ${{ vars.DOCKER_TAG }}
+          FALLBACK_DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}
+          FL_BACKEND: ${{ vars.FL_BACKEND }}
+          RESOLVE_SHA_TAG: "false"
+        run: deploy/providers/AWS/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"
 
       # The Makefile reads its inputs from ../../../.env.stag. Composing that file
       # rather than exporting TF_VAR_* directly keeps the Makefile as the single
@@ -109,8 +133,6 @@ jobs:
           ALB_SUBDOMAIN: ${{ vars.ALB_SUBDOMAIN }}
           NLB_SUBDOMAIN: ${{ vars.NLB_SUBDOMAIN }}
           DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
-          DOCKER_TAG: ${{ vars.DOCKER_TAG }}
-          DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}
           FL_BACKEND: ${{ vars.FL_BACKEND }}
           FL_KIT_SLOT_NAMES: ${{ vars.FL_KIT_SLOT_NAMES }}
           FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
@@ -124,8 +146,8 @@ jobs:
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
           INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
           INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
-          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_DB: ${{ vars.POSTGRES_DB }}
+          POSTGRES_USER: ${{ vars.POSTGRES_USER }}
         run: deploy/providers/AWS/scripts/compose-ci-env.sh .env.stag
 
       # aws_key_pair.public_key is ForceNew and neither keypair is behind a
@@ -146,7 +168,7 @@ jobs:
           chmod 600 "$HOME/.ssh/host-aws.pub"
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: "~> 1.13"
           terraform_wrapper: false
