@@ -381,6 +381,11 @@ def test_resolve_image_opts_out_only_for_a_known_non_amd64_arch(arch: str, expec
     resolved = subprocess.run(
         [
             "make",
+            # Without this the probe's output is framed by "Entering/Leaving directory" whenever
+            # make runs as a sub-make (MAKELEVEL > 0) — which is exactly how CI invokes the suite,
+            # via `make -C trust/xnat/tests unit_test`. A bare interactive run is MAKELEVEL 0 and
+            # prints nothing, so the banner would only ever appear in CI.
+            "--no-print-directory",
             "-f",
             "Makefile",
             "-f",
