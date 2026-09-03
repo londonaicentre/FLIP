@@ -2067,8 +2067,11 @@ def test_list_local_base_files_excludes_developer_files_that_are_not_artefacts(t
     ]
 
 
-# Files a committed template may carry that the bundle deliberately leaves behind. Anything else
-# appearing in fl-apps/ must either ship or be added here as a considered decision.
+# Files a committed template may carry that the bundle deliberately leaves behind, as paths relative
+# to the template root. Anything else appearing in fl-apps/ must either ship or be added here as a
+# considered decision. Matched as whole relative paths rather than by basename: a nested
+# `docs/README.md` is a different decision from the root `README.md`, and exempting it by name would
+# let a dropped nested file through the guard silently.
 KNOWN_UNBUNDLED_TEMPLATE_FILES = frozenset({"README.md", "recipe.py", "required_files.json"})
 
 
@@ -2121,7 +2124,7 @@ def test_every_committed_template_file_either_ships_or_is_known_unbundled(fl_bac
         bundled = set(fl_service.list_local_base_files(template, fl_backend))
         committed = {p.relative_to(template).as_posix() for p in template.rglob("*") if p.is_file()}
         assert committed, f"template {template.name} has no committed files"
-        unaccounted = {rel for rel in committed - bundled if Path(rel).name not in KNOWN_UNBUNDLED_TEMPLATE_FILES}
+        unaccounted = {rel for rel in committed - bundled if rel not in KNOWN_UNBUNDLED_TEMPLATE_FILES}
         assert not unaccounted, (
             f"{fl_backend}/{template.name}: committed but not bundled and not a known exclusion: "
             f"{sorted(unaccounted)}. Either the allowlist should keep it, or add it to "
