@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
 
+import httpx
 from fastapi import Request
 from sqlalchemy import Column
 from sqlmodel import Session, col, select
@@ -34,7 +35,7 @@ from flip_api.domain.interfaces.fl import (
 from flip_api.domain.schemas.status import FLJobStatus, FLTargets, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.utils.encryption import encrypt
-from flip_api.utils.exceptions import JobAbortedError, NotFoundError
+from flip_api.utils.exceptions import JobAbortedError, NotFoundError, TransientDispatchError
 from flip_api.utils.http import http_delete, http_get, http_post
 from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import S3Client
@@ -343,17 +344,23 @@ def validate_client_availability(clients: list[str], endpoint: str, fl_backend: 
         None
 
     Raises:
-        ValueError: If any client is unavailable (NVFLARE backend only).
+        TransientDispatchError: If the FL API cannot be reached, its client status cannot be
+            fetched, or any client is unavailable (NVFLARE backend only). These are transient
+            dispatch failures: a client or the FL API may be mid-restart and retry can succeed.
     """
     is_flower = fl_backend == FLBackend.FLOWER
 
-    client_statuses = check_client_status(endpoint)
+    try:
+        client_statuses = check_client_status(endpoint)
+    except httpx.RequestError as e:
+        raise TransientDispatchError(f"Unable to reach the FL API at {endpoint}: {e}") from e
+
     if not client_statuses:
         if is_flower:
             logger.warning(f"No client status response from FL API at {endpoint} — Flower will handle client selection")
             return
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")
-        raise ValueError("Unable to fetch client statuses to validate client availability")
+        raise TransientDispatchError("Unable to fetch client statuses to validate client availability")
 
     logger.info(f"Client status: {client_statuses}")
 
@@ -363,7 +370,7 @@ def validate_client_availability(clients: list[str], endpoint: str, fl_backend: 
         if is_flower:
             logger.warning(f"Clients unavailable: {', '.join(unavailable)} — Flower will handle client selection")
             return
-        raise ValueError(f"Clients unavailable: {', '.join(unavailable)}")
+        raise TransientDispatchError(f"Clients unavailable: {', '.join(unavailable)}")
 
 
 def abort_job(endpoint: str, job_id: str) -> dict:
@@ -441,10 +448,16 @@ def start_training(
     # is the side effect that creates the backend run, so a job aborted mid-prepare (#787) must
     # never reach it.
     _raise_if_job_aborted(fl_job_id, session)
-    upload_app(model_id, training_details, endpoint)
+    try:
+        upload_app(model_id, training_details, endpoint)
+    except httpx.RequestError as e:
+        raise TransientDispatchError(f"Unable to upload the application to the FL API at {endpoint}: {e}") from e
     _raise_if_job_aborted(fl_job_id, session)
     logger.info(f"Submitting job for training for model {model_id} with FL job ID {fl_job_id}")
-    submit_job(fl_job_id, endpoint, model_id, session)
+    try:
+        submit_job(fl_job_id, endpoint, model_id, session)
+    except httpx.RequestError as e:
+        raise TransientDispatchError(f"Unable to submit the job to the FL API at {endpoint}: {e}") from e
 
 
 def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) -> str:

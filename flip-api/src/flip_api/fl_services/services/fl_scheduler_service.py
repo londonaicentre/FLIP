@@ -48,7 +48,7 @@ from flip_api.fl_services.services.fl_service import (
     validate_client_availability,
 )
 from flip_api.model_services.services.model_service import add_log, update_model_status, validate_trust_ids
-from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
+from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError, TransientDispatchError
 from flip_api.utils.logger import logger
 
 
@@ -85,6 +85,46 @@ def remove_job(job_id: UUID, session: Session) -> None:
         session.rollback()
         logger.error(f"Error reverting job pickup: {e}")
         raise DatabaseError("Error reverting job pickup") from e
+
+
+def requeue_job(job_id: UUID, session: Session) -> None:
+    """
+    Returns a picked-up job to QUEUED after a transient dispatch failure.
+
+    This is the inverse of ``remove_job``: instead of marking the job DELETED, it keeps the row
+    and clears the pickup timestamps and backend job id (which was never written when the
+    dispatch failed transiently), so the next scheduler tick can select it again.
+
+    Args:
+        job_id (UUID): The ID of the job to requeue.
+        session (Session): SQLModel session.
+
+    Returns:
+        None
+
+    Raises:
+        flip_api.utils.exceptions.NotFoundError: If no ``FLJob`` exists with the given ID.
+        DatabaseError: If the update fails at the DB layer.
+    """
+    logger.info(f"Requeuing job pickup: {job_id}")
+    try:
+        job = session.get(FLJob, job_id)
+        if not job:
+            logger.error(f"FLJob with id {job_id} not found")
+            raise NotFoundError(f"FLJob with id {job_id} not found")
+
+        job.status = JobStatus.QUEUED
+        job.started = None
+        job.fl_backend_job_id = None
+
+        session.commit()
+
+        logger.info("Requeued job pickup")
+
+    except SQLAlchemyError as e:
+        session.rollback()
+        logger.error(f"Error requeuing job pickup: {e}")
+        raise DatabaseError("Error requeuing job pickup") from e
 
 
 def remove_job_from_queue(model_id: UUID, session: Session) -> None:
@@ -651,11 +691,12 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         bool: True when the job was submitted to the fl-server; False when a concurrent abort
             (#787) deleted the job before or during prepare — an abort gate at the top of the
             function catches aborts landed since the pickup commit — in which case submission
-            was skipped and the net released.
+            was skipped and the net released; also False when a transient dispatch failure
+            requeued the job for the next tick.
 
     Raises:
-        Exception: If the FL backend is unsupported, the net endpoint cannot be resolved, client
-            availability validation fails, or training fails to start. On failure the job is
+        Exception: If the FL backend is unsupported, the net endpoint cannot be resolved, or
+            training fails to start with a genuine (fatal) error. On fatal failure the job is
             removed, the model is marked as errored, the net is released, and the original
             exception is re-raised.
     """
@@ -730,6 +771,16 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         # error. The job is already DELETED and the model STOPPED — just make sure the net is
         # free (the abort usually released it already; this is an idempotent belt-and-braces).
         logger.info(f"Job {fl_job_id} for model {model_id} was aborted mid-prepare; skipping submission.")
+        release_scheduler_for_model(model_id, session)
+        return False
+
+    except TransientDispatchError as e:
+        # A transient dispatch failure (client mid-restart, FL API cold-start, connection
+        # refused/timeout) must not destroy the job: requeue it so the next scheduler tick
+        # retries, and free the net. The model status is deliberately left alone.
+        logger.warning(f"Transient dispatch failure for job {fl_job_id} (model {model_id}); requeueing: {e}")
+        requeue_job(fl_job_id, session)
+        add_log(model_id, f"Transient dispatch failure; job requeued: {e}", session, success=False)
         release_scheduler_for_model(model_id, session)
         return False
 

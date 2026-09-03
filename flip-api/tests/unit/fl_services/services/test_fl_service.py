@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 
 from flip_api.config import Settings
@@ -28,7 +29,7 @@ from flip_api.domain.interfaces.fl import (
 from flip_api.domain.schemas.status import ClientStatus, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_service
-from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
+from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError, TransientDispatchError
 
 
 @pytest.fixture
@@ -176,7 +177,7 @@ def test_validate_client_availability_all_offline(mock_get_status):
         IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS),
     ]
 
-    with pytest.raises(ValueError, match="Clients unavailable: trust-1"):
+    with pytest.raises(TransientDispatchError, match="Clients unavailable: trust-1"):
         fl_service.validate_client_availability(["trust-1"], "endpoint", FLBackend.NVFLARE)
 
 
@@ -188,7 +189,7 @@ def test_validate_client_availability_some_online(mock_get_status):
     ]
 
     # This has to raise an error for Trust_2 only.
-    with pytest.raises(ValueError, match="Clients unavailable: Trust_2"):
+    with pytest.raises(TransientDispatchError, match="Clients unavailable: Trust_2"):
         fl_service.validate_client_availability(["Trust_2", "Trust_1"], "endpoint", FLBackend.NVFLARE)
 
 
@@ -196,8 +197,17 @@ def test_validate_client_availability_some_online(mock_get_status):
 def test_validate_client_availability_empty_statuses(mock_get_status):
     mock_get_status.return_value = []
 
-    with pytest.raises(ValueError, match="Unable to fetch client statuses"):
+    with pytest.raises(TransientDispatchError, match="Unable to fetch client statuses"):
         fl_service.validate_client_availability(["trust-1"], "endpoint", FLBackend.NVFLARE)
+
+
+@patch("flip_api.fl_services.services.fl_service.check_client_status")
+def test_validate_client_availability_connection_error_is_transient(mock_get_status):
+    """Connection refused/timeout while checking client status is transient, not fatal."""
+    mock_get_status.side_effect = httpx.ConnectError("connection refused")
+
+    with pytest.raises(TransientDispatchError, match="Unable to reach the FL API"):
+        fl_service.validate_client_availability(["Trust_1"], "endpoint", FLBackend.NVFLARE)
 
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
@@ -222,10 +232,10 @@ def test_validate_client_availability_flower_soft_on_unavailable(mock_get_status
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
 def test_validate_client_availability_nvflare_still_raises(mock_get_status):
-    """NVFLARE backend: empty client statuses still raises ValueError."""
+    """NVFLARE backend: empty client statuses still raises TransientDispatchError."""
     mock_get_status.return_value = []
 
-    with pytest.raises(ValueError, match="Unable to fetch client statuses"):
+    with pytest.raises(TransientDispatchError, match="Unable to fetch client statuses"):
         fl_service.validate_client_availability(["Trust_1"], "endpoint", FLBackend.NVFLARE)
 
 
@@ -329,6 +339,72 @@ def test_start_training_skips_submit_when_job_deleted_during_upload(
 
     mock_upload.assert_called_once()
     mock_submit.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.submit_job")
+@patch("flip_api.fl_services.services.fl_service.upload_app")
+@patch("flip_api.fl_services.services.fl_service.encrypt")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_required_training_details")
+def test_start_training_transient_upload_request_error_is_requeued(
+    mock_get_required,
+    mock_encrypt,
+    mock_upload,
+    mock_submit,
+    model_id,
+    fl_job_id,
+    fake_session,
+):
+    """Connection refused/timeout during upload_app is transient — not a fatal backend error."""
+    mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
+    mock_encrypt.return_value = "encrypted"
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS
+    mock_upload.side_effect = httpx.ConnectError("connection refused")
+
+    with pytest.raises(TransientDispatchError, match="Unable to upload the application"):
+        fl_service.start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            clients=["client1"],
+            endpoint="endpoint",
+            bundle_urls=["url"],
+            session=fake_session,
+        )
+
+    mock_upload.assert_called_once()
+    mock_submit.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.submit_job")
+@patch("flip_api.fl_services.services.fl_service.upload_app")
+@patch("flip_api.fl_services.services.fl_service.encrypt")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_required_training_details")
+def test_start_training_transient_submit_request_error_is_requeued(
+    mock_get_required,
+    mock_encrypt,
+    mock_upload,
+    mock_submit,
+    model_id,
+    fl_job_id,
+    fake_session,
+):
+    """Connection refused/timeout during submit_job is transient — not a fatal backend error."""
+    mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
+    mock_encrypt.return_value = "encrypted"
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS
+    mock_submit.side_effect = httpx.ConnectError("connection refused")
+
+    with pytest.raises(TransientDispatchError, match="Unable to submit the job"):
+        fl_service.start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            clients=["client1"],
+            endpoint="endpoint",
+            bundle_urls=["url"],
+            session=fake_session,
+        )
+
+    mock_upload.assert_called_once()
+    mock_submit.assert_called_once()
 
 
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)

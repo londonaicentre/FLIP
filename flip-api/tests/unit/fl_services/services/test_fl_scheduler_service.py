@@ -26,7 +26,7 @@ from flip_api.domain.interfaces.fl import (
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, NetStatus
 from flip_api.domain.schemas.types import FLBackend, FLLogEvent
 from flip_api.fl_services.services import fl_scheduler_service
-from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
+from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError, TransientDispatchError
 
 
 @pytest.fixture
@@ -112,6 +112,130 @@ def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
         mock_log.assert_called_once_with(model_id, "bundle failed", fake_session, success=False)
         # The failure handler must actually free the BUSY net, not leave it to the watchdog.
         mock_release.assert_called_once_with(model_id, fake_session)
+
+
+def test_prepare_and_start_training_transient_client_availability_failure_requeues(
+    fake_session, model_id, fl_job_id
+):
+    """A transient availability failure requeues the job and leaves the model alone."""
+    with (
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.bundle_nvflare_application",
+            return_value="s3://dest/model",
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.validate_client_availability",
+            side_effect=TransientDispatchError("Clients unavailable: Trust_1"),
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.requeue_job") as mock_requeue,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
+        patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model"
+        ) as mock_release,
+    ):
+        mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
+
+        started = fl_scheduler_service.prepare_and_start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            trust_ids=[uuid4()],
+            session=fake_session,
+        )
+
+    assert started is False
+    mock_requeue.assert_called_once_with(fl_job_id, fake_session)
+    mock_release.assert_called_once_with(model_id, fake_session)
+    mock_log.assert_called_once()
+    assert mock_log.call_args.kwargs["success"] is False
+    mock_remove.assert_not_called()
+    mock_status.assert_not_called()
+
+
+def test_prepare_and_start_training_transient_submit_failure_requeues(fake_session, model_id, fl_job_id):
+    """A transient submit failure (e.g. fl-server cold-start) requeues the job."""
+    with (
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.bundle_nvflare_application",
+            return_value="s3://dest/model",
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
+        patch("flip_api.fl_services.services.fl_scheduler_service.validate_client_availability"),
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_bundle_urls", return_value=["url1"]),
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.start_training",
+            side_effect=TransientDispatchError("Unable to submit the job"),
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.requeue_job") as mock_requeue,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
+        patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model"
+        ) as mock_release,
+    ):
+        mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
+
+        started = fl_scheduler_service.prepare_and_start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            trust_ids=[uuid4()],
+            session=fake_session,
+        )
+
+    assert started is False
+    mock_requeue.assert_called_once_with(fl_job_id, fake_session)
+    mock_release.assert_called_once_with(model_id, fake_session)
+    mock_log.assert_called_once()
+    assert mock_log.call_args.kwargs["success"] is False
+    mock_remove.assert_not_called()
+    mock_status.assert_not_called()
+
+
+def test_prepare_and_start_training_fatal_submit_error_still_errors(fake_session, model_id, fl_job_id):
+    """A genuine backend submission error stays fatal: job DELETED, model ERROR, net released."""
+    with (
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.bundle_nvflare_application",
+            return_value="s3://dest/model",
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
+        patch("flip_api.fl_services.services.fl_scheduler_service.validate_client_availability"),
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_bundle_urls", return_value=["url1"]),
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.start_training",
+            side_effect=ValueError("No backend job id returned or invalid format"),
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.requeue_job") as mock_requeue,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
+        patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model"
+        ) as mock_release,
+    ):
+        mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
+
+        with pytest.raises(ValueError, match="No backend job id returned or invalid format"):
+            fl_scheduler_service.prepare_and_start_training(
+                model_id=model_id,
+                fl_job_id=fl_job_id,
+                trust_ids=[uuid4()],
+                session=fake_session,
+            )
+
+    mock_requeue.assert_not_called()
+    mock_remove.assert_called_once_with(fl_job_id, fake_session)
+    mock_status.assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
+    mock_log.assert_called_once_with(
+        model_id,
+        "No backend job id returned or invalid format",
+        fake_session,
+        success=False,
+    )
+    mock_release.assert_called_once_with(model_id, fake_session)
 
 
 def test_prepare_and_start_training_aborted_mid_prepare_returns_false(fake_session, model_id, fl_job_id):
@@ -287,6 +411,25 @@ def test_remove_job_not_found(fake_session):
     missing_job_id = "missing-id"
     with pytest.raises(NotFoundError, match=f"FLJob with id {missing_job_id} not found"):
         fl_scheduler_service.remove_job(missing_job_id, fake_session)
+
+
+def test_requeue_job_success(fake_session, fl_job_id):
+    job = MagicMock()
+    fake_session.get.return_value = job
+
+    fl_scheduler_service.requeue_job(fl_job_id, fake_session)
+
+    assert job.status == JobStatus.QUEUED
+    assert job.started is None
+    assert job.fl_backend_job_id is None
+    fake_session.commit.assert_called_once()
+
+
+def test_requeue_job_not_found(fake_session):
+    fake_session.get.return_value = None
+    missing_job_id = "missing-id"
+    with pytest.raises(NotFoundError, match=f"FLJob with id {missing_job_id} not found"):
+        fl_scheduler_service.requeue_job(missing_job_id, fake_session)
 
 
 def test_remove_job_from_queue(fake_session, model_id):
