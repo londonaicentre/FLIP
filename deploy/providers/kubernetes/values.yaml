@@ -404,11 +404,19 @@ omopDb:
   # pg_isready can take many seconds while the vocabulary COPY is running. The
   # Kubernetes defaults (timeoutSeconds 1, failureThreshold 3) restart Postgres
   # mid-load and abort the omop-vocab-load hook, so they are set explicitly here.
+  # initialDelaySeconds/periodSeconds carry the values that used to be hardcoded in
+  # templates/omop-db.yaml, so the default render is unchanged; they are here so this
+  # block honours the same four keys as every other service's probes block rather
+  # than silently ignoring two of them.
   probes:
     liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 10
       timeoutSeconds: 15
       failureThreshold: 10
     readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 5
       timeoutSeconds: 15
       failureThreshold: 10
   # Streams the licensed core vocabulary into the running database after

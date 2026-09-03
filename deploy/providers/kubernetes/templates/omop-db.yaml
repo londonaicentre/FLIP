@@ -186,8 +186,8 @@ spec:
                 - {{ .Values.omopDb.credentials.user | quote }}
                 - -d
                 - {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }}
-            initialDelaySeconds: 30
-            periodSeconds: 10
+            initialDelaySeconds: {{ .Values.omopDb.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.omopDb.probes.liveness.periodSeconds }}
             # pg_isready forks a client and connects; under a heavy write load
             # (the vocabulary-load post-install hook COPYs ~33M rows into concept_ancestor)
             # that can take many seconds, especially on slow or emulated hosts.
@@ -206,8 +206,8 @@ spec:
                 - {{ .Values.omopDb.credentials.user | quote }}
                 - -d
                 - {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }}
-            initialDelaySeconds: 5
-            periodSeconds: 5
+            initialDelaySeconds: {{ .Values.omopDb.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.omopDb.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.omopDb.probes.readiness.timeoutSeconds }}
             failureThreshold: {{ .Values.omopDb.probes.readiness.failureThreshold }}
   {{- if .Values.omopDb.persistence.enabled }}
