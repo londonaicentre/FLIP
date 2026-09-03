@@ -869,8 +869,18 @@ deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and dep
 # services/<slot>/ dir in the S3 participant-kit bundle and under /opt/flip.
 # Read from the trust's kit file (the single source of truth: the kit file's
 # FL_KIT_SLOT is also what trust/Makefile mounts), not duplicated here.
-FL_KIT_SLOT := $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
-FL_KIT_SLOT_NUMBER := $(shell sed -n 's/^FL_KIT_SLOT_NUMBER=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+#
+# Both are DEFERRED (`=`, not `:=`) on purpose. A simply-expanded assignment is evaluated once
+# when the Makefile is parsed, which is before any target runs — and `register-trusts` is what
+# writes these values into the kit file. Inside a single `make full-deploy`, `register-trusts`
+# and `deploy-trust` are prerequisites of the same make process, so a parse-time snapshot hands
+# the staging targets whatever the kit file held *before* registration: empty on a first
+# deployment, and the previously claimed slot after a delete-then-re-register (which claims the
+# next free slot rather than the old one) — the silent wrong-slot stage the guards below exist
+# to prevent. Deferred, each reference re-reads the file at recipe-expansion time and therefore
+# sees what register-trusts just wrote. The repeated $(shell) is a `sed` over one small file.
+FL_KIT_SLOT = $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+FL_KIT_SLOT_NUMBER = $(shell sed -n 's/^FL_KIT_SLOT_NUMBER=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 
 # Trust-local OMOP DB credentials from the kit — passed to the vocab-load play
 # (they must match the values the restored pgdata cluster was built with).
