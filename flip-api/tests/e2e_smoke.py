@@ -1061,6 +1061,9 @@ def main(argv: list[str] | None = None) -> int:
             _log(f"♻️  Reusing existing project_id={project_id} (skipping cohort + approval)")
             if args.no_imaging or args.no_dicom_to_nifti:
                 _log("  ℹ️  --no-imaging / --no-dicom-to-nifti apply at creation only: the project is reused as created")
+            # The one branch where the flag is not already known locally: some earlier run created
+            # this project, so ask the hub.
+            has_imaging = project_has_imaging(client, headers, project_id)
             trusts = _ensure_ok(_get(client, "/trust", headers), "list trusts").json()
             if not trusts:
                 raise SmokeFailure("No trusts registered with the hub")
@@ -1078,6 +1081,8 @@ def main(argv: list[str] | None = None) -> int:
                 has_imaging=not args.no_imaging,
                 description=project_description,
             )
+            # What we asked for, which create_project_with_query has just proved the hub honoured.
+            has_imaging = not args.no_imaging
             trusts = stage_and_approve(client, headers, project_id, args.trusts)
         # Create the model and upload files before waiting for image pull. This
         # surfaces model-creation / upload errors immediately instead of after
@@ -1093,8 +1098,8 @@ def main(argv: list[str] | None = None) -> int:
         # wait_for_model_advanced sit blocked on the (still pulling) FL clients
         # until it times out.
         # A project created without imaging (FLIP#1071) dispatched nothing to XNAT, so there is
-        # nothing to wait for — read the flag off the project so --project-id reuse honours it too.
-        if project_has_imaging(client, headers, project_id):
+        # nothing to wait for.
+        if has_imaging:
             wait_for_image_pull(
                 client,
                 headers,

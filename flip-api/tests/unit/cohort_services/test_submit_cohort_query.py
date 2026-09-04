@@ -109,12 +109,14 @@ def mock_unstaged():
 
 
 @pytest.fixture(autouse=True)
-def mock_project_row():
-    """Default every test's project to has_imaging=True (the pre-FLIP#1071 behaviour)."""
-    with patch(
-        "flip_api.cohort_services.submit_cohort_query.get_project_by_id",
-        return_value=SimpleNamespace(has_imaging=True),
-    ) as mock:
+def mock_project_row(mock_project):
+    """Default every test's project to has_imaging=True so the existing assertions hold (FLIP#1071).
+
+    Backed by the conftest-registered ``Projects`` factory rather than a SimpleNamespace: a stub that
+    invents its own attributes keeps this suite green through a rename of the column production reads.
+    """
+    mock_project.has_imaging = True
+    with patch("flip_api.cohort_services.submit_cohort_query.get_project_by_id", return_value=mock_project) as mock:
         yield mock
 
 

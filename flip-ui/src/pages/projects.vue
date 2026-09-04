@@ -119,7 +119,7 @@
                     <div
                         role="group"
                         aria-label="View"
-                        class="inline-flex bg-white dark:bg-dark-canvas border border-gray-200 dark:border-dark-border rounded-lg p-1"
+                        :class="SEGMENTED_GROUP_CLASS"
                     >
                         <button
                             type="button"
@@ -380,8 +380,10 @@ const viewMode = ref<ViewMode>("list");
 type SortKey = "created" | "status" | "name" | "cohort";
 const sortKey = ref<SortKey>("created");
 
-// The two toolbar segmented controls (My/All, Type) share one look; keep the class strings in one
-// place so they cannot drift apart.
+// All three toolbar controls (My/All, Type, and the list/grid view toggle) share one group look;
+// keep the class string in one place so they cannot drift apart. Only the group wrapper is shared —
+// the view toggle's buttons are icon-only and keep their own padding, so segmentClass is for the two
+// labelled controls.
 const SEGMENTED_GROUP_CLASS = "inline-flex bg-white dark:bg-dark-canvas border border-gray-200 "
     + "dark:border-dark-border rounded-lg p-1";
 const segmentClass = (active: boolean): string[] => [

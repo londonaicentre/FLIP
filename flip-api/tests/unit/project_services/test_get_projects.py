@@ -10,12 +10,11 @@
 # limitations under the License.
 #
 
-import re
 import uuid
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
-from sqlmodel import Session
+from sqlmodel import Session, col
 
 from flip_api.db.models.main_models import Projects
 from flip_api.db.models.user_models import PermissionRef
@@ -447,12 +446,17 @@ def test_get_projects_paginated_orm_picks_latest_audit_per_project(user_id):
 
 
 def test_get_projects_paginated_orm_applies_project_type_filter(user_id):
-    """FLIP#1071: ``projectType`` narrows the WHERE clause on ``has_imaging`` — with the right polarity."""
+    """FLIP#1071: ``projectType`` narrows the WHERE clause on ``has_imaging`` — with the right polarity.
+
+    Asserted against the condition the code builds rather than the compiled SQL text: the rendering of
+    ``.is_(True)`` belongs to SQLAlchemy and the dialect, so matching on it fails the build when neither
+    the filter nor its polarity has changed. ``test_project_db_flow`` proves the rows this selects.
+    """
     session = MagicMock(spec=Session)
     session.exec.return_value.all.return_value = []
     session.exec.return_value.one_or_none.return_value = None
 
-    def where_clause_for(project_type: str | None) -> str:
+    def conditions_for(project_type: str | None) -> list:
         session.exec.reset_mock()
         params: dict[str, str | uuid.UUID] = {"projectType": project_type} if project_type else {}
         get_projects_paginated_orm(
@@ -461,10 +465,15 @@ def test_get_projects_paginated_orm_applies_project_type_filter(user_id):
             paging_details=paging_details,
             filter_details=get_filter_details(params),
         )
-        # The SELECT list always names the column, so look at the WHERE clause only.
-        compiled = str(session.exec.call_args_list[0].args[0].compile()).lower()
-        return re.split(r"\swhere\s", compiled, maxsplit=1)[1]
+        where = session.exec.call_args_list[0].args[0].whereclause
+        return list(getattr(where, "clauses", [where]))
 
-    assert "has_imaging is false" in where_clause_for("omop_only")
-    assert "has_imaging is true" in where_clause_for("imaging")
-    assert "has_imaging" not in where_clause_for(None)
+    def selects_on_has_imaging(project_type: str | None, expected: bool) -> bool:
+        wanted = col(Projects.has_imaging).is_(expected)
+        return any(condition.compare(wanted) for condition in conditions_for(project_type))
+
+    assert selects_on_has_imaging("omop_only", False)
+    assert selects_on_has_imaging("imaging", True)
+    # No projectType filter: neither polarity is constrained.
+    assert not selects_on_has_imaging(None, True)
+    assert not selects_on_has_imaging(None, False)

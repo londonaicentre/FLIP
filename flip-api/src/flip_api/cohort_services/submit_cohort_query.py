@@ -121,6 +121,11 @@ def validate_query(query: str) -> sqlglot.expressions.Expression:
     return statements[0]
 
 
+# Mirrors the column the trust selects when it wraps a cohort for the accession-ids route
+# (``SELECT accession_id FROM (<query>) AS cohort_subquery`` in
+# trust/data-access-api/data_access_api/routers/cohort.py). Nothing links the two automatically:
+# if the trust ever changes how it derives accession ids, this fast-feedback check goes stale and
+# must follow. The trust stays authoritative either way, so staleness costs feedback, not safety.
 ACCESSION_ID_COLUMN = "accession_id"
 MISSING_ACCESSION_ID_DETAIL = (
     "This project includes imaging, so its cohort query must return an accession_id column. "
@@ -175,9 +180,9 @@ def projection_lacks_accession_id(statement: sqlglot.expressions.Expression) -> 
         node = node.this.unnest()
     if not isinstance(node, sqlglot.expressions.Select):
         return False
-    if any(projection.find(sqlglot.expressions.Star) for projection in node.expressions):
-        return False
     for projection in node.expressions:
+        if projection.find(sqlglot.expressions.Star):
+            return False
         identifier = _output_identifier(projection)
         if identifier is None:
             return False

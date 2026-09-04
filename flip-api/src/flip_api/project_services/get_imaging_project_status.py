@@ -87,6 +87,9 @@ async def get_imaging_project_status(
 
     # FLIP#1071: a project without imaging has nothing to report. 200 [] rather than 404 so a
     # non-polling client's probe never reads as an error; the UI never polls for such projects.
+    # Deliberately read off the project get_project already loaded rather than a scalar pre-read:
+    # that would add a query to every poll of an imaging project's status — the hot path during an
+    # image pull — to save work on a path no client takes.
     if not project_response.has_imaging:
         return []
 
