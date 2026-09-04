@@ -181,11 +181,14 @@ outside the smoke:
 
 ```bash
 make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid> \
-  XNAT_URLS="http://127.0.0.1:8104 http://127.0.0.1:8106" DRY_RUN=1   # then drop DRY_RUN
+  XNAT_URLS="http://127.0.0.1:8105 http://127.0.0.1:8107" DRY_RUN=1   # then drop DRY_RUN
 ```
 
 The mapping is cached beside the labels dir (so a re-run needs no huggingface.co egress) and
-`HF_TRUST_DATA_REVISION=<sha>` pins the dataset revision instead of the moving `main`.
+`HF_TRUST_DATA_REVISION=<sha>` pins the dataset revision instead of the moving `main`. The uploader
+speaks REST to XNAT, so those URLs carry each trust's **`XNAT_WEB_PORT`** — 8105 (GSTT) and 8107
+(KCH) since the FLIP#993 split, not 8104/8106, which are now the DICOM SCP receiver ports. Dialling
+the old numbers reaches a DIMSE listener and hangs rather than refusing the connection.
 
 Through the smoke, `make -C flip-api e2e_smoke_spleen` (or `e2e_smoke_spleen_evaluation`) carries the
 in-tree command already, targeting both dev trusts via `SPLEEN_XNAT_URLS` (override for another roster;
@@ -199,7 +202,7 @@ cd flip-api && uv run python -m tests.e2e_smoke \
   --model-files-dir ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/app_files \
   --query-file ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql \
   --data-enrichment-cwd ../fl-tutorials/datasets/spleen \
-  --data-enrichment-cmd 'uv run --no-project --with ../../../flip-utils python upload_spleen_labels_to_xnat.py --flip-project-id "$FLIP_PROJECT_ID" --labels-dir ../../data/spleen/images --xnat-url http://127.0.0.1:8104 --xnat-url http://127.0.0.1:8106'
+  --data-enrichment-cmd 'uv run --no-project --with ../../../flip-utils python upload_spleen_labels_to_xnat.py --flip-project-id "$FLIP_PROJECT_ID" --labels-dir ../../data/spleen/images --xnat-url http://127.0.0.1:8105 --xnat-url http://127.0.0.1:8107'
 ```
 
 (The `$`-escaping trap still applies to any hand-written `EXTRA_ARGS`: `make -C flip-api …` expands once, so
