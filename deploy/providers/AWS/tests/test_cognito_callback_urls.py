@@ -32,10 +32,11 @@ Two failure modes are guarded, and both are silent in a plan diff:
 The dev root is asserted in the opposite direction: it *must* keep localhost, so that
 a well-meant "no localhost in Terraform" sweep cannot break local development instead.
 
-The stag/prod list entry is a ``local.`` reference rather than a quoted URL — the origin
-differs between a DNS-managed environment and a zone-less LZA bring-up (FLIP#749), so the
-one expression is resolved in ``cloudfront.tf`` — hence the guard follows a reference to
-its definition and asserts over that too, instead of only over quoted literals.
+The stag/prod list holds a ``local.`` reference rather than a quoted URL, because the
+canonical origin differs between a DNS-managed environment and a zone-less LZA bring-up
+(FLIP#749) and ``cloudfront.tf`` resolves the two into one expression. So the guard reads
+raw list entries rather than quoted literals — a reference entry would otherwise read as
+no entry at all — and follows each reference to its definition, asserting over that too.
 """
 
 import re
