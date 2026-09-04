@@ -365,9 +365,9 @@
       # deploy/providers/local/site_local_trust.yml does pre-create them, and is right
       # to — there the operator extracts a kit tarball by hand and nothing wipes.
       #
-      # local/ and transfer/ are re-created after the sync: the `find -delete` above removes
-      # the pre-created copies, and aws s3 sync mirrors objects rather than empty prefixes, so
-      # the provisioner's empty transfer/ never comes back. Docker would then create the
+      # local/ and transfer/ are re-created after the sync: the `find -delete` above clears
+      # them, and aws s3 sync mirrors objects rather than empty prefixes, so the provisioner's
+      # empty transfer/ never comes back. Docker would then create the
       # bind-mount source as root and the non-root fl-client could not write its trained
       # model at the END of a run. local/ gets the same treatment because site policy writes
       # privacy.json into it at container start. package-onprem-trust-kit.sh does the same mkdir.
