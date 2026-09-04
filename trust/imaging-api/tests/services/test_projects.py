@@ -355,13 +355,29 @@ def test_get_command_info_lists_unrelated_commands_without_claiming_a_mismatch(m
 
 
 @patch("imaging_api.services.projects.requests.get")
-def test_get_command_info_no_commands_at_all_keeps_plugin_hypothesis(mock_get, headers):
-    """With nothing registered, the Container Service hypothesis is the accurate one."""
+def test_get_command_info_empty_registry_leads_with_the_registration_fix(mock_get, headers):
+    """A readable, empty registry means "never registered", not "plugin missing".
+
+    XNAT answers a path with no plugin behind it with 404, so a 200 carrying an empty array is
+    evidence the Container Service *is* installed. TROUBLESHOOTING 2.3a documents the cause this
+    branch actually has: the service account lacked ContainerManager, so registration reported
+    success having registered nothing. Lead with that remedy, not with the plugin hypothesis.
+    """
     empty = MagicMock(status_code=200, json=MagicMock(return_value=[]))
     mock_get.side_effect = [empty, empty]
 
-    with pytest.raises(Exception, match="may not be installed or configured"):
+    with pytest.raises(Exception, match="No commands found for container") as excinfo:
         get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
+
+    message = str(excinfo.value)
+    # The fact the response supports, and the action that follows from it.
+    assert "readable and empty" in message
+    assert "configure-dcm2niix.sh" in message
+    assert "ContainerManager" in message
+    assert "2.3a" in message
+    # The plugin hypothesis survives only as a trailing note, never as the headline.
+    assert not message.startswith("No commands found for container '...' - Container Service")
+    assert message.index("configure-dcm2niix.sh") < message.index("missing plugin")
 
 
 @patch("imaging_api.services.projects.requests.get")
@@ -459,14 +475,26 @@ def test_get_command_info_exact_image_match_drops_the_stale_pin_advice(mock_get,
 
 
 @patch("imaging_api.services.projects.requests.get")
-def test_get_command_info_caps_the_listed_commands(mock_get, headers):
-    """The raised string reaches the hub through a 1000-character truncation.
+@pytest.mark.parametrize(
+    "image_for",
+    [
+        lambda i: f"ghcr.io/example/tool-{i:02d}:v1",
+        # The shape an operator actually has. An item cap sized against the short fixture above
+        # lets ten of these render ~1075 characters, putting the remediation past the hub-side cut.
+        lambda i: f"ghcr.io/londonaicentre/xnat-dcm2niix-variant-{i:02d}:v1.0.20260724",
+    ],
+    ids=["short-images", "realistic-long-images"],
+)
+def test_get_command_info_listing_stays_inside_the_truncation_budget(mock_get, headers, image_for):
+    """The raised string reaches the hub through trust-api's 1000-character truncation.
 
-    A large registry otherwise pushes the remediation sentence past the cut, so the hub-side error
-    ends mid-image-name with nothing actionable in it.
+    The budget has to be in characters, not items: the invariant that matters is that the
+    remediation sentence survives the cut, and that is a property of the rendered length, not of
+    how many pairs were appended. Parametrised over a short and a realistic image shape so the
+    bound is held by the code rather than by the brevity of a fixture.
     """
     filtered = MagicMock(status_code=200, json=MagicMock(return_value=[]))
-    many = [{"id": i, "name": f"tool-{i:02d}", "image": f"ghcr.io/example/tool-{i:02d}:v1"} for i in range(40)]
+    many = [{"id": i, "name": f"tool-{i:02d}", "image": image_for(i)} for i in range(40)]
     unfiltered = MagicMock(status_code=200, json=MagicMock(return_value=many))
     mock_get.side_effect = [filtered, unfiltered]
 
@@ -474,13 +502,136 @@ def test_get_command_info_caps_the_listed_commands(mock_get, headers):
         get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
 
     message = str(excinfo.value)
-    assert "and 30 more" in message
-    assert "'tool-09' -> 'ghcr.io/example/tool-09:v1'" in message
-    assert "tool-10" not in message
-    # The count still reports the whole registry, and the remediation survives the truncation.
-    assert "40 command(s) registered" in message
-    assert "configure-dcm2niix.sh" in message
+    # The whole message survives the truncation, remediation included - the point of the budget.
     assert len(message) < 1000
+    assert "configure-dcm2niix.sh" in message
+    assert message.endswith("image is current.")
+    # The count still reports the whole registry, and the tail names what was dropped.
+    assert "40 command(s) registered" in message
+    assert "more" in message
+    # Whatever was listed was listed whole - never cut mid-pair.
+    listed = message.split("registered: ", 1)[1].split(". If one of those", 1)[0]
+    shown = [p for p in listed.split(", ") if p.startswith("'")]
+    assert shown, "at least one pair should fit"
+    for pair in shown:
+        assert pair.endswith("'"), f"pair rendered incomplete: {pair!r}"
+
+
+@patch("imaging_api.services.projects.requests.get")
+def test_get_command_info_forbidden_listing_points_at_the_role_not_credentials(mock_get, headers):
+    """403 shares this branch with 401 but has a different documented remedy.
+
+    Container Service 3.7.0+ answers /xapi/commands with 401/403 when the caller lacks the
+    ContainerManager role (TROUBLESHOOTING 2.3a); the fix is a role grant. Sending an operator to
+    re-check credentials that are working is the same misdirection FLIP#1093 is about.
+    """
+    filtered = MagicMock(status_code=200, json=MagicMock(return_value=[]))
+    forbidden = MagicMock(status_code=403, text="<html>forbidden</html>")
+    mock_get.side_effect = [filtered, forbidden]
+
+    with pytest.raises(Exception, match="No commands found for container") as excinfo:
+        get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
+
+    message = str(excinfo.value)
+    assert "HTTP 403" in message
+    assert "ContainerManager" in message
+    assert "2.3a" in message
+    assert "may not be installed" not in message
+    # The 401 remedy must not be what a 403 is told to do.
+    assert "credentials are wrong" not in message
+
+
+@patch("imaging_api.services.projects.requests.get")
+def test_get_command_info_listing_failure_never_carries_the_html_body(mock_get, headers):
+    """XNAT's 401 page is ~683 characters of Tomcat boilerplate.
+
+    It must not travel to the hub inside the raised message, where it would consume most of the
+    1000-character budget; the body belongs in the trust-side log.
+    """
+    filtered = MagicMock(status_code=200, json=MagicMock(return_value=[]))
+    unauthorised = MagicMock(status_code=401, text="<html><body>" + "x" * 2000 + "</body></html>")
+    mock_get.side_effect = [filtered, unauthorised]
+
+    with pytest.raises(Exception, match="No commands found for container") as excinfo:
+        get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
+
+    message = str(excinfo.value)
+    assert "xxxx" not in message
+    assert "<html>" not in message
+    assert len(message) < 1000
+
+
+@patch("imaging_api.services.projects.requests.get")
+def test_get_command_info_exact_match_is_listed_even_beyond_the_budget(mock_get, headers):
+    """The claim and its evidence must not disagree.
+
+    This branch asserts the exact image *is* registered. Ordered by name, a matching entry sorting
+    late would be trimmed away by the budget, leaving a message that asserts a registration and
+    shows a listing without it - the claim-without-support shape this helper exists to remove.
+    """
+    target = "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724"
+    filtered = MagicMock(status_code=200, json=MagicMock(return_value=[]))
+    many = [{"id": i, "name": f"tool-{i:02d}", "image": f"ghcr.io/example/tool-{i:02d}:v1"} for i in range(40)]
+    # Sorts last by name, so a naive name-ordered trim would drop it.
+    many.append({"id": 99, "name": "zzz-dcm2niix", "image": target})
+    unfiltered = MagicMock(status_code=200, json=MagicMock(return_value=many))
+    mock_get.side_effect = [filtered, unfiltered]
+
+    with pytest.raises(Exception, match="No commands found for container") as excinfo:
+        get_command_info(target, headers)
+
+    message = str(excinfo.value)
+    assert "that exact image is registered" in message
+    assert f"'zzz-dcm2niix' -> '{target}'" in message, "the entry the message claims is registered must be shown"
+    assert len(message) < 1000
+
+
+@patch("imaging_api.services.projects.requests.get")
+@pytest.mark.parametrize(
+    "command",
+    [
+        {"id": 1, "name": "dcm2niix"},
+        {"id": 1, "name": "dcm2niix", "xnat": []},
+        {"id": 1, "name": "dcm2niix", "xnat": [{}]},
+    ],
+    ids=["no-xnat-key", "empty-wrapper-list", "wrapper-without-name"],
+)
+def test_get_command_info_wrapperless_command_is_a_legible_error(mock_get, headers, command):
+    """The mismatch message teaches "a command with no 'xnat' wrapper" as a hypothesis to check.
+
+    Unguarded, that exact state raises a bare KeyError('xnat') - or IndexError on an empty wrapper
+    list - and reaches the hub as a task error with nothing in it, which is the opaque failure class
+    this change is narrowing. 2.3a's verification step checks for the wrapper, so it is a real state.
+    """
+    mock_get.return_value = MagicMock(status_code=200, json=MagicMock(return_value=[command]))
+
+    with pytest.raises(Exception, match="no 'xnat' wrapper") as excinfo:
+        get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
+
+    assert not isinstance(excinfo.value, KeyError | IndexError), "must not surface as a bare lookup error"
+    message = str(excinfo.value)
+    assert "no 'xnat' wrapper" in message
+    assert "dcm2niix" in message
+    assert "configure-dcm2niix.sh" in message
+
+
+@patch("imaging_api.services.projects.requests.get")
+def test_get_command_info_fetch_failure_bounds_the_error_body(mock_get, headers):
+    """Wrong credentials fail on the filtered lookup, before the diagnostic helper is reached.
+
+    XNAT answers with a whole Tomcat error page; interpolating it whole leaves the hub-side error
+    almost entirely login-page markup, and subject to the same truncation the message below
+    respects. Bound it here and keep the full body in the log.
+    """
+    mock_get.return_value = MagicMock(status_code=401, text="<html>" + "y" * 5000 + "</html>")
+
+    with pytest.raises(Exception, match="XNAT command fetch failed") as excinfo:
+        get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
+
+    message = str(excinfo.value)
+    assert "401" in message
+    assert len(message) < 1000
+    assert "more characters, full body in the imaging-api log" in message
 
 
 # ===========================================================================
