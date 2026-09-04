@@ -156,19 +156,25 @@ def test_empty_env_resolves_to_development_and_therefore_the_console_backend():
 def test_production_settings_resolve_to_the_ses_backend(monkeypatch):
     """The other half: a constructed ``ProdSettings`` comes out on SES, not just its field default.
 
-    ``monkeypatch.delenv`` keeps the assertion about the class rather than
-    about the developer's shell — an ``EMAIL_BACKEND`` exported there would
-    otherwise decide the result, and a stray ``console`` would fail the
-    construction outright against the ``Literal["ses"]`` narrowing.
+    ``ENV`` is passed as an init argument, the highest-precedence settings
+    source, rather than exported: CI writes ``ENV=development`` into the
+    env file it builds for the whole flip-api suite, and ``ProdSettings``
+    rejects that against its own ``Literal["production"]`` before the
+    backend is ever reached. Setting the variable in the environment was not
+    enough there, so this does not depend on how env and env-file sources
+    rank. ``ENV`` is therefore not worth asserting on — it would only echo
+    the argument — while ``EMAIL_BACKEND``, left unset, still resolves
+    through the class. Deleting it from the environment keeps that about the
+    class rather than about the runner's shell.
     """
     monkeypatch.delenv("EMAIL_BACKEND", raising=False)
 
     settings = ProdSettings(
+        ENV="production",
         AWS_SES_ADMIN_EMAIL_ADDRESS="admin@example.com",
         AWS_SES_SENDER_EMAIL_ADDRESS="sender@example.com",
     )
 
-    assert settings.ENV == "production"
     assert settings.EMAIL_BACKEND == "ses"
 
 
