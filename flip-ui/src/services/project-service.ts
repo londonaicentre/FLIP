@@ -83,6 +83,11 @@ export type IProject = {
     // immutable thereafter. Only the project-detail endpoint surfaces it, so
     // it's optional (the list endpoint omits it).
     dicom_to_nifti?: boolean;
+    // Whether the project has an imaging stage at all. Set at creation and immutable
+    // thereafter (FLIP#1071). Off = tabular-only cohort: no XNAT project, no image
+    // pull, no imaging status card. Unlike dicom_to_nifti the list endpoint does return
+    // it; optional only because a hub predating the flag omits it (absent = imaging).
+    has_imaging?: boolean;
 }
 
 export interface IProjectCreate {
@@ -90,6 +95,7 @@ export interface IProjectCreate {
     description: string;
     users?: string[];
     dicom_to_nifti?: boolean;
+    has_imaging?: boolean;
 }
 
 export interface ICreateProjectResponse {

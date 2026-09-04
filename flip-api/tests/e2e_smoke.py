@@ -52,6 +52,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -66,9 +67,54 @@ from tests.integration.utils import admin_authentication
 # `uv run` from any directory, not just `flip-api/`). `make e2e_smoke` passes
 # --query-file explicitly, so this default only kicks in for direct invocation.
 DEFAULT_QUERY_FILE = Path(__file__).parent / "example_query.sql"
-DEFAULT_PROJECT_NAME_PREFIX = "Xrays E2E Smoke"
-DEFAULT_MODEL_NAME = "Xrays E2E Smoke Model"
 ABORT_MIDWAY_NAME_SUFFIX = " (abort-midway)"
+
+
+@dataclass(frozen=True)
+class TutorialCopy:
+    """Human-readable copy for one tutorial: its name, and its clinical task in plain language."""
+
+    label: str
+    task: str
+
+
+# Keyed by the tutorial directory (the parent of app/ or app_files/). The task is what a clinician
+# reading the projects list should understand the project is for — not how it was run. Anything not
+# listed falls back to a capitalised, de-hyphenated form of the directory name and a generic task.
+TUTORIALS: dict[str, TutorialCopy] = {
+    "xray_classification": TutorialCopy(
+        "Chest X-ray classification",
+        "Detecting pleural effusion and pulmonary oedema on chest X-rays with an image classifier trained "
+        "across the participating trusts' radiographs.",
+    ),
+    "3d_spleen_segmentation": TutorialCopy(
+        "3D spleen segmentation",
+        "Outlining the spleen on abdominal CT scans, so its size and shape can be measured automatically, "
+        "with a 3D segmentation model trained across the participating trusts.",
+    ),
+    "3d_spleen_segmentation_evaluation": TutorialCopy(
+        "3D spleen segmentation evaluation",
+        "Checking how accurately an existing spleen-outlining model traces the spleen on each participating "
+        "trust's abdominal CT scans, without retraining it.",
+    ),
+    "arkplus_fine_tuning": TutorialCopy(
+        "Ark+ fine-tuning",
+        "Adapting the Ark+ chest X-ray foundation model to the participating trusts' own radiographs so it "
+        "recognises the chest conditions seen locally.",
+    ),
+    "arkplus_baseline_classification_evaluation": TutorialCopy(
+        "Ark+ baseline classification evaluation",
+        "Measuring how well the existing Ark+ chest X-ray model recognises chest conditions on each "
+        "participating trust's radiographs, without retraining it.",
+    ),
+    "arkplus_multimodel_classification_evaluation": TutorialCopy(
+        "Ark+ multi-model classification evaluation",
+        "Comparing several existing Ark+ chest X-ray models on each participating trust's radiographs to "
+        "see which recognises chest conditions best, without retraining them.",
+    ),
+}
+APP_DIR_NAMES = ("app", "app_files")
+
 
 # How long to wait for uploaded files to clear malware scanning (#52). The
 # scan runs server-side as a background task; tutorial-sized files finish in
@@ -91,6 +137,41 @@ class SmokeFailure(RuntimeError):
 
 def _log(msg: str) -> None:
     print(msg, flush=True)
+
+
+def describe_tutorial(model_files_dir: Path) -> TutorialCopy:
+    """The copy for the tutorial an app directory belongs to.
+
+    The result drives the smoke's default project name, model name and description, so a run is
+    named for what it actually trained rather than a hardcoded "Xrays".
+
+    Args:
+        model_files_dir (Path): The ``--model-files-dir`` argument (``…/<tutorial>/app`` or ``app_files``).
+
+    Returns:
+        TutorialCopy: The tutorial's human-readable label and its clinical task.
+    """
+    app_dir = model_files_dir.resolve()
+    tutorial_dir = app_dir.parent.name if app_dir.name in APP_DIR_NAMES else app_dir.name
+    copy = TUTORIALS.get(tutorial_dir)
+    if copy is not None:
+        return copy
+    # Sentence case on the first character only: str.capitalize() would lower-case the rest,
+    # turning an acronym directory like MRI_segmentation into "Mri segmentation".
+    words = tutorial_dir.replace("_", " ").replace("-", " ").split()
+    label = " ".join(words)
+    label = label[:1].upper() + label[1:]
+    return TutorialCopy(label, f"Training the {label} application across the participating trusts' data.")
+
+
+def default_project_name(label: str) -> str:
+    """The default project name: the tutorial label plus an epoch so repeated runs stay distinct."""
+    return f"{label} E2E smoke {int(time.time())}"
+
+
+def default_model_name(label: str) -> str:
+    """The default model name, matching the project's tutorial label."""
+    return f"{label} E2E smoke model"
 
 
 def resolve_model_name(base_name: str, abort_midway: bool) -> str:
@@ -191,16 +272,34 @@ def authenticate() -> dict[str, str]:
 
 
 def create_project_with_query(
-    client: requests.Session, headers: dict[str, str], project_name: str, query: str, dicom_to_nifti: bool = True
+    client: requests.Session,
+    headers: dict[str, str],
+    project_name: str,
+    query: str,
+    dicom_to_nifti: bool = True,
+    has_imaging: bool = True,
+    description: str = "E2E smoke run",
 ) -> tuple[str, str]:
-    _log(f"🏗️  Creating project: {project_name} (dicom_to_nifti={dicom_to_nifti})")
+    _log(f"🏗️  Creating project: {project_name} (dicom_to_nifti={dicom_to_nifti}, has_imaging={has_imaging})")
+    _log(f"   📝 {description}")
     project_payload = ProjectDetails(
-        name=project_name, description="E2E smoke run", users=[], dicom_to_nifti=dicom_to_nifti
+        name=project_name,
+        description=description,
+        users=[],
+        dicom_to_nifti=dicom_to_nifti,
+        has_imaging=has_imaging,
     ).model_dump()
     project_id = _ensure_ok(
         _post(client, "/projects", project_payload, headers), "create project"
     ).json()["id"]
     _log(f"  ✅ project_id={project_id}")
+    # A hub predating FLIP#1071 ignores the unknown field and creates an imaging project; fail here
+    # rather than 20 minutes later on an image-pull wait that cannot succeed.
+    if not has_imaging and project_has_imaging(client, headers, project_id):
+        raise SmokeFailure(
+            f"Hub ignored has_imaging=false for project {project_id} (it predates FLIP#1071): the project "
+            "was created WITH imaging — aborting rather than waiting for a pull that cannot succeed."
+        )
 
     _log("📝 Adding cohort query")
     add_resp = _ensure_ok(
@@ -382,6 +481,24 @@ def _import_progress(status: dict[str, Any]) -> tuple[int, int, int]:
         processing + queued,
         successful + failed + processing + queued + queue_failed,
     )
+
+
+def project_has_imaging(client: requests.Session, headers: dict[str, str], project_id: str) -> bool:
+    """Read the project's creation-time ``has_imaging`` flag off the hub (FLIP#1071).
+
+    Read back rather than taken from the CLI so ``--project-id`` reuse honours whatever the project
+    was created with. A hub predating the flag omits the key, which means "imaging" (the old behaviour).
+
+    Args:
+        client (requests.Session): HTTP session for hub calls.
+        headers (dict[str, str]): Auth headers.
+        project_id (str): Project to read.
+
+    Returns:
+        bool: True when the project has an imaging stage.
+    """
+    resp = _ensure_ok(_get(client, f"/projects/{project_id}", headers), "read project")
+    return bool(resp.json().get("has_imaging", True))
 
 
 def wait_for_image_pull(
@@ -798,7 +915,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--project-name",
         default=None,
-        help=f"Project name (default: '{DEFAULT_PROJECT_NAME_PREFIX} <epoch>')",
+        help="Project name (default: '<tutorial> E2E smoke <epoch>', the tutorial read off --model-files-dir).",
+    )
+    parser.add_argument(
+        "--project-description",
+        default=None,
+        help="Project description (default: a plain-language statement of the tutorial's clinical task).",
     )
     parser.add_argument(
         "--project-id",
@@ -808,13 +930,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "100%%, correct when a prior --abort-midway run left pulls in flight). Lets you iterate on "
         "training code without re-creating the project for every retry.",
     )
-    parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
+    parser.add_argument(
+        "--model-name",
+        default=None,
+        help="Model name (default: '<tutorial> E2E smoke model').",
+    )
     parser.add_argument(
         "--no-dicom-to-nifti",
         action="store_true",
         help="Create the project with dicom_to_nifti=false (apps that read DICOMs directly, e.g. the "
         "Ark+ tutorials with ResourceType.ALL, skip the XNAT dcm2niix conversion). Set at project "
         "creation and immutable afterwards; ignored with --project-id.",
+    )
+    parser.add_argument(
+        "--no-imaging",
+        action="store_true",
+        help="Create the project with has_imaging=false (tabular-only cohorts, e.g. the EHR risk-prediction "
+        "tutorials): the hub skips the imaging stage entirely, and the smoke skips the image-pull wait. "
+        "Set at project creation and immutable afterwards; ignored with --project-id (read from the project).",
     )
     parser.add_argument(
         "--trusts",
@@ -891,7 +1024,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    project_name = args.project_name or f"{DEFAULT_PROJECT_NAME_PREFIX} {int(time.time())}"
+    tutorial = describe_tutorial(args.model_files_dir)
+    project_name = args.project_name or default_project_name(tutorial.label)
+    # The description is the tutorial's clinical task in plain language: the projects list is read by
+    # clinicians and reviewers, so it says what the project is for, not which harness produced it.
+    project_description = args.project_description or tutorial.task
 
     if not args.query_file.exists():
         _log(f"❌ Query file not found: {args.query_file}")
@@ -922,6 +1059,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.project_id:
             project_id = args.project_id
             _log(f"♻️  Reusing existing project_id={project_id} (skipping cohort + approval)")
+            if args.no_imaging or args.no_dicom_to_nifti:
+                _log("  ℹ️  --no-imaging / --no-dicom-to-nifti apply at creation only: the project is reused as created")
+            # The one branch where the flag is not already known locally: some earlier run created
+            # this project, so ask the hub.
+            has_imaging = project_has_imaging(client, headers, project_id)
             trusts = _ensure_ok(_get(client, "/trust", headers), "list trusts").json()
             if not trusts:
                 raise SmokeFailure("No trusts registered with the hub")
@@ -931,29 +1073,43 @@ def main(argv: list[str] | None = None) -> int:
                 _log(f"  🎯 --trusts selection: {[t.get('code') or t['name'] for t in trusts]}")
         else:
             project_id, _query_id = create_project_with_query(
-                client, headers, project_name, query, dicom_to_nifti=not args.no_dicom_to_nifti
+                client,
+                headers,
+                project_name,
+                query,
+                dicom_to_nifti=not args.no_dicom_to_nifti,
+                has_imaging=not args.no_imaging,
+                description=project_description,
             )
+            # What we asked for, which create_project_with_query has just proved the hub honoured.
+            has_imaging = not args.no_imaging
             trusts = stage_and_approve(client, headers, project_id, args.trusts)
         # Create the model and upload files before waiting for image pull. This
         # surfaces model-creation / upload errors immediately instead of after
         # 5–15 minutes of XNAT pulling, and the FL pipeline only consumes the
         # images at training time anyway.
-        model_name = resolve_model_name(args.model_name, args.abort_midway)
+        model_name = resolve_model_name(args.model_name or default_model_name(tutorial.label), args.abort_midway)
         model_id = create_model(client, headers, project_id, model_name)
         upload_files(client, headers, model_id, args.model_files_dir)
-        # Always wait for image pull, including on --project-id reuse: a prior
-        # run on this project may have left pulls in flight (aborted midway,
-        # failed, or simply queued back-to-back before the first pull finished),
-        # in which case skipping the wait here would have wait_for_model_advanced
-        # sit blocked on the (still pulling) FL clients until it times out.
-        wait_for_image_pull(
-            client,
-            headers,
-            project_id,
-            args.image_pull_threshold,
-            args.image_pull_timeout,
-            required_trust_names={t["name"] for t in trusts} if args.trusts else None,
-        )
+        # Wait for the image pull whenever the project has imaging — including on
+        # --project-id reuse: a prior run on this project may have left pulls in
+        # flight (aborted midway, failed, or simply queued back-to-back before the
+        # first pull finished), in which case skipping the wait here would have
+        # wait_for_model_advanced sit blocked on the (still pulling) FL clients
+        # until it times out.
+        # A project created without imaging (FLIP#1071) dispatched nothing to XNAT, so there is
+        # nothing to wait for.
+        if has_imaging:
+            wait_for_image_pull(
+                client,
+                headers,
+                project_id,
+                args.image_pull_threshold,
+                args.image_pull_timeout,
+                required_trust_names={t["name"] for t in trusts} if args.trusts else None,
+            )
+        else:
+            _log("🩻 Project has no imaging: skipping the image-pull wait (nothing was dispatched to XNAT)")
         if args.data_enrichment_cmd:
             run_data_enrichment(args.data_enrichment_cwd, args.data_enrichment_cmd, project_id)
         initiate_training(client, headers, model_id, trusts)

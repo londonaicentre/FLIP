@@ -23,7 +23,9 @@
                 <label for="enriched" class="block text-sm font-medium text-gray-700 dark:text-gray-300 sm:mt-px sm:pt-2">
                     Dataset enriched
                     <div class="mr-2 text-sm text-gray-400 dark:text-gray-300">
-                        Confirm your dataset has been enriched as required before training
+                        {{ hasImaging
+                            ? "Confirm your dataset has been enriched as required before training"
+                            : "This project has no imaging to enrich. Confirm your data is ready before training" }}
                     </div>
                 </label>
                 <div class="mt-1 text-right sm:mt-0 sm:col-span-2">
@@ -89,6 +91,7 @@
 import { computed, ComputedRef } from "vue";
 
 import AiSwitch from "@/components/AiSwitch/AiSwitch.vue";
+import { projectHasImaging } from "@/partials/projects/projectType";
 import { useProjectStore } from "@/store/project";
 
 interface ITrainingOptionsProps {
@@ -114,6 +117,10 @@ withDefaults(defineProps<ITrainingOptionsProps>(), { disabled: false });
 const projectStore = useProjectStore();
 
 const approvedTrusts = projectStore.project?.approvedTrusts;
+
+// The enrichment attestation stays for every project; only its wording depends on whether there
+// is imaging to enrich (FLIP#1071). Absent on a hub predating the flag, which means imaging.
+const hasImaging = computed(() => projectHasImaging(projectStore.project));
 
 const trustsToSelect: ComputedRef<ITrustsToTrain[] | undefined> = computed(() =>
     approvedTrusts?.filter(t => t.approved)

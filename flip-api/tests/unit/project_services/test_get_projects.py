@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
-from sqlmodel import Session
+from sqlmodel import Session, col
 
 from flip_api.db.models.main_models import Projects
 from flip_api.db.models.user_models import PermissionRef
@@ -58,6 +58,7 @@ def test_get_projects_paginated_orm_some_results(user_id):
         owner_id=user_id,
         status=ProjectStatus.APPROVED,
         creation_timestamp=datetime.utcnow(),
+        has_imaging=False,  # FLIP#1071: a tabular-only project
     )
     # get_projects_paginated_orm fires six SELECTs when projects exist:
     # projects (LEFT-joined to UserProfile so owner_name comes back in
@@ -94,6 +95,8 @@ def test_get_projects_paginated_orm_some_results(user_id):
 
     assert len(project_response.data) == 2
     assert project_response.total_rows == 2
+    # The list carries the type so the UI can render the chip + filter without a per-row round-trip.
+    assert [p.has_imaging for p in project_response.data] == [True, False]
 
 
 def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
@@ -440,3 +443,37 @@ def test_get_projects_paginated_orm_picks_latest_audit_per_project(user_id):
     # `Z`-suffixed so the browser parses the naive UTC audit_date as UTC, matching creation_timestamp.
     assert response.data[0].staged_at == newer.isoformat(timespec="milliseconds") + "Z"
     assert response.data[0].staged_at.endswith("Z")
+
+
+def test_get_projects_paginated_orm_applies_project_type_filter(user_id):
+    """FLIP#1071: ``projectType`` narrows the WHERE clause on ``has_imaging`` — with the right polarity.
+
+    Asserted against the condition the code builds rather than the compiled SQL text: the rendering of
+    ``.is_(True)`` belongs to SQLAlchemy and the dialect, so matching on it fails the build when neither
+    the filter nor its polarity has changed. ``test_project_db_flow`` proves the rows this selects.
+    """
+    session = MagicMock(spec=Session)
+    session.exec.return_value.all.return_value = []
+    session.exec.return_value.one_or_none.return_value = None
+
+    def conditions_for(project_type: str | None) -> list:
+        session.exec.reset_mock()
+        params: dict[str, str | uuid.UUID] = {"projectType": project_type} if project_type else {}
+        get_projects_paginated_orm(
+            session=session,
+            user_id=user_id,
+            paging_details=paging_details,
+            filter_details=get_filter_details(params),
+        )
+        where = session.exec.call_args_list[0].args[0].whereclause
+        return list(getattr(where, "clauses", [where]))
+
+    def selects_on_has_imaging(project_type: str | None, expected: bool) -> bool:
+        wanted = col(Projects.has_imaging).is_(expected)
+        return any(condition.compare(wanted) for condition in conditions_for(project_type))
+
+    assert selects_on_has_imaging("omop_only", False)
+    assert selects_on_has_imaging("imaging", True)
+    # No projectType filter: neither polarity is constrained.
+    assert not selects_on_has_imaging(None, True)
+    assert not selects_on_has_imaging(None, False)

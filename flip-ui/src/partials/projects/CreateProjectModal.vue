@@ -29,9 +29,10 @@
                 </TransitionChild>
 
                 <Form
+                    v-slot="{ values }"
                     class="fixed inset-y-0 right-0 flex max-w-full pl-10"
                     :validation-schema="schema"
-                    :initial-values="{ dicom_to_nifti: 'true' }"
+                    :initial-values="{ dicom_to_nifti: 'true', has_imaging: 'true' }"
                     @submit="submitForm"
                 >
                     <TransitionChild
@@ -87,6 +88,28 @@
                                                 hint="A small description of what your project is trying to achieve."
                                             />
                                             <div>
+                                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                                    Includes imaging data
+                                                </label>
+                                                <p class="text-xs text-gray-500 dark:text-gray-300 mb-1">
+                                                    Turn this off for a tabular-only cohort (for example
+                                                    EHR data): no imaging is pulled from PACS, no XNAT
+                                                    project is created at the trusts, and the project page
+                                                    shows no imaging status.
+                                                </p>
+                                                <p class="text-xs italic text-gray-400 dark:text-gray-300 mb-2">
+                                                    This option is set when the project is created and cannot be
+                                                    changed.
+                                                </p>
+                                                <AiSwitch
+                                                    name="has_imaging"
+                                                    value="true"
+                                                    :label="{ enabled: 'Enabled', disabled: 'Disabled' }"
+                                                    data-test="has-imaging-toggle"
+                                                />
+                                            </div>
+                                            <!-- Meaningless without imaging: hide it, submit its default. -->
+                                            <div v-if="values.has_imaging">
                                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                                                     Convert DICOMs to NIfTI
                                                 </label>
@@ -192,7 +215,12 @@ const submitForm = async(v: unknown) => {
             return u.id;
         });
 
-        values.dicom_to_nifti = !!values.dicom_to_nifti;
+        // AiSwitch reports "true" when on and undefined when off (its unchecked value); compare with
+        // the string rather than truthiness so a future unchecked sentinel cannot read as "on".
+        values.has_imaging = (values.has_imaging as unknown) === "true";
+        // The DICOM→NIfTI toggle is hidden (and unregistered by vee-validate) when imaging is off:
+        // submit its default rather than the absent value.
+        values.dicom_to_nifti = values.has_imaging ? (values.dicom_to_nifti as unknown) === "true" : true;
 
         const { id: projectId } = await createProject("/projects", values as IProjectCreate);
 

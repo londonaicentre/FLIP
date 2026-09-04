@@ -16,6 +16,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from flip_api.domain.schemas.status import ProjectType
 from flip_api.utils.logger import logger
 
 # Define TypeVars for Generic Models
@@ -36,6 +37,9 @@ class PagingInfo(BaseModel):
 
 class FilterInfo(BaseModel):
     owner: UUID | None = Field(default=None)  # Assuming owner is a UUID
+    # FLIP#1071: restrict the list to imaging projects or tabular-only ones.
+    # None = every type; the UI's "All types" segment sends no parameter.
+    project_type: ProjectType | None = Field(default=None)
 
     model_config = ConfigDict(
         populate_by_name=True,  # Allows using alias in constructor and for export
@@ -117,7 +121,7 @@ def get_filter_details(query_string_parameters: dict[str, str | UUID] | None = N
         query_string_parameters: A dictionary of query parameters.
 
     Returns:
-        FilterInfo: An object containing filter criteria (e.g., owner_id).
+        FilterInfo: The filter criteria: owner, and the FLIP#1071 project type (``projectType``).
     """
     if query_string_parameters is None:
         query_string_parameters = {}
@@ -134,8 +138,17 @@ def get_filter_details(query_string_parameters: dict[str, str | UUID] | None = N
             logger.warning(f"Invalid UUID format for owner parameter: {owner_param}. Treating as None.")
             owner_param = None
 
-    # The Pydantic model FilterInfo will handle the validation of owner_param to UUID
-    return FilterInfo(owner=owner_param)
+    project_type: ProjectType | None = None
+    raw_project_type = query_string_parameters.get("projectType")
+    if raw_project_type is not None:
+        try:
+            project_type = ProjectType(str(raw_project_type))
+        except ValueError:
+            # A UI convenience filter: an unknown value means "every type" rather than a 400 — but
+            # say so, as the owner branch above does, so a client sending the wrong spelling shows up.
+            logger.warning(f"Unknown projectType filter value: {raw_project_type!r}. Treating as every type.")
+
+    return FilterInfo(owner=owner_param, project_type=project_type)
 
 
 def get_total_pages(total_records: int, page_size_int: int) -> int:

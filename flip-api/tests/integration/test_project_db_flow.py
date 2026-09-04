@@ -18,7 +18,7 @@ Postgres rather than mocking the session. Unit tests for the same code mock
 relationships, default mismatches, etc.); these do.
 """
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlmodel import select
@@ -35,6 +35,7 @@ from flip_api.domain.interfaces.project import IProjectApproval
 from flip_api.domain.schemas.actions import ProjectAuditAction
 from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.domain.schemas.status import ProjectStatus, XNATImageStatus
+from flip_api.project_services.get_projects import get_projects_paginated_orm
 from flip_api.project_services.services.project_services import (
     approve_project,
     create_project,
@@ -42,6 +43,7 @@ from flip_api.project_services.services.project_services import (
     get_project,
     get_reimport_queries_service,
 )
+from flip_api.utils.paging_utils import get_filter_details, get_paging_details
 
 
 @pytest.fixture
@@ -91,6 +93,20 @@ def test_get_project_returns_project_for_existing_id(session, project_payload, u
     # `Projects.deleted == False` so a soft-deleted row would 404 here).
     # Verify by re-querying the table directly.
     assert session.get(Projects, new_project_id).deleted is False
+
+
+def test_create_project_persists_has_imaging_false_and_returns_it(session, project_payload, user_factory):
+    """A tabular-only project keeps has_imaging=False through create and get_project (FLIP#1071)."""
+    creator_id = user_factory().id
+    payload = project_payload.model_copy(update={"has_imaging": False})
+
+    new_project_id = create_project(payload=payload, current_user_id=creator_id, session=session)
+
+    assert session.get(Projects, new_project_id).has_imaging is False
+    assert get_project(new_project_id, session).has_imaging is False
+    # The default stays imaging-on for every existing caller.
+    default_id = create_project(payload=project_payload, current_user_id=creator_id, session=session)
+    assert session.get(Projects, default_id).has_imaging is True
 
 
 def test_list_projects_returns_only_undeleted(session, project_payload, user_factory):
@@ -284,3 +300,27 @@ def test_reimport_sweep_skips_a_soft_deleted_project(session, project_eligible_f
     assert status_row.retrieve_image_status == XNATImageStatus.CREATED, (
         "Imaging status must be untouched by the delete — the project row is what gates the sweep"
     )
+
+
+def test_list_projects_project_type_filter_selects_by_has_imaging(session, project_payload, user_factory):
+    """FLIP#1071: ``projectType`` narrows the list to imaging or tabular-only projects; absent, both are listed."""
+    creator_id = user_factory().id
+    imaging_id = create_project(payload=project_payload, current_user_id=creator_id, session=session)
+    tabular_id = create_project(
+        payload=project_payload.model_copy(update={"name": "Tabular", "has_imaging": False}),
+        current_user_id=creator_id,
+        session=session,
+    )
+
+    def listed(params: dict[str, str | UUID]) -> set:
+        page = get_projects_paginated_orm(
+            session=session,
+            user_id=creator_id,
+            paging_details=get_paging_details(),
+            filter_details=get_filter_details(params),
+        )
+        return {project.id for project in page.data}
+
+    assert listed({"projectType": "omop_only"}) == {tabular_id}
+    assert listed({"projectType": "imaging"}) == {imaging_id}
+    assert listed({}) >= {imaging_id, tabular_id}

@@ -95,8 +95,16 @@
                 </div>
             </header>
 
-            <div class="relative grid items-start grid-cols-1 gap-4 p-4 lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,1.5fr)_minmax(17rem,0.75fr)] xl:p-4">
-                <div class="lg:col-span-3">
+            <div
+                data-test="project-workspace"
+                :class="[
+                    'relative grid items-start grid-cols-1 gap-4 p-4 xl:p-4',
+                    hasImaging
+                        ? 'lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,1.5fr)_minmax(17rem,0.75fr)]'
+                        : 'lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,2.25fr)]'
+                ]"
+            >
+                <div :class="hasImaging ? 'lg:col-span-3' : 'lg:col-span-2'">
                     <!-- my-4 on top of the grid's gap/padding gives the lifecycle ~32px of
                          breathing room above and below, matching the model page. -->
                     <LifecycleTrack :steps="steps" class="my-4" />
@@ -128,18 +136,20 @@
                     </Transition>
                 </div>
 
-                <div class="lg:sticky top-16">
+                <div v-if="hasImaging" class="lg:sticky top-16">
                     <ProjectStatus
                         :can-load="projectApproved"
                         :cohort-size="project.query?.totalCohort"
                     />
                 </div>
 
-                <!-- Stretched cell + absolutely positioned card: the model list can't
-                     inflate the row, so the card matches the height the imaging
-                     project status card defines and scrolls internally instead. -->
-                <div class="relative lg:self-stretch">
-                    <LatestModels class="lg:absolute lg:inset-0" />
+                <!-- With imaging: a stretched cell + absolutely positioned card, so the model list
+                     can't inflate the row — it matches the height the imaging project status card
+                     defines and scrolls internally instead. Without imaging (FLIP#1071) nothing
+                     replaces that card, so the list widens into the main workspace and flows to its
+                     own height, there being no sibling card defining a row to pin to. -->
+                <div :class="hasImaging ? 'relative lg:self-stretch' : 'lg:sticky top-16'">
+                    <LatestModels :class="hasImaging ? 'lg:absolute lg:inset-0' : ''" />
                 </div>
             </div>
         </div>
@@ -151,6 +161,7 @@
             :project-unstaged="isProjectUnstaged() && !isViewer"
             :description="project.description"
             :dicom-to-nifti="project.dicom_to_nifti ?? true"
+            :has-imaging="hasImaging"
             :updating="projectUpdating"
             :owner-id="project.ownerId"
             @close="closeEditProjectDrawer"
@@ -177,6 +188,7 @@ import LifecycleTrack from "@/partials/projects/LifecycleTrack.vue";
 import ProjectApproval from "@/partials/projects/ProjectApproval.vue";
 import ProjectStaging from "@/partials/projects/ProjectStaging.vue";
 import ProjectStatus from "@/partials/projects/ProjectStatus.vue";
+import { projectHasImaging } from "@/partials/projects/projectType";
 import { approveProject, editProject, stageProject as stageProjectWithTrusts, unstageProject } from "@/services/project-service";
 import { useAuthStore, UserPermissions } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
@@ -254,6 +266,9 @@ const { project } = storeToRefs(projectStore);
 const editProjectPermissions: UserPermissions[] = ["CanCreateProjects"];
 const unstageProjectPermissions: UserPermissions[] = ["CanUnstageProjects"];
 const { isViewer, canCreateProjects } = usePermissions();
+
+// Creation-time flag (FLIP#1071). Absent on a hub predating it, which means imaging.
+const hasImaging = computed(() => projectHasImaging(project.value));
 
 const projectApproved = computed(() => {
     return project?.value?.status === "APPROVED";
