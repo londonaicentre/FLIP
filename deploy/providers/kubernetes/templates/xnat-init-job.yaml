@@ -52,6 +52,17 @@ spec:
       #
       # An initContainer runs to completion before containers[] start, which
       # removes the race by construction rather than by widening the timeout.
+      #
+      # It does make the waits strictly serial rather than overlapping, so the
+      # theoretical ceiling rises: this container's readiness wait (600-1200s) plus
+      # the plugin gate (600-1200s), then configure-dcm2niix's own readiness wait
+      # (600-1200s), site-activation wait (300-900s) and ContainerManager wait
+      # (300-900s) — 40 to 90 minutes, against roughly 50 at the old max() of the
+      # two chains. Neither figure is reachable: `make deploy` passes
+      # `--timeout 20m`, which bounds the hook below both, and did so before this
+      # change too. Observed installs complete in 37-69s. If a budget here is ever
+      # raised past 20m, raise the helm timeout with it or the Job will be killed
+      # mid-wait and the hook failure will name helm rather than the wait.
       initContainers:
         - name: configure-xnat-web
           image: alpine:3.20
@@ -247,8 +258,8 @@ spec:
                 -d "{\"password\": \"${ADMIN_PASS}\"}" >/dev/null
 
               # Grant the admin account the ContainerManager role. Mirrors
-              # trust/xnat/xnat/config/configure-xnat.sh — the sibling
-              # configure-dcm2niix container authenticates as admin, and since
+              # trust/xnat/xnat/config/configure-xnat.sh — configure-dcm2niix, the
+              # containers[] entry that runs after this one, authenticates as admin, and since
               # Container Service 3.7.0 both /xapi/docker/server and
               # /xapi/commands require this role. Without it those calls fail
               # with 401/403 and, because they were `|| true`, the Job still
@@ -542,9 +553,18 @@ spec:
                 exit 1
               fi
 
-              # The sibling configure-xnat-web container activates the site
-              # ({"initialized": true} on /xapi/siteConfig). Wait for that before
-              # touching the Container Service plugin so we don't race it.
+              # The configure-xnat-web INIT container activates the site
+              # ({"initialized": true} on /xapi/siteConfig). It is no longer a sibling:
+              # initContainers run to completion before this one starts, so this wait can
+              # no longer expire for the reason it was written to catch. If the
+              # initContainer completed, activation has already happened; if it did not,
+              # this container never started — its activation POST goes through xnat_curl
+              # under `set -e`, which aborts the initContainer on any non-2xx.
+              #
+              # Kept as a residual guard, not as sequencing: it still catches a site that
+              # reports activated and then does not (an XNAT-side rollback, or a different
+              # backend answering), and it fails with a named cause rather than letting the
+              # Container Service calls below 404 into `|| true`.
               echo "Waiting for XNAT site activation..."
               SITE_ACTIVATED=false
               for i in $(seq 1 60); do
@@ -559,15 +579,16 @@ spec:
                 sleep 5
               done
               if [ "$SITE_ACTIVATED" != "true" ]; then
-                echo "ERROR: XNAT site was not activated within 300s — the sibling configure-xnat-web container likely failed" >&2
+                echo "ERROR: XNAT site was not activated within 300s — check the configure-xnat-web INIT container's log" >&2
                 exit 1
               fi
 
-              # The sibling configure-xnat-web container grants ${XNAT_ADMIN_USER}
+              # The configure-xnat-web INIT container grants ${XNAT_ADMIN_USER}
               # the ContainerManager role, which every Container Service call
-              # below requires (CS >= 3.7.0). Wait for it to land rather than
-              # racing it — an unauthorised call here used to be swallowed by
-              # `|| true` and left dcm2niix unregistered on a "successful" Job.
+              # below requires (CS >= 3.7.0). Residual guard for the same reason
+              # as the activation wait above — an unauthorised call here used to
+              # be swallowed by `|| true` and left dcm2niix unregistered on a
+              # "successful" Job, so it fails with a named cause instead.
               echo "Waiting for the ContainerManager role on ${XNAT_ADMIN_USER}..."
               HAS_CM=false
               for i in $(seq 1 60); do
