@@ -34,7 +34,7 @@ def _load_uploader():
 def test_omop_data_version_file_is_the_repos_pin():
     uploader = _load_uploader()
 
-    assert uploader.OMOP_DATA_VERSION_FILE == REPO_ROOT / "trust" / ".data_version"
+    assert uploader.OMOP_DATA_VERSION_FILE == REPO_ROOT / "trust" / "omop-db" / ".data_version"
     assert uploader.OMOP_DATA_VERSION_FILE.is_file(), (
         "the parents[N] index in OMOP_DATA_VERSION_FILE no longer matches this file's depth"
     )
@@ -43,4 +43,4 @@ def test_omop_data_version_file_is_the_repos_pin():
 def test_omop_data_version_reads_the_pinned_value():
     uploader = _load_uploader()
 
-    assert uploader.omop_data_version() == (REPO_ROOT / "trust" / ".data_version").read_text().strip()
+    assert uploader.omop_data_version() == (REPO_ROOT / "trust" / "omop-db" / ".data_version").read_text().strip()

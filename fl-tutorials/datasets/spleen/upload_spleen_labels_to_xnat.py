@@ -58,17 +58,18 @@ mock DICOMs, the pgdata and this mapping are all read at one revision of that on
 MAPPING_CACHE_FILENAME = ".accession_map.csv"
 """Cached mapping, written beside the labels directory so re-runs and offline runs work."""
 
-# The OMOP CSV export lives at one unversioned path on the dataset; a data version is a git tag
-# there, and this checkout pins one in trust/.data_version — the same pin the trusts are seeded
-# from, rather than a second copy that could silently drift from it. The mapping is read at that
-# tag unless HF_TRUST_DATA_REVISION says otherwise.
+# The OMOP CSV export is published per data version alongside the pgdata tars the trusts are
+# seeded from, so the mapping is read at whatever version this checkout deploys — one pin, in
+# trust/omop-db/.data_version, rather than a second copy that could silently drift from it.
+# Note this pins the *path*, not the bytes: HF_TRUST_DATA_REVISION above pins the revision those
+# bytes are read at, and defaults to a moving `main` like every other dataset read in this repo.
 #
 # parents[3] is the repository root from fl-tutorials/datasets/spleen/<this file>. The index is
 # a depth assumption: it was parents[5] when this file lived under
 # fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/utils/, and the move to
 # datasets/ (d6ce346b) left it pointing two directories above the repo (FLIP#1102).
 # tests/test_spleen_uploader_paths.py fails if this ever stops resolving to a real file.
-OMOP_DATA_VERSION_FILE = Path(__file__).resolve().parents[3] / "trust" / ".data_version"
+OMOP_DATA_VERSION_FILE = Path(__file__).resolve().parents[3] / "trust" / "omop-db" / ".data_version"
 
 DOWNLOAD_TIMEOUT_SECONDS = 60
 

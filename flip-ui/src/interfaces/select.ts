@@ -11,9 +11,15 @@
  * limitations under the License.
  */
 
-
-
-
+/**
+ * An option in a select-style control: a stable `id` plus the human-readable
+ * `description` shown to the user.
+ *
+ * Originally `@/components/AiSelect/interfaces`, alongside the AiSelect and
+ * AiChipSelect components. Both were removed as dead code in FLIP#1063, but the
+ * shape outlived them — RegisterUserModal's role chooser (a Headless UI Listbox
+ * written inline) still uses it.
+ */
 export interface IOption {
     id: string,
     description: string,
