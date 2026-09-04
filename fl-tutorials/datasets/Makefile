@@ -47,8 +47,14 @@ PROSTATE_UV := uv run --project prostate
 
 .PHONY: download-xray-data download-spleen-data download-spleen-msd-data \
 	download-spleen-flip-format-data download-arkplus-finetuning-data \
-	download-arkplus-eval-data upload-spleen-labels download-prostate-data \
-	convert-prostate-to-dicom convert-prostate-to-nifti partition-prostate-data
+	download-arkplus-eval-data upload-spleen-labels \
+	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
+	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
+	reproduce-spleen-omop \
+	fetch-cxr-metadata-table build-cxr-omop-tables verify-cxr-omop-tables reproduce-cxr-omop \
+	download-prostate-data convert-prostate-to-dicom convert-prostate-to-nifti partition-prostate-data \
+	create-prostate-metadata-table fetch-prostate-metadata-table build-prostate-omop-tables \
+	verify-prostate-omop-tables reproduce-prostate-omop build-prostate-canonical package-prostate-dicom
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the layout
 # both harnesses read (data/xrays_mini_300/, gitignored). Idempotent — safe to re-run.
@@ -129,10 +135,14 @@ download-prostate-data:
 	@echo "✅ PI-CAI data ready at $(abspath $(DATA_DIR))/prostate/ — make -C fl-tutorials convert-prostate-to-dicom"
 
 # Convert the downloaded .mha scans to a DICOM series per study, so they can be pulled into a
-# trust's PACS the same way any other study would be.
+# trust's PACS the same way any other study would be. Only the axial series the tutorial reads by
+# default: the sagittal/coronal T2W PI-CAI also ships are unused and would double the DICOM tree
+# (and the published set). PROSTATE_MODALITIES="t2w adc hbv sag cor" converts everything.
+PROSTATE_MODALITIES ?= t2w adc hbv
 convert-prostate-to-dicom:
 	@$(PROSTATE_UV) python prostate/convert_mha_to_dicom.py \
-		--input $(DATA_DIR)/prostate/images --output $(DATA_DIR)/prostate/dicom
+		--input $(DATA_DIR)/prostate/images --output $(DATA_DIR)/prostate/dicom \
+		--modalities $(PROSTATE_MODALITIES)
 
 # Convert the DICOM series (above) to .nii.gz with the platform's own pinned dcm2niix image —
 # the same conversion an fl-client gets from XNAT after image pull, so the simulator trains on
@@ -180,3 +190,175 @@ upload-spleen-labels:
 		$(if $(ALLOW_NO_OP),--allow-no-op) \
 		$(if $(REQUIRE_FULL_COVERAGE),--require-full-coverage) \
 		$(if $(DRY_RUN),--dry-run)
+
+# The OMOP-generation chains (FLIP#1092): spleen below, then cxr. Every vendored script uses
+# hardcoded, cwd-relative paths inherited from its original repo, so all these targets run from
+# fl-tutorials/ (one level up) rather than from here — that is the only directory where `data/…`,
+# `tables/` and `dicom_output/` resolve as the scripts expect. Do not "simplify" either chain by
+# dropping the `cd ..`.
+#
+# Spleen OMOP-generation chain
+#
+# There are two ways to reach build-spleen-omop-tables:
+#   fetch-spleen-metadata-table   — the reproducible path. Downloads the published metadata table
+#                                   that actually produced the published OMOP export. No root, no
+#                                   1.5GB download. This is what the verification gate uses.
+#   download-spleen-msd-raw -> convert-spleen-to-dicom -> create-spleen-metadata-table
+#                                 — the full regeneration path. Needs root and re-synthesises
+#                                   patient identities, so its output will NOT match the published
+#                                   export (see the README). Use it to exercise the DICOM stage.
+SPLEEN_OMOP_UV := uv run --project datasets/spleen
+# The published tables are read at a data-version TAG on aicentreflip/trust-data: the dataset holds
+# one copy of every table at omop-csv/<project>/, and the version is the revision, never the path.
+# HF_TRUST_DATA_REVISION overrides; otherwise the pin — trust/.data_version once FLIP#1101 lands
+# (one tag for the whole dataset), trust/omop-db/.data_version until then.
+TRUST_DATA_REVISION ?= $(or $(HF_TRUST_DATA_REVISION),$(shell cat ../../trust/.data_version 2>/dev/null),$(shell cat ../../trust/omop-db/.data_version 2>/dev/null))
+HF_TRUST_DATA_BASE := https://huggingface.co/datasets/aicentreflip/trust-data/resolve/$(TRUST_DATA_REVISION)
+SPLEEN_METADATA_URL := $(HF_TRUST_DATA_BASE)/omop-csv/spleen_project/source/dicom_metadata.csv
+
+# Reproducible path: fetch the canonical metadata table for the pinned data version.
+fetch-spleen-metadata-table:
+	@cd .. && mkdir -p data && curl -fsSL "$(SPLEEN_METADATA_URL)" -o data/spleen_metadata.csv
+	@echo "✅ metadata table at fl-tutorials/data/spleen_metadata.csv (revision $(TRUST_DATA_REVISION))"
+
+# Regeneration path, step 0: the RAW MSD extract. NOTE this is NOT `download-spleen-data`, which
+# reorganises the archive into the FLIP accession-resources layout and then rmtree's the raw tree;
+# convert_spleen_dataset.py reads the RAW layout (data/Task09_Spleen/imagesTr). Both downloads are
+# legitimate — they serve different consumers.
+download-spleen-msd-raw:
+	@cd .. && $(SPLEEN_OMOP_UV) python -c "from monai.apps.utils import download_and_extract; \
+		download_and_extract(url='https://msd-for-monai.s3-us-west-2.amazonaws.com/Task09_Spleen.tar', \
+		filepath='data/Task09_Spleen.tar', output_dir='data')"
+	@echo "✅ raw MSD extract at fl-tutorials/data/Task09_Spleen/imagesTr (41 cases)"
+
+# Regeneration path, step 1: NIfTI -> DICOM with synthesised patient identities.
+# WORKSTATION ONLY: pyplastimatch's install_precompiled_binaries() copies to /usr/local/bin, so this
+# needs root and is never run in CI. Run as:
+#   sudo $(shell which uv) run --project datasets/spleen python datasets/spleen/convert_spleen_dataset.py
+# from fl-tutorials/. Create the venv as your normal user first (any other target does it) — a sudo
+# run can leave a root-owned .venv that breaks every later non-sudo invocation.
+convert-spleen-to-dicom:
+	@cd .. && $(SPLEEN_OMOP_UV) python datasets/spleen/convert_spleen_dataset.py
+
+# Regeneration path, step 2: DICOM -> tables/dicom_metadata.csv, then bridge it to where the OMOP
+# converter expects its input. The copy stands in for a step that was manual upstream:
+# create_metadata_table.py came from flip_project_spleen_segmentation and writes
+# tables/dicom_metadata.csv, while omop_convert_spleen.py came from flip-omop-mock-data and reads
+# data/spleen_metadata.csv. A human moved the file between the two repos. Automating that is the
+# point of having both halves in one tree; editing either script's hardcoded path would break the
+# byte-faithfulness the verification gate depends on.
+create-spleen-metadata-table:
+	@cd .. && $(SPLEEN_OMOP_UV) python datasets/spleen/create_metadata_table.py \
+		&& cp tables/dicom_metadata.csv data/spleen_metadata.csv
+
+# Metadata table -> omop/<trust>/spleen_project/*.csv, ready for trust/omop-db's build_canonical +
+# import_tables. Reads data/spleen_metadata.csv, from either path above.
+#
+# PYTHONPATH=datasets is required because omop_convert_spleen.py imports utils.omop_mappings:
+# `python datasets/spleen/x.py` puts datasets/spleen on sys.path, never datasets/.
+build-spleen-omop-tables:
+	@cd .. && PYTHONPATH=datasets $(SPLEEN_OMOP_UV) python datasets/spleen/omop_convert_spleen.py
+
+# Diff the generated tables against the published export for the pinned data version. Re-run this
+# after a .data_version bump, or after any change to the converter or the shared schemas.
+verify-spleen-omop-tables:
+	@cd .. && $(SPLEEN_OMOP_UV) python datasets/utils/verify_omop_tables.py --project spleen_project --revision $(TRUST_DATA_REVISION)
+
+# The whole reproducible path in one command: fetch the canonical input, convert, verify.
+# Needs no root and no MSD download.
+reproduce-spleen-omop: fetch-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables
+
+# ---------------------------------------------------------------------------------------------
+# cxr_project OMOP tables (FLIP#1092 wave 2)
+#
+# Only the OMOP conversion is in-tree. The chest X-rays are generated by a synthetic model in the
+# private londonaicentre/xraycat repo, so there is no in-tree equivalent of the spleen regeneration
+# path -- the provenance chain here starts at the published DICOM metadata table:
+#   fetch-cxr-metadata-table -> build-cxr-omop-tables -> verify-cxr-omop-tables
+# or `reproduce-cxr-omop` for all three. Needs no root and no image download.
+CXR_OMOP_UV := uv run --project datasets/cxr
+CXR_METADATA_URL := $(HF_TRUST_DATA_BASE)/omop-csv/cxr_project/source/dicom_metadata.csv
+
+# Fetch the canonical metadata table for the pinned data version. This is the table that actually
+# produced the published cxr_project export -- its 8332 rows yield exactly the published person_ids.
+fetch-cxr-metadata-table:
+	@cd .. && mkdir -p data && curl -fsSL "$(CXR_METADATA_URL)" -o data/cxr_metadata.csv
+	@echo "✅ metadata table at fl-tutorials/data/cxr_metadata.csv (revision $(TRUST_DATA_REVISION))"
+
+# Metadata table -> omop/<trust>/cxr_project/*.csv, ready for trust/omop-db's build_canonical +
+# import_tables. PYTHONPATH=datasets for the same reason as the spleen target: the converter imports
+# utils.omop_mappings, and `python datasets/cxr/x.py` puts datasets/cxr on sys.path, never datasets/.
+build-cxr-omop-tables:
+	@cd .. && PYTHONPATH=datasets $(CXR_OMOP_UV) python datasets/cxr/omop_convert_cxr.py
+
+# Diff the generated tables against the published export for the pinned data version. Same gate
+# script as spleen, selected by --project; tables a project does not publish are skipped.
+verify-cxr-omop-tables:
+	@cd .. && $(CXR_OMOP_UV) python datasets/utils/verify_omop_tables.py --project cxr_project --revision $(TRUST_DATA_REVISION)
+
+reproduce-cxr-omop: fetch-cxr-metadata-table build-cxr-omop-tables verify-cxr-omop-tables
+
+# ---------------------------------------------------------------------------------------------
+# prostate_project OMOP tables + DICOM set (the seed pipeline's third dataset — FLIP#1100 follow-on)
+#
+# The first dataset published with no snapshot at all: the trusts load it through `make -C trust
+# seed`, by the source_trust column the metadata table decides from the contributing center (ZGT ->
+# trust 1, PCNN -> trust 2, RUMC -> trust 3, waiting for a third trust). Full chain, from the fold download:
+#   download-prostate-data -> convert-prostate-to-dicom -> create-prostate-metadata-table
+#     -> build-prostate-omop-tables -> build-prostate-canonical -> package-prostate-dicom
+#     -> make -C trust publish-trust-data VERSION=... OMOP_CSV=... DICOM=...
+# Reproducible path (no 5 GB download, no conversion), the same shape as spleen's and cxr's:
+#   fetch-prostate-metadata-table -> build-prostate-omop-tables -> verify-prostate-omop-tables
+# or `reproduce-prostate-omop` for the three. Everything lands under DATA_DIR/prostate/.
+PROSTATE_DATA := $(abspath $(DATA_DIR))/prostate
+PROSTATE_OMOP_UV := uv run --project datasets/prostate
+PROSTATE_METADATA_URL := $(HF_TRUST_DATA_BASE)/omop-csv/prostate_project/source/dicom_metadata.csv
+PROSTATE_MARKSHEET_URL := $(HF_TRUST_DATA_BASE)/omop-csv/prostate_project/source/marksheet.csv
+
+# DICOM tree -> source/dicom_metadata.csv (one row per series, source_trust decided here) +
+# source/marksheet.csv (the studies present). These two are the published inputs of the conversion.
+create-prostate-metadata-table:
+	@$(PROSTATE_UV) python prostate/create_prostate_metadata_table.py --dicom $(PROSTATE_DATA)/dicom \
+		--marksheet $(PROSTATE_DATA)/clinical_information/marksheet.csv --output $(PROSTATE_DATA)/source
+
+# Reproducible path: the published inputs at the pinned data version.
+fetch-prostate-metadata-table:
+	@mkdir -p $(PROSTATE_DATA)/source \
+		&& curl -fsSL "$(PROSTATE_METADATA_URL)" -o $(PROSTATE_DATA)/source/dicom_metadata.csv \
+		&& curl -fsSL "$(PROSTATE_MARKSHEET_URL)" -o $(PROSTATE_DATA)/source/marksheet.csv
+	@echo "✅ prostate source tables at $(PROSTATE_DATA)/source (revision $(TRUST_DATA_REVISION))"
+
+# source/ -> omop/prostate_project/*.csv (every row, trust column) + omop/<trust>/prostate_project/.
+# PYTHONPATH=datasets: the converter imports utils.*, as spleen's and cxr's do.
+build-prostate-omop-tables:
+	@cd .. && PYTHONPATH=datasets $(PROSTATE_OMOP_UV) python datasets/prostate/omop_convert_prostate.py \
+		--metadata $(PROSTATE_DATA)/source/dicom_metadata.csv --marksheet $(PROSTATE_DATA)/source/marksheet.csv \
+		--omop-root $(PROSTATE_DATA)
+
+# The faithfulness gate, same script as spleen/cxr.
+# Three source trusts (one center each: ZGT, PCNN, RUMC), so the gate concatenates three per-trust dirs.
+verify-prostate-omop-tables:
+	@cd .. && $(PROSTATE_OMOP_UV) python datasets/utils/verify_omop_tables.py --project prostate_project \
+		--generated-dir $(PROSTATE_DATA)/omop --trusts trust_1 trust_2 trust_3 --revision $(TRUST_DATA_REVISION)
+
+reproduce-prostate-omop: fetch-prostate-metadata-table build-prostate-omop-tables verify-prostate-omop-tables
+
+# The canonical (source_trust) form that gets published: the per-trust split assembled by
+# trust/omop-db's dataset tool, plus the two source tables beside it so the conversion reproduces
+# from the dataset alone. This directory is what publish-trust-data's OMOP_CSV= takes.
+build-prostate-canonical:
+	@cd ../../trust/omop-db && uv run python -m omop_db_tools.dataset build \
+		--trust-dirs $(PROSTATE_DATA)/omop/trust_1 $(PROSTATE_DATA)/omop/trust_2 $(PROSTATE_DATA)/omop/trust_3 \
+		--dest $(PROSTATE_DATA)/canonical --projects prostate_project
+	@mkdir -p $(PROSTATE_DATA)/canonical/prostate_project/source && cp \
+		$(PROSTATE_DATA)/source/dicom_metadata.csv $(PROSTATE_DATA)/source/marksheet.csv \
+		$(PROSTATE_DATA)/canonical/prostate_project/source/
+	@echo "✅ canonical tables at $(PROSTATE_DATA)/canonical/prostate_project"
+
+# The DICOM set, verified both ways against the canonical tables just built (the pre-publish
+# check: every accession, study UID and patient present on both sides), then packaged as the
+# dicom/prostate_project.tar.gz that publish-trust-data's DICOM= takes.
+package-prostate-dicom:
+	@cd ../../trust/orthanc && uv run publish_dicom.py --project prostate_project \
+		--tables-dir $(PROSTATE_DATA)/canonical --source $(PROSTATE_DATA)/dicom \
+		--out $(PROSTATE_DATA)/dist/dicom/prostate_project.tar.gz

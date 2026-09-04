@@ -1,0 +1,55 @@
+schema_type: dataframe
+columns:
+  specimen_id:
+    dtype: int64
+    unique: true
+  person_id:
+    dtype: int64
+  specimen_concept_id:
+    dtype: int64
+  specimen_type_concept_id:
+    dtype: int64
+  specimen_date:
+    dtype: datetime64[ns]
+  specimen_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  quantity:
+    dtype: float64
+    nullable: true
+    required: false
+  unit_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  anatomic_site_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  disease_status_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  specimen_source_id:
+    dtype: string[python]
+    nullable: true
+    required: false
+  specimen_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  unit_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  anatomic_site_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  disease_status_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

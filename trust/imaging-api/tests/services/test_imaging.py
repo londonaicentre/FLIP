@@ -113,6 +113,31 @@ def test_query_by_accession_number(mock_post, headers):
     assert studies[0].accession_number == accession_number
 
 
+@patch("imaging_api.services.imaging.requests.post")
+def test_query_by_accession_number_without_descriptive_tags(mock_post, headers):
+    """A study with no StudyDescription / ReferringPhysicianName / PatientName still parses (FLIP#1123)."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = [
+        {
+            "accessionNumber": "10000_1000000",
+            "studyInstanceUid": "1.2.3.4",
+            "studyDate": "2019-07-02",
+            "modalitiesInStudy": ["MR"],
+            "patient": {"id": "10000", "name": None, "sex": "M"},
+        }
+    ]
+    mock_response.text = "[]"
+    mock_response.reason = "OK"
+    mock_post.return_value = mock_response
+
+    studies = query_by_accession_number("10000_1000000", headers)
+
+    assert [s.study_instance_uid for s in studies] == ["1.2.3.4"]
+    assert studies[0].study_description is None
+    assert studies[0].patient.name is None
+
+
 @patch("imaging_api.services.imaging.check_pacs")
 @patch("imaging_api.services.imaging.requests.post")
 @patch("imaging_api.services.imaging.get_project")

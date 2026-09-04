@@ -16,7 +16,7 @@ FLIP/
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
 ├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (all Client-API), fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
-├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion. Shared dataset tooling in fl-tutorials/datasets/ (download/derive/enrich, single copy for both backends — the download-*-data + upload-spleen-labels targets), outputs in the shared gitignored fl-tutorials/data/. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
+├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion. Shared dataset tooling in fl-tutorials/datasets/ (download/derive/enrich, single copy for both backends — the download-*-data + upload-spleen-labels targets), outputs in the shared gitignored fl-tutorials/data/. fl-tutorials/datasets/utils/ holds the OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, the per-project surrogate-key blocks (omop_ids.py) and the one verification gate (verify_omop_tables.py --project <name>). spleen carries the full chain (`convert-spleen-to-dicom`, `create-spleen-metadata-table`, `build-spleen-omop-tables`, plus the reproducible-path/verification targets); cxr carries the OMOP conversion only (`reproduce-cxr-omop`) because image generation lives in the private londonaicentre/xraycat. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
 ├── map-apps/           # MONAI Application Package (MAP) templates for packaging FLIP-trained models for clinical deployment
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
@@ -162,7 +162,7 @@ cause. (Older app copies die with torch's opaque `num_samples=0` instead.)
 in-tree at `fl-tutorials/datasets/spleen/upload_spleen_labels_to_xnat.py` (the shared dataset-tooling tree)
 — **no private repo required**. It resolves each trust's XNAT project by `secondary_ID == <FLIP project_id>`,
 fetches the accession→MSD-case mapping at run time from the public `aicentreflip/trust-data` dataset
-(`omop-csv/<version>/spleen_project/image_occurrence.csv`, which also carries `source_trust`), and writes each
+(`omop-csv/spleen_project/image_occurrence.csv` at the pinned data-version tag, which also carries `source_trust`), and writes each
 label into the scan's existing `NIFTI` resource, renaming `input_` → `label_`. The XNAT protocol work lives in
 `flip.xnat` (`flip-utils/flip/xnat/`), also exposed as the `flip-xnat` CLI.
 
@@ -185,7 +185,7 @@ make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid> \
 ```
 
 The mapping is cached beside the labels dir (so a re-run needs no huggingface.co egress) and
-`HF_TRUST_DATA_REVISION=<sha>` pins the dataset revision instead of the moving `main`.
+`HF_TRUST_DATA_REVISION=<sha|main>` overrides the dataset revision, which defaults to the tag in `trust/.data_version`.
 
 Through the smoke, `make -C flip-api e2e_smoke_spleen` (or `e2e_smoke_spleen_evaluation`) carries the
 in-tree command already, targeting both dev trusts via `SPLEEN_XNAT_URLS` (override for another roster;
@@ -253,6 +253,32 @@ make -C fl-tutorials run-all-tutorials                   # every tutorial (heavy
 To iterate on the FL images, `make build-fl` builds them locally as `:dev` (see `fl-services/nvflare/README.md`);
 run the stack on them with `make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`.
 
+The tutorials' mock OMOP data is generated in-tree, per dataset, under `fl-tutorials/datasets/`
+(FLIP#1092). Each project is reproducible without root from a pinned published metadata table and
+verified against the published export by one shared gate
+(`datasets/utils/verify_omop_tables.py --project <name>`):
+
+```bash
+make -C fl-tutorials reproduce-spleen-omop          # fetch -> build -> verify, chained
+make -C fl-tutorials reproduce-cxr-omop             # same three for cxr_project
+make -C fl-tutorials fetch-spleen-metadata-table    # or step by step: pinned metadata table
+make -C fl-tutorials build-spleen-omop-tables       # -> omop/<trust>/spleen_project/*.csv
+make -C fl-tutorials verify-spleen-omop-tables      # diff against the published export
+make -C fl-tutorials convert-spleen-to-dicom        # spleen-only full regeneration (workstation/root)
+make -C fl-tutorials create-spleen-metadata-table   # spleen-only full regeneration
+```
+
+**Scope differs per dataset, and it is not an oversight.** Spleen carries the whole chain from the
+public MSD download. **cxr carries only the OMOP conversion** — the synthetic chest X-rays, their
+DICOM write and their metadata extraction live in the private `londonaicentre/xraycat` repo, so the
+in-tree provenance chain starts at the published metadata table. Neither regeneration path
+reproduces the published export byte-for-byte anyway (spleen re-synthesises patient identities on
+every run), which is why the gate's fixed input is the published metadata table rather than the
+images.
+
+See `fl-tutorials/datasets/README.md` ("OMOP mock-data generation") for both chains, the shared
+contract in `datasets/utils/`, and the `download-spleen-msd-raw` regeneration-path first step.
+
 ### Linting & Type Checking
 
 ```bash
@@ -280,7 +306,38 @@ make -C flip-api create_testing_projects   # Create test projects
 make -C flip-api delete_testing_projects   # Clean up test data
 make seed-demo-projects                    # Curated radiology catalogue in honest lifecycle states
                                            # (EXTRA_ARGS="--cleanup" removes it again)
+make -C trust seed-trusts PROJECTS="spleen_project cxr_project"   # Seed the RUNNING dev trusts with datasets (#1100)
+make -C trust seed KIT=GSTT PROJECTS="…"   # one trust; seed-omop / seed-orthanc for one half
 ```
+
+**Trust data has two paths.** `make up` mounts pre-built snapshots (`update-omop-data` /
+`update-orthanc-data`, pinned by `trust/.data_version`) — a fixed two-project, two-trust cut.
+**Seeding** loads a chosen set of projects into a *running* trust instead: OMOP rows via
+`omop_db_tools.import_tables` and DICOMs via `trust/orthanc/seed_orthanc.py`, both selected by the
+same `source_trust` column of the published canonical tables, so a trust's OMOP rows and the studies
+in its PACS agree by construction. Same lifecycle as `load-omop-vocab`: one-time after `up-trusts`,
+idempotent, persists in the bind-mounted volumes until a `.data_version` bump — which the update
+scripts then refuse to apply over a seeded volume without `FORCE=1`. Adding a dataset means
+publishing its `omop-csv/<project>/` tables and `dicom/<project>.tar.gz`
+(`trust/orthanc/publish_dicom.py` verifies both agree before packaging), not a new pair of tarballs.
+`prostate_project` (PI-CAI fold 0, 300 bpMRI studies, one center per `source_trust` — ZGT → 1,
+PCNN → 2, RUMC → 3 waiting for a third trust — in `fl-tutorials/datasets/prostate/`) is the first cohort that exists
+only this way: `make -C trust seed-trusts PROJECTS=prostate_project`, its masks reach a project via
+`upload_prostate_labels_to_xnat.py`, and `make -C flip-api e2e_smoke_prostate` drives cohort →
+pull → enrichment (`--stop-after-enrichment`: no prostate training app exists yet).
+The FL simulator (`make -C fl-tutorials run-tutorial`) is a third, separate path: LOCAL_DEV reads
+`fl-tutorials/data/` straight from disk and touches no trust service.
+
+**One copy of every artefact; a data version is a git tag.** `aicentreflip/trust-data` holds each
+file once, at an unversioned path on `main` (`trust<N>/trust<N>_pgdata.tar`,
+`trust<N>/trust<N>_orthanc_data.tar`, `omop-csv/<project>/`, `dicom/<project>.tar.gz`). A data
+version is a tag on that dataset, and `trust/.data_version` is the ONE pin, for OMOP and Orthanc
+together: every consumer (the two update scripts, `omop_db_tools.dataset`, `seed_orthanc.py`, the
+spleen uploader, Ansible, the Helm chart) fetches `resolve/<tag>/<path>`, so old versions stay
+reachable at their tags forever and are never duplicated. `HF_TRUST_DATA_REVISION` overrides the
+tag (`main` to work against content that is not tagged yet). Publishing a version is
+`make -C trust publish-trust-data VERSION=<tag> …` — one commit on the dataset plus one tag —
+then a bump of `trust/.data_version`. Never add a versioned filename or directory to the dataset.
 
 ### Demo Video Recorder
 

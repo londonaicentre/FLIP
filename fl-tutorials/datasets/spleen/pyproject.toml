@@ -5,11 +5,25 @@ description = "Local uv environment for the shared spleen dataset tooling (MSD d
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "monai>=1.5.1",
+    "names>=0.3.0",
     "natsort>=8.4.0",
     "pandas>=2.3.2",
+    "pandera[pandas,io]>=0.28.1",
+    "pillow>=11.3.0",
+    "pydicom>=3.0.1",
+    "pyplastimatch>=0.4.6",
     "requests>=2.32.5",
+    "sqlglot>=28.6.0",
     "torch>=2.6.0",
     "tqdm>=4.67.3",
+]
+
+[dependency-groups]
+# Test-only: fl-tutorials/tests/datasets/ runs in this project's environment (see
+# fl-tutorials/tests/README.md) rather than flip-utils', because pandera/sqlglot are needed
+# only to test this workstation tooling, not to run FL jobs.
+dev = [
+    "pytest>=8.4.2",
 ]
 
 [tool.uv]

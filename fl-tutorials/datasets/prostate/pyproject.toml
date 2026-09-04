@@ -12,13 +12,27 @@
 [project]
 name = "prostate-dataset-tools"
 version = "0.1.0"
-description = "Local uv environment for the shared prostate dataset tooling (PI-CAI download + DICOM/NIfTI conversion + center partitioning)."
+description = "Local uv environment for the shared prostate dataset tooling (PI-CAI download + DICOM/NIfTI conversion + center partitioning + the prostate_project OMOP conversion)."
 requires-python = ">=3.12,<3.14"
 dependencies = [
+    "names>=0.3.0",
     "nibabel>=5.3.2",
+    "pandas>=2.2.0",
+    "pandera[pandas,io]>=0.22.0",
     "pydicom>=3.0.2",
+    # utils/omop_schemas.py imports requests at module scope for its --regenerate path, so every
+    # consumer of the shared contract needs it even though no conversion run reaches the network.
+    "requests>=2.32.5",
     "simpleitk>=2.5.6",
+    "sqlglot>=28.6.0",
     "tqdm>=4.67.0",
+]
+
+[dependency-groups]
+# Test-only: fl-tutorials/tests/datasets/prostate/ runs in this project's environment
+# (see fl-tutorials/tests/README.md).
+dev = [
+    "pytest>=8.4.2",
 ]
 
 [tool.uv]

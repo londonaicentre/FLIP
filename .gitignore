@@ -464,6 +464,17 @@ flip-utils/dist/
 fl-tutorials/data/
 fl-tutorials/datasets/spleen/uv.lock
 fl-tutorials/datasets/prostate/uv.lock
+fl-tutorials/datasets/cxr/uv.lock
+
+# Output of the spleen and cxr OMOP generation chains (FLIP#1092). Regenerated on demand and verified against
+# the published export — never committed. The scripts write cwd-relative, and the Make recipes run
+# from fl-tutorials/datasets/; the second set covers a hand-run from fl-tutorials/.
+fl-tutorials/datasets/dicom_output/
+fl-tutorials/datasets/tables/
+fl-tutorials/datasets/omop/
+fl-tutorials/dicom_output/
+fl-tutorials/tables/
+fl-tutorials/omop/
 fl-services/flower/provision/creds/
 fl-services/flower/runs/
 

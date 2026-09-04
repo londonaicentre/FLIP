@@ -25,8 +25,9 @@ set -euo pipefail
 # Set TRUST=1 or TRUST=2 to update only a single trust; defaults to "all" (both trusts).
 
 # These paths are relative to the location of this script
-REPO_DATA_VERSION_FILE=".data_version"  # committed in repo
-VOLUMES_DIR="./volumes"                  # local dir for downloaded archives
+# ONE pin for the whole trust dataset (OMOP and Orthanc): a git tag on the HF dataset.
+REPO_DATA_VERSION_FILE="../.data_version"  # committed in repo
+VOLUMES_DIR="./volumes"                    # local dir for downloaded archives
 # Pre-per-trust marker. Older versions of this script tracked a single shared
 # version here; both trusts now use per-trust markers (.local_data_version_trust<N>).
 LEGACY_DATA_VERSION_FILE="${VOLUMES_DIR}/.local_data_version"
@@ -42,12 +43,13 @@ LEGACY_DATA_VERSION_FILE="${VOLUMES_DIR}/.local_data_version"
 : "${ORTHANC_STORAGE_DIR_TRUST_2:=orthanc/orthanc-storage-trust2}"
 
 # Mock data is fetched anonymously over HTTPS from a public Hugging Face dataset
-# (no AWS CLI or credentials required). The dataset is laid out per trust:
-#   <repo>/resolve/<revision>/trust1/trust1_orthanc_data_<version>.tar
-# Both the repo and revision can be overridden via the environment.
+# (no AWS CLI or credentials required). There is ONE copy of each archive, at an
+# unversioned path; the data version is a git TAG on the dataset, so the pin
+# selects the revision, never a filename:
+#   <repo>/resolve/<data version>/trust1/trust1_orthanc_data.tar
+# Both the repo and the revision can be overridden via the environment
+# (HF_TRUST_DATA_REVISION=main to test content that is not tagged yet).
 HF_TRUST_DATA_REPO="${HF_TRUST_DATA_REPO:-aicentreflip/trust-data}"
-HF_TRUST_DATA_REVISION="${HF_TRUST_DATA_REVISION:-main}"
-HF_BASE_URL="https://huggingface.co/datasets/${HF_TRUST_DATA_REPO}/resolve/${HF_TRUST_DATA_REVISION}"
 
 # TRUST controls which trust(s) to update: "1", "2", or "all" (default).
 # Validate before env-var checks so TRUST=1 never requires TRUST_2's var.
@@ -69,6 +71,8 @@ resolve_storage_dir() {
 
 # --- read desired data version from repo file ---
 DATA_VERSION="$(tr -d ' \n\r\t' < "${REPO_DATA_VERSION_FILE}")"
+HF_TRUST_DATA_REVISION="${HF_TRUST_DATA_REVISION:-${DATA_VERSION}}"
+HF_BASE_URL="https://huggingface.co/datasets/${HF_TRUST_DATA_REPO}/resolve/${HF_TRUST_DATA_REVISION}"
 
 mkdir -p "${VOLUMES_DIR}"
 
@@ -81,9 +85,10 @@ update_trust() {
   local storage_dir_var="ORTHANC_STORAGE_DIR_TRUST_${trust_num}"
   local storage_dir; storage_dir="$(resolve_storage_dir "${!storage_dir_var}")"
   local local_version_file="${VOLUMES_DIR}/.local_data_version_trust${trust_num}"
-  local archive="trust${trust_num}_orthanc_data_${DATA_VERSION}.tar"
-  local hf_url="${HF_BASE_URL}/trust${trust_num}/${archive}"
-  local local_archive="${VOLUMES_DIR}/${archive}"
+  # Unversioned on the dataset (the revision IS the version); versioned in the local cache so a
+  # bump can never reuse the previous version's bytes.
+  local hf_url="${HF_BASE_URL}/trust${trust_num}/trust${trust_num}_orthanc_data.tar"
+  local local_archive="${VOLUMES_DIR}/trust${trust_num}_orthanc_data_${DATA_VERSION}.tar"
 
   local local_version=""
   if [[ -f "${local_version_file}" ]]; then
@@ -103,6 +108,18 @@ update_trust() {
     # extracted by an older version of this script that didn't set them).
     chmod -R 777 "${storage_dir}" 2>/dev/null || true
     return
+  fi
+
+  # A seeded PACS (make seed-orthanc, FLIP#1100) holds studies the snapshot does not. Replacing it
+  # is a decision, not a side effect of a bump, so refuse here — before the ~1 GB download —
+  # unless FORCE=1. The marker lives INSIDE the storage dir (the two default dirs share a parent),
+  # so it follows the data and is removed with it.
+  local seed_marker="${storage_dir}/.seeded"
+  if [[ -f "${seed_marker}" && "${FORCE:-0}" != "1" ]]; then
+    echo "❌ Trust ${trust_num}'s Orthanc storage was seeded ($(tr '\n' ' ' < "${seed_marker}")) but the pinned" >&2
+    echo "   version is now ${DATA_VERSION}. Re-snapshotting discards every seeded study." >&2
+    echo "   Re-run with FORCE=1 to replace it, then re-run seed-orthanc." >&2
+    exit 1
   fi
 
   if [[ -z "${local_version}" ]]; then

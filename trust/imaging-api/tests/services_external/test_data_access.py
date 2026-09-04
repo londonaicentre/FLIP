@@ -52,6 +52,25 @@ class TestGetAccessionIds:
 
     @pytest.mark.asyncio
     @patch("imaging_api.services_external.data_access.httpx.AsyncClient")
+    async def test_rows_of_the_same_study_collapse_to_one_accession_in_query_order(self, mock_client_cls):
+        """One image_occurrence per series gives the same accession several times; a study imports once."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"accession_ids": ["ACC2", "ACC2", "ACC1", "ACC2", "ACC3", "ACC1"]}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        with patch.object(get_settings(), "TRUST_INTERNAL_SERVICE_KEY", "outbound-test-key"):
+            accession_ids = await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")
+
+        assert accession_ids == ["ACC2", "ACC1", "ACC3"]
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services_external.data_access.httpx.AsyncClient")
     async def test_empty_response(self, mock_client_cls):
         mock_response = MagicMock()
         mock_response.json.return_value = {"accession_ids": []}
