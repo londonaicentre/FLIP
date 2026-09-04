@@ -105,7 +105,7 @@ async def approve_project_step_function_endpoint(
         # Step 1: Approve Project
         logger.info(f"Approving project with ID: {project_id}")
         trusts = approve_project_endpoint(project_id=project_id, payload=payload, user_id=user_id, db=db)
-        print(f"Trusts returned from approve_project: {trusts}")
+        logger.debug(f"Trusts returned from approve_project: {trusts}")
 
         # Step 2: Format Trusts
         if not trusts:
