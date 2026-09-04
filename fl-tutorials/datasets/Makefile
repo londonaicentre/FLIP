@@ -42,7 +42,7 @@ SPLEEN_UV := uv run --project spleen
 
 .PHONY: download-xray-data download-spleen-data download-spleen-msd-data \
 	download-spleen-flip-format-data download-arkplus-finetuning-data \
-	download-arkplus-eval-data upload-spleen-labels
+	download-arkplus-eval-data upload-spleen-labels download-idc-pathology-data
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the layout
 # both harnesses read (data/xrays_mini_300/, gitignored). Idempotent — safe to re-run.
@@ -111,6 +111,27 @@ download-arkplus-eval-data:
 		--sites site1_holdoff site2_holdoff \
 		--label hold-out \
 		--next-step "make -C fl-tutorials run-tutorial TUTORIAL=arkplus_baseline_classification_evaluation (or arkplus_multimodel_classification_evaluation)"
+
+# NCI Imaging Data Commons digital pathology: DICOM Slide Microscopy whole-slide images plus their
+# Pan-Cancer-Nuclei-Seg bulk annotations, partitioned into FLIP sites by TCGA tissue source site.
+#
+# Downloads straight from IDC's public buckets -- no credentials, and no DICOM is re-hosted anywhere.
+# SLIDES_PER_SITE and SITES tune the subset; the defaults pull ~2.1 GB, chosen because base-resolution
+# instances in this collection run to 3 GB each (median ~890 MB) and the default sites are the two with
+# the most slides under the size cap.
+IDC_SITES ?= A8,A7
+IDC_SLIDES_PER_SITE ?= 5
+IDC_MAX_SLIDE_MB ?= 400
+
+download-idc-pathology-data:
+	@uv run --no-project --with idc-index --with pandas python idc_pathology/prepare_idc_pathology.py \
+		--resolve \
+		--sites $(IDC_SITES) \
+		--slides-per-site $(IDC_SLIDES_PER_SITE) \
+		--max-slide-mb $(IDC_MAX_SLIDE_MB) \
+		--out-dir $(DATA_DIR)/idc_pathology
+	@echo ""
+	@echo "Next step: make -C fl-tutorials run-tutorial TUTORIAL=idc_pathology_nuclei_detection_evaluation"
 
 # Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT, so the spleen
 # apps find a label_*.nii.gz beside each pulled input_*.nii.gz. Needs NUM_CASES=41 on the MSD
