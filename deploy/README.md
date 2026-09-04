@@ -60,11 +60,15 @@ recreate** — projects, models and cohort queries are still there when the stac
 Reset it deliberately when you want a genuinely empty hub:
 
 ```bash
-make down && docker volume rm deploy_flip_db_data && make up
+make reset-hub-db && make up
 ```
 
 `make up` re-runs `register-trusts`, so the trusts and their FL kit slots come back on their own;
-everything else starts empty.
+only projects, models and cohort queries are lost.
+
+`make clean` does **not** remove the volume. What it reclaims — containers, locally built images,
+dangling artifacts — is all reproducible, whereas the database is not, so freeing disk space or
+unsticking a bad image never costs you your projects.
 
 This applies to development only. Neither production compose defines `flip-db` — the hub talks to
 RDS through RDS Proxy there, so there is no local volume in play.

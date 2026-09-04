@@ -76,6 +76,7 @@ make build                 # Build all Docker images (standalone, --no-cache; do
 make lock                  # Regenerate every uv.lock from its pyproject.toml
 make ui                    # Start UI only
 make clean                 # Remove all stopped containers, networks, and images
+make reset-hub-db          # Drop the dev hub database (flip-db's named volume); `clean` does not
 make ci                    # Run CI pipeline locally using act
 make central-hub           # Start flip-api + database (no UI)
 make debug SERVICE=<name>  # Restart service in debug mode (port 5678)

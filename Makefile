@@ -12,6 +12,7 @@
 
 .PHONY: build build-fl dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
+		reset-hub-db \
 		check-aws-access generate-internal-service-key generate-xnat-credentials \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock checkov-lint \
@@ -252,11 +253,28 @@ down:
 	${DOCKER_COMMAND} down --remove-orphans
 	@echo "🛌 All services stopped successfully!"
 
-# Clean Docker resources
+# Clean Docker resources.
+#
+# Deliberately does NOT remove the hub database volume. Everything this reclaims —
+# containers, locally built images, dangling artifacts — is reproducible; the database is
+# not. Someone running `clean` to free disk space or unstick a bad image should not lose
+# their projects. Use `reset-hub-db` for that, the way trust/xnat has `xnat-reset`.
 clean:
 	${DOCKER_COMMAND} down --rmi local && \
 	docker system prune -f && \
 	rm -rf ./flip-fl-api/*/transfer/*/
+
+# Drop the development hub database and start over. The counterpart to flip-db's named
+# volume: data persists by default, and this is the explicit way to discard it. Trusts are
+# re-registered automatically by the next `make up`, so only projects, models and cohort
+# queries are lost.
+reset-hub-db:
+	@echo "🗑️  Resetting the hub database ($(COMPOSE_PROJECT)_flip_db_data)..."
+	@${DOCKER_COMMAND} rm -sf flip-db >/dev/null 2>&1 || true
+	@docker volume rm $(COMPOSE_PROJECT)_flip_db_data >/dev/null 2>&1 \
+		&& echo "   removed volume $(COMPOSE_PROJECT)_flip_db_data" \
+		|| echo "   no volume $(COMPOSE_PROJECT)_flip_db_data to remove"
+	@echo "✅ Hub database reset. Run 'make up' to recreate and re-register the trusts."
 
 # Stop all services and remove the containers
 restart: down up
