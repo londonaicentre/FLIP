@@ -205,6 +205,48 @@ run_on "hold message carries no plan values" "$(plan_with \
     "aws_ecs_service fl_server_net_1 aws_ecs_service.fl_server_net_1[0] delete,create")"
 expect_silent_about "format_version" "prints a summary, not the plan document"
 
+# 12. ACTIONS SURFACE. Without these a hold renders as a bare red X on the step,
+#     indistinguishable from a broken pipeline — which matters because a single
+#     piece of out-of-band drift makes the hold recur on every apply until one
+#     quiesced apply clears it.
+echo ""
+echo "-- a held plan writes a job summary and an annotation"
+held_plan="$(plan_with \
+    "aws_ecs_service fl_server_net_1 aws_ecs_service.fl_server_net_1[0] update")"
+summary="${TEST_ROOT}/summary-held.md"
+: >"${summary}"
+out="$(GITHUB_STEP_SUMMARY="${summary}" GITHUB_ACTIONS=true bash "${SCRIPT}" "${held_plan}" 2>&1)"
+rc=$?
+[[ "${rc}" -eq 1 ]] && ok "still exits 1 — a hold must not read as green" \
+    || no "still exits 1" "got ${rc}"
+grep -q 'Apply held' "${summary}" && ok "summary says the apply was held" \
+    || no "summary says the apply was held" "$(cat "${summary}")"
+grep -q 'fl_server_net_1' "${summary}" && ok "summary names the offending resource" \
+    || no "summary names the offending resource"
+grep -q 'fl_quiesced' "${summary}" && ok "summary carries the remedy" \
+    || no "summary carries the remedy"
+printf '%s' "${out}" | grep -q '::warning title=' && ok "emits a warning annotation" \
+    || no "emits a warning annotation" "${out}"
+
+echo ""
+echo "-- a safe plan writes neither"
+safe_plan="$(plan_with "aws_s3_bucket logs aws_s3_bucket.logs update")"
+summary_safe="${TEST_ROOT}/summary-safe.md"
+: >"${summary_safe}"
+out="$(GITHUB_STEP_SUMMARY="${summary_safe}" GITHUB_ACTIONS=true bash "${SCRIPT}" "${safe_plan}" 2>&1)"
+rc=$?
+[[ "${rc}" -eq 0 ]] && ok "exits 0" || no "exits 0" "got ${rc}"
+[[ ! -s "${summary_safe}" ]] && ok "writes no job summary" \
+    || no "writes no job summary" "$(cat "${summary_safe}")"
+printf '%s' "${out}" | grep -q '::warning' && no "emits no annotation" "${out}" \
+    || ok "emits no annotation"
+
+echo ""
+echo "-- outside Actions it stays quiet on both channels"
+out="$(bash "${SCRIPT}" "${held_plan}" 2>&1)" || true
+printf '%s' "${out}" | grep -q '::warning' && no "no annotation without GITHUB_ACTIONS" "${out}" \
+    || ok "no annotation without GITHUB_ACTIONS"
+
 echo ""
 echo "==== ${PASS} passed, ${FAIL} failed ===="
 [[ "${FAIL}" -eq 0 ]]
