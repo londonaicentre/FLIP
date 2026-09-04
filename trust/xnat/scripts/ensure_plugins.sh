@@ -39,16 +39,38 @@ fi
 
 STAMP_FILE="${PLUGIN_DIR}/.s3-prefix"
 
-# NOTE: ohif-viewer is intentionally NOT installed. FLIP uses XNAT purely as a
-# DICOM store for FL training and never opens the OHIF viewer, but the plugin's
-# per-session metadata-rebuild event listener is the dominant load on XNAT's
-# Reactor EventBus and materially drives the back-pressure livelock that wedges
-# bulk cohort imports (FLIP#662). It is excluded from the S3 sync below.
+# The OHIF viewer is opt-in, via XNAT_OHIF_VIEWER.
+#
+# It was previously excluded outright: FLIP used XNAT purely as a DICOM store for FL training and
+# never opened the viewer, while the plugin's per-session metadata-rebuild event listener was the
+# dominant load on XNAT's Reactor EventBus and was implicated in the back-pressure livelock that
+# wedged bulk cohort imports (FLIP#662).
+#
+# Both halves of that reasoning have moved. Digital pathology gives the viewer a real purpose --
+# XNAT-OHIF 3.7.0 made DICOM SM a first-class modality, so a whole-slide image can be read in the
+# browser rather than only fed to a training job. And the livelock's suspected root cause, a DQR
+# thread leak, is fixed in DQR 3.0.0, which this stack now runs; the plugin itself also rewrote its
+# DICOMweb backend in 3.7.0, so it is not the build FLIP#662 measured.
+#
+# The exclusion therefore becomes a switch rather than a verdict. It defaults off so existing
+# deployments are unchanged, and the caveat worth knowing is unchanged too: the wedging was observed
+# on bulk cohort imports of thousands of radiology studies, so an operator who pulls at that scale
+# and sees imports stall should try turning this back off first.
+XNAT_OHIF_VIEWER="${XNAT_OHIF_VIEWER:-false}"
+case "${XNAT_OHIF_VIEWER,,}" in
+  true|1|yes|on) ohif_enabled=true ;;
+  *) ohif_enabled=false ;;
+esac
+
 required_prefixes=(
   "batch-launch-"
   "container-service-"
   "dicom-query-retrieve-"
 )
+if [[ "${ohif_enabled}" == "true" ]]; then
+  required_prefixes+=("ohif-viewer-")
+  echo "🔎 OHIF viewer enabled (XNAT_OHIF_VIEWER=${XNAT_OHIF_VIEWER})."
+fi
 expected_prefixes="$(printf '%s, ' "${required_prefixes[@]}")"
 expected_prefixes="${expected_prefixes%, }"
 
@@ -122,18 +144,41 @@ else
     echo "🔁 Local plugins were synced from '${synced_prefix:-<unknown>}' but this build needs '${S3_PREFIX}'."
   fi
   echo "📦 Syncing plugins from S3..."
-  # Exclude ohif-viewer: the trailing --exclude wins over --include for matching
-  # keys, so it is neither downloaded nor (with --delete) kept locally. See the
-  # required_prefixes note above (FLIP#662).
+  # When the viewer is off, the trailing --exclude wins over --include for matching keys, so the jar
+  # is neither downloaded nor (despite --delete) removed. See the required_prefixes note above.
+  ohif_filter=(--exclude "ohif-viewer-*")
+  if [[ "${ohif_enabled}" == "true" ]]; then
+    ohif_filter=()
+  fi
   aws s3 sync "s3://${S3_BUCKET}/${S3_PREFIX}/" "${PLUGIN_DIR}/" --delete \
-    --exclude "*" --include "*.jar" --exclude "ohif-viewer-*"
+    --exclude "*" --include "*.jar" "${ohif_filter[@]}"
   printf '%s\n' "${S3_PREFIX}" > "${STAMP_FILE}"
+fi
+
+if [[ "${ohif_enabled}" != "true" ]]; then
+  # The sync's --exclude hides these keys from --delete, so a jar left by a previous run when the
+  # viewer was enabled would survive switching it off. Remove it here so the switch works in both
+  # directions rather than only latching on.
+  for stale in "${PLUGIN_DIR}"/ohif-viewer-*.jar; do
+    [[ -e "${stale}" ]] || continue
+    echo "🧹 Removing $(basename "${stale}") (XNAT_OHIF_VIEWER is off)."
+    rm -f "${stale}"
+  done
 fi
 
 missing_prefixes="$(find_missing_prefixes)"
 if [[ -n "${missing_prefixes}" ]]; then
   echo "❌ ERROR: Missing required plugin families after sync: ${missing_prefixes//$'\n'/ }"
   echo "   Expected plugin prefixes: ${expected_prefixes}"
+  # The viewer is the one family that is opt-in, and it was added to the artifact bucket later than
+  # the others -- so "enabled but absent from S3" is the likely first failure, and it deserves the
+  # fix rather than a bare list of prefixes.
+  if [[ "${ohif_enabled}" == "true" && "${missing_prefixes}" == *"ohif-viewer-"* ]]; then
+    echo ""
+    echo "   XNAT_OHIF_VIEWER is on, but no ohif-viewer jar is in"
+    echo "   s3://${S3_BUCKET}/${S3_PREFIX}/. Either upload the plugin build matching this XNAT"
+    echo "   version, or set XNAT_OHIF_VIEWER=false in trust/xnat/.env to build without the viewer."
+  fi
   exit 1
 fi
 

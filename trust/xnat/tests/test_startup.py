@@ -53,11 +53,21 @@ def _aws_stub_writing_jars(template: Path, names: tuple[str, ...]) -> str:
     return f'dest="$4"; mkdir -p "$dest"; {copies}'
 
 
-def _plugin_env(tmp_path: Path, aws_body: str) -> dict[str, str]:
+def _plugin_env(tmp_path: Path, aws_body: str, ohif: bool = False) -> dict[str, str]:
+    """Environment for the plugin check, with a fake `aws` on PATH.
+
+    ``XNAT_OHIF_VIEWER`` is pinned rather than inherited. The xnat Makefile exports `.env`, where it
+    is enabled, so a test that inherited the ambient environment would assert the three-plugin
+    baseline while the script required four -- passing alone and failing under `make test`.
+    """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _write_executable(bin_dir / "aws", f"#!/bin/sh\nset -eu\n{aws_body}\n")
-    return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+    return {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "XNAT_OHIF_VIEWER": "true" if ohif else "false",
+    }
 
 
 def _run_plugin_check(plugin_dir: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -93,6 +103,48 @@ def test_plugin_check_downloads_and_validates_fresh_cache(tmp_path: Path) -> Non
 
     assert result.returncode == 0, result.stderr
     assert (plugin_dir / ".s3-prefix").read_text().strip() == PLUGIN_PREFIX
+
+
+def test_plugin_check_requires_ohif_when_enabled(tmp_path: Path) -> None:
+    """With the viewer on, a cache holding only the base three is incomplete and must re-sync."""
+    plugin_dir = tmp_path / "plugins"
+    plugin_dir.mkdir()
+    for name in REQUIRED_PLUGIN_NAMES:
+        _write_jar(plugin_dir / name)
+    (plugin_dir / ".s3-prefix").write_text(f"{PLUGIN_PREFIX}\n")
+    template = _write_jar(tmp_path / "template.jar")
+    env = _plugin_env(
+        tmp_path,
+        _aws_stub_writing_jars(template, (*REQUIRED_PLUGIN_NAMES, "ohif-viewer-test.jar")),
+        ohif=True,
+    )
+
+    result = _run_plugin_check(plugin_dir, env)
+
+    assert result.returncode == 0, result.stderr
+    assert "ohif-viewer-" in result.stdout
+    assert (plugin_dir / "ohif-viewer-test.jar").exists()
+
+
+def test_plugin_check_removes_ohif_when_disabled(tmp_path: Path) -> None:
+    """Turning the viewer off must remove a jar an earlier enabled run left behind.
+
+    The sync's --exclude hides those keys from --delete, so without an explicit removal the switch
+    would latch on: disabling it would leave the plugin installed and still loading.
+    """
+    plugin_dir = tmp_path / "plugins"
+    plugin_dir.mkdir()
+    for name in (*REQUIRED_PLUGIN_NAMES, "ohif-viewer-test.jar"):
+        _write_jar(plugin_dir / name)
+    (plugin_dir / ".s3-prefix").write_text(f"{PLUGIN_PREFIX}\n")
+    env = _plugin_env(tmp_path, 'echo "AWS must not be called" >&2; exit 99', ohif=False)
+
+    result = _run_plugin_check(plugin_dir, env)
+
+    assert result.returncode == 0, result.stderr
+    assert not (plugin_dir / "ohif-viewer-test.jar").exists()
+    for name in REQUIRED_PLUGIN_NAMES:
+        assert (plugin_dir / name).exists(), "disabling the viewer must not disturb the other plugins"
 
 
 def test_plugin_check_propagates_sync_failure(tmp_path: Path) -> None:
@@ -261,7 +313,12 @@ def test_readiness_reaches_the_rotated_password_on_the_first_rejection(tmp_path:
     )
 
     result = _run_readiness(
-        _readiness_env(tmp_path, curl_body, initial_password="initial", rotated_password="rotated")
+        _readiness_env(
+            tmp_path,
+            curl_body,
+            initial_password="initial",  # pragma: allowlist secret
+            rotated_password="rotated",  # pragma: allowlist secret
+        )
     )
 
     assert result.returncode == 0, result.stderr
@@ -286,7 +343,12 @@ def test_readiness_forgives_a_transient_rejection_during_boot(tmp_path: Path) ->
     )
 
     result = _run_readiness(
-        _readiness_env(tmp_path, curl_body, initial_password="initial", rotated_password="rotated")
+        _readiness_env(
+            tmp_path,
+            curl_body,
+            initial_password="initial",  # pragma: allowlist secret
+            rotated_password="rotated",  # pragma: allowlist secret
+        )
     )
 
     assert result.returncode == 0, result.stderr
@@ -310,8 +372,8 @@ def test_readiness_does_not_replay_a_dead_credential_while_plugins_load(tmp_path
             tmp_path,
             f'printf "%s\\n" "$*" >> "{argv_log}"; printf "404"',
             timeout="0",
-            initial_password="initial",
-            rotated_password="rotated",
+            initial_password="initial",  # pragma: allowlist secret
+            rotated_password="rotated",  # pragma: allowlist secret
         )
     )
 
@@ -327,8 +389,8 @@ def test_readiness_stops_well_before_lockout_when_both_credentials_are_rejected(
             tmp_path,
             f'printf "%s\\n" "$*" >> "{argv_log}"; printf "401"',
             timeout="900",
-            initial_password="initial",
-            rotated_password="rotated",
+            initial_password="initial",  # pragma: allowlist secret
+            rotated_password="rotated",  # pragma: allowlist secret
         )
     )
 
@@ -432,7 +494,7 @@ def test_trust_makefile_exports_the_artifacts_bucket_to_the_xnat_sub_make() -> N
             "FL_BACKEND=nvflare",
             # Seeds a value for the CI case, where no env file supplies one. On a configured
             # checkout the env file's real value arrives instead — either proves the export.
-            "--eval=FLIP_ARTIFACTS_BUCKET_NAME=probe-bucket",
+            "--eval=FLIP_ARTIFACTS_BUCKET_NAME=probe-bucket",  # pragma: allowlist secret
             "--eval=__probe: ; @printenv FLIP_ARTIFACTS_BUCKET_NAME || echo NOT-EXPORTED",
             "__probe",
         ],
@@ -460,7 +522,7 @@ def test_root_smoke_target_resolves_relative_paths_from_repo_root() -> None:
             "make",
             "-n",
             "e2e_smoke",
-            "MODEL_FILES_DIR=fl-tutorials/example/app_files",
+            "MODEL_FILES_DIR=fl-tutorials/example/app_files",  # pragma: allowlist secret
             "QUERY_FILE=fl-tutorials/example/query.sql",
         ],
         cwd=REPO_ROOT,

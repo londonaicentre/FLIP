@@ -199,7 +199,7 @@ The following table lists the plugin versions for the XNAT version `1.10.0` used
 | DICOM Query-Retrieve Plugin     | 3.0.0                       | Yes       | **Must upgrade** from 2.2.0 — rebuilt on JDK 21 + `dcm4che5`, plus a thread-leakage fix |
 | Container Service Plugin        | 3.8.1 (JDK 8 build)         | Yes       | **Must upgrade** from 3.7.3 — 3.8.x is the only column the compatibility matrix ticks for 1.10.0 |
 | Batch Launch Plugin             | 0.9.0 (JDK 8 build)         | Yes       | None — the matrix keeps BLP 0.9.0 for 1.10.0 |
-| OHIF Viewer Plugin              | 3.8.0 available; n/a here   | No        | None — deliberately not installed (FLIP#662) |
+| OHIF Viewer Plugin              | 3.8.0                       | Optional  | Opt-in via `XNAT_OHIF_VIEWER` (see below) |
 
 Not applicable to FLIP, but released alongside 1.10.0: **Distributed Events 2.0.0** (only needed for
 load-balanced multi-node XNAT — each FLIP trust runs a single node) and **MFA 1.6.0** (FLIP does not
@@ -218,7 +218,32 @@ use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a servic
 > The DQR thread-leakage fix is also worth attention: it is plausibly related to the bulk-import
 > wedging investigated in FLIP#662 (worked around here with the raised heap in `.env` and by
 > excluding the OHIF viewer). Re-test a large cohort pull on 1.10 + DQR 3.0.0 before assuming those
-> workarounds are still needed.
+> workarounds are still needed. The OHIF half of that workaround is now a switch — see below.
+
+### The OHIF viewer (`XNAT_OHIF_VIEWER`)
+
+Set in `trust/xnat/.env`, read by `scripts/ensure_plugins.sh`. **On** in this repo; the script
+defaults **off** when the variable is unset, so a deployment that does not use that file is
+unchanged.
+
+It was previously excluded outright, on two premises that have both moved:
+
+- *"FLIP never opens the viewer."* No longer true. XNAT-OHIF 3.7.0 made DICOM SM a first-class
+  modality, so whole-slide images are readable in the browser rather than only feedable to a
+  training job — which is what the digital-pathology tutorial wants.
+- *"It drives the FLIP#662 livelock."* The suspected root cause, a DQR thread leak, is fixed in
+  DQR 3.0.0, which this stack now runs. The plugin also rewrote its DICOMweb backend in 3.7.0, so it
+  is not the build that was measured.
+
+The caveat that stands: the wedging was seen on **bulk cohort imports of thousands of radiology
+studies**, not on a handful of slides. An operator pulling at that scale who sees imports stall
+should set `XNAT_OHIF_VIEWER=false` first and report it.
+
+The switch works in both directions. Turning it off removes any `ohif-viewer-*.jar` left behind,
+because the sync's `--exclude` hides those keys from `--delete` and they would otherwise survive.
+
+To view whole-slide images you may also need to enable the **SM Session** data type in XNAT's admin
+UI, if no microscopy data has been received on that instance before.
 
 **Staying on 1.9 instead?** Upstream also shipped **XNAT 1.9.3.4** (urgent fixes for JDK 8
 deployments) and **DQR 2.3.2** (the thread-leak fix alone, JDK 8). That is the lower-risk path to the
