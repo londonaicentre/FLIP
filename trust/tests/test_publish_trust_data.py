@@ -120,6 +120,20 @@ class TestBuildOperations:
             pub.build_operations([], None, [], None)
 
 
+class TestVersionFormat:
+    """The tag is the half that cannot be corrected later, so it is checked like a filename is."""
+
+    def test_a_version_that_is_not_a_date_is_refused(self, pub, tmp_path):
+        with pytest.raises(SystemExit, match="YYYYMMDD"):
+            pub.main(["--version", "2026101", "--pgdata", str(touch(tmp_path / "trust1_pgdata.tar"))])
+
+    def test_allow_any_tag_gets_past_the_format_check(self, pub):
+        # It should fall through to the artefact checks — the tag's shape is no longer what stops it.
+        with pytest.raises(SystemExit) as excinfo:
+            pub.main(["--version", "rc1", "--allow-any-tag"])
+        assert "YYYYMMDD" not in str(excinfo.value)
+
+
 class TestPublish:
     def test_one_commit_then_the_tag_on_that_commit(self, pub, tmp_path):
         api = FakeApi(tags=["20260729"])

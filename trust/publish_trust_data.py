@@ -57,6 +57,8 @@ HF_TRUST_DATA_REPO = os.environ.get("HF_TRUST_DATA_REPO", "aicentreflip/trust-da
 # the version is the tag, and a suffixed file would be a second copy nobody fetches.
 VOLUME_RE = re.compile(r"^(?P<trust>trust\d+)_(?:pgdata|orthanc_data)\.tar$")
 VERSIONED_RE = re.compile(r"_\d{8}(?=\.tar(?:\.gz)?$)")
+# The shape every published version has had, and what trust/.data_version is expected to hold.
+TAG_RE = re.compile(r"\d{8}")
 
 
 def path_in_repo(local: Path, kind: str) -> str:
@@ -174,7 +176,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--card", type=Path, default=None, help="the dataset README.md")
     parser.add_argument("--repo", default=HF_TRUST_DATA_REPO)
     parser.add_argument("--dry-run", action="store_true", help="list the operations; upload and tag nothing")
+    parser.add_argument("--allow-any-tag", action="store_true", help="publish a --version that is not a YYYYMMDD date")
     args = parser.parse_args(argv)
+
+    # A filename carrying a version is refused outright (VERSIONED_RE), so the tag — the half that
+    # cannot be corrected by re-uploading — should be at least as strict. A typo like 2026101 would
+    # otherwise publish a tag no .data_version will ever pin.
+    if not args.allow_any_tag and not TAG_RE.fullmatch(args.version):
+        raise SystemExit(f"❌ a data version is YYYYMMDD, got {args.version!r} — pass --allow-any-tag to override")
 
     operations = build_operations(args.pgdata + args.orthanc, args.omop_csv, args.dicom, args.card)
     publish(HfApi(), args.version, operations, args.repo, args.dry_run)
