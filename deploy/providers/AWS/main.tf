@@ -430,11 +430,16 @@ resource "aws_iam_role_policy" "trust_ec2_s3" {
         # its destination before fetching — a failed read leaves the host with no kit
         # rather than the previous one. Default bucket encryption applies only to objects
         # written after it was enabled, which is why kits predating the CMK still download
-        # with s3:GetObject alone and this gap went unnoticed. DescribeKey is not required
-        # for the read path; it is kept to match the ECS task roles (iam_ecs.tf), which
-        # were granted the same key when the CMK landed. See FLIP#965.
+        # with s3:GetObject alone and this gap went unnoticed. Decrypt is the whole read
+        # path: kms:DescribeKey returns key metadata S3 never asks this role for, so it is
+        # deliberately absent. The symmetry with the ECS task roles (iam_ecs.tf) that would
+        # otherwise argue for carrying it does not hold — those roles also hold
+        # kms:GenerateDataKey/GenerateDataKeyWithoutPlaintext because they write objects,
+        # which this role deliberately cannot. This is the host that runs
+        # researcher-submitted training code, so it holds the least of the three.
+        # See FLIP#965.
         Effect   = "Allow"
-        Action   = ["kms:Decrypt", "kms:DescribeKey"]
+        Action   = ["kms:Decrypt"]
         Resource = [aws_kms_key.flip_app_key.arn]
         # The CMK also encrypts Secrets Manager (kms.tf), so constrain the grant to
         # decrypts S3 performs on this host's behalf. Reading a secret would still need
