@@ -140,6 +140,7 @@ locals {
       FL_APP_DESTINATION_BUCKET      = local.fl_app_destination_uri
       NET_ENDPOINTS                  = local.net_endpoints_json
       FL_BACKEND                     = var.fl_backend
+      PER_JOB_FL_SERVER              = tostring(var.PER_JOB_FL_SERVER)
       # Raise the per-file model-upload cap from the 100 MiB Settings default
       # to 5 GB. This is the practical ceiling for the current upload path: a
       # browser presigned POST (services.tf) is a *single* S3 POST, and S3
@@ -179,6 +180,7 @@ locals {
       # startup is a dead container (replaced by ECS), not a zombie (FLIP#593 pt.1).
       ENV                = "production"
       FL_ADMIN_DIRECTORY = var.FL_ADMIN_DIRECTORY
+      PER_JOB_FL_SERVER  = tostring(var.PER_JOB_FL_SERVER)
       # Writer side of the shared checkpoint-staging volume: fl-api de-bundles a
       # large eval checkpoint out of the client app and writes it to
       # <root>/<model_id>/ for the fl-server to load (FLIP#695). Same path the

@@ -42,7 +42,7 @@ $(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
 # replace environment variables by the values from the .env files
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
-export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
+export $(shell grep -v '^[[:space:]]*#' $(MAIN_ENV_FILE) | sed 's/=.*//')
 endif
 
 include deploy/fl_backend.mk

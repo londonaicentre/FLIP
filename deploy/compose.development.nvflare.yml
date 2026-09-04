@@ -25,6 +25,7 @@ services:
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
       - DEBUG=${DEBUG}
+      - PER_JOB_FL_SERVER=${PER_JOB_FL_SERVER:-false}
       # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       # Per-job GPU request written into meta.json resource_spec by configure_meta. Default 0 =>
@@ -62,6 +63,7 @@ services:
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
       - DEBUG=${DEBUG}
+      - PER_JOB_FL_SERVER=${PER_JOB_FL_SERVER:-false}
       # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       # Per-job GPU request (see fl-api-net-1). Default 0 => CPU; set >0 to train on the GPU.

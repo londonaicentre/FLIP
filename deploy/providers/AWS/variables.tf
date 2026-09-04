@@ -217,6 +217,12 @@ variable "MIN_CLIENTS" {
   default     = 1
 }
 
+variable "PER_JOB_FL_SERVER" {
+  description = "Per-job fl-server scale-to-zero (FLIP#735 Phase 0). When true, fl-api tolerates an unreachable fl-server at boot and connects lazily on first use, and flip-api skips the keep-alive ping for scaled-to-zero nets. Off by default."
+  type        = bool
+  default     = false
+}
+
 # Per-job GPU resource spec requested by the fl-api when it builds an NVFLARE
 # job's meta (mirrors JOB_RESOURCE_SPEC_* in compose.production.nvflare.yml).
 # This drives client-side GPU allocation — the hub's Fargate tasks are CPU-only;

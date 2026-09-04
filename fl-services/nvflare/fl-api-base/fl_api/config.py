@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,6 +25,21 @@ class Settings(BaseSettings):
     FL_ADMIN_DIRECTORY: str
 
     TIMEOUT_SESSION_CONNECT: float = 20.0
+
+    # Per-job fl-server scale-to-zero (FLIP#735 Phase 0). Default off. When on, fl-api tolerates
+    # an unreachable fl-server at boot and connects lazily on first use. Parsed leniently so the
+    # empty string the root Makefile can export for a commented .env line means False — and so
+    # "yes"/"on"/"true"/"1" mean True identically in BOTH fl-api-base and flip-api.
+    PER_JOB_FL_SERVER: bool = False
+
+    @field_validator("PER_JOB_FL_SERVER", mode="before")
+    @classmethod
+    def coerce_empty_per_job_fl_server(cls, v: str | bool | None) -> bool:
+        if isinstance(v, bool):
+            return v
+        if v is None:
+            return False
+        return str(v).strip().lower() in ("true", "1", "yes", "on")
 
     # GPU resources that the submitted NVFLARE jobs need in order to schedule correctly.
     # TODO Currently this is set globally for all jobs, but we should allow per-job overrides in the future.

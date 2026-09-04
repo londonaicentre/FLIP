@@ -68,6 +68,7 @@ services:
       - FL_ADMIN_DIRECTORY=/app/admin
       - DEBUG=${DEBUG}
       - LOG_LEVEL=${LOG_LEVEL}
+      - PER_JOB_FL_SERVER=${PER_JOB_FL_SERVER:-false}
     ports:
       - "${FL_API_PORT}:8000"
       - "5679:5679"

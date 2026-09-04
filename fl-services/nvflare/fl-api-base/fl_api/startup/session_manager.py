@@ -11,6 +11,9 @@
 #
 
 
+from nvflare.apis.fl_exception import FLCommunicationError
+from nvflare.fuel.flare_api.api_spec import InternalError, NoConnection
+
 from fl_api.config import get_settings
 from fl_api.utils.flip_session import FLIP_Session
 from fl_api.utils.logger import logger
@@ -43,10 +46,41 @@ def create_fl_session() -> FLIP_Session:
         debug=debug,
     )
 
-    # Try connecting the session here, so that we can catch any connection issues at startup
-    session.try_connect(get_settings().TIMEOUT_SESSION_CONNECT)
-
     logger.info(f"Upload directory set to: {session.upload_dir}")
     logger.info(f"Download directory set to: {session.download_dir}")
+
+    # Try connecting the session here, so that we can catch any connection issues at startup.
+    #
+    # With PER_JOB_FL_SERVER off, an unreachable fl-server at boot is fatal (unchanged) — the
+    # normal alerting signal for an unplanned outage. With it on, the server is expected to be
+    # down most of the time (scaled to zero between jobs, FLIP#735), so transport failures are
+    # tolerated and the session connects lazily on first use (FLIP_Session._do_command).
+    #
+    # Discrimination is deliberate: transport-down and not-ready are tolerable; auth/identity
+    # failures are not. A wrong admin kit (AuthenticationError) or a server-identity mismatch
+    # (FLCommunicationError, or NoConnection with "cannot authenticate") still raise either way.
+    try:
+        session.try_connect(get_settings().TIMEOUT_SESSION_CONNECT)
+    except NoConnection as e:
+        if "cannot authenticate" in str(e) or not get_settings().PER_JOB_FL_SERVER:
+            raise
+        logger.warning(
+            "fl-server unreachable at boot (cannot connect); PER_JOB_FL_SERVER is on — treating "
+            "this as the normal idle-between-jobs state. Will connect lazily on first use. "
+            "Reason: %s",
+            e,
+        )
+    except InternalError as e:
+        if not get_settings().PER_JOB_FL_SERVER:
+            raise
+        logger.warning(
+            "fl-server login failed at boot (server up but not ready); PER_JOB_FL_SERVER is on — "
+            "treating this as a cold start. Will connect lazily on first use. Reason: %s",
+            e,
+        )
+    except FLCommunicationError:
+        # Rejected registration / server-identity mismatch — a misconfiguration, never the
+        # idle-between-jobs state. Fatal regardless of the flag.
+        raise
 
     return session
