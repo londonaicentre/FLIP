@@ -202,6 +202,7 @@ spec:
               # The Job then failed on "plugin routes did not register", naming the wait rather
               # than the ordering that caused it. /xapi/siteConfig is a core route and answers
               # before the plugins register, so activating first is safe.
+              #
               # The readiness loop above accepts 200 *or* 401 from a core route, so it proves only
               # that Tomcat is answering — not that the plugins have registered their routes. Every
               # plugin call below (container service, DICOM SCP, PACS, DQR) would otherwise race a
