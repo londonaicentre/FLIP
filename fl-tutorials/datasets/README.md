@@ -28,7 +28,7 @@ Invoke the targets through the fl-tutorials root Makefile (which forwards here):
 ```bash
 make -C fl-tutorials download-xray-data
 make -C fl-tutorials download-spleen-data              # MSD build (NUM_CASES=<1-41>, default 10)
-make -C fl-tutorials download-spleen-data FL_BACKEND=flower   # pre-built FLIP-format tree
+make -C fl-tutorials download-spleen-checkpoint        # evaluation-tutorial checkpoint only
 make -C fl-tutorials download-arkplus-finetuning-data  # large (~6.3 GB)
 make -C fl-tutorials download-arkplus-eval-data        # (~1.6 GB)
 make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrichment
@@ -41,8 +41,8 @@ make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrich
 | spleen checkpoint | HF `aicentreflip/flip-fl-base-test-data` | `model_checkpoints/model.pt` | 3d_spleen_segmentation_evaluation |
 | arkplus | HF `aicentreflip/tutorials-arkplus-cxr-classification` | `arkplus/site{1,2}[,_holdoff]/` | the three Ark+ tutorials (NVFLARE) |
 
-The two spleen variants coexist in `data/spleen/` — the FLIP-format download removes only
-its own outputs, never an MSD build beside it.
+One spleen tree serves both backends. `download-spleen-data` refuses to overwrite an
+existing `data/spleen/images` — remove it first to rebuild at a different `NUM_CASES`.
 
 ## Per-dataset scripts
 
@@ -60,9 +60,7 @@ pandas, natsort; `uv.lock` is gitignored):
   against the in-tree `flip-utils`, not `spleen/`'s env.
 - `download_spleen_checkpoint.py` — fetch the evaluation-tutorial checkpoint from Hugging
   Face. A pure Hugging Face fetch, so like the xray/arkplus scripts it runs via
-  `uv run --no-project --with huggingface_hub`, not in `spleen/`'s env. It used to also
-  download a fixed 6-case "FLIP-format" spleen tree for the Flower tutorials; both backends
-  now read the one MSD build (FLIP#1158), which honours `NUM_CASES`.
+  `uv run --no-project --with huggingface_hub`, not in `spleen/`'s env.
 
 [`xrays_mini_300/`](xrays_mini_300/) owns the single x-ray script — no dedicated uv project,
 it runs via `uv run --no-project --with huggingface_hub`, the same way `upload-spleen-labels`

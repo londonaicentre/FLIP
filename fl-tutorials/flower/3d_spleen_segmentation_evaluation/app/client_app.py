@@ -16,7 +16,6 @@
 from logging import INFO
 
 import torch
-from flip.constants.flip_constants import FlipConstants
 from flip.flower.identity import client_identity, partition_cohort
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
@@ -48,13 +47,8 @@ def evaluate(msg: Message, context: Context) -> Message:
     flip_utils.query = run_config.get("flip-cohort-query", "*")
     log(INFO, "Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
     flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
-    if FlipConstants.LOCAL_DEV:
-        # LOCAL_DEV hands every client the SAME cohort: the simulator runs all ClientApps in one
-        # process against one DEV_DATAFRAME/DEV_IMAGES_DIR, and the compose stack mounts the same
-        # CSV into each SuperNode (its per-SuperNode net-N image mount is what made the sites
-        # disjoint, and one process cannot reproduce that). Slice it so the sites really differ.
-        # Deployed, each trust's data-access-api already serves its own cohort — never partition.
-        flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
+    # Slice the shared dev cohort so the simulated sites really differ; a no-op off LOCAL_DEV.
+    flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
     log(INFO, f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
 
     # Setup device

@@ -19,8 +19,8 @@ require the researcher to edit their app between them:
   used only for logging: each trust's data-access-api already serves a disjoint cohort.
 * **The local compose stack** (``fl-services/flower``) — same env var, and the name additionally
   selects a partition of the shared dev CSV.
-* **The flwr simulator** (``flwr run . local-simulation``) — no container, so no env var. Flower
-  instead populates ``context.node_config`` with ``partition-id`` / ``num-partitions``
+* **The flwr simulator** — no container, so no env var. Flower instead populates
+  ``context.node_config`` with ``partition-id`` / ``num-partitions``
   (``flwr.simulation.ray_transport.ray_client_proxy``), the same keys a deployed SuperNode accepts
   via ``--node-config 'partition-id=0 num-partitions=2'``. Flower's own generated ClientApp reads
   ``context.node_config.get("partition-id", ...)``, so this is the framework's intended mechanism
@@ -41,6 +41,8 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from flip.constants.flip_constants import FlipConstants
+
 if TYPE_CHECKING:  # pragma: no cover - typing only, flwr is not a runtime dependency
     from flwr.common import Context
 
@@ -51,26 +53,16 @@ UNKNOWN_CLIENT = "unknown_client"
 DEFAULT_KEY_COLUMNS = ("person_id", "accession_id")
 
 
-def client_identity(context: Context, num_partitions: int | None = None) -> str:
+def client_identity(context: Context) -> str:
     """Resolve this client's site name identically in simulation and deployment.
 
     Args:
         context (Context): The Flower ``Context``; only ``node_config`` is read.
-        num_partitions (int | None): How many partitions the caller is about to split a shared
-            dev cohort into. Pass it whenever the name will select a partition, so an
-            unresolvable identity fails loudly instead of silently handing this client the whole
-            cohort. ``None`` or ``1`` means the name is only used for logging.
 
     Returns:
         str: ``SUPERNODE_NAME`` when set (deployed and compose-stack runs), otherwise a
         ``site-<n>`` name derived from ``node_config``'s ``partition-id`` (simulator runs, and any
         SuperNode started with ``--node-config``), otherwise ``"unknown_client"``.
-
-    Raises:
-        RuntimeError: If the identity cannot be resolved but ``num_partitions`` is greater than 1.
-            Returning an unusable name there would make ``partition_for_client`` hand **every**
-            client the full cohort — a run that trains happily and reports plausible metrics while
-            not being federated at all.
     """
     supernode_name = os.getenv("SUPERNODE_NAME")
     if supernode_name:
@@ -81,20 +73,36 @@ def client_identity(context: Context, num_partitions: int | None = None) -> str:
     if partition_id is not None:
         return f"site-{int(partition_id) + 1}"
 
-    if num_partitions is not None and num_partitions > 1:
-        raise RuntimeError(
-            f"Cannot tell which of {num_partitions} sites this client is: neither the "
-            f"SUPERNODE_NAME environment variable nor node_config's {PARTITION_ID_KEY!r} is set. "
-            "Refusing to continue, because partitioning on an unrecognised name would give every "
-            "client the whole cohort and the run would look federated without being so. Set "
-            "SUPERNODE_NAME, or start the SuperNode with --node-config "
-            "'partition-id=<n> num-partitions=<N>', or run under the flwr simulator."
-        )
     return UNKNOWN_CLIENT
 
 
-def partition_index(context: Context, num_partitions: int) -> int | None:
-    """This client's 0-based partition index, from the same sources as :func:`client_identity`.
+def partition_count(context: Context, num_partitions: int | None = None) -> int:
+    """How many partitions a shared dev cohort is split into for this run.
+
+    Single source for the count, so a caller reporting on a split cannot disagree with the
+    split :func:`partition_cohort` actually performed.
+
+    Args:
+        context (Context): The Flower ``Context``; only ``node_config`` is read.
+        num_partitions (int | None): An explicit override, returned as-is when given.
+
+    Returns:
+        int: ``num_partitions`` if given, else ``node_config``'s ``num-partitions``, else 2 —
+        the compose stack sets no ``node_config`` but does run two SuperNodes off one CSV, and
+        every shipped tutorial declares ``flip-min-clients = 2``.
+    """
+    if num_partitions is not None:
+        return num_partitions
+    declared = getattr(context, "node_config", {}).get(NUM_PARTITIONS_KEY)
+    return int(declared) if declared is not None else 2
+
+
+def _partition_index(context: Context, num_partitions: int) -> int | None:
+    """This client's 0-based partition index, derived from :func:`client_identity`'s name.
+
+    Deriving it from the resolved name rather than re-reading the two sources keeps one
+    precedence rule: were these to disagree, the logged site name and the data slice would
+    come from different places.
 
     Args:
         context (Context): The Flower ``Context``; only ``node_config`` is read.
@@ -103,13 +111,9 @@ def partition_index(context: Context, num_partitions: int) -> int | None:
     Returns:
         int | None: The index, or ``None`` when neither source identifies this client.
     """
-    supernode_name = os.getenv("SUPERNODE_NAME")
-    if supernode_name:
-        # "Trust_1", "site-1" and "supernode-1" all mean the first partition.
-        match = re.search(r"(\d+)\s*$", supernode_name)
-        return (int(match.group(1)) - 1) % num_partitions if match else None
-    partition_id = getattr(context, "node_config", {}).get(PARTITION_ID_KEY)
-    return int(partition_id) % num_partitions if partition_id is not None else None
+    # "Trust_1", "site-1" and "supernode-1" all mean the first partition.
+    match = re.search(r"(\d+)\s*$", client_identity(context))
+    return (int(match.group(1)) - 1) % num_partitions if match else None
 
 
 def partition_cohort(
@@ -120,44 +124,59 @@ def partition_cohort(
 ) -> pd.DataFrame:
     """Slice a shared LOCAL_DEV cohort into this client's disjoint partition.
 
-    **LOCAL_DEV only.** A deployed trust's data-access-api already serves that trust its own
-    cohort; partitioning again there would silently discard most of it. Callers must gate on
-    ``FlipConstants.LOCAL_DEV``.
+    Outside ``LOCAL_DEV`` this returns the cohort untouched: a deployed trust's data-access-api
+    already serves that trust its own rows, and partitioning again would silently discard most
+    of them. The check lives here rather than in each caller because forgetting it is silent and
+    severe — a real trust would train on half its cohort and report plausible metrics.
 
     Needed because a shared dev cohort reaches every client identically: the simulator runs all
     ClientApps in one process against one ``DEV_DATAFRAME`` / ``DEV_IMAGES_DIR``, and the compose
-    stack hands each SuperNode the same CSV. (The imaging tutorials have historically relied on
-    each SuperNode's own ``net-N`` image mount for disjointness, which a single process cannot
-    reproduce — hence this.)
+    stack hands each SuperNode the same CSV. Only the *images* are split there, by each
+    SuperNode's own ``net-N`` mount — which one process has no equivalent of.
 
     Args:
         dataframe (pd.DataFrame): The shared cohort.
         context (Context): The Flower ``Context``, for this client's partition index.
-        num_partitions (int | None): How many partitions. Defaults to ``node_config``'s
-            ``num-partitions``, then to 2.
+        num_partitions (int | None): How many partitions; see :func:`partition_count` for
+            the default.
         key_column (str | None): Column to partition on. Defaults to the first of
             ``person_id`` / ``accession_id`` present.
 
     Returns:
-        pd.DataFrame: This client's rows, index reset. The input unchanged when there is one
-        partition, when no key column is present, or when this client cannot be identified —
-        callers wanting the last case to be fatal should use :func:`client_identity`'s
-        ``num_partitions`` guard, which raises.
+        pd.DataFrame: This client's rows, index reset — or the input unchanged when not in
+        ``LOCAL_DEV`` or when there is only one partition.
+
+    Raises:
+        RuntimeError: If the cohort must be split but this client cannot be identified, or no
+            key column is present. Returning everything there would hand *every* client the
+            whole cohort — a run that trains happily and reports plausible metrics while not
+            being federated at all.
     """
-    if num_partitions is None:
-        declared = getattr(context, "node_config", {}).get(NUM_PARTITIONS_KEY)
-        num_partitions = int(declared) if declared is not None else 2
+    if not FlipConstants.LOCAL_DEV:
+        return dataframe
+
+    num_partitions = partition_count(context, num_partitions)
     if num_partitions <= 1:
         return dataframe
 
     if key_column is None:
         key_column = next((c for c in DEFAULT_KEY_COLUMNS if c in dataframe.columns), None)
     if key_column is None:
-        return dataframe
+        raise RuntimeError(
+            f"Cannot split a cohort {num_partitions} ways: none of {list(DEFAULT_KEY_COLUMNS)} is "
+            f"a column (found {list(dataframe.columns)}). Pass key_column= to name the column to "
+            "partition on."
+        )
 
-    index = partition_index(context, num_partitions)
+    index = _partition_index(context, num_partitions)
     if index is None:
-        return dataframe
+        raise RuntimeError(
+            f"Cannot tell which of {num_partitions} sites this client is: neither the "
+            f"SUPERNODE_NAME environment variable nor node_config's {PARTITION_ID_KEY!r} is set. "
+            "Refusing to continue, because handing every client the whole cohort would look "
+            "federated without being so. Set SUPERNODE_NAME, or start the SuperNode with "
+            "--node-config 'partition-id=<n> num-partitions=<N>', or run under the flwr simulator."
+        )
 
     keys = dataframe[key_column]
     numeric = pd.to_numeric(keys, errors="coerce")
@@ -170,7 +189,7 @@ def partition_cohort(
         # Python's built-in hash() is salted per interpreter, so two ClientApp processes would
         # disagree and the partitions would overlap and lose rows.
         buckets = keys.astype(str).map(
-            lambda value: int(hashlib.sha256(value.encode()).hexdigest(), 16) % num_partitions
+            lambda value: int.from_bytes(hashlib.sha256(value.encode()).digest(), "big") % num_partitions
         )
     return dataframe[buckets == index].reset_index(drop=True)
 
@@ -186,8 +205,7 @@ def check_splits_are_populated(
     An empty split does not crash where it happens. The client trains, then returns a metric
     record missing the keys the empty pass could not produce, and Flower rejects the round with
     ``InconsistentMessageReplies`` raised deep inside the strategy — which says nothing about
-    cohort size. Observed with the Flower spleen tutorial's shipped 6-case dev cohort: split
-    across two sites, then 40/30/30, one site's validation split came out empty.
+    cohort size.
 
     Args:
         splits (dict[str, int]): Split name to row count, e.g. ``{"train": 2, "val": 0}``.

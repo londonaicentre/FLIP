@@ -11,12 +11,8 @@
 #
 """Fetch the spleen evaluation-tutorial checkpoint from Hugging Face.
 
-This used to also download a pre-built "FLIP-format" spleen tree — a fixed 6-case snapshot that
-ignored ``NUM_CASES`` — which the Flower tutorials read while the NVFLARE ones read the MSD build.
-The two trees were structurally identical (``subject_N/scans/{input,label}_spleen_N.nii.gz``), so
-the snapshot was a small duplicate of data ``download_spleen_dataset.py`` already produces at up to
-41 cases, and it capped a partitioned Flower simulation at 3 cases per site. Both backends now read
-the one MSD build (FLIP#1158), leaving this script the checkpoint alone.
+The images and cohort CSV come from the MSD build (``download_spleen_dataset.py``); the
+checkpoint is the one thing the evaluation tutorial needs that the MSD build does not provide.
 """
 
 import argparse

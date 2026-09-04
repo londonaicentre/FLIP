@@ -36,8 +36,9 @@ This example of Flower uses a small MONAI UNet based on FLIP's implementation an
 
 > **Two supported paths.** `make sim-tutorial` runs the flwr simulator with no containers at
 > all — fast, and what you want while iterating on app code. The Docker Compose stack is the
-> pre-merge check: it is the only path that exercises the real deployment wiring, and the only
-> one where the sites hold genuinely disjoint data. The app code is identical in both.
+> pre-merge check: it is the only path that exercises the real deployment wiring (TLS, fl-api
+> submit, SuperNode registration). The app code is identical in both, and both give each site a
+> disjoint slice of the cohort.
 
 ### Recommended: Docker Compose
 
@@ -109,19 +110,11 @@ command — `sim-tutorial.sh` handles all three:
 FLIP's `DevSettings` singleton is pinned at import time, so all of the above must be set *before*
 the process starts; the script does that, but it does mean you cannot change them mid-run.
 
-**The sites hold genuinely disjoint data.** Historically that came from each SuperNode mounting
-its own `net-N` slice of the images tree — which one simulator process cannot reproduce, so both
-clients would have read the same `DEV_IMAGES_DIR`. The cohort is therefore partitioned in the app
-instead: `flip.flower.identity.partition_cohort` slices the fetched dataframe by this client's
-`partition-id`, so the split is the same under the simulator and under the compose stack. It is
-gated on `FlipConstants.LOCAL_DEV` — deployed, each trust's data-access-api already serves that
-trust its own cohort, and partitioning again would silently discard most of it.
-
-`accession_id` is a string, so the bucket is a SHA-256 of the id rather than Python's `hash()`,
-which is salted per interpreter — two ClientApp processes using `hash()` would disagree about who
-owns a row and the partitions would overlap and lose data. Numeric ids (`person_id`) keep the
-`id % n` convention the tabular tutorial and the trust loader already use, so a cohort splits the
-same way however it is partitioned.
+**Each site gets a disjoint slice.** `flip.flower.identity.partition_cohort` splits the fetched
+dataframe by this client's `partition-id`, so the split is the same under the simulator and under
+the compose stack — both of which otherwise hand every client the same `DEV_DATAFRAME`. It applies
+only under `LOCAL_DEV`: deployed, each trust's data-access-api already serves that trust its own
+cohort. See that function's docstring for how the buckets are chosen.
 
 The first run is slow: `flwr run` builds a per-run environment under `~/.flwr/runtime-envs/` and
 installs the app's dependencies (MONAI, torch) into it. Later runs reuse it.
@@ -225,16 +218,15 @@ make -C fl-tutorials upload-spleen-labels FL_BACKEND=flower FLIP_PROJECT_ID=<pro
 One invocation covers every Trust in `XNAT_URLS` (above, the dev roster: GSTT on 8104, KCH on 8106), which
 matters because each Trust's XNAT holds only its own studies and a Trust left without labels fails training.
 
-> **This tutorial's download covers only part of the cohort.** `download-spleen-data FL_BACKEND=flower`
-> pulls a fixed 6-case HF snapshot and ignores `NUM_CASES`, while the accession mapping spans 41. Enriching
-> from it succeeds but leaves most of the cohort unlabelled, and the command says so. For full coverage use
-> the MSD download (`make -C fl-tutorials download-spleen-data NUM_CASES=41`) and point
-> `SPLEEN_LABELS_DIR` at it — the labels are backend-agnostic once they are in XNAT.
+> **Download the whole cohort before enriching.** `download-spleen-data` defaults to
+> `NUM_CASES=10` while the accession mapping spans 41. Enriching from a partial download succeeds
+> but leaves most of the cohort unlabelled, and the command says so; use
+> `make -C fl-tutorials download-spleen-data NUM_CASES=41` for full coverage.
 
 Enrichment is **backend-agnostic**: the labels live in XNAT, so a project enriched once can be trained by
 either backend. The upload script is a single copy in
-[`fl-tutorials/datasets/spleen/`](../../datasets/spleen); with `FL_BACKEND=flower` the target points it at
-this tutorial's FLIP-format tree — see the
+[`fl-tutorials/datasets/spleen/`](../../datasets/spleen), pointed at the one spleen tree both backends
+read — see the
 [NVFLARE spleen tutorial's README](../../nvflare/image_segmentation/3d_spleen_segmentation/README.md) for
 the full walkthrough and options.
 

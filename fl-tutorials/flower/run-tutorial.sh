@@ -33,8 +33,7 @@ if [ ! -d "$HERE/$TUTORIAL/app" ]; then echo "❌ Unknown tutorial '$TUTORIAL'. 
 DATA_ROOT="$(cd "$HERE/.." && pwd)/data"
 case "$TUTORIAL" in
   3d_spleen_segmentation|3d_spleen_segmentation_evaluation)
-    # The same MSD build the NVFLARE tutorials read, honouring NUM_CASES (FLIP#1158). Flower
-    # used to read a separate fixed 6-case "FLIP-format" snapshot here.
+    # The MSD build both backends read, honouring NUM_CASES.
     export DEV_IMAGES_DIR="$DATA_ROOT/spleen/images"
     export DEV_DATAFRAME="$DATA_ROOT/spleen/dataframe.csv"
     DATASET_TARGET=spleen ;;
@@ -46,12 +45,12 @@ case "$TUTORIAL" in
 esac
 if [ -n "${DEV_IMAGES_DIR:-}" ] && [ ! -d "$DEV_IMAGES_DIR" ]; then
   echo "❌ Dataset missing: $DEV_IMAGES_DIR"
-  echo "   Run: make -C $REPO_ROOT/fl-tutorials download-$DATASET_TARGET-data FL_BACKEND=flower"
+  echo "   Run: make -C $REPO_ROOT/fl-tutorials download-$DATASET_TARGET-data"
   exit 1
 fi
 if [ -n "${DEV_DATAFRAME:-}" ] && [ ! -f "$DEV_DATAFRAME" ]; then
   echo "❌ Dataset missing: $DEV_DATAFRAME"
-  echo "   Run: make -C $REPO_ROOT/fl-tutorials download-$DATASET_TARGET-data FL_BACKEND=flower"
+  echo "   Run: make -C $REPO_ROOT/fl-tutorials download-$DATASET_TARGET-data"
   exit 1
 fi
 

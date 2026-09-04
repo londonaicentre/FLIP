@@ -22,15 +22,13 @@
 #   make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrichment
 #
 # Everything lands under the shared, gitignored fl-tutorials/data/ — see README.md here for
-# the per-dataset layout. FL_BACKEND matters only where a dataset has per-harness variants
-# (spleen: the NVFLARE simulator reads the raw MSD build, the Flower compose stack mounts the
-# pre-built FLIP-format tree; both can coexist under data/spleen/).
+# the per-dataset layout. Every dataset is backend-agnostic: one copy, read by both harnesses.
 
 FL_BACKEND ?= nvflare
 DATA_DIR := ../data
 HF_CACHE := $(DATA_DIR)/.hf
 
-# Hugging Face dataset backing the xray tutorials and the FLIP-format spleen variant.
+# Hugging Face dataset backing the xray tutorials and the spleen evaluation checkpoint.
 HF_TEST_DATA_REPO := aicentreflip/flip-fl-base-test-data
 # Hugging Face dataset backing the three Ark+ tutorials (site{1,2} train + hold-out splits).
 ARKPLUS_DATA_REPO := aicentreflip/tutorials-arkplus-cxr-classification
@@ -54,15 +52,11 @@ download-xray-data:
 		--output-dir $(DATA_DIR)/xrays_mini_300 \
 		--repo-id $(HF_TEST_DATA_REPO)
 
-# ONE spleen dataset for BOTH backends (FLIP#1158): the MSD build, honouring NUM_CASES —
-# exactly as xray and arkplus already work. Flower used to read a pre-built "FLIP-format"
-# tree instead: a fixed 6-case snapshot that ignored NUM_CASES, so the two backends trained
-# on different data. The trees were structurally identical
-# (subject_N/scans/{input,label}_spleen_N.nii.gz), so nothing is lost by dropping it — and
-# six cases could not support a partitioned simulation (three per site, then a 40/30/30
-# split leaves a split empty). The evaluation-tutorial checkpoint was the one thing only the
-# snapshot carried, so it keeps its own target.
-download-spleen-data: download-spleen-msd-data download-spleen-checkpoint
+# One spleen dataset for both backends: the MSD build, honouring NUM_CASES, plus the
+# checkpoint only the evaluation tutorial needs. The checkpoint comes FIRST because
+# download-spleen-msd-data refuses to overwrite an existing data/spleen/images — ordering it
+# second would mean an existing MSD build makes the checkpoint unreachable through this target.
+download-spleen-data: download-spleen-checkpoint download-spleen-msd-data
 
 # Download the MSD spleen dataset and build its accession CSV (large; NUM_CASES caps the
 # subject count). Runs in spleen/'s own uv project for MONAI.
@@ -119,11 +113,9 @@ download-arkplus-eval-data:
 # is rarely needed: the whole mapping goes to every server and each ignores the others' studies.
 #
 # The script is single-copy and backend-agnostic — enrichment happens once per FLIP project, in
-# XNAT, and both backends read the result. Only the label source differs per variant, so
-# SPLEEN_LABELS_DIR points at the one spleen tree both backends read, and can be overridden.
-# It runs via `uv run --no-project --with <flip-utils>` rather than spleen/'s env, so uploading
-# labels never drags in the simulator's MONAI/torch stack.
-# One tree for both backends since FLIP#1158, so no per-backend branch here any more.
+# XNAT, and both backends read the result. SPLEEN_LABELS_DIR points at the one spleen tree both
+# backends read, and can be overridden. It runs via `uv run --no-project --with <flip-utils>`
+# rather than spleen/'s env, so uploading labels never drags in the simulator's MONAI/torch stack.
 SPLEEN_LABELS_DIR ?= $(abspath $(DATA_DIR)/spleen/images)
 # upload-spleen-labels runs against the in-tree flip-utils, not the PyPI release, so the enrichment
 # CLI always matches this checkout (flip.xnat may be newer here than the last published version).

@@ -23,7 +23,6 @@ from logging import INFO
 from pathlib import Path
 
 import torch
-from flip.constants.flip_constants import FlipConstants
 from flip.flower.identity import client_identity, partition_cohort
 from flip.flower.privacy import flip_local_dp_mod
 from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
@@ -67,13 +66,8 @@ def _build_flip_utils(context: Context) -> FLIP_BASE:
     flip_utils.project_id = context.run_config.get("flip-project-id", "xray-flower-tutorial")
     flip_utils.query = context.run_config.get("flip-cohort-query", "*")
     flip_utils.fetch_dataframe()
-    if FlipConstants.LOCAL_DEV:
-        # LOCAL_DEV hands every client the SAME cohort: the simulator runs all ClientApps in one
-        # process against one DEV_DATAFRAME/DEV_IMAGES_DIR, and the compose stack mounts the same
-        # CSV into each SuperNode (its per-SuperNode net-N image mount is what made the sites
-        # disjoint, and one process cannot reproduce that). Slice it so the sites really differ.
-        # Deployed, each trust's data-access-api already serves its own cohort — never partition.
-        flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
+    # Slice the shared dev cohort so the simulated sites really differ; a no-op off LOCAL_DEV.
+    flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
     return flip_utils
 
 

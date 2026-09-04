@@ -22,11 +22,13 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+from flip.flower import identity
 from flip.flower.identity import (
     UNKNOWN_CLIENT,
     check_splits_are_populated,
     client_identity,
     partition_cohort,
+    partition_count,
 )
 
 
@@ -61,29 +63,17 @@ def test_empty_supernode_name_falls_through(monkeypatch: pytest.MonkeyPatch):
     assert client_identity(_context({"partition-id": "0"})) == "site-1"
 
 
-def test_unresolvable_identity_is_unknown_when_not_partitioning(monkeypatch: pytest.MonkeyPatch):
-    """With one partition (or none declared) the name is only used for logging."""
+def test_unresolvable_identity_is_unknown(monkeypatch: pytest.MonkeyPatch):
+    """client_identity is a pure name resolver; refusing to guess is partition_cohort's job."""
     monkeypatch.delenv("SUPERNODE_NAME", raising=False)
     assert client_identity(_context()) == UNKNOWN_CLIENT
-    assert client_identity(_context(), num_partitions=1) == UNKNOWN_CLIENT
-
-
-def test_unresolvable_identity_raises_when_it_would_partition(monkeypatch: pytest.MonkeyPatch):
-    """The whole point of the helper: never silently hand one client the entire cohort.
-
-    ``partition_for_client`` returns the frame unchanged for a name with no site number, so
-    without this guard every client would train on all the data and the run would look
-    federated while not being so.
-    """
-    monkeypatch.delenv("SUPERNODE_NAME", raising=False)
-    with pytest.raises(RuntimeError, match="Cannot tell which of 2 sites"):
-        client_identity(_context(), num_partitions=2)
-
-
-def test_context_without_node_config_is_tolerated(monkeypatch: pytest.MonkeyPatch):
-    """Older/!simulated contexts may not carry node_config at all."""
-    monkeypatch.delenv("SUPERNODE_NAME", raising=False)
     assert client_identity(SimpleNamespace()) == UNKNOWN_CLIENT
+
+
+def test_partition_count_prefers_explicit_then_node_config_then_two():
+    assert partition_count(_context({"num-partitions": "4"}), 3) == 3
+    assert partition_count(_context({"num-partitions": "4"})) == 4
+    assert partition_count(_context()) == 2
 
 
 def _cohort(n: int, column: str = "accession_id") -> pd.DataFrame:
@@ -96,10 +86,7 @@ def test_partitions_are_disjoint_and_covering(monkeypatch: pytest.MonkeyPatch):
     """Every row lands in exactly one partition — the property the whole helper exists for."""
     monkeypatch.delenv("SUPERNODE_NAME", raising=False)
     cohort = _cohort(40)
-    parts = [
-        partition_cohort(cohort, _context({"partition-id": str(i), "num-partitions": "2"}))
-        for i in (0, 1)
-    ]
+    parts = [partition_cohort(cohort, _context({"partition-id": str(i), "num-partitions": "2"})) for i in (0, 1)]
     seen = pd.concat(parts).accession_id.tolist()
     assert sorted(seen) == sorted(cohort.accession_id.tolist())
     assert not set(parts[0].accession_id) & set(parts[1].accession_id)
@@ -134,18 +121,39 @@ def test_supernode_name_selects_the_same_partition_as_node_config(monkeypatch: p
     assert by_env.accession_id.tolist() == by_config.accession_id.tolist()
 
 
-def test_single_partition_and_unknown_key_return_the_cohort_unchanged(monkeypatch: pytest.MonkeyPatch):
+def test_single_partition_returns_the_cohort_unchanged(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("SUPERNODE_NAME", raising=False)
     cohort = _cohort(5)
     assert partition_cohort(cohort, _context({"partition-id": "0", "num-partitions": "1"})) is cohort
-    assert partition_cohort(pd.DataFrame({"other": [1, 2]}), _context({"partition-id": "0"})).shape == (2, 1)
 
 
-def test_unidentifiable_client_gets_the_cohort_unchanged(monkeypatch: pytest.MonkeyPatch):
-    """partition_cohort is permissive by design; client_identity's guard is what raises."""
+def test_partitioning_is_skipped_entirely_outside_local_dev(monkeypatch: pytest.MonkeyPatch):
+    """A deployed trust's data-access-api already serves it a disjoint cohort.
+
+    Partitioning again would silently discard most of it, so the gate lives in the helper
+    rather than being a contract every researcher's app has to remember.
+    """
     monkeypatch.delenv("SUPERNODE_NAME", raising=False)
-    cohort = _cohort(4)
-    assert partition_cohort(cohort, _context({})) is cohort
+    monkeypatch.setattr(identity, "FlipConstants", SimpleNamespace(LOCAL_DEV=False))
+    cohort = _cohort(40)
+    assert partition_cohort(cohort, _context({"partition-id": "0", "num-partitions": "2"})) is cohort
+
+
+def test_unidentifiable_client_raises_rather_than_returning_everything(monkeypatch: pytest.MonkeyPatch):
+    """Never silently hand one client the entire cohort.
+
+    Returning the frame unchanged here would make every client train on all the data, and the
+    run would look federated while not being so.
+    """
+    monkeypatch.delenv("SUPERNODE_NAME", raising=False)
+    with pytest.raises(RuntimeError, match="Cannot tell which of 2 sites"):
+        partition_cohort(_cohort(4), _context({"num-partitions": "2"}))
+
+
+def test_missing_key_column_raises_when_it_would_partition(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("SUPERNODE_NAME", raising=False)
+    with pytest.raises(RuntimeError, match="Cannot split a cohort 2 ways"):
+        partition_cohort(pd.DataFrame({"other": [1, 2]}), _context({"partition-id": "0", "num-partitions": "2"}))
 
 
 def test_populated_splits_pass_silently():
@@ -155,9 +163,7 @@ def test_populated_splits_pass_silently():
 def test_empty_split_names_the_real_cause():
     """Flower would otherwise surface this as InconsistentMessageReplies, which says nothing."""
     with pytest.raises(ValueError, match="split val is empty"):
-        check_splits_are_populated(
-            {"train": 2, "val": 0}, cohort_rows=3, client_name="site-1", num_partitions=2
-        )
+        check_splits_are_populated({"train": 2, "val": 0}, cohort_rows=3, client_name="site-1", num_partitions=2)
 
 
 def test_message_mentions_partitioning_only_when_partitioned():

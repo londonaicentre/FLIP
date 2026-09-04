@@ -41,8 +41,7 @@ if [ ! -d "$HERE/$TUTORIAL/app" ]; then echo "❌ Unknown tutorial '$TUTORIAL'. 
 DATA_ROOT="$REPO_ROOT/fl-tutorials/data"
 case "$TUTORIAL" in
   3d_spleen_segmentation|3d_spleen_segmentation_evaluation)
-    # The same MSD build the NVFLARE tutorials read, honouring NUM_CASES (FLIP#1158). Flower
-    # used to read a separate fixed 6-case "FLIP-format" snapshot here.
+    # The MSD build both backends read, honouring NUM_CASES.
     export DEV_IMAGES_DIR="$DATA_ROOT/spleen/images"
     export DEV_DATAFRAME="$DATA_ROOT/spleen/dataframe.csv"
     DATASET_TARGET=spleen ;;
@@ -84,13 +83,25 @@ stop_stale_superlinks() {
 }
 stop_stale_superlinks
 
+# How many simulated sites, from the tutorial's own flip-min-clients so the two cannot drift.
+SITES="$(sed -n 's/^flip-min-clients[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' \
+  "$HERE/$TUTORIAL/pyproject.toml" | head -1)"
+if [ -z "$SITES" ]; then echo "❌ No flip-min-clients in $TUTORIAL/pyproject.toml"; exit 1; fi
+
 export LOCAL_DEV=true
 echo "🧪 Simulating Flower tutorial '$TUTORIAL' (flwr simulator — no containers)"
+echo "   sites=$SITES"
 echo "   DEV_IMAGES_DIR=$DEV_IMAGES_DIR"
 echo "   DEV_DATAFRAME=$DEV_DATAFRAME"
 echo "   WORKING_DIR=$WORKING_DIR"
 
 # Run in flip-utils' env so the app sees the same flip package a SuperNode image carries.
+#
+# `local` is the SuperLink connection flwr ships in its own default config (created on first
+# use), so this works on a clean checkout with nothing to install or hand-add. The site count
+# rides on --federation-config rather than a [tool.flwr.federations] block, because `flwr run`
+# migrates such a block into the user's ~/.flwr/config.toml and REWRITES the pyproject.toml to
+# comment it out (flwr/cli/config_migration.py) — which would dirty a tracked file every run.
 cd "$HERE/$TUTORIAL"
 exec uv run --project "$REPO_ROOT/flip-utils" --extra full \
-  flwr run . local-simulation --stream "$@"
+  flwr run . local --federation-config "num-supernodes=$SITES" --stream "$@"

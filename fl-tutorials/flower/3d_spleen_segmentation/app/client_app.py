@@ -23,8 +23,7 @@ hub credential. Per-epoch granularity is preserved via the
 from logging import INFO
 
 import torch
-from flip.constants.flip_constants import FlipConstants
-from flip.flower.identity import check_splits_are_populated, client_identity, partition_cohort
+from flip.flower.identity import check_splits_are_populated, client_identity, partition_cohort, partition_count
 from flip.flower.privacy import flip_local_dp_mod
 from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
@@ -71,13 +70,8 @@ def train(msg: Message, context: Context) -> Message:
     flip_utils.query = run_config.get("flip-cohort-query", "*")
     log(INFO, "Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
     flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
-    if FlipConstants.LOCAL_DEV:
-        # LOCAL_DEV hands every client the SAME cohort: the simulator runs all ClientApps in one
-        # process against one DEV_DATAFRAME/DEV_IMAGES_DIR, and the compose stack mounts the same
-        # CSV into each SuperNode (its per-SuperNode net-N image mount is what made the sites
-        # disjoint, and one process cannot reproduce that). Slice it so the sites really differ.
-        # Deployed, each trust's data-access-api already serves its own cohort — never partition.
-        flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
+    # Slice the shared dev cohort so the simulated sites really differ; a no-op off LOCAL_DEV.
+    flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
     log(INFO, f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
 
     # Setup device
@@ -99,7 +93,7 @@ def train(msg: Message, context: Context) -> Message:
         {"train": len(train_datalist), "val": len(val_datalist)},
         cohort_rows=len(flip_utils.dataframe),
         client_name=client_name,
-        num_partitions=int(context.node_config.get("num-partitions", 0)) or None,
+        num_partitions=partition_count(context),
     )
     dataset_train = Dataset(train_datalist, transform=get_train_transforms())
     dataset_val = Dataset(val_datalist, transform=get_val_transforms())
@@ -216,17 +210,18 @@ def evaluate(msg: Message, context: Context) -> Message:
     flip_utils.query = run_config.get("flip-cohort-query", "*")
     log(INFO, "Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
     flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
-    if FlipConstants.LOCAL_DEV:
-        # LOCAL_DEV hands every client the SAME cohort: the simulator runs all ClientApps in one
-        # process against one DEV_DATAFRAME/DEV_IMAGES_DIR, and the compose stack mounts the same
-        # CSV into each SuperNode (its per-SuperNode net-N image mount is what made the sites
-        # disjoint, and one process cannot reproduce that). Slice it so the sites really differ.
-        # Deployed, each trust's data-access-api already serves its own cohort — never partition.
-        flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
+    # Slice the shared dev cohort so the simulated sites really differ; a no-op off LOCAL_DEV.
+    flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
     log(INFO, f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
 
     # Get test data
     test_datalist = flip_utils.get_image_and_label_list(_val_split=val_split, _test_split=test_split, is_test=True)
+    check_splits_are_populated(
+        {"test": len(test_datalist)},
+        cohort_rows=len(flip_utils.dataframe),
+        client_name=client_name,
+        num_partitions=partition_count(context),
+    )
     test_dataset = Dataset(test_datalist, transform=get_val_transforms())
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 

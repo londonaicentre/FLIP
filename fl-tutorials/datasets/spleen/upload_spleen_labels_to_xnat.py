@@ -188,12 +188,6 @@ def fetch_accession_map(url: str | None = None, cache_dir: Path | None = None) -
 INCOMPLETE_DOWNLOAD_HELP = """   --labels-dir should point at the spleen build both backends read:
        data/spleen/images    make -C fl-tutorials download-spleen-data NUM_CASES=41
                              (the default of 10 covers only part of the cohort)"""
-"""Remediation text for an incomplete spleen download.
-
-Printed unconditionally rather than inferred from ``--labels-dir``: guessing wrong sends the reader
-to a command that cannot help. Both backends read the one MSD build since FLIP#1158, so there is no
-longer a second download whose ``NUM_CASES`` does nothing.
-"""
 
 
 def build_manifest(labels_dir: Path, trust: str | None = None) -> list[EnrichmentItem]:
