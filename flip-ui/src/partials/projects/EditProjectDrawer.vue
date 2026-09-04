@@ -110,11 +110,13 @@
                                                     Includes imaging data
                                                 </label>
                                                 <p class="text-xs text-gray-500 dark:text-gray-300 mb-1">
-                                                    Off for a tabular-only cohort: no imaging is pulled from PACS, no XNAT project is
-                                                    created at the trusts, and the project page shows no imaging status.
+                                                    Off for a tabular-only cohort: no imaging is pulled from PACS,
+                                                    no XNAT project is created at the trusts, and the project page
+                                                    shows no imaging status.
                                                 </p>
                                                 <p class="text-xs italic text-gray-400 dark:text-gray-300 mb-2">
-                                                    This option is set when the project is created and cannot be changed.
+                                                    This option is set when the project is created and cannot be
+                                                    changed.
                                                 </p>
                                                 <AiSwitch
                                                     name="has_imaging"

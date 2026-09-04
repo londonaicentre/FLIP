@@ -451,7 +451,6 @@ debouncedWatch(
     { debounce: 300 }
 );
 
-
 const addProject = () => {
     modalsStore.toggleCreateProject();
 };

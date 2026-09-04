@@ -92,12 +92,14 @@
                                                     Includes imaging data
                                                 </label>
                                                 <p class="text-xs text-gray-500 dark:text-gray-300 mb-1">
-                                                    Turn this off for a tabular-only cohort (for example EHR data): no imaging
-                                                    is pulled from PACS, no XNAT project is created at the trusts, and the
-                                                    project page shows no imaging status.
+                                                    Turn this off for a tabular-only cohort (for example
+                                                    EHR data): no imaging is pulled from PACS, no XNAT
+                                                    project is created at the trusts, and the project page
+                                                    shows no imaging status.
                                                 </p>
                                                 <p class="text-xs italic text-gray-400 dark:text-gray-300 mb-2">
-                                                    This option is set when the project is created and cannot be changed.
+                                                    This option is set when the project is created and cannot be
+                                                    changed.
                                                 </p>
                                                 <AiSwitch
                                                     name="has_imaging"
@@ -106,7 +108,7 @@
                                                     data-test="has-imaging-toggle"
                                                 />
                                             </div>
-                                            <!-- Conversion is meaningless without imaging: hide the toggle and submit its default. -->
+                                            <!-- Meaningless without imaging: hide it, submit its default. -->
                                             <div v-if="values.has_imaging">
                                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                                                     Convert DICOMs to NIfTI
