@@ -484,11 +484,19 @@
       #    patterns below fetch — and nothing more.
       #
       #    This is intentionally NARROWER than package-onprem-trust-kit.sh, which syncs
-      #    the whole certificates/ tree (ca.crt, server.pem, server.key — ca.key never
-      #    reaches S3; fl-services/flower/Makefile excludes it at upload) plus the one
+      #    the whole certificates/ tree (ca.crt, server.pem, server.key) plus the one
       #    supernode credential. That tarball therefore still hands an on-prem operator
       #    the SuperLink's server key — the same exposure class narrowed here for EC2 —
       #    and closing it can be split into a follow-up.
+      #
+      #    On ca.key: fl-services/flower/Makefile excludes it from `upload-creds-to-s3`,
+      #    so a kit published through that target carries ca.crt / server.pem /
+      #    server.key and no CA key. That is a property of the upload path, not of the
+      #    bucket — a prefix published before the exclusion existed can still hold one,
+      #    and `--delete` only reaches the prefix being re-synced. Do not read the
+      #    exclusion as "there is no CA key in S3" when reasoning about what a bucket
+      #    read is worth: a CA key mints certificates the SuperLink trusts, which is a
+      #    strictly stronger capability than any single participant kit.
       #
       # The closing assertion is the durable half of the fix: because the wipe below runs
       # first, a sync that copies nothing leaves the host with NO kit, and aws s3 sync
