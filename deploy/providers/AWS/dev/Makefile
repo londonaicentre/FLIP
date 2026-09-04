@@ -101,6 +101,17 @@ unset_or_placeholder = $(if $(1),$(if $(filter <%>,$(patsubst <%,<%>,$(1))),plac
 # no default: set flip_cognito_admin_email in $(ENV_FILE) (usually the
 # developer's own mailbox). It previously defaulted from SES_VERIFIED_EMAIL,
 # which FLIP#919 removed along with the dev SES module.
+#
+# An already-exported TF_VAR_flip_cognito_admin_email is accepted as the other
+# way in — the Terraform-native spelling, and what the `export` above imports
+# when the shell carries it. Fall back to it *before* the guard, or a shell
+# that had supplied the variable is rejected by a guard reading only the
+# un-prefixed name and then handed an empty value on any goal the guard skips.
+# Tested for emptiness rather than with `?=`, so an env file carrying the key
+# with no value falls back too.
+ifeq ($(strip $(flip_cognito_admin_email)),)
+flip_cognito_admin_email := $(TF_VAR_flip_cognito_admin_email)
+endif
 ifneq ($(DEV_TF_APPLY_GOALS),)
 $(if $(call unset_or_placeholder,$(flip_cognito_admin_email)),$(error 📧 flip_cognito_admin_email must be set to a real mailbox in $(ENV_FILE) — it seeds the Cognito admin user (previously defaulted from the removed SES_VERIFIED_EMAIL)),)
 endif

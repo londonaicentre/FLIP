@@ -36,7 +36,7 @@ The Cognito and S3 resource definitions are shared with the prod stack via the m
 | --- | --- |
 | `AWS_PROFILE` | dev SSO profile; also guarded against prod/stag account IDs |
 | `AWS_REGION` | region for the dev Cognito + S3 resources |
-| `flip_cognito_admin_email` | mailbox for the seed admin user — it receives the Cognito invite. Required; the Makefile fails at parse time if it is unset or still a `<placeholder>` |
+| `flip_cognito_admin_email` | mailbox for the seed admin user — it receives the Cognito invite. Required; the Makefile fails at parse time if it is unset or still a `<placeholder>`. An exported `TF_VAR_flip_cognito_admin_email` is accepted instead, and this name wins when both are set |
 | `ADMIN_USER_PASSWORD` | initial password for the seed admin (and researcher, if set) |
 | `FLIP_TFSTATE_BUCKET_NAME` | S3 bucket for `flip/dev/terraform.tfstate` |
 | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME`, `FLIP_APP_BUNDLES_BUCKET_NAME` | the three application buckets; each guarded at parse time |
