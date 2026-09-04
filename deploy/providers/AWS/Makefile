@@ -259,6 +259,61 @@ init: ## Initialize Terraform configuration
 		-reconfigure
 
 
+# Hand the resolved TF_VAR_* environment to a caller that runs terraform directly.
+#
+# The Terraform-input mapping lives in this Makefile and nowhere else: it derives
+# TF_VAR_environment from PROD, hard-codes the VPC/subnet CIDRs, resolves the FL
+# image names through deploy/fl_backend.mk and picks the kit date for FL_BACKEND.
+# CI runs `op5dev/tf-via-pr`, which invokes terraform directly rather than through
+# make, so it needs those values in its own environment — this target hands them
+# over instead of CI re-deriving the mapping and drifting from a laptop plan:
+#
+#     make print-tf-env >> "$$GITHUB_ENV"
+#
+# Every line of stdout is consumed as KEY=value, so the recipe must print the
+# variables and nothing else — no @echo banner, and no `##` recipe-line comments
+# (those are echoed by make and would land in the file as garbage). Output carries
+# AES_KEY_BASE64, INTERNAL_SERVICE_KEY, ADMIN_USER_PASSWORD and the DB user, so
+# never pipe it anywhere it would be echoed. Values are single-line by construction
+# (scripts/compose-ci-env.sh rejects embedded newlines), which is what makes the
+# plain KEY=value form safe for $$GITHUB_ENV.
+.PHONY: print-tf-env
+print-tf-env: ## Print the resolved TF_VAR_* environment as KEY=value lines (for CI)
+	@env | grep '^TF_VAR_' | sort
+
+# Publish the EC2 keypair public key to SSM so CI can reproduce it.
+#
+# main.tf reads both aws_key_pair public keys with file(): `flip_keypair` from
+# `${var.flip_keypair}.pub` and `host_key` from `var.ec2_public_key_path` — both
+# resolve to ~/.ssh/host-aws.pub, and neither is behind a `count`. A runner
+# without that file plans a replacement of both keypairs, and because
+# `public_key` is ForceNew that ripples into aws_instance.ec2_instance.
+#
+# The bytes come from *state*, not from the operator's ~/.ssh, so what CI writes
+# is what Terraform already believes — a laptop file that has drifted (a
+# regenerated key, a different machine) would otherwise plan a replacement from
+# CI just as reliably.
+.PHONY: seed-ci-keypair-param
+seed-ci-keypair-param: ## Publish the aws_key_pair public key from state to SSM (for Terraform CI)
+	@set -eu; \
+	echo "🔑 Reading the keypair public key from state..."; \
+	state="$$($(_TF) state pull)"; \
+	host_key="$$(printf '%s' "$$state" | jq -r '.resources[] | select(.type=="aws_key_pair" and .name=="host_key") | .instances[0].attributes.public_key // empty')"; \
+	flip_key="$$(printf '%s' "$$state" | jq -r '.resources[] | select(.type=="aws_key_pair" and .name=="flip_keypair") | .instances[0].attributes.public_key // empty')"; \
+	if [ -z "$$host_key" ]; then \
+		echo "❌ aws_key_pair.host_key is not in state — run 'make plan' first, or check AWS_PROFILE=$(AWS_PROFILE)"; exit 1; \
+	fi; \
+	if [ -n "$$flip_key" ] && [ "$$flip_key" != "$$host_key" ]; then \
+		echo "❌ aws_key_pair.flip_keypair and .host_key hold different public keys."; \
+		echo "   Both are read from ~/.ssh/host-aws.pub, so CI can only supply one file."; \
+		echo "   Reconcile them from a laptop before enabling Terraform CI."; exit 1; \
+	fi; \
+	$(_AWS_ENV) aws ssm put-parameter \
+		--name /flip/ci/host_aws_public_key \
+		--description "EC2 keypair public key, read by the Terraform CI workflows (FLIP#962)" \
+		--type String --overwrite --value "$$host_key" >/dev/null; \
+	echo "✅ Published /flip/ci/host_aws_public_key to the $(AWS_PROFILE) account."
+
 .PHONY: import-persistent
 import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prevent replacement
 	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; bash scripts/import-resources.sh
@@ -820,14 +875,34 @@ deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and dep
 	fi
 	@# The variable being set is necessary but not sufficient — it must actually
 	@# be applied. Confirm the behaviour exists on the live distribution.
+	@# Capture the count into a variable rather than testing `if ! … | grep -qv`:
+	@# _AWS_ENV expands to `unset …; AWS_PROFILE=…`, so the embedded `;` bound the
+	@# `!` to the `unset` and left the `if` condition as the *un-negated* grep —
+	@# inverting the guard, which then refused to publish on a correctly
+	@# provisioned distribution and waved the demo through on an unprovisioned
+	@# one (precisely the silent-detach this check exists to prevent).
 	@DIST_ID=$$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId); \
-	if ! $(_AWS_ENV) aws cloudfront get-distribution-config --id "$$DIST_ID" \
-		--query "DistributionConfig.CacheBehaviors.Items[?PathPattern=='/ark_demo/*'] | length(@)" \
-		--output text 2>/dev/null | grep -qv '^0$$'; then \
-		echo "❌ No /ark_demo/* cache behaviour on distribution $$DIST_ID."; \
-		echo "   DEMO_ASSETS_BUCKET_NAME is set but not applied — run a terraform apply first."; \
+	[ -n "$$DIST_ID" ] || { \
+		echo "❌ Terraform output CloudfrontDistributionId is empty."; \
+		echo "   The state has no distribution to check — run a terraform apply first."; \
 		exit 1; \
-	fi
+	}; \
+	if ! DEMO_BEHAVIOURS=$$($(_AWS_ENV) aws cloudfront get-distribution-config --id "$$DIST_ID" \
+		--query "DistributionConfig.CacheBehaviors.Items[?PathPattern=='/ark_demo/*'] | length(@)" \
+		--output text 2>&1); then \
+		echo "❌ Could not read the CloudFront distribution config for $$DIST_ID."; \
+		echo "   aws said: $$DEMO_BEHAVIOURS"; \
+		echo "   That is a lookup failure — an expired SSO session, the wrong profile, or no"; \
+		echo "   network — NOT a missing behaviour. Fix the credential or connectivity and"; \
+		echo "   re-run; a terraform apply is not the remedy here."; \
+		exit 1; \
+	fi; \
+	case "$$DEMO_BEHAVIOURS" in \
+		''|0|None) \
+			echo "❌ No /ark_demo/* cache behaviour on distribution $$DIST_ID."; \
+			echo "   DEMO_ASSETS_BUCKET_NAME is set but not applied — run a terraform apply first."; \
+			exit 1;; \
+	esac
 	@echo "🖼️  Building flip-ui Ark+ demo bundle from working tree..."
 	@# npm run build:demo's postbuild hook regenerates dist/js/window.js itself
 	@# (scripts/generate-demo-window-js.sh) — no separate window.js step needed,

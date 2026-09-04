@@ -11,6 +11,8 @@
 #
 
 import json
+import logging
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
@@ -343,7 +345,7 @@ def test_bundle_nvflare_application_success(
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
     # Base application template on the local FL_APP_BASE_DIR tree
-    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py"])
+    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py", "meta.json"])
 
     mock_client = mock_s3.return_value
     # Ensure get_object returns a body whose read() yields the config.json bytes
@@ -380,6 +382,54 @@ def test_bundle_nvflare_application_success(
     )
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_multi_site_template(
+    mock_s3, mock_required, mock_verify, mock_is_valid, model_id, mocked_settings
+):
+    """A per-site ``app_site-N/`` folder beside ``app/`` is bundled and populated like ``app/``.
+
+    The allowlist walk keeps NVFLARE's multi-site layout (FLIP#1008 review): both folders are
+    mirrored from the local tree, and the researcher's files land in each folder's ``custom/``.
+    """
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+    dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+
+    write_base_tree(
+        base_dir,
+        "nvflare",
+        "standard",
+        ["app/config/config_fed_server.json", "app_site-1/config/config_fed_client.json", "meta.json"],
+    )
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_required.return_value = ["trainer.py", "config.json"]
+    mock_client.list_objects.side_effect = [
+        [f"{model_bucket}/{model_id}/trainer.py", f"{model_bucket}/{model_id}/config.json"],
+        [],  # Destination bucket (clear check)
+    ]
+    mock_client.copy_object.return_value = None
+    mock_client.object_exists.return_value = False
+    mock_verify.return_value = None
+
+    fl_service.bundle_nvflare_application(model_id)
+
+    for rel in ("app/config/config_fed_server.json", "app_site-1/config/config_fed_client.json", "meta.json"):
+        mock_client.upload_file.assert_any_call(
+            str(Path(base_dir) / "nvflare/standard" / rel), f"{dest_bucket}/{model_id}/{rel}"
+        )
+    for app in ("app", "app_site-1"):
+        mock_client.copy_object.assert_any_call(
+            f"{model_bucket}/{model_id}/trainer.py", f"{dest_bucket}/{model_id}/{app}/custom/trainer.py"
+        )
+
+
 # "evaluation_client_api" is the pre-rename alias: _normalise_job_type resolves it to
 # "evaluation" BEFORE manifest validation and the base-dir lookup, so a pre-rename model bundles
 # from the plain-name template — the alias directory no longer exists.
@@ -399,7 +449,7 @@ def test_bundle_nvflare_application_diverts_eval_checkpoint(
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
     # The tree lives under the RESOLVED name only — proving the alias path reads it from there.
-    write_base_tree(base_dir, "nvflare", "evaluation", ["app/custom/flip.py"])
+    write_base_tree(base_dir, "nvflare", "evaluation", ["app/custom/flip.py", "meta.json"])
 
     eval_config = {
         "job_type": job_type,
@@ -458,7 +508,7 @@ def test_bundle_nvflare_application_diverts_standard_server_checkpoint(
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
-    write_base_tree(base_dir, "nvflare", "standard", ["app/custom/flip.py"])
+    write_base_tree(base_dir, "nvflare", "standard", ["app/custom/flip.py", "meta.json"])
 
     std_config = {"job_type": "standard", "SERVER_CHECKPOINT": "pretrained_weights.pt"}
     mock_client = mock_s3.return_value
@@ -517,7 +567,9 @@ def test_bundle_nvflare_application_model_files_overwrite(
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
     # Base template contains flip.py under app/custom — a name the researcher must not overwrite
-    write_base_tree(base_dir, "nvflare", "standard", ["app/custom/flip.py", "app/config/config_fed_client.json"])
+    write_base_tree(
+        base_dir, "nvflare", "standard", ["app/custom/flip.py", "app/config/config_fed_client.json", "meta.json"]
+    )
 
     mock_client = mock_s3.return_value
     # config.json with job_type standard
@@ -606,7 +658,7 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
 
     # A base template exists for the parametrized job_type (unused for the "invalid" run, which is
     # rejected before the base directory is ever walked).
-    write_base_tree(base_dir, "nvflare", job_type, ["app/file1.py"])
+    write_base_tree(base_dir, "nvflare", job_type, ["app/file1.py", "meta.json"])
 
     mock_is_valid.side_effect = lambda jt, backend: jt in mock_job_types_file
     mock_client = mock_s3.return_value
@@ -645,7 +697,7 @@ def test_bundle_nvflare_application_wrong_files(mock_s3, mock_required, mock_ver
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
-    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py"])
+    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py", "meta.json"])
 
     mock_client = mock_s3.return_value
     # Provide an empty JSON config for tests that include config.json in model files
@@ -806,7 +858,7 @@ def test_bundle_flower_application_file_wrong_job_type_in_config(
 
     # A base template exists for the parametrized job_type (unused for the "invalid" run, which is
     # rejected before the base directory is ever walked).
-    write_base_tree(base_dir, "flower", job_type, ["app/file1.py"])
+    write_base_tree(base_dir, "flower", job_type, ["app/file1.py", "pyproject.toml"])
 
     mock_is_valid.side_effect = lambda jt, backend: jt in mock_job_types_file
     mock_client = mock_s3.return_value
@@ -844,7 +896,7 @@ def test_bundle_flower_application_wrong_files(mock_s3, mock_required, mocked_se
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
-    write_base_tree(base_dir, "flower", "standard", ["app/server_app.py"])
+    write_base_tree(base_dir, "flower", "standard", ["app/server_app.py", "pyproject.toml"])
 
     mock_client = mock_s3.return_value
     mock_client.get_object.return_value = {
@@ -1316,10 +1368,75 @@ def test_bundle_nvflare_application_no_base_files(mock_s3, mocked_settings, mode
         fl_service.bundle_nvflare_application(model_id)
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_missing_root_file(mock_s3, mock_is_valid, mocked_settings, model_id):
+    """A template with ``app/`` files but no ``meta.json`` is rejected at bundle time.
+
+    Without this guard the bundle uploads cleanly and only fails at the FL server, far from the
+    cause — NVFLARE has no job definition to deploy.
+    """
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py"])  # app/ present, meta.json absent
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/trainer.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
+    ]
+
+    with pytest.raises(FileNotFoundError, match="Base application root file missing"):
+        fl_service.bundle_nvflare_application(model_id)
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_root_file_without_app_folder(mock_s3, mock_is_valid, mocked_settings, model_id):
+    """A template holding only ``meta.json`` — no ``app/`` or ``app_*/`` — is rejected.
+
+    The third malformed-template shape: it passes the "nothing deployable" and "root file" guards,
+    so it needs its own, and it is caught before the destination bucket is touched.
+    """
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "nvflare", "standard", ["meta.json"])  # root file only
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/trainer.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
+    ]
+
+    with pytest.raises(FileNotFoundError, match=r"Base application app folder missing .* app/ or app_\*/"):
+        fl_service.bundle_nvflare_application(model_id)
+
+    mock_client.delete_objects.assert_not_called()
+    mock_client.upload_file.assert_not_called()
+
+
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 def test_bundle_nvflare_application_no_app_folders(mock_s3, mock_required, mocked_settings, model_id):
-    """Base tree without any top-level ``app*`` folder is rejected."""
+    """Base tree without an ``app/`` folder is rejected.
+
+    Under the FLIP#1008 allowlist nothing outside ``app/`` is bundleable, so a template holding
+    only ``notapp/`` yields an empty file list and is rejected at the first check rather than
+    later by the app-folder scan. The error names the rule and the debug log lists what was
+    excluded, so a visibly non-empty directory reporting "missing" is still diagnosable.
+    """
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
@@ -1338,7 +1455,7 @@ def test_bundle_nvflare_application_no_app_folders(mock_s3, mock_required, mocke
     ]
     mock_client.copy_object.return_value = None
 
-    with pytest.raises(FileNotFoundError, match="No app folders found under base application"):
+    with pytest.raises(FileNotFoundError, match="Base application files missing"):
         fl_service.bundle_nvflare_application(model_id)
 
 
@@ -1357,7 +1474,7 @@ def test_bundle_nvflare_application_clears_existing_dest(
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
-    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py"])
+    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py", "meta.json"])
 
     mock_client = mock_s3.return_value
     mock_client.get_object.return_value = {
@@ -1421,7 +1538,7 @@ def test_bundle_nvflare_application_empty_manifest_is_rejected(
     """
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
-    write_base_tree(mocked_settings.FL_APP_BASE_DIR, "nvflare", "standard", ["app/file1.py"])
+    write_base_tree(mocked_settings.FL_APP_BASE_DIR, "nvflare", "standard", ["app/file1.py", "meta.json"])
 
     mock_client = mock_s3.return_value
     mock_client.get_object.return_value = {
@@ -1468,6 +1585,101 @@ def test_bundle_flower_application_no_base_files(mock_s3, mocked_settings, model
 
     with pytest.raises(FileNotFoundError, match="Base application files missing in the local base directory"):
         fl_service.bundle_flower_application(model_id)
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_flower_application_missing_root_file(mock_s3, mock_is_valid, mocked_settings, model_id):
+    """A template with ``app/`` files but no ``pyproject.toml`` is rejected at bundle time.
+
+    Without this guard the bundle uploads cleanly and only fails at the FL server, far from the
+    cause — fl-api-flower cannot build a FAB without the run-root ``pyproject.toml``.
+    """
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "flower", "standard", ["app/server_app.py"])  # app/ present, pyproject.toml absent
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/client_app.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
+    ]
+
+    with pytest.raises(FileNotFoundError, match="Base application root file missing"):
+        fl_service.bundle_flower_application(model_id)
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_flower_application_root_file_without_app_folder(mock_s3, mock_is_valid, mocked_settings, model_id):
+    """A template holding only ``pyproject.toml`` — no ``app/`` — is rejected.
+
+    Without this guard a FAB with no app package would be built and only fail at the SuperLink.
+    Caught before the destination bucket is touched.
+    """
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "flower", "standard", ["pyproject.toml"])  # root file only
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/client_app.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
+    ]
+
+    with pytest.raises(FileNotFoundError, match=r"Base application app folder missing .* app/ and one of"):
+        fl_service.bundle_flower_application(model_id)
+
+    mock_client.delete_objects.assert_not_called()
+    mock_client.upload_file.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_flower_application_rejects_more_than_one_app_package(
+    mock_s3, mock_is_valid, mocked_settings, model_id, monkeypatch
+):
+    """Widening Flower's app-folder rule is refused by name rather than by a bare unpack error.
+
+    A FAB has exactly one app package, and the bundler takes the destination folder from the
+    returned set by single-element unpack. Giving FLOWER a ``BUNDLED_APP_DIR_PREFIXES`` entry would
+    otherwise surface as ``ValueError: too many values to unpack`` raised from inside the bundler —
+    the species of unnamed error :func:`_assert_backends_have_bundling_rules` exists to eliminate.
+    """
+    monkeypatch.setitem(fl_service.BUNDLED_APP_DIR_PREFIXES, FLBackend.FLOWER, ("app_",))
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "flower", "standard", ["app/server_app.py", "app_site1/server_app.py", "pyproject.toml"])
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/client_app.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
+    ]
+
+    with pytest.raises(RuntimeError, match="exactly one app package"):
+        fl_service.bundle_flower_application(model_id)
+
+    mock_client.delete_objects.assert_not_called()
+    mock_client.upload_file.assert_not_called()
 
 
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
@@ -1754,10 +1966,10 @@ def test_abort_model_training_raises_on_invalid_target(
 
 def test_list_local_base_files_missing_dir_returns_empty(tmp_path):
     # A non-existent base directory yields no files (bundlers turn this into FileNotFoundError).
-    assert fl_service.list_local_base_files(tmp_path / "does-not-exist") == []
+    assert fl_service.list_local_base_files(tmp_path / "does-not-exist", FLBackend.FLOWER) == []
 
 
-def test_list_local_base_files_skips_symlinks(tmp_path):
+def test_list_local_base_files_skips_symlinks(tmp_path, caplog):
     # A symlinked file/dir inside FL_APP_BASE_DIR must not pull host files outside the template
     # tree into the uploaded bundle.
     base = tmp_path / "base"
@@ -1772,8 +1984,377 @@ def test_list_local_base_files_skips_symlinks(tmp_path):
 
     (base / "app" / "link.py").symlink_to(external_file)  # symlinked file
     (base / "linked_dir").symlink_to(external_dir)  # symlinked directory
+    (base / "app" / "linked_sub").symlink_to(external_dir)  # symlinked dir INSIDE app/
 
-    assert fl_service.list_local_base_files(base) == ["app/real.py"]
+    with caplog.at_level(logging.DEBUG):
+        assert fl_service.list_local_base_files(base, FLBackend.FLOWER) == ["app/real.py"]
+
+    # Every one of the three is named in the debug log — including the symlinked directory nested
+    # inside app/, which os.walk(followlinks=False) lists but never enters, so it has to be pruned
+    # explicitly to be recorded rather than vanish silently.
+    assert "'app/link.py'" in caplog.text
+    assert "'linked_dir'" in caplog.text
+    assert "'app/linked_sub/'" in caplog.text
+
+
+def test_list_local_base_files_excludes_local_dev_artefacts(tmp_path):
+    # In dev the repo's fl-apps/ tree is bind-mounted into flip-api, so a developer's .venv,
+    # __pycache__ or tool caches sit inside the template directory and would otherwise be
+    # mirrored into the bucket and shipped to every trust. None of them is enumerated: they are
+    # excluded because they are neither app/ nor an allowed root file (FLIP#1008).
+    base = tmp_path / "base"
+    (base / "app").mkdir(parents=True)
+    (base / "app" / "client_app.py").write_text("x")
+    (base / "pyproject.toml").write_text("x")
+
+    (base / ".venv" / "lib" / "python3.12" / "site-packages").mkdir(parents=True)
+    (base / ".venv" / "pyvenv.cfg").write_text("x")
+    (base / ".venv" / "lib" / "python3.12" / "site-packages" / "_virtualenv.py").write_text("x")
+    (base / ".ruff_cache").mkdir()
+    (base / ".ruff_cache" / "CACHEDIR.TAG").write_text("x")
+    (base / ".DS_Store").write_text("x")
+
+    assert fl_service.list_local_base_files(base, FLBackend.FLOWER) == ["app/client_app.py", "pyproject.toml"]
+
+
+def test_list_local_base_files_excludes_unknown_tool_output(tmp_path):
+    # The point of allowlisting over a denylist: a cache from a tool nobody enumerated is still
+    # excluded, because the rule is positional rather than a list of known offenders.
+    base = tmp_path / "base"
+    (base / "app").mkdir(parents=True)
+    (base / "app" / "server_app.py").write_text("x")
+    (base / "pyproject.toml").write_text("x")
+
+    for unknown in (".tox", ".nox", "htmlcov", ".idea", "dist", "standard_app.egg-info"):
+        (base / unknown).mkdir()
+        (base / unknown / "junk.txt").write_text("x")
+
+    assert fl_service.list_local_base_files(base, FLBackend.FLOWER) == ["app/server_app.py", "pyproject.toml"]
+
+
+def test_list_local_base_files_excludes_compiled_python_inside_app(tmp_path):
+    # __pycache__/*.pyc appears INSIDE app/, so position alone cannot exclude it — the app folder
+    # is the thing being allowed. Within it the rule inverts to a name-based exclusion.
+    base = tmp_path / "base"
+    (base / "app" / "__pycache__").mkdir(parents=True)
+    (base / "app" / "client_app.py").write_text("x")
+    (base / "app" / "__pycache__" / "client_app.cpython-312.pyc").write_text("x")
+    (base / "app" / "stale.pyc").write_text("x")
+    (base / "app" / "stale.pyo").write_text("x")
+    (base / "pyproject.toml").write_text("x")
+
+    assert fl_service.list_local_base_files(base, FLBackend.FLOWER) == ["app/client_app.py", "pyproject.toml"]
+
+
+@pytest.mark.parametrize("fl_backend", [FLBackend.NVFLARE, FLBackend.FLOWER])
+def test_list_local_base_files_excludes_tooling_artefacts_inside_app(tmp_path, fl_backend):
+    """Compiled Python is not the only artefact that lands inside ``app/``.
+
+    A template directory is a live uv project root, so the tools that run there write into the app
+    folder as well as beside it: ``.venv/``, ``.flwr/``, ``.ruff_cache/``, a stray ``.env``, a
+    resolved ``uv.lock``, and ``.DS_Store`` in every directory the Finder displays — at any depth,
+    including ``app/config/``. Before this rule the walk kept all of them, so the allowlist was
+    closed at the template root only and the incident that motivated FLIP#1008 (a ``.venv``
+    reaching the run directory) remained reachable one level down.
+    """
+    base = tmp_path / "base"
+    (base / "app" / "config").mkdir(parents=True)
+    (base / "app" / ".venv" / "lib").mkdir(parents=True)
+    (base / "app" / ".flwr").mkdir()
+    (base / "app" / ".ruff_cache").mkdir()
+    # Deployable content, at both depths.
+    (base / "app" / "client_app.py").write_text("x")
+    (base / "app" / "config" / "settings.json").write_text("{}")
+    # Artefacts.
+    (base / "app" / ".venv" / "pyvenv.cfg").write_text("x")
+    (base / "app" / ".venv" / "lib" / "thing.py").write_text("x")
+    (base / "app" / ".flwr" / "cache.db").write_text("x")
+    (base / "app" / ".ruff_cache" / "x.json").write_text("{}")
+    (base / "app" / ".DS_Store").write_text("x")
+    (base / "app" / ".env").write_text("SECRET=1")
+    (base / "app" / "uv.lock").write_text("x")
+    (base / "app" / "config" / ".DS_Store").write_text("x")
+    root_file = "meta.json" if fl_backend == FLBackend.NVFLARE else "pyproject.toml"
+    (base / root_file).write_text("{}")
+
+    assert fl_service.list_local_base_files(base, fl_backend) == [
+        "app/client_app.py",
+        "app/config/settings.json",
+        root_file,
+    ]
+
+
+def test_list_local_base_files_excludes_developer_files_that_are_not_artefacts(tmp_path):
+    # recipe.py regenerates the committed configs on a developer's workstation; README.md is
+    # documentation; the per-template required_files.json is the source for the backend-level
+    # manifest flip-api reads one directory up. All three are real files that a denylist could
+    # never exclude, and none of them belongs at a trust.
+    base = tmp_path / "base"
+    (base / "app" / "config").mkdir(parents=True)
+    (base / "app" / "config" / "config_fed_server.json").write_text("{}")
+    (base / "meta.json").write_text("{}")
+    (base / "recipe.py").write_text("x")
+    (base / "README.md").write_text("x")
+    (base / "required_files.json").write_text("[]")
+
+    assert fl_service.list_local_base_files(base, FLBackend.NVFLARE) == [
+        "app/config/config_fed_server.json",
+        "meta.json",
+    ]
+
+
+# Files a committed template may carry that the bundle deliberately leaves behind, as paths relative
+# to the template root. Anything else appearing in fl-apps/ must either ship or be added here as a
+# considered decision. Matched as whole relative paths rather than by basename: a nested
+# `docs/README.md` is a different decision from the root `README.md`, and exempting it by name would
+# let a dropped nested file through the guard silently.
+KNOWN_UNBUNDLED_TEMPLATE_FILES = frozenset({"README.md", "recipe.py", "required_files.json"})
+
+# Path components that mark untracked tooling output rather than committed template content.
+# A template directory is a live uv project root, so the tools that run there write into it: a
+# developer's `uv sync` leaves a `.venv/` inside `fl-apps/flower/standard` and
+# `fl-apps/flower/evaluation`, which is their normal state, and the dev compose bind-mounts that
+# same tree into flip-api, so the Dockerised `make -C flip-api test` sees it too. Excluding it here
+# keeps the guard measuring what its name says — the committed tree — rather than the filesystem.
+# `git ls-files` would express "committed" exactly, but this suite also runs inside the flip-api
+# image, where fl-apps is baked in with neither git nor a `.git` directory, so the rule has to be
+# expressible from the path alone. Nothing is lost: keeping gitignored junk out of the *bundle* is
+# the bundler's job, asserted by test_list_local_base_files_excludes_local_dev_artefacts and
+# test_list_local_base_files_excludes_tooling_artefacts_inside_app.
+UNTRACKED_TEMPLATE_PATH_COMPONENTS = frozenset({"__pycache__"})
+
+
+def _is_untracked_template_component(name: str) -> bool:
+    """Whether a path component under a template is tooling output rather than committed content.
+
+    Args:
+        name (str): A single path component (not a path).
+
+    Returns:
+        bool: True if the component is dot-prefixed or a known tooling directory.
+    """
+    return name.startswith(".") or name in UNTRACKED_TEMPLATE_PATH_COMPONENTS
+
+
+def _committed_template_files(template: Path) -> set[str]:
+    """The template's committed files, as paths relative to its root.
+
+    Prunes untracked directories in place rather than filtering after the fact, so a real ``.venv``
+    is never descended into — it holds thousands of files.
+
+    Args:
+        template (Path): A ``fl-apps/<backend>/<job_type>`` template root.
+
+    Returns:
+        set[str]: Relative POSIX paths of every committed file under ``template``.
+    """
+    committed: set[str] = set()
+    for dirpath, dirnames, filenames in os.walk(template):
+        dirnames[:] = [d for d in dirnames if not _is_untracked_template_component(d)]
+        here = Path(dirpath)
+        committed.update(
+            (here / name).relative_to(template).as_posix()
+            for name in filenames
+            if not _is_untracked_template_component(name)
+        )
+    return committed
+
+
+def _committed_fl_apps_dir() -> Path:
+    """Locate the committed ``fl-apps/`` tree, which sits at a different depth per run context.
+
+    Running from a checkout the tree is at the repo root, two levels above ``flip-api/``; inside
+    the flip-api image it is baked at ``/app/fl-apps`` (Dockerfile), one level up from the tests.
+    ``FL_APP_BASE_DIR`` overrides both, matching what the bundler itself reads.
+
+    Returns:
+        Path: The first candidate that exists.
+
+    Raises:
+        AssertionError: If no candidate resolves, rather than skipping — a guard that cannot find
+            the tree must fail loudly instead of passing vacuously.
+    """
+    here = Path(__file__).resolve()
+    candidates = [
+        *([Path(os.environ["FL_APP_BASE_DIR"])] if os.environ.get("FL_APP_BASE_DIR") else []),
+        here.parents[5] / "fl-apps",
+        here.parents[4] / "fl-apps",
+    ]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    raise AssertionError(f"committed fl-apps tree not found; tried {[str(c) for c in candidates]}")
+
+
+@pytest.mark.parametrize("fl_backend", [FLBackend.NVFLARE, FLBackend.FLOWER])
+def test_every_committed_template_file_either_ships_or_is_known_unbundled(fl_backend):
+    """Bind the allowlist to the templates actually shipped, not only to synthesised trees.
+
+    Every other test here builds its own tree under ``tmp_path``, so the rule is verified against
+    fixtures rather than against ``fl-apps/``. That leaves the failure mode this change is meant to
+    prevent: a template gains a root-level file the rule does not recognise — a run-root
+    ``config.toml``, a second config, a new non-``app_`` directory — and it is dropped with only a
+    ``logger.debug`` line, surfacing at a trust instead of in CI. Asserting the complement here
+    means a new file either ships or forces a deliberate entry in
+    :data:`KNOWN_UNBUNDLED_TEMPLATE_FILES`.
+    """
+    backend_dir = _committed_fl_apps_dir() / fl_backend
+    assert backend_dir.is_dir(), f"no committed templates for {fl_backend} at {backend_dir}"
+
+    templates = sorted(p for p in backend_dir.iterdir() if p.is_dir())
+    # Guard the guard: an empty roster would make every assertion below vacuous.
+    assert templates, f"no job-type templates found under {backend_dir}"
+
+    for template in templates:
+        bundled = set(fl_service.list_local_base_files(template, fl_backend))
+        committed = _committed_template_files(template)
+        assert committed, f"template {template.name} has no committed files"
+        unaccounted = {rel for rel in committed - bundled if rel not in KNOWN_UNBUNDLED_TEMPLATE_FILES}
+        assert not unaccounted, (
+            f"{fl_backend}/{template.name}: committed but not bundled and not a known exclusion: "
+            f"{sorted(unaccounted)}. Either the allowlist should keep it, or add it to "
+            f"KNOWN_UNBUNDLED_TEMPLATE_FILES."
+        )
+
+
+def test_committed_template_files_ignores_untracked_tooling_output(tmp_path):
+    # The guard above measures the committed tree, not the filesystem. A template directory is a
+    # live uv project root, so a working copy routinely carries a .venv and tool caches inside it —
+    # if those counted, the guard would fail on exactly the trees this change protects, and its
+    # message would advise exempting them as template files.
+    template = tmp_path / "standard"
+    (template / "app" / "__pycache__").mkdir(parents=True)
+    (template / "app" / "server_app.py").write_text("x")
+    (template / "app" / "__pycache__" / "server_app.cpython-312.pyc").write_bytes(b"x")
+    (template / "pyproject.toml").write_text("x")
+    (template / ".venv" / "lib").mkdir(parents=True)
+    (template / ".venv" / "pyvenv.cfg").write_text("x")
+    (template / ".venv" / "lib" / "_virtualenv.py").write_text("x")
+    (template / ".ruff_cache").mkdir()
+    (template / ".ruff_cache" / "CACHEDIR.TAG").write_text("x")
+
+    assert _committed_template_files(template) == {"app/server_app.py", "pyproject.toml"}
+
+
+def test_committed_template_files_keeps_ordinary_nested_content(tmp_path):
+    # The narrowing must not blunt the guard: anything a template genuinely commits still counts,
+    # at every depth, so a file the allowlist drops is still reported as unaccounted.
+    template = tmp_path / "standard"
+    (template / "app" / "config").mkdir(parents=True)
+    (template / "app" / "config" / "config_fed_server.json").write_text("{}")
+    (template / "docs").mkdir()
+    (template / "docs" / "README.md").write_text("x")
+    (template / "meta.json").write_text("{}")
+
+    assert _committed_template_files(template) == {
+        "app/config/config_fed_server.json",
+        "docs/README.md",
+        "meta.json",
+    }
+
+
+@pytest.mark.parametrize("fl_backend", list(FLBackend))
+def test_every_backend_has_bundling_rules(fl_backend):
+    """A backend added to FLBackend without both maps raised a bare KeyError from inside the bundler.
+
+    FLBackend's docstring invites adding a backend "in this one place", so the omission is a
+    realistic mistake; this fails in CI instead.
+    """
+    assert fl_backend in fl_service.BUNDLED_APP_DIR_PREFIXES
+    assert fl_backend in fl_service.BUNDLED_ROOT_FILES
+
+
+def test_list_local_base_files_root_file_is_per_backend(tmp_path):
+    # Each backend keeps exactly one root file: NVFLARE's job definition, Flower's FAB definition.
+    # The other backend's is not deployable here and must not ride along.
+    base = tmp_path / "base"
+    (base / "app").mkdir(parents=True)
+    (base / "app" / "keep.py").write_text("x")
+    (base / "meta.json").write_text("{}")
+    (base / "pyproject.toml").write_text("x")
+
+    assert fl_service.list_local_base_files(base, FLBackend.NVFLARE) == ["app/keep.py", "meta.json"]
+    assert fl_service.list_local_base_files(base, FLBackend.FLOWER) == ["app/keep.py", "pyproject.toml"]
+
+
+def _multi_site_template(tmp_path: Path) -> Path:
+    """An NVFLARE-style template with per-site app variants beside ``app/``.
+
+    ``meta.json``'s ``deploy_map`` names each folder and NVFLARE deploys it to the sites listed —
+    the layout ``bundle_nvflare_application`` scans for and fl-api-base's job assembly documents.
+    """
+    base = tmp_path / "base"
+    (base / "app" / "config").mkdir(parents=True)
+    (base / "app" / "config" / "config_fed_server.json").write_text("{}")
+    (base / "app_site1" / "config").mkdir(parents=True)
+    (base / "app_site1" / "config" / "config_fed_client.json").write_text("{}")
+    (base / "app_site-2" / "custom").mkdir(parents=True)
+    (base / "app_site-2" / "custom" / "flip.py").write_text("x")
+    (base / "meta.json").write_text("{}")
+    (base / "pyproject.toml").write_text("x")
+    return base
+
+
+def test_list_local_base_files_keeps_nvflare_per_site_app_folders(tmp_path):
+    # NVFLARE's multi-site layout is a documented capability (app_site-N folders named in
+    # meta.json's deploy_map), so the allowlist must keep app_* beside app/ — the positional rule
+    # is "an app folder", not "a directory literally named app".
+    base = _multi_site_template(tmp_path)
+
+    assert fl_service.list_local_base_files(base, FLBackend.NVFLARE) == [
+        "app/config/config_fed_server.json",
+        "app_site-2/custom/flip.py",
+        "app_site1/config/config_fed_client.json",
+        "meta.json",
+    ]
+
+
+def test_list_local_base_files_flower_keeps_only_app(tmp_path, caplog):
+    # A Flower App Bundle has exactly one app package, so the same tree under the Flower rule
+    # bundles app/ alone and records the per-site folders as excluded.
+    base = _multi_site_template(tmp_path)
+
+    with caplog.at_level(logging.DEBUG):
+        kept = fl_service.list_local_base_files(base, FLBackend.FLOWER)
+
+    assert kept == ["app/config/config_fed_server.json", "pyproject.toml"]
+    assert "'app_site1/'" in caplog.text
+    assert "'app_site-2/'" in caplog.text
+
+
+@pytest.mark.parametrize("fl_backend", [FLBackend.NVFLARE, FLBackend.FLOWER])
+def test_list_local_base_files_rejects_app_lookalike_dirs(tmp_path, fl_backend, caplog):
+    # Merely starting with "app" is not enough on either backend: apps/ and application/ are not
+    # app folders and must not ride along under a prefix match.
+    base = tmp_path / "base"
+    (base / "app").mkdir(parents=True)
+    (base / "app" / "keep.py").write_text("x")
+    for lookalike in ("apps", "application", "appendix"):
+        (base / lookalike).mkdir()
+        (base / lookalike / "stray.py").write_text("x")
+    (base / "meta.json").write_text("{}")
+    (base / "pyproject.toml").write_text("x")
+
+    with caplog.at_level(logging.DEBUG):
+        kept = fl_service.list_local_base_files(base, fl_backend)
+
+    assert [p for p in kept if p.startswith("app/")] == ["app/keep.py"]
+    assert not [p for p in kept if p.startswith(("apps/", "application/", "appendix/"))]
+    for lookalike in ("apps", "application", "appendix"):
+        assert f"'{lookalike}/'" in caplog.text
+
+
+def test_is_bundled_app_dir_is_per_backend():
+    assert fl_service.is_bundled_app_dir("app", FLBackend.NVFLARE)
+    assert fl_service.is_bundled_app_dir("app", FLBackend.FLOWER)
+    assert fl_service.is_bundled_app_dir("app_site1", FLBackend.NVFLARE)
+    assert fl_service.is_bundled_app_dir("app_site-1", FLBackend.NVFLARE)
+    assert not fl_service.is_bundled_app_dir("app_site1", FLBackend.FLOWER)
+    for lookalike in ("apps", "application", "app-site1", "myapp", ""):
+        assert not fl_service.is_bundled_app_dir(lookalike, FLBackend.NVFLARE)
+        assert not fl_service.is_bundled_app_dir(lookalike, FLBackend.FLOWER)
+    assert fl_service.describe_bundled_app_dirs(FLBackend.NVFLARE) == "app/ or app_*/"
+    assert fl_service.describe_bundled_app_dirs(FLBackend.FLOWER) == "app/"
 
 
 def test_list_local_base_files_returns_sorted_nested_relpaths(tmp_path):
@@ -1784,11 +2365,28 @@ def test_list_local_base_files_returns_sorted_nested_relpaths(tmp_path):
     (tmp_path / "pyproject.toml").write_text("x")
 
     # Directories are not returned, only files; paths are relative POSIX and sorted.
-    assert fl_service.list_local_base_files(tmp_path) == [
+    assert fl_service.list_local_base_files(tmp_path, FLBackend.FLOWER) == [
         "app/config/config_fed_server.json",
         "app/custom/sub/deep.py",
         "pyproject.toml",
     ]
+
+
+def test_list_local_base_files_logs_what_it_dropped(tmp_path, caplog):
+    # FL_APP_BASE_DIR may point at an operator-provided tree, where the allowlist fails CLOSED.
+    # The debug log is what makes such an omission diagnosable from the bundling logs instead of
+    # surfacing later as a missing file at a trust.
+    base = tmp_path / "base"
+    (base / "app").mkdir(parents=True)
+    (base / "app" / "client_app.py").write_text("x")
+    (base / "pyproject.toml").write_text("x")
+    (base / "operator_extra.py").write_text("x")
+
+    with caplog.at_level(logging.DEBUG):
+        kept = fl_service.list_local_base_files(base, FLBackend.FLOWER)
+
+    assert kept == ["app/client_app.py", "pyproject.toml"]
+    assert "operator_extra.py" in caplog.text
 
 
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
@@ -1803,7 +2401,9 @@ def test_bundle_nvflare_application_uploads_nested_base_paths(
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
-    write_base_tree(base_dir, "nvflare", "standard", ["app/config/config_fed_server.json", "app/custom/sub/deep.py"])
+    write_base_tree(
+        base_dir, "nvflare", "standard", ["app/config/config_fed_server.json", "app/custom/sub/deep.py", "meta.json"]
+    )
 
     mock_client = mock_s3.return_value
     mock_client.get_object.return_value = {
@@ -1840,7 +2440,7 @@ def test_bundle_nvflare_application_propagates_upload_failure(
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
-    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py"])
+    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py", "meta.json"])
 
     mock_client = mock_s3.return_value
     mock_client.get_object.return_value = {

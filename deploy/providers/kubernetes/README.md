@@ -80,8 +80,31 @@ The kit owns only the per-trust keys. The chart's *other* secrets (XNAT, OMOP,
 Orthanc, Grafana) are deployment-specific — supply them
 via the chart's built-in Secret template (`secrets.create=true` + a
 `values-secrets.yaml`, see the [Secrets Reference](#secrets-reference)) or create
-the Secret externally. `make sync-kit` (next step) patches the per-trust keys
-*on top* of this Secret without touching the infra keys.
+the Secret externally.
+
+> **`values-secrets.yaml` is generated, gitignored, and must never be committed.**
+> It carries live trust credentials. The tracked `values-secrets.yaml.example` is a
+> field reference with every slot empty — not a working file.
+
+Generate it from the repo root:
+
+```bash
+python3 deploy/providers/kubernetes/scripts/generate_values.py \
+  --env-file trust/.env.<CODE>.<env> \
+  --output-dir deploy/providers/kubernetes
+```
+
+That writes `values-secrets.yaml` with mode `0600` (and `values-override.yaml`
+beside it). One slot it **cannot** fill, because no trust kit carries the source
+env var: `orthanc-registered-users`. Hand-fill it before deploying Orthanc. There
+are no AWS slots — the fl-client never fetches its own kit (see step 4). An empty slot
+is omitted from the Secret by `templates/secrets.yaml` and the pod that mounts it
+then fails with `CreateContainerConfigError` — deliberate (it is why copying the
+example into place does not deploy), and also why Orthanc will not start until
+`orthanc-registered-users` is filled.
+
+`make sync-kit` (next step) patches the per-trust keys *on top* of this Secret
+without touching the infra keys.
 
 ### 3. Sync the kit into the cluster
 
@@ -138,7 +161,7 @@ Removed values — delete them from your overrides, they no longer exist:
 | `flClient.kitFromS3`, `flClient.nvflare.kitFromS3.*`, `flClient.flower.kitFromS3.*` | `flClient.kitHostPath` (now **required** when `flClient.enabled`) |
 | `flClient.hostAwsMount.enabled` / `.readOnly` | none — the fl-client mounts no AWS credentials |
 | `flClient.s3EndpointOverride` | none |
-| the `aws-access-key-id` / `aws-secret-access-key` / `aws-session-token` secret keys | none — drop them from `values-secrets.yaml` and from any existing Secret |
+| the `s3-access-key-id` / `s3-secret-access-key` / `aws-session-token` secret keys | none — drop them from your generated `values-secrets.yaml` and from any existing Secret |
 | `make patch-aws-creds` | `make stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>` |
 
 The failure mode if you miss one is loud rather than silent: an unknown value is ignored by
