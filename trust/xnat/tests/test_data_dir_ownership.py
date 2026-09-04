@@ -13,11 +13,19 @@
 Tests for XNAT bind-mount ownership (FLIP#1095).
 
 ``xnat-web`` runs as the in-image ``xnat`` user, whose id is fixed in
-``trust/xnat/xnat/Dockerfile``. Every host directory bind-mounted into it must be
-owned by that id. When one is not, XNAT accepts the inbound DICOM association,
-fails to write the object, and aborts — so the PACS reports a *network* fault
-("Peer aborted Association") and the same permission failure stops XNAT writing
-the application logs that would name the real cause.
+``trust/xnat/xnat/Dockerfile``. The host directories XNAT writes at runtime —
+``archive``, ``build``, ``cache`` and ``tomcat_logs``, the ``XNAT_DATA_DIRS`` this
+suite guards — must be owned by that id. When one is not, XNAT accepts the inbound
+DICOM association, fails to write the object, and aborts — so the PACS reports a
+*network* fault ("Peer aborted Association") and the same permission failure stops
+XNAT writing the application logs that would name the real cause.
+
+The development stack also bind-mounts ``xnat/plugins`` and ``xnat/config`` from the
+checkout (``docker-compose-stack.development.yml``). Those keep the checkout's
+ownership on purpose — they hold plugin jars and config a developer edits directly —
+so they sit outside ``XNAT_DATA_DIRS`` and outside these tests. ``xnat-configure``
+absorbs the write friction that leaves, rather than the ownership being changed to
+remove it (see the ``rm -f`` before each ``tee`` in ``trust/xnat/Makefile``).
 
 Three provisioning paths must therefore agree on one number: ``xnat-reset`` in
 ``trust/xnat/Makefile``, and the two Ansible playbooks. They previously did not —
@@ -117,7 +125,10 @@ class TestUidIsConsistent:
         assert task, f"no XNAT bind-mount directory task in {playbook}"
         assert re.search(rf'owner:\s*"{uid}"', task.group(0)), (
             f"{playbook.name} provisions the XNAT bind mounts as a different uid than "
-            f"trust/xnat/Makefile ({uid}). All three provisioning paths must agree."
+            f"trust/xnat/Makefile ({uid}). All three provisioning paths must agree on the "
+            "uid. They deliberately do not share directories — both playbooks provision "
+            "/opt/flip/xnat while the Makefile resolves the per-slot XNAT_DATA_DIR — so the "
+            "uid is the whole of what this pins."
         )
 
 

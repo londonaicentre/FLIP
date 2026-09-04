@@ -134,10 +134,21 @@ export XNAT_DATA_DIR
 # rather than at permissions. The same failure stops XNAT writing the application
 # logs that would name the real cause, so the evidence goes with it (FLIP#1095).
 #
-# xnat-db runs as root and is unaffected; its dir is included on stag/prod only
-# so the whole tree carries one owner, matching the playbooks.
+# xnat-db is unaffected, but not merely because it runs as root: trust/xnat/postgres/
+# Dockerfile sets no USER and the compose pins none, so the container starts as root
+# and the stock postgres entrypoint re-chowns PGDATA and drops to `postgres` itself.
+# That is what makes a 1001-owned xnat-db-data harmless, and it is what would go away
+# if someone pinned a `user:` on xnat-db. Its dir is included on stag/prod only, so
+# the whole tree carries one owner.
+#
 # deploy/providers/AWS/site.yml and deploy/providers/local/site_local_trust.yml
-# provision these same paths with this same id — keep the three in step.
+# provision XNAT's bind mounts with this same id: the uid is the invariant all three
+# paths share, and the one to keep in step. The directories deliberately are not —
+# both playbooks provision /opt/flip/xnat, while stag/prod resolves XNAT_DATA_DIR to
+# the per-slot /opt/flip/xnat-trust$(TRUST_NUM) above so two trusts sharing an EC2
+# host stay isolated. Compose and xnat-reset read that same variable, so this recipe
+# provisions the tree XNAT actually writes to and the playbooks' one is not it — an
+# ownership change made there would look right and reach nothing.
 XNAT_CONTAINER_UID := 1001
 XNAT_CONTAINER_GID := 1001
 XNAT_DIR_OWNER := $(XNAT_CONTAINER_UID):$(XNAT_CONTAINER_GID)
@@ -152,8 +163,13 @@ XNAT_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive bu
 # symptom surfaces layers away from the cause (see above) and a warning is easy
 # to lose in long bring-up output — the same reasoning, and the same shape, as
 # $(ensure_net_dirs) in trust/Makefile. Checked after the chown rather than
-# instead of it: a non-root non-owner gets EPERM from chown even when the
-# metadata already matches, and that must not abort an already-correct host.
+# instead of it as defence in depth, not because the chown itself might be
+# refused: all three branches chown under sudo, and `set -e` aborts on one that
+# fails outright before the guard is reached. What is left for the guard is a
+# chown that did not cover what it was meant to — it applies recursively to
+# $(XNAT_DATA_DIR) while the guard stats each entry of $(XNAT_DATA_DIRS), so those
+# two drifting apart, or a later edit narrowing or dropping the chown on one
+# branch, surfaces here rather than at the first DICOM write.
 # Counting matches (rather than testing the chown's exit status) also catches a
 # dir that is missing entirely, since stat then prints nothing for it.
 #

@@ -1,9 +1,10 @@
 # Production overlay for docker-compose-stack.yml
 # Mounts persistent data volumes on the host for XNAT data survival across restarts.
 # In development, XNAT stores data inside the container (ephemeral).
-# Host path comes from XNAT_DATA_DIR (set by trust/xnat/Makefile; defaults to
-# /opt/flip/xnat in stag/prod). Keep this in lockstep with the xnat-reset
-# recipe so the dirs Make creates and the dirs compose mounts match.
+# Host path comes from XNAT_DATA_DIR (set by trust/xnat/Makefile; defaults to the
+# per-slot /opt/flip/xnat-trust<N> in stag/prod — not the /opt/flip/xnat the Ansible
+# playbooks provision). Keep this in lockstep with the xnat-reset recipe so the dirs
+# Make creates and the dirs compose mounts match.
 services:
   xnat-web:
     environment:
