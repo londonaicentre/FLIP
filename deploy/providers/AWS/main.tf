@@ -387,8 +387,9 @@ resource "aws_iam_role_policy" "trust_ec2_s3" {
         # conditional resource lists), and it couples `terraform apply` to the Ansible
         # -e fl_kit_date value — re-staging kits at a new date against stale IAM would
         # hard-fail the exact task this change fixes. Net effect is still a narrowing: the
-        # pre-#1009 statement granted GetObject on the entire bucket. Revisit date scoping if
-        # the cross-trust residual stops being acceptable.
+        # pre-#1009 statement granted GetObject on the entire bucket. The residual is tracked
+        # in FLIP#1164, which carries this reasoning and the per-trust-role route that makes
+        # slot scoping expressible — this comment is not the only record of the deferral.
         #
         # Deliberately no s3:GetBucketLocation: a GetBucketLocation request carries no
         # s3:prefix context key, so under this condition the grant could never authorize
