@@ -106,6 +106,14 @@ BUNDLED_APP_DIR_PREFIXES: dict[str, tuple[str, ...]] = {
 #   NVFLARE  meta.json      — the job definition NVFLARE reads to deploy the app.
 #   Flower   pyproject.toml — the FAB definition; ``[tool.flwr.app.components]`` resolves
 #                             ``app.server_app:app`` relative to it, so it must sit at the run root.
+#
+# There is deliberately no slot for a lockfile, and no template commits one. Flower resolves
+# dependencies fresh on every app launch at every trust (``uv sync``, see FL_APP_BASE_DIR in
+# CLAUDE.md), so a committed ``uv.lock`` would be a resolution for the developer's machine rather
+# than for the trust — which is also why ``uv.lock`` is named in EXCLUDED_APP_FILE_NAMES below, to
+# keep one out of an app folder. If reproducible per-run resolution ever becomes a requirement,
+# both halves have to change together: add the lockfile here and stop excluding it there, and the
+# lock then has to be resolved for the FL image's platform, not for whoever ran ``uv sync`` last.
 BUNDLED_ROOT_FILES: dict[str, frozenset[str]] = {
     FLBackend.NVFLARE: frozenset({"meta.json"}),
     FLBackend.FLOWER: frozenset({"pyproject.toml"}),
@@ -185,6 +193,16 @@ def describe_bundled_app_dirs(fl_backend: FLBackend) -> str:
 # dot rule catches all but ``uv.lock``, which is named because it is not dot-prefixed: it is a
 # resolved lock for the developer's machine, and the Flower run-root ``pyproject.toml`` is what the
 # per-run ``uv sync`` at a trust resolves from.
+#
+# So the two halves of the rule are not the same kind of rule, and only one of them is closed. At
+# the template root the allowlist is *positional* — a directory ships because it is an app folder,
+# and nothing else can qualify. Inside an app folder it is *name-based*, so an artefact carrying no
+# leading dot is still kept: ``app/htmlcov/``, ``app/dist/``, ``app/node_modules/``, an
+# ``app/*.egg-info/``. That stays a denylist that has to keep pace, rather than one closed by
+# construction. It is unlikely to bite — those tools run from the template root, where position
+# already excludes their output — and any committed instance is caught by the static guard in
+# test_fl_service.py, which asserts that every committed template file either ships or is a
+# recorded exclusion.
 EXCLUDED_APP_DIR_NAMES = frozenset({"__pycache__"})
 EXCLUDED_APP_FILE_NAMES = frozenset({"uv.lock"})
 EXCLUDED_APP_FILE_SUFFIXES = (".pyc", ".pyo")
@@ -226,7 +244,8 @@ def list_local_base_files(base_dir: Path, fl_backend: FLBackend) -> list[str]:
     write their caches. In dev that tree is bind-mounted into flip-api, so a denylist would have to
     keep pace with every tool a developer might run, and a single miss ships the artefact to every
     trust. Allowlisting is closed by construction: a ``.venv`` is excluded because it is not an app
-    folder, not because it was enumerated.
+    folder, not because it was enumerated. That property is positional, so it holds at the template
+    root; *inside* an app folder the rule is name-based instead (:func:`is_excluded_app_entry`).
 
     It also drops files that are real but have no business at a trust — ``recipe.py`` (a developer
     driver that regenerates the committed configs), ``README.md``, and the per-template
@@ -1026,7 +1045,19 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     # destination is touched. A FAB has one app package, so the returned set is exactly {app}; take
     # the destination folder from it rather than restating the name at the copy loop below, which
     # is the drift the shared is_bundled_app_dir predicate exists to prevent.
-    (flower_app_dir,) = sorted(_check_base_template(base_dir, base_rel_paths, FLBackend.FLOWER))
+    flower_app_dirs = sorted(_check_base_template(base_dir, base_rel_paths, FLBackend.FLOWER))
+    # Load-bearing: the single-element unpack below is the invariant, not a convenience. Giving
+    # FLOWER a BUNDLED_APP_DIR_PREFIXES entry would make it fail as a bare "too many values to
+    # unpack" from inside the bundler — the unnamed error _assert_backends_have_bundling_rules was
+    # added to eliminate — so the rule is named here instead.
+    if len(flower_app_dirs) != 1:
+        raise RuntimeError(
+            f"A Flower App Bundle has exactly one app package, but the base template at {base_dir} "
+            f"yielded {flower_app_dirs}. Flower has no per-site app folders: keep "
+            f"BUNDLED_APP_DIR_PREFIXES[FLBackend.FLOWER] empty, or teach this bundler and "
+            f"fl-api-flower how to lay out more than one."
+        )
+    (flower_app_dir,) = flower_app_dirs
 
     # Clear destination if files already exist there (e.g. from a previous training run)
     dest_files = s3.list_objects(dest_bucket_s3_path)

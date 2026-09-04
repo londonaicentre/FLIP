@@ -1647,6 +1647,42 @@ def test_bundle_flower_application_root_file_without_app_folder(mock_s3, mock_is
 
 
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_flower_application_rejects_more_than_one_app_package(
+    mock_s3, mock_is_valid, mocked_settings, model_id, monkeypatch
+):
+    """Widening Flower's app-folder rule is refused by name rather than by a bare unpack error.
+
+    A FAB has exactly one app package, and the bundler takes the destination folder from the
+    returned set by single-element unpack. Giving FLOWER a ``BUNDLED_APP_DIR_PREFIXES`` entry would
+    otherwise surface as ``ValueError: too many values to unpack`` raised from inside the bundler —
+    the species of unnamed error :func:`_assert_backends_have_bundling_rules` exists to eliminate.
+    """
+    monkeypatch.setitem(fl_service.BUNDLED_APP_DIR_PREFIXES, FLBackend.FLOWER, ("app_",))
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "flower", "standard", ["app/server_app.py", "app_site1/server_app.py", "pyproject.toml"])
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/client_app.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
+    ]
+
+    with pytest.raises(RuntimeError, match="exactly one app package"):
+        fl_service.bundle_flower_application(model_id)
+
+    mock_client.delete_objects.assert_not_called()
+    mock_client.upload_file.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 def test_bundle_flower_application_clears_existing_dest(
@@ -2074,6 +2110,55 @@ def test_list_local_base_files_excludes_developer_files_that_are_not_artefacts(t
 # let a dropped nested file through the guard silently.
 KNOWN_UNBUNDLED_TEMPLATE_FILES = frozenset({"README.md", "recipe.py", "required_files.json"})
 
+# Path components that mark untracked tooling output rather than committed template content.
+# A template directory is a live uv project root, so the tools that run there write into it: a
+# developer's `uv sync` leaves a `.venv/` inside `fl-apps/flower/standard` and
+# `fl-apps/flower/evaluation`, which is their normal state, and the dev compose bind-mounts that
+# same tree into flip-api, so the Dockerised `make -C flip-api test` sees it too. Excluding it here
+# keeps the guard measuring what its name says — the committed tree — rather than the filesystem.
+# `git ls-files` would express "committed" exactly, but this suite also runs inside the flip-api
+# image, where fl-apps is baked in with neither git nor a `.git` directory, so the rule has to be
+# expressible from the path alone. Nothing is lost: keeping gitignored junk out of the *bundle* is
+# the bundler's job, asserted by test_list_local_base_files_excludes_local_dev_artefacts and
+# test_list_local_base_files_excludes_tooling_artefacts_inside_app.
+UNTRACKED_TEMPLATE_PATH_COMPONENTS = frozenset({"__pycache__"})
+
+
+def _is_untracked_template_component(name: str) -> bool:
+    """Whether a path component under a template is tooling output rather than committed content.
+
+    Args:
+        name (str): A single path component (not a path).
+
+    Returns:
+        bool: True if the component is dot-prefixed or a known tooling directory.
+    """
+    return name.startswith(".") or name in UNTRACKED_TEMPLATE_PATH_COMPONENTS
+
+
+def _committed_template_files(template: Path) -> set[str]:
+    """The template's committed files, as paths relative to its root.
+
+    Prunes untracked directories in place rather than filtering after the fact, so a real ``.venv``
+    is never descended into — it holds thousands of files.
+
+    Args:
+        template (Path): A ``fl-apps/<backend>/<job_type>`` template root.
+
+    Returns:
+        set[str]: Relative POSIX paths of every committed file under ``template``.
+    """
+    committed: set[str] = set()
+    for dirpath, dirnames, filenames in os.walk(template):
+        dirnames[:] = [d for d in dirnames if not _is_untracked_template_component(d)]
+        here = Path(dirpath)
+        committed.update(
+            (here / name).relative_to(template).as_posix()
+            for name in filenames
+            if not _is_untracked_template_component(name)
+        )
+    return committed
+
 
 def _committed_fl_apps_dir() -> Path:
     """Locate the committed ``fl-apps/`` tree, which sits at a different depth per run context.
@@ -2122,7 +2207,7 @@ def test_every_committed_template_file_either_ships_or_is_known_unbundled(fl_bac
 
     for template in templates:
         bundled = set(fl_service.list_local_base_files(template, fl_backend))
-        committed = {p.relative_to(template).as_posix() for p in template.rglob("*") if p.is_file()}
+        committed = _committed_template_files(template)
         assert committed, f"template {template.name} has no committed files"
         unaccounted = {rel for rel in committed - bundled if rel not in KNOWN_UNBUNDLED_TEMPLATE_FILES}
         assert not unaccounted, (
@@ -2130,6 +2215,42 @@ def test_every_committed_template_file_either_ships_or_is_known_unbundled(fl_bac
             f"{sorted(unaccounted)}. Either the allowlist should keep it, or add it to "
             f"KNOWN_UNBUNDLED_TEMPLATE_FILES."
         )
+
+
+def test_committed_template_files_ignores_untracked_tooling_output(tmp_path):
+    # The guard above measures the committed tree, not the filesystem. A template directory is a
+    # live uv project root, so a working copy routinely carries a .venv and tool caches inside it —
+    # if those counted, the guard would fail on exactly the trees this change protects, and its
+    # message would advise exempting them as template files.
+    template = tmp_path / "standard"
+    (template / "app" / "__pycache__").mkdir(parents=True)
+    (template / "app" / "server_app.py").write_text("x")
+    (template / "app" / "__pycache__" / "server_app.cpython-312.pyc").write_bytes(b"x")
+    (template / "pyproject.toml").write_text("x")
+    (template / ".venv" / "lib").mkdir(parents=True)
+    (template / ".venv" / "pyvenv.cfg").write_text("x")
+    (template / ".venv" / "lib" / "_virtualenv.py").write_text("x")
+    (template / ".ruff_cache").mkdir()
+    (template / ".ruff_cache" / "CACHEDIR.TAG").write_text("x")
+
+    assert _committed_template_files(template) == {"app/server_app.py", "pyproject.toml"}
+
+
+def test_committed_template_files_keeps_ordinary_nested_content(tmp_path):
+    # The narrowing must not blunt the guard: anything a template genuinely commits still counts,
+    # at every depth, so a file the allowlist drops is still reported as unaccounted.
+    template = tmp_path / "standard"
+    (template / "app" / "config").mkdir(parents=True)
+    (template / "app" / "config" / "config_fed_server.json").write_text("{}")
+    (template / "docs").mkdir()
+    (template / "docs" / "README.md").write_text("x")
+    (template / "meta.json").write_text("{}")
+
+    assert _committed_template_files(template) == {
+        "app/config/config_fed_server.json",
+        "docs/README.md",
+        "meta.json",
+    }
 
 
 @pytest.mark.parametrize("fl_backend", list(FLBackend))
