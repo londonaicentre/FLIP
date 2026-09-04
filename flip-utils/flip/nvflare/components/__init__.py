@@ -30,6 +30,7 @@ Exports:
     - ValidationJsonGenerator: Validation results JSON generator
     - EvaluationJsonGenerator: Evaluation results JSON generator
     - PersistToS3AndCleanup: S3 persistence and cleanup component
+    - LocalDifferentialPrivacy: Local (epsilon, delta) DP filter — clip + Gaussian noise
     - PercentilePrivacy: Percentile-based privacy filter
     - StagePercentilePrivacy: Stage-aware percentile-based privacy filter
     - CleanupImages: Image cleanup executor
@@ -47,6 +48,7 @@ from flip.nvflare.components.flip_analytics_bridge import FlipAnalyticsBridge
 from flip.nvflare.components.flip_client_event_handler import ClientEventHandler
 from flip.nvflare.components.flip_server_event_handler import ServerEventHandler
 from flip.nvflare.components.keep_vars_filter import KeepOnlyVars
+from flip.nvflare.components.local_dp import LocalDifferentialPrivacy
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
 from flip.nvflare.components.pt_model_locator import (
     EvaluationModelLocator,
@@ -74,6 +76,7 @@ __all__ = [
     "ValidationJsonGenerator",
     "EvaluationJsonGenerator",
     "PersistToS3AndCleanup",
+    "LocalDifferentialPrivacy",
     "PercentilePrivacy",
     "StagePercentilePrivacy",
     "CleanupImages",

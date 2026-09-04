@@ -78,6 +78,9 @@ from flip.nvflare.components import (
     ValidationJsonGenerator,
 )
 from flip.nvflare.components import (
+    LocalDifferentialPrivacy as LocalDifferentialPrivacyFilter,
+)
+from flip.nvflare.components import (
     PercentilePrivacy as PercentilePrivacyFilter,
 )
 from flip.nvflare.controllers import BroadcastTask, InitTraining, ScatterAndGather
@@ -89,8 +92,39 @@ _DEV_MODEL_ID = "00000000-0000-0000-0000-000000000001"
 
 
 @dataclass
+class LocalDp:
+    """Local ``(epsilon, delta)`` differential privacy — the parity counterpart of Flower's mod.
+
+    Clips the client's weight diff to ``clipping_norm`` and adds Gaussian noise at the analytic
+    mechanism's ``sensitivity * sqrt(2 ln(1.25 / delta)) / epsilon``, the same expression
+    ``flip.flower.privacy.LocalDpConfig`` uses, so a job configured identically on either backend
+    gets the same mechanism (FLIP#1145). Defaults match that module's.
+
+    Neither backend accounts for composition across rounds: each round spends the budget again, so
+    these parameters describe one round's mechanism rather than a per-run guarantee.
+
+    Attributes:
+        clipping_norm: L2 bound the update is clipped to before noise. Defaults to 1.0.
+        sensitivity: How much one training example can move the update. Defaults to 1e-4.
+        epsilon: Budget for one round; smaller means more privacy and more noise. Defaults to 10.0.
+        delta: Probability the guarantee fails outright. Defaults to 1e-5.
+        off: Pass-through toggle, so DP-on and DP-off runs use an identical job. Defaults to False.
+    """
+
+    clipping_norm: float = 1.0
+    sensitivity: float = 1e-4
+    epsilon: float = 10.0
+    delta: float = 1e-5
+    off: bool = False
+
+
+@dataclass
 class PercentilePrivacy:
-    """Percentile-based DP noise filter configuration.
+    """Percentile sparsification filter configuration.
+
+    Not differential privacy and not noise, despite the historical name: NVIDIA documents this
+    filter as "truncation of weights by percentile" and reserves the differential-privacy label for
+    its sparse-vector filter. For a formal ``(epsilon, delta)`` mechanism use ``local_dp`` below.
 
     Stock NVFLARE semantics (Shokri & Shmatikov "largest percentile to share"): components of the
     per-step weight diff with magnitude BELOW the ``percentile``-th percentile are zeroed (only the
@@ -126,7 +160,12 @@ class FlipFedAvgRecipe(Recipe):
         model_id: Real UUID for SimEnv/PocEnv runs. Written into ``meta.json['custom_props']``
             so FLIP components can resolve it lazily at first task. Production runs override
             this via the FLIP-API which writes the real model id into the same key.
-        percentile_privacy: Configuration for the percentile-based DP noise filter.
+        percentile_privacy: Configuration for the percentile sparsification filter (not DP; see
+            its dataclass). Ignored when ``local_dp`` is set — the two are alternatives.
+        local_dp: When set, wire the local (epsilon, delta) DP filter on train results instead
+            of the percentile sparsifier, giving NVFLARE the mechanism Flower already has.
+            Ordered after KeepOnlyVars on a head-only job, so the clipped norm covers the
+            trainable parameters only. Defaults to None (percentile sparsifier, as before).
         heart_beat_timeout, validation_timeout, wait_time_after_min_received: NVFlare timing knobs.
         project_id, query: Top-level keys on the client config (consumed by the FLIP-API
             placeholder substitution and read by the trainer at runtime).
@@ -176,6 +215,7 @@ class FlipFedAvgRecipe(Recipe):
         train_args: str = "--project_id {project_id}",
         model_id: str = _DEV_MODEL_ID,
         percentile_privacy: PercentilePrivacy | None = None,
+        local_dp: LocalDp | None = None,
         heart_beat_timeout: int = 600,
         validation_timeout: int = 12000,
         wait_time_after_min_received: int = 10,
@@ -206,6 +246,7 @@ class FlipFedAvgRecipe(Recipe):
         self.train_args = train_args
         self.model_id = model_id
         self.percentile_privacy = percentile_privacy or PercentilePrivacy()
+        self.local_dp = local_dp
         self.heart_beat_timeout = heart_beat_timeout
         self.validation_timeout = validation_timeout
         self.wait_time_after_min_received = wait_time_after_min_received
@@ -370,16 +411,30 @@ class FlipFedAvgRecipe(Recipe):
                 id="reconstruct_full_model",
             )
 
-        # Clients: percentile-privacy DP noise on training results.
-        job.to_clients(
-            PercentilePrivacyFilter(
+        # Clients: one privacy filter on training results — a formal (epsilon, delta) mechanism
+        # when local_dp is configured, otherwise the percentile sparsifier. They are
+        # alternatives rather than a chain: stacking them would compound the utility cost while
+        # muddying which guarantee, if any, the released update carries.
+        privacy_filter = (
+            LocalDifferentialPrivacyFilter(
+                clipping_norm=self.local_dp.clipping_norm,
+                sensitivity=self.local_dp.sensitivity,
+                epsilon=self.local_dp.epsilon,
+                delta=self.local_dp.delta,
+                off=self.local_dp.off,
+            )
+            if self.local_dp is not None
+            else PercentilePrivacyFilter(
                 gamma=self.percentile_privacy.gamma,
                 percentile=self.percentile_privacy.percentile,
                 off=self.percentile_privacy.off,
-            ),
+            )
+        )
+        job.to_clients(
+            privacy_filter,
             filter_type=FilterType.TASK_RESULT,
             tasks=[self.train_task_name],
-            id="percentile_privacy",
+            id="local_dp" if self.local_dp is not None else "percentile_privacy",
         )
 
         # Clients: event handlers — client event handler + analytics bridge.

@@ -304,9 +304,15 @@ The server will also use the package to update the status, as well as to upload 
 Privacy filters on shared model updates
 ---------------------------------------
 
-Both backends privatise a client's training result before it leaves the site, but with different
-mechanisms: NVFLARE sparsifies and clips without noise, while Flower clips and adds calibrated
-Gaussian noise for a formal ``(epsilon, delta)`` guarantee.
+Both backends privatise a client's training result before it leaves the site. Each offers a formal
+``(epsilon, delta)`` mechanism — clip the update to an L2 norm, then add calibrated Gaussian noise —
+and NVFLARE additionally defaults to a heuristic sparsifier that predates it. Which one an NVFLARE
+job runs is a recipe choice; the two are alternatives rather than a chain.
+
+.. note::
+
+   Neither backend accounts for composition across rounds: each round spends the budget again. The
+   parameters below describe one round's mechanism, not a per-run guarantee.
 
 NVFLARE: percentile sparsification
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -336,10 +342,44 @@ run with ``off: true``. Two caveats for anyone changing them:
   ``(epsilon, delta)`` guarantee. It complements — rather than replaces — FLIP's primary output controls
   (review of the uploaded app code and aggregate-only results).
 
+NVFLARE: local ``(epsilon, delta)`` differential privacy
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Since FLIP#1145 an NVFLARE job can run the same mechanism as a Flower one. Pass
+``FlipFedAvgRecipe(local_dp=LocalDp(...))`` and the recipe wires
+``flip.nvflare.components.LocalDifferentialPrivacy`` as the train-task result filter **in place of**
+the percentile sparsifier: the client's weight diff is clipped to ``clipping_norm`` and Gaussian
+noise of standard deviation ``sensitivity * sqrt(2 ln(1.25 / delta)) / epsilon`` is added before the
+result leaves the site. That is the analytic Gaussian mechanism, and it is the same expression
+``flip.flower.privacy`` uses, so a job configured with the same numbers gets the same mechanism on
+either backend — a unit test asserts the two agree element-for-element.
+
+Defaults match the Flower mod's (``clipping_norm=1.0``, ``sensitivity=1e-4``, ``epsilon=10.0``,
+``delta=1e-5``) and are deliberately utility-first, so a DP-on tutorial still converges. They are not
+a defensible budget: a real one calibrates ``sensitivity`` to the local dataset
+(``2 * clipping_norm / |D|`` for an average-of-examples update). ``off=True`` makes the filter a
+pass-through so DP-on and DP-off runs use an identical job, and it logs a warning, because a raw
+update leaving a trust is the event an operator audits for.
+
+The filter fails closed. A result that is not a weight diff, an array whose dtype it cannot classify
+(a bool mask or complex weights may hold learned values), or an update with no floating-point array
+at all is refused rather than forwarded — integer step counters such as BatchNorm's
+``num_batches_tracked`` are the one thing passed through untouched. On a head-only job it is ordered
+after ``KeepOnlyVars``, so the clipped norm covers the trainable parameters only.
+
+.. note::
+
+   NVFLARE also ships ``SVTPrivacy``, the only filter NVIDIA labels differential privacy. FLIP does
+   not use it, and the reason is measured in FLIP#1145: it is a *selection* primitive whose whole
+   advantage is that below-threshold queries cost nothing, which never applies to FedAvg's dense
+   per-round update. On a real 7M-parameter update it left a cosine similarity of 0.001 with the
+   true update at every setting tried, scoring no better than on a structureless one, because it
+   clips each released value to ``±gamma`` before adding noise calibrated in units of ``gamma``.
+
 Site-enforced privacy policy (per trust)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The filter above is part of the **app**: it is configured in the job's ``config_fed_client.json``, so its
+The filters above are part of the **app**: it is configured in the job's ``config_fed_client.json``, so its
 parameters — including ``off: true`` — are chosen on the researcher's side. Since FLIP#851 each trust can
 additionally enforce its **own** update-privacy filter through NVFLARE's site privacy policy
 (``local/privacy.json`` in the client's workspace), configured entirely on the trust's side:
@@ -444,4 +484,3 @@ the description above:
   the per-job-type implementations under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`__.
 - every NVFLARE job type takes a plain training/evaluation script that calls
   ``nvflare.client`` directly (`fed_opt` reuses `standard`'s trainer contract unchanged).
-
