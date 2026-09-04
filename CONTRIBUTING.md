@@ -454,7 +454,17 @@ make -C deploy/providers/kubernetes template-all-backends
 
 # Validate rendered templates against K8s schema (requires kubeconform)
 make -C deploy/providers/kubernetes validate
+
+# Place this trust's FL participant kit onto the node, BEFORE deploying
+make -C deploy/providers/kubernetes stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 ```
+
+`stage-kit` is a prerequisite of deploying with `flClient.enabled`: the chart never fetches
+the kit (a trust holds no FLIP AWS credentials), so `flClient.kitHostPath` must already exist
+on the node. It reads the backend from the kit's own shape and chowns to that backend's uid.
+The previous `make patch-aws-creds` target is gone along with the chart's in-cluster S3 fetch;
+see "Upgrading an install that fetched its kit from S3" in the K8s README for the full list of
+removed values.
 
 The chart has a `check_status.py` smoke test script and a `register_k8s_trust.py` registration script. See the [K8s README](deploy/providers/kubernetes/README.md) for details.
 

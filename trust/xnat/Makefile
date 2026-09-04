@@ -348,6 +348,15 @@ xnat-reset:
 	@if ! echo "$(XNAT_PORT_EFFECTIVE)" | grep -qE '^[0-9]+$$'; then \
 		echo "ERROR: XNAT_PORT must be numeric for KIT=$(KIT), got '$(XNAT_PORT_EFFECTIVE)'"; exit 1; \
 	fi
+	@# xnat-data is chowned to 1001 — the xnat user baked into the xnat-web image, NOT
+	@# the host login user. Chowning to 1000 leaves the archive unwritable, and XNAT then
+	@# records image sessions in its database while writing no files: the pull reports
+	@# RECEIVED, the archive stays empty, and it surfaces much later as training finding
+	@# no images.
+	@# xnat-db-data is deliberately NOT chowned here — postgres runs as uid 70 inside the
+	@# xnat-db image and its entrypoint (running as root) takes ownership at startup.
+	@# Chowning it to the xnat uid breaks the database with "could not open file
+	@# global/pg_filenode.map: Permission denied".
 	@echo "Deleting previous XNAT data and creating new directories for $(KIT) ..."; \
 	if [ "$(PROD)" = "true" ] || [ "$(PROD)" = "stag" ]; then \
 		echo "  📍 Using prod data dir: $(XNAT_DATA_DIR)/"; \
@@ -356,7 +365,7 @@ xnat-reset:
 		case "$$xnat_endpoint" in \
 			ssh://*) \
 				echo "  🛰️  remote swarm deploy (context '$$xnat_ctx') — resetting XNAT dirs on the trust host via ssh"; \
-				ssh "$$xnat_ctx" "sudo rm -rf $(XNAT_DATA_DIR) && sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/tomcat_logs $(XNAT_DATA_DIR)/xnat-data/archive $(XNAT_DATA_DIR)/xnat-data/build $(XNAT_DATA_DIR)/xnat-data/cache $(XNAT_DATA_DIR)/xnat-db-data && sudo chown -R 1000:1000 $(XNAT_DATA_DIR)"; \
+				ssh "$$xnat_ctx" "sudo rm -rf $(XNAT_DATA_DIR) && sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/tomcat_logs $(XNAT_DATA_DIR)/xnat-data/archive $(XNAT_DATA_DIR)/xnat-data/build $(XNAT_DATA_DIR)/xnat-data/cache $(XNAT_DATA_DIR)/xnat-db-data && sudo chown -R 1001:1001 $(XNAT_DATA_DIR)/xnat-data"; \
 				;; \
 			*) \
 				echo "  💻 local docker context '$$xnat_ctx' ($$xnat_endpoint) — resetting XNAT dirs on this host"; \
@@ -366,7 +375,7 @@ xnat-reset:
 				sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/build; \
 				sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/cache; \
 				sudo mkdir -p $(XNAT_DATA_DIR)/xnat-db-data; \
-				sudo chown -R $(USER):$$(id -gn) $(XNAT_DATA_DIR); \
+				sudo chown -R 1001:1001 $(XNAT_DATA_DIR)/xnat-data; \
 				;; \
 		esac; \
 	else \
@@ -376,6 +385,7 @@ xnat-reset:
 		mkdir -p $(XNAT_DATA_DIR)/xnat-data/archive; \
 		mkdir -p $(XNAT_DATA_DIR)/xnat-data/build; \
 		mkdir -p $(XNAT_DATA_DIR)/xnat-data/cache; \
+		sudo chown -R 1001:1001 $(XNAT_DATA_DIR)/xnat-data; \
 	fi
 
 # Configure an XNAT instance with initial settings and run dcm2niix setup.

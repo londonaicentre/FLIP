@@ -17,7 +17,10 @@ trustNumber: 1
 environment: production
 logLevel: INFO
 
-# AWS region for S3 bucket access (used by FL client init container and other AWS-integrated services)
+# AWS region for the OMOP and Orthanc data Jobs — the seed restores and the OMOP
+# vocabulary load — which read from S3 with the operator credentials mounted at
+# omopDb.initJob.hostAwsMount / orthanc.initJob.hostAwsMount. Not used by the FL client:
+# it holds no AWS credentials and its kit is staged onto the node out-of-band.
 awsRegion: "eu-west-2"
 
 # S3 bucket for uploaded federated data (mounted by FL client)
@@ -96,10 +99,6 @@ secrets:
     xnat-datasource-password: ""
     xnat-datasource-admin-password: ""
     grafana-admin-password: ""
-    s3-access-key-id: ""
-    s3-secret-access-key: ""
-    # Only for temporary AWS credentials (SSO/STS); leave empty for long-lived keys.
-    aws-session-token: ""
 
 # ---------------------------------------------------------------------------
 # trust-api — API gateway, polls Central Hub for tasks, orchestrates trust
@@ -268,8 +267,23 @@ dataAccessApi:
 # Shared images PVC — used by imaging-api and fl-client to share downloaded
 # DICOM images
 # ---------------------------------------------------------------------------
+# The handoff between imaging-api (which downloads a project's images from XNAT) and the
+# fl-client (which trains on them): both mount this volume at their images path. Enabled
+# by default because the alternative is a deployment that cannot train — with it off,
+# each pod gets its own emptyDir, imaging-api's downloads land in one and the fl-client
+# reads the other, and every run dies with num_samples=0 while all 300 downloads report
+# success. Disable only for a trust that will never run FL training.
+#
+# accessMode is ReadWriteOnce, which is what the storage classes this chart is validated on
+# (kind's local-path, EBS gp3) actually provide — ReadWriteMany needs an RWX-capable class
+# such as EFS or NFS, and asking for it by default would leave the claim Pending on a
+# single-node cluster. Because RWO binds the volume to one node while two pods mount it,
+# imaging-api and fl-client must land on the same node: flClient.affinity below carries a
+# required podAffinity that pins the fl-client to imaging-api's node, so a multi-node cluster
+# schedules them together instead of leaving one pod Pending forever. Switch accessMode to
+# ReadWriteMany on an RWX class and that affinity can be relaxed to a preferred rule.
 sharedImagesPvc:
-  enabled: false
+  enabled: true
   storageClassName: ""
   size: 100Gi
   accessMode: ReadWriteOnce
@@ -280,11 +294,41 @@ sharedImagesPvc:
 flClient:
   enabled: true
   netId: "net-1"
-  s3EndpointOverride: ""
   imagesDir: /app/data/images
-  hostAwsMount:
-    enabled: false
-    readOnly: true
+  # Co-schedule with imaging-api. The two share sharedImagesPvc, which ships ReadWriteOnce
+  # (see the comment on that block), and an RWO volume can only be mounted from one node —
+  # so on a multi-node cluster without this the scheduler is free to place them apart and one
+  # pod sits Pending indefinitely with no indication that the volume is the reason. `required`
+  # rather than `preferred` deliberately: a preferred rule degrades to exactly that silent
+  # Pending. Harmless on the single-node kind and k3s targets, where it is always satisfied.
+  # Set to {} if you move sharedImagesPvc to an RWX class and want free placement.
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                  - imaging-api
+          topologyKey: kubernetes.io/hostname
+  # Absolute path ON THE NODE holding this trust's already-provisioned FL participant
+  # kit — the contents of the slot's kit directory (for NVFLARE: local/, startup/,
+  # transfer/; for Flower: certificates/ and keys/ with this slot's credential).
+  #
+  # Required whenever flClient.enabled. The chart deliberately offers no way to fetch
+  # the kit itself: a trust never holds FLIP's AWS credentials (see the trust boundary
+  # in CLAUDE.md — "FL clients intentionally have no Central Hub credentials"), and the
+  # kit reaches an operator out-of-band, as trust/README.md describes. The kit is placed
+  # on the node before the workload starts, which is also what a real trust does — so
+  # what is deployed here is what is deployed in production.
+  #
+  # On kind, either map it in with an extraMount at cluster-create time, or copy it into
+  # the node: `docker cp <kit>/. <cluster>-control-plane:/opt/flip/fl-kit/` (which is
+  # what `make stage-kit` does). /opt/flip/fl-kit is the kit file's FL_KIT_DIR — the same
+  # path the Compose and Ansible trust deployments use — so keep any override in step
+  # with the path the kit was actually staged to, or the pod stays Pending.
+  kitHostPath: ""
   hostAliases:
     - ip: "13.43.162.56"
       hostnames:
@@ -293,31 +337,7 @@ flClient:
     repository: ghcr.io/londonaicentre
     tag: stag
     pullPolicy: Always
-  # Node path holding a pre-staged participant kit, used INSTEAD of fetching from
-  # S3. Only consulted when the active backend's kitFromS3.enabled is false: the
-  # fl-client-kit volume is then a hostPath here, rather than an emptyDir that the
-  # kit-init initContainer populates. Nothing enforces that one of the two sources
-  # is configured — kitFromS3 disabled with this left empty renders an empty
-  # emptyDir, and the client starts without credentials, failing only at connect
-  # time. For air-gapped trusts and local kind clusters, where the kit is copied
-  # onto the node out of band. The directory must be readable by the FL image's
-  # runtime user — 49999 (app) for the Flower SuperNode, 1000 (flip) for the
-  # NVFLARE client.
-  kitHostPath: ""
   nvflare:
-    kitFromS3:
-      enabled: true
-      # S3 bucket holding the FL participant kits (the AI Centre bucket,
-      # AICENTRE_BUCKET_NAME). Required, but deployment-specific — supply it via
-      # the kit override (`make sync-kit` writes it from the kit file). Empty here
-      # so the chart stays env-agnostic; an empty bucket crash-loops the kit-init.
-      bucket: ""
-      kitDate: "20260318"
-      # pathTemplate's trailing segment is the FL kit SLOT the hub assigned
-      # (FL_KIT_SLOT, e.g. Trust_2) — not the cosmetic trustName. `make sync-kit`
-      # pins it to the slot in the generated override. The trustName default below
-      # only works when trustName == the slot.
-      pathTemplate: "fl-flare-participant-kits/{{ .Values.flClient.nvflare.kitFromS3.kitDate }}/net-1/services/{{ .Values.trustName }}"
     # Site-enforced privacy policy (FLIP#851): rendered into /app/local/privacy.json
     # at container start by `python -m flip.nvflare.site_policy`. Empty string = unset
     # = no site policy (previous behavior). policy: "percentile"; the params
@@ -328,12 +348,6 @@ flClient:
       percentile: ""
       gamma: ""
   flower:
-    kitFromS3:
-      enabled: true
-      # See the nvflare note above — supply via the kit override (`make sync-kit`).
-      bucket: ""
-      kitDate: "20260401"
-      pathTemplate: "fl-flower-participant-kits/{{ .Values.flClient.flower.kitFromS3.kitDate }}/net-1"
     superlink: ""
     supernodeClientAppIoAddress: "127.0.0.1:9094"
   resources:
@@ -360,8 +374,11 @@ flClient:
       initialDelaySeconds: 30
       periodSeconds: 15
   serviceAccount:
+    # Deliberately empty, and no IRSA example: the fl-client holds no AWS credentials.
+    # Its participant kit is staged onto the node out-of-band (kitHostPath above) and
+    # it reaches no other AWS service, so annotating this account with a role would
+    # hand FLIP credentials to the host that runs researcher-submitted FL code.
     annotations: {}
-      # eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/fl-client-s3-access
   sidecar:
     enabled: false
 

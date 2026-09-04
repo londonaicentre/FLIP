@@ -39,13 +39,20 @@ ENV_VAR_MAP = {
     "ENV": ("environment", False),
     "FL_BACKEND": ("flBackend", False),
     "UPLOADED_FEDERATED_DATA_BUCKET": ("uploadedFederatedDataBucket", False),
-    "S3_BUCKET": ("flClient.nvflare.kitFromS3.bucket", False),
-    "S3_BUCKET_FLOWER": ("flClient.flower.kitFromS3.bucket", False),
-    "S3_KIT_DATE": ("flClient.nvflare.kitFromS3.kitDate", False),
-    "S3_KIT_DATE_FLOWER": ("flClient.flower.kitFromS3.kitDate", False),
+    # No S3 kit fetch: the chart mounts an already-provisioned kit from the node
+    # (flClient.kitHostPath). A trust holds no FLIP AWS credentials. Falls back to
+    # DEFAULT_KIT_HOST_PATH when the kit omits it — see build_values.
+    "FL_KIT_DIR": ("flClient.kitHostPath", False),
     "AICENTRE_BUCKET_NAME": ("omopDb.initJob.s3Bucket", False),
     "OMOP_DATA_VERSION": ("omopDb.initJob.dataVersion", False),
 }
+
+# Where the operator placed this trust's kit ON THE NODE when the kit file does not say.
+# The canonical FLIP kit path: every shipped kit sets FL_KIT_DIR to it, the Ansible
+# EC2/on-prem plays stage to it, and the chart Makefile's stage-kit KIT_DEST defaults to it.
+# Same fallback as sync_k8s_kit.render_override, so both generators of a Helm override
+# agree on what a kit file without FL_KIT_DIR means.
+DEFAULT_KIT_HOST_PATH = "/opt/flip/fl-kit"
 
 # The chart's credential slots, as (env var name, Secret key name) pairs. Both
 # sides are identifiers; no value appears here, which is why the entries
@@ -56,6 +63,13 @@ ENV_VAR_MAP = {
 # the "which slots are unfilled" report in main() can be built from a plain list
 # of names that never held a value and cannot be confused - by a reader or by a
 # static analyser - with the map the values are read into.
+#
+# No AWS slots: the fl-client holds no AWS credentials and never fetches its own
+# kit (FLIP#965) — it is staged onto the node and mounted from flClient.kitHostPath.
+# templates/secrets.yaml renders no s3-access-key-id / s3-secret-access-key /
+# aws-session-token key, so a pair here would be a slot with nowhere to land, and
+# test_chart_secrets.test_secret_var_map_targets_exist_in_the_secret_template
+# fails on exactly that.
 CHART_KEY_SLOTS = (
     ("AES_KEY_BASE64", "aes-key-base64"),
     ("TRUST_API_KEY", "trust-api-key"),  # pragma: allowlist secret
@@ -70,9 +84,6 @@ CHART_KEY_SLOTS = (
     ("XNAT_DATASOURCE_PASSWORD", "xnat-datasource-password"),  # pragma: allowlist secret
     ("XNAT_DATASOURCE_ADMIN_PASSWORD", "xnat-datasource-admin-password"),  # pragma: allowlist secret
     ("GRAFANA_ADMIN_PASSWORD", "grafana-admin-password"),  # pragma: allowlist secret
-    ("AWS_ACCESS_KEY_ID", "s3-access-key-id"),
-    ("AWS_SECRET_ACCESS_KEY", "s3-secret-access-key"),  # pragma: allowlist secret
-    ("AWS_SESSION_TOKEN", "aws-session-token"),
 )
 
 SECRET_VAR_MAP = dict(CHART_KEY_SLOTS)
@@ -114,10 +125,14 @@ def build_values(env):
         # Normalise flBackend: accept any casing
         if env_var == "FL_BACKEND":
             val = val.lower().replace(" ", "")
-        # Also set Flower kit bucket when S3_BUCKET is set without explicit FLOWER variant
-        if env_var == "S3_BUCKET" and "S3_BUCKET_FLOWER" not in env:
-            deep_set(overrides, "flClient.flower.kitFromS3.bucket", val)
         deep_set(overrides, yaml_path, val)
+
+    # flClient.kitHostPath is `required` by the chart, so dropping it like any other
+    # absent value would only move the failure to render time. A kit missing or
+    # blanking FL_KIT_DIR still renders the canonical path — the one the default
+    # `make stage-kit` actually wrote to — exactly as sync_k8s_kit.render_override does.
+    if not env.get("FL_KIT_DIR", "").strip():
+        deep_set(overrides, "flClient.kitHostPath", DEFAULT_KIT_HOST_PATH)
 
     secrets = {}
     for env_var, secret_key in SECRET_VAR_MAP.items():
