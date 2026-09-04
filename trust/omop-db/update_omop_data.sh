@@ -118,9 +118,19 @@ update_trust() {
   # is frequently NOT needed: on Docker Desktop (macOS/Windows) the virtiofs
   # bind mount maps ownership onto the invoking host user, so a plain rm works.
   # Try unprivileged first and escalate only if that actually fails.
+  #
+  # Capture that failure rather than discarding it. Ownership is the expected
+  # cause but not the only one: a busy mount, an immutable file or a read-only
+  # filesystem fail here too, and sudo then fails with the same message — which
+  # reads as a credentials problem rather than as the thing it actually is. Print
+  # what rm said before escalating, so a non-permission failure names itself.
   if [[ -e "${dest_dir}" ]]; then
-    if ! rm -rf "${dest_dir}" 2>/dev/null; then
-      echo "   (root-owned by the container; escalating to sudo)"
+    local rm_error=""
+    if ! rm_error="$(rm -rf "${dest_dir}" 2>&1)"; then
+      if [[ -n "${rm_error}" ]]; then
+        echo "   ${rm_error}"
+      fi
+      echo "   (usually owned by the container's uid; escalating to sudo)"
       sudo rm -rf "${dest_dir}"
     fi
   fi
