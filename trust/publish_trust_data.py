@@ -26,8 +26,9 @@ The dataset holds exactly one copy of every artefact, at an unversioned path::
 A data version is a git *tag* on the dataset, which is what ``trust/.data_version`` pins and what
 every consumer resolves at. So publishing is: upload exactly the files that changed (everything else
 stays as it was at the previous tag — nothing is copied, renamed or suffixed), in one commit, then tag
-that commit. A version can never be half-published: either the commit and its tag both exist or
-neither does, and an existing tag is never moved.
+that commit. An existing tag is never moved: a version, once published, means one set of bytes for
+good. The commit and the tag are separate Hub calls, so a failure between them leaves the bytes on
+``main`` with nothing pinning them — re-run the same command to finish the job.
 
 Usage (from ``trust/``; ``make publish-trust-data`` wraps it)::
 
@@ -122,8 +123,15 @@ def build_operations(
 def publish(api: HfApi, version: str, operations: list[CommitOperationAdd], repo: str, dry_run: bool) -> str | None:
     """One commit, then the tag on that commit. Returns the commit id, or None on a dry run.
 
+    The commit and the tag are two Hub calls, so a failure between them leaves the new bytes on
+    ``main`` untagged — nothing pins them, and no consumer resolves them. That is recoverable and
+    the message says how: re-running publishes the same artefacts again (unchanged files are a
+    no-op for the Hub) and then tags. The one thing that never happens is a *moved* version — an
+    existing tag is refused up front.
+
     Raises:
-        SystemExit: If the tag already exists — a version is immutable; publish a new one.
+        SystemExit: If the tag already exists — a version is immutable; publish a new one. Or if
+            tagging failed after the commit landed, carrying the commit id and the recovery step.
     """
     tags = {ref.name for ref in api.list_repo_refs(repo, repo_type="dataset").tags}
     if version in tags:
@@ -142,7 +150,16 @@ def publish(api: HfApi, version: str, operations: list[CommitOperationAdd], repo
         commit_description="Published by FLIP/trust/publish_trust_data.py. One copy of every artefact at an "
         f"unversioned path; the data version is the tag {version} on this commit.",
     )
-    api.create_tag(repo, tag=version, revision=info.oid, repo_type="dataset", tag_message=f"trust-data {version}")
+    try:
+        api.create_tag(repo, tag=version, revision=info.oid, repo_type="dataset", tag_message=f"trust-data {version}")
+    except Exception as exc:
+        raise SystemExit(
+            f"❌ commit {info.oid} landed on {repo}@main but tagging it {version} failed: {exc}\n"
+            f"   The artefacts are uploaded and nothing pins them — no consumer resolves them, so\n"
+            f"   nothing is broken, but the version is not published until the tag exists.\n"
+            f"   Re-run this same command to finish it: the Hub treats unchanged files as a no-op,\n"
+            f"   so it re-commits cheaply and then tags."
+        ) from exc
     print(f"✅ commit {info.oid} tagged {version}. Now set trust/.data_version to {version}.")
     return info.oid
 

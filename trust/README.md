@@ -134,7 +134,9 @@ duplicated as a second directory or a suffixed filename. `HF_TRUST_DATA_REVISION
 tag everywhere (`main` to work against files uploaded but not tagged yet; a sha to freeze one).
 
 Publishing a new version is one commit that replaces exactly the artefacts that changed, plus one
-tag — a version can never be half-published, and an existing tag is never moved:
+tag. An existing tag is never moved, so a published version means one set of bytes for good. The
+commit and the tag are separate calls to the Hub: if the second fails, the bytes sit on `main` with
+nothing pinning them and no consumer resolving them — re-run the same command to finish it.
 
 ```sh
 make -C omop-db export-pgdata                         # dist/trust<N>_pgdata.tar
