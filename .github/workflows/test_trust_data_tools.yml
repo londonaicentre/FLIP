@@ -12,9 +12,12 @@
 name: Trust - Data tools CI
 
 # The trust-level data tooling that has no service container: the PACS seeder
-# (trust/orthanc/seed_orthanc.py) and the dataset publisher
-# (trust/publish_trust_data.py). Both are PEP 723 scripts with their own pytest
-# suites; nothing here needs Orthanc, Postgres or Hugging Face credentials.
+# (trust/orthanc/seed_orthanc.py), the dataset publisher
+# (trust/publish_trust_data.py) and the .seeded guard that stops a data-version
+# bump discarding a seeded volume (trust/tests/test_seed_guard.sh, which drives
+# both update_*_data.sh against a sandbox with curl/tar/sudo stubbed).
+# The scripts are PEP 723 with their own pytest suites; nothing here needs
+# Orthanc, Postgres or Hugging Face credentials.
 # Deliberately its own workflow rather than a job on "Trust - OMOP DB CI": the
 # omop-db image build is gated on THAT workflow's success and inherits its path
 # filter, so wiring these paths in there would rebuild the image on a seeder change.
@@ -26,6 +29,9 @@ on:
       - "trust/orthanc/publish_dicom.py"
       - "trust/orthanc/tests/**"
       - "trust/orthanc/Makefile"
+      - "trust/orthanc/update_orthanc_data.sh"
+      - "trust/omop-db/Makefile"
+      - "trust/omop-db/update_omop_data.sh"
       - "trust/publish_trust_data.py"
       - "trust/tests/**"
       - "trust/Makefile"
@@ -57,5 +63,5 @@ jobs:
 
       # trust/Makefile includes deploy/fl_backend.mk at parse time, which refuses an unset
       # FL_BACKEND; a dev checkout gets it from .env.development, CI has no such file.
-      - name: Dataset publisher — unit tests + lint
+      - name: Dataset publisher + .seeded guard — unit tests + lint
         run: make -C trust test-trust-data-tools FL_BACKEND=nvflare

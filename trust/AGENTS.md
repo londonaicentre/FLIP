@@ -126,7 +126,9 @@ make update-orthanc-data       # Download/extract mock DICOM data (both trusts)
 make update-orthanc-data TRUST=1  # Trust_1 only
 make seed KIT=GSTT PROJECTS="spleen_project cxr_project"  # Seed a RUNNING trust: OMOP rows + DICOMs by source_trust (#1100)
 make seed-trusts PROJECTS="…"  # Both dev trusts; seed-omop / seed-orthanc for one half; CLEAR=1, DRY_RUN=1 on the PACS half
+make seed KIT=GSTT SOURCE_TRUST=1  # Override the OMOP partition; defaults to the FL kit slot, which is a convention, not an invariant (see README "Which partition a trust is seeded with")
 make publish-trust-data VERSION=<tag> [PGDATA=… ORTHANC=… OMOP_CSV=… DICOM=…]  # ONE commit on aicentreflip/trust-data + ONE tag; then bump trust/.data_version (the single pin, OMOP + Orthanc)
+make test-trust-data-tools  # Publisher pytest + ruff, then tests/test_seed_guard.sh — the .seeded guard driven end-to-end (make target writes the marker, update script reads it) in a sandbox with curl/tar/sudo stubbed
 ```
 
 ## Environment

@@ -579,6 +579,7 @@ publish-trust-data:
 test-trust-data-tools:
 	uv run --no-project --with pytest --with 'huggingface_hub>=1.6' pytest tests -q
 	uvx ruff@0.14.7 check publish_trust_data.py tests && uvx ruff@0.14.7 format --check publish_trust_data.py tests
+	bash tests/test_seed_guard.sh
 
 tests:
 	cd data-access-api && make test && \
