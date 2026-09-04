@@ -138,6 +138,40 @@ def test_console_email_backend_is_rejected_in_production():
     assert "EMAIL_BACKEND" in str(exc_info.value)
 
 
+def test_empty_env_resolves_to_development_and_therefore_the_console_backend():
+    """Pins the step before every ``model_fields`` assertion above: which class gets built.
+
+    ``config.py`` selects ``DevSettings`` when ``Settings().ENV`` reads
+    ``"development"``, and ``coerce_empty_env`` is the only thing mapping an
+    unset or empty ``ENV`` onto that name — the Makefile's unanchored
+    ``export $(shell sed ...)`` exports bare names, so an absent ``ENV``
+    arrives as an empty string rather than as missing. That reasoning is
+    load-bearing for the whole email gate but lives only as a comment, and a
+    regression in it would leave every other test in this module green.
+    """
+    assert Settings(ENV="").ENV == "development"
+    assert DevSettings.model_fields["EMAIL_BACKEND"].default == "console"
+
+
+def test_production_settings_resolve_to_the_ses_backend(monkeypatch):
+    """The other half: a constructed ``ProdSettings`` comes out on SES, not just its field default.
+
+    ``monkeypatch.delenv`` keeps the assertion about the class rather than
+    about the developer's shell — an ``EMAIL_BACKEND`` exported there would
+    otherwise decide the result, and a stray ``console`` would fail the
+    construction outright against the ``Literal["ses"]`` narrowing.
+    """
+    monkeypatch.delenv("EMAIL_BACKEND", raising=False)
+
+    settings = ProdSettings(
+        AWS_SES_ADMIN_EMAIL_ADDRESS="admin@example.com",
+        AWS_SES_SENDER_EMAIL_ADDRESS="sender@example.com",
+    )
+
+    assert settings.ENV == "production"
+    assert settings.EMAIL_BACKEND == "ses"
+
+
 def test_dev_ses_addresses_are_optional_with_defaults():
     """Development boots with no SES configuration at all (#919).
 
