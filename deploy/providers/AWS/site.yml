@@ -338,25 +338,6 @@
         mode: "0755"
       when: fl_backend == "nvflare"
 
-    # The fl-client/fl-server images now run as a non-root uid (GHSA-8465;
-    # CI builds them at UID=1000, matching ubuntu on this host). Pre-create
-    # the leaf dirs owned by ubuntu, mirroring deploy/providers/local/
-    # site_local_trust.yml — otherwise the `mkdir -p` inside the shell task
-    # below runs under `become: true` (root) and the bind-mount source is
-    # root-owned, which the non-root container can't write into.
-    - name: pre-create NVFLARE kit subdirectories (owned by ubuntu)
-      file:
-        path: "{{ fl_kit_dir }}/net-1/services/{{ fl_kit_slot }}/{{ item }}"
-        state: directory
-        owner: ubuntu
-        group: ubuntu
-        mode: "0755"
-      loop:
-        - local
-        - startup
-        - transfer
-      when: fl_backend == "nvflare"
-
     - name: sync NVFLARE participant kit from S3
       # `aws s3 sync` skips files when source/dest size + mtime "look
       # equivalent", so a freshly regenerated kit can leave stale
@@ -372,10 +353,17 @@
       # ${FL_KIT_DIR}/net-1/services/${TRUST_NAME}/{local,startup,transfer},
       # which resolves to /opt/flip/fl-kit/net-1/services/<slot>/...
       #
-      # The sync (and the `find -delete` before it) run as root via
-      # `become: true`, so files land root-owned regardless of the
-      # pre-created parent's ownership above — the closing chown fixes that
-      # up for the non-root fl-client (GHSA-8465).
+      # Every step here runs as root via `become: true` — the `find -delete`, the
+      # sync and all three `mkdir -p`s — so the whole tree under $dest lands root-owned.
+      # The closing `chown -R ubuntu:ubuntu "$dest"` is the ONLY thing that makes it
+      # writable by the non-root fl-client (GHSA-8465; CI builds the images at
+      # UID=1000, matching ubuntu on this host). It is load-bearing, not tidying:
+      # do not drop it as redundant.
+      #
+      # Nor is there any point pre-creating the leaf dirs from an Ansible `file:` task
+      # ahead of this one: the net-1 wipe below deletes whatever such a task created.
+      # deploy/providers/local/site_local_trust.yml does pre-create them, and is right
+      # to — there the operator extracts a kit tarball by hand and nothing wipes.
       #
       # local/ and transfer/ are re-created after the sync: the `find -delete` above removes
       # the pre-created copies, and aws s3 sync mirrors objects rather than empty prefixes, so
@@ -403,6 +391,14 @@
       # that some kit is present — fed_client.json carries the client's own fully-qualified
       # site name, so a mis-slotted or half-wiped stage is caught here rather than at the first
       # training run.
+      #
+      # That check reads client.fqsn as a JSON field rather than pattern-matching the file:
+      # an exact comparison is what is wanted, and building a regex out of a templated slot
+      # name would quietly change meaning if slot naming ever grew a metacharacter. python3
+      # is on the host by definition — Ansible runs its own modules through it — whereas jq
+      # is not installed here. Unreadable JSON fails the same way a wrong name does — python
+      # prints the parse error above the message below — which is the safe direction:
+      # nothing downstream can use a kit this guard cannot parse.
       shell: |
         set -euo pipefail
         dest="{{ fl_kit_dir }}/net-1/services/{{ fl_kit_slot }}"
@@ -420,9 +416,10 @@
           echo "       can kms:Decrypt the bucket CMK." >&2
           exit 1
         fi
-        if ! grep -Eq '"fqsn"[[:space:]]*:[[:space:]]*"{{ fl_kit_slot }}"' \
-             "$dest/startup/fed_client.json"; then
-          echo "ERROR: the kit staged in $dest is not {{ fl_kit_slot }}'s." >&2
+        if ! python3 -c \
+             'import json, sys; kit = json.load(open(sys.argv[1])); sys.exit(0 if kit.get("client", {}).get("fqsn") == sys.argv[2] else 1)' \
+             "$dest/startup/fed_client.json" "{{ fl_kit_slot }}"; then
+          echo "ERROR: the kit staged in $dest does not name {{ fl_kit_slot }} in client.fqsn." >&2
           echo "       Source: {{ trust_s3_source }}" >&2
           echo "       fed_client.json names a different site, so this host would register with" >&2
           echo "       the federation under the wrong identity. Check FL_KIT_SLOT_NUMBER in the" >&2
