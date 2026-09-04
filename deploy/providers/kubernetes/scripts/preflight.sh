@@ -256,7 +256,10 @@ if [ -f "${CHART_DIR}/values-secrets.yaml" ]; then
 else
     warn "values-secrets.yaml not found — XNAT/OMOP/S3 secrets will use chart defaults"
     hint "Patch secrets after the first deploy: make patch-kit-secrets KIT=<KIT> PROD=${PROD:-(env)}"
-    hint "Or populate the file before deploying: ${CHART_DIR}/values-secrets.yaml"
+    hint "Or generate it before deploying (never hand-write it — it is gitignored):"
+    hint "  python3 ${CHART_DIR}/scripts/generate_values.py \\"
+    hint "    --env-file ${REPO_ROOT}/trust/.env.<KIT>.${ENV_SUFFIX} --output-dir ${CHART_DIR}"
+    hint "Then hand-fill the slots no kit carries: orthanc-registered-users and the S3 keys"
 fi
 
 if [ -n "$OVERRIDES_FILE" ]; then

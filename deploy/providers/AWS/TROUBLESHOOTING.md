@@ -713,9 +713,9 @@ Canonical checks pass (Terraform, EC2, RDS, HTTPS, ECS), the XNAT web interface 
 
 1. **`#` in password value (Make comment char)**: The Make `include` directive treats `#` as a comment start. If `.env.stag` contains:
    ```
-   XNAT_SERVICE_PASSWORD=bH@BDC#Myl0lev6WQW#0u8GD
+   XNAT_SERVICE_PASSWORD=EXAMPLE#not-a-real#password
    ```
-   Make reads this as `XNAT_SERVICE_PASSWORD=bH@BDC` — everything after the first `#` is silently discarded. The XNAT service account was configured with the truncated value.
+   Make reads this as `XNAT_SERVICE_PASSWORD=EXAMPLE` — everything after the first `#` is silently discarded. The XNAT service account was configured with the truncated value.
 
 2. **`$` in SQL UPDATE values (shell expansion)**: When running SQL via `docker exec sh -c "psql ... \"UPDATE ... SET pw='{bcrypt}\$2a\$10\$...';\""`, the `\$` escapes may not survive the nesting: `sh → psql → SQL`. The `$` signs get consumed by shell expansion, producing a corrupt hash like `{bcrypt}a` instead of `{bcrypt}$2a$10$...`. Always write sensitive SQL to a file via `scp` + `docker cp`.
 

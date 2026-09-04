@@ -331,7 +331,7 @@ The Central Hub uses four S3 buckets, each with a distinct purpose, access patte
 
 All four share standard configs: public access blocked, SSE-KMS server-side encryption with bucket keys enabled, versioning enabled. The three FLIP application buckets are rendered by the shared **`modules/flip_s3_bucket`** module, which is consumed by both `main.tf` (prod / stag) and `dev/main.tf` (dev account) — so a CORS or bucket-policy change plans identically across every environment, closing the dev-drift gap that masked the presigned-PUT → presigned-POST regression in #438.
 
-**Base FL application templates ship in the image, not S3.** As of FLIP#724 the base FL application templates (the repo's `fl-apps/` tree) are baked into the `flip-api` image and read from a local directory (`FL_APP_BASE_DIR`, default `/app/fl-apps`); flip-api bundles applications by uploading those local templates plus the user's model files into `flip{env}-app-bundles/app_destinations/<model_id>/`. There is no longer any CI that syncs templates to S3, so the `flip{env}-app-bundles` bucket is written **only** by flip-api at bundle time. Template hotfixes therefore ship by rebuilding and redeploying the `flip-api` image (see the migration note below).
+**Base FL application templates ship in the image, not S3.** As of FLIP#724 the base FL application templates (the repo's `fl-apps/` tree) are baked into the `flip-api` image and read from a local directory (`FL_APP_BASE_DIR`, default `/app/fl-apps`); flip-api bundles applications by uploading a selection from those local templates, plus the user's model files, into `flip{env}-app-bundles/app_destinations/<model_id>/`. The selection is an allowlist (FLIP#1008): the backend's app folder(s) plus its single root file ship, and everything else in the template directory is excluded and listed at debug level — worth knowing before pointing `FL_APP_BASE_DIR` at an operator-provided tree, since an unrecognised file is dropped rather than shipped. There is no longer any CI that syncs templates to S3, so the `flip{env}-app-bundles` bucket is written **only** by flip-api at bundle time. Template hotfixes therefore ship by rebuilding and redeploying the `flip-api` image (see the migration note below).
 
 #### Migrating off the legacy single-bucket layout
 
@@ -397,7 +397,9 @@ Two stag-specific watch-outs:
 
 For a **future fresh prod or dev** account that needs the same migration, the flow is the stag runbook above minus step 1 (`make import-persistent` is only needed on environments with the stag-style state gap) and with `PROD=true` on every `make` call for prod (dev uses the separate `deploy/providers/AWS/dev/` Terraform root, no `PROD=` flag).
 
-> **Do not `aws s3 rb s3://flipdev` on the legacy dev bucket.** The `test-data/` prefix in there (~42 objects) is consumed by external CI fixtures, so it is outside the scope of the FLIP#24 migration and must survive. Either leave the `flipdev` bucket alive solely for `test-data/`, or move `test-data/` to a dedicated bucket and update those references in lockstep before any `aws s3 rb`. The same constraint may apply to a `test-data/` prefix in `flipstag` / `flipprod` if one exists — check with `aws s3 ls s3://flipstag/test-data/` before decommissioning either.
+> **None of the legacy buckets has a keep-set** (re-verified 2026-09-02). Earlier revisions of this runbook warned against `aws s3 rb s3://flipdev` because its `test-data/` prefix (42 objects, ~280 MB) was read by CI in the `flip-fl-base` / `flip-fl-base-flower` repos. Both repos were **archived** in June 2026, and GitHub disables Actions on archived repositories, so that CI can no longer run; the surviving `make download-test-data` in them fetches from HuggingFace (`aicentreflip/flip-fl-base-test-data`), not S3. The objects were last written 2026-02-05 and were deleted on 2026-09-02. `flipstag` and `flipprod` never had a `test-data/` prefix. So all three legacy buckets can now be decommissioned by the flow above with no carve-out.
+>
+> The same archived-CI reasoning retired the `base-application/` and `base-application-dev/` prefixes across all six legacy buckets (deleted 2026-09-02): those repos' `push-app-to-s3-*` / `push-pr-to-s3` workflows were what wrote them, and base FL templates have shipped inside the flip-api image since FLIP#724.
 
 Once a decommission is complete in every environment, drop the `FLIP_BUCKET_NAME` line from `.env.*`, the `removed` blocks in `services.tf`, and the `migrate-flip-bucket` / `verify-flip-bucket-migration` Makefile targets in a follow-up PR.
 
@@ -519,6 +521,58 @@ the image back — re-run `make plan` after any `make deploy-centralhub`.
 > **Prod rollout note:** switch *production* deploys to this flow only after the 24 Jul 2026 DECAF
 > deadline (BDMS is live on legacy prod until then). Staging can adopt it immediately.
 
+### Changing the browser CORS allowlist (Cognito `callback_urls`)
+
+The Cognito app client's `callback_urls` **is** this environment's browser CORS allowlist. The UI
+signs in with `USER_SRP_AUTH`, so Cognito never redirects to these URLs; flip-api reads them back
+instead — `get_cors_allowed_origins()` (`flip_api/utils/cors.py`) calls `describe_user_pool_client`,
+normalizes each entry to `scheme://host[:port]`, and `CORSMiddleware` serves that list with
+`allow_credentials=true`. Every browser origin that must call the API has to be listed, and removing
+one silently blocks that origin — in the browser only, with nothing red in CI or in the ECS console.
+
+The value is set per Terraform root: `module "cognito"` in `services.tf` for stag/prod,
+`var.cognito_callback_urls` in `dev/variables.tf` for the dev account. **Deleting the argument does
+not empty the list** — `modules/cognito` defaults it to `["https://localhost:443"]`, so an omission
+puts a localhost origin into the production allowlist. `tests/test_cognito_callback_urls.py` guards
+both directions, and runs in CI as the `AWS deploy tests` job of `validate_terraform.yml`.
+
+To change it:
+
+```bash
+# 1. Edit the list for the environment's root:
+#      stag/prod → services.tf, module "cognito" → callback_urls
+#      dev       → dev/variables.tf, var.cognito_callback_urls
+# 2. Apply — TARGETED at the app client. Never run a full `make apply` on stag/prod for
+#    this: AMI drift in the same plan can force-replace the trust EC2s. Same reasoning
+#    as `apply-fl-kit-slots` above. The apply updates Cognito immediately …
+make init PROD=stag
+terraform plan -target=module.cognito.aws_cognito_user_pool_client.client -out=cognito.tfplan
+terraform apply cognito.tfplan
+
+# 3. … but flip-api does NOT pick it up until it restarts: main.py's lifespan reads the
+#    list once at start-up and CORSMiddleware holds it by reference. Restart flip-api.
+#    Quiesce FIRST if the deploy will also replace fl-server-net-1 — see "Central Hub
+#    deploys and rollback" above (Admin → Deployments, then GET /fl/quiesce).
+make deploy-centralhub PROD=stag
+#    Or, to restart flip-api alone without moving any image tag:
+aws ecs update-service --cluster flip-cluster --service flip-api --force-new-deployment
+
+# 4. Confirm Cognito actually carries the new list …
+aws cognito-idp describe-user-pool-client \
+  --user-pool-id "$AWS_COGNITO_USER_POOL_ID" --client-id "$AWS_COGNITO_APP_CLIENT_ID" \
+  --query 'UserPoolClient.CallbackURLs'
+
+# 5. … and that the running API serves it, with a preflight from the canonical origin.
+#    A correct response echoes access-control-allow-origin for that origin; a blocked
+#    origin simply omits the header (it is not an error status).
+curl -sSi -X OPTIONS "https://<api-host>/api/projects" \
+  -H "Origin: https://<ui-host>" \
+  -H "Access-Control-Request-Method: GET" | grep -i "^access-control-allow-origin"
+```
+
+Step 5 is the one that matters: steps 2–4 can all look right while the browser is still blocked,
+because the allowlist the API is *serving* only changes at the restart in step 3.
+
 ### Growing the FL kit-slot pool (`add-fl-kits`)
 
 When trust registration fails with `NoFreeKitSlotError` ("No FL kit slots available…"),
@@ -626,9 +680,11 @@ Replace each `<…>` with the matching value from the FLIP AWS account directory
 
 If your local profile names differ, override the defaults via `PROD_AWS_PROFILE`, `STAG_AWS_PROFILE`, or `DEV_AWS_PROFILE` (in your env file or on the make command line).
 
-**Dev account (Cognito + SES only):**
+**Dev account (Cognito + S3 only):**
 
-The dev AWS account runs only the services that cannot reasonably run locally (Cognito for auth, SES for email). A separate, minimal Terraform root lives in [`dev/`](./dev/README.md) and calls the same `modules/cognito` and `modules/ses` as this stack, so a change to either service lands in both environments from one place. The dev stack reuses `.env.development` — the same env file the local Docker Compose dev stack consumes — so there is no extra file to maintain.
+The dev AWS account runs only the services that cannot reasonably run locally (Cognito for auth, plus the three FLIP application S3 buckets). A separate, minimal Terraform root lives in [`dev/`](./dev/README.md) and calls the same `modules/cognito` and `modules/flip_s3_bucket` as this stack, so a change to either service lands in both environments from one place. The dev stack reuses `.env.development` — the same env file the local Docker Compose dev stack consumes — so there is no extra file to maintain.
+
+Dev carries **no SES**: flip-api defaults to `EMAIL_BACKEND=console` in development and logs would-be emails instead of sending them (FLIP#919), so `make up` needs no SES identity, templates or verified address. Only prod/stag instantiate `modules/ses`.
 
 The dev stack has its own Makefile; drive it from the `dev/` directory:
 
@@ -640,7 +696,7 @@ make plan
 make apply
 ```
 
-See [`dev/README.md`](./dev/README.md) for the one-time `terraform import` workflow that pulls the manually-created dev Cognito pool into state.
+See [`dev/README.md`](./dev/README.md) for the first-time setup workflow (the dev resources are Terraform-managed from day one; there is no import step).
 
 ### Terraform module layout
 
@@ -664,11 +720,11 @@ deploy/providers/AWS/
 ├── certificate.tf              # ACM certificates (ALB in eu-west-2, CloudFront viewer in us-east-1)
 ├── modules/
 │   ├── cognito/                # shared: pool, domain, client, seed users
-│   ├── ses/                    # shared: sender identity, transactional templates
+│   ├── ses/                    # prod/stag only: sender identity, transactional templates
 │   ├── secgroup/               # shared: security-group wrapper
 │   ├── flip_s3_bucket/         # shared: opinionated FLIP application S3 bucket
 │   └── trust_ec2/              # prod/stag only: Trust EC2 host
-└── dev/                        # dev-account root (calls cognito + ses modules)
+└── dev/                        # dev-account root (calls cognito + flip_s3_bucket modules)
 ```
 
 The Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) run on **ECS
@@ -865,6 +921,332 @@ make allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip>
 Verify the trust can poll the hub (check trust-api logs for successful task polling).
 
 Full details are in the [local provider README](../local/README.md).
+
+## Terraform CI: plan on PR, apply on merge
+
+Terraform runs in GitHub Actions as well as from a laptop (FLIP#962). Three
+workflows, all authenticating through OIDC — there are no long-lived AWS keys in
+GitHub:
+
+| Workflow | Trigger | Role | What it does |
+| --- | --- | --- | --- |
+| `terraform_plan.yml` | PR touching `deploy/providers/AWS/**` | plan (read-only) | Posts the staging plan as a PR comment |
+| `terraform_apply.yml` | Push to `develop` / `main` | apply | Applies to staging / production |
+| `terraform_drift.yml` | Nightly 03:00 UTC | plan (read-only) | Raises one issue per environment when reality has drifted |
+
+The drift workflow runs **twice**, and which environment a run checks is decided
+by the ref it was loaded from. GitHub only fires a `schedule` from the default
+branch, so the nightly run is a `develop` run and checks staging; it then
+dispatches `terraform_drift.yml --ref main`, and that second run checks
+production. Two things fall out of doing it that way rather than running both
+legs in one matrix: `aws-prod` stays restricted to `main` (see below), and the
+production plan compares **main's** HCL against production's state instead of
+reporting every unreleased develop change as drift.
+
+`validate_terraform.yml` still runs `fmt`/`validate` with `-backend=false` on every
+change; it catches HCL errors without credentials and is the fast gate.
+
+### Where the values come from
+
+The Makefile is the only definition of how env values map onto Terraform inputs,
+and CI does not duplicate it. Each workflow:
+
+1. composes `.env.stag` / `.env.production` from GitHub environment secrets and
+   variables (`scripts/compose-ci-env.sh`),
+2. writes `~/.ssh/host-aws.pub` from SSM (see below),
+3. runs `make print-tf-env >> "$GITHUB_ENV"` to hand the resolved `TF_VAR_*` to
+   Terraform.
+
+**The contract this creates: changing an environment value now means changing it
+in two places** — the operator's `.env.<env>` file *and* the matching GitHub
+environment. There is no automatic link between them. What catches a slip:
+
+- `compose-ci-env.sh` fails the build naming every missing key, rather than
+  letting Terraform plan a destructive diff from an empty string;
+- `scripts/tests/test_compose_ci_env.sh` cross-checks the key manifest against
+  the Makefile's `export TF_VAR_…` lines *and* against all three workflows, so
+  adding a Terraform input without wiring it through fails in the PR;
+- a value that has merely drifted (not gone missing) shows up as an unexpected
+  plan diff — compare against a laptop `AWS_PROFILE=stag make plan` on the same
+  commit when a CI plan looks wrong.
+
+### GitHub environments
+
+Two environments hold the inputs. Do **not** reuse the existing `flip`
+environment — it carries *test* values for `AES_KEY_BASE64`, `POSTGRES_PASSWORD`
+and `SES_VERIFIED_EMAIL` for the unit-test workflows, and feeding those into a
+plan or apply would be a genuine incident.
+
+| Environment | Deployment branch policy | Used by |
+| --- | --- | --- |
+| `aws-stag` | none (PRs must be able to plan) | plan, apply-to-stag, stag drift |
+| `aws-prod` | `main` only | apply-to-prod, prod drift |
+
+**`aws-prod` admits `main` and nothing else, and that is load-bearing.** A GitHub
+environment's secrets are readable by *any* workflow that declares the environment
+and runs on an admitted branch — before it makes a single AWS call, so the OIDC
+trust policies do not constrain it. Admitting the default branch, as an earlier
+revision of this did so the scheduled drift job could reach the prod plan role,
+would have collapsed "merged to `main`" into "merged to `develop`" for the
+production secrets. The drift job reaches them by being dispatched onto `main`
+instead.
+
+Each holds `TF_PLAN_ROLE_ARN` and `TF_APPLY_ROLE_ARN` (from `make -C ci output`)
+alongside the Terraform inputs. Stored as environment *secrets*:
+`ADMIN_USER_PASSWORD`, `AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY`,
+`INTERNAL_SERVICE_KEY_HASH`. Everything else is a variable, including
+`POSTGRES_DB` / `POSTGRES_USER` — they are configuration rather than credentials
+and are rendered in the clear into the public plan comment either way
+(`variables.tf` explains the decision). The authoritative list is `REQUIRED_KEYS`
+/ `OPTIONAL_KEYS` in `scripts/compose-ci-env.sh`.
+
+`AWS_PROFILE` is deliberately *not* stored: it is derived from the target
+environment, so a mis-set variable cannot point a stag run at the prod account.
+
+**Know what this exposes — this is a recorded decision, not an oversight.** The
+plan job declares `environment: aws-stag`, because that is the only way a workflow
+can read environment secrets, and the plan needs real values to be truthful. It
+runs on the pull request's own code. So **anyone with write access to this
+repository can read the staging secrets** (`AES_KEY_BASE64`,
+`INTERNAL_SERVICE_KEY`, `ADMIN_USER_PASSWORD`) by adding a step that prints them.
+GitHub masks registered secrets in logs, but base64 or splitting the string
+defeats masking trivially — do not count on it.
+
+It is wider than those secrets, and worth stating exactly. The same job holds a
+one-hour `ReadOnlyAccess` session over the whole staging account: the state file,
+the Cognito user list, every CloudWatch log group, every ECS task definition and
+its environment. It is also narrower than "everything": the KMS-encrypted buckets
+(model files, FL participant kits, FL results) stay closed, because
+`ReadOnlyAccess` carries no `kms:Decrypt` and the one grant the plan role has is
+pinned by a `kms:ViaService` condition to Secrets Manager.
+
+The same reasoning applies to **any** workflow, not only PR plans: a workflow file
+merged to a branch an environment admits can name that environment and read its
+secrets. That is why `aws-prod` admits `main` alone.
+
+Fork PRs cannot: GitHub withholds both the OIDC token and environment secrets from
+them, and the job skips outright on the same-repo guard.
+
+Note the apply routing gives no protection here, because nothing is being applied —
+the exposure is in the plan, before any merge.
+
+Weighed and accepted on 2026-09-01: write access to this repository already implies
+trust with staging, and the alternative costs a round trip on every infrastructure
+PR. Dummy values were considered and rejected — they feed the Secrets Manager
+version, the Cognito admin user and the task definitions, so wrong ones add four to
+six spurious "must be replaced" lines to every plan, which trains reviewers to skim
+the diff and would mask a real change to exactly those resources.
+
+To revisit, gate the plan job on a maintainer-applied label — one line in
+`terraform_plan.yml`:
+
+```yaml
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && contains(github.event.pull_request.labels.*.name, 'terraform-plan')
+```
+
+### Never publish a plan file as an artifact
+
+`tf-via-pr` defaults `upload-plan` to **true**, and a Terraform plan file is a
+zip containing the full `tfstate` — `AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY` and
+`ADMIN_USER_PASSWORD` in plaintext. **This repository is public**, so an uploaded
+plan is a public download of live credentials.
+
+This happened. The first green CI plan (2026-09-01) left a 357 KB staging plan
+artifact on the run, because omitting the input takes the insecure default. It
+was deleted about an hour later and the staging secrets it contained were
+rotated. Every `tf-via-pr` step now sets `upload-plan: false`, and
+`scripts/tests/test_compose_ci_env.sh` fails the build if any step omits it.
+
+`preserve-plan` is a *different* input and stays `true` in the apply workflow: it
+keeps the plan on the runner's disk so the FL gate and the apply step can read
+it. That never leaves the job.
+
+### Recovering an environment's true values
+
+The operator `.env` files drift, and seeding GitHub from a stale one bakes that
+drift into every future CI plan. `scripts/reconcile_ci_env.py` rebuilds the
+Terraform inputs from what is actually deployed — live state, plus the things
+state cannot answer (the running image tags, the FL kit-slot list, the live
+secret material):
+
+```bash
+python3 scripts/reconcile_ci_env.py --env prod --profile prod --compare ../../../.env.production
+python3 scripts/reconcile_ci_env.py --env stag --profile stag --out /tmp/stag-tf-inputs.env
+```
+
+Secret values are written to `--out` but never printed; the summary shows a
+truncated SHA-256 so two copies can be compared without either being disclosed.
+`--compare` reports drift against an existing file without writing anything.
+
+**`--out` emits only the Terraform inputs, not a complete operator env file** —
+the trust, XNAT, Orthanc and OMOP settings are not recoverable from AWS. It
+refuses to overwrite an existing file for that reason, and its refusal message
+counts the keys it would have written rather than quoting a figure that goes
+stale in this README.
+
+Run against staging this found a batch of differences from the checked-out
+`.env.stag`, including a renamed UI bucket (`flipstag` → `flip-ui-stag`) that
+plans as `must be replaced` against a `prevent_destroy` lifecycle rule, a stale
+`FLARE_KIT_DATE`, an out-of-date `API_PORT`, and rotated service keys. Several
+were not stale but **absent**, which is worse: the Makefile exports
+`DEPLOY_TRUST_EC2`, `LOCAL_TRUST_PUBLIC_IPS`, `K8S_TRUST_PUBLIC_IPS`,
+`JOB_RESOURCE_SPEC_*` and `FL_KIT_SLOT_NAMES` either unconditionally or behind a
+`?=` default, so an absent key arrives at Terraform as `""` or as the Makefile's
+own default and **does not** fall back to the `variables.tf` one — the same trap
+as `UI_PORT`. `LOCAL_TRUST_PUBLIC_IPS` empty would have dropped the on-prem
+trust's NLB ingress rule.
+
+The three whose Makefile default is *destructive* rather than merely wrong —
+`DEPLOY_TRUST_EC2` (`?= true`, i.e. create a cloud trust host) and
+`LOCAL_TRUST_PUBLIC_IPS` / `K8S_TRUST_PUBLIC_IPS` (`?= []`, i.e. delete every
+on-prem and K8s NLB ingress rule) — are **required** in
+`scripts/compose-ci-env.sh` for that reason. An explicit `false` or `[]` is a
+decision; an absent key is an accident that reads identically to Terraform, and
+none of the three is on `check-fl-plan-impact.sh`'s watch list, so an unattended
+apply would make the change silently. Both environments now compose cleanly.
+
+The same trap was then found on **production**: `DEMO_ASSETS_BUCKET_NAME` was
+absent from `.env.production` while prod state carried the Ark+ demo resources.
+`cloudfront.tf` gates them on `var.DEMO_ASSETS_BUCKET_NAME != ""`, so an apply
+with the key absent destroys the demo's bucket policy, public-access block, OAC
+and `/ark_demo/*` behaviour. It is `OPTIONAL` in the manifest because empty is
+the *correct* value on stag, which hosts no demo — which is exactly why it is
+also recovered from state here, so prod cannot be seeded without it.
+
+Do not trust a recovered value you have not seen a plan agree with. The staging
+plan caught this tool getting `DEPLOY_TRUST_EC2` wrong: it was derived from the
+root `aws_instance.ec2_instance`, which is the SSM bastion and exists in every
+environment, so it always read `true` — and staging, which runs no cloud trust,
+would have had a `t3.xlarge` trust host created under it. The cloud trust host is
+`module.trust_ec2[0].aws_instance.trust_host`, and state keys a module's
+resources under a separate `module` field that the root-level lookup never sees.
+
+Planning **staging** from a laptop needs staging's EC2 public key. The two
+accounts hold different keypairs, both Terraform resources read the one path
+`~/.ssh/host-aws.pub`, and `public_key` is ForceNew — so whichever account your
+local file does not match plans a keypair replacement that ripples into the
+bastion. CI is unaffected (each workflow writes the file from its own account's
+`/flip/ci/host_aws_public_key`). To reproduce that locally without touching your
+`~/.ssh`:
+
+```bash
+aws ssm get-parameter --name /flip/ci/host_aws_public_key --profile stag \
+  --query Parameter.Value --output text > /tmp/stagkey/host-aws.pub
+AWS_PROFILE=stag LOCK=false make plan \
+  TF_VAR_flip_keypair=/tmp/stagkey/host-aws \
+  TF_VAR_ec2_public_key_path=/tmp/stagkey/host-aws.pub
+```
+
+### One-time setup
+
+```bash
+# 1. Publish the EC2 keypair public key so CI reproduces it byte for byte.
+#    Read from state, not from ~/.ssh: a laptop key that has drifted would make
+#    CI plan a replacement of both aws_key_pair resources — and because
+#    public_key is ForceNew, that ripples into aws_instance.ec2_instance.
+make seed-ci-keypair-param                 # stag
+make seed-ci-keypair-param PROD=true       # prod
+
+# 2. Create the OIDC roles, from a laptop (see ci/README.md).
+make -C ci init && make -C ci plan && make -C ci apply
+make -C ci init PROD=true && make -C ci plan PROD=true && make -C ci apply PROD=true
+
+# 3. Create and populate the two GitHub environments. Run --dry-run first.
+#    Reads the secret-vs-variable split out of terraform_plan.yml, so it cannot
+#    disagree with what the workflows dereference, and refuses to run when ci/ is
+#    initialised for the other account (which would wire in the wrong role ARNs).
+bash scripts/setup-github-environments.sh --env stag --env-file ../../../.env.stag --dry-run
+bash scripts/setup-github-environments.sh --env stag --env-file ../../../.env.stag
+bash scripts/setup-github-environments.sh --env prod --env-file ../../../.env.production
+```
+
+Requires repo admin. It prints key names only — values go from the local env file
+straight to GitHub.
+
+### What an automated apply will not do
+
+Two hazards would make an unattended apply unsafe. Both are handled in the
+pipeline rather than left to a runbook.
+
+**It will not un-pin the released image.** `ecs_services.tf` tracks
+`max(terraform_revision, live_revision)`, so a *no-op* apply preserves whatever
+`make deploy-centralhub` deployed. But an apply that changes a task definition
+mints a revision from `var.docker_image_tag` — and the env files set that to the
+mutable `:stag` / `:prod`, which would silently discard the immutable
+`sha-<short7>` pin from FLIP#751. So `scripts/resolve-image-tags.sh` resolves the
+tag instead of reading it: this commit's `sha-<short7>` once published, else the
+tag the service is already running, and only on an empty account the configured
+tag. The guarantee is about substitution: the configured tag can never replace a
+deployed one. An environment genuinely running `:stag` (staging, today) gets
+`:stag` back, which is a no-op; what cannot happen is a sha-pinned service being
+moved onto a mutable tag.
+
+Every lookup in that script **fails closed**. An expired session, a throttle, an
+AccessDenied or a wrong `ECS_CLUSTER` all used to look exactly like "there is no
+service here", which is the one answer that reaches the configured-tag fallback —
+so an API error on an unattended production apply would have un-pinned the
+release. Absence is now recognised only from ECS's own `failures[].reason ==
+"MISSING"`, and every other outcome stops the run.
+
+**Plan and drift resolve the tags too**, with `RESOLVE_SHA_TAG=false`: read what
+the services are running, never probe the registry. Without that, once the first
+CI apply has written a `sha-…` pin every PR plan and every nightly run would
+report a permanent `sha-… → :prod` diff on the task definitions — including the FL
+ones, which the FL gate would then hold every apply on.
+
+**An infrastructure-only apply does not wait for images that cannot exist.** The
+apply fires on `deploy/providers/AWS/**` while the image builds fire on service
+paths, so the commonest apply publishes no `sha-…` image at all. The workflow
+diffs the push against its predecessor and spends the `GHCR_WAIT_SECONDS` budget
+only when a path that builds one of the two images actually changed.
+
+**It will not disturb a training run.** Replacing `fl-server-net-1` kills any
+in-flight run (FLIP#770). A runner cannot ask the hub whether one is in flight —
+`GET /fl/quiesce` needs a Cognito session (and prod runs `ENFORCE_MFA=true`),
+CloudFront strips `X-Internal-Service-Key` at the edge, and the scheduler state
+is in a private subnet. So `scripts/check-fl-plan-impact.sh` asks the plan
+instead: if the plan changes `fl-server-net-1` / `fl-api-net-1` (task definition
+or service), or deletes any EFS resource, the job **holds** and names what it
+found. Everything else — VPC, IAM, S3, SSM, CloudFront, ALB, and a plain
+`flip-api` roll — applies unattended.
+
+When it holds:
+
+1. Enable deployment mode on the hub (pauses FL job pickup; queued jobs hold, the
+   running job finishes and frees its net).
+2. Wait until `GET /fl/quiesce` reports deployment mode ON and no BUSY net.
+3. Re-run `terraform_apply.yml` via `workflow_dispatch` on the same branch **with
+   the `fl_quiesced` input set to `true`**.
+4. Disable deployment mode.
+
+Step 3's input is what makes the remedy work. The gate reads the plan, and the
+plan has not changed between the held run and the re-run — so a plain re-run finds
+the same FL change and holds again, indefinitely. `fl_quiesced: true` skips the
+gate, and nothing verifies it: the runner cannot reach `GET /fl/quiesce`, so it is
+an operator attestation, recorded as a warning annotation naming whoever
+dispatched the run. Setting it when FL is *not* quiesced kills the in-flight
+training run, which is exactly what the gate exists to prevent.
+
+`flip-api` is deliberately outside the watch list: its deploy is a rolling
+replacement (`desired_count` 1, `deployment_minimum_healthy_percent` 100) and the
+run is held by fl-server, not the hub. Watching it would hold nearly every apply,
+since any image-tag change updates the task definition.
+
+### Break-glass
+
+The pipeline is additive — the laptop workflow is unchanged and remains the
+recovery path.
+
+- **CI is wedged / the role is broken.** `AWS_PROFILE=stag make init plan apply`
+  as before. The CI roles live in their own state (`flip/ci/terraform.tfstate`)
+  and are applied only from a laptop, so a bad main-state apply cannot lock CI
+  out of the apply that would fix it.
+- **A plan is stuck on the state lock.** PR plans run with `-lock=false` and never
+  take it. An apply does; `make force-unlock LOCK_ID=<id>` releases it.
+- **An apply must not run.** Disable `terraform_apply.yml` in the Actions tab, or
+  revert the merge — the workflow only acts on `deploy/providers/AWS/**` changes.
 
 ## Troubleshooting
 

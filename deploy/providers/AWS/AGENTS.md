@@ -20,6 +20,7 @@
 | `parameter_store.tf` | SSM Parameter Store entries |
 | `backend.tf` | S3 backend with S3 native locking (`use_lockfile`) |
 | `variables.tf` | All Terraform variables with defaults |
+| `ci/` | Separate root (`flip/ci/terraform.tfstate`): the GitHub Actions OIDC plan/apply roles. Applied from a laptop only — see `ci/README.md` |
 
 ## AWS Profiles
 
@@ -53,8 +54,87 @@ make add-fl-kits N=<n> PROD=<stag|true>       # Ensure N more claimable FL kit s
 make apply-fl-kit-slots                       # Targeted plan/apply of the /flip/fl_kit_slot_names SSM parameter (slot activation path)
 make destroy                                  # Selective destroy (preserves Cognito, Secrets, S3)
 make aws-login                                # AWS SSO login
+make print-tf-env                             # Print resolved TF_VAR_* as KEY=value (consumed by the CI workflows)
+make seed-ci-keypair-param                    # Publish the aws_key_pair public key from state to SSM, for CI plans
+make -C ci init/plan/apply                    # GitHub Actions OIDC roles (laptop only — see ci/README.md)
 make checkov-lint                             # Static checkov security lint (IAM policy content + promoted posture checks) — CI counterpart is the Checkov Security Lint job in validate_terraform.yml (FLIP#1052, FLIP#1058); suppress deliberate breadth/posture in-code with `# checkov:skip=<ID>:<rationale>`. NB this Makefile's parse-time env guard needs the deploy env file — the REPO-ROOT `make checkov-lint` (or `bash scripts/checkov_lint.sh`) runs env-free
+uv run --no-project --with pytest --with jinja2 --with click pytest tests/   # Credential-free static checks over the stack's artefacts (rendered templates, deploy scripts, and Terraform source itself — incl. the Cognito `callback_urls` = browser CORS allowlist invariants). CI counterpart: the AWS deploy tests job in validate_terraform.yml. Deps named explicitly rather than `uv sync`d: the dev group pulls ansible-core + pyqt5, the tests need three packages
 ```
+
+## Terraform CI (FLIP#962)
+
+Terraform runs in GitHub Actions as well as from a laptop. `terraform_plan.yml`
+plans staging on every PR touching `deploy/providers/AWS/**`; `terraform_apply.yml`
+applies on push to `develop` (stag) and `main` (prod); `terraform_drift.yml` plans
+nightly and raises one issue per environment. All three authenticate via OIDC —
+no long-lived AWS keys in GitHub. **Merging to `main` now changes production
+infrastructure**; the old "don't `make apply` for prod" rule is superseded.
+
+Things worth knowing before touching any of it:
+
+- **The Makefile stays the single source of truth for Terraform inputs.** CI
+  composes `.env.stag` / `.env.production` from GitHub environment secrets and
+  variables (`scripts/compose-ci-env.sh`), then runs `make print-tf-env >> $GITHUB_ENV`.
+  Adding an `export TF_VAR_…` line therefore also means adding the key to that
+  script's manifest, to all three workflow `env:` blocks, and to both GitHub
+  environments — `scripts/tests/test_compose_ci_env.sh` fails the build otherwise.
+- **Env values now live in two places** (the operator `.env.<env>` file and the
+  GitHub environment) with no automatic link. Missing keys fail loudly; drifted
+  ones show up as an unexpected plan diff.
+- **Use `aws-stag` / `aws-prod`, never the existing `flip` environment** — `flip`
+  holds *test* values for `AES_KEY_BASE64` / `POSTGRES_PASSWORD` / `SES_VERIFIED_EMAIL`.
+- **Every workflow resolves the image tag rather than reading it**
+  (`scripts/resolve-image-tags.sh`): an apply takes this commit's `sha-<short7>`
+  once published, else the tag the service is already running; plan and drift run
+  it with `RESOLVE_SHA_TAG=false`, which reads only the running tag and never
+  touches the registry. The configured `:stag`/`:prod` can never *replace* a
+  deployed tag — that would discard the FLIP#751 pin — and a plan that read the
+  configured tag would report a permanent `sha-… → :prod` diff nobody can clear.
+  (Reusing `:stag` when that is genuinely what stag runs is a no-op, and expected.)
+  Every lookup **fails closed**: absence is recognised only from ECS's own
+  `failures[].reason == "MISSING"`, so an expired session or a wrong `ECS_CLUSTER`
+  stops the run instead of reading as "empty account" and emitting the mutable tag.
+- **An apply holds if the plan touches FL** (`scripts/check-fl-plan-impact.sh`):
+  `fl-server-net-1` / `fl-api-net-1` task definitions or services, or any EFS
+  deletion. `flip-api` is deliberately not watched. The hub cannot be asked
+  whether a run is in flight — `/fl/quiesce` is Cognito-gated, CloudFront strips
+  the internal key, and the DB is in a private subnet — so the plan is asked instead.
+  Release a held apply by re-dispatching `terraform_apply.yml` with the
+  `fl_quiesced: true` input; a plain re-run reads the same plan and holds again.
+- **`aws-prod` admits `main` alone.** An environment's secrets are readable by any
+  workflow that names it and runs on an admitted branch, before any AWS call, so
+  admitting the default branch would hand the production secrets to every workflow
+  merged to develop. The nightly drift run reaches prod by dispatching itself onto
+  `main` rather than by widening the policy.
+- **Every IAM role this root owns carries a permissions boundary**
+  (`var.iam_permissions_boundary_name`, the policy declared in `ci/`). The CI apply
+  role may only create a role, or write an inline policy onto one, when the role
+  carries it — which is what keeps `PowerUserAccess` + IAM write from being
+  administrator-equivalent. Adding a role means adding its literal name to
+  `var.managed_role_names` in `ci/variables.tf` and re-applying `ci/` from a laptop
+  first, or the apply cannot pass or re-trust it.
+- **The pytest suite under `tests/` runs in CI** as the `AWS deploy tests` job in
+  `validate_terraform.yml`. The root `make unit_test` does not reach this directory
+  and `make -C deploy/providers/AWS test` cannot be used (parse-time env guard), so
+  run it locally with the `uv run --no-project --with …` line above, from this
+  directory — that is what CI runs, and `--frozen` would pull the dev group's
+  ansible-core and pyqt5 for a suite that needs three packages.
+
+- **Seed the GitHub environments with `scripts/setup-github-environments.sh`** (repo
+  admin, `--dry-run` first). It derives the secret-vs-variable split from
+  `terraform_plan.yml` rather than hard-coding it — a key stored as a variable but
+  read as `secrets.X` resolves to empty and fails the run pointing at the wrong
+  cause — and refuses when `ci/` is initialised for the other account.
+- **Never seed a GitHub environment from a laptop `.env` file without checking it.**
+  `scripts/reconcile_ci_env.py --env <e> --compare <file>` rebuilds the Terraform
+  inputs from deployed state and reports drift (secrets shown as digests, never
+  values). Staging's checked-out file was a batch of values stale, including a
+  renamed UI bucket that plans as a `prevent_destroy` violation. Its `--out` writes
+  only the Terraform inputs, so it refuses to overwrite a real operator env file,
+  and on `--env prod` it treats an empty `DEMO_ASSETS_BUCKET_NAME` as a failed
+  recovery rather than a value — empty there destroys the Ark+ demo resources.
+
+Full flow, one-time setup and break-glass: [README.md](README.md#terraform-ci-plan-on-pr-apply-on-merge).
 
 ## Infrastructure
 
@@ -67,7 +147,7 @@ make checkov-lint                             # Static checkov security lint (IA
 - **CloudFront + S3**: flip-ui static hosting
 - **Secrets Manager**: `FLIP_API` secret (AES key, DB password, key hashes)
 - **Cognito**: `flip-user-pool` with email auth
-- **Container registry**: **GHCR** (`ghcr.io/londonaicentre/`) for every FLIP image (flip-api, flare-fl-api, flare-fl-server, flower-superlink, trust-api, imaging-api, data-access-api, orthanc, omop-db, XNAT). ECS Fargate task definitions pull directly from GHCR — `var.docker_registry` in `variables.tf` defaults to it; trust EC2 / on-prem hosts do too. **There is no ECR mirror.** A surgical centralhub redeploy (per `project_prod_ecs_deploy.md` — don't `make apply` for prod) is now one command: GH workflow `workflow_dispatch` to build the branch image to GHCR (publishes `sha-<short7>`) → `make deploy-centralhub TAG=sha-<short7>`, which registers new task-definition revisions and repoints the services (FLIP#751 — the previously manual register-task-definition + update-service runbook). The flip-ui bundle ships separately via `make deploy-ui` (it's static assets in S3, not a container image).
+- **Container registry**: **GHCR** (`ghcr.io/londonaicentre/`) for every FLIP image (flip-api, flare-fl-api, flare-fl-server, flower-superlink, trust-api, imaging-api, data-access-api, orthanc, omop-db, XNAT). ECS Fargate task definitions pull directly from GHCR — `var.docker_registry` in `variables.tf` defaults to it; trust EC2 / on-prem hosts do too. **There is no ECR mirror.** A surgical centralhub redeploy is now one command: GH workflow `workflow_dispatch` to build the branch image to GHCR (publishes `sha-<short7>`) → `make deploy-centralhub TAG=sha-<short7>`, which registers new task-definition revisions and repoints the services (FLIP#751 — the previously manual register-task-definition + update-service runbook). The flip-ui bundle ships separately via `make deploy-ui` (it's static assets in S3, not a container image).
 
 ## Verifying a Central-Hub FL redeploy
 
