@@ -55,6 +55,43 @@ class MatchCounts:
         return self.tp + self.fn
 
 
+def assign_points(predictions: np.ndarray, references: np.ndarray, radius: float) -> list[tuple[int, int]]:
+    """Greedily pair predictions with references, one-to-one, within ``radius``.
+
+    Returns:
+        The accepted ``(prediction_index, reference_index)`` pairs. This is the single source of truth
+        for matching -- :func:`match_points` counts these pairs rather than repeating the logic, and
+        the overlay renderer uses them to colour each detection by outcome.
+    """
+    predictions = np.asarray(predictions, dtype=float).reshape(-1, 2)
+    references = np.asarray(references, dtype=float).reshape(-1, 2)
+    if len(predictions) == 0 or len(references) == 0:
+        return []
+    if radius <= 0:
+        raise ValueError(f"Matching radius must be positive, got {radius!r}.")
+
+    # Candidate pairs only within the radius, so the sort below stays small even on dense tiles.
+    neighbours = cKDTree(predictions).query_ball_tree(cKDTree(references), r=radius)
+    candidates = [
+        (float(np.hypot(*(predictions[p] - references[r]))), p, r)
+        for p, matches in enumerate(neighbours)
+        for r in matches
+    ]
+    # Sort by distance, then by the index pair, so equidistant candidates resolve deterministically.
+    candidates.sort()
+
+    used_predictions: set[int] = set()
+    used_references: set[int] = set()
+    pairs: list[tuple[int, int]] = []
+    for _distance, prediction_index, reference_index in candidates:
+        if prediction_index in used_predictions or reference_index in used_references:
+            continue
+        used_predictions.add(prediction_index)
+        used_references.add(reference_index)
+        pairs.append((prediction_index, reference_index))
+    return pairs
+
+
 def match_points(predictions: np.ndarray, references: np.ndarray, radius: float) -> MatchCounts:
     """Match predicted centres to reference centres, one-to-one, within *radius*.
 
@@ -69,31 +106,12 @@ def match_points(predictions: np.ndarray, references: np.ndarray, radius: float)
         The TP/FP/FN counts. With no predictions every reference is a false negative; with no
         references every prediction is a false positive; with neither, all counts are zero.
     """
-    predictions = np.asarray(predictions, dtype=float).reshape(-1, 2)
-    references = np.asarray(references, dtype=float).reshape(-1, 2)
+    n_predictions = len(np.asarray(predictions, dtype=float).reshape(-1, 2))
+    n_references = len(np.asarray(references, dtype=float).reshape(-1, 2))
+    if n_predictions == 0:
+        return MatchCounts(tp=0, fp=0, fn=n_references)
+    if n_references == 0:
+        return MatchCounts(tp=0, fp=n_predictions, fn=0)
 
-    if len(predictions) == 0:
-        return MatchCounts(tp=0, fp=0, fn=len(references))
-    if len(references) == 0:
-        return MatchCounts(tp=0, fp=len(predictions), fn=0)
-    if radius <= 0:
-        raise ValueError(f"Matching radius must be positive, got {radius!r}.")
-
-    # Candidate pairs only within the radius, so the sort below stays small even on dense tiles.
-    pairs = cKDTree(predictions).query_ball_tree(cKDTree(references), r=radius)
-    candidates = [
-        (float(np.hypot(*(predictions[p] - references[r]))), p, r) for p, matches in enumerate(pairs) for r in matches
-    ]
-    # Sort by distance, then by the index pair, so equidistant candidates resolve deterministically.
-    candidates.sort()
-
-    used_predictions: set[int] = set()
-    used_references: set[int] = set()
-    for _distance, prediction_index, reference_index in candidates:
-        if prediction_index in used_predictions or reference_index in used_references:
-            continue
-        used_predictions.add(prediction_index)
-        used_references.add(reference_index)
-
-    tp = len(used_predictions)
-    return MatchCounts(tp=tp, fp=len(predictions) - tp, fn=len(references) - tp)
+    tp = len(assign_points(predictions, references, radius))
+    return MatchCounts(tp=tp, fp=n_predictions - tp, fn=n_references - tp)

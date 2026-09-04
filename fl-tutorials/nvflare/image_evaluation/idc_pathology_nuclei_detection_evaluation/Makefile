@@ -43,7 +43,7 @@ override SITE1_DATAFRAME  := $(call abspath_app,$(SITE1_DATAFRAME))
 override SITE2_IMAGES_DIR := $(call abspath_app,$(SITE2_IMAGES_DIR))
 override SITE2_DATAFRAME  := $(call abspath_app,$(SITE2_DATAFRAME))
 
-.PHONY: run sim export prepare-model check-data summary clean
+.PHONY: run sim export prepare-model check-data summary overlays clean
 
 # --- Detector specification ---
 # The FL server broadcasts this to every site. It is derived from app_files/config.json, so it is
@@ -83,6 +83,17 @@ sim: check-data
 # a custom NVFLARE aggregation component, and it needs nothing that did not already leave the sites.
 summary:
 	@$(UV_RUN) python "$(APP_DIR)/process_tools/summarise_results.py"
+
+# --- Nuclei overlays ---
+# Renders the scored tiles with reference outlines and detections, colour-coded by outcome, and
+# assembles them into an mp4. Local and single-site by design: per-nucleus overlays are exactly the
+# kind of data the federated job never returns, so this is a debugging and explanation aid, not part
+# of the job. ACCESSION picks the slide; TILES how many frames.
+ACCESSION ?= TCGA-A8-A0AB
+TILES ?= 12
+overlays: check-data
+	@$(UV_RUN) --group dev python "$(APP_DIR)/process_tools/render_overlays.py" \
+		--accession $(ACCESSION) --tiles $(TILES) --video
 
 # --- Tutorial-harness entrypoint ---
 # fl-tutorials/nvflare/Makefile auto-discovers any dir with a .env.app and invokes `make run`.

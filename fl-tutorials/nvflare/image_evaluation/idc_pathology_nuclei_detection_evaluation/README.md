@@ -146,6 +146,44 @@ whenever that is the case, because a cross-site difference smaller than the with
 not evidence of a site effect. Tiles from one patient are not independent samples, so tile-level
 intervals would be overconfident by roughly the square root of the tiles-per-patient count.
 
+## Seeing the nuclei
+
+```bash
+make overlays                              # 12 tiles of the default slide, plus an mp4
+make overlays ACCESSION=TCGA-A7-A0DC TILES=20
+```
+
+Renders the tiles the federated run actually scored — same seed, same tissue threshold — with the
+reference nuclei drawn as their true polygon outlines and every detection marked:
+
+- **green** outline with a centre dot — reference matched by a detection (TP)
+- **orange dashed** outline — reference the detector missed (FN)
+- **magenta ×** — detection with no reference (FP)
+
+The picture is more informative than the score. The misses are overwhelmingly *elongated,
+faintly-stained* nuclei — stromal, fibroblast, vessel wall — while the matches are round, densely
+stained epithelial nuclei. That is a specific, explainable limitation of a peak detector on a
+haematoxylin channel, not uniform noise, and it is the sort of thing an F1 of 0.64 conceals.
+
+This runs **locally on one site's data** and is deliberately not part of the federated job: rendering
+per-nucleus overlays centrally would mean shipping pixels and per-nucleus coordinates off the site,
+which is the exact thing the tutorial exists to avoid.
+
+### Viewing the slides themselves
+
+The slides are public and already served by IDC's DICOM-native slide viewer, so no local viewer is
+needed to look at one — for example the first Trust_1 slide, `TCGA-A8-A0AB`:
+
+<https://viewer.imaging.datacommons.cancer.gov/slim/studies/2.25.305523966109504368018351018821035186810/series/1.3.6.1.4.1.5962.99.1.1343238082.2143638158.1637725810626.2.0>
+
+A link for any slide in the subset is `.../slim/studies/<slide_study_uid>/series/<slide_series_uid>`,
+both of which are columns in `manifest.csv`.
+
+Viewing them in **FLIP's own** stack is a different matter: XNAT here has no OHIF viewer at all (it is
+deliberately not installed, FLIP#662), and OHIF's slide support is a separate microscopy extension
+rather than its radiology core. So a FLIP-hosted slide view needs the ingestion work above *and* a
+viewer that does not currently exist in the stack.
+
 ## What data leaves each hospital?
 
 **Stays local:** slide pixels, annotation polygons, per-nucleus coordinates, per-tile counts,

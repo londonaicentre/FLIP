@@ -59,9 +59,32 @@ class ReferenceNuclei:
     centroids: np.ndarray
     label: str
     generation_type: str
+    vertices: np.ndarray | None = None
+    offsets: np.ndarray | None = None
 
     def __len__(self) -> int:
         return len(self.centroids)
+
+    def polygons_within(self, x0: float, y0: float, width: float, height: float) -> list[np.ndarray]:
+        """Return the full polygon outlines whose centroid falls in the given box, tile-local.
+
+        Detection scoring only needs centroids, but drawing needs the boundaries -- so the decoded
+        vertices are kept and sliced on demand rather than decoded twice. Selection is by centroid so
+        a polygon is drawn by exactly the tile that scored it.
+        """
+        if self.vertices is None or self.offsets is None:
+            raise ValueError("This ReferenceNuclei was loaded without vertices; pass keep_vertices=True.")
+        inside = np.nonzero(
+            (self.centroids[:, 0] >= x0)
+            & (self.centroids[:, 0] < x0 + width)
+            & (self.centroids[:, 1] >= y0)
+            & (self.centroids[:, 1] < y0 + height)
+        )[0]
+        # ends[i + 1] is the exclusive end of polygon i; it is always in range because ends has one
+        # more element than offsets.
+        ends = np.append(self.offsets, len(self.vertices))
+        origin = np.array([x0, y0], dtype=float)
+        return [self.vertices[self.offsets[i] : ends[i + 1]] - origin for i in inside]
 
 
 def _polygon_centroids(coordinates: np.ndarray, starts: np.ndarray) -> np.ndarray:
@@ -84,7 +107,9 @@ def _polygon_centroids(coordinates: np.ndarray, starts: np.ndarray) -> np.ndarra
     return sums / counts[:, None]
 
 
-def load_reference_nuclei(annotation_path: Path | str, group_label: str = "Nuclei") -> ReferenceNuclei:
+def load_reference_nuclei(
+    annotation_path: Path | str, group_label: str = "Nuclei", keep_vertices: bool = False
+) -> ReferenceNuclei:
     """Load nucleus centroids from the ANN object at *annotation_path*.
 
     Args:
@@ -150,4 +175,6 @@ def load_reference_nuclei(annotation_path: Path | str, group_label: str = "Nucle
         centroids=centroids,
         label=str(getattr(group, "AnnotationGroupLabel", "")),
         generation_type=str(getattr(group, "AnnotationGroupGenerationType", "")),
+        vertices=coordinates.astype(float) if keep_vertices else None,
+        offsets=starts if keep_vertices else None,
     )
