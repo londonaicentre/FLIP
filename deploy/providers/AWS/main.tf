@@ -297,11 +297,13 @@ module "flip_api_secret" {
 # Fargate and use the task roles in iam_ecs.tf; the bastion needs no access to
 # application secrets, buckets, Cognito, SES, or CloudWatch Logs.
 module "ec2_role" {
-  source                = "terraform-aws-modules/iam/aws//modules/iam-assumable-role"
-  version               = "~> 5.0"
-  role_name             = "ec2-role"
-  create_role           = "true"
-  trusted_role_services = ["ec2.amazonaws.com"]
+  source      = "terraform-aws-modules/iam/aws//modules/iam-assumable-role"
+  version     = "~> 5.0"
+  role_name   = "ec2-role"
+  create_role = "true"
+  # FLIP#962: the CI apply role may only create a boundary-carrying role.
+  role_permissions_boundary_arn = local.iam_permissions_boundary_arn
+  trusted_role_services         = ["ec2.amazonaws.com"]
   custom_role_policy_arns = [
     "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
   ]
@@ -340,11 +342,13 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 #      pattern to AWS-hosted trusts would remove S3 entirely from the Trust
 #      role's blast radius.
 module "trust_ec2_role" {
-  source                = "terraform-aws-modules/iam/aws//modules/iam-assumable-role"
-  version               = "~> 5.0"
-  role_name             = "trust-ec2-role"
-  create_role           = "true"
-  trusted_role_services = ["ec2.amazonaws.com"]
+  source      = "terraform-aws-modules/iam/aws//modules/iam-assumable-role"
+  version     = "~> 5.0"
+  role_name   = "trust-ec2-role"
+  create_role = "true"
+  # FLIP#962: the CI apply role may only create a boundary-carrying role.
+  role_permissions_boundary_arn = local.iam_permissions_boundary_arn
+  trusted_role_services         = ["ec2.amazonaws.com"]
   custom_role_policy_arns = [
     "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
     "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
@@ -386,7 +390,7 @@ resource "aws_iam_role_policy" "trust_ec2_s3" {
 # logs through its CloudWatch agent. The Central Hub bastion has no app logs.
 resource "aws_cloudwatch_log_group" "flip_trust_log_group" {
   name              = "/aws/ec2/flip-trust"
-  retention_in_days = 7
+  retention_in_days = local.log_retention_days
 }
 
 # Retain the keypair for SSH-over-SSM (`ssh flip`) and Ansible. No inbound SSH
@@ -427,6 +431,14 @@ resource "aws_instance" "ec2_instance" {
     delete_on_termination = true
     encrypted             = true
   }
+
+  # IMDSv2 only (FLIP#1058): session tokens close the classic SSRF →
+  # instance-credential-theft read. Nothing on this host speaks IMDSv1, and the
+  # default hop limit of 1 stands — the bastion runs no containers.
+  metadata_options {
+    http_endpoint = "enabled"
+    http_tokens   = "required"
+  }
 }
 
 # Application Load Balancer
@@ -463,6 +475,7 @@ resource "aws_ec2_tag" "alb_security_group_flip_sg" {
 
 module "alb" {
   source                     = "terraform-aws-modules/alb/aws"
+  version                    = "~> 10.0"
   name                       = "flip-alb"
   vpc_id                     = module.flip_vpc.vpc_id
   internal                   = true
@@ -508,6 +521,7 @@ module "alb" {
 # Network Load Balancer for FL server TCP/TLS pass-through
 module "fl_server_nlb" {
   source                     = "terraform-aws-modules/alb/aws"
+  version                    = "~> 10.0"
   name                       = "flip-fl-server-nlb"
   load_balancer_type         = "network"
   vpc_id                     = module.flip_vpc.vpc_id

@@ -80,8 +80,31 @@ The kit owns only the per-trust keys. The chart's *other* secrets (XNAT, OMOP,
 Orthanc, Grafana, S3 kit-sync credentials) are deployment-specific — supply them
 via the chart's built-in Secret template (`secrets.create=true` + a
 `values-secrets.yaml`, see the [Secrets Reference](#secrets-reference)) or create
-the Secret externally. `make sync-kit` (next step) patches the per-trust keys
-*on top* of this Secret without touching the infra keys.
+the Secret externally.
+
+> **`values-secrets.yaml` is generated, gitignored, and must never be committed.**
+> It carries live trust credentials. The tracked `values-secrets.yaml.example` is a
+> field reference with every slot empty — not a working file.
+
+Generate it from the repo root:
+
+```bash
+python3 deploy/providers/kubernetes/scripts/generate_values.py \
+  --env-file trust/.env.<CODE>.<env> \
+  --output-dir deploy/providers/kubernetes
+```
+
+That writes `values-secrets.yaml` with mode `0600` (and `values-override.yaml`
+beside it). Four slots it **cannot** fill, because no trust kit carries the source
+env var: `orthanc-registered-users`, `s3-access-key-id`, `s3-secret-access-key`
+and `aws-session-token`. Hand-fill whichever your deployment needs. An empty slot
+is omitted from the Secret by `templates/secrets.yaml` and the pod that mounts it
+then fails with `CreateContainerConfigError` — deliberate (it is why copying the
+example into place does not deploy), and also why Orthanc will not start until
+`orthanc-registered-users` is filled.
+
+`make sync-kit` (next step) patches the per-trust keys *on top* of this Secret
+without touching the infra keys.
 
 ### 3. Sync the kit into the cluster
 
@@ -550,7 +573,13 @@ old install on the previous chart version.
   `runAsNonRoot` / `readOnlyRootFilesystem` are left opt-in (image-dependent).
   **Remaining for full `restricted` enforcement:** the stateful images
   (`xnat-web`, `xnat-db`, `omop-db`, `orthanc`) need `fsGroup`/chown init
-  containers before they can run non-root.
+  containers before they can run non-root, and the fl-client pod's init
+  containers (`images-init` — pre-creates the pod's per-net slice of the shared
+  images volume with the ownership imaging-api and the client need — and
+  `kit-init`) run as root by design: `images-init` declares an explicit
+  `securityContext` scoped to `CHOWN`/`DAC_OVERRIDE`/`FOWNER` with everything
+  else dropped, but root init containers are still rejected under
+  `enforce=restricted`.
 
 ## Development
 

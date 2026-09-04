@@ -211,7 +211,6 @@ For the full local stack, replace every placeholder in these minimum groups befo
 | --- | --- |
 | AWS session | `AWS_PROFILE`, `AWS_REGION` |
 | Central Hub auth | `AWS_COGNITO_USER_POOL_ID`, `AWS_COGNITO_APP_CLIENT_ID`, `ADMIN_USER_PASSWORD` |
-| Email | an SES-verified `SES_VERIFIED_EMAIL` |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Runtime S3 | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME`, `FLIP_APP_BUNDLES_BUCKET_NAME`, `AICENTRE_BUCKET_NAME` |
 | XNAT artifacts | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins) |
@@ -219,6 +218,13 @@ For the full local stack, replace every placeholder in these minimum groups befo
 Development uses these configured AWS services directly; there is no LocalStack fallback. Authorised FLIP developers
 can use the shared development values. Other deployers should create their own resources with the
 [Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
+
+**Email needs no configuration in development** (FLIP#919). flip-api defaults to `EMAIL_BACKEND=console` in dev, which
+logs the would-be message (recipient, template name, non-secret payload) instead of calling SES — so the access-request
+and XNAT-credentials paths work with no SES identity, verified address or templates. Staging and production keep
+`EMAIL_BACKEND=ses` and still require `AWS_SES_ADMIN_EMAIL_ADDRESS` / `AWS_SES_SENDER_EMAIL_ADDRESS`; the setting is
+type-narrowed in `ProdSettings`, so the console backend cannot be selected there. Note Cognito still sends real invite
+and password-reset emails in dev — those come from the user pool, not SES.
 
 Trusts are registered on the **running hub** with `make register-trusts` (shipped dev roster) or
 `make register-trust KIT=<CODE>` (one trust), which inserts each `trust` row (with its
@@ -312,6 +318,27 @@ Everything that **validates** your change still runs on your fork, and a red res
 lint, type-checking, unit and integration tests, docs, Terraform validation, Helm tests, and secret scanning.
 Coverage upload to Codecov is non-blocking (`fail_ci_if_error: false`), so a missing `CODECOV_TOKEN` on your fork
 never fails an otherwise-green job.
+
+### Checkov security lint (Terraform)
+
+`validate_terraform.yml` carries a `Checkov Security Lint` job (FLIP#1052 + the FLIP#1058 triage) alongside
+`fmt`/`validate`: a curated checkov check list runs statically over `deploy/providers/AWS/**` and **fails the
+PR's CI** on a regression. It covers IAM policy content — overly-broad statements such as a wildcard `Resource`/`Action` on a
+restrictable data-access action, data exfiltration or privilege-escalation shapes, on both policy syntaxes
+(`data "aws_iam_policy_document"` blocks and `jsonencode()` policies) — plus a small promoted set of
+infrastructure-posture checks (IMDSv2-only EC2, module version pinning, HSTS, WAF Log4j rule, SSM/KMS posture).
+No cloud credentials are needed, and checkov already knows which AWS actions support no resource-level scoping
+(e.g. `ssmmessages:*`, `ec2:Describe*`) — those wildcards pass without ceremony. Run it locally with
+`make checkov-lint` from the repo root (deliberately not the `deploy/providers/AWS` Makefile, whose parse-time
+env guard needs the gitignored deploy env files).
+
+Deliberate breadth or posture is acknowledged **in-code, with a rationale**, never by weakening the check list:
+put `# checkov:skip=<CHECK_ID>:<why this is deliberate>` inside the flagged resource/data block. The check
+list — including the classes triaged in FLIP#1058 and deliberately *not* promoted — lives in
+`deploy/providers/AWS/scripts/checkov_lint.sh`, which self-tests against a canary fixture before scanning so a
+broken checkov install can never produce a vacuous green. The script's own guards (version pin, unknown check
+IDs, skip rationale, canary) are regression-tested by `scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
+run by the same workflow's `Deploy script tests` job.
 
 ### Running the stack (pull vs. build)
 
