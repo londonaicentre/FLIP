@@ -12,7 +12,7 @@
 -->
 
 <template>
-    <AiCard class="flex flex-col">
+    <AiCard class="flex flex-col h-full">
         <div class="px-6 py-4 shrink-0">
             <div class="flex items-center justify-between">
                 <h2 class="text-lg font-semibold font-heading grow leading-loose">

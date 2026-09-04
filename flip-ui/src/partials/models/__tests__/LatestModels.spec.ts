@@ -251,10 +251,12 @@ describe("LatestModels — defensive data access", () => {
         const wrapper = mountLatestModels();
         await flushPromises();
 
-        // The project page pins this card to the imaging-status row height; the
-        // root must be a flex column so the list flexes and scrolls internally.
+        // The project page hands this card a stretched, fill-height grid cell; the
+        // root must be a full-height flex column so the list flexes and scrolls
+        // internally rather than inflating the row.
         expect(wrapper.classes()).toContain("flex");
         expect(wrapper.classes()).toContain("flex-col");
+        expect(wrapper.classes()).toContain("h-full");
         const list = wrapper.find("[data-test=models-approved-status]");
         for (const cls of ["flex-1", "min-h-0", "overflow-y-auto"]) {
             expect(list.classes()).toContain(cls);

@@ -18,8 +18,11 @@
 
 <template>
     <div v-if="project" class="relative flex flex-col h-full overflow-hidden">
-        <div class="flex-grow h-full overflow-y-auto">
-            <header class="px-6 pt-4">
+        <!-- Page column. Below lg it is the page scroller (stacked, content-height
+             cards, exactly as before); at lg+ it is a fixed-height flex column so the
+             three cards can fill the viewport and own their own scrollbars. -->
+        <div class="flex flex-col flex-1 min-h-0 overflow-y-auto lg:overflow-hidden">
+            <header class="px-6 pt-4 shrink-0">
                 <router-link
                     to="/projects"
                     class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
@@ -95,51 +98,55 @@
                 </div>
             </header>
 
-            <div class="relative grid items-start grid-cols-1 gap-4 p-4 lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,1.5fr)_minmax(17rem,0.75fr)] xl:p-4">
-                <div class="lg:col-span-3">
-                    <!-- my-4 on top of the grid's gap/padding gives the lifecycle ~32px of
-                         breathing room above and below, matching the model page. -->
-                    <LifecycleTrack :steps="steps" class="my-4" />
-                </div>
+            <!-- Lifecycle lifted out of the card grid so the grid can be the single
+                 flex-1 row. p-4 on top of the track's my-4 keeps the ~32px of breathing
+                 room above and below that the grid's padding/gap used to provide. -->
+            <div class="p-4 shrink-0">
+                <LifecycleTrack :steps="steps" class="my-4" />
+            </div>
 
-                <div class="grid grid-cols-1 gap-4 lg:sticky top-16">
-                    <QueryDetails :query-details="project.query" />
+            <div class="relative grid grid-cols-1 gap-4 p-4 pt-0 lg:flex-1 lg:min-h-0 lg:items-stretch lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,1.5fr)_minmax(17rem,0.75fr)]">
+                <div class="flex flex-col gap-4 lg:min-h-0">
+                    <div class="shrink-0">
+                        <QueryDetails :query-details="project.query" />
+                    </div>
 
                     <Transition name="slidedown" mode="out-in">
                         <template v-if="isProjectUnstaged()">
-                            <ProjectStaging
-                                :has-query="!!project.query"
-                                :stageable-trust-ids="stageableTrustIds"
-                                :project-staged="isProjectStaged()"
-                                :staging="stagingProject"
-                                @staged="stageProject"
-                            />
+                            <div class="lg:flex-1 lg:min-h-0">
+                                <ProjectStaging
+                                    :has-query="!!project.query"
+                                    :stageable-trust-ids="stageableTrustIds"
+                                    :project-staged="isProjectStaged()"
+                                    :staging="stagingProject"
+                                    @staged="stageProject"
+                                />
+                            </div>
                         </template>
                         <template v-else>
-                            <ProjectApproval
-                                :approved-trusts="project.approvedTrusts ?? []"
-                                :has-query="!!project.query"
-                                :project-approved="projectApproved"
-                                :approving="approvingProject"
-                                :can-approve="isProjectStaged()"
-                                @approve-project="approveProjectEvent"
-                            />
+                            <div class="lg:flex-1 lg:min-h-0">
+                                <ProjectApproval
+                                    :approved-trusts="project.approvedTrusts ?? []"
+                                    :has-query="!!project.query"
+                                    :project-approved="projectApproved"
+                                    :approving="approvingProject"
+                                    :can-approve="isProjectStaged()"
+                                    @approve-project="approveProjectEvent"
+                                />
+                            </div>
                         </template>
                     </Transition>
                 </div>
 
-                <div class="lg:sticky top-16">
+                <div class="lg:min-h-0">
                     <ProjectStatus
                         :can-load="projectApproved"
                         :cohort-size="project.query?.totalCohort"
                     />
                 </div>
 
-                <!-- Stretched cell + absolutely positioned card: the model list can't
-                     inflate the row, so the card matches the height the imaging
-                     project status card defines and scrolls internally instead. -->
-                <div class="relative lg:self-stretch">
-                    <LatestModels class="lg:absolute lg:inset-0" />
+                <div class="lg:min-h-0">
+                    <LatestModels />
                 </div>
             </div>
         </div>

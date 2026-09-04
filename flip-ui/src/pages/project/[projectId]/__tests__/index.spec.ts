@@ -152,18 +152,52 @@ describe("Project page (/project/[id]/index.vue)", () => {
         expect(wrapper.text()).toContain("Projects");
     });
 
-    test("pins the Latest Models card to the row height the imaging-status card defines", () => {
+    test("stretches all three cards to a shared bottom baseline at lg, each scrolling internally", () => {
         const wrapper = mountProjectPage();
 
-        // The card is absolutely positioned inside a stretched grid cell at lg, so
-        // its model list can't inflate the row past the imaging project status card.
-        const card = wrapper.find("[data-test=stub-latest-models]");
-        expect(card.classes()).toContain("lg:absolute");
-        expect(card.classes()).toContain("lg:inset-0");
-        const cell = card.element.parentElement;
-        expect(cell?.className).toContain("relative");
-        expect(cell?.className).toContain("lg:self-stretch");
-        expect(cell?.className).not.toContain("sticky");
+        // Every cell is min-h-0 so a long card can shrink below its content and
+        // scroll inside itself rather than inflating the row.
+        const statusCell = wrapper.find("[data-test=stub-project-status]").element.parentElement;
+        const modelsCell = wrapper.find("[data-test=stub-latest-models]").element.parentElement;
+        expect(statusCell?.className).toContain("lg:min-h-0");
+        expect(modelsCell?.className).toContain("lg:min-h-0");
+
+        // The grid is the single fill-height row of the page column.
+        const grid = statusCell?.parentElement;
+        expect(grid?.className).toContain("lg:flex-1");
+        expect(grid?.className).toContain("lg:min-h-0");
+        expect(grid?.className).toContain("lg:items-stretch");
+        expect(grid?.className).not.toContain("items-start");
+
+        // The old absolute-position and sticky hacks are gone — nothing scrolls
+        // past the side cards any more, so nothing needs pinning to the viewport.
+        expect(wrapper.find("[data-test=stub-latest-models]").classes()).not.toContain("lg:absolute");
+        expect(modelsCell?.className).not.toContain("lg:self-stretch");
+        expect(wrapper.html()).not.toContain("lg:sticky");
+
+        // The page column stops scrolling at lg; the cards own the scrollbars.
+        const pageColumn = grid?.parentElement;
+        expect(pageColumn?.className).toContain("min-h-0");
+        expect(pageColumn?.className).toContain("lg:overflow-hidden");
+    });
+
+    test("gives the staged/approval card the remaining height of the left column", () => {
+        const wrapper = mountProjectPage();
+
+        // QueryDetails keeps its content height; the card below it takes the rest.
+        expect(wrapper.find("[data-test=stub-query-details]").element.parentElement?.className)
+            .toContain("shrink-0");
+        expect(wrapper.find("[data-test=stub-project-staging]").element.parentElement?.className)
+            .toContain("lg:flex-1");
+
+        const approved = mountProjectPage({
+            project: {
+                ...baseProject(),
+                status: "STAGED"
+            }
+        });
+        expect(approved.find("[data-test=stub-project-approval]").element.parentElement?.className)
+            .toContain("lg:flex-1");
     });
 
     test("renders 4 lifecycle steps and marks only step 01 complete on a fresh UNSTAGED project", () => {

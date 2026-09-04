@@ -12,8 +12,8 @@
 -->
 
 <template>
-    <AiCard>
-        <div class="p-4">
+    <AiCard class="flex flex-col h-full">
+        <div class="p-4 shrink-0">
             <div class="flex flex-row items-center">
                 <div class="grow">
                     <h2 class="text-lg font-semibold leading-loose font-heading grow">
@@ -29,7 +29,7 @@
                 </div>
             </div>
         </div>
-        <div v-if="canLoad" class="flex-grow text-sm" data-test="project-status-container">
+        <div v-if="canLoad" class="flex flex-col flex-1 min-h-0 text-sm" data-test="project-status-container">
             <Transition name="fade" mode="out-in">
                 <div v-if="!data" class="p-4 space-y-2 transition">
                     <AiSkeleton class="w-1/4 h-8" />
@@ -38,8 +38,8 @@
                     <AiSkeleton class="w-full h-8" />
                 </div>
 
-                <div v-else class="space-y-4">
-                    <div class="grid grid-cols-5 overflow-hidden border-t border-b border-gray-200 divide-x divide-gray-200 dark:border-dark-border dark:divide-dark-border">
+                <div v-else class="flex flex-col flex-1 min-h-0">
+                    <div class="grid grid-cols-5 shrink-0 overflow-hidden border-t border-b border-gray-200 divide-x divide-gray-200 dark:border-dark-border dark:divide-dark-border">
                         <div class="min-w-0 p-2.5">
                             <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Trusts onboarded
@@ -102,207 +102,206 @@
                         </div>
                     </div>
 
-                    <div class="w-full border-t border-gray-200 dark:border-dark-border">
-                        <div class="w-full">
-                            <ul role="list" class="grid grid-cols-1 gap-3 p-3 xl:grid-cols-2">
-                                <li
-                                    v-for="project in sortedData"
-                                    :key="project.trustId"
-                                    class="relative p-4 border rounded-lg hover:bg-gray-50 dark:hover:bg-dark-surface"
-                                    :class="isImportStale(project)
-                                        ? 'border-red-400 ring-[3px] ring-red-500/10 dark:border-red-500/70 dark:ring-red-500/15'
-                                        : 'border-gray-200 dark:border-dark-border'"
-                                    :data-test="`trust-card-${project.trustId}`"
-                                >
-                                    <div class="flex flex-col gap-3">
-                                        <!-- Top row: trust name + reimport count -->
-                                        <div class="flex items-center justify-between gap-3">
-                                            <h2 class="font-bold font-heading text-base text-gray-900 dark:text-gray-100" :data-test="`trust-name-${project.trustId}`">
-                                                {{ project.trustName }}
-                                            </h2>
-                                            <div
-                                                v-if="project.reimportCount !== undefined && project.reimportCount !== null && project.projectCreationCompleted && maxReimportCount > 0"
-                                                v-tippy="{ content: reimportTooltip(project), placement: 'top' }"
-                                                class="flex items-center gap-1.5 shrink-0"
-                                            >
-                                                <icon-ph-arrows-clockwise
-                                                    v-if="project.reimportCount < maxReimportCount"
-                                                    class="w-4 h-4"
-                                                    :class="isImportStale(project) ? 'text-gray-400 dark:text-gray-300' : 'text-green-500'"
-                                                />
-                                                <icon-ph-warning-circle-fill
-                                                    v-else
-                                                    class="w-4 h-4 text-yellow-500"
-                                                />
-                                                <span
-                                                    class="font-mono text-xs text-gray-500 dark:text-gray-300"
-                                                    :data-test="`project-reimport-status-${project.trustId}`"
-                                                >
-                                                    {{ project.reimportCount }} / {{ maxReimportCount }}
-                                                </span>
-                                            </div>
-                                        </div>
-                                        <!-- Stacked import bar — design ref:
-                                             06_imaging_status/imaging-status.jsx
-                                             ImagingStatusA / IPSImportBar.
-                                             Always rendered (even when importStatus is absent)
-                                             so every card has the same body height and the
-                                             footer pin lands at the card bottom in the grid. -->
-                                        <div class="flex flex-col gap-2 text-sm" :data-test="`import-bar-${project.trustId}`">
-                                            <div class="flex items-baseline justify-between gap-2">
-                                                <span class="inline-flex items-baseline gap-2 min-w-0">
-                                                    <span
-                                                        class="font-heading font-semibold text-2xl leading-none"
-                                                        :class="rowTotal(project) === 0
-                                                            ? 'text-gray-400 dark:text-gray-300'
-                                                            : 'text-gray-900 dark:text-gray-100'"
-                                                        :data-test="`pct-retrieved-${project.trustId}`"
-                                                    >
-                                                        {{ rowTotal(project) === 0
-                                                            ? "—"
-                                                            : floorPercent(rowRatio(project)) + "%" }}
-                                                    </span>
-                                                    <!-- The counts are real but no longer confirmed; say so next to
-                                                         the number rather than letting it read as live. -->
-                                                    <span
-                                                        v-if="isImportStale(project) && rowTotal(project) > 0"
-                                                        class="font-mono text-[9px] uppercase tracking-[0.08em] rounded px-1.5 py-0.5 border border-red-200 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300"
-                                                        :data-test="`last-known-tag-${project.trustId}`"
-                                                    >
-                                                        Last known
-                                                    </span>
-                                                </span>
-                                                <span
-                                                    class="font-mono text-[11px] text-gray-500 dark:text-gray-300 shrink-0"
-                                                    :data-test="`import-count-${project.trustId}`"
-                                                >
-                                                    {{ importCountLabel(project) }}
-                                                </span>
-                                            </div>
-                                            <div
-                                                class="flex h-2 rounded-full overflow-hidden bg-gray-100 dark:bg-dark-raised"
-                                                :class="{ 'opacity-[0.55]': isImportStale(project) }"
-                                            >
-                                                <template v-if="rowTotal(project) > 0">
-                                                    <div
-                                                        v-if="(project.importStatus?.successful ?? 0) > 0"
-                                                        class="bg-emerald-500 transition-all"
-                                                        :style="{ width: `${((project.importStatus?.successful ?? 0) / rowTotal(project)) * 100}%` }"
-                                                    />
-                                                    <div
-                                                        v-if="(project.importStatus?.processing ?? 0) > 0"
-                                                        class="bg-sky-500 transition-all"
-                                                        :style="{ width: `${((project.importStatus?.processing ?? 0) / rowTotal(project)) * 100}%` }"
-                                                    />
-                                                    <div
-                                                        v-if="(project.importStatus?.queued ?? 0) > 0"
-                                                        class="bg-gray-400 transition-all"
-                                                        :style="{ width: `${((project.importStatus?.queued ?? 0) / rowTotal(project)) * 100}%` }"
-                                                    />
-                                                    <div
-                                                        v-if="rowFailed(project) > 0"
-                                                        class="bg-red-500 transition-all"
-                                                        :style="{ width: `${(rowFailed(project) / rowTotal(project)) * 100}%` }"
-                                                    />
-                                                </template>
-                                            </div>
-                                            <div
-                                                class="flex justify-between font-mono text-[9px] uppercase tracking-wide text-gray-500 dark:text-gray-300"
-                                                :class="{ 'opacity-[0.65]': isImportStale(project) }"
-                                            >
-                                                <span class="inline-flex items-center gap-1">
-                                                    <span class="inline-block w-1.5 h-1.5 rounded-sm bg-emerald-500" />
-                                                    <span
-                                                        class="text-gray-700 dark:text-gray-200 font-semibold"
-                                                        :data-test="`successful-imports-${project.trustId}`"
-                                                    >{{ project.importStatus?.successful ?? 0 }}</span>
-                                                    retrieved
-                                                </span>
-                                                <span class="inline-flex items-center gap-1">
-                                                    <span class="inline-block w-1.5 h-1.5 rounded-sm bg-sky-500" />
-                                                    <span
-                                                        class="text-gray-700 dark:text-gray-200 font-semibold"
-                                                        :data-test="`processing-imports-${project.trustId}`"
-                                                    >{{ project.importStatus?.processing ?? 0 }}</span>
-                                                    processing
-                                                </span>
-                                                <span class="inline-flex items-center gap-1">
-                                                    <span class="inline-block w-1.5 h-1.5 rounded-sm bg-gray-400" />
-                                                    <span
-                                                        class="text-gray-700 dark:text-gray-200 font-semibold"
-                                                        :data-test="`queued-imports-${project.trustId}`"
-                                                    >{{ project.importStatus?.queued ?? 0 }}</span>
-                                                    queued
-                                                </span>
-                                                <span class="inline-flex items-center gap-1">
-                                                    <span class="inline-block w-1.5 h-1.5 rounded-sm bg-red-500" />
-                                                    <span
-                                                        class="text-gray-700 dark:text-gray-200 font-semibold"
-                                                        :data-test="`failed-imports-${project.trustId}`"
-                                                    >{{ rowFailed(project) }}</span>
-                                                    failed
-                                                </span>
-                                            </div>
-                                        </div>
-                                        <!-- Footer: project creation state (design ref:
-                                             06_imaging_status IPSCreationState), or the import
-                                             error state when the counts above have gone stale. -->
-                                        <div
-                                            v-if="importError(project)"
-                                            class="flex items-start gap-2 px-3 py-2 mt-1 -mx-4 -mb-4 border-t border-red-200 bg-red-50 dark:border-red-500/40 dark:bg-red-500/10"
-                                            :data-test="`import-error-${project.trustId}`"
+                    <!-- The only scroller in the card. auto-rows-max is load-bearing:
+                         a definite-height grid sizes auto rows against the available
+                         space, and each <li> has an automatic minimum size of zero, so
+                         without it every trust card collapses to a sliver. content-start
+                         stops the rows being distributed down the container. -->
+                    <ul role="list" class="grid flex-1 min-h-0 grid-cols-1 gap-3 p-3 overflow-y-auto auto-rows-max content-start xl:grid-cols-2">
+                        <li
+                            v-for="project in sortedData"
+                            :key="project.trustId"
+                            class="relative p-4 border rounded-lg hover:bg-gray-50 dark:hover:bg-dark-surface"
+                            :class="isImportStale(project)
+                                ? 'border-red-400 ring-[3px] ring-red-500/10 dark:border-red-500/70 dark:ring-red-500/15'
+                                : 'border-gray-200 dark:border-dark-border'"
+                            :data-test="`trust-card-${project.trustId}`"
+                        >
+                            <div class="flex flex-col gap-3">
+                                <!-- Top row: trust name + reimport count -->
+                                <div class="flex items-center justify-between gap-3">
+                                    <h2 class="font-bold font-heading text-base text-gray-900 dark:text-gray-100" :data-test="`trust-name-${project.trustId}`">
+                                        {{ project.trustName }}
+                                    </h2>
+                                    <div
+                                        v-if="project.reimportCount !== undefined && project.reimportCount !== null && project.projectCreationCompleted && maxReimportCount > 0"
+                                        v-tippy="{ content: reimportTooltip(project), placement: 'top' }"
+                                        class="flex items-center gap-1.5 shrink-0"
+                                    >
+                                        <icon-ph-arrows-clockwise
+                                            v-if="project.reimportCount < maxReimportCount"
+                                            class="w-4 h-4"
+                                            :class="isImportStale(project) ? 'text-gray-400 dark:text-gray-300' : 'text-green-500'"
+                                        />
+                                        <icon-ph-warning-circle-fill
+                                            v-else
+                                            class="w-4 h-4 text-yellow-500"
+                                        />
+                                        <span
+                                            class="font-mono text-xs text-gray-500 dark:text-gray-300"
+                                            :data-test="`project-reimport-status-${project.trustId}`"
                                         >
-                                            <icon-ph-x-circle-fill
-                                                v-if="project.connectionState === 'project-missing'"
-                                                class="w-4 h-4 shrink-0 mt-px text-red-600 dark:text-red-400"
-                                            />
-                                            <icon-ph-warning-circle-fill
-                                                v-else
-                                                class="w-4 h-4 shrink-0 mt-px text-red-600 dark:text-red-400"
-                                            />
-                                            <span class="flex flex-col gap-0.5 min-w-0">
-                                                <span class="text-xs font-bold text-red-700 dark:text-red-300">
-                                                    {{ importError(project)?.title }}
-                                                </span>
-                                                <span class="text-[11px] leading-[1.4] text-red-600 dark:text-red-400">
-                                                    {{ importError(project)?.detail }}
-                                                </span>
-                                            </span>
-                                        </div>
-                                        <div v-else class="flex items-center px-3 py-2 mt-1 -mx-4 -mb-4 border-t border-gray-100 bg-gray-50 dark:border-dark-border dark:bg-dark-surface/60">
-                                            <span
-                                                v-if="project.projectCreationCompleted"
-                                                class="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300"
-                                            >
-                                                <span
-                                                    class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-500 text-white"
-                                                    :data-test="`project-creation-complete-${project.trustId}`"
-                                                >
-                                                    <icon-ph-check-bold class="w-3 h-3" />
-                                                </span>
-                                                Created
-                                            </span>
-                                            <span
-                                                v-else
-                                                class="inline-flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400"
-                                                :data-test="`project-creation-incomplete-${project.trustId}`"
-                                            >
-                                                <span class="inline-block w-1.5 h-1.5 rounded-full bg-amber-500" />
-                                                Awaiting creation…
-                                            </span>
-                                        </div>
+                                            {{ project.reimportCount }} / {{ maxReimportCount }}
+                                        </span>
                                     </div>
-                                </li>
-                            </ul>
-                            <template v-if="canLoad">
-                                <div v-if="sortedData?.length === 0" class="flex flex-row items-center h-full">
-                                    <p class="flex items-center justify-center gap-2 flex-1 text-center" data-test="no-project-status-message">
-                                        <icon-ph-clock class="w-5 h-5" />
-                                        Awaiting imaging project creation from trusts…
-                                    </p>
                                 </div>
-                            </template>
-                        </div>
+                                <!-- Stacked import bar — design ref:
+                                     06_imaging_status/imaging-status.jsx
+                                     ImagingStatusA / IPSImportBar.
+                                     Always rendered (even when importStatus is absent)
+                                     so every card has the same body height and the
+                                     footer pin lands at the card bottom in the grid. -->
+                                <div class="flex flex-col gap-2 text-sm" :data-test="`import-bar-${project.trustId}`">
+                                    <div class="flex items-baseline justify-between gap-2">
+                                        <span class="inline-flex items-baseline gap-2 min-w-0">
+                                            <span
+                                                class="font-heading font-semibold text-2xl leading-none"
+                                                :class="rowTotal(project) === 0
+                                                    ? 'text-gray-400 dark:text-gray-300'
+                                                    : 'text-gray-900 dark:text-gray-100'"
+                                                :data-test="`pct-retrieved-${project.trustId}`"
+                                            >
+                                                {{ rowTotal(project) === 0
+                                                    ? "—"
+                                                    : floorPercent(rowRatio(project)) + "%" }}
+                                            </span>
+                                            <!-- The counts are real but no longer confirmed; say so next to
+                                                 the number rather than letting it read as live. -->
+                                            <span
+                                                v-if="isImportStale(project) && rowTotal(project) > 0"
+                                                class="font-mono text-[9px] uppercase tracking-[0.08em] rounded px-1.5 py-0.5 border border-red-200 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300"
+                                                :data-test="`last-known-tag-${project.trustId}`"
+                                            >
+                                                Last known
+                                            </span>
+                                        </span>
+                                        <span
+                                            class="font-mono text-[11px] text-gray-500 dark:text-gray-300 shrink-0"
+                                            :data-test="`import-count-${project.trustId}`"
+                                        >
+                                            {{ importCountLabel(project) }}
+                                        </span>
+                                    </div>
+                                    <div
+                                        class="flex h-2 rounded-full overflow-hidden bg-gray-100 dark:bg-dark-raised"
+                                        :class="{ 'opacity-[0.55]': isImportStale(project) }"
+                                    >
+                                        <template v-if="rowTotal(project) > 0">
+                                            <div
+                                                v-if="(project.importStatus?.successful ?? 0) > 0"
+                                                class="bg-emerald-500 transition-all"
+                                                :style="{ width: `${((project.importStatus?.successful ?? 0) / rowTotal(project)) * 100}%` }"
+                                            />
+                                            <div
+                                                v-if="(project.importStatus?.processing ?? 0) > 0"
+                                                class="bg-sky-500 transition-all"
+                                                :style="{ width: `${((project.importStatus?.processing ?? 0) / rowTotal(project)) * 100}%` }"
+                                            />
+                                            <div
+                                                v-if="(project.importStatus?.queued ?? 0) > 0"
+                                                class="bg-gray-400 transition-all"
+                                                :style="{ width: `${((project.importStatus?.queued ?? 0) / rowTotal(project)) * 100}%` }"
+                                            />
+                                            <div
+                                                v-if="rowFailed(project) > 0"
+                                                class="bg-red-500 transition-all"
+                                                :style="{ width: `${(rowFailed(project) / rowTotal(project)) * 100}%` }"
+                                            />
+                                        </template>
+                                    </div>
+                                    <div
+                                        class="flex justify-between font-mono text-[9px] uppercase tracking-wide text-gray-500 dark:text-gray-300"
+                                        :class="{ 'opacity-[0.65]': isImportStale(project) }"
+                                    >
+                                        <span class="inline-flex items-center gap-1">
+                                            <span class="inline-block w-1.5 h-1.5 rounded-sm bg-emerald-500" />
+                                            <span
+                                                class="text-gray-700 dark:text-gray-200 font-semibold"
+                                                :data-test="`successful-imports-${project.trustId}`"
+                                            >{{ project.importStatus?.successful ?? 0 }}</span>
+                                            retrieved
+                                        </span>
+                                        <span class="inline-flex items-center gap-1">
+                                            <span class="inline-block w-1.5 h-1.5 rounded-sm bg-sky-500" />
+                                            <span
+                                                class="text-gray-700 dark:text-gray-200 font-semibold"
+                                                :data-test="`processing-imports-${project.trustId}`"
+                                            >{{ project.importStatus?.processing ?? 0 }}</span>
+                                            processing
+                                        </span>
+                                        <span class="inline-flex items-center gap-1">
+                                            <span class="inline-block w-1.5 h-1.5 rounded-sm bg-gray-400" />
+                                            <span
+                                                class="text-gray-700 dark:text-gray-200 font-semibold"
+                                                :data-test="`queued-imports-${project.trustId}`"
+                                            >{{ project.importStatus?.queued ?? 0 }}</span>
+                                            queued
+                                        </span>
+                                        <span class="inline-flex items-center gap-1">
+                                            <span class="inline-block w-1.5 h-1.5 rounded-sm bg-red-500" />
+                                            <span
+                                                class="text-gray-700 dark:text-gray-200 font-semibold"
+                                                :data-test="`failed-imports-${project.trustId}`"
+                                            >{{ rowFailed(project) }}</span>
+                                            failed
+                                        </span>
+                                    </div>
+                                </div>
+                                <!-- Footer: project creation state (design ref:
+                                     06_imaging_status IPSCreationState), or the import
+                                     error state when the counts above have gone stale. -->
+                                <div
+                                    v-if="importError(project)"
+                                    class="flex items-start gap-2 px-3 py-2 mt-1 -mx-4 -mb-4 border-t border-red-200 bg-red-50 dark:border-red-500/40 dark:bg-red-500/10"
+                                    :data-test="`import-error-${project.trustId}`"
+                                >
+                                    <icon-ph-x-circle-fill
+                                        v-if="project.connectionState === 'project-missing'"
+                                        class="w-4 h-4 shrink-0 mt-px text-red-600 dark:text-red-400"
+                                    />
+                                    <icon-ph-warning-circle-fill
+                                        v-else
+                                        class="w-4 h-4 shrink-0 mt-px text-red-600 dark:text-red-400"
+                                    />
+                                    <span class="flex flex-col gap-0.5 min-w-0">
+                                        <span class="text-xs font-bold text-red-700 dark:text-red-300">
+                                            {{ importError(project)?.title }}
+                                        </span>
+                                        <span class="text-[11px] leading-[1.4] text-red-600 dark:text-red-400">
+                                            {{ importError(project)?.detail }}
+                                        </span>
+                                    </span>
+                                </div>
+                                <div v-else class="flex items-center px-3 py-2 mt-1 -mx-4 -mb-4 border-t border-gray-100 bg-gray-50 dark:border-dark-border dark:bg-dark-surface/60">
+                                    <span
+                                        v-if="project.projectCreationCompleted"
+                                        class="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300"
+                                    >
+                                        <span
+                                            class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-500 text-white"
+                                            :data-test="`project-creation-complete-${project.trustId}`"
+                                        >
+                                            <icon-ph-check-bold class="w-3 h-3" />
+                                        </span>
+                                        Created
+                                    </span>
+                                    <span
+                                        v-else
+                                        class="inline-flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400"
+                                        :data-test="`project-creation-incomplete-${project.trustId}`"
+                                    >
+                                        <span class="inline-block w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                        Awaiting creation…
+                                    </span>
+                                </div>
+                            </div>
+                        </li>
+                    </ul>
+                    <div v-if="sortedData?.length === 0" class="flex flex-row items-center flex-1">
+                        <p class="flex items-center justify-center gap-2 flex-1 text-center" data-test="no-project-status-message">
+                            <icon-ph-clock class="w-5 h-5" />
+                            Awaiting imaging project creation from trusts…
+                        </p>
                     </div>
                 </div>
             </Transition>
@@ -312,7 +311,8 @@
                 text="Project approval is required to view the imaging project status"
                 variant="info"
                 close
-                class="relative m-auto text-base"
+                data-test="approval-required-alert"
+                class="relative text-base shrink-0"
                 :rounded="false"
                 :bordered="false"
             />

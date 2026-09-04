@@ -156,6 +156,16 @@ describe("ProjectStatus", () => {
 
             expect(skeletons.length).toBeGreaterThan(0);
         });
+
+        it("keeps the approval-required alert under the title instead of vertically centring it", () => {
+            const wrapper = mountProjectStatus(false);
+
+            const alert = wrapper.find("[data-test=approval-required-alert]");
+            expect(alert.exists()).toBe(true);
+            // m-auto would centre the alert in the now fill-height flex-column card.
+            expect(alert.classes()).not.toContain("m-auto");
+            expect(alert.classes()).toContain("shrink-0");
+        });
     });
 
     describe("loading state", () => {
@@ -311,6 +321,26 @@ describe("ProjectStatus", () => {
             expect(wrapper.find("[data-test=trust-name-trust-1]").exists()).toBe(true);
             expect(wrapper.find("[data-test=trust-name-trust-2]").exists()).toBe(true);
             expect(wrapper.find("[data-test=trust-name-trust-3]").exists()).toBe(true);
+        });
+
+        it("scrolls the trust grid on its own while the header and overview row stay pinned", () => {
+            const wrapper = mountProjectStatus(true);
+
+            const grid = wrapper.find("ul[role=list]");
+            expect(grid.classes()).toContain("overflow-y-auto");
+            expect(grid.classes()).toContain("flex-1");
+            expect(grid.classes()).toContain("min-h-0");
+            // Without auto-rows-max the implicit rows are sized against the scroll
+            // container's height instead of their content, and because every trust
+            // card is overflow-hidden (min size 0) they collapse to a sliver.
+            expect(grid.classes()).toContain("auto-rows-max");
+            expect(grid.classes()).toContain("content-start");
+
+            // The five-stat overview is a sibling of the scroller, not inside it.
+            const overview = wrapper.find("[data-test=overview-project-creation]")
+                .element.closest("div.grid-cols-5");
+            expect(overview?.className).toContain("shrink-0");
+            expect(grid.element.contains(overview)).toBe(false);
         });
     });
 
