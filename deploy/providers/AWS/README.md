@@ -680,9 +680,11 @@ Replace each `<…>` with the matching value from the FLIP AWS account directory
 
 If your local profile names differ, override the defaults via `PROD_AWS_PROFILE`, `STAG_AWS_PROFILE`, or `DEV_AWS_PROFILE` (in your env file or on the make command line).
 
-**Dev account (Cognito + SES only):**
+**Dev account (Cognito + S3 only):**
 
-The dev AWS account runs only the services that cannot reasonably run locally (Cognito for auth, SES for email). A separate, minimal Terraform root lives in [`dev/`](./dev/README.md) and calls the same `modules/cognito` and `modules/ses` as this stack, so a change to either service lands in both environments from one place. The dev stack reuses `.env.development` — the same env file the local Docker Compose dev stack consumes — so there is no extra file to maintain.
+The dev AWS account runs only the services that cannot reasonably run locally (Cognito for auth, plus the three FLIP application S3 buckets). A separate, minimal Terraform root lives in [`dev/`](./dev/README.md) and calls the same `modules/cognito` and `modules/flip_s3_bucket` as this stack, so a change to either service lands in both environments from one place. The dev stack reuses `.env.development` — the same env file the local Docker Compose dev stack consumes — so there is no extra file to maintain.
+
+Dev carries **no SES**: flip-api defaults to `EMAIL_BACKEND=console` in development and logs would-be emails instead of sending them (FLIP#919), so `make up` needs no SES identity, templates or verified address. Only prod/stag instantiate `modules/ses`.
 
 The dev stack has its own Makefile; drive it from the `dev/` directory:
 
@@ -694,7 +696,7 @@ make plan
 make apply
 ```
 
-See [`dev/README.md`](./dev/README.md) for the one-time `terraform import` workflow that pulls the manually-created dev Cognito pool into state.
+See [`dev/README.md`](./dev/README.md) for the first-time setup workflow (the dev resources are Terraform-managed from day one; there is no import step).
 
 ### Terraform module layout
 
@@ -718,11 +720,11 @@ deploy/providers/AWS/
 ├── certificate.tf              # ACM certificates (ALB in eu-west-2, CloudFront viewer in us-east-1)
 ├── modules/
 │   ├── cognito/                # shared: pool, domain, client, seed users
-│   ├── ses/                    # shared: sender identity, transactional templates
+│   ├── ses/                    # prod/stag only: sender identity, transactional templates
 │   ├── secgroup/               # shared: security-group wrapper
 │   ├── flip_s3_bucket/         # shared: opinionated FLIP application S3 bucket
 │   └── trust_ec2/              # prod/stag only: Trust EC2 host
-└── dev/                        # dev-account root (calls cognito + ses modules)
+└── dev/                        # dev-account root (calls cognito + flip_s3_bucket modules)
 ```
 
 The Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) run on **ECS
