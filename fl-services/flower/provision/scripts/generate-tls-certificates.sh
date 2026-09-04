@@ -19,18 +19,32 @@
 #
 # Requires: uv (pulls `cryptography` ephemerally via --with).
 # Usage: generate-tls-certificates.sh net-1     (call once per net: net-1, net-2)
+#
+# FLOWER_NUM_SUPERNODES sets how many SuperNode credentials to mint (default 2,
+# generate_creds.py's own default). It needs to cover every slot the hub can hand
+# out — FL_KIT_SLOT_NAMES — because each trust fetches keys/supernode_credentials_<slot>
+# and there is no way to add one later: a re-run regenerates the CA, so every
+# existing node's material is invalidated. `make provision` derives it from the
+# environment's slot pool for this reason.
 set -euo pipefail
 
 NET="${1:?usage: generate-tls-certificates.sh <net-1|net-2>}"
+NUM_SUPERNODES="${FLOWER_NUM_SUPERNODES:-2}"
+case "$NUM_SUPERNODES" in
+    '' | *[!0-9]* | 0)
+        echo "❌ FLOWER_NUM_SUPERNODES must be a positive integer (got '$NUM_SUPERNODES')" >&2
+        exit 1
+        ;;
+esac
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(git -C "$HERE" rev-parse --show-toplevel)"
 OUT="${FLOWER_CERTS_DIR:-$REPO_ROOT/fl-services/flower/provision/creds}/$NET"
 
 mkdir -p "$OUT"
-echo "🔐 Generating Flower TLS certs + SuperNode key pairs for $NET → $OUT"
+echo "🔐 Generating Flower TLS certs + $NUM_SUPERNODES SuperNode key pair(s) for $NET → $OUT"
 # generate_creds.py writes certificates/ + keys/ into CWD (and clears any existing),
 # so run it inside the per-net output dir.
-( cd "$OUT" && uv run --no-project --with cryptography "$HERE/generate_creds.py" )
+( cd "$OUT" && uv run --no-project --with cryptography "$HERE/generate_creds.py" --supernodes "$NUM_SUPERNODES" )
 
 # Tighten permissions. Private keys are owner+group readable only (640): the FL
 # containers read them via the compose `group_add: ${DOCKER_GID}` (the host group),
