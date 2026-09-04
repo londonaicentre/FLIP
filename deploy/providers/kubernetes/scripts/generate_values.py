@@ -44,7 +44,16 @@ ENV_VAR_MAP = {
     "S3_KIT_DATE": ("flClient.nvflare.kitFromS3.kitDate", False),
     "S3_KIT_DATE_FLOWER": ("flClient.flower.kitFromS3.kitDate", False),
     "AICENTRE_BUCKET_NAME": ("omopDb.initJob.s3Bucket", False),
-    "OMOP_DATA_VERSION": ("omopDb.initJob.dataVersion", False),
+    "TRUST_DATA_VERSION": ("trustData.version", False),
+}
+
+# Env vars this script used to read, and what replaced them. Dropping one from
+# ENV_VAR_MAP is silent by construction: the variable simply stops reaching the
+# generated values and the deployment follows the chart default instead — a
+# changed data version rather than an error. An operator environment that has
+# not caught up gets told (FLIP#1100).
+RENAMED_ENV_VARS = {
+    "OMOP_DATA_VERSION": "TRUST_DATA_VERSION",
 }
 
 # The chart's credential slots, as (env var name, Secret key name) pairs. Both
@@ -104,8 +113,25 @@ def parse_env_file(path):
     return env
 
 
+def warn_renamed(env):
+    """Name any env var that has been renamed away, so its loss is not silent."""
+    for old, new in RENAMED_ENV_VARS.items():
+        if not env.get(old):
+            continue
+        if env.get(new):
+            print(f"⚠️  {old} is no longer read; {new}={env[new]} is in effect.", file=sys.stderr)
+        else:
+            print(
+                f"⚠️  {old}={env[old]} is no longer read — it is now {new} (one pin covering OMOP "
+                f"and Orthanc). Set {new}={env[old]} to keep the version you had, or the chart "
+                f"default applies.",
+                file=sys.stderr,
+            )
+
+
 def build_values(env):
     """Build (values_overrides, secrets_dict) from parsed env vars."""
+    warn_renamed(env)
     overrides = {}
     for env_var, (yaml_path, _) in ENV_VAR_MAP.items():
         if env_var not in env or not env[env_var]:

@@ -184,6 +184,34 @@ already-listed IP is a no-op (idempotent — #596).
 | `imagePullSecrets` | `[]` | Registry credentials for private images |
 | `namespace.create` | `true` | Whether to create the namespace |
 | `namespace.name` | `""` | Namespace name (defaults to release namespace) |
+| `trustData.version` | `20260901` | Mock trust-data version — a git tag on the Hugging Face dataset, fetched by the OMOP and Orthanc init jobs. One value for both stores |
+| `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the init jobs fetch from |
+
+#### Upgrading: `trustData.version` replaces the two per-store pins (FLIP#1100)
+
+**This is a breaking change to the chart's values interface.** `omopDb.initJob.dataVersion` and
+`orthanc.initJob.dataVersion` are gone, replaced by the single `trustData.version` — the data
+version is now one git tag covering OMOP *and* Orthanc, so two independently pinned values could
+no longer describe a coherent state. (They had already drifted: `20260729` against `20260106`.)
+
+Helm ignores unknown keys silently, so a values file still pinning the old keys keeps installing —
+it simply stops taking effect, and the deployment follows the new default for both stores. That is
+a silent change of the deployed data version, not an error, so **check your values file before
+upgrading**:
+
+| Before | After |
+| ------ | ----- |
+| `omopDb.initJob.dataVersion: "<v>"` | `trustData.version: "<v>"` |
+| `orthanc.initJob.dataVersion: "<v>"` | `trustData.version: "<v>"` (same value — one pin covers both) |
+| `OMOP_DATA_VERSION=<v>` (env, via `generate_values.py`) | `TRUST_DATA_VERSION=<v>` |
+
+Pinning a version that predates the single-copy dataset layout is not supported: from `20260729`
+onwards every artefact is fetched at an unversioned path resolved at the tag. `archiveName` is
+unaffected — it names an **S3** object, and S3 has no revisions, so a version still lives in that
+filename.
+
+The templates read the pin through Helm's `required`, so an empty `trustData.version` fails at
+template time instead of 404-ing inside the init job.
 
 ### Secrets
 

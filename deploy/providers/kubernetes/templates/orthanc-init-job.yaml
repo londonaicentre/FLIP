@@ -47,7 +47,7 @@ spec:
               # Install tar (amazon/aws-cli image doesn't ship it)
               microdnf install -y tar gzip curl 2>/dev/null || yum install -y tar gzip curl 2>/dev/null
               TRUST_NUM="{{ .Values.trustNumber }}"
-              DATA_VERSION="{{ .Values.orthanc.initJob.dataVersion }}"
+              DATA_VERSION="{{ required "trustData.version is required — the trust-data tag every snapshot is fetched at (was omopDb.initJob.dataVersion / orthanc.initJob.dataVersion before FLIP#1100)" .Values.trustData.version }}"
               S3_BUCKET="{{ .Values.orthanc.initJob.s3Bucket }}"
               if [ -n "$S3_BUCKET" ]; then
                 ARCHIVE_NAME="{{ .Values.orthanc.initJob.archiveName }}"
@@ -63,9 +63,11 @@ spec:
               else
                 # Fall back to HuggingFace mock data, selecting the correct trust
                 # slot (trustNumber) so trust2 gets trust2's dataset, not trust1's.
-                HF_REPO="aicentreflip/trust-data"
-                HF_REVISION="main"
-                ARCHIVE="trust${TRUST_NUM}_orthanc_data_${DATA_VERSION}.tar"
+                # One copy per archive on the dataset; the data version is the git
+                # tag the URL resolves at, never part of the filename.
+                HF_REPO="{{ .Values.trustData.hfRepo }}"
+                HF_REVISION="${DATA_VERSION}"
+                ARCHIVE="trust${TRUST_NUM}_orthanc_data.tar"
                 ARCHIVE_URL="https://huggingface.co/datasets/${HF_REPO}/resolve/${HF_REVISION}/trust${TRUST_NUM}/${ARCHIVE}"
                 echo "Downloading Orthanc data from HuggingFace (trust${TRUST_NUM}): ${ARCHIVE_URL}..."
                 curl -fSL "${ARCHIVE_URL}" -o /tmp/orthanc-data.tar

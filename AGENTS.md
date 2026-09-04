@@ -162,7 +162,7 @@ cause. (Older app copies die with torch's opaque `num_samples=0` instead.)
 in-tree at `fl-tutorials/datasets/spleen/upload_spleen_labels_to_xnat.py` (the shared dataset-tooling tree)
 — **no private repo required**. It resolves each trust's XNAT project by `secondary_ID == <FLIP project_id>`,
 fetches the accession→MSD-case mapping at run time from the public `aicentreflip/trust-data` dataset
-(`omop-csv/<version>/spleen_project/image_occurrence.csv`, which also carries `source_trust`), and writes each
+(`omop-csv/spleen_project/image_occurrence.csv` at the pinned data-version tag, which also carries `source_trust`), and writes each
 label into the scan's existing `NIFTI` resource, renaming `input_` → `label_`. The XNAT protocol work lives in
 `flip.xnat` (`flip-utils/flip/xnat/`), also exposed as the `flip-xnat` CLI.
 
@@ -185,7 +185,7 @@ make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid> \
 ```
 
 The mapping is cached beside the labels dir (so a re-run needs no huggingface.co egress) and
-`HF_TRUST_DATA_REVISION=<sha>` pins the dataset revision instead of the moving `main`.
+`HF_TRUST_DATA_REVISION=<sha|main>` overrides the dataset revision, which defaults to the tag in `trust/.data_version`.
 
 Through the smoke, `make -C flip-api e2e_smoke_spleen` (or `e2e_smoke_spleen_evaluation`) carries the
 in-tree command already, targeting both dev trusts via `SPLEEN_XNAT_URLS` (override for another roster;
@@ -280,7 +280,33 @@ make -C flip-api create_testing_projects   # Create test projects
 make -C flip-api delete_testing_projects   # Clean up test data
 make seed-demo-projects                    # Curated radiology catalogue in honest lifecycle states
                                            # (EXTRA_ARGS="--cleanup" removes it again)
+make -C trust seed-trusts PROJECTS="spleen_project cxr_project"   # Seed the RUNNING dev trusts with datasets (#1100)
+make -C trust seed KIT=GSTT PROJECTS="…"   # one trust; seed-omop / seed-orthanc for one half
 ```
+
+**Trust data has two paths.** `make up` mounts pre-built snapshots (`update-omop-data` /
+`update-orthanc-data`, pinned by `trust/.data_version`) — a fixed two-project, two-trust cut.
+**Seeding** loads a chosen set of projects into a *running* trust instead: OMOP rows via
+`omop_db_tools.import_tables` and DICOMs via `trust/orthanc/seed_orthanc.py`, both selected by the
+same `source_trust` column of the published canonical tables, so a trust's OMOP rows and the studies
+in its PACS agree by construction. Same lifecycle as `load-omop-vocab`: one-time after `up-trusts`,
+idempotent, persists in the bind-mounted volumes until a `.data_version` bump — which the update
+scripts then refuse to apply over a seeded volume without `FORCE=1`. Adding a dataset means
+publishing its `omop-csv/<project>/` tables and `dicom/<project>.tar.gz`
+(`trust/orthanc/publish_dicom.py` verifies both agree before packaging), not a new pair of tarballs.
+The FL simulator (`make -C fl-tutorials run-tutorial`) is a third, separate path: LOCAL_DEV reads
+`fl-tutorials/data/` straight from disk and touches no trust service.
+
+**One copy of every artefact; a data version is a git tag.** `aicentreflip/trust-data` holds each
+file once, at an unversioned path on `main` (`trust<N>/trust<N>_pgdata.tar`,
+`trust<N>/trust<N>_orthanc_data.tar`, `omop-csv/<project>/`, `dicom/<project>.tar.gz`). A data
+version is a tag on that dataset, and `trust/.data_version` is the ONE pin, for OMOP and Orthanc
+together: every consumer (the two update scripts, `omop_db_tools.dataset`, `seed_orthanc.py`, the
+spleen uploader, Ansible, the Helm chart) fetches `resolve/<tag>/<path>`, so old versions stay
+reachable at their tags forever and are never duplicated. `HF_TRUST_DATA_REVISION` overrides the
+tag (`main` to work against content that is not tagged yet). Publishing a version is
+`make -C trust publish-trust-data VERSION=<tag> …` — one commit on the dataset plus one tag —
+then a bump of `trust/.data_version`. Never add a versioned filename or directory to the dataset.
 
 ### Demo Video Recorder
 
