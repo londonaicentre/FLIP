@@ -104,9 +104,6 @@ Each CI workflow follows this pattern:
     echo "DATA_ACCESS_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
     echo "OMOP_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
     echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-    echo "SES_VERIFIED_EMAIL=${{ secrets.SES_VERIFIED_EMAIL }}" >> .env.development
-    echo "AWS_SES_ADMIN_EMAIL_ADDRESS=${{ secrets.SES_VERIFIED_EMAIL }}" >> ../../.env.development
-    echo "AWS_SES_SENDER_EMAIL_ADDRESS=${{ secrets.SES_VERIFIED_EMAIL }}"
 ```
 
 This approach:

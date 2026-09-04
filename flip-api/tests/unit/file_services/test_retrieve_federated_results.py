@@ -123,8 +123,6 @@ def mocked_settings():
     mock = Settings(
         AWS_REGION="mock-region",
         AWS_COGNITO_USER_POOL_ID="eu-west-2_123456789",
-        AWS_SES_ADMIN_EMAIL_ADDRESS="admin@example.com",
-        AWS_SES_SENDER_EMAIL_ADDRESS="sender@example.com",
         UPLOADED_MODEL_FILES_BUCKET="mock-bucket",
         UPLOADED_FEDERATED_DATA_BUCKET="s3://mock-bucket-uploaded/uploaded_federated_data",
         SCANNED_MODEL_FILES_BUCKET="s3://mock-bucket-scanned/model_files",

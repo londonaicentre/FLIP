@@ -61,6 +61,16 @@ describe("sentinels", () => {
         expect(needles).toContain("Bangkok Dusit Medical Services");
         expect(needles).toContain("Running in Ark+ demo mode");
     });
+
+    it("covers the Mirage/Pretender library code, not just register data", () => {
+        // mocks/server carries no register data, so shipping it (static
+        // re-import, or a VITE_LOCAL branch that stops folding) would pass
+        // every register sentinel. These literals sit in the libraries' own
+        // code (FLIP#1041 review).
+        const needles = sentinels().map(s => s.needle);
+        expect(needles).toContain("Mirage: Passthrough request for ");
+        expect(needles).toContain("Pretender intercepted");
+    });
 });
 
 describe("scan", () => {
@@ -82,6 +92,14 @@ describe("scan", () => {
         // is still published and still publicly fetchable, so it must fail too.
         write("assets/demo-server-xyz.js", "const sql='WITH project_images AS (...)';");
         expect(scan(dist).hits).toHaveLength(1);
+    });
+
+    it("finds Mirage library code shipped without any register data", () => {
+        write("assets/index-abc123.js", "t.warn('Mirage: Passthrough request for '+e.url)");
+
+        const { hits } = scan(dist);
+        expect(hits).toHaveLength(1);
+        expect(hits[0].label).toContain("MirageJS");
     });
 
     it("scans nested directories and non-JS text output", () => {

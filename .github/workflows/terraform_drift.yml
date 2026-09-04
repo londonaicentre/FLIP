@@ -1,0 +1,333 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Nightly Terraform drift detection (FLIP#962).
+#
+# Console changes, half-finished applies and out-of-band fixes accumulate between
+# deploys, and today nothing notices until the next plan surprises whoever ran it.
+# This plans each environment on a schedule and raises one issue per environment
+# when reality has moved away from the code.
+#
+# Uses the read-only plan role and `-lock=false`, so it can never block or disturb
+# an operator mid-apply. `-detailed-exitcode` makes "there is a diff" exit 2,
+# distinct from "the plan failed" (exit 1) — the two want different responses and
+# collapsing them would train people to ignore the issue.
+#
+# WHICH ENVIRONMENT A RUN CHECKS IS DECIDED BY THE REF IT IS LOADED FROM, and this
+# is the part that is easy to get wrong twice over:
+#
+#   * GitHub only ever fires a `schedule` from the repository default branch, so
+#     the scheduled run is a `develop` run and checks **staging** only.
+#   * Production is checked by a second run that this one dispatches onto `main`
+#     (`gh workflow run … --ref main`). That is not a detail of convenience. It
+#     is what lets the `aws-prod` GitHub environment stay restricted to `main`:
+#     admitting `develop` would let *any* workflow merged to develop declare
+#     `environment: aws-prod` and read the production secrets. And it is what
+#     makes the OIDC side work at all — the plan role's trust policy matches
+#     `terraform_drift.yml@refs/heads/<drift_branch>`, which is `main` for prod
+#     (ci/variables.tf, `drift_branch`).
+#   * Checking out `github.sha` on a develop-scheduled prod run would also have
+#     compared develop's HCL against production's state and reported every
+#     unreleased change as drift. Running the prod leg on `main` fixes that by
+#     construction: the checkout is main's tip because the run is main's run.
+#
+# So: dispatching this workflow on `develop` checks staging, and on `main` checks
+# production. There is no leg for the environment a run cannot reach.
+#
+# Until this file exists on `main` — i.e. until the first release after FLIP#962 —
+# the dispatch fails, loudly, and the staging leg still reports. That is the right
+# way round: production drift silently not being checked is the failure this
+# arrangement exists to avoid.
+
+name: Terraform Drift
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC daily, well clear of working hours
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Per ref: the scheduled develop run dispatches the main run, and the two are
+  # separate runs against separate accounts that must not queue behind one another.
+  group: tf-drift-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: Drift (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
+    runs-on: ubuntu-latest
+    # No matrix: a run can only reach the one environment its ref is trusted for,
+    # so there is exactly one leg. The same `github.ref_name == 'main'` ternary
+    # that terraform_apply.yml uses selects every environment-specific value.
+    environment: ${{ github.ref_name == 'main' && 'aws-prod' || 'aws-stag' }}
+    permissions:
+      contents: read
+      id-token: write # mint the OIDC token
+      issues: write # raise the drift issue
+
+    defaults:
+      run:
+        # `bash` (not the default `bash -e`) adds `-o pipefail`. Without it a
+        # failing `gh issue list | head -1` reads as "no existing issue" and files
+        # a duplicate every night, and a jq error reads as "no changes" and raises
+        # an issue with a blank body.
+        shell: bash
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ vars.TF_PLAN_ROLE_ARN }}
+          role-session-name: flip-tf-drift-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # Read the tags the services are running rather than the configured mutable
+      # ones, for the same reason terraform_plan.yml does: an apply writes the
+      # immutable `sha-<short7>` pin (FLIP#751) into the task definitions, so a
+      # drift run reading `vars.DOCKER_TAG` would report `sha-… -> :prod` every
+      # night, on the FL task definitions among others, and nobody could clear it.
+      # RESOLVE_SHA_TAG=false means no registry access and no waiting.
+      - name: Resolve the image tags the services are running
+        env:
+          GIT_SHA: ${{ github.sha }}
+          DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
+          FALLBACK_DOCKER_TAG: ${{ vars.DOCKER_TAG }}
+          FALLBACK_DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}
+          FL_BACKEND: ${{ vars.FL_BACKEND }}
+          RESOLVE_SHA_TAG: "false"
+        run: deploy/providers/AWS/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"
+
+      # Scoped to this step, exactly as in terraform_plan.yml and
+      # terraform_apply.yml. A job-level `env:` block would define every key for
+      # every step — and, worse, define an *absent* GitHub variable as the empty
+      # string. compose-ci-env.sh can tell absent from empty; the Makefile's `?=`
+      # defaults cannot, so `TF_VAR_deploy_trust_ec2=` reaches Terraform and the
+      # run fails on a type error the operator has to decode.
+      #
+      # DOCKER_TAG / DOCKER_FL_TAG are deliberately absent: they arrive from the
+      # resolver above through $GITHUB_ENV.
+      - name: Compose the Terraform env file
+        env:
+          TF_ENV: ${{ github.ref_name == 'main' && 'prod' || 'stag' }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          VPC_NAME: ${{ vars.VPC_NAME }}
+          FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}
+          AICENTRE_BUCKET_NAME: ${{ vars.AICENTRE_BUCKET_NAME }}
+          FLIP_APP_BUNDLES_BUCKET_NAME: ${{ vars.FLIP_APP_BUNDLES_BUCKET_NAME }}
+          FLIP_FL_RESULTS_BUCKET_NAME: ${{ vars.FLIP_FL_RESULTS_BUCKET_NAME }}
+          FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME: ${{ vars.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME }}
+          FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
+          FLIP_BUCKET_NAME: ${{ vars.FLIP_BUCKET_NAME }}
+          API_PORT: ${{ vars.API_PORT }}
+          DB_PORT: ${{ vars.DB_PORT }}
+          UI_PORT: ${{ vars.UI_PORT }}
+          FL_API_PORT: ${{ vars.FL_API_PORT }}
+          FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
+          ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
+          DEMO_ASSETS_BUCKET_NAME: ${{ vars.DEMO_ASSETS_BUCKET_NAME }}
+          FL_ADMIN_DIRECTORY: ${{ vars.FL_ADMIN_DIRECTORY }}
+          INTERNAL_SERVICE_KEY_HEADER: ${{ vars.INTERNAL_SERVICE_KEY_HEADER }}
+          TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}
+          MIN_CLIENTS: ${{ vars.MIN_CLIENTS }}
+          SES_VERIFIED_EMAIL: ${{ vars.SES_VERIFIED_EMAIL }}
+          ALB_SUBDOMAIN: ${{ vars.ALB_SUBDOMAIN }}
+          NLB_SUBDOMAIN: ${{ vars.NLB_SUBDOMAIN }}
+          DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
+          FL_BACKEND: ${{ vars.FL_BACKEND }}
+          FL_KIT_SLOT_NAMES: ${{ vars.FL_KIT_SLOT_NAMES }}
+          FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
+          FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
+          DEPLOY_TRUST_EC2: ${{ vars.DEPLOY_TRUST_EC2 }}
+          LOCAL_TRUST_PUBLIC_IPS: ${{ vars.LOCAL_TRUST_PUBLIC_IPS }}
+          K8S_TRUST_PUBLIC_IPS: ${{ vars.K8S_TRUST_PUBLIC_IPS }}
+          JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
+          JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: ${{ vars.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB }}
+          ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
+          AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
+          INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
+          INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
+          POSTGRES_DB: ${{ vars.POSTGRES_DB }}
+          POSTGRES_USER: ${{ vars.POSTGRES_USER }}
+        run: deploy/providers/AWS/scripts/compose-ci-env.sh ".env.${{ github.ref_name == 'main' && 'production' || 'stag' }}"
+
+      - name: Write the EC2 keypair public key
+        run: |
+          mkdir -p "$HOME/.ssh"
+          if ! aws ssm get-parameter \
+            --name /flip/ci/host_aws_public_key \
+            --query Parameter.Value --output text > "$HOME/.ssh/host-aws.pub"; then
+            echo "::error::/flip/ci/host_aws_public_key is missing. Seed it with:" \
+                 "make -C deploy/providers/AWS seed-ci-keypair-param"
+            exit 1
+          fi
+          chmod 600 "$HOME/.ssh/host-aws.pub"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "~> 1.13"
+          terraform_wrapper: false
+
+      - name: Export the Terraform variables
+        working-directory: deploy/providers/AWS
+        env:
+          PROD: ${{ github.ref_name == 'main' && 'true' || 'stag' }}
+        run: make --no-print-directory print-tf-env >> "$GITHUB_ENV"
+
+      - name: Terraform init
+        working-directory: deploy/providers/AWS
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.FLIP_TFSTATE_BUCKET_NAME }}" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -reconfigure
+
+      - name: Terraform plan
+        id: plan
+        working-directory: deploy/providers/AWS
+        env:
+          NAME: ${{ github.ref_name == 'main' && 'prod' || 'stag' }}
+        run: |
+          # plan.txt renders every resource attribute, so it is captured to a
+          # file (gitignored) rather than to the job log, which is public.
+          set +e
+          terraform plan -detailed-exitcode -lock=false -no-color -out=tfplan > plan.txt 2>&1
+          code=$?
+          set -e
+          echo "exitcode=${code}" >> "$GITHUB_OUTPUT"
+          case "${code}" in
+            0) echo "✅ No drift in ${NAME}." ;;
+            2) echo "⚠️ Drift detected in ${NAME}." ;;
+            *)
+              echo "::error::terraform plan failed for ${NAME} (exit ${code})"
+              # Only Terraform's own diagnostic frames, never a tail of the plan
+              # body: an error late in a mostly-successful refresh would put
+              # resource attributes into a public log. Via a file rather than a
+              # pipe into `head` — under pipefail, `head` closing the pipe kills
+              # awk with SIGPIPE and the message is lost.
+              awk '/^╷/,/^╵/' plan.txt > diagnostics.txt || true
+              if [[ ! -s diagnostics.txt ]]; then
+                grep -E '^(Error|Warning):' plan.txt > diagnostics.txt || true
+              fi
+              if [[ -s diagnostics.txt ]]; then
+                head -60 diagnostics.txt
+              else
+                echo "No diagnostic block found. The full plan text stays on the runner and is"
+                echo "deliberately not published — re-run the plan from a laptop to read it."
+              fi
+              exit 1
+              ;;
+          esac
+
+      # The plan text is a full rendering of the diff. `sensitive` values render as
+      # (sensitive value), but the issue body is still trimmed to the change
+      # summary rather than pasted whole — an issue on a public repository is not
+      # the place for an unbounded dump of infrastructure detail.
+      - name: Summarise the drift
+        if: steps.plan.outputs.exitcode == '2'
+        id: summary
+        working-directory: deploy/providers/AWS
+        run: |
+          terraform show -json tfplan > tfplan.json
+          # Written to a file, not piped into `head`: `head` closing the pipe
+          # early makes jq exit on SIGPIPE, which under pipefail fails the step
+          # for no reason. Truncation happens on the file instead.
+          jq -r '
+            [.resource_changes[]
+             | select(.change.actions | any(. != "no-op" and . != "read"))]
+            | if length == 0 then "No resource changes (provider or output drift only)."
+              else (.[] | "- `\(.change.actions | join("+"))` \(.address)")
+              end
+          ' tfplan.json > changes.txt
+          {
+            echo "changes<<DRIFT_EOF"
+            head -100 changes.txt
+            echo "DRIFT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # One open issue per environment, updated in place. A new issue per night
+      # would bury the first report — which is the one with the useful timestamp.
+      - name: Raise or update the drift issue
+        if: steps.plan.outputs.exitcode == '2'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NAME: ${{ github.ref_name == 'main' && 'prod' || 'stag' }}
+          TITLE: "Terraform drift detected: ${{ github.ref_name == 'main' && 'prod' || 'stag' }}"
+          CHANGES: ${{ steps.summary.outputs.changes }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # printf rather than a heredoc: a heredoc inside a YAML block scalar
+          # carries the block's own indentation into every line, and ten leading
+          # spaces make GitHub render the whole issue body as a code block.
+          body="$(printf '%s\n' \
+            "The nightly drift plan for **${NAME}** found differences between the" \
+            "Terraform code on \`${REF_NAME}\` and the live infrastructure." \
+            "" \
+            "${CHANGES}" \
+            "" \
+            "Full plan output: ${RUN_URL}" \
+            "" \
+            "Either apply the change (merge to the environment's branch) or reconcile" \
+            "whatever was changed out of band. This issue is updated in place by each" \
+            "nightly run and can be closed once the plan is clean.")"
+          # Same reason as above: `| head -1` would sink gh on SIGPIPE, and under
+          # pipefail a failed lookup must fail the step rather than read as
+          # "no existing issue" and file a duplicate every night.
+          gh issue list --state open --search "\"${TITLE}\" in:title" \
+            --json number,title --jq ".[] | select(.title == \"${TITLE}\") | .number" \
+            > "${RUNNER_TEMP}/open-issues.txt"
+          existing="$(head -1 "${RUNNER_TEMP}/open-issues.txt")"
+          if [[ -n "${existing}" ]]; then
+            gh issue comment "${existing}" --body "${body}"
+            echo "Updated issue #${existing}."
+          else
+            # --label fails the whole call if the label does not exist yet, which
+            # would lose the drift report over a cosmetic detail. Create it once,
+            # ignore the "already exists" case, and fall back to an unlabelled
+            # issue if label creation is not permitted.
+            gh label create terraform-drift \
+              --description "Raised by the nightly Terraform drift run" \
+              --color D93F0B 2>/dev/null || true
+            gh issue create --title "${TITLE}" --body "${body}" --label terraform-drift \
+              || gh issue create --title "${TITLE}" --body "${body}"
+          fi
+
+  # The production leg, run from `main` so that it reaches the prod plan role and
+  # compares main's HCL — see the header. GITHUB_TOKEN can start a run this way:
+  # `workflow_dispatch` and `repository_dispatch` are the two events exempted from
+  # the rule that a token-triggered event creates no new workflow run.
+  #
+  # Deliberately not `continue-on-error`: if the dispatch fails, production drift
+  # silently stops being checked, which is the failure this whole arrangement
+  # exists to avoid. The staging leg above is a separate job and still reports.
+  dispatch-prod:
+    name: Dispatch the production drift run on main
+    if: github.ref_name != 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write # start the run on main
+    steps:
+      - name: Dispatch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh workflow run terraform_drift.yml --ref main
+          echo "Dispatched terraform_drift.yml on main — that run checks production."
