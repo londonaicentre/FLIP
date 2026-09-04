@@ -824,7 +824,7 @@ This prints a list of URLs you can paste into your browser:
 
 | Service | Local URL | Purpose |
 | --- | --- | --- |
-| XNAT | `http://localhost:8104` | Neuroimaging platform UI |
+| XNAT | `http://localhost:8105` | Neuroimaging platform UI |
 | Orthanc | `http://localhost:8042` | DICOM server UI (basic auth: the kit file's `ORTHANC_USERNAME`/`ORTHANC_PASSWORD`) |
 | trust-api swagger | `http://localhost:8020/docs` | Trust API documentation |
 | imaging-api swagger | `http://localhost:8001/docs` | Imaging API documentation |
@@ -832,6 +832,20 @@ This prints a list of URLs you can paste into your browser:
 | Grafana | `http://localhost:3000` | Observability dashboards |
 
 Press Ctrl+C to stop all forwards. The Central Hub UI and API are accessed via the CloudFront distribution at the canonical subdomain (e.g. `https://app.flip.aicentre.co.uk`) — no port forwarding needed. The ALB is internal (private subnets, no public IP); CloudFront reaches it through a VPC origin.
+
+> **Upgrading a trust deployed before the XNAT port split (FLIP#993) — every existing trust must
+> act:** `XNAT_PORT` used to mean both the DICOM receiver and the web UI. It now means the DICOM
+> receiver only, and the web UI has its own `XNAT_WEB_PORT`. Both are published on the host on
+> **every** deployment, not only where a real PACS is configured, so the two must differ. A kit
+> file that sets only `XNAT_PORT` resolves them to the same number — `XNAT_WEB_PORT` defaults to
+> `XNAT_PORT` — so the next `make up-trust` / `up-trust-ec2` on that kit is **refused** by the
+> collision guard, which names both values and the kit file to edit. The refusal is the intended
+> upgrade path: deriving the web port from `XNAT_PORT` routes a pre-split kit into a loud
+> instruction instead of silently moving its web UI to a number nothing else expects. Add
+> `XNAT_WEB_PORT` to that trust's kit file before the next deploy (the shipped dev allocation is
+> 8104 DICOM / 8105 web for the first trust, 8106/8107 for the second). The `forward-trust` URL
+> above is 8105 by convention, not by enforcement; a trust that chose different numbers forwards
+> its own.
 
 ## Checkov Security Lint
 

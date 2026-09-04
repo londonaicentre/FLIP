@@ -9,6 +9,7 @@ FLIP components
    components/component-fl-nodes
    components/component-omop-database
    components/component-xnat
+   components/component-pacs
    components/component-logging-stack
 
 .. note::

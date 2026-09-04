@@ -74,7 +74,6 @@ trust's kit file (`trust/.env.<CODE>.<env>`); hub-shared values (`AES_KEY_BASE64
 | `HEALTH_COLLECT_INTERVAL_SECONDS` | How often the health collector probes the trust services (default: 30) |
 | `HEALTH_PROBE_DEGRADED_MS` | A successful probe slower than this reports `degraded` (default: 1000) |
 | `XNAT_URL` | Internal URL of XNAT for the health probe (default `http://xnat-web:8080`) |
-| `PACS_ID` | XNAT DQR PACS id used for the `ping_pacs` deep probe (default: 1) |
 | `OMOP_DB_HOST` / `OMOP_DB_PORT` | OMOP PostgreSQL address for the TCP health probe (defaults `omop-db` / 5432) |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Forwarded outbound on every call to imaging-api and data-access-api so those services can authenticate the caller. Minted by `register_trust` (`make register-trust KIT=<CODE>`) into this trust's kit file (`trust/.env.<CODE>.<env>`). |

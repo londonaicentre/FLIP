@@ -13,7 +13,7 @@
 .PHONY: build dev prod clean stop up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
 	create-networks remove-networks recreate-networks tests \
-	update-omop-data update-orthanc-data integration_test
+	update-omop-data update-orthanc-data integration_test require-xnat-aetitle
 # PROD selects the compose-file suffix (__DCKR_SUFFIX: stag collapses to the
 # production compose) and the kit-file env token (ENV: stag stays distinct, so
 # a stag kit is .env.<CODE>.stag, never confused with .env.<CODE>.production).
@@ -315,6 +315,26 @@ define require_kit_file
 	fi
 endef
 
+# Guard: refuse an explicitly-empty XNAT_AETITLE before either stack sees it. The value has two
+# kinds of consumer with opposite empty-value behaviour, and the kit file is the one place an
+# operator sets it:
+#   - the XNAT stack (xnat/Makefile → configure-xnat.sh) passes an empty value through on purpose
+#     (XNAT_AETITLE_EFFECTIVE) so the script's own ${VAR-default} guard is what reports it;
+#   - the trust compose (Orthanc's DICOM_MODALITIES entry, imaging-api's XNAT_AETITLE) uses
+#     ${XNAT_AETITLE:-XNAT}, because those consumers default the value in code and have no
+#     empty-value check of their own — a bare-dash pass-through would register an empty AE title
+#     rather than fail (see the note above imaging-api's environment in deploy/compose_trust.*.yml).
+# So the explicit empty is refused here, once, before compose or the stack runs, and both sides
+# keep agreeing on the AE title DQR matches the C-MOVE destination against. An undefined
+# XNAT_AETITLE (line absent or commented out in the kit) still takes the XNAT default in both
+# places. $(origin) rather than $(if $(XNAT_AETITLE),…): the latter cannot tell unset from empty,
+# which is exactly the distinction that matters. Evaluated in the recipe, not at parse time, so
+# down-trust / build / help still work against a kit that carries the bad value.
+XNAT_AETITLE_SET_EMPTY := $(if $(filter undefined,$(origin XNAT_AETITLE)),,$(if $(strip $(XNAT_AETITLE)),,yes))
+XNAT_AETITLE_SOURCE := $(if $(filter file,$(origin XNAT_AETITLE)),$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),trust/$(KIT_FILE)),the $(origin XNAT_AETITLE))
+require-xnat-aetitle:
+	@$(if $(XNAT_AETITLE_SET_EMPTY),$(error XNAT_AETITLE is set but empty in $(XNAT_AETITLE_SOURCE). It is XNAT's own AE title (SCP receiver, DQR calling AE and C-MOVE destination): set it, or drop the line to take the default 'XNAT'),:)
+
 # Guard: refuse to act on the compose project this kit resolves to when it is already held
 # by a DIFFERENT trust. TRUST_PROJECT is trust$(FL_KIT_SLOT_NUMBER), and slots are handed
 # out by the hub from its own database — so a second hub (FLIP_INSTANCE, FLIP#957)
@@ -382,8 +402,9 @@ build:
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS) (defined in the
 # root Makefile and inherited here): pulls fresh FL images when
 # DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op
-# otherwise.
-up-trust: update-omop-data update-orthanc-data create-networks
+# otherwise. require-xnat-aetitle goes first so a bad kit is refused before the data
+# fixtures are fetched, not just before compose runs.
+up-trust: require-xnat-aetitle update-omop-data update-orthanc-data create-networks
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
@@ -425,7 +446,7 @@ restart-trust: down-trust up-trust
 # workstation against a remote docker context, so a local mkdir cannot touch the
 # EC2 host — the per-net images dirs there are pre-created (ubuntu-owned) by the
 # AWS provisioning playbook (deploy/providers/AWS/site.yml).
-up-trust-ec2:
+up-trust-ec2: require-xnat-aetitle
 	$(require_kit_file)
 	$(check_slot_not_taken)
 	@echo "🚢 Starting Trust services on EC2 (KIT=$(KIT))..."

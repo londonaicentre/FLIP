@@ -241,7 +241,6 @@ async def test_probe_dicom_healthy_measures_own_round_trip_and_sends_internal_ke
     mock_client.get.return_value = _response(200, {"successful": True, "pingTime": 1_786_029_453_834})
 
     with (
-        patch.object(health_collector, "PACS_ID", 1),
         patch(
             "trust_api.services.health_collector.trust_internal_headers",
             return_value={"X-Trust-Internal-Service-Key": "secret"},
@@ -252,7 +251,9 @@ async def test_probe_dicom_healthy_measures_own_round_trip_and_sends_internal_ke
 
     assert result == {"status": "healthy", "version": None, "response_ms": 250}
     call_args = mock_client.get.call_args
-    assert call_args[0][0].endswith("/imaging/ping_pacs/1")
+    # No trailing id: imaging-api resolves the registered PACS. A pinned id here was a second
+    # source of truth for something XNAT assigns at registration (FLIP#993).
+    assert call_args[0][0].endswith("/imaging/ping_pacs")
     assert call_args[1]["headers"] == {"X-Trust-Internal-Service-Key": "secret"}
 
 

@@ -120,6 +120,162 @@ jobs:
             --set omopDb.external.host=test.example.com \
             > /dev/null
 
+      # The real-PACS path is entirely opt-in: with the defaults the chart deploys the mocked
+      # Orthanc, keeps the Service ClusterIP and leaves ingress default-denied. None of the
+      # NodePort or NetworkPolicy-ingress bodies render at all unless configured, so without this
+      # step a broken .Values path in either would merge green and only fail for the first trust
+      # that connects a real PACS (FLIP#993).
+      - name: Render template (real PACS)
+        run: |
+          helm template trust-release deploy/providers/kubernetes/ \
+            --set xnat.web.service.type=NodePort \
+            --set xnat.web.dicomNodePort=8104 \
+            --set xnat.web.dicomAet=FLIPXNAT \
+            --set pacs.host=10.0.0.10 \
+            --set pacs.aeTitle=SECTRA_QR \
+            --set pacs.qrPort=8059 \
+            --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+            --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' \
+            --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+            --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' > /tmp/real-pacs.yaml
+          for want in "nodePort: 8104" "allow-pacs-ingress" "cidr: \"10.0.0.10/32\"" \
+                      "value: \"SECTRA_QR\"" "value: \"10.0.0.10\"" "value: \"8059\"" \
+                      "value: \"FLIPXNAT\""; do
+            if ! grep -q "$want" /tmp/real-pacs.yaml; then
+              echo "::error::real-PACS render is missing: $want"
+              exit 1
+            fi
+          done
+          # imaging-api builds the C-MOVE destination from these, and DQR matches it against a
+          # registered receiver by exact AE title and port. Grepping the whole document is not
+          # enough — the init job's own copy satisfies that while imaging-api silently falls back
+          # to its code default, which is how this shipped broken once (FLIP#993).
+          python3 - <<'PY'
+          import re, sys, pathlib
+          doc = pathlib.Path("/tmp/real-pacs.yaml").read_text()
+          cm = next((d for d in doc.split("---")
+                     if "kind: ConfigMap" in d and "component: imaging-api" in d), None)
+          if cm is None:
+              sys.exit("::error::imaging-api ConfigMap not found in the real-PACS render")
+          for key, val in (("XNAT_AETITLE", "FLIPXNAT"), ("XNAT_PORT", "8104")):
+              if not re.search(rf'^\s*{key}:\s*"{val}"\s*$', cm, re.M):
+                  sys.exit(f'::error::imaging-api ConfigMap missing {key}: "{val}" '
+                           f'— the C-MOVE destination will not match the registered receiver')
+          PY
+
+      # A real PACS with no egress rule cannot be queried at all — C-FIND never leaves the cluster.
+      # The chart refuses to render that, so assert the refusal: this configuration was previously
+      # rendered and asserted as correct (FLIP#993).
+      - name: Render template (real PACS without egress is refused)
+        run: |
+          if helm template trust-release deploy/providers/kubernetes/ \
+               --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 > /dev/null 2>&1; then
+            echo "::error::a PACS with no egress rule rendered successfully"
+            exit 1
+          fi
+
+      # The return leg. Egress alone gets C-FIND and C-MOVE out; the studies come back on a *new*
+      # association the PACS opens to XNAT, which the default-deny drops unless the ingress
+      # allowance names the receiver's port. That configuration used to render clean and fail only
+      # at retrieval time — queries succeed, retrievals silently time out (FLIP#993). The second
+      # case is the near miss the guard exists for: an operator who lists the NodePort instead of
+      # the pod's containerPort. Both must be refused, or the render guard is decorative.
+      - name: Render template (real PACS without matching ingress is refused)
+        run: |
+          for port_args in "" "--set networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32 --set networkPolicies.allowedIngressCIDRsWithPorts[0].port=31104"; do
+            # shellcheck disable=SC2086 # deliberate word splitting: $port_args carries several flags
+            if helm template trust-release deploy/providers/kubernetes/ \
+                 --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
+                 --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+                 --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' \
+                 $port_args > /dev/null 2>&1; then
+              echo "::error::a PACS with no ingress rule on the receiver's port rendered successfully (${port_args:-no ingress entry})"
+              exit 1
+            fi
+          done
+
+      # One layer up from the NetworkPolicy: with every egress/ingress rule in place but the
+      # Service left at its ClusterIP default, xnat-web.yaml's NodePort blocks silently no-op and
+      # the receiver is unreachable from outside the cluster — a render that satisfies both guards
+      # above yet gives the PACS's C-STORE leg no path to take. The guard refuses ClusterIP
+      # specifically (not "anything but NodePort") so a LoadBalancer receiver stays valid.
+      - name: Render template (real PACS on a ClusterIP service is refused)
+        run: |
+          if helm template trust-release deploy/providers/kubernetes/ \
+               --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
+               --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+               --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' \
+               --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+               --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' > /dev/null 2>&1; then
+            echo "::error::a real PACS with the Service left ClusterIP rendered successfully — the receiver is unreachable"
+            exit 1
+          fi
+          # Same refusal with NetworkPolicy turned off. This guard began inside network-policy.yaml
+          # and so inherited `if .Values.networkPolicies.enabled`, which made it silently absent for
+          # a supported configuration — policies disabled is the right call on a CNI that does not
+          # enforce them, and rendering unenforced policies is worse than rendering none. It now
+          # lives in the flip-trust.validatePacsReachable partial, evaluated from xnat-web.yaml
+          # beside the Service it is about, so it fires either way. No egress/ingress rules are set
+          # here on purpose: with policies off those checks do not apply, and this asserts the
+          # exposure guard stands on its own.
+          # Assert on the refusal *message*, not just a non-zero exit: any unrelated render error
+          # would otherwise make this pass while proving nothing.
+          if helm template trust-release deploy/providers/kubernetes/ \
+               --set networkPolicies.enabled=false \
+               --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 > /dev/null 2> /tmp/nopolicy.err; then
+            echo "::error::a real PACS on ClusterIP rendered successfully with networkPolicies.enabled=false — the reachability guard is gated on NetworkPolicy again"
+            exit 1
+          fi
+          if ! grep -q "xnat.web.service.type is ClusterIP" /tmp/nopolicy.err; then
+            echo "::error::render failed for some other reason than the ClusterIP reachability guard:"
+            cat /tmp/nopolicy.err
+            exit 1
+          fi
+          # And the LoadBalancer allowance must keep rendering, or on-prem MetalLB trusts break.
+          helm template trust-release deploy/providers/kubernetes/ \
+            --set xnat.web.service.type=LoadBalancer \
+            --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
+            --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+            --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' \
+            --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+            --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' > /dev/null
+
+      # The other half of the conjunction xnat-web.yaml gates the NodePort pin and
+      # externalTrafficPolicy on. NodePort with dicomNodePort left at its empty default satisfies
+      # every guard above yet breaks the return leg twice: a random node port the PACS was never
+      # told to dial, and Cluster policy SNATting the source address so the ingress CIDR cannot
+      # match. Same queries-succeed / retrievals-time-out failure, through the one combination the
+      # other refusals leave open (FLIP#993).
+      - name: Render template (real PACS on NodePort without dicomNodePort is refused)
+        run: |
+          if helm template trust-release deploy/providers/kubernetes/ \
+               --set xnat.web.service.type=NodePort \
+               --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
+               --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+               --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' \
+               --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+               --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' > /dev/null 2> /tmp/nonodeport.err; then
+            echo "::error::a real PACS on NodePort with no dicomNodePort rendered successfully — the PACS has no stable destination port"
+            exit 1
+          fi
+          # Assert on the message, not just the exit code: an unrelated render error would
+          # otherwise make this pass while proving nothing.
+          if ! grep -q "xnat.web.dicomNodePort is unset" /tmp/nonodeport.err; then
+            echo "::error::render failed for some other reason than the dicomNodePort guard:"
+            cat /tmp/nonodeport.err
+            exit 1
+          fi
+
+      # Default-deny must survive: the ingress allowance is the one inbound path into a trust, so a
+      # chart that opened it without being asked would silently widen every existing deployment.
+      - name: Render template (default keeps ingress denied)
+        run: |
+          helm template trust-release deploy/providers/kubernetes/ > /tmp/default.yaml
+          if grep -q "allow-pacs-ingress" /tmp/default.yaml; then
+            echo "::error::the PACS ingress NetworkPolicy rendered without being configured"
+            exit 1
+          fi
+
       # omopDb.vocabLoad.s3Bucket defaults to "" (the licensed bundle has no public
       # mirror — FLIP#842/843), so every other render in this job skips the
       # vocab-load Job. Without this step its ~110-line body is never rendered in

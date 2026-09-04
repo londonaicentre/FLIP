@@ -143,3 +143,42 @@ drops a staged kit silently (#999) — so both call this helper.
 {{- define "flip-trust.flClientKitFromS3" -}}
 {{- if (index .Values.flClient .Values.flBackend).kitFromS3.enabled }}true{{ end }}
 {{- end }}
+
+{{/*
+Refuse a real-PACS install whose DICOM receiver has no route from outside the cluster.
+
+Retrieval is two connections in opposite directions: XNAT dials the PACS to C-FIND and C-MOVE, then
+the PACS opens a *new* association back to XNAT to C-STORE the studies. templates/xnat-web.yaml
+publishes the receiver beyond the cluster only when service.type is NodePort AND dicomNodePort is
+set — on ClusterIP both blocks silently no-op, so the render succeeds and produces the failure this
+chart calls the hardest to diagnose: queries succeed, retrievals silently time out with nothing
+logged on either side.
+
+This lives here, and is included from xnat-web.yaml, rather than in network-policy.yaml where it
+started: it is a statement about the Service's exposure, not about NetworkPolicy. Inside that file
+it inherited `if .Values.networkPolicies.enabled`, so an install that turns policies off — supported,
+and the right call on a CNI that does not enforce them — rendered cleanly on ClusterIP with no path
+a PACS packet could take, which is precisely the case the guard exists to stop.
+
+Refuses ClusterIP specifically rather than demanding NodePort, because a LoadBalancer service
+(MetalLB and friends) is an equally valid way to make the receiver reachable and must not be
+rejected.
+
+Both halves of that conjunction are checked, not just the Service type. NodePort with
+`dicomNodePort` left at its empty default renders clean while breaking the same leg twice over:
+Kubernetes allocates a random NodePort, so the port the PACS was told to dial is not the one that
+reaches the pod, and `externalTrafficPolicy: Local` is gated on the same pair (xnat-web.yaml:56),
+so kube-proxy SNATs the source address and the ingress CIDR cannot match even if a packet did
+arrive. That is the same queries-succeed / retrievals-time-out failure, reached through the one
+combination the other refusals leave open.
+*/}}
+{{- define "flip-trust.validatePacsReachable" -}}
+{{- if and .Values.xnat.enabled .Values.xnat.web.enabled (ne .Values.pacs.host "orthanc") }}
+{{- if eq .Values.xnat.web.service.type "ClusterIP" }}
+{{- fail (printf "pacs.host is %s but xnat.web.service.type is ClusterIP, so the DICOM receiver is unreachable from outside the cluster and the C-STORE return leg the PACS opens after C-MOVE can never arrive. Set xnat.web.service.type: NodePort plus xnat.web.dicomNodePort (equal to xnat.web.dicomPort), or expose the receiver through a LoadBalancer service." .Values.pacs.host) }}
+{{- end }}
+{{- if and (eq .Values.xnat.web.service.type "NodePort") (not .Values.xnat.web.dicomNodePort) }}
+{{- fail (printf "pacs.host is %s and xnat.web.service.type is NodePort, but xnat.web.dicomNodePort is unset, so the receiver's node port is allocated at random and externalTrafficPolicy stays Cluster. The PACS cannot be given a stable destination port, and kube-proxy rewrites its source address so the ingress NetworkPolicy CIDR never matches — queries succeed and retrievals silently time out. Set xnat.web.dicomNodePort (equal to xnat.web.dicomPort, %v), widening the API server's --service-node-port-range if needed." .Values.pacs.host (.Values.xnat.web.dicomPort | default 8104)) }}
+{{- end }}
+{{- end }}
+{{- end }}

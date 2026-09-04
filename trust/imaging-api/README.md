@@ -73,7 +73,7 @@ NVFLARE backend — by `CleanupImages`, which empties the whole net directory at
 ### Imaging
 
 Interfaces with XNAT's DICOM Query-Retrieve (DQR) plugin. Full DQR API docs available at
-`http://127.0.0.1:8104/xapi/swagger-ui.html#/dicom-query-retrieve-api`.
+`http://127.0.0.1:8105/xapi/swagger-ui.html#/dicom-query-retrieve-api`.
 
 - Query PACS with an accession number
 - Queue image retrieval from PACS to an XNAT project

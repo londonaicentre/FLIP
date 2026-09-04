@@ -12,10 +12,14 @@
 
 name: Trust - XNAT CI
 
-# The suite covers the anonymization script and the weak-password guards. The
-# guard parity tests read their inputs from outside trust/xnat/tests/, so every
-# file they assert on has to trigger this workflow — otherwise a change to a
-# guard (or to the credential minter) lands with the test that pins it unrun.
+# The suite covers the anonymization script, the weak-password guards, and the deployment wiring
+# that carries configuration into configure-xnat.sh. Those tests read their inputs from outside
+# trust/xnat/tests/, so every file they assert on has to trigger this workflow — otherwise a change
+# to a guard, to the credential minter, or to either deployment path's environment block lands with
+# the test that pins it unrun. That includes both trust-core compose files: test_deploy_wiring.py
+# asserts each wires XNAT_AETITLE to exactly its two consumers with the same default the XNAT stack
+# substitutes, and the AE titles on the two sides drifting apart is the queries-succeed /
+# retrievals-time-out failure, since DQR matches the C-MOVE destination by exact AE and port.
 # The dcm2niix-pin-sync job below likewise reads four files scattered across the
 # repo, so each of those triggers the workflow too.
 on:
@@ -28,6 +32,10 @@ on:
       - "trust/xnat/scripts/ensure_plugins.sh"
       - "trust/xnat/tests/**"
       - "trust/xnat/Makefile"
+      - "trust/xnat/docker-compose-stack.yml"
+      - "trust/deploy/compose_trust.development.yml"
+      - "trust/deploy/compose_trust.production.yml"
+      - "deploy/providers/kubernetes/templates/xnat-init-job.yaml"
       - "trust/Makefile"
       - "Makefile"
       - "flip-api/Makefile"
@@ -39,7 +47,6 @@ on:
       - "flip-api/src/flip_api/scripts/generate_xnat_credentials.py"
       - "trust/xnat/dcm2niix/**"
       - "trust/xnat/xnat/config/dcm2niix_command.json"
-      - "deploy/providers/kubernetes/templates/xnat-init-job.yaml"
       - ".github/workflows/test_trust_xnat.yml"
   pull_request:
     branches: [main, develop]
@@ -50,6 +57,10 @@ on:
       - "trust/xnat/scripts/ensure_plugins.sh"
       - "trust/xnat/tests/**"
       - "trust/xnat/Makefile"
+      - "trust/xnat/docker-compose-stack.yml"
+      - "trust/deploy/compose_trust.development.yml"
+      - "trust/deploy/compose_trust.production.yml"
+      - "deploy/providers/kubernetes/templates/xnat-init-job.yaml"
       - "trust/Makefile"
       - "Makefile"
       - "flip-api/Makefile"
@@ -61,7 +72,6 @@ on:
       - "flip-api/src/flip_api/scripts/generate_xnat_credentials.py"
       - "trust/xnat/dcm2niix/**"
       - "trust/xnat/xnat/config/dcm2niix_command.json"
-      - "deploy/providers/kubernetes/templates/xnat-init-job.yaml"
       - ".github/workflows/test_trust_xnat.yml"
 
 permissions:

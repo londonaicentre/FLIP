@@ -68,7 +68,7 @@ KIT_FILE := $(if $(wildcard ../.env.$(KIT).$(ENV)),../.env.$(KIT).$(ENV),../.env
 -include $(KIT_FILE)
 # Kit-file values must reach the shell env, not just Make vars. docker stack
 # deploy (unlike docker compose) has no --env-file flag; it substitutes
-# ${XNAT_ADMIN_USER}, ${PACS_DICOM_PORT}, ${DOCKER_REGISTRY}, etc. in the
+# ${XNAT_ADMIN_USER}, ${PACS_UI_PORT}, ${DOCKER_REGISTRY}, etc. in the
 # compose YAML from the calling shell env only. Without this export, the
 # stack came up with empty admin creds and configure-xnat.sh would 401/403
 # on every auth call, leaving "Site has not yet been configured" forever.
@@ -98,9 +98,23 @@ XNAT_NETWORK := $(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM)
 # TRUST_PROJECT. Instance-scoped: unprefixed, the guard below inspects whichever hub owns
 # plain `trust<N>` and reports on a trust that is not ours.
 TRUST_PROJECT := $(INSTANCE_PREFIX)trust$(TRUST_NUM)
+# XNAT_PORT is the DICOM SCP receiver port: the port XNAT binds, registers on its dicomscp
+# receiver, advertises as the C-MOVE destination, and publishes on the host so a PACS outside the
+# host can complete the C-STORE return leg of a DQR retrieval (FLIP#993). XNAT_WEB_PORT is the
+# host-published web UI port. Both are host-published, so every kit must give them distinct values
+# (the guard in xnat-reset refuses a collision); the shipped dev allocation is 8104/8105 (GSTT) and
+# 8106/8107 (KCH). The web port deliberately defaults to XNAT_PORT rather than to its own literal:
+# the two were one variable until the FLIP#993 split, so a kit that predates it sets only XNAT_PORT
+# — deriving the web port from it routes that kit into the collision guard, a loud instruction to
+# allocate a second port, instead of silently moving its web UI to a number nothing else expects.
 # Defaults are the Trust_1 allocation, so a single-trust host (EC2 / on-prem)
 # needs no XNAT port entries in its kit file.
 XNAT_PORT_EFFECTIVE := $(or $(XNAT_PORT),8104)
+XNAT_WEB_PORT_EFFECTIVE := $(or $(XNAT_WEB_PORT),$(XNAT_PORT_EFFECTIVE))
+# XNAT's AE title, applied to the SCP receiver, dqrCallingAe and the C-MOVE destination.
+# $(if $(filter undefined,...)) rather than $(or): $(or) treats an empty value as false and
+# would substitute the default, cancelling configure-xnat.sh's guard on an empty kit value.
+XNAT_AETITLE_EFFECTIVE := $(if $(filter undefined,$(origin XNAT_AETITLE)),XNAT,$(XNAT_AETITLE))
 PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 
 # Host path that backs this trust's XNAT bind mounts (parent of xnat-data/
@@ -255,6 +269,8 @@ endif
 	$(MAKE) xnat-reset KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
 	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
+	XNAT_WEB_PORT=$(XNAT_WEB_PORT_EFFECTIVE) \
+	XNAT_AETITLE=$(XNAT_AETITLE_EFFECTIVE) \
 	PACS_UI_PORT=$(PACS_UI_PORT_EFFECTIVE) \
 	DOCKER_NETWORK_NAME=$(XNAT_NETWORK) \
 	docker stack deploy --with-registry-auth --detach=false ${STACK_FILES} $(XNAT_STACK)
@@ -347,6 +363,16 @@ xnat-reset:
 	esac
 	@if ! echo "$(XNAT_PORT_EFFECTIVE)" | grep -qE '^[0-9]+$$'; then \
 		echo "ERROR: XNAT_PORT must be numeric for KIT=$(KIT), got '$(XNAT_PORT_EFFECTIVE)'"; exit 1; \
+	fi
+	@if ! echo "$(XNAT_WEB_PORT_EFFECTIVE)" | grep -qE '^[0-9]+$$'; then \
+		echo "ERROR: XNAT_WEB_PORT must be numeric for KIT=$(KIT), got '$(XNAT_WEB_PORT_EFFECTIVE)'"; exit 1; \
+	fi
+	@if [ "$(XNAT_PORT_EFFECTIVE)" = "$(XNAT_WEB_PORT_EFFECTIVE)" ]; then \
+		echo "ERROR: the web UI and the DICOM receiver are both published on the host, so"; \
+		echo "       XNAT_WEB_PORT ($(XNAT_WEB_PORT_EFFECTIVE)) and XNAT_PORT ($(XNAT_PORT_EFFECTIVE)) must differ."; \
+		echo "       They were one variable until FLIP#993 — set both in the kit file"; \
+		echo "       ($(KIT_FILE)), e.g. XNAT_PORT=8104 (DICOM) and XNAT_WEB_PORT=8105 (web UI)."; \
+		exit 1; \
 	fi
 	@echo "Deleting previous XNAT data and creating new directories for $(KIT) ..."; \
 	if [ "$(PROD)" = "true" ] || [ "$(PROD)" = "stag" ]; then \

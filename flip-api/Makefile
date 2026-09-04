@@ -164,8 +164,9 @@ e2e_smoke:
 #
 # Every trust needs enriching, not just one: each trust's XNAT holds only its own studies, so a
 # trust left without labels takes the whole run down at that guard. SPLEEN_XNAT_URLS is the roster
-# the uploader visits in a single invocation — it defaults to the two dev trusts (GSTT :8104,
-# KCH :8106; IPv4 literals because "localhost" can resolve to ::1, which the swarm-published
+# the uploader visits in a single invocation — it defaults to the two dev trusts (GSTT :8105,
+# KCH :8107 — the XNAT_WEB_PORT of each, not XNAT_PORT, which is the DICOM SCP receiver since the
+# FLIP#993 port split; IPv4 literals because "localhost" can resolve to ::1, which the swarm-published
 # XNAT ports do not answer on). Override it for any other roster, or blank it to fall back to a
 # single XNAT_HOST.
 #
@@ -177,7 +178,7 @@ e2e_smoke:
 # dir, two levels below the repo root), so relative paths written from flip-api/ would not
 # resolve there.
 SPLEEN_ENRICHMENT_CWD := ../fl-tutorials/datasets/spleen
-SPLEEN_XNAT_URLS ?= http://127.0.0.1:8104 http://127.0.0.1:8106
+SPLEEN_XNAT_URLS ?= http://127.0.0.1:8105 http://127.0.0.1:8107
 # The MSD build by default even though the uploaded app is Flower's: enrichment is
 # backend-agnostic, and only the MSD download can reach all 41 mapped cases.
 SPLEEN_LABELS_DIR ?= $(abspath ../fl-tutorials/data/spleen/images)

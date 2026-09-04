@@ -20,6 +20,7 @@ from imaging_api.config import get_settings
 
 PACS_ID = get_settings().PACS_ID
 XNAT_PORT = get_settings().XNAT_PORT
+XNAT_AETITLE = get_settings().XNAT_AETITLE
 
 # Blocks the three characters most likely to enable structural XML injection
 # in the XNAT projectData payload built by imaging_api.services.projects. This
@@ -235,8 +236,18 @@ class ImportStudy(BaseModel):
 class ImportStudyRequest(BaseModel):
     """Represents an image import request for DQR."""
 
-    pacs_id: int = Field(default=PACS_ID, alias="pacsId")
-    ae_title: str = Field(default="XNAT", alias="aeTitle")  # XNAT
+    # Resolved from XNAT at request time and overwritten in services/imaging.py before the request
+    # is sent, so a caller-supplied value has no effect. Kept on the model because the resolved id
+    # is assigned here and serialised onward to DQR; the description says so in the OpenAPI schema
+    # rather than leaving a knob that silently does nothing.
+    pacs_id: int = Field(
+        default=PACS_ID,
+        alias="pacsId",
+        description="Resolved from XNAT server-side; any value supplied here is ignored.",
+    )
+    # The C-MOVE destination the PACS is told to send to. DQR matches this against a registered
+    # SCP receiver by exact AE title and port, so it must equal what configure-xnat.sh registered.
+    ae_title: str = Field(default=XNAT_AETITLE, alias="aeTitle")
     port: int = Field(default=XNAT_PORT, alias="port")
     project_id: str = Field(..., alias="projectId")
     force_import: bool = Field(default=True, alias="forceImport")

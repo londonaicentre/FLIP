@@ -12,7 +12,7 @@ Trust services run at each healthcare institution (cloud EC2 or on-prem). All tr
 | fl-client | — | FL participant (connects outbound to FL server via NLB) |
 | omop-db | 5432 | Mocked OMOP patient database (PostgreSQL); dir also holds the image build source + populate tooling (#834, see `omop-db/CLAUDE.md`) |
 | orthanc | 8042 | Mocked DICOM PACS server (UI/REST behind HTTP basic auth — kit file's `ORTHANC_USERNAME`/`ORTHANC_PASSWORD`; DICOM port 4242 is internal to the trust network and not bound to the host) |
-| xnat | 8104 | Mocked neuroimaging platform |
+| xnat | 8104/8105 | Mocked neuroimaging platform. `XNAT_PORT` (8104) is the **DICOM SCP receiver** port; `XNAT_WEB_PORT` (8105) is the web UI. Both are host-published — the receiver so a real PACS can C-STORE back in, dev included so it runs the same wiring — so the two must differ; the deploy refuses a collision (FLIP#993) |
 | observability | 3000/3100 | Grafana + Loki monitoring stack |
 
 ## Kit file structure
