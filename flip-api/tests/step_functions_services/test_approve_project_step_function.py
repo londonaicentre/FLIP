@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from flip_api.domain.interfaces.trust import ITrust
@@ -67,11 +68,16 @@ def override_dependencies():
 
 
 @pytest.fixture(autouse=True)
-def mock_project_row():
-    """Default every test's project to has_imaging=True so the existing fan-out assertions hold (FLIP#1071)."""
+def mock_project_row(mock_project):
+    """Default every test's project to has_imaging=True so the existing assertions hold (FLIP#1071).
+
+    Backed by the conftest-registered ``Projects`` factory rather than a SimpleNamespace: a stub that
+    invents its own attributes keeps this suite green through a rename of the column production reads.
+    """
+    mock_project.has_imaging = True
     with patch(
         "flip_api.step_functions_services.approve_project_step_function.get_project_by_id",
-        return_value=SimpleNamespace(has_imaging=True),
+        return_value=mock_project,
     ) as mock:
         yield mock
 
@@ -185,14 +191,40 @@ def test_approve_project_skips_imaging_fan_out_when_project_has_no_imaging(
     "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
     new_callable=AsyncMock,
 )
-def test_approve_project_404s_before_approving_when_the_project_row_is_missing(
-    mock_start_imaging, mock_approve_project, project_id, request_body, mock_project_row
+def test_approve_project_leaves_a_missing_row_to_the_authorised_approval_path(
+    mock_start_imaging, mock_approve_project, project_id, request_body, mock_trusts, mock_project_row
 ):
-    """The flag is read before approval commits; a missing row stops the workflow loudly, unapproved."""
+    """A missing row must not short-circuit: this route only authenticates.
+
+    ``CAN_APPROVE_PROJECTS`` is checked inside ``approve_project_endpoint``, so refusing here first
+    would answer "does this project exist?" for a caller who is not allowed to approve anything —
+    404 for a missing project against 403 for a real one. The pre-approval read exists only to carry
+    ``has_imaging`` across the commit, so it defaults and lets the authorised path own the error.
+    """
     mock_project_row.return_value = None
+    mock_approve_project.return_value = mock_trusts
 
     response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
 
-    assert response.status_code == 404
-    mock_approve_project.assert_not_called()
+    assert response.status_code != 404
+    mock_approve_project.assert_called_once()
+
+
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+@patch(
+    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    new_callable=AsyncMock,
+)
+def test_approve_project_reports_the_permission_refusal_whether_or_not_the_project_exists(
+    mock_start_imaging, mock_approve_project, project_id, request_body, mock_project_row
+):
+    """The refusal a caller without CAN_APPROVE_PROJECTS sees must not depend on the row existing."""
+    mock_approve_project.side_effect = HTTPException(status_code=403, detail="not allowed")
+
+    statuses = []
+    for row in (SimpleNamespace(has_imaging=True), None):
+        mock_project_row.return_value = row
+        statuses.append(client.post(f"/api/step/project/{project_id}/approve", json=request_body).status_code)
+
+    assert statuses == [403, 403]
     assert mock_start_imaging.await_count == 0
