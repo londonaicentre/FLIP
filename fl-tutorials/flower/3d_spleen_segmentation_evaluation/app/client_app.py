@@ -17,10 +17,9 @@ from logging import INFO
 
 import torch
 from flip.flower.identity import client_identity, partition_cohort
-from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
+from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from flwr.common import log
-from flwr.common.record import ConfigRecord
 from monai.data import DataLoader, Dataset
 
 from app.data_loading import FLIP_BASE
