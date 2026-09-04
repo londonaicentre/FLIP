@@ -13,10 +13,10 @@
 
 The Pan-Cancer-Nuclei-Seg analysis result stores one nucleus per POLYGON annotation, encoded per
 DICOM Supplement 222: all vertices of all polygons are concatenated into a single flat
-PointCoordinatesData buffer, and LongPrimitivePointIndexList holds the **1-based index into
+``PointCoordinatesData`` buffer, and ``LongPrimitivePointIndexList`` holds the **1-based index into
 that flat buffer** at which each polygon starts. Nothing delimits polygons other than those offsets.
 
-These annotations are AnnotationGroupGenerationType == AUTOMATIC — model output, not curated
+These annotations are ``AnnotationGroupGenerationType`` == AUTOMATIC — model output, not curated
 truth. Everything here calls them *reference* nuclei, never ground truth; see the tutorial README.
 
 The tutorial scores **detection**, so each polygon is reduced to its centroid. That loses shape, and
@@ -74,7 +74,7 @@ def _polygon_centroids(coordinates: np.ndarray, starts: np.ndarray) -> np.ndarra
     Returns:
         (N, 2) array of vertex-mean centroids.
 
-    Uses np.add.reduceat, which sums each contiguous run in one pass — the alternative, slicing
+    Uses ``np.add.reduceat``, which sums each contiguous run in one pass — the alternative, slicing
     per polygon, is ~80,000 Python-level slices for a single slide.
     """
     if len(starts) == 0:

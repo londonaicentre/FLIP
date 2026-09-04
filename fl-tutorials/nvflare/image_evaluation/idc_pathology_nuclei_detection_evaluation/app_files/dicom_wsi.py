@@ -14,10 +14,10 @@
 A whole slide is far too large to hold in memory — the tutorial's own slides run to 35584 x 42752
 pixels — so nothing here ever decodes more than one 256 x 256 frame at a time.
 
-Frame geometry comes from DimensionOrganizationType == TILED_FULL, where tile positions are
+Frame geometry comes from ``DimensionOrganizationType`` == ``TILED_FULL``, where tile positions are
 **implicit**: frames run in row-major order across the tile grid and there is no
-PerFrameFunctionalGroupsSequence to consult. That is what IDC's conversion of Pan-Cancer-Nuclei-Seg
-slides uses. TILED_SPARSE stores an explicit position per frame and is rejected rather than
+``PerFrameFunctionalGroupsSequence`` to consult. That is what IDC's conversion of Pan-Cancer-Nuclei-Seg
+slides uses. ``TILED_SPARSE`` stores an explicit position per frame and is rejected rather than
 guessed at.
 
 Edge tiles are full-size and padded: the tile grid covers more area than the total pixel matrix, so

@@ -14,13 +14,13 @@
 The tutorial ships a **classical** detector rather than a deep model, deliberately:
 
 * It needs no dependency FLIP's FL runtime does not already carry (scikit-image and scipy arrive with
-  monai[skimage,scipy]), so the tutorial runs on the published FL images with no rebuild.
+  ``monai[skimage,scipy]``), so the tutorial runs on the published FL images with no rebuild.
 * The tutorial is about the federated-evaluation architecture, not about winning a detection
   benchmark. A weak-but-honest detector makes the cross-site comparison *more* legible, because the
   differences between sites are large enough to see.
 
-Swapping in Cellpose, HoVer-Net or StarDist means adding a NucleiDetector implementation and
-naming it in config.json; nothing else in the tutorial changes. Those models do need new runtime
+Swapping in Cellpose, HoVer-Net or StarDist means adding a ``NucleiDetector`` implementation and
+naming it in ``config.json``; nothing else in the tutorial changes. Those models do need new runtime
 dependencies, which is why they are not the default.
 
 Detector parameters are expressed in **micrometres**, not pixels, and converted per slide using its
@@ -93,9 +93,9 @@ class HaematoxylinPeakDetector:
     """Detect nuclei as local maxima of the haematoxylin channel of an H&E tile.
 
     Haematoxylin stains nucleic acid, so separating it from eosin with colour deconvolution
-    (skimage.color.rgb2hed) gives a channel where nuclei are bright blobs on a dark field.
+    (``skimage.color.rgb2hed``) gives a channel where nuclei are bright blobs on a dark field.
     Smoothing then suppresses chromatin texture, which would otherwise split one nucleus into several
-    peaks, and peak_local_max with a minimum separation of roughly one nucleus diameter picks the
+    peaks, and ``peak_local_max`` with a minimum separation of roughly one nucleus diameter picks the
     centres.
     """
 
