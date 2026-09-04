@@ -32,8 +32,10 @@ from tests.fixtures.user_fixtures import mock_request
 
 __all__ = ["mock_request"]
 
-ATTACKER_SQL = "SELECT person_id FROM omop.person"
-VICTIM_SQL = "SELECT person_id FROM omop.observation"
+# Both projects are imaging projects (the project_factory default), so their cohorts have to
+# project accession_id or submission refuses them before any scoping check runs (FLIP#1071).
+ATTACKER_SQL = "SELECT accession_id, person_id FROM omop.image_occurrence"
+VICTIM_SQL = "SELECT accession_id, person_id FROM omop.observation"
 
 
 @pytest.fixture
