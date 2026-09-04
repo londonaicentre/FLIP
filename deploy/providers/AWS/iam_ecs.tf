@@ -45,6 +45,9 @@ data "aws_iam_policy_document" "ecs_tasks_assume" {
 resource "aws_iam_role" "ecs_task_execution" {
   name               = "ecs-task-execution-role"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+  # FLIP#962: the CI apply role may only create or grant to a boundary-carrying
+  # role. See locals.tf and ci/main.tf.
+  permissions_boundary = local.iam_permissions_boundary_arn
 }
 
 resource "aws_iam_role_policy_attachment" "ecs_task_execution_managed" {
@@ -132,6 +135,9 @@ resource "aws_iam_role_policy" "ecs_task_execution_ecr_pull_through" {
 resource "aws_iam_role" "ecs_flip_api_task" {
   name               = "ecs-flip-api-task-role"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+  # FLIP#962: the CI apply role may only create or grant to a boundary-carrying
+  # role. See locals.tf and ci/main.tf.
+  permissions_boundary = local.iam_permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "ecs_flip_api_task" {
@@ -289,6 +295,9 @@ data "aws_iam_policy_document" "ecs_fl_api_task" {
 resource "aws_iam_role" "ecs_fl_api_task" {
   name               = "ecs-fl-api-task-role"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+  # FLIP#962: the CI apply role may only create or grant to a boundary-carrying
+  # role. See locals.tf and ci/main.tf.
+  permissions_boundary = local.iam_permissions_boundary_arn
 }
 
 resource "aws_iam_role_policy" "ecs_fl_api_task" {
@@ -314,6 +323,9 @@ resource "aws_iam_role_policy" "ecs_fl_api_task" {
 resource "aws_iam_role" "ecs_fl_server_task" {
   name               = "ecs-fl-server-task-role"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+  # FLIP#962: the CI apply role may only create or grant to a boundary-carrying
+  # role. See locals.tf and ci/main.tf.
+  permissions_boundary = local.iam_permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "ecs_fl_server_task" {

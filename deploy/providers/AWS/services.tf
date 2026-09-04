@@ -211,11 +211,47 @@ module "cognito" {
   researcher_email        = var.flip_cognito_researcher_email
   seed_user_password      = var.ADMIN_USER_PASSWORD
   templates_dir           = "${path.module}/templates/cognito"
-  # The UI uses USER_SRP_AUTH (Cognito's native auth flow, not OAuth2 redirect),
-  # so callback_urls are hygiene only — keep the canonical UI origin + localhost
-  # for dev.
-  callback_urls = [local.ui_origin, "https://localhost:443"]
-  logout_urls   = [local.ui_origin, "https://localhost:443"]
+  # callback_urls is NOT cosmetic — it is this environment's live browser CORS
+  # allowlist. Do not trim it without reading the following.
+  #
+  # The UI signs in with USER_SRP_AUTH (Cognito's native flow, not an OAuth2
+  # redirect), so Cognito itself never redirects to these URLs. flip-api reads
+  # them back instead: its get_cors_allowed_origins() calls
+  # describe_user_pool_client, normalizes each CallbackURL to a
+  # scheme://host[:port] origin, and CORSMiddleware serves that list with
+  # allow_credentials=true. Every browser origin that must call the API in
+  # stag/prod therefore has to be listed here, and removing one silently blocks
+  # that origin. No runtime test can catch it — the API reads the list from live
+  # Cognito at start-up, not from this file — so the guard is static, over this
+  # source (see tests/test_cognito_callback_urls.py).
+  #
+  # Operationally: a change here takes effect at the NEXT flip-api start, not at
+  # apply time. main.py's lifespan reads the list once and CORSMiddleware holds
+  # it by reference, so restart the flip-api service after applying. The full
+  # runbook — targeted apply (never a full stag/prod apply), restart, and the two
+  # verification steps — is in README.md, "Changing the browser CORS allowlist
+  # (Cognito callback_urls)".
+  #
+  # localhost is deliberately absent: this root stack is stag/prod only. Local
+  # development uses the separate ./dev root, whose var.cognito_callback_urls
+  # carries the localhost origins.
+  #
+  # The one origin is local.ui_origin (cloudfront.tf) rather than a literal
+  # "https://${var.flip_alb_subdomain}": the two are the same string wherever DNS
+  # is managed — every legacy environment — and on a zone-less LZA bring-up
+  # (FLIP#749) the local resolves to the reachable edge/CloudFront domain, which
+  # is the browser origin there. It is the same value fed to the S3 bucket CORS
+  # rules above, so the two allowlists cannot drift apart.
+  callback_urls = [local.ui_origin]
+
+  # Not read by flip-api; only Cognito's hosted UI would honour these as
+  # post-logout redirect targets, and allowed_oauth_flows_user_pool_client is
+  # unset (provider default false), so the hosted UI is not enabled for this
+  # client. Kept non-empty and localhost-free so the stag/prod client advertises
+  # no redirect target that isn't a real FLIP origin. logout_urls is Optional in
+  # the provider schema and need not mirror callback_urls — the ./dev root
+  # already passes lists of differing length.
+  logout_urls = [local.ui_origin]
 }
 
 # State migration: Cognito resources used to live at the root of this stack and

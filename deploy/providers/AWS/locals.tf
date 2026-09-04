@@ -24,6 +24,19 @@
 locals {
   flip_local_domain = "flip.local"
 
+  # Permissions boundary carried by every IAM role in this root (FLIP#962).
+  #
+  # Composed rather than looked up: the policy lives in the ci/ root, the two
+  # roots share no state, and a `data "aws_iam_policy"` here would make every
+  # plan fail in an account where ci/ has not been applied yet — including the
+  # `terraform validate` a contributor runs with no credentials at all.
+  # `make -C ci output permissions_boundary_arn` prints the ARN to compare.
+  iam_permissions_boundary_arn = (
+    var.iam_permissions_boundary_name == ""
+    ? null
+    : "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.iam_permissions_boundary_name}"
+  )
+
   # Service Discovery names (FQDN under the private hosted zone).
   service_discovery_names = {
     flip_api  = "flip-api.${local.flip_local_domain}"
@@ -207,4 +220,32 @@ locals {
       FLOWER_SRC_ROOT             = "/app/src"
     }
   }
+}
+
+# CloudWatch log retention, applied to every log group this root owns.
+#
+# 365 days is not an arbitrary choice: it is the organisation's own Landing
+# Zone Accelerator baseline (`cloudwatchLogRetentionInDays` in the LZA
+# `global-config.yaml`), which LZA already applies to every log group it
+# creates in the FLIPProduction and FLIPStaging accounts. FLIP's groups sat at
+# 7 days — 52x below that baseline, and far short of any realistic
+# incident-detection window. A group that has aged out cannot support the
+# incident triage claimed under the CAF-aligned DSPT (C1.d).
+#
+# Staging deliberately deviates to 90 days. Its trust data is mock, but its
+# IAM, Cognito and authentication events are real, and a staging compromise is
+# a genuine incident with a plausible pivot toward production — so the window
+# stays long enough to investigate one rather than returning to 7 days. LZA
+# itself does not distinguish the environments (it applies 365 to both), so
+# this is a documented deviation, recorded under "Retention and deletion" in
+# docs/source/governance-and-compliance.rst. An undocumented deviation is
+# indistinguishable from the drift this change is correcting.
+#
+# Cost is not a consideration at FLIP's volume. The hub emits roughly 11 MB of
+# logs per day, so a 365-day window is about 4 GB retained — cents per month
+# at CloudWatch's storage rate. Do not trade retention against storage here,
+# and do not build an export-to-S3/Glacier pipeline for it: at this volume the
+# pipeline costs more than the storage it saves.
+locals {
+  log_retention_days = var.environment == "prod" ? 365 : 90
 }

@@ -167,7 +167,7 @@ class EvaluationModelLocator(ModelLocator):
         super().__init__()
         self.models: dict | None = None
 
-    def _resolve_checkpoint_path(self, fl_ctx: FLContext, app_dir: str, name: str, model_checkpoint: str):
+    def _resolve_checkpoint_path(self, fl_ctx: FLContext, app_dir: str, name: str, model_checkpoint: str) -> str | None:
         """Locate a checkpoint: bundled ``custom/`` first, then the FL API's shared staging volume."""
         bundled_path = os.path.join(app_dir, "custom", model_checkpoint)
         if os.path.isfile(bundled_path):

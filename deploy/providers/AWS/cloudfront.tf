@@ -676,7 +676,7 @@ resource "aws_wafv2_web_acl" "flip_ui_cloudfront" {
 resource "aws_cloudwatch_log_group" "flip_ui_waf" {
   provider          = aws.us_east_1
   name              = "aws-waf-logs-flip-ui-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
-  retention_in_days = 30
+  retention_in_days = local.log_retention_days
 }
 
 resource "aws_wafv2_web_acl_logging_configuration" "flip_ui_cloudfront" {

@@ -192,7 +192,6 @@ For the full local stack, replace every placeholder in these minimum groups befo
 | --- | --- |
 | AWS session | `AWS_PROFILE`, `AWS_REGION` |
 | Central Hub auth | `AWS_COGNITO_USER_POOL_ID`, `AWS_COGNITO_APP_CLIENT_ID`, `ADMIN_USER_PASSWORD` |
-| Email | an SES-verified `SES_VERIFIED_EMAIL` |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Runtime S3 | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME`, `FLIP_APP_BUNDLES_BUCKET_NAME`, `AICENTRE_BUCKET_NAME` |
 | XNAT artifacts | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins) |
@@ -200,6 +199,13 @@ For the full local stack, replace every placeholder in these minimum groups befo
 Development uses these configured AWS services directly; there is no LocalStack fallback. Authorised FLIP developers
 can use the shared development values. Other deployers should create their own resources with the
 [Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
+
+**Email needs no configuration in development** (FLIP#919). flip-api defaults to `EMAIL_BACKEND=console` in dev, which
+logs the would-be message (recipient, template name, non-secret payload) instead of calling SES — so the access-request
+and XNAT-credentials paths work with no SES identity, verified address or templates. Staging and production keep
+`EMAIL_BACKEND=ses` and still require `AWS_SES_ADMIN_EMAIL_ADDRESS` / `AWS_SES_SENDER_EMAIL_ADDRESS`; the setting is
+type-narrowed in `ProdSettings`, so the console backend cannot be selected there. Note Cognito still sends real invite
+and password-reset emails in dev — those come from the user pool, not SES.
 
 Trusts are registered on the **running hub** with `make register-trusts` (shipped dev roster) or
 `make register-trust KIT=<CODE>` (one trust), which inserts each `trust` row (with its

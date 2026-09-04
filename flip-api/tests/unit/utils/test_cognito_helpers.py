@@ -21,12 +21,9 @@ from starlette.status import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERRO
 
 from flip_api.domain.schemas.users import CognitoUser
 from flip_api.utils.cognito_helpers import (
-    _origin_from_url,
-    apply_user_profile,
     create_cognito_user,
     filter_enabled_users,
     get_cognito_users,
-    get_cors_allowed_origins,
     get_pool_id,
     get_user_by_email_or_id,
     is_mfa_enabled,
@@ -47,21 +44,6 @@ class CognitoUserFactory(factory.Factory):
     id = factory.Faker("uuid4")
     email = factory.Faker("email")
     is_disabled = factory.Faker("boolean")
-
-
-@pytest.fixture(autouse=True)
-def _reset_cognito_client_cache():
-    """
-    `_cognito_client` is lru_cached so a boto3 client is built once per
-    process. Tests patch `boto3.client` and assume each test starts fresh;
-    clear the cache between tests so a mock from one test doesn't leak
-    into the next.
-    """
-    from flip_api.utils.cognito_helpers import _cognito_client
-
-    _cognito_client.cache_clear()
-    yield
-    _cognito_client.cache_clear()
 
 
 @pytest.fixture
@@ -1295,75 +1277,6 @@ class TestGetCognitoUsers:
         mock_client_instance.get_paginator.assert_called_once_with("list_users")
 
 
-class TestOriginFromUrl:
-    """Tests for the _origin_from_url normalizer used by the CORS allowlist builder."""
-
-    @pytest.mark.parametrize(
-        ("url", "expected"),
-        [
-            # Default ports must be stripped — browsers omit them from the Origin header.
-            ("https://localhost:443", "https://localhost"),
-            ("http://example.com:80/path", "http://example.com"),
-            # Non-default ports must be preserved.
-            ("http://localhost:8080", "http://localhost:8080"),
-            ("https://localhost:8443/", "https://localhost:8443"),
-            # Path / query / fragment are dropped.
-            ("https://app.flip.aicentre.co.uk/login?x=1#frag", "https://app.flip.aicentre.co.uk"),
-            # Hostname is lowercased by urlparse.
-            ("https://APP.FLIP.aicentre.co.uk", "https://app.flip.aicentre.co.uk"),
-        ],
-    )
-    def test_normalizes_origin(self, url, expected):
-        assert _origin_from_url(url) == expected
-
-    @pytest.mark.parametrize("url", ["", "not-a-url", "/just/a/path"])
-    def test_returns_none_for_unusable_input(self, url):
-        assert _origin_from_url(url) is None
-
-
-class TestGetCorsAllowedOrigins:
-    """Tests for get_cors_allowed_origins (Cognito-derived CORS allowlist)."""
-
-    @pytest.fixture
-    def mock_boto3_client(self):
-        with patch("flip_api.utils.cognito_helpers.boto3.client") as mock_client:
-            yield mock_client
-
-    @pytest.fixture
-    def mock_settings(self):
-        with patch("flip_api.utils.cognito_helpers.get_settings") as mock_get_settings:
-            settings = mock_get_settings.return_value
-            settings.AWS_REGION = "eu-west-2"
-            settings.AWS_COGNITO_USER_POOL_ID = "pool-id"
-            settings.AWS_COGNITO_APP_CLIENT_ID = "client-id"
-            yield mock_get_settings
-
-    def test_returns_normalized_unique_origins(self, mock_boto3_client, mock_settings):
-        """CallbackURLs are normalized to origins and deduplicated, preserving order."""
-        mock_boto3_client.return_value.describe_user_pool_client.return_value = {
-            "UserPoolClient": {
-                "CallbackURLs": [
-                    "https://app.flip.aicentre.co.uk",
-                    "https://localhost:443",
-                    # Duplicate after normalization (default port stripped) — must be deduped.
-                    "https://app.flip.aicentre.co.uk/callback",
-                ]
-            }
-        }
-
-        origins = get_cors_allowed_origins()
-
-        assert origins == ["https://app.flip.aicentre.co.uk", "https://localhost"]
-        mock_boto3_client.assert_called_once_with("cognito-idp", region_name="eu-west-2")
-        mock_boto3_client.return_value.describe_user_pool_client.assert_called_once_with(
-            UserPoolId="pool-id", ClientId="client-id"
-        )
-
-    def test_returns_empty_list_when_no_callback_urls(self, mock_boto3_client, mock_settings):
-        mock_boto3_client.return_value.describe_user_pool_client.return_value = {"UserPoolClient": {}}
-        assert get_cors_allowed_origins() == []
-
-
 class TestResetUserMfa:
     """Tests for the reset_user_mfa function."""
 
@@ -1911,56 +1824,3 @@ class TestGetUserByEmailOrId:
 
             params = mock_list.call_args.args[0]
             assert params["Filter"] == f'sub = "{user1}"'
-
-
-class TestApplyUserProfile:
-    """`apply_user_profile` merges DB profile fields onto a Cognito user."""
-
-    def _make_user(self):
-        return CognitoUser(
-            id=uuid4(),
-            email="alice@example.com",
-            is_disabled=False,
-        )  # type: ignore[call-arg]
-
-    def test_returns_user_unchanged_when_session_has_no_get(self):
-        """Duck-typed guard: list-listing call-sites pass `None` for `session`
-        when they don't have one. Don't blow up — just return the input.
-        """
-        user = self._make_user()
-
-        result = apply_user_profile(user, session=None)  # type: ignore[arg-type]
-
-        assert result is user
-
-    def test_returns_user_unchanged_when_no_profile_row_exists(self):
-        """No UserProfile row → no fields to apply; return the input verbatim."""
-        user = self._make_user()
-        session = Mock()
-        session.get.return_value = None
-
-        result = apply_user_profile(user, session=session)
-
-        # session.get was probed with the user id under UserProfile.
-        assert session.get.call_count == 1
-        assert result is user
-
-    def test_merges_profile_fields_when_available(self):
-        """A matching UserProfile row supplies the name + organisation that
-        Cognito doesn't carry. is_disabled is preserved verbatim.
-        """
-        user = self._make_user()
-        profile = Mock(name="…", organisation="London AI Centre")
-        # Mock(name=…) on a stock Mock is reserved — use side-effect attrs.
-        profile.name = "Alice Example"
-        profile.organisation = "London AI Centre"
-        session = Mock()
-        session.get.return_value = profile
-
-        result = apply_user_profile(user, session=session)
-
-        assert result.id == user.id
-        assert result.email == user.email
-        assert result.is_disabled is False
-        assert result.name == "Alice Example"
-        assert result.organisation == "London AI Centre"

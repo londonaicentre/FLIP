@@ -69,7 +69,7 @@ In the self-contained mode the Central Hub stack runs in a custom VPC with publi
 - **fl-api** and **fl-server** — the federated learning control plane. The FL server accepts outbound gRPC connections from trust-side FL clients via a Network Load Balancer (NLB).
 - **PostgreSQL (RDS)** — managed database, private subnet.
 - **Cognito** — user authentication (TOTP MFA enforced).
-- **SES** — transactional email (invites, password reset, access requests).
+- **SES** — transactional email sent by the application: access-request notifications and XNAT credential emails. Cognito invites and password-reset codes do **not** go through SES (see below).
 - **Secrets Manager** — AES key, database password, internal service key hash.
 
 Under the platform-managed mode the same services run unchanged; what differs is where they
@@ -309,6 +309,20 @@ the first deploy you must:
 
 If SES is still in the sandbox, request production access from the SES console
 or only send to verified destination addresses for testing.
+
+.. note::
+
+   SES carries only the emails the application sends itself: access-request
+   notifications and XNAT credential emails. **Cognito sends its own invites
+   and password-reset codes** from the user pool's default sender — the pool
+   declares no ``email_configuration``, so it uses ``COGNITO_DEFAULT`` rather
+   than SES. A broken or sandboxed SES identity therefore does not stop
+   invites or password resets, and conversely verifying the SES identity does
+   not fix them; those have their own delivery limits (see FLIP#592).
+
+   In development neither is needed: flip-api defaults to
+   ``EMAIL_BACKEND=console``, which logs the would-be email instead of calling
+   SES.
 
 ************
 Status check
