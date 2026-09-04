@@ -88,22 +88,31 @@ load-omop-vocab: fetch-vocab-core
 # agree by construction. Works against the constrained, vocab-loaded database
 # a running trust is (CANONICAL_TABLES is FK-ordered; one transaction per
 # project). Normally reached via `make -C trust seed-omop KIT=<CODE>`, which
-# supplies TRUST_INDEX, the port and the credentials from the kit; direct use:
+# supplies TRUST_INDEX, SOURCE_TRUST, the port and the credentials from the kit;
+# direct use:
 #   make seed-omop TRUST_INDEX=2 OMOP_DB_PORT=5436 PROJECTS="spleen_project cxr_project"
 # Writes a .seeded marker BESIDE the trust's db_data (so it follows the data,
 # whichever checkout runs the scripts) and update_omop_data.sh then refuses to
 # re-snapshot over the seed on the next bump without FORCE=1.
+# TRUST_INDEX names the TRUST — its FL kit slot, and so its volume and marker.
+# SOURCE_TRUST names the OMOP PARTITION to load into it. They are two axes that
+# coincide by convention on the shipped GSTT/KCH roster, not by construction:
+# kit slots are claimed from a pool in registration order, so a re-registered or
+# third trust can hold slot 2 while its data is partition 1. Separating them
+# leaves an override for that case; overriding TRUST_INDEX instead would move
+# the volume and the marker along with the partition.
 TRUST_INDEX ?= 1
+SOURCE_TRUST ?= $(TRUST_INDEX)
 PROJECTS ?= cxr_project spleen_project
 SEED_DATA_DIR = $(or $(OMOP_DATA_DIR_TRUST_$(TRUST_INDEX)),volumes/Trust_$(TRUST_INDEX)/db_data)
 SEED_MARKER = $(dir $(SEED_DATA_DIR)).seeded
 
 seed-omop: fetch-dataset
 	OMOP_DB_PORT=$(OMOP_DB_PORT) uv run python -m omop_db_tools.import_tables \
-		--trust-index $(TRUST_INDEX) --num-trusts $(NUM_TRUSTS) --partition $(PARTITION) \
+		--trust-index $(SOURCE_TRUST) --num-trusts $(NUM_TRUSTS) --partition $(PARTITION) \
 		--clean projects --projects $(PROJECTS) --data-dir data/canonical
-	@mkdir -p $(dir $(SEED_MARKER)) && printf 'projects=%s\nversion=%s\n' "$(PROJECTS)" "$(HF_TRUST_DATA_REVISION)" > $(SEED_MARKER)
-	@echo "✅ Seeded trust $(TRUST_INDEX) on port $(OMOP_DB_PORT) with: $(PROJECTS) (marker: $(SEED_MARKER))"
+	@mkdir -p $(dir $(SEED_MARKER)) && printf 'projects=%s\nsource_trust=%s\nversion=%s\n' "$(PROJECTS)" "$(SOURCE_TRUST)" "$(HF_TRUST_DATA_REVISION)" > $(SEED_MARKER)
+	@echo "✅ Seeded trust $(TRUST_INDEX) on port $(OMOP_DB_PORT) with: $(PROJECTS) (source_trust $(SOURCE_TRUST); marker: $(SEED_MARKER))"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Image build + populate pipeline (standalone; see README "Building the image")

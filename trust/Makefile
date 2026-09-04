@@ -509,18 +509,28 @@ update-orthanc-data:
 	$(ORTHANC_CMD) update-orthanc-data TRUST=$(TRUST)
 
 # Seed a running trust with the listed projects (FLIP#1100) — OMOP rows into its
-# omop-db, keyed by `source_trust == FL_KIT_SLOT_NUMBER`, the same value that
-# selects Trust_<N>/db_data for the snapshot path. Everything the sub-make needs
-# comes from the kit: the slot number, the published port, the credentials.
+# omop-db, keyed by `source_trust`, the same column the per-project DICOM sets
+# are keyed on. Everything the sub-make needs comes from the kit: the slot
+# number, the published port, the credentials.
 # A one-time step after `up-trust` + `load-omop-vocab`, idempotent, scoped to the
 # listed projects (Synthea rows and other projects untouched). Persists in the
 # bind-mounted volume until a .data_version bump, which update-omop-data then
 # refuses to apply over a seeded volume without FORCE=1.
 #   make -C trust seed-omop KIT=GSTT PROJECTS="spleen_project cxr_project"
 PROJECTS ?= cxr_project spleen_project
+# Which OMOP partition this trust gets. The FL kit slot is the default and is
+# right for the shipped GSTT/KCH roster, but the two are different axes: slots
+# are claimed from a pool in registration order, so a re-registered or third
+# trust can hold slot 2 with partition 1. Seeded the wrong way round the result
+# is silently self-consistent — the rows and the studies still agree with each
+# other, they just belong to another institution — so the assumption gets a name
+# and an override rather than living inside `TRUST_INDEX=$(TRUST_NUM)`.
+#   make -C trust seed KIT=GSTT SOURCE_TRUST=2
+SOURCE_TRUST ?= $(TRUST_NUM)
 seed-omop:
 	$(require_kit)
-	$(OMOP_DB_CMD) seed-omop TRUST_INDEX=$(TRUST_NUM) OMOP_DB_PORT=$(OMOP_DB_PORT) \
+	$(OMOP_DB_CMD) seed-omop TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
+	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
 	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
 	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB) PROJECTS="$(PROJECTS)" \
 	  $(if $(and $(TRUST_NUM),$(OMOP_DATA_DIR)),OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_DIR))
@@ -532,7 +542,8 @@ seed-omop:
 #   make -C trust seed-orthanc KIT=GSTT PROJECTS="spleen_project cxr_project"
 seed-orthanc:
 	$(require_kit)
-	$(ORTHANC_CMD) seed-orthanc TRUST_INDEX=$(TRUST_NUM) PACS_UI_PORT=$(PACS_UI_PORT) \
+	$(ORTHANC_CMD) seed-orthanc TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
+	  PACS_UI_PORT=$(PACS_UI_PORT) \
 	  ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
 	  ORTHANC_STORAGE_DIR_TRUST_$(TRUST_NUM)=$(ORTHANC_STORAGE_DIR) PROJECTS="$(PROJECTS)" \
 	  $(if $(CLEAR),CLEAR=$(CLEAR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))

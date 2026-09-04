@@ -149,6 +149,26 @@ make publish-trust-data VERSION=20261001 …            # for real; then set .da
 moves a checkout: the next `up-trust` re-snapshots — refusing, without `FORCE=1`, to discard a
 volume that was seeded — and every seed/enrichment run reads at the new tag.
 
+### Which partition a trust is seeded with
+
+`make -C trust seed KIT=<CODE>` loads the OMOP `source_trust` partition matching the trust's **FL
+kit slot** — partition 1 into the trust holding `Trust_1`, and so on. That is a default, not an
+invariant: the kit slot and the OMOP partition are separate axes that happen to line up on the
+shipped GSTT/KCH roster. Slots are claimed from a pool in registration order, so a re-registered
+trust, or a third one, can hold slot 2 while the data meant for it is partition 1.
+
+Seeded the wrong way round nothing complains — the OMOP rows and the PACS studies are selected by
+the same column, so they still agree with each other; they just belong to another institution.
+Override with `SOURCE_TRUST` when the two differ:
+
+```sh
+make -C trust seed KIT=<CODE> SOURCE_TRUST=1        # slot stays as assigned; load partition 1
+```
+
+`SOURCE_TRUST` moves only the partition. The trust's volumes, ports and the `.seeded` marker stay
+keyed to its kit slot, which is why it exists as its own variable rather than an override of
+`TRUST_NUM`.
+
 ## OMOP Database
 
 See dedicated README under [omop-db/README.md](omop-db/README.md) for instructions to populate the database.

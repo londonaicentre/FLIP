@@ -65,7 +65,12 @@ update-orthanc-data:
 #   make seed-orthanc TRUST_INDEX=2 PACS_UI_PORT=8044 PROJECTS="spleen_project"
 # Writes <storage dir>/.seeded (inside — the two default storage dirs share a
 # parent) so update_orthanc_data.sh refuses to re-snapshot over it without FORCE=1.
+# TRUST_INDEX names the TRUST (its FL kit slot, hence its port and storage dir);
+# SOURCE_TRUST names the OMOP partition whose accessions are uploaded into it.
+# Coupled by default, separable for a trust whose slot and partition differ —
+# see the omop-db Makefile's seed-omop for why they are two axes.
 TRUST_INDEX ?= 1
+SOURCE_TRUST ?= $(TRUST_INDEX)
 PROJECTS ?= cxr_project spleen_project
 # The marker must land on the volume the READER will look at, so both halves of
 # the guard follow update_orthanc_data.sh exactly (lines 42-43 and 67-70):
@@ -79,9 +84,9 @@ SEED_STORAGE_DIR = $(or $(ORTHANC_STORAGE_DIR_TRUST_$(TRUST_INDEX)),orthanc/orth
 SEED_MARKER = $(if $(filter /%,$(SEED_STORAGE_DIR)),$(SEED_STORAGE_DIR),../$(SEED_STORAGE_DIR))/.seeded
 seed-orthanc:
 	PACS_UI_PORT=$(PACS_UI_PORT) ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
-	  uv run seed_orthanc.py --trust-index $(TRUST_INDEX) --projects $(PROJECTS) \
+	  uv run seed_orthanc.py --trust-index $(SOURCE_TRUST) --projects $(PROJECTS) \
 	  $(if $(filter 1,$(CLEAR)),--clear-projects) $(if $(filter 1,$(DRY_RUN)),--dry-run)
-	@$(if $(filter 1,$(DRY_RUN)),true,printf 'projects=%s\nversion=%s\n' "$(PROJECTS)" "$${HF_TRUST_DATA_REVISION:-$$(tr -d ' \n\r\t' < ../.data_version)}" > "$(SEED_MARKER)" && echo "✅ marker: $(SEED_MARKER)")
+	@$(if $(filter 1,$(DRY_RUN)),true,printf 'projects=%s\nsource_trust=%s\nversion=%s\n' "$(PROJECTS)" "$(SOURCE_TRUST)" "$${HF_TRUST_DATA_REVISION:-$$(tr -d ' \n\r\t' < ../.data_version)}" > "$(SEED_MARKER)" && echo "✅ marker: $(SEED_MARKER)")
 
 # seed_orthanc.py's unit tests (pure selection/guard logic + the upload contract
 # against a scripted session) and publish_dicom.py's (the both-ways verification).
