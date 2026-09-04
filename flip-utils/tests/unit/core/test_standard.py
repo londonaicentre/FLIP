@@ -862,3 +862,122 @@ class TestFLIPStandardDevUploadAndCleanup:
         flip_dev.cleanup(cleanup_dir)
 
         assert cleanup_dir.exists()
+
+
+class TestMlflowDualWriteHooks:
+    """The MLflow sink hooks (FLIP#745): best-effort mirrors after each canonical call."""
+
+    VALID_MODEL_ID = "550e8400-e29b-41d4-a716-446655440000"
+
+    @pytest.fixture
+    def flip_prod(self):
+        """Create a FLIPStandardProd instance."""
+        return FLIPStandardProd()
+
+    @pytest.fixture
+    def flip_dev(self):
+        """Create a FLIPStandardDev instance."""
+        return FLIPStandardDev()
+
+    @pytest.fixture
+    def sink(self):
+        """Patch the sink accessor (as imported by flip.core.standard) to a Mock sink."""
+        mock_sink = Mock()
+        with patch("flip.core.standard.get_mlflow_sink", return_value=mock_sink):
+            yield mock_sink
+
+    @pytest.fixture
+    def prod_constants(self):
+        """Patch FlipConstants with the hub-call values Prod methods need."""
+        with patch("flip.core.standard.FlipConstants") as mock_constants:
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+            mock_constants.UPLOADED_FEDERATED_DATA_BUCKET = "s3://test-bucket/results"
+            yield mock_constants
+
+    def test_prod_update_status_mirrors_to_sink(self, flip_prod, sink, prod_constants):
+        with patch("flip.core.standard.requests.put", return_value=Mock(status_code=200, text="OK")):
+            flip_prod.update_status(self.VALID_MODEL_ID, ModelStatus.RUNNING)
+
+        sink.on_status.assert_called_once_with(self.VALID_MODEL_ID, ModelStatus.RUNNING)
+
+    def test_prod_update_status_mirrors_even_when_hub_call_fails(self, flip_prod, sink, prod_constants):
+        """Dual-write independence: a failed canonical call must not drop the mirror."""
+        with patch("flip.core.standard.requests.put", side_effect=ConnectionError("hub down")):
+            flip_prod.update_status(self.VALID_MODEL_ID, ModelStatus.ERROR)
+
+        sink.on_status.assert_called_once_with(self.VALID_MODEL_ID, ModelStatus.ERROR)
+
+    def test_prod_send_metrics_mirrors_to_sink(self, flip_prod, sink, prod_constants):
+        with patch("flip.core.standard.requests.post", return_value=Mock(status_code=200, text="OK")):
+            flip_prod.send_metrics("Trust_1", self.VALID_MODEL_ID, "LOSS_FUNCTION", 0.5, 2)
+
+        sink.log_metric.assert_called_once_with(
+            model_id=self.VALID_MODEL_ID, client_name="Trust_1", label="LOSS_FUNCTION", value=0.5, round=2
+        )
+
+    def test_prod_send_handled_exception_mirrors_to_sink(self, flip_prod, sink, prod_constants):
+        with patch("flip.core.standard.requests.post", return_value=Mock(status_code=200, text="OK")):
+            flip_prod.send_handled_exception("boom", "Trust_1", self.VALID_MODEL_ID)
+
+        sink.note_exception.assert_called_once_with(self.VALID_MODEL_ID, "Trust_1", "boom")
+
+    def test_prod_upload_results_registers_version_by_reference(self, flip_prod, sink, prod_constants, tmp_path):
+        """After a successful upload the sink registers the exact zip key, by S3 URI."""
+        results_folder = tmp_path / "results"
+        results_folder.mkdir()
+        (results_folder / "weights.pt").write_text("w")
+
+        with patch("flip.core.standard.boto3.client", return_value=Mock()):
+            flip_prod.upload_results_to_s3(results_folder, "model-123")
+
+        sink.register_results.assert_called_once()
+        model_id, results_uri = sink.register_results.call_args.args
+        assert model_id == "model-123"
+        assert results_uri.startswith("s3://test-bucket/results/model-123/")
+        assert results_uri.endswith(".zip")
+
+    def test_prod_upload_failure_does_not_register_version(self, flip_prod, sink, prod_constants, tmp_path):
+        results_folder = tmp_path / "results"
+        results_folder.mkdir()
+
+        mock_s3_client = Mock()
+        mock_s3_client.upload_file.side_effect = Exception("S3 down")
+        with (
+            patch("flip.core.standard.boto3.client", return_value=mock_s3_client),
+            pytest.raises(ResultsUploadError),
+        ):
+            flip_prod.upload_results_to_s3(results_folder, "model-123")
+
+        sink.register_results.assert_not_called()
+
+    def test_dev_update_status_mirrors_to_sink(self, flip_dev, sink):
+        flip_dev.update_status("tutorial-model", ModelStatus.RUNNING)
+
+        sink.on_status.assert_called_once_with("tutorial-model", ModelStatus.RUNNING)
+
+    def test_dev_send_metrics_mirrors_to_sink(self, flip_dev, sink):
+        flip_dev.send_metrics("site-1", "tutorial-model", "ACCURACY", 0.9, 1)
+
+        sink.log_metric.assert_called_once_with(
+            model_id="tutorial-model", client_name="site-1", label="ACCURACY", value=0.9, round=1
+        )
+
+    def test_hooks_are_noops_when_sink_disabled(self, flip_prod, flip_dev, prod_constants, tmp_path):
+        """With get_mlflow_sink() -> None (URI unset), every path must behave exactly as before."""
+        results_folder = tmp_path / "results"
+        results_folder.mkdir()
+
+        with (
+            patch("flip.core.standard.get_mlflow_sink", return_value=None),
+            patch("flip.core.standard.requests.put", return_value=Mock(status_code=200, text="OK")),
+            patch("flip.core.standard.requests.post", return_value=Mock(status_code=200, text="OK")),
+            patch("flip.core.standard.boto3.client", return_value=Mock()),
+        ):
+            flip_prod.update_status(self.VALID_MODEL_ID, ModelStatus.RUNNING)
+            flip_prod.send_metrics("Trust_1", self.VALID_MODEL_ID, "LOSS_FUNCTION", 0.5, 2)
+            flip_prod.send_handled_exception("boom", "Trust_1", self.VALID_MODEL_ID)
+            flip_prod.upload_results_to_s3(results_folder, "model-123")
+            flip_dev.update_status("tutorial-model", ModelStatus.RUNNING)
+            flip_dev.send_metrics("site-1", "tutorial-model", "ACCURACY", 0.9, 1)

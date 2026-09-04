@@ -45,6 +45,10 @@ dependencies = [
     "urllib3>=2.7.0",
     "picklescan>=1.0.5",
     "bandit>=1.7.10",
+    "mlflow-skinny>=3.14.0",
+    # SigV4 auth plugin for SageMaker managed MLflow (FLIP#745 WP6): lets
+    # MLFLOW_TRACKING_URI carry the prod MLflow App ARN. Dormant otherwise.
+    "sagemaker-mlflow>=0.5.0",
 ]
 
 [project.scripts]

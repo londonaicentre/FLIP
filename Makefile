@@ -12,6 +12,7 @@
 
 .PHONY: build build-fl dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
+		mlflow \
 		check-aws-access generate-internal-service-key generate-xnat-credentials \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock checkov-lint \
@@ -337,6 +338,12 @@ debug-off-all:
 # still created them, rather than looked them up `external:` (FLIP#957).
 create-networks-centralhub:
 	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_central-hub-network)
+
+# Start only the MLflow tracking server (FLIP#745). Included in `make up` via the
+# compose file; this standalone target is for fl-tutorials runs that want metric
+# plots (http://localhost:$(MLFLOW_PORT)) without bringing up the full stack.
+mlflow: create-networks-centralhub
+	${DOCKER_COMMAND} up -d mlflow
 
 create-networks: create-networks-centralhub
 	$(MAKE) -C trust create-networks

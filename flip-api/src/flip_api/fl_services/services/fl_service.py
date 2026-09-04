@@ -33,6 +33,7 @@ from flip_api.domain.interfaces.fl import (
 )
 from flip_api.domain.schemas.status import FLJobStatus, FLTargets, JobStatus
 from flip_api.domain.schemas.types import FLBackend
+from flip_api.fl_services.services import mlflow_run_service
 from flip_api.utils.encryption import encrypt
 from flip_api.utils.exceptions import JobAbortedError, NotFoundError
 from flip_api.utils.http import http_delete, http_get, http_post
@@ -1055,6 +1056,10 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
             f"(released {released} scheduler(s)). Reason: {e}"
         )
         add_log(model_id, "Training job aborted before start; training slot released.", session)
+        # Best-effort MLflow mirror (FLIP#745): every non-exceptional exit of this
+        # abort guarantees no RUNNING run remains for the model (a hard-killed
+        # Flower ServerApp reports no terminal status of its own).
+        mlflow_run_service.stop_run(model_id)
         return
 
     server_status = fetch_server_status(net_endpoint)
@@ -1074,6 +1079,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
             f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); "
             f"already stopped — nothing to abort."
         )
+        mlflow_run_service.stop_run(model_id)
         return
 
     # Extracting target and clients from the request path parameters
@@ -1096,6 +1102,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     # non-DELETED jobs) can no longer free the net — release it here now the abort is delivered.
     released = fl_scheduler_service.release_scheduler_for_model(model_id, session)
     logger.info(f"Released {released} scheduler(s) for model {model_id} after abort")
+    mlflow_run_service.stop_run(model_id)
 
 
 def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session) -> None:

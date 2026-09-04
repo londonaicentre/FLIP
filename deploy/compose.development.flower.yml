@@ -120,6 +120,9 @@ services:
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
+      # MLflow dual-write (FLIP#745): the flip package mirrors metrics/status to
+      # MLflow, reached over `default` (hub-internal). Empty => sink disabled.
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt
@@ -221,6 +224,8 @@ services:
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
+      # MLflow dual-write (FLIP#745): see fl-server-net-1.
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt

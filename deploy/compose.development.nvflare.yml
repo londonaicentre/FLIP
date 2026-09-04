@@ -116,6 +116,9 @@ services:
       - AWS_PROFILE=${AWS_PROFILE}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       - HOME=/home/${UNAME}
+      # MLflow dual-write (FLIP#745): the flip package mirrors metrics/status to
+      # MLflow, reached over `default` (hub-internal). Empty => sink disabled.
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -168,6 +171,8 @@ services:
       - AWS_PROFILE=${AWS_PROFILE}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       - HOME=/home/${UNAME}
+      # MLflow dual-write (FLIP#745): see fl-server-net-1.
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
     security_opt:
       - no-new-privileges:true
     cap_drop:
