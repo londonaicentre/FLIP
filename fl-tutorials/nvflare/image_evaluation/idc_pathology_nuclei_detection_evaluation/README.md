@@ -27,6 +27,28 @@ Annotation (Supplement 222).
 Nothing is re-hosted: `make -C fl-tutorials download-idc-pathology-data` pulls from IDC's public
 buckets with no credentials, using `idc-index`. Roughly 2.1 GB for the default subset.
 
+### Reproducibility without republishing the imaging
+
+Slides are fetched from IDC on demand and never copied into another dataset. What *is* saved is the
+much smaller thing needed to make a run repeatable:
+
+- **`datasets/idc_pathology/manifest.csv`** — the lockfile. One row per slide, pinning its UIDs, its
+  site and the IDC index version the selection was resolved against. IDC issues versioned releases
+  and series come and go, so without this pin "the same criteria" silently resolves to a different
+  subset later. The download target reproduces from it **by default**; `IDC_RESOLVE=1` re-selects
+  and rewrites it, which should be reviewed as a deliberate dataset change.
+- **`datasets/idc_pathology/omop/pathology_project/*.csv`** — the OMOP mock rows, derived from the
+  manifest by `build_omop_project.py`. Deterministic: the same manifest regenerates them
+  byte-identically.
+
+Together these are a few kilobytes, so the repository carries the *selection* and its *description*
+while the gigabytes stay at their source.
+
+No demographics are invented. TCGA pathology DICOM is de-identified — every `PatientSex` and
+`PatientBirthDate` in this collection is empty — so those columns carry OMOP's "No matching concept"
+(0), and `year_of_birth`, which is `NOT NULL`, gets the deliberately implausible sentinel 1900 rather
+than a realistic-looking year an analysis might believe.
+
 ### How sites are formed
 
 TCGA `PatientID` is the TCGA barcode, `TCGA-<TSS>-<participant>`, whose second field is the
@@ -150,14 +172,33 @@ A test pins the returned key set, because this is the tutorial's central claim.
 
 ## Running this on a real trust
 
-You cannot yet, and the blocker is the platform rather than this tutorial. FLIP's imaging path
-assumes radiology: `ResourceType` has no pathology member, imaging-api converts DICOM to NIfTI
-(meaningless for a tiled RGB pyramid), XNAT's model is series-oriented, `trust/orthanc/` carries no
-WSI plugin, and OMOP MI-CDM would need an `SM` modality concept. The dev stack's OMOP mock contains
-only plain radiography, MR and CT.
+Not yet — but the gap is narrower than it first appears, and most of it is data rather than code.
 
-The tutorial therefore runs under `LOCAL_DEV`, reading slides from disk — which is why it can be
-developed and reviewed without any of that work landing first.
+What is **not** in the way, despite looking like it might be:
+
+- `ResourceType` needs no new member. A whole-slide image *is* DICOM, and the evaluator already asks
+  for `ResourceType.DICOM`.
+- The DICOM-to-NIfTI conversion does not block anything. It is an XNAT *event subscription* that
+  reacts to a scan being created and launches dcm2niix asynchronously; it would fail on a slide, but
+  the DICOM resource is returned regardless.
+- OMOP needs no new concept. The loaded DICOM vocabulary already carries Slide microscopy as
+  `concept_id 2128009266`, which is what `image_occurrence.csv` here uses.
+- Orthanc needs no WSI plugin to *store* slides — that plugin is for viewing.
+
+What genuinely is in the way:
+
+- **The dev OMOP mock has no slide-microscopy rows.** It carries plain radiography, MR and CT only.
+  The generated `omop/pathology_project/` CSVs above are exactly what would fill that gap, and they
+  already carry the `source_trust` column the seed pipeline partitions on.
+- **A loader for a running trust.** FLIP#1101 adds `make -C trust seed`, which loads OMOP rows and
+  the matching DICOM into a running trust by `source_trust`. Until it lands there is no in-tree way
+  to add a project without rebuilding snapshots.
+- **XNAT ingesting a slide.** This is the real unknown and worth proving before anything else: a
+  slide is one multi-frame instance of 140 MB to 3 GB, and XNAT's importer is built around
+  radiology series. Size matters too — the current Orthanc snapshot is about 1.1 GB in total.
+
+The tutorial runs under `LOCAL_DEV`, reading slides from disk, which is why it can be developed and
+reviewed without any of that landing first.
 
 ## Next steps
 

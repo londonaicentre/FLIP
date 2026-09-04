@@ -27,7 +27,7 @@ reproduces across IDC releases.
 
 Outputs, under ``--out-dir`` (default ``fl-tutorials/data/idc_pathology``)::
 
-    <out>/manifest.csv                      # the lockfile: every selected slide, its site, its UIDs
+    datasets/idc_pathology/manifest.csv     # the lockfile: every selected slide, its site, its UIDs
     <out>/<site>/dataframe.csv              # the FLIP dataframe for that site (needs accession_id)
     <out>/<site>/accession-resources/<accession_id>/{slide.dcm,annotation.dcm}
 
@@ -65,6 +65,10 @@ DEFAULT_COLLECTION = "tcga_brca"
 DEFAULT_SITES = ("A8", "A7")
 DEFAULT_SLIDES_PER_SITE = 5
 
+# The manifest lives beside this script, not under the gitignored data root: it is the lockfile that
+# makes a run reproducible, and it is small enough to review in a diff.
+_DEFAULT_MANIFEST = Path(__file__).resolve().parent / "manifest.csv"
+
 SLIDE_FILENAME = "slide.dcm"
 ANNOTATION_FILENAME = "annotation.dcm"
 
@@ -73,12 +77,14 @@ MANIFEST_COLUMNS = [
     "site",
     "tss",
     "patient_id",
+    "slide_study_uid",
     "slide_series_uid",
     "slide_sop_instance_uid",
     "annotation_series_uid",
     "total_pixel_columns",
     "total_pixel_rows",
     "pixel_spacing_mm",
+    "study_date",
     "slide_instance_mb",
     "annotation_series_mb",
     "idc_index_version",
@@ -101,7 +107,10 @@ def _candidate_query(collection: str) -> str:
     """
     return f"""
     WITH slides AS (
-        SELECT SeriesInstanceUID AS slide_series_uid, PatientID AS patient_id
+        SELECT SeriesInstanceUID AS slide_series_uid,
+               StudyInstanceUID AS slide_study_uid,
+               PatientID AS patient_id,
+               StudyDate AS study_date
           FROM index
          WHERE collection_id = '{collection}'
            AND Modality = 'SM'
@@ -130,7 +139,9 @@ def _candidate_query(collection: str) -> str:
     )
     SELECT s.patient_id,
            split_part(s.patient_id, '-', 2) AS tss,
+           s.slide_study_uid,
            s.slide_series_uid,
+           s.study_date,
            b.slide_sop_instance_uid,
            n.annotation_series_uid,
            b.total_pixel_columns,
@@ -206,7 +217,11 @@ def select_subset(
                 f"--slides-per-site, or choose another site."
             )
         chosen["site"] = site_name
-        chosen["accession_id"] = chosen["slide_series_uid"]
+        # The accession is the TCGA barcode, which is what these slides carry in their DICOM
+        # AccessionNumber -- so the dev layout and a future real-stack cohort resolve on the same
+        # key. It is unique here only because one slide per patient is selected, which is asserted
+        # after selection rather than assumed.
+        chosen["accession_id"] = chosen["patient_id"]
         selected.append(chosen)
         logger.info(
             "%s <- TSS %s: %d slide(s), %d patient(s), %.0f MB slides + %.0f MB annotations",
@@ -220,6 +235,14 @@ def select_subset(
 
     manifest = pd.concat(selected, ignore_index=True)
     manifest["idc_index_version"] = idc_index_version
+
+    duplicated = manifest["accession_id"][manifest["accession_id"].duplicated()].tolist()
+    if duplicated:
+        raise SystemExit(
+            f"Accession ids are not unique: {duplicated}. The accession is the TCGA barcode, so this "
+            "means a patient contributed more than one slide -- which the per-patient selection is "
+            "supposed to prevent."
+        )
     return manifest[MANIFEST_COLUMNS]
 
 
@@ -328,7 +351,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--resolve", action="store_true", help="Query IDC and select a fresh subset.")
-    source.add_argument("--manifest", type=Path, help="Reproduce a pinned subset from this manifest CSV.")
+    source.add_argument(
+        "--manifest",
+        type=Path,
+        nargs="?",
+        const=_DEFAULT_MANIFEST,
+        help="Reproduce a pinned subset. Defaults to the committed manifest beside this script.",
+    )
     parser.add_argument("--collection", default=DEFAULT_COLLECTION, help="IDC collection id.")
     parser.add_argument(
         "--sites",
@@ -347,6 +376,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--out-dir", type=Path, default=Path(__file__).resolve().parents[2] / "data" / "idc_pathology")
+    parser.add_argument(
+        "--manifest-out",
+        type=Path,
+        default=_DEFAULT_MANIFEST,
+        help="Where to write the resolved manifest. Defaults beside this script, where it is committed.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Resolve and report, but download nothing.")
     return parser.parse_args(argv)
 
@@ -388,7 +423,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = out_dir / "manifest.csv"
+    manifest_path = args.manifest_out
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest.to_csv(manifest_path, index=False)
     logger.info("Wrote %s", manifest_path)
 

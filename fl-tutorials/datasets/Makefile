@@ -42,7 +42,7 @@ SPLEEN_UV := uv run --project spleen
 
 .PHONY: download-xray-data download-spleen-data download-spleen-msd-data \
 	download-spleen-flip-format-data download-arkplus-finetuning-data \
-	download-arkplus-eval-data upload-spleen-labels download-idc-pathology-data
+	download-arkplus-eval-data upload-spleen-labels download-idc-pathology-data build-idc-pathology-omop
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the layout
 # both harnesses read (data/xrays_mini_300/, gitignored). Idempotent — safe to re-run.
@@ -123,15 +123,23 @@ IDC_SITES ?= A8,A7
 IDC_SLIDES_PER_SITE ?= 5
 IDC_MAX_SLIDE_MB ?= 400
 
+# Reproduces the committed manifest by default, so every developer downloads the same slides even as
+# IDC issues new index releases. IDC_RESOLVE=1 re-selects instead, which rewrites the manifest and
+# should be reviewed as a deliberate dataset change.
 download-idc-pathology-data:
 	@uv run --no-project --with idc-index --with pandas python idc_pathology/prepare_idc_pathology.py \
-		--resolve \
-		--sites $(IDC_SITES) \
-		--slides-per-site $(IDC_SLIDES_PER_SITE) \
-		--max-slide-mb $(IDC_MAX_SLIDE_MB) \
+		$(if $(IDC_RESOLVE),--resolve --sites $(IDC_SITES) --slides-per-site $(IDC_SLIDES_PER_SITE) \
+			--max-slide-mb $(IDC_MAX_SLIDE_MB),--manifest) \
 		--out-dir $(DATA_DIR)/idc_pathology
+	@$(MAKE) --no-print-directory build-idc-pathology-omop
 	@echo ""
 	@echo "Next step: make -C fl-tutorials run-tutorial TUTORIAL=idc_pathology_nuclei_detection_evaluation"
+
+# Derive the OMOP mock rows for the pathology project from the pinned manifest. Committed, because
+# the imaging is fetched from IDC on demand and never re-hosted -- so what has to be saved for a run
+# to be reproducible is the selection and the rows describing it, not the gigabytes of DICOM.
+build-idc-pathology-omop:
+	@uv run --no-project --with pandas python idc_pathology/build_omop_project.py
 
 # Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT, so the spleen
 # apps find a label_*.nii.gz beside each pulled input_*.nii.gz. Needs NUM_CASES=41 on the MSD
