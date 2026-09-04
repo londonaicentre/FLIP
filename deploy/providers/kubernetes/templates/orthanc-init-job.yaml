@@ -47,7 +47,7 @@ spec:
               # Install tar (amazon/aws-cli image doesn't ship it)
               microdnf install -y tar gzip curl 2>/dev/null || yum install -y tar gzip curl 2>/dev/null
               TRUST_NUM="{{ .Values.trustNumber }}"
-              DATA_VERSION="{{ .Values.trustData.version }}"
+              DATA_VERSION="{{ required "trustData.version is required — the trust-data tag every snapshot is fetched at (was omopDb.initJob.dataVersion / orthanc.initJob.dataVersion before FLIP#1100)" .Values.trustData.version }}"
               S3_BUCKET="{{ .Values.orthanc.initJob.s3Bucket }}"
               if [ -n "$S3_BUCKET" ]; then
                 ARCHIVE_NAME="{{ .Values.orthanc.initJob.archiveName }}"

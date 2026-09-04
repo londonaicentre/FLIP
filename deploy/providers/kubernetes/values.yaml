@@ -32,6 +32,11 @@ flBackend: "nvflare"
 # version is a git TAG on that dataset (FLIP pins it in trust/.data_version) and every archive is
 # fetched at that tag from an unversioned path. Also the version suffix of the default S3 archive
 # names below, which is where a version still has to live in a filename.
+#
+# BREAKING (FLIP#1100): replaces omopDb.initJob.dataVersion and orthanc.initJob.dataVersion, and
+# OMOP_DATA_VERSION becomes TRUST_DATA_VERSION on the env side. Helm ignores unknown keys, so an
+# existing values file pinning the old ones keeps installing and silently stops taking effect —
+# see README "Upgrading: trustData.version replaces the two per-store pins".
 trustData:
   version: "20260901"
   hfRepo: "aicentreflip/trust-data"
