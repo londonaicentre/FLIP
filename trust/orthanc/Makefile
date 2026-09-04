@@ -67,12 +67,21 @@ update-orthanc-data:
 # parent) so update_orthanc_data.sh refuses to re-snapshot over it without FORCE=1.
 TRUST_INDEX ?= 1
 PROJECTS ?= cxr_project spleen_project
-SEED_STORAGE_DIR = $(or $(ORTHANC_STORAGE_DIR_TRUST_$(TRUST_INDEX)),$(ORTHANC_STORAGE_DIR))
+# The marker must land on the volume the READER will look at, so both halves of
+# the guard follow update_orthanc_data.sh exactly (lines 42-43 and 67-70):
+# keyed by TRUST_INDEX with the same trust/-relative default — never the
+# unsuffixed ORTHANC_STORAGE_DIR, which the kit-example include above pins to
+# slot 1 whatever TRUST_INDEX says — and resolved the same way, absolute as-is,
+# relative against trust/. That last step is why SEED_MARKER exists rather than
+# the storage dir being used directly: this recipe runs in trust/orthanc while
+# the script resolves against trust/, so a relative path needs the ../ here.
+SEED_STORAGE_DIR = $(or $(ORTHANC_STORAGE_DIR_TRUST_$(TRUST_INDEX)),orthanc/orthanc-storage-trust$(TRUST_INDEX))
+SEED_MARKER = $(if $(filter /%,$(SEED_STORAGE_DIR)),$(SEED_STORAGE_DIR),../$(SEED_STORAGE_DIR))/.seeded
 seed-orthanc:
 	PACS_UI_PORT=$(PACS_UI_PORT) ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
 	  uv run seed_orthanc.py --trust-index $(TRUST_INDEX) --projects $(PROJECTS) \
 	  $(if $(filter 1,$(CLEAR)),--clear-projects) $(if $(filter 1,$(DRY_RUN)),--dry-run)
-	@$(if $(filter 1,$(DRY_RUN)),true,printf 'projects=%s\nversion=%s\n' "$(PROJECTS)" "$${HF_TRUST_DATA_REVISION:-$$(tr -d ' \n\r\t' < ../.data_version)}" > "$(SEED_STORAGE_DIR)/.seeded" && echo "✅ marker: $(SEED_STORAGE_DIR)/.seeded")
+	@$(if $(filter 1,$(DRY_RUN)),true,printf 'projects=%s\nversion=%s\n' "$(PROJECTS)" "$${HF_TRUST_DATA_REVISION:-$$(tr -d ' \n\r\t' < ../.data_version)}" > "$(SEED_MARKER)" && echo "✅ marker: $(SEED_MARKER)")
 
 # seed_orthanc.py's unit tests (pure selection/guard logic + the upload contract
 # against a scripted session) and publish_dicom.py's (the both-ways verification).
