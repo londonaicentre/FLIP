@@ -82,12 +82,6 @@ class TutorialCopy:
 # reading the projects list should understand the project is for — not how it was run. Anything not
 # listed falls back to a capitalised, de-hyphenated form of the directory name and a generic task.
 TUTORIALS: dict[str, TutorialCopy] = {
-    "ehr_risk_prediction": TutorialCopy(
-        "EHR risk prediction",
-        "Predicting which patients will go on to develop type 2 diabetes from their routine electronic "
-        "health records — demographics plus the conditions and hospital visits recorded before diagnosis — "
-        "with a model trained across the participating trusts without moving any patient data.",
-    ),
     "xray_classification": TutorialCopy(
         "Chest X-ray classification",
         "Detecting pleural effusion and pulmonary oedema on chest X-rays with an image classifier trained "
@@ -162,7 +156,11 @@ def describe_tutorial(model_files_dir: Path) -> TutorialCopy:
     copy = TUTORIALS.get(tutorial_dir)
     if copy is not None:
         return copy
-    label = tutorial_dir.replace("_", " ").replace("-", " ").strip().capitalize()
+    # Sentence case on the first character only: str.capitalize() would lower-case the rest,
+    # turning an acronym directory like MRI_segmentation into "Mri segmentation".
+    words = tutorial_dir.replace("_", " ").replace("-", " ").split()
+    label = " ".join(words)
+    label = label[:1].upper() + label[1:]
     return TutorialCopy(label, f"Training the {label} application across the participating trusts' data.")
 
 
