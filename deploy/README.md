@@ -325,10 +325,29 @@ longer run as root, the host-side bind-mount source directories must be owned by
 UID. The Ansible playbooks `deploy/providers/AWS/site.yml` and
 `deploy/providers/local/site_local_trust.yml` provision `/opt/flip/xnat/**` as UID 1001 and
 `/opt/flip/orthanc/**` as UID 999 — including a recursive `chown` after extracting the Orthanc
-storage archive (which `tar` writes as root). If you provision a trust host outside Ansible, you
-must replicate this ownership or first-boot writes (archive ingest, SQLite index, log rotation)
-will fail with EACCES. In dev, `trust/orthanc/update_orthanc_data.sh` instead `chmod`s the mock
+storage archive (which `tar` writes as root). `make -C trust/xnat xnat-reset` is the third path
+onto the same invariant and provisions the XNAT directories as UID 1001 too, verifying it
+afterwards and failing with the exact `chown` to run rather than leaving a host half-provisioned
+(FLIP#1095 — it previously used a hardcoded 1000 on its remote branch and the invoking user's UID
+on the others). What the three paths share is the **UID, not the directory**: the playbooks
+provision `/opt/flip/xnat/**`, while `xnat-reset` and the compose stacks both read `XNAT_DATA_DIR`,
+which in stag/prod defaults to the per-slot `/opt/flip/xnat-trust<N>` so two trusts on one host stay
+isolated. `xnat-reset` is therefore the path that provisions the tree XNAT actually writes to, and
+an ownership change made against the playbooks' `/opt/flip/xnat` would not reach it. If you
+provision a trust host outside all three, you must replicate this ownership or first-boot writes
+(archive ingest, SQLite index, log rotation) will fail with EACCES. That
+failure is worth recognising because it does not look like a permissions problem: XNAT accepts the
+inbound DICOM association, fails the write and aborts it, so the PACS reports a *network* fault
+(`Peer aborted Association`), while the same EACCES stops XNAT writing the application logs that
+would name the cause. In dev, `trust/orthanc/update_orthanc_data.sh` instead `chmod`s the mock
 storage world-writable so a developer needs no `sudo` to re-seed it.
+
+XNAT's dev tree deliberately does **not** follow that convention. `xnat-reset` creates
+`trust/xnat/xnat-data-<KIT>/` under `sudo` and chowns it to UID 1001, so on a host whose developer
+is not themselves UID 1001 that tree is readable but not writable: deleting it, or running
+`git clean -fdx` over the checkout, needs `sudo`. Ownership is the whole of the fix here — it is
+what makes XNAT able to ingest at all — and the modes are left at their defaults rather than
+widened to buy back the convenience.
 
 ### Linux Capability Restrictions
 
