@@ -25,9 +25,9 @@ have one definition.
 
 The caller (the root Makefile) is responsible for sourcing the right env file:
 `include $(MAIN_ENV_FILE)` + `export` populates os.environ with
-.env.development / .env.stag / .env.production values before invoking this
-script. No docker compose exec, no ECS round-trip, no per-trust lookup — just a
-file→file copy keyed on KIT, portable across dev/stag/prod.
+.env.development / .env.stag / .env.production (or .env.lza-prod / .env.lza-stag)
+values before invoking this script. No docker compose exec, no ECS round-trip, no
+per-trust lookup — just a file→file copy keyed on KIT, portable across dev/stag/prod.
 """
 
 from __future__ import annotations

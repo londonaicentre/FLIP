@@ -60,9 +60,9 @@ def mock_flwr_run(monkeypatch):
 
         if by_command is not None:
             # by_command: {flwr_subcommand: {"returncode": int, "stdout": str, "stderr": str}}
-            # e.g. {"stop": {...}, "list": {...}}. command is ["uvx", "flwr", "<subcommand>", ...].
+            # e.g. {"stop": {...}, "list": {...}}. command is ["flwr", "<subcommand>", ...].
             def _dispatch(command, *_args, **_kwargs):
-                subcommand = command[2] if len(command) > 2 else ""
+                subcommand = command[1] if len(command) > 1 else ""
                 spec = by_command.get(subcommand, {})
                 return subprocess.CompletedProcess(
                     args=command,

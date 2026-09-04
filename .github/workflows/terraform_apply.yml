@@ -186,6 +186,15 @@ jobs:
           K8S_TRUST_PUBLIC_IPS: ${{ vars.K8S_TRUST_PUBLIC_IPS }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
           JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: ${{ vars.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB }}
+          # Optional LZA keys (FLIP#749). Expected to be unset in the aws-stag /
+          # aws-prod environments — a platform-managed estate is applied from a
+          # laptop, and unset is the legacy value for all five. Passed through so
+          # compose-ci-env.sh's manifest stays the one place the mapping lives.
+          ACCESS_LOGS_BUCKET_NAME: ${{ vars.ACCESS_LOGS_BUCKET_NAME }}
+          CF_LOGS_BUCKET_NAME: ${{ vars.CF_LOGS_BUCKET_NAME }}
+          EFS_PROVISION_IMAGE: ${{ vars.EFS_PROVISION_IMAGE }}
+          LZA_VPC_NAME: ${{ vars.LZA_VPC_NAME }}
+          MANAGE_DNS: ${{ vars.MANAGE_DNS }}
           ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
           INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}

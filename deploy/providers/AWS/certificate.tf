@@ -26,9 +26,16 @@
 # This is because the domain_validation_options are only known after
 # the certificate is created, so Terraform cannot plan the DNS records
 # in a single pass.
+#
+# The whole chain is skipped when var.manage_dns is false (the zone-less
+# first LZA bring-up, FLIP#749): DNS validation is impossible without the
+# hosted zone, and an unvalidated cert cannot be attached to the ALB — which
+# serves plain HTTP on the private CloudFront-VPC-origin leg instead (see the
+# listeners comment in main.tf).
 ############################
 
 resource "aws_acm_certificate" "flip" {
+  count             = var.manage_dns ? 1 : 0
   domain_name       = var.flip_alb_subdomain
   validation_method = "DNS"
 
@@ -44,7 +51,7 @@ resource "aws_acm_certificate" "flip" {
 # DNS validation record
 resource "aws_route53_record" "cert_validation" {
   for_each = {
-    for dvo in tolist(aws_acm_certificate.flip.domain_validation_options) : dvo.domain_name => {
+    for dvo in var.manage_dns ? tolist(aws_acm_certificate.flip[0].domain_validation_options) : [] : dvo.domain_name => {
       name   = dvo.resource_record_name
       record = dvo.resource_record_value
       type   = dvo.resource_record_type
@@ -56,16 +63,30 @@ resource "aws_route53_record" "cert_validation" {
   records         = [each.value.record]
   ttl             = 60
   type            = each.value.type
-  zone_id         = data.aws_route53_zone.subdomain.zone_id
+  zone_id         = data.aws_route53_zone.subdomain[0].zone_id
 }
 
 # Certificate validation
 resource "aws_acm_certificate_validation" "flip" {
-  certificate_arn         = aws_acm_certificate.flip.arn
+  count                   = var.manage_dns ? 1 : 0
+  certificate_arn         = aws_acm_certificate.flip[0].arn
   validation_record_fqdns = [for record in aws_route53_record.cert_validation : record.fqdn]
 }
 
 output "CertificateArn" {
-  description = "ACM Certificate ARN (validated)"
-  value       = aws_acm_certificate_validation.flip.certificate_arn
+  description = "ACM Certificate ARN (validated; null when manage_dns is false — FLIP#749)"
+  value       = var.manage_dns ? aws_acm_certificate_validation.flip[0].certificate_arn : null
+}
+
+# State migration for the counts added above (FLIP#749): keeps existing legacy
+# states aligned without a manual `terraform state mv`. Safe to remove once
+# every live state file has been migrated.
+moved {
+  from = aws_acm_certificate.flip
+  to   = aws_acm_certificate.flip[0]
+}
+
+moved {
+  from = aws_acm_certificate_validation.flip
+  to   = aws_acm_certificate_validation.flip[0]
 }

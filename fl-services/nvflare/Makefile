@@ -21,12 +21,17 @@ REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 
 # Load the env file selected by PROD (dev by default), exactly as the root Makefile
 # does, so compose + the provisioning targets see the dev vars (FL_API_PORT,
-# LOG_LEVEL, NET_ENDPOINTS, FL_PORT, …) and, with PROD=stag|true, the upload vars
-# (AICENTRE_BUCKET_NAME, FLARE_KIT_DATE) used by upload-kits-to-s3.
+# LOG_LEVEL, NET_ENDPOINTS, FL_PORT, …) and, with PROD=stag|true (or lza|lza-stag
+# for the LZA estate, FLIP#749), the upload vars (AICENTRE_BUCKET_NAME,
+# FLARE_KIT_DATE) used by upload-kits-to-s3.
 ifeq ($(PROD),true)
 MAIN_ENV_FILE := $(REPO_ROOT)/.env.production
 else ifeq ($(PROD),stag)
 MAIN_ENV_FILE := $(REPO_ROOT)/.env.stag
+else ifeq ($(PROD),lza)
+MAIN_ENV_FILE := $(REPO_ROOT)/.env.lza-prod
+else ifeq ($(PROD),lza-stag)
+MAIN_ENV_FILE := $(REPO_ROOT)/.env.lza-stag
 else
 MAIN_ENV_FILE := $(REPO_ROOT)/.env.development
 endif
@@ -110,13 +115,14 @@ provision-add-client-prod:
 # Upload the provisioned FLARE participant kits to S3 under the FLARE_KIT_DATE prefix
 # the deploy flow pulls from (deploy/providers/AWS Makefile `provision-local-trust`,
 # which reads s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/
-# net-N/services/<slot>/). Run with PROD=stag|true so AICENTRE_BUCKET_NAME + FLARE_KIT_DATE
-# load from the matching .env. Defaults to a dry run — pass DRYRUN= to upload for real.
-FL_KIT_WORKSPACE := $(if $(filter true,$(PROD)),$(PROD_WORKSPACE_DIR),$(STAG_WORKSPACE_DIR))
+# net-N/services/<slot>/). Run with PROD=stag|true (or lza|lza-stag) so AICENTRE_BUCKET_NAME +
+# FLARE_KIT_DATE load from the matching .env. Defaults to a dry run — pass DRYRUN= to upload
+# for real. The LZA pair maps onto the legacy workspaces (same FQDN + CA by design, FLIP#749).
+FL_KIT_WORKSPACE := $(if $(filter true lza,$(PROD)),$(PROD_WORKSPACE_DIR),$(STAG_WORKSPACE_DIR))
 DRYRUN ?= --dryrun
 upload-kits-to-s3:
-	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true"; exit 1; }
-	@[ -n "$(FLARE_KIT_DATE)" ] || { echo "❌ FLARE_KIT_DATE not set — run with PROD=stag|true"; exit 1; }
+	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true|lza|lza-stag"; exit 1; }
+	@[ -n "$(FLARE_KIT_DATE)" ] || { echo "❌ FLARE_KIT_DATE not set — run with PROD=stag|true|lza|lza-stag"; exit 1; }
 	@echo "⬆️  Uploading FLARE kits (net-$(NET_NUMBER), $(FL_KIT_WORKSPACE)) → s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) $(DRYRUN)"
 	aws s3 sync ./$(FL_KIT_WORKSPACE)/net-$(NET_NUMBER) s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) --delete $(DRYRUN)
 

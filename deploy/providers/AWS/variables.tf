@@ -30,6 +30,42 @@ variable "VPC_NAME" {
   type = string
 }
 
+variable "lza_managed_network" {
+  description = "Run against the LZA-provisioned (platform-managed) network instead of creating one (FLIP#749). true skips the VPC module (and with it NAT/IGW/EIPs), the VPC endpoints, the DHCP options, and the legacy /flip/networking/* SSM params (fl_ingress_lza.tf publishes the LZA edge-handoff set under that prefix instead), and discovers the AWSAccelerator VPC + subnets by Name tag instead (see network_lza.tf). Orthogonal to var.environment: the LZA account is prod-grade, so it deploys with environment=prod AND this flag. Set via PROD=lza in the Makefile."
+  type        = bool
+  default     = false
+}
+
+variable "lza_vpc_name" {
+  description = "Name tag of the platform-managed VPC to discover when lza_managed_network is set. The subnet lookups derive their Name-tag patterns from it (<name>-app-*, <name>-data-*)."
+  type        = string
+  default     = "AWSAccelerator-eu-west-2-prod"
+}
+
+variable "networking_ingress_cidrs" {
+  description = "CIDRs of the networking account's ingress-VPC subnets (the edge NLB and CloudFront relay path over the TGW), admitted onto the LZA FL NLB and the ALB's main listener (fl_ingress_lza.tf). Empty by default so the stack applies standalone; the value comes from the networking account. LZA-only — legacy prod/stag never reads it."
+  type        = list(string)
+  default     = []
+}
+
+variable "lza_fl_nlb_host_num" {
+  description = "Host number (cidrhost index) assigned to the internal FL NLB's static private IP in each app subnet via subnet_mapping (fl_ingress_lza.tf) — e.g. 251 in 10.12.0.0/24 gives 10.12.0.251. Assigned (not discovered) so the IPs are known at plan time and stable by construction; keep it high, clear of DHCP-assigned task/ALB ENIs, and DIFFERENT from the e2e harness's fl_nlb_host_num (250) while both stacks share the app subnets (FLIP#829)."
+  type        = number
+  default     = 251
+}
+
+variable "lza_web_edge_domain" {
+  description = "Domain name of the networking account's edge CloudFront distribution -- the user-facing front door on LZA (FLIP#749 WP3; the workload distribution is gated off there). Used for local.ui_origin (CORS / UI origin URL). LZA-only."
+  type        = string
+  default     = ""
+}
+
+variable "lza_web_edge_distribution_arn" {
+  description = "ARN of the networking account's edge CloudFront distribution, granted s3:GetObject on the flip-ui (and demo-assets) buckets via cross-account OAC on LZA. LZA-only -- legacy grants the in-account distribution instead."
+  type        = string
+  default     = ""
+}
+
 variable "max_azs" {
   type = number
 }
@@ -169,9 +205,15 @@ variable "flip_fl_image_tag" {
 }
 
 variable "docker_registry" {
-  description = "Docker image registry prefix (e.g. ghcr.io/londonaicentre/)"
+  description = "Docker image registry prefix (e.g. ghcr.io/londonaicentre/). On the LZA account point it at the ECR pull-through cache mirror (<account>.dkr.ecr.<region>.amazonaws.com/ghcr/londonaicentre/) — there is no internet egress to reach GHCR directly (FLIP#749)."
   type        = string
   default     = "ghcr.io/londonaicentre/"
+}
+
+variable "efs_provision_image" {
+  description = "Image for the one-shot EFS provisioning task (ecs_efs_provision.tf). Default is the Docker-Hub-hosted amazon/aws-cli, unchanged for legacy envs; on the egress-less LZA account point it at the credential-less ECR Public pull-through cache mirror (<account>.dkr.ecr.<region>.amazonaws.com/ecr-public/aws-cli/aws-cli:<tag>) via EFS_PROVISION_IMAGE in the env file (FLIP#749)."
+  type        = string
+  default     = "amazon/aws-cli:2.22.35"
 }
 
 variable "fl_api_name" {
@@ -260,6 +302,18 @@ variable "enable_service_discovery" {
   description = "Enable Cloud Map Service Discovery namespace"
   type        = bool
   default     = true
+}
+
+variable "ACCESS_LOGS_BUCKET_NAME" {
+  description = "Override for the S3 server-access-logs bucket name; empty derives flip-access-logs-<flip_alb_subdomain>. Bucket names are global, so set this where the derived name is already owned by another account — e.g. the LZA env, whose flip_alb_subdomain deliberately keeps its post-cutover value while legacy prod still owns the derived name (FLIP#749)."
+  type        = string
+  default     = ""
+}
+
+variable "CF_LOGS_BUCKET_NAME" {
+  description = "Override for the CloudFront standard-logs bucket name; empty derives flip-cf-logs-<flip_alb_subdomain>. Same global-name rationale as ACCESS_LOGS_BUCKET_NAME (FLIP#749)."
+  type        = string
+  default     = ""
 }
 
 variable "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME" {
@@ -367,6 +421,12 @@ variable "FL_SERVER_PORT" {
 }
 
 
+variable "manage_dns" {
+  description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (first LZA bring-up, before the zone moves in the platform DNS migration — FLIP#749) skips the zone lookup, every Route53 record, and both DNS-validated ACM certs: CloudFront then serves on its default *.cloudfront.net domain with the default viewer certificate (allowed only when no aliases are set), and the CloudFront→ALB origin leg falls back to plain HTTP over the private VPC-origin ENI, because an ALB HTTPS listener needs an ISSUED certificate and issuance needs DNS validation. Legacy prod/stag keep the default true."
+  type        = bool
+  default     = true
+}
+
 variable "flip_alb_subdomain" {
   description = "Public canonical subdomain for FLIP. Aliased via Route53 to the CloudFront distribution; CloudFront fronts both the SPA (from S3) and the API (/api/* -> ALB). Name is retained for Terraform-state backwards compatibility - see main.tf:492-494."
   type        = string
@@ -436,4 +496,17 @@ variable "ecs_exec_enabled" {
   description = "Enable ECS Exec (execute-command) on Fargate tasks. Default false; set to true for debugging sessions via 'aws ecs execute-command'."
   type        = bool
   default     = false
+}
+
+variable "lza_elb_access_logs_bucket" {
+  description = <<-EOT
+    Name of the LZA LogArchive account's central ELB access-logs bucket. On the
+    LZA estate the accelerator's guardrail auto-enables ALB access logging to
+    this bucket out-of-band; setting it here codifies that state so plans stop
+    proposing to disable platform-managed logging. Empty (the default, and the
+    only valid value on legacy) omits the access_logs block entirely, keeping
+    legacy plans byte-identical.
+  EOT
+  type        = string
+  default     = ""
 }

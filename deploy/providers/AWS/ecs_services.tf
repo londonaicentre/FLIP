@@ -76,7 +76,7 @@ resource "aws_ecs_service" "flip_api" {
   enable_execute_command = var.ecs_exec_enabled
 
   network_configuration {
-    subnets          = module.flip_vpc.private_subnets
+    subnets          = local.app_subnet_ids
     security_groups  = [aws_security_group.ecs_flip_api.id]
     assign_public_ip = false
   }
@@ -125,7 +125,7 @@ resource "aws_ecs_service" "fl_api_net_1" {
   enable_execute_command = var.ecs_exec_enabled
 
   network_configuration {
-    subnets          = module.flip_vpc.private_subnets
+    subnets          = local.app_subnet_ids
     security_groups  = [aws_security_group.ecs_fl_api.id]
     assign_public_ip = false
   }
@@ -163,7 +163,7 @@ resource "aws_ecs_service" "fl_server_net_1" {
   enable_execute_command = var.ecs_exec_enabled
 
   network_configuration {
-    subnets          = module.flip_vpc.private_subnets
+    subnets          = local.app_subnet_ids
     security_groups  = [aws_security_group.ecs_fl_server.id]
     assign_public_ip = false
   }
@@ -173,10 +173,13 @@ resource "aws_ecs_service" "fl_server_net_1" {
   }
 
   # Register the running task's ENI IP with the NLB target group so FL
-  # clients reaching fl.<env>.flip.aicentre.co.uk:8002 hit the Fargate task
-  # over gRPC. NLB on TCP forwards the gRPC stream untouched.
+  # clients hit the Fargate task over gRPC. NLB on TCP forwards the gRPC
+  # stream untouched. Legacy: the internet-facing module.fl_server_nlb's TG,
+  # reached at fl.<env>.flip.aicentre.co.uk:8002. LZA (FLIP#749): the
+  # internal NLB's TG (fl_ingress_lza.tf), reached via the networking
+  # account's edge NLB over the TGW.
   load_balancer {
-    target_group_arn = aws_lb_target_group.ecs_fl_server_tcp.arn
+    target_group_arn = var.lza_managed_network ? aws_lb_target_group.ecs_fl_server_tcp_lza[0].arn : aws_lb_target_group.ecs_fl_server_tcp[0].arn
     container_name   = "fl-server-net-1"
     # Backend-dependent container port (Flower: SuperLink Fleet 9092); the
     # NLB listener port trusts connect to stays var.FL_SERVER_PORT.

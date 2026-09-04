@@ -5,6 +5,8 @@
 | File | Resources |
 |------|-----------|
 | `main.tf` | Provider config, VPC, subnets, IGW, NAT, route tables, RDS instance, Secrets Manager, SES |
+| `network_lza.tf` | LZA platform-managed network (FLIP#749): VPC/subnet data lookups + the `local.vpc_id` / `local.app_subnet_ids` / `local.data_subnet_ids` locals both paths consume |
+| `fl_ingress_lza.tf` | LZA-only ingress (FLIP#749 WP3, ported from the #829 e2e harness): internal FL NLB with static per-subnet IPs + its TG/SG, the ALB ingress rule for the networking-account relay path, and the `/flip/networking/*` edge-handoff SSM params |
 | `services.tf` | S3 buckets, Cognito |
 | `rds_proxy.tf` | RDS Proxy + IAM DB auth (proxy, IAM role/policy, SG, `rds-db:connect`) — see FLIP#556 |
 | `ecs.tf` | ECS cluster, capacity providers, ECS CloudWatch log groups (ALB / NLB / target groups / listener rules live in `main.tf`) |
@@ -28,13 +30,16 @@
 | ------- | ------------- | --------- |
 | `stag` | Staging | `flipstag` |
 | `prod` | Production | `flipprod` |
-| `FlipDeveloperAccess-080369786334` | Developer access | — |
+| `lza-prod` | LZA estate, production (`PROD=lza`, FLIP#749; `FLIPAdminAccess` permission set) | `FLIPProduction` |
+| `lza-stag` | LZA estate, staging (`PROD=lza-stag`; `FLIPAdminAccess` permission set) | staging workload account (provisioning tracked on FLIP#749) |
+| `dev` | Development (the `dev/` root: Cognito + SES; `FlipDeveloperAccess` permission set) | `flipdev` |
 
 ## Key Deploy Commands
 
 ```bash
 make full-deploy PROD=stag                   # Full staging deploy
 make full-deploy PROD=true                    # Full prod deploy
+make init/plan/apply PROD=lza                 # LZA estate, platform-managed network (env-gated; full-deploy chains untested there — see README "Deploying onto an LZA estate"). PROD=lza-stag = staging semantics on the same mode (requires LZA_VPC_NAME in .env.lza-stag)
 make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<ip>]  # Hybrid with on-prem trust
 make full-deploy-hub-only PROD=<stag|true>    # Hub only, NO cloud Trust EC2 (all trusts on-prem, e.g. GPU hosts) — see README "Hub-only Deployment"
 make init/plan/apply                          # Terraform workflow

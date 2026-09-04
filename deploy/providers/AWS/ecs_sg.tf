@@ -24,7 +24,7 @@
 resource "aws_security_group" "ecs_flip_api" {
   name        = "ecs-flip-api"
   description = "ECS flip-api task - inbound HTTP from ALB"
-  vpc_id      = module.flip_vpc.vpc_id
+  vpc_id      = local.vpc_id
 
   tags = {
     FlipSG = "true"
@@ -48,7 +48,7 @@ resource "aws_security_group_rule" "ecs_flip_api_ingress_vpc_http" {
   to_port           = local.api_container_port
   protocol          = "tcp"
   security_group_id = aws_security_group.ecs_flip_api.id
-  cidr_blocks       = [var.vpc_cidr]
+  cidr_blocks       = [local.vpc_cidr_block]
 }
 
 resource "aws_security_group_rule" "ecs_flip_api_egress_all" {
@@ -68,7 +68,7 @@ resource "aws_security_group_rule" "ecs_flip_api_egress_all" {
 resource "aws_security_group" "ecs_fl_api" {
   name        = "ecs-fl-api"
   description = "ECS fl-api-net-1 task - inbound HTTP from VPC"
-  vpc_id      = module.flip_vpc.vpc_id
+  vpc_id      = local.vpc_id
 
   tags = {
     FlipSG = "true"
@@ -82,7 +82,7 @@ resource "aws_security_group_rule" "ecs_fl_api_ingress_vpc_http" {
   to_port           = local.api_container_port
   protocol          = "tcp"
   security_group_id = aws_security_group.ecs_fl_api.id
-  cidr_blocks       = [var.vpc_cidr]
+  cidr_blocks       = [local.vpc_cidr_block]
 }
 
 resource "aws_security_group_rule" "ecs_fl_api_egress_all" {
@@ -102,14 +102,16 @@ resource "aws_security_group_rule" "ecs_fl_api_egress_all" {
 resource "aws_security_group" "ecs_fl_server" {
   name        = "ecs-fl-server"
   description = "ECS fl-server-net-1 task - inbound gRPC from NLB + HTTP from VPC"
-  vpc_id      = module.flip_vpc.vpc_id
+  vpc_id      = local.vpc_id
 
   tags = {
     FlipSG = "true"
   }
 }
 
+# Gated off with the NLB on LZA (FLIP#749): no NLB security group to reference.
 resource "aws_security_group_rule" "ecs_fl_server_ingress_nlb_grpc" {
+  count       = var.lza_managed_network ? 0 : 1
   type        = "ingress"
   description = "gRPC from NLB (FL client connections)"
   # Backend-dependent container port (Flower: SuperLink Fleet 9092) — the
@@ -119,6 +121,14 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_nlb_grpc" {
   protocol                 = "tcp"
   security_group_id        = aws_security_group.ecs_fl_server.id
   source_security_group_id = module.fl_server_nlb.security_group_id
+}
+
+# State migration for the count added above (FLIP#749): keeps existing legacy
+# states aligned without a manual `terraform state mv`. Safe to remove once
+# every live state file has been migrated.
+moved {
+  from = aws_security_group_rule.ecs_fl_server_ingress_nlb_grpc
+  to   = aws_security_group_rule.ecs_fl_server_ingress_nlb_grpc[0]
 }
 
 # fl-api (the NVFLARE admin client) connects directly to fl-server on the
@@ -170,7 +180,7 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_vpc_http" {
   to_port           = local.api_container_port
   protocol          = "tcp"
   security_group_id = aws_security_group.ecs_fl_server.id
-  cidr_blocks       = [var.vpc_cidr]
+  cidr_blocks       = [local.vpc_cidr_block]
 }
 
 resource "aws_security_group_rule" "ecs_fl_server_egress_all" {

@@ -118,7 +118,7 @@ resource "null_resource" "flower_register_supernode_keys" {
         --cluster ${aws_ecs_cluster.flip.name} \
         --task-definition ${aws_ecs_task_definition.flower_register_supernode_keys[0].arn} \
         --launch-type FARGATE \
-        --network-configuration "awsvpcConfiguration={subnets=[${join(",", module.flip_vpc.private_subnets)}],securityGroups=[${aws_security_group.ecs_fl_api.id}],assignPublicIp=DISABLED}" \
+        --network-configuration "awsvpcConfiguration={subnets=[${join(",", local.app_subnet_ids)}],securityGroups=[${aws_security_group.ecs_fl_api.id}],assignPublicIp=DISABLED}" \
         --count 1 \
         --region ${var.AWS_REGION} \
         --no-cli-pager \

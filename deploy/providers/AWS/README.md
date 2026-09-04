@@ -38,7 +38,7 @@ In both models, trusts poll the Central Hub for tasks over HTTPS — all communi
 5. **GitHub CLI** installed via [GitHub CLI installation guide](https://cli.github.com/)
 6. **SSH key pair** created at `~/.ssh/host-aws` (see [deploy README](../../README.md))
 7. **Environment files** configured: (see [deploy README](../../README.md))
-   - `.env.stag` (staging) or `.env.production` (production) in project root
+   - `.env.stag` (staging), `.env.production` (production), or `.env.lza-prod` (LZA FLIPProduction) in project root
    - Service-specific `.env` files (see Environment Configuration section)
 
 ### Required AWS Permissions
@@ -536,6 +536,13 @@ not empty the list** — `modules/cognito` defaults it to `["https://localhost:4
 puts a localhost origin into the production allowlist. `tests/test_cognito_callback_urls.py` guards
 both directions, and runs in CI as the `AWS deploy tests` job of `validate_terraform.yml`.
 
+The stag/prod list holds one entry, and it is the expression `local.ui_origin` rather than a literal
+URL: the canonical UI origin differs between a DNS-managed environment (`https://<flip_alb_subdomain>`
+— every legacy environment) and a zone-less LZA bring-up, where it is the reachable edge/CloudFront
+domain. `cloudfront.tf` resolves it once, and the same local feeds the S3 bucket CORS rules, so the
+two allowlists cannot drift apart. Adding a *second* origin means adding a literal entry alongside it;
+the guard follows the reference into `cloudfront.tf`, so a localhost origin is caught either way.
+
 To change it:
 
 ```bash
@@ -644,10 +651,13 @@ The `PROD` variable determines which environment files are loaded:
 
 - `PROD=stag` → Uses the root `.env.stag`
 - `PROD=true` → Uses the root `.env.production`
+- `PROD=lza` → Uses the root `.env.lza-prod` (production on an LZA-governed estate — see
+  [Deploying onto an LZA estate](#deploying-onto-an-lza-estate-prodlza))
+- `PROD=lza-stag` → Uses the root `.env.lza-stag` (staging on an LZA-governed estate)
 
 If `PROD` is omitted when running the AWS provider Makefile, it defaults to staging.
 
-The Makefile maps `PROD` onto `TF_VAR_environment` (`prod` when `PROD=true`, otherwise `stag`). Terraform branches on this variable to gate prod-only RDS hardening — see [RDS lifecycle](#rds-lifecycle-stag-vs-prod).
+The Makefile maps `PROD` onto `TF_VAR_environment` (`prod` when `PROD=true` or `PROD=lza`, otherwise `stag`). Terraform branches on this variable to gate prod-only RDS hardening — see [RDS lifecycle](#rds-lifecycle-stag-vs-prod). `PROD=lza` additionally sets the orthogonal `TF_VAR_lza_managed_network=true` platform-managed-network toggle.
 
 #### AWS profile aliases
 
@@ -697,6 +707,247 @@ make apply
 ```
 
 See [`dev/README.md`](./dev/README.md) for the first-time setup workflow (the dev resources are Terraform-managed from day one; there is no import step).
+
+### Deploying onto an LZA estate (PROD=lza)
+
+This Terraform root supports **two deployment modes**, both permanently:
+
+| Mode | Selected by | Network | Ingress |
+| --- | --- | --- | --- |
+| **Self-contained** (default) | `PROD=stag` / `PROD=true` | FLIP creates its own VPC, subnets, IGW, NAT | In-account CloudFront + public FL NLB |
+| **Platform-managed (LZA)** | `PROD=lza` / `PROD=lza-stag` | Discovered from the accelerator-provisioned VPC; FLIP creates none of it | Shared networking account's two-tier edge, over the Transit Gateway |
+
+Self-contained single-account is the supported open-source deployment shape and is not going away. The LZA mode
+([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)) is the multi-account shape for estates running AWS's
+[Landing Zone Accelerator](https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/), where
+the network, guardrails and edge are owned by the accelerator pipeline rather than by FLIP.
+
+The two are one root module, not a fork: every LZA adaptation is gated behind `var.lza_managed_network` (set from
+the LZA `PROD` values), so with `PROD=true`/`PROD=stag` the resolved configuration is identical to before — the
+self-contained environments are never touched by LZA work. The AI Centre's own LZA targets are the
+**FLIPProduction** workload account in `eu-west-2` (the `lza-prod` profile alias, running alongside legacy prod)
+and a staging workload account reached as `lza-stag`.
+
+Environment (prod vs stag semantics) and network mode are **orthogonal axes**, and the two `PROD` values set them
+independently:
+
+| | `PROD=lza` | `PROD=lza-stag` |
+| --- | --- | --- |
+| Env file / kit suffix | `.env.lza-prod` / `trust/.env.<CODE>.lza-prod` | `.env.lza-stag` / `trust/.env.<CODE>.lza-stag` |
+| Profile guard | `lza-prod` (`LZA_AWS_PROFILE`) | `lza-stag` (`LZA_STAG_AWS_PROFILE`) |
+| `TF_VAR_environment` | `prod` — RDS deletion protection + final snapshot on | `stag` — disposable, like legacy stag |
+| `deploy-centralhub` git ref | `origin/main` | `origin/develop` |
+| `LZA_VPC_NAME` | optional (defaults to the prod template name) | **required** in the env file — there is no defaultable staging VPC name, so the Makefile refuses to run without it rather than letting the lookup fail opaquely |
+
+Everything below reads naturally for either value; where it says `PROD=lza`, staging substitutes `lza-stag` and
+its own account-scoped values (state bucket, `flip-lza-stag-*` bucket namespace, pull-through registry URL); the raw
+`TF_VAR_` exports at the end of the env block below are estate-wide values shared by both (one ingress VPC, one
+LogArchive bucket), except the two edge ones, which stay empty until a staging edge exists. Each
+LZA environment is its **own workload account** — never co-tenant two environments in one account: the stack's
+resource names (`flip-cluster`, `flip-api`, `flip-database-proxy`, the `/flip/networking/*` handoff params) are
+fixed per account by design.
+
+**What `PROD=lza` selects:**
+
+| Concern | Value |
+| --- | --- |
+| Env file | root `.env.lza-prod` (gitignored, like the other env files) |
+| Profile guard | `AWS_PROFILE=lza-prod` — a short local alias for the workload account's `FLIPAdminAccess` permission set, per the same convention as `prod`/`stag` (override via `LZA_AWS_PROFILE`) |
+| `TF_VAR_environment` | `prod` — LZA is a production estate, so all prod-only hardening (RDS deletion protection, final snapshot) stays on |
+| `TF_VAR_lza_managed_network` | `true` — the platform-managed-network toggle, orthogonal to `environment` (see below) |
+| Trust kit suffix | `trust/.env.<CODE>.lza-prod` — a separate namespace so legacy prod kits are never overwritten |
+| `deploy-centralhub` git ref | `origin/main` (same as legacy prod) |
+
+**Platform-managed vs FLIP-managed.** The LZA account's network is owned by the accelerator pipeline
+([londonaicentre/lza](https://github.com/londonaicentre/lza)) and VPC-layer creation is SCP-denied in-account, so with
+`TF_VAR_lza_managed_network=true` Terraform:
+
+- **skips creating**: the VPC module (VPC/subnets/NAT/IGW/EIPs), the in-account VPC endpoints (interface endpoints are
+  centralised in the Network account; S3+DynamoDB gateway endpoints are platform-provided), the DHCP options, and the
+  `/flip/networking/*` SSM params (legacy TGW coupling — the LZA TGW attachment is platform-managed);
+- **discovers instead**: the `AWSAccelerator-eu-west-2-prod` VPC and its subnets by Name tag (`network_lza.tf`;
+  override the name via `LZA_VPC_NAME`). Subnet lookups match ALL `-app-*` / `-data-*` hits, so subnets the platform
+  team adds later — as the second AZ's were — appear on the next plan with no code change;
+- **places by connectivity need**: RDS instances go to the isolated **data** subnets (local routes only — nothing
+  there can reach TGW/endpoints, and RDS doesn't need to); ECS tasks, the internal ALB, the RDS Proxy, EFS mount
+  targets and the EC2 hosts go to the TGW-routed **app** subnets (they need the central endpoints / image pulls);
+- **gates off**: the SG-drift CloudTrail→EventBridge→Lambda stack (`security.tf` — the org baseline of Control Tower
+  org trail, GuardDuty, Security Hub and Config covers it), the public FL-server NLB + target group + DNS record +
+  SG rules (no IGW and VPC Block Public Access make an internet-facing NLB impossible), and the workload CloudFront
+  distribution + its VPC origin (the `GRCLOUDFRONTVPCORIGIN` SCP denies VPC origins by design — a VPC origin dials
+  the ALB inside the VPC, bypassing the TGW + central firewall). Ingress instead rides the networking account's
+  two-tier edge (proven end-to-end in FLIP#829/PR#830 and now serving the real stack): the edge CloudFront serves
+  the UI bucket via cross-account OAC and relays `/api/*` to the internal ALB, and the edge NLB forwards FL traffic
+  over TGW to the internal FL NLB in `fl_ingress_lza.tf` (static per-subnet IPs the edge registers once as targets),
+  which fronts `fl-server-net-1`.
+
+Everything else (ECS Fargate, RDS + Proxy, Cognito, S3 + CMK, Secrets Manager, SES, EFS, Cloud Map, internal ALB)
+remains FLIP-managed exactly as on legacy prod; the legacy WAF/OAC/CloudFront-function components stay standing
+unused on LZA to keep legacy churn minimal.
+
+**Edge wiring is two-phase — by construction, not configuration.** The networking account's edge stack
+([aicentre-lza-iac](https://github.com/londonaicentre/aicentre-lza-iac)) is built *from* this stack's outputs: the
+first workload `apply` publishes the `/flip/networking/*` SSM handoff params (FL NLB private IPs + port, ALB DNS
+name, web port) that the edge NLB and relay consume, so the workload account necessarily applies before the edge
+distribution exists. On that first apply `TF_VAR_lza_web_edge_domain` and `TF_VAR_lza_web_edge_distribution_arn`
+are still empty: the UI-bucket policy then grants no principal (fail-closed — the edge simply cannot read the
+bucket yet) and `local.ui_origin` is a placeholder. Once the edge stack is up, set both values in `.env.lza-prod`
+(the edge distribution's default domain and its ARN) and re-apply to grant the cross-account OAC read and point
+bucket CORS + Cognito URLs at the edge domain. This ordering is why the two variables deliberately carry no
+"required-when-LZA" validation — it would hard-fail the legitimate first apply.
+
+**Prerequisites (provisioned out-of-band in each LZA account, not Terraform-managed here).** Every
+`PROD=lza*` account needs these three before its first `plan`; the commands below are the ones the
+FLIPStaging bring-up used (2026-09-01), with `PROD`/profile swapped per environment.
+
+- TF state bucket (`flip-terraform-state-lza`, or `-lza-stag`; versioned, SSE-KMS, public access blocked):
+  `make create-backend PROD=lza` — idempotent, reads the bucket name from the env file.
+- ECR **pull-through cache rules** — the account has no internet egress, so images come from in-account mirrors over
+  the central `ecr.api`/`ecr.dkr` endpoints: prefix `ghcr/` mirroring `ghcr.io` (upstream auth via a read-only GHCR
+  PAT in the `ecr-pullthroughcache/ghcr` Secrets Manager secret) and the credential-less `ecr-public/` prefix
+  mirroring `public.ecr.aws` (used for the EFS-provision utility image). The execution role's
+  `ecr:BatchImportUpstreamImage`/`ecr:CreateRepository` grant for first-pull imports IS Terraform-managed
+  (`iam_ecs.tf`, LZA-gated). **Create the secret before the rule that references it, and both before the first
+  `plan`** (see the KMS-alias trap above):
+
+  ```bash
+  # The GHCR PAT. Copy the existing read-only one from another LZA account (shown),
+  # or mint a fresh token per account for tighter isolation. The value must never
+  # be echoed — write it via a 0600 temp file.
+  TMP=$(mktemp) && chmod 600 "$TMP"
+  aws secretsmanager get-secret-value --profile <source-profile> \
+    --secret-id ecr-pullthroughcache/ghcr --query SecretString --output text > "$TMP"
+  aws secretsmanager create-secret --profile <target-profile> \
+    --name ecr-pullthroughcache/ghcr --secret-string "file://$TMP" --query ARN --output text
+  shred -u "$TMP"
+
+  aws ecr create-pull-through-cache-rule --profile <target-profile> \
+    --ecr-repository-prefix ghcr --upstream-registry-url ghcr.io --credential-arn <arn-from-above>
+  aws ecr create-pull-through-cache-rule --profile <target-profile> \
+    --ecr-repository-prefix ecr-public --upstream-registry-url public.ecr.aws
+  ```
+
+  Nothing is pre-populated: the first pull of each image pays the upstream fetch. Cached **mutable** tags can
+  serve up to ~24h stale, which is why deploys pin the immutable `sha-<short7>` tags.
+- An `lza-prod` profile in `~/.aws/config` for the account's Identity Center `FLIPAdminAccess` permission set (an
+  `aws configure sso` against the account, then rename the generated profile — same short-alias convention as
+  `prod`/`stag`; override the expected name via `LZA_AWS_PROFILE`).
+
+**`.env.lza-prod`.** Carries the same keys as `.env.production` (start from that shape); the values that MUST differ,
+plus the LZA-only keys:
+
+```bash
+# Terraform backend + account
+FLIP_TFSTATE_BUCKET_NAME=flip-terraform-state-lza
+AWS_REGION=eu-west-2
+
+# Registry: the ghcr/ pull-through cache, NOT ghcr.io (no internet egress).
+# Composes with the image names exactly like the GHCR prefix does:
+# <registry><name>:<tag> → .../ghcr/londonaicentre/flip-api:<tag>
+DOCKER_REGISTRY=<account-id>.dkr.ecr.eu-west-2.amazonaws.com/ghcr/londonaicentre/
+# EFS-provision one-shot utility image via the credential-less ecr-public/ cache
+EFS_PROVISION_IMAGE=<account-id>.dkr.ecr.eu-west-2.amazonaws.com/ecr-public/aws-cli/aws-cli:2.22.35
+
+# Bucket names are globally unique and the legacy flipprod-* names stay taken
+# while the old account lives — the LZA env uses its own flip-lza-* namespace.
+FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME=flip-lza-model-files-uploads
+FLIP_FL_RESULTS_BUCKET_NAME=flip-lza-fl-results
+FLIP_APP_BUNDLES_BUCKET_NAME=flip-lza-app-bundles
+AICENTRE_BUCKET_NAME=flip-lza-aicentre
+FLIP_UI_BUCKET_NAME=flip-lza-ui
+# The two log buckets default to subdomain-derived names
+# (flip-access-logs-/flip-cf-logs-<ALB_SUBDOMAIN>) — but ALB_SUBDOMAIN keeps its
+# post-cutover value here, so those derived names are still owned by legacy
+# prod. Bucket names are global: override them into the flip-lza-* namespace.
+ACCESS_LOGS_BUCKET_NAME=flip-lza-access-logs
+CF_LOGS_BUCKET_NAME=flip-lza-cf-logs
+
+# No Route53 hosted zone in the account yet (its move is a platform-side DNS
+# line item) — first bring-up runs on the default CloudFront domain. Flip to
+# true (and re-apply) once the zone lands. ALB_SUBDOMAIN/NLB_SUBDOMAIN keep
+# their eventual post-cutover values meanwhile (used for resource naming).
+MANAGE_DNS=false
+ALB_SUBDOMAIN=app.flip.aicentre.co.uk
+NLB_SUBDOMAIN=fl.app.flip.aicentre.co.uk
+
+# LZA-only Terraform inputs with no Makefile mapping of their own — exported
+# straight from the env file (the Makefile includes it as make syntax, so an
+# `export TF_VAR_…=` line reaches Terraform unchanged). Values come from the
+# networking account.
+#   ingress-VPC subnet CIDRs (edge NLB + CloudFront relay path over the TGW)
+export TF_VAR_networking_ingress_cidrs=["<ingress-vpc-cidr>"]
+#   the LogArchive account's central ELB access-logs bucket (accelerator guardrail)
+export TF_VAR_lza_elb_access_logs_bucket=<log-archive-elb-bucket>
+#   the edge distribution — EMPTY on the first apply (the edge is built from this
+#   stack's outputs, see "Edge wiring is two-phase"), then filled in + re-applied
+export TF_VAR_lza_web_edge_domain=
+export TF_VAR_lza_web_edge_distribution_arn=
+
+# Optional: only needed if the platform VPC template is renamed.
+# LZA_VPC_NAME=AWSAccelerator-eu-west-2-prod
+```
+
+Secrets (`AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY*`, `ADMIN_USER_PASSWORD`, …) are minted fresh for the account during
+the WP3 bring-up and later replaced by the carried-over legacy **values** in the WP4 data migration (so existing trust
+kits and encrypted data stay valid) — never reuse the legacy Secrets Manager secret itself.
+
+**First bring-up without DNS (`MANAGE_DNS=false`).** The zone lookup would hard-fail in a zone-less account, so
+`MANAGE_DNS=false` skips it plus every Route53 record and both DNS-validated ACM certs. Consequences, all of which
+revert by flipping `MANAGE_DNS=true` + `make plan`/`apply` once the zone lands:
+
+- The user-facing URL is the networking account's edge distribution on its default `*.cloudfront.net` domain
+  (`TF_VAR_lza_web_edge_domain`) — the workload distribution is gated off on LZA, so `terraform output
+  CloudfrontDistributionDomain` is null there by design.
+- The edge→ALB `/api/*` relay leg terminates on a **plain-HTTP** ALB listener (an ALB HTTPS listener needs an
+  ISSUED cert, and issuance needs DNS validation). Viewer traffic stays HTTPS at the edge, and the relay leg never
+  leaves the TGW + central-firewall path. Accepted as a bring-up-only limitation.
+- Bucket CORS and the Cognito sign-in hostname/callback URLs follow the CloudFront default domain automatically
+  (`local.ui_origin`), so uploads, downloads and sign-in work; `make deploy-ui` must generate `window.js` with
+  `CENTRAL_HUB_API_URL` pointing at the CloudFront domain.
+- Trusts polling the hub would need the CloudFront domain as `CENTRAL_HUB_API_URL` — fine for WP3 smoke trusts;
+  the real cutover is DNS-only and happens after the zone migrates.
+
+**Fresh-account trap: create a Secrets Manager secret before the first `plan`.** On a
+brand-new workload account `make plan` fails at the very end with
+
+```
+Error: reading KMS Alias (alias/aws/secretsmanager): empty result
+  with data.aws_kms_alias.secretsmanager, on rds_proxy.tf line 37
+```
+
+even though the plan itself computed cleanly. `alias/aws/secretsmanager` is an
+**AWS-managed** key: AWS creates it lazily, the first time the account uses Secrets
+Manager, so in an account that has never held a secret the alias genuinely does not
+exist yet and the data source has nothing to read. Nothing is wrong with the
+configuration — the account is simply too new. Creating *any* secret mints the key,
+and the ECR pull-through credential below is the one every LZA account needs anyway,
+so do that step first and the plan completes. (Verified on the FLIPStaging bring-up,
+2026-09-01.)
+
+**Attaching the real domain to the edge.** CloudFront is never addressed by IP — distribution IPs are anycast
+and rotate — so the domain is wired up DNS-side, in the networking account where the edge lives: a public
+Route 53 hosted zone for the FLIP subdomain (e.g. `flip.example.org`) is created there; a
+DNS-validated ACM certificate for the canonical names is minted **in us-east-1** (a CloudFront requirement)
+and attached to the distribution as its alternate domain names; the zone then carries an **A/AAAA alias
+record** — e.g. `app.flip.example.org` → `d111111abcdef8.cloudfront.net` (an alias, never a literal
+IP) — and the parent domain's DNS host delegates the subdomain to the zone's four `ns-*.awsdns-*` name
+servers. The FL name (`fl.app.flip.example.org`) is the same shape aliasing the edge NLB. The
+concrete cutover runbook stays in the private platform repos.
+
+**State of the LZA path** (tracked on #749):
+
+- **Multi-AZ has landed platform-side** (verified against the live account 2026-08-24): both AZs carry an
+  `-app-*`, a `-data-*` and a `-tgw-*` subnet, which clears the earlier single-AZ constraints — the live
+  `flip-db-subnet-group` spans both AZs, and the TGW attachment now rides `tgw-a` **and** `tgw-b`, so traffic
+  originating in the `-b` subnets no longer blackholes (the condition reported on PR#830). No FLIP-side change
+  was needed: the subnet lookups glob every matching Name tag, so the second AZ arrived on an ordinary plan.
+- **FL ingress is wired.** `fl_ingress_lza.tf` creates the internal NLB (static per-subnet IPs, so the edge can
+  register them once as targets), its target group fronting `fl-server-net-1`, and the `/flip/networking/*` SSM
+  handoff the networking account consumes. The full chain — internet → edge NLB → TGW → central firewall →
+  internal NLB → ECS — was proven with dummy services first (FLIP#829 / PR#830).
+- **Still untested against `PROD=lza`:** the `full-deploy*` chains, `make status`/`check_status.py`, `update_env.py`
+  and `make destroy`. WP3 exercises the `init`/`plan`/`apply` (+ `deploy-centralhub`/`deploy-ui`) loop first and
+  fixes up the auxiliary tooling as findings come in.
 
 ### Terraform module layout
 

@@ -26,6 +26,18 @@ else ifeq ($(PROD),stag)
 MAIN_ENV_FILE=.env.stag
 __DCKR_SUFFIX=production
 ENV=stag
+# LZA estate (FLIP#749): the hub itself deploys via deploy/providers/AWS, but the
+# kit-file targets here (new-trust, sync-trust-kit[s]) must name
+# trust/.env.<CODE>.$(ENV) the way that Makefile's KIT_ENV_SUFFIX and
+# register-trusts.sh read it back — .lza-prod / .lza-stag, never .stag.
+else ifeq ($(PROD),lza)
+MAIN_ENV_FILE=.env.lza-prod
+__DCKR_SUFFIX=production
+ENV=lza-prod
+else ifeq ($(PROD),lza-stag)
+MAIN_ENV_FILE=.env.lza-stag
+__DCKR_SUFFIX=production
+ENV=lza-stag
 else
 MAIN_ENV_FILE=.env.development
 __DCKR_SUFFIX=development
