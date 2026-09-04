@@ -31,6 +31,7 @@ make -C fl-tutorials download-spleen-data              # MSD build (NUM_CASES=<1
 make -C fl-tutorials download-spleen-data FL_BACKEND=flower   # pre-built FLIP-format tree
 make -C fl-tutorials download-arkplus-finetuning-data  # large (~6.3 GB)
 make -C fl-tutorials download-arkplus-eval-data        # (~1.6 GB)
+make -C fl-tutorials download-synthea-data             # EHR tabular dataset (~5 MB, backend-agnostic)
 make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrichment
 ```
 
@@ -40,6 +41,7 @@ make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrich
 | spleen (MSD build) | MSD Task09_Spleen | `spleen/{images/, dataframe.csv}` | 3d_spleen_segmentation + evaluation + latent_diffusion_model (NVFLARE sim); enrichment labels |
 | spleen (FLIP-format) | HF `aicentreflip/flip-fl-base-test-data` | `spleen/{accession-resources/, sample_get_dataframe_response.csv}` + `model_checkpoints/model.pt` | 3d_spleen_segmentation + evaluation (Flower stack) |
 | arkplus | HF `aicentreflip/tutorials-arkplus-cxr-classification` | `arkplus/site{1,2}[,_holdoff]/` | the three Ark+ tutorials (NVFLARE) |
+| synthea | Synthea-in-OMOP, 1k persons (AWS Open Data Registry) | `synthea/{dataframe.csv, site{1,2}/dataframe.csv}` | ehr_risk_prediction (both backends); on the platform the same data goes into each trust's OMOP via `make -C trust load-synthea-ehr` |
 
 The two spleen variants coexist in `data/spleen/` — the FLIP-format download removes only
 its own outputs, never an MSD build beside it.
@@ -78,3 +80,13 @@ against `flip-utils` without adopting `spleen/`'s env:
   Hugging Face and normalise each into `accession-resources/` +
   `sample_get_dataframe_response.csv`. Parameterised by `--sites`, so one script backs both
   `download-arkplus-finetuning-data` and `download-arkplus-eval-data`.
+
+[`synthea/`](synthea/) owns the single EHR script — no dedicated uv project, it needs only pandas
+and runs via `uv run --no-project --with pandas`:
+
+- `build_synthea_dataframe.py` — fetch three OMOP tables (`person`, `condition_occurrence`,
+  `visit_occurrence`) of the public Synthea-in-OMOP dataset and derive the EHR risk-prediction
+  tutorial's feature dataframe: one row per person labelled with first type-2-diabetes diagnosis,
+  plus `site1/`/`site2/` `person_id`-modulo splits. Its feature logic mirrors the tutorial's
+  `query.sql` (the OMOP SQL a deployed run sends to each trust) — change one and change the other
+  (see the [EHR tutorial README](../nvflare/tabular_classification/ehr_risk_prediction/README.md)).

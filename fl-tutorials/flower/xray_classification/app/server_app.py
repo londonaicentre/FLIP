@@ -11,7 +11,7 @@
 # limitations under the License.
 #
 
-"""quickstart-monai: A Flower / MONAI server app (training-only)."""
+"""standard-app: FLIP's standard-template Flower ServerApp (training-only, model-agnostic)."""
 
 import json
 import os

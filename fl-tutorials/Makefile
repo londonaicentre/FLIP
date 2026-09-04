@@ -22,7 +22,7 @@ FL_BACKEND ?= nvflare
 TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials
 # Dataset targets are backend-agnostic (shared data root, single copy in datasets/);
 # FL_BACKEND still selects a per-harness variant where one exists (the two spleen downloads).
-DATASET_TARGETS := download-xray-data download-spleen-data upload-spleen-labels \
+DATASET_TARGETS := download-xray-data download-spleen-data download-synthea-data upload-spleen-labels \
 	download-arkplus-finetuning-data download-arkplus-eval-data
 
 .PHONY: $(TUTORIAL_TARGETS) $(DATASET_TARGETS)

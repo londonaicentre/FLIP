@@ -74,6 +74,35 @@ For database-only debugging (without the rest of the trust stack), `make -C trus
 
 Bringing the container up should not run any initialization scripts — the data volume already contains a populated database.
 
+### The Synthea EHR cohort (for the EHR risk-prediction tutorial)
+
+The shipped mock OMOP is built from the imaging projects and carries **no `condition_occurrence`
+rows**. The EHR risk-prediction tutorial
+([`fl-tutorials/{nvflare/tabular_classification,flower}/ehr_risk_prediction`](../../fl-tutorials))
+runs a cohort query over person demographics + condition/visit history, so it needs those tables
+populated. `load-synthea-ehr` fetches the fully synthetic 1k-person
+[Synthea-in-OMOP dataset](https://registry.opendata.aws/synthea-omop/) from the AWS Open Data
+Registry (anonymous HTTPS, no credentials, ~5 MB, downloaded at run time and cached under
+`data/synthea-ehr/`, never committed) and appends each trust's `person_id`-modulo slice into a
+**running** trust database — once per trust, the same shape as `load-omop-vocab`:
+
+```sh
+make -C trust/omop-db load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # Trust_1 (GSTT)
+make -C trust/omop-db load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # Trust_2 (KCH)
+```
+
+Design (see `src/omop_db_tools/synthea_ehr.py`): Synthea ids are shifted by `PERSON_ID_OFFSET` so
+they never collide with the imaging cohorts' existing keys at insert time, and the tutorial's
+`query.sql` scopes to persons that have at least one condition — i.e. exactly the rows loaded here,
+transparently excluding the imaging-only persons. That offset is not what makes reloading safe,
+though: imaging `person_id` is derived from a real NHS number and scatters across the whole 9-digit
+range, so idempotency deletes by **provenance** (the `synthea-` prefix each loaded row carries in
+`person_source_value`) rather than by an id-range threshold — the latter was tried first and
+silently deleted a chunk of the imaging cohort (and its cascaded rows) on every reload. The load is
+FK-safe (it keeps Synthea's standard gender concepts and zeroes the rest, matching conditions on
+their SNOMED `condition_source_value`) and idempotent. It is a dev/demo convenience: a real trust
+already holds real condition data, so `query.sql` runs against it unchanged.
+
 ## Building the image
 
 The image bakes the schema init chain (`files/`: schema DDL → primary keys →
