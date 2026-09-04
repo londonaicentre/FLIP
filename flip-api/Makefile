@@ -141,6 +141,7 @@ demo_video:
 # target-specific one, so folding the enrichment flags into EXTRA_ARGS meant
 # `make e2e_smoke_spleen EXTRA_ARGS="--project-id <uuid>"` — the documented fast-iterate flow —
 # silently dropped enrichment and died at the zero-pairs guard minutes later.
+# TARGET_ARGS is the same idea for any other flag a variant target must pin (e.g. --no-imaging).
 FL_BACKEND ?= nvflare
 ifeq ($(FL_BACKEND),flower)
 MODEL_FILES_DIR ?= ../fl-tutorials/flower/xray_classification/app
@@ -151,7 +152,7 @@ QUERY_FILE ?= $(MODEL_FILES_DIR)/../query.sql
 endif
 e2e_smoke:
 	@echo "🚀 Running e2e smoke (model files: $(MODEL_FILES_DIR), query: $(QUERY_FILE))..."
-	env DB_HOST=localhost uv run python -m tests.e2e_smoke --model-files-dir "$(MODEL_FILES_DIR)" --query-file "$(QUERY_FILE)" $(ENRICHMENT_ARGS) $(EXTRA_ARGS)
+	env DB_HOST=localhost uv run python -m tests.e2e_smoke --model-files-dir "$(MODEL_FILES_DIR)" --query-file "$(QUERY_FILE)" $(ENRICHMENT_ARGS) $(TARGET_ARGS) $(EXTRA_ARGS)
 
 # Spleen-segmentation variant of e2e_smoke: same recipe, with the spleen tutorial
 # defaults plus a data-enrichment step that uploads segmentation labels into every

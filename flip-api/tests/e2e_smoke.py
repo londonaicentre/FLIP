@@ -191,11 +191,20 @@ def authenticate() -> dict[str, str]:
 
 
 def create_project_with_query(
-    client: requests.Session, headers: dict[str, str], project_name: str, query: str, dicom_to_nifti: bool = True
+    client: requests.Session,
+    headers: dict[str, str],
+    project_name: str,
+    query: str,
+    dicom_to_nifti: bool = True,
+    has_imaging: bool = True,
 ) -> tuple[str, str]:
-    _log(f"🏗️  Creating project: {project_name} (dicom_to_nifti={dicom_to_nifti})")
+    _log(f"🏗️  Creating project: {project_name} (dicom_to_nifti={dicom_to_nifti}, has_imaging={has_imaging})")
     project_payload = ProjectDetails(
-        name=project_name, description="E2E smoke run", users=[], dicom_to_nifti=dicom_to_nifti
+        name=project_name,
+        description="E2E smoke run",
+        users=[],
+        dicom_to_nifti=dicom_to_nifti,
+        has_imaging=has_imaging,
     ).model_dump()
     project_id = _ensure_ok(
         _post(client, "/projects", project_payload, headers), "create project"
@@ -382,6 +391,24 @@ def _import_progress(status: dict[str, Any]) -> tuple[int, int, int]:
         processing + queued,
         successful + failed + processing + queued + queue_failed,
     )
+
+
+def project_has_imaging(client: requests.Session, headers: dict[str, str], project_id: str) -> bool:
+    """Read the project's creation-time ``has_imaging`` flag off the hub (FLIP#1071).
+
+    Read back rather than taken from the CLI so ``--project-id`` reuse honours whatever the project
+    was created with. A hub predating the flag omits the key, which means "imaging" (the old behaviour).
+
+    Args:
+        client (requests.Session): HTTP session for hub calls.
+        headers (dict[str, str]): Auth headers.
+        project_id (str): Project to read.
+
+    Returns:
+        bool: True when the project has an imaging stage.
+    """
+    resp = _ensure_ok(_get(client, f"/projects/{project_id}", headers), "read project")
+    return bool(resp.json().get("has_imaging", True))
 
 
 def wait_for_image_pull(
@@ -817,6 +844,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "creation and immutable afterwards; ignored with --project-id.",
     )
     parser.add_argument(
+        "--no-imaging",
+        action="store_true",
+        help="Create the project with has_imaging=false (tabular-only cohorts, e.g. the EHR risk-prediction "
+        "tutorials): the hub skips the imaging stage entirely, and the smoke skips the image-pull wait. "
+        "Set at project creation and immutable afterwards; ignored with --project-id (read from the project).",
+    )
+    parser.add_argument(
         "--trusts",
         default=None,
         help="Comma-separated trust codes or names (case-insensitive) to run against, e.g. "
@@ -931,7 +965,12 @@ def main(argv: list[str] | None = None) -> int:
                 _log(f"  🎯 --trusts selection: {[t.get('code') or t['name'] for t in trusts]}")
         else:
             project_id, _query_id = create_project_with_query(
-                client, headers, project_name, query, dicom_to_nifti=not args.no_dicom_to_nifti
+                client,
+                headers,
+                project_name,
+                query,
+                dicom_to_nifti=not args.no_dicom_to_nifti,
+                has_imaging=not args.no_imaging,
             )
             trusts = stage_and_approve(client, headers, project_id, args.trusts)
         # Create the model and upload files before waiting for image pull. This
@@ -946,14 +985,19 @@ def main(argv: list[str] | None = None) -> int:
         # failed, or simply queued back-to-back before the first pull finished),
         # in which case skipping the wait here would have wait_for_model_advanced
         # sit blocked on the (still pulling) FL clients until it times out.
-        wait_for_image_pull(
-            client,
-            headers,
-            project_id,
-            args.image_pull_threshold,
-            args.image_pull_timeout,
-            required_trust_names={t["name"] for t in trusts} if args.trusts else None,
-        )
+        # A project created without imaging (FLIP#1071) dispatched nothing to XNAT, so there is
+        # nothing to wait for — read the flag off the project so --project-id reuse honours it too.
+        if project_has_imaging(client, headers, project_id):
+            wait_for_image_pull(
+                client,
+                headers,
+                project_id,
+                args.image_pull_threshold,
+                args.image_pull_timeout,
+                required_trust_names={t["name"] for t in trusts} if args.trusts else None,
+            )
+        else:
+            _log("🩻 Project has no imaging: skipping the image-pull wait (nothing was dispatched to XNAT)")
         if args.data_enrichment_cmd:
             run_data_enrichment(args.data_enrichment_cwd, args.data_enrichment_cmd, project_id)
         initiate_training(client, headers, model_id, trusts)

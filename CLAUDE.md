@@ -216,6 +216,17 @@ The uploader derives each target filename from the converted `input_*.nii.gz`, s
 skips every scan (reported as *skipped (no image in resource)*) — i.e. a broken XNAT Container Service surfaces
 as "no labels".
 
+**Tabular-only projects (no imaging stage — FLIP#1071).** A project created with "Includes imaging data"
+off (`has_imaging=false`, creation-time and immutable like `dicom_to_nifti`) is approved without the
+CREATE_IMAGING fan-out: no XNAT project, no accession-ids call, no pull, and `GET /projects/{id}/image/status`
+returns `200 []`. `make e2e_smoke EXTRA_ARGS="--no-imaging"` creates the project with the flag off and skips
+the image-pull wait; the smoke reads `has_imaging` back off the project, so `--project-id` reuse honours it
+too. A tutorial-specific variant target pins the flag through `TARGET_ARGS`, the third recipe slot after
+`ENRICHMENT_ARGS`, for the same reason enrichment does not use `EXTRA_ARGS` — a command-line `EXTRA_ARGS`
+cannot clobber it. Imaging projects get fast feedback instead: submitting a cohort whose explicit SELECT list
+has no `accession_id` column is a 400 at submission (hub pre-check, not a security control — `SELECT *` passes
+through to the trust's authoritative check).
+
 **Testing a change on BOTH FL backends in one sitting (the backend switch).** The pulled DICOM lives in
 each trust's Orthanc/XNAT, which `make restart-fl` leaves untouched — so you can pull once on the first
 backend and *reuse the same project* for the second, skipping the second image pull entirely:
