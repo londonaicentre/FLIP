@@ -282,9 +282,6 @@ flClient:
   netId: "net-1"
   s3EndpointOverride: ""
   imagesDir: /app/data/images
-  hostAwsMount:
-    enabled: false
-    readOnly: true
   hostAliases:
     - ip: "13.43.162.56"
       hostnames:
@@ -305,8 +302,17 @@ flClient:
   # NVFLARE client.
   kitHostPath: ""
   nvflare:
+    # Fetching the kit from S3 requires this trust to hold credentials into the
+    # AI Centre's account, which is at odds with the platform's own boundary —
+    # FL clients deliberately carry no Central Hub credentials, and a cloud
+    # credential is the same category of secret (FLIP#922). Kits are therefore
+    # delivered OUT OF BAND for production, exactly as the on-prem flow already
+    # does (`make -C deploy/providers/AWS package-onprem-trust-kit`): stage the
+    # kit on the node and point flClient.kitHostPath at it. Turn this on only as
+    # a dev convenience, and only against a bucket the cluster should be able to
+    # read.
     kitFromS3:
-      enabled: true
+      enabled: false
       # S3 bucket holding the FL participant kits (the AI Centre bucket,
       # AICENTRE_BUCKET_NAME). Required, but deployment-specific — supply it via
       # the kit override (`make sync-kit` writes it from the kit file). Empty here
@@ -328,8 +334,17 @@ flClient:
       percentile: ""
       gamma: ""
   flower:
+    # Fetching the kit from S3 requires this trust to hold credentials into the
+    # AI Centre's account, which is at odds with the platform's own boundary —
+    # FL clients deliberately carry no Central Hub credentials, and a cloud
+    # credential is the same category of secret (FLIP#922). Kits are therefore
+    # delivered OUT OF BAND for production, exactly as the on-prem flow already
+    # does (`make -C deploy/providers/AWS package-onprem-trust-kit`): stage the
+    # kit on the node and point flClient.kitHostPath at it. Turn this on only as
+    # a dev convenience, and only against a bucket the cluster should be able to
+    # read.
     kitFromS3:
-      enabled: true
+      enabled: false
       # See the nvflare note above — supply via the kit override (`make sync-kit`).
       bucket: ""
       kitDate: "20260401"
@@ -495,7 +510,14 @@ omopDb:
     # Enabled for local K8s clusters; disable for EKS (use IRSA instead)
     hostAwsMount:
       enabled: false
-      hostPath: "/home/rd24/.aws"
+    # Path to an AWS config directory ON THE NODE (a hostPath, not your
+    # workstation). On a single-node k3s/on-prem cluster the node IS the
+    # workstation, so this is $HOME/.aws. On kind the node is a container, so
+    # the cluster must be created with an extraMount mapping ~/.aws to this
+    # path. Deliberately empty: Helm templates cannot read $HOME, and a
+    # hardcoded personal path only ever works on one machine. Required when
+    # enabled — the render fails rather than emitting an empty hostPath.
+      hostPath: ""
       readOnly: true
 
 # ---------------------------------------------------------------------------
@@ -554,7 +576,14 @@ orthanc:
     # Enabled for local K8s clusters; disable for EKS (use IRSA instead)
     hostAwsMount:
       enabled: false
-      hostPath: "/home/rd24/.aws"
+    # Path to an AWS config directory ON THE NODE (a hostPath, not your
+    # workstation). On a single-node k3s/on-prem cluster the node IS the
+    # workstation, so this is $HOME/.aws. On kind the node is a container, so
+    # the cluster must be created with an extraMount mapping ~/.aws to this
+    # path. Deliberately empty: Helm templates cannot read $HOME, and a
+    # hardcoded personal path only ever works on one machine. Required when
+    # enabled — the render fails rather than emitting an empty hostPath.
+      hostPath: ""
 
 # ---------------------------------------------------------------------------
 # XNAT — Neuroimaging platform (multi-component)
