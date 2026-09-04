@@ -14,13 +14,15 @@ FLIP - Federated Learning & Interoperability Platform
 
 Hello,
 
-An XNAT account has been created at trust {{trust_name}}. You have been granted access to project: {{project_name}} (ID: {{project_id}}).
+An XNAT account has been created for you at trust {{trust_name}}. You have been granted access to project: {{project_name}} (ID: {{project_id}}).
 
-Your XNAT credentials:
+Set your password to activate your account:
   Username: {{username}}
-  Password: {{password}}
+  Set-password link: {{setup_path}}
 
-Please change your password when you first log in.
+Open your trust's XNAT in a web browser, then append the set-password link path above to its address and go to it. You'll be asked to choose your own password - no password is ever sent by email.
+
+IMPORTANT: XNAT is only reachable from inside {{trust_name}}'s secure network. Open this link from a machine connected to that network (for example, using the connection you normally use to reach XNAT). It cannot be opened over the public internet. The link can be used once and expires.
 
 This is an automated message. Please do not reply to this email. This message may contain confidential information. If you are not the intended recipient, please do not disclose, copy, or distribute it.
 

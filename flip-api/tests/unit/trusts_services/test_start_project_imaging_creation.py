@@ -33,7 +33,7 @@ trust_example = ITrust(id=trust_id, name="Example Trust")
 user_id = uuid.uuid4()
 user_name = "user one"
 user_email = "user1@example.com"
-user_encrypted_password = "encrypted_pw"
+user_encrypted_setup_path = "encrypted_setup_path"
 user_pool_id = uuid.uuid4()
 # =============================================================================================
 

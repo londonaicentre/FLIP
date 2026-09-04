@@ -115,10 +115,14 @@ class ICreateImagingProject(BaseModel):
 
 
 class ICreatedImagingUser(BaseModel):
-    """Represents a user created on XNAT. Used to be called IImageUser in the old repo."""
+    """Represents a user created on XNAT. Used to be called IImageUser in the old repo.
+
+    Carries the AES-encrypted, host-less setup path (an XNAT alias-token link) the new user follows
+    to set their own password — never a password. See FLIP-PT-079.
+    """
 
     username: str
-    encrypted_password: str
+    encrypted_setup_path: str
     email: EmailStr
 
 
@@ -139,11 +143,13 @@ class ICreatedImagingProject(BaseModel):
 
 
 class ISesTemplateData(BaseModel):
+    """Template data for the XNAT invite email: a host-less setup link, never a password (FLIP-PT-079)."""
+
     trust_name: str
     project_name: str
     project_id: UUID
     username: str
-    password: str
+    setup_path: str
 
 
 class ISesProjectAccessTemplateData(BaseModel):

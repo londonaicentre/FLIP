@@ -405,7 +405,7 @@ def test_add_central_hub_users_existing_user(mock_get_profile, mock_add, headers
 def test_add_central_hub_users_new_user(mock_get_profile, mock_create, mock_add, headers):
     mock_get_profile.side_effect = NotFoundError("not found")
     user_profile = User(**_USER_DICT)
-    created_user = CreatedUser(username="alice", encrypted_password="enc", email="alice@test.com")
+    created_user = CreatedUser(username="alice", encrypted_setup_path="enc", email="alice@test.com")
     mock_create.return_value = (created_user, user_profile)
     mock_add.return_value = user_profile
 
