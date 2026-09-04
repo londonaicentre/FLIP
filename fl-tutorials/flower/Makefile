@@ -31,7 +31,7 @@ REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 # 3d_spleen_segmentation, 3d_spleen_segmentation_evaluation).
 TUTORIAL_DIRS := $(sort $(patsubst %/app/,%,$(dir $(wildcard */app/.))))
 
-.PHONY: list-tutorials run-tutorial run-all-tutorials
+.PHONY: list-tutorials run-tutorial run-all-tutorials sim-tutorial
 
 list-tutorials:
 	@echo "Available Flower tutorials (pass the name to 'make run-tutorial TUTORIAL=…'):"
@@ -42,6 +42,12 @@ list-tutorials:
 # `make -C fl-tutorials download-<dataset>-data FL_BACKEND=flower`.
 run-tutorial:
 	@bash $(REPO_ROOT)/fl-tutorials/flower/run-tutorial.sh "$(TUTORIAL)"
+
+# Run one tutorial on the flwr SIMULATOR — no SuperLink, no SuperNodes, no fl-api, no
+# Docker. Same app code as a platform run (identity comes from node_config; see
+# flip.flower.identity). The NVFLARE counterpart is `make sim` in a tutorial dir.
+sim-tutorial:
+	@bash $(REPO_ROOT)/fl-tutorials/flower/sim-tutorial.sh "$(TUTORIAL)"
 
 run-all-tutorials:
 	@for d in $(TUTORIAL_DIRS); do \

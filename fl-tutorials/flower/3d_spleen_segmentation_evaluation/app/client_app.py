@@ -13,14 +13,13 @@
 
 """quickstart-monai: A Flower / MONAI evaluation-only app."""
 
-import os
 from logging import INFO
 
 import torch
-from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
+from flip.flower.identity import client_identity, partition_cohort
+from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from flwr.common import log
-from flwr.common.record import ConfigRecord
 from monai.data import DataLoader, Dataset
 
 from app.data_loading import FLIP_BASE
@@ -39,7 +38,7 @@ def evaluate(msg: Message, context: Context) -> Message:
     run_config = context.run_config
 
     # NOTE this needs to match the name of the trust in the central hub database
-    client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
+    client_name = client_identity(context)
 
     # Configure FLIP
     flip_utils = FLIP_BASE()
@@ -47,6 +46,8 @@ def evaluate(msg: Message, context: Context) -> Message:
     flip_utils.query = run_config.get("flip-cohort-query", "*")
     log(INFO, "Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
     flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
+    # Slice the shared dev cohort so the simulated sites really differ; a no-op off LOCAL_DEV.
+    flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
     log(INFO, f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
 
     # Setup device

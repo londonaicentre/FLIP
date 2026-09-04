@@ -133,8 +133,8 @@ are fixed by `working_dir:`. Use the compose stack above.
 
 By default, the app reads from:
 
-- `data/sample_get_dataframe_response.csv`
-- `data/accession-resources`
+- `data/spleen/dataframe.csv`
+- `data/spleen/images`
 
 ## Architecture
 
