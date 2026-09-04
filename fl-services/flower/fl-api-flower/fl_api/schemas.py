@@ -70,6 +70,11 @@ class JobStatus(StrEnum):
     FINISHED = "FINISHED"
     FAILED = "FAILED"
     STOPPED = "STOPPED"
+    # A native status the map below does not recognise — i.e. a framework upgrade added one.
+    # Never guessed into a real state: FAILED now has destructive consumers on the hub (the
+    # failed-job reconcile errors the model and frees the net), and RUNNING would make the
+    # job abortable, so an unmapped status must reach the hub as explicitly unknowable.
+    UNKNOWN = "UNKNOWN"
 
 
 class JobMetadata(BaseModel):
@@ -77,6 +82,29 @@ class JobMetadata(BaseModel):
 
     job_id: str
     status: JobStatus
+    # One-line native explanation of the status, when the backend supplies one. Flower's
+    # `flwr ls` carries `status-details`, which for a failed run is the ServerApp's exception
+    # type and message — the cause, from the call the hub already makes, with no second
+    # request and no log fetch. Optional because it is not universal: NVFLARE's job meta has
+    # no equivalent field (checked against `nvflare.apis.job_def.JobMetaKey`, which carries
+    # only `job_deploy_detail` / `schedule_history`, neither of which explains an
+    # execution exception), so that adapter leaves this None.
+    status_details: str | None = None
+
+
+class RunLogs(BaseModel):
+    """The response of ``GET /run_logs/{run_id}`` — a bounded tail of a run's ServerApp output.
+
+    Only the tail is returned: a Flower run log opens with the per-run dependency
+    install (``uv sync`` over the app's whole dependency set) and the cause of a
+    failure is at the other end, so the head is the half worth dropping.
+    """
+
+    run_id: str
+    log: str
+    # True when the stored log was longer than the cap and the head was dropped, so a
+    # reader knows to go to `flwr log` for the full stream rather than assuming this is all.
+    truncated: bool
 
 
 # Flower native status (`flwr list` / `flwr stop`) -> normalized contract status.
@@ -101,10 +129,11 @@ def normalize_status(native_status: str) -> JobStatus:
 
     Returns:
         JobStatus: The normalized status. Unknown / unmapped statuses are logged and
-            treated as ``FAILED`` — never silently surfaced as an abortable ``RUNNING``.
+            surfaced as ``UNKNOWN`` — never guessed into an abortable ``RUNNING`` or an
+            actionable ``FAILED`` (the hub's failed-job reconcile acts on FAILED).
     """
     normalized = _FLOWER_STATUS_MAP.get(native_status.strip().lower())
     if normalized is None:
-        logger.warning("Unmapped Flower job status %r; treating as FAILED.", native_status)
-        return JobStatus.FAILED
+        logger.warning("Unmapped Flower job status %r; surfacing as UNKNOWN.", native_status)
+        return JobStatus.UNKNOWN
     return normalized

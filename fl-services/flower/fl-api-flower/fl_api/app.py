@@ -34,10 +34,12 @@ from fl_api.schemas import (
     JobMetadata,
     JobStatus,
     NodeRegistrationRequest,
+    RunLogs,
     ServerInfoModel,
     UploadAppRequest,
     normalize_status,
 )
+from fl_api.utils.redaction import redact_secrets
 from fl_api.utils.upload import upload_application
 from fl_api.utils.validation import safe_join, validate_tutorial_folder_name
 
@@ -58,6 +60,20 @@ _submission_in_progress = False
 
 _node_mapping_lock = threading.Lock()
 _node_trust_mapping: dict[str, str] = {}  # Flower node_id → trust name
+
+# `flwr log --show` asks the SuperLink for the run's stored log and returns; its own gRPC
+# deadline is 5s, so anything past this means the CLI itself is wedged (unreachable
+# SuperLink, uvx resolving the package) rather than a slow run.
+_RUN_LOG_COMMAND_TIMEOUT_SECONDS = 60
+# Cap on the `status-details` one-liner carried on each list_jobs item. It is a status
+# string, not a log, so this is a sanity bound rather than a real truncation policy — but
+# the text is a researcher-authored exception message, so it is not trusted to be short.
+_MAX_STATUS_DETAILS_CHARS = 500
+# `flwr ls` writes this literal for a run with nothing to say (a healthy or still-running
+# one), rather than omitting the key. Carrying it through would put "N/A" in the hub's
+# activity feed as though it were a cause.
+_NO_STATUS_DETAILS = "N/A"
+_DEFAULT_RUN_LOG_MAX_CHARS = 8000
 
 
 def _get_src_root() -> Path:
@@ -81,6 +97,24 @@ def _get_healthcheck_timeout_seconds() -> float:
             raw_value,
         )
         return 1.0
+
+
+def _get_run_log_max_chars() -> int:
+    raw_value = os.getenv("FLOWER_RUN_LOG_MAX_CHARS", "").strip()
+    if not raw_value:
+        return _DEFAULT_RUN_LOG_MAX_CHARS
+    try:
+        max_chars = int(raw_value)
+        if max_chars <= 0:
+            raise ValueError("max chars must be positive")
+        return max_chars
+    except ValueError:
+        logger.warning(
+            "Invalid FLOWER_RUN_LOG_MAX_CHARS='%s'. Falling back to %d characters.",
+            raw_value,
+            _DEFAULT_RUN_LOG_MAX_CHARS,
+        )
+        return _DEFAULT_RUN_LOG_MAX_CHARS
 
 
 def _check_health(address: str, timeout: float) -> bool:
@@ -121,7 +155,9 @@ def _extract_json_from_stdout(stdout: str) -> dict[str, Any]:
     return parsed
 
 
-def _run_flwr_command(command: list[str], cwd: Path, action_name: str) -> subprocess.CompletedProcess[str]:
+def _run_flwr_command(
+    command: list[str], cwd: Path, action_name: str, timeout: float | None = None
+) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
             command,
@@ -129,6 +165,7 @@ def _run_flwr_command(command: list[str], cwd: Path, action_name: str) -> subpro
             capture_output=True,
             text=True,
             check=False,
+            timeout=timeout,
         )
     except Exception as err:
         logger.exception("Failed to run Flower %s command", action_name)
@@ -194,6 +231,28 @@ def _get_federation_nodes(src_root: Path) -> list[dict[str, Any]]:
     return nodes
 
 
+def _clean_status_details(raw: Any) -> str | None:
+    """Normalise one run's ``status-details`` into the contract's optional one-liner.
+
+    Redacted like the run log is, and for the same reason: the text is whatever the
+    ServerApp's exception carried, written by researcher-supplied code in a container that
+    holds a hub service key. Collapsed to a single line so it can be used as a headline in
+    the hub's activity feed without swallowing the log tail that follows it.
+
+    Args:
+        raw (Any): The ``status-details`` value from one `flwr ls` entry, if any.
+
+    Returns:
+        str | None: The cleaned one-liner, or None when the backend had nothing to say.
+    """
+    if not isinstance(raw, str):
+        return None
+    collapsed = " ".join(raw.split())
+    if not collapsed or collapsed == _NO_STATUS_DETAILS:
+        return None
+    return redact_secrets(collapsed)[:_MAX_STATUS_DETAILS_CHARS]
+
+
 def _parse_runs_payload(payload: dict[str, Any]) -> list[JobMetadata]:
     runs = payload.get("runs")
     if not isinstance(runs, list):
@@ -211,6 +270,9 @@ def _parse_runs_payload(payload: dict[str, Any]) -> list[JobMetadata]:
                 JobMetadata(
                     job_id=str(run["run-id"]),
                     status=normalize_status(run["status"]),
+                    # Absent on older flwr versions -- .get, so a missing key is simply no
+                    # detail rather than the 500 a missing run-id/status earns below.
+                    status_details=_clean_status_details(run.get("status-details")),
                 )
             )
         except KeyError as err:
@@ -315,6 +377,68 @@ def list_runs() -> list[JobMetadata]:
     result = _run_flwr_command(command, src_root, "list")
     payload = _parse_flwr_payload(result, "list")
     return _parse_runs_payload(payload)
+
+
+def _tail(text: str, max_chars: int) -> tuple[str, bool]:
+    """Return the last ``max_chars`` characters of ``text`` and whether anything was dropped.
+
+    Args:
+        text (str): The full text.
+        max_chars (int): Maximum number of characters to keep.
+
+    Returns:
+        tuple[str, bool]: The tail, and True when the head was dropped. The cut is
+            advanced to the next line boundary so the tail never opens mid-line.
+    """
+    if len(text) <= max_chars:
+        return text, False
+
+    tail = text[-max_chars:]
+    newline = tail.find("\n")
+    if newline != -1:
+        tail = tail[newline + 1 :]
+    return tail, True
+
+
+@app.get("/run_logs/{run_id}", status_code=status.HTTP_200_OK, response_model=RunLogs)
+def run_logs(run_id: int) -> RunLogs:
+    """Return a bounded, secret-masked tail of a run's ServerApp log.
+
+    Exists so a run that dies after submission — an import error at ServerApp module
+    scope, say — can be diagnosed from the Central Hub instead of by exec-ing into this
+    container and running ``flwr log`` by hand (FLIP#1001). The hub's FL job reconcile
+    calls this for a run it has found in a failed state and stores the result on the
+    model's activity feed.
+
+    Args:
+        run_id (int): The Flower run id. Typed as ``int`` for the same reason as
+            ``abort_run``: FastAPI rejects any non-numeric segment with 422 before it
+            can reach the ``flwr`` argv.
+
+    Returns:
+        RunLogs: The run id, the log tail, and whether the head was dropped.
+
+    Raises:
+        HTTPException: 500 when the ``flwr log`` command cannot be run or fails.
+    """
+    run_id_str = str(run_id)
+    # --show prints what the SuperLink has stored for the run and exits; the default
+    # --stream would follow the log forever and never return to the caller.
+    command = ["uvx", "flwr", "log", run_id_str, "local", "--show"]
+    result = _run_flwr_command(command, _get_src_root(), "log", timeout=_RUN_LOG_COMMAND_TIMEOUT_SECONDS)
+
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        logger.error("Flower log failed for run %s: %s", run_id_str, stderr)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Flower log command failed with code {result.returncode}. stderr: {redact_secrets(stderr)}",
+        )
+
+    # Redact before truncating, not after: the tail is cut from the middle of the log, and
+    # a cut landing inside a `key=<secret>` pair would strip the keyword the matcher needs.
+    log_tail, truncated = _tail(redact_secrets(result.stdout), _get_run_log_max_chars())
+    return RunLogs(run_id=run_id_str, log=log_tail, truncated=truncated)
 
 
 def _submit_from_job_dir(job_dir: Path, label: str) -> str:

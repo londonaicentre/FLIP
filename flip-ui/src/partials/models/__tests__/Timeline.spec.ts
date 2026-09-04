@@ -118,4 +118,22 @@ describe("Timeline", () => {
             expect(stamp.classes()).toContain("dark:text-gray-300");
         }
     });
+
+    test("preserves the line structure of failure logs, and only failure logs", () => {
+        // A failed-run row carries the FL run's log tail (FLIP#1001) — a multi-line
+        // traceback whose line breaks are the readability. Without pre-wrap the browser
+        // collapses it to one wall of wrapped text. Success rows are single-line prose
+        // and keep the default so stray whitespace never reformats them.
+        const comp = mount(Timeline, {
+            props: { complete: true },
+            global: { stubs: { AiLoader: true } }
+        });
+
+        const texts = comp.findAll("[data-test='log-text']");
+        expect(texts).toHaveLength(mockLogs.logs.length);
+        const failureRow = texts.find((t) => t.text().includes("Round failed"));
+        const successRow = texts.find((t) => t.text().includes("Training started"));
+        expect(failureRow?.classes()).toContain("whitespace-pre-wrap");
+        expect(successRow?.classes()).not.toContain("whitespace-pre-wrap");
+    });
 });

@@ -61,7 +61,14 @@
                                                         {{ getShortDateFromString(log.logDate) }}
                                                     </span>
                                                 </div>
-                                                <p class="mt-1 text-xs text-gray-700 dark:text-gray-300 break-words">
+                                                <!-- Failure rows carry the FL run's log tail (FLIP#1001) — a
+                                                     multi-line traceback that must keep its line breaks. Success
+                                                     rows stay on the default so prose never gets reformatted. -->
+                                                <p
+                                                    class="mt-1 text-xs text-gray-700 dark:text-gray-300 break-words"
+                                                    :class="{ 'whitespace-pre-wrap': !log.success }"
+                                                    data-test="log-text"
+                                                >
                                                     {{ log.log }}
                                                 </p>
                                             </div>
