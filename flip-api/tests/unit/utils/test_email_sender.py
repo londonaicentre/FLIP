@@ -24,7 +24,7 @@ from botocore.exceptions import ClientError
 
 from flip_api.utils.email_sender import send_templated_email
 
-SECRET_PASSWORD = "sup3r-s3cret-xnat-pw"
+SECRET_PASSWORD = "sup3r-s3cret-xnat-pw"  # pragma: allowlist secret
 CREDENTIALS_DATA = {
     "trust_name": "Trust_1",
     "project_name": "Test Project",
@@ -100,6 +100,49 @@ def test_console_backend_redacts_any_secret_shaped_key(console_backend, caplog, 
     assert SECRET_PASSWORD not in caplog.text
     assert "***REDACTED***" in caplog.text
     assert "user1" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"user": {"password": SECRET_PASSWORD}},
+        {"account": {"credentials": {"api_token": SECRET_PASSWORD}}},
+        {"users": [{"username": "user1", "temp_password": SECRET_PASSWORD}]},
+        {"tokens": [SECRET_PASSWORD]},
+    ],
+    ids=["nested-dict", "twice-nested", "list-of-dicts", "list-of-secrets"],
+)
+def test_console_backend_redacts_secrets_below_the_top_level(console_backend, caplog, payload):
+    """The marker match must not be defeated by a parent key that matches nothing.
+
+    Today's ``ISes*TemplateData`` payloads are flat, so none of these shapes is
+    reachable yet — but the helper's stated design intent is to fail safe
+    against payloads nobody has written, and a top-level-only match would
+    stringify the whole nested value into the log line instead.
+    """
+    with caplog.at_level(logging.WARNING, logger="uvicorn"):
+        send_templated_email(
+            recipient="user1@test.com",
+            template_name="flip-xnat-credentials",
+            template_data=payload,
+        )
+
+    assert SECRET_PASSWORD not in caplog.text
+    assert "***REDACTED***" in caplog.text
+
+
+def test_console_backend_keeps_non_secret_nested_values_legible(console_backend, caplog):
+    """Recursion must not turn the dev log into a wall of redactions."""
+    with caplog.at_level(logging.WARNING, logger="uvicorn"):
+        send_templated_email(
+            recipient="user1@test.com",
+            template_name="flip-xnat-credentials",
+            template_data={"project": {"name": "Test Project", "trust": "Trust_1"}, "password": SECRET_PASSWORD},
+        )
+
+    assert "Test Project" in caplog.text
+    assert "Trust_1" in caplog.text
+    assert SECRET_PASSWORD not in caplog.text
 
 
 def test_console_backend_keeps_secret_length_as_a_diagnostic(console_backend, caplog):

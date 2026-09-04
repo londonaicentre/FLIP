@@ -13,6 +13,7 @@
 """Templated email dispatch: SESv2 in production, console logging in development (FLIP#919)."""
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 import boto3
@@ -23,10 +24,11 @@ from flip_api.utils.logger import logger
 # Substrings marking a template-data key whose value must never reach the
 # logs. The console backend logs the payload, and flip-xnat-credentials
 # carries the user's decrypted XNAT password. Matched as substrings rather
-# than exact names, and at the top level only (all current ISes*TemplateData
-# payloads are flat): a denylist guarding a live credential has to fail safe,
-# so a future `temp_password`, `api_secret` or `access_token` field is
-# redacted without anyone remembering to update this set.
+# than exact names, and at every depth of the payload: a denylist guarding a
+# live credential has to fail safe, so a future `temp_password`, `api_secret`
+# or `access_token` field is redacted without anyone remembering to update
+# this set, and without depending on the payload staying flat the way today's
+# ISesTemplateData shapes happen to be.
 _REDACTED_KEY_MARKERS = ("password", "secret", "token", "credential")
 
 # Cap on a single logged template value. reason_for_access arrives on the
@@ -112,11 +114,30 @@ def _send_via_console(recipient: str, template_name: str, template_data: dict[st
     )
 
 
-def _redact(key: str, value: Any) -> str:
-    """Mask a sensitive value, keeping its length as a diagnostic, and truncate the rest."""
-    rendered = str(value)
+def _redact(key: str, value: Any) -> Any:
+    """Mask a sensitive value, keeping its length as a diagnostic, and truncate the rest.
+
+    Recurses into nested mappings, re-matching the markers against each
+    nested key, so a secret one level down is redacted rather than
+    stringified wholesale by a parent key that matches nothing
+    (``{"user": {"password": ...}}``). Sequence elements are recursed under
+    the key they were found on, so a list of tokens is masked element-wise.
+
+    Args:
+        key (str): Template-data key the value was found under.
+        value (Any): Value to render for the log line.
+
+    Returns:
+        Any: The rendered value — a string for a leaf, or the same container
+        shape with every leaf rendered.
+    """
     if any(marker in key.lower() for marker in _REDACTED_KEY_MARKERS):
         # Keep the length: an empty or whitespace-only secret means a broken
         # decrypt(), which would otherwise be indistinguishable from a good one.
-        return f"***REDACTED*** ({len(rendered)} chars)"
+        return f"***REDACTED*** ({len(str(value))} chars)"
+    if isinstance(value, Mapping):
+        return {nested: _redact(str(nested), nested_value) for nested, nested_value in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redact(key, item) for item in value]
+    rendered = str(value)
     return rendered if len(rendered) <= _MAX_LOGGED_VALUE_CHARS else f"{rendered[:_MAX_LOGGED_VALUE_CHARS]}…"
