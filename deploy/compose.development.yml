@@ -249,6 +249,15 @@ services:
       - FOWNER
       - SETUID
       - SETGID
+    volumes:
+      # Without this the postgres image's own `VOLUME /var/lib/postgresql/data` puts the
+      # hub database on a fresh ANONYMOUS volume per container, so every `make down` (and
+      # `make restart`, which calls it) silently started the hub with an empty database —
+      # losing projects, models and cohort queries while the trusts kept the DICOM those
+      # rows referenced. `make down` passes no `-v`, so each wipe also orphaned the old
+      # volume rather than reclaiming it. Named so the data survives a recreate; remove the
+      # volume to reset deliberately (see below). Sibling of the xnat-db fix in FLIP#1048.
+      - flip_db_data:/var/lib/postgresql/data
     networks:
       - default
 
@@ -276,6 +285,11 @@ services:
 
 volumes:
   pgadmin_data:
+  # The hub database. Reset it deliberately with:
+  #   make down && docker volume rm deploy_flip_db_data && make up
+  # (compose prefixes the volume with the project name, so a second stack started with
+  # FLIP_INSTANCE gets its own.)
+  flip_db_data:
 
 # Every network here is created outside compose by `make create-networks` —
 # trust-network-* as swarm overlays (`--driver overlay --attachable`) because the

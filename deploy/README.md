@@ -51,6 +51,24 @@ Only **trusts** have more than one deployment target (AWS EC2, on-prem Ubuntu, K
 supported production target — AWS ECS Fargate — so it needs no provider of its own. See
 [`providers/README.md`](providers/README.md) for the per-provider scope.
 
+## Hub database persistence (development)
+
+`flip-db` keeps its data on the named volume `flip_db_data`, which compose creates as
+`deploy_flip_db_data`. It therefore **survives `make down`, `make restart` and any container
+recreate** — projects, models and cohort queries are still there when the stack comes back.
+
+Reset it deliberately when you want a genuinely empty hub:
+
+```bash
+make down && docker volume rm deploy_flip_db_data && make up
+```
+
+`make up` re-runs `register-trusts`, so the trusts and their FL kit slots come back on their own;
+everything else starts empty.
+
+This applies to development only. Neither production compose defines `flip-db` — the hub talks to
+RDS through RDS Proxy there, so there is no local volume in play.
+
 ## Supported PostgreSQL Versions
 
 FLIP uses AWS RDS PostgreSQL with the following version support policy:
