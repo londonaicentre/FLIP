@@ -182,7 +182,7 @@ The default script performs only basic label mapping:
 FLIP Anonymization Script
 =========================
 
-FLIP replaces the default script with a comprehensive site-wide anonymization script (``anon_script.das``) that provides more thorough PHI removal, including:
+FLIP replaces the default script with a site-wide anonymization script (``anon_script.das``) that removes considerably more PHI than the XNAT default, including:
 
 - **Patient identifiers**: birth date, address, telephone numbers, other patient IDs
 - **Institutional identifiers**: institution name, address, department
@@ -192,6 +192,17 @@ FLIP replaces the default script with a comprehensive site-wide anonymization sc
 - **De-identification recording**: sets ``Patient Identity Removed`` and ``De-identification Method`` tags
 
 The script is configured automatically during XNAT initialization via ``configure-xnat.sh``. It is applied to all incoming DICOM data when the SCP receiver has ``anonymizationEnabled`` set to ``true``.
+
+Limits of the profile
+---------------------
+
+The script is a denylist: 28 removal rules naming specific tags. It removes what it enumerates, and anything unenumerated survives. Three boundaries are worth stating explicitly, because a trust connecting a real PACS (see :doc:`component-pacs`) sends this script real patient data rather than the synthetic studies it has been exercised against:
+
+- **Vendor private tags are not removed.** Real PACS populate these heavily and they routinely carry identifiers. No rule in the script reaches them.
+- **Dates are not shifted or removed.** Only patient birth date and time are dropped; study, series and acquisition dates pass through unchanged.
+- **Burned-in annotation is untouched.** Identifiers rendered into pixel data are beyond the reach of any header rule.
+
+The script nevertheless sets ``Patient Identity Removed`` to ``YES`` on every object it processes. That assertion is only as strong as the rules above, so a trust connecting a real PACS should review the profile against its own information-governance requirements rather than read the tag as an assurance. Declaring a DICOM PS3.15 confidentiality profile, with coded ``De-identification Method Code Sequence`` values, is tracked as separate work.
 
 Anonymize API Endpoints
 =======================

@@ -195,13 +195,17 @@ fl-client container, so preserve it as extracted.
 
 .. note::
 
-   **Upgrading a trust deployed before the XNAT port split (FLIP#993).**
-   ``XNAT_PORT`` used to mean both the DICOM SCP receiver and the web UI. It
-   now means the receiver only, and the web UI has its own ``XNAT_WEB_PORT``.
-   An existing kit that sets only ``XNAT_PORT`` keeps working — the web port
-   derives from it — but a trust connecting a **real** PACS publishes both on
-   the host, and ``up-onprem-trust`` refuses to start when the two collide.
-   Add ``XNAT_WEB_PORT`` to the Host-local profile in that case; the shipped
+   **Upgrading a trust deployed before the XNAT port split (FLIP#993) — every
+   existing trust must act.** ``XNAT_PORT`` used to mean both the DICOM SCP
+   receiver and the web UI. It now means the receiver only, and the web UI has
+   its own ``XNAT_WEB_PORT``. Both are published on the host on **every**
+   deployment, not only where a real PACS is connected, so the two must differ.
+   A kit that sets only ``XNAT_PORT`` resolves them to the same number — the
+   web port defaults to ``XNAT_PORT`` — so your next ``up-onprem-trust`` is
+   **refused**, naming both values and the file to edit. That refusal is the
+   upgrade path, not a fault: it asks you to allocate a second port rather than
+   moving your web UI to a number nothing else expects. Add ``XNAT_WEB_PORT``
+   to the Host-local profile before your next deployment; the shipped
    allocation is 8104 for DICOM and 8105 for the web UI.
 
 **Optional — set your site privacy policy (NVFLARE backend).** As the data

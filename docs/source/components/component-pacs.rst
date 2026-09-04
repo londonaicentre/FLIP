@@ -78,7 +78,9 @@ performs the retrieval, driven over REST by the imaging API:
 3. XNAT issues a **C-MOVE** to the PACS, naming itself as the move destination.
 4. The PACS **C-STOREs** the study back to XNAT's DICOM SCP receiver, where the site-wide
    anonymisation script runs on receipt, before the session is archived — see
-   :ref:`DICOM Anonymization <dicom-anonymization>`.
+   :ref:`DICOM Anonymization <dicom-anonymization>`. That script is a denylist, and its limits
+   (vendor private tags, unshifted dates, burned-in annotation) are stated there; read them before
+   connecting a real PACS, since until now the script has only seen synthetic data.
 
 Only accession numbers belonging to an approved project cohort are ever requested. There is no
 standing forward rule and no bulk transfer.
@@ -212,9 +214,26 @@ exposed differs by deployment:
 **Compose.** The receiver is always published on the host, next to the web UI, so a development
 deployment runs the same wiring a real-PACS trust relies on. ``XNAT_WEB_PORT`` and ``XNAT_PORT``
 must therefore differ; the Makefile refuses to deploy if they collide. The mocked Orthanc does not
-itself need the publication — it reaches the receiver over the container network — and the mock
-deployments expose nothing by it: local development binds on the developer's machine, and the
-AWS-hosted mock trusts sit behind security groups with no ingress rules.
+itself need the publication — it reaches the receiver over the container network — but it is
+published there too, on every Compose deployment rather than only where a real PACS is configured.
+
+That publication is **unscoped**: it binds every interface of the host, not the loopback. A Swarm
+service publishes through the routing mesh, which takes no bind address, so there is no way to
+narrow it in the Compose file. What the exposure amounts to therefore depends on the host — the
+AWS-hosted mock trusts sit behind security groups with no ingress rules and so reach no further
+than the instance, while an on-prem trust host or a developer machine publishes the receiver to
+whatever network it is on. Docker's DNAT precedes the host firewall's ``INPUT`` chain, so a
+host-level rule does not close it; scope it at the network the host sits on.
+
+.. warning::
+
+   The receiver accepts an association from **any** calling AE. DIMSE carries no authentication,
+   and the receiver is registered with its calling-AE whitelist off
+   (``whitelistEnabled: false``) and ``directArchive`` on, so what confines C-STORE to the trust's
+   own PACS is the surrounding network rather than anything XNAT checks. Treat the DICOM port as
+   an unauthenticated write path into the archive when specifying firewall rules for it.
+   Making the Compose publication conditional on a real PACS being configured is tracked in
+   FLIP#1142, and deriving the whitelist from the configured PACS in FLIP#1143.
 
 **Kubernetes.** Three values, all off by default:
 
