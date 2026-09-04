@@ -163,11 +163,22 @@ a PACS packet could take, which is precisely the case the guard exists to stop.
 Refuses ClusterIP specifically rather than demanding NodePort, because a LoadBalancer service
 (MetalLB and friends) is an equally valid way to make the receiver reachable and must not be
 rejected.
+
+Both halves of that conjunction are checked, not just the Service type. NodePort with
+`dicomNodePort` left at its empty default renders clean while breaking the same leg twice over:
+Kubernetes allocates a random NodePort, so the port the PACS was told to dial is not the one that
+reaches the pod, and `externalTrafficPolicy: Local` is gated on the same pair (xnat-web.yaml:56),
+so kube-proxy SNATs the source address and the ingress CIDR cannot match even if a packet did
+arrive. That is the same queries-succeed / retrievals-time-out failure, reached through the one
+combination the other refusals leave open.
 */}}
 {{- define "flip-trust.validatePacsReachable" -}}
 {{- if and .Values.xnat.enabled .Values.xnat.web.enabled (ne .Values.pacs.host "orthanc") }}
 {{- if eq .Values.xnat.web.service.type "ClusterIP" }}
 {{- fail (printf "pacs.host is %s but xnat.web.service.type is ClusterIP, so the DICOM receiver is unreachable from outside the cluster and the C-STORE return leg the PACS opens after C-MOVE can never arrive. Set xnat.web.service.type: NodePort plus xnat.web.dicomNodePort (equal to xnat.web.dicomPort), or expose the receiver through a LoadBalancer service." .Values.pacs.host) }}
+{{- end }}
+{{- if and (eq .Values.xnat.web.service.type "NodePort") (not .Values.xnat.web.dicomNodePort) }}
+{{- fail (printf "pacs.host is %s and xnat.web.service.type is NodePort, but xnat.web.dicomNodePort is unset, so the receiver's node port is allocated at random and externalTrafficPolicy stays Cluster. The PACS cannot be given a stable destination port, and kube-proxy rewrites its source address so the ingress NetworkPolicy CIDR never matches — queries succeed and retrievals silently time out. Set xnat.web.dicomNodePort (equal to xnat.web.dicomPort, %v), widening the API server's --service-node-port-range if needed." .Values.pacs.host (.Values.xnat.web.dicomPort | default 8104)) }}
 {{- end }}
 {{- end }}
 {{- end }}

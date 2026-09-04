@@ -240,6 +240,32 @@ jobs:
             --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
             --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' > /dev/null
 
+      # The other half of the conjunction xnat-web.yaml gates the NodePort pin and
+      # externalTrafficPolicy on. NodePort with dicomNodePort left at its empty default satisfies
+      # every guard above yet breaks the return leg twice: a random node port the PACS was never
+      # told to dial, and Cluster policy SNATting the source address so the ingress CIDR cannot
+      # match. Same queries-succeed / retrievals-time-out failure, through the one combination the
+      # other refusals leave open (FLIP#993).
+      - name: Render template (real PACS on NodePort without dicomNodePort is refused)
+        run: |
+          if helm template trust-release deploy/providers/kubernetes/ \
+               --set xnat.web.service.type=NodePort \
+               --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
+               --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+               --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' \
+               --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+               --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' > /dev/null 2> /tmp/nonodeport.err; then
+            echo "::error::a real PACS on NodePort with no dicomNodePort rendered successfully — the PACS has no stable destination port"
+            exit 1
+          fi
+          # Assert on the message, not just the exit code: an unrelated render error would
+          # otherwise make this pass while proving nothing.
+          if ! grep -q "xnat.web.dicomNodePort is unset" /tmp/nonodeport.err; then
+            echo "::error::render failed for some other reason than the dicomNodePort guard:"
+            cat /tmp/nonodeport.err
+            exit 1
+          fi
+
       # Default-deny must survive: the ingress allowance is the one inbound path into a trust, so a
       # chart that opened it without being asked would silently widen every existing deployment.
       - name: Render template (default keeps ingress denied)
