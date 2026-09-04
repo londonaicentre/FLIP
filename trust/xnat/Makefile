@@ -259,7 +259,7 @@ endif
 	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
 	PACS_UI_PORT=$(PACS_UI_PORT_EFFECTIVE) \
 	DOCKER_NETWORK_NAME=$(XNAT_NETWORK) \
-	docker stack deploy --with-registry-auth --resolve-image $(XNAT_RESOLVE_IMAGE) --detach=false ${STACK_FILES} $(XNAT_STACK)
+	docker stack deploy --with-registry-auth --resolve-image "$(XNAT_RESOLVE_IMAGE)" --detach=false ${STACK_FILES} $(XNAT_STACK)
 	$(MAKE) xnat-configure XNAT_PROJECT=$(XNAT_STACK)
 
 # Docker Swarm enforces image/node architecture strictly and, unlike docker compose,
@@ -274,6 +274,14 @@ endif
 # probe result — keeps the `always` that Linux/amd64 hosts rely on. Override
 # explicitly if needed:
 #   make up-xnat KIT=<CODE> XNAT_RESOLVE_IMAGE=always
+#
+# The use site quotes the expansion. `?=` yields to a command-line assignment even
+# when that assignment is empty, so `make up-xnat XNAT_RESOLVE_IMAGE=` expands to
+# nothing; unquoted, the empty word disappears and `--resolve-image` swallows the
+# next flag, failing with `invalid argument "--detach=false"`. Quoted, docker gets
+# an empty value and names the flag it belongs to. Not falling back to `always`
+# here is deliberate: that would hand a non-amd64 host the digest pinning this
+# whole block exists to avoid, and reinstate the silent "Pending forever" stall.
 #
 # The filter-out direction is deliberate. `docker info` returns empty for plenty of
 # reasons unrelated to architecture: the daemon not up yet, the user not in the

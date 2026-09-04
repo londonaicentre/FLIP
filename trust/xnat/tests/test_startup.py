@@ -407,6 +407,25 @@ def test_resolve_image_opts_out_only_for_a_known_non_amd64_arch(arch: str, expec
     )
 
 
+def test_an_empty_resolve_image_override_cannot_swallow_the_next_flag() -> None:
+    """An explicitly cleared override must fail naming the flag, not consume the one after it.
+
+    ``?=`` yields to a command-line assignment even when that assignment is empty, so
+    ``make up-xnat XNAT_RESOLVE_IMAGE=`` expands to nothing. Unquoted, the empty word
+    disappears from the recipe and ``--resolve-image`` takes ``--detach=false`` as its
+    value, failing with ``invalid argument "--detach=false"`` — which reads as a bug in
+    the Makefile rather than as the override the caller actually typed.
+    """
+    stdout = _dry_run_up_xnat(XNAT_RESOLVE_IMAGE="").stdout
+
+    assert "--resolve-image --detach=false" not in stdout, (
+        "an unquoted expansion lets --resolve-image consume --detach=false as its argument"
+    )
+    assert '--resolve-image "" --detach=false' in stdout, (
+        "the empty override must reach docker as an empty value for --resolve-image"
+    )
+
+
 def test_up_xnat_skips_the_host_plugin_cache_outside_development() -> None:
     """Only the development stack bind-mounts plugins; elsewhere they are baked into the image.
 
