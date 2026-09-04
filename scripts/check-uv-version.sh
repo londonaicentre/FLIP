@@ -55,6 +55,11 @@ fi
 # tie is then broken by string length in the shorter value's favour — so a pre-release of the
 # minimum version would pass as if it were the release. uv has never shipped a pre-release tag,
 # so this is a guard against a shape the comparison cannot rank, not a known case.
+#
+# If this ever fires for a shape that is NOT a pre-release — a four-component or
+# post-release build string, say — the fix is to widen this pattern and teach the
+# comparison below to rank the new shape, NOT to relax the guard or skip the check.
+# Bypassing it re-opens the silent lockfile rewrite the floor exists to prevent.
 if [[ ! "${current}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "❌ Unexpected uv version '${current}' — expected a plain X.Y.Z." >&2
   echo "   A pre-release cannot be ordered against the ${MIN_UV_VERSION} floor; install a release." >&2
