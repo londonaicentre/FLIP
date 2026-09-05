@@ -20,3 +20,12 @@ class DatabaseError(Exception):
 
 class JobAbortedError(Exception):
     """Raised when a queued FL job was aborted (DELETED) before submission to the fl-server."""
+
+
+class TransientDispatchError(Exception):
+    """Raised when dispatching an FL job fails transiently (client/server mid-restart, cold start).
+
+    Unlike a genuine backend submission error, a transient failure leaves the system in a state
+    where retrying the same job on the next scheduler tick can succeed — so callers requeue the
+    job instead of deleting it and erroring the model.
+    """
