@@ -14,7 +14,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from imaging_api.routers.schemas import DownloadImagesRequestData, DownloadImagesResponse
+from imaging_api.routers.schemas import (
+    DownloadImagesRequestData,
+    DownloadImagesResponse,
+    ResourceType,
+)
 from imaging_api.services.download import download_and_unzip_images
 from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.encryption import decrypt
@@ -34,7 +38,7 @@ async def download_images_by_accession_number(
     *,
     # TODO Make assessor_type an Enum with allowed values ("scan", "assessor")
     assessor_type: str = "scan",
-    resource_type: str = "NIFTI",
+    resource_type: ResourceType = "NIFTI",
     force_refresh: bool = False,
     headers: XNATAuthHeaders,
 ) -> DownloadImagesResponse:
