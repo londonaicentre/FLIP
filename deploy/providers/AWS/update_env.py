@@ -16,7 +16,7 @@ import subprocess
 import sys
 
 
-def get_terraform_outputs():
+def get_terraform_outputs() -> dict:
     """Run terraform output -json and return parsed object"""
     try:
         result = subprocess.run(["terraform", "output", "-json"], capture_output=True, text=True, check=True)
@@ -26,7 +26,7 @@ def get_terraform_outputs():
         sys.exit(1)
 
 
-def update_env_file(env_path, updates):
+def update_env_file(env_path: str, updates: dict[str, str]) -> None:
     """Update specific keys in the env file"""
     try:
         with open(env_path, "r") as f:
@@ -61,7 +61,7 @@ def update_env_file(env_path, updates):
         f.writelines(new_lines)
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: python3 update_env.py <path_to_env_file>")
         sys.exit(1)
