@@ -33,9 +33,19 @@ from pathlib import Path
 import pandas as pd
 
 HF_TRUST_DATA_REPO = os.environ.get("HF_TRUST_DATA_REPO", "aicentreflip/trust-data")
-# The dataset holds ONE copy of every table at omop-csv/<project>/; a data version is a git tag on it,
-# and the pin names that tag. trust/.data_version once FLIP#1101 lands (one tag for the whole
-# dataset), trust/omop-db/.data_version until then.
+# Published tables are read at omop-csv/<project>/ on the data-version TAG the pin names. That is the
+# FLIP#1101 layout — one copy of every table, a data version being a git tag on the dataset — and it
+# is the convention for new code here.
+#
+# It is not the only layout the dataset carries today. The pre-#1101 copies at
+# omop-csv/<version>/<project>/ are still published, and are still what trust/omop-db's
+# omop_db_tools.dataset and this tree's spleen/upload_spleen_labels_to_xnat.py read; both forms
+# resolve to the same bytes. The versioned-path copies are removed once FLIP#1101 has landed and
+# stag/prod have bumped their pin, so this file is not "inconsistent" with those consumers — it is
+# ahead of them. Do not unify either direction on sight.
+#
+# The pin itself: trust/.data_version once FLIP#1101 lands (one tag for the whole dataset),
+# trust/omop-db/.data_version until then.
 PIN_FILES = ("trust/.data_version", "trust/omop-db/.data_version")
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TABLES = (
@@ -59,7 +69,11 @@ def pinned_revision() -> str:
 
 
 def published_url(revision: str, project: str, table: str) -> str:
-    """URL of one published table at a revision — the version is the revision, never the path."""
+    """URL of one published table: under FLIP#1101 the version is the revision, not a path segment.
+
+    See the note above ``PIN_FILES`` for the pre-#1101 versioned-path layout the dataset also still
+    carries, and why this is deliberately not the URL construction ``omop_db_tools.dataset`` uses.
+    """
     return f"https://huggingface.co/datasets/{HF_TRUST_DATA_REPO}/resolve/{revision}/omop-csv/{project}/{table}.csv"
 
 

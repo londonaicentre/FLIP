@@ -167,8 +167,11 @@ upload-spleen-labels:
 #                                   patient identities, so its output will NOT match the published
 #                                   export (see the README). Use it to exercise the DICOM stage.
 SPLEEN_OMOP_UV := uv run --project datasets/spleen
-# The published tables are read at a data-version TAG on aicentreflip/trust-data: the dataset holds
-# one copy of every table at omop-csv/<project>/, and the version is the revision, never the path.
+# The published tables are read at omop-csv/<project>/ on a data-version TAG on aicentreflip/trust-data
+# — the FLIP#1101 layout, one copy of every table with the version as a git tag. The pre-#1101 copies
+# at omop-csv/<version>/<project>/ are still published and still what trust/omop-db's
+# omop_db_tools.dataset reads; both forms resolve, and the versioned-path ones go once #1101 has
+# landed and stag/prod have bumped. See the note above PIN_FILES in utils/verify_omop_tables.py.
 # HF_TRUST_DATA_REVISION overrides; otherwise the pin — trust/.data_version once FLIP#1101 lands
 # (one tag for the whole dataset), trust/omop-db/.data_version until then.
 TRUST_DATA_REVISION ?= $(or $(HF_TRUST_DATA_REVISION),$(shell cat ../../trust/.data_version 2>/dev/null),$(shell cat ../../trust/omop-db/.data_version 2>/dev/null))
