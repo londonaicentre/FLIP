@@ -133,12 +133,22 @@ def _accession_dir(flip, project_id: str, accession_id: str, site_name: str) -> 
 
 
 def _find_by_sop_class(directory: Path, sop_class_uid: str, preferred_name: str) -> Path | None:
-    """Return the file in ``directory`` holding an object of this SOP Class, or ``None``.
+    """Return the file at or below ``directory`` holding an object of this SOP Class, or ``None``.
 
     The tutorial's own name is tried first so the common case costs one header read rather than one
-    per file in the directory -- which matters on a trust, where the pull may deliver a whole study.
+    per file -- which matters on a trust, where the pull may deliver a whole study.
+
+    The search is **recursive**, because the two data paths hand back different shapes. Under
+    LOCAL_DEV the objects sit directly in the accession directory, but a trust returns what XNAT
+    stored, and ``flip.get_by_accession_number`` hands back the accession root of that tree::
+
+        <accession>/scans/<scan-id>-<description>/resources/DICOM/files/<sop-instance-uid>.dcm
+
+    A non-recursive scan of the accession root therefore finds nothing on a trust and the run dies
+    at "no whole-slide image found" -- naming the directory the files really are under, two levels
+    below where it looked.
     """
-    candidates = [directory / preferred_name, *sorted(p for p in directory.iterdir() if p.is_file())]
+    candidates = [directory / preferred_name, *sorted(p for p in directory.rglob("*") if p.is_file())]
     seen: set[Path] = set()
     for path in candidates:
         if path in seen or not path.exists():

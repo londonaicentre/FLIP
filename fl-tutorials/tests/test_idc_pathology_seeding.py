@@ -357,3 +357,29 @@ def test_recorder_xnat_url_is_the_web_port_not_the_dicom_scp_port() -> None:
     """
     source = DEMO_VIDEO.read_text()
     assert '"--xnat-url",\n        default="http://127.0.0.1:8105"' in source
+
+
+def test_finds_both_objects_in_the_nested_tree_a_trust_returns(tmp_path: Path) -> None:
+    """A trust hands back XNAT's directory tree, not a flat accession folder.
+
+    ``flip.get_by_accession_number`` returns the accession root; imaging-api writes the objects two
+    levels below it, under ``scans/<scan>/resources/DICOM/files/``. A non-recursive scan of the root
+    finds neither object and the run dies at "no whole-slide image found", which reads as a failed
+    pull rather than a lookup that never descended. The layout below is the one observed on a live
+    trust, including the scan directory's ``<id>-<series description>`` name.
+    """
+    data_utils = load_data_utils()
+    files = tmp_path / "scans" / "1-FFPE_HE_TP_DX1" / "resources" / "DICOM" / "files"
+    files.mkdir(parents=True)
+    write_min_dicom(files / "2.25.180569379270056488293474013124856658992-1-1-irteys.dcm",
+                    data_utils.SLIDE_SOP_CLASS)
+    write_min_dicom(files / "annotation.dcm", data_utils.ANNOTATION_SOP_CLASS)
+
+    slide = data_utils._find_by_sop_class(tmp_path, data_utils.SLIDE_SOP_CLASS, "slide.dcm")
+    annotation = data_utils._find_by_sop_class(tmp_path, data_utils.ANNOTATION_SOP_CLASS, "annotation.dcm")
+
+    assert slide is not None, "the slide must be found below the accession root, not only in it"
+    assert annotation is not None
+    assert slide.name.endswith("-irteys.dcm")
+    assert annotation.name == "annotation.dcm"
+    assert slide != annotation
