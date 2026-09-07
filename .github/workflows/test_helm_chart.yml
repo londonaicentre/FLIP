@@ -150,6 +150,7 @@ jobs:
       - name: Render template (real PACS)
         run: |
           helm template trust-release deploy/providers/kubernetes/ \
+            --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set xnat.web.service.type=NodePort \
             --set xnat.web.dicomNodePort=8104 \
             --set xnat.web.dicomAet=FLIPXNAT \
@@ -191,6 +192,7 @@ jobs:
       - name: Render template (real PACS without egress is refused)
         run: |
           if helm template trust-release deploy/providers/kubernetes/ \
+            --set flClient.kitHostPath=/opt/flip/fl-kit \
                --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 > /dev/null 2>&1; then
             echo "::error::a PACS with no egress rule rendered successfully"
             exit 1
@@ -207,6 +209,7 @@ jobs:
           for port_args in "" "--set networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32 --set networkPolicies.allowedIngressCIDRsWithPorts[0].port=31104"; do
             # shellcheck disable=SC2086 # deliberate word splitting: $port_args carries several flags
             if helm template trust-release deploy/providers/kubernetes/ \
+              --set flClient.kitHostPath=/opt/flip/fl-kit \
                  --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
                  --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
                  --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' \
@@ -224,6 +227,7 @@ jobs:
       - name: Render template (real PACS on a ClusterIP service is refused)
         run: |
           if helm template trust-release deploy/providers/kubernetes/ \
+            --set flClient.kitHostPath=/opt/flip/fl-kit \
                --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
                --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
                --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' \
@@ -243,6 +247,7 @@ jobs:
           # Assert on the refusal *message*, not just a non-zero exit: any unrelated render error
           # would otherwise make this pass while proving nothing.
           if helm template trust-release deploy/providers/kubernetes/ \
+            --set flClient.kitHostPath=/opt/flip/fl-kit \
                --set networkPolicies.enabled=false \
                --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 > /dev/null 2> /tmp/nopolicy.err; then
             echo "::error::a real PACS on ClusterIP rendered successfully with networkPolicies.enabled=false — the reachability guard is gated on NetworkPolicy again"
@@ -255,6 +260,7 @@ jobs:
           fi
           # And the LoadBalancer allowance must keep rendering, or on-prem MetalLB trusts break.
           helm template trust-release deploy/providers/kubernetes/ \
+            --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set xnat.web.service.type=LoadBalancer \
             --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
             --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
@@ -271,6 +277,7 @@ jobs:
       - name: Render template (real PACS on NodePort without dicomNodePort is refused)
         run: |
           if helm template trust-release deploy/providers/kubernetes/ \
+            --set flClient.kitHostPath=/opt/flip/fl-kit \
                --set xnat.web.service.type=NodePort \
                --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
                --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
@@ -292,7 +299,7 @@ jobs:
       # chart that opened it without being asked would silently widen every existing deployment.
       - name: Render template (default keeps ingress denied)
         run: |
-          helm template trust-release deploy/providers/kubernetes/ > /tmp/default.yaml
+          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit > /tmp/default.yaml
           if grep -q "allow-pacs-ingress" /tmp/default.yaml; then
             echo "::error::the PACS ingress NetworkPolicy rendered without being configured"
             exit 1
