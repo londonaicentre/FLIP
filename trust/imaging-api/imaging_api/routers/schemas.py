@@ -188,10 +188,16 @@ class PacsStatus(BaseModel):
     disabled: int = Field(..., alias="disabled")
 
 
+# PatientSex (0010,0040) and ReferringPhysicianName (0008,0090) are DICOM Type 2: the attribute must
+# be present in an instance but may be zero-length, and DQR omits an empty value from its JSON
+# entirely. De-identified public data routinely carries neither -- every TCGA whole-slide study does
+# -- so requiring them rejected the whole cohort at parse time, reported only as QueueFailed=N with
+# the real cause in imaging-api's log. They are optional here for the same reason DICOM makes them
+# Type 2, and default to "" so every consumer still gets a string.
 class Patient(BaseModel):
     id: str
     name: str
-    sex: str
+    sex: str = ""
 
 
 class Study(BaseModel):
@@ -200,7 +206,7 @@ class Study(BaseModel):
     accession_number: str = Field(..., alias="accessionNumber")
     study_date: str = Field(..., alias="studyDate")
     modalities_in_study: list[str] = Field(..., alias="modalitiesInStudy")
-    referring_physician_name: str = Field(..., alias="referringPhysicianName")
+    referring_physician_name: str = Field(default="", alias="referringPhysicianName")
     patient: Patient
 
 
