@@ -85,6 +85,29 @@ def fetch_published(revision: str, project: str, table: str) -> pd.DataFrame | N
         raise
 
 
+def source_trust_of(trust: str) -> int:
+    """The published ``source_trust`` value for one generated trust directory.
+
+    The converters write ``omop/<trust>/<project>/`` with the ``trust`` column dropped, while the
+    published export is a single file per table carrying ``source_trust`` instead. Re-deriving it
+    from the directory name is what lets the federated split itself be compared — see ``compare``.
+
+    Args:
+        trust: Generated trust directory name, e.g. ``trust_1``.
+
+    Returns:
+        int: The provenance value the published export carries for that trust — ``trust_1`` is 1,
+        matching ``omop_db_tools.dataset``'s partition (index i holds ``source_trust`` i + 1).
+
+    Raises:
+        SystemExit: If the name carries no trailing number to derive it from.
+    """
+    number = trust.rsplit("_", 1)[-1]
+    if not number.isdigit():
+        raise SystemExit(f"cannot derive source_trust from --trusts entry {trust!r}: expected a trailing number")
+    return int(number)
+
+
 def compare(mine: pd.DataFrame, theirs: pd.DataFrame) -> tuple[bool, str]:
     """Compare a generated table against its published counterpart.
 
@@ -92,9 +115,20 @@ def compare(mine: pd.DataFrame, theirs: pd.DataFrame) -> tuple[bool, str]:
     is empty there — so shared columns are compared for equality and published-only columns are
     required to be information-free. A published-only column carrying real data is a genuine gap.
 
+    ``source_trust`` is compared like any other column rather than dropped from both sides, so the
+    federated split is part of what the gate certifies. It has to be: both sides are sorted by the
+    surrogate key before comparison, so with the column dropped any reassignment of rows between
+    trust_1 and trust_2 compares byte-identical and still passes — and for cxr that column is a pure
+    function of row order in the input CSV (``df.index % len(TRUSTS)``), so a re-ordered or
+    re-published input would silently re-partition the cohort. The split decides which trust's OMOP
+    holds a person, hence which trust's cohort query returns them and whose imaging is pulled into
+    XNAT. A published table that carries no ``source_trust`` at all fails as a generated-only column,
+    which is the right answer: the export has lost the provenance the gate exists to check.
+
     Args:
-        mine: Generated table, with any ``trust`` column already dropped.
-        theirs: Published table, with ``source_trust`` already dropped.
+        mine: Generated table, with any ``trust`` column already dropped and ``source_trust``
+            re-derived from the trust directory it was read from.
+        theirs: Published table, as published.
 
     Returns:
         tuple[bool, str]: Whether they match, and a one-line description.
@@ -150,8 +184,11 @@ def main(argv: list[str] | None = None) -> int:
             failed.append(table)
             print(f"DIFF  {table}: generated file(s) missing: {[str(p) for p in missing]}")
             continue
-        mine = pd.concat([pd.read_csv(p) for p in paths], ignore_index=True)
-        ok, detail = compare(mine, theirs.drop(columns=["source_trust"], errors="ignore"))
+        mine = pd.concat(
+            [pd.read_csv(p).assign(source_trust=source_trust_of(t)) for p, t in zip(paths, args.trusts)],
+            ignore_index=True,
+        )
+        ok, detail = compare(mine, theirs)
         print(f"{'MATCH' if ok else 'DIFF '} {table}: {detail}")
         compared += 1
         if not ok:
