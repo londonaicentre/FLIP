@@ -201,12 +201,14 @@ spec:
               # Activate XNAT site (idempotent — safe to call even if already initialized).
               # siteUrl must be non-empty on XNAT >= 1.10.0: the Restlet create paths NPE on a
               # null siteUrl while building the response (entity created, request 500s) — see
-              # trust/xnat/xnat/config/configure-xnat.sh for the full explanation.
+              # trust/xnat/xnat/config/configure-xnat.sh for the full explanation, including why
+              # the OHIF viewer needs this to be a URL the browser can reach.
+              SITE_URL="{{ .Values.xnat.web.siteUrl | default "" }}"
               echo "Activating XNAT site..."
               xnat_curl -X POST "${XNAT_URL}/xapi/siteConfig" \
                 -H "Cookie: JSESSIONID=${JSESSION}" \
                 -H "Content-Type: application/json" \
-                -d "{\"initialized\": true, \"siteUrl\": \"${XNAT_URL}\"}" >/dev/null
+                -d "{\"initialized\": true, \"siteUrl\": \"${SITE_URL:-$XNAT_URL}\"}" >/dev/null
 
               # Set admin password to configured value if it differs from default
               echo "Setting admin password..."
@@ -924,10 +926,12 @@ data:
     COOKIE="Cookie: JSESSIONID=${JSESSION}"
 
     # Activate XNAT site. siteUrl must be non-empty on XNAT >= 1.10.0 (Restlet create paths
-    # NPE on null siteUrl while building the response) — see configure-xnat.sh.
+    # NPE on null siteUrl while building the response) — see configure-xnat.sh, which also
+    # explains why the OHIF viewer needs a browser-reachable value here.
+    SITE_URL="{{ .Values.xnat.web.siteUrl | default "" }}"
     echo "Activating XNAT site..."
     wget -q -O /dev/null --header="${COOKIE}" --header="Content-Type: application/json" \
-      --post-data="{\"initialized\": true, \"siteUrl\": \"${XNAT_URL}\"}" "${XNAT_URL}/xapi/siteConfig"
+      --post-data="{\"initialized\": true, \"siteUrl\": \"${SITE_URL:-$XNAT_URL}\"}" "${XNAT_URL}/xapi/siteConfig"
 
     # Register PACS (Orthanc)
     echo "Registering PACS..."

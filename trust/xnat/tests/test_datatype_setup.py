@@ -214,3 +214,40 @@ def test_shellcheck_clean_if_available() -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+# --- siteUrl (FLIP: OHIF whole-slide viewport rendered black) --------------------------------
+#
+# Separate concern from data types, but the same failure shape and the same demo: a slide that
+# archives correctly and still will not display. Kept here rather than in a new file because both
+# are "XNAT is configured wrong in a way nothing reports".
+
+CONFIGURE_XNAT = CONFIG_DIR / "configure-xnat.sh"
+K8S_INIT_JOB = Path(__file__).resolve().parents[3] / "deploy" / "providers" / "kubernetes" / "templates" / "xnat-init-job.yaml"
+
+
+def test_site_url_is_browser_reachable_not_the_docker_internal_host() -> None:
+    """siteUrl reaches the *browser*, so it cannot be the internal name this script dials.
+
+    The OHIF viewer builds its DICOMweb roots from siteUrl and fetches them from the user's
+    machine. Set to ``http://xnat-web:8080`` every whole-slide tile fails at DNS and the viewport
+    renders black -- with nothing in the XNAT logs, because the requests never reach XNAT.
+    """
+    body = CONFIGURE_XNAT.read_text()
+
+    assert "${XNAT_SITE_URL:-http://127.0.0.1:${XNAT_PORT}}" in body, (
+        "siteUrl must default to a browser-reachable URL, overridable via XNAT_SITE_URL"
+    )
+    assert "${XNAT_SITE_URL:-$XNAT_URL}" not in body, (
+        "XNAT_URL is the Docker-internal host and is not reachable from a browser"
+    )
+
+
+def test_k8s_init_job_allows_a_browser_reachable_site_url() -> None:
+    """The chart cannot know the ingress URL, but it must let an operator supply one."""
+    body = K8S_INIT_JOB.read_text()
+
+    assert body.count('SITE_URL="{{ .Values.xnat.web.siteUrl | default "" }}"') == 2, (
+        "both activation sites must honour the override"
+    )
+    assert 'siteUrl\\": \\"${XNAT_URL}' not in body, "no site may hardcode the in-cluster URL"

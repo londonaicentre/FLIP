@@ -152,14 +152,23 @@ sleep 10 # Additional wait to ensure XNAT is fully up before proceeding
 # paths (e.g. POST /data/projects) resolve response references through the siteUrl preference
 # via URI.create(), which throws an uncaught NPE on null — the entity is created but the
 # request returns 500, so imaging-api treats every create as failed. The UI setup wizard
-# normally sets this; our headless configure must set it explicitly. Nothing in FLIP consumes
-# the rewritten references, so the Docker-internal base URL is the honest default; override
-# with XNAT_SITE_URL if an externally reachable URL is ever needed (e.g. for SMTP links).
+# normally sets this; our headless configure must set it explicitly.
+#
+# It must be a URL a *browser* can reach, which is not the Docker-internal one this script
+# itself talks to. The OHIF viewer builds its DICOMweb roots from siteUrl and then fetches
+# them from the user's machine, so an internal value makes every whole-slide tile fail at DNS
+# and the viewport render black -- with nothing in the XNAT logs, because the requests never
+# arrive. The origin has to match too: tiles fetched from a different host spelling than the
+# one the user browsed are cross-origin and carry no session cookie. Hence 127.0.0.1, which is
+# the form the READMEs tell people to open.
+#
+# Override with XNAT_SITE_URL wherever the browser reaches XNAT by another name: any remote
+# trust (EC2, on-prem) needs it, and so does SMTP link generation.
 echo "Activating XNAT instance..."
 xnat_curl -X POST "$XNAT_URL/xapi/siteConfig" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
   -H "Content-Type: application/json" \
-  -d "{\"initialized\": true, \"siteUrl\": \"${XNAT_SITE_URL:-$XNAT_URL}\"}"
+  -d "{\"initialized\": true, \"siteUrl\": \"${XNAT_SITE_URL:-http://127.0.0.1:${XNAT_PORT}}\"}"
 
 # Now that the site is initialized, authenticated routes stop redirecting to /setup and the
 # plugin-readiness probe can actually answer.

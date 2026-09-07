@@ -271,8 +271,24 @@ should set `XNAT_OHIF_VIEWER=false` first and report it.
 The switch works in both directions. Turning it off removes any `ohif-viewer-*.jar` left behind,
 because the sync's `--exclude` hides those keys from `--delete` and they would otherwise survive.
 
-To view whole-slide images you may also need to enable the **SM Session** data type in XNAT's admin
-UI, if no microscopy data has been received on that instance before.
+Two things the viewer needs beyond the plugin itself, both of which fail silently:
+
+- **The `xnat:smSessionData` data type must be registered**, or a whole-slide image cannot be
+  archived at all. `xnat/config/setup-datatypes.sh` does this on every bring-up — see
+  [Registering the data types XNAT ships but leaves disabled][register-datatypes].
+- **`siteUrl` must be a URL the browser can reach.** The viewer builds its DICOMweb roots from it
+  and fetches them from the user's machine, so the Docker-internal `http://xnat-web:8080` makes
+  every tile fail at DNS and the viewport render black — with *nothing* in the XNAT logs, because
+  the requests never arrive. `configure-xnat.sh` defaults it to `http://127.0.0.1:${XNAT_PORT}`;
+  set `XNAT_SITE_URL` wherever the browser reaches XNAT by another name. It must also match the
+  origin actually browsed, or the tile requests are cross-origin and carry no session cookie.
+
+**Whole-slide images have no preview in XNAT's file browser.** Asking XNAT to render one
+(`.../files/slide.dcm?format=image/jpeg`) returns *"No Reader for format: jpeg2000-cv registered"*:
+that path goes through dcm4che's `Dcm2Jpg`, which needs the OpenCV JPEG-2000 codec that this build
+does not ship, and decoding a 35584x42752 image to a single JPEG would be a poor idea regardless.
+The OHIF viewer is unaffected — it receives raw JPEG-2000 tiles over DICOMweb and decodes them in
+the browser. Use the viewer to look at slides.
 
 **Staying on 1.9 instead?** Upstream also shipped **XNAT 1.9.3.4** (urgent fixes for JDK 8
 deployments) and **DQR 2.3.2** (the thread-leak fix alone, JDK 8). That is the lower-risk path to the
@@ -355,3 +371,5 @@ project maintained by Washington University School of Medicine.
 Original source: <https://github.com/NrgXnat/xnat-docker-compose>
 
 Modifications were made to integrate with the FLIP Trust Services layer.
+
+[register-datatypes]: #registering-the-data-types-xnat-ships-but-leaves-disabled
