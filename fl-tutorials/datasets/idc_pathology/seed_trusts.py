@@ -91,12 +91,16 @@ def rows_for(table: list[dict[str, str]], trust_number: str) -> list[dict[str, s
 
 
 def seed_omop(trust: Trust, tables: dict[str, list[dict[str, str]]], dry_run: bool) -> int:
-    """Insert this trust's rows, skipping any already present.
+    """Replace this trust's rows for the patients the pathology project owns.
 
-    ON CONFLICT DO NOTHING rather than an upsert: the ids come from the committed CSVs and never
-    change, so a row that is already there is the same row. That makes a re-run a no-op instead of a
-    duplicate-key failure, which matters because seeding is a documented prerequisite people will run
-    more than once.
+    Delete-then-insert, scoped by ``person_source_value``, rather than an insert that skips
+    conflicts. The surrogate ids look stable but are not: re-resolving the manifest renumbers every
+    table from ID_BASE, so the same slide comes back under a new ``image_occurrence_id``. Skipping
+    on primary-key conflict therefore does not deduplicate -- it silently doubles the cohort, which
+    is how a 12-slide trust briefly became a 17-row one here.
+
+    Scoping by the patient barcode instead means re-running converges on exactly what the CSVs say,
+    whatever the ids did, and touches nothing outside this mock project.
     """
     # Report without connecting: a dry run is for checking what would happen, so it must not also
     # require working database credentials.
@@ -105,8 +109,17 @@ def seed_omop(trust: Trust, tables: dict[str, list[dict[str, str]]], dry_run: bo
             logger.info("  [dry-run] %s: would insert %d row(s)", name, len(rows_for(tables[name], trust.number)))
         return 0
 
+    barcodes = [row["person_source_value"] for row in rows_for(tables["person"], trust.number)]
     inserted = 0
     with psycopg2.connect(trust.omop_dsn) as connection, connection.cursor() as cursor:
+        # Clear first, in reverse dependency order so the foreign keys hold at every step.
+        cursor.execute("SELECT person_id FROM omop.person WHERE person_source_value = ANY(%s);", (barcodes,))
+        person_ids = [row[0] for row in cursor.fetchall()]
+        if person_ids:
+            for name in reversed(OMOP_TABLES[1:]):
+                cursor.execute(f"DELETE FROM omop.{name} WHERE person_id = ANY(%s);", (person_ids,))
+            cursor.execute("DELETE FROM omop.person WHERE person_id = ANY(%s);", (person_ids,))
+
         for name in OMOP_TABLES:
             rows = rows_for(tables[name], trust.number)
             if not rows:
@@ -115,14 +128,11 @@ def seed_omop(trust: Trust, tables: dict[str, list[dict[str, str]]], dry_run: bo
             # is dropped before the insert -- the trust's own database has no such column.
             columns = [c for c in rows[0] if c != TRUST_COLUMN]
             placeholders = ", ".join(["%s"] * len(columns))
-            statement = (
-                f"INSERT INTO omop.{name} ({', '.join(columns)}) "
-                f"VALUES ({placeholders}) ON CONFLICT DO NOTHING"
-            )
+            statement = f"INSERT INTO omop.{name} ({', '.join(columns)}) VALUES ({placeholders})"
             for row in rows:
                 cursor.execute(statement, [row[c] or None for c in columns])
                 inserted += cursor.rowcount
-            logger.info("  %s: %d row(s) present", name, len(rows))
+            logger.info("  %s: %d row(s)", name, len(rows))
     return inserted
 
 

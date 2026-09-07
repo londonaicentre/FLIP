@@ -119,9 +119,19 @@ def test_omop_rows_are_inserted_without_the_partition_column() -> None:
     source = SEEDER.read_text()
 
     assert 'c != TRUST_COLUMN' in source, "the partition marker must be dropped before insert"
-    assert "ON CONFLICT DO NOTHING" in source, (
-        "seeding is a documented prerequisite people re-run; a second run must be a no-op"
-    )
+
+
+def test_reseeding_replaces_rather_than_accumulates() -> None:
+    """Re-resolving the manifest renumbers every id, so conflict-skipping does not deduplicate.
+
+    Keyed on the patient barcode instead. Pinned because the failure is a doubled cohort, not an
+    error: the demo would pull and score each slide twice and still report plausible numbers.
+    """
+    source = SEEDER.read_text()
+
+    assert "ON CONFLICT" not in source, "surrogate ids are not stable across a manifest re-resolve"
+    assert "person_source_value = ANY" in source, "the delete must be scoped by the natural key"
+    assert "DELETE FROM omop.person WHERE person_id = ANY" in source
 
 
 def test_seeding_nothing_anywhere_fails_loudly() -> None:
