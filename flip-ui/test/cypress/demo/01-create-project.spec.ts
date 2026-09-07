@@ -53,6 +53,11 @@ describe("FLIP demo — create project", () => {
         const projectName = requireEnv("DEMO_PROJECT_NAME");
         const projectDescription = requireEnv("DEMO_PROJECT_DESCRIPTION");
         const queryFile = requireEnv("DEMO_QUERY_FILE");
+        // Required, not defaulted. Cypress.expose() reads an allowlist in plugins/index.ts, so a
+        // variable the recorder sets but the allowlist omits reads as undefined — and a default of
+        // "true" would silently create an imaging project for a tabular tutorial, which is exactly
+        // how this went unnoticed once already. Fail here instead, where the cause is legible.
+        const hasImaging = requireEnv("DEMO_HAS_IMAGING");
 
         cy.visit("/auth/login");
         cy.demoCaption("A researcher signs in to FLIP — the Federated Learning Interoperability Platform", 1400);
@@ -91,6 +96,14 @@ describe("FLIP demo — create project", () => {
         cy.get("[role=dialog]").within(() => {
             cy.getBySel("project-name").demoType(projectName);
             cy.getBySel("project-description").demoType(projectDescription, { delay: 15 });
+            // "Includes imaging data" defaults on, which is right for the imaging tutorials and
+            // wrong for a tabular one: with it left on the hub dispatches CREATE_IMAGING and each
+            // trust queues a pull per cohort row that can never resolve, so the run dies at the
+            // image-pull wait or at the XNAT segment. The app profile decides.
+            if (hasImaging === "false") {
+                cy.demoCaption("This study is EHR-only — no imaging leaves the trust", 600);
+                cy.getBySel("has-imaging-toggle").demoClick();
+            }
             cy.getBySel("create-project-btn").demoClick();
         });
 
