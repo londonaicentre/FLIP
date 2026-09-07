@@ -20,6 +20,7 @@ import Schema from "miragejs/orm/schema";
 import { v4 } from "uuid";
 
 import { FileUploadStatus } from "@/interfaces/model/types";
+import { projectHasImaging } from "@/partials/projects/projectType";
 import { IGenericResponse, IPaginatedResponse } from "@/services/api";
 import { IModel } from "@/services/model-service";
 import { IProject } from "@/services/project-service";
@@ -52,7 +53,11 @@ const projectsModel: ModelDefinition<IProject> = Model.extend({});
 const usersModel: ModelDefinition<IUser> = Model.extend({});
 const detailsModel: ModelDefinition<ISiteDetails> = Model.extend({});
 
-// eslint-disable-next-line @typescript-eslint/ban-types
+// Mirage's Registry is parameterised by the model and factory maps; this app
+// registers neither, so both are genuinely empty. `ban-types` was removed in
+// typescript-eslint v8 and split into `no-empty-object-type` (FLIP#1041 — the
+// old disable named a rule that no longer exists, so it suppressed nothing).
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export type AppRegistry = Registry<{}, {}>;
 
 type AppSchema = Schema<AppRegistry>
@@ -83,10 +88,21 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
             // #region Project Routes
 
             this.get(baseUrl + "/projects", (schema: AppSchema, request) => {
+                // FLIP#1071: the Type filter, mirroring the hub — an unknown value means every type,
+                // and has_imaging is absent on older fixtures, which means imaging.
+                const projectType = request?.queryParams?.["projectType"];
+                const byType = (projects: IProject[]): IProject[] => {
+                    if (projectType !== "imaging" && projectType !== "omop_only") {
+                        return projects;
+                    }
+
+                    return projects.filter(project => projectHasImaging(project) === (projectType === "imaging"));
+                };
+
                 if (request?.queryParams?.["owner"]) {
                     const response: IPaginatedResponse<IProject> = {
                         ...paginatedProjectData1,
-                        data: schema.db.projects.where({ ownerid: request.queryParams["owner"] })
+                        data: byType([...schema.db.projects.where({ ownerid: request.queryParams["owner"] })])
                     };
 
                     return new Response(200, undefined, response);
@@ -96,7 +112,7 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
                     case "1": {
                         const page1: IPaginatedResponse<IProject> = {
                             ...paginatedProjectData1,
-                            data: schema.db.projects
+                            data: byType([...schema.db.projects])
                         };
 
                         return new Response(200, undefined, page1);
@@ -104,9 +120,9 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
                     case "2": {
                         const page2: IPaginatedResponse<IProject> = {
                             ...paginatedProjectData2,
-                            data: schema.db.projects.filter(project =>
+                            data: byType(schema.db.projects.filter(project =>
                                 projectDataPage2.map(p => p.id).includes(project.id)
-                            )
+                            ))
                         };
 
                         return new Response(200, undefined, page2);
@@ -270,7 +286,11 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
                 // Mirror the hub: name and organisation are withheld from this route.
                 const { id, email, isDisabled } = user;
 
-                return new Response(200, undefined, { id, email, isDisabled });
+                return new Response(200, undefined, {
+                    id,
+                    email,
+                    isDisabled
+                });
             });
 
             // #endregion

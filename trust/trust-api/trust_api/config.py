@@ -79,7 +79,6 @@ class Settings(BaseSettings):
     HEALTH_COLLECT_INTERVAL_SECONDS: int = 30  # How often to probe the trust services (seconds)
     HEALTH_PROBE_DEGRADED_MS: int = 1000  # Successful probe slower than this reports "degraded"
     XNAT_URL: str = "http://xnat-web:8080"
-    PACS_ID: int = 1  # XNAT DQR PACS id used for the ping_pacs deep probe (matches imaging-api's default)
     OMOP_DB_HOST: str = "omop-db"
     OMOP_DB_PORT: int = 5432
 

@@ -45,6 +45,7 @@ describe("create project", () => {
             "name": "Test Project Name",
             "description": "Test Project Description",
             "dicom_to_nifti": true,
+            "has_imaging": true,
             "users": []
         });
         cy.contains("Project created successfully").should("be.visible");
@@ -137,6 +138,7 @@ describe("create project", () => {
             "name": "Test Project Name",
             "description": "Test Project Description",
             "dicom_to_nifti": true,
+            "has_imaging": true,
             "users": []
         });
 
@@ -174,6 +176,7 @@ describe("create project", () => {
             "name": "Test Project Name",
             "description": "Test Project Description",
             "dicom_to_nifti": true,
+            "has_imaging": true,
             "users": []
         });
 
@@ -215,6 +218,7 @@ describe("create project", () => {
             "name": "Test Project Name",
             "description": "Test Project Description",
             "dicom_to_nifti": true,
+            "has_imaging": true,
             "users": [
                 "ad1fbfc0-e6dc-40e1-9a6c-0019cf490fa3"
             ]
@@ -286,6 +290,7 @@ describe("create project", () => {
             "name": "Test Project Name",
             "description": "Test Project Description",
             "dicom_to_nifti": true,
+            "has_imaging": true,
             "users": [
                 "ad1fbfc0-e6dc-40e1-9a6c-0019cf490fa3",
                 "2635f591-1430-4d20-86e2-c0ee88c0a0c5",
@@ -360,6 +365,7 @@ describe("create project", () => {
             "name": "Test Project Name",
             "description": "Test Project Description",
             "dicom_to_nifti": true,
+            "has_imaging": true,
             "users": [
                 "ad1fbfc0-e6dc-40e1-9a6c-0019cf490fa3",
                 "9057b483-d483-47a1-af3b-72ca23893caa"
