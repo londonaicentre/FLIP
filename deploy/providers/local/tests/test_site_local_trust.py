@@ -27,8 +27,12 @@ from pathlib import Path
 
 import pytest
 import yaml
+from jinja2 import Template
 
 PLAYBOOK_PATH = Path(__file__).parent.parent / "site_local_trust.yml"
+
+# The per-net images bind sources, which imaging-api AND the fl-client both write into.
+NET_DIR_PATHS = {"{{ flip_dir }}/data/images/net-1", "{{ flip_dir }}/data/images/net-2"}
 
 
 @pytest.fixture(scope="module")
@@ -143,3 +147,49 @@ def test_no_usermod_adding_to_docker_group(playbook: list[dict]) -> None:
 def test_user_module_docker_grant_detection(task: dict, expected: bool) -> None:
     """The docker-grant checker must catch every ``groups`` form Ansible accepts."""
     assert _user_module_grants_docker(task) is expected
+
+
+def _net_dir_tasks(playbook: list[dict]) -> list[tuple[dict, dict]]:
+    """Return every ``file`` task whose loop creates one of the per-net images dirs."""
+    matches = []
+    for task in _iter_tasks(playbook):
+        file_module = task.get("file") or task.get("ansible.builtin.file") or {}
+        if not isinstance(file_module, dict):
+            continue
+        if NET_DIR_PATHS & set(task.get("loop") or []):
+            matches.append((task, file_module))
+    return matches
+
+
+def test_fl_backend_has_a_playbook_default(playbook: list[dict]) -> None:
+    """A bare ``ansible-playbook site_local_trust.yml`` must not fail on an undefined ``fl_backend``.
+
+    The net-dir task below templates on it, so without a play-level default every direct
+    (non-Makefile) run of the playbook would abort with an undefined-variable error.
+    """
+    defaults = [(play.get("vars") or {}).get("fl_backend") for play in playbook]
+    assert any(default for default in defaults), "No play sets a default for fl_backend"
+
+
+def test_net_dirs_are_writable_by_the_fl_client(playbook: list[dict]) -> None:
+    """The per-net images dirs must be group-writable by the Flower client (uid/gid 49999).
+
+    imaging-api (uid 1000) owns them on every backend, but the fl-client writes inside them too
+    (``flip.add_resource`` staging, NVFLARE ``CleanupImages``). NVFLARE's client shares
+    imaging-api's uid so owner write is enough; Flower's is built on upstream ``flwr/base`` and
+    runs as ``app`` (uid/gid 49999) with no supplementary group, so a ``ubuntu:ubuntu`` ``0755``
+    net dir leaves it as "other" and ``add_resource`` fails with EACCES. Mirrors the K8s chart's
+    ``images-init`` and ``trust/Makefile``'s ``$(ensure_net_dirs)``.
+    """
+    matches = _net_dir_tasks(playbook)
+    assert len(matches) == 1, f"Expected exactly one task creating {sorted(NET_DIR_PATHS)}, found {len(matches)}"
+    task, file_module = matches[0]
+
+    assert NET_DIR_PATHS <= set(task["loop"]), f"Task '{task.get('name')}' does not create every net dir"
+    assert file_module.get("owner") == "ubuntu", "imaging-api's uid must own the net dirs on every backend"
+
+    for backend, expected_group, expected_mode in (("flower", "49999", "0775"), ("nvflare", "ubuntu", "0755")):
+        group = Template(str(file_module.get("group"))).render(fl_backend=backend)
+        mode = Template(str(file_module.get("mode"))).render(fl_backend=backend)
+        assert group == expected_group, f"fl_backend={backend} must give the net dirs group {expected_group}"
+        assert mode == expected_mode, f"fl_backend={backend} must give the net dirs mode {expected_mode}"

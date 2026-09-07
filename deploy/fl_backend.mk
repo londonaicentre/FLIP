@@ -49,6 +49,18 @@ FL_PROVISIONED_DIR    := fl-services/flower/provision/creds
 FL_JOBS_DIR           := jobs
 endif
 
+# Resolve a configured path to an absolute one, since docker requires absolute paths for
+# volume mounts while the .env value may be relative: $(call abs_or_relative_to,<value>,<base>).
+#
+# Only joins on <base> when <value> is not already absolute. $(abspath) merely normalises the
+# string it is given — it does not notice the operand was already rooted — so joining
+# unconditionally welded two absolute paths together:
+#   FL_PROVISIONED_DIR=/opt/kits  ->  /path/to/repo/opt/kits
+# which surfaced as a misleading "workspace not provisioned" naming a path the caller never
+# asked for, even though CLAUDE.md advertises the CLI override. Applied by the root Makefile
+# and trust/Makefile, which anchor on different bases (repo root vs trust/..).
+abs_or_relative_to = $(abspath $(if $(filter /%,$(1)),$(1),$(2)/$(1)))
+
 # DOCKER_FL_REGISTRY decouples the FL images' registry from DOCKER_REGISTRY so
 # you can iterate on locally-built FL images (DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev)
 # without flipping the rest of the stack to local images. Defaults to whatever

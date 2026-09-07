@@ -134,13 +134,6 @@ export const routeChange = {
         router.push({ path: `/project/${projectId}` });
     },
     /**
-     * Change route to view models
-     * @param projectId The project Id
-     */
-    viewModels: (projectId: string): void => {
-        router.push({ path: `/project/${projectId}/models` });
-    },
-    /**
      * Change route to view a model
      * @param projectId The project Id
      * @param modelId The model Id

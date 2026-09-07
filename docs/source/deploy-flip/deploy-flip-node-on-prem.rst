@@ -7,7 +7,9 @@ Deploy a FLIP node on-prem
 An on-prem FLIP node runs the trust-side stack (trust-api, imaging-api,
 data-access-api, FL client, optional XNAT/Orthanc) on an Ubuntu host owned by
 the Trust. The node polls the Central Hub for tasks over HTTPS — all
-communication is outbound, no inbound ports are opened. This is the deployment
+communication with the hub is outbound and no inbound ports are opened to the internet.
+Retrieval from the trust's own PACS is the exception — see
+:doc:`../components/component-pacs`. This is the deployment
 model used when the Trust has direct, governed access to its own OMOP database
 and PACS. For deployment inside a TRE see :doc:`deploy-flip-node-in-tre`; for
 the Central Hub side see :doc:`deploy-central-hub`.
@@ -191,6 +193,21 @@ at any point — including before the kit is fully staged — just to read off t
 The prod trust compose mounts the extracted ``net-1/`` hierarchy into the
 fl-client container, so preserve it as extracted.
 
+.. note::
+
+   **Upgrading a trust deployed before the XNAT port split (FLIP#993) — every
+   existing trust must act.** ``XNAT_PORT`` used to mean both the DICOM SCP
+   receiver and the web UI. It now means the receiver only, and the web UI has
+   its own ``XNAT_WEB_PORT``. Both are published on the host on **every**
+   deployment, not only where a real PACS is connected, so the two must differ.
+   A kit that sets only ``XNAT_PORT`` resolves them to the same number — the
+   web port defaults to ``XNAT_PORT`` — so your next ``up-onprem-trust`` is
+   **refused**, naming both values and the file to edit. That refusal is the
+   upgrade path, not a fault: it asks you to allocate a second port rather than
+   moving your web UI to a number nothing else expects. Add ``XNAT_WEB_PORT``
+   to the Host-local profile before your next deployment; the shipped
+   allocation is 8104 for DICOM and 8105 for the web UI.
+
 **Optional — set your site privacy policy (NVFLARE backend).** As the data
 holder you can enforce your own update-privacy filter on everything the
 fl-client sends to the FL server, independently of the researcher's app
@@ -275,7 +292,8 @@ the operator brings the stack up.
 Network requirements
 ***********************
 
-**No inbound port forwarding is needed.** Trusts poll the hub outbound for
+**No inbound port forwarding from the internet is needed.** (Retrieval from a trust PACS needs
+one rule inside the trust's own network — see :doc:`../components/component-pacs`.) Trusts poll the hub outbound for
 tasks, and FL clients connect outbound to the FL server via the NLB. All
 communication is trust-initiated.
 

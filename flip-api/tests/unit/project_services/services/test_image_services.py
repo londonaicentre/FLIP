@@ -21,6 +21,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from flip_api.domain.interfaces.project import (
     IImagingImportStatus,
+    ImagingStatusSnapshot,
     IReimportQuery,
     IUpdateXnatProfile,
 )
@@ -29,8 +30,9 @@ from flip_api.domain.schemas.projects import (
     ImagingProject,
     XnatProjectStatusInfo,
 )
-from flip_api.domain.schemas.status import XNATImageStatus
+from flip_api.domain.schemas.status import ImagingConnectionState, TaskStatus, XNATImageStatus
 from flip_api.project_services.services.image_service import (
+    _get_imaging_status_snapshot,
     _get_latest_imaging_status,
     base64_url_encode,
     delete_imaging_project,
@@ -203,14 +205,14 @@ class TestGetXnatProjectStatusInfo:
 
 # --- get_imaging_project_statuses ---
 class TestGetImagingProjectStatuses:
-    @patch(f"{MOCK_SERVICE_PATH}._get_latest_imaging_status")
+    @patch(f"{MOCK_SERVICE_PATH}._get_imaging_status_snapshot")
     @patch(f"{MOCK_SERVICE_PATH}.get_xnat_project_status_info")
     @patch(MOCK_LOGGER_PATH)
     def test_returns_statuses_and_queues_tasks(
         self,
         mock_logger: MagicMock,
         mock_get_xnat_status: MagicMock,
-        mock_get_latest_status: MagicMock,
+        mock_get_snapshot: MagicMock,
         mock_db_session: MagicMock,
     ):
         trust_id_1, trust_id_2 = uuid4(), uuid4()
@@ -239,7 +241,7 @@ class TestGetImagingProjectStatuses:
             XnatProjectStatusInfo(retrieve_image_status=XNATImageStatus.RETRIEVE_COMPLETED, reimport_count=1),
         ]
 
-        mock_get_latest_status.return_value = None
+        mock_get_snapshot.return_value = ImagingStatusSnapshot()
 
         # No existing pending/in-progress tasks
         mock_db_session.exec.return_value.first.return_value = None
@@ -253,19 +255,19 @@ class TestGetImagingProjectStatuses:
         assert results[1].project_creation_completed is False
 
         assert mock_get_xnat_status.call_count == 2
-        assert mock_get_latest_status.call_count == 2
+        assert mock_get_snapshot.call_count == 2
         # Should have added task records and committed
         assert mock_db_session.add.call_count == 2
         mock_db_session.commit.assert_called_once()
 
-    @patch(f"{MOCK_SERVICE_PATH}._get_latest_imaging_status")
+    @patch(f"{MOCK_SERVICE_PATH}._get_imaging_status_snapshot")
     @patch(f"{MOCK_SERVICE_PATH}.get_xnat_project_status_info")
     @patch(MOCK_LOGGER_PATH)
     def test_returns_import_status_from_completed_task(
         self,
         mock_logger: MagicMock,
         mock_get_xnat_status: MagicMock,
-        mock_get_latest_status: MagicMock,
+        mock_get_snapshot: MagicMock,
         mock_db_session: MagicMock,
     ):
         """Should populate import_status from the latest completed GET_IMAGING_STATUS task."""
@@ -284,8 +286,10 @@ class TestGetImagingProjectStatuses:
         mock_get_xnat_status.return_value = XnatProjectStatusInfo(
             retrieve_image_status=XNATImageStatus.CREATED, reimport_count=0
         )
-        mock_get_latest_status.return_value = IImagingImportStatus(
-            successful=10, failed=2, processing=3, queued=5, queueFailed=1
+        mock_get_snapshot.return_value = ImagingStatusSnapshot(
+            import_status=IImagingImportStatus(successful=10, failed=2, processing=3, queued=5, queueFailed=1),
+            connection_state=ImagingConnectionState.OK,
+            last_seen_at=datetime(2026, 8, 21, 13, 58, tzinfo=timezone.utc),
         )
         mock_db_session.exec.return_value.first.return_value = None
 
@@ -299,14 +303,14 @@ class TestGetImagingProjectStatuses:
         assert results[0].import_status.queued_count == 5
         assert results[0].import_status.queue_failed_count == 1
 
-    @patch(f"{MOCK_SERVICE_PATH}._get_latest_imaging_status")
+    @patch(f"{MOCK_SERVICE_PATH}._get_imaging_status_snapshot")
     @patch(f"{MOCK_SERVICE_PATH}.get_xnat_project_status_info")
     @patch(MOCK_LOGGER_PATH)
     def test_skips_xnat_lookup_for_trust_without_project(
         self,
         mock_logger: MagicMock,
         mock_get_xnat_status: MagicMock,
-        mock_get_latest_status: MagicMock,
+        mock_get_snapshot: MagicMock,
         mock_db_session: MagicMock,
     ):
         """Trusts without an XNAT project should not trigger status lookups or task queuing."""
@@ -330,7 +334,7 @@ class TestGetImagingProjectStatuses:
         mock_get_xnat_status.return_value = XnatProjectStatusInfo(
             retrieve_image_status=XNATImageStatus.CREATED, reimport_count=0
         )
-        mock_get_latest_status.return_value = None
+        mock_get_snapshot.return_value = ImagingStatusSnapshot()
         mock_db_session.exec.return_value.first.return_value = None
 
         results = get_imaging_project_statuses(imaging_projects_list, "ZXF1ZXJ5", mock_db_session)
@@ -339,7 +343,7 @@ class TestGetImagingProjectStatuses:
         # Trust with XNAT project should have status looked up
         assert results[0].project_creation_completed is True
         assert mock_get_xnat_status.call_count == 1
-        assert mock_get_latest_status.call_count == 1
+        assert mock_get_snapshot.call_count == 1
         # Trust without XNAT project should show as not created
         assert results[1].trust_id == trust_without_xnat
         assert results[1].project_creation_completed is False
@@ -856,3 +860,184 @@ class TestReimportFailedStudiesRateLimited:
         mock_db_session.add.assert_not_called()
         mock_db_session.commit.assert_called_once()
         mock_logger.info.assert_any_call("No queries were eligible for reimport at this time.")
+
+
+# --- _get_imaging_status_snapshot (GitHub issue #1022) ---
+def _completed_task(counts: dict, updated_at: datetime) -> MagicMock:
+    """A COMPLETED GET_IMAGING_STATUS task carrying import-status counts."""
+    task = MagicMock()
+    task.status = TaskStatus.COMPLETED
+    task.result = json.dumps({"import_status": counts})
+    task.updated_at = updated_at
+    return task
+
+
+def _failed_task(error: str, updated_at: datetime, status_code: int | None = None) -> MagicMock:
+    """A FAILED GET_IMAGING_STATUS task, shaped as trust-api's task poller reports failures."""
+    task = MagicMock()
+    task.status = TaskStatus.FAILED
+    payload: dict[str, object] = {"error": error}
+    if status_code is not None:
+        payload["status_code"] = status_code
+    task.result = json.dumps(payload)
+    task.updated_at = updated_at
+    return task
+
+
+_SAMPLE_COUNTS = {
+    "successful_count": 300,
+    "failed_count": 0,
+    "processing_count": 0,
+    "queued_count": 0,
+    "queue_failed_count": 0,
+}
+
+
+class TestGetImagingStatusSnapshot:
+    """The hub must distinguish a current status from a stale one (issue #1022).
+
+    Counts are always the last known good ones; ``connection_state`` says whether they are
+    still current, and ``last_seen_at`` says when they were last confirmed.
+    """
+
+    def test_completed_task_is_ok_and_carries_its_timestamp(self, mock_db_session: MagicMock):
+        seen = datetime(2026, 8, 21, 13, 58, tzinfo=timezone.utc)
+        mock_db_session.exec.return_value.first.return_value = _completed_task(_SAMPLE_COUNTS, seen)
+
+        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
+
+        assert snapshot.connection_state == ImagingConnectionState.OK
+        assert snapshot.last_seen_at == seen
+        assert snapshot.import_status is not None
+        assert snapshot.import_status.successful_count == 300
+
+    def test_no_task_at_all_is_ok_with_no_counts(self, mock_db_session: MagicMock):
+        """A project whose first refresh has not landed yet is not an error state."""
+        mock_db_session.exec.return_value.first.return_value = None
+
+        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
+
+        assert snapshot.connection_state == ImagingConnectionState.OK
+        assert snapshot.import_status is None
+        assert snapshot.last_seen_at is None
+
+    def test_failed_404_is_project_missing_and_keeps_last_known_counts(self, mock_db_session: MagicMock):
+        """XNAT answered but the imaging project is gone — keep showing the last good counts."""
+        seen = datetime(2026, 8, 21, 13, 58, tzinfo=timezone.utc)
+        failed = _failed_task(
+            "404: Project with ID 'abc' not found.", datetime(2026, 8, 21, 14, 8, tzinfo=timezone.utc)
+        )
+        mock_db_session.exec.return_value.first.side_effect = [failed, _completed_task(_SAMPLE_COUNTS, seen)]
+
+        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
+
+        assert snapshot.connection_state == ImagingConnectionState.PROJECT_MISSING
+        assert snapshot.import_status is not None
+        assert snapshot.import_status.successful_count == 300
+        # The timestamp is when the counts were last *confirmed*, not when the failure happened.
+        assert snapshot.last_seen_at == seen
+
+    def test_failed_500_is_unreachable(self, mock_db_session: MagicMock):
+        """imaging-api 500 means the XNAT fetch itself failed — XNAT is unreachable."""
+        failed = _failed_task("500: Error: XNAT project fetch failed: timeout", datetime.now(timezone.utc))
+        mock_db_session.exec.return_value.first.side_effect = [failed, None]
+
+        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
+
+        assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
+        assert snapshot.import_status is None
+        assert snapshot.last_seen_at is None
+
+    def test_failed_502_is_unreachable(self, mock_db_session: MagicMock):
+        """trust-api could not reach imaging-api at all."""
+        failed = _failed_task("502: Failed to connect to remote service", datetime.now(timezone.utc))
+        mock_db_session.exec.return_value.first.side_effect = [failed, None]
+
+        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
+
+        assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
+
+    def test_prefers_structured_status_code_over_the_error_string(self, mock_db_session: MagicMock):
+        """A trust that reports ``status_code`` is classified on that, not on string sniffing."""
+        failed = _failed_task("upstream said no", datetime.now(timezone.utc), status_code=404)
+        mock_db_session.exec.return_value.first.side_effect = [failed, None]
+
+        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
+
+        assert snapshot.connection_state == ImagingConnectionState.PROJECT_MISSING
+
+    def test_unclassifiable_failure_falls_back_to_unreachable(self, mock_db_session: MagicMock):
+        """Stale-task recovery gives up with a plain message and no status code."""
+        failed = _failed_task("Exceeded maximum retries (3)", datetime.now(timezone.utc))
+        mock_db_session.exec.return_value.first.side_effect = [failed, None]
+
+        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
+
+        assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
+
+    def test_malformed_failure_result_falls_back_to_unreachable(self, mock_db_session: MagicMock):
+        failed = MagicMock()
+        failed.status = TaskStatus.FAILED
+        failed.result = "not valid json"
+        failed.updated_at = datetime.now(timezone.utc)
+        mock_db_session.exec.return_value.first.side_effect = [failed, None]
+
+        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
+
+        assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
+
+    @pytest.mark.parametrize("result", [None, ""], ids=["none", "empty-string"])
+    def test_failure_with_no_result_payload_falls_back_to_unreachable(
+        self, result: str | None, mock_db_session: MagicMock
+    ):
+        """A task can be marked FAILED without ever recording a result — e.g. killed mid-flight."""
+        failed = MagicMock()
+        failed.status = TaskStatus.FAILED
+        failed.result = result
+        failed.updated_at = datetime.now(timezone.utc)
+        mock_db_session.exec.return_value.first.side_effect = [failed, None]
+
+        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
+
+        assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
+
+    @pytest.mark.parametrize("payload", ['"boom"', "[404]", "404"], ids=["string", "list", "number"])
+    def test_non_object_failure_result_falls_back_to_unreachable(
+        self, payload: str, mock_db_session: MagicMock
+    ):
+        """Valid JSON that isn't an object has no `status_code` to read, so it can't be a 404."""
+        failed = MagicMock()
+        failed.status = TaskStatus.FAILED
+        failed.result = payload
+        failed.updated_at = datetime.now(timezone.utc)
+        mock_db_session.exec.return_value.first.side_effect = [failed, None]
+
+        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
+
+        assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
+
+    def test_failure_with_no_result_keeps_the_last_known_counts(self, mock_db_session: MagicMock):
+        """Whatever shape the failure took, the last good counts must survive it."""
+        seen = datetime(2026, 8, 21, 13, 58, tzinfo=timezone.utc)
+        failed = MagicMock()
+        failed.status = TaskStatus.FAILED
+        failed.result = None
+        failed.updated_at = datetime(2026, 8, 21, 14, 30, tzinfo=timezone.utc)
+        mock_db_session.exec.return_value.first.side_effect = [failed, _completed_task(_SAMPLE_COUNTS, seen)]
+
+        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
+
+        assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
+        assert snapshot.import_status is not None
+        assert snapshot.import_status.successful_count == 300
+        assert snapshot.last_seen_at == seen
+
+    def test_recovery_back_to_ok_when_a_newer_refresh_succeeds(self, mock_db_session: MagicMock):
+        """Once the trust comes back, the newest terminal task is COMPLETED again."""
+        seen = datetime(2026, 8, 21, 15, 30, tzinfo=timezone.utc)
+        mock_db_session.exec.return_value.first.return_value = _completed_task(_SAMPLE_COUNTS, seen)
+
+        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
+
+        assert snapshot.connection_state == ImagingConnectionState.OK
+        assert snapshot.last_seen_at == seen

@@ -21,8 +21,9 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.schemas.users import CognitoUser, ProjectMemberLookup
-from flip_api.utils.cognito_helpers import apply_user_profile, get_user_by_email_or_id, get_user_pool_id
+from flip_api.utils.cognito_helpers import get_user_by_email_or_id, get_user_pool_id
 from flip_api.utils.logger import logger
+from flip_api.utils.user_roles import apply_user_profile
 
 router = APIRouter(prefix="/users", tags=["user_services"])
 

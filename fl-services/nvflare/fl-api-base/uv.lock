@@ -615,7 +615,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.115.11" },
-    { name = "nvflare", specifier = "==2.8.0" },
+    { name = "nvflare", specifier = "==2.8.1" },
     { name = "pydantic-settings", specifier = ">=2.11.0" },
 ]
 
@@ -1122,7 +1122,7 @@ wheels = [
 
 [[package]]
 name = "nvflare"
-version = "2.8.0"
+version = "2.8.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1144,7 +1144,7 @@ dependencies = [
     { name = "safetensors" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/a9/a3c6d71f081c277126ec929d87d9b40f7308f56e1d13118de77441bd70c3/nvflare-2.8.0-py3-none-any.whl", hash = "sha256:a448ce5654b5a37bf8a680c1b9a5292ea01f44384b5dffc1e754d75dffd46c74", size = 3259204, upload-time = "2026-06-04T19:05:47.576Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/33/172857cbd2258970bc23acec5c39d62535537304f678672298409b9e75ff/nvflare-2.8.1-py3-none-any.whl", hash = "sha256:55d1b77af3f5125ade0532fa1c6821902b6eae6a101c4d8b6c6efbb77096cd20", size = 3262630, upload-time = "2026-07-20T16:20:47.84Z" },
 ]
 
 [[package]]

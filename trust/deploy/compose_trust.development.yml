@@ -58,7 +58,6 @@ services:
       dockerfile: Dockerfile
     restart: always
     ports:
-      # - "${PACS_DICOM_PORT}:4242"
       - "${PACS_UI_PORT}:8042"
     security_opt:
       - no-new-privileges:true
@@ -71,8 +70,11 @@ services:
     environment:
       ORTHANC__REGISTERED_USERS: |
           {"${ORTHANC_USERNAME}": "${ORTHANC_PASSWORD}"}
+      # Colon-dash on purpose: Orthanc has no empty-AET check, so a bare-dash pass-through of an
+      # explicitly-empty kit value would register an empty AE title rather than fail. The
+      # explicit empty is refused by trust/Makefile (require-xnat-aetitle) before this runs.
       ORTHANC__DICOM_MODALITIES: |
-          {"XNAT": {"AET": "XNAT", "Host": "xnat-web", "Port": "${XNAT_PORT}"}}
+          {"XNAT": {"AET": "${XNAT_AETITLE:-XNAT}", "Host": "xnat-web", "Port": "${XNAT_PORT}"}}
 
   imaging-api:
     # Pull from GHCR by default; local imaging_api/ bind-mount overlays it for
@@ -106,6 +108,14 @@ services:
       # default in imaging_api/config.py — do not inject them (an empty ${VAR}
       # from a kit that omits them would override the code default).
       XNAT_PORT: ${XNAT_PORT}
+      # Must match what configure-xnat.sh registered: this becomes the C-MOVE destination,
+      # which DQR matches against a registered SCP receiver by exact AE title and port.
+      # Colon-dash, like the code-defaulted constants above: imaging_api/config.py defaults
+      # XNAT_AETITLE and has no empty-value check, so bare-dash would inject an empty AE title
+      # rather than fail. An explicitly-empty kit value is refused by trust/Makefile
+      # (require-xnat-aetitle) before compose runs; the XNAT stack keeps its own bare-dash
+      # form because configure-xnat.sh guards the empty itself.
+      XNAT_AETITLE: ${XNAT_AETITLE:-XNAT}
       XNAT_SERVICE_USER: ${XNAT_SERVICE_USER}
       XNAT_SERVICE_PASSWORD: ${XNAT_SERVICE_PASSWORD}
       # Minted per-trust XNAT DB password (FLIP-PT-056): imaging_api/config.py
@@ -312,9 +322,23 @@ networks:
   default:
     external: true
     name: ${TRUST_NETWORK_NAME}
+  # Hub-shared networks, created by the hub's compose project and joined here by
+  # literal name — a trust is its own compose project and compose has no cross-project
+  # network reference, so the name is the whole contract. Every one of them is
+  # `${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_<name>`, where `deploy_` is the hub compose
+  # project that owns it and the FLIP_INSTANCE prefix is what attaches this trust to the
+  # hub instance it was launched for (FLIP#957). The keys are local to this file and stay
+  # stable, since the services above reference them by key.
   central-hub-trust-apis-network:
     external: true
-  deploy_shared-net-1:
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_central-hub-trust-apis-network
+  # The FL data plane, one per FL net: fl-server, fl-api and every trust's fl-client,
+  # and deliberately not flip-api. Numbered by FL net (`net-1`/`net-2`, matching the
+  # `fl_nets` table and NET_NUMBER), *not* by trust slot the way `trust-network-<N>`
+  # is — a trust on slot 2 can perfectly well sit on `fl-net-1`.
+  fl-net-1:
     external: true
-  deploy_shared-net-2:
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_fl-net-1
+  fl-net-2:
     external: true
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_fl-net-2

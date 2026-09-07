@@ -84,6 +84,21 @@ provenance or PHI question, and the identical code path — the axis order is a 
 reader's convention, wholly independent of pixel content. It is parametrised over `MONOCHROME1`,
 `MONOCHROME2` and RLE Lossless, where the array path genuinely differs.
 
+## Bundle-export parity
+
+`test_spleen_inference_config_parity.py` pins the spleen tutorial's exported
+`export/inference.json` preprocessing to `app_files/transforms.py::get_val_transforms()`. That
+drift shipped once already (fixed in e4981613): the bundle resampled before windowing and dropped
+`CropForegroundd`, so a MAP built from it fed the model a field of view it never saw in training —
+quietly worse on five of six MSD cases, invisible without ground truth. The bundle is the
+deliberate image-only projection of the training chain, so the comparison normalises exactly three
+asymmetries (image-only `keys`, interpolation `mode` at the image slot, numbers as floats) and is
+strict about everything else: transform order by class name, declared parameter names, and values —
+with the load-bearing values (pixdim, the CT window, RAS, `allow_smaller`) pinned literally on
+both sides so even a consistent retune stops there. The bundle side is read as plain JSON, never
+instantiated via `monai.bundle`, so the check stays hermetic. This is a config-parity check, not a
+`DICOM_APPS` entry — the paragraph below still applies.
+
 ## What it does **not** cover
 
 This is a check on axis order and chain composition. It is not coverage of the DICOM loading

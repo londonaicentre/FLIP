@@ -14,7 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { _http } from "@/services/api";
-import { buildModelSteps, clearJobTypesCache, createModel, deleteModel, editModel, fetchJobTypes, getAllModels, getDownloadUrlForResults, getLogsForModel, getModel, getModelFileStatus, getModelMetrics, getModels, getPreSignedUrl, getRequiredFilesForJobType, getStatusEnumValue, initialiseTraining, isValidJobType, JobTypesUnavailableError, type ModelStatus, ModelStatusEnum, modelStatusLabelWithQueue, stopTraining, uploadModelFile } from "@/services/model-service";
+import { buildModelSteps, clearJobTypesCache, createModel, deleteModel, editModel, fetchJobTypes, getAllModels, getDownloadUrlForResults, getLogsForModel, getModel, getModelFileStatus, getModelMetrics, getModelProjectOptions, getModels, getPreSignedUrl, getRequiredFilesForJobType, getStatusEnumValue, initialiseTraining, isValidJobType, JobTypesUnavailableError, type ModelStatus, ModelStatusEnum, modelStatusLabelWithQueue, stopTraining, uploadModelFile } from "@/services/model-service";
 
 vi.mock("@/services/api", () => ({
     _http: {
@@ -60,6 +60,29 @@ describe("model-service", () => {
 
             expect(_http.get).toHaveBeenCalledWith("/models?pageNumber=1&pageSize=20&status=INITIATED,PENDING");
             expect(result).toEqual(page);
+        });
+    });
+
+    describe("getModelProjectOptions", () => {
+        it("GETs the unpaginated project options for the Models page filter", async () => {
+            const options = [
+                {
+                    id: "p1",
+                    name: "Stroke triage",
+                    status: "APPROVED"
+                },
+                {
+                    id: "p2",
+                    name: "Chest X-ray",
+                    status: "STAGED"
+                }
+            ];
+            vi.mocked(_http.get).mockResolvedValue({ data: options } as never);
+
+            const result = await getModelProjectOptions("/models/projects");
+
+            expect(_http.get).toHaveBeenCalledWith("/models/projects");
+            expect(result).toEqual(options);
         });
     });
 

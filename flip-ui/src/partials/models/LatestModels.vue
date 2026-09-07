@@ -20,7 +20,7 @@
                 </h2>
                 <div v-if="!isViewer && projectStore.project?.status === 'APPROVED'">
                     <AiButton
-                        light
+                        primary
                         data-test="add-model-btn"
                         aria-label="Create Model"
                         tooltip="Create Model"
@@ -119,7 +119,7 @@
             v-if="projectStore.project?.status === 'APPROVED' && data?.data?.length"
             class="inline-flex justify-end w-full px-6 py-4 space-x-2 shrink-0 mt-auto"
         >
-            <AiButton light data-test="view-all-models-btn" :link="`/project/${route.params['projectId']}/models`">
+            <AiButton light data-test="view-all-models-btn" :link="`/models?project=${route.params['projectId']}`">
                 View All Models
             </AiButton>
         </div>

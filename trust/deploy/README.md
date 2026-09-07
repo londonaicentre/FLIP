@@ -76,18 +76,30 @@ its paths are genuinely one level up (`../trust-api`, `../data-access-api`, `../
 so both *fail* on a missing network rather than creating one. `make -C trust create-networks` is what
 creates all of them — the repo-root `make create-networks` forwards to it:
 
-| Network | Created by |
-| ------- | ---------- |
-| `${TRUST_NETWORK_NAME}` (`deploy_trust-network-<N>`) | `make -C trust create-networks` (`create-networks-trust-1` / `-2`) |
-| `central-hub-trust-apis-network` | `make -C trust create-networks` (`create-networks-core`) |
-| `deploy_shared-net-1`, `deploy_shared-net-2` | `make -C trust create-networks` (`create-networks-core`) |
+| Network | Created by | Carries |
+| ------- | ---------- | ------- |
+| `${TRUST_NETWORK_NAME}` (`deploy_trust-network-<N>`) | `make -C trust create-networks` (`create-networks-trust-1` / `-2`) | this trust's own services |
+| `deploy_central-hub-trust-apis-network` | `make -C trust create-networks` (`create-networks-core`) | trust-api ↔ flip-api |
+| `deploy_fl-net-1`, `deploy_fl-net-2` | `make -C trust create-networks` (`create-networks-core`) | fl-client ↔ fl-server (FL data plane) |
 
-So if you hit `network deploy_shared-net-1 declared as external, but could not be found`, the fix is
+So if you hit `network deploy_fl-net-1 declared as external, but could not be found`, the fix is
 `make -C trust create-networks` — starting the hub stack cannot help, and a remote trust operator has no
 hub compose on the host at all.
 
-The `deploy_` prefix is a historical compose project-name artifact. On the hub side the names are now pinned
-explicitly with `name:` (`trust-network-1` → `deploy_trust-network-1`, etc.); the trust side pins only
-`default` and relies on the compose key itself as the external network name for the rest (hence the literal
-`deploy_shared-net-1` keys). Either way the names are stable regardless of directory layout. Bring the
-networks up before the stack — `up-trust` depends on `create-networks` for exactly this reason.
+Every hub-shared network follows one rule: `<hub compose project>_<name>`, i.e. `deploy_…` by default and
+`<instance>-deploy_…` when `FLIP_INSTANCE` is set. The `deploy_` was once a fossil — it is what Compose
+generated back when the hub created these networks itself — but it now names the hub project that owns
+them, which is also what Compose would still generate if they were not `external:`. Both sides pin the real
+name with `name:`, because an external network is resolved by its literal name and is never scoped to the
+project joining it, so the two sides must agree on a string. That is also why the instance prefix exists at
+all: a trust is a separate Compose project and cannot derive the hub's network names from its own.
+
+The two axes are numbered differently and are **not** parallel: `deploy_fl-net-<N>` is numbered by FL net,
+`deploy_trust-network-<N>` by the trust's FL kit slot. A trust on slot 2 training on FL net 1 sits on
+`deploy_trust-network-2` and `deploy_fl-net-1` at once.
+
+Note the FL data plane carries **no hub API**: `flip-api` is deliberately absent from `deploy_fl-net-<N>`,
+so an fl-client — which holds no Central Hub credential by design — has no route to it. The fl-server
+reaches `flip-api` over the hub-internal network instead.
+
+Bring the networks up before the stack — `up-trust` depends on `create-networks` for exactly this reason.

@@ -52,6 +52,12 @@ module.exports = {
                     800: "#180D1B",
                     900: "#040205",
                 },
+                // Steel blue — the data/infrastructure accent from the FLIP design system
+                // ("OMOP only" project-type chip, FLIP#1071).
+                steel: {
+                    100: "#EBF0F5",
+                    700: "#2C3E6B",
+                },
                 lightgreen: {
                     100: "#DCEDC8",
                     900: "#33691E",

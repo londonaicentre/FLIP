@@ -21,7 +21,7 @@ autocommit block; it is appended last so migrated databases keep the same enum
 order as fresh ones.
 
 Revision ID: b3f1c857a001
-Revises: 46edb903e4d1
+Revises: 40f7934c6419
 Create Date: 2026-08-26 18:20:00.000000
 
 """
@@ -31,8 +31,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = 'b3f1c857a001'
-down_revision: str | None = '46edb903e4d1'
+revision: str = 'b3f1c857a001'  # pragma: allowlist secret
+down_revision: str | None = '40f7934c6419'  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -83,6 +83,11 @@ export type IProject = {
     // immutable thereafter. Only the project-detail endpoint surfaces it, so
     // it's optional (the list endpoint omits it).
     dicom_to_nifti?: boolean;
+    // Whether the project has an imaging stage at all. Set at creation and immutable
+    // thereafter (FLIP#1071). Off = tabular-only cohort: no XNAT project, no image
+    // pull, no imaging status card. Unlike dicom_to_nifti the list endpoint does return
+    // it; optional only because a hub predating the flag omits it (absent = imaging).
+    has_imaging?: boolean;
 }
 
 export interface IProjectCreate {
@@ -90,6 +95,7 @@ export interface IProjectCreate {
     description: string;
     users?: string[];
     dicom_to_nifti?: boolean;
+    has_imaging?: boolean;
 }
 
 export interface ICreateProjectResponse {
@@ -104,12 +110,21 @@ export interface IImagingImportStatus {
     queueFailed: number;
 }
 
+// How the hub's newest imaging-status refresh for this trust turned out. The counts in
+// `importStatus` are always the last known ones, so anything other than "ok" means they are
+// stale and must not be presented as current (FLIP#1022).
+export type ImagingConnectionState = "ok" | "unreachable" | "project-missing";
+
 export interface IImagingProjectStatus {
     trustId: string,
     trustName: string,
     projectCreationCompleted: boolean,
     importStatus?: IImagingImportStatus,
     reimportCount?: number,
+    connectionState?: ImagingConnectionState,
+    // When `importStatus` was last confirmed against the trust (ISO 8601). Absent when no
+    // refresh has ever succeeded.
+    lastSeenAt?: string | null,
 }
 
 // One trust's frozen approved-cohort record (FLIP#857) — aggregates only. A rowCount

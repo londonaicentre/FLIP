@@ -1,18 +1,18 @@
 [
   {
-    "id": "61f1946b-5680-42f6-b325-dde3900e0ded",
-    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
-    "logDate": "2026-07-13T09:30:29.557734",
+    "id": "ff99417b-536a-4ad5-84cd-2ccd9ad0c453",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T21:48:57.611089",
     "success": true,
     "trustName": null,
     "trustCode": null,
     "globalRound": null,
-    "log": "This model has been added to the queue."
+    "log": "Model Queued (1)"
   },
   {
-    "id": "0dec1c16-d903-4cd8-b2e9-fcfc2db21b0e",
-    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
-    "logDate": "2026-07-13T09:30:29.575040",
+    "id": "77797bbc-ff86-424d-8861-237b69ffb980",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T21:48:57.622856",
     "success": true,
     "trustName": null,
     "trustCode": null,
@@ -20,9 +20,9 @@
     "log": "Selected trusts for training: King's College London, Bangkok Dusit Medical Services"
   },
   {
-    "id": "e12f748e-50fd-4db5-9ab6-66d26782dffd",
-    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
-    "logDate": "2026-07-13T09:31:26.293808",
+    "id": "85dc8662-0cf5-46f5-9378-8f2ebc8f4e9b",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T21:49:50.740937",
     "success": true,
     "trustName": null,
     "trustCode": null,
@@ -30,39 +30,2039 @@
     "log": "Model training assigned to 'net-1'"
   },
   {
-    "id": "dad98cba-1010-4d55-b8bf-4eb79eb7a4f5",
-    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
-    "logDate": "2026-07-13T09:31:46.206279",
+    "id": "615f061d-1077-4b02-ac58-6db8db4015b5",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T21:50:05.928452",
     "success": true,
     "trustName": null,
     "trustCode": null,
     "globalRound": null,
-    "log": "This model has been selected from the queue and will be prepared for training."
+    "log": "This model has been selected from the queue and will be prepared to run."
   },
   {
-    "id": "54f0cff4-7a8e-4b17-8202-5886bf27152e",
-    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
-    "logDate": "2026-07-13T09:31:52.024454",
+    "id": "4aa13505-7dfb-4966-9f5c-e6ebb0b17769",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T21:50:14.064942",
     "success": true,
     "trustName": null,
     "trustCode": null,
     "globalRound": null,
-    "log": "This model has been prepared and will begin training."
+    "log": "This model has been prepared and its job will begin shortly."
   },
   {
-    "id": "9efd1a39-65ca-429d-9b95-cfd70816f031",
-    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
-    "logDate": "2026-07-13T09:31:52.066860",
+    "id": "6b580d8d-8874-4150-a364-6fe5e05d969f",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T21:50:14.106098",
     "success": true,
     "trustName": null,
     "trustCode": null,
     "globalRound": null,
-    "log": "Training has started for this model."
+    "log": "The job for this model is now running."
   },
   {
-    "id": "b460cfe6-44dd-4bc7-90f3-e427e6cff4ca",
-    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
-    "logDate": "2026-07-13T20:56:11.423716",
+    "id": "9c119700-b84a-4901-bb11-904aaa20c43a",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T21:50:14.126511",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 1,
+    "log": "Round 1 initiated · global model dispatched"
+  },
+  {
+    "id": "82aea8b2-2259-44da-bfaa-e2af3a0d5311",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T21:55:56.024069",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 1,
+    "log": "Round 1 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "5bbeb090-1cfe-4dc1-9cac-0f6659c6a68b",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T22:19:13.973320",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 1,
+    "log": "Round 1 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "cb568188-73aa-48b1-b53c-7bbe5a9b5ef0",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T22:19:14.777889",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 1,
+    "log": "Round 1 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "c4f75fcf-8075-461f-a9bd-d47784e8e525",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T22:19:14.979785",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 2,
+    "log": "Round 2 initiated · global model dispatched"
+  },
+  {
+    "id": "5666de04-7efd-4275-a15f-75f575332e44",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T22:22:14.398442",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 2,
+    "log": "Round 2 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "afbc94ec-de18-448d-aa3c-fb5ac42d45a3",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T22:31:41.708226",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 2,
+    "log": "Round 2 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "707bf551-f1dc-4cb0-82de-99be1213f372",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T22:31:47.440740",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 2,
+    "log": "Round 2 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "ca6d887a-0e2e-4439-9a87-0c2e84245201",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T22:31:47.612726",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 3,
+    "log": "Round 3 initiated · global model dispatched"
+  },
+  {
+    "id": "4512cbec-6159-4092-b53e-ba1579e2398d",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T22:34:48.250783",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 3,
+    "log": "Round 3 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "bdd4cd7b-b9d7-4f74-81c9-6f6d971c0c58",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T22:44:15.657512",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 3,
+    "log": "Round 3 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "d841d79f-9035-4239-9543-b55711c5953d",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T22:44:21.435936",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 3,
+    "log": "Round 3 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "f79ee16a-0197-4758-93df-fd2999d82c5b",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T22:44:21.606955",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 4,
+    "log": "Round 4 initiated · global model dispatched"
+  },
+  {
+    "id": "1c678d70-6994-44c3-bf3a-3e837f158913",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T22:47:22.475023",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 4,
+    "log": "Round 4 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "cd1ead6c-66cb-47b0-96ee-cd0651956347",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T22:56:46.997426",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 4,
+    "log": "Round 4 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "5a21a2c3-6fbe-46f8-a5da-dcfabc8bac49",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T22:56:52.634611",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 4,
+    "log": "Round 4 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "28bcbc55-1cb0-4751-a4ac-f21de585e059",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T22:56:52.820793",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 5,
+    "log": "Round 5 initiated · global model dispatched"
+  },
+  {
+    "id": "75120d99-361e-43c7-a27c-8dc0f13cb59a",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T22:59:54.173729",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 5,
+    "log": "Round 5 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "ec85f52e-7bc5-443a-b4d0-81da8aae936c",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:09:25.019241",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 6,
+    "log": "Round 6 initiated · global model dispatched"
+  },
+  {
+    "id": "3ca0327b-0c7a-412e-b9a3-cf27ee814995",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:24:59.230055",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 7,
+    "log": "Round 7 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "8be2ca01-7e45-479d-9b3d-61a8ed39d125",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:34:30.670831",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 7,
+    "log": "Round 7 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "d43e25c7-f1a4-4e11-8d67-4b42cefe9782",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:47:03.696234",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 8,
+    "log": "Round 8 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "e25a93fa-bfd8-48c5-a63b-7c6c235c30ac",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:59:30.223392",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 9,
+    "log": "Round 9 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "558f6c7a-b90e-40d5-9bd9-4424bd7db6cd",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:09:19.159076",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 5,
+    "log": "Round 5 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "1b415bbc-7972-4eaa-9b1d-9cd9a19e31ef",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:09:24.843914",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 5,
+    "log": "Round 5 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "fa234878-40a0-4e8a-8790-e638c93ea660",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:21:57.457266",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 6,
+    "log": "Round 6 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "a93a7bfc-8669-4582-86d2-e0d19481a74f",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:59:35.934156",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 9,
+    "log": "Round 9 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "3aa7955a-2f28-490e-bcc4-7b90d56cd2a7",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:02:36.064062",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 10,
+    "log": "Round 10 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "6d7ab837-3030-403f-a89b-52996a3a546e",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:12:03.486688",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 10,
+    "log": "Round 10 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "226d3ddd-42e3-4a39-b812-ef5ed4f73ff9",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:12:25.919712",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 6,
+    "log": "Round 6 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "536f210a-11ff-40d2-814c-898e742c8dc7",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:21:51.800567",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 6,
+    "log": "Round 6 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "c3bbac49-eccc-4cc1-bafe-07f2ba17da86",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:21:57.644263",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 7,
+    "log": "Round 7 initiated · global model dispatched"
+  },
+  {
+    "id": "142a6430-f401-4ea8-9ee7-a768a57f4c5b",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:34:25.015626",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 7,
+    "log": "Round 7 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "5ed258e4-555d-4384-b940-af2a2fb99ce4",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:34:30.883655",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 8,
+    "log": "Round 8 initiated · global model dispatched"
+  },
+  {
+    "id": "90eaee4b-c40a-45bf-8726-d34bac3174bb",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:37:32.189117",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 8,
+    "log": "Round 8 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "e5e310db-b6dc-42ed-8818-c45843d45aad",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:46:58.159295",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 8,
+    "log": "Round 8 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "ccb31177-56c3-4a16-a5ae-350baa64b96c",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:47:03.877693",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 9,
+    "log": "Round 9 initiated · global model dispatched"
+  },
+  {
+    "id": "70eeff19-6a5b-43cf-85dd-9809b4657bb7",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:50:01.940320",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 9,
+    "log": "Round 9 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "dc0cabb8-e5c1-4699-861d-cafacf1457fe",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-21T23:59:36.116952",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 10,
+    "log": "Round 10 initiated · global model dispatched"
+  },
+  {
+    "id": "e52798c6-714b-4f61-9b99-d2f4170d5f21",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:12:09.165729",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 10,
+    "log": "Round 10 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "a87cca5c-a5e9-4861-bad1-1224865b96b1",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:12:09.353902",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 11,
+    "log": "Round 11 initiated · global model dispatched"
+  },
+  {
+    "id": "50527b34-6721-4d79-bdb6-eb5b341a0819",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:15:09.276830",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 11,
+    "log": "Round 11 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "433a0738-fd81-4dad-971f-7ed3def4748c",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:24:35.942049",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 11,
+    "log": "Round 11 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "44d20ea2-b436-40b0-a449-7642ebf9a0c2",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:24:41.588204",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 11,
+    "log": "Round 11 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "2981a2f5-281a-47ad-bf14-63ca80b34e49",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:24:41.808878",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 12,
+    "log": "Round 12 initiated · global model dispatched"
+  },
+  {
+    "id": "5cb1d20e-dee4-463d-a1fe-6a26e2d9bf2d",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:27:39.566008",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 12,
+    "log": "Round 12 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "782599bd-7091-4e88-b583-dacea6a0d935",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:37:08.171329",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 12,
+    "log": "Round 12 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "bd5dce81-964c-4f60-8773-9f5e37c6134f",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:37:13.856748",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 12,
+    "log": "Round 12 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "a6370f77-e0e6-4fbb-b736-57baa04d7b89",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:37:14.044334",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 13,
+    "log": "Round 13 initiated · global model dispatched"
+  },
+  {
+    "id": "1952443c-0952-4eff-b419-12d1ca4d250e",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:40:13.102868",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 13,
+    "log": "Round 13 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "831a3e0f-48ca-40b3-98b7-265c5408a735",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:49:40.380338",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 13,
+    "log": "Round 13 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "3851b0dd-9490-4bf9-b595-68732b9b32e3",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:49:46.092087",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 13,
+    "log": "Round 13 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "9e35f35d-ea5d-4e8d-aa51-7e47b96a4020",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:49:46.320757",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 14,
+    "log": "Round 14 initiated · global model dispatched"
+  },
+  {
+    "id": "23ee2a53-4830-4d9e-a2e6-477dacec6f8c",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T00:52:46.192298",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 14,
+    "log": "Round 14 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "49455215-323b-42c2-96d3-67b359a7c29c",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:02:12.788670",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 14,
+    "log": "Round 14 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "2617cf31-c879-425c-9021-b153cd10ac1a",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:02:18.573399",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 14,
+    "log": "Round 14 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "f0865ea8-0161-4876-be64-ef796ba1eba4",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:02:18.802518",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 15,
+    "log": "Round 15 initiated · global model dispatched"
+  },
+  {
+    "id": "7d43784e-a1dd-4e3d-b5b7-158a51d608ab",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:05:17.755448",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 15,
+    "log": "Round 15 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "365f9ce1-7d50-404d-847a-98873fcf58e1",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:14:45.214168",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 15,
+    "log": "Round 15 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "4ce0bc82-9da7-4965-8e33-1c5fa0a991c3",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:14:50.852235",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 15,
+    "log": "Round 15 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "6bbdb951-a3b6-4d5c-ab9a-bedcbdcf13ff",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:14:51.048791",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 16,
+    "log": "Round 16 initiated · global model dispatched"
+  },
+  {
+    "id": "f3654bb8-89eb-47d2-806c-88b57bdd7195",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:17:49.606260",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 16,
+    "log": "Round 16 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "33ef5468-c98a-476b-beaf-e655489b59ee",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:27:17.059122",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 16,
+    "log": "Round 16 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "a7a3c6b4-4edb-4332-b11d-36729ad6c2de",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:27:22.684156",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 16,
+    "log": "Round 16 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "1f708646-9729-4951-ac8b-5e4abafefc08",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:27:22.872718",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 17,
+    "log": "Round 17 initiated · global model dispatched"
+  },
+  {
+    "id": "6f493895-1cba-44ef-a9ee-de6d1244adc9",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:30:20.708940",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 17,
+    "log": "Round 17 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "aba06935-9811-41b3-900d-032830059a02",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:39:50.363708",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 17,
+    "log": "Round 17 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "8ab24207-6b1b-4f17-9cf1-7e6f36bea384",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:39:55.920583",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 17,
+    "log": "Round 17 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "c43b4802-dd91-4909-8603-ad79d82c4840",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:39:56.103731",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 18,
+    "log": "Round 18 initiated · global model dispatched"
+  },
+  {
+    "id": "ff90f655-21aa-43d6-9921-b6a039b7f2d0",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:42:57.027799",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 18,
+    "log": "Round 18 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "ca9e1326-cf46-47be-aebb-6cfd8a0385e8",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:52:23.622448",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 18,
+    "log": "Round 18 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "b3934828-6c4c-4761-95ae-a116dd3f0221",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:52:29.347070",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 18,
+    "log": "Round 18 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "92f96c5e-b86d-4fe8-89a8-2541bf7f5591",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:52:29.518146",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 19,
+    "log": "Round 19 initiated · global model dispatched"
+  },
+  {
+    "id": "e440de93-9454-40fc-af2f-a848db1ae1e9",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T01:55:29.827510",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 19,
+    "log": "Round 19 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "0ed62078-7679-46eb-8524-dd4b6bcfbb99",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:04:56.398023",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 19,
+    "log": "Round 19 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "af098516-48e1-4128-b763-28ef2ddbe533",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:05:01.983914",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 19,
+    "log": "Round 19 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "116b436f-1ec3-45e6-8c3f-392f6c10cb00",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:05:02.426068",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 20,
+    "log": "Round 20 initiated · global model dispatched"
+  },
+  {
+    "id": "53e0d4c9-fadf-4af2-84c0-e741746bde3a",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:08:01.535841",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 20,
+    "log": "Round 20 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "de8d385a-8b58-4cbc-a790-df826784a371",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:17:30.618713",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 20,
+    "log": "Round 20 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "f1d98b9e-c920-4614-8ac5-1b14f4ba9e28",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:17:36.290563",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 20,
+    "log": "Round 20 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "66d862eb-a1da-4f47-b92a-5b25928c9ed9",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:17:36.478526",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 21,
+    "log": "Round 21 initiated · global model dispatched"
+  },
+  {
+    "id": "7744854b-064a-4309-b9ea-7cbff676b9fd",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:20:36.801562",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 21,
+    "log": "Round 21 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "f692f7dc-d97d-4ef9-9e26-5f18bcd8db0c",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:30:03.353436",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 21,
+    "log": "Round 21 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "2c4b55c0-609d-4010-b24f-62cb44eacbd4",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:30:09.099497",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 21,
+    "log": "Round 21 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "9ffe6130-08e1-48db-83c7-cea12124e37b",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:30:09.275839",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 22,
+    "log": "Round 22 initiated · global model dispatched"
+  },
+  {
+    "id": "26bdd404-dd81-42c0-898b-986daac8dea8",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:33:11.807573",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 22,
+    "log": "Round 22 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "a7025f72-5c5a-477c-9922-38022c947e28",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:42:36.223207",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 22,
+    "log": "Round 22 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "f73fe1d1-6e97-478a-990e-1f0005606626",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:42:41.696081",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 22,
+    "log": "Round 22 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "832c7db7-96ec-44bc-805b-9a93d6a2d807",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:42:41.872464",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 23,
+    "log": "Round 23 initiated · global model dispatched"
+  },
+  {
+    "id": "a892434b-1793-4fea-b6f1-9f6cc8bb85ce",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:45:40.835694",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 23,
+    "log": "Round 23 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "8d45ace7-9578-4850-aef0-cabf734b8a8e",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:55:07.591515",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 23,
+    "log": "Round 23 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "bb37443a-048c-4dfd-9ab6-0bcae8dd6369",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:55:13.086489",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 23,
+    "log": "Round 23 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "8a0ec2d7-2fcf-44e8-812e-fa9cbea4aa80",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:55:13.254774",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 24,
+    "log": "Round 24 initiated · global model dispatched"
+  },
+  {
+    "id": "72d8acf0-aad1-4355-bde5-e562e274f9af",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T02:58:13.614472",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 24,
+    "log": "Round 24 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "d05d02c2-6f0c-4993-bcd9-227772ac81f5",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:07:45.278825",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 25,
+    "log": "Round 25 initiated · global model dispatched"
+  },
+  {
+    "id": "3c19aa8b-bedf-47dc-8b27-fc0e3c7ebac9",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:20:16.887133",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 26,
+    "log": "Round 26 initiated · global model dispatched"
+  },
+  {
+    "id": "b45e4091-8488-4765-8708-f033ee3261b8",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:07:39.550307",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 24,
+    "log": "Round 24 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "74be42dc-2cd7-4254-8144-b04cdc60c35c",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:07:45.091030",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 24,
+    "log": "Round 24 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "5641c7e2-2e4b-4537-8055-d3b27b7adf79",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:35:48.872607",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 27,
+    "log": "Round 27 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "4b1c9841-db89-4b55-aae1-1630b64ffeba",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:10:44.654528",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 25,
+    "log": "Round 25 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "cfa7737c-18d1-4d19-ad91-1ee68c644a48",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:20:11.210450",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 25,
+    "log": "Round 25 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "e8992c2c-13a7-4894-95c5-23d0bcb0b192",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:20:16.704873",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 25,
+    "log": "Round 25 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "513f3ca9-893a-4c5e-8621-338f1b7de902",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:23:16.824392",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 26,
+    "log": "Round 26 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "6beaea38-b6d3-404f-aa83-3daf3ea4107b",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:32:43.704794",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 26,
+    "log": "Round 26 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "3023135f-b21f-40dd-aa25-9e07189c968f",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:32:49.303719",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 26,
+    "log": "Round 26 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "0c2a6db7-54d5-4073-8070-b8d64c320897",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:32:49.470480",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 27,
+    "log": "Round 27 initiated · global model dispatched"
+  },
+  {
+    "id": "52333926-e549-4b22-9393-a42e2f57e59c",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:45:17.669890",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 27,
+    "log": "Round 27 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "c4e5043e-647a-4762-b9b7-931ff819473a",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:45:23.489708",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 27,
+    "log": "Round 27 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "7d93a020-00cb-47c6-9b4d-7ef4eeaaf7a3",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:45:23.659714",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 28,
+    "log": "Round 28 initiated · global model dispatched"
+  },
+  {
+    "id": "d0301231-897b-4a25-baf7-20a0b9d7ad52",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:57:50.755098",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 28,
+    "log": "Round 28 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "dc70de1a-8242-416a-86f6-593eff3d5625",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:57:56.489676",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 28,
+    "log": "Round 28 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "2b914c76-a933-48df-9a15-7f01764eda83",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:48:23.505948",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 28,
+    "log": "Round 28 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "27e591c9-126c-4b88-8f0d-ca3d27702052",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:00:57.492592",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 29,
+    "log": "Round 29 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "54fb220a-dd83-4df8-92e4-f79483011a09",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:10:24.636936",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 29,
+    "log": "Round 29 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "c7663898-0e42-44f0-8cc4-5607964eb453",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T03:57:56.668893",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 29,
+    "log": "Round 29 initiated · global model dispatched"
+  },
+  {
+    "id": "83e7fe99-3170-456a-a9e5-36585eedfdab",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:10:30.296771",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 29,
+    "log": "Round 29 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "a792f468-8e78-4d7c-9024-2a6cb96612c9",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:10:30.485491",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 30,
+    "log": "Round 30 initiated · global model dispatched"
+  },
+  {
+    "id": "3cc72cab-cbdb-4d88-88c0-bf63b6dd3667",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:13:32.447850",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 30,
+    "log": "Round 30 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "4f2453eb-fc31-459a-b3ae-aa064e411f36",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:22:56.374767",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 30,
+    "log": "Round 30 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "94f28fbb-02a5-451d-89c0-a27f6100142d",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:23:01.930423",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 30,
+    "log": "Round 30 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "36c05004-ecf6-4f3d-8cd6-89855c7e06da",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:23:02.121656",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 31,
+    "log": "Round 31 initiated · global model dispatched"
+  },
+  {
+    "id": "5ea8cf71-4888-44f8-aaff-eabc34bf16ca",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:26:03.541073",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 31,
+    "log": "Round 31 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "00a0c412-c6a1-4617-a9cc-351bfac0d92f",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:35:29.026073",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 31,
+    "log": "Round 31 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "5c85f41a-97cc-42ff-92ce-4ab6ae43235c",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:35:34.595512",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 31,
+    "log": "Round 31 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "993b0330-8084-4b77-bfc5-6daf04f34b94",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:35:34.770374",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 32,
+    "log": "Round 32 initiated · global model dispatched"
+  },
+  {
+    "id": "bf3ec7a7-6bf9-407b-a0a0-4a49e77383ab",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:38:35.588148",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 32,
+    "log": "Round 32 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "19409b88-1cbf-42c1-bae7-315e0f110dd6",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:48:01.132170",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 32,
+    "log": "Round 32 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "c376a100-2d11-483c-8bbd-83f4488ee5f0",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:48:06.789666",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 32,
+    "log": "Round 32 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "6acb8bc7-4267-444a-86d1-a1ddcef5498c",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:48:06.968609",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 33,
+    "log": "Round 33 initiated · global model dispatched"
+  },
+  {
+    "id": "2c59eb8c-8435-48c2-a5d4-c40d5d1e66be",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T04:51:06.858458",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 33,
+    "log": "Round 33 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "e3d30473-7db9-4317-991a-c60d0bb77fec",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:00:34.437105",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 33,
+    "log": "Round 33 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "81085b13-793a-4326-83c3-7c357892b1f7",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:00:40.194939",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 33,
+    "log": "Round 33 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "da9f2d83-e9f1-49f7-83ba-836e8eca8591",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:00:40.372874",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 34,
+    "log": "Round 34 initiated · global model dispatched"
+  },
+  {
+    "id": "6c4c4be6-14b9-4793-b2c6-5240057e783d",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:03:41.260393",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 34,
+    "log": "Round 34 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "013f3f02-ff25-4f7d-be94-75b584488618",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:13:06.264909",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 34,
+    "log": "Round 34 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "2e1da94c-1ded-4ac2-ba65-26403967a2aa",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:13:11.819934",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 34,
+    "log": "Round 34 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "755a2ec1-3a22-43ac-a25c-6df4c445b9a3",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:13:11.990034",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 35,
+    "log": "Round 35 initiated · global model dispatched"
+  },
+  {
+    "id": "c13fdff2-6569-4121-8d05-02fb15444355",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:16:12.396523",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 35,
+    "log": "Round 35 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "211bbd87-2b35-4d25-9925-57f73a3802b5",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:25:38.606558",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 35,
+    "log": "Round 35 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "cbce6476-5365-41ab-9172-4a603a3c2d4b",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:25:44.421986",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 35,
+    "log": "Round 35 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "77facc31-d372-4475-a633-977be4b5f091",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:25:44.595812",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 36,
+    "log": "Round 36 initiated · global model dispatched"
+  },
+  {
+    "id": "49b869d4-405b-4077-a131-ec5666314321",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:28:43.475175",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 36,
+    "log": "Round 36 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "4220a1a9-5ef7-468e-a034-de0d68e32c85",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:38:11.400164",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 36,
+    "log": "Round 36 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "ef954fd7-1c7f-4024-8baf-060b7165bc47",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:38:17.018572",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 36,
+    "log": "Round 36 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "96134b83-97c0-4539-ac68-447e23a4adec",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:38:17.185184",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 37,
+    "log": "Round 37 initiated · global model dispatched"
+  },
+  {
+    "id": "0c75142c-140a-40a1-ae29-c610ddb3fc5a",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:41:17.511740",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 37,
+    "log": "Round 37 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "9fb8bfd5-0af0-4069-9711-50992207b6ff",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:50:44.316533",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 37,
+    "log": "Round 37 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "53790b0a-0094-432f-9992-2ce860410245",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:50:49.804754",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 37,
+    "log": "Round 37 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "79358a2b-d7e3-410f-9c65-b0d4106076ee",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:50:49.985074",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 38,
+    "log": "Round 38 initiated · global model dispatched"
+  },
+  {
+    "id": "89b5635e-96a1-4cbe-82fd-c1730c2b0931",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T05:53:49.030214",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 38,
+    "log": "Round 38 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "7a9d5751-e2da-4220-a586-441bd34c9835",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:03:16.805266",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 38,
+    "log": "Round 38 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "5e909d39-2f30-471a-b3f4-d3fdd41d7605",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:03:22.413656",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 38,
+    "log": "Round 38 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "dd132d44-aeac-455d-8618-12ef0a1e18c1",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:03:22.589107",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 39,
+    "log": "Round 39 initiated · global model dispatched"
+  },
+  {
+    "id": "d8689cbb-3cd5-4da4-9314-89e6c4406709",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:06:23.397590",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 39,
+    "log": "Round 39 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "49ba9b66-ee08-467d-8446-f0af46f36abf",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:15:49.409993",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 39,
+    "log": "Round 39 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "5c86110f-3ac1-4e06-bfac-7ffd66fff03e",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:15:55.247331",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 39,
+    "log": "Round 39 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "23c918c8-852a-45f3-b9ca-d5e43938b352",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:15:55.431042",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 40,
+    "log": "Round 40 initiated · global model dispatched"
+  },
+  {
+    "id": "3a00d81f-197c-4af8-9faf-e98d61cd944c",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:18:55.529319",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 40,
+    "log": "Round 40 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "5b6a03db-df5f-401c-b03b-c0bb6204373a",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:28:22.662535",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 40,
+    "log": "Round 40 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "5a2b755e-191d-48ba-90d1-74f7607ee9b4",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:28:28.289262",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 40,
+    "log": "Round 40 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "6f1847f5-22d1-48cf-861d-b5643e01dcc2",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:28:28.509558",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 41,
+    "log": "Round 41 initiated · global model dispatched"
+  },
+  {
+    "id": "20cce074-477e-43b8-90ae-261737452a7b",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:31:29.439270",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 41,
+    "log": "Round 41 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "1f6218a5-ea0f-45ef-8cd5-4ea77961aaad",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:40:55.280934",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 41,
+    "log": "Round 41 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "7b8d067f-ba8e-4f1b-9895-296f3af0eec9",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:41:00.975032",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 41,
+    "log": "Round 41 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "c9ffb8b4-2f88-437a-aa1f-3ef20c3451e5",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:41:01.155865",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 42,
+    "log": "Round 42 initiated · global model dispatched"
+  },
+  {
+    "id": "9620ce0f-5060-48c6-9f92-505a31da8742",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:44:02.141552",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 42,
+    "log": "Round 42 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "7c95b917-5181-482f-9af3-22eba3918a9d",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:53:27.206445",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 42,
+    "log": "Round 42 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "cd9c5196-7123-45fb-a171-6847ab37bb88",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:53:33.035228",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 42,
+    "log": "Round 42 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "2e667568-b49a-4dbe-8f45-ed6eb115e86f",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:53:33.233934",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 43,
+    "log": "Round 43 initiated · global model dispatched"
+  },
+  {
+    "id": "b44dbc65-de6c-4915-a416-022301332e7f",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T06:56:33.531740",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 43,
+    "log": "Round 43 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "702f8112-a530-4ba3-8a56-83ddeaf544ab",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:06:05.874744",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 43,
+    "log": "Round 43 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "260ba47d-2d7c-436f-857b-90e804945374",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:06:00.276807",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 43,
+    "log": "Round 43 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "ae49527b-c120-43fa-8748-cdb9b6ea39a9",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:21:39.126972",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 45,
+    "log": "Round 45 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "d766fb00-f493-4f92-bc6f-f0e3a12f83c7",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:31:10.515918",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 46,
+    "log": "Round 46 initiated · global model dispatched"
+  },
+  {
+    "id": "5ffb96d4-8ea9-4621-9efc-fa9d111fdc2d",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:34:11.908295",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 46,
+    "log": "Round 46 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "6fdfe603-c4aa-49c6-a8b0-e2d1c178f703",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:43:36.548383",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 46,
+    "log": "Round 46 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "543a0266-ed58-4d35-b0a5-99fa9d4fd4be",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:43:42.559369",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 47,
+    "log": "Round 47 initiated · global model dispatched"
+  },
+  {
+    "id": "f020107a-a391-482f-bd2e-f3e98ba8bf0d",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:56:15.202940",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 47,
+    "log": "Round 47 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "34b44afb-49b4-4cc3-bfce-471e2caf221a",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:56:15.380857",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 48,
+    "log": "Round 48 initiated · global model dispatched"
+  },
+  {
+    "id": "ac42b96c-0c64-4d06-8529-708066aae48b",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:06:06.070458",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 44,
+    "log": "Round 44 initiated · global model dispatched"
+  },
+  {
+    "id": "5ca912e4-f3af-4ee6-a034-9f492edce034",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:46:40.533623",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 47,
+    "log": "Round 47 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "82e96b74-a0ea-4780-9816-00ee9ae06c0c",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:56:09.436339",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 47,
+    "log": "Round 47 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "643b5bb0-7163-435e-adba-3706f1d108fe",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:59:17.172338",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 48,
+    "log": "Round 48 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "4b9629fd-dca1-426b-bd5d-da998b539c7d",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T08:08:42.790546",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 48,
+    "log": "Round 48 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "8afe74e0-c17e-4aca-a3e2-ea5b1604c3d7",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T08:08:48.425439",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 48,
+    "log": "Round 48 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "01bbd19f-eeb0-4248-a75c-ae157cac2aaf",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T08:08:48.594737",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 49,
+    "log": "Round 49 initiated · global model dispatched"
+  },
+  {
+    "id": "59deac7b-3fdc-4f56-ad1d-5cfbe45f1391",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T08:11:48.112827",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 49,
+    "log": "Round 49 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "0a4c2734-194a-4bec-be3b-15af1716145d",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:09:07.499757",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 44,
+    "log": "Round 44 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "262cb4f3-d6bc-4238-9c36-a5333adb989b",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:18:32.886126",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 44,
+    "log": "Round 44 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "b4271a84-6efe-4937-a6b6-0b993d12e092",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:18:38.530719",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 44,
+    "log": "Round 44 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "44dcf45c-e2bd-4542-b5d3-c1252ff5b6ec",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:18:38.703808",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 45,
+    "log": "Round 45 initiated · global model dispatched"
+  },
+  {
+    "id": "7d2f89a3-6711-45d7-a815-94effa13e99e",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:31:04.691167",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 45,
+    "log": "Round 45 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "78c4bfd4-78b5-4100-b267-d22a26d369dc",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:31:10.348227",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 45,
+    "log": "Round 45 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "94e5151c-7a52-42d2-b1f1-d6cb85d950f3",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T08:21:15.629017",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 49,
+    "log": "Round 49 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "771324b1-9019-4559-94f2-c01adfc47f3c",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T07:43:42.368719",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 46,
+    "log": "Round 46 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "42a69edc-4594-4ee2-bd94-18fe294af93a",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T08:21:21.429602",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 49,
+    "log": "Round 49 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "c9eb647c-6173-4547-ac2a-a3bc87901bb2",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T08:21:21.632301",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 50,
+    "log": "Round 50 initiated · global model dispatched"
+  },
+  {
+    "id": "4b7ba2b3-3f47-45e8-9066-92f5bad53ca3",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T08:24:22.256779",
+    "success": true,
+    "trustName": "King's College London",
+    "trustCode": "KCL",
+    "globalRound": 50,
+    "log": "Round 50 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "6e57dbb7-ffcc-4dd5-ac37-2a0069d61f2c",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T08:33:48.518884",
+    "success": true,
+    "trustName": "Bangkok Dusit Medical Services",
+    "trustCode": "BDMS",
+    "globalRound": 50,
+    "log": "Round 50 weights uploaded · 26.9 KB"
+  },
+  {
+    "id": "1d989826-9fb4-449a-8fe1-c2ee8c624f3c",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T08:33:54.085288",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": 50,
+    "log": "Round 50 aggregated · 2 of 2 trusts returned"
+  },
+  {
+    "id": "6a22d77d-853b-4411-ae5c-872d2e8ae2d5",
+    "modelId": "31569b0b-7698-4bf4-a446-59643c6674e0",
+    "logDate": "2026-08-22T08:44:57.856424",
     "success": true,
     "trustName": null,
     "trustCode": null,

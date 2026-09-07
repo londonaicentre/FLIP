@@ -24,17 +24,48 @@
                 <!-- Page header (mirrors the Projects page spine) -->
                 <header class="flex flex-col gap-4 px-8 pt-8 pb-4 sm:flex-row sm:items-end sm:justify-between">
                     <div>
-                        <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
-                            Estate-wide · every project
+                        <p
+                            class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300"
+                            data-test="models-scope-eyebrow"
+                        >
+                            <template v-if="isScoped">
+                                Project ·
+                                <!-- font-normal keeps the anchor at the eyebrow's weight (main.css
+                                     bolds every non-nav link); the underline carries the affordance. -->
+                                <router-link
+                                    :to="`/project/${projectFilter}`"
+                                    data-test="scope-project-link"
+                                    class="font-normal hover:underline hover:text-primary-600 dark:hover:text-primary-300"
+                                >
+                                    {{ scopedProjectLabel }}
+                                </router-link>
+                            </template>
+                            <template v-else>
+                                Estate-wide · every project
+                            </template>
                         </p>
                         <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
                             <span class="text-primary-600 underline decoration-4 decoration-primary-500/60 underline-offset-8 dark:text-white">Models</span>
                             <span class="ml-3 text-gray-400 dark:text-gray-300 font-medium">{{ data.totalRecords ?? data.data.length }}</span>
                         </h1>
                         <p class="mt-2 text-sm text-gray-500 dark:text-gray-300">
-                            The federated training queue across every project you can access.
+                            {{ isScoped ? SCOPED_SUBTITLE : ESTATE_SUBTITLE }}
                         </p>
                     </div>
+                    <!-- Only offered when scoped: a model is created against one project, and the
+                         estate-wide view has none in hand. Server-side, creating against an
+                         unapproved project is refused, so don't offer it here either. -->
+                    <AiButton
+                        v-if="isScoped && !isViewer && scopedProject?.status === 'APPROVED'"
+                        primary
+                        data-test="add-model-btn"
+                        aria-label="Create Model"
+                        tooltip="Create Model"
+                        @click="modalsStore.toggleCreateModel"
+                    >
+                        <icon-mdi-plus class="lg:mr-2" />
+                        <span class="hidden lg:inline">Create Model</span>
+                    </AiButton>
                 </header>
 
                 <!-- Filter tiles: one per lifecycle group, each a toggle. Click the active tile to reset. -->
@@ -66,7 +97,7 @@
                     </button>
                 </div>
 
-                <!-- Toolbar: search -->
+                <!-- Toolbar: search + project filter -->
                 <div class="flex flex-wrap items-center gap-3 px-8 pb-4">
                     <div class="flex-1 min-w-[240px]">
                         <AiSearch
@@ -75,12 +106,53 @@
                             data-test="model-search"
                         />
                     </div>
+
+                    <!-- Stands down once a project is picked: the chip beside it already names the
+                         project and carries the way out, so two controls for one scope is one too
+                         many. Clearing the chip brings the select back. -->
+                    <label v-if="!isScoped" for="project-filter" class="sr-only">Filter by project</label>
+                    <!-- Bound to the URL rather than v-model'd: the address bar owns the scope, so
+                         the select reflects it instead of holding a second copy of it. -->
+                    <select
+                        v-if="!isScoped"
+                        id="project-filter"
+                        data-test="project-filter"
+                        class="rounded-md border-gray-200 dark:border-dark-border dark:bg-dark-canvas text-sm py-2 pl-3 pr-8"
+                        :value="projectFilter ?? ''"
+                        @change="applyProject(($event.target as HTMLSelectElement).value || null)"
+                    >
+                        <option value="">
+                            All projects
+                        </option>
+                        <option v-for="project in projectOptionList" :key="project.id" :value="project.id">
+                            {{ project.name }}
+                        </option>
+                    </select>
+
+                    <span
+                        v-if="isScoped"
+                        data-test="project-filter-chip"
+                        class="inline-flex items-center gap-2 rounded-full border border-primary-200 bg-primary-100 py-1.5 pl-4 pr-1.5 text-[13.5px] font-semibold text-primary-600 dark:border-dark-border dark:bg-dark-surface dark:text-primary-200"
+                    >
+                        Project: {{ scopedProjectLabel }}
+                        <button
+                            type="button"
+                            data-test="clear-project-filter"
+                            aria-label="Clear project filter"
+                            title="Clear project filter"
+                            class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-primary-200 hover:bg-primary-300 dark:bg-dark-raised dark:hover:bg-dark-border"
+                            @click="applyProject(null)"
+                        >
+                            <icon-mdi-close class="w-3.5 h-3.5" />
+                        </button>
+                    </span>
                 </div>
 
-                <!-- Models table (div/grid layout: transparent rows + status rail, escapes the
-                     global `<table>` styling in main.css) -->
+                <!-- Models table (div/grid layout: white rows + status rail, escapes the global
+                     `<table>` styling in main.css). Same surface as the Projects list: an AiCard
+                     holding white rows divided by hairlines, so the two tables read as one system. -->
                 <div class="px-8 pb-8">
-                    <div class="overflow-hidden border border-gray-200 rounded-xl dark:border-dark-border">
+                    <AiCard class="overflow-hidden p-0">
                         <!-- Header row: sortable columns (desktop-only — the stacked
                              mobile rows have no columns to head) -->
                         <div class="hidden sm:flex items-stretch bg-gray-50 border-b border-gray-200 dark:bg-dark-surface dark:border-dark-border">
@@ -112,7 +184,7 @@
                             v-for="(model, index) in sortedModels"
                             :key="model.id"
                             :data-test="`models-list-item-${index}`"
-                            class="flex items-stretch border-t border-gray-100 transition first:border-t-0 hover:bg-gray-50 dark:border-dark-border dark:hover:bg-dark-raised"
+                            class="flex items-stretch bg-white border-t border-gray-100 transition-colors first:border-t-0 hover:bg-gray-50 dark:bg-dark-canvas dark:border-dark-border dark:hover:bg-dark-surface"
                         >
                             <!-- Status rail -->
                             <div
@@ -154,9 +226,11 @@
                                             :key="t.id"
                                             data-test="model-trust-chip"
                                             :title="t.name"
-                                            class="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-0.5 text-xs text-gray-700 dark:border-dark-border dark:bg-dark-surface dark:text-gray-200"
+                                            :class="[TRUST_CHIP_CLASS, TRUST_CHIP_PLAIN_PADDING]"
                                         >
-                                            <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                            <!-- Code only, no status dot: every chip here is a trust the
+                                                 run was dispatched to, so there is no state to encode. The
+                                                 Projects list dots because a trust there can be pending. -->
                                             {{ trustChipLabel(t) }}
                                         </span>
                                     </div>
@@ -219,36 +293,41 @@
                                             </template>
                                         </p>
                                     </div>
-                                    <span
-                                        data-test="model-status-indicator-mobile"
-                                        class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium shrink-0"
-                                        :class="statusPillClass(model.status)"
-                                    >
-                                        <span class="inline-block w-1.5 h-1.5 rounded-full" :class="statusDotClass(model.status)" />
-                                        {{ modelStatusLabelWithQueue(model.status, model.queuePosition) }}
-                                    </span>
+                                    <!-- Status and the trusts that ran it belong together: the chips
+                                         sit under the pill rather than running full width under the
+                                         description, which read as part of the description. -->
+                                    <div class="flex flex-col items-end gap-1.5 shrink-0">
+                                        <span
+                                            data-test="model-status-indicator-mobile"
+                                            class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
+                                            :class="statusPillClass(model.status)"
+                                        >
+                                            <span class="inline-block w-1.5 h-1.5 rounded-full" :class="statusDotClass(model.status)" />
+                                            {{ modelStatusLabelWithQueue(model.status, model.queuePosition) }}
+                                        </span>
+                                        <div
+                                            v-if="model.trusts.length"
+                                            class="flex flex-wrap items-center justify-end gap-1.5"
+                                        >
+                                            <span
+                                                v-for="t in model.trusts"
+                                                :key="t.id"
+                                                data-test="model-trust-chip-mobile"
+                                                :title="t.name"
+                                                :class="[TRUST_CHIP_CLASS, TRUST_CHIP_PLAIN_PADDING]"
+                                            >
+                                                {{ trustChipLabel(t) }}
+                                            </span>
+                                        </div>
+                                        <p
+                                            v-else
+                                            data-test="model-trusts-empty-mobile"
+                                            class="text-xs italic text-right text-gray-400 dark:text-gray-300"
+                                        >
+                                            Trusts assigned when training starts
+                                        </p>
+                                    </div>
                                 </div>
-                                <div v-if="model.trusts.length" class="flex flex-wrap items-center gap-1.5 mt-2">
-                                    <span
-                                        v-for="t in model.trusts"
-                                        :key="t.id"
-                                        data-test="model-trust-chip-mobile"
-                                        :title="t.name"
-                                        class="inline-flex items-center gap-1 rounded-full border border-gray-200
-                                        bg-white px-2.5 py-0.5 text-xs text-gray-700 dark:text-gray-200
-                                        dark:border-dark-border dark:bg-dark-surface"
-                                    >
-                                        <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                        {{ trustChipLabel(t) }}
-                                    </span>
-                                </div>
-                                <p
-                                    v-else
-                                    data-test="model-trusts-empty-mobile"
-                                    class="mt-2 text-xs italic text-gray-400 dark:text-gray-300"
-                                >
-                                    Trusts assigned when training starts
-                                </p>
                             </div>
                         </div>
 
@@ -258,7 +337,7 @@
                         >
                             There are no models to show
                         </div>
-                    </div>
+                    </AiCard>
 
                     <AiPagination
                         class="mt-4"
@@ -269,29 +348,64 @@
                 </div>
             </div>
         </transition>
+        <CreateModelModal
+            v-if="isScoped && projectFilter"
+            :open="modalsStore.createModelOpen"
+            :project-id="projectFilter"
+            @close-modal="modalsStore.toggleCreateModel"
+        />
     </div>
 </template>
 
 <script setup lang="ts">
 import { debouncedWatch } from "@vueuse/core";
 import useSWRV from "swrv";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 
+import AiButton from "@/components/AiButton/AiButton.vue";
+import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiPagination from "@/components/AiPagination/AiPagination.vue";
 import AiSearch from "@/components/AiSearch/AiSearch.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
+import { usePermissions } from "@/composables/usePermissions";
+import CreateModelModal from "@/partials/models/CreateModelModal.vue";
 import { getAllModels,
+    getModelProjectOptions,
+    IModelProjectOption,
     IModelSummary,
-    IModelSummaryTrust,
     isModelStatusError,
     ModelStatus,
     modelStatusDotClass as statusDotClass,
     modelStatusLabelWithQueue,
     modelStatusPillClass as statusPillClass } from "@/services/model-service";
+import { useModalsStore } from "@/store/modals";
 import { apiTimestampMs, relativeCreatedLabel } from "@/utils/helpers";
+import { Snackbar } from "@/utils/snackbar";
+import { TRUST_CHIP_CLASS, TRUST_CHIP_PLAIN_PADDING, trustChipLabel } from "@/utils/trust-chip";
 
 const pageSize = 20;
+
+const ESTATE_SUBTITLE = "The federated training queue across every project you can access.";
+const SCOPED_SUBTITLE =
+    "The federated training queue for this project. Clear the project filter to see the whole estate.";
+
+const route = useRoute();
+const router = useRouter();
+const modalsStore = useModalsStore();
+const { isViewer } = usePermissions();
+
+// The project scope lives in the URL, not in a ref: a scoped view is then linkable, the back
+// button works, and the fetch key below reads the same source of truth the address bar shows.
+const projectFilter = computed<string | null>(() => {
+    const raw = route.query.project;
+    const value = Array.isArray(raw) ? raw[0] : raw;
+
+    return value ? String(value) : null;
+});
+const projectQueryParam = computed<string>(() =>
+    projectFilter.value ? `&project=${encodeURIComponent(projectFilter.value)}` : "");
 
 const search = ref("");
 const pageNumber = ref(1);
@@ -353,7 +467,8 @@ const TILES: ITile[] = [
 // Tiles are accumulative: each click toggles a group in or out of the selection
 // and the list shows the union. An empty selection means no status filter (all
 // models). The page opens on the active work: Running + Queued.
-const activeTiles = ref<Set<GroupKey>>(new Set(["running", "queued"]));
+const DEFAULT_TILES: GroupKey[] = ["running", "queued"];
+const activeTiles = ref<Set<GroupKey>>(new Set(DEFAULT_TILES));
 
 const syncStatusFilter = (): void => {
     const statuses = TILES.filter(t => activeTiles.value.has(t.key)).flatMap(t => t.statuses);
@@ -361,13 +476,91 @@ const syncStatusFilter = (): void => {
     pageNumber.value = 1;
 };
 
+// Arriving already scoped — via "View All Models" or a bookmark — means "show everything in
+// this project", so the estate default of Running + Queued would hide most of what was asked
+// for. Seeded before syncStatusFilter() so the very first key is already the right one.
+if (projectFilter.value) activeTiles.value = new Set();
+
 // Seed the query param before SWRV builds its first key, so the default
 // selection doesn't cost an extra unfiltered fetch.
 syncStatusFilter();
 
+// Which project the page believes it is showing. Changing the dropdown navigates, so the
+// watcher below would otherwise treat the page's own navigation as an arrival and wipe the
+// filters the user just set. Claiming the value first tells the two apart. (A one-shot boolean
+// would not: it stays armed if `replace` rejects a duplicate navigation.)
+const claimedProject = ref<string | null>(projectFilter.value);
+
+const applyProject = (id: string | null): void => {
+    claimedProject.value = id;
+    pageNumber.value = 1;
+    const query = { ...route.query };
+    if (id) {
+        query.project = id;
+    } else {
+        delete query.project;
+    }
+    void router.replace({
+        path: route.path,
+        query
+    });
+};
+
+// An arrival from elsewhere — the sidebar Models link, a bookmark, back/forward. The link is a
+// query-only change on this same route, so the component is never remounted and only this can
+// reset the page.
+watch(projectFilter, next => {
+    if (next === claimedProject.value) return;
+    claimedProject.value = next;
+    activeTiles.value = next ? new Set() : new Set<GroupKey>(DEFAULT_TILES);
+    if (!next) {
+        // Both, deliberately: the debouncedWatch on `search` fires 500ms later, far too late
+        // for the key this reset is about to rebuild.
+        search.value = "";
+        searchQueryParam.value = "";
+    }
+    syncStatusFilter();
+});
+
+// The filter's options, and the only place the scoped project's name and status come from — a
+// project with no models yet has no row in the list to read them off. Barely changes, so it
+// polls not at all and dedupes for a minute. `mutate` forces a fetch through that dedup window
+// (see the guard watcher below); `isValidating` says when one is in flight.
+const {
+    data: projectOptions,
+    error: projectOptionsError,
+    isValidating: projectOptionsValidating,
+    mutate: revalidateProjectOptions
+} = useSWRV("/models/projects", getModelProjectOptions, {
+    dedupingInterval: 60_000,
+    shouldRetryOnError: false
+});
+
+// The options as a list, whatever arrived. Array-checked rather than `?? []`: the body comes off
+// the wire, and a catch-all stub answering with an empty string would otherwise reach `.find()`
+// and take the whole page down with a TypeError.
+const projectOptionList = computed<IModelProjectOption[]>(() =>
+    Array.isArray(projectOptions.value) ? projectOptions.value : []);
+
+// With `?project=` in the URL, hold the models fetch until the options have confirmed the id: a
+// stale or unauthorised link would otherwise fire a scoped call the backend 403s/404s, flashing
+// the global error banner in the gap before the guard below can tidy the URL. An options
+// *failure* opens the gate instead — the list must still load rather than wait on a gate that can
+// never open, with the filter degrading to invisible.
+const scopedFetchReady = computed<boolean>(() => {
+    if (!projectFilter.value) return true;
+    if (projectOptionsError.value) return true;
+    if (!projectOptions.value) return false;
+
+    return projectOptionList.value.some(project => project.id === projectFilter.value);
+});
+
 const { data, error } = useSWRV(
     () =>
-        `/models?pageNumber=${pageNumber.value}&pageSize=${pageSize}${searchQueryParam.value}${statusQueryParam.value}`,
+        scopedFetchReady.value
+            ? `/models?pageNumber=${pageNumber.value}&pageSize=${pageSize}`
+                + `${searchQueryParam.value}${statusQueryParam.value}${projectQueryParam.value}`
+            : "",
     getAllModels,
     {
         dedupingInterval: 5_000,
@@ -377,6 +570,81 @@ const { data, error } = useSWRV(
 );
 
 useErrorHandler(error);
+
+const scopedProject = computed<IModelProjectOption | null>(() =>
+    projectOptionList.value.find(project => project.id === projectFilter.value) ?? null);
+
+// Scoped, but with no name to show for it. A 404 is the one options failure that does NOT land
+// here: an API without /models/projects also predates the `project` query param and ignores it,
+// so the rows really are estate-wide and the estate header stays truthful. Every other failure
+// (5xx, network, timeout) leaves a working scoped endpoint that honours the param — the table
+// below IS one project's, and saying "Estate-wide" over it would tell the user the opposite of
+// what the page is showing.
+const OPTIONS_ENDPOINT_ABSENT = 404;
+const scopedWithoutName = computed<boolean>(() => {
+    if (!projectFilter.value || !projectOptionsError.value) return false;
+    // Duck-typed rather than axios's `isAxiosError`: the value arrives through SWRV as `unknown`,
+    // and a failure with no response at all (network/timeout) simply has no status to read.
+    const status = (projectOptionsError.value as { response?: { status?: number } }).response?.status;
+
+    return status !== OPTIONS_ENDPOINT_ABSENT;
+});
+
+const isScoped = computed<boolean>(() =>
+    !!projectFilter.value && (!!scopedProject.value || scopedWithoutName.value));
+
+// What the header and the chip call the scoped project: its name once the options have arrived,
+// otherwise the raw id from the URL — the only handle on it when the options call failed.
+const scopedProjectLabel = computed<string>(() => scopedProject.value?.name ?? projectFilter.value ?? "");
+
+// The id we have already forced a fresh options fetch for, so a genuinely-absent project is
+// judged once against live data instead of looping on mutate().
+const revalidatedOptionsFor = ref<string | null>(null);
+
+// A project id we cannot show — a stale bookmark, a deleted project, access since revoked, or a
+// typo. The gate above has already kept it off the backend; this drops it from the URL and says
+// why, so the page lands on the full list instead of an empty scoped shell.
+//
+// It cannot judge the id on the options it happens to hold: they are SWRV-cached for a minute
+// with no refresh interval, so a project created since the last visit is missing from a list the
+// subscription will not refetch inside that window — leaving the gate shut, the fetch key empty
+// and the page stranded on the loader until the window lapses. A first miss therefore forces one
+// revalidation (`mutate` bypasses the dedup window) and the id is judged on what comes back.
+//
+// `immediate` is load-bearing: SWRV serves a cached list synchronously during setup, so a plain
+// watcher would never see the very value this guard exists to distrust.
+watch(
+    [projectOptions, projectFilter, projectOptionsValidating],
+    ([options, filter, validating]) => {
+        if (!filter) {
+            revalidatedOptionsFor.value = null;
+
+            return;
+        }
+        // Nothing can be proved absent while a fetch is in flight, or when one failed — SWRV
+        // keeps the last list on error, and bouncing off that would drop a good deep link.
+        // scopedWithoutName covers the failure case instead.
+        if (validating || projectOptionsError.value) return;
+        // Array-checked, not truthiness-checked: an unstubbed route answering with an empty
+        // string body must not reach `.some()`.
+        if (!Array.isArray(options)) return;
+        if (options.some(project => project.id === filter)) return;
+
+        if (revalidatedOptionsFor.value !== filter) {
+            revalidatedOptionsFor.value = filter;
+            void revalidateProjectOptions();
+
+            return;
+        }
+
+        Snackbar.error({
+            title: "Project unavailable",
+            text: "That project could not be found, so the full models list is shown instead."
+        });
+        applyProject(null);
+    },
+    { immediate: true }
+);
 
 const models = computed<IModelSummary[]>(() => data.value?.data ?? []);
 
@@ -485,14 +753,13 @@ const sortedModels = computed<IModelSummary[]>(() => {
     return [...models.value].sort(sortDir.value === "asc" ? cmp : (a, b) => cmp(b, a));
 });
 
-// Status-toned left rail: magenta = running, amber = preparing, emerald =
-// completed, red = needs attention, neutral = created/queued. PENDING groups under
-// the Preparing tile but keeps the neutral tone — nothing is running yet.
+// Status-toned left rail: magenta = running, amber = preparing (PENDING + PREPARED),
+// emerald = completed, red = needs attention, neutral = queued.
 const railClass = (status: ModelStatus | undefined): string => {
     if (isModelStatusError(status)) return "bg-red-500";
     if (status === "RESULTS_UPLOADED") return "bg-emerald-500";
     if (status === "RUNNING") return "bg-fuchsia-500";
-    if (status === "PREPARED") return "bg-amber-500";
+    if (status === "PREPARED" || status === "PENDING") return "bg-amber-500";
 
     return "bg-gray-300 dark:bg-gray-600";
 };
@@ -513,20 +780,6 @@ const updateModelList = (pageNumberInt: number): void => {
     getSearchQuery();
 };
 
-// Prefer the trust's short code (e.g. "GSTT"); otherwise strip common name bloat
-// and truncate so chips stay compact — mirrors the Projects page behaviour.
-const trustChipLabel = (trust: IModelSummaryTrust): string => {
-    if (trust.code) return trust.code;
-    if (!trust.name) return "";
-    const stripped = trust.name
-        .replace(/\bNHS Foundation Trust\b/gi, "")
-        .replace(/\bNHS Trust\b/gi, "")
-        .replace(/\bTrust\b/gi, "")
-        .trim();
-    if (stripped.length <= 16) return stripped;
-
-    return stripped.slice(0, 14) + "…";
-};
 
 // Owner display name (UserProfile.name from the backend). Falls back to an
 // em-dash when the owner has no profile row — the endpoint carries no email.

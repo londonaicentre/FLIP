@@ -11,13 +11,6 @@
     limitations under the License.
 -->
 
----
-
-tags: [quickstart]
-dataset: [spleen]
-framework: [monai]
----
-
 # Federated Learning with MONAI and Flower (Quickstart Example)
 
 This example of Flower uses a small MONAI UNet based on FLIP's implementation and a training-only `ClientApp`. It reads NIfTI data from the local `./data` folder and does not write any outputs.
@@ -203,27 +196,30 @@ export XNAT_USER=your-username
 export XNAT_PASS=your-password
 
 make -C fl-tutorials upload-spleen-labels FL_BACKEND=flower FLIP_PROJECT_ID=<project-uuid> \
-  XNAT_URLS="http://127.0.0.1:8104 http://127.0.0.1:8106" DRY_RUN=1
+  XNAT_URLS="http://127.0.0.1:8105 http://127.0.0.1:8107" DRY_RUN=1
 ```
 
 `DRY_RUN=1` reports what would happen without changing anything — do that first, then drop it to upload.
-One invocation covers every Trust in `XNAT_URLS` (above, the dev roster: GSTT on 8104, KCH on 8106), which
+One invocation covers every Trust in `XNAT_URLS` (above, the dev roster: GSTT on 8105, KCH on 8107 —
+the XNAT **web** ports; 8104 and 8106 are the DICOM receivers and will not answer a REST call), which
 matters because each Trust's XNAT holds only its own studies and a Trust left without labels fails training.
 
 > **This tutorial's download covers only part of the cohort.** `download-spleen-data FL_BACKEND=flower`
 > pulls a fixed 6-case HF snapshot and ignores `NUM_CASES`, while the accession mapping spans 41. Enriching
 > from it succeeds but leaves most of the cohort unlabelled, and the command says so. For full coverage use
-> the NVFLARE download (`make -C fl-tutorials/nvflare download-spleen-data NUM_CASES=41`) and point
+> the MSD download (`make -C fl-tutorials download-spleen-data NUM_CASES=41`) and point
 > `SPLEEN_LABELS_DIR` at it — the labels are backend-agnostic once they are in XNAT.
 
 Enrichment is **backend-agnostic**: the labels live in XNAT, so a project enriched once can be trained by
-either backend. This target deliberately delegates to the single copy of the upload script in
-`fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/utils/`, passing this tutorial's own data
-directory — see that tutorial's README for the full walkthrough and options.
+either backend. The upload script is a single copy in
+[`fl-tutorials/datasets/spleen/`](../../datasets/spleen); with `FL_BACKEND=flower` the target points it at
+this tutorial's FLIP-format tree — see the
+[NVFLARE spleen tutorial's README](../../nvflare/image_segmentation/3d_spleen_segmentation/README.md) for
+the full walkthrough and options.
 
 ## Data Location
 
-By default, the app reads from:
+By default, the app reads from the shared gitignored `fl-tutorials/data/` root:
 
-- `data/sample_get_dataframe_response.csv`
-- `data/accession-resources`
+- `data/spleen/sample_get_dataframe_response.csv`
+- `data/spleen/accession-resources`
