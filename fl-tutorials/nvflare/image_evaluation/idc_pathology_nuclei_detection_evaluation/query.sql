@@ -9,17 +9,24 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Cohort query placeholder for the IDC digital-pathology nuclei-detection tutorial.
+-- Cohort query for the IDC digital-pathology nuclei-detection tutorial.
 --
--- This tutorial runs under LOCAL_DEV against slides downloaded from the NCI Imaging Data Commons,
--- where `flip.get_dataframe` validates this query and then ignores it, reading the per-site
--- `dataframe.csv` instead. It is kept so the tutorial has the same shape as the others and so the
--- exported job carries a syntactically valid query.
+-- Under LOCAL_DEV `flip.get_dataframe` validates this query and then ignores it, reading the
+-- per-site `dataframe.csv` instead, so a simulator run never exercises it. On a trust it is the
+-- real thing: it selects the slides whose imaging is pulled into XNAT and scored.
 --
--- Running this on a real trust would additionally require a pathology route through the platform
--- that does not exist yet: `ResourceType` has no pathology member, imaging-api converts DICOM to
--- NIfTI (meaningless for a tiled RGB pyramid), XNAT's model is series-oriented, and OMOP MI-CDM
--- would need an `SM` modality concept. See the README's "Running this on a real trust" section.
+-- This comment previously said a real-trust run was impossible, listing four blockers. None of them
+-- hold, and they are recorded here only so nobody reinstates the claim:
+--
+--   * `ResourceType` has a DICOM member, which is what whole-slide imaging is fetched as.
+--   * The DICOM-to-NIfTI conversion is an asynchronous event subscription, not part of the pull.
+--   * XNAT archives `xnat:smSessionData` and serves it over DICOMweb.
+--   * OMOP already carries the slide-microscopy modality concept this query joins on.
+--
+-- What a trust does need is the data: `make -C fl-tutorials seed-idc-pathology` puts the slides in
+-- Orthanc and these rows in OMOP. Note the cohort must also clear that trust's
+-- COHORT_QUERY_THRESHOLD (default 10) before row-level data is released at all, which is why the
+-- tutorial ships twelve slides per site rather than five.
 SELECT
     io.accession_id AS accession_id,
     p.person_source_value AS patient_id
