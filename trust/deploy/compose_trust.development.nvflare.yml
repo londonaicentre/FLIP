@@ -55,6 +55,24 @@ services:
       - ${FL_PROVISIONED_DIR}/net-1/services/${FL_KIT_SLOT}/startup:/app/startup
       - ${FL_PROVISIONED_DIR}/net-1/services/${FL_KIT_SLOT}/transfer:/app/transfer
     environment:
+      # Explicit because `user:` above runs the container as the host uid, which has no
+      # /etc/passwd entry in the image — so getpwuid finds nothing and HOME falls back to
+      # "/", where nothing is writable. torch then dies on $HOME/.cache with
+      # "PermissionError: [Errno 13] Permission denied: '/.cache'" and the client aborts
+      # the train task mid-job, which surfaces server-side only as a bare TASK_ABORTED
+      # (FLIP#1171). The image's own user supplied this for free before the override, and
+      # compose.development.yml makes the same point about libpq's getpwuid for flip-api.
+      - HOME=/home/flip
+      # Same reason HOME is set: the overridden uid is absent from /etc/passwd, so
+      # pwd.getpwuid() raises KeyError. torch hits this inside torch.optim.Adam ->
+      # import torch._dynamo, which then dies *partway* through the module — after
+      # @CacheArtifactFactory.register has recorded "precompile" but before the import
+      # completes. Python discards the half-imported module while the registry keeps
+      # the entry, so the retry re-runs the decorator and raises the far more
+      # confusing "Artifact of type=precompile already registered in mega-cache
+      # artifact factory". getpass.getuser() checks these vars before pwd (FLIP#1171).
+      - USER=flip
+      - LOGNAME=flip
       - NET_ID=net-1
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
       - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
@@ -98,6 +116,24 @@ services:
       - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/startup:/app/startup
       - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/transfer:/app/transfer
     environment:
+      # Explicit because `user:` above runs the container as the host uid, which has no
+      # /etc/passwd entry in the image — so getpwuid finds nothing and HOME falls back to
+      # "/", where nothing is writable. torch then dies on $HOME/.cache with
+      # "PermissionError: [Errno 13] Permission denied: '/.cache'" and the client aborts
+      # the train task mid-job, which surfaces server-side only as a bare TASK_ABORTED
+      # (FLIP#1171). The image's own user supplied this for free before the override, and
+      # compose.development.yml makes the same point about libpq's getpwuid for flip-api.
+      - HOME=/home/flip
+      # Same reason HOME is set: the overridden uid is absent from /etc/passwd, so
+      # pwd.getpwuid() raises KeyError. torch hits this inside torch.optim.Adam ->
+      # import torch._dynamo, which then dies *partway* through the module — after
+      # @CacheArtifactFactory.register has recorded "precompile" but before the import
+      # completes. Python discards the half-imported module while the registry keeps
+      # the entry, so the retry re-runs the decorator and raises the far more
+      # confusing "Artifact of type=precompile already registered in mega-cache
+      # artifact factory". getpass.getuser() checks these vars before pwd (FLIP#1171).
+      - USER=flip
+      - LOGNAME=flip
       - NET_ID=net-2
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
       - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}

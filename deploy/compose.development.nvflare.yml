@@ -118,6 +118,12 @@ services:
       - AWS_PROFILE=${AWS_PROFILE}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       - HOME=/home/flip
+      # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises
+      # KeyError: 'getpwuid(): uid not found'. getpass.getuser() consults these first
+      # and only falls back to pwd, so naming the image's user here keeps every
+      # getuser() caller working without mounting the host's passwd file (FLIP#1171).
+      - USER=flip
+      - LOGNAME=flip
     # Run as the HOST user's uid, with the image's gid (FLIP#1171). The bind mounts
     # below — the provisioned NVFLARE kit and the operator's 0600 AWS SSO token — are
     # owned by whoever ran `make provision` and `aws sso login`, so only a matching
@@ -180,6 +186,12 @@ services:
       - AWS_PROFILE=${AWS_PROFILE}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       - HOME=/home/flip
+      # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises
+      # KeyError: 'getpwuid(): uid not found'. getpass.getuser() consults these first
+      # and only falls back to pwd, so naming the image's user here keeps every
+      # getuser() caller working without mounting the host's passwd file (FLIP#1171).
+      - USER=flip
+      - LOGNAME=flip
     # Run as the HOST user's uid, with the image's gid (FLIP#1171). The bind mounts
     # below — the provisioned NVFLARE kit and the operator's 0600 AWS SSO token — are
     # owned by whoever ran `make provision` and `aws sso login`, so only a matching
