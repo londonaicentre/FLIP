@@ -221,6 +221,8 @@ When a FLIP project is created, the ``dicom_to_nifti`` setting controls the even
 
 The event subscription can be activated or deactivated later via the XNAT Event Service API.
 
+A project created with 'Includes imaging data' turned off (``has_imaging=False``) never reaches XNAT at all: the Central Hub skips the imaging stage at approval, so no XNAT project, event subscription or PACS pull is created at any trust.
+
 Event Service API Endpoints
 ============================
 

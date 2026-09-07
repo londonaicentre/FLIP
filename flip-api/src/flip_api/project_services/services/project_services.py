@@ -229,6 +229,7 @@ def create_project(
             status=ProjectStatus.UNSTAGED,  # Default status
             creation_timestamp=datetime.utcnow(),
             dicom_to_nifti=payload.dicom_to_nifti,
+            has_imaging=payload.has_imaging,
         )
         session.add(new_project)
         session.flush()  # Ensure the project is added and has an ID
@@ -952,6 +953,7 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
         status=project.status,
         query=query_data,
         dicom_to_nifti=project.dicom_to_nifti,
+        has_imaging=project.has_imaging,
     )  # type: ignore[call-arg]
 
     logger.debug(f"Returning project response: {project_response}")
