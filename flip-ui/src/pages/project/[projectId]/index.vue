@@ -105,7 +105,15 @@
                 <LifecycleTrack :steps="steps" class="my-4" />
             </div>
 
-            <div class="relative grid grid-cols-1 gap-4 p-4 pt-0 lg:flex-1 lg:min-h-0 lg:items-stretch lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,1.5fr)_minmax(17rem,0.75fr)]">
+            <div
+                data-test="project-workspace"
+                :class="[
+                    'relative grid grid-cols-1 gap-4 p-4 pt-0 lg:flex-1 lg:min-h-0 lg:items-stretch',
+                    hasImaging
+                        ? 'lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,1.5fr)_minmax(17rem,0.75fr)]'
+                        : 'lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,2.25fr)]'
+                ]"
+            >
                 <div class="flex flex-col gap-4 lg:min-h-0">
                     <div class="shrink-0">
                         <QueryDetails :query-details="project.query" />
@@ -138,13 +146,18 @@
                     </Transition>
                 </div>
 
-                <div class="lg:min-h-0">
+                <div v-if="hasImaging" class="lg:min-h-0">
                     <ProjectStatus
                         :can-load="projectApproved"
                         :cohort-size="project.query?.totalCohort"
                     />
                 </div>
 
+                <!-- No absolute-position or sticky variant either way now: the grid is the
+                     page's single flex-1 row, so the cell's height comes from the viewport
+                     rather than from whatever sibling card happens to define the row. That
+                     holds with the imaging status card present and, on a tabular-only
+                     project (FLIP#1071), with nothing in its place. -->
                 <div class="lg:min-h-0">
                     <LatestModels />
                 </div>
@@ -158,6 +171,7 @@
             :project-unstaged="isProjectUnstaged() && !isViewer"
             :description="project.description"
             :dicom-to-nifti="project.dicom_to_nifti ?? true"
+            :has-imaging="hasImaging"
             :updating="projectUpdating"
             :owner-id="project.ownerId"
             @close="closeEditProjectDrawer"
@@ -184,6 +198,7 @@ import LifecycleTrack from "@/partials/projects/LifecycleTrack.vue";
 import ProjectApproval from "@/partials/projects/ProjectApproval.vue";
 import ProjectStaging from "@/partials/projects/ProjectStaging.vue";
 import ProjectStatus from "@/partials/projects/ProjectStatus.vue";
+import { projectHasImaging } from "@/partials/projects/projectType";
 import { approveProject, editProject, stageProject as stageProjectWithTrusts, unstageProject } from "@/services/project-service";
 import { useAuthStore, UserPermissions } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
@@ -261,6 +276,9 @@ const { project } = storeToRefs(projectStore);
 const editProjectPermissions: UserPermissions[] = ["CanCreateProjects"];
 const unstageProjectPermissions: UserPermissions[] = ["CanUnstageProjects"];
 const { isViewer, canCreateProjects } = usePermissions();
+
+// Creation-time flag (FLIP#1071). Absent on a hub predating it, which means imaging.
+const hasImaging = computed(() => projectHasImaging(project.value));
 
 const projectApproved = computed(() => {
     return project?.value?.status === "APPROVED";
