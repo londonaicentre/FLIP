@@ -1,5 +1,5 @@
 {
-  "job_type": "standard_client_api",
+  "job_type": "standard",
   "SERVER_CHECKPOINT": "pretrained_weights.pt",
   "AGGREGATE_ONLY_REGEX": "omni_heads",
   "GLOBAL_ROUNDS": 50,

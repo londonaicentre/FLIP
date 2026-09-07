@@ -9,12 +9,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Tuple, Union
-
 import monai.transforms as mt
 
 
-def get_train_transforms(spatial_shape: Union[Tuple, List]):
+def get_train_transforms(spatial_shape: tuple | list):
     return mt.Compose([
         mt.LoadImaged(keys=["image"], image_only=True),
         mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
@@ -38,7 +36,7 @@ def get_train_transforms(spatial_shape: Union[Tuple, List]):
     ])
 
 
-def get_val_transforms(spatial_shape: Union[Tuple, List]):
+def get_val_transforms(spatial_shape: tuple | list):
     return mt.Compose([
         mt.LoadImaged(keys=["image"], image_only=True),
         mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),

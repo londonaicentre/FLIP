@@ -12,7 +12,6 @@
 
 """Tests for flip_api.main rate limit handler, CORS, and docs gating."""
 
-import asyncio
 import importlib
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -26,12 +25,13 @@ from flip_api.main import app, rate_limit_exceeded_handler
 
 
 class TestRateLimitExceededHandler:
-    def test_returns_429_with_detail(self):
+    @pytest.mark.asyncio
+    async def test_returns_429_with_detail(self):
         """rate_limit_exceeded_handler should return a 429 JSON response."""
         request = MagicMock()
         exc = MagicMock()
 
-        response = asyncio.get_event_loop().run_until_complete(rate_limit_exceeded_handler(request, exc))
+        response = await rate_limit_exceeded_handler(request, exc)
 
         assert response.status_code == 429
         assert b"Rate limit exceeded" in response.body

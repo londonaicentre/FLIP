@@ -1,5 +1,5 @@
 {
-  "job_type": "evaluation_client_api",
+  "job_type": "evaluation",
   "label_mapping": {
     "arkplus_pretrained": "nih14_5class",
     "arkplus_finetuned": null

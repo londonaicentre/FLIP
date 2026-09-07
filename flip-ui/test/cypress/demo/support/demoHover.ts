@@ -41,7 +41,9 @@ Cypress.Commands.add(
         const { fx = 0.5, fy = 0.5, dwellMs = 900 } = options;
         cy.wrap(subject, { log: false }).then(($el) => {
             const el = $el[0];
-            const win = (el.ownerDocument.defaultView ?? window) as Window;
+            // `Window & typeof globalThis`, not bare `Window`: the constructors (MouseEvent, …)
+            // hang off the global scope, not the interface.
+            const win = (el.ownerDocument.defaultView ?? window) as Window & typeof globalThis;
             const rect = el.getBoundingClientRect();
             const x = rect.left + rect.width * fx;
             const y = rect.top + rect.height * fy;
@@ -66,7 +68,7 @@ Cypress.Commands.add(
 declare global {
     // eslint-disable-next-line @typescript-eslint/no-namespace
     namespace Cypress {
-        interface Chainable<Subject = unknown> {
+        interface Chainable<Subject = any> {
             demoHover(options?: DemoHoverOptions): Chainable<Subject>;
         }
     }

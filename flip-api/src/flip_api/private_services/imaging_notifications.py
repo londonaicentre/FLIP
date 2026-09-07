@@ -15,10 +15,9 @@
 import json
 from uuid import UUID
 
-import boto3
+from botocore.exceptions import BotoCoreError
 from sqlmodel import Session, col, select
 
-from flip_api.config import get_settings
 from flip_api.db.models.main_models import Queries, Trust, TrustTask, XNATImageStatus, XNATProjectStatus
 from flip_api.domain.interfaces.trust import (
     ICreatedImagingProject,
@@ -27,6 +26,7 @@ from flip_api.domain.interfaces.trust import (
 )
 from flip_api.private_services.project_images_helpers import insert_status
 from flip_api.utils.constants import IMAGING_INVITE_TEMPLATE_NAME, IMAGING_PROJECT_ACCESS_TEMPLATE_NAME
+from flip_api.utils.email_sender import EmailDispatchError, send_templated_email
 from flip_api.utils.encryption import decrypt
 from flip_api.utils.logger import logger
 
@@ -40,12 +40,32 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
     Called after the task result has been committed to the database.
     Any exceptions are expected to be caught by the caller.
 
+    Failures are classified, not counted. A ``BotoCoreError`` — no region, no
+    credentials, an unreachable endpoint — is systemic: nothing can be sent for
+    any recipient, so it aborts the run. Both callers (``trust_tasks`` and the
+    ``stale_task_recovery`` sweep) clear ``needs_post_processing`` only on a
+    clean return, so swallowing that would discard the retry and leave those
+    users with no invite and no trace in the retry queue. Anything else,
+    notably a ``ClientError`` such as SES ``MessageRejected`` on one bad
+    address, is that recipient's problem alone: it is logged and skipped so the
+    remaining recipients still get their mail and the task reaches a terminal
+    state.
+
+    Counting failures instead (raising when all attempts failed) cannot make
+    that distinction on the batch shape this actually runs with — one created
+    XNAT user and no added users, so a single permanently rejected address
+    would look identical to an outage. ``retry_failed_post_processing`` has no
+    attempt cap and never increments ``retry_count``, so such a task would be
+    re-sent every sweep forever.
+
     Args:
         task (TrustTask): The completed CREATE_IMAGING task with result data.
         db (Session): Database session.
 
     Raises:
         ValueError: If the task has no result data.
+        EmailDispatchError: If dispatch failed systemically, so no recipient
+            could have been reached.
     """
     if not task.result:
         raise ValueError(f"Task {task.id} has no result data")
@@ -84,9 +104,6 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
     trust = db.exec(select(Trust).where(Trust.id == task.trust_id)).first()
     trust_name = trust.name if trust else "Unknown Trust"
 
-    sesv2 = boto3.client("sesv2", region_name=get_settings().AWS_REGION)
-    sender_email = get_settings().AWS_SES_SENDER_EMAIL_ADDRESS
-
     # Send invite emails to newly created users. The email carries a host-less "set your own
     # password" link (an XNAT alias-token path), never a password (FLIP-PT-079). The link is
     # decrypted here only to place it in the email — no standing credential is ever transmitted.
@@ -102,20 +119,23 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
                 setup_path=setup_path,
             )
 
-            sesv2.send_email(
-                FromEmailAddress=sender_email,
-                Destination={"ToAddresses": [user.email]},
-                Content={
-                    "Template": {
-                        "TemplateName": IMAGING_INVITE_TEMPLATE_NAME,
-                        "TemplateData": json.dumps(template_data.model_dump(mode="json"), default=str),
-                    }
-                },
+            send_templated_email(
+                recipient=user.email,
+                template_name=IMAGING_INVITE_TEMPLATE_NAME,
+                template_data=template_data.model_dump(mode="json"),
             )
-            logger.info(f"Sent XNAT invite email to {user.email} for project '{imaging_project.name}'")
+            logger.info(f"XNAT invite dispatched to {user.email} for project '{imaging_project.name}'")
 
+        except BotoCoreError as e:
+            raise EmailDispatchError(
+                f"Imaging notification dispatch failed systemically for task {task.id} "
+                f"({type(e).__name__}) — no recipient could be reached, so the task stays "
+                "queued for retry"
+            ) from e
         except Exception as e:
-            logger.error(f"Failed to send invite email to {user.email}: {e}")
+            # exception(), not error(): the traceback is what distinguishes a
+            # rejected address from a template or decrypt fault.
+            logger.exception(f"Failed to send invite email to {user.email}: {e}")
 
     # Send project access notifications to existing users (no password)
     for added_user in imaging_project.added_users:
@@ -127,20 +147,24 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
                 username=added_user.username,
             )
 
-            sesv2.send_email(
-                FromEmailAddress=sender_email,
-                Destination={"ToAddresses": [added_user.email]},
-                Content={
-                    "Template": {
-                        "TemplateName": IMAGING_PROJECT_ACCESS_TEMPLATE_NAME,
-                        "TemplateData": json.dumps(access_template_data.model_dump(mode="json"), default=str),
-                    }
-                },
+            send_templated_email(
+                recipient=added_user.email,
+                template_name=IMAGING_PROJECT_ACCESS_TEMPLATE_NAME,
+                template_data=access_template_data.model_dump(mode="json"),
             )
-            logger.info(f"Sent project access email to {added_user.email} for project '{imaging_project.name}'")
+            logger.info(
+                f"Project access notification dispatched to {added_user.email} "
+                f"for project '{imaging_project.name}'"
+            )
 
+        except BotoCoreError as e:
+            raise EmailDispatchError(
+                f"Imaging notification dispatch failed systemically for task {task.id} "
+                f"({type(e).__name__}) — no recipient could be reached, so the task stays "
+                "queued for retry"
+            ) from e
         except Exception as e:
-            logger.error(f"Failed to send project access email to {added_user.email}: {e}")
+            logger.exception(f"Failed to send project access email to {added_user.email}: {e}")
 
 
 def _get_latest_query_id(project_id: UUID, db: Session) -> UUID | None:

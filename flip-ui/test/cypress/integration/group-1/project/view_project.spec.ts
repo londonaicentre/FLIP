@@ -40,7 +40,13 @@ describe("Project Page: Researcher & Owner [UNAPPROVED]", () => {
         }
         ).as("getProject");
 
-        cy.intercept("GET", "/users/validUser@gmail.com", { statusCode: 200 }).as("validUser");
+        cy.intercept(
+
+            { method: "GET", pathname: "/users/lookup", query: { email: "validUser@gmail.com" } },
+
+            { statusCode: 200 }
+
+        ).as("validUser");
 
         cy.intercept("PUT", `projects/${validProject.id}`, { statusCode: 200 }).as("updateProject");
         cy.intercept("DELETE", `projects/${validProject.id}`, {
@@ -197,7 +203,13 @@ describe("Editing Project", () => {
         }
         ).as("getProject");
 
-        cy.intercept("GET", "users/validUser@gmail.com", { statusCode: 200 }).as("validUser");
+        cy.intercept(
+
+            { method: "GET", pathname: "/users/lookup", query: { email: "validUser@gmail.com" } },
+
+            { statusCode: 200 }
+
+        ).as("validUser");
         cy.intercept("PUT", `projects/${validProject.id}`, { statusCode: 200 }).as("updateProject");
 
         cy.visit("/project/" + validProject.id);
@@ -213,7 +225,16 @@ describe("Editing Project", () => {
         cy.getBySel("add-user-project-btn").click();
 
 
-        cy.intercept("GET", "/users/invalidUser@gmail.com", { statusCode: 404 }).as("invalidUser");
+        cy.intercept(
+
+
+            { method: "GET", pathname: "/users/lookup", query: { email: "invalidUser@gmail.com" } },
+
+
+            { statusCode: 404 }
+
+
+        ).as("invalidUser");
         cy.getBySel("add-user-project-input").clear().type("invalidUser@gmail.com");
         cy.getBySel("add-user-project-btn").click();
         cy.wait("@invalidUser");

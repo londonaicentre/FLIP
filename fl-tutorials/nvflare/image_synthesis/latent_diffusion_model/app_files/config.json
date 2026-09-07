@@ -16,17 +16,33 @@
     "w_reconstruction_loss": 1.0,
     "w_perceptual_loss": 1,
     "w_gan_loss": 0.1,
-    "w_kl_loss": 1e-9,
-    "spatial_shape": [128, 128, 32],
+    "w_kl_loss": 1e-09,
+    "spatial_shape": [
+        128,
+        128,
+        32
+    ],
     "net_config": {
         "spatial_dims": 3,
         "stage_1": {
             "in_channels": 1,
             "spatial_dims": 3,
             "out_channels": 1,
-            "num_res_blocks": [1, 1, 2],
-            "channels": [64, 96, 128],
-            "attention_levels": [false, false, false],
+            "num_res_blocks": [
+                1,
+                1,
+                2
+            ],
+            "channels": [
+                64,
+                96,
+                128
+            ],
+            "attention_levels": [
+                false,
+                false,
+                false
+            ],
             "latent_channels": 3
         },
         "discriminator": {
@@ -42,9 +58,24 @@
             "out_channels": 3,
             "with_conditioning": false,
             "cross_attention_dim": 0,
-            "channels": [32, 64, 128, 128],
-            "num_res_blocks": [2, 2, 2, 2],
-            "attention_levels": [false, false, true, true]
+            "channels": [
+                32,
+                64,
+                128,
+                128
+            ],
+            "num_res_blocks": [
+                2,
+                2,
+                2,
+                2
+            ],
+            "attention_levels": [
+                false,
+                false,
+                true,
+                true
+            ]
         }
     }
 }

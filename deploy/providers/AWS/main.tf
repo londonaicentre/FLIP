@@ -297,11 +297,13 @@ module "flip_api_secret" {
 # Fargate and use the task roles in iam_ecs.tf; the bastion needs no access to
 # application secrets, buckets, Cognito, SES, or CloudWatch Logs.
 module "ec2_role" {
-  source                = "terraform-aws-modules/iam/aws//modules/iam-assumable-role"
-  version               = "~> 5.0"
-  role_name             = "ec2-role"
-  create_role           = "true"
-  trusted_role_services = ["ec2.amazonaws.com"]
+  source      = "terraform-aws-modules/iam/aws//modules/iam-assumable-role"
+  version     = "~> 5.0"
+  role_name   = "ec2-role"
+  create_role = "true"
+  # FLIP#962: the CI apply role may only create a boundary-carrying role.
+  role_permissions_boundary_arn = local.iam_permissions_boundary_arn
+  trusted_role_services         = ["ec2.amazonaws.com"]
   custom_role_policy_arns = [
     "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
   ]
@@ -340,11 +342,13 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 #      pattern to AWS-hosted trusts would remove S3 entirely from the Trust
 #      role's blast radius.
 module "trust_ec2_role" {
-  source                = "terraform-aws-modules/iam/aws//modules/iam-assumable-role"
-  version               = "~> 5.0"
-  role_name             = "trust-ec2-role"
-  create_role           = "true"
-  trusted_role_services = ["ec2.amazonaws.com"]
+  source      = "terraform-aws-modules/iam/aws//modules/iam-assumable-role"
+  version     = "~> 5.0"
+  role_name   = "trust-ec2-role"
+  create_role = "true"
+  # FLIP#962: the CI apply role may only create a boundary-carrying role.
+  role_permissions_boundary_arn = local.iam_permissions_boundary_arn
+  trusted_role_services         = ["ec2.amazonaws.com"]
   custom_role_policy_arns = [
     "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
     "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
@@ -366,17 +370,87 @@ resource "aws_iam_role_policy" "trust_ec2_s3" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = [
-          "s3:ListBucket",
-          "s3:GetBucketLocation",
-        ]
+        # Scoped to the prefixes this host actually reads, mirroring S3ListAicentreBucketForKit
+        # in iam_ecs.tf. Bucket-wide list/read was largely inert before the kms:Decrypt grant
+        # below (nothing encrypted could be read at all); granting decrypt completes the
+        # capability, so the scope has to be narrowed in the same change. The bucket also holds
+        # every net's kits, the fl-server's own kit, the NVFLARE provisioning CA registry and
+        # the licensed OMOP vocabulary — and this is the host that runs researcher-submitted
+        # FL code, so it is the role that least deserves bucket-wide read.
+        #
+        # The narrowing deliberately stops at the kit-type prefix, i.e. within these trees any
+        # trust host can still read any trust's kit. Slot-level (Trust_<n>) scoping is not
+        # expressible here: one shared trust-ec2-role serves every trust host and the slot is
+        # an Ansible-runtime value IAM never sees. Date-level scoping via var.flare_kit_date /
+        # var.flower_kit_date was considered and deferred: only one of the two is non-empty
+        # per backend (naive interpolation yields a dead "//*" ARN for the other, so it needs
+        # conditional resource lists), and it couples `terraform apply` to the Ansible
+        # -e fl_kit_date value — re-staging kits at a new date against stale IAM would
+        # hard-fail the exact task this change fixes. Net effect is still a narrowing: the
+        # pre-#1009 statement granted GetObject on the entire bucket. The residual is tracked
+        # in FLIP#1164, which carries this reasoning and the per-trust-role route that makes
+        # slot scoping expressible — this comment is not the only record of the deferral.
+        #
+        # Deliberately no s3:GetBucketLocation: a GetBucketLocation request carries no
+        # s3:prefix context key, so under this condition the grant could never authorize
+        # anything, and splitting it out unconditioned would widen the role for a call
+        # nothing on this host makes — the region is supplied by the instance's own
+        # configuration. Kit and vocab staging were verified on the stag EC2 trust with
+        # exactly the actions below.
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
         Resource = [aws_s3_bucket.aicentre_bucket.arn]
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              "fl-flare-participant-kits/*", "fl-flare-participant-kits",
+              "fl-flower-participant-kits/*", "fl-flower-participant-kits",
+              "vocab/*", "vocab",
+            ]
+          }
+        }
       },
       {
+        # The three prefixes above: the two participant-kit trees (site.yml kit staging) and
+        # the licensed OMOP core-vocabulary bundle (site.yml, "download core vocabulary bundle
+        # from S3 (instance role)").
+        Effect = "Allow"
+        Action = ["s3:GetObject"]
+        Resource = [
+          "${aws_s3_bucket.aicentre_bucket.arn}/fl-flare-participant-kits/*",
+          "${aws_s3_bucket.aicentre_bucket.arn}/fl-flower-participant-kits/*",
+          "${aws_s3_bucket.aicentre_bucket.arn}/vocab/*",
+        ]
+      },
+      {
+        # The bucket is SSE-KMS with the app CMK (services.tf, key defined in kms.tf),
+        # which declares no key policy and so relies on the AWS default that delegates
+        # authorization to IAM. s3:GetObject alone is therefore not enough: without this
+        # statement every read of an encrypted object fails AccessDenied on kms:Decrypt.
+        # That matters more than it looks, because the kit-staging task in site.yml wipes
+        # its destination before fetching — a failed read leaves the host with no kit
+        # rather than the previous one. Default bucket encryption applies only to objects
+        # written after it was enabled, which is why kits predating the CMK still download
+        # with s3:GetObject alone and this gap went unnoticed. Decrypt is the whole read
+        # path: kms:DescribeKey returns key metadata S3 never asks this role for, so it is
+        # deliberately absent. The symmetry with the ECS task roles (iam_ecs.tf) that would
+        # otherwise argue for carrying it does not hold — those roles also hold
+        # kms:GenerateDataKey/GenerateDataKeyWithoutPlaintext because they write objects,
+        # which this role deliberately cannot. This is the host that runs
+        # researcher-submitted training code, so it holds the least of the three.
+        # See FLIP#965.
         Effect   = "Allow"
-        Action   = ["s3:GetObject"]
-        Resource = ["${aws_s3_bucket.aicentre_bucket.arn}/*"]
+        Action   = ["kms:Decrypt"]
+        Resource = [aws_kms_key.flip_app_key.arn]
+        # The CMK also encrypts Secrets Manager (kms.tf), so constrain the grant to
+        # decrypts S3 performs on this host's behalf. Reading a secret would still need
+        # secretsmanager:GetSecretValue, which this role does not have — this keeps that
+        # true if the role ever gains it.
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "s3.${var.AWS_REGION}.amazonaws.com"
+          }
+        }
       },
     ]
   })
@@ -386,7 +460,7 @@ resource "aws_iam_role_policy" "trust_ec2_s3" {
 # logs through its CloudWatch agent. The Central Hub bastion has no app logs.
 resource "aws_cloudwatch_log_group" "flip_trust_log_group" {
   name              = "/aws/ec2/flip-trust"
-  retention_in_days = 7
+  retention_in_days = local.log_retention_days
 }
 
 # Retain the keypair for SSH-over-SSM (`ssh flip`) and Ansible. No inbound SSH
@@ -427,6 +501,14 @@ resource "aws_instance" "ec2_instance" {
     delete_on_termination = true
     encrypted             = true
   }
+
+  # IMDSv2 only (FLIP#1058): session tokens close the classic SSRF →
+  # instance-credential-theft read. Nothing on this host speaks IMDSv1, and the
+  # default hop limit of 1 stands — the bastion runs no containers.
+  metadata_options {
+    http_endpoint = "enabled"
+    http_tokens   = "required"
+  }
 }
 
 # Application Load Balancer
@@ -463,6 +545,7 @@ resource "aws_ec2_tag" "alb_security_group_flip_sg" {
 
 module "alb" {
   source                     = "terraform-aws-modules/alb/aws"
+  version                    = "~> 10.0"
   name                       = "flip-alb"
   vpc_id                     = module.flip_vpc.vpc_id
   internal                   = true
@@ -508,6 +591,7 @@ module "alb" {
 # Network Load Balancer for FL server TCP/TLS pass-through
 module "fl_server_nlb" {
   source                     = "terraform-aws-modules/alb/aws"
+  version                    = "~> 10.0"
   name                       = "flip-fl-server-nlb"
   load_balancer_type         = "network"
   vpc_id                     = module.flip_vpc.vpc_id

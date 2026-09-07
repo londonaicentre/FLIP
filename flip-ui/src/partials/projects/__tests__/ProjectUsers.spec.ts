@@ -12,12 +12,14 @@
  */
 
 import { createTestingPinia } from "@pinia/testing";
-import { mount } from "@vue/test-utils";
-import { describe, expect, test, vi } from "vitest";
+import { flushPromises, mount } from "@vue/test-utils";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+
+import { lookupProjectUser } from "@/services/user-service";
 
 import ProjectUsers from "../ProjectUsers.vue";
 
-vi.mock("@/services/user-service", () => ({ validateUser: vi.fn() }));
+vi.mock("@/services/user-service", () => ({ lookupProjectUser: vi.fn() }));
 
 function mountProjectUsers(props: Record<string, unknown> = {}) {
     // Cast: the component declares `users` as required, but the whole
@@ -46,10 +48,20 @@ function mountProjectUsers(props: Record<string, unknown> = {}) {
             ],
             directives: { tippy: () => {} },
             stubs: {
-                AiAlert: { template: "<div><slot /></div>" },
+                // Renders `text` so the add-user error messages are assertable.
+                AiAlert: {
+                    props: ["text"],
+                    template: "<div>{{ text }}<slot /></div>"
+                },
                 AiButton: { template: "<button><slot /></button>" },
                 AiInput: { template: "<input />" },
-                Form: { template: "<form><slot /></form>" }
+                // Declares the submit event so tests can drive the real handler without
+                // standing up vee-validate.
+                Form: {
+                    name: "Form",
+                    emits: ["submit"],
+                    template: "<form><slot /></form>"
+                }
             }
         }
     });
@@ -104,5 +116,82 @@ describe("ProjectUsers — defensive prop default", () => {
         });
         expect(wrapper.text()).not.toContain("self@e.com");
         expect(wrapper.text()).toContain("bob@e.com");
+    });
+});
+
+describe("ProjectUsers — add-user submit path", () => {
+    beforeEach(() => {
+        vi.mocked(lookupProjectUser).mockReset();
+    });
+
+    // Drives the component's real submit handler. vee-validate's Form is stubbed, so the submit
+    // event is emitted directly with the (values, actions) pair the real Form would supply.
+    async function submitEmail(wrapper: ReturnType<typeof mountProjectUsers>, email: string) {
+        const resetForm = vi.fn();
+
+        wrapper.findComponent({ name: "Form" }).vm.$emit("submit", { email }, { resetForm });
+        await flushPromises();
+
+        return resetForm;
+    }
+
+    const errorText = (wrapper: ReturnType<typeof mountProjectUsers>) =>
+        wrapper.find("[data-test=\"invalid-user-project-list\"]").text();
+
+    test("adds the resolved user and emits the updated list", async () => {
+        const resolved = {
+            id: "u9",
+            email: "new@e.com",
+            isDisabled: false
+        };
+        vi.mocked(lookupProjectUser).mockResolvedValue(resolved);
+        const wrapper = mountProjectUsers({ users: [] });
+
+        const resetForm = await submitEmail(wrapper, "new@e.com");
+
+        expect(lookupProjectUser).toHaveBeenCalledWith("new@e.com");
+        expect(wrapper.text()).toContain("new@e.com");
+        expect(wrapper.emitted("updatedUsers")?.at(-1)?.[0]).toEqual([resolved]);
+        expect(resetForm).toHaveBeenCalled();
+    });
+
+    test("rejects a disabled account without adding it", async () => {
+        vi.mocked(lookupProjectUser).mockResolvedValue({
+            id: "u9",
+            email: "off@e.com",
+            isDisabled: true
+        });
+        const wrapper = mountProjectUsers({ users: [] });
+
+        await submitEmail(wrapper, "off@e.com");
+
+        expect(errorText(wrapper)).toContain("off@e.com is disabled");
+        expect(wrapper.emitted("updatedUsers")).toBeUndefined();
+    });
+
+    test("reports an unknown address as not found", async () => {
+        // The hub answers an unregistered address with 404 (FLIP#907).
+        vi.mocked(lookupProjectUser).mockRejectedValue({ response: { status: 404 } });
+        const wrapper = mountProjectUsers({ users: [] });
+
+        await submitEmail(wrapper, "ghost@e.com");
+
+        expect(errorText(wrapper)).toContain("ghost@e.com cannot be found");
+        expect(wrapper.emitted("updatedUsers")).toBeUndefined();
+    });
+
+    test("does not call the hub for an address already in the list", async () => {
+        const wrapper = mountProjectUsers({
+            users: [{
+                id: "u1",
+                email: "alice@e.com",
+                isDisabled: false
+            }]
+        });
+
+        await submitEmail(wrapper, "alice@e.com");
+
+        expect(lookupProjectUser).not.toHaveBeenCalled();
+        expect(errorText(wrapper)).toContain("alice@e.com has already been added");
     });
 });

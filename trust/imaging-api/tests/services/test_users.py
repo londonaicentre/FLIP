@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import re
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -184,8 +185,53 @@ def test_to_create_imaging_user_with_conflict(mock_get_users, mock_pwd, headers)
     hub_user = CentralHubUser(id=uuid4(), email="john.doe@hospital.nhs.uk")
 
     create_user_req = to_create_imaging_user(hub_user, headers)
-    # Should append suffix to avoid collision
-    assert create_user_req.username == "john.doe1"
+    # Should append a suffix to the *sanitised* stem to avoid collision — the dot from the email
+    # local part must not come back.
+    assert create_user_req.username == "johndoe1"
+
+
+@pytest.mark.parametrize(
+    "email",
+    [
+        "john.doe@hospital.nhs.uk",
+        "jo+hn.doe@hospital.nhs.uk",
+        "j'ohn.d%oe@hospital.nhs.uk",
+        "john=doe!@hospital.nhs.uk",
+    ],
+)
+@patch("imaging_api.services.users.generate_complex_password", return_value="P@ssw0rd123456!")
+@patch("imaging_api.services.users.get_xnat_users")
+def test_to_create_imaging_user_collision_keeps_sanitisation(mock_get_users, mock_pwd, headers, email):
+    """The generated username must stay within the safe charset even after a collision.
+
+    This is the property that matters, not the literal value: the username is sent to an
+    admin-authenticated POST /xapi/users and interpolated into an XNAT URL path, so characters like
+    ``%``, ``+``, ``'`` and ``!`` must never reach it. Asserting the charset rather than the exact
+    string keeps the test meaningful if the suffix scheme ever changes.
+    """
+    existing_user = MagicMock()
+    existing_user.username = "johndoe"
+    mock_get_users.return_value = [existing_user]
+    hub_user = CentralHubUser(id=uuid4(), email=email)
+
+    create_user_req = to_create_imaging_user(hub_user, headers)
+
+    assert re.fullmatch(r"[a-zA-Z0-9 \-]+", create_user_req.username), create_user_req.username
+
+
+@patch("imaging_api.services.users.generate_complex_password", return_value="P@ssw0rd123456!")
+@patch("imaging_api.services.users.get_xnat_users")
+def test_to_create_imaging_user_suffix_increments_past_repeated_collisions(mock_get_users, mock_pwd, headers):
+    """Successive collisions keep incrementing rather than sticking on the first suffix."""
+    taken = [MagicMock(), MagicMock()]
+    taken[0].username = "johndoe"
+    taken[1].username = "johndoe1"
+    mock_get_users.return_value = taken
+    hub_user = CentralHubUser(id=uuid4(), email="john.doe@hospital.nhs.uk")
+
+    create_user_req = to_create_imaging_user(hub_user, headers)
+
+    assert create_user_req.username == "johndoe2"
 
 
 @patch("imaging_api.services.users.generate_complex_password", return_value="P@ssw0rd123456!")
@@ -224,7 +270,7 @@ def test_create_user_success(mock_post, mock_get_profile, headers):
     mock_get_profile.return_value = User(**_SAMPLE_USER_DICT)
 
     user_req = CreateUser(
-        username="alice", password="pass", firstName="Alice",
+        username="alice", password="pass", firstName="Alice",  # pragma: allowlist secret
         lastName="A", email="alice@test.com",
     )
     profile = create_user(user_req, headers)
@@ -236,7 +282,7 @@ def test_create_user_conflict(mock_post, headers):
     mock_post.return_value = MagicMock(status_code=409, text="conflict")
 
     user_req = CreateUser(
-        username="alice", password="pass", firstName="Alice",
+        username="alice", password="pass", firstName="Alice",  # pragma: allowlist secret
         lastName="A", email="alice@test.com",
     )
     with pytest.raises(AlreadyExistsError, match="already exists"):
@@ -248,7 +294,7 @@ def test_create_user_server_error(mock_post, headers):
     mock_post.return_value = MagicMock(status_code=500, text="Server Error")
 
     user_req = CreateUser(
-        username="alice", password="pass", firstName="Alice",
+        username="alice", password="pass", firstName="Alice",  # pragma: allowlist secret
         lastName="A", email="alice@test.com",
     )
     with pytest.raises(Exception, match="XNAT user creation failed"):
@@ -263,7 +309,7 @@ def test_issue_setup_token_builds_hostless_path(mock_get, headers):
     """Mints an alias token and returns a host-less set-password path with url-encoded secret."""
     mock_get.return_value = MagicMock(
         status_code=200,
-        json=lambda: {"alias": "al-123", "secret": "sek ret"},
+        json=lambda: {"alias": "al-123", "secret": "sek ret"},  # pragma: allowlist secret
     )
 
     path = issue_setup_token("alice", headers)
@@ -289,7 +335,7 @@ def test_issue_setup_token_raises_on_error(mock_get, headers):
 @patch("imaging_api.services.users.to_create_imaging_user")
 def test_create_user_from_central_hub_user(mock_to_create, mock_create, mock_issue, mock_encrypt, headers):
     mock_to_create.return_value = CreateUser(
-        username="alice", password="secret", firstName="Alice",
+        username="alice", password="secret", firstName="Alice",  # pragma: allowlist secret
         lastName="A", email="alice@test.com",
     )
     mock_create.return_value = User(**_SAMPLE_USER_DICT)

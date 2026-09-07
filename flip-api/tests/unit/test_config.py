@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-"""Settings parsing for the model-file scan pipeline (#52).
+"""Settings parsing for the model-file scan pipeline (#52) and the email backend (#919).
 
 The suffix-list fields carry ``NoDecode`` so the env value reaches the
 validator raw — these tests pin every accepted input shape (JSON list,
@@ -21,7 +21,7 @@ normalisation the suffix matching relies on.
 import pytest
 from pydantic import ValidationError
 
-from flip_api.config import Settings
+from flip_api.config import DevSettings, ProdSettings, Settings
 
 
 def test_allowed_extensions_default():
@@ -91,6 +91,121 @@ def test_suffix_list_passes_through_unexpected_types_for_pydantic_to_reject():
     """
     with pytest.raises(ValidationError):
         Settings(ALLOWED_MODEL_FILE_EXTENSIONS=123)
+
+
+def test_email_backend_defaults_per_environment_class():
+    """Dev logs, prod sends, and prod cannot be narrowed any wider (#919).
+
+    Asserted on the fields rather than instances, for the same reason as
+    ``test_dev_ses_addresses_are_optional_with_defaults`` below: a developer
+    may set ``EMAIL_BACKEND=ses`` in their own ``.env.development`` (the
+    config comment invites exactly that), which an instance would pick up.
+
+    Note the base default is *not* a safety net for a misconfigured deploy —
+    an unset ``ENV`` resolves to ``DevSettings`` and therefore ``console``.
+    It exists so the field is declared for ``ProdSettings`` to narrow.
+    """
+    assert Settings.model_fields["EMAIL_BACKEND"].default == "ses"
+    assert DevSettings.model_fields["EMAIL_BACKEND"].default == "console"
+    assert ProdSettings.model_fields["EMAIL_BACKEND"].default == "ses"
+
+
+def test_email_backend_empty_string_falls_back_to_the_per_class_default():
+    """Same env-file empty-string trap as the scan ints, resolved per class.
+
+    Not hypothetical: ``.env.development.example`` carries a commented
+    ``# EMAIL_BACKEND=ses`` line, and the root Makefile's unanchored
+    ``sed 's/=.*//'`` exports the bare name from it, so a copied example
+    hands flip-api an empty ``EMAIL_BACKEND``.
+    """
+    assert Settings(EMAIL_BACKEND="").EMAIL_BACKEND == "ses"
+    assert DevSettings(EMAIL_BACKEND="").EMAIL_BACKEND == "console"
+
+
+def test_console_email_backend_is_rejected_in_production():
+    """The dev substitute must be impossible to enable in production (#919).
+
+    ``ProdSettings`` narrows ``EMAIL_BACKEND`` to ``Literal["ses"]``, so the
+    console backend is a boot-time validation error rather than a silently
+    accepted setting that would drop every production email.
+    """
+    with pytest.raises(ValidationError) as exc_info:
+        ProdSettings(
+            EMAIL_BACKEND="console",
+            AWS_SES_ADMIN_EMAIL_ADDRESS="admin@example.com",
+            AWS_SES_SENDER_EMAIL_ADDRESS="sender@example.com",
+        )
+    assert "EMAIL_BACKEND" in str(exc_info.value)
+
+
+def test_empty_env_resolves_to_development_and_therefore_the_console_backend():
+    """Pins the step before every ``model_fields`` assertion above: which class gets built.
+
+    ``config.py`` selects ``DevSettings`` when ``Settings().ENV`` reads
+    ``"development"``, and ``coerce_empty_env`` is the only thing mapping an
+    unset or empty ``ENV`` onto that name — the Makefile's unanchored
+    ``export $(shell sed ...)`` exports bare names, so an absent ``ENV``
+    arrives as an empty string rather than as missing. That reasoning is
+    load-bearing for the whole email gate but lives only as a comment, and a
+    regression in it would leave every other test in this module green.
+    """
+    assert Settings(ENV="").ENV == "development"
+    assert DevSettings.model_fields["EMAIL_BACKEND"].default == "console"
+
+
+def test_production_settings_resolve_to_the_ses_backend(monkeypatch):
+    """The other half: a constructed ``ProdSettings`` comes out on SES, not just its field default.
+
+    ``ENV`` is passed as an init argument, the highest-precedence settings
+    source, rather than exported: CI writes ``ENV=development`` into the
+    env file it builds for the whole flip-api suite, and ``ProdSettings``
+    rejects that against its own ``Literal["production"]`` before the
+    backend is ever reached. Setting the variable in the environment was not
+    enough there, so this does not depend on how env and env-file sources
+    rank. ``ENV`` is therefore not worth asserting on — it would only echo
+    the argument — while ``EMAIL_BACKEND``, left unset, still resolves
+    through the class. Deleting it from the environment keeps that about the
+    class rather than about the runner's shell.
+    """
+    monkeypatch.delenv("EMAIL_BACKEND", raising=False)
+
+    settings = ProdSettings(
+        ENV="production",
+        AWS_SES_ADMIN_EMAIL_ADDRESS="admin@example.com",
+        AWS_SES_SENDER_EMAIL_ADDRESS="sender@example.com",
+    )
+
+    assert settings.EMAIL_BACKEND == "ses"
+
+
+def test_dev_ses_addresses_are_optional_with_defaults():
+    """Development boots with no SES configuration at all (#919).
+
+    Asserted on the fields rather than an instance: a developer's own
+    ``.env.development`` may still hold real addresses, which legitimately
+    override these defaults. What must hold everywhere is that neither field
+    is *required* in dev, so a checkout with no SES lines still starts.
+    """
+    for name, expected in (
+        ("AWS_SES_ADMIN_EMAIL_ADDRESS", "flip-admin@example.com"),
+        ("AWS_SES_SENDER_EMAIL_ADDRESS", "flip-no-reply@example.com"),
+    ):
+        assert DevSettings.model_fields[name].is_required() is False
+        assert DevSettings.model_fields[name].default == expected
+        # ...while production still demands an explicit address.
+        assert ProdSettings.model_fields[name].is_required() is True
+
+
+def test_dev_ses_addresses_tolerate_empty_strings():
+    """Empty strings matter as much as absent values.
+
+    A stale ``.env.development`` that still carries (even commented-out)
+    ``AWS_SES_*`` lines exports the bare name, and ``EmailStr`` would otherwise
+    reject the empty value and take flip-api down at import.
+    """
+    blanked = DevSettings(AWS_SES_ADMIN_EMAIL_ADDRESS="", AWS_SES_SENDER_EMAIL_ADDRESS="")
+    assert blanked.AWS_SES_ADMIN_EMAIL_ADDRESS == "flip-admin@example.com"
+    assert blanked.AWS_SES_SENDER_EMAIL_ADDRESS == "flip-no-reply@example.com"
 
 
 @pytest.mark.parametrize("blank", [",,,", " , ", " ", ",", "[]"])

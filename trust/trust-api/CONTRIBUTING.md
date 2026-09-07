@@ -27,11 +27,20 @@ cd ../..
 make up-trusts
 ```
 
-To run only the trust-api in development mode with live-reload:
+To run only the trust-api in a container against the running trust stack, use the
+service-scoped compose wrapper (there is no separate `make dev` target — the
+containerised `make up` is the local dev flow):
 
 ```bash
-uv sync
-make dev
+uv sync   # populate the local venv for IDE type-checks / running tests
+make up
+```
+
+To iterate without Docker (host-side reload), run `uvicorn` directly against the
+already-running sibling services:
+
+```bash
+uv run uvicorn trust_api.main:app --reload --port "${TRUST_API_PORT:-8020}"
 ```
 
 ### Running tests

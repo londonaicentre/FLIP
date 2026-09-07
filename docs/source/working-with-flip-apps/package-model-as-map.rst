@@ -91,9 +91,10 @@ deployable service built around it that speaks the hospital's protocol.
 
    A bundle does not have to be a directory. It can also be a **single TorchScript file** with
    ``inference.json`` and ``metadata.json`` embedded as TorchScript *extra files* — which is what
-   :ref:`Step 3 <map-export-bundle>` produces, and what the MONAI Deploy App SDK's own reference
-   models use. That form is convenient here because a MAP then needs exactly one artefact
-   passed to ``--models``.
+   :ref:`Step 3 <map-export-bundle>` produces by default, and what the MONAI Deploy App SDK's own
+   reference models use. That form is convenient here because a MAP then needs exactly one artefact
+   passed to ``--models``. :ref:`Both forms are available <map-bundle-forms>`, and the directory
+   one is the way off ``torch.jit``.
 
 Where the boundary sits
 =======================
@@ -102,7 +103,7 @@ Where the boundary sits
 
    FLIP (training)                          MONAI Deploy (inference)
    ─────────────────────────────────        ────────────────────────────────────
-   trainer.py / validator.py                DICOM series selection
+   trainer.py                               DICOM series selection
    models.py :: get_model()          ──▶    preprocessing (must match training!)
    FL_global_model.pt (aggregated)          inference on the exported weights
                                             postprocessing
@@ -148,23 +149,95 @@ unpinned instruction rots quickly.
      - Version
      - Notes
    * - ``monai-deploy-app-sdk``
-     - ``3.5.0``
-     - 4.x requires a CUDA 13 base image; see :ref:`map-environment-traps`.
+     - ``4.0.0``
+     - The CUDA-13 generation. 3.5.0 does ``from holoscan.graphs import *`` and therefore needs
+       holoscan 3.x; 4.0.0 imports it tolerantly and requires ``holoscan-cu13``.
    * - ``holoscan`` / ``holoscan-cli``
-     - ``3.11.0``
-     - SDK 3.5.0 uses ``holoscan.graphs``, removed in holoscan 4.x.
+     - ``4.2.0``
+     - Install **both**: the packager refuses to run with only the CLI. The CLI pin is load-bearing
+       in its own right — ``holoscan-cli`` **4.3.0 removed MAP packaging entirely**, replacing it
+       with a source-project build system, and ``monai-deploy-app-sdk`` depends on ``holoscan-cli``
+       unpinned, so an unconstrained install leaves you with a CLI that has no
+       ``holoscan package --models`` at all. 4.2.0 is also the only version whose base-image
+       manifest is published upstream, which is why no ``--source`` file is needed.
    * - ``monai``
-     - ``1.5.0``
-     - Declares ``torch<2.7.0``; see the Blackwell note below.
+     - ``>=1.6.0``
+     - Four high-severity advisories are patched only in 1.6.0, and it is what FLIP trains with.
+       **Not** ``1.5.0``: that release also declares ``torch<2.7.0``, which costs you the GPU. See
+       below.
    * - ``torch``
-     - ``2.11.0+cu128``
-     - Install **last**, so MONAI's pin does not downgrade it.
+     - ``2.13.0``
+     - PyPI's default wheel line, which is cu130.
+   * - **NVIDIA driver**
+     - **>= 580**
+     - Required by cu130 and by the CUDA-13 base image, on the packaging host **and** on every host
+       that runs the MAP. This is the one hard prerequisite the toolchain adds; check it with
+       ``nvidia-smi`` before you start. See below for what to do if a deployment site is below it.
    * - Python
      - ``3.12``
      - The MAP base image must be Ubuntu 24.04 to match.
 
-You also need Docker with the NVIDIA Container Toolkit, and an NVIDIA driver appropriate to the
-CUDA version of the MAP base image.
+You also need Docker with the NVIDIA Container Toolkit.
+
+.. note::
+
+   **Why these versions, and what the driver floor buys.** Both templates originally carried
+   ``monai<=1.5.0`` on the CUDA-12 toolchain, inherited verbatim from the App SDK's
+   ``ai_spleen_seg_app`` example. Nothing required it — ``monai-deploy-app-sdk`` does not depend on
+   MONAI at all, reaching it through ``optional_import`` — and 1.5.0 is the only release in that
+   neighbourhood still declaring ``torch<2.7.0``. Measured on an RTX 5090:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 34 22 14 14 16
+
+      * - requirements
+        - resolves to
+        - ``is_available()``
+        - a real kernel
+        - the MAP's DICOM SEG
+      * - ``monai<=1.5.0`` + ``torch``
+        - torch 2.6.0+cu124
+        - ``True``
+        - **fails**, no ``sm_120``
+        - never produced
+      * - ``monai>=1.5.2`` + ``torch``, driver 575
+        - torch 2.13.0+cu130
+        - ``False``
+        - fails, driver < 580
+        - never produced
+      * - ``monai>=1.5.2`` + ``torch==2.11.0+cu128``
+        - torch 2.11.0+cu128
+        - ``True``
+        - works
+        - 73 frames, 212,808 voxels
+      * - ``monai>=1.6.0`` + ``torch==2.11.0+cu128``
+        - torch 2.11.0+cu128
+        - ``True``
+        - works
+        - **identical, voxel for voxel**
+      * - **the current pins**, driver 580
+        - torch 2.13.0+cu130
+        - ``True``
+        - works
+        - **identical, voxel for voxel**
+
+   Two conclusions follow, and both are load-bearing.
+
+   **MONAI 1.6.0 changes nothing about what the MAP computes.** Same 73 frames, same 212,808
+   foreground voxels, same 278 mL, against the published tutorial checkpoint and a 168-slice spleen
+   CT. ``UNet`` and ``DenseNet121``, the two architectures the tutorials use, have identical
+   state-dict keys and shapes across 1.5.2 and 1.6.0, so the coupling described under
+   :ref:`map-bundle-forms` does not bite them.
+
+   **The CUDA-13 move costs a driver floor and buys a torch line that still moves.** PyTorch
+   publishes no cu128 wheel above **2.11.0**, so the previous pins were a permanent ceiling: a torch
+   advisory fixed in 2.12 or later would have forced this migration anyway, under time pressure. The
+   price is that ``nvidia-smi`` must report **580 or newer** wherever the MAP is packaged *and*
+   wherever it runs. If a deployment site is below that, do not loosen the pins in place — the
+   previous generation is a coherent set and is one commit back in this file's history
+   (``monai>=1.6.0``, ``torch==2.11.0+cu128``, ``holoscan-cu12==3.11.0``, App SDK 3.5.0,
+   ``holoscan-cli==3.11.0`` with a local ``--source`` manifest), and it produces the same SEG.
 
 
 Step 1 — Obtain the aggregated checkpoint
@@ -176,8 +249,8 @@ a ``model`` key holding the state dict, alongside ``train_conf`` and optionally 
 
 .. warning::
 
-   FLIP persists the **last** global model, not the best one. The ``standard`` and
-   ``standard_client_api`` job types wire no model selector, so
+   FLIP persists the **last** global model by default. The ``standard`` job type wires a model
+   selector only when ``config.json`` sets ``BEST_MODEL_METRIC`` — without it,
    ``best_FL_global_model.pt`` is never written. If your run's final round is not its best round,
    the exported model will reflect the final round.
 
@@ -211,10 +284,11 @@ The script reports the checkpoint's structure and then attempts
 Step 3 — Export a MONAI Bundle
 ==============================
 
-The exported artefact is a single ``model.ts``: the TorchScript-compiled network carrying
-``inference.json`` and ``metadata.json`` as TorchScript *extra files*. This is the shape
+By default the exported artefact is a single ``model.ts``: the TorchScript-compiled network
+carrying ``inference.json`` and ``metadata.json`` as TorchScript *extra files*. This is the shape
 ``MonaiBundleInferenceOperator`` consumes, and it is what breaks the dependency on FLIP
-application code — a MAP built this way needs no ``models.py``.
+application code — a MAP built this way needs no ``models.py``. :ref:`A second form
+<map-bundle-forms>` writes a bundle directory instead, and needs no ``torch.jit``.
 
 Use :mod:`flip.export`:
 
@@ -251,7 +325,7 @@ Or as a library, which is the same code path:
 **It reads the bundle configuration rather than generating it.** ``inference.json`` and
 ``metadata.json`` are looked up in ``<app-dir>/../export/`` by default — written once by the app
 author, who is the person who knows the preprocessing. The exporter's job is to load the weights,
-compile them, embed those configs and stamp provenance.
+compile or serialise them, carry those configs and stamp provenance.
 
 ``--input-shape`` is optional when scripting, but supplying it is worth the keystrokes: it enables
 a numerical equivalence check against the eager model, and ``result.max_abs_delta`` of ``0.0`` is
@@ -262,13 +336,135 @@ Scripting is the default because it requires no example input. Tracing is availa
 ``--method trace`` for models that will not script, but then a shape is mandatory. Both FLIP
 tutorial models script cleanly with exact equivalence.
 
+.. _map-bundle-forms:
+
+Two bundle forms, and why the default is the one it is
+------------------------------------------------------
+
+``--form`` selects what gets written. Both are consumed by ``MonaiBundleInferenceOperator``, and
+the choice is a genuine trade rather than a preference:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 35 35
+
+   * - -
+     - ``torchscript`` (default)
+     - ``directory``
+   * - What ``--out`` is
+     - A file, conventionally ``model.ts``
+     - A directory
+   * - The weights
+     - TorchScript-compiled network
+     - Plain state dict at ``models/model.pt``
+   * - The configs
+     - Embedded as TorchScript *extra files*
+     - Plain files under ``configs/``
+   * - Ships your application code
+     - **No** — this is why it exists
+     - **Yes**, the whole app dir, under ``scripts/``
+   * - The architecture
+     - Frozen into the compiled graph at export
+     - Rebuilt at inference by your ``get_model()``
+   * - Uses ``torch.jit``
+     - To write and to read
+     - **Nowhere**
+   * - Usable in a packaged MAP
+     - Yes, both templates
+     - **Classification only** — see the warning below
+
+Reach for ``--form directory`` in two situations: your model will not script, or ``torch.jit`` has
+stopped working. Otherwise the default is better, because a MAP built from it needs no FLIP
+application code at all.
+
+.. warning::
+
+   **A directory bundle does not work with the segmentation template today.** Verified by packaging
+   and running one on an RTX 5090: ``holoscan package --models <bundle-dir>`` succeeds and the MAP
+   starts, but inference dies with ``ItemNotExistsError: A predictor of the model is not set``. The
+   toolchain move to App SDK 4.0.0 did not fix it: ``core/models/named_model.py`` and
+   ``core/models/factory.py``, where the cause lives, are byte-identical between 3.5.0 and 4.0.0.
+
+   The cause is upstream, not in the bundle. The packager copies the bundle into
+   ``/opt/holoscan/models``, and the SDK's ``ModelFactory`` does not recognise that layout as a
+   model — ``NamedModel`` requires exactly one item per model folder, and a bundle has three. It
+   nevertheless returns a placeholder ``Model`` with ``predictor = None`` rather than nothing, so
+   ``app_context.models`` is truthy. ``MonaiBundleInferenceOperator`` checks
+   ``app_context.models`` *before* its own directory-bundle branch, takes the placeholder, and
+   fails much later, inside the inferer.
+
+   So the directory form is currently for: a model that will not script, driving a bundle directly
+   from Python, and the **classification** template, whose operator loads the bundle itself and
+   therefore checks that the context's model actually has a predictor before trusting it. Use the
+   TorchScript form for a segmentation MAP. If ``torch.jit`` is ever removed, the SDK's own
+   ``torch.jit.load`` breaks at the same moment, so this has to be fixed upstream regardless.
+
+.. warning::
+
+   **The directory form couples your MAP to the MONAI your model was trained against, and the
+   TorchScript form does not.** Scripting freezes the network into a compiled graph, so the MAP
+   never constructs it; the directory form calls your ``get_model()`` inside the MAP, under
+   whatever MONAI that container has. If a MONAI release renames a submodule of the network you
+   build — say ``monai.networks.nets.UNet`` — the strict ``load_state_dict`` fails outright, which
+   is the good case. Check the MAP's ``requirements.txt`` against the MONAI your app trained with
+   before choosing this form, and prefer a version range that includes it.
+
+   The MAP templates and FLIP's training environment are deliberately kept on the same MONAI
+   (``>=1.6.0`` in both, the templates having been moved off an inherited ``monai<=1.5.0``), which
+   is what makes the directory form safe to use here today. Keep them aligned when either moves:
+   ``UNet`` and ``DenseNet121`` are unchanged between 1.5.2 and 1.6.0, so this particular step
+   would have been survivable either way, but that is a fact about those two releases rather than
+   a guarantee about the next one.
+
+.. code-block:: bash
+
+   uv run python -m flip.export \
+       --checkpoint /path/to/FL_global_model.pt \
+       --app-dir    /path/to/your/app_files \
+       --out        bundle \
+       --form       directory \
+       --input-shape 1,1,96,96,96
+
+which writes::
+
+   bundle/
+     configs/inference.json     <- yours, plus a network_def entry
+     configs/metadata.json      <- yours, plus provenance
+     models/model.pt            <- plain state dict
+     scripts/                   <- your app_files, verbatim
+     flip_network.py            <- generated: the bundle's entry point to get_model()
+     .gitignore                 <- generated: a bundle is a build artefact
+
+The exporter adds exactly one thing to your ``inference.json``: a ``network_def`` naming
+``flip_network.get_model``, so the bundle can rebuild the architecture without TorchScript. If you
+have already declared ``network`` or ``network_def`` yourself, yours is kept and the export warns
+rather than overriding your architecture.
+
+**The whole application directory is copied, not just** ``models.py``. It has to be: the spleen
+tutorial's ``get_model()`` reads a sidecar ``config.json`` next to its own module, and the Ark+
+apps import a sibling module flatly. Your files are copied **verbatim** — the generated
+``flip_network.py`` is what puts ``scripts/`` on ``sys.path`` before importing your ``get_model``,
+so those flat imports resolve inside the bundle exactly as they do under the FL executors, and
+nothing is written into your own source. ``__pycache__`` and tool caches are left behind, and an
+empty ``scripts/__init__.py`` is added only when your app is not already a package.
+
+The bundle carries its own ``.gitignore``, because a directory bundle contains a second copy of
+your application and ``--out`` can point anywhere — including inside your own repository.
+
 .. note::
 
-   PyTorch has begun deprecating TorchScript in favour of ``torch.export``, and torch 2.11 emits
-   ``DeprecationWarning`` from ``torch.jit.save``/``load``/``trace``. TorchScript remains the
-   format MONAI Deploy's bundle inference operator consumes, so it is the correct choice today —
-   but this is a dependency worth watching, and a reason not to spread ``torch.jit`` calls across
-   the codebase when they can live behind :func:`flip.export.export_bundle`.
+   **Why not** ``torch.export``\ **?** Because nothing downstream can read it. PyTorch has
+   TorchScript on a removal path — deprecated on Python 3.12, and reporting itself *"not supported
+   in Python 3.14+ and may break"* — and points users at ``torch.export``. But no released
+   ``monai-deploy-app-sdk`` can load an ``ExportedProgram``: the bundle inference operator loads
+   ``.ts`` and ``.pt``, and nothing else. So the escape hatch from ``torch.jit`` is the directory
+   form above, not a new artefact format. MONAI core tracks its own TorchScript retirement in
+   `Project-MONAI/MONAI#8632 <https://github.com/Project-MONAI/MONAI/issues/8632>`_; when MONAI
+   Deploy follows, a third form becomes possible. FLIP#1019 has the detail.
+
+   The pressure is lower than it looks: ``monai-deploy-app-sdk`` itself declares
+   ``requires-python = ">=3.10,<3.14"``, so no part of this toolchain runs on the interpreter
+   where ``torch.jit`` warns it may break.
 
 .. warning::
 
@@ -343,25 +539,32 @@ it may not.
    reach the pixels through different loaders, and the orientation step is the one that is
    calibrated to its loader rather than to the model.
 
-   MONAI's ``LoadImaged`` returns a DICOM's pixel array **transposed** — indexed
-   ``(column, row)``, where ``PixelData`` is ``(row, column)``. Training chains routinely carry a
-   rotation that exists to undo that transpose. The MAP's ``DICOMSeriesToVolumeOperator`` does not
-   transpose, so copying the rotation across applies a correction to something that was never
-   wrong, and you end up with a differently-wrong orientation.
+   By default MONAI's ``LoadImaged`` returns a DICOM's pixel array **transposed** — indexed
+   ``(column, row)``, where ``PixelData`` is ``(row, column)`` — because it falls through to
+   ``PydicomReader(swap_ij=True)``. Training chains routinely carry a rotation that exists to undo
+   that transpose. The MAP's ``DICOMSeriesToVolumeOperator`` does not transpose, so copying the
+   rotation across applies a correction to something that was never wrong, and you end up with a
+   differently-wrong orientation.
 
    The xray tutorial is a worked example of getting this wrong. It applied ``Rotate90d(k=-1)``
    after ``LoadImaged`` — which does produce an upright radiograph, because the loaded image is
    sideways. But a transpose composed with a rotation is algebraically a **mirror**, so the chain
    was training on left-right flipped radiographs: anatomically plausible, visually undetectable,
-   and wrong. It now uses ``Transposed(keys=["image"], indices=(0, 2, 1))``, which undoes the
-   loader and nothing more. Because both paths then agree on the image as DICOM stores it,
-   ``map-apps/classification/classifier_operator.py`` needs no orientation transform at all.
+   and wrong. The tutorials now correct nothing after the fact: they load with
+   ``LoadImaged(keys=["image"], reader="PydicomReader", swap_ij=False)``, which returns the array
+   exactly as ``PixelData`` stores it. Pinning the reader also matters in its own right — MONAI
+   tries its registered readers last-registered-first and takes the first that can read the file,
+   so installing ``itk`` would otherwise promote ``ITKReader`` and change the axis order silently.
+   Because both paths then agree on the
+   image as DICOM stores it, ``map-apps/classification/classifier_operator.py`` needs no
+   orientation transform at all.
 
    Derive yours empirically — dump both arrays for one study and search the eight rotation/flip
    combinations for the one that matches, as ``map-apps/classification/README.md`` describes. Use a
    non-square image: on a square one, a transpose and a rotation cannot be told apart by shape.
    Nothing about this failure is loud. The MAP runs, the SR is written, and the numbers are simply
-   worse than they should be.
+   worse than they should be. ``fl-tutorials/tests/`` is the committed form of that empirical
+   check for the tutorial apps, and CI runs it on every change to the tree.
 
 
 .. _map-package:
@@ -381,20 +584,22 @@ trained under either NVFLARE or Flower.
        --models   <bundle-dir>/model.ts \
        --tag      my_flip_map:latest \
        --platform x86_64 \
+       --cuda     13 \
        --sdk      monai-deploy \
-       --source   map-apps/holoscan-source.json \
        --uid $(id -u) --gid $(id -g)
 
-Two flags are load-bearing and are not in the upstream instructions:
+Two flags deserve a word:
 
-``--source``
-   Supplies the base-image manifest locally. The packager otherwise fetches it from GitHub, where
-   only one version's manifest is currently published.
+``--cuda``
+   Selects the base image's CUDA generation. 13 is the default in ``holoscan-cli`` 4.x, so this is
+   documentation rather than necessity — but it is the flag to change if you ever have to build the
+   CUDA-12 variant, and it must agree with the ``holoscan-cu13`` / ``holoscan-cu12`` pin in
+   ``requirements.txt``.
 
 ``--uid`` / ``--gid``
-   The packager installs Python dependencies with ``pip install --user``, while the runner
-   launches the container as the *host* user. If those identities differ, every import inside the
-   MAP fails.
+   Not in the upstream instructions, and not optional. The packager installs Python dependencies
+   with ``pip install --user``, while the runner launches the container as the *host* user. If those
+   identities differ, every import inside the MAP fails.
 
 
 Step 5 — Run the MAP
@@ -639,28 +844,66 @@ These were all encountered while establishing the sequence above. None are docum
    * - Symptom
      - Cause and remedy
    * - ``nvidia-container-cli: unsatisfied condition: cuda>=13.0``
-     - App SDK 4.x builds CUDA 13 MAPs, which need driver ≥580. Use SDK 3.5.0, or upgrade the
-       driver.
+     - The host driver is below 580 and cannot run the CUDA-13 MAP. Upgrade it, or build the
+       previous generation (see ``The NVIDIA driver on your system is too old`` below).
    * - ``monai-deploy: command not found``
      - SDK 4.x ships no console scripts; packaging moved to the ``holoscan`` CLI. The 4.x
        documentation has not caught up.
    * - ``holoscan package`` has no ``--models`` flag
      - ``holoscan-cli`` 4.3+ dropped the MAP interface. Use ≤4.2 or 3.x.
+   * - ``# of series: 0``, then ``Missing expected input 'study_selected_series_list'``
+     - The loader dropped every instance. With ``Error parsing SOP Instance: int() argument must be
+       ... not 'NoneType'`` just above it, the cause is a numeric tag that is **present but empty**:
+       the SDK does ``int()`` on it, and pydicom returns ``None`` for such a tag rather than the
+       default the SDK passes. **The FLIP mock CT data has this** — every spleen series seeded from
+       ``aicentreflip/trust-data`` carries an empty ``SeriesNumber`` (which fails first, in
+       ``populate_series_attributes``) and an empty ``AcquisitionNumber`` (``int(instance.get(
+       "AcquisitionNumber", -1))``, reached only where two instances share a position). The mock CR
+       data does not (the tags are absent there, so the defaults apply), which is why the
+       chest-radiograph path has never hit it. **Fixed in mock-data version 20260821**, which fills
+       both; on anything older, stamp them before packaging::
+
+           import glob
+
+           import pydicom
+
+           for path in glob.glob("input/*.dcm"):
+               ds = pydicom.dcmread(path)
+               ds.AcquisitionNumber = 1
+               ds.SeriesNumber = 1
+               ds.save_as(path, enforce_file_format=True)
+
+   * - ``No installed Holoscan PyPI package found``
+     - The packaging *host* needs the Holoscan **SDK**, not only the CLI — ``holoscan-cli`` alone
+       gets you as far as generating ``app.json`` and then stops. ``pip install holoscan-cu13==4.2.0``
+       into the same environment; ``holoscan version`` should stop reporting ``Holoscan SDK: N/A``.
    * - ``ManifestDownloadError ... 404``
-     - The base-image manifest is fetched from GitHub and most versions are absent. Pass a local
-       manifest with ``--source``.
+     - The base-image manifest is fetched from GitHub, where only ``4.2.0``'s is published — which
+       is one reason the toolchain pins that version. On any other CLI version, write the manifest
+       out yourself and pass it with ``--source``.
    * - ``E: Version '3.12.3-*' for 'python3' was not found``
      - The CLI pins Ubuntu 24.04 package versions; the base image in the manifest must be an
        Ubuntu 24.04 image.
    * - ``ModuleNotFoundError`` inside the MAP
      - UID mismatch between build and run. Pass ``--uid``/``--gid``.
    * - ``undefined symbol: cudaGetDriverEntryPointByVersion``
-     - ``monai<=1.5.0`` forces torch 2.6.0, whose bundled CUDA 12.4 runtime shadows the base
-       image's and lacks the symbol holoscan needs. Add ``nvidia-cuda-runtime-cu12>=12.8``.
+     - A torch build whose bundled CUDA runtime is older than the base image's shadows it and lacks
+       a symbol holoscan needs. You see this by mixing generations — a cu12 torch under a CUDA-13
+       base image, or the reverse. Keep ``torch``, ``holoscan-cu13`` and ``--cuda`` in agreement.
    * - ``no kernel image is available for execution on the device``
-     - torch <2.7 has no ``sm_120`` support, so it cannot use a Blackwell GPU — while
-       ``torch.cuda.is_available()`` still returns ``True``, so it fails late. Force a newer torch
-       or run on CPU.
+     - torch <2.7 has no ``sm_120``, so it cannot use a Blackwell GPU — while
+       ``torch.cuda.is_available()`` still returns ``True``, so it fails late. Caused by
+       ``monai<=1.5.0``, which caps torch below 2.7; the templates now floor MONAI at 1.6.0.
+   * - ``The NVIDIA driver on your system is too old``
+     - The driver is below 580 and cannot run cu130. Upgrade it, or build the previous generation
+       (``torch==2.11.0+cu128``, ``holoscan-cu12==3.11.0``, App SDK 3.5.0, ``holoscan-cli==3.11.0``
+       with a local ``--source`` manifest, ``--cuda 12``) — one commit back in this file's history,
+       and it produces the same DICOM SEG.
+   * - ``holoscan package: error: unrecognized arguments: --models`` (or a ``package`` subcommand
+       that talks about DEB/WHEEL generators)
+     - ``holoscan-cli`` >= 4.3.0, which removed MAP packaging in favour of a source-project build
+       system. ``monai-deploy-app-sdk`` depends on ``holoscan-cli`` unpinned, so this is what an
+       unconstrained install gives you. Pin ``holoscan-cli==4.2.0``.
 
 
 .. _map-config-enforcement:
@@ -676,8 +919,8 @@ moments.
 solely to decide which base application template to bundle, and validates that value against the
 per-backend manifest of known job types (``bundle_nvflare_application`` /
 ``bundle_flower_application`` in ``flip-api/src/flip_api/fl_services/services/fl_service.py``). An
-unrecognised ``job_type`` is rejected; a missing one falls back to ``standard`` — as does a missing
-``config.json``, which is a valid submission for a Flower app.
+unrecognised ``job_type`` is rejected; a missing one falls back to ``standard``. The file itself is
+a required file on both backends, so a submission without it is rejected before bundling.
 
 **For NVFLARE, the FL API then validates a fixed set of platform keys** when it assembles the job
 (``validate_config`` in ``fl-services/nvflare/fl-api-base/fl_api/utils/prepare_config.py``). Several

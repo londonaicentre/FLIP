@@ -23,7 +23,7 @@ data:
   # Orthanc configuration is built from values; users may supply additional
   # configuration via extra config maps in the future.
   ORTHANC__DICOM_MODALITIES: |
-    {"XNAT": {"AET": "XNAT", "Host": "xnat-web", "Port": "8104"}}
+    {"XNAT": {"AET": {{ .Values.xnat.web.dicomAet | default "XNAT" | quote }}, "Host": "xnat-web", "Port": {{ .Values.xnat.web.dicomPort | default 8104 | quote }}}}
 ---
 apiVersion: v1
 kind: Service

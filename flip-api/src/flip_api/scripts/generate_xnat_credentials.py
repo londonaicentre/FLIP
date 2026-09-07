@@ -43,7 +43,7 @@ import secrets
 import sys
 from pathlib import Path
 
-from flip_api.scripts.env_utils import read_env_value, update_or_append
+from flip_api.scripts.env_utils import read_env_value, update_or_append, write_env_file
 
 PASSWORD_VARS = (
     "XNAT_DATASOURCE_PASSWORD",
@@ -126,7 +126,7 @@ def main() -> None:
         lines = update_or_append(lines, var, new_value)
         actions[var] = "generated" if _is_placeholder(existing) else "rotated"
 
-    env_file.write_text("\n".join(lines) + "\n")
+    write_env_file(env_file, lines)
 
     generated = sum(1 for a in actions.values() if a in {"generated", "rotated"})
     skipped = sum(1 for a in actions.values() if a == "skipped")

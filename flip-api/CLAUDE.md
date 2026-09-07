@@ -18,7 +18,7 @@ Central Hub REST API. FastAPI + psycopg2 + SQLModel (sync sessions). Handles use
 | `src/flip_api/domain/schemas/` | Pydantic request/response schemas |
 | `src/flip_api/domain/interfaces/` | Repository interfaces (Dependency Inversion) |
 | `src/flip_api/auth/` | Cognito JWT verification, auth middleware |
-| `src/flip_api/scripts/` | Trust registration CLI (register_trust.py), internal-service-key generation, env utils |
+| `src/flip_api/scripts/` | Trust registration + deletion CLIs (`register_trust.py`, `delete_trust.py`), internal-service-key + trust-key + XNAT-credential generation, demo user seeding (`create_demo_users.py`), env utils |
 
 ## Service Modules
 

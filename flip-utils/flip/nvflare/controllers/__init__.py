@@ -21,11 +21,9 @@ Exports:
     - ScatterAndGatherLDM: Dual-phase training controller for LDM (autoencoder + diffusion model)
     - BroadcastTask: Broadcast a lifecycle task and wait for client responses
     - InitEvaluation: Initialization controller for evaluation setup
-    - ModelEval: Main evaluation loop controller
 """
 
 from flip.nvflare.controllers.broadcast_task import BroadcastTask
-from flip.nvflare.controllers.fed_evaluation import ModelEval
 from flip.nvflare.controllers.init_evaluation import InitEvaluation
 from flip.nvflare.controllers.init_training import InitTraining
 from flip.nvflare.controllers.scatter_and_gather import ScatterAndGather
@@ -37,5 +35,4 @@ __all__ = [
     "ScatterAndGatherLDM",
     "BroadcastTask",
     "InitEvaluation",
-    "ModelEval",
 ]

@@ -9,106 +9,124 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""FedAvg job definition for 3D Spleen Segmentation with FLIP.
+"""FedAvg Client API job definition for 3D Spleen Segmentation with FLIP.
 
-This module defines the federated learning job using the FedAvgRecipe and
-FLUNet model.  It supports two execution modes via ``recipe.execute()``:
-
-*SimEnv* (default, no flags):
-    Runs a local simulation with ``n_clients`` parallel threads.  Intended
-    for development and integration testing.
+This module defines the federated learning job using :class:`FlipFedAvgRecipe`.
+It supports two execution modes:
 
 *Export* (``--export --export-dir <path>``):
-    Writes the job config to ``<path>`` as a set of NVFlare configuration
-    files.  The exported job can be submitted to a production FL server
-    (e.g. via Docker compose).
+    Writes the complete NVFLARE job to ``<path>/flip_fedavg/``, including
+    ``meta.json`` (carrying ``custom_props.model_id`` for lazy resolution),
+    ``app/config/`` (server + client configs), and ``app/custom/`` (the bundled
+    ``flip/`` package plus the staged user app files). This is the primary,
+    fully-local-verifiable path — no GPU or data required.
+
+*SimEnv* (default, no flags):
+    Runs a local simulation under the NVFLARE simulator. Requires a GPU and the
+    reference dataset (``make -C fl-tutorials download-spleen-data``). FLIP-specific
+    values are injected via environment variables (``FLIP_PROJECT_ID``,
+    ``FLIP_QUERY``) rather than CLI flags because SQL queries contain spaces that
+    don't survive argparse whitespace-splitting.
+
+Both modes go through NVFLARE's :meth:`Recipe.execute`, which consumes ``--export``/``--export-dir``
+from ``sys.argv`` itself (it strips them before this script's own ``argparse`` runs) and
+exports-or-runs accordingly — so there is no separate ``--export`` branch here.
 
 Usage:
-    # SimEnv (local testing)
-    python job.py --n_clients 2 --num_rounds 10 --local_epochs 4
+    # Export job config for review or Docker deployment (no GPU needed)
+    python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 2
 
-    # Export (Docker / production)
-    python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 10
+    # SimEnv local simulation (requires GPU + data)
+    python job.py --n_clients 2 --num_rounds 2
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import sys
+from pathlib import Path
 
-from model import FLUNet
-from nvflare.apis.dxo import DataKind
-from nvflare.app_opt.pt.recipes.fedavg import FedAvgRecipe
-from nvflare.client.config import TransferType
-from nvflare.recipe import SimEnv
+# app_files/ must be importable at recipe-construction time so PTFileModelPersistor
+# and PTModelLocator can reference 'models.get_model' correctly.
+_APP_FILES_DIR = Path(__file__).parent / "app_files"
+if str(_APP_FILES_DIR) not in sys.path:
+    sys.path.insert(0, str(_APP_FILES_DIR))
+
+from flip.nvflare.recipes import FlipFedAvgRecipe  # noqa: E402
+from nvflare import FedJob  # noqa: E402
+from nvflare.recipe import SimEnv  # noqa: E402
+
+
+def stage_app_files(job: FedJob) -> None:
+    """Bundle every file in ``app_files/`` into the job's server + client ``custom/`` directories.
+
+    The recipe wires only the NVFLARE components; the user-supplied app files (``trainer.py``,
+    ``models.py``, ``transforms.py``, ``config.json``) must be added to the job explicitly so they
+    land in every site's ``app/custom/``. ``FedJob.add_file_to_{server,clients}`` registers them
+    with the job's file sources, so they are bundled for **both** the SimEnv/simulator run
+    (``recipe.execute``) and ``--export`` — unlike a post-export filesystem copy, which the SimEnv
+    path never triggered.
+
+    Args:
+        job: The recipe's underlying :class:`~nvflare.job_config.api.FedJob` (``recipe.job``).
+    """
+    for src in sorted(_APP_FILES_DIR.iterdir()):
+        if src.is_file():
+            job.add_file_to_server(str(src))
+            job.add_file_to_clients(str(src))
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="FLIP Spleen Segmentation FedAvg Job")
+    parser = argparse.ArgumentParser(description="FLIP 3D Spleen Segmentation Client API FedAvg Job")
     parser.add_argument("--n_clients", type=int, default=2, help="Number of clients")
-    parser.add_argument("--num_rounds", type=int, default=10, help="Number of federated rounds")
-    parser.add_argument("--local_epochs", type=int, default=4, help="Local training epochs per round")
-    parser.add_argument("--lr", type=float, default=5e-5, help="Learning rate")
-    parser.add_argument("--val_split", type=float, default=0.1, help="Validation split fraction")
-    parser.add_argument("--batch_size", type=int, default=3, help="Training batch size")
-    parser.add_argument("--threads", type=int, default=2, help="SimEnv parallel threads")
+    parser.add_argument("--num_rounds", type=int, default=2, help="Number of federated rounds")
     parser.add_argument(
         "--workspace",
         type=str,
-        default="/tmp/nvflare/simulation",
+        default="/tmp/nvflare/spleen",
         help="SimEnv workspace root",
     )
+    # NOTE: ``--export``/``--export-dir`` are handled by NVFLARE's ``Recipe.execute`` (it strips them
+    # from ``sys.argv`` before this parser runs), so they are intentionally not declared here.
     args = parser.parse_args()
 
     # ------------------------------------------------------------------
-    # Build train_args string — these are forwarded to client.py
-    #
-    # FLIP-specific values (project_id, query, model_id) are NOT passed
-    # here because the SQL query contains spaces and special characters
-    # that don't survive shell/argparse splitting.  Instead they are
-    # injected via environment variables (FLIP_PROJECT_ID, FLIP_QUERY,
-    # FLIP_MODEL_ID) which client.py reads as CLI defaults.
+    # FLIP-specific values are read from environment variables rather than
+    # CLI flags.  SQL queries contain spaces that don't survive argparse
+    # whitespace-splitting when forwarded via train_args.  The trainer
+    # reads the query from config_fed_client.json at runtime (via
+    # load_query()), and project_id is passed as --project_id {project_id}
+    # which the FLIP-API substitutes before job submission.
     # ------------------------------------------------------------------
-    train_args = (
-        f"--local_epochs {args.local_epochs} "
-        f"--lr {args.lr} "
-        f"--val_split {args.val_split} "
-        f"--batch_size {args.batch_size}"
-    )
+    project_id = os.environ.get("FLIP_PROJECT_ID", "")
+    query = os.environ.get("FLIP_QUERY", "SELECT * FROM Table;")
 
-    job_dir = os.path.dirname(os.path.abspath(__file__))
+    # Best-model selection (FLIP#673): the config.json keys wire a server-side IntimeModelSelector
+    # keyed on the metric the trainer reports for the received global model (the pre-train
+    # validation pass in trainer.main). Absent keys → no selector, no best checkpoint.
+    config = json.loads((_APP_FILES_DIR / "config.json").read_text())
 
-    # ------------------------------------------------------------------
-    # Create FedAvgRecipe with FLUNet model
-    # ------------------------------------------------------------------
-    recipe = FedAvgRecipe(
-        name="spleen_fedavg_flip",
-        min_clients=args.n_clients,
+    recipe = FlipFedAvgRecipe(
         num_rounds=args.num_rounds,
-        model=FLUNet(
-            spatial_dims=3,
-            in_channels=1,
-            out_channels=2,
-            channels=[16, 32, 64, 128, 256],
-            strides=[2, 2, 2, 2],
-            num_res_units=2,
-            norm="batch",
-        ),
-        train_script=os.path.join(job_dir, "client.py"),
-        train_args=train_args,
-        # Weight diff reduces bandwidth
-        params_transfer_type=TransferType.DIFF,
-        aggregator_data_kind=DataKind.WEIGHT_DIFF,
-        # The key metric for model selection
-        key_metric="accuracy",
+        min_clients=args.n_clients,
+        train_script="trainer.py",
+        train_args="--project_id {project_id}",
+        project_id=project_id,
+        query=query,
+        best_model_metric=config.get("BEST_MODEL_METRIC"),
+        best_model_metric_minimize=config.get("BEST_MODEL_METRIC_MINIMIZE", False),
     )
 
-    # ------------------------------------------------------------------
-    # Execute (SimEnv) or Export
-    # ------------------------------------------------------------------
+    # Stage the user app files into the job's custom/ dirs *before* execute() — this is what makes the
+    # exported/simulated job self-contained (the recipe only wires components). execute() then either
+    # exports (when --export is on sys.argv, exiting afterwards) or runs the SimEnv simulation.
+    stage_app_files(recipe.job)
+
     env = SimEnv(
         num_clients=args.n_clients,
-        num_threads=args.threads,
+        num_threads=args.n_clients,
         workspace_root=args.workspace,
     )
     run = recipe.execute(env)

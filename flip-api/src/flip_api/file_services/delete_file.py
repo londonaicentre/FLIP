@@ -40,7 +40,7 @@ def delete_model_file(
 
     Args:
         model_id (UUID): ID of the model
-        file_name (str): Name of the file to delete
+        file_name (SafeFileName): Name of the file to delete
         db (Session): Database session
         user_id (UUID): ID of the user (obtained from auth token)
 

@@ -27,7 +27,13 @@ class PercentilePrivacy(NVFlarePercentilePrivacy):
     adding or removing the component.
     """
 
-    def __init__(self, percentile=10, gamma=0.01, data_kinds: list[str] | None = None, off: bool = False):
+    def __init__(
+        self,
+        percentile: int = 10,
+        gamma: float = 0.01,
+        data_kinds: list[str] | None = None,
+        off: bool = False,
+    ) -> None:
         """Initialise the filter.
 
         Args:

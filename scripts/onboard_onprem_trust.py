@@ -42,6 +42,7 @@ import argparse
 import os
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -462,6 +463,47 @@ def check_gpu_capacity(kit_vars: dict[str, str], kit_present: bool, kit: str) ->
     )
 
 
+def check_site_privacy_policy(
+    kit_vars: dict[str, str], kit_present: bool, kit: str, repo_root: Path,
+) -> Check:
+    """Validate site-policy variables with the same stdlib-only renderer used at runtime."""
+    label = "Site privacy policy"
+    if not kit_present:
+        return Check(label, Status.PENDING, "pending — needs kit file")
+    hints = [f"Edit trust/.env.{kit} → Host-local profile; the fl-client fails closed on an invalid policy."]
+    policy_vars = {key: value for key, value in kit_vars.items() if key.startswith("FL_SITE_PRIVACY_")}
+    if kit_vars.get("FL_BACKEND", "").strip().lower() != "nvflare":
+        if any(value.strip() for value in policy_vars.values()):
+            return Check(
+                label,
+                Status.FAIL,
+                "configured but FL_BACKEND is not nvflare; the policy would be ignored",
+                hints=hints,
+            )
+        return Check(label, Status.PASS, "not applicable for this FL backend")
+
+    renderer = repo_root / "flip-utils" / "flip" / "nvflare" / "site_policy.py"
+    # The validation target must not exist: the renderer treats any existing file as a
+    # stale render, so os.devnull would make a no-policy kit report "would remove stale
+    # /dev/null". env stays kit-only on purpose — the check validates what the kit file
+    # provides, not whatever the operator's shell happens to export.
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        result = subprocess.run(
+            [sys.executable, str(renderer), "--check", str(Path(tmp_dir) / "privacy.json")],
+            capture_output=True,
+            check=False,
+            env=policy_vars,
+            text=True,
+        )
+    if result.returncode:
+        detail = result.stderr.strip().removeprefix("[site-privacy] FATAL: ")
+        return Check(label, Status.FAIL, detail or "site privacy validation failed", hints=hints)
+    # Keep the verdict half of the renderer's report; the rest names the throwaway
+    # validation path, which means nothing in a readiness table.
+    detail = result.stdout.strip().removeprefix("[site-privacy] ").split(" — ")[0]
+    return Check(label, Status.PASS, detail)
+
+
 def check_unrotated_passwords(
     kit_vars: dict[str, str], kit_present: bool, repo_root: Path, kit: str,
 ) -> Check:
@@ -600,6 +642,7 @@ def run_checks(kit: str, repo_root: Path) -> list[Check]:
         check_fl_kit_dir_exists(fl_kit_dir, kit_present),
         check_fl_kit_contents(kit_vars, kit_present),
         check_gpu_capacity(kit_vars, kit_present, kit),
+        check_site_privacy_policy(kit_vars, kit_present, kit, repo_root),
         check_unrotated_passwords(kit_vars, kit_present, repo_root, kit),
         check_data_dir(
             "OMOP data dir", "OMOP_DATA_DIR", "update-omop-data",

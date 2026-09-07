@@ -29,8 +29,9 @@ class KeepOnlyVars(DXOFilter):
     Keeping only the head is correct for a frozen backbone: the backbone is identical on every
     client after round 0, so it need not be re-aggregated; the server retains it from the round-0
     global model (delivered by ``InitialCheckpointPTModelPersistor``) and the aggregator merges the
-    head diff into it. The server's WEIGHT_DIFF reconstruction is partial-safe (only keys present in
-    the diff are applied), so a head-only update reconstructs correctly.
+    head diff into it. Stock ``WEIGHT_DIFF`` aggregation is natively partial-safe — the shareable
+    generator applies only the keys present in the averaged diff, so every other key keeps its
+    global value and a head-only update lands correctly.
     """
 
     def __init__(self, include_vars: str | None = None, data_kinds: list[str] | None = None):

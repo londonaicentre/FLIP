@@ -11,9 +11,11 @@
 #
 
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
+from flip_api.auth.dependencies import verify_token
 from flip_api.domain.schemas.types import FLBackend
-from flip_api.model_services.get_job_types import get_job_types_endpoint
+from flip_api.model_services.get_job_types import get_job_types_endpoint, router
 
 
 def test_get_job_types_endpoint_returns_manifest_for_resolved_backend():
@@ -27,8 +29,20 @@ def test_get_job_types_endpoint_returns_manifest_for_resolved_backend():
             return_value=manifest,
         ) as mock_get_all,
     ):
-        result = get_job_types_endpoint(db)
+        result = get_job_types_endpoint(db, uuid4())
 
     assert result == manifest
     mock_resolve.assert_called_once_with(db)
     mock_get_all.assert_called_once_with(FLBackend.FLOWER)
+
+
+def test_get_job_types_route_requires_authentication():
+    """The route is a token-gated read, like every other route in the /model namespace.
+
+    Asserted on the route rather than through a client call because the dependency *is* the whole
+    access control here — the handler ignores the caller — so dropping it would leave every test
+    that calls the function directly still passing.
+    """
+    route = next(r for r in router.routes if getattr(r, "path", "") == "/model/job-types")
+
+    assert verify_token in {dependency.call for dependency in route.dependant.dependencies}

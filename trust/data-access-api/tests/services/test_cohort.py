@@ -23,6 +23,7 @@ from sqlglot import exp
 
 from data_access_api.routers.schema import CohortQueryInput
 from data_access_api.services.cohort import (
+    ALLOWED_SCHEMA,
     MAX_QUERY_LENGTH,
     get_age_distribution,
     get_counts,
@@ -398,9 +399,12 @@ def test_get_records_pandas_error_without_dbapi_cause(mock_read_sql):
 #
 # DDL/DML keyword filtering is intentionally not asserted here: data-access-api
 # connects as data_analyst_reader (see trust/omop-db/files/create_readonly_users.sql),
-# a Postgres role that has INSERT/UPDATE/DELETE/TRUNCATE/CREATE explicitly
-# REVOKEd. Writes are rejected at the database layer; validate_query only
-# enforces structural rules that the DB role cannot enforce on its own.
+# a Postgres role that is never granted INSERT/UPDATE/DELETE/TRUNCATE/CREATE and has
+# them explicitly REVOKEd. Writes are rejected at the database layer; validate_query
+# only enforces structural rules that the DB role cannot enforce on its own. Note the
+# role bounds writes, not reads — its read scope is deployment dependent (the
+# Kubernetes chart grants pg_read_all_data), which is why the schema pinning in rule 5
+# is the only barrier and is asserted thoroughly below.
 
 
 @pytest.mark.parametrize(
@@ -493,6 +497,26 @@ def test_validate_query_still_accepts_read_only_cte():
 @pytest.mark.parametrize(
     "query",
     [
+        "SELECT * INTO newtbl FROM omop.person",
+        # Nested inside a CTE body — the walk must reach it there too.
+        "WITH x AS (SELECT * INTO t FROM omop.person) SELECT * FROM x",
+    ],
+)
+def test_validate_query_rejects_select_into(query: str):
+    """``SELECT ... INTO`` is ``CREATE TABLE AS`` in Postgres but parses as a plain ``Select``.
+
+    It satisfies the SELECT-shape check and carries no INSERT/UPDATE/DELETE/MERGE node, so only
+    the ``exp.Into`` entry in ``_DATA_MODIFYING_TYPES`` rejects it structurally. Without that,
+    the write reached the engine and failed as an opaque permission error instead of the clear
+    400 the docstring promises (plain ``CREATE TABLE AS`` is already caught by the shape check).
+    """
+    with pytest.raises(HTTPException, match="Data-modifying statements are not allowed"):
+        validate_query(query)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
         "",                  # empty input → sqlglot returns [None]
         "   ",               # whitespace only → [None]
         "; ;",               # multiple Nones
@@ -578,6 +602,309 @@ def test_validate_query_rejects_non_omop_schemas(query: str):
     """
     with pytest.raises(HTTPException, match="is not accessible"):
         validate_query(query)
+
+
+def test_validate_query_rejects_cross_database_references():
+    """A three-part reference hides the real catalog from the schema check.
+
+    ``otherdb.omop.person`` parses with db=omop, so the schema comparison passes and only the
+    ``catalog`` arg reveals it. Postgres has no cross-database references, so there is no
+    legitimate reason to send one.
+    """
+    with pytest.raises(HTTPException, match="Cross-database table references are not allowed"):
+        validate_query("SELECT * FROM otherdb.omop.person")
+
+
+def test_validate_query_rejects_empty_schema_slot_cleanly():
+    """``otherdb..person`` parses with catalog=otherdb and a bare-``str`` empty ``db``.
+
+    Reading ``.name`` on that ``str`` used to raise AttributeError — an unhandled exception
+    from the security validator, surfaced as a 500. The catalog check runs first now, so the
+    shape gets the rejection that actually describes it.
+    """
+    with pytest.raises(HTTPException, match="Cross-database table references are not allowed"):
+        validate_query("SELECT * FROM otherdb..person")
+
+
+def test_validate_query_fails_closed_when_the_validator_crashes(monkeypatch):
+    """Any non-HTTPException escaping the validation pass must become a clean 400.
+
+    The validator feeds adversarial input through a third-party parser; a shape it mishandles
+    must reject in-hand rather than surface as a 500. Escaping would also skip the re-emit at
+    the end of the pass, so failing closed here loses nothing.
+    """
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("parser surprise")
+
+    monkeypatch.setattr("data_access_api.services.cohort.normalize_identifiers", _boom)
+    with pytest.raises(HTTPException, match="Could not validate query"):
+        validate_query("SELECT * FROM omop.person")
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        'SELECT * FROM "OMOP".person',
+        'SELECT * FROM "Omop".person',
+        'SELECT person_id FROM omop.person UNION SELECT person_id FROM "OMOP".person',
+    ],
+)
+def test_validate_query_rejects_a_quoted_schema_that_is_not_omop(query: str):
+    """Postgres holds ``"OMOP"`` distinct from ``omop``, so the schema check must not fold it.
+
+    Quoted identifiers survive ``normalize_identifiers`` with their case intact -- that is what
+    makes the CTE exemption agree with the engine. Lowering the schema name before the allowlist
+    comparison undid it here: ``"OMOP"`` compared equal to ``omop``, passed, and was emitted
+    untouched, so the validator approved one schema while the engine read another.
+    """
+    with pytest.raises(HTTPException, match="is not accessible"):
+        validate_query(query)
+
+
+def test_validate_query_allows_a_quoted_omop_schema():
+    """The rejection above is about case, not quoting -- ``"omop"`` binds to the allowed schema."""
+    emitted = validate_query('SELECT * FROM "omop".person')
+
+    assert '"omop".person' in emitted
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_fragment"),
+    [
+        # Postgres searches pg_catalog implicitly and first, so dropping the schema qualifier
+        # reached the catalog no matter what search_path was set to (FLIP#879).
+        ("SELECT * FROM pg_class", "omop.pg_class"),
+        ("SELECT relname FROM pg_tables", "omop.pg_tables"),
+        ("SELECT rolname FROM pg_roles", "omop.pg_roles"),
+        # Ordinary unqualified cohort references are pinned the same way, not rejected.
+        ("SELECT * FROM person", "omop.person"),
+        # The walk covers every arm, not just the first table.
+        ("SELECT * FROM omop.person UNION SELECT relname, NULL FROM pg_class", "omop.pg_class"),
+        ("SELECT (SELECT relname FROM pg_class LIMIT 1) FROM omop.person", "omop.pg_class"),
+        ("SELECT * FROM omop.person p JOIN visit_occurrence v ON p.person_id = v.person_id", "omop.visit_occurrence"),
+    ],
+)
+def test_validate_query_pins_unqualified_tables_to_omop(query: str, expected_fragment: str):
+    """Unqualified references are rewritten to omop.<table> in the emitted SQL.
+
+    Asserting on the *emitted* string is the point: the emitted query is what reaches the engine,
+    so pinning the AST node is only a fix if the pin survives emission.
+    """
+    emitted = validate_query(query)
+
+    assert expected_fragment in emitted
+
+
+def test_validate_query_does_not_pin_cte_references():
+    """A name bound by WITH is not a schema-qualifiable table — pinning it would break the query.
+
+    The CTE is deliberately not named ``p``: ``omop.p`` is a substring of ``omop.person``, so the
+    negative assertion would pass for the wrong reason.
+    """
+    emitted = validate_query("WITH cohort_rows AS (SELECT * FROM omop.person) SELECT * FROM cohort_rows")
+
+    assert "FROM cohort_rows" in emitted
+    assert "omop.cohort_rows" not in emitted
+
+
+def test_validate_query_pins_unqualified_tables_inside_a_cte_body():
+    """The CTE exemption covers the bound name only, not the tables the CTE selects from."""
+    emitted = validate_query("WITH p AS (SELECT * FROM pg_class) SELECT * FROM p")
+
+    assert "omop.pg_class" in emitted
+
+
+def test_validate_query_pins_table_outside_nested_cte_scope():
+    """An inner CTE cannot exempt an unqualified table in its enclosing query."""
+    emitted = validate_query(
+        "WITH wrapper AS (WITH audit_log AS (SELECT 1) SELECT * FROM audit_log) SELECT * FROM audit_log"
+    )
+
+    assert "SELECT * FROM audit_log" in emitted
+    assert emitted.endswith("SELECT * FROM omop.audit_log")
+
+
+def test_validate_query_allows_pg_prefixed_cte_names_in_their_scope():
+    """A scope-aware CTE exemption safely permits ordinary PostgreSQL CTE names."""
+    emitted = validate_query("WITH pg_class AS (SELECT 1 AS x) SELECT * FROM pg_class")
+
+    assert emitted.endswith("SELECT * FROM pg_class")
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT * FROM pg_catalog.pg_ls_dir('/')",
+        "SELECT * FROM public.some_func()",
+        "SELECT * FROM otherdb.pg_catalog.pg_ls_dir('/')",
+    ],
+)
+def test_validate_query_rejects_schema_qualified_table_functions(query: str):
+    """A *qualified* table-valued function must not escape the schema check.
+
+    sqlglot parses it as an exp.Table with an empty ``.name`` but a populated ``.db``, so a skip
+    keyed on the name steps over the schema check — which is exactly the regression this test
+    exists to prevent. The unqualified-function case below is the one that legitimately skips.
+    """
+    with pytest.raises(HTTPException, match="is not accessible|Cross-database"):
+        validate_query(query)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT * FROM omop.pg_ls_dir('/')",
+        "SELECT * FROM omop.pg_read_file('/etc/passwd')",
+    ],
+)
+def test_validate_query_rejects_omop_qualified_table_functions(query: str):
+    """An *omop*-qualified table-valued function must still face the function allowlist.
+
+    It passes the schema check by construction, and the tree-wide ``exp.Anonymous`` walk skips
+    nodes an ``exp.Table`` owns — so this was the one spelling that reached the emit without
+    touching either allowlist. Not exploitable while nothing is installed in ``omop``, but the
+    control is an allowlist in every other position and must be one here too.
+    """
+    with pytest.raises(HTTPException, match="not an allowed table-valued function"):
+        validate_query(query)
+
+
+def test_validate_query_pins_across_lexical_cte_scopes():
+    """A CTE bound in one scope must not exempt a physical table in another.
+
+    Postgres CTE visibility is lexical: the outer ``person`` here is *not* the inner CTE, so it must
+    still be pinned. A statement-wide alias set exempts it — and with ``public`` on the search path
+    that is a read outside omop.
+    """
+    emitted = validate_query("SELECT * FROM person, (WITH person AS (SELECT 1 AS x) SELECT x FROM person) z")
+
+    assert "omop.person" in emitted
+
+
+def test_validate_query_leaves_table_valued_functions_alone():
+    """``FROM generate_series(...)`` parses as an exp.Table with no name and no schema to pin."""
+    emitted = validate_query("SELECT * FROM generate_series(1, 10)")
+
+    assert "GENERATE_SERIES" in emitted.upper()
+    assert "omop." not in emitted
+
+
+@pytest.mark.parametrize(
+    ("query", "catalog_table"),
+    [
+        ('WITH "PG_CLASS" AS (SELECT 1 AS x) SELECT relname FROM PG_CLASS', "pg_class"),
+        ('WITH "PG_ROLES" AS (SELECT 1 AS x) SELECT rolname FROM PG_ROLES', "pg_roles"),
+        ('WITH "PG_TABLES" AS (SELECT 1 AS x) SELECT tablename FROM PG_TABLES', "pg_tables"),
+    ],
+)
+def test_validate_query_pins_when_a_quoted_cte_name_cannot_bind_the_reference(query: str, catalog_table: str):
+    """A quoted CTE name must not exempt an unquoted reference to a real catalog table.
+
+    ``scope.cte_sources`` is keyed on the CTE's literal text, so a raw string comparison matches
+    ``"PG_CLASS"`` against ``PG_CLASS`` and exempts it. Postgres does not agree: the quoted CTE is
+    ``PG_CLASS`` while the unquoted reference folds to ``pg_class``, which the CTE cannot bind — so
+    it resolves through the implicit ``pg_catalog`` and the pin is bypassed entirely.
+    """
+    emitted = validate_query(query)
+
+    assert f"{ALLOWED_SCHEMA}.{catalog_table}" in emitted.lower()
+
+
+@pytest.mark.parametrize(
+    ("query", "cte_name"),
+    [
+        ("WITH cohort AS (SELECT person_id FROM omop.person) SELECT COUNT(*) FROM COHORT", "cohort"),
+        ("WITH COHORT AS (SELECT person_id FROM omop.person) SELECT COUNT(*) FROM cohort", "cohort"),
+        ('WITH "Mixed" AS (SELECT 1 AS x) SELECT x FROM "Mixed"', "mixed"),
+    ],
+)
+def test_validate_query_exempts_a_cte_the_reference_can_actually_bind(query: str, cte_name: str):
+    """Case-differing references to an unquoted CTE bind to it in Postgres, so must stay unpinned.
+
+    Pinning them rewrites a working query to ``omop.<name>``. For the most likely CTE name in this
+    product that is not even a clean error: ``omop.cohort`` is a real, empty OMOP CDM table, so the
+    researcher silently gets a count of zero.
+    """
+    emitted = validate_query(query)
+
+    # Quotes are stripped so a pinned *quoted* reference (omop."Mixed") is caught too.
+    assert f"{ALLOWED_SCHEMA}.{cte_name}" not in emitted.lower().replace('"', "")
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT * FROM pg_ls_dir('/')",
+        "SELECT * FROM pg_read_file('/etc/passwd')",
+        "SELECT * FROM query_to_xml('SELECT 1', true, false, '')",
+        "SELECT * FROM pg_show_all_settings()",
+    ],
+)
+def test_validate_query_rejects_unqualified_table_functions_outside_the_allowlist(query: str):
+    """An unqualified table-valued function resolves through the implicit ``pg_catalog`` too.
+
+    The schema pin only reaches ``exp.Table`` nodes carrying a name, so a set-returning function in
+    the FROM clause skipped it entirely — including ``query_to_xml``, which executes a SQL string
+    sqlglot never parses and so bypasses every other rule here as well.
+    """
+    with pytest.raises(HTTPException, match="not an allowed table-valued function"):
+        validate_query(query)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        # LATERAL before a function FROM-item is a noise word in Postgres — this is the exact
+        # call the FROM allowlist rejects — but sqlglot parses it as exp.Lateral, not exp.Table,
+        # so the scope walk never sees it.
+        "SELECT * FROM LATERAL pg_ls_dir('/')",
+        "SELECT * FROM omop.person, LATERAL query_to_xml('SELECT person_id FROM omop.person', true, false, '') q",
+        # Scalar position: pg_read_file returns text and query_to_xml executes its SQL argument,
+        # so the select list is as dangerous as the FROM clause for both.
+        "SELECT pg_read_file('/etc/passwd')",
+        "SELECT query_to_xml('SELECT person_id FROM omop.person', true, false, '')",
+        # A derived table hides the call one scope down.
+        "SELECT * FROM (SELECT pg_ls_dir('/')) t",
+        # Qualified calls parse as exp.Dot wrapping the same Anonymous node.
+        "SELECT pg_catalog.pg_read_file('/etc/passwd')",
+        # Postgres folds the unquoted name; the check must fold with it.
+        "SELECT PG_READ_FILE('/etc/passwd')",
+        # Any expression position will do — a predicate runs the function per row.
+        "SELECT person_id FROM omop.person WHERE pg_read_file('/etc/passwd') IS NOT NULL",
+    ],
+)
+def test_validate_query_rejects_unrecognised_functions_in_any_position(query: str):
+    """A catalog function is callable anywhere an expression is, not only as a FROM item.
+
+    The FROM-clause allowlist inspects ``scope.tables`` — ``exp.Table`` nodes only — so a
+    ``LATERAL`` function item (``exp.Lateral``), a select-list call, or a call inside a predicate
+    never reached it while Postgres still resolved all of them through the implicit ``pg_catalog``.
+    Every such spelling parses as ``exp.Anonymous`` (sqlglot models the SQL-standard functions as
+    typed nodes), so unrecognised functions are allowlisted tree-wide.
+    """
+    with pytest.raises(HTTPException, match="is not an allowed function"):
+        validate_query(query)
+
+
+def test_validate_query_allows_unrecognised_but_benign_scalar_functions():
+    """Benign Postgres functions sqlglot does not model must keep working in cohort SQL.
+
+    ``age`` is the canonical example — it is how a cohort query derives patient age — and it
+    parses as ``exp.Anonymous`` exactly like ``pg_read_file`` does, so it must be on the
+    unrecognised-function allowlist rather than collateral damage of it.
+    """
+    emitted = validate_query("SELECT age(CURRENT_DATE, p.birth_datetime) FROM person p")
+
+    assert "age(" in emitted.lower()
+    assert "omop.person" in emitted
+
+
+def test_validate_query_allows_lateral_over_an_allowed_table_function():
+    """``LATERAL generate_series(...)`` is ordinary row-expansion SQL and must stay allowed."""
+    emitted = validate_query("SELECT * FROM omop.person, LATERAL generate_series(1, 3) g")
+
+    assert "generate_series(1, 3)" in emitted.lower()
 
 
 @pytest.mark.parametrize(

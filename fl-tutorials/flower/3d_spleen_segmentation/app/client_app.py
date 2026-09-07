@@ -24,6 +24,7 @@ import os
 from logging import INFO
 
 import torch
+from flip.flower.privacy import flip_local_dp_mod
 from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from flwr.common import log
@@ -39,7 +40,13 @@ from app.transforms import get_train_transforms, get_val_transforms
 app = ClientApp()
 
 
-@app.train()
+# The DP mod clips the update to `dp-clipping-norm` and adds Gaussian noise calibrated to
+# (dp-epsilon, dp-delta) before the reply leaves the SuperNode — see pyproject.toml's
+# [tool.flwr.app.config]. It is applied to @app.train only; @app.evaluate below is untouched.
+# The UNet is built with norm="batch", so its int64 `num_batches_tracked` counters pass through
+# unprivatised; the mod excludes them because clipping cannot write a float scale back into an
+# int array.
+@app.train(mods=[flip_local_dp_mod])
 def train(msg: Message, context: Context) -> Message:
     """Train the model on local data (no evaluation)."""
     # Configure training parameters

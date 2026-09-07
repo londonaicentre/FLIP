@@ -65,6 +65,14 @@ probe() {
   printf '%s' "$status"
 }
 
+# Only called on the fatal redirect path, to name the destination in the error. Worth one extra
+# request there because "302" alone does not say *why*, and the destination (/setup) does.
+probe_redirect_target() {
+  curl -sS -o /dev/null -w '%{redirect_url}' \
+    --connect-timeout 5 --max-time 10 \
+    -u "${XNAT_ADMIN_USER}:${credential}" "$READINESS_URL" 2>/dev/null || true
+}
+
 echo "Waiting for the XNAT DQR plugin to be ready..."
 wait_start=$SECONDS
 last_status="000"
@@ -148,6 +156,25 @@ while true; do
           exit 1
         fi
       fi
+      ;;
+    3*)
+      # An uninitialized XNAT redirects EVERY authenticated route to /setup — not just plugin
+      # routes; /data/projects does it too. So a redirect here says nothing about plugins and
+      # everything about the site never having been switched on.
+      #
+      # Fail immediately rather than poll. Waiting cannot clear it: the step that would —
+      # POST /xapi/siteConfig {"initialized": true} in configure-xnat.sh — runs *after* this
+      # wait, so a retry loop is waiting on something downstream of itself. Treating it as
+      # transient is what made this cost a full timeout and then report a healthy plugin as
+      # "not ready" (FLIP#966).
+      redirect_target="$(probe_redirect_target)"
+      echo "ERROR: XNAT redirected the readiness probe (HTTP $last_status)." >&2
+      echo "  endpoint: $READINESS_URL" >&2
+      [[ -n "$redirect_target" ]] && echo "  redirected to: $redirect_target" >&2
+      echo "  This means XNAT is not initialized yet — every authenticated route redirects to" >&2
+      echo "  /setup until site initialization runs, so no amount of waiting will help. This" >&2
+      echo "  readiness wait must run AFTER configure-xnat.sh initializes the site." >&2
+      exit 1
       ;;
     *)
       # 404 (plugin route not registered yet), 000 (transport), 5xx (still starting): not a

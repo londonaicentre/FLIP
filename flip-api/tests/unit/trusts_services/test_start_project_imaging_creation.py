@@ -234,3 +234,29 @@ async def test_dicom_to_nifti_false_forwarded_to_trust(
     task = mock_get_session.add.call_args[0][0]
     payload = json.loads(task.payload)
     assert payload["dicom_to_nifti"] is False
+
+
+@pytest.mark.asyncio
+async def test_project_without_imaging_is_refused_with_409(
+    mock_request,
+    mock_get_session,
+    mock_has_permissions,
+    mock_get_project,
+    mock_get_user_pool_id,
+    mock_get_users_with_access,
+    mock_get_cognito_users,
+):
+    """FLIP#1071: a direct call cannot start an imaging stage the project was created without."""
+    mock_get_project.return_value.has_imaging = False
+
+    with pytest.raises(HTTPException) as excinfo:
+        await start_project_imaging_creation(
+            request=mock_request,
+            project_id=project_id,
+            trust=trust_example,
+            db=mock_get_session,
+            user_id=user_id,
+        )
+
+    assert excinfo.value.status_code == 409
+    mock_get_session.add.assert_not_called()

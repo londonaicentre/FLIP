@@ -11,6 +11,7 @@
 #
 
 from fastapi import HTTPException, status
+from pydantic import ValidationError
 from sqlmodel import Session, select
 
 from flip_api.config import get_settings
@@ -42,27 +43,31 @@ def get_site_details(db: Session) -> ISiteDetails:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment mode not found")
 
     if banner:
-        validated_banner = ISiteBanner.model_validate(banner.model_dump())
-
-        return ISiteDetails(
-            banner=ISiteBanner(
-                message=validated_banner.message,
-                link=validated_banner.link if banner.link and banner.link.strip() != "" else None,
-                enabled=validated_banner.enabled,
-            ),
-            deploymentMode=config.value,
-            maxReimportCount=get_settings().MAX_REIMPORT_COUNT,
-        )
+        stored = banner.model_dump()
+        try:
+            validated_banner = ISiteBanner.model_validate(stored)
+        except ValidationError:
+            # A row stored before the link-scheme validator existed (or written by some other
+            # path) must not take the whole site down: every page load reads this, so raising
+            # here would turn a bad banner link into a site-wide 500. Drop the link and serve
+            # the rest of the banner.
+            logger.warning("Stored site banner failed validation; serving it without its link")
+            try:
+                validated_banner = ISiteBanner.model_validate({**stored, "link": None})
+            except ValidationError:
+                # The row is invalid for a reason other than the link (e.g. a legacy NULL
+                # message), so nulling the link is not enough. Still must not 500 every page —
+                # fall back to a safe, disabled default banner.
+                logger.warning("Stored site banner is unusable even without its link; serving a default")
+                validated_banner = ISiteBanner(message="", link=None, enabled=False)
     else:
-        return ISiteDetails(
-            banner=ISiteBanner(
-                message="This is a default banner message.",
-                link=None,
-                enabled=False,
-            ),
-            deploymentMode=config.value,
-            maxReimportCount=get_settings().MAX_REIMPORT_COUNT,
-        )
+        validated_banner = ISiteBanner(message="This is a default banner message.", link=None, enabled=False)
+
+    return ISiteDetails(
+        banner=validated_banner,
+        deploymentMode=config.value,
+        maxReimportCount=get_settings().MAX_REIMPORT_COUNT,
+    )
 
 
 def update_site_details(site_details: ISiteDetails, db: Session) -> None:
@@ -120,7 +125,7 @@ def update_site_details(site_details: ISiteDetails, db: Session) -> None:
 
     except Exception as e:
         db.rollback()
-        logger.exception(f"Error updating site details: {str(e)}")
+        logger.exception("Error updating site details")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error updating site details: {str(e)}"
-        )
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
+        ) from e

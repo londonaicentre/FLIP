@@ -42,7 +42,7 @@ class TestEvaluationJsonGenerator:
             data_client (str | None): The client that produced the result.
             validation_result (Shareable | None): The result shareable.
             model_owner (str | None): The validated model's name. ``GlobalModelEval`` sets this;
-                FLIP's own ``ModelEval`` controller does not.
+                the retired legacy ``ModelEval`` controller (deleted) did not.
         """
         self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
             AppConstants.DATA_CLIENT: data_client,
@@ -364,7 +364,7 @@ class TestEvaluationJsonGenerator:
         }
 
     def test_results_stay_flat_when_model_owner_is_absent(self):
-        """FLIP's ModelEval controller sets no MODEL_OWNER: the evaluator's own dict is the shape."""
+        """The retired ModelEval controller set no MODEL_OWNER: legacy stored results keep that shape."""
         self._receive("Trust_1", self._metrics(**{"model_a": {"dice": 0.7}}), model_owner=None)
 
         assert self.generator._eval_results == {"Trust_1": {"model_a": {"dice": 0.7}}}

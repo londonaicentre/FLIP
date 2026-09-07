@@ -51,11 +51,14 @@ vi.mock("@/router", () => ({
     default: { push: vi.fn() }
 }));
 
+// Records every key swrv is given, so tests can assert which endpoints the layout subscribes to.
+const { swrvKeys } = vi.hoisted(() => ({ swrvKeys: [] as unknown[] }));
+
 vi.mock("swrv", () => ({
     // Invoke the key function like real swrv does, so the page's key builders
-    // (e.g. the `/users/${email}` lookup) are exercised rather than skipped.
+    // (e.g. the `/users/me` self lookup) are exercised rather than skipped.
     default: (keyFn?: unknown) => {
-        if (typeof keyFn === "function") keyFn();
+        if (typeof keyFn === "function") swrvKeys.push(keyFn());
 
         return {
             data: ref(null),
@@ -83,6 +86,7 @@ vi.mock("@/utils/snackbar", () => ({
 function mountMainLayout(options: {
     permissions?: string[];
     email?: string;
+    userId?: string;
     bannerEnabled?: boolean;
     bannerMessage?: string;
     deploymentMode?: boolean;
@@ -94,6 +98,7 @@ function mountMainLayout(options: {
     const {
         permissions = [],
         email = "test@example.com",
+        userId = "1",
         bannerEnabled,
         bannerMessage = "Test banner",
         deploymentMode = false,
@@ -126,9 +131,9 @@ function mountMainLayout(options: {
                         auth: {
                             user: {
                                 username: "testuser",
-                                userId: "1",
+                                userId,
                                 attributes: {
-                                    sub: "1",
+                                    sub: userId,
                                     email
                                 },
                                 permissions
@@ -181,6 +186,42 @@ describe("MainLayout", () => {
             const wrapper = mountMainLayout();
 
             expect(wrapper.exists()).toBe(true);
+        });
+    });
+
+    describe("current user profile", () => {
+        it("subscribes to /users/me rather than a by-email lookup", () => {
+            swrvKeys.length = 0;
+
+            mountMainLayout();
+
+            expect(swrvKeys.some(key => typeof key === "string" && key.startsWith("/users/me"))).toBe(true);
+            // The header used to resolve the caller by putting their email in the path. That
+            // route is now admin-only, and addresses do not belong in URLs anyway (FLIP#907).
+            expect(swrvKeys.some(key => typeof key === "string" && /^\/users\/.+@/.test(key))).toBe(false);
+        });
+
+        it("scopes the cache key to the signed-in user", () => {
+            // swrv's cache is module-level and survives sign-out (an SPA route change), so a
+            // constant key would serve the previous account's profile to the next user in the
+            // same tab — and `dedupingInterval` would suppress the correcting refetch.
+            swrvKeys.length = 0;
+
+            mountMainLayout({ userId: "user-a" });
+            mountMainLayout({ userId: "user-b" });
+
+            const selfKeys = swrvKeys.filter(key => typeof key === "string" && key.startsWith("/users/me"));
+
+            expect(selfKeys).toHaveLength(2);
+            expect(new Set(selfKeys).size).toBe(2);
+        });
+
+        it("does not subscribe before the signed-in user is known", () => {
+            swrvKeys.length = 0;
+
+            mountMainLayout({ userId: "" });
+
+            expect(swrvKeys.some(key => typeof key === "string" && key.startsWith("/users/me"))).toBe(false);
         });
     });
 

@@ -41,7 +41,7 @@ usage() {
 Usage: ${SCRIPT_NAME} [workspace-dir] [options]
 
 Extract FL round metrics from a local NVFLARE simulator workspace
-(default workspace: /tmp/nvflare/arkplus_finetuning_client_api).
+(default workspace: /tmp/nvflare/arkplus_finetuning).
 
 Options:
   -o, --output-dir DIR   Base output directory (default: ./round_metrics)
@@ -53,12 +53,12 @@ Options:
 
 Examples:
   ${SCRIPT_NAME}                                    # after 'make sim' in the finetuning tutorial
-  ${SCRIPT_NAME} /tmp/nvflare/arkplus_finetuning_client_api -o round_metrics \\
+  ${SCRIPT_NAME} /tmp/nvflare/arkplus_finetuning -o round_metrics \\
       --compare round_metrics/eff70d90-5706-4cc9-8087-5059dfb40d96/rounds.tsv
 EOF
 }
 
-WORKSPACE="/tmp/nvflare/arkplus_finetuning_client_api"
+WORKSPACE="/tmp/nvflare/arkplus_finetuning"
 OUTPUT_DIR="./round_metrics"
 RUN_NAME=""
 LOG_FILE=""

@@ -42,7 +42,7 @@ legacy tutorial.
 
 ## Compatible job type
 
-This tutorial is designed for `JOB_TYPE=evaluation_client_api`.
+This tutorial is designed for `JOB_TYPE=evaluation`.
 
 ## Prerequisites
 
@@ -68,7 +68,7 @@ make -C fl-tutorials run-tutorial TUTORIAL=arkplus_multimodel_classification_eva
 
 `download-arkplus-eval-data` pulls the `site1_holdoff`/`site2_holdoff` hold-out splits of
 [`aicentreflip/tutorials-arkplus-cxr-classification`](https://huggingface.co/datasets/aicentreflip/tutorials-arkplus-cxr-classification)
-and normalises them into `fl-tutorials/nvflare/data/arkplus/site{1,2}_holdoff/` (gitignored), matching
+and normalises them into `fl-tutorials/data/arkplus/site{1,2}_holdoff/` (gitignored), matching
 this tutorial's `.env.app` defaults (the same hold-out splits the baseline tutorial evaluates).
 
 For local development, per-site paths are set in `.env.app`:
@@ -140,7 +140,7 @@ your own, set `FINETUNED_CHECKPOINT` in `.env.app` to a URL or a local (absolute
 
 Default local development settings are in `.env.app`:
 
-- `JOB_TYPE=evaluation_client_api`
+- `JOB_TYPE=evaluation`
 - `RAW_CHECKPOINT=models/Ark6_swinLarge768_ep50.pth.tar`
 - `FINETUNED_CHECKPOINT=` (empty → download the default fine-tuned model from `aicentreflip/tutorials-arkplus-cxr-finetuned`)
 - `DEV_IMAGES_DIR` / `DEV_DATAFRAME` and the per-site `SITE{1,2}_*` paths

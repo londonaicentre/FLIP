@@ -56,6 +56,18 @@ export interface IProjectUser {
     isDisabled: boolean;
 }
 
+/**
+ * What `GET /users/lookup` returns when resolving an email to a prospective project member.
+ *
+ * Deliberately narrower than IProjectUser: the hub withholds `name` and `organisation` from
+ * everyone who lacks CAN_MANAGE_USERS, so the add-member flow never sees them (FLIP#907).
+ */
+export interface IProjectUserLookup {
+    id: string;
+    email: string;
+    isDisabled: boolean;
+}
+
 export interface IAccessRequest {
     email: string;
     fullName: string;
@@ -133,8 +145,14 @@ export async function updateUserProfile(userId: string, profile: IUserProfileDto
     return response.data;
 }
 
-export async function validateUser(email: string): Promise<IProjectUser> {
-    const response = await _http.get<IProjectUser>(`/users/${email}`);
+export async function getCurrentUser(): Promise<IProjectUser> {
+    const response = await _http.get<IProjectUser>("/users/me");
+
+    return response.data;
+}
+
+export async function lookupProjectUser(email: string): Promise<IProjectUserLookup> {
+    const response = await _http.get<IProjectUserLookup>(`/users/lookup?email=${encodeURIComponent(email)}`);
 
     return response.data;
 }

@@ -13,6 +13,7 @@
 """Tests for generate_internal_service_key script."""
 
 import hashlib
+import stat
 from pathlib import Path
 from unittest.mock import patch
 
@@ -118,3 +119,29 @@ class TestGenerateInternalServiceKey:
             with pytest.raises(SystemExit) as exc_info:
                 main()
         assert exc_info.value.code == 1
+
+    def test_written_env_file_is_owner_only(self, env_file: Path) -> None:
+        """The generated key and its hash are secrets; the file must not stay world-readable."""
+        env_file.chmod(0o644)
+
+        with patch("sys.argv", ["prog", "--env-file", str(env_file), "--force"]):
+            main()
+
+        assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
+
+    def test_hash_resync_path_also_restricts_the_file(self, env_file: Path) -> None:
+        """The stale-hash branch writes through a second call site — it must tighten too."""
+        key = "test-key-abc123"
+        env_file.write_text(
+            f"INTERNAL_SERVICE_KEY={key}\n"
+            "INTERNAL_SERVICE_KEY_HEADER=X-Internal-Service-Key\n"
+            "INTERNAL_SERVICE_KEY_HASH=stale-hash\n"
+        )
+        env_file.chmod(0o644)
+
+        with patch("sys.argv", ["prog", "--env-file", str(env_file)]):
+            main()
+
+        env = _parse_env(env_file.read_text())
+        assert env["INTERNAL_SERVICE_KEY_HASH"] == hashlib.sha256(key.encode()).hexdigest()
+        assert stat.S_IMODE(env_file.stat().st_mode) == 0o600

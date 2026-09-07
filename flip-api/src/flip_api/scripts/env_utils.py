@@ -13,6 +13,12 @@
 """Shared utilities for reading and updating environment files."""
 
 import json
+import os
+from pathlib import Path
+
+# Owner read/write only. Kit files carry generated database passwords, per-trust API keys and the
+# trust-internal service key, so their mode must never be left to the process umask.
+KIT_FILE_MODE = 0o600
 
 
 def get_json_value(json_str: str, key: str) -> str:
@@ -67,6 +73,36 @@ def update_or_append(lines: list[str], var_name: str, value: str) -> list[str]:
     if not found:
         new_lines.append(f"{var_name}={value}")
     return new_lines
+
+
+def write_env_file(path: Path, lines: list[str]) -> None:
+    """Write env file lines to *path* and restrict it to owner read/write.
+
+    A kit file created outside the sanctioned paths can keep whatever mode the umask gave it —
+    0644 on a stock box — while receiving generated credentials. Tighten the open file descriptor
+    before truncating or writing it, so the new contents are never exposed through an existing
+    permissive mode.
+
+    ``scripts/trust_kit_lib.write_secure`` is the same routine for the root-level ``register-trust``
+    scripts. It is duplicated rather than shared because that module lives at the repository root,
+    outside this package and its virtual environment, so neither can import the other.
+
+    Args:
+        path (Path): The env file to write.
+        lines (list[str]): Lines to write, without trailing newlines.
+
+    Returns:
+        None
+    """
+    # Do not use Path.write_text followed by chmod: an existing 0644 file, or a new file created
+    # under umask 022, would contain fresh credentials before its mode is tightened. Opening
+    # without O_TRUNC lets fchmod run first; truncate and write only after the descriptor is 0600.
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT, KIT_FILE_MODE), "w") as env_file:
+        os.fchmod(env_file.fileno(), KIT_FILE_MODE)
+        env_file.truncate(0)
+        # Guard the empty case so an empty list writes an empty file, not a lone "\n" that would
+        # leave a leading blank line — matching scripts/trust_kit_lib.write_secure exactly.
+        env_file.write("\n".join(lines) + "\n" if lines else "")
 
 
 if __name__ == "__main__":

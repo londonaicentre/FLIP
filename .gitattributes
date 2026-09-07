@@ -5,10 +5,11 @@
 # the per-backend aggregate (single path segment after fl-apps/), never the per-template sources.
 fl-apps/*/required_files.json linguist-generated=true
 
-# The *_client_api base app configs (standard_client_api, evaluation_client_api, ...) are generated
-# from flip.nvflare.recipes (FlipFedAvgRecipe / FlipEvalRecipe) by each template's recipe.py — do not
-# hand-edit; regenerate after any recipe change (see each template's README) and commit the result.
+# The NVFLARE base app configs (standard, evaluation, fed_opt, diffusion_model) are generated from
+# flip.nvflare.recipes (FlipFedAvgRecipe / FlipEvalRecipe / FlipFedOptRecipe / FlipDiffusionRecipe)
+# by each template's recipe.py — do not hand-edit; regenerate after any recipe change (see each
+# template's README) and commit the result.
 # Marked generated so GitHub collapses them in diffs and flags them as derived.
-fl-apps/nvflare/*_client_api/app/config/config_fed_server.json linguist-generated=true
-fl-apps/nvflare/*_client_api/app/config/config_fed_client.json linguist-generated=true
-fl-apps/nvflare/*_client_api/meta.json linguist-generated=true
+fl-apps/nvflare/*/app/config/config_fed_server.json linguist-generated=true
+fl-apps/nvflare/*/app/config/config_fed_client.json linguist-generated=true
+fl-apps/nvflare/*/meta.json linguist-generated=true

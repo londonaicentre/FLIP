@@ -21,6 +21,7 @@ that becomes a filesystem path or an outbound fetch is validated here first.
 
 import ipaddress
 import os
+import socket
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -63,7 +64,9 @@ def validate_bundle_url(url: str) -> str:
     ``http://169.254.169.254`` metadata fetch and non-http schemes (flip-api presigns S3
     over https in every environment); an optional comma-separated ``BUNDLE_URL_ALLOWED_HOSTS``
     pins fetches to the expected object-store origin when configured. DNS names are not
-    resolved here — the redirect-disabled fetch and the optional allow-list cover the rest.
+    resolved here — the redirect-disabled fetch and the optional allow-list cover the rest —
+    with one named exception: ``localhost`` is a literal loopback alias, so it is rejected
+    outright rather than left to resolution.
 
     Args:
         url (str): A bundle download URL from the request body.
@@ -73,7 +76,8 @@ def validate_bundle_url(url: str) -> str:
 
     Raises:
         HTTPException: 400 if the URL is not https, has no host, uses a non-443 port, names a
-            private/loopback/link-local IP literal, or is not on the host allow-list.
+            private/loopback/link-local IP literal (in any spelling, root-label included) or
+            ``localhost``, or is not on the host allow-list.
     """
     parsed = urlparse(url)
     if parsed.scheme != "https":
@@ -82,11 +86,25 @@ def validate_bundle_url(url: str) -> str:
             detail=f"Bundle URL must use https: {url!r}.",
         )
 
-    hostname = parsed.hostname
+    # Strip any root label (trailing dots) before the emptiness check and both parsers below. DNS
+    # treats "127.0.0.1." as absolute and glibc resolvers reach loopback, while both IP parsers
+    # reject the trailing dot — so the unstripped spelling skipped every range check: the same
+    # parsers-disagree failure mode as the numeric spellings. Stripping first also keeps a
+    # dot-only host on the no-host rejection instead of the "not an IP literal" branch.
+    hostname = (parsed.hostname or "").rstrip(".")
     if not hostname:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Bundle URL has no host: {url!r}.",
+        )
+
+    # "localhost" is a literal loopback alias, not a name that needs resolving — the range checks
+    # below cover the numeric spellings, this covers the named one. urlparse lowercases .hostname,
+    # so one comparison catches every case variant.
+    if hostname == "localhost":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bundle URL host not allowed: {hostname!r}.",
         )
 
     # Presigned S3 URLs are always served on 443; a custom port points at an internal service.
@@ -105,12 +123,35 @@ def validate_bundle_url(url: str) -> str:
             detail=f"Bundle URL port not allowed: {port}.",
         )
 
-    # Block IP-literal hosts in non-public ranges. A host that is not an IP literal raises
-    # ValueError and is left to the https + optional allow-list checks (we do not resolve DNS).
+    # Refuse a host carrying a NUL or other control character before either parser sees it.
+    # urlparse passes NUL straight through to .hostname, and resolvers that truncate at NUL would
+    # then reach a different host than the one checked here — "127.0.0.1\x00" is the loopback
+    # bypass that shape buys. Neither parser rejects it usefully on its own: inet_aton raises a
+    # plain ValueError (not the AddressValueError subclass), which would either escape as a 500 or,
+    # if swallowed, leave the range checks below unrun. No legitimate host contains these.
+    if any(ch < " " or ch == "\x7f" for ch in hostname):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bundle URL host not allowed: {hostname!r}.",
+        )
+
+    # Block IP-literal hosts in non-public ranges. Two parsers, because they disagree:
+    # ipaddress.ip_address accepts only the canonical dotted-quad form, while the resolver behind
+    # the actual fetch (getaddrinfo -> inet_aton) also accepts packed decimal, hex and octal
+    # spellings — "2130706433", "0x7f000001", "017700000001", "127.1" and "0" all reach loopback.
+    # Parsing with ip_address alone therefore left the checks below unrun for exactly the
+    # spellings an attacker would pick. inet_aton raises OSError on a real DNS name, so a host
+    # neither parser accepts is left to the https + optional allow-list checks — we still do not
+    # resolve DNS here, which would make this function network-dependent without closing the
+    # rebinding window anyway.
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address | None
     try:
-        ip: ipaddress.IPv4Address | ipaddress.IPv6Address | None = ipaddress.ip_address(hostname)
+        ip = ipaddress.ip_address(hostname)
     except ValueError:
-        ip = None
+        try:
+            ip = ipaddress.IPv4Address(socket.inet_aton(hostname))
+        except OSError:
+            ip = None
     if ip is not None and (
         ip.is_private
         or ip.is_loopback

@@ -36,7 +36,7 @@ class InitialCheckpointPTModelPersistor(PTFileModelPersistor):
          FL API staged on the hub-local shared volume (production). Read straight from disk;
          the checkpoint is intentionally NOT shipped in the app bundle, so it never reaches
          the clients. Mirrors the Flower backend's ``/app/src`` shared mount and the eval
-         ``EvaluationPTModelLocator``.
+         ``EvaluationModelLocator``.
 
     The resolved checkpoint is loaded (``strict=False``) into the ``get_model()`` architecture
     so the round-0 global model that ScatterAndGather broadcasts carries the backbone **plus**
@@ -48,11 +48,11 @@ class InitialCheckpointPTModelPersistor(PTFileModelPersistor):
     object), so it is a safe drop-in for the shared standard base app.
     """
 
-    def __init__(self, model=None, model_id: str = "", **kwargs) -> None:
+    def __init__(self, model: torch.nn.Module | None = None, model_id: str = "", **kwargs) -> None:
         super().__init__(model=model, **kwargs)
         self._model_id_arg = model_id
 
-    def _resolve_backbone(self, fl_ctx: FLContext):
+    def _resolve_backbone(self, fl_ctx: FLContext) -> str | None:
         """Locate the declared backbone checkpoint, or ``None`` if none is declared/found."""
         app_dir = fl_ctx.get_engine().get_workspace().get_app_dir(fl_ctx.get_job_id())
         config_path = os.path.join(app_dir, "custom", "config.json")
