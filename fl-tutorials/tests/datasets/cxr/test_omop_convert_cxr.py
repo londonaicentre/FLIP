@@ -26,19 +26,9 @@ SCRIPT_PATH = DATASETS_DIR / "cxr" / "omop_convert_cxr.py"
 # the two that make this dataset different from spleen: they carry the synthetic radiology report
 # that becomes the image_feature and observation rows.
 METADATA_COLUMNS = [
-    "FileName",
-    "PatientID",
-    "PatientSex",
-    "PatientBirthDate",
-    "AccessionNumber",
-    "Modality",
-    "StudyDate",
-    "StudyTime",
-    "StudyDescription",
-    "StudyInstanceUID",
-    "SeriesInstanceUID",
-    "conditioning",
-    "pathologies",
+    "FileName", "PatientID", "PatientSex", "PatientBirthDate", "AccessionNumber",
+    "Modality", "StudyDate", "StudyTime", "StudyDescription",
+    "StudyInstanceUID", "SeriesInstanceUID", "conditioning", "pathologies",
 ]
 
 
@@ -88,19 +78,12 @@ def _write_metadata_csv(path: Path, rows: list[tuple[str, str]]) -> Path:
             nhs = f"{100000000 + index:09d}"
             writer.writerow(
                 {
-                    "FileName": f"sample_{index}",
-                    "PatientID": f"{nhs[:3]} {nhs[3:6]} {nhs[6:]}",
-                    "PatientSex": "M",
-                    "PatientBirthDate": "19500101",
-                    "AccessionNumber": nhs,
-                    "Modality": "CR",
-                    "StudyDate": "20200101",
-                    "StudyTime": "120000",
-                    "StudyDescription": "Chest X-ray",
-                    "StudyInstanceUID": f"1.2.3.{index}",
+                    "FileName": f"sample_{index}", "PatientID": f"{nhs[:3]} {nhs[3:6]} {nhs[6:]}",
+                    "PatientSex": "M", "PatientBirthDate": "19500101", "AccessionNumber": nhs,
+                    "Modality": "CR", "StudyDate": "20200101", "StudyTime": "120000",
+                    "StudyDescription": "Chest X-ray", "StudyInstanceUID": f"1.2.3.{index}",
                     "SeriesInstanceUID": f"1.2.3.{index}.1",
-                    "conditioning": conditioning,
-                    "pathologies": pathologies,
+                    "conditioning": conditioning, "pathologies": pathologies,
                 }
             )
     return path
@@ -142,7 +125,7 @@ def test_edema_variants_collapse_to_pulmonary_edema(converter: ModuleType) -> No
 
 
 def test_no_finding_maps_to_normal_lungs(converter: ModuleType) -> None:
-    """ "no_finding" is the healthy label, NOT a negated finding — negative stays 0."""
+    """"no_finding" is the healthy label, NOT a negated finding — negative stays 0."""
     from utils.omop_mappings import MAPPING_FINDING
 
     (entry,) = converter.get_concepts_from_pathologies("no_finding", "No abnormality.")
@@ -194,7 +177,9 @@ def test_surrogate_ids_come_from_the_cxr_block(converter: ModuleType, tmp_path: 
     """cxr_project owns 1,000,000-1,999,999; spleen owns the next block up."""
     from utils.omop_ids import PROJECT_ID_BLOCKS
 
-    csv_path = _write_metadata_csv(tmp_path / "cxr_metadata.csv", [("no_finding", "No abnormality.")] * 3)
+    csv_path = _write_metadata_csv(
+        tmp_path / "cxr_metadata.csv", [("no_finding", "No abnormality.")] * 3
+    )
 
     tables = converter.transform_dicom_metadata_to_omop_tables(str(csv_path), omop_root=".")
 
@@ -203,7 +188,9 @@ def test_surrogate_ids_come_from_the_cxr_block(converter: ModuleType, tmp_path: 
     assert list(tables["image_occurrence"]["image_occurrence_id"]) == [base + 1, base + 2, base + 3]
 
 
-def test_image_feature_and_observation_are_paired_by_a_derived_id(converter: ModuleType, tmp_path: Path) -> None:
+def test_image_feature_and_observation_are_paired_by_a_derived_id(
+    converter: ModuleType, tmp_path: Path
+) -> None:
     """One image_feature and one observation per finding, sharing an id derived from the occurrence.
 
     The id is the image_occurrence_id with a two-digit finding index appended, which puts it well
@@ -238,8 +225,12 @@ def test_observation_value_records_presence_and_absence(converter: ModuleType, t
     assert list(observation["value_as_number"]) == [0.0, 1.0]
 
 
-def test_split_writes_one_directory_per_trust_without_the_trust_column(converter: ModuleType, tmp_path: Path) -> None:
-    csv_path = _write_metadata_csv(tmp_path / "cxr_metadata.csv", [("no_finding", "No abnormality.")] * 4)
+def test_split_writes_one_directory_per_trust_without_the_trust_column(
+    converter: ModuleType, tmp_path: Path
+) -> None:
+    csv_path = _write_metadata_csv(
+        tmp_path / "cxr_metadata.csv", [("no_finding", "No abnormality.")] * 4
+    )
     tables = converter.transform_dicom_metadata_to_omop_tables(str(csv_path), omop_root=".")
 
     converter.split_data_into_trusts_and_copy_dicoms(tables, omop_root=".", copy_dicom=False)
