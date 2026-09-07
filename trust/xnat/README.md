@@ -50,6 +50,35 @@ FLIP runs XNAT `1.10.0` (see `XNAT_VERSION` in `.env`). Two things matter for us
 > listing (`GET /data/experiments?project={id}`) instead, which is modality-agnostic and needs no
 > registration; keep it that way. See `imaging_api/services/projects.py::get_experiments`.
 
+### Registering the data types XNAT ships but leaves disabled
+
+Element-security registration is what FLIP#612 was really about, and the same gap stops a trust
+archiving whole-slide images: XNAT ships the `xnat:smSessionData` schema but leaves it inert, so
+digital pathology cannot be archived until the type is registered. In the UI that is a one-time
+**Administer > Data Types > Setup Additional Data Type**.
+
+`xnat/config/setup-datatypes.sh` does it headlessly, and `make -C trust/xnat xnat-configure` runs it
+on every bring-up (after `configure-xnat.sh`, whose password rotation it depends on). It is safe to
+re-run: a type that is already fully registered is skipped. The types it registers are listed in
+`xnat/config/datatypes-common.sh`.
+
+There is no REST API for this — `/xapi/datatypes` is read-only, and the neighbouring
+`POST /xapi/datatypes/create` generates a *new* type from a schema stub, which is a different
+operation. Nor can the rows simply be inserted: registration writes five tables, each with an
+`*_info` foreign key into a matching `*_meta_data` table, which is XFT's persistence layer. So the
+script drives the admin UI's own wizard, which is a plain form chain holding no server-side state
+between steps. The script's own header covers this in full.
+
+`xnat/config/verify-datatypes.sh` checks the result and is what `setup-datatypes.sh` finishes by
+running. It is a separate check because the dangerous outcome is a *partial* registration: XNAT
+lists such a type as enabled and the admin UI looks right, but every permission check fails closed,
+so archiving dies much later with "This user has insufficient privileges for the data type" — which
+reads like a problem with the user rather than a missing data type.
+
+> The K8s trust chart's `xnat-init-job` carries its own translations of the `configure-*` scripts and
+> does **not** yet run this one, so a K8s trust still needs the manual wizard step for slide
+> microscopy.
+
 ## Docker Swarm
 
 XNAT is deployed using Docker Swarm (both locally and on EC2). This is because Swarm provides overlay networking, resource constraints, and restart policies needed for XNAT services.
