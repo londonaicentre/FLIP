@@ -30,7 +30,12 @@ metadata:
     app.kubernetes.io/component: imaging-api
 data:
   XNAT_URL: {{ .Values.imagingApi.env.XNAT_URL | quote }}
-  XNAT_PORT: {{ .Values.imagingApi.env.XNAT_PORT | quote }}
+  # Both of these describe XNAT's DICOM SCP receiver, and imaging-api uses them to build the C-MOVE
+  # destination it hands to the PACS. DQR matches that destination against a registered receiver by
+  # exact AE title and port, so they must equal what xnat-init-job.yaml registered — they are
+  # sourced from the same xnat.web.* values it uses rather than restated here (FLIP#993).
+  XNAT_PORT: {{ .Values.xnat.web.dicomPort | quote }}
+  XNAT_AETITLE: {{ .Values.xnat.web.dicomAet | quote }}
   PACS_ID: {{ .Values.imagingApi.env.PACS_ID | quote }}
   XNAT_DATABASE_URL: {{ .Values.imagingApi.env.XNAT_DATABASE_URL | quote }}
   DATA_ACCESS_API_URL: {{ .Values.imagingApi.env.DATA_ACCESS_API_URL | quote }}

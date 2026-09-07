@@ -107,10 +107,10 @@ This command executes the following steps in order:
 7. **`apply`**: Apply infrastructure changes
 8. **`update-env`**: Refresh the root environment file with Terraform outputs
 9. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
-10. **`ansible-init`**: Patch both hosts, install `psql` on the Central Hub bastion, and provision Docker, AWS CLI, CloudWatch, and FL assets on the Trust EC2
+10. **`ansible-init`**: Patch both hosts, install `psql` on the Central Hub bastion, and provision Docker, AWS CLI, CloudWatch, and FL assets on the Trust EC2 (the FL kit is staged as `Trust_1` at this point — no slot has been assigned yet)
 11. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3 + invalidate CloudFront
 12. **`register-trusts`**: Register every locally-present trust kit file (`trust/.env.<CODE>.<env>`) on the running hub and fill each kit with hub-shared values
-13. **`deploy-trust`**: Deploy Trust services via Docker Compose to the Trust EC2
+13. **`deploy-trust`**: Re-stage the FL participant kit for the slot the hub assigned at registration (`stage-fl-kit`, reading `FL_KIT_SLOT_NUMBER` from the kit file — idempotent when the host really is `Trust_1`), then deploy Trust services via Docker Compose to the Trust EC2
 14. **`status`**: Run comprehensive health checks
 
 To provision only the minimal Central Hub bastion after a targeted Terraform
@@ -824,7 +824,7 @@ This prints a list of URLs you can paste into your browser:
 
 | Service | Local URL | Purpose |
 | --- | --- | --- |
-| XNAT | `http://localhost:8104` | Neuroimaging platform UI |
+| XNAT | `http://localhost:8105` | Neuroimaging platform UI |
 | Orthanc | `http://localhost:8042` | DICOM server UI (basic auth: the kit file's `ORTHANC_USERNAME`/`ORTHANC_PASSWORD`) |
 | trust-api swagger | `http://localhost:8020/docs` | Trust API documentation |
 | imaging-api swagger | `http://localhost:8001/docs` | Imaging API documentation |
@@ -832,6 +832,20 @@ This prints a list of URLs you can paste into your browser:
 | Grafana | `http://localhost:3000` | Observability dashboards |
 
 Press Ctrl+C to stop all forwards. The Central Hub UI and API are accessed via the CloudFront distribution at the canonical subdomain (e.g. `https://app.flip.aicentre.co.uk`) — no port forwarding needed. The ALB is internal (private subnets, no public IP); CloudFront reaches it through a VPC origin.
+
+> **Upgrading a trust deployed before the XNAT port split (FLIP#993) — every existing trust must
+> act:** `XNAT_PORT` used to mean both the DICOM receiver and the web UI. It now means the DICOM
+> receiver only, and the web UI has its own `XNAT_WEB_PORT`. Both are published on the host on
+> **every** deployment, not only where a real PACS is configured, so the two must differ. A kit
+> file that sets only `XNAT_PORT` resolves them to the same number — `XNAT_WEB_PORT` defaults to
+> `XNAT_PORT` — so the next `make up-trust` / `up-trust-ec2` on that kit is **refused** by the
+> collision guard, which names both values and the kit file to edit. The refusal is the intended
+> upgrade path: deriving the web port from `XNAT_PORT` routes a pre-split kit into a loud
+> instruction instead of silently moving its web UI to a number nothing else expects. Add
+> `XNAT_WEB_PORT` to that trust's kit file before the next deploy (the shipped dev allocation is
+> 8104 DICOM / 8105 web for the first trust, 8106/8107 for the second). The `forward-trust` URL
+> above is 8105 by convention, not by enforcement; a trust that chose different numbers forwards
+> its own.
 
 ## Checkov Security Lint
 
