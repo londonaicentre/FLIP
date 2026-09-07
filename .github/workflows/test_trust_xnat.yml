@@ -17,7 +17,12 @@ name: Trust - XNAT CI
 # file they assert on has to trigger this workflow — otherwise a change to a
 # guard (or to the credential minter) lands with the test that pins it unrun.
 # The dcm2niix-pin-sync job below likewise reads four files scattered across the
-# repo, so each of those triggers the workflow too.
+# repo, so each of those triggers the workflow too. The same rule covers the
+# bind-mount ownership drift tests (test_data_dir_ownership.py): they assert that
+# the XNAT Dockerfile's uid and both Ansible playbooks' ownership tasks still
+# agree with trust/xnat/Makefile, so all three of those files trigger this
+# workflow — otherwise a change to the uid in the image, or to the ownership task
+# in either playbook, lands with the drift test that exists to catch it unrun.
 on:
   push:
     branches: [main, develop]
@@ -40,6 +45,9 @@ on:
       - "trust/xnat/dcm2niix/**"
       - "trust/xnat/xnat/config/dcm2niix_command.json"
       - "deploy/providers/kubernetes/templates/xnat-init-job.yaml"
+      - "trust/xnat/xnat/Dockerfile"
+      - "deploy/providers/AWS/site.yml"
+      - "deploy/providers/local/site_local_trust.yml"
       - ".github/workflows/test_trust_xnat.yml"
   pull_request:
     branches: [main, develop]
@@ -62,6 +70,9 @@ on:
       - "trust/xnat/dcm2niix/**"
       - "trust/xnat/xnat/config/dcm2niix_command.json"
       - "deploy/providers/kubernetes/templates/xnat-init-job.yaml"
+      - "trust/xnat/xnat/Dockerfile"
+      - "deploy/providers/AWS/site.yml"
+      - "deploy/providers/local/site_local_trust.yml"
       - ".github/workflows/test_trust_xnat.yml"
 
 permissions:
