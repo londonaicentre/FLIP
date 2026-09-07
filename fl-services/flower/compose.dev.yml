@@ -38,7 +38,7 @@ services:
     # image's own user. DOCKER_GID comes from the Makefile; defaults to 1000.
     group_add: &host-gid ["${DOCKER_GID:-1000}"]
     environment:
-      - ALLOWED_JOB_FOLDERS=${ALLOWED_JOB_FOLDERS:-numpy,3d_spleen_segmentation,3d_spleen_segmentation_evaluation}
+      - ALLOWED_JOB_FOLDERS=${ALLOWED_JOB_FOLDERS:-xray_classification,3d_spleen_segmentation,3d_spleen_segmentation_evaluation}
       - SUPERLINK_ADDRESS=${SUPERLINK_ADDRESS:-superlink:9093}
       - SUPERLINK_HEALTH_ADDRESS=${SUPERLINK_HEALTH_ADDRESS:-superlink:9097}
       - FLOWER_SRC_ROOT=/app/src

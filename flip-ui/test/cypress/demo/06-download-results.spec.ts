@@ -22,12 +22,11 @@ import { demoVisit, requireEnv, revealDemo } from "./support/demoFlow";
 describe("FLIP demo — download results", () => {
     it("downloads the federated training results", () => {
         const email = requireEnv("DEMO_RESEARCHER_EMAIL");
-        const password = requireEnv("DEMO_RESEARCHER_PASSWORD");
         const projectId = requireEnv("DEMO_PROJECT_ID");
         const modelId = requireEnv("DEMO_MODEL_ID");
 
         // Stealth sign-in — the clip opens directly on the finished dashboard.
-        cy.demoLogin(email, password, { stealth: true });
+        cy.demoLogin(email, "DEMO_RESEARCHER_PASSWORD", { stealth: true });
         demoVisit(`/project/${projectId}/model/${modelId}`);
         cy.getBySel("training-timeline", { timeout: 60000 }).should("exist");
         cy.getBySel("download-results-btn", { timeout: 120000 }).should("exist");

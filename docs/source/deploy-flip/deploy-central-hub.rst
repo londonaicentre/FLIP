@@ -25,7 +25,7 @@ The Central Hub stack runs in a custom VPC with public and private subnets acros
 - **fl-api** and **fl-server** — the federated learning control plane. The FL server accepts outbound gRPC connections from trust-side FL clients via a Network Load Balancer (NLB).
 - **PostgreSQL (RDS)** — managed database, private subnet.
 - **Cognito** — user authentication (TOTP MFA enforced).
-- **SES** — transactional email (invites, password reset, access requests).
+- **SES** — transactional email sent by the application: access-request notifications and XNAT credential emails. Cognito invites and password-reset codes do **not** go through SES (see below).
 - **Secrets Manager** — AES key, database password, internal service key hash.
 
 Operator access is via AWS Systems Manager (SSM) Session Manager — port 22 is
@@ -37,7 +37,7 @@ Prerequisites
 
 1. **AWS CLI configured with SSO access** — see `deploy/README.md <https://github.com/londonaicentre/FLIP/blob/main/deploy/README.md>`_.
 2. **Terraform >= 1.13.1** (or OpenTofu).
-3. **Python 3.12+** with `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
+3. **Python 3.12 or 3.13** with `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
 4. **GitHub CLI** — needed to authenticate against GitHub Container Registry for image pulls.
 5. **SSH key pair** at ``~/.ssh/host-aws`` — uploaded to AWS and used as the
    identity file for the SSM ProxyCommand-based SSH config.
@@ -204,7 +204,9 @@ CI otherwise.
 ``alembic upgrade head`` on every container start, so a fresh ``flip-api`` deploy
 applies any pending revisions in order against the existing database:
 
-- **Development**: ``make restart`` re-creates the ``flip-api`` container; revisions apply on boot.
+- **Development**: ``make restart`` re-creates the ``flip-api`` service's container
+  (``deploy-flip-api-1`` — compose names it from the project, no service sets
+  ``container_name``); revisions apply on boot.
 - **Staging / Production**: a normal ECS redeploy (``make deploy-centralhub`` from
   ``deploy/providers/AWS/``) applies the revisions before the new task serves traffic.
 
@@ -242,6 +244,20 @@ the first deploy you must:
 
 If SES is still in the sandbox, request production access from the SES console
 or only send to verified destination addresses for testing.
+
+.. note::
+
+   SES carries only the emails the application sends itself: access-request
+   notifications and XNAT credential emails. **Cognito sends its own invites
+   and password-reset codes** from the user pool's default sender — the pool
+   declares no ``email_configuration``, so it uses ``COGNITO_DEFAULT`` rather
+   than SES. A broken or sandboxed SES identity therefore does not stop
+   invites or password resets, and conversely verifying the SES identity does
+   not fix them; those have their own delivery limits (see FLIP#592).
+
+   In development neither is needed: flip-api defaults to
+   ``EMAIL_BACKEND=console``, which logs the would-be email instead of calling
+   SES.
 
 ************
 Status check

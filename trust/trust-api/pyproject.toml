@@ -18,7 +18,7 @@ readme = "README.md"
 authors = [
     { name = "A. Triay Bagur", email = "alexandre.triay_bagur@kcl.ac.uk" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "cryptography>=46.0.7",
     "fastapi[standard]>=0.115.12",

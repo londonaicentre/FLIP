@@ -20,6 +20,7 @@
 # (kms:Decrypt, kms:GenerateDataKey*, etc.) on the caller roles suffice.
 
 resource "aws_kms_key" "flip_app_key" {
+  # checkov:skip=CKV2_AWS_64:default key policy + IAM grants is the documented design (see file header) — account-root control, no cross-account principals
   description             = "FLIP application encryption key"
   deletion_window_in_days = 30
   enable_key_rotation     = true

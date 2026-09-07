@@ -15,6 +15,19 @@ beforeEach(() => {
 
     cy.intercept("http://localhost:8080/**", { statusCode: 200 }).as("catchAllGlobal");
 
+    // The catch-all answers 200 with an empty body, which `fetchJobTypes` rejects as unusable —
+    // so every spec that opens a model page needs a real map here, not just the ones asserting on
+    // required files. The body below is the NVFLARE standard manifest; required files are
+    // per-backend, so a spec that cares about a particular job type — or about Flower's manifest
+    // (`client_app.py` in place of `trainer.py`) — overrides this locally.
+    cy.intercept(
+        "GET",
+        "/model/job-types", {
+        statusCode: 200,
+        body: { standard: ["trainer.py", "config.json", "models.py"] }
+    }
+    ).as("jobTypesGlobal");
+
     cy.intercept(
         "POST",
         "https://cognito-idp.eu-west-2.amazonaws.com/", {
@@ -46,6 +59,18 @@ beforeEach(() => {
         fixture: "user/getPermissions"
     }
     ).as("getPermissionsGlobal");
+
+    // The main layout resolves the signed-in user's profile on every page load. The fixture
+    // carries an empty `name` on purpose: specs sign in as different users, and the header falls
+    // back to the signed-in email address when there is no profile name, which is what they
+    // assert on. Override this intercept in a spec that needs the display-name path.
+    cy.intercept(
+        "GET",
+        "/users/me", {
+        statusCode: 200,
+        fixture: "user/getCurrentUser"
+    }
+    ).as("getCurrentUserGlobal");
 
     cy.intercept(
         "GET",

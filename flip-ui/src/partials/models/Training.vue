@@ -23,7 +23,25 @@
         @submit="initTraining"
     >
         <AiCard class="flex flex-col flex-1 min-h-0 overflow-hidden">
-            <template v-if="pending && !allFilesUploaded">
+            <!-- Which files this model needs depends on the FL backend, so with the job types
+                 unknown there is nothing honest to list. Say so instead of falling through to the
+                 "upload the required files" copy, which would imply we know what they are. -->
+            <AiAlert
+                v-if="pending && jobTypesError"
+                variant="error"
+                data-test="job-types-error-alert"
+                :close="false"
+                :rounded="false"
+                :bordered="false"
+                :action-text="jobTypesLoading ? undefined : 'Retry'"
+                @action="emits('retryJobTypes')"
+            >
+                We could not load the list of files this model requires, so training stays disabled.
+                <template v-if="jobTypesLoading">
+                    Retrying&hellip;
+                </template>
+            </AiAlert>
+            <template v-else-if="pending && !allFilesUploaded">
                 <AiAlert
                     variant="info"
                     :close="false"
@@ -132,6 +150,10 @@ interface ITrainingProps {
     uploadedFileNames: string[];
     jobType: JobType;
     flBackendLabel?: string;
+    // True when the job-types map could not be loaded: `requiredFiles` is empty because it is
+    // unknown, not because nothing is required.
+    jobTypesError?: boolean;
+    jobTypesLoading?: boolean;
     // Ids of the trusts a dispatched run went to; empty before dispatch.
     runTrusts?: string[];
     // Which stage tab is showing: "prepare" owns the run options (locked once the
@@ -141,10 +163,12 @@ interface ITrainingProps {
 
 const props = withDefaults(defineProps<ITrainingProps>(), {
     flBackendLabel: undefined,
+    jobTypesError: false,
+    jobTypesLoading: false,
     runTrusts: () => []
 });
 
-const emits = defineEmits(["started"]);
+const emits = defineEmits(["started", "retryJobTypes"]);
 
 const route = useRoute();
 

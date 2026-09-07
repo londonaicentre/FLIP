@@ -18,11 +18,17 @@ on:
     paths:
       - "deploy/providers/AWS/**"
       - ".github/workflows/validate_terraform.yml"
+      - ".github/workflows/terraform_plan.yml"
+      - ".github/workflows/terraform_apply.yml"
+      - ".github/workflows/terraform_drift.yml"
   pull_request:
     branches: [main, develop]
     paths:
       - "deploy/providers/AWS/**"
       - ".github/workflows/validate_terraform.yml"
+      - ".github/workflows/terraform_plan.yml"
+      - ".github/workflows/terraform_apply.yml"
+      - ".github/workflows/terraform_drift.yml"
 
 permissions:
   contents: read
@@ -38,6 +44,10 @@ jobs:
         root:
           - ./deploy/providers/AWS
           - ./deploy/providers/AWS/dev
+          # GitHub Actions OIDC roles for the Terraform pipeline (FLIP#962).
+          # Applied from a laptop, never by CI — see ci/backend.tf — but still
+          # validated here so a broken trust policy is caught before it is applied.
+          - ./deploy/providers/AWS/ci
     defaults:
       run:
         working-directory: ${{ matrix.root }}
@@ -60,15 +70,92 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-  # Black-box harness for the add-fl-kits deploy script (mints certs and mutates
-  # live S3 kit state in real runs — here aws/make/openssl are stubbed, no
-  # credentials or network). Shares this workflow's deploy/providers/AWS/** path
-  # filter, so it runs whenever the script or its tests change.
-  add-fl-kits-script-tests:
+  # Black-box harnesses for the deploy scripts, every external tool stubbed on
+  # PATH — no credentials, no network, no checkov install. add_fl_kits.sh mints
+  # certs and mutates live S3 kit state in real runs (aws/make/openssl stubbed);
+  # checkov_lint.sh's harness drives its own self-guards — version pin,
+  # unknown-check-ID validation, mandatory skip rationale, canary must-fail —
+  # which the checkov-lint job below only exercises on the happy path (checkov
+  # stubbed). test_compose_ci_env.sh additionally cross-checks the Makefile and
+  # the Terraform CI workflows against the env manifest, so adding a TF_VAR
+  # export without wiring it through fails here rather than at apply time.
+  # Shares this workflow's deploy/providers/AWS/** path filter, so it runs
+  # whenever a script or its tests change.
+  script-tests:
+    name: Deploy script tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        harness:
+          - test_add_fl_kits.sh
+          - test_checkov_lint.sh
+          - test_check_fl_plan_impact.sh
+          - test_compose_ci_env.sh
+          - test_resolve_image_tags.sh
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Run ${{ matrix.harness }}
+        run: bash deploy/providers/AWS/scripts/tests/${{ matrix.harness }}
+
+  # Credential-free pytest checks over the stack's static artefacts: rendered
+  # Jinja templates, the deploy helper scripts, and Terraform source itself
+  # (e.g. the Cognito callback_urls / CORS allowlist invariants, which no runtime
+  # suite can see — flip-api reads that list from live Cognito, not from this
+  # tree; and reconcile_ci_env.py's state mining, which decides what a CI plan is
+  # handed). No AWS calls, no init, no plan. Deps are named explicitly rather than
+  # synced from the lockfile: the tests need only pytest, jinja2 and click,
+  # while the project's dev group pulls ansible-core and pyqt5.
+  #
+  # This is the only place the suite runs: the root `make unit_test` does not
+  # reach here — deploy/providers/AWS is not one of the service directories it
+  # walks — and `make -C deploy/providers/AWS test` cannot be used either, since
+  # that Makefile errors at parse time unless AWS_PROFILE matches the target
+  # environment.
+  python-tests:
+    name: AWS deploy tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Run add_fl_kits.sh test harness
-        run: bash deploy/providers/AWS/scripts/tests/test_add_fl_kits.sh
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Run AWS deploy test suite
+        working-directory: deploy/providers/AWS
+        run: uv run --no-project --with pytest --with jinja2 --with click pytest tests/ -v
+
+  # Static checkov security lint (FLIP#1052 + the FLIP#1058 triage): a curated
+  # check list over the whole AWS tree — IAM policy content (overly-broad
+  # statements fmt/validate can't see) plus promoted infrastructure-posture
+  # checks. Runs on raw .tf with no credentials, no init, no plan —
+  # fork-PR-safe. Deliberate breadth/posture is acknowledged in-code via
+  # `# checkov:skip=<ID>:<rationale>`, never by weakening the check list. The
+  # script self-tests against a canary fixture first, so a broken install
+  # can't produce a vacuous green.
+  checkov-lint:
+    name: Checkov Security Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install checkov
+        # Keep in sync with CHECKOV_VERSION in scripts/checkov_lint.sh.
+        run: pip install checkov==3.3.14
+
+      - name: Run checkov lint
+        run: bash deploy/providers/AWS/scripts/checkov_lint.sh

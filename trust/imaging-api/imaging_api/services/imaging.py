@@ -28,6 +28,136 @@ from imaging_api.utils.logger import logger
 
 PACS_ID = get_settings().PACS_ID
 XNAT_URL = get_settings().XNAT_URL
+# Bound every XNAT call: an unbounded request to a wedged XNAT would hang the import (and the
+# health probe) rather than failing. The DQR data-path calls get a far larger bound because they
+# proxy live DIMSE operations against the upstream PACS — a throttled or slow real PACS can hold
+# a C-FIND well past what any metadata round-trip to XNAT itself would need.
+XNAT_REQUEST_TIMEOUT = 30
+XNAT_DQR_REQUEST_TIMEOUT = 300
+
+# Cache for resolve_pacs_id(). XNAT assigns a PACS its id at registration time, so the id is fixed
+# for the life of that registration and re-resolving on every query would add an XNAT round-trip per
+# accession number. Note the cache outlives the registration: if the PACS is re-registered while
+# imaging-api stays up — configure-xnat.sh deletes and recreates it when the AE title changes — the
+# cached id points at a deleted entry, so it is cleared when XNAT reports the PACS missing.
+# Deliberately unlocked: routes here are sync defs dispatched to a threadpool, so two cold-cache
+# threads can race the read-check-set — but both resolve the same fixed id from the same XNAT
+# roster, so the loser merely repeats one metadata round-trip. A lock would serialise every request
+# to save that one call.
+_resolved_pacs_id: int | None = None
+
+
+def resolve_pacs_id(headers: dict[str, str]) -> int:
+    """
+    Resolves the id of the PACS registered in XNAT.
+
+    A trust XNAT retrieves from exactly one PACS, and ``configure-xnat.sh`` enforces that by removing
+    any other registration. The id itself cannot be assumed: XNAT numbers registrations in creation
+    order, so an XNAT that carried the mocked Orthanc before the real PACS was configured does not
+    have it at id 1 (FLIP#993).
+
+    Falls back to the configured ``PACS_ID`` when XNAT cannot be reached or reports no PACS, so a
+    transient XNAT failure degrades to the previous behaviour rather than failing the import.
+
+    Args:
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        int: The id of the registered PACS, or the configured ``PACS_ID`` fallback.
+    """
+    global _resolved_pacs_id
+    if _resolved_pacs_id is not None:
+        return _resolved_pacs_id
+
+    try:
+        response = requests.get(f"{XNAT_URL}/xapi/pacs", headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
+        response.raise_for_status()
+        registrations = response.json()
+    except Exception as e:
+        # Deliberately not cached: a transient failure must not pin the fallback for the life of the
+        # process. Logged at error because the fallback is a guess — on an XNAT that carried the
+        # mocked Orthanc before the real PACS, id 1 is the known-wrong answer, and the symptom is
+        # "no study found" for every accession, which reads as a data problem rather than a
+        # misconfiguration (FLIP#993).
+        logger.error(
+            f"Could not resolve the PACS id from XNAT ({e}); falling back to id {PACS_ID}. "
+            f"Retrieval will target that id, which may not be the configured PACS."
+        )
+        return PACS_ID
+
+    if not isinstance(registrations, list) or not registrations:
+        logger.error(
+            f"XNAT reports no registered PACS; falling back to id {PACS_ID}. "
+            f"Retrieval will target that id, which may not be the configured PACS."
+        )
+        return PACS_ID
+
+    # configure-xnat.sh sets defaultQueryRetrievePacs on the one it owns and removes any other, so
+    # prefer that flag over list order — an extra registration added through the XNAT UI would
+    # otherwise be picked purely because XNAT happened to list it first.
+    default_qr = [p for p in registrations if p.get("defaultQueryRetrievePacs")]
+    chosen = (default_qr or registrations)[0]
+
+    if len(registrations) > 1:
+        logger.warning(
+            f"XNAT has {len(registrations)} PACS registrations; expected one. "
+            f"Using '{chosen.get('aeTitle')}'"
+            f"{' (the default query/retrieve PACS)' if default_qr else ' (first listed)'}."
+        )
+
+    try:
+        _resolved_pacs_id = int(chosen["id"])
+    except (KeyError, TypeError, ValueError) as e:
+        logger.error(f"PACS registration from XNAT has no usable id ({e}); falling back to id {PACS_ID}.")
+        return PACS_ID
+
+    logger.info(f"Resolved PACS '{chosen.get('aeTitle')}' to id {_resolved_pacs_id}")
+    return _resolved_pacs_id
+
+
+def forget_resolved_pacs_id() -> None:
+    """
+    Clears the cached PACS id so the next call re-reads it from XNAT.
+
+    Called when XNAT reports the resolved PACS missing. ``configure-xnat.sh`` deletes and recreates
+    the registration when its AE title changes, which gives it a new id, and nothing restarts
+    imaging-api when XNAT is reconfigured — so without this the cache would point at a deleted
+    registration until the container was restarted (FLIP#993).
+    """
+    global _resolved_pacs_id
+    _resolved_pacs_id = None
+
+
+def ping_registered_pacs(headers: dict[str, str]) -> PacsStatus:
+    """
+    Pings the PACS registered in XNAT, resolving its id first.
+
+    On a 404 the resolved id is presumed stale — the PACS was re-registered under a new id while
+    this process stayed up — so the cache is dropped and the ping retried once against a freshly
+    resolved id. Without that, a caller that only ever pings (the trust-api health probe) would
+    keep failing on the dead id until the container restarted; ``check_pacs`` drops the cache the
+    same way on the import path (FLIP#993).
+
+    Args:
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        PacsStatus: Status of the PACS system.
+
+    Raises:
+        imaging_api.utils.exceptions.NotFoundError: If the PACS is not found under the freshly
+            resolved id either.
+        Exception: If there is an error during the ping request.
+    """
+    pacs_id = resolve_pacs_id(headers)
+    try:
+        return ping_pacs(pacs_id, headers)
+    except NotFoundError:
+        forget_resolved_pacs_id()
+        fresh_id = resolve_pacs_id(headers)
+        if fresh_id == pacs_id:
+            raise
+        return ping_pacs(fresh_id, headers)
 
 
 def ping_pacs(pacs_id: int, headers: dict[str, str]) -> PacsStatus:
@@ -48,6 +178,7 @@ def ping_pacs(pacs_id: int, headers: dict[str, str]) -> PacsStatus:
     response = requests.get(
         f"{XNAT_URL}/xapi/pacs/{pacs_id}/status",
         headers=headers,
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
     if response.status_code == 200:
         return PacsStatus(**response.json())
@@ -57,13 +188,15 @@ def ping_pacs(pacs_id: int, headers: dict[str, str]) -> PacsStatus:
         raise Exception(f"Failed to ping PACS: {response.text}")
 
 
-def check_pacs(headers: dict[str, str], pacs_id: int = PACS_ID) -> None:
+def check_pacs(headers: dict[str, str], pacs_id: int | None = None) -> None:
     """
     Checks if the PACS system is reachable by pinging it.
 
     Args:
         headers (dict[str, str]): XNAT authentication headers.
-        pacs_id (int): PACS ID to check. Default is the PACS_ID from settings.
+        pacs_id (int | None): PACS ID to check. Resolved from XNAT when omitted, rather than
+            defaulting to the configured ``PACS_ID`` — that setting is the unreachable-XNAT
+            fallback, not a description of what is registered.
 
     Returns:
         None
@@ -72,9 +205,15 @@ def check_pacs(headers: dict[str, str], pacs_id: int = PACS_ID) -> None:
         imaging_api.utils.exceptions.NotFoundError: If the PACS with the given ID is not found.
         Exception: If there is an error during the ping request or if the PACS is not reachable or is disabled.
     """
+    if pacs_id is None:
+        pacs_id = resolve_pacs_id(headers)
     try:
         pacs_status = ping_pacs(pacs_id, headers)
     except NotFoundError:
+        # The id we hold no longer exists in XNAT. If it came from the cache it is stale — the PACS
+        # was re-registered under a new id while this process stayed up — so drop it and let the
+        # next call re-read, rather than failing every import until the container restarts.
+        forget_resolved_pacs_id()
         raise NotFoundError(f"PACS with ID '{pacs_id}' not found.")
     except Exception:
         raise Exception(f"Failed to ping PACS with ID '{pacs_id}'.")
@@ -100,14 +239,21 @@ def query_by_accession_number(accession_number: str, headers: dict[str, str]) ->
         Exception: If there is an error during the query request.
     """
     # Construct DQR Query
-    study_query = StudyQuery(accessionNumber=accession_number, pacsId=PACS_ID)
+    study_query = StudyQuery(accessionNumber=accession_number, pacsId=resolve_pacs_id(headers))
 
     response = requests.post(
         f"{XNAT_URL}/xapi/dqr/query/studies",
         headers=headers,
         json=study_query.model_dump(by_alias=True),
+        timeout=XNAT_DQR_REQUEST_TIMEOUT,
     )
-    logger.debug(f"Query response: {response.text} - {response.status_code} - {response.reason}")
+    # Status and reason only. The DQR query response body is a study list carrying patient id, name,
+    # sex, referring physician, accession number and study date (see routers/schemas.py), so logging
+    # it verbatim writes patient identifiers into the trust's container logs — mock data until this
+    # XNAT is pointed at a real hospital PACS, real patients afterwards. Dev trusts run at
+    # LOG_LEVEL=DEBUG, so this line is emitted today. The study count is logged after parsing below,
+    # which is the part that is actually useful when debugging a retrieval.
+    logger.debug(f"Query response: {response.status_code} - {response.reason}")
 
     if response.status_code == 200:
         logger.info("Successfully queried PACS via DQR")
@@ -160,6 +306,11 @@ def queue_image_import_request(
     # Check if project exists
     get_project(import_request.project_id, headers=headers)
 
+    # Retrieve against the same PACS the C-FIND queried. The model default is the static fallback,
+    # so resolve here rather than leaving the import pointing at a different registration than the
+    # query used (FLIP#993).
+    import_request.pacs_id = resolve_pacs_id(headers)
+
     # Check PACS
     check_pacs(headers=headers, pacs_id=import_request.pacs_id)
 
@@ -168,6 +319,7 @@ def queue_image_import_request(
         f"{XNAT_URL}/xapi/dqr/import",
         headers=headers,
         json=import_request.model_dump(by_alias=True),
+        timeout=XNAT_DQR_REQUEST_TIMEOUT,
     )
 
     if response.status_code == 200:

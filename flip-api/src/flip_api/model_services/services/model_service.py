@@ -38,10 +38,11 @@ from flip_api.domain.interfaces.model import (
     IModelMetrics,
     IModelMetricsData,
     IModelMetricsValue,
+    IModelsProjectOption,
     ITrustSummary,
 )
 from flip_api.domain.schemas.actions import ModelAuditAction
-from flip_api.domain.schemas.status import JobStatus, ModelStatus
+from flip_api.domain.schemas.status import JobStatus, ModelStatus, ProjectStatus
 from flip_api.fl_services.services import fl_scheduler_service
 from flip_api.model_services.utils.audit_helper import audit_model_action, audit_model_actions
 from flip_api.utils.logger import logger
@@ -519,6 +520,7 @@ def get_all_models_service(
     user_id: UUID | None,
     query_params: dict,
     status_filter: list[ModelStatus] | None = None,
+    project_id: UUID | None = None,
 ) -> tuple[IPagedResponse[IAllModelsResponse], dict[str, int], PagingInfo]:
     """Estate-wide, access-scoped model list joined with project name, owner and run trusts (#726).
 
@@ -530,12 +532,16 @@ def get_all_models_service(
 
     Alongside the page it returns per-status counts over the same access-scoped, search-filtered set
     but **without** the status filter — so the filter tiles keep their numbers while one is selected.
+    ``project_id`` is deliberately part of that base set rather than the list filter, so scoping to a
+    project rescopes the tiles too: they describe the project in view, not the estate behind it.
 
     Args:
         session (Session): The database session.
         user_id (UUID | None): The requesting user, or ``None`` to see every model (manager bypass).
         query_params (dict): Raw query params (``pageNumber`` / ``pageSize`` / ``search``).
         status_filter (list[ModelStatus] | None): Optional set of statuses to filter the list to.
+        project_id (UUID | None): Optional project to scope the list — and the counts — to. The
+            caller is responsible for the access check; this only narrows.
 
     Returns:
         tuple[IPagedResponse[IAllModelsResponse], dict[str, int], PagingInfo]: the page of rows, the
@@ -552,6 +558,8 @@ def get_all_models_service(
         base_conditions.append(
             or_(func.lower(Model.name).like(pattern), func.lower(Projects.name).like(pattern))
         )
+    if project_id is not None:
+        base_conditions.append(Model.project_id == project_id)
 
     list_conditions = list(base_conditions)
     if status_filter:
@@ -615,3 +623,44 @@ def get_all_models_service(
     ]
 
     return IPagedResponse[IAllModelsResponse](data=data, total_rows=total_rows), status_counts, paging
+
+
+def get_models_project_options_service(session: Session, user_id: UUID | None) -> list[IModelsProjectOption]:
+    """List the projects a caller may filter the Models page by.
+
+    Same access rule as the model list — owned or granted, with ``user_id=None`` meaning a manager
+    who sees everything — but deliberately **not** joined to ``Model``: a project with no models yet
+    still belongs in the dropdown, and picking it should show an honest empty list rather than be
+    impossible to select.
+
+    Args:
+        session (Session): The database session.
+        user_id (UUID | None): The requesting user, or ``None`` to list every project.
+
+    Returns:
+        list[IModelsProjectOption]: Accessible projects as ``(id, name, status)``, ordered by name.
+    """
+    conditions: list[Any] = [col(Projects.deleted).is_(False)]
+    if user_id is not None:
+        conditions.append(or_(Projects.owner_id == user_id, ProjectUserAccess.user_id == user_id))
+
+    # Same pinned LEFT JOIN as the list query, so a granted project matches once rather than once
+    # per access row.
+    access_join = and_(
+        col(ProjectUserAccess.project_id) == Projects.id, ProjectUserAccess.user_id == user_id
+    )
+
+    query = (
+        select(Projects.id, Projects.name, Projects.status)  # type: ignore[call-overload]
+        .outerjoin(ProjectUserAccess, access_join)
+        .where(and_(*conditions))
+        .distinct()
+        .order_by(col(Projects.name))
+    )
+
+    return [
+        # The column comes back as its raw string; ProjectStatus is a StrEnum, so this both
+        # satisfies the response model and fails loudly if the DB ever holds an unknown value.
+        IModelsProjectOption(id=project_id, name=name, status=ProjectStatus(project_status))
+        for project_id, name, project_status in session.exec(query).all()
+    ]

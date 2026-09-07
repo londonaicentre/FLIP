@@ -18,7 +18,7 @@ Postgres rather than mocking the session. Unit tests for the same code mock
 relationships, default mismatches, etc.); these do.
 """
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlmodel import select
@@ -28,17 +28,22 @@ from flip_api.db.models.main_models import (
     ProjectsAudit,
     ProjectTrustIntersect,
     ProjectUserAccess,
+    Queries,
+    XNATProjectStatus,
 )
 from flip_api.domain.interfaces.project import IProjectApproval
 from flip_api.domain.schemas.actions import ProjectAuditAction
 from flip_api.domain.schemas.projects import ProjectDetails
-from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.domain.schemas.status import ProjectStatus, XNATImageStatus
+from flip_api.project_services.get_projects import get_projects_paginated_orm
 from flip_api.project_services.services.project_services import (
     approve_project,
     create_project,
     delete_project,
     get_project,
+    get_reimport_queries_service,
 )
+from flip_api.utils.paging_utils import get_filter_details, get_paging_details
 
 
 @pytest.fixture
@@ -88,6 +93,20 @@ def test_get_project_returns_project_for_existing_id(session, project_payload, u
     # `Projects.deleted == False` so a soft-deleted row would 404 here).
     # Verify by re-querying the table directly.
     assert session.get(Projects, new_project_id).deleted is False
+
+
+def test_create_project_persists_has_imaging_false_and_returns_it(session, project_payload, user_factory):
+    """A tabular-only project keeps has_imaging=False through create and get_project (FLIP#1071)."""
+    creator_id = user_factory().id
+    payload = project_payload.model_copy(update={"has_imaging": False})
+
+    new_project_id = create_project(payload=payload, current_user_id=creator_id, session=session)
+
+    assert session.get(Projects, new_project_id).has_imaging is False
+    assert get_project(new_project_id, session).has_imaging is False
+    # The default stays imaging-on for every existing caller.
+    default_id = create_project(payload=project_payload, current_user_id=creator_id, session=session)
+    assert session.get(Projects, default_id).has_imaging is True
 
 
 def test_list_projects_returns_only_undeleted(session, project_payload, user_factory):
@@ -216,3 +235,92 @@ def test_approve_project_raises_for_soft_deleted_project(session, project_payloa
     payload = IProjectApproval(project_id=project_id, trust_ids=[])
     with pytest.raises(ValueError, match="does not exist or is deleted"):
         approve_project(session, payload, creator_id)
+
+
+@pytest.fixture
+def project_eligible_for_reimport(session, user_factory, trust_factory, project_payload):
+    """A live project wired up exactly as the reimport sweep expects to find it.
+
+    ``get_reimport_queries_service`` joins ``Queries`` → ``XNATProjectStatus`` → ``Trust`` and
+    additionally requires ``XNATProjectStatus.query_at_creation == Queries.id``, so all four rows
+    have to line up before the sweep will return anything at all.
+    """
+    creator_id = user_factory().id
+    project_id = create_project(payload=project_payload, current_user_id=creator_id, session=session)
+
+    trust = trust_factory.build()
+    session.add(trust)
+
+    query = Queries(name="Cohort", query="SELECT 1", project_id=project_id, created_by=creator_id)
+    session.add(query)
+    session.flush()
+
+    session.add(
+        XNATProjectStatus(
+            xnat_project_id=uuid4(),
+            project_id=project_id,
+            trust_id=trust.id,
+            retrieve_image_status=XNATImageStatus.CREATED,
+            query_at_creation=query.id,
+            reimport_count=0,
+        )
+    )
+    session.commit()
+
+    return {"project_id": project_id, "creator_id": creator_id, "trust": trust, "query": query}
+
+
+def test_reimport_sweep_returns_queries_for_a_live_project(session, project_eligible_for_reimport):
+    """Baseline: the sweep must still pick up a live project, or the deleted-project test proves nothing."""
+    ctx = project_eligible_for_reimport
+
+    reimport_queries = get_reimport_queries_service(max_reimport_count=5, session=session)
+
+    assert len(reimport_queries) == 1
+    assert reimport_queries[0].query_id == ctx["query"].id
+    assert reimport_queries[0].trust_id == ctx["trust"].id
+
+
+def test_reimport_sweep_skips_a_soft_deleted_project(session, project_eligible_for_reimport):
+    """A soft-deleted project must drop out of the reimport sweep (FLIP#963).
+
+    Soft delete deliberately leaves Trust imaging intact and no longer writes
+    ``retrieve_image_status = DELETED``, so the status flag can no longer be the gate. Without the
+    ``Projects.deleted`` predicate the scheduled sweep would keep queueing ``REIMPORT_STUDIES`` for
+    a deleted project, pulling *new* patient imaging into a Trust's XNAT after deletion.
+    """
+    ctx = project_eligible_for_reimport
+    delete_project(ctx["project_id"], ctx["creator_id"], session)
+
+    assert get_reimport_queries_service(max_reimport_count=5, session=session) == []
+
+    status_row = session.exec(
+        select(XNATProjectStatus).where(XNATProjectStatus.project_id == ctx["project_id"])
+    ).one()
+    assert status_row.retrieve_image_status == XNATImageStatus.CREATED, (
+        "Imaging status must be untouched by the delete — the project row is what gates the sweep"
+    )
+
+
+def test_list_projects_project_type_filter_selects_by_has_imaging(session, project_payload, user_factory):
+    """FLIP#1071: ``projectType`` narrows the list to imaging or tabular-only projects; absent, both are listed."""
+    creator_id = user_factory().id
+    imaging_id = create_project(payload=project_payload, current_user_id=creator_id, session=session)
+    tabular_id = create_project(
+        payload=project_payload.model_copy(update={"name": "Tabular", "has_imaging": False}),
+        current_user_id=creator_id,
+        session=session,
+    )
+
+    def listed(params: dict[str, str | UUID]) -> set:
+        page = get_projects_paginated_orm(
+            session=session,
+            user_id=creator_id,
+            paging_details=get_paging_details(),
+            filter_details=get_filter_details(params),
+        )
+        return {project.id for project in page.data}
+
+    assert listed({"projectType": "omop_only"}) == {tabular_id}
+    assert listed({"projectType": "imaging"}) == {imaging_id}
+    assert listed({}) >= {imaging_id, tabular_id}

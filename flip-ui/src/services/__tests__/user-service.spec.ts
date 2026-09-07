@@ -13,9 +13,11 @@
 
 import { _http } from "@/services/api";
 import { getAccessRequests,
+    getCurrentUser,
     getMfaStatus,
     getUserPermissions,
     getUsers,
+    lookupProjectUser,
     registerUser,
     resetUserMfa,
     revokeToken,
@@ -23,8 +25,7 @@ import { getAccessRequests,
     updateAccessRequestStatus,
     updateUserDisabledState,
     updateUserProfile,
-    updateUserRoles,
-    validateUser } from "@/services/user-service";
+    updateUserRoles } from "@/services/user-service";
 import { Snackbar } from "@/utils/snackbar";
 
 // Stub the low-level axios wrapper so each test can assert the URL + payload
@@ -244,8 +245,8 @@ describe("user-service", () => {
         });
     });
 
-    describe("validateUser", () => {
-        it("GETs /users/{email} and returns the resolved user", async () => {
+    describe("getCurrentUser", () => {
+        it("GETs /users/me and returns the caller's own profile", async () => {
             const user = {
                 id: "u-1",
                 email: "x@example.test",
@@ -255,10 +256,36 @@ describe("user-service", () => {
             };
             vi.mocked(_http.get).mockResolvedValue({ data: user } as never);
 
-            const result = await validateUser("x@example.test");
+            const result = await getCurrentUser();
 
-            expect(_http.get).toHaveBeenCalledWith("/users/x@example.test");
+            expect(_http.get).toHaveBeenCalledWith("/users/me");
             expect(result).toEqual(user);
+        });
+    });
+
+    describe("lookupProjectUser", () => {
+        it("GETs /users/lookup with the email as a query parameter", async () => {
+            const user = {
+                id: "u-1",
+                email: "x@example.test",
+                isDisabled: false
+            };
+            vi.mocked(_http.get).mockResolvedValue({ data: user } as never);
+
+            const result = await lookupProjectUser("x@example.test");
+
+            expect(_http.get).toHaveBeenCalledWith("/users/lookup?email=x%40example.test");
+            expect(result).toEqual(user);
+        });
+
+        it("percent-encodes addresses containing a plus", async () => {
+            // A bare `+` in a query string decodes server-side as a space, which would turn
+            // "a+tag@example.test" into an address that no longer resolves.
+            vi.mocked(_http.get).mockResolvedValue({ data: {} } as never);
+
+            await lookupProjectUser("a+tag@example.test");
+
+            expect(_http.get).toHaveBeenCalledWith("/users/lookup?email=a%2Btag%40example.test");
         });
     });
 

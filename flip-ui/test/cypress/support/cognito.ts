@@ -21,7 +21,7 @@
 // real Cognito and the test flow uses this hook. The auth-related specs in
 // group-3 still drive the real `signIn` codepath through the login form.
 
-interface LoginOptions {
+export interface LoginOptions {
     username?: string;
     permissionsFixture?: string;
 }
