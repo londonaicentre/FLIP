@@ -204,6 +204,8 @@ DICOM to NIfTI Conversion
 
 XNAT can automatically convert DICOM images to NIfTI format using the ``dcm2niix`` tool via the Container Service plugin. The converter runs from FLIP's version-pinned image ``ghcr.io/londonaicentre/xnat-dcm2niix`` (built from ``trust/xnat/dcm2niix/``; never a mutable ``latest`` tag — the previously used Docker Hub ``xnat/dcm2niix:latest`` resolved to a stale 2021 build that silently dropped slices from valid series). On the Docker/swarm backend the setup script also registers ``ghcr.io`` as a credential-less Container Service *image host*: without an image-host entry matching the image's registry hostname, container-service 3.8.1's swarm launch path fails with a ``NullPointerException`` before any container exists, even for a public image (the Kubernetes backend pulls via kubelet and does not need the entry). FLIP controls this conversion on a per-project basis through two XNAT mechanisms:
 
+The pinned image is recorded in XNAT's own database when the command is registered, not read from the repository at run time, so an XNAT provisioned before a pin bump keeps converting with the superseded image and reports itself healthy. The pin-sync check compares repository files only and cannot detect this. ``GET /xapi/commands`` lists the ``name -> image`` pairs a deployment actually holds — the same listing imaging-api returns when no command matches the image it requests — and re-running ``configure-dcm2niix.sh`` (or the ``xnat-init`` job on Kubernetes) re-registers against the current pin.
+
 Commands vs Event Subscriptions
 ================================
 
