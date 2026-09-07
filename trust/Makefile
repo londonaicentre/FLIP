@@ -13,7 +13,7 @@
 .PHONY: build dev prod clean stop up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
 	create-networks remove-networks recreate-networks tests \
-	update-omop-data update-orthanc-data load-synthea-ehr integration_test
+	update-omop-data update-orthanc-data load-synthea-ehr integration_test require-xnat-aetitle
 # PROD selects the compose-file suffix (__DCKR_SUFFIX: stag collapses to the
 # production compose) and the kit-file env token (ENV: stag stays distinct, so
 # a stag kit is .env.<CODE>.stag, never confused with .env.<CODE>.production).
@@ -58,10 +58,33 @@ ifeq ($(ENV),development)
 export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER FL_BACKEND \
        FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY \
        DOCKER_FL_TAG DOCKER_FL_REGISTRY NLB_SUBDOMAIN FL_SERVER_PORT
-# xnat/Makefile's dev-only plugin cache reads this to reach the artifacts bucket. Unexported it is
-# empty in the `make -C trust up-trust` path (the root Makefile blanket-exports the hub env, so only
-# a top-level `make up` would carry it), and the cache download fails on a bucket-less S3 URI.
+# xnat/Makefile's dev-only plugin cache reads these to reach the artifacts bucket. Unexported they
+# are empty in the `make -C trust up-trust` path (the root Makefile blanket-exports the hub env, so
+# only a top-level `make up` would carry them), and the cache download fails on a bucket-less S3 URI.
+# AWS_PROFILE/AWS_REGION belong here for the same reason: without them the bucket NAME reaches the
+# sub-make but the credentials to read it do not, and the plugin sync dies on
+#   fatal error: Unable to locate credentials
 export FLIP_ARTIFACTS_BUCKET_NAME
+# The two AWS names are exported only when actually defined. A bare `export AWS_PROFILE` on an
+# undefined name does not pass a value through — it DEFINES the variable as empty (origin=file) and
+# exports `AWS_PROFILE=` to every child, which is the same trap the sed change at Makefile:43-47
+# removes from the root. `-include ../$(MAIN_ENV_FILE)` silently skips a missing file, and a
+# developer may legitimately comment either key out to fall through to the default profile or to
+# ambient SSO credentials — so both are routinely undefined here. An empty value is worse than an
+# absent one for the AWS CLI, because absent and empty fail differently:
+#   AWS_PROFILE absent → "Unable to locate credentials"          (falls back to the default chain)
+#   AWS_PROFILE=       → "The config profile () could not be found"
+#   AWS_REGION  absent → resolves region from the profile in ~/.aws/config
+#   AWS_REGION=        → shadows it, giving "Invalid endpoint: https://s3..amazonaws.com"
+# ifdef treats a defined-but-empty value as undefined, so an `AWS_PROFILE=` line in an env file is
+# also left un-exported. The one case this cannot cover: if the CALLER exports an empty value, make
+# forwards it to children regardless of anything written here.
+ifdef AWS_PROFILE
+export AWS_PROFILE
+endif
+ifdef AWS_REGION
+export AWS_REGION
+endif
 # UID/GID/UNAME come from the same hub .env and must be exported for the same reason:
 # the dev compose runs imaging-api, data-access-api and trust-api as `user: "${UID}:${GID}"`
 # so they can write host-owned bind mounts (notably BASE_IMAGES_DOWNLOAD_DIR, which this
@@ -315,6 +338,26 @@ define require_kit_file
 	fi
 endef
 
+# Guard: refuse an explicitly-empty XNAT_AETITLE before either stack sees it. The value has two
+# kinds of consumer with opposite empty-value behaviour, and the kit file is the one place an
+# operator sets it:
+#   - the XNAT stack (xnat/Makefile → configure-xnat.sh) passes an empty value through on purpose
+#     (XNAT_AETITLE_EFFECTIVE) so the script's own ${VAR-default} guard is what reports it;
+#   - the trust compose (Orthanc's DICOM_MODALITIES entry, imaging-api's XNAT_AETITLE) uses
+#     ${XNAT_AETITLE:-XNAT}, because those consumers default the value in code and have no
+#     empty-value check of their own — a bare-dash pass-through would register an empty AE title
+#     rather than fail (see the note above imaging-api's environment in deploy/compose_trust.*.yml).
+# So the explicit empty is refused here, once, before compose or the stack runs, and both sides
+# keep agreeing on the AE title DQR matches the C-MOVE destination against. An undefined
+# XNAT_AETITLE (line absent or commented out in the kit) still takes the XNAT default in both
+# places. $(origin) rather than $(if $(XNAT_AETITLE),…): the latter cannot tell unset from empty,
+# which is exactly the distinction that matters. Evaluated in the recipe, not at parse time, so
+# down-trust / build / help still work against a kit that carries the bad value.
+XNAT_AETITLE_SET_EMPTY := $(if $(filter undefined,$(origin XNAT_AETITLE)),,$(if $(strip $(XNAT_AETITLE)),,yes))
+XNAT_AETITLE_SOURCE := $(if $(filter file,$(origin XNAT_AETITLE)),$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),trust/$(KIT_FILE)),the $(origin XNAT_AETITLE))
+require-xnat-aetitle:
+	@$(if $(XNAT_AETITLE_SET_EMPTY),$(error XNAT_AETITLE is set but empty in $(XNAT_AETITLE_SOURCE). It is XNAT's own AE title (SCP receiver, DQR calling AE and C-MOVE destination): set it, or drop the line to take the default 'XNAT'),:)
+
 # Guard: refuse to act on the compose project this kit resolves to when it is already held
 # by a DIFFERENT trust. TRUST_PROJECT is trust$(FL_KIT_SLOT_NUMBER), and slots are handed
 # out by the hub from its own database — so a second hub (FLIP_INSTANCE, FLIP#957)
@@ -382,8 +425,9 @@ build:
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS) (defined in the
 # root Makefile and inherited here): pulls fresh FL images when
 # DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op
-# otherwise.
-up-trust: update-omop-data update-orthanc-data create-networks
+# otherwise. require-xnat-aetitle goes first so a bad kit is refused before the data
+# fixtures are fetched, not just before compose runs.
+up-trust: require-xnat-aetitle update-omop-data update-orthanc-data create-networks
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
@@ -425,7 +469,7 @@ restart-trust: down-trust up-trust
 # workstation against a remote docker context, so a local mkdir cannot touch the
 # EC2 host — the per-net images dirs there are pre-created (ubuntu-owned) by the
 # AWS provisioning playbook (deploy/providers/AWS/site.yml).
-up-trust-ec2:
+up-trust-ec2: require-xnat-aetitle
 	$(require_kit_file)
 	$(check_slot_not_taken)
 	@echo "🚢 Starting Trust services on EC2 (KIT=$(KIT))..."

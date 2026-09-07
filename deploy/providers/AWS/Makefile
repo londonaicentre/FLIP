@@ -259,6 +259,61 @@ init: ## Initialize Terraform configuration
 		-reconfigure
 
 
+# Hand the resolved TF_VAR_* environment to a caller that runs terraform directly.
+#
+# The Terraform-input mapping lives in this Makefile and nowhere else: it derives
+# TF_VAR_environment from PROD, hard-codes the VPC/subnet CIDRs, resolves the FL
+# image names through deploy/fl_backend.mk and picks the kit date for FL_BACKEND.
+# CI runs `op5dev/tf-via-pr`, which invokes terraform directly rather than through
+# make, so it needs those values in its own environment — this target hands them
+# over instead of CI re-deriving the mapping and drifting from a laptop plan:
+#
+#     make print-tf-env >> "$$GITHUB_ENV"
+#
+# Every line of stdout is consumed as KEY=value, so the recipe must print the
+# variables and nothing else — no @echo banner, and no `##` recipe-line comments
+# (those are echoed by make and would land in the file as garbage). Output carries
+# AES_KEY_BASE64, INTERNAL_SERVICE_KEY, ADMIN_USER_PASSWORD and the DB user, so
+# never pipe it anywhere it would be echoed. Values are single-line by construction
+# (scripts/compose-ci-env.sh rejects embedded newlines), which is what makes the
+# plain KEY=value form safe for $$GITHUB_ENV.
+.PHONY: print-tf-env
+print-tf-env: ## Print the resolved TF_VAR_* environment as KEY=value lines (for CI)
+	@env | grep '^TF_VAR_' | sort
+
+# Publish the EC2 keypair public key to SSM so CI can reproduce it.
+#
+# main.tf reads both aws_key_pair public keys with file(): `flip_keypair` from
+# `${var.flip_keypair}.pub` and `host_key` from `var.ec2_public_key_path` — both
+# resolve to ~/.ssh/host-aws.pub, and neither is behind a `count`. A runner
+# without that file plans a replacement of both keypairs, and because
+# `public_key` is ForceNew that ripples into aws_instance.ec2_instance.
+#
+# The bytes come from *state*, not from the operator's ~/.ssh, so what CI writes
+# is what Terraform already believes — a laptop file that has drifted (a
+# regenerated key, a different machine) would otherwise plan a replacement from
+# CI just as reliably.
+.PHONY: seed-ci-keypair-param
+seed-ci-keypair-param: ## Publish the aws_key_pair public key from state to SSM (for Terraform CI)
+	@set -eu; \
+	echo "🔑 Reading the keypair public key from state..."; \
+	state="$$($(_TF) state pull)"; \
+	host_key="$$(printf '%s' "$$state" | jq -r '.resources[] | select(.type=="aws_key_pair" and .name=="host_key") | .instances[0].attributes.public_key // empty')"; \
+	flip_key="$$(printf '%s' "$$state" | jq -r '.resources[] | select(.type=="aws_key_pair" and .name=="flip_keypair") | .instances[0].attributes.public_key // empty')"; \
+	if [ -z "$$host_key" ]; then \
+		echo "❌ aws_key_pair.host_key is not in state — run 'make plan' first, or check AWS_PROFILE=$(AWS_PROFILE)"; exit 1; \
+	fi; \
+	if [ -n "$$flip_key" ] && [ "$$flip_key" != "$$host_key" ]; then \
+		echo "❌ aws_key_pair.flip_keypair and .host_key hold different public keys."; \
+		echo "   Both are read from ~/.ssh/host-aws.pub, so CI can only supply one file."; \
+		echo "   Reconcile them from a laptop before enabling Terraform CI."; exit 1; \
+	fi; \
+	$(_AWS_ENV) aws ssm put-parameter \
+		--name /flip/ci/host_aws_public_key \
+		--description "EC2 keypair public key, read by the Terraform CI workflows (FLIP#962)" \
+		--type String --overwrite --value "$$host_key" >/dev/null; \
+	echo "✅ Published /flip/ci/host_aws_public_key to the $(AWS_PROFILE) account."
+
 .PHONY: import-persistent
 import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prevent replacement
 	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; bash scripts/import-resources.sh
@@ -513,6 +568,34 @@ seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP 
 		-e vocab_s3_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e omop_db_tag=$(DOCKER_TAG)
 	@echo "✅ Trust data seeding complete."
+
+.PHONY: stage-fl-kit
+stage-fl-kit: check-trust-ec2-enabled ssh-config ## Stage the FL participant kit for the trust's REGISTERED slot onto the Trust EC2 (requires KIT=)
+	@# ansible-init runs BEFORE register-trusts in every deploy chain, so its kit
+	@# staging falls back to trust_num=1 (no kit file exists yet to read the slot
+	@# from). This target is the post-registration correction: it re-runs only the
+	@# kit-staging plays (`--tags flkit`) with the slot the hub actually assigned,
+	@# read from the kit file register-trusts wrote. deploy-trust depends on it so
+	@# the fl-client always mounts its own slot's kit — without it, a host assigned
+	@# Trust_2+ (re-registration, slot churn, second EC2 trust) would silently run
+	@# with Trust_1's FL identity. Idempotent: the plays wipe-then-sync, so a
+	@# re-run on a genuine Trust_1 host is a cheap no-op.
+	@# omop/orthanc_data_version are not used by the flkit plays but are asserted
+	@# by the always-tagged inventory play, same as every site.yml invocation.
+	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make stage-fl-kit KIT=Trust_2 PROD=stag"; exit 1)
+	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo "❌  FL_KIT_SLOT_NUMBER not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — run register-trusts first"; exit 1)
+	@[ -n "$(OMOP_DATA_VERSION)" ] || (echo "❌  trust/omop-db/.data_version not found"; exit 1)
+	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
+	@echo "🎫 Staging the $(FL_BACKEND) participant kit for slot Trust_$(FL_KIT_SLOT_NUMBER) onto the Trust EC2..."
+	@uv run ansible-playbook site.yml \
+		--tags flkit \
+		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
+		-e fl_backend=$(FL_BACKEND) \
+		-e fl_kit_date=$(FL_KIT_DATE) \
+		-e trust_num=$(FL_KIT_SLOT_NUMBER) \
+		-e omop_data_version=$(OMOP_DATA_VERSION) \
+		-e orthanc_data_version=$(ORTHANC_DATA_VERSION)
+	@echo "✅ FL participant kit staged for slot Trust_$(FL_KIT_SLOT_NUMBER)."
 
 .PHONY: deploy-centralhub
 deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new task-def revisions) and publish the UI
@@ -792,14 +875,34 @@ deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and dep
 	fi
 	@# The variable being set is necessary but not sufficient — it must actually
 	@# be applied. Confirm the behaviour exists on the live distribution.
+	@# Capture the count into a variable rather than testing `if ! … | grep -qv`:
+	@# _AWS_ENV expands to `unset …; AWS_PROFILE=…`, so the embedded `;` bound the
+	@# `!` to the `unset` and left the `if` condition as the *un-negated* grep —
+	@# inverting the guard, which then refused to publish on a correctly
+	@# provisioned distribution and waved the demo through on an unprovisioned
+	@# one (precisely the silent-detach this check exists to prevent).
 	@DIST_ID=$$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId); \
-	if ! $(_AWS_ENV) aws cloudfront get-distribution-config --id "$$DIST_ID" \
-		--query "DistributionConfig.CacheBehaviors.Items[?PathPattern=='/ark_demo/*'] | length(@)" \
-		--output text 2>/dev/null | grep -qv '^0$$'; then \
-		echo "❌ No /ark_demo/* cache behaviour on distribution $$DIST_ID."; \
-		echo "   DEMO_ASSETS_BUCKET_NAME is set but not applied — run a terraform apply first."; \
+	[ -n "$$DIST_ID" ] || { \
+		echo "❌ Terraform output CloudfrontDistributionId is empty."; \
+		echo "   The state has no distribution to check — run a terraform apply first."; \
 		exit 1; \
-	fi
+	}; \
+	if ! DEMO_BEHAVIOURS=$$($(_AWS_ENV) aws cloudfront get-distribution-config --id "$$DIST_ID" \
+		--query "DistributionConfig.CacheBehaviors.Items[?PathPattern=='/ark_demo/*'] | length(@)" \
+		--output text 2>&1); then \
+		echo "❌ Could not read the CloudFront distribution config for $$DIST_ID."; \
+		echo "   aws said: $$DEMO_BEHAVIOURS"; \
+		echo "   That is a lookup failure — an expired SSO session, the wrong profile, or no"; \
+		echo "   network — NOT a missing behaviour. Fix the credential or connectivity and"; \
+		echo "   re-run; a terraform apply is not the remedy here."; \
+		exit 1; \
+	fi; \
+	case "$$DEMO_BEHAVIOURS" in \
+		''|0|None) \
+			echo "❌ No /ark_demo/* cache behaviour on distribution $$DIST_ID."; \
+			echo "   DEMO_ASSETS_BUCKET_NAME is set but not applied — run a terraform apply first."; \
+			exit 1;; \
+	esac
 	@echo "🖼️  Building flip-ui Ark+ demo bundle from working tree..."
 	@# npm run build:demo's postbuild hook regenerates dist/js/window.js itself
 	@# (scripts/generate-demo-window-js.sh) — no separate window.js step needed,
@@ -841,8 +944,18 @@ deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and dep
 # services/<slot>/ dir in the S3 participant-kit bundle and under /opt/flip.
 # Read from the trust's kit file (the single source of truth: the kit file's
 # FL_KIT_SLOT is also what trust/Makefile mounts), not duplicated here.
-FL_KIT_SLOT := $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
-FL_KIT_SLOT_NUMBER := $(shell sed -n 's/^FL_KIT_SLOT_NUMBER=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+#
+# Both are DEFERRED (`=`, not `:=`) on purpose. A simply-expanded assignment is evaluated once
+# when the Makefile is parsed, which is before any target runs — and `register-trusts` is what
+# writes these values into the kit file. Inside a single `make full-deploy`, `register-trusts`
+# and `deploy-trust` are prerequisites of the same make process, so a parse-time snapshot hands
+# the staging targets whatever the kit file held *before* registration: empty on a first
+# deployment, and the previously claimed slot after a delete-then-re-register (which claims the
+# next free slot rather than the old one) — the silent wrong-slot stage the guards below exist
+# to prevent. Deferred, each reference re-reads the file at recipe-expansion time and therefore
+# sees what register-trusts just wrote. The repeated $(shell) is a `sed` over one small file.
+FL_KIT_SLOT = $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+FL_KIT_SLOT_NUMBER = $(shell sed -n 's/^FL_KIT_SLOT_NUMBER=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 
 # Trust-local OMOP DB credentials from the kit — passed to the vocab-load play
 # (they must match the values the restored pgdata cluster was built with).
@@ -856,7 +969,7 @@ OMOP_DATA_VERSION := $(shell cat ../../../trust/omop-db/.data_version 2>/dev/nul
 ORTHANC_DATA_VERSION := $(shell cat ../../../trust/orthanc/.data_version 2>/dev/null | tr -d ' \n\r\t')
 
 .PHONY: deploy-trust
-deploy-trust: check-trust-ec2-enabled ssh-config update-env seed-trust-data ## Deploy trust relationships after central hub is deployed
+deploy-trust: check-trust-ec2-enabled ssh-config update-env seed-trust-data stage-fl-kit ## Deploy trust relationships after central hub is deployed
 	@echo "🔍 Checking trust images (tag: $(DOCKER_TAG))..."
 	@missing=false; \
 	for image in $(TRUST_IMAGES); do \
@@ -1108,10 +1221,11 @@ full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trus
 	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, secrets)
 	## 4. update-env: refresh .env with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure the SSM bastion and provision the Trust EC2
-	##    (ansible-init uses trust_num=1 by default; re-run with KIT=<CODE> after register-trusts for slot-specific data)
+	##    (ansible-init stages with trust_num=1 — no kit file exists yet; deploy-trust re-stages the kit
+	##    for the registered slot via stage-fl-kit once register-trusts has written it)
 	## 6. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
-	## 8. deploy-trust + status: bring up cloud Trust container stack and verify
+	## 8. deploy-trust + status: re-stage the FL kit for the registered slot, bring up cloud Trust container stack and verify
 	## Prerequisite: create stub kit files first: make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=London PROD=$(PROD)
 full-deploy: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust status
 
@@ -1145,10 +1259,11 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, ALB, secrets, on-prem trust NLB rule)
 	## 4. update-env: refresh .env.{PROD} with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure the SSM bastion and provision the Trust EC2
-	##    (ansible-init uses trust_num=1 by default; re-run with KIT=<CODE> after register-trusts for slot-specific data)
+	##    (ansible-init stages with trust_num=1 — no kit file exists yet; deploy-trust re-stages the kit
+	##    for the registered slot via stage-fl-kit once register-trusts has written it)
 	## 6. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
-	## 8. deploy-trust + provision-local-trust + status: bring up cloud + on-prem trust hosts and verify
+	## 8. deploy-trust + provision-local-trust + status: re-stage the cloud trust's FL kit for its registered slot, bring up cloud + on-prem trust hosts and verify
 	## NOTE: After this completes you must manually:
 	##   - Start the on-prem trust stack (sudo: the provisioned login user is deliberately not in
 	##     the docker group): cd ../../.. && sudo -E env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)

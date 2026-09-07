@@ -113,11 +113,26 @@ update_trust() {
   fi
 
   echo "🗑️  Removing existing db_data dir for Trust ${trust_num}..."
-  # The dir is owned by the postgres container's uid, so removal needs sudo —
-  # but sudo prompts for a password in non-interactive runs. Only invoke it when
-  # there's actually something to delete (first-run case has no dir yet).
+  # The dir may be owned by the postgres container's uid, in which case removal
+  # needs sudo. But sudo prompts for a password in non-interactive runs, and it
+  # is frequently NOT needed: on Docker Desktop (macOS/Windows) the virtiofs
+  # bind mount maps ownership onto the invoking host user, so a plain rm works.
+  # Try unprivileged first and escalate only if that actually fails.
+  #
+  # Capture that failure rather than discarding it. Ownership is the expected
+  # cause but not the only one: a busy mount, an immutable file or a read-only
+  # filesystem fail here too, and sudo then fails with the same message — which
+  # reads as a credentials problem rather than as the thing it actually is. Print
+  # what rm said before escalating, so a non-permission failure names itself.
   if [[ -e "${dest_dir}" ]]; then
-    sudo rm -rf "${dest_dir}"
+    local rm_error=""
+    if ! rm_error="$(rm -rf "${dest_dir}" 2>&1)"; then
+      if [[ -n "${rm_error}" ]]; then
+        echo "   ${rm_error}"
+      fi
+      echo "   (usually owned by the container's uid; escalating to sudo)"
+      sudo rm -rf "${dest_dir}"
+    fi
   fi
   mkdir -p "${dest_dir}"
 

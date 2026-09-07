@@ -32,7 +32,7 @@ from flip_api.domain.schemas.cohort import (
 from flip_api.domain.schemas.status import ProjectStatus, TaskType
 from flip_api.utils.encryption import encrypt
 from flip_api.utils.logger import logger
-from flip_api.utils.project_manager import has_project_status
+from flip_api.utils.project_manager import get_project_by_id, has_project_status
 
 router = APIRouter(prefix="/cohort", tags=["cohort_services"])
 
@@ -51,7 +51,7 @@ _SELECT_LIKE_STATEMENTS: tuple[type[sqlglot.expressions.Expression], ...] = (
 )
 
 
-def validate_query(query: str) -> None:
+def validate_query(query: str) -> sqlglot.expressions.Expression:
     """
     Fast-feedback validity pre-check for a cohort query. **Not a security control.**
 
@@ -90,6 +90,9 @@ def validate_query(query: str) -> None:
     Args:
         query (str): The SQL query string submitted by the researcher.
 
+    Returns:
+        sqlglot.expressions.Expression: The parsed statement, for callers that inspect it further.
+
     Raises:
         ValueError: If the query is over length, unparseable, not exactly one
             statement, or not SELECT-shaped.
@@ -114,6 +117,79 @@ def validate_query(query: str) -> None:
 
     if not isinstance(statements[0], _SELECT_LIKE_STATEMENTS):
         raise ValueError("Only SELECT statements are allowed.")
+
+    return statements[0]
+
+
+# Mirrors the column the trust selects when it wraps a cohort for the accession-ids route
+# (``SELECT accession_id FROM (<query>) AS cohort_subquery`` in
+# trust/data-access-api/data_access_api/routers/cohort.py). Nothing links the two automatically:
+# if the trust ever changes how it derives accession ids, this fast-feedback check goes stale and
+# must follow. The trust stays authoritative either way, so staleness costs feedback, not safety.
+ACCESSION_ID_COLUMN = "accession_id"
+MISSING_ACCESSION_ID_DETAIL = (
+    "This project includes imaging, so its cohort query must return an accession_id column. "
+    "Add it to the SELECT list, or create the project with 'Includes imaging data' turned off "
+    "for a tabular-only cohort."
+)
+
+
+def _output_identifier(projection: sqlglot.expressions.Expression) -> sqlglot.expressions.Identifier | None:
+    """The identifier Postgres names a SELECT-list item after, or None when that is not provable here.
+
+    An alias names the column outright and a bare column reference is named after itself. Anything
+    else (a function call, a scalar subquery, arithmetic) gets a Postgres-chosen name this check does
+    not model, so it is treated as unknowable.
+    """
+    if isinstance(projection, sqlglot.expressions.Alias):
+        alias = projection.args.get("alias")
+        return alias if isinstance(alias, sqlglot.expressions.Identifier) else None
+    if isinstance(projection, sqlglot.expressions.Column):
+        column_name = projection.this
+        return column_name if isinstance(column_name, sqlglot.expressions.Identifier) else None
+    return None
+
+
+def projection_lacks_accession_id(statement: sqlglot.expressions.Expression) -> bool:
+    """Whether the statement's outermost SELECT list is fully explicit and names no ``accession_id``.
+
+    Fast-feedback companion to :func:`validate_query` for *imaging* projects (FLIP#1071): the trust's
+    accession-ids route wraps the cohort as ``SELECT accession_id FROM (<query>)``, so a query that
+    provably lacks that output column would fail at every trust — but only after approval, as an
+    opaque status error. Catching it here turns that into a 400 at submission.
+
+    Anything this cannot prove passes through, the trust remaining the authority: a star anywhere in
+    the SELECT list (``*``, ``t.*``, even ``COUNT(*)``), and any item whose output name Postgres
+    chooses itself (a function call, a scalar subquery). Names are compared the way Postgres resolves
+    the trust's unquoted ``accession_id``: unquoted identifiers fold to lower case, quoted ones must
+    match exactly — so ``"Accession_ID"`` counts as lacking the column. That last rule is why sqlglot's
+    own ``named_selects`` is not used here: it returns bare strings, discarding the quoting this
+    depends on.
+
+    Args:
+        statement (sqlglot.expressions.Expression): The parsed statement :func:`validate_query` returned.
+
+    Returns:
+        bool: True only when the outermost SELECT list is explicit and provably has no
+        ``accession_id`` output column.
+    """
+    node = statement.unnest()
+    # A set operation takes its output names from its left-most SELECT: follow ``this`` down the left
+    # spine (a breadth-first find would reach the right-hand branch of a nested UNION first).
+    while isinstance(node, sqlglot.expressions.SetOperation):
+        node = node.this.unnest()
+    if not isinstance(node, sqlglot.expressions.Select):
+        return False
+    for projection in node.expressions:
+        if projection.find(sqlglot.expressions.Star):
+            return False
+        identifier = _output_identifier(projection)
+        if identifier is None:
+            return False
+        name = identifier.name if identifier.quoted else identifier.name.lower()
+        if name == ACCESSION_ID_COLUMN:
+            return False
+    return True
 
 
 # TODO [#114] This endpoint was not defined in the old repo. The old repo defined a step function that ran the
@@ -190,9 +266,19 @@ def submit_cohort_query(
         # query safety. See validate_query's docstring for why this is
         # deliberately weaker than the trust-side check.
         try:
-            validate_query(query_row.query)
+            parsed_query = validate_query(query_row.query)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+
+        # Imaging projects need an accession_id output column (the trusts' accession-ids route
+        # selects it by name). Fast feedback only — see projection_lacks_accession_id.
+        project = get_project_by_id(cohort_query.project_id, db)
+        if project is None:
+            # can_modify_project proved the project exists, so only a soft-delete racing this request
+            # lands here: refuse, rather than dispatch a deleted project's cohort to every trust.
+            raise HTTPException(status_code=404, detail="Project not found.")
+        if project.has_imaging and projection_lacks_accession_id(parsed_query):
+            raise HTTPException(status_code=400, detail=MISSING_ACCESSION_ID_DETAIL)
 
         # Query database for trusts
         statement = select(Trust)

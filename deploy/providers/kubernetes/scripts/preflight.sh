@@ -121,7 +121,7 @@ else
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
-    fail "python3 not found — required by sync_k8s_kit.py, patch_aws_creds.py, check_status.py"
+    fail "python3 not found — required by sync_k8s_kit.py, check_status.py"
     hint "macOS:  brew install python3"
     hint "Linux:  sudo apt-get install python3"
 else
@@ -135,18 +135,20 @@ else
 fi
 
 if ! command -v aws >/dev/null 2>&1; then
-    warn "aws CLI not found — required for 'make patch-aws-creds' and FL-client S3 kit access"
+    warn "aws CLI not found — required for the OMOP/Orthanc seed Jobs (they authenticate via omopDb.initJob.hostAwsMount and orthanc.initJob.hostAwsMount respectively). Not needed for the FL kit, which is staged onto the node with 'make stage-kit'"
     hint "Install: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
 else
     AWS_VER="$(aws --version 2>&1 | extract_semver || true)"
     pass "aws CLI ${AWS_VER:-found}"
-    # Warn about stale SSO session early — patch-aws-creds is needed right after deploy
+    # Warn about stale SSO session early. Not for the FL kit — that is staged onto the
+    # node beforehand and the cluster holds no credentials — but the OMOP/Orthanc seed
+    # Jobs read the operator AWS config through a host mount.
     if [ "$PROD" = "stag" ] || [ "$PROD" = "true" ]; then
         AWS_PROFILE_CHECK="${AWS_PROFILE:-flipstag}"
         if ! aws sts get-caller-identity --profile "$AWS_PROFILE_CHECK" >/dev/null 2>&1; then
             warn "AWS SSO session not active for profile '${AWS_PROFILE_CHECK}'"
             hint "Login before deploying: aws sso login --profile ${AWS_PROFILE_CHECK}"
-            hint "(Required for 'make patch-aws-creds' to push FL-client S3 credentials)"
+            hint "(Required by the OMOP/Orthanc seed Jobs via omopDb.initJob.hostAwsMount and orthanc.initJob.hostAwsMount)"
         else
             pass "AWS SSO session active  (profile: ${AWS_PROFILE_CHECK})"
         fi
@@ -256,7 +258,10 @@ if [ -f "${CHART_DIR}/values-secrets.yaml" ]; then
 else
     warn "values-secrets.yaml not found — XNAT/OMOP/S3 secrets will use chart defaults"
     hint "Patch secrets after the first deploy: make patch-kit-secrets KIT=<KIT> PROD=${PROD:-(env)}"
-    hint "Or populate the file before deploying: ${CHART_DIR}/values-secrets.yaml"
+    hint "Or generate it before deploying (never hand-write it — it is gitignored):"
+    hint "  python3 ${CHART_DIR}/scripts/generate_values.py \\"
+    hint "    --env-file ${REPO_ROOT}/trust/.env.<KIT>.${ENV_SUFFIX} --output-dir ${CHART_DIR}"
+    hint "Then hand-fill the slots no kit carries: orthanc-registered-users and the S3 keys"
 fi
 
 if [ -n "$OVERRIDES_FILE" ]; then
