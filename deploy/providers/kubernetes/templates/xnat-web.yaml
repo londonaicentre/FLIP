@@ -10,6 +10,11 @@
 # limitations under the License.
 
 {{- if and .Values.xnat.enabled .Values.xnat.web.enabled }}
+{{- /*
+Refuse a real-PACS install whose receiver has no route in from outside the cluster. Evaluated here,
+beside the Service this is a statement about, so it fires whether or not NetworkPolicy is enabled.
+*/ -}}
+{{- include "flip-trust.validatePacsReachable" . }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -22,7 +27,11 @@ metadata:
 data:
   XNAT_HOME: /data/xnat/home
   XNAT_ADMIN_USER: {{ .Values.xnat.web.adminUser | quote }}
-  XNAT_PORT: "8080"
+  # The DICOM SCP receiver port. Sourced from the same value the init job registers the receiver
+  # with, so a hand-run of configure-xnat.sh inside this pod (initJob.enabled: false) configures the
+  # same port rather than a stale literal. It read "8080" — Tomcat's port — while XNAT_PORT was
+  # still ambiguous; it now unambiguously means DICOM (FLIP#993).
+  XNAT_PORT: {{ .Values.xnat.web.dicomPort | quote }}
   XNAT_DATASOURCE_DRIVER: "org.postgresql.Driver"
   XNAT_DATASOURCE_NAME: "xnat"
   XNAT_DATASOURCE_USERNAME: {{ .Values.xnat.db.datasourceUsername | quote }}
@@ -33,7 +42,6 @@ data:
   XNAT_MIN_HEAP: {{ .Values.xnat.web.env.XNAT_MIN_HEAP | quote }}
   XNAT_MAX_HEAP: {{ .Values.xnat.web.env.XNAT_MAX_HEAP | quote }}
   CATALINA_OPTS: "-Xms{{ .Values.xnat.web.env.XNAT_MIN_HEAP }} -Xmx{{ .Values.xnat.web.env.XNAT_MAX_HEAP }} -Dxnat.home=/data/xnat/home -XX:+UseG1GC -Djava.awt.headless=true"
-  PACS_DICOM_PORT: "4242"
 ---
 apiVersion: v1
 kind: Service
@@ -45,6 +53,15 @@ metadata:
     app.kubernetes.io/component: xnat-web
 spec:
   type: {{ .Values.xnat.web.service.type }}
+  {{- if and (eq .Values.xnat.web.service.type "NodePort") .Values.xnat.web.dicomNodePort }}
+  # Preserve the PACS's source IP. Under the default `Cluster` policy kube-proxy SNATs NodePort
+  # traffic to the node address before it reaches the pod, so the ingress NetworkPolicy's PACS CIDR
+  # would never match and the C-STORE return leg would be dropped by default-deny — queries
+  # succeeding while retrievals silently time out, which is the bug this exists to prevent
+  # (FLIP#993). `Local` also means only nodes running the pod answer, which suits the single-node
+  # trust deployment this targets.
+  externalTrafficPolicy: Local
+  {{- end }}
   ports:
     - port: {{ .Values.xnat.web.service.port }}
       targetPort: tomcat
@@ -54,6 +71,11 @@ spec:
       targetPort: {{ .Values.xnat.web.dicomPort | default 8104 }}
       protocol: TCP
       name: dicom-scp
+      {{- if and .Values.xnat.web.dicomNodePort (eq .Values.xnat.web.service.type "NodePort") }}
+      # Pinned so the PACS has a stable destination port. Without this Kubernetes allocates one at
+      # random, and the C-MOVE destination XNAT advertises would not match what the PACS can reach.
+      nodePort: {{ .Values.xnat.web.dicomNodePort }}
+      {{- end }}
   selector:
     {{- include "flip-trust.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: xnat-web
