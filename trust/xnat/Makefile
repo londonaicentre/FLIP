@@ -107,8 +107,9 @@ TRUST_PROJECT := $(INSTANCE_PREFIX)trust$(TRUST_NUM)
 # the two were one variable until the FLIP#993 split, so a kit that predates it sets only XNAT_PORT
 # — deriving the web port from it routes that kit into the collision guard, a loud instruction to
 # allocate a second port, instead of silently moving its web UI to a number nothing else expects.
-# Defaults are the Trust_1 allocation, so a single-trust host (EC2 / on-prem)
-# needs no XNAT port entries in its kit file.
+# XNAT_PORT defaults to the Trust_1 allocation, so a single-trust host (EC2 / on-prem)
+# need not set it. XNAT_WEB_PORT has no such default — it derives from XNAT_PORT, which
+# collides — so every kit must set it explicitly, single-trust hosts included.
 XNAT_PORT_EFFECTIVE := $(or $(XNAT_PORT),8104)
 XNAT_WEB_PORT_EFFECTIVE := $(or $(XNAT_WEB_PORT),$(XNAT_PORT_EFFECTIVE))
 # XNAT's AE title, applied to the SCP receiver, dqrCallingAe and the C-MOVE destination.
