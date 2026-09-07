@@ -136,11 +136,26 @@ def seed_omop(trust: Trust, tables: dict[str, list[dict[str, str]]], dry_run: bo
     return inserted
 
 
-# Both objects are seeded: the slide the detector reads, and the reference annotations it is scored
-# against. They share an accession and a study, so one pull brings both into XNAT -- but only if both
-# are in Orthanc to begin with. Seeding just the slide produces a run that pulls, converts and then
-# fails at scoring with nothing to compare against.
-ACCESSION_FILES = ("slide.dcm", "annotation.dcm")
+# Only the slide is seeded into Orthanc. The reference annotations reach XNAT by data enrichment
+# instead -- `upload_annotations_to_xnat.py`, the same route the spleen tutorial uses for its NIfTI
+# labels -- and this is a correctness requirement, not a preference.
+#
+# XNAT's DICOM receiver runs on dcm4che 2.0.29, whose UID table has no entry for the Microscopy Bulk
+# Simple Annotations SOP class (1.2.840.10008.5.1.4.1.1.91.1). It therefore offers no presentation
+# context for it, and Orthanc's C-STORE is refused:
+#
+#     Cannot C-Store an instance of SOPClassUID 1.2.840.10008.5.1.4.1.1.91.1,
+#     the destination has not accepted any TransferSyntax for this SOPClassUID
+#
+# Because slide and annotation share one accession, that refusal fails the *whole study's* C-MOVE, so
+# seeding the annotation here does not merely fail to deliver it -- it stops the slide arriving too.
+# The study then wedges in ISSUED and is reported as `Processing` forever (FLIP#662), which is
+# indistinguishable from a slow whole-slide transfer. An earlier version of this file seeded both and
+# asserted "one pull brings both into XNAT"; that was never true on a real trust.
+#
+# The whole-slide SOP class (1.2.840.10008.5.1.4.1.1.77.1.6) *is* in dcm4che 2's table, so the slide
+# transfers normally once the annotation is out of the way.
+ORTHANC_FILES = ("slide.dcm",)
 
 
 def accession_dir(slides_dir: Path, trust_number: str, accession: str) -> Path:
@@ -159,7 +174,7 @@ def seed_orthanc(trust: Trust, accessions: list[str], slides_dir: Path, dry_run:
     """
     posted = 0
     for accession in accessions:
-        for filename in ACCESSION_FILES:
+        for filename in ORTHANC_FILES:
             path = accession_dir(slides_dir, trust.number, accession) / filename
             if not path.exists():
                 raise FileNotFoundError(
@@ -181,6 +196,61 @@ def seed_orthanc(trust: Trust, accessions: list[str], slides_dir: Path, dry_run:
             logger.info("  %s/%s -> %s", accession, filename, body.get("Status", "?"))
             posted += 1
     return posted
+
+
+# SOP class of the annotation objects, and the Modality they carry in Orthanc. Named here because
+# an Orthanc seeded by an earlier version of this script still holds them, and their mere presence
+# under a shared accession fails the slide's C-MOVE (see ORTHANC_FILES above).
+ANNOTATION_MODALITY = "ANN"
+
+
+def prune_annotations(trust: Trust, accessions: list[str], dry_run: bool) -> int:
+    """Delete any annotation series this script previously seeded into ``trust``'s Orthanc.
+
+    Seeding is otherwise additive, so changing ``ORTHANC_FILES`` is not enough on a store that an
+    earlier version already populated: the annotations would stay, and keep failing every slide's
+    C-MOVE. Removing them is scoped to the accessions this project manages and to ``ANN`` series
+    only, so nothing else in a shared dev PACS is touched.
+
+    Args:
+        trust (Trust): The trust whose Orthanc to prune.
+        accessions (list[str]): Accessions this project manages.
+        dry_run (bool): Report what would be deleted, delete nothing.
+
+    Returns:
+        int: Number of series deleted (or that would be, on a dry run).
+    """
+    base = trust.orthanc_url.rstrip("/")
+    deleted = 0
+    for accession in accessions:
+        response = requests.post(
+            f"{base}/tools/find",
+            json={
+                "Level": "Series",
+                "Query": {"AccessionNumber": accession, "Modality": ANNOTATION_MODALITY},
+                "Expand": False,
+            },
+            auth=trust.orthanc_auth,
+            timeout=TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        for series_id in response.json():
+            if dry_run:
+                logger.info("  [dry-run] would delete %s series %s (%s)", ANNOTATION_MODALITY, series_id, accession)
+                deleted += 1
+                continue
+            delete = requests.delete(f"{base}/series/{series_id}", auth=trust.orthanc_auth, timeout=TIMEOUT_SECONDS)
+            delete.raise_for_status()
+            logger.info("  pruned %s series for %s", ANNOTATION_MODALITY, accession)
+            deleted += 1
+    if deleted:
+        logger.info(
+            "  %s: removed %d annotation series -- they are delivered by "
+            "`make -C fl-tutorials upload-idc-pathology-annotations` instead",
+            trust,
+            deleted,
+        )
+    return deleted
 
 
 def parse_trust(value: str) -> Trust:
@@ -232,6 +302,7 @@ def main(argv: list[str] | None = None) -> int:
             logger.warning("%s: no rows with %s=%s -- skipping", trust, TRUST_COLUMN, trust.number)
             continue
         logger.info("%s: %d slide(s)", trust, len(accessions))
+        prune_annotations(trust, accessions, args.dry_run)
         seed_orthanc(trust, accessions, args.slides_dir, args.dry_run)
         seed_omop(trust, tables, args.dry_run)
         seeded_any = True

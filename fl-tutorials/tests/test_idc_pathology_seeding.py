@@ -234,3 +234,96 @@ def test_ignores_unrelated_files_rather_than_failing(tmp_path: Path) -> None:
 
     assert data_utils._find_by_sop_class(tmp_path, data_utils.SLIDE_SOP_CLASS, "slide.dcm") is not None
     assert data_utils._find_by_sop_class(tmp_path, data_utils.ANNOTATION_SOP_CLASS, "annotation.dcm") is None
+
+
+# ---------------------------------------------------------------------------
+# How the two DICOM objects reach a trust.
+#
+# The slide travels by C-MOVE; the annotation cannot, and must not be put where one would be
+# attempted. XNAT's DICOM receiver (dcm4che 2.0.29) has no presentation context for the Microscopy
+# Bulk Simple Annotations SOP class, and because slide and annotation share an accession, an
+# annotation sitting in Orthanc fails the *whole study's* C-MOVE -- so the slide never arrives
+# either, and the study wedges in ISSUED while the status endpoint reports `Processing` forever.
+#
+# That failure is invisible from the pull's own counters and looks exactly like a slow whole-slide
+# transfer, which is why it is pinned by a test rather than left to a comment.
+# ---------------------------------------------------------------------------
+
+
+class _FakeResponse:
+    def __init__(self, payload=None):
+        self._payload = payload if payload is not None else {}
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self):
+        return self._payload
+
+
+class _RecordingRequests:
+    """Minimal stand-in for the ``requests`` module, recording what the seeder would send."""
+
+    def __init__(self, find_result=None):
+        self.posted_urls: list[str] = []
+        self.posted_files: list[str] = []
+        self.find_queries: list[dict] = []
+        self.deleted: list[str] = []
+        self._find_result = find_result or []
+
+    def post(self, url, data=None, json=None, **kwargs):
+        if url.endswith("/tools/find"):
+            self.find_queries.append(json)
+            return _FakeResponse(self._find_result)
+        self.posted_urls.append(url)
+        self.posted_files.append(getattr(data, "name", str(data)))
+        return _FakeResponse({"Status": "Success"})
+
+    def delete(self, url, **kwargs):
+        self.deleted.append(url)
+        return _FakeResponse()
+
+
+@pytest.fixture
+def trust() -> "seed_trusts.Trust":
+    return seed_trusts.Trust(number="1", orthanc_url="http://orthanc.test", omop_dsn="postgresql://x")
+
+
+def _accession_tree(root: Path, accession: str) -> None:
+    directory = root / "Trust_1" / "accession-resources" / accession
+    directory.mkdir(parents=True)
+    (directory / "slide.dcm").write_bytes(b"slide")
+    (directory / "annotation.dcm").write_bytes(b"annotation")
+
+
+def test_orthanc_receives_the_slide_and_never_the_annotation(tmp_path, trust, monkeypatch) -> None:
+    """The annotation must not be seeded: its presence fails the slide's C-MOVE, not just its own."""
+    _accession_tree(tmp_path, "AAA-1")
+    fake = _RecordingRequests()
+    monkeypatch.setattr(seed_trusts, "requests", fake)
+
+    seed_trusts.seed_orthanc(trust, ["AAA-1"], tmp_path, dry_run=False)
+
+    assert fake.posted_files == [str(tmp_path / "Trust_1" / "accession-resources" / "AAA-1" / "slide.dcm")]
+    assert not any("annotation" in name for name in fake.posted_files)
+
+
+def test_prune_deletes_only_annotation_series_and_only_for_managed_accessions(tmp_path, trust, monkeypatch) -> None:
+    """Pruning is scoped to ANN series of this project's accessions -- a shared dev PACS holds others."""
+    fake = _RecordingRequests(find_result=["series-abc"])
+    monkeypatch.setattr(seed_trusts, "requests", fake)
+
+    deleted = seed_trusts.prune_annotations(trust, ["AAA-1", "AAA-2"], dry_run=False)
+
+    assert deleted == 2
+    assert [q["Query"]["Modality"] for q in fake.find_queries] == ["ANN", "ANN"]
+    assert sorted(q["Query"]["AccessionNumber"] for q in fake.find_queries) == ["AAA-1", "AAA-2"]
+    assert fake.deleted == ["http://orthanc.test/series/series-abc"] * 2
+
+
+def test_prune_dry_run_deletes_nothing(trust, monkeypatch) -> None:
+    fake = _RecordingRequests(find_result=["series-abc"])
+    monkeypatch.setattr(seed_trusts, "requests", fake)
+
+    assert seed_trusts.prune_annotations(trust, ["AAA-1"], dry_run=True) == 1
+    assert fake.deleted == []

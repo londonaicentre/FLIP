@@ -24,7 +24,7 @@ TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials
 # FL_BACKEND still selects a per-harness variant where one exists (the two spleen downloads).
 DATASET_TARGETS := download-xray-data download-spleen-data upload-spleen-labels \
 	download-arkplus-finetuning-data download-arkplus-eval-data \
-	download-idc-pathology-data seed-idc-pathology
+	download-idc-pathology-data seed-idc-pathology upload-idc-pathology-annotations
 
 .PHONY: $(TUTORIAL_TARGETS) $(DATASET_TARGETS)
 $(TUTORIAL_TARGETS):

@@ -23,10 +23,25 @@
 --   * XNAT archives `xnat:smSessionData` and serves it over DICOMweb.
 --   * OMOP already carries the slide-microscopy modality concept this query joins on.
 --
--- What a trust does need is the data: `make -C fl-tutorials seed-idc-pathology` puts the slides in
--- Orthanc and these rows in OMOP. Note the cohort must also clear that trust's
--- COHORT_QUERY_THRESHOLD (default 10) before row-level data is released at all, which is why the
--- tutorial ships twelve slides per site rather than five.
+-- A fifth constraint, unlike those four, is real, and it shapes how the tutorial is deployed: the
+-- reference annotations cannot reach a trust through the imaging pull. XNAT's DICOM receiver runs
+-- on dcm4che 2.0.29, whose UID table has no entry for the Microscopy Bulk Simple Annotations SOP
+-- class (1.2.840.10008.5.1.4.1.1.91.1), so it offers no presentation context and Orthanc's C-STORE
+-- is refused. Slide and annotation share an accession, so that refusal fails the whole study's
+-- C-MOVE -- an annotation left in Orthanc stops the *slide* arriving too, and the study then wedges
+-- in ISSUED, reported as `Processing` forever (FLIP#662).
+--
+-- So the annotations travel by data enrichment instead, over XNAT's REST API, which negotiates no
+-- presentation contexts: `make -C fl-tutorials upload-idc-pathology-annotations`. They are written
+-- into the slide scan's own DICOM resource, so `get_by_accession_number(..., DICOM)` returns both
+-- objects together and the app picks them apart by SOP Class. This mirrors the spleen tutorial,
+-- whose NIfTI labels cannot live in OMOP and are uploaded to XNAT the same way.
+--
+-- What a trust does need is therefore the data in two steps: `make -C fl-tutorials
+-- seed-idc-pathology` puts the slides in Orthanc and these rows in OMOP, and
+-- `upload-idc-pathology-annotations` puts the annotations in XNAT once a project has pulled. Note
+-- the cohort must also clear that trust's COHORT_QUERY_THRESHOLD (default 10) before row-level data
+-- is released at all, which is why the tutorial ships twelve slides per site rather than five.
 SELECT
     io.accession_id AS accession_id,
     p.person_source_value AS patient_id

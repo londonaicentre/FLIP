@@ -296,7 +296,14 @@ live AWS SSO session, and ideally the demo Cognito users — `make demo-users` (
 `DEMO_ADMIN_PASSWORD` from env, never committed) then restart flip-api so seeding grants their roles; without them
 the recorder falls back to the well-known admin for both parts. Useful `DEMO_ARGS`: `--app spleen` (record the 3D
 spleen segmentation tutorial instead of chest X-ray; pair with `--data-enrichment-cwd/-cmd` for the off-camera
-label upload, same contract as `e2e_smoke`), `--publish-segmentations` (republish those NIfTI labels as DICOM-SEG
+label upload, same contract as `e2e_smoke`), `--app digipath` (the IDC nuclei-detection evaluation on DICOM
+whole-slide imaging; NVFLARE only, and its profile carries its own enrichment step so no `--data-enrichment-*`
+flags are needed. The reference annotations **cannot** ride the imaging pull: XNAT's DICOM receiver has no
+presentation context for the Microscopy Bulk Simple Annotations SOP class, and since slide and annotation share
+an accession, an annotation left in Orthanc fails the whole study's C-MOVE and the slide never arrives either.
+They are uploaded to XNAT over REST instead, by `make -C fl-tutorials upload-idc-pathology-annotations`;
+`--xnat-urls` names the roster, which must cover every trust because each XNAT holds only its own studies),
+`--publish-segmentations` (republish those NIfTI labels as DICOM-SEG
 ROI collections via `flip-api/tests/xnat_seg_upload.py` so segment 3 shows the segmentation overlaid in OHIF —
 dcmqi in Docker for the conversion, the viewer's own `PUT /xapi/roi/…?type=SEG` for the upload; `--seg-limit`
 caps how many sessions per trust are converted), `--skip-xnat`, `--project-id <uuid> --from-segment <n>` (iterate

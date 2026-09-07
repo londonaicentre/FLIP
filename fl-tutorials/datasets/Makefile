@@ -43,7 +43,7 @@ SPLEEN_UV := uv run --project spleen
 .PHONY: download-xray-data download-spleen-data download-spleen-msd-data \
 	download-spleen-flip-format-data download-arkplus-finetuning-data \
 	download-arkplus-eval-data upload-spleen-labels download-idc-pathology-data build-idc-pathology-omop \
-	seed-idc-pathology
+	seed-idc-pathology upload-idc-pathology-annotations
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the layout
 # both harnesses read (data/xrays_mini_300/, gitignored). Idempotent — safe to re-run.
@@ -186,8 +186,9 @@ seed-idc-pathology:
 # It runs via `uv run --no-project --with <flip-utils>` rather than spleen/'s env, so uploading
 # labels never drags in the simulator's MONAI/torch stack.
 SPLEEN_LABELS_DIR ?= $(abspath $(if $(filter flower,$(FL_BACKEND)),$(DATA_DIR)/spleen/accession-resources,$(DATA_DIR)/spleen/images))
-# upload-spleen-labels runs against the in-tree flip-utils, not the PyPI release, so the enrichment
-# CLI always matches this checkout (flip.xnat may be newer here than the last published version).
+# The enrichment uploaders run against the in-tree flip-utils, not the PyPI release, so the
+# enrichment CLI always matches this checkout (flip.xnat may be newer here than the last
+# published version). Shared by upload-spleen-labels and upload-idc-pathology-annotations.
 FLIP_UTILS_DIR ?= $(abspath ../../flip-utils)
 
 upload-spleen-labels:
@@ -195,6 +196,32 @@ upload-spleen-labels:
 	@uv run --no-project --with $(FLIP_UTILS_DIR) python spleen/upload_spleen_labels_to_xnat.py \
 		--flip-project-id $(FLIP_PROJECT_ID) \
 		--labels-dir $(SPLEEN_LABELS_DIR) \
+		$(if $(TRUST),--trust $(TRUST)) \
+		$(foreach url,$(XNAT_URLS),--xnat-url $(url)) \
+		$(foreach cfg,$(XNAT_CREDENTIALS_FILES) $(XNAT_CREDENTIALS_FILE),--credentials-file $(cfg)) \
+		$(if $(OVERWRITE),--overwrite) \
+		$(if $(ALLOW_NO_OP),--allow-no-op) \
+		$(if $(REQUIRE_FULL_COVERAGE),--require-full-coverage) \
+		$(if $(DRY_RUN),--dry-run)
+
+# Data enrichment: upload the IDC pathology reference annotations into a real FLIP project's XNAT,
+# so the nuclei-detection evaluation app finds an annotation.dcm beside each pulled slide.
+#
+# This is NOT optional polish -- it is how the annotations reach a Trust at all. XNAT's DICOM
+# receiver (dcm4che 2.0.29) has no entry for the Microscopy Bulk Simple Annotations SOP class, so a
+# C-STORE of one is refused; and because slide and annotation share an accession, leaving the
+# annotation in Orthanc fails the whole study's C-MOVE and the slide never arrives either. So
+# seed-idc-pathology seeds slides only and this target delivers the annotations over XNAT's REST
+# API, which negotiates no presentation contexts. See idc_pathology/upload_annotations_to_xnat.py.
+#
+# Enrich EVERY Trust in the project: each Trust's XNAT holds only its own studies. Pass a
+# space-separated XNAT_URLS (credentials from XNAT_USER/XNAT_PASS), or repeat XNAT_CREDENTIALS_FILES
+# for per-Trust logins. TRUST=N filters the manifest by its site partition and is rarely needed.
+upload-idc-pathology-annotations:
+	@[ -n "$(FLIP_PROJECT_ID)" ] || (echo "❌  FLIP_PROJECT_ID is required. Usage: make upload-idc-pathology-annotations FLIP_PROJECT_ID=<uuid> [XNAT_URLS=\"http://host1 http://host2\"] [DRY_RUN=1]"; exit 1)
+	@uv run --no-project --with $(FLIP_UTILS_DIR) python idc_pathology/upload_annotations_to_xnat.py \
+		--flip-project-id $(FLIP_PROJECT_ID) \
+		--data-dir $(DATA_DIR)/idc_pathology \
 		$(if $(TRUST),--trust $(TRUST)) \
 		$(foreach url,$(XNAT_URLS),--xnat-url $(url)) \
 		$(foreach cfg,$(XNAT_CREDENTIALS_FILES) $(XNAT_CREDENTIALS_FILE),--credentials-file $(cfg)) \

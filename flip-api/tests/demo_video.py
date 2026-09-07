@@ -53,7 +53,7 @@ import requests
 
 from flip_api.utils import constants
 from tests import e2e_smoke, xnat_seg_upload
-from tests.e2e_smoke import SmokeFailure, _get, _log, describe_tutorial
+from tests.e2e_smoke import SmokeFailure, _get, _log
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FLIP_UI_DIR = REPO_ROOT / "flip-ui"
@@ -72,17 +72,15 @@ SEGMENTS = [
     "06-download-results",
 ]
 
-# Per-app recording profiles: on-camera names plus the per-backend tutorial locations (mirroring
-# the e2e_smoke Makefile defaults). CLI name flags override the profile values.
-#
-# The project *description* is deliberately not here: it is the clinical task from e2e_smoke's
-# TUTORIALS, resolved from the app directory below. Both the recorder and the smoke write it to the
-# same ProjectDetails.description field and it is read in the same projects list, so a second copy
-# here only bought two registers of prose for one study and a description no length guard covered.
-# The on-camera names stay local — they are a presentation choice, not a description of the study.
+# Per-app recording profiles: on-camera names plus the per-backend tutorial
+# locations (mirroring the e2e_smoke Makefile defaults). CLI name flags
+# override the profile values.
 APPS: dict[str, dict[str, Any]] = {
     "xray": {
         "project_name": "Federated Chest X-ray Classification",
+        "project_description": (
+            "Multi-trust federated study: CNN classification of pleural effusion and edema on chest radiographs."
+        ),
         "model_name": "Chest X-ray CNN",
         "model_description": "CNN classifier trained with federated averaging across the participating trusts.",
         "backends": {
@@ -94,36 +92,6 @@ APPS: dict[str, dict[str, Any]] = {
             "flower": {
                 "app_dir": "fl-tutorials/flower/xray_classification/app",
                 "query_file": "fl-tutorials/flower/xray_classification/query.sql",
-                "label": "Flower",
-            },
-        },
-    },
-    "ehr": {
-        "project_name": "Federated Type-2 Diabetes Risk Prediction",
-        "project_description": (
-            "Multi-trust federated study: an MLP predicting type-2-diabetes onset from OMOP "
-            "demographics, condition history and visit history."
-        ),
-        "model_name": "T2DM Risk MLP",
-        "model_description": (
-            "Multi-layer perceptron trained with federated averaging on each trust's own OMOP "
-            "records — tabular only, no imaging leaves any hospital."
-        ),
-        # FLIP's tabular/EHR path: the cohort arrives through flip.get_dataframe as arbitrary SQL
-        # over each trust's OMOP CDM, and no DICOM is touched at all. The project must therefore be
-        # created with "Includes imaging data" off (FLIP#1071's has_imaging). Left on -- which is the
-        # form's default -- the hub dispatches CREATE_IMAGING, each trust queues pulls that can never
-        # succeed, and the run dies at the image-pull wait or the XNAT segment.
-        "has_imaging": False,
-        "backends": {
-            "nvflare": {
-                "app_dir": "fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files",
-                "query_file": "fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql",
-                "label": "NVFLARE",
-            },
-            "flower": {
-                "app_dir": "fl-tutorials/flower/ehr_risk_prediction/app",
-                "query_file": "fl-tutorials/flower/ehr_risk_prediction/query.sql",
                 "label": "Flower",
             },
         },
@@ -154,9 +122,22 @@ APPS: dict[str, dict[str, Any]] = {
                 "label": "NVFLARE",
             },
         },
+        # The reference annotations cannot travel with the slides: XNAT's DICOM receiver has no
+        # presentation context for the Microscopy Bulk Simple Annotations SOP class, and because
+        # slide and annotation share an accession, leaving the annotation in Orthanc fails the whole
+        # study's C-MOVE. They are delivered here instead, off-camera between the pull and training,
+        # exactly as the spleen tutorial delivers its NIfTI labels. Without this the run pulls, then
+        # dies at scoring with nothing to compare against.
+        "enrichment": {
+            "cwd": "fl-tutorials/datasets",
+            "make_target": "upload-idc-pathology-annotations",
+        },
     },
     "spleen": {
         "project_name": "Federated 3D Spleen Segmentation",
+        "project_description": (
+            "Multi-trust federated study: 3D U-Net segmentation of the spleen on abdominal CT volumes."
+        ),
         "model_name": "Spleen 3D U-Net",
         "model_description": "3D U-Net trained with federated averaging on trust-held abdominal CT volumes.",
         "backends": {
@@ -247,6 +228,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Name the OHIF Masks > Import dialog lists the DICOM-SEG collection under — must match the "
             "--collection-name given to tests.xnat_seg_upload during data enrichment"
+        ),
+    )
+    parser.add_argument(
+        "--xnat-urls",
+        default="http://127.0.0.1:8105 http://127.0.0.1:8107",
+        help=(
+            "Space-separated XNAT base URLs, one per trust, for the data-enrichment step. Enrichment "
+            "must visit EVERY trust: each XNAT holds only its own studies, so a trust left un-enriched "
+            "fails at scoring. Web-UI ports (XNAT_WEB_PORT), not the DICOM SCP ports."
         ),
     )
     parser.add_argument("--xnat-username", default=os.environ.get("XNAT_ADMIN_USER", "admin"))
@@ -414,7 +404,7 @@ def resolve_xnat_ids(
     ``?subjectId=&projectId=&experimentId=&experimentLabel=``).
 
     Args:
-        xnat_url (str): Base URL of the trust's XNAT (e.g. http://localhost:8105).
+        xnat_url (str): Base URL of the trust's XNAT (e.g. http://localhost:8104).
         username (str): XNAT login.
         password (str): XNAT password.
         flip_project_id (str): FLIP project UUID to match against secondary_ID.
@@ -516,13 +506,50 @@ def app_files_for(app_dir: Path) -> list[str]:
     return names
 
 
+def _resolve_enrichment(args: argparse.Namespace, profile: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Return the ``(cwd, cmd)`` for the off-camera data-enrichment step, or ``(None, None)``.
+
+    An explicit ``--data-enrichment-cwd``/``--data-enrichment-cmd`` pair always wins, so the flags
+    keep their existing meaning. Otherwise a profile may carry its own step: a tutorial whose labels
+    cannot travel with its imaging needs enrichment to run every time, not only when the caller
+    remembers the flags, because forgetting it produces a run that pulls and trains and then fails
+    at scoring -- or worse, scores against nothing.
+
+    Args:
+        args (argparse.Namespace): Parsed arguments.
+        profile (dict[str, Any]): The selected app profile.
+
+    Returns:
+        tuple[str | None, str | None]: Directory to run in, and the shell command.
+    """
+    if args.data_enrichment_cwd and args.data_enrichment_cmd:
+        return args.data_enrichment_cwd, args.data_enrichment_cmd
+
+    enrichment = profile.get("enrichment")
+    if not enrichment:
+        return None, None
+
+    cwd = str(REPO_ROOT / enrichment["cwd"])
+    cmd = (
+        f"make {enrichment['make_target']} "
+        f'FLIP_PROJECT_ID="$FLIP_PROJECT_ID" XNAT_URLS="{args.xnat_urls}"'
+    )
+    return cwd, cmd
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     profile = APPS[args.app]
-    # Imaging unless the app says otherwise: only the tabular tutorials opt out, and a
-    # missing value must not silently mean "imaging" (see 01-create-project.spec.ts).
-    has_imaging_env = "true" if profile.get("has_imaging", True) else "false"
     tutorial = profile["backends"][args.fl_backend]
+    # Segments 1 and 2 both read this, and both use requireEnv -- an unset value is a hard failure
+    # rather than a silently-wrong project, which is the point. Every tutorial on this branch is an
+    # imaging one, so the default carries it; the key exists so a tabular profile can say otherwise.
+    has_imaging_env = "true" if profile.get("has_imaging", True) else "false"
+    enrichment_cwd, enrichment_cmd = _resolve_enrichment(args, profile)
+    project_name = args.project_name or profile["project_name"]
+    project_description = args.project_description or profile["project_description"]
+    model_name = args.model_name or profile["model_name"]
+    model_description = args.model_description or profile["model_description"]
     if bool(args.data_enrichment_cwd) != bool(args.data_enrichment_cmd):
         raise SmokeFailure("--data-enrichment-cwd and --data-enrichment-cmd must be provided together")
     if args.data_enrichment_cwd and not Path(args.data_enrichment_cwd).is_dir():
@@ -532,12 +559,6 @@ def main(argv: list[str] | None = None) -> int:
     for required in (app_dir, query_file):
         if not required.exists():
             raise SmokeFailure(f"Tutorial path missing: {required}")
-
-    project_name = args.project_name or profile["project_name"]
-    # One description of this study, shared with the smoke and guarded against the 250-char cap there.
-    project_description = args.project_description or describe_tutorial(app_dir).task
-    model_name = args.model_name or profile["model_name"]
-    model_description = args.model_description or profile["model_description"]
 
     researcher, admin, fallback_roles = resolve_ui_credentials()
     _log(f"🎭 Researcher part: {researcher[0]} | Admin part: {admin[0]}")
@@ -621,25 +642,22 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     # ── Off-camera: the imaging import (the ~6 min wait) ──────────────────
-    # A non-imaging study dispatches no CREATE_IMAGING, so no import tasks are ever created and the
-    # wait has nothing to converge on: it sees total == 0 and loops to its timeout rather than
-    # returning. Skip it outright rather than leaning on --image-pull-threshold 0, which only masks
-    # the same absence.
-    if profile.get("has_imaging", True):
-        e2e_smoke.wait_for_image_pull(
-            client,
-            headers,
-            project_id,
-            threshold=args.image_pull_threshold,
-            timeout_s=args.image_pull_timeout,
-            required_trust_names=required_trust_names,
-        )
-    else:
-        _log("⏭️  No imaging for this study — skipping the image-pull wait")
+    e2e_smoke.wait_for_image_pull(
+        client,
+        headers,
+        project_id,
+        threshold=args.image_pull_threshold,
+        timeout_s=args.image_pull_timeout,
+        required_trust_names=required_trust_names,
+    )
 
     # ── Off-camera: optional data enrichment (e.g. spleen labels) ────────
-    if args.data_enrichment_cwd and args.data_enrichment_cmd:
-        e2e_smoke.run_data_enrichment(Path(args.data_enrichment_cwd), args.data_enrichment_cmd, project_id)
+    if enrichment_cwd and enrichment_cmd:
+        # The uploader reads XNAT_USER / XNAT_PASS from its environment rather than the command
+        # line, so the password never reaches an argv a `ps` can read.
+        os.environ.setdefault("XNAT_USER", args.xnat_username)
+        os.environ.setdefault("XNAT_PASS", args.xnat_password)
+        e2e_smoke.run_data_enrichment(Path(enrichment_cwd), enrichment_cmd, project_id)
 
     # Second half of enrichment for a segmentation app: the NIfTI labels the app
     # trains on are invisible to a viewer, so republish them as DICOM-SEG for the
@@ -656,10 +674,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SmokeFailure("publishing DICOM-SEG collections failed — see the log above")
 
     # ── Segment 3: XNAT + OHIF at one trust ───────────────────────────────
-    # A non-imaging study has no XNAT project and never will, so the segment cannot pass:
-    # derive the skip from the app rather than making the operator remember --skip-xnat.
-    records_xnat = not args.skip_xnat and profile.get("has_imaging", True)
-    if records_xnat and args.from_segment <= 3:
+    if not args.skip_xnat and args.from_segment <= 3:
         xnat_ids = resolve_xnat_ids(args.xnat_url, args.xnat_username, args.xnat_password, project_id)
         run_segment(
             "03-xnat-ohif",

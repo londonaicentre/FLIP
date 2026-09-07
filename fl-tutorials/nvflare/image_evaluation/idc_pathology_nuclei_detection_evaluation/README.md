@@ -210,9 +210,50 @@ A test pins the returned key set, because this is the tutorial's central claim.
 
 ## Running this on a real trust
 
-Not yet — but the gap is narrower than it first appears, and most of it is data rather than code.
+Yes, as far as the data path goes. Cohort query → imaging pull → XNAT archive → viewer → data
+enrichment has been driven through the platform against two dev trusts, not only in the simulator;
+the federated evaluation run itself is still to be confirmed on a trust. It takes **two** data steps
+rather than one, and the second is not optional.
 
-What is **not** in the way, despite looking like it might be:
+```bash
+make -C fl-tutorials seed-idc-pathology                                  # slides + OMOP rows
+make -C fl-tutorials upload-idc-pathology-annotations \                  # annotations, after the pull
+    FLIP_PROJECT_ID=<uuid> XNAT_URLS="http://host-1 http://host-2"
+```
+
+**Why two steps: the annotations cannot travel with the slides.** XNAT's DICOM receiver runs on
+dcm4che 2.0.29, whose UID table has no entry for the Microscopy Bulk Simple Annotations SOP class
+(`1.2.840.10008.5.1.4.1.1.91.1`). It offers no presentation context for it, so the C-STORE is
+refused:
+
+```
+Cannot C-Store an instance of SOPClassUID 1.2.840.10008.5.1.4.1.1.91.1,
+the destination has not accepted any TransferSyntax for this SOPClassUID
+```
+
+Slide and annotation share one accession, so that refusal fails the **whole study's** C-MOVE: an
+annotation left in Orthanc stops the *slide* arriving too, and the study wedges in `ISSUED` while
+the import status reports `Processing` indefinitely (FLIP#662) — indistinguishable, from the
+counters alone, from a slow whole-slide transfer. So `seed-idc-pathology` seeds slides only, and the
+annotations are uploaded to XNAT over its REST API, which negotiates no presentation contexts and
+therefore carries any SOP class.
+
+Each annotation is written **into the slide scan's own `DICOM` resource**, which is why the app
+needs no special case: `flip.get_by_accession_number(..., ResourceType.DICOM)` returns that
+resource's contents and `data_utils` picks the two objects apart by SOP Class, not by filename. A
+scan's resource ends up holding both:
+
+```
+2.25.220751785271985364724971555318215948627-1-1-tvk325.dcm   265 MB   <- slide, named by SOP Instance UID
+annotation.dcm                                                  34 MB   <- uploaded by enrichment
+```
+
+This mirrors the spleen tutorial, whose segmentation masks cannot live in OMOP and reach XNAT the
+same way. Enrichment must visit **every** trust — each XNAT holds only its own studies — which is
+what the repeated `--xnat-url` / `XNAT_URLS` roster is for; a run that resolves no destination
+anywhere exits non-zero rather than looking clean.
+
+What turned out **not** to be in the way, despite looking like it might be:
 
 - `ResourceType` needs no new member. A whole-slide image *is* DICOM, and the evaluator already asks
   for `ResourceType.DICOM`.
@@ -222,21 +263,22 @@ What is **not** in the way, despite looking like it might be:
 - OMOP needs no new concept. The loaded DICOM vocabulary already carries Slide microscopy as
   `concept_id 2128009266`, which is what `image_occurrence.csv` here uses.
 - Orthanc needs no WSI plugin to *store* slides — that plugin is for viewing.
+- **XNAT ingests whole slides fine.** This was the open unknown; it is settled. The whole-slide SOP
+  class *is* in dcm4che 2's table, and a 12-slide cohort (245–345 MB each) archived at each of two
+  trusts. Note the finalisation delay: direct-archive sessions sit in `RECEIVING` until
+  `sessionArchiveTimeoutInterval` (default 600 s) elapses after the last instance, so sessions
+  appear ~10 minutes after transfer completes rather than immediately.
 
-What genuinely is in the way:
+Two operational notes worth having before the first run:
 
-- **The dev OMOP mock has no slide-microscopy rows.** It carries plain radiography, MR and CT only.
-  The generated `omop/pathology_project/` CSVs above are exactly what would fill that gap, and they
-  already carry the `source_trust` column the seed pipeline partitions on.
-- **A loader for a running trust.** FLIP#1101 adds `make -C trust seed`, which loads OMOP rows and
-  the matching DICOM into a running trust by `source_trust`. Until it lands there is no in-tree way
-  to add a project without rebuilding snapshots.
-- **XNAT ingesting a slide.** This is the real unknown and worth proving before anything else: a
-  slide is one multi-frame instance of 140 MB to 3 GB, and XNAT's importer is built around
-  radiology series. Size matters too — the current Orthanc snapshot is about 1.1 GB in total.
+- The cohort must clear the trust's `COHORT_QUERY_THRESHOLD` (default 10) before any row-level data
+  is released, which is why the tutorial ships twelve slides per site rather than five.
+- An Orthanc seeded by an older version of this tutorial still holds the annotation series;
+  `seed-idc-pathology` prunes them, because leaving them behind reintroduces the C-MOVE failure
+  above.
 
-The tutorial runs under `LOCAL_DEV`, reading slides from disk, which is why it can be developed and
-reviewed without any of that landing first.
+The tutorial also runs under `LOCAL_DEV`, reading slides from disk, so it can still be developed and
+reviewed without a trust.
 
 ## Next steps
 
