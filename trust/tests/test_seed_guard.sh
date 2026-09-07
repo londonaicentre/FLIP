@@ -242,6 +242,31 @@ for component in omop-db orthanc; do
     run_update "${component}" 1
     check "  ...and trust 1, unseeded, still updates" "$?" "0"
 
+    # 5. an HF_TRUST_DATA_REVISION override names the bytes it actually fetched.
+    # The revision picks the URL, so it has to pick the cache filename and the local
+    # marker too. Keyed on the pin instead, `main`'s bytes land in the volume under the
+    # tag's name -- and the next pinned run, seeing its own version in the marker,
+    # reports "already up to date" and fetches nothing.
+    new_sandbox 20260901
+
+    run_update "${component}" 1 HF_TRUST_DATA_REVISION=main
+    check "an override fetches at that revision" "$?" "0"
+    grep -q '/resolve/main/' "${CURL_LOG}" \
+        && ok "  ...from resolve/main" \
+        || no "  ...from resolve/main ($(cat "${CURL_LOG}"))"
+    grep -q -- '-o .*_main\.tar' "${CURL_LOG}" \
+        && ok "  ...caching under the revision, not the pin" \
+        || no "  ...caching under the revision, not the pin ($(cat "${CURL_LOG}"))"
+    check "  ...and recording it as the local version" \
+        "$(cat "${SANDBOX}/trust/${component}/volumes/.local_data_version_trust1" 2>/dev/null)" \
+        "main"
+
+    # The failure the other three assertions exist to prevent.
+    : > "${CURL_LOG}"
+    run_update "${component}" 1
+    check "  ...so a later pinned run re-fetches, not 'already up to date'" \
+        "$(wc -l < "${CURL_LOG}")" "1"
+
     echo
 done
 

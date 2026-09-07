@@ -71,6 +71,17 @@ DATA_VERSION="$(tr -d ' \n\r\t' < "${REPO_DATA_VERSION_FILE}")"
 HF_TRUST_DATA_REVISION="${HF_TRUST_DATA_REVISION:-${DATA_VERSION}}"
 HF_BASE_URL="https://huggingface.co/datasets/${HF_TRUST_DATA_REPO}/resolve/${HF_TRUST_DATA_REVISION}"
 
+# From here on DATA_VERSION is the revision actually being installed, not the pin. The revision
+# decides which bytes arrive, so it -- not the pin -- is what they are called: the cache filename,
+# the .local_data_version_trust<N> marker, and the log lines. Keyed on the pin instead, a run with
+# HF_TRUST_DATA_REVISION=main cached main's bytes under the tag's name and wrote the tag into the
+# marker, so the next run at the pin reported "already up to date" and fetched nothing -- the
+# volume held one revision under another's name. With no override the two are equal, as before.
+DATA_VERSION="${HF_TRUST_DATA_REVISION}"
+# A revision can be a ref path (refs/pr/7): a valid URL segment, but not a valid filename
+# component. Flatten it for the cache name only -- the URL above carries the real revision.
+DATA_VERSION_SLUG="${DATA_VERSION//\//-}"
+
 mkdir -p "${VOLUMES_DIR}"
 
 # Archives are gzip-compressed tarballs named .tar on Hugging Face (the .gz is
@@ -80,10 +91,10 @@ mkdir -p "${VOLUMES_DIR}"
 update_trust() {
   local trust_num="$1"
   local local_version_file="${VOLUMES_DIR}/.local_data_version_trust${trust_num}"
-  # Unversioned on the dataset (the revision IS the version); versioned in the local cache so a
-  # bump can never reuse the previous version's bytes.
+  # Unversioned on the dataset (the revision IS the version); named by the revision in the local
+  # cache, so neither a pin bump nor a revision override can reuse the previous bytes.
   local hf_url="${HF_BASE_URL}/trust${trust_num}/trust${trust_num}_pgdata.tar"
-  local local_archive="${VOLUMES_DIR}/trust${trust_num}_pgdata_${DATA_VERSION}.tar"
+  local local_archive="${VOLUMES_DIR}/trust${trust_num}_pgdata_${DATA_VERSION_SLUG}.tar"
   local dest_dir_var="OMOP_DATA_DIR_TRUST_${trust_num}"
   local dest_dir; dest_dir="$(resolve_data_dir "${!dest_dir_var}")"
 
@@ -111,8 +122,8 @@ update_trust() {
   # and whichever checkout runs this script.
   local seed_marker="$(dirname "${dest_dir}")/.seeded"
   if [[ -f "${seed_marker}" && "${FORCE:-0}" != "1" ]]; then
-    echo "❌ Trust ${trust_num}'s OMOP volume was seeded ($(tr '\n' ' ' < "${seed_marker}")) but the pinned" >&2
-    echo "   version is now ${DATA_VERSION}. Re-snapshotting discards the seed AND the vocabulary load." >&2
+    echo "❌ Trust ${trust_num}'s OMOP volume was seeded ($(tr '\n' ' ' < "${seed_marker}")) but the" >&2
+    echo "   requested version is now ${DATA_VERSION}. Re-snapshotting discards the seed AND the vocabulary load." >&2
     echo "   Re-run with FORCE=1 to replace it, then re-run load-omop-vocab and seed-omop." >&2
     exit 1
   fi
