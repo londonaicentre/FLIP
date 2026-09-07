@@ -130,21 +130,6 @@ FL client image name based on backend selection
 {{- end }}
 
 {{/*
-Whether the FL client's participant kit is fetched from S3 by the kit-init
-initContainer, for the ACTIVE backend. Returns a non-empty string when true and
-an empty string (falsy) otherwise.
-
-Both the kit-init initContainer and the fl-client-kit volume must agree on this:
-when the kit comes from S3 the volume is an emptyDir that kit-init populates,
-otherwise it is the hostPath at flClient.kitHostPath. Gating one of them on a
-single backend's flag lets the two disagree, which renders an empty volume and
-drops a staged kit silently (#999) — so both call this helper.
-*/}}
-{{- define "flip-trust.flClientKitFromS3" -}}
-{{- if (index .Values.flClient .Values.flBackend).kitFromS3.enabled }}true{{ end }}
-{{- end }}
-
-{{/*
 Refuse a real-PACS install whose DICOM receiver has no route from outside the cluster.
 
 Retrieval is two connections in opposite directions: XNAT dials the PACS to C-FIND and C-MOVE, then

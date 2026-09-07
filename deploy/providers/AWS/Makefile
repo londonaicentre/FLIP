@@ -569,6 +569,34 @@ seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP 
 		-e omop_db_tag=$(DOCKER_TAG)
 	@echo "✅ Trust data seeding complete."
 
+.PHONY: stage-fl-kit
+stage-fl-kit: check-trust-ec2-enabled ssh-config ## Stage the FL participant kit for the trust's REGISTERED slot onto the Trust EC2 (requires KIT=)
+	@# ansible-init runs BEFORE register-trusts in every deploy chain, so its kit
+	@# staging falls back to trust_num=1 (no kit file exists yet to read the slot
+	@# from). This target is the post-registration correction: it re-runs only the
+	@# kit-staging plays (`--tags flkit`) with the slot the hub actually assigned,
+	@# read from the kit file register-trusts wrote. deploy-trust depends on it so
+	@# the fl-client always mounts its own slot's kit — without it, a host assigned
+	@# Trust_2+ (re-registration, slot churn, second EC2 trust) would silently run
+	@# with Trust_1's FL identity. Idempotent: the plays wipe-then-sync, so a
+	@# re-run on a genuine Trust_1 host is a cheap no-op.
+	@# omop/orthanc_data_version are not used by the flkit plays but are asserted
+	@# by the always-tagged inventory play, same as every site.yml invocation.
+	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make stage-fl-kit KIT=Trust_2 PROD=stag"; exit 1)
+	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo "❌  FL_KIT_SLOT_NUMBER not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — run register-trusts first"; exit 1)
+	@[ -n "$(OMOP_DATA_VERSION)" ] || (echo "❌  trust/omop-db/.data_version not found"; exit 1)
+	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
+	@echo "🎫 Staging the $(FL_BACKEND) participant kit for slot Trust_$(FL_KIT_SLOT_NUMBER) onto the Trust EC2..."
+	@uv run ansible-playbook site.yml \
+		--tags flkit \
+		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
+		-e fl_backend=$(FL_BACKEND) \
+		-e fl_kit_date=$(FL_KIT_DATE) \
+		-e trust_num=$(FL_KIT_SLOT_NUMBER) \
+		-e omop_data_version=$(OMOP_DATA_VERSION) \
+		-e orthanc_data_version=$(ORTHANC_DATA_VERSION)
+	@echo "✅ FL participant kit staged for slot Trust_$(FL_KIT_SLOT_NUMBER)."
+
 .PHONY: deploy-centralhub
 deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new task-def revisions) and publish the UI
 	## Immutable deploy (FLIP#751). The tag is resolved INSIDE the recipe (not a Make-level
@@ -916,8 +944,18 @@ deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and dep
 # services/<slot>/ dir in the S3 participant-kit bundle and under /opt/flip.
 # Read from the trust's kit file (the single source of truth: the kit file's
 # FL_KIT_SLOT is also what trust/Makefile mounts), not duplicated here.
-FL_KIT_SLOT := $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
-FL_KIT_SLOT_NUMBER := $(shell sed -n 's/^FL_KIT_SLOT_NUMBER=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+#
+# Both are DEFERRED (`=`, not `:=`) on purpose. A simply-expanded assignment is evaluated once
+# when the Makefile is parsed, which is before any target runs — and `register-trusts` is what
+# writes these values into the kit file. Inside a single `make full-deploy`, `register-trusts`
+# and `deploy-trust` are prerequisites of the same make process, so a parse-time snapshot hands
+# the staging targets whatever the kit file held *before* registration: empty on a first
+# deployment, and the previously claimed slot after a delete-then-re-register (which claims the
+# next free slot rather than the old one) — the silent wrong-slot stage the guards below exist
+# to prevent. Deferred, each reference re-reads the file at recipe-expansion time and therefore
+# sees what register-trusts just wrote. The repeated $(shell) is a `sed` over one small file.
+FL_KIT_SLOT = $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+FL_KIT_SLOT_NUMBER = $(shell sed -n 's/^FL_KIT_SLOT_NUMBER=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 
 # Trust-local OMOP DB credentials from the kit — passed to the vocab-load play
 # (they must match the values the restored pgdata cluster was built with).
@@ -931,7 +969,7 @@ OMOP_DATA_VERSION := $(shell cat ../../../trust/omop-db/.data_version 2>/dev/nul
 ORTHANC_DATA_VERSION := $(shell cat ../../../trust/orthanc/.data_version 2>/dev/null | tr -d ' \n\r\t')
 
 .PHONY: deploy-trust
-deploy-trust: check-trust-ec2-enabled ssh-config update-env seed-trust-data ## Deploy trust relationships after central hub is deployed
+deploy-trust: check-trust-ec2-enabled ssh-config update-env seed-trust-data stage-fl-kit ## Deploy trust relationships after central hub is deployed
 	@echo "🔍 Checking trust images (tag: $(DOCKER_TAG))..."
 	@missing=false; \
 	for image in $(TRUST_IMAGES); do \
@@ -1183,10 +1221,11 @@ full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trus
 	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, secrets)
 	## 4. update-env: refresh .env with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure the SSM bastion and provision the Trust EC2
-	##    (ansible-init uses trust_num=1 by default; re-run with KIT=<CODE> after register-trusts for slot-specific data)
+	##    (ansible-init stages with trust_num=1 — no kit file exists yet; deploy-trust re-stages the kit
+	##    for the registered slot via stage-fl-kit once register-trusts has written it)
 	## 6. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
-	## 8. deploy-trust + status: bring up cloud Trust container stack and verify
+	## 8. deploy-trust + status: re-stage the FL kit for the registered slot, bring up cloud Trust container stack and verify
 	## Prerequisite: create stub kit files first: make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=London PROD=$(PROD)
 full-deploy: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust status
 
@@ -1220,10 +1259,11 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, ALB, secrets, on-prem trust NLB rule)
 	## 4. update-env: refresh .env.{PROD} with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure the SSM bastion and provision the Trust EC2
-	##    (ansible-init uses trust_num=1 by default; re-run with KIT=<CODE> after register-trusts for slot-specific data)
+	##    (ansible-init stages with trust_num=1 — no kit file exists yet; deploy-trust re-stages the kit
+	##    for the registered slot via stage-fl-kit once register-trusts has written it)
 	## 6. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
-	## 8. deploy-trust + provision-local-trust + status: bring up cloud + on-prem trust hosts and verify
+	## 8. deploy-trust + provision-local-trust + status: re-stage the cloud trust's FL kit for its registered slot, bring up cloud + on-prem trust hosts and verify
 	## NOTE: After this completes you must manually:
 	##   - Start the on-prem trust stack (sudo: the provisioned login user is deliberately not in
 	##     the docker group): cd ../../.. && sudo -E env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)
