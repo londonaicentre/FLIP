@@ -327,3 +327,33 @@ def test_prune_dry_run_deletes_nothing(trust, monkeypatch) -> None:
 
     assert seed_trusts.prune_annotations(trust, ["AAA-1"], dry_run=True) == 1
     assert fake.deleted == []
+
+
+def test_recorder_carries_the_enrichment_step_for_digipath() -> None:
+    """The annotations must not depend on the operator remembering a flag.
+
+    Forgetting enrichment does not fail loudly at the point of omission: the run pulls, archives and
+    starts training, then fails at scoring with nothing to compare against. So the profile carries
+    the step itself, and this pins that it names a make target the datasets Makefile actually
+    defines -- a rename on either side would otherwise surface only as a failed recording.
+    """
+    source = DEMO_VIDEO.read_text()
+    digipath = source[source.index('"digipath": {'):source.index('"spleen": {')]
+
+    assert '"enrichment"' in digipath, "the digipath profile must carry its own enrichment step"
+    # The exact quoted value, not a substring: a suffix typo in the target name still contains
+    # the correct name, so `in` passes while the recipe it invokes does not exist.
+    assert '"make_target": "upload-idc-pathology-annotations"' in digipath
+
+    makefile = (REPO_ROOT / "fl-tutorials" / "datasets" / "Makefile").read_text()
+    assert "\nupload-idc-pathology-annotations:" in makefile, "the profile names a target that must exist"
+
+
+def test_recorder_xnat_url_is_the_web_port_not_the_dicom_scp_port() -> None:
+    """Segment 3 talks HTTP to XNAT, so its default must be XNAT_WEB_PORT.
+
+    Since FLIP#993 split the two, 8104 is the DICOM SCP receiver and answers no HTTP at all, so the
+    old default made the XNAT/OHIF segment unreachable rather than merely wrong.
+    """
+    source = DEMO_VIDEO.read_text()
+    assert '"--xnat-url",\n        default="http://127.0.0.1:8105"' in source
