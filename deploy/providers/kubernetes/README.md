@@ -23,7 +23,7 @@ trust services only make outbound connections to the Central Hub and the FL
 server; no inbound ports are exposed from the K8s cluster.
 
 > **Deployment status.** The chart is validated on single-node k3s and includes
-> kit synchronisation, default-deny ingress, audited egress rules, least-privilege
+> kit staging, default-deny ingress, audited egress rules, least-privilege
 > service accounts, and stateless-workload hardening. Review the
 > [known limitations](#known-limitations), particularly storage and Pod Security
 > constraints, before selecting it for a production Trust.
@@ -77,7 +77,7 @@ SHA-256 hash of the API key — re-running registration is idempotent.
 ### 2. Provide the infrastructure secrets
 
 The kit owns only the per-trust keys. The chart's *other* secrets (XNAT, OMOP,
-Orthanc, Grafana, S3 kit-sync credentials) are deployment-specific — supply them
+Orthanc, Grafana) are deployment-specific — supply them
 via the chart's built-in Secret template (`secrets.create=true` + a
 `values-secrets.yaml`, see the [Secrets Reference](#secrets-reference)) or create
 the Secret externally.
@@ -95,9 +95,9 @@ python3 deploy/providers/kubernetes/scripts/generate_values.py \
 ```
 
 That writes `values-secrets.yaml` with mode `0600` (and `values-override.yaml`
-beside it). Four slots it **cannot** fill, because no trust kit carries the source
-env var: `orthanc-registered-users`, `s3-access-key-id`, `s3-secret-access-key`
-and `aws-session-token`. Hand-fill whichever your deployment needs. An empty slot
+beside it). One slot it **cannot** fill, because no trust kit carries the source
+env var: `orthanc-registered-users`. Hand-fill it before deploying Orthanc. There
+are no AWS slots — the fl-client never fetches its own kit (see step 4). An empty slot
 is omitted from the Secret by `templates/secrets.yaml` and the pod that mounts it
 then fails with `CreateContainerConfigError` — deliberate (it is why copying the
 example into place does not deploy), and also why Orthanc will not start until
@@ -116,11 +116,59 @@ This reads `trust/.env.<CODE>.stag`, patches the per-trust keys
 (`trust-api-key`, `trust-internal-service-key[-header]`, `aes-key-base64`) into
 the chart's Kubernetes Secret (`trust-release-flip-trust-secrets`), and writes a
 secret-free Helm override `k8s-trust-<CODE>.yaml` carrying the hub URL, FL
-backend, AWS region, the fl-client kit bucket, and the slot-aware NVFLARE kit
-path. Plaintext keys go straight into the Secret over kubectl's TLS channel —
-never to disk.
+backend, AWS region, and `flClient.kitHostPath` (taken from the kit's
+`FL_KIT_DIR`). Plaintext keys go straight into the Secret over kubectl's TLS
+channel — never to disk.
 
-### 4. Install / upgrade the chart
+### 4. Stage the FL participant kit onto the node
+
+```bash
+make -C deploy/providers/kubernetes stage-kit \
+  KIT_SRC=<dir holding this trust's kit> KUBE_CONTEXT=<kube context>
+```
+
+**The chart never fetches the kit.** A trust holds no FLIP AWS credentials — FL
+clients have none by design — and the kit reaches the operator out-of-band (see
+[`trust/README.md`](../../../trust/README.md)). It is placed on the node *before*
+the workload starts, which is also what a real trust does, so what is deployed
+here is what is deployed in production.
+
+`KIT_SRC` is the slot's own kit directory: for NVFLARE `local/`, `startup/`,
+`transfer/`; for Flower `certificates/` and `keys/` holding **only this slot's**
+credential. That shape is also how the target picks the uid the staged kit is
+chowned to — 1000 for an NVFLARE kit, 49999 (the SuperNode's `app` user) for a
+Flower one — so the command above is complete for either backend with no
+`FL_BACKEND` to remember. A directory with neither shape, or both, is refused
+before anything is copied; `FL_BACKEND=nvflare|flower` overrides the detection.
+`KUBE_CONTEXT` is required — this writes to a node's filesystem, and on a host
+running several clusters, defaulting to the current context stages into
+whichever one `kubectl` happens to point at.
+
+The target implements the kind case (`docker cp` into the node). On a managed
+cluster, place the kit by whatever means the site allows and pass the resulting
+path as `flClient.kitHostPath`; nothing else changes.
+
+Skipping this step leaves the fl-client pod `Pending` with a `hostPath type check
+failed` event naming the missing path.
+
+**Upgrading an install that fetched its kit from S3:** the chart no longer holds AWS
+credentials or fetches the kit itself, so a values file written for the previous version
+will fail to render. The kit is staged onto the node out-of-band instead, by step 4 above.
+Removed values — delete them from your overrides, they no longer exist:
+
+| Removed | Replacement |
+| ------- | ----------- |
+| `flClient.kitFromS3`, `flClient.nvflare.kitFromS3.*`, `flClient.flower.kitFromS3.*` | `flClient.kitHostPath` (now **required** when `flClient.enabled`) |
+| `flClient.hostAwsMount.enabled` / `.readOnly` | none — the fl-client mounts no AWS credentials |
+| `flClient.s3EndpointOverride` | none |
+| the `s3-access-key-id` / `s3-secret-access-key` / `aws-session-token` secret keys | none — drop them from your generated `values-secrets.yaml` and from any existing Secret |
+| `make patch-aws-creds` | `make stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>` |
+
+The failure mode if you miss one is loud rather than silent: an unknown value is ignored by
+Helm, but a missing `flClient.kitHostPath` fails the render by name, and a kit that never
+reached the node leaves the pod `Pending` on the `hostPath type check failed` event above.
+
+### 5. Install / upgrade the chart
 
 ```bash
 make -C deploy/providers/kubernetes deploy-trust-k8s KIT=<CODE> PROD=stag
@@ -142,7 +190,7 @@ helm upgrade --install trust-release ./deploy/providers/kubernetes/ \
 first install can adopt it. It also regenerates the FL-server egress port from
 the kit on every run, so upgrades do not lose the fl-client gRPC allowance.
 
-### 5. Verify the trust is polling
+### 6. Verify the trust is polling
 
 ```bash
 kubectl get pods -n flip-trust
@@ -155,7 +203,7 @@ A `401 "API key is missing"` means the API-key **header** is mismatched — the
 chart default `TRUST_API_KEY_HEADER` is `Authorization` (the platform default);
 override it only if your hub uses a different header.
 
-### 6. (FL training only) Open the FL-server NLB
+### 7. (FL training only) Open the FL-server NLB
 
 Polling needs nothing more. For FL *training*, the K8s node's FL client must
 reach the hub's FL server. Add the node's public/egress IP to
@@ -278,9 +326,83 @@ forwards to the chart's plain `deploy` target, so `KIT=` never reaches the
 per-trust override file.
 
 AWS credentials for the fetch are shared with the init job:
-`omopDb.initJob.awsProfile` and `omopDb.initJob.hostAwsMount` (enable the host
-`~/.aws` mount for local clusters; use IRSA on EKS). Note `awsProfile` only
-reaches this Job when `hostAwsMount` is enabled.
+`omopDb.initJob.awsProfile` and `omopDb.initJob.hostAwsMount` (a host `~/.aws`
+mount for clusters whose node *is* the machine holding your SSO session — k3s,
+minikube's `none` driver; IRSA on EKS). Note `awsProfile` only reaches this Job
+when `hostAwsMount` is enabled.
+
+#### Local clusters (kind): the mount is resolved on the node, not your workstation
+
+`hostAwsMount.hostPath` renders as a `hostPath` volume, which Kubernetes resolves
+**on the node**. On `kind` the node is itself a container and your `~/.aws` is
+not inside it: the path does not exist there, the volume's `type: Directory`
+check fails, and the Job pod never starts (`MountVolume.SetUp failed … is not a
+directory` in its events) while the release waits on the hook until
+`--timeout`. The chart cannot see this at render time, which is why
+`values.yaml` ships no `hostPath` default. Two ways through, neither of which
+puts long-lived keys in the cluster:
+
+**Map `~/.aws` into the node when you create the cluster.** kind's
+`extraMounts` bind-mounts a host directory into the node container; point
+`hostAwsMount.hostPath` at the *node-side* path. The host path must be absolute:
+kind does not expand `~` or `$HOME` — `hostPath: ~/.aws` is taken as a
+*relative* path, resolved against the directory you ran `kind create` from, and
+Docker then creates that `./~/.aws` (root-owned, empty) rather than failing. An
+absolute path is also why this is a snippet and not a checked-in file — a
+committed one is a single developer's home directory, silently wrong on every
+other machine.
+
+```yaml
+# kind-config.yaml (per machine — do not commit)
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraMounts:
+      - hostPath: /home/<you>/.aws   # absolute path on the workstation
+        containerPath: /host-aws
+        readOnly: true
+```
+
+```sh
+kind create cluster --name <name> --config kind-config.yaml
+helm upgrade --install <release> . -n <ns> ... \
+  --set omopDb.initJob.hostAwsMount.enabled=true \
+  --set omopDb.initJob.hostAwsMount.hostPath=/host-aws
+```
+
+The Job sees the mount as `/root/.aws` with `AWS_PROFILE=<omopDb.initJob.awsProfile>`,
+so that profile must exist in your `~/.aws/config` and its SSO session must be
+live on the host (`aws sso login`) before any install or upgrade that has to
+fetch — the mount is read-only, so the CLI inside the Job cannot refresh a
+token itself. One mapping serves `orthanc.initJob.hostAwsMount` too.
+
+**Or pre-seed the database from the host and leave the hook off.** Keep
+`omopDb.vocabLoad.s3Bucket` empty (the Job is then not rendered at all), fetch
+the bundle on the workstation, and run the loader the hook would have run over
+a port-forward. Needs `psql` on the host and either org S3 access
+(`make fetch-vocab-core`) or a self-built bundle — see `trust/omop-db/README.md`,
+"The core vocabulary bundle".
+
+```sh
+kubectl -n <ns> port-forward svc/omop-db 5999:5432 &
+PW=$(kubectl -n <ns> get secret <secret> \
+       -o jsonpath='{.data.omop-postgres-password}' | base64 -d)
+cd trust/omop-db && make fetch-vocab-core
+OMOP_DB_HOST=127.0.0.1 OMOP_DB_PORT=5999 OMOP_POSTGRES_USER=postgres \
+  OMOP_POSTGRES_PASSWORD="$PW" OMOP_POSTGRES_DB=trustomopdb \
+  ./files/load_core_vocab.sh data/vocab_aicentre_core_20240916 \
+    files/OMOPCDM_postgresql_5.4_constraints.sql
+```
+
+`<secret>` is `secrets.existingName`, or `<release>-flip-trust-secrets` when the
+chart creates it; the database is `dataAccessApi.env.OMOP_POSTGRES_DB` (default
+`trustomopdb`) and the user `omopDb.credentials.user` (`postgres`). The load is
+idempotent and takes ~25 min for the full bundle; afterwards
+`./files/load_core_vocab.sh --check` with the same environment exits 0. Restart
+`data-access-api` if any cohort query ran before the load — it caches results,
+so the empty answer would otherwise be replayed. Later `helm upgrade`s neither
+re-fetch nor undo the seeded vocabulary.
 
 The hook probes before it fetches: `probe-vocab` asks the database what is
 missing, and only if something is does `fetch-bundle` download the bundle. This
@@ -312,27 +434,6 @@ helm install trust-release ./ --set flBackend=nvflare
 # Flower
 helm install trust-release ./ --set flBackend=flower
 ```
-
-#### Staged participant kit (no S3)
-
-By default the `kit-init` initContainer fetches the active backend's participant kit
-from S3 into an `emptyDir`. Air-gapped trusts and local `kind` clusters can stage the
-kit on the node instead:
-
-```yaml
-flClient:
-  <backend>:            # nvflare or flower — the active backend's flag
-    kitFromS3:
-      enabled: false
-  kitHostPath: /opt/fl-kit/<slot>   # node directory holding the kit
-```
-
-The `fl-client-kit` volume then mounts `kitHostPath` directly and no `kit-init` runs.
-The directory must be readable by the FL image's runtime user (uid 1000 for the
-NVFLARE client, uid 49999 for the Flower SuperNode). With `kitFromS3` disabled and
-`kitHostPath` unset, the kit volume renders as an empty `emptyDir` — nothing fails at
-deploy time and the client starts without credentials, so configure one or the other.
-When `kitFromS3` is enabled it wins over a set `kitHostPath`.
 
 ### GPU Configuration
 
@@ -407,8 +508,6 @@ with `secrets.create=true` or pre-created externally):
 | `xnat-datasource-password` | xnat-web, xnat-db, imaging-api | Password of the `xnat` **application role** — mint via `make generate-xnat-credentials KIT=<CODE>` and fill from the kit with `scripts/generate_values.py`; xnat-web and xnat-db refuse to start on the shipped placeholder or weak values, and imaging-api splices it into its `XNAT_DATABASE_URL` (FLIP-PT-056) |
 | `xnat-datasource-admin-password` | xnat-db | Password of the Postgres **superuser** (`POSTGRES_PASSWORD`). Minted by the same command, from the kit's `XNAT_DATASOURCE_ADMIN_PASSWORD`. Must differ from `xnat-datasource-password` — xnat-db's entrypoint refuses to start when the two match (FLIP-PT-056) |
 | `grafana-admin-password` | grafana | Grafana admin password |
-| `s3-access-key-id` | fl-client (init container) | AWS access key for S3 kit sync |
-| `s3-secret-access-key` | fl-client (init container) | AWS secret key for S3 kit sync |
 
 For production, use [External Secrets Operator](https://external-secrets.io/) to
 sync secrets from AWS Secrets Manager or HashiCorp Vault.
@@ -483,7 +582,9 @@ old install on the previous chart version.
 
 - **NetworkPolicies**: Default-deny-ingress, allow-intra-namespace, allow-egress
   to Central Hub and FL server only (audit and threat model: [NETWORK-POLICY.md](NETWORK-POLICY.md))
-- **No LoadBalancer or NodePort** for application services (all ClusterIP)
+- **No LoadBalancer or NodePort** for application services (all ClusterIP), with one opt-in
+  exception: `xnat.web.dicomNodePort` with `service.type: NodePort` exposes XNAT's DICOM SCP
+  receiver so a trust PACS can complete the C-STORE leg of a retrieval. Off by default.
 - **Secrets**: Separate from ConfigMaps; recommend External Secrets Operator
 - **FL clients**: No Central Hub credentials; connect outbound to FL server only
 - **ServiceAccounts**: each stateless service runs under its own ServiceAccount
@@ -498,13 +599,12 @@ old install on the previous chart version.
   `runAsNonRoot` / `readOnlyRootFilesystem` are left opt-in (image-dependent).
   **Remaining for full `restricted` enforcement:** the stateful images
   (`xnat-web`, `xnat-db`, `omop-db`, `orthanc`) need `fsGroup`/chown init
-  containers before they can run non-root, and the fl-client pod's init
-  containers (`images-init` — pre-creates the pod's per-net slice of the shared
-  images volume with the ownership imaging-api and the client need — and
-  `kit-init`) run as root by design: `images-init` declares an explicit
-  `securityContext` scoped to `CHOWN`/`DAC_OVERRIDE`/`FOWNER` with everything
-  else dropped, but root init containers are still rejected under
-  `enforce=restricted`.
+  containers before they can run non-root, and the fl-client pod's
+  `images-init` init container (pre-creates the pod's per-net slice of the shared
+  images volume with the ownership imaging-api and the client need) runs as root
+  by design: it declares an explicit `securityContext` scoped to
+  `CHOWN`/`DAC_OVERRIDE`/`FOWNER` with everything else dropped, but root init
+  containers are still rejected under `enforce=restricted`.
 
 ## Development
 
@@ -552,16 +652,17 @@ The chart is validated in CI via:
 | **Missing secrets** | `kubectl logs <pod> -n <ns>` shows auth/connection errors | Verify the Secret exists: `kubectl get secret -n <ns>`. Compare keys against the [Secrets Reference](#secrets-reference). |
 | **Bad env vars** | `kubectl exec <pod> -n <ns> -- env` shows empty/wrong URLs | Check ConfigMap values. For trust-api, verify `CENTRAL_HUB_API_URL` is reachable. |
 | **DB unreachable** | trust-api / imaging-api logs show DB connection errors | If using external DB: verify `external.host:port` is correct and firewall allows. For in-cluster DB: check the StatefulSet pod is running. |
-| **Init container failed** | `kubectl logs <pod> -c <init-container> -n <ns>` | For fl-client: check S3 bucket exists and access keys are valid. For omop-db-init: verify PVC is bound. |
+| **Init container failed** | `kubectl logs <pod> -c <init-container> -n <ns>` | For fl-client (`images-init`): the shared images volume must be writable by the init's root user — check the PVC is bound. For omop-db-init: verify PVC is bound. |
 
 ### FL client won't connect
 
-1. **S3 kit download failed**: Check the `kit-init` init container logs. Verify `s3-access-key-id` and `s3-secret-access-key` in the Secret are correct and the bucket path exists.
-2. **Kit path mismatch**: Verify `flClient.nvflare.kitFromS3.pathTemplate` or `flClient.flower.kitFromS3.pathTemplate` resolves to a valid S3 path. The `tpl` function renders `.Values.trustName` so ensure `trustName` is set.
+1. **Kit not on the node**: The pod stays `Pending` with a `hostPath type check failed` event naming `flClient.kitHostPath`. Stage the kit first — `make stage-kit KIT_SRC=<local kit dir> KUBE_CONTEXT=<context>` — then re-deploy. The chart holds no AWS credentials and cannot fetch it.
+   A kit that IS on the node but was staged with the wrong owner (a Flower SuperNode logging `Permission denied` on `/certs` or `/keys`) means `stage-kit` chowned it for the other backend — it reads the backend off the kit's shape, so re-stage from the slot's own kit directory (or pass `FL_BACKEND=flower` explicitly).
+2. **Kit path mismatch**: Verify `flClient.kitHostPath` points at the directory ON THE NODE holding this trust's provisioned kit, and that it contains the slot's contents (NVFLARE: `local/`, `startup/`, `transfer/`; Flower: `certificates/` and `keys/` with this slot's credential). The chart never fetches the kit — it is delivered out-of-band and placed on the node before the workload starts. A missing path fails scheduling with the path named.
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
 4. **GPU not visible**: Verify `nvidia.com/gpu` annotation on the fl-client pod. Check CUDA env vars (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`) are set via `flClient.gpu.enabled: true`.
 5. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
-6. **Staged kit not mounted**: With the active backend's `kitFromS3.enabled=false`, verify `flClient.kitHostPath` is set and the node directory is readable by the client's runtime uid (NVFLARE 1000, Flower 49999) — unset, the kit volume renders empty with no deploy-time error and the client starts without credentials.
+6. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (NVFLARE 1000, Flower 49999).
 
 ### Network policy blocking intra-service traffic
 
@@ -591,7 +692,7 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 **OMOP init job** (`omop-db-init-job`):
 
 - The init Job is a Helm `post-install,post-upgrade` hook that downloads and restores OMOP data from S3.
-- If the Job fails: check `s3-bucket` and `s3-path` values. Verify `s3-access-key-id` / `s3-secret-access-key` in the Secret.
+- If the Job fails: check `s3-bucket` and `s3-path` values, and that `omopDb.initJob.hostAwsMount` points at a readable AWS config dir ON THE NODE (this Job authenticates via that mount, not via cluster-stored credentials).
 - PVC name must match the StatefulSet's `volumeClaimTemplates` — the Job expects a PVC named `<release-name>-omop-db-data`.
 - To re-run: `helm upgrade trust-release . --set omopDb.initJob.enabled=true` or delete the Job and let Helm re-create it.
 
@@ -604,6 +705,10 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 - `aws s3 cp` denied in the `fetch-bundle` initContainer → wrong bucket for this
   environment (each env reads its own; no cross-account read), or no credentials
   (`omopDb.initJob.hostAwsMount` for local clusters, IRSA on EKS).
+- Job pod stuck in `ContainerCreating` with `MountVolume.SetUp failed … is not a
+  directory` → `hostAwsMount.hostPath` names a workstation path the node cannot
+  see (the `kind` case). Map it in with `extraMounts` or pre-seed instead — see
+  "Local clusters (kind)" above.
 - `/flip/omop/load_core_vocab.sh: No such file or directory` → the `omopDb.image.tag`
   in use predates FLIP#842; repull a CI-published tag.
 - Re-running `helm upgrade` is safe *and* cheap. The Job runs three stages —

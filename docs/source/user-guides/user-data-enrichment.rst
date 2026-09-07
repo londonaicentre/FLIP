@@ -206,10 +206,11 @@ The spleen segmentation tutorials ship a complete, runnable version of this work
 
    make -C fl-tutorials download-spleen-data NUM_CASES=41
    make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<project-uuid> \
-     XNAT_URLS="http://127.0.0.1:8104 http://127.0.0.1:8106" DRY_RUN=1
+     XNAT_URLS="http://127.0.0.1:8105 http://127.0.0.1:8107" DRY_RUN=1
 
-Drop ``DRY_RUN=1`` to perform the upload. The two URLs are the dev roster's XNATs — GSTT on 8104 and
-KCH on 8106 — and one invocation enriches both. For per-Trust logins, pass
+Drop ``DRY_RUN=1`` to perform the upload. The two URLs are the dev roster's XNATs — GSTT on 8105 and
+KCH on 8107 — and one invocation enriches both. These are the XNAT web ports; 8104 and 8106 are the
+DICOM receiver ports and will not answer a REST call. For per-Trust logins, pass
 ``XNAT_CREDENTIALS_FILES`` instead. ``NUM_CASES=41`` matters: the mapping covers 41 accessions, and
 a smaller download silently enriches only part of the cohort, which the command now warns about.
 

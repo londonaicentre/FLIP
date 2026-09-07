@@ -31,9 +31,9 @@ locals {
   # Flower creds are produced by `make -C fl-services/flower provision` (with
   # FLOWER_EXTRA_SERVER_SANS covering the Cloud Map + public FL hostnames)
   # and uploaded by its `upload-creds-to-s3` target. The prefix matches the
-  # convention the K8s trust chart already consumes for its SuperNode kit
-  # (values.yaml flClient.flower.kitFromS3.pathTemplate) — one tree serves
-  # both sides. Layout:
+  # convention the K8s trust operator stages their SuperNode kit from — the
+  # chart itself no longer fetches from S3 (a trust holds no FLIP credentials),
+  # but the on-disk layout is the same one tree. Layout:
   #   fl-flower-participant-kits/{date}/net-1/{certificates,keys}/...
   flower_creds_base_s3 = "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flower-participant-kits/${var.flower_kit_date}/net-1"
 }
