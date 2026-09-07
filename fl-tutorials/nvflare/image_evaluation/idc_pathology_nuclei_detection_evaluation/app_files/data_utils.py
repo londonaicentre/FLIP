@@ -35,6 +35,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pydicom
 from annotations import load_reference_nuclei
 from dicom_wsi import SlideReader
 from flip.constants import FlipConstants, ResourceType
@@ -43,6 +44,12 @@ logger = logging.getLogger(__name__)
 
 SLIDE_FILENAME = "slide.dcm"
 ANNOTATION_FILENAME = "annotation.dcm"
+
+# The two objects are identified by SOP Class, not by filename. The tutorial's own download names
+# them slide.dcm and annotation.dcm, but a trust does not: imaging-api hands over whatever XNAT
+# stored, named by SOP Instance UID. Matching on the class is how the same code reads both.
+SLIDE_SOP_CLASS = "1.2.840.10008.5.1.4.1.1.77.1.6"  # VL Whole Slide Microscopy Image Storage
+ANNOTATION_SOP_CLASS = "1.2.840.10008.5.1.4.1.1.91.1"  # Microscopy Bulk Simple Annotations Storage
 
 
 @dataclass(frozen=True)
@@ -125,6 +132,27 @@ def _accession_dir(flip, project_id: str, accession_id: str, site_name: str) -> 
     return Path(flip.get_by_accession_number(project_id, accession_id, [ResourceType.DICOM]))
 
 
+def _find_by_sop_class(directory: Path, sop_class_uid: str, preferred_name: str) -> Path | None:
+    """Return the file in ``directory`` holding an object of this SOP Class, or ``None``.
+
+    The tutorial's own name is tried first so the common case costs one header read rather than one
+    per file in the directory -- which matters on a trust, where the pull may deliver a whole study.
+    """
+    candidates = [directory / preferred_name, *sorted(p for p in directory.iterdir() if p.is_file())]
+    seen: set[Path] = set()
+    for path in candidates:
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        try:
+            header = pydicom.dcmread(path, stop_before_pixels=True, specific_tags=["SOPClassUID"])
+        except Exception:  # noqa: BLE001 - a non-DICOM file in the directory is not an error here
+            continue
+        if getattr(header, "SOPClassUID", None) == sop_class_uid:
+            return path
+    return None
+
+
 def load_slide_case(flip, project_id: str, accession_id: str, patient_id: str, site_name: str) -> SlideCase:
     """Load one slide and its reference annotations.
 
@@ -132,14 +160,15 @@ def load_slide_case(flip, project_id: str, accession_id: str, patient_id: str, s
         FileNotFoundError: If either DICOM object is missing, naming the command that fetches them.
     """
     accession_dir = _accession_dir(flip, project_id, accession_id, site_name)
-    slide_path = accession_dir / SLIDE_FILENAME
-    annotation_path = accession_dir / ANNOTATION_FILENAME
+    slide_path = _find_by_sop_class(accession_dir, SLIDE_SOP_CLASS, SLIDE_FILENAME)
+    annotation_path = _find_by_sop_class(accession_dir, ANNOTATION_SOP_CLASS, ANNOTATION_FILENAME)
 
-    for path in (slide_path, annotation_path):
-        if not path.exists():
+    for path, what in ((slide_path, "whole-slide image"), (annotation_path, "annotation")):
+        if path is None:
             raise FileNotFoundError(
-                f"{accession_id}: expected {path.name} in {accession_dir}. Fetch the tutorial data with "
-                "'make -C fl-tutorials download-idc-pathology-data'."
+                f"{accession_id}: no {what} found in {accession_dir}. Under LOCAL_DEV, fetch the "
+                "tutorial data with 'make -C fl-tutorials download-idc-pathology-data'; on a trust, "
+                "check that both DICOM objects were pulled into XNAT for this accession."
             )
 
     reference = load_reference_nuclei(annotation_path)

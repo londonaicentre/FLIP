@@ -126,8 +126,19 @@ def seed_omop(trust: Trust, tables: dict[str, list[dict[str, str]]], dry_run: bo
     return inserted
 
 
+# Both objects are seeded: the slide the detector reads, and the reference annotations it is scored
+# against. They share an accession and a study, so one pull brings both into XNAT -- but only if both
+# are in Orthanc to begin with. Seeding just the slide produces a run that pulls, converts and then
+# fails at scoring with nothing to compare against.
+ACCESSION_FILES = ("slide.dcm", "annotation.dcm")
+
+
+def accession_dir(slides_dir: Path, trust_number: str, accession: str) -> Path:
+    return slides_dir / f"Trust_{trust_number}" / "accession-resources" / accession
+
+
 def slide_path(slides_dir: Path, trust_number: str, accession: str) -> Path:
-    return slides_dir / f"Trust_{trust_number}" / "accession-resources" / accession / "slide.dcm"
+    return accession_dir(slides_dir, trust_number, accession) / "slide.dcm"
 
 
 def seed_orthanc(trust: Trust, accessions: list[str], slides_dir: Path, dry_run: bool) -> int:
@@ -138,26 +149,27 @@ def seed_orthanc(trust: Trust, accessions: list[str], slides_dir: Path, dry_run:
     """
     posted = 0
     for accession in accessions:
-        path = slide_path(slides_dir, trust.number, accession)
-        if not path.exists():
-            raise FileNotFoundError(
-                f"{path} is missing. Run `make -C fl-tutorials download-idc-pathology-data` first."
-            )
-        if dry_run:
-            logger.info("  [dry-run] would post %s (%.0f MB)", accession, path.stat().st_size / 1e6)
-            continue
-        with path.open("rb") as handle:
-            response = requests.post(
-                f"{trust.orthanc_url.rstrip('/')}/instances",
-                data=handle,
-                headers={"Content-Type": "application/dicom"},
-                auth=trust.orthanc_auth,
-                timeout=TIMEOUT_SECONDS,
-            )
-        response.raise_for_status()
-        body: dict[str, Any] = response.json()
-        logger.info("  %s -> %s (%s)", accession, body.get("ID", "?"), body.get("Status", "?"))
-        posted += 1
+        for filename in ACCESSION_FILES:
+            path = accession_dir(slides_dir, trust.number, accession) / filename
+            if not path.exists():
+                raise FileNotFoundError(
+                    f"{path} is missing. Run `make -C fl-tutorials download-idc-pathology-data` first."
+                )
+            if dry_run:
+                logger.info("  [dry-run] would post %s/%s (%.0f MB)", accession, filename, path.stat().st_size / 1e6)
+                continue
+            with path.open("rb") as handle:
+                response = requests.post(
+                    f"{trust.orthanc_url.rstrip('/')}/instances",
+                    data=handle,
+                    headers={"Content-Type": "application/dicom"},
+                    auth=trust.orthanc_auth,
+                    timeout=TIMEOUT_SECONDS,
+                )
+            response.raise_for_status()
+            body: dict[str, Any] = response.json()
+            logger.info("  %s/%s -> %s", accession, filename, body.get("Status", "?"))
+            posted += 1
     return posted
 
 

@@ -143,3 +143,84 @@ def test_recorder_knows_the_digipath_tutorial() -> None:
     tutorial = REPO_ROOT / "fl-tutorials/nvflare/image_evaluation/idc_pathology_nuclei_detection_evaluation"
     assert (tutorial / "app_files").is_dir()
     assert (tutorial / "query.sql").is_file()
+
+
+# --------------------------------------------------------------------------------------------
+# Reading the seeded data back on a trust
+# --------------------------------------------------------------------------------------------
+#
+# The seeding above and this lookup are two halves of one path, which is why they share a file. A
+# trust does not hand back the tutorial's filenames: imaging-api delivers whatever XNAT stored, named
+# by SOP Instance UID. The app therefore identifies the slide and its annotations by SOP Class.
+
+
+def load_data_utils():
+    """Import app_files/data_utils.py, stubbing the flip package the FL client provides at runtime."""
+    for name, attrs in (
+        ("flip", {}),
+        ("flip.constants", {"FlipConstants": type("FlipConstants", (), {"LOCAL_DEV": False}),
+                            "ResourceType": type("ResourceType", (), {"DICOM": "DICOM"})}),
+    ):
+        module = sys.modules.setdefault(name, type(sys)(name))
+        for attr, value in attrs.items():
+            setattr(module, attr, value)
+
+    app_files = REPO_ROOT / "fl-tutorials/nvflare/image_evaluation/idc_pathology_nuclei_detection_evaluation/app_files"
+    spec = importlib.util.spec_from_file_location("idc_seeding_data_utils", app_files / "data_utils.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    sys.path.insert(0, str(app_files))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(app_files))
+    return module
+
+
+def write_min_dicom(path: Path, sop_class_uid: str) -> None:
+    pydicom = pytest.importorskip("pydicom")
+    from pydicom.dataset import FileMetaDataset
+
+    meta = FileMetaDataset()
+    meta.MediaStorageSOPClassUID = sop_class_uid
+    meta.MediaStorageSOPInstanceUID = "1.2.3.4"
+    meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
+    ds = pydicom.dataset.FileDataset(str(path), {}, file_meta=meta, preamble=b"\0" * 128)
+    ds.SOPClassUID = sop_class_uid
+    ds.SOPInstanceUID = "1.2.3.4"
+    ds.save_as(path, enforce_file_format=True)
+
+
+def test_finds_both_objects_under_xnat_style_names(tmp_path: Path) -> None:
+    """The real failure mode: correct data, trust-assigned filenames, nothing found."""
+    data_utils = load_data_utils()
+    write_min_dicom(tmp_path / "1.2.840.113619.2.1.dcm", data_utils.SLIDE_SOP_CLASS)
+    write_min_dicom(tmp_path / "1.2.840.113619.2.2.dcm", data_utils.ANNOTATION_SOP_CLASS)
+
+    slide = data_utils._find_by_sop_class(tmp_path, data_utils.SLIDE_SOP_CLASS, "slide.dcm")
+    annotation = data_utils._find_by_sop_class(tmp_path, data_utils.ANNOTATION_SOP_CLASS, "annotation.dcm")
+
+    assert slide is not None
+    assert annotation is not None
+    assert slide.name == "1.2.840.113619.2.1.dcm"
+    assert annotation.name == "1.2.840.113619.2.2.dcm"
+    assert slide != annotation, "the two objects must not resolve to the same file"
+
+
+def test_still_finds_the_tutorials_own_filenames(tmp_path: Path) -> None:
+    """The LOCAL_DEV layout must keep working unchanged."""
+    data_utils = load_data_utils()
+    write_min_dicom(tmp_path / "slide.dcm", data_utils.SLIDE_SOP_CLASS)
+    write_min_dicom(tmp_path / "annotation.dcm", data_utils.ANNOTATION_SOP_CLASS)
+
+    assert data_utils._find_by_sop_class(tmp_path, data_utils.SLIDE_SOP_CLASS, "slide.dcm").name == "slide.dcm"
+
+
+def test_ignores_unrelated_files_rather_than_failing(tmp_path: Path) -> None:
+    """A pull can deliver a whole study; non-DICOM neighbours must not break the scan."""
+    data_utils = load_data_utils()
+    (tmp_path / "catalog.xml").write_text("<not-dicom/>")
+    write_min_dicom(tmp_path / "anything.dcm", data_utils.SLIDE_SOP_CLASS)
+
+    assert data_utils._find_by_sop_class(tmp_path, data_utils.SLIDE_SOP_CLASS, "slide.dcm") is not None
+    assert data_utils._find_by_sop_class(tmp_path, data_utils.ANNOTATION_SOP_CLASS, "annotation.dcm") is None
