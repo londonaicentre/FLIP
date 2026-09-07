@@ -34,7 +34,11 @@ describe("FLIP demo — download results", () => {
         // alone films the dashboard mid-load: an empty "Any metrics sent during the run will show
         // here" panel next to a spinning Live activity feed, held for several seconds. Wait for the
         // plots to have actually drawn, so the completed run is shown with its results.
+        // A canvas alone is not enough: the chart mounts with axes and legend before /metrics
+        // answers, so waiting on it still films an empty plot beside a spinning activity feed.
+        // A rendered log line means the run's data has actually arrived.
         cy.get("canvas", { timeout: 120000 }).should("exist");
+        cy.getBySel("log-timestamp", { timeout: 120000 }).should("have.length.greaterThan", 0);
         revealDemo();
 
         cy.demoCaption("Training complete — results are uploaded from the FL network", 1200);
