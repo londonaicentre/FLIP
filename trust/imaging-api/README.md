@@ -73,7 +73,10 @@ NVFLARE backend — by `CleanupImages`, which empties the whole net directory at
 ### Imaging
 
 Interfaces with XNAT's DICOM Query-Retrieve (DQR) plugin. Full DQR API docs available at
-`http://127.0.0.1:8105/xapi/swagger-ui.html#/dicom-query-retrieve-api`.
+`http://127.0.0.1:<XNAT_WEB_PORT>/xapi/swagger-ui.html#/dicom-query-retrieve-api` — `XNAT_WEB_PORT`
+is the per-trust host port for XNAT's web UI in the kit file (`trust/.env.<CODE>.<env>`), e.g. `8105`
+for the GSTT dev trust and `8107` for KCH. Not `XNAT_PORT`, which since FLIP#993 is the DICOM SCP
+receiver port (`8104`/`8106`) and serves no HTTP.
 
 - Query PACS with an accession number
 - Queue image retrieval from PACS to an XNAT project

@@ -31,12 +31,20 @@ interface ProjectsResponse {
 
 const mockSwrvData = ref<ProjectsResponse | undefined>(undefined);
 
+// The page's SWRV key (the projects URL with its query params), captured at mount so tests
+// can assert what the filters put on the request.
+let capturedKey: (() => string) | undefined;
+
 vi.mock("swrv", () => ({
-    default: () => ({
-        data: mockSwrvData,
-        mutate: vi.fn(),
-        error: ref(null)
-    })
+    default: (key: () => string) => {
+        capturedKey = key;
+
+        return {
+            data: mockSwrvData,
+            mutate: vi.fn(),
+            error: ref(null)
+        };
+    }
 }));
 
 const stubs = {
@@ -53,7 +61,11 @@ const stubs = {
         emits: ["update:modelValue"],
         template: "<input data-test='project-search' :value='modelValue' @input='$emit(\"update:modelValue\", $event.target.value)' />"
     },
-    AiPagination: { template: "<div />" },
+    AiPagination: {
+        // A single stubbed control that moves to page 2, so tests can see a filter reset the page.
+        template: "<button data-test='go-page-2' @click=\"$emit('page-update', 2)\" />",
+        emits: ["page-update"]
+    },
     CreateProjectModal: { template: "<div data-test='create-project-modal' />" },
     // The global test setup stubs router-link with an empty (no-slot) stub;
     // override it so project rows actually render their content.
@@ -64,7 +76,9 @@ const stubs = {
     "icon-ph-list-bullets-duotone": { template: "<span />" },
     "icon-ph-squares-four-duotone": { template: "<span />" },
     "icon-ph-archive-duotone": { template: "<span />" },
-    "icon-ph-users-three-duotone": { template: "<span />" }
+    "icon-ph-users-three-duotone": { template: "<span />" },
+    "icon-ph-scan": { template: "<span />" },
+    "icon-ph-database": { template: "<span />" }
 };
 
 const trust = (id: string, code: string, approved: boolean): IProjectTrust => ({
@@ -577,5 +591,66 @@ describe("Projects Page", () => {
         const tracks = rows[0].classes().flatMap(c => c.match(/grid-cols-\[(.+)\]$/)?.[1].split("_") ?? []);
         expect(tracks.length).toBeGreaterThan(0);
         tracks.forEach(track => expect(track).toMatch(/^(minmax\(0,[\d.]+fr\)|[\d.]+rem)$/));
+    });
+
+    test("every row carries a project-type chip: 'OMOP only' for has_imaging=false, 'Imaging + OMOP' otherwise", async () => {
+        mockSwrvData.value = {
+            data: [
+                {
+                    ...makeProject("APPROVED", []),
+                    id: "p-omop",
+                    has_imaging: false
+                },
+                makeProject("STAGED", [])
+            ],
+            totalPages: 1,
+            page: 1
+        };
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const omop = wrapper.find("[data-test='project-type-chip-omop-only']");
+        const imaging = wrapper.find("[data-test='project-type-chip-imaging']");
+        expect(omop.text()).toBe("OMOP only");
+        expect(imaging.text()).toBe("Imaging + OMOP");
+        // Design tokens: steel blue for OMOP only, the primary tint for imaging.
+        expect(omop.classes()).toContain("bg-steel-100");
+        expect(imaging.classes()).toContain("bg-primary-100");
+    });
+
+    test("grid cards carry the type chip beside the status pill", async () => {
+        setProject({
+            ...makeProject("APPROVED", []),
+            has_imaging: false
+        });
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        await wrapper.find("[data-test='view-mode-grid']").trigger("click");
+
+        const chip = wrapper.find("[data-test='projects-grid-view'] [data-test='project-type-chip-omop-only']");
+        expect(chip.text()).toBe("OMOP only");
+    });
+
+    test("the Type filter puts projectType on the projects request and resets to page 1", async () => {
+        setProject(makeProject("APPROVED", []));
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        expect(capturedKey?.()).not.toContain("projectType");
+
+        // Move off page 1 first, so "resets to page 1" is observed rather than assumed.
+        await wrapper.find("[data-test='go-page-2']").trigger("click");
+        await vi.waitFor(() => expect(capturedKey?.()).toContain("pageNumber=2"));
+
+        await wrapper.find("[data-test='type-filter-omop-only']").trigger("click");
+        expect(wrapper.find("[data-test='type-filter-omop-only']").attributes("aria-selected")).toBe("true");
+        expect(wrapper.find("[data-test='type-filter-all']").attributes("aria-selected")).toBe("false");
+        await vi.waitFor(() => expect(capturedKey?.()).toContain("projectType=omop_only"));
+        expect(capturedKey?.()).toContain("pageNumber=1");
+
+        await wrapper.find("[data-test='type-filter-imaging']").trigger("click");
+        await vi.waitFor(() => expect(capturedKey?.()).toContain("projectType=imaging"));
+
+        await wrapper.find("[data-test='type-filter-all']").trigger("click");
+        await vi.waitFor(() => expect(capturedKey?.()).not.toContain("projectType"));
     });
 });

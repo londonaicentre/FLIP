@@ -309,13 +309,19 @@ def run_xnat_reset(tmp_path, **overrides: str) -> subprocess.CompletedProcess:
 
     ``make -n`` is no use here: the port guards are shell ``if``s inside the recipe, so a dry run
     prints them without ever deciding anything. So the recipe runs for real, but against a data
-    directory under tmp_path and with ``sudo`` stubbed to a no-op — a guard that stops working
-    then creates a directory in a temp dir instead of deleting a trust's XNAT archive.
+    directory under tmp_path — a guard that stops working then creates a directory in a temp dir
+    instead of deleting a trust's XNAT archive.
+
+    ``sudo`` is shimmed to ``exec "$@"`` rather than to a no-op, matching
+    test_data_dir_ownership.py: since FLIP#1096 the development branch provisions with
+    ``sudo mkdir``/``sudo chown`` and then *verifies* the ownership it asked for, so a no-op
+    ``sudo`` leaves the tree uncreated and the recipe fails in the ownership guard rather than
+    on the ports these tests are about. Running unprivileged is also what a developer does.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     fake_sudo = bin_dir / "sudo"
-    fake_sudo.write_text("#!/bin/sh\nexit 0\n")
+    fake_sudo.write_text('#!/bin/sh\nexec "$@"\n')
     fake_sudo.chmod(0o755)
     env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
     return subprocess.run(

@@ -53,7 +53,7 @@ import requests
 
 from flip_api.utils import constants
 from tests import e2e_smoke, xnat_seg_upload
-from tests.e2e_smoke import SmokeFailure, _get, _log
+from tests.e2e_smoke import SmokeFailure, _get, _log, describe_tutorial
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FLIP_UI_DIR = REPO_ROOT / "flip-ui"
@@ -72,15 +72,17 @@ SEGMENTS = [
     "06-download-results",
 ]
 
-# Per-app recording profiles: on-camera names plus the per-backend tutorial
-# locations (mirroring the e2e_smoke Makefile defaults). CLI name flags
-# override the profile values.
+# Per-app recording profiles: on-camera names plus the per-backend tutorial locations (mirroring
+# the e2e_smoke Makefile defaults). CLI name flags override the profile values.
+#
+# The project *description* is deliberately not here: it is the clinical task from e2e_smoke's
+# TUTORIALS, resolved from the app directory below. Both the recorder and the smoke write it to the
+# same ProjectDetails.description field and it is read in the same projects list, so a second copy
+# here only bought two registers of prose for one study and a description no length guard covered.
+# The on-camera names stay local — they are a presentation choice, not a description of the study.
 APPS: dict[str, dict[str, Any]] = {
     "xray": {
         "project_name": "Federated Chest X-ray Classification",
-        "project_description": (
-            "Multi-trust federated study: CNN classification of pleural effusion and edema on chest radiographs."
-        ),
         "model_name": "Chest X-ray CNN",
         "model_description": "CNN classifier trained with federated averaging across the participating trusts.",
         "backends": {
@@ -98,9 +100,6 @@ APPS: dict[str, dict[str, Any]] = {
     },
     "spleen": {
         "project_name": "Federated 3D Spleen Segmentation",
-        "project_description": (
-            "Multi-trust federated study: 3D U-Net segmentation of the spleen on abdominal CT volumes."
-        ),
         "model_name": "Spleen 3D U-Net",
         "model_description": "3D U-Net trained with federated averaging on trust-held abdominal CT volumes.",
         "backends": {
@@ -464,10 +463,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     profile = APPS[args.app]
     tutorial = profile["backends"][args.fl_backend]
-    project_name = args.project_name or profile["project_name"]
-    project_description = args.project_description or profile["project_description"]
-    model_name = args.model_name or profile["model_name"]
-    model_description = args.model_description or profile["model_description"]
     if bool(args.data_enrichment_cwd) != bool(args.data_enrichment_cmd):
         raise SmokeFailure("--data-enrichment-cwd and --data-enrichment-cmd must be provided together")
     if args.data_enrichment_cwd and not Path(args.data_enrichment_cwd).is_dir():
@@ -477,6 +472,12 @@ def main(argv: list[str] | None = None) -> int:
     for required in (app_dir, query_file):
         if not required.exists():
             raise SmokeFailure(f"Tutorial path missing: {required}")
+
+    project_name = args.project_name or profile["project_name"]
+    # One description of this study, shared with the smoke and guarded against the 250-char cap there.
+    project_description = args.project_description or describe_tutorial(app_dir).task
+    model_name = args.model_name or profile["model_name"]
+    model_description = args.model_description or profile["model_description"]
 
     researcher, admin, fallback_roles = resolve_ui_credentials()
     _log(f"🎭 Researcher part: {researcher[0]} | Admin part: {admin[0]}")
