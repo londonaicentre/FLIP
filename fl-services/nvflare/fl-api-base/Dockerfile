@@ -15,11 +15,18 @@ FROM python:3.12-slim-bookworm AS development
 RUN apt-get update && apt-get install -y gettext-base \
     && rm -rf /var/lib/apt/lists/*
 
-ARG UID
-ARG GID
-ARG UNAME
+# Fixed image identity, defaulted here rather than supplied per-build (FLIP#1171) so
+# a locally-built :dev image is identical to CI's :stag. See fl-base/Dockerfile for
+# the full rationale; in short, this identity used to be the building developer's and
+# the dev composes reused it as runtime config, so published images and local ones
+# behaved differently. This image keeps running as `flip`: unlike fl-server and
+# fl-client it is not given a `user:` override, because it writes only its own
+# image-owned /app/admin/transfer and the FL_JOBS_DIR bind mount.
+ARG UID=1000
+ARG GID=1000
+ARG UNAME=flip
 RUN groupadd -g ${GID} ${UNAME}
-# Create a user with the same UID and GID as the host user with home directory at /home/${UNAME}
+# Create the non-root user, with home directory at /home/${UNAME}
 RUN useradd -u ${UID} -g ${GID} -m -d /home/${UNAME} -s /bin/bash ${UNAME}
 WORKDIR /app
 RUN chown -R ${UNAME}:${UNAME} /app

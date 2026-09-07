@@ -23,15 +23,24 @@ services:
       - ALL
     # No capability is added back. The image runs non-root (GHSA-8465) and Docker
     # grants effective capabilities only to root, so a cap_add here would land in
-    # the bounding set and never take effect (CapEff stays 0). provision/workspace-dev/
-    # (gitignored) is written by `make provision` as the host user and the image's UID
-    # is baked in at build time (fl-base's UID/GID build args) from that same user's
-    # .env.development, so build+provision by the same developer already match. When
-    # they don't (CI, a shared devbox, a teammate's prebuilt :dev image) the fix is to
-    # chown the provisioned kit dirs to the container UID — see fl-services/nvflare/README.md
-    # — not a capability grant. What aborts the entrypoint in that case is the envsubst
+    # the bounding set and never take effect (CapEff stays 0).
+    #
+    # provision/workspace-dev/ (gitignored) is written by `make provision` as the host
+    # user. The image's identity is now FIXED at flip/1000/1000 rather than baked from
+    # the building developer's .env.development (FLIP#1171), so the two no longer
+    # coincide by luck for whoever built the image and mismatch for everyone else —
+    # published :stag images used to crash-loop here for any developer who was not uid
+    # 1000. Instead of chowning the kit dirs to the container (the previous advice, and
+    # what this comment used to say), `user:` below runs the container as the host user
+    # that already owns them. What aborted the entrypoint in that case was the envsubst
     # write into the bind-mounted local/ (guarded by `|| exit 1`); the `chmod +x` calls
     # on startup/*.sh are unguarded and do not crash-loop.
+    #
+    # uid = the host user, so the provisioned kit and this net's images slice are
+    # readable and writable without any chown; gid = the image's, so /app stays
+    # writable for NVFLARE's job workspace (fl-base makes it group-writable). On
+    # EC2/on-prem the host user is uid 1000 and this resolves to the baked identity.
+    user: "${UID:-1000}:${FL_IMAGE_GID:-1000}"
     volumes:
       # This net's slice of the images download directory, at the unchanged container
       # path — see compose_trust.production.nvflare.yml for the least-privilege
@@ -79,7 +88,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    # No capability added back — see fl-client-net-1 above.
+    # No capability added back, and the same host-uid override — see fl-client-net-1.
+    user: "${UID:-1000}:${FL_IMAGE_GID:-1000}"
     volumes:
       # This net's slice of the images download directory (see fl-client-net-1 above)
       - ${BASE_IMAGES_DOWNLOAD_DIR:?set in the trust kit file}/net-2:/app/data/images/net-2

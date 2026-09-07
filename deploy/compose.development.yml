@@ -84,10 +84,9 @@ services:
     # .venv. No effect under BUILD=true (the image is already host-uid).
     user: "${UID}:${GID}"
     build:
-      args:
-        UID: ${UID}
-        GID: ${GID}
-        UNAME: ${UNAME}
+      # No UID/GID/UNAME args: the Dockerfile fixes the identity at flip/1000/1000 so a
+      # locally-built image matches the pulled one (FLIP#1171). `user:` above still runs
+      # it as the host uid either way.
       context: ../flip-api
       # fl-apps/ lives at the repo root, outside the flip-api build context. Pass it as a named
       # additional context so the Dockerfile can `COPY --from=fl_apps` the base FL templates into
@@ -114,8 +113,8 @@ services:
       # Bind-mount the base FL app templates over the baked-in copy so template edits take effect
       # without a rebuild (the bundler reads them from FL_APP_BASE_DIR=/app/fl-apps). FLIP#724.
       - ../fl-apps/:/app/fl-apps/
-      - ~/.aws/config:/home/${UNAME}/.aws/config:ro
-      - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
+      - ~/.aws/config:/home/flip/.aws/config:ro
+      - ~/.aws/sso/cache:/home/flip/.aws/sso/cache:rw
     # Deliberately NOT on `fl-net-*`: flip-api fronts the database and holds the hub's
     # credentials, and nothing on the FL data plane calls it. The traffic that looks like
     # it needs this is the fl-server → flip-api callback, and fl-server reaches it over
@@ -132,7 +131,7 @@ services:
       # the runtime editable install (UV_NO_SYNC) so the host-uid process never
       # writes the image-owned .venv; keep uv's cache + HOME writable. HOME
       # matches the ~/.aws mount path below so boto3 still finds credentials.
-      - HOME=/home/${UNAME}
+      - HOME=/home/flip
       - UV_CACHE_DIR=/tmp/uv-cache
       - UV_NO_SYNC=1
       - PYTHONPATH=/app/src

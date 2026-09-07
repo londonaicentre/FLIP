@@ -16,9 +16,14 @@ FROM python:3.12-slim-bookworm AS development
 RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client
 
-ARG UID
-ARG GID
-ARG UNAME
+# Fixed image identity, defaulted here rather than taken from the building
+# developer's environment (FLIP#1171), so a BUILD=true image and the pulled GHCR
+# image agree on where /home lives — the compose names /home/flip literally. The
+# `user:` override in compose.development.yml is what re-points the runtime uid to
+# the host user, which is what actually needs to match the bind mounts.
+ARG UID=1000
+ARG GID=1000
+ARG UNAME=flip
 RUN groupadd -g ${GID} ${UNAME}
 # Create a user with the same UID and GID as the host user with home directory at /home/${UNAME}
 RUN useradd -u ${UID} -g ${GID} -m -d /home/${UNAME} -s /bin/bash ${UNAME}
