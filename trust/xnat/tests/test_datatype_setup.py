@@ -251,3 +251,28 @@ def test_k8s_init_job_allows_a_browser_reachable_site_url() -> None:
         "both activation sites must honour the override"
     )
     assert 'siteUrl\\": \\"${XNAT_URL}' not in body, "no site may hardcode the in-cluster URL"
+
+
+XNAT_COMPOSE = Path(__file__).resolve().parents[1] / "docker-compose-stack.yml"
+TRUST_ENV_EXAMPLE = Path(__file__).resolve().parents[2] / ".env.example"
+
+
+def test_site_url_override_actually_reaches_the_container() -> None:
+    """xnat-web declares an explicit environment list, so an undeclared variable cannot arrive.
+
+    Documenting XNAT_SITE_URL in the kit file without this line would leave a remote trust's
+    operator setting a variable that goes nowhere.
+    """
+    body = XNAT_COMPOSE.read_text()
+
+    assert "- XNAT_SITE_URL=${XNAT_SITE_URL:-}" in body, (
+        "xnat-web must pass XNAT_SITE_URL through, defaulting to empty so compose does not warn"
+    )
+
+
+def test_kit_template_tells_remote_operators_about_site_url() -> None:
+    """127.0.0.1 is right for a laptop and wrong for every host browsed from elsewhere."""
+    body = TRUST_ENV_EXAMPLE.read_text()
+
+    assert "XNAT_SITE_URL" in body
+    assert "#XNAT_SITE_URL=" in body, "keep the example commented; an empty value must fall back"
