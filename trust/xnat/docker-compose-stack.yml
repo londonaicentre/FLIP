@@ -35,7 +35,10 @@ services:
       - XNAT_SERVICE_USER=${XNAT_SERVICE_USER}
       - XNAT_SERVICE_PASSWORD=${XNAT_SERVICE_PASSWORD}
       - XNAT_PORT=${XNAT_PORT}
-      # Empty on a dev host, where configure-xnat.sh derives 127.0.0.1:${XNAT_PORT}. Set in the
+      # The web UI's host port, which is what a browser opens and therefore what siteUrl must
+      # name -- XNAT_PORT above is the DICOM SCP receiver (FLIP#993 split the two).
+      - XNAT_WEB_PORT=${XNAT_WEB_PORT}
+      # Empty on a dev host, where configure-xnat.sh derives 127.0.0.1:${XNAT_WEB_PORT}. Set in the
       # kit file on any host whose XNAT is opened from another machine -- the OHIF whole-slide
       # viewport is fetched by the browser and goes black if this does not resolve there.
       - XNAT_SITE_URL=${XNAT_SITE_URL:-}

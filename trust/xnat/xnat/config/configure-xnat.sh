@@ -26,7 +26,7 @@ set -euo pipefail
 # that XNAT rejects — the failure mode behind the silent PACS registration
 # bug (FLIP#822 / FLIP#862).
 : "${XNAT_ADMIN_USER:?}" "${XNAT_ADMIN_INITIAL_PASSWORD:?}" "${XNAT_ADMIN_PASSWORD:?}"
-: "${XNAT_SERVICE_USER:?}" "${XNAT_SERVICE_PASSWORD:?}" "${XNAT_PORT:?}"
+: "${XNAT_SERVICE_USER:?}" "${XNAT_SERVICE_PASSWORD:?}" "${XNAT_PORT:?}" "${XNAT_WEB_PORT:?}"
 
 # The below are fixed values for now
 XNAT_URL="http://xnat-web:8080" # internal to Docker network
@@ -160,7 +160,8 @@ sleep 10 # Additional wait to ensure XNAT is fully up before proceeding
 # and the viewport render black -- with nothing in the XNAT logs, because the requests never
 # arrive. The origin has to match too: tiles fetched from a different host spelling than the
 # one the user browsed are cross-origin and carry no session cookie. Hence 127.0.0.1, which is
-# the form the READMEs tell people to open.
+# the form the READMEs tell people to open -- on XNAT_WEB_PORT, not XNAT_PORT, which FLIP#993
+# split off as the DICOM SCP receiver a PACS dials.
 #
 # Override with XNAT_SITE_URL wherever the browser reaches XNAT by another name: any remote
 # trust (EC2, on-prem) needs it, and so does SMTP link generation.
@@ -168,7 +169,7 @@ echo "Activating XNAT instance..."
 xnat_curl -X POST "$XNAT_URL/xapi/siteConfig" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
   -H "Content-Type: application/json" \
-  -d "{\"initialized\": true, \"siteUrl\": \"${XNAT_SITE_URL:-http://127.0.0.1:${XNAT_PORT}}\"}"
+  -d "{\"initialized\": true, \"siteUrl\": \"${XNAT_SITE_URL:-http://127.0.0.1:${XNAT_WEB_PORT}}\"}"
 
 # Now that the site is initialized, authenticated routes stop redirecting to /setup and the
 # plugin-readiness probe can actually answer.

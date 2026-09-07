@@ -30,6 +30,11 @@ describe("FLIP demo — download results", () => {
         demoVisit(`/project/${projectId}/model/${modelId}`);
         cy.getBySel("training-timeline", { timeout: 60000 }).should("exist");
         cy.getBySel("download-results-btn", { timeout: 120000 }).should("exist");
+        // The download button appears before /metrics and /logs have answered, so revealing on it
+        // alone films the dashboard mid-load: an empty "Any metrics sent during the run will show
+        // here" panel next to a spinning Live activity feed, held for several seconds. Wait for the
+        // plots to have actually drawn, so the completed run is shown with its results.
+        cy.get("canvas", { timeout: 120000 }).should("exist");
         revealDemo();
 
         cy.demoCaption("Training complete — results are uploaded from the FL network", 1200);
