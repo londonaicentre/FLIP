@@ -147,6 +147,29 @@ data was in a trust:
   that trust would have pulled, decoded, and then had nothing to compare against. Both objects share
   an accession and a study, so one pull carries both — but only if both are in Orthanc.
 
+### 1c. imaging-api rejected every study (found by the pull; fixed)
+
+With the cohort staged, the pull failed all twelve accessions at once. Orthanc answered correctly —
+accession, patient, `modalitiesInStudy: ["ANN","SM"]` — and imaging-api rejected the response:
+
+```
+2 validation errors for Study
+  referringPhysicianName  Field required
+  patient.sex             Field required
+```
+
+`PatientSex` (0010,0040) and `ReferringPhysicianName` (0008,0090) are DICOM **Type 2**: present in an
+instance but permitted to be zero-length, and DQR omits an empty value from its JSON altogether. The
+schema was stricter than the standard it models.
+
+**Nothing about this is pathology-specific.** Any de-identified cohort would have hit it; it had gone
+unnoticed only because the dev PACS snapshot happens to populate both fields. Fixed by defaulting
+both to `""`.
+
+Worth recording for the next person: the operator-visible symptom was `QueueFailed=12` and an
+aborted pull, with the real cause only in imaging-api's log. `QueueFailed` for *every* accession
+normally means an empty PACS — here the PACS was answering perfectly.
+
 ### 2. Seeding
 
 Neither `make update-orthanc-data` nor `make update-omop-data` can be reused: both are wholesale
