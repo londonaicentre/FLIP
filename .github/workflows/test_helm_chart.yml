@@ -310,14 +310,14 @@ jobs:
           for backend in nvflare flower; do
             helm template trust-release deploy/providers/kubernetes/ \
               --set flBackend="${backend}" \
-              --set flClient.kitHostPath=/opt/fl-kit \
+              --set flClient.kitHostPath=/opt/flip/fl-kit \
               --show-only templates/fl-client.yaml > /tmp/kit-"${backend}".yaml
             uv run --no-project --with "pyyaml==6.0.3" python - "${backend}" /tmp/kit-"${backend}".yaml <<'PY'
           import sys, yaml
 
           backend, path = sys.argv[1:3]
           KIT = "fl-client-kit"
-          STAGED = "/opt/fl-kit"  # what the render above passes as flClient.kitHostPath
+          STAGED = "/opt/flip/fl-kit"  # what the render above passes as flClient.kitHostPath
 
           def die(msg):
               print(f"::error::{backend}: {msg}")  # workflow commands are read from stdout, not stderr
