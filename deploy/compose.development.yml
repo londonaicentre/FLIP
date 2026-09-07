@@ -78,10 +78,10 @@ services:
     # image (its workflow is a CI smoke test; prod serves it from S3/CloudFront).
     image: ${DOCKER_REGISTRY}flip-api:${DOCKER_TAG}
     pull_policy: always
-    # Dev-on-pull: the GHCR image bakes uid 1000 (flip); run the pulled image as
-    # the HOST uid so it can write the host-owned bind mounts (src/, ~/.aws).
-    # Paired with the HOME/UV_* env below so it never writes the image-owned
-    # .venv. No effect under BUILD=true (the image is already host-uid).
+    # Run the image as the HOST uid so it can write the host-owned bind mounts
+    # (src/, ~/.aws). Paired with the HOME/UV_* env below so it never writes the
+    # image-owned .venv. Applies equally to a pulled image and a BUILD=true one:
+    # since FLIP#1171 both bake flip/1000/1000, so neither is host-uid by itself.
     user: "${UID}:${GID}"
     build:
       # No UID/GID/UNAME args: the Dockerfile fixes the identity at flip/1000/1000 so a
@@ -132,6 +132,12 @@ services:
       # writes the image-owned .venv; keep uv's cache + HOME writable. HOME
       # matches the ~/.aws mount path below so boto3 still finds credentials.
       - HOME=/home/flip
+      # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises.
+      # getpass.getuser() consults these first (FLIP#1171). Latent here today —
+      # nothing under src/ calls getuser() — but the same condition that the
+      # PGUSER line below works around for libpq.
+      - USER=flip
+      - LOGNAME=flip
       - UV_CACHE_DIR=/tmp/uv-cache
       - UV_NO_SYNC=1
       - PYTHONPATH=/app/src

@@ -134,7 +134,7 @@ services:
     # NVFLARE's job workspace and torch's cache. On EC2/on-prem the host user is uid
     # 1000, so this resolves to the baked identity and nothing changes there; prod
     # composes set no `user:` at all and keep running as `flip`.
-    user: "${UID:-1000}:${FL_IMAGE_GID:-1000}"
+    user: "${UID:-1000}:1000"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -202,7 +202,7 @@ services:
     # NVFLARE's job workspace and torch's cache. On EC2/on-prem the host user is uid
     # 1000, so this resolves to the baked identity and nothing changes there; prod
     # composes set no `user:` at all and keep running as `flip`.
-    user: "${UID:-1000}:${FL_IMAGE_GID:-1000}"
+    user: "${UID:-1000}:1000"
     security_opt:
       - no-new-privileges:true
     cap_drop:

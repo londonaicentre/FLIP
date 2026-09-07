@@ -36,12 +36,23 @@ services:
     # fl-server-net-1:8002 from within the client containers)
     container_name: fl-server-net-${NET_NUMBER}
     image: flare-fl-server:dev
+    # Run as the HOST user with the image's gid (FLIP#1171). The provisioned kit
+    # mounted below is written by `make provision` as the host user, so only a
+    # matching uid can write it; the image identity is fixed at flip/1000/1000 and
+    # no longer inherits whoever built the image. The gid stays the image's so /app
+    # and /home/flip -- group-writable in fl-base -- remain writable.
+    user: "${UID:-1000}:1000"
     build:
       context: ../../fl-services/nvflare/fl-server
       dockerfile: Dockerfile
       args:
         BASE_REF: ${BASE_REF:-flare-fl-base:dev}
     environment:
+      # The overridden uid is absent from the image's /etc/passwd, so pwd.getpwuid()
+      # raises and HOME falls back to "/". getpass.getuser() checks these first.
+      - HOME=/home/flip
+      - USER=flip
+      - LOGNAME=flip
       - NET_ID=net-${NET_NUMBER}
       - LOCAL_DEV=false
       - MIN_CLIENTS=1
@@ -58,10 +69,16 @@ services:
   flip-fl-api:
     container_name: flip-fl-api-net-${NET_NUMBER}
     image: flare-fl-api:dev
+    # Host uid, image gid -- see fl-server above.
+    user: "${UID:-1000}:1000"
     build:
       context: ../../fl-services/nvflare/fl-api-base
       dockerfile: Dockerfile
     environment:
+      # Identity for the overridden uid -- see fl-server above.
+      - HOME=/home/flip
+      - USER=flip
+      - LOGNAME=flip
       - FL_ADMIN_DIRECTORY=/app/admin
       - DEBUG=${DEBUG}
       - LOG_LEVEL=${LOG_LEVEL}
@@ -85,12 +102,18 @@ services:
   fl-client-1:
     container_name: fl-client-1-net-${NET_NUMBER}
     image: flare-fl-client:dev
+    # Host uid, image gid -- see fl-server above.
+    user: "${UID:-1000}:1000"
     build:
       context: ../../fl-services/nvflare/fl-client
       dockerfile: Dockerfile
       args:
         BASE_REF: ${BASE_REF:-flare-fl-base:dev}
     environment:
+      # Identity for the overridden uid -- see fl-server above.
+      - HOME=/home/flip
+      - USER=flip
+      - LOGNAME=flip
       - NET_ID=net-${NET_NUMBER}
       - LOCAL_DEV=false
       - MIN_CLIENTS=1
@@ -116,12 +139,18 @@ services:
   fl-client-2:
     container_name: fl-client-2-net-${NET_NUMBER}
     image: flare-fl-client:dev
+    # Host uid, image gid -- see fl-server above.
+    user: "${UID:-1000}:1000"
     build:
       context: ../../fl-services/nvflare/fl-client
       dockerfile: Dockerfile
       args:
         BASE_REF: ${BASE_REF:-flare-fl-base:dev}
     environment:
+      # Identity for the overridden uid -- see fl-server above.
+      - HOME=/home/flip
+      - USER=flip
+      - LOGNAME=flip
       - NET_ID=net-${NET_NUMBER}
       - LOCAL_DEV=false
       - MIN_CLIENTS=1

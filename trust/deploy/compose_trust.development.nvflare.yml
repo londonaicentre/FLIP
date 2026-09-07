@@ -40,7 +40,7 @@ services:
     # readable and writable without any chown; gid = the image's, so /app stays
     # writable for NVFLARE's job workspace (fl-base makes it group-writable). On
     # EC2/on-prem the host user is uid 1000 and this resolves to the baked identity.
-    user: "${UID:-1000}:${FL_IMAGE_GID:-1000}"
+    user: "${UID:-1000}:1000"
     volumes:
       # This net's slice of the images download directory, at the unchanged container
       # path — see compose_trust.production.nvflare.yml for the least-privilege
@@ -107,7 +107,7 @@ services:
     cap_drop:
       - ALL
     # No capability added back, and the same host-uid override — see fl-client-net-1.
-    user: "${UID:-1000}:${FL_IMAGE_GID:-1000}"
+    user: "${UID:-1000}:1000"
     volumes:
       # This net's slice of the images download directory (see fl-client-net-1 above)
       - ${BASE_IMAGES_DOWNLOAD_DIR:?set in the trust kit file}/net-2:/app/data/images/net-2

@@ -25,7 +25,7 @@ ARG UID=1000
 ARG GID=1000
 ARG UNAME=flip
 RUN groupadd -g ${GID} ${UNAME}
-# Create a user with the same UID and GID as the host user with home directory at /home/${UNAME}
+# Create the non-root user, with home directory at /home/${UNAME}
 RUN useradd -u ${UID} -g ${GID} -m -d /home/${UNAME} -s /bin/bash ${UNAME}
 WORKDIR /app
 RUN chown -R ${UNAME}:${UNAME} /app

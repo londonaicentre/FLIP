@@ -77,7 +77,7 @@ are two different things and conflating them was FLIP#1171.
   `flip` user. This is what lets the composes name `/home/flip` literally, and it means a local build is a
   faithful stand-in for the published image. `1000` also matches the `ubuntu` uid that EC2/on-prem trust
   hosts stage kits as.
-- **Run time** — the dev composes pass `user: "${UID:-1000}:${FL_IMAGE_GID:-1000}"`, so the process runs as
+- **Run time** — the dev composes pass `user: "${UID:-1000}:1000"`, so the process runs as
   the **host** user with the image's gid. The host uid is what has to match the bind mounts: the
   provisioned kit is written by whoever ran `make provision`, and the AWS SSO token cache by whoever ran
   `aws sso login`. A `0600` token cannot be reached by group membership at all, so only a uid match works —
