@@ -22,6 +22,7 @@ describe("FLIP demo — administrator approval", () => {
     it("reviews connection status and approves the staged project", () => {
         const email = requireEnv("DEMO_ADMIN_EMAIL");
         const projectId = requireEnv("DEMO_PROJECT_ID");
+        const hasImaging = requireEnv("DEMO_HAS_IMAGING");
 
         // Scenic sign-in — the administrator's entrance deserves screen time.
         cy.demoCaption("A FLIP administrator signs in to review the request", 1200);
@@ -52,13 +53,21 @@ describe("FLIP demo — administrator approval", () => {
         // keep holding until the trusts have actually onboarded the project
         // (the "Awaiting creation…" cards flip to live import bars), so the
         // import is visibly underway before the story moves into XNAT.
-        cy.demoCaption("Approval dispatched — the imaging import starts at each trust", 600);
-        cy.get("[data-test^=\"import-bar-\"]", { timeout: 180000 }).should("have.length.at.least", 1);
-        cy.get("[data-test^=\"import-bar-\"]").first().scrollIntoView({ duration: 800 });
-        cy.demoPause(2500);
+        // Only an imaging project dispatches CREATE_IMAGING, so only an imaging project grows
+        // per-trust import bars. A tabular study approves and is immediately ready to train, and
+        // waiting on bars that will never render just times the segment out.
+        if (hasImaging === "false") {
+            cy.demoCaption("No imaging to retrieve — the cohort is already at each trust", 600);
+            cy.demoPause(4000);
+        } else {
+            cy.demoCaption("Approval dispatched — the imaging import starts at each trust", 600);
+            cy.get("[data-test^=\"import-bar-\"]", { timeout: 180000 }).should("have.length.at.least", 1);
+            cy.get("[data-test^=\"import-bar-\"]").first().scrollIntoView({ duration: 800 });
+            cy.demoPause(2500);
 
-        cy.demoCaption("Each trust creates its XNAT project and begins retrieving the cohort", 600);
-        cy.contains("Awaiting creation", { timeout: 240000 }).should("not.exist");
-        cy.demoPause(5500);
+            cy.demoCaption("Each trust creates its XNAT project and begins retrieving the cohort", 600);
+            cy.contains("Awaiting creation", { timeout: 240000 }).should("not.exist");
+            cy.demoPause(5500);
+        }
     });
 });
