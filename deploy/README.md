@@ -343,7 +343,7 @@ would name the cause. In dev, `trust/orthanc/update_orthanc_data.sh` instead `ch
 storage world-writable so a developer needs no `sudo` to re-seed it.
 
 XNAT's dev tree deliberately does **not** follow that convention. `xnat-reset` creates
-`trust/xnat/xnat-data-<KIT>/` under `sudo` and chowns it to UID 1001, so on a host whose developer
+`trust/xnat/xnat-data-trust<N>/` under `sudo` and chowns it to UID 1001, so on a host whose developer
 is not themselves UID 1001 that tree is readable but not writable: deleting it, or running
 `git clean -fdx` over the checkout, needs `sudo`. Ownership is the whole of the fix here — it is
 what makes XNAT able to ingest at all — and the modes are left at their defaults rather than
