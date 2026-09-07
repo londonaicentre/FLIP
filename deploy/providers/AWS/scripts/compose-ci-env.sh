@@ -162,6 +162,11 @@ OPTIONAL_KEYS=(
     # configuration. Only stag sets it (to "false", for testing).
     ENFORCE_MFA
 
+    # Empty is the intended value wherever no tracking server is hosted: it
+    # disables the MLflow dual-write entirely, leaving flip-api canonical for
+    # status and metrics (FLIP#745). Requiring a value would reject that.
+    MLFLOW_TRACKING_URI
+
 )
 # Deliberately absent: PRESERVE_VPC. It is a make-level flag read only by
 # `make destroy` (scripts/destroy-selective.sh), never a Terraform input — and CI
