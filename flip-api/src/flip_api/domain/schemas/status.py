@@ -130,6 +130,18 @@ class ProjectStatus(StrEnum):
     APPROVED = "APPROVED"
 
 
+class ProjectType(StrEnum):
+    """Kind of project, for the projects-list filter (FLIP#1071): imaging, or tabular-only."""
+
+    IMAGING = "imaging"
+    OMOP_ONLY = "omop_only"
+
+    @property
+    def has_imaging(self) -> bool:
+        """The ``Projects.has_imaging`` value this kind corresponds to."""
+        return self is ProjectType.IMAGING
+
+
 class AccessRequestStatus(StrEnum):
     """Lifecycle state of a platform access request.
 

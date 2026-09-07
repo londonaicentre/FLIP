@@ -581,6 +581,13 @@ If you see `Permission denied` on `/app/data/images/...`, you have the same bug.
 ssh flip-trust 'sudo chown -R 1000:1000 /opt/flip/data/trust-1 /opt/flip/data/trust-2'
 ```
 
+**Flower variant — same symptom, different writer.** Each fl-client bind-mounts only its own net's slice (`<base>/net-N`), and it writes there too (`flip.add_resource` stages under `net-N/upload/`). On NVFLARE the client is uid 1000, so the ownership above covers it. The Flower client is built on upstream `flwr/base` and runs as `app` (uid/gid **49999**): on a `1000:1000` `0755` net dir it is only "other", and `add_resource` fails with EACCES while imaging-api's own downloads succeed. `site.yml` provisions the `net-N` dirs `ubuntu:49999` `0775` when `fl_backend == flower` (matching the K8s chart's `images-init`), and `trust/Makefile`'s `$(ensure_net_dirs)` now *fails* the bring-up rather than warning if it cannot apply that. Hot-fix on an existing host:
+
+```bash
+ssh flip-trust 'sudo chown 1000:49999 /opt/flip/data/trust-{1,2}/net-{1,2} && \
+                sudo chmod 0775 /opt/flip/data/trust-{1,2}/net-{1,2}'
+```
+
 The general principle: anywhere a non-root container bind-mounts a host path, pre-create the host path with the right uid in Ansible. Letting Docker auto-create it leaves a root-owned source that silently breaks every non-root container that touches it.
 
 ---
@@ -705,9 +712,9 @@ Canonical checks pass (Terraform, EC2, RDS, HTTPS, ECS), the XNAT web interface 
 
 1. **`#` in password value (Make comment char)**: The Make `include` directive treats `#` as a comment start. If `.env.stag` contains:
    ```
-   XNAT_SERVICE_PASSWORD=bH@BDC#Myl0lev6WQW#0u8GD
+   XNAT_SERVICE_PASSWORD=EXAMPLE#not-a-real#password
    ```
-   Make reads this as `XNAT_SERVICE_PASSWORD=bH@BDC` — everything after the first `#` is silently discarded. The XNAT service account was configured with the truncated value.
+   Make reads this as `XNAT_SERVICE_PASSWORD=EXAMPLE` — everything after the first `#` is silently discarded. The XNAT service account was configured with the truncated value.
 
 2. **`$` in SQL UPDATE values (shell expansion)**: When running SQL via `docker exec sh -c "psql ... \"UPDATE ... SET pw='{bcrypt}\$2a\$10\$...';\""`, the `\$` escapes may not survive the nesting: `sh → psql → SQL`. The `$` signs get consumed by shell expansion, producing a corrupt hash like `{bcrypt}a` instead of `{bcrypt}$2a$10$...`. Always write sensitive SQL to a file via `scp` + `docker cp`.
 

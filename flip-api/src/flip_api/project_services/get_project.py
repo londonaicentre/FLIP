@@ -174,6 +174,7 @@ def get_project_details_endpoint(
         staged_at=staged_at_map.get(project_db.id),
         owner_id=project_db.owner_id,
         dicom_to_nifti=project_db.dicom_to_nifti,
+        has_imaging=project_db.has_imaging,
     )  # type: ignore[call-arg]
 
     logger.info(f"Successfully retrieved details for project {project_id}")

@@ -64,7 +64,13 @@ MAPPING_CACHE_FILENAME = ".accession_map.csv"
 # trust/omop-db/.data_version, rather than a second copy that could silently drift from it.
 # Note this pins the *path*, not the bytes: HF_TRUST_DATA_REVISION above pins the revision those
 # bytes are read at, and defaults to a moving `main` like every other dataset read in this repo.
-OMOP_DATA_VERSION_FILE = Path(__file__).resolve().parents[5] / "trust" / "omop-db" / ".data_version"
+#
+# parents[3] is the repository root from fl-tutorials/datasets/spleen/<this file>. The index is
+# a depth assumption: it was parents[5] when this file lived under
+# fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/utils/, and the move to
+# datasets/ (d6ce346b) left it pointing two directories above the repo (FLIP#1102).
+# tests/test_spleen_uploader_paths.py fails if this ever stops resolving to a real file.
+OMOP_DATA_VERSION_FILE = Path(__file__).resolve().parents[3] / "trust" / "omop-db" / ".data_version"
 
 DOWNLOAD_TIMEOUT_SECONDS = 60
 

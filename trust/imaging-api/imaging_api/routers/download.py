@@ -35,6 +35,7 @@ async def download_images_by_accession_number(
     # TODO Make assessor_type an Enum with allowed values ("scan", "assessor")
     assessor_type: str = "scan",
     resource_type: str = "NIFTI",
+    force_refresh: bool = False,
     headers: XNATAuthHeaders,
 ) -> DownloadImagesResponse:
     """
@@ -51,6 +52,8 @@ async def download_images_by_accession_number(
         assessor_type (str): The type of assessor to use for the download. Default is "scan". Can be "assessor".
         resource_type (str): XNAT resource type e.g DICOM/NIFTI. ALL will download all resources. Custom value is
         allowed if researcher has added their own custom XNAT resource type into scans.
+        force_refresh (bool): Re-download even when a completed local copy is cached; the cache
+        marker is rewritten after the re-download succeeds. Default False.
         headers (XNATAuthHeaders): XNAT authentication headers.
 
     Returns:
@@ -77,6 +80,7 @@ async def download_images_by_accession_number(
             assessor_type=assessor_type,
             resource_type=resource_type,
             headers=headers,
+            force_refresh=force_refresh,
         )
         return DownloadImagesResponse(path=downloaded_folder)
     except NotFoundError as e:

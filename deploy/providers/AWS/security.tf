@@ -192,6 +192,9 @@ resource "aws_lambda_function" "sg_drift_filter" {
 resource "aws_iam_role" "sg_drift_lambda_role" {
   name               = "flip-sg-drift-lambda-role"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  # FLIP#962: the CI apply role may only create or grant to a boundary-carrying
+  # role. See locals.tf and ci/main.tf.
+  permissions_boundary = local.iam_permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "lambda_assume" {

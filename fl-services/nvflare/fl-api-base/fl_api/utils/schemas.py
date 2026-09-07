@@ -30,25 +30,43 @@ class UploadAppRequest(BaseModel):
 
 
 class ServerInfoModel(BaseModel):
-    """Pydantic model for server status information. Based on FLARE ServerInfo class."""
+    """Pydantic model for server status information. Based on FLARE ServerInfo class.
+
+    ``start_time`` is optional because NVFLARE's own ``ServerInfo`` treats it as optional: the
+    admin ``check_status`` meta is read with a bare ``get``, so a stopped or restarting server
+    reports no start time, and upstream's ``__str__`` prints "unknown" for it. Since
+    ``FLIP_Session.get_system_info`` substitutes this model for NVFLARE's type on paths NVFLARE
+    itself calls, a required float here would raise ``ValidationError`` exactly where upstream
+    carries on — including inside ``restart`` and the client-shutdown waits.
+    """
 
     status: str
-    start_time: float
+    start_time: float | None = None
 
     def __str__(self) -> str:
-        return f"status: {self.status}, start_time: {time.asctime(time.localtime(self.start_time))}"
+        start_time = "unknown" if self.start_time is None else time.asctime(time.localtime(self.start_time))
+        return f"status: {self.status}, start_time: {start_time}"
 
 
 class ClientInfoModel(BaseModel):
-    """Pydantic model for client status information. Extends FLARE ClientInfo class to include client status."""
+    """Pydantic model for client status information. Extends FLARE ClientInfo class to include client status.
+
+    ``last_connect_time`` is optional for the same reason as ``ServerInfoModel.start_time``: a
+    registered client that has never connected reports none, and NVFLARE's own
+    ``_wait_for_clients_restart`` has an explicit ``if previous_time is None: continue`` branch —
+    upstream proof that ``None`` is an expected value on this field, not an error.
+    """
 
     name: str
-    last_connect_time: float
+    last_connect_time: float | None = None
     status: str
 
     def __str__(self) -> str:
+        last_connect = (
+            "unknown" if self.last_connect_time is None else time.asctime(time.localtime(self.last_connect_time))
+        )
         return f"""
-        {self.name}(last_connect_time: {time.asctime(time.localtime(self.last_connect_time))}, status: {self.status})
+        {self.name}(last_connect_time: {last_connect}, status: {self.status})
         """
 
 

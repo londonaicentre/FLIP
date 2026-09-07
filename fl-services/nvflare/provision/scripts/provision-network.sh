@@ -58,6 +58,9 @@ fi
 # cwd — and therefore the relative PROJECT_YAML / WORKSPACE_PARENT_DIR paths below —
 # stays at fl-services/nvflare/ (where the Makefile invokes this).
 log "Provisioning network ${NET_NUMBER}..."
+# uv older than 0.10.0 cannot parse `exclude-newer = "3 days"`; it warns, drops
+# the cooldown and rewrites uv.lock. Fail here instead of silently re-resolving.
+"${SCRIPT_DIR}/../../../../scripts/check-uv-version.sh"
 uv run --project fl-api-base nvflare provision -p "${PROJECT_YAML}" -w "${WORKSPACE_PARENT_DIR}"
 
 echo "Restructuring provisioned files in workspace..."

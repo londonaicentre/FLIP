@@ -13,7 +13,7 @@
 .PHONY: build dev prod clean stop up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
 	create-networks remove-networks recreate-networks tests \
-	update-omop-data update-orthanc-data integration_test
+	update-omop-data update-orthanc-data integration_test require-xnat-aetitle
 # PROD selects the compose-file suffix (__DCKR_SUFFIX: stag collapses to the
 # production compose) and the kit-file env token (ENV: stag stays distinct, so
 # a stag kit is .env.<CODE>.stag, never confused with .env.<CODE>.production).
@@ -58,10 +58,33 @@ ifeq ($(ENV),development)
 export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER FL_BACKEND \
        FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY \
        DOCKER_FL_TAG DOCKER_FL_REGISTRY NLB_SUBDOMAIN FL_SERVER_PORT
-# xnat/Makefile's dev-only plugin cache reads this to reach the artifacts bucket. Unexported it is
-# empty in the `make -C trust up-trust` path (the root Makefile blanket-exports the hub env, so only
-# a top-level `make up` would carry it), and the cache download fails on a bucket-less S3 URI.
+# xnat/Makefile's dev-only plugin cache reads these to reach the artifacts bucket. Unexported they
+# are empty in the `make -C trust up-trust` path (the root Makefile blanket-exports the hub env, so
+# only a top-level `make up` would carry them), and the cache download fails on a bucket-less S3 URI.
+# AWS_PROFILE/AWS_REGION belong here for the same reason: without them the bucket NAME reaches the
+# sub-make but the credentials to read it do not, and the plugin sync dies on
+#   fatal error: Unable to locate credentials
 export FLIP_ARTIFACTS_BUCKET_NAME
+# The two AWS names are exported only when actually defined. A bare `export AWS_PROFILE` on an
+# undefined name does not pass a value through — it DEFINES the variable as empty (origin=file) and
+# exports `AWS_PROFILE=` to every child, which is the same trap the sed change at Makefile:43-47
+# removes from the root. `-include ../$(MAIN_ENV_FILE)` silently skips a missing file, and a
+# developer may legitimately comment either key out to fall through to the default profile or to
+# ambient SSO credentials — so both are routinely undefined here. An empty value is worse than an
+# absent one for the AWS CLI, because absent and empty fail differently:
+#   AWS_PROFILE absent → "Unable to locate credentials"          (falls back to the default chain)
+#   AWS_PROFILE=       → "The config profile () could not be found"
+#   AWS_REGION  absent → resolves region from the profile in ~/.aws/config
+#   AWS_REGION=        → shadows it, giving "Invalid endpoint: https://s3..amazonaws.com"
+# ifdef treats a defined-but-empty value as undefined, so an `AWS_PROFILE=` line in an env file is
+# also left un-exported. The one case this cannot cover: if the CALLER exports an empty value, make
+# forwards it to children regardless of anything written here.
+ifdef AWS_PROFILE
+export AWS_PROFILE
+endif
+ifdef AWS_REGION
+export AWS_REGION
+endif
 # UID/GID/UNAME come from the same hub .env and must be exported for the same reason:
 # the dev compose runs imaging-api, data-access-api and trust-api as `user: "${UID}:${GID}"`
 # so they can write host-owned bind mounts (notably BASE_IMAGES_DOWNLOAD_DIR, which this
@@ -93,6 +116,64 @@ override FL_PROVISIONED_DIR := $(call abs_or_relative_to,$(FL_PROVISIONED_DIR),$
 
 OMOP_DB_CMD=make -C ./omop-db
 ORTHANC_CMD=make -C ./orthanc
+
+# Images bind-source base for this kit: the kit's BASE_IMAGES_DOWNLOAD_DIR, or this
+# environment's compose default — the prod composes fall back to
+# /opt/flip/data/trust-<slot> (see compose_trust.production.yml), dev to ./data/<KIT>.
+# Must mirror the compose fallbacks exactly: pre-creating any other path leaves the real
+# mount source for Docker to root-create.
+IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(PROD),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT)))
+
+# Pre-create the per-net images bind sources (keep in lockstep with the fl-client-net-*
+# compose services) owned like their base dir. A plain `mkdir -p` is not enough: the
+# documented on-prem bring-up runs this Makefile under sudo, and Docker root-creates any
+# missing source dir — either way a root-owned net-N means imaging-api (uid 1000,
+# CapDrop ALL) cannot write inside it, every download 500s, and training dies much later
+# with a misleading num_samples=0. The base dir's owner UID is authoritative (set by the
+# provisioning playbooks in prod, by this mkdir as the host user in dev) and imaging-api
+# runs as it on every path, so it always owns net-N.
+#
+# The GROUP and MODE are backend-aware, because the fl-client writes inside net-N too
+# (flip.add_resource stages under net-N/upload/, NVFLARE CleanupImages deletes net-N's
+# children) and on Flower it does not share imaging-api's UID: the Flower client is built
+# on the upstream flwr/base image, which runs as `app` (uid/gid 49999). Mirrors the K8s
+# chart's images-init (deploy/providers/kubernetes/templates/fl-client.yaml):
+#   * NVFLARE, any env      — the base dir's own owner:group, 0755. Its client shares
+#     imaging-api's UID, so owner write covers both writers.
+#   * Flower, prod/stag     — <base-uid>:49999, 0775. The production compose adds no
+#     supplementary group, so 49999 has to be the dir's own group. Setting it needs root,
+#     which the documented on-prem/EC2 bring-up already has (sudo).
+#   * Flower, development   — <base-uid>:$(DOCKER_GID), 0775. The development compose
+#     already hands the client the host GID (`group_add: ["$${DOCKER_GID:-1000}"]`, for
+#     the 640 TLS keys), so group write is all that is missing — and an unprivileged dev
+#     bring-up could not chown to 49999 anyway.
+#
+# A failed chown/chmod is fatal: continuing lands in exactly the Permission-denied →
+# num_samples=0 failure this recipe exists to prevent, and a warning is easy to miss in
+# long bring-up output. It is fatal only after re-checking the dirs, though — chown/chmod
+# by a non-root non-owner returns EPERM even when the metadata already matches the
+# target, and that must not abort an already-correct host.
+define ensure_net_dirs
+	@base="$(IMAGES_BASE)"; \
+	mkdir -p "$$base/net-1" "$$base/net-2"; \
+	if [ "$(FL_BACKEND)" = "flower" ]; then \
+	  owner="$$(stat -c '%u' "$$base"):$(if $(PROD),49999,$(DOCKER_GID))"; mode=775; \
+	else \
+	  owner="$$(stat -c '%u:%g' "$$base")"; mode=755; \
+	fi; \
+	if ! chown "$$owner" "$$base/net-1" "$$base/net-2" 2>/dev/null || \
+	   ! chmod "$$mode" "$$base/net-1" "$$base/net-2" 2>/dev/null; then \
+	  for d in "$$base/net-1" "$$base/net-2"; do \
+	    got="$$(stat -c '%u:%g %a' "$$d")"; \
+	    case "$$got" in "$$owner "*"$$mode") continue;; esac; \
+	    echo "❌  $$d is $$got but must be $$owner $$mode — imaging-api and the $(FL_BACKEND)"; \
+	    echo "    fl-client both write there, so every image download would 500 and training"; \
+	    echo "    would later fail with a misleading num_samples=0."; \
+	    echo "    Fix: sudo chown $$owner $$base/net-1 $$base/net-2 && sudo chmod $$mode $$base/net-1 $$base/net-2"; \
+	    exit 1; \
+	  done; \
+	fi
+endef
 # --project-directory . keeps relative paths inside the compose files (./trust-api,
 # ./observability/, ./omop-db/volumes/, …) resolving from trust/ even though the compose
 # files now live in trust/deploy/. Avoids having to rewrite every ./X to ../X.
@@ -257,6 +338,26 @@ define require_kit_file
 	fi
 endef
 
+# Guard: refuse an explicitly-empty XNAT_AETITLE before either stack sees it. The value has two
+# kinds of consumer with opposite empty-value behaviour, and the kit file is the one place an
+# operator sets it:
+#   - the XNAT stack (xnat/Makefile → configure-xnat.sh) passes an empty value through on purpose
+#     (XNAT_AETITLE_EFFECTIVE) so the script's own ${VAR-default} guard is what reports it;
+#   - the trust compose (Orthanc's DICOM_MODALITIES entry, imaging-api's XNAT_AETITLE) uses
+#     ${XNAT_AETITLE:-XNAT}, because those consumers default the value in code and have no
+#     empty-value check of their own — a bare-dash pass-through would register an empty AE title
+#     rather than fail (see the note above imaging-api's environment in deploy/compose_trust.*.yml).
+# So the explicit empty is refused here, once, before compose or the stack runs, and both sides
+# keep agreeing on the AE title DQR matches the C-MOVE destination against. An undefined
+# XNAT_AETITLE (line absent or commented out in the kit) still takes the XNAT default in both
+# places. $(origin) rather than $(if $(XNAT_AETITLE),…): the latter cannot tell unset from empty,
+# which is exactly the distinction that matters. Evaluated in the recipe, not at parse time, so
+# down-trust / build / help still work against a kit that carries the bad value.
+XNAT_AETITLE_SET_EMPTY := $(if $(filter undefined,$(origin XNAT_AETITLE)),,$(if $(strip $(XNAT_AETITLE)),,yes))
+XNAT_AETITLE_SOURCE := $(if $(filter file,$(origin XNAT_AETITLE)),$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),trust/$(KIT_FILE)),the $(origin XNAT_AETITLE))
+require-xnat-aetitle:
+	@$(if $(XNAT_AETITLE_SET_EMPTY),$(error XNAT_AETITLE is set but empty in $(XNAT_AETITLE_SOURCE). It is XNAT's own AE title (SCP receiver, DQR calling AE and C-MOVE destination): set it, or drop the line to take the default 'XNAT'),:)
+
 # Guard: refuse to act on the compose project this kit resolves to when it is already held
 # by a DIFFERENT trust. TRUST_PROJECT is trust$(FL_KIT_SLOT_NUMBER), and slots are handed
 # out by the hub from its own database — so a second hub (FLIP_INSTANCE, FLIP#957)
@@ -324,15 +425,16 @@ build:
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS) (defined in the
 # root Makefile and inherited here): pulls fresh FL images when
 # DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op
-# otherwise.
-up-trust: update-omop-data update-orthanc-data create-networks
+# otherwise. require-xnat-aetitle goes first so a bad kit is refused before the data
+# fixtures are fetched, not just before compose runs.
+up-trust: require-xnat-aetitle update-omop-data update-orthanc-data create-networks
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/Trust_$(TRUST_NUM)/db_data))
 	$(check_slot_not_taken)
-	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))
+	$(ensure_net_dirs)
 	@echo "$(GPU_STATUS_MSG)"
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
 	@echo "🩻 Starting XNAT for $(KIT)..."
@@ -363,7 +465,11 @@ restart-trust: down-trust up-trust
 # Together these defend the deploy against a kit seeded NUM_AVAILABLE_GPUS=1 (the
 # template default). A GPU-equipped EC2 instance would drop the override and add
 # $(GPU_OVERRIDE) back.
-up-trust-ec2:
+# Deliberately no $(ensure_net_dirs) here: this recipe runs on the operator's
+# workstation against a remote docker context, so a local mkdir cannot touch the
+# EC2 host — the per-net images dirs there are pre-created (ubuntu-owned) by the
+# AWS provisioning playbook (deploy/providers/AWS/site.yml).
+up-trust-ec2: require-xnat-aetitle
 	$(require_kit_file)
 	$(check_slot_not_taken)
 	@echo "🚢 Starting Trust services on EC2 (KIT=$(KIT))..."
@@ -418,6 +524,7 @@ up-fl-clients-kit:
 	$(require_kit_file)
 	$(check_slot_not_taken)
 	@echo "$(GPU_STATUS_MSG)"
+	$(ensure_net_dirs)
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --no-deps $(UP_PULL_FLAGS) fl-client-net-1 fl-client-net-2
 
 down-fl-clients:

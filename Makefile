@@ -15,7 +15,7 @@
 		mlflow \
 		check-aws-access generate-internal-service-key generate-xnat-credentials \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
-		sync-trust-kit sync-trust-kits lock \
+		sync-trust-kit sync-trust-kits lock checkov-lint \
 		deploy-trust-k8s undeploy-trust-k8s \
 		demo-video demo-users seed-demo-projects
 
@@ -40,10 +40,15 @@ endif
 export MAIN_ENV_FILE
 $(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
 
-# replace environment variables by the values from the .env files
+# Replace environment variables by the values from the .env files.
+# The sed extracts ONLY real assignments (`^KEY=`): a plain `sed 's/=.*//'` also
+# emits commented-out lines like `# DOCKER_FL_REGISTRY=`, and a bare
+# `export DOCKER_FL_REGISTRY` DEFINES it as empty (origin=file) — which silently
+# defeats `DOCKER_FL_REGISTRY ?= $(DOCKER_REGISTRY)` in deploy/fl_backend.mk and
+# leaves the FL images unprefixed (`flare-fl-server:stag` -> pull access denied).
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
-export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
+export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(MAIN_ENV_FILE))
 endif
 
 include deploy/fl_backend.mk
@@ -298,6 +303,11 @@ restart-no-trust:
 	$(MAKE) -e DEBUG=$(DEBUG) -C flip-api restart
 ci:
 	act --env-file .env.development
+# Runs the script directly (not via deploy/providers/AWS/Makefile) so it stays
+# credential-free: that Makefile's parse-time FL_KIT_DATE guard needs the
+# gitignored deploy env files, which contributors don't have.
+checkov-lint:
+	bash deploy/providers/AWS/scripts/checkov_lint.sh
 ui:
 ifeq ($(strip $(PROD)),)
 	@echo "🚀 Starting UI..."
@@ -417,6 +427,7 @@ UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-acce
 # `exclude-newer` window, so transitive pin versions may shift even when no
 # direct dependency changed.
 lock:
+	@./scripts/check-uv-version.sh
 	@for dir in $(UV_PROJECTS); do \
 		echo "Locking $$dir"; \
 		( cd $$dir && uv lock ) || exit 1; \
