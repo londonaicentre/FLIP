@@ -49,6 +49,92 @@ spec:
   policyTypes:
     - Ingress
 ---
+{{- if and .Values.networkPolicies.enabled (ne .Values.pacs.host "orthanc") }}
+{{- $pacsPort := .Values.pacs.qrPort | int }}
+{{- $egressOk := false }}
+{{- range .Values.networkPolicies.allowedEgressCIDRsWithPorts }}
+  {{- if eq (.port | int) $pacsPort }}{{ $egressOk = true }}{{ end }}
+{{- end }}
+{{- range .Values.networkPolicies.allowedEgressPorts }}
+  {{- if eq (.port | int) $pacsPort }}{{ $egressOk = true }}{{ end }}
+{{- end }}
+{{- /*
+A non-empty allowedEgressCIDRs satisfies this check whatever is in it: those entries are all-ports
+rules, and Helm cannot do CIDR containment, so the chart cannot tell whether one of them actually
+covers the PACS. That is a deliberate escape hatch rather than an oversight — but it means the
+guarantee here is "either a port-scoped rule names the PACS port, or you have taken an all-ports
+rule on trust", not "a PACS with no egress rule is always refused". Said plainly in the message
+below and at networkPolicies.allowedEgressCIDRs in values.yaml.
+*/ -}}
+{{- if and (not $egressOk) (not .Values.networkPolicies.allowedEgressCIDRs) }}
+{{- fail (printf "pacs.host is %s but no egress rule reaches its query/retrieve port %v. XNAT could not issue C-FIND or C-MOVE, so retrieval would fail before it began. Add the PACS to networkPolicies.allowedEgressCIDRsWithPorts. (Note: a non-empty networkPolicies.allowedEgressCIDRs also satisfies this check — those are all-ports rules and the chart cannot verify one covers the PACS, so it assumes it does.)" .Values.pacs.host .Values.pacs.qrPort) }}
+{{- end }}
+{{- $dicomPort := .Values.xnat.web.dicomPort | int }}
+{{- $ingressOk := false }}
+{{- range .Values.networkPolicies.allowedIngressCIDRsWithPorts }}
+  {{- if eq (.port | int) $dicomPort }}{{ $ingressOk = true }}{{ end }}
+{{- end }}
+{{- /*
+The return leg, guarded to the same standard as the outbound one. Retrieval is two connections in
+opposite directions: XNAT dials the PACS to C-FIND and C-MOVE, then the PACS opens a *new*
+association back to XNAT to C-STORE the studies. Omitting the egress rule already fails this render;
+omitting the inbound one used to render clean and produce the failure this chart's comments call the
+hardest to diagnose — queries succeed, retrievals silently time out with nothing logged on either
+side. Both directions now fail equally loudly, at render, naming the values to set.
+*/ -}}
+{{- if not $ingressOk }}
+{{- fail (printf "pacs.host is %s but networkPolicies.allowedIngressCIDRsWithPorts has no entry on port %v. After XNAT issues C-MOVE the PACS opens a new association back to XNAT to C-STORE the studies; without that allowance it is dropped, so queries succeed and retrievals silently time out. Add the PACS CIDRs on port %v, and make the receiver reachable from outside the cluster with xnat.web.service.type: NodePort plus xnat.web.dicomNodePort. Note the port here is the pod's containerPort (xnat.web.dicomPort, default 8104) and not dicomNodePort: a NetworkPolicy matches the port the pod listens on, after the node has undone the NodePort translation." .Values.pacs.host $dicomPort $dicomPort) }}
+{{- end }}
+{{- /*
+The NetworkPolicy admits the C-STORE leg only as far as the pod; the packet still needs a route from
+outside the cluster to that pod. That check is deliberately NOT here: it is a statement about the
+Service's exposure rather than about NetworkPolicy, and inside this file it inherited the
+`networkPolicies.enabled` condition above, so an install with policies disabled rendered cleanly on
+ClusterIP with no path a PACS packet could take. It now lives in the
+`flip-trust.validatePacsReachable` partial in _helpers.tpl, included from templates/xnat-web.yaml,
+where it fires either way.
+*/ -}}
+{{- end }}
+{{- if .Values.networkPolicies.allowedIngressCIDRsWithPorts }}
+# Allow inbound DICOM from the trust PACS.
+#
+# The default-deny above models FLIP's zero-inbound posture, which holds for the internet and for
+# the Central Hub: neither can open a connection to a trust. Retrieval from a trust PACS is the one
+# exception, and it is inbound by protocol rather than by choice — FLIP pulls, so after XNAT issues
+# C-MOVE the PACS opens a *new* association back to XNAT to C-STORE the studies (FLIP#993).
+#
+# This stays default-deny until an operator lists the PACS CIDRs, and the allowance is scoped to
+# those CIDRs on that port only. It does not open anything to the internet or to the hub.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-allow-pacs-ingress
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: xnat-web
+  ingress:
+{{- range .Values.networkPolicies.allowedIngressCIDRsWithPorts }}
+    - from:
+  {{- range .cidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+  {{- end }}
+      ports:
+        {{- if not .port }}
+        {{- fail "networkPolicies.allowedIngressCIDRsWithPorts: each entry needs an explicit `port`. Kubernetes reads an absent port as *all* ports, which would widen the one inbound path into the trust from DICOM to everything." }}
+        {{- end }}
+        - port: {{ .port }}
+          protocol: {{ .protocol | default "TCP" }}
+{{- end }}
+  policyTypes:
+    - Ingress
+{{- end }}
+---
 # Allow egress to specific destinations (Central Hub, FL server, DNS, IMDS)
 # All other egress is denied
 apiVersion: networking.k8s.io/v1

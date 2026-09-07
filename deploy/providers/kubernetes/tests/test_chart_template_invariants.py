@@ -41,11 +41,17 @@ TEMPLATES_DIR = CHART_DIR / "templates"
 VALUES_FILE = CHART_DIR / "values.yaml"
 XNAT_INIT_JOB = TEMPLATES_DIR / "xnat-init-job.yaml"
 OMOP_DB_TEMPLATE = TEMPLATES_DIR / "omop-db.yaml"
+REPO_ROOT = CHART_DIR.parents[2]  # deploy/providers/kubernetes -> repo root
+CONFIGURE_XNAT = REPO_ROOT / "trust" / "xnat" / "xnat" / "config" / "configure-xnat.sh"
 
 # The activation POST, and the gate that must not precede it. Matched on the calls
 # rather than the surrounding prose — the comments name both endpoints in both orders.
-ACTIVATION_CALL = 'xnat_curl -X POST "${XNAT_URL}/xapi/siteConfig"'
-PLUGIN_GATE_POLL = '"${XNAT_URL}/xapi/dqr/settings"'
+#
+# These live in configure-xnat.sh, not in the Job template: since FLIP#993 the initContainer
+# runs that script instead of carrying its own inline copy, so the ordering is asserted at its
+# one remaining source. The Job is checked separately for the delegation that makes it apply.
+ACTIVATION_CALL = 'xnat_curl -X POST "$XNAT_URL/xapi/siteConfig"'
+PLUGIN_GATE_POLL = "bash wait-for-xnat-plugins.sh"
 
 PROBE_FIELDS = ("initialDelaySeconds", "periodSeconds", "timeoutSeconds", "failureThreshold")
 
@@ -134,12 +140,23 @@ def _values_declares(dotted_path: str) -> bool:
     return False
 
 
-def test_the_xnat_site_is_activated_before_the_plugin_route_gate() -> None:
-    """Reversed, the gate can never see a 2xx and blames itself for the ordering."""
+def test_the_init_container_delegates_to_configure_xnat() -> None:
+    """The ordering invariant below is only binding if the Job actually runs that script."""
     script = _init_container_script()
 
-    assert ACTIVATION_CALL in script, f"no site-activation call {ACTIVATION_CALL!r} in the initContainer"
-    assert PLUGIN_GATE_POLL in script, f"no plugin-route gate {PLUGIN_GATE_POLL!r} in the initContainer"
+    assert "bash configure-xnat.sh" in script, (
+        "the xnat-init initContainer no longer runs configure-xnat.sh — if it has gone back to an "
+        "inline copy of the configuration, assert the activation ordering against that copy too, "
+        "or this suite guards a script the cluster never executes"
+    )
+
+
+def test_the_xnat_site_is_activated_before_the_plugin_route_gate() -> None:
+    """Reversed, the gate can never see a 2xx and blames itself for the ordering."""
+    script = CONFIGURE_XNAT.read_text()
+
+    assert ACTIVATION_CALL in script, f"no site-activation call {ACTIVATION_CALL!r} in configure-xnat.sh"
+    assert PLUGIN_GATE_POLL in script, f"no plugin-route gate {PLUGIN_GATE_POLL!r} in configure-xnat.sh"
     assert script.index(ACTIVATION_CALL) < script.index(PLUGIN_GATE_POLL), (
         "the plugin-route gate runs before the site is activated: every plugin route 302s to "
         "/setup until activation, so the gate burns its whole budget and then reports "
