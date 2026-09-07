@@ -92,21 +92,26 @@ spec:
           operator: Exists
           effect: NoSchedule
       {{- end }}
+      {{- with .Values.flClient.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       initContainers:
         # Pre-create this net's slice of the shared images volume: the fl-client
         # container below mounts only <imagesDir>/<netId> via subPath — least
         # privilege, so training code cannot read another net's cached studies —
         # and kubelet creates a missing subPath dir as root, which the writers
         # could then never use. Owner is the uid imaging-api writes as (1000,
-        # the image-baked `flip` user — GHSA-8465, same anchor as kit-init's
-        # chown below); on Flower the group is the SuperNode's `app` uid (49999)
+        # the image-baked `flip` user — GHSA-8465); on Flower the group is the
+        # SuperNode's `app` uid (49999)
         # with group-write, because the client itself must also write inside the
         # net dir (`flip.add_resource` stages files under <netId>/upload/;
         # NVFLARE's CleanupImages deletes the dir's children — both need write,
         # read-only is NOT sufficient for the client). Without this, every
         # imaging-api download would 500 with EACCES and training would die
         # later with a misleading num_samples=0.
-        # Runs unconditionally, unlike kit-init below. Reuses the fl-client's
+        # This is the pod's only init container: the kit is staged onto the node
+        # out-of-band (`make stage-kit`), never fetched here. Reuses the fl-client's
         # own image (already required by this pod — no extra registry
         # dependency) with an explicit root securityContext: chown/chmod need
         # root, but privilege is scoped to exactly the three file capabilities.
@@ -144,66 +149,6 @@ spec:
           volumeMounts:
             - name: images
               mountPath: {{ .Values.flClient.imagesDir }}
-      {{- if include "flip-trust.flClientKitFromS3" . }}
-        - name: kit-init
-          image: amazon/aws-cli:2.22.0
-          command:
-            - /bin/sh
-            - -c
-            - |
-              set -euo pipefail
-              {{- $kitFromS3 := (index .Values.flClient .Values.flBackend).kitFromS3 }}
-              S3_PATH="{{ tpl $kitFromS3.pathTemplate . }}"
-              S3_BUCKET="{{ $kitFromS3.bucket }}"
-              DEST_DIR="/opt/fl-client/kit"
-              echo "Syncing s3://${S3_BUCKET}/${S3_PATH} to ${DEST_DIR}..."
-              {{- if .Values.flClient.s3EndpointOverride }}
-              aws s3 sync "s3://${S3_BUCKET}/${S3_PATH}" "${DEST_DIR}" --delete --endpoint-url {{ .Values.flClient.s3EndpointOverride | quote }}
-              {{- else }}
-              aws s3 sync "s3://${S3_BUCKET}/${S3_PATH}" "${DEST_DIR}" --delete
-              {{- end }}
-              chmod -R go-rwx "${DEST_DIR}"
-              # The init runs as root, so after stripping group/other access the
-              # tree must be handed to the fl-client's runtime user or the main
-              # container cannot even traverse the kit dirs (Permission denied
-              # on /certs, /keys). Uids are the image-baked users: Flower's
-              # upstream base runs as `app` (49999); the NVFLARE image as
-              # `flip` (1000, GHSA-8465).
-              {{- if eq .Values.flBackend "flower" }}
-              chown -R 49999:49999 "${DEST_DIR}"
-              {{- else }}
-              chown -R 1000:1000 "${DEST_DIR}"
-              {{- end }}
-              echo "Kit sync complete."
-          env:
-            - name: AWS_DEFAULT_REGION
-              value: {{ default "eu-west-2" .Values.awsRegion | quote }}
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
-                  key: s3-access-key-id
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
-                  key: s3-secret-access-key
-            - name: AWS_SESSION_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
-                  key: aws-session-token
-          volumeMounts:
-            - name: fl-client-kit
-              mountPath: /opt/fl-client/kit
-            - name: images
-              mountPath: {{ .Values.flClient.imagesDir }}
-{{- if .Values.flClient.hostAwsMount.enabled }}
-            - name: host-aws
-              mountPath: /root/.aws
-              readOnly: {{ .Values.flClient.hostAwsMount.readOnly }}
-{{- end }}
-      {{- end }}
       containers:
         - name: fl-client
           image: {{ include "flip-trust.flClientImage" . }}
@@ -374,17 +319,11 @@ spec:
             medium: Memory
             sizeLimit: {{ .Values.flClient.shmSize }}
         - name: fl-client-kit
-{{- if and (not (include "flip-trust.flClientKitFromS3" .)) .Values.flClient.kitHostPath }}
+          # Pre-provisioned on the node. The chart cannot fetch it: a trust holds no
+          # FLIP credentials, and the kit arrives out-of-band (see values.yaml).
+          # `type: Directory` makes a missing path a scheduling failure that names the
+          # path, rather than an empty dir the client fails against much later.
           hostPath:
-            path: {{ .Values.flClient.kitHostPath | quote }}
+            path: {{ required "flClient.kitHostPath is required when flClient.enabled — the absolute path ON THE NODE holding this trust's provisioned FL participant kit. Stage it with `make -C deploy/providers/kubernetes stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then --set flClient.kitHostPath=/opt/flip/fl-kit (stage-kit's default KIT_DEST, and the kit file's FL_KIT_DIR)" .Values.flClient.kitHostPath | quote }}
             type: Directory
-{{- else }}
-          emptyDir: {}
-{{- end }}
-{{- if .Values.flClient.hostAwsMount.enabled }}
-        - name: host-aws
-          hostPath:
-            path: {{ .Values.flClient.hostAwsMount.hostPath | quote }}
-            type: Directory
-{{- end }}
 {{- end }}

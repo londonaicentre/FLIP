@@ -85,38 +85,293 @@ def _normalise_job_type(job_type: str, fl_backend: FLBackend) -> str:
     return resolved
 
 
-def list_local_base_files(base_dir: Path) -> list[str]:
-    """List every file under a local base-application directory, recursively.
+# The app directory of a base template — the only directory that is ever deployed. Everything a
+# job actually needs at a trust lives under it: the NVFLARE ``app/config/*.json`` pair, or the
+# Flower ``app/*.py`` modules named by ``[tool.flwr.app.components]``. The researcher's own files
+# are added by the bundler afterwards (into ``app*/custom/`` for NVFLARE, or alongside for Flower)
+# and never pass through this walk.
+BUNDLED_APP_DIR_NAME = "app"
+
+# Per-backend name prefixes that make a top-level directory an *additional* app folder beside
+# ``app/``. An NVFLARE job may carry per-site variants — ``app_site1/``, ``app_site-1/``,
+# ``app_server/`` — each named in ``meta.json``'s ``deploy_map`` and deployed to the sites it
+# lists; ``bundle_nvflare_application`` and fl-api-base's job assembly both handle that layout.
+# A Flower App Bundle has exactly one app package, so nothing but ``app/`` qualifies there.
+BUNDLED_APP_DIR_PREFIXES: dict[str, tuple[str, ...]] = {
+    FLBackend.NVFLARE: ("app_",),
+    FLBackend.FLOWER: (),
+}
+
+# The single root file each backend needs beside the app folder(s):
+#   NVFLARE  meta.json      — the job definition NVFLARE reads to deploy the app.
+#   Flower   pyproject.toml — the FAB definition; ``[tool.flwr.app.components]`` resolves
+#                             ``app.server_app:app`` relative to it, so it must sit at the run root.
+#
+# There is deliberately no slot for a lockfile, and no template commits one. Flower resolves
+# dependencies fresh on every app launch at every trust (``uv sync``, see FL_APP_BASE_DIR in
+# CLAUDE.md), so a committed ``uv.lock`` would be a resolution for the developer's machine rather
+# than for the trust — which is also why ``uv.lock`` is named in EXCLUDED_APP_FILE_NAMES below, to
+# keep one out of an app folder. If reproducible per-run resolution ever becomes a requirement,
+# both halves have to change together: add the lockfile here and stop excluding it there, and the
+# lock then has to be resolved for the FL image's platform, not for whoever ran ``uv sync`` last.
+BUNDLED_ROOT_FILES: dict[str, frozenset[str]] = {
+    FLBackend.NVFLARE: frozenset({"meta.json"}),
+    FLBackend.FLOWER: frozenset({"pyproject.toml"}),
+}
+
+
+def _assert_backends_have_bundling_rules() -> None:
+    """Fail at import if a backend has no bundling rule, naming it and the map that lacks it.
+
+    Both maps above are indexed directly, so a member of :class:`FLBackend` missing from either
+    surfaced as a bare ``KeyError(<backend>)`` raised from inside the bundler — the one error in
+    this module that did not name the rule it was enforcing. ``FLBackend``'s own docstring invites
+    adding a backend "in this one place", which makes forgetting these two maps a realistic
+    mistake, so the check runs at import: the drift fails in CI at collection time rather than at a
+    trust, mid-bundle.
+
+    Raises:
+        RuntimeError: If any :class:`FLBackend` member is absent from either map.
+    """
+    for map_name, mapping in (
+        ("BUNDLED_APP_DIR_PREFIXES", BUNDLED_APP_DIR_PREFIXES),
+        ("BUNDLED_ROOT_FILES", BUNDLED_ROOT_FILES),
+    ):
+        missing = sorted(str(backend) for backend in FLBackend if backend not in mapping)
+        if missing:
+            raise RuntimeError(
+                f"FL backend(s) {missing} have no bundling rule: add them to {map_name} in "
+                f"{__name__}. Every FLBackend member needs an entry in both BUNDLED_APP_DIR_PREFIXES "
+                f"(which top-level directories are app folders) and BUNDLED_ROOT_FILES (the single "
+                f"root file that ships beside them)."
+            )
+
+
+_assert_backends_have_bundling_rules()
+
+
+def is_bundled_app_dir(name: str, fl_backend: FLBackend) -> bool:
+    """Whether a top-level template directory is an app folder that this backend deploys.
+
+    One rule shared by the allowlist walk and the NVFLARE bundler's app-folder scan, so the two
+    cannot drift: ``app/`` on every backend, plus any :data:`BUNDLED_APP_DIR_PREFIXES` match
+    (``app_*`` on NVFLARE only). Anything else that merely starts with ``app`` — ``apps/``,
+    ``application/`` — is not an app folder.
+
+    Args:
+        name (str): The directory's name (not a path).
+        fl_backend (FLBackend): The backend whose layout applies.
+
+    Returns:
+        bool: True if files under ``name/`` belong in the bundle.
+    """
+    return name == BUNDLED_APP_DIR_NAME or name.startswith(BUNDLED_APP_DIR_PREFIXES[fl_backend])
+
+
+def describe_bundled_app_dirs(fl_backend: FLBackend) -> str:
+    """Human-readable form of the app-folder rule, for error messages and the debug log.
+
+    Args:
+        fl_backend (FLBackend): The backend whose layout applies.
+
+    Returns:
+        str: ``"app/"``, or ``"app/ or app_*/"`` where per-site variants are allowed.
+    """
+    return " or ".join([f"{BUNDLED_APP_DIR_NAME}/", *(f"{p}*/" for p in BUNDLED_APP_DIR_PREFIXES[fl_backend])])
+
+
+# Artefacts that appear *inside* an app folder rather than at the template root. Positional
+# allowlisting cannot exclude these — the app folder is the thing being allowed — so within it the
+# rule is inverted: drop anything dot-prefixed plus the named exceptions below.
+#
+# Compiled Python is not the only such artefact, and treating it as the only one left the allowlist
+# closed at depth 0 only. A template directory is a live uv project root, so the tools that run
+# there write *into* ``app/`` too: ``.venv/``, ``.flwr/``, ``.ruff_cache/``, ``.pytest_cache/``, a
+# stray ``.env``, and ``.DS_Store`` in every directory the Finder displays. The counter-evidence is
+# in-tree — ``fl-tutorials/flower/3d_spleen_segmentation_evaluation/app/.gitignore`` exists
+# precisely to ignore ``.flwr/``, ``.venv/`` and ``uv.lock`` *inside* an ``app/`` directory. The
+# dot rule catches all but ``uv.lock``, which is named because it is not dot-prefixed: it is a
+# resolved lock for the developer's machine, and the Flower run-root ``pyproject.toml`` is what the
+# per-run ``uv sync`` at a trust resolves from.
+#
+# So the two halves of the rule are not the same kind of rule, and only one of them is closed. At
+# the template root the allowlist is *positional* — a directory ships because it is an app folder,
+# and nothing else can qualify. Inside an app folder it is *name-based*, so an artefact carrying no
+# leading dot is still kept: ``app/htmlcov/``, ``app/dist/``, ``app/node_modules/``, an
+# ``app/*.egg-info/``. That stays a denylist that has to keep pace, rather than one closed by
+# construction. It is unlikely to bite — those tools run from the template root, where position
+# already excludes their output — and any committed instance is caught by the static guard in
+# test_fl_service.py, which asserts that every committed template file either ships or is a
+# recorded exclusion.
+EXCLUDED_APP_DIR_NAMES = frozenset({"__pycache__"})
+EXCLUDED_APP_FILE_NAMES = frozenset({"uv.lock"})
+EXCLUDED_APP_FILE_SUFFIXES = (".pyc", ".pyo")
+
+
+def is_excluded_app_entry(name: str) -> bool:
+    """Whether a name inside an app folder is a development artefact rather than deployable content.
+
+    Applies at every depth under the app folder, to both files and directories: anything
+    dot-prefixed, plus the explicitly named exceptions that carry no leading dot.
+
+    Args:
+        name (str): The entry's name (not a path).
+
+    Returns:
+        bool: True if the entry must be excluded from the bundle.
+    """
+    return (
+        name.startswith(".")
+        or name in EXCLUDED_APP_DIR_NAMES
+        or name in EXCLUDED_APP_FILE_NAMES
+        or name.endswith(EXCLUDED_APP_FILE_SUFFIXES)
+    )
+
+
+def list_local_base_files(base_dir: Path, fl_backend: FLBackend) -> list[str]:
+    """List the files of a local base-application template that belong in a deployed bundle.
 
     The base FL application templates live in the repo's ``fl-apps/`` tree, baked into the
     flip-api image and read from ``FL_APP_BASE_DIR`` (FLIP#724) — no longer from S3. This walks
-    ``base_dir`` and returns each file's path relative to it, so the bundler can mirror the tree
-    1:1 into the destination bucket.
+    ``base_dir`` and returns each kept file's path relative to it, so the bundler can mirror them
+    into the destination bucket.
+
+    Selection is a positive allowlist, not a denylist of known junk (FLIP#1008): everything under
+    the backend's app folder(s) plus its single root file, and nothing else. The app folders are
+    ``app/`` on both backends, plus NVFLARE's per-site ``app_*/`` variants (see
+    :func:`is_bundled_app_dir`). A template directory is also a live uv project root — it is where
+    ``pyproject.toml`` sits — so it is exactly where ``uv sync``, ``ruff``, ``pytest`` and friends
+    write their caches. In dev that tree is bind-mounted into flip-api, so a denylist would have to
+    keep pace with every tool a developer might run, and a single miss ships the artefact to every
+    trust. Allowlisting is closed by construction: a ``.venv`` is excluded because it is not an app
+    folder, not because it was enumerated. That property is positional, so it holds at the template
+    root; *inside* an app folder the rule is name-based instead (:func:`is_excluded_app_entry`).
+
+    It also drops files that are real but have no business at a trust — ``recipe.py`` (a developer
+    driver that regenerates the committed configs), ``README.md``, and the per-template
+    ``required_files.json`` (the source for the backend-level manifest flip-api actually reads, one
+    directory up). A denylist could never exclude those, since they are not artefacts.
 
     Args:
         base_dir (Path): Root directory of a backend/job-type base application
             (``<FL_APP_BASE_DIR>/<backend>/<job_type>``).
+        fl_backend (FLBackend): The backend whose layout applies — selects the app-folder rule
+            (:data:`BUNDLED_APP_DIR_PREFIXES`) and the root file (:data:`BUNDLED_ROOT_FILES`).
 
     Returns:
-        list[str]: Sorted relative POSIX paths of every regular file under ``base_dir`` (nested
-        paths included). Empty if ``base_dir`` does not exist or contains no files.
+        list[str]: Sorted relative POSIX paths of every kept file under ``base_dir``. Empty if
+        ``base_dir`` does not exist or contains nothing that qualifies.
 
     Note:
         Symlinks are ignored — both symlinked files and symlinked directories (``followlinks=False``).
         The default baked-in ``fl-apps/`` tree contains none, but ``FL_APP_BASE_DIR`` may point at an
         operator-provided tree; skipping symlinks keeps the walk inside the template tree so a stray
         link can't pull files from elsewhere on the host into the uploaded bundle.
+
+        For that same operator-provided case the allowlist fails *closed*: an unrecognised file is
+        dropped rather than shipped. Every skipped path is logged at debug level so the omission is
+        diagnosable from the bundling logs rather than surfacing as a missing file at a trust.
     """
     if not base_dir.is_dir():
         return []
+
+    allowed_root_files = BUNDLED_ROOT_FILES[fl_backend]
     rel_paths: list[str] = []
-    for dirpath, _dirnames, filenames in os.walk(base_dir, followlinks=False):
-        for name in filenames:
-            path = Path(dirpath) / name
-            if path.is_symlink():
+    skipped: list[str] = []
+
+    for entry in sorted(base_dir.iterdir()):
+        if entry.is_symlink():
+            skipped.append(entry.name)
+            continue
+        if entry.is_dir():
+            if not is_bundled_app_dir(entry.name, fl_backend):
+                skipped.append(f"{entry.name}/")
                 continue
-            rel_paths.append(path.relative_to(base_dir).as_posix())
+            rel_paths.extend(_walk_app_dir(entry, base_dir, skipped))
+        elif entry.is_file():
+            if entry.name in allowed_root_files:
+                rel_paths.append(entry.name)
+            else:
+                skipped.append(entry.name)
+
+    if skipped:
+        logger.debug(
+            f"Excluded from the {base_dir.name} bundle (not under {describe_bundled_app_dirs(fl_backend)}, "
+            f"nor one of {sorted(allowed_root_files)}): {sorted(skipped)}"
+        )
     return sorted(rel_paths)
+
+
+def _walk_app_dir(app_dir: Path, base_dir: Path, skipped: list[str]) -> list[str]:
+    """Collect deployable files under one of a template's app directories.
+
+    Args:
+        app_dir (Path): The app directory (``app/`` or an NVFLARE ``app_*/`` variant).
+        base_dir (Path): Template root, so returned paths stay relative to it.
+        skipped (list[str]): Accumulator for excluded paths, for the caller's debug log.
+
+    Returns:
+        list[str]: Relative POSIX paths of the files to bundle.
+    """
+    kept: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(app_dir, followlinks=False):
+        here = Path(dirpath)
+        # In place, so os.walk does not descend (os.walk contract for topdown=True). A symlinked
+        # directory is listed in dirnames but never entered under followlinks=False, so it is
+        # pruned here too — otherwise it would vanish without being recorded as skipped.
+        pruned = [d for d in dirnames if is_excluded_app_entry(d) or (here / d).is_symlink()]
+        dirnames[:] = [d for d in dirnames if d not in pruned]
+        skipped.extend(f"{here.relative_to(base_dir).as_posix()}/{d}/" for d in pruned)
+
+        for name in filenames:
+            path = here / name
+            rel = path.relative_to(base_dir).as_posix()
+            if path.is_symlink() or is_excluded_app_entry(name):
+                skipped.append(rel)
+                continue
+            kept.append(rel)
+    return kept
+
+
+def _check_base_template(base_dir: Path, base_rel_paths: list[str], fl_backend: FLBackend) -> set[str]:
+    """Reject a malformed base template before anything is written, naming what it must carry.
+
+    Three shapes of malformed template, one wording. Each would otherwise bundle cleanly and only
+    fail at the FL server, far from the cause — NVFLARE has no ``meta.json`` job definition to
+    deploy, fl-api-flower cannot build a FAB without the run-root ``pyproject.toml``, and neither
+    can run a job with no app package. The debug log from the walk lists exactly what was excluded,
+    so a visibly non-empty template directory reporting "missing" stays diagnosable.
+
+    Args:
+        base_dir (Path): The template root, for the error message.
+        base_rel_paths (list[str]): What :func:`list_local_base_files` kept from it.
+        fl_backend (FLBackend): The backend whose layout applies.
+
+    Returns:
+        set[str]: The app folders the walk kept — ``app`` plus NVFLARE's ``app_*`` variants — which
+        is where the researcher's files are mirrored to.
+
+    Raises:
+        FileNotFoundError: Nothing deployable at all, the backend's root file missing, or no app
+            folder (a root file alone).
+    """
+    allowed_root_files = BUNDLED_ROOT_FILES[fl_backend]
+    where = f"in the local base directory: {base_dir}"
+    needs = f"(a bundle needs {describe_bundled_app_dirs(fl_backend)} and one of {sorted(allowed_root_files)})"
+    if not base_rel_paths:
+        raise FileNotFoundError(f"Base application files missing {where} {needs}")
+    if not allowed_root_files.intersection(base_rel_paths):
+        raise FileNotFoundError(f"Base application root file missing {where} {needs}")
+    # Same predicate as the walk, so this scan cannot drift from what was actually bundled.
+    app_folders = {
+        top
+        for top, sep, _ in (rel.partition("/") for rel in base_rel_paths)
+        if sep and is_bundled_app_dir(top, fl_backend)
+    }
+    if not app_folders:
+        raise FileNotFoundError(f"Base application app folder missing {where} {needs}")
+    logger.debug(f"App folders found: {sorted(app_folders)}")
+    return app_folders
 
 
 def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: str) -> Any:
@@ -574,26 +829,15 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     # (FLIP#724) — there is no S3 base bucket.
     base_dir = Path(get_settings().FL_APP_BASE_DIR) / FLBackend.NVFLARE / job_type
     logger.debug(f"Base application dir: {base_dir}")
-    base_rel_paths = list_local_base_files(base_dir)
-    if not base_rel_paths:
-        raise FileNotFoundError(f"Base application files missing in the local base directory: {base_dir}")
+    base_rel_paths = list_local_base_files(base_dir, FLBackend.NVFLARE)
+    # Rejects a malformed template (nothing deployable, no meta.json, or no app folder) before the
+    # destination is touched; app/ plus any per-site app_* variant is what the model files go into.
+    app_folders = _check_base_template(base_dir, base_rel_paths, FLBackend.NVFLARE)
 
     # Clear destination if files already exist there (e.g. from a previous training run)
     dest_files = s3.list_objects(dest_bucket_s3_path)
     if dest_files:
         s3.delete_objects(dest_files)
-
-    # Find app folders (top-level directories that start with "app", e.g. app, app_site1, etc)
-    app_folders: set[str] = set()
-    for rel in base_rel_paths:
-        top = rel.split("/", 1)[0]  # e.g. "app" or "app_site1"
-        if top.startswith("app"):
-            app_folders.add(top)
-
-    if not app_folders:
-        raise FileNotFoundError(f"No app folders found under base application: {base_dir}")
-
-    logger.debug(f"App folders found: {sorted(app_folders)}")
 
     # Validate required model files exist for the job type before uploading anything, so a bad
     # submission fails fast without leaving a partial bundle in the destination bucket.
@@ -796,9 +1040,24 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     # (FLIP#724) — there is no S3 base bucket.
     base_dir = Path(get_settings().FL_APP_BASE_DIR) / FLBackend.FLOWER / job_type
     logger.debug(f"Base application dir: {base_dir}")
-    base_rel_paths = list_local_base_files(base_dir)
-    if not base_rel_paths:
-        raise FileNotFoundError(f"Base application files missing in the local base directory: {base_dir}")
+    base_rel_paths = list_local_base_files(base_dir, FLBackend.FLOWER)
+    # Rejects a malformed template (nothing deployable, no pyproject.toml, or no app/) before the
+    # destination is touched. A FAB has one app package, so the returned set is exactly {app}; take
+    # the destination folder from it rather than restating the name at the copy loop below, which
+    # is the drift the shared is_bundled_app_dir predicate exists to prevent.
+    flower_app_dirs = sorted(_check_base_template(base_dir, base_rel_paths, FLBackend.FLOWER))
+    # Load-bearing: the single-element unpack below is the invariant, not a convenience. Giving
+    # FLOWER a BUNDLED_APP_DIR_PREFIXES entry would make it fail as a bare "too many values to
+    # unpack" from inside the bundler — the unnamed error _assert_backends_have_bundling_rules was
+    # added to eliminate — so the rule is named here instead.
+    if len(flower_app_dirs) != 1:
+        raise RuntimeError(
+            f"A Flower App Bundle has exactly one app package, but the base template at {base_dir} "
+            f"yielded {flower_app_dirs}. Flower has no per-site app folders: keep "
+            f"BUNDLED_APP_DIR_PREFIXES[FLBackend.FLOWER] empty, or teach this bundler and "
+            f"fl-api-flower how to lay out more than one."
+        )
+    (flower_app_dir,) = flower_app_dirs
 
     # Clear destination if files already exist there (e.g. from a previous training run)
     dest_files = s3.list_objects(dest_bucket_s3_path)
@@ -830,11 +1089,11 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
         logger.debug(f"Uploading base {src_path} -> {dest_file_path}")
         s3.upload_file(str(src_path), dest_file_path)
 
-    # Copy model files into app/
+    # Copy model files into the template's app folder
     for src_key in model_files:
         rel = src_key.replace(f"{model_bucket_s3_path}/", "", 1)
 
-        dst_key = f"{dest_bucket_s3_path}/app/{rel}"
+        dst_key = f"{dest_bucket_s3_path}/{flower_app_dir}/{rel}"
         # Check if destination key exists
         if s3.object_exists(dst_key):
             logger.warning(
