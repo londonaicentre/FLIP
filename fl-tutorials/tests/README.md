@@ -58,6 +58,9 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_fl_api_writes_the_key_the_apps_read` | fl-api-flower writes the same `flip-min-clients` key the apps read — the two live in different packages. |
 | `test_strategy_gets_min_clients_from_the_injected_trust_count` | Every FLIP Flower app passes `min_clients` sourced from `min_clients_from_run_config(run_config)`, not a constant. |
 | `test_app_config_declares_flip_min_clients` | Each app declares the key in `[tool.flwr.app.config]` (flwr rejects undeclared overrides) at flwr's default of 2 or more. |
+| `test_tutorial_declares_a_job_type_backed_by_a_template` | Each Flower tutorial's `config.json` names a job type that has an `fl-apps/flower/<job_type>/` template and a `required_files.json` entry — otherwise the researcher's first upload dies inside the bundler. |
+| `test_tutorial_ships_every_file_its_job_type_requires` | The manifest's required files are all present, so the gap fails here rather than mid-e2e after a trust has already pulled imaging. |
+| `test_platform_owned_files_are_identical_in_the_tutorial` | Every file the fl-apps template ships is present and equivalent in the tutorial's `app/`. flip-api **reserves** those names and discards the researcher's copy, so a drifted tutorial runs one thing on the simulator and deploys another. Files with no executable code in either tree may differ, which is what lets each tutorial keep its own `__init__.py` docstring. |
 | `test_phantom_has_no_dihedral_symmetry` | The fixture is non-square **and** distinguishable from all eight of its dihedral variants. |
 | `test_phantom_dicom_round_trips` | Each synthetic encoding decodes back to the phantom. |
 | `test_loader_prefix_matches_pixel_data` | The chain up to the first resampling transform is `np.array_equal` to `pydicom`'s `PixelData`. |
