@@ -26,9 +26,19 @@ SCRIPT_PATH = DATASETS_DIR / "cxr" / "omop_convert_cxr.py"
 # the two that make this dataset different from spleen: they carry the synthetic radiology report
 # that becomes the image_feature and observation rows.
 METADATA_COLUMNS = [
-    "FileName", "PatientID", "PatientSex", "PatientBirthDate", "AccessionNumber",
-    "Modality", "StudyDate", "StudyTime", "StudyDescription",
-    "StudyInstanceUID", "SeriesInstanceUID", "conditioning", "pathologies",
+    "FileName",
+    "PatientID",
+    "PatientSex",
+    "PatientBirthDate",
+    "AccessionNumber",
+    "Modality",
+    "StudyDate",
+    "StudyTime",
+    "StudyDescription",
+    "StudyInstanceUID",
+    "SeriesInstanceUID",
+    "conditioning",
+    "pathologies",
 ]
 
 
@@ -78,12 +88,19 @@ def _write_metadata_csv(path: Path, rows: list[tuple[str, str]]) -> Path:
             nhs = f"{100000000 + index:09d}"
             writer.writerow(
                 {
-                    "FileName": f"sample_{index}", "PatientID": f"{nhs[:3]} {nhs[3:6]} {nhs[6:]}",
-                    "PatientSex": "M", "PatientBirthDate": "19500101", "AccessionNumber": nhs,
-                    "Modality": "CR", "StudyDate": "20200101", "StudyTime": "120000",
-                    "StudyDescription": "Chest X-ray", "StudyInstanceUID": f"1.2.3.{index}",
+                    "FileName": f"sample_{index}",
+                    "PatientID": f"{nhs[:3]} {nhs[3:6]} {nhs[6:]}",
+                    "PatientSex": "M",
+                    "PatientBirthDate": "19500101",
+                    "AccessionNumber": nhs,
+                    "Modality": "CR",
+                    "StudyDate": "20200101",
+                    "StudyTime": "120000",
+                    "StudyDescription": "Chest X-ray",
+                    "StudyInstanceUID": f"1.2.3.{index}",
                     "SeriesInstanceUID": f"1.2.3.{index}.1",
-                    "conditioning": conditioning, "pathologies": pathologies,
+                    "conditioning": conditioning,
+                    "pathologies": pathologies,
                 }
             )
     return path
@@ -125,7 +142,7 @@ def test_edema_variants_collapse_to_pulmonary_edema(converter: ModuleType) -> No
 
 
 def test_no_finding_maps_to_normal_lungs(converter: ModuleType) -> None:
-    """"no_finding" is the healthy label, NOT a negated finding — negative stays 0."""
+    """ "no_finding" is the healthy label, NOT a negated finding — negative stays 0."""
     from utils.omop_mappings import MAPPING_FINDING
 
     (entry,) = converter.get_concepts_from_pathologies("no_finding", "No abnormality.")
@@ -133,15 +150,28 @@ def test_no_finding_maps_to_normal_lungs(converter: ModuleType) -> None:
     assert entry["concept"] == MAPPING_FINDING["normal lungs"]
 
 
-def test_an_unmapped_pathology_yields_an_empty_entry(converter: ModuleType, capsys) -> None:
-    """Documented as-is: the upstream `except` swallows the KeyError and appends `{}`.
+def test_an_unmapped_pathology_raises_where_it_is_unmapped(converter: ModuleType) -> None:
+    """The failure names the offending values at the point they fail to map (FLIP#1097 review).
 
-    The caller then reads entry["concept"] and dies with a KeyError naming the wrong thing, so an
-    unmapped finding surfaces far from its cause. Pinned rather than fixed — changing it is a
-    behaviour change to vendored code, and no published row exercises it.
+    Upstream this swallowed the KeyError and appended `{}`, which nothing downstream guarded: the
+    empty dict reached entry["concept"] ~190 lines later and the run died with KeyError: 'concept',
+    with the real cause on stdout only. No published row exercises this — the gate still passes for
+    both projects — but the next dataset added to this tree is exactly what would hit it.
     """
-    assert converter.get_concepts_from_pathologies("pneumothorax", "Pneumothorax.") == [{}]
-    assert "pneumothorax" in capsys.readouterr().out
+    with pytest.raises(KeyError) as excinfo:
+        converter.get_concepts_from_pathologies("pneumothorax", "Pneumothorax.")
+
+    message = str(excinfo.value)
+    assert "pneumothorax" in message
+    assert "both lungs" in message, "the location that did map should still be reported"
+    assert "omop_mappings" in message, "the message should say where to add it"
+
+
+def test_data_that_maps_cleanly_is_unaffected_by_the_raise(converter: ModuleType) -> None:
+    """Both mappings resolving means no exception path is taken — byte-faithfulness preserved."""
+    entries = converter.get_concepts_from_pathologies("pleural_effusion,edema", "Right-sided edema.")
+    assert len(entries) == 2
+    assert all(set(entry) == {"concept", "location", "negative"} for entry in entries)
 
 
 def test_transform_produces_the_expected_tables(converter: ModuleType, tmp_path: Path) -> None:
@@ -164,9 +194,7 @@ def test_surrogate_ids_come_from_the_cxr_block(converter: ModuleType, tmp_path: 
     """cxr_project owns 1,000,000-1,999,999; spleen owns the next block up."""
     from utils.omop_ids import PROJECT_ID_BLOCKS
 
-    csv_path = _write_metadata_csv(
-        tmp_path / "cxr_metadata.csv", [("no_finding", "No abnormality.")] * 3
-    )
+    csv_path = _write_metadata_csv(tmp_path / "cxr_metadata.csv", [("no_finding", "No abnormality.")] * 3)
 
     tables = converter.transform_dicom_metadata_to_omop_tables(str(csv_path), omop_root=".")
 
@@ -175,9 +203,7 @@ def test_surrogate_ids_come_from_the_cxr_block(converter: ModuleType, tmp_path: 
     assert list(tables["image_occurrence"]["image_occurrence_id"]) == [base + 1, base + 2, base + 3]
 
 
-def test_image_feature_and_observation_are_paired_by_a_derived_id(
-    converter: ModuleType, tmp_path: Path
-) -> None:
+def test_image_feature_and_observation_are_paired_by_a_derived_id(converter: ModuleType, tmp_path: Path) -> None:
     """One image_feature and one observation per finding, sharing an id derived from the occurrence.
 
     The id is the image_occurrence_id with a two-digit finding index appended, which puts it well
@@ -212,12 +238,8 @@ def test_observation_value_records_presence_and_absence(converter: ModuleType, t
     assert list(observation["value_as_number"]) == [0.0, 1.0]
 
 
-def test_split_writes_one_directory_per_trust_without_the_trust_column(
-    converter: ModuleType, tmp_path: Path
-) -> None:
-    csv_path = _write_metadata_csv(
-        tmp_path / "cxr_metadata.csv", [("no_finding", "No abnormality.")] * 4
-    )
+def test_split_writes_one_directory_per_trust_without_the_trust_column(converter: ModuleType, tmp_path: Path) -> None:
+    csv_path = _write_metadata_csv(tmp_path / "cxr_metadata.csv", [("no_finding", "No abnormality.")] * 4)
     tables = converter.transform_dicom_metadata_to_omop_tables(str(csv_path), omop_root=".")
 
     converter.split_data_into_trusts_and_copy_dicoms(tables, omop_root=".", copy_dicom=False)

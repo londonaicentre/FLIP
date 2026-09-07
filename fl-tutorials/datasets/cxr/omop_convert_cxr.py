@@ -98,9 +98,17 @@ def get_concepts_from_pathologies(pathologies_str: str, conditioning: str) -> li
                 "location": MAPPING_ANATOMIC_SITE[location],
                 "negative": 1 if "no_" in pathology else 0,
             }
-        except Exception as e:
-            pathology_entry = {}
-            print(e)
+        except KeyError as e:
+            # Upstream this caught Exception, printed it and appended {}. Nothing downstream guarded
+            # the empty dict, so it reached entry["concept"] ~190 lines later and the run died with
+            # KeyError: 'concept', with the real cause visible only on stdout. Unreachable for the
+            # published data — every finding and location it carries maps — but this tree exists for
+            # the next dataset added to it, and this is the branch that one is most likely to hit.
+            raise KeyError(
+                f"unmapped finding/location in pathologies {pathologies_str!r}: finding "
+                f"{pathology_description!r}, location {location!r} — add it to utils.omop_mappings "
+                "(MAPPING_FINDING / MAPPING_ANATOMIC_SITE)"
+            ) from e
 
         output_pathology_entries.append(pathology_entry)
 
