@@ -59,7 +59,15 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   on GPU hosts
 - GNU Make, `jq`, and `curl`
-- [Python 3.12 or 3.13](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/)
+- [Python 3.12 or 3.13](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/) **>= 0.10.0** —
+  earlier uv cannot parse the `exclude-newer = "3 days"` cooldown (see
+  [Dependency cooldown](#dependency-cooldown-supply-chain-protection)); it warns, ignores the setting and
+  re-resolves `uv.lock` without any cooldown. `scripts/check-uv-version.sh` checks this at the two entry
+  points that re-resolve a lockfile with your own uv — `make lock` and
+  `fl-services/nvflare/provision/scripts/provision-network.sh`. It is not a global gate: a bare
+  `uv sync`, `uv run --project` or `uv lock` run by hand is unguarded, so keep your uv current rather
+  than relying on the check to catch you. (The `uv-lock` pre-commit hook is not a gap here — it pins its
+  own uv and runs `uv lock --check`, which verifies and never rewrites.)
 - The AWS CLI configured for SSO access to the development environment
 - [act](https://github.com/nektos/act) if you want to run GitHub Actions locally
 - **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:
@@ -185,6 +193,17 @@ make generate-internal-service-key
 
 This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into `.env.development` for
 fl-server-to-hub authentication.
+
+#### Updating an existing checkout
+
+Three changes affect checkouts created before them. None is picked up automatically, because
+`.env.development` and the trust kit files are gitignored and never rewritten for you.
+
+| What changed | What to do |
+| --- | --- |
+| `NLB_SUBDOMAIN` is now a live assignment in `.env.development.example` | Add `NLB_SUBDOMAIN=<your-nlb-subdomain>` to your `.env.development`. `scripts/check_env_vars.py` is a pre-commit hook requiring every variable in the example file to be present in yours, and its regex matches real `^KEY=` assignments only — so a still-commented `# NLB_SUBDOMAIN=` fails your next commit, naming the variable. Nothing in a purely local stack resolves the value; it is required because `scripts/trust_kit_lib.py` lists it among the Hub-shared keys. |
+| uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the NVFLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
+| `NUM_AVAILABLE_GPUS` now defaults to `0` in the dev trust kit examples | Only newly scaffolded kits are affected; existing `trust/.env.<CODE>.<env>` files keep their value. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
 
 For the full local stack, replace every placeholder in these minimum groups before running `make up`:
 

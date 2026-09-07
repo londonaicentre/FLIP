@@ -27,7 +27,7 @@
 # Load XNAT-specific .env file
 ifneq ("$(wildcard .env)","")
 include .env
-export $(shell sed 's/=.*//' .env)
+export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' .env)
 endif
 
 # Default DOCKER_TAG to 'stag' when running standalone (not via root Makefile which exports its own)
@@ -72,10 +72,12 @@ KIT_FILE := $(if $(wildcard ../.env.$(KIT).$(ENV)),../.env.$(KIT).$(ENV),../.env
 # compose YAML from the calling shell env only. Without this export, the
 # stack came up with empty admin creds and configure-xnat.sh would 401/403
 # on every auth call, leaving "Site has not yet been configured" forever.
-# Pattern mirrors line 28 for trust/xnat/.env; Make silently ignores the
-# comment-line "exports" that sed leaks through.
+# Pattern mirrors the trust/xnat/.env export above. The sed extracts ONLY real
+# assignments: a plain `sed 's/=.*//'` also emits commented-out lines such as
+# `# FOO=`, and a bare `export FOO` DEFINES FOO as empty (origin=file), which
+# silently defeats any later `FOO ?= default`.
 ifneq ("$(wildcard $(KIT_FILE))","")
-export $(shell sed 's/=.*//' $(KIT_FILE))
+export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(KIT_FILE))
 endif
 
 # INSTANCE_PREFIX for the per-instance trust network. FLIP_INSTANCE arrives already exported
@@ -257,8 +259,45 @@ endif
 	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
 	PACS_UI_PORT=$(PACS_UI_PORT_EFFECTIVE) \
 	DOCKER_NETWORK_NAME=$(XNAT_NETWORK) \
-	docker stack deploy --with-registry-auth --detach=false ${STACK_FILES} $(XNAT_STACK)
+	docker stack deploy --with-registry-auth --resolve-image "$(XNAT_RESOLVE_IMAGE)" --detach=false ${STACK_FILES} $(XNAT_STACK)
 	$(MAKE) xnat-configure XNAT_PROJECT=$(XNAT_STACK)
+
+# Docker Swarm enforces image/node architecture strictly and, unlike docker compose,
+# will NOT fall back to emulation: an amd64-only image on an arm64 node sits Pending
+# forever with "no suitable node (unsupported platform on 1 node)". The XNAT images
+# are published amd64-only, so the whole stack stalls on an Apple Silicon host while
+# the compose-deployed hub and trust services run fine under emulation.
+#
+# `--resolve-image never` skips the registry manifest query that feeds that check, so
+# a locally-present amd64 image is scheduled and runs emulated. Opt out of digest
+# pinning only for a KNOWN non-amd64 arch, so anything else — including an empty
+# probe result — keeps the `always` that Linux/amd64 hosts rely on. Override
+# explicitly if needed:
+#   make up-xnat KIT=<CODE> XNAT_RESOLVE_IMAGE=always
+#
+# The use site quotes the expansion. `?=` yields to a command-line assignment even
+# when that assignment is empty, so `make up-xnat XNAT_RESOLVE_IMAGE=` expands to
+# nothing; unquoted, the empty word disappears and `--resolve-image` swallows the
+# next flag, failing with `invalid argument "--detach=false"`. Quoted, docker gets
+# an empty value and names the flag it belongs to. Not falling back to `always`
+# here is deliberate: that would hand a non-amd64 host the digest pinning this
+# whole block exists to avoid, and reinstate the silent "Pending forever" stall.
+#
+# The filter-out direction is deliberate. `docker info` returns empty for plenty of
+# reasons unrelated to architecture: the daemon not up yet, the user not in the
+# `docker` group (reachable only via sudo), a rootless or remote DOCKER_HOST/context
+# that is momentarily unreachable, or a DOCKER_CONTEXT needing auth. Testing for a
+# known-amd64 value instead would hand every one of those `never` on an amd64 Linux
+# host — losing digest pinning, a supply-chain posture change, as a side effect of
+# detection failing quietly rather than as an explicit decision.
+#
+# Recursive `=`, not `:=`: the probe then runs only when XNAT_RESOLVE_IMAGE is actually
+# expanded, in the up-xnat recipe. Simply-expanded, the `docker info` ran at parse time
+# on EVERY invocation of this Makefile — measured firing on `down-xnat` and
+# `xnat-configure`, neither of which consumes the value, and on each sub-make the
+# trust/xnat/tests suite spawns.
+XNAT_NODE_ARCH = $(shell docker info --format '{{.Architecture}}' 2>/dev/null)
+XNAT_RESOLVE_IMAGE ?= $(if $(filter-out x86_64 amd64,$(XNAT_NODE_ARCH)),never,always)
 
 down:
 	@for f in ../.env.*.$(ENV); do \
