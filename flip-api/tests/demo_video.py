@@ -96,6 +96,33 @@ APPS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "digipath": {
+        "project_name": "Federated Nuclei Detection on Digital Pathology",
+        "project_description": (
+            "Multi-trust federated evaluation: nuclei detection on DICOM whole-slide images."
+        ),
+        "model_name": "Nuclei Detector",
+        "model_description": (
+            "Haematoxylin-peak nuclei detector, evaluated against each trust's own reference "
+            "annotations without the slides or the per-nucleus coordinates leaving the trust."
+        ),
+        # Evaluation-only, and NVFLARE-only: there is no Flower counterpart. No evaluation-specific
+        # wiring is needed here -- as with e2e_smoke_spleen_evaluation, pointing at the evaluation
+        # app directory is the whole difference.
+        "backends": {
+            "nvflare": {
+                "app_dir": (
+                    "fl-tutorials/nvflare/image_evaluation/"
+                    "idc_pathology_nuclei_detection_evaluation/app_files"
+                ),
+                "query_file": (
+                    "fl-tutorials/nvflare/image_evaluation/"
+                    "idc_pathology_nuclei_detection_evaluation/query.sql"
+                ),
+                "label": "NVFLARE",
+            },
+        },
+    },
     "spleen": {
         "project_name": "Federated 3D Spleen Segmentation",
         "project_description": (

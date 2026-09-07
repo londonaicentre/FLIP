@@ -95,7 +95,32 @@ rest.
                         FL evaluation job  ← segments 4-6 film this
 ```
 
-### 1. Validate the pull (do this first)
+### 0. The dataset is below the trust disclosure threshold (found by the gate; blocks everything)
+
+The gate never reached the pull. Staging failed first:
+
+```
+Trusts [...] returned no cohort records (zero or privacy-suppressed) and cannot be staged
+```
+
+This is the platform working correctly. `COHORT_QUERY_THRESHOLD` defaults to **10** — each trust's
+own disclosure floor, enforced trust-side on every row-level cohort route — and the tutorial pins
+`IDC_SLIDES_PER_SITE = 5`. Five is below ten, so each trust refuses to release its cohort, and the
+refusal is deliberately indistinguishable from an empty one.
+
+`LOCAL_DEV` never exercised this because it bypasses the cohort entirely, reading `dataframe.csv`
+off disk. The constraint has always been there; nothing had ever asked.
+
+**The only acceptable fix is more slides.** Lowering the threshold would weaken a privacy control to
+make a demo work, on the very tutorial whose selling point is that slides and per-nucleus
+coordinates never leave the trust. It is not on the table.
+
+Raising `IDC_SLIDES_PER_SITE` to at least 10 is a **deliberate dataset change**: it re-resolves the
+committed manifest, roughly doubles the download (~1.8 GB to ~3.6 GB), and shifts every metric the
+tutorial's README reports, since the evaluation would then run over more slides. That is the
+tutorial author's call, not an implementation detail, so it is escalated rather than assumed.
+
+### 1. Validate the pull (blocked on the above)
 
 Whether imaging-api can carry a slide-microscopy study from Orthanc into XNAT is unknown and
 untested. Everything else is wasted if it cannot.
@@ -142,9 +167,10 @@ existing hook is the wrong place and a new pre-flight hook would earn nothing ov
 
 - `APPS["digipath"]` — on-camera project and model names, one backend (`nvflare`); the tutorial is
   an evaluation recipe and has no Flower counterpart.
-- **Evaluation job support.** Segments 4-6 are written around "create model + train". The tutorial
-  runs `FlipEvalRecipe`, so the recorder needs the evaluation job type. `e2e_smoke` already has an
-  evaluation path (`e2e_smoke_spleen_evaluation`) to follow.
+- **Evaluation needs no recorder support.** This design originally assumed it would, since segments
+  4-6 are written around "create model + train". It does not: `e2e_smoke_spleen_evaluation` is
+  nothing but `MODEL_FILES_DIR` / `QUERY_FILE` overrides, and model creation carries no job type.
+  Pointing the profile at the evaluation app directory is the whole difference.
 - The uploaded artefact is small: the digipath "checkpoint" is a generated specification file
   carrying the detector's physical parameters, not model weights, so nothing here strains
   `MAX_MODEL_FILE_BYTES` or the upload segment's timing.

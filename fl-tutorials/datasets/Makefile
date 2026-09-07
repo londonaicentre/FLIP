@@ -42,7 +42,8 @@ SPLEEN_UV := uv run --project spleen
 
 .PHONY: download-xray-data download-spleen-data download-spleen-msd-data \
 	download-spleen-flip-format-data download-arkplus-finetuning-data \
-	download-arkplus-eval-data upload-spleen-labels download-idc-pathology-data build-idc-pathology-omop
+	download-arkplus-eval-data upload-spleen-labels download-idc-pathology-data build-idc-pathology-omop \
+	seed-idc-pathology
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the layout
 # both harnesses read (data/xrays_mini_300/, gitignored). Idempotent — safe to re-run.
@@ -140,6 +141,33 @@ download-idc-pathology-data:
 # to be reproducible is the selection and the rows describing it, not the gigabytes of DICOM.
 build-idc-pathology-omop:
 	@uv run --no-project --with pandas python idc_pathology/build_omop_project.py
+
+# Seed the pathology slides and their OMOP rows into RUNNING dev trusts, so the tutorial can be
+# driven through the platform (cohort query -> imaging pull -> XNAT -> viewer) rather than only in
+# the simulator. Additive on purpose: update-orthanc-data / update-omop-data replace a trust's whole
+# data directory from a prepared tarball and cannot add to a live one.
+#
+# TRUSTS is "<n>=<orthanc-url>,<omop-dsn>[,<user>:<pass>]" per trust, defaulting to the shipped dev
+# roster's published ports. Credentials come from the kit files, which are gitignored, so they are
+# read at run time rather than baked in here.
+IDC_TRUST_1 ?= 1=http://127.0.0.1:8042,postgresql://$(OMOP_USER_1):$(OMOP_PASS_1)@127.0.0.1:5434/trustomopdb,$(ORTHANC_AUTH_1)
+IDC_TRUST_2 ?= 2=http://127.0.0.1:8044,postgresql://$(OMOP_USER_2):$(OMOP_PASS_2)@127.0.0.1:5436/trustomopdb,$(ORTHANC_AUTH_2)
+IDC_TRUSTS ?= $(IDC_TRUST_1) $(IDC_TRUST_2)
+
+# Pull each value out of its kit file at expansion time; a missing kit yields an empty string and the
+# seeder then fails on connect rather than seeding the wrong place.
+kit_value = $(shell sed -n 's/^$(2)=//p' ../../trust/.env.$(1).development 2>/dev/null | head -1)
+OMOP_USER_1 ?= $(call kit_value,GSTT,OMOP_POSTGRES_USER)
+OMOP_PASS_1 ?= $(call kit_value,GSTT,OMOP_POSTGRES_PASSWORD)
+OMOP_USER_2 ?= $(call kit_value,KCH,OMOP_POSTGRES_USER)
+OMOP_PASS_2 ?= $(call kit_value,KCH,OMOP_POSTGRES_PASSWORD)
+ORTHANC_AUTH_1 ?= $(call kit_value,GSTT,ORTHANC_USERNAME):$(call kit_value,GSTT,ORTHANC_PASSWORD)
+ORTHANC_AUTH_2 ?= $(call kit_value,KCH,ORTHANC_USERNAME):$(call kit_value,KCH,ORTHANC_PASSWORD)
+
+seed-idc-pathology:
+	@uv run --no-project --with psycopg2-binary --with requests python idc_pathology/seed_trusts.py \
+		$(foreach t,$(IDC_TRUSTS),--trust "$(t)") \
+		$(if $(DRY_RUN),--dry-run)
 
 # Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT, so the spleen
 # apps find a label_*.nii.gz beside each pulled input_*.nii.gz. Needs NUM_CASES=41 on the MSD
