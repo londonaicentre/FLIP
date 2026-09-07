@@ -134,6 +134,19 @@ DICOM-to-NIfTI subscription is asynchronous and non-fatal.
 **Re-scope trigger.** If the pull cannot carry an SM study, stop and return to the choice between a
 "from XNAT onwards" recording and fixing imaging-api. Do not build around it silently.
 
+### 1b. Two defects in the never-run federated path (found while seeding; both fixed)
+
+The tutorial's federated branch was written but had never executed, so neither showed up until the
+data was in a trust:
+
+- **The app located its two DICOM objects by filename** (`slide.dcm`, `annotation.dcm`). That is what
+  the tutorial's download produces and not what a trust returns — imaging-api hands back whatever
+  XNAT stored, named by SOP Instance UID. The first real run would have failed with
+  `FileNotFoundError` for files that were present. Both are now found by SOP Class.
+- **The seeder posted only the slide.** The evaluation scores against the reference annotations, so
+  that trust would have pulled, decoded, and then had nothing to compare against. Both objects share
+  an accession and a study, so one pull carries both — but only if both are in Orthanc.
+
 ### 2. Seeding
 
 Neither `make update-orthanc-data` nor `make update-omop-data` can be reused: both are wholesale
