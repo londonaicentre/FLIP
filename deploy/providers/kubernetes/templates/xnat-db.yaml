@@ -131,10 +131,21 @@ spec:
                     # initdb of an empty PVC, so a rotated xnat-datasource-password otherwise
                     # never reaches the live role (a PVC snapshot or pg_dumpall restore likewise
                     # brings back the old hash until the next restart). Same idea as
-                    # omop-db.yaml's data_analyst_reader sync but narrower: that one runs as the
-                    # superuser and CREATEs the role if absent; this one connects as `xnat`
-                    # itself over the local socket (stock-image pg_hba `local all all trust`;
-                    # ALTER ROLE on oneself needs no CREATEROLE) and only ALTERs.
+                    # omop-db.yaml's data_analyst_reader sync but narrower: that one CREATEs the
+                    # role if absent; this one only ALTERs.
+                    #
+                    # Connects as `postgres` over the local socket (stock-image pg_hba
+                    # `local all all trust`, so no credential is needed) rather than as `xnat`
+                    # itself. PG12 does not redact `ALTER ROLE ... PASSWORD` on a server-side
+                    # error, and the image's default log_min_error_statement (error) would
+                    # otherwise write the new plaintext password into the container's log stream
+                    # on any error on that statement. Authenticating as `xnat` would let a holder
+                    # of the *current* xnat credential force exactly that error (e.g.
+                    # `ALTER ROLE xnat SET default_transaction_read_only = on` — USERSET, no
+                    # CREATEROLE needed) to leak the *new* password on the next rotation. The two
+                    # SET statements below close that: log_statement=none suppresses the
+                    # statement text on success, and log_min_error_statement=panic means nothing
+                    # short of a server crash logs the erroring statement either.
                     #
                     # The outcome is reported by psql rather than by the shell. postStart stdout
                     # goes nowhere (the kubelet surfaces it only in a FailedPostStartHook event)
@@ -151,8 +162,10 @@ spec:
                     # credential-logging CI guard looks for, and busybox provides the applet
                     # anyway. The heredoc body is tab-indented so `<<-` does the stripping
                     # rather than YAML's de-indent.
-                    if ! psql -X -q -v ON_ERROR_STOP=1 -U {{ .Values.xnat.db.datasourceUsername | quote }} -d xnat \
+                    if ! psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres \
                            -v u={{ .Values.xnat.db.datasourceUsername | quote }} <<-'EOSQL'
+                    	SET log_statement = none;
+                    	SET log_min_error_statement = panic;
                     	\set pw `printenv XNAT_DATASOURCE_PASSWORD`
                     	ALTER ROLE :"u" WITH PASSWORD :'pw';
                     	DO $$ BEGIN RAISE WARNING 'xnat-db postStart: xnat role password synced'; END $$;

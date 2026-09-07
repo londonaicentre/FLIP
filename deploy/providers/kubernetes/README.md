@@ -402,29 +402,45 @@ image's baked `XNAT.sql`, which runs from `/docker-entrypoint-initdb.d`.
 > mount replaces the directory, hiding `XNAT.sql`, and the two roles silently
 > collapse into one. Per-file mounts need an explicit `subPath`.
 
-**`XNAT.sql` applies both passwords only at the first initdb of an empty PVC**,
-and a StatefulSet PVC survives `helm upgrade` and `helm uninstall` — so a
-rotated secret would otherwise leave the database on the old credential while
-the pods start using the new one, and authentication fails. (A PVC snapshot or
-`pg_dumpall` restore has the same effect: it brings back the old hash.) The two
-roles are handled differently from here:
+**Both passwords apply only at the first initdb of an empty PVC** — the
+superuser's via initdb's own `--pwfile`, the `xnat` role's via the image's
+baked `XNAT.sql` — and a StatefulSet PVC survives `helm upgrade` and `helm
+uninstall`, so a rotated secret would otherwise leave the database on the old
+credential while the pods start using the new one, and authentication fails.
+(A PVC snapshot or `pg_dumpall` restore has the same effect: it brings back
+the old hash.) The two roles are handled differently from here:
 
 | Role | Secret key | Rotation |
 | ---- | ---------- | -------- |
 | `xnat` application role | `xnat-datasource-password` | **Automatic.** A `postStart` hook on the xnat-db container re-applies it to the live role on every pod start, so rotating the secret and restarting the pod is enough. |
 | `postgres` superuser | `xnat-datasource-admin-password` | **Manual.** Still first-initdb only — rotate it by hand as below. |
 
-Rotating the `xnat` role therefore only needs the secret updated and the pod
-restarted:
+Rotating the `xnat` role needs the secret updated and **all three**
+consumers restarted, in that order — `xnat-web` and `imaging-api` also hold
+`xnat-datasource-password` as a plain `secretKeyRef` env var, which resolves
+once at pod start with no `checksum/secret` annotation to force a restart, so
+stopping after `xnat-db` leaves them authenticating with the old password:
 
 ```bash
 kubectl rollout restart statefulset/<release>-flip-trust-xnat-db
+kubectl rollout status statefulset/<release>-flip-trust-xnat-db
+kubectl rollout restart deployment/<release>-flip-trust-xnat-web
+kubectl rollout restart deployment/<release>-flip-trust-imaging-api
 ```
 
-The hook connects as `xnat` itself over the local socket and only `ALTER`s, so
-it needs no superuser and no `CREATEROLE`. It reports its outcome through the
-Postgres server log — the container's own log stream — because `postStart`
-stdout is not surfaced anywhere on success:
+`make patch-kit-secrets` restarts `imaging-api` (along with `trust-api` and
+`data-access-api`) but neither `xnat-db` nor `xnat-web`, so running it alone
+during a rotation still leaves those two on the old password — restart
+`xnat-db` and `xnat-web` yourself, in that order, around it.
+
+The hook connects as `postgres` over the local socket rather than as `xnat`
+itself — PG12 does not redact `ALTER ROLE ... PASSWORD` on a server-side
+error, so authenticating as `xnat` would let a holder of the *current*
+credential force an error (no `CREATEROLE` needed) that logs the *new*
+password on the next rotation; connecting as the superuser instead, with
+statement logging suppressed for the `ALTER`, closes that. It reports its
+outcome through the Postgres server log — the container's own log stream —
+because `postStart` stdout is not surfaced anywhere on success:
 
 ```bash
 kubectl logs <xnat-db-pod> | grep 'postStart'
