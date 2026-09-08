@@ -270,7 +270,7 @@ class TestZeroAcceptancePanic:
         Parametrised because every other test here leaves _start_round at the constructor default,
         so nothing pinned that term: dropping it entirely from the comparison still passed the
         whole suite, while making a start_round=3 job read as 'finished' during its very first
-        round — silently disarming the FLIP#1001 guard it must preserve.
+        round — silently disarming the zero-acceptance guard it must preserve.
         """
         controller = self._controller(round_no=start_round + 1)
         controller._start_round = start_round
@@ -318,7 +318,12 @@ class TestZeroAcceptancePanic:
 
     def test_still_panics_on_a_genuinely_empty_round_mid_loop(self):
         """The finished-controller exemption must not disarm the guard it exists for: a controller
-        INSIDE its loop with a real zero-acceptance round still aborts (FLIP#1001)."""
+        INSIDE its loop with a real zero-acceptance round still aborts.
+
+        The guard was added by commit fee560241 and carries no issue number; it is cited by commit
+        here rather than by number, because an earlier revision of this test misattributed it to
+        FLIP#1001, which is an unrelated Flower run-visibility bug.
+        """
         controller = self._controller(round_no=1)
         controller._start_round = 0
         controller._num_rounds = 3  # round 1 of 3 — still running
