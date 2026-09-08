@@ -54,7 +54,6 @@ from nvflare.app_common.shareablegenerators.full_model_shareable_generator impor
 from nvflare.app_common.workflows.global_model_eval import GlobalModelEval
 from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
 from nvflare.job_config.defs import FilterType
-from nvflare.recipe.spec import Recipe
 
 from flip.constants import FlipTasks
 from flip.nvflare.components import (
@@ -70,6 +69,7 @@ from flip.nvflare.components import (
     ValidationJsonGenerator,
 )
 from flip.nvflare.controllers import BroadcastTask, InitTraining, ScatterAndGatherLDM
+from flip.nvflare.recipes.base import FlipRecipe
 from flip.nvflare.recipes.flip_fedavg_recipe import PercentilePrivacy
 from flip.nvflare.runtime import FLIP_CUSTOM_PROPS_KEY, FLIP_MODEL_ID_KEY
 
@@ -83,7 +83,7 @@ VALIDATE_AE_TASK = "validate_ae"
 VALIDATE_DM_TASK = "validate_dm"
 
 
-class FlipDiffusionRecipe(Recipe):
+class FlipDiffusionRecipe(FlipRecipe):
     """FLIP latent-diffusion recipe wired for the NVFLARE Client API.
 
     Args:
@@ -264,7 +264,7 @@ class FlipDiffusionRecipe(Recipe):
         optionally rewrites ``meta.json['custom_props']`` with the real model_id at submit time, and
         forwards the job to the fl-server stack.
         """
-        self._job.export_job(str(job_dir))
+        self.job.export_job(str(job_dir))
         self._write_client_config_params(Path(job_dir))
 
     def _write_client_config_params(self, job_dir: Path) -> None:
@@ -280,7 +280,7 @@ class FlipDiffusionRecipe(Recipe):
         ignored (data comes from the ``DEV_DATAFRAME`` / ``DEV_IMAGES_DIR`` env). Mirrors the
         hand-written ``diffusion_model`` template.
         """
-        client_cfg = job_dir / self._job.name / "app" / "config" / "config_fed_client.json"
+        client_cfg = job_dir / self.job.name / "app" / "config" / "config_fed_client.json"
         if not client_cfg.exists():
             return
         config = json.loads(client_cfg.read_text())

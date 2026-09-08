@@ -47,7 +47,6 @@ from nvflare.app_common.executors.client_api_executor import ClientAPIExecutor, 
 from nvflare.app_common.workflows.global_model_eval import GlobalModelEval
 from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
 from nvflare.job_config.defs import FilterType
-from nvflare.recipe.spec import Recipe
 
 from flip.constants import FlipTasks
 from flip.nvflare.components import (
@@ -60,6 +59,7 @@ from flip.nvflare.components import (
     ServerEventHandler,
 )
 from flip.nvflare.controllers import BroadcastTask, InitEvaluation
+from flip.nvflare.recipes.base import FlipRecipe
 from flip.nvflare.runtime import FLIP_CUSTOM_PROPS_KEY, FLIP_MODEL_ID_KEY
 
 # Default UUID used by SimEnv/PocEnv runs when the caller doesn't pass one. Pinned so dev runs are
@@ -67,7 +67,7 @@ from flip.nvflare.runtime import FLIP_CUSTOM_PROPS_KEY, FLIP_MODEL_ID_KEY
 _DEV_MODEL_ID = "00000000-0000-0000-0000-000000000001"
 
 
-class FlipEvalRecipe(Recipe):
+class FlipEvalRecipe(FlipRecipe):
     """FLIP evaluation recipe wired for the NVFLARE Client API.
 
     Args:
@@ -183,7 +183,7 @@ class FlipEvalRecipe(Recipe):
         rewrites ``meta.json['custom_props']`` with the real model_id at submit time, and forwards the
         job to the fl-server stack.
         """
-        self._job.export_job(str(job_dir))
+        self.job.export_job(str(job_dir))
         self._write_client_config_params(Path(job_dir))
 
     def _write_client_config_params(self, job_dir: Path) -> None:
@@ -198,7 +198,7 @@ class FlipEvalRecipe(Recipe):
         with the real submission values; in SimEnv/LOCAL_DEV they're ignored (data comes from the
         ``DEV_DATAFRAME`` / ``DEV_IMAGES_DIR`` env). Mirrors the hand-written ``evaluation`` template.
         """
-        client_cfg = job_dir / self._job.name / "app" / "config" / "config_fed_client.json"
+        client_cfg = job_dir / self.job.name / "app" / "config" / "config_fed_client.json"
         if not client_cfg.exists():
             return
         config = json.loads(client_cfg.read_text())

@@ -72,7 +72,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         recipe = FlipFedAvgRecipe()
         recipe.export(tmp)
-        exported_root = Path(tmp) / recipe._job.name
+        exported_root = Path(tmp) / recipe.job.name
         exported_config = exported_root / "app" / "config"
         for name in ("config_fed_server.json", "config_fed_client.json"):
             _copy_json(exported_config / name, dest_config / name)

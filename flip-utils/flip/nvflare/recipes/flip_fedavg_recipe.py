@@ -60,7 +60,6 @@ from nvflare.app_common.widgets.intime_model_selector import IntimeModelSelector
 from nvflare.app_common.workflows.cross_site_model_eval import CrossSiteModelEval
 from nvflare.app_common.workflows.global_model_eval import GlobalModelEval
 from nvflare.job_config.defs import FilterType
-from nvflare.recipe.spec import Recipe
 
 from flip.constants import FlipTasks
 from flip.nvflare.components import (
@@ -81,6 +80,7 @@ from flip.nvflare.components import (
     PercentilePrivacy as PercentilePrivacyFilter,
 )
 from flip.nvflare.controllers import BroadcastTask, InitTraining, ScatterAndGather
+from flip.nvflare.recipes.base import FlipRecipe
 from flip.nvflare.runtime import FLIP_CUSTOM_PROPS_KEY, FLIP_MODEL_ID_KEY
 
 # Default UUID used by SimEnv/PocEnv runs when the caller doesn't pass one. Pinned so dev runs
@@ -105,7 +105,7 @@ class PercentilePrivacy:
     off: bool = False
 
 
-class FlipFedAvgRecipe(Recipe):
+class FlipFedAvgRecipe(FlipRecipe):
     """FLIP FedAvg recipe wired for the NVFLARE Client API.
 
     Head-only (frozen-backbone) aggregation is canonically driven in production by the fl-server's
@@ -397,7 +397,7 @@ class FlipFedAvgRecipe(Recipe):
         consumes this directory, optionally rewrites ``meta.json['custom_props']`` with
         the real model_id at submit time, and forwards the job to the fl-server stack.
         """
-        self._job.export_job(str(job_dir))
+        self.job.export_job(str(job_dir))
         self._write_client_config_params(Path(job_dir))
 
     def _write_client_config_params(self, job_dir: Path) -> None:
@@ -414,7 +414,7 @@ class FlipFedAvgRecipe(Recipe):
         values at job-assembly; in SimEnv/LOCAL_DEV they're ignored (data comes from the
         ``DEV_DATAFRAME`` / ``DEV_IMAGES_DIR`` env). Mirrors the hand-written ``standard`` template.
         """
-        client_cfg = job_dir / self._job.name / "app" / "config" / "config_fed_client.json"
+        client_cfg = job_dir / self.job.name / "app" / "config" / "config_fed_client.json"
         if not client_cfg.exists():
             return
         config = json.loads(client_cfg.read_text())
