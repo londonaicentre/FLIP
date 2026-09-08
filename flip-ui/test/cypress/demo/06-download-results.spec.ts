@@ -49,6 +49,21 @@ describe("FLIP demo — download results", () => {
         cy.getBySel("training-timeline").should("be.visible");
         cy.demoPause(2000);
 
+        // Show the finished run the same way segment 5 shows the live one: every metric at once,
+        // per trust, rather than one plot the viewer has to click through. Conditional on the
+        // toggle existing, because a run that emitted no metrics renders the empty-state panel and
+        // no view switcher at all -- an unconditional click would fail the segment on a run that
+        // completed correctly.
+        cy.get("body").then(($body) => {
+            if ($body.find("[data-test=metrics-view-grid]").length === 0) {
+                return;
+            }
+            cy.demoCaption("Every metric from the completed run — each trust's own curve", 600);
+            cy.getBySel("metrics-view-grid").demoClick();
+            cy.getBySel("metrics-grid").should("be.visible");
+            cy.demoPause(4000);
+        });
+
         cy.demoCaption("Downloading the aggregated global model", 800);
         cy.getBySel("download-results-btn", { timeout: 120000 }).should("not.be.disabled");
         cy.getBySel("download-results-btn").demoClick();

@@ -712,6 +712,9 @@ def main(argv: list[str] | None = None) -> int:
                 "DEMO_APP_DIR": app_dir_rel,
                 "DEMO_APP_FILES": ",".join(app_files_for(app_dir)),
                 "DEMO_BACKEND_LABEL": tutorial["label"],
+                # Segment 4 opens by saying what just finished off-camera. For a tabular study
+                # nothing was imported, so the imaging wording would describe a step that never ran.
+                "DEMO_HAS_IMAGING": has_imaging_env,
             },
             video_scale=args.video_scale,
         )
