@@ -348,7 +348,10 @@ flClient:
       gamma: ""
   flower:
     superlink: ""
-    supernodeClientAppIoAddress: "127.0.0.1:9094"
+    # flwr>=1.36 split --clientappio-api-address into --host/--port; the
+    # SuperNode's own --host default (127.0.0.1, loopback-only) is unchanged
+    # and not overridden here, so only the port needs a chart value.
+    supernodeClientAppIoPort: "9094"
   resources:
     requests:
       memory: "8Gi"

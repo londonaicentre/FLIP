@@ -61,8 +61,11 @@ services:
       - fl-server-net-1:9092
       - --auth-supernode-private-key
       - /keys/supernode_credentials_${FL_KIT_SLOT_NUMBER}
-      - --clientappio-api-address
-      - ${SUPERNODE_1_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9094}
+      # flwr>=1.36 split the old --clientappio-api-address into --host/--port;
+      # host stays at flower-supernode's own 127.0.0.1 default (loopback-only,
+      # never overridden in any FLIP env file).
+      - --port
+      - ${SUPERNODE_1_CLIENTAPPIO_PORT:-9094}
       # ClientApp-side runtime dependency install (default-off on SuperNodes in
       # flwr 1.32): resolves the app's deps per run, with flip-utils pinned to
       # /opt/flip-utils via the template's [tool.uv.sources] (FLIP#767).
@@ -111,8 +114,11 @@ services:
       - fl-server-net-2:9092
       - --auth-supernode-private-key
       - /keys/supernode_credentials_${FL_KIT_SLOT_NUMBER}
-      - --clientappio-api-address
-      - ${SUPERNODE_2_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9095}
+      # flwr>=1.36 split the old --clientappio-api-address into --host/--port;
+      # host stays at flower-supernode's own 127.0.0.1 default (loopback-only,
+      # never overridden in any FLIP env file).
+      - --port
+      - ${SUPERNODE_2_CLIENTAPPIO_PORT:-9095}
       # ClientApp-side runtime dependency install — see net-1 note (FLIP#767).
       - --allow-runtime-dependency-installation
     networks:

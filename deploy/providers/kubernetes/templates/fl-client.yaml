@@ -171,8 +171,8 @@ spec:
             - {{ .Values.flClient.flower.superlink | quote }}
             - "--auth-supernode-private-key"
             - "/keys/supernode_credentials_{{ .Values.trustNumber }}"
-            - "--clientappio-api-address"
-            - {{ .Values.flClient.flower.supernodeClientAppIoAddress | quote }}
+            - "--port"
+            - {{ .Values.flClient.flower.supernodeClientAppIoPort | quote }}
             # ClientApp-side per-run dependency install (uv sync with the
             # image's pinned flip-utils — FLIP#767); required for every
             # Flower app run, mirroring compose_trust.production.flower.yml.
