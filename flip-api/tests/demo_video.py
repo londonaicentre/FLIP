@@ -130,6 +130,12 @@ APPS: dict[str, dict[str, Any]] = {
         # study's C-MOVE. They are delivered here instead, off-camera between the pull and training,
         # exactly as the spleen tutorial delivers its NIfTI labels. Without this the run pulls, then
         # dies at scoring with nothing to compare against.
+        #
+        # This tutorial scores an existing detector; it never trains one, so the closing line of
+        # segment 6 must not say "trained". The default is written for the training apps.
+        "closing_caption": (
+            "A detector scored at every hospital — while the slides never left any of them"
+        ),
         "enrichment": {
             "cwd": "fl-tutorials/datasets",
             "make_target": "upload-idc-pathology-annotations",
@@ -724,7 +730,17 @@ def main(argv: list[str] | None = None) -> int:
         wait_for_first_metrics(client, headers, model_id, timeout_s=args.metrics_timeout)
 
     # ── Segment 5: live progress ──────────────────────────────────────────
-    ids_env = {**researcher_env, "DEMO_PROJECT_ID": project_id, "DEMO_MODEL_ID": model_id}
+    ids_env = {
+        **researcher_env,
+        "DEMO_PROJECT_ID": project_id,
+        "DEMO_MODEL_ID": model_id,
+        # Always supplied, so the spec can requireEnv it: a profile that says nothing gets the
+        # training wording, and one that trains nothing says so instead.
+        "DEMO_CLOSING_CAPTION": profile.get(
+            "closing_caption",
+            "A model trained across every hospital — while the data never left any of them",
+        ),
+    }
     if args.from_segment <= 5:
         run_segment("05-follow-progress", ids_env, video_scale=args.video_scale)
 

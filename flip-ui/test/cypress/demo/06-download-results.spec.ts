@@ -54,7 +54,7 @@ describe("FLIP demo — download results", () => {
         cy.getBySel("download-results-btn").demoClick();
         cy.demoPause(3500);
 
-        cy.demoCaption("A model trained across every hospital — while the data never left any of them", 500);
+        cy.demoCaption(requireEnv("DEMO_CLOSING_CAPTION"), 500);
         cy.demoPause(4000);
     });
 });
