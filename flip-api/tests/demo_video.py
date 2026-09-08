@@ -715,7 +715,12 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── Off-camera: training spins up and produces its first metrics ─────
     e2e_smoke.wait_for_model_advanced(client, headers, model_id, timeout_s=args.training_start_timeout)
-    wait_for_first_metrics(client, headers, model_id, timeout_s=args.metrics_timeout)
+    # Only segment 5 films the live charts, so only segment 5 needs to wait for metrics. Ungated,
+    # `--from-segment 6` paid the full metrics timeout (25 min by default) before recording a
+    # segment that does not plot anything -- and for an evaluation job, which emits no metrics at
+    # all, that wait can never be satisfied, so the flag was effectively unusable.
+    if args.from_segment <= 5:
+        wait_for_first_metrics(client, headers, model_id, timeout_s=args.metrics_timeout)
 
     # ── Segment 5: live progress ──────────────────────────────────────────
     ids_env = {**researcher_env, "DEMO_PROJECT_ID": project_id, "DEMO_MODEL_ID": model_id}

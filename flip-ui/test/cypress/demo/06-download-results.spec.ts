@@ -32,12 +32,16 @@ describe("FLIP demo — download results", () => {
         cy.getBySel("download-results-btn", { timeout: 120000 }).should("exist");
         // The download button appears before /metrics and /logs have answered, so revealing on it
         // alone films the dashboard mid-load: an empty "Any metrics sent during the run will show
-        // here" panel next to a spinning Live activity feed, held for several seconds. Wait for the
-        // plots to have actually drawn, so the completed run is shown with its results.
-        // A canvas alone is not enough: the chart mounts with axes and legend before /metrics
-        // answers, so waiting on it still films an empty plot beside a spinning activity feed.
-        // A rendered log line means the run's data has actually arrived.
-        cy.get("canvas", { timeout: 120000 }).should("exist");
+        // here" panel next to a spinning Live activity feed, held for several seconds. So wait for
+        // the run's own data to have arrived before revealing.
+        // A rendered log line is the signal, and the only one: a canvas proves nothing, because the
+        // chart mounts with axes and legend before /metrics answers -- as the comment that used to
+        // sit here said itself. Waiting on the canvas as well was therefore redundant for a run
+        // that has metrics, and wrong for one that has none: an evaluation job emits no metrics at
+        // all (the analytics bridge is wired into the training recipes but not flip_eval_recipe, so
+        // nothing carries them to the hub), so the panel correctly renders "Any metrics sent during
+        // the run will show here" and no canvas ever appears. Waiting for one timed out after two
+        // minutes and failed the segment on a run that had completed and uploaded its results.
         cy.getBySel("log-timestamp", { timeout: 120000 }).should("have.length.greaterThan", 0);
         revealDemo();
 
