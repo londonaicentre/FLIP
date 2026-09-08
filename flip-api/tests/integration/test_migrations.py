@@ -205,3 +205,36 @@ def test_downgrade_base_then_upgrade_head_round_trips(empty_db_engine: Engine) -
     with empty_db_engine.connect() as connection:
         current = MigrationContext.configure(connection).get_current_revision()
         assert current == _script_head(connection)
+
+
+def test_has_imaging_backfills_true_for_pre_existing_projects(empty_db_engine: Engine) -> None:
+    """``40f7934c6419`` must turn every project that predates the flag into an imaging project.
+
+    The drift guard does not compare server defaults and the empty-DB upgrade has no rows to backfill,
+    so this is the only test that would catch a wrong default stripping the imaging stage from every
+    deployed project (FLIP#1071).
+    """
+    with empty_db_engine.connect() as connection:
+        # pragma: allowlist nextline secret
+        command.upgrade(make_alembic_config(connection), "46edb903e4d1")
+    with empty_db_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO projects (id, name, description, owner_id, deleted, creation_timestamp, status, "
+                "dicom_to_nifti) VALUES (gen_random_uuid(), 'legacy', 'predates has_imaging', gen_random_uuid(), "
+                "false, now(), 'UNSTAGED', true)"
+            )
+        )
+    with empty_db_engine.connect() as connection:
+        command.upgrade(make_alembic_config(connection), "head")
+
+    with empty_db_engine.connect() as connection:
+        has_imaging = connection.execute(text("SELECT has_imaging FROM projects WHERE name = 'legacy'")).scalar_one()
+        nullable = connection.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'projects' AND column_name = 'has_imaging'"
+            )
+        ).scalar_one()
+    assert has_imaging is True
+    assert nullable == "NO"
