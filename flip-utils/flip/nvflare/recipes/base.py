@@ -18,7 +18,7 @@ absorbed here rather than pushed out to tutorial authors, and rather than scatte
 private upstream attribute through the recipes.
 """
 
-from nvflare.job_config.api import FedJob
+from nvflare import FedJob
 from nvflare.recipe.spec import Recipe
 
 
