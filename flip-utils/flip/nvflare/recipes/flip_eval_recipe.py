@@ -25,9 +25,10 @@ single-model ``validate`` task and reuses the same cross-site validation path th
   :class:`~flip.nvflare.components.EvaluationJsonGenerator` collects the returned metrics
   into ``evaluation_results.json`` (unchanged output contract); ``PersistToS3AndCleanup`` zips + uploads
   the run dir to S3.
-* client: the stock ``InProcessClientAPIExecutor`` runs the evaluator script, which is the canonical
-  Client-API ``is_evaluate()`` loop — receive the global model, score it on local data, send back an
-  aggregate-only metrics ``FLModel``. No ``Executor``/``Shareable`` plumbing, no ``COLLECTION`` unwrap.
+* client: the stock ``ClientAPIExecutor`` (in-process mode) runs the evaluator script, which is the
+  canonical Client-API ``is_evaluate()`` loop — receive the global model, score it on local data, send
+  back an aggregate-only metrics ``FLModel``. No ``Executor``/``Shareable`` plumbing, no ``COLLECTION``
+  unwrap.
 
 The recipe runs identically across SimEnv/PocEnv/ProdEnv and exports the standard NVFLARE FedJob layout
 for the FLIP-API, exactly like :class:`FlipFedAvgRecipe`. ``model_id`` is resolved lazily by the FLIP
@@ -42,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from nvflare import FedJob
-from nvflare.app_common.executors.in_process_client_api_executor import InProcessClientAPIExecutor
+from nvflare.app_common.executors.client_api_executor import ClientAPIExecutor, ExecutionMode
 from nvflare.app_common.workflows.global_model_eval import GlobalModelEval
 from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
 from nvflare.job_config.defs import FilterType
@@ -158,7 +159,8 @@ class FlipEvalRecipe(Recipe):
 
         # Clients: Client API evaluator for the validate task.
         job.to_clients(
-            InProcessClientAPIExecutor(
+            ClientAPIExecutor(
+                execution_mode=ExecutionMode.IN_PROCESS,
                 task_script_path=self.eval_script,
                 task_script_args=self.eval_args,
                 evaluate_task_name=self.evaluate_task_name,
@@ -181,7 +183,7 @@ class FlipEvalRecipe(Recipe):
         rewrites ``meta.json['custom_props']`` with the real model_id at submit time, and forwards the
         job to the fl-server stack.
         """
-        self.job.export_job(str(job_dir))
+        self._job.export_job(str(job_dir))
         self._write_client_config_params(Path(job_dir))
 
     def _write_client_config_params(self, job_dir: Path) -> None:
@@ -196,7 +198,7 @@ class FlipEvalRecipe(Recipe):
         with the real submission values; in SimEnv/LOCAL_DEV they're ignored (data comes from the
         ``DEV_DATAFRAME`` / ``DEV_IMAGES_DIR`` env). Mirrors the hand-written ``evaluation`` template.
         """
-        client_cfg = job_dir / self.job.name / "app" / "config" / "config_fed_client.json"
+        client_cfg = job_dir / self._job.name / "app" / "config" / "config_fed_client.json"
         if not client_cfg.exists():
             return
         config = json.loads(client_cfg.read_text())

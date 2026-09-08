@@ -54,7 +54,7 @@ from typing import Any
 
 from nvflare import FedJob
 from nvflare.app_common.aggregators import InTimeAccumulateWeightedAggregator
-from nvflare.app_common.executors.in_process_client_api_executor import InProcessClientAPIExecutor
+from nvflare.app_common.executors.client_api_executor import ClientAPIExecutor, ExecutionMode
 from nvflare.app_common.shareablegenerators.full_model_shareable_generator import FullModelShareableGenerator
 from nvflare.app_common.widgets.intime_model_selector import IntimeModelSelector
 from nvflare.app_common.workflows.cross_site_model_eval import CrossSiteModelEval
@@ -340,7 +340,8 @@ class FlipFedAvgRecipe(Recipe):
         if self.submit_model_task_name:
             executor_tasks.insert(1, self.submit_model_task_name)
         job.to_clients(
-            InProcessClientAPIExecutor(
+            ClientAPIExecutor(
+                execution_mode=ExecutionMode.IN_PROCESS,
                 task_script_path=self.train_script,
                 task_script_args=self.train_args,
                 train_task_name=self.train_task_name,
@@ -396,7 +397,7 @@ class FlipFedAvgRecipe(Recipe):
         consumes this directory, optionally rewrites ``meta.json['custom_props']`` with
         the real model_id at submit time, and forwards the job to the fl-server stack.
         """
-        self.job.export_job(str(job_dir))
+        self._job.export_job(str(job_dir))
         self._write_client_config_params(Path(job_dir))
 
     def _write_client_config_params(self, job_dir: Path) -> None:
@@ -413,7 +414,7 @@ class FlipFedAvgRecipe(Recipe):
         values at job-assembly; in SimEnv/LOCAL_DEV they're ignored (data comes from the
         ``DEV_DATAFRAME`` / ``DEV_IMAGES_DIR`` env). Mirrors the hand-written ``standard`` template.
         """
-        client_cfg = job_dir / self.job.name / "app" / "config" / "config_fed_client.json"
+        client_cfg = job_dir / self._job.name / "app" / "config" / "config_fed_client.json"
         if not client_cfg.exists():
             return
         config = json.loads(client_cfg.read_text())
