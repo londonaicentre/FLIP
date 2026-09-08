@@ -31,7 +31,7 @@ from types import ModuleType
 
 import pytest
 
-TUTORIALS_ROOT = Path(__file__).resolve().parents[1]
+TUTORIALS_ROOT = Path(__file__).resolve().parents[3]
 DOWNLOADER_PATH = TUTORIALS_ROOT / "datasets/spleen/download_spleen_dataset.py"
 
 # The real Task09_Spleen training set: 41 cases, sparsely numbered from 2 to 63.
