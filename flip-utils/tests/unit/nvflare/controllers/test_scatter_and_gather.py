@@ -262,6 +262,40 @@ class TestZeroAcceptancePanic:
             controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
         controller.system_panic.assert_not_called()
 
+    def test_no_panic_for_a_finished_sibling_controller(self):
+        """A controller that has completed its round loop must not panic on a sibling's round.
+
+        Stock's loop is ``while self._current_round < self._start_round + self._num_rounds`` with a
+        post-increment, so a FINISHED controller is left holding one round PAST the last it ran —
+        a round its ``_round_acceptances`` can never have a key for. In the two-phase LDM job the
+        finished ``train_ae`` controller still receives ``train_dm``'s BEFORE_AGGREGATION, looked
+        its own stale round up, found nothing, and aborted the whole run (FLIP#1177).
+        """
+        controller = self._controller(round_no=1)
+        controller._start_round = 0
+        controller._num_rounds = 1
+        # It ran round 0 and accepted both clients; the loop then left _current_round at 1.
+        controller._round_acceptances[0] = {"site-1", "site-2"}
+
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+
+        controller.system_panic.assert_not_called()
+        controller.flip.send_handled_exception.assert_not_called()
+
+    def test_still_panics_on_a_genuinely_empty_round_mid_loop(self):
+        """The finished-controller exemption must not disarm the guard it exists for: a controller
+        INSIDE its loop with a real zero-acceptance round still aborts (FLIP#1001)."""
+        controller = self._controller(round_no=1)
+        controller._start_round = 0
+        controller._num_rounds = 3  # round 1 of 3 — still running
+
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+
+        controller.system_panic.assert_called_once()
+        assert "accepted 0 of 2" in controller.system_panic.call_args.args[0]
+
     def test_relay_failure_still_panics(self):
         controller = self._controller()
         controller.flip.send_handled_exception.side_effect = RuntimeError("hub down")
@@ -326,6 +360,36 @@ class TestHandleEvent:
             controller.handle_event(FlipEvents.SEND_RESULT, fl_ctx)  # must not raise
 
         mock_metrics.assert_not_called()
+
+    def test_send_result_skips_relay_when_controller_has_finished(self):
+        """A FINISHED sibling must not relay the active controller's metric under its stale round.
+
+        Stock leaves ``_current_round`` one past the last round it ran, so the not-started guard
+        above does not catch this case. In the two-phase LDM job it meant every phase-2 metric
+        reached the hub TWICE — once with the active controller's real ``global_round``, and once
+        tagged with the finished phase-1 controller's round (FLIP#1177):
+
+            Metric -> Total loss DM=0.9905 (site-2, global_round=1, ...)   <- finished controller
+            Metric -> Total loss DM=0.9905 (site-2, global_round=0, ...)   <- active controller
+        """
+        controller = ScatterAndGather(model_id=_VALID_MODEL_ID)
+        controller.log_error = MagicMock()
+        controller._start_round = 0
+        controller._num_rounds = 1
+        controller._current_round = 1  # ran round 0; the loop left it here on exit
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_prop.side_effect = lambda key, default=None: (
+            "metrics-shareable"
+            if key == FLContextKey.EVENT_DATA
+            else (None if key == FLContextKey.JOB_META else default)
+        )
+
+        with patch("flip.nvflare.controllers.scatter_and_gather.handle_metrics_event") as mock_metrics:
+            controller.handle_event(FlipEvents.SEND_RESULT, fl_ctx)
+
+        mock_metrics.assert_not_called()
+        controller.log_error.assert_not_called()
 
 
 class TestFedJobSerialisation:
