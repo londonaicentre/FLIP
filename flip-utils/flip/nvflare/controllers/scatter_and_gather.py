@@ -179,7 +179,8 @@ class ScatterAndGather(NVFlareScatterAndGather):
         controller is routinely handed events belonging to a *sibling's* round. Acting on
         one means answering for a round this controller never ran.
 
-        Two states must be excluded, and only checking the first is what caused FLIP#1177:
+        Used by the zero-acceptance guard only. Two states must be excluded, and checking just
+        the first is what caused FLIP#1177:
 
         * **not started** — stock initialises ``_current_round`` to ``None``.
         * **finished** — stock's ``control_flow`` is
@@ -191,7 +192,7 @@ class ScatterAndGather(NVFlareScatterAndGather):
         """
         if self._current_round is None:
             return False
-        return self._current_round < self._start_round + self._num_rounds
+        return bool(self._current_round < self._start_round + self._num_rounds)
 
     def _panic_if_round_accepted_nothing(self, fl_ctx: FLContext) -> None:
         """Abort the job when a training round is about to aggregate zero accepted results.
@@ -202,6 +203,11 @@ class ScatterAndGather(NVFlareScatterAndGather):
         COMPLETED with a "trained" model bit-identical to round 0.
         """
         if not self._is_running_a_round():
+            self.log_debug(
+                fl_ctx,
+                "Zero-acceptance guard skipped: not inside this controller's round loop "
+                f"(current_round={self._current_round}, bound={self._start_round + self._num_rounds}).",
+            )
             return
         round_num = self._current_round
         expected = getattr(self, "_current_num_targets", None)
@@ -282,13 +288,19 @@ class ScatterAndGather(NVFlareScatterAndGather):
             if event_data is None:
                 self.log_error(fl_ctx, "Metrics Error: metrics result event was fired but no data found")
                 return
-            if not self._is_running_a_round():
-                # SEND_RESULT is broadcast to every controller. In a multi-phase job (the
-                # diffusion AE/DM split) only the controller actually running a round may relay
-                # a metric — a sibling that has not started has no round to tag it with, and one
-                # that has FINISHED would tag the active controller's metric with its own stale
-                # round. That second case shipped every LDM metric to the hub TWICE, once under
-                # the wrong global_round (FLIP#1177).
+            if self._current_round is None:
+                # SEND_RESULT is broadcast to every controller. In a multi-phase job (e.g. the
+                # diffusion AE/DM split) a controller whose control_flow has not started yet still
+                # has _current_round is None (as stock initialises it); it must not relay another
+                # controller's metric with a None round. The active controller relays it.
+                #
+                # Deliberately NOT _is_running_a_round(): cross-site validation (GlobalModelEval)
+                # runs AFTER the SAG loop exits, so at that point no controller is inside a round
+                # and that stricter test drops every held-out metric the validate task emits —
+                # TEST_LOSS and TEST-*-* on xray/Ark+, val_l1_loss/val_ssim on LDM — silently.
+                # A finished controller does still relay phase-2 metrics under its own stale round
+                # (a duplicate at the wrong global_round); fixing that needs a discriminator for
+                # "whose metric is this", not "am I running", so it is tracked separately.
                 return
             handle_metrics_event(event_data, self._current_round, self._resolve_model_id(fl_ctx), flip=self.flip)
 

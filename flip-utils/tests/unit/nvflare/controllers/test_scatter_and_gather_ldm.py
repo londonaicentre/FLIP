@@ -30,6 +30,7 @@ from nvflare.app_common.abstract.model import make_model_learnable
 from nvflare.app_common.abstract.model_locator import ModelLocator
 from nvflare.app_common.abstract.shareable_generator import ShareableGenerator
 from nvflare.app_common.app_constant import AppConstants
+from nvflare.app_common.app_event_type import AppEventType
 
 from flip.constants import FlipEvents, PTConstants
 from flip.nvflare.controllers.scatter_and_gather import ScatterAndGather
@@ -276,6 +277,39 @@ class TestScatterAndGatherLDM:
         controller._engine = MagicMock()
         controller._engine.get_clients.return_value = ["site-1"]
         return controller
+
+    @pytest.mark.parametrize(("ae", "dm"), [(2, 3), (5, 5), (1, 4)])
+    def test_finished_ae_phase_does_not_panic_on_the_dm_phase_round(self, ae, dm):
+        """A completed AE phase must stay silent when the DM phase aggregates (FLIP#1177).
+
+        This drives stock's REAL inherited loop and then stop_controller, rather than hand-setting
+        the post-loop attributes, because the guard's correctness on this class depends on
+        control_flow having narrowed _num_rounds to the per-phase count and that narrowing
+        SURVIVING the rest of the workflow lifecycle. __init__ and start_controller both set
+        _num_rounds to the two-phase total (ae + dm); only control_flow narrows it. Pinning the
+        narrowing in isolation is not enough — re-widening it in stop_controller resurrects
+        FLIP#1177 in full while every other test in this file stays green.
+        """
+        controller = self._round_ready_controller(num_rounds_ae=ae, num_rounds_dm=dm, train_task_name="train_ae")
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        abort_signal = MagicMock()
+        abort_signal.triggered = False
+
+        controller.control_flow(abort_signal, fl_ctx)
+        controller.stop_controller(fl_ctx)
+
+        # Stock's loop leaves _current_round one past the last round it ran.
+        assert controller._current_round == ae
+        assert controller._is_running_a_round() is False
+
+        # The DM phase now aggregates; this finished controller receives that event too.
+        controller._current_num_targets = 2
+        with patch.object(ScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, fl_ctx)
+
+        controller.system_panic.assert_not_called()
 
     def test_control_flow_runs_round_and_cleans_memory(self):
         """One AE round end-to-end through stock's real (inherited) loop: broadcasts the train

@@ -19,6 +19,7 @@
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 from nvflare.apis.dxo import DXO, DataKind, from_shareable
 from nvflare.apis.fl_constant import FLContextKey, ReturnCode
 from nvflare.apis.shareable import Shareable
@@ -262,6 +263,38 @@ class TestZeroAcceptancePanic:
             controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
         controller.system_panic.assert_not_called()
 
+    @pytest.mark.parametrize("start_round", [0, 3])
+    def test_no_panic_for_a_finished_sibling_controller_from_any_start_round(self, start_round):
+        """The finished-controller exemption is relative to _start_round, not to zero.
+
+        Parametrised because every other test here leaves _start_round at the constructor default,
+        so nothing pinned that term: dropping it entirely from the comparison still passed the
+        whole suite, while making a start_round=3 job read as 'finished' during its very first
+        round — silently disarming the FLIP#1001 guard it must preserve.
+        """
+        controller = self._controller(round_no=start_round + 1)
+        controller._start_round = start_round
+        controller._num_rounds = 1
+        controller._round_acceptances[start_round] = {"site-1", "site-2"}
+
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+
+        controller.system_panic.assert_not_called()
+
+    @pytest.mark.parametrize("start_round", [0, 3])
+    def test_still_panics_on_an_empty_round_from_any_start_round(self, start_round):
+        """Companion to the above: the guard must still fire mid-loop whatever _start_round is."""
+        controller = self._controller(round_no=start_round)
+        controller._start_round = start_round
+        controller._num_rounds = 3
+
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+
+        controller.system_panic.assert_called_once()
+        assert "accepted 0 of 2" in controller.system_panic.call_args.args[0]
+
     def test_no_panic_for_a_finished_sibling_controller(self):
         """A controller that has completed its round loop must not panic on a sibling's round.
 
@@ -360,36 +393,6 @@ class TestHandleEvent:
             controller.handle_event(FlipEvents.SEND_RESULT, fl_ctx)  # must not raise
 
         mock_metrics.assert_not_called()
-
-    def test_send_result_skips_relay_when_controller_has_finished(self):
-        """A FINISHED sibling must not relay the active controller's metric under its stale round.
-
-        Stock leaves ``_current_round`` one past the last round it ran, so the not-started guard
-        above does not catch this case. In the two-phase LDM job it meant every phase-2 metric
-        reached the hub TWICE — once with the active controller's real ``global_round``, and once
-        tagged with the finished phase-1 controller's round (FLIP#1177):
-
-            Metric -> Total loss DM=0.9905 (site-2, global_round=1, ...)   <- finished controller
-            Metric -> Total loss DM=0.9905 (site-2, global_round=0, ...)   <- active controller
-        """
-        controller = ScatterAndGather(model_id=_VALID_MODEL_ID)
-        controller.log_error = MagicMock()
-        controller._start_round = 0
-        controller._num_rounds = 1
-        controller._current_round = 1  # ran round 0; the loop left it here on exit
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_prop.side_effect = lambda key, default=None: (
-            "metrics-shareable"
-            if key == FLContextKey.EVENT_DATA
-            else (None if key == FLContextKey.JOB_META else default)
-        )
-
-        with patch("flip.nvflare.controllers.scatter_and_gather.handle_metrics_event") as mock_metrics:
-            controller.handle_event(FlipEvents.SEND_RESULT, fl_ctx)
-
-        mock_metrics.assert_not_called()
-        controller.log_error.assert_not_called()
 
 
 class TestFedJobSerialisation:
