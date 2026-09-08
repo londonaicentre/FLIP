@@ -142,6 +142,12 @@ def parse_services(path: Path) -> list[Service]:
             continue
         if current is not None:
             current.lines.append(line)
+    if not services:
+        raise ValueError(
+            f"{path}: parsed zero services. The line-based parser expects `services:` at column 0 "
+            f"and two-space-indented service keys; if the file's shape changed, these guards would "
+            f"otherwise pass by asserting over nothing."
+        )
     return services
 
 
@@ -237,10 +243,13 @@ def check_no_uname_runtime_paths(failures: list[str]) -> None:
 
 def main() -> int:
     failures: list[str] = []
-    check_kit_mounters_run_as_host_uid(failures)
-    check_user_override_names_the_user(failures)
-    check_production_does_not_override_user(failures)
-    check_no_uname_runtime_paths(failures)
+    try:
+        check_kit_mounters_run_as_host_uid(failures)
+        check_user_override_names_the_user(failures)
+        check_production_does_not_override_user(failures)
+        check_no_uname_runtime_paths(failures)
+    except ValueError as exc:
+        failures.append(str(exc))
 
     if failures:
         print("❌ container identity guards failed:\n")
