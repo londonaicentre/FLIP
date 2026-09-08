@@ -26,7 +26,7 @@ class FlipAnalyticsBridge(FLComponent):
     FLIP's ``FlipEvents.SEND_RESULT`` federated events.
 
     Trainer scripts written against the NVFLARE Client API publish metrics
-    through ``SummaryWriter`` / ``flare.log``. The ``InProcessClientAPIExecutor``
+    through ``SummaryWriter`` / ``flare.log``. The ``ClientAPIExecutor``
     forwards those records onto the client process as ``ANALYTIC_EVENT_TYPE``
     events. This widget rewraps each record as a ``DataKind.METRICS`` DXO and
     re-fires it under ``FlipEvents.SEND_RESULT`` with federation scope, so the

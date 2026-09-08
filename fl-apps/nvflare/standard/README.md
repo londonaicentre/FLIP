@@ -17,7 +17,7 @@
 
 This is the NVFLARE **Client API** federated-training job type (`JOB_TYPE=standard`). It performs a
 **Federated Averaging** round-trip, driving client training through the NVFLARE Client API
-(`InProcessClientAPIExecutor`). It replaced the retired Executor-based `standard` template, which
+(`ClientAPIExecutor` in `in_process` mode). It replaced the retired Executor-based `standard` template, which
 drove the clients through the legacy `RUN_TRAINER`/`RUN_VALIDATOR` executor pair.
 The server side is: `InitTraining` → `ScatterAndGather` → stock `GlobalModelEval` → `BroadcastTask` cleanup.
 
@@ -30,7 +30,7 @@ hand-edit them — regenerate via `recipe.py` after any recipe change and commit
 For each global round (`num_rounds` in the recipe / `ScatterAndGather` args):
 
 1. The server sends the current global model to every site.
-2. Each site runs the user's `trainer.py` via `InProcessClientAPIExecutor`, using the NVFLARE
+2. Each site runs the user's `trainer.py` via `ClientAPIExecutor`, using the NVFLARE
    Client API (`flare.receive()` / `flare.send()`) to receive and return model params.
 3. Sites return their update as a weight **diff** — `FLModel(params=<local minus global>,
    params_type="DIFF")` → `DataKind.WEIGHT_DIFF` (a `WEIGHTS` return is rejected by the
@@ -54,7 +54,7 @@ There is **no `validator.py`** — validation is orchestrated server-side via `G
 **Client — `config_fed_client.json` `executors` / `filters`:**
 
 - `init_training`, `post_validation` → `flip.nvflare.components.CleanupImages`
-- `train`, `validate` → `nvflare.app_common.executors.InProcessClientAPIExecutor`
+- `train`, `validate` → `nvflare.app_common.executors.client_api_executor.ClientAPIExecutor` (`execution_mode: in_process``
 - `train` result → `flip.nvflare.components.PercentilePrivacy` (DP noise filter)
 - Event handlers: `ClientEventHandler`, `FlipAnalyticsBridge`
 

@@ -25,7 +25,7 @@ The two :class:`~flip.nvflare.controllers.ScatterAndGatherLDM` instances share o
 ``train_dm`` controller seeds its phase with the autoencoder weights the ``train_ae`` controller
 persisted (the phase-1 → phase-2 handoff, unchanged from the legacy job).
 
-Client-side, a **single** stock ``InProcessClientAPIExecutor`` serves all four ML task names
+Client-side, a **single** stock ``ClientAPIExecutor`` serves all four ML task names
 (``train_ae`` / ``train_dm`` / ``validate_ae`` / ``validate_dm``): the executor forwards the actual
 task name to the script, which dispatches on ``flare.get_task_name()`` (the single-name
 ``flare.is_train()`` / ``flare.is_evaluate()`` predicates cannot distinguish the two train phases).
@@ -49,12 +49,11 @@ from typing import Any
 
 from nvflare import FedJob
 from nvflare.app_common.aggregators import InTimeAccumulateWeightedAggregator
-from nvflare.app_common.executors.in_process_client_api_executor import InProcessClientAPIExecutor
+from nvflare.app_common.executors.client_api_executor import ClientAPIExecutor, ExecutionMode
 from nvflare.app_common.shareablegenerators.full_model_shareable_generator import FullModelShareableGenerator
 from nvflare.app_common.workflows.global_model_eval import GlobalModelEval
 from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
 from nvflare.job_config.defs import FilterType
-from nvflare.recipe.spec import Recipe
 
 from flip.constants import FlipTasks
 from flip.nvflare.components import (
@@ -70,6 +69,7 @@ from flip.nvflare.components import (
     ValidationJsonGenerator,
 )
 from flip.nvflare.controllers import BroadcastTask, InitTraining, ScatterAndGatherLDM
+from flip.nvflare.recipes.base import FlipRecipe
 from flip.nvflare.recipes.flip_fedavg_recipe import PercentilePrivacy
 from flip.nvflare.runtime import FLIP_CUSTOM_PROPS_KEY, FLIP_MODEL_ID_KEY
 
@@ -83,7 +83,7 @@ VALIDATE_AE_TASK = "validate_ae"
 VALIDATE_DM_TASK = "validate_dm"
 
 
-class FlipDiffusionRecipe(Recipe):
+class FlipDiffusionRecipe(FlipRecipe):
     """FLIP latent-diffusion recipe wired for the NVFLARE Client API.
 
     Args:
@@ -228,7 +228,8 @@ class FlipDiffusionRecipe(Recipe):
         # executor's own train/evaluate task-name knobs are single-valued, so they are left at
         # their stock defaults and intentionally unused.
         job.to_clients(
-            InProcessClientAPIExecutor(
+            ClientAPIExecutor(
+                execution_mode=ExecutionMode.IN_PROCESS,
                 task_script_path=self.train_script,
                 task_script_args=self.train_args,
                 params_exchange_format=self.params_exchange_format,

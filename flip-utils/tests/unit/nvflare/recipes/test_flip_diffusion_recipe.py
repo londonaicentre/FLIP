@@ -145,7 +145,10 @@ class TestFlipDiffusionRecipe:
             client_blob = json.dumps(client_cfg)
             # Client uses ONE stock Client-API executor for all four ML tasks; no RUN_TRAINER /
             # RUN_VALIDATOR executor pairs.
-            assert "InProcessClientAPIExecutor" in client_blob
+            assert "ClientAPIExecutor" in client_blob
+            # NVFLARE 2.9.0 folded the in-process executor into ClientAPIExecutor, where the mode
+            # is an argument rather than the class identity — so the mode is what needs pinning.
+            assert '"execution_mode": "in_process"' in client_blob
             assert "RUN_TRAINER" not in client_blob
             assert "RUN_VALIDATOR" not in client_blob
             executor_tasks = [t for e in client_cfg["executors"] for t in e["tasks"]]

@@ -110,7 +110,10 @@ class TestFlipEvalRecipe:
             client_cfg = json.loads(client_cfg_path.read_text())
             client_blob = json.dumps(client_cfg)
             # Client uses the stock Client-API executor for the validate task; no RUN_EVALUATOR.
-            assert "InProcessClientAPIExecutor" in client_blob
+            assert "ClientAPIExecutor" in client_blob
+            # NVFLARE 2.9.0 folded the in-process executor into ClientAPIExecutor, where the mode
+            # is an argument rather than the class identity — so the mode is what needs pinning.
+            assert '"execution_mode": "in_process"' in client_blob
             assert "RUN_EVALUATOR" not in client_blob
             # validate task is registered on the executor.
             executor_tasks = [t for e in client_cfg["executors"] for t in e["tasks"]]
