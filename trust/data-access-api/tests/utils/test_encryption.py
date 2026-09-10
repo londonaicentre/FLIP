@@ -166,8 +166,8 @@ KAT_PLAINTEXT = "known-answer"
 #: encrypt(KAT_PLAINTEXT, KAT_KEY, context=KAT_CONTEXT) with nonce 0x00..0x0b. Identical in all four services'
 #: test suites, so a copy that drifts from the others fails here instead of in production.
 KAT_ENVELOPE = (
-    "eyJ2IjogMSwgImtpZCI6ICJzaGFyZWQiLCAiaXYiOiAiQUFFQ0F3UUZCZ2NJQ1FvTCIsICJjdCI6ICJMR3k1Ykt2SW8zWCtOdkw1MFo3MFNwSTgz"  # pragma: allowlist secret
-    "d1NLbGlyaUxJa25PQT09In0="
+    "eyJ2IjogMSwgImtpZCI6ICJzaGFyZWQiLCAiaXYiOiAiQUFFQ0F3UUZCZ2NJQ1FvTCIsICJj"  # pragma: allowlist secret
+    "dCI6ICJMR3k1Ykt2SW8zWCtOdkw1MFo3MFNwSTgzd1NLbGlyaUxJa25PQT09In0="  # pragma: allowlist secret
 )
 
 
