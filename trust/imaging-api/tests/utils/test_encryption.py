@@ -11,60 +11,120 @@
 #
 
 import base64
-from unittest.mock import MagicMock, patch
+import json
 
 import pytest
+from cryptography.exceptions import InvalidTag
 
-from imaging_api.utils.encryption import decrypt, encrypt, get_aes_key
+from imaging_api.utils import encryption
+from imaging_api.utils.encryption import SHARED_KID, _reset_caches, decrypt, encrypt
 
-
-class TestGetAesKey:
-    def test_valid_key(self):
-        key = get_aes_key()
-        assert isinstance(key, bytes)
-        assert len(key) in (16, 24, 32)
-
-    @patch("imaging_api.utils.encryption.get_settings")
-    def test_missing_key_raises_value_error(self, mock_settings):
-        mock_settings.return_value = MagicMock(AES_KEY_BASE64="")
-        with pytest.raises(ValueError, match="AES key not found"):
-            get_aes_key()
-
-    @patch("imaging_api.utils.encryption.get_settings")
-    def test_invalid_key_length_raises_value_error(self, mock_settings):
-        # 10 bytes → invalid AES key length
-        mock_settings.return_value = MagicMock(AES_KEY_BASE64=base64.b64encode(b"x" * 10).decode())
-        with pytest.raises(ValueError, match="Invalid AES key length"):
-            get_aes_key()
+RAW_KEY_BYTES = b"ThisIsExactly32BytesLongKey!!!!1"
+ENCODED_KEY = base64.b64encode(RAW_KEY_BYTES).decode()
+TRUST_KEY_B64 = base64.b64encode(b"AnotherExactly32ByteAESKey!!!!!2").decode()
 
 
-class TestEncryptDecrypt:
-    def test_roundtrip(self):
-        plaintext = "hello-project-id-12345"
-        key = get_aes_key()
-        encrypted = encrypt(plaintext, key)
-        decrypted = decrypt(encrypted, key)
-        assert decrypted == plaintext
+@pytest.fixture(autouse=True)
+def _shared_key_settings(monkeypatch):
+    monkeypatch.setattr(encryption, "get_settings", lambda: type("S", (), {"AES_KEY_BASE64": ENCODED_KEY})())
+    for var in ("AES_TRUST_KEYS", "TRUST_AES_KID", "TRUST_AES_KEY_BASE64"):
+        monkeypatch.delenv(var, raising=False)
+    _reset_caches()
+    yield
+    _reset_caches()
 
-    def test_encrypt_produces_different_ciphertexts(self):
-        plaintext = "same-text"
-        key = get_aes_key()
-        c1 = encrypt(plaintext, key)
-        c2 = encrypt(plaintext, key)
-        assert c1 != c2  # random IV → different ciphertexts
 
-    def test_encrypt_uses_default_key(self):
-        plaintext = "auto-key-test"
-        encrypted = encrypt(plaintext)
-        decrypted = decrypt(encrypted)
-        assert decrypted == plaintext
+def _envelope(payload: str) -> dict:
+    return json.loads(base64.b64decode(payload))
 
-    def test_roundtrip_with_unicode(self):
-        plaintext = "patient-name-日本��"
-        key = get_aes_key()
-        assert decrypt(encrypt(plaintext, key), key) == plaintext
 
-    def test_roundtrip_with_long_text(self):
-        plaintext = "a" * 1000
-        key = get_aes_key()
-        assert decrypt(encrypt(plaintext, key), key) == plaintext
+def _reseal(envelope: dict) -> str:
+    return base64.b64encode(json.dumps(envelope).encode()).decode()
+
+
+def test_roundtrip_via_keyring():
+    assert decrypt(encrypt("hello")) == "hello"
+
+
+def test_roundtrip_explicit_key():
+    assert decrypt(encrypt("secret", key=RAW_KEY_BYTES), key=RAW_KEY_BYTES) == "secret"
+
+
+def test_default_kid_is_shared():
+    assert _envelope(encrypt("x"))["kid"] == SHARED_KID
+
+
+def test_tampered_ciphertext_fails_closed():
+    envelope = _envelope(encrypt("do not tamper"))
+    raw = bytearray(base64.b64decode(envelope["ct"]))
+    raw[0] ^= 0x01
+    envelope["ct"] = base64.b64encode(bytes(raw)).decode()
+    with pytest.raises(InvalidTag):
+        decrypt(_reseal(envelope))
+
+
+def test_kid_swap_fails_closed():
+    envelope = _envelope(encrypt("bound", key=RAW_KEY_BYTES, kid="kid-a"))
+    envelope["kid"] = "kid-b"
+    with pytest.raises(InvalidTag):
+        decrypt(_reseal(envelope), key=RAW_KEY_BYTES)
+
+
+def test_unsupported_version_raises():
+    envelope = _envelope(encrypt("x"))
+    envelope["v"] = 99
+    with pytest.raises(ValueError, match="Unsupported payload version"):
+        decrypt(_reseal(envelope))
+
+
+def test_own_trust_key_is_used_by_default(monkeypatch):
+    monkeypatch.setenv("TRUST_AES_KID", "trust-GSTT")
+    monkeypatch.setenv("TRUST_AES_KEY_BASE64", TRUST_KEY_B64)
+    _reset_caches()
+    payload = encrypt("per-trust")
+    assert _envelope(payload)["kid"] == "trust-GSTT"
+    assert decrypt(payload) == "per-trust"
+
+
+def test_decrypts_payload_addressed_to_this_trust(monkeypatch):
+    """Hub encrypts to this trust's kid; the trust decrypts it with its own key."""
+    monkeypatch.setenv("TRUST_AES_KID", "trust-GSTT")
+    monkeypatch.setenv("TRUST_AES_KEY_BASE64", TRUST_KEY_B64)
+    _reset_caches()
+    from_hub = encrypt("task payload", key=base64.b64decode(TRUST_KEY_B64), kid="trust-GSTT")
+    assert decrypt(from_hub) == "task payload"
+
+
+# --- temporary AES-CBC compatibility shim (delete with the shim) ---------------
+
+
+def _legacy_cbc_payload(plaintext: str, key: bytes = RAW_KEY_BYTES) -> str:
+    """Produce a payload in the pre-GCM format, exactly as an un-upgraded peer would."""
+    import os
+
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    iv = os.urandom(16)
+    padder = padding.PKCS7(128).padder()
+    padded = padder.update(plaintext.encode()) + padder.finalize()
+    encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+    return base64.b64encode(iv + encryptor.update(padded) + encryptor.finalize()).decode()
+
+
+def test_legacy_cbc_from_unupgraded_hub_still_decrypts():
+    assert decrypt(_legacy_cbc_payload("task payload")) == "task payload"
+
+
+def test_legacy_cbc_rejected_once_disabled(monkeypatch):
+    monkeypatch.setenv("AES_ACCEPT_LEGACY_CBC", "false")
+    _reset_caches()
+    with pytest.raises(ValueError, match="Legacy AES-CBC payload rejected"):
+        decrypt(_legacy_cbc_payload("x"))
+
+
+def test_gcm_still_works_when_legacy_disabled(monkeypatch):
+    """Turning the shim off must not affect the real format."""
+    monkeypatch.setenv("AES_ACCEPT_LEGACY_CBC", "false")
+    _reset_caches()
+    assert decrypt(encrypt("still fine")) == "still fine"

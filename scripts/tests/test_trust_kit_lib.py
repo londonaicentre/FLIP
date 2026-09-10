@@ -53,12 +53,29 @@ def _assert(condition: bool, label: str, detail: str = "") -> None:
         FAIL += 1
 
 
+def _count_key(content: str, key: str) -> int:
+    """Count live ``KEY=`` lines, matching the key exactly.
+
+    A substring count is wrong here: ``AES_KEY_BASE64`` is a suffix of the
+    per-trust ``TRUST_AES_KEY_BASE64``, so ``content.count("AES_KEY_BASE64=")``
+    silently counts both and a duplicate-detection assertion stops meaning
+    anything.
+    """
+    return sum(
+        1
+        for ln in content.splitlines()
+        if not ln.lstrip().startswith("#") and ln.split("=", 1)[0] == key
+    )
+
+
 def _full_kit(**overrides: object) -> dict:
     kit = {
         "trust_id": "11111111-1111-1111-1111-111111111111",
         "trust_name": "GSTT Hospital",
         "trust_api_key": "plain-api-key",
         "trust_internal_service_key": "plain-internal-key",
+        "trust_aes_key": "plain-aes-key==",
+        "trust_aes_kid": "trust-11111111-1111-1111-1111-111111111111",
         "fl_kit_slot": "Trust_1",
         "fl_kit_slot_number": 1,
         "hub_shared": {"AES_KEY_BASE64": "v1==", "FL_BACKEND": "flower"},
@@ -81,6 +98,15 @@ def test_new_kit_writes_creds_meta_and_hub_shared() -> None:
         _assert("OMOP_DB_PORT=5436" in content, "host-local profile seeded from example")
         _assert("TRUST_API_KEY=plain-api-key" in content, "TRUST_API_KEY written")
         _assert("TRUST_INTERNAL_SERVICE_KEY=plain-internal-key" in content, "internal key written")
+        # The hub keeps no copy of the AES key, so if it is not written here it is lost.
+        _assert("TRUST_AES_KEY_BASE64=plain-aes-key==" in content, "AES key written (trailing == preserved)")
+        # The kid ships commented: setting it live before the hub holds the same key
+        # breaks decryption in both directions, so enabling it must stay deliberate.
+        _assert(
+            "# TRUST_AES_KID=trust-11111111-1111-1111-1111-111111111111" in content,
+            "AES kid written commented (inert until enabled)",
+        )
+        _assert(_count_key(content, "TRUST_AES_KID") == 0, "AES kid has no live line")
         _assert("EXPECTED_TRUST_ID=11111111-1111-1111-1111-111111111111" in content, "EXPECTED_TRUST_ID written")
         _assert("FL_KIT_SLOT=Trust_1" in content, "FL_KIT_SLOT written")
         _assert("FL_KIT_SLOT_NUMBER=1" in content, "FL_KIT_SLOT_NUMBER written")
@@ -128,6 +154,7 @@ def test_skip_path_preserves_existing_creds() -> None:
         target.write_text(
             "TRUST_API_KEY=preserved-key\n"
             "TRUST_INTERNAL_SERVICE_KEY=preserved-internal\n"
+            "TRUST_AES_KEY_BASE64=preserved-aes==\n"
             "FL_KIT_SLOT=Trust_1\n"
             "FL_KIT_SLOT_NUMBER=1\n"
         )
@@ -143,6 +170,8 @@ def test_skip_path_preserves_existing_creds() -> None:
         content = target.read_text()
         _assert("TRUST_API_KEY=preserved-key" in content, "TRUST_API_KEY preserved on skip path")
         _assert("TRUST_INTERNAL_SERVICE_KEY=preserved-internal" in content, "internal key preserved on skip path")
+        # An unrecoverable credential: a skip-path clobber would strand the trust.
+        _assert("TRUST_AES_KEY_BASE64=preserved-aes==" in content, "AES key preserved on skip path")
         _assert("AES_KEY_BASE64=rotated==" in content, "hub-shared refreshed on skip path")
 
 
@@ -154,11 +183,11 @@ def test_idempotent_rotation_no_dupes() -> None:
         tkl.write_kit(target, _full_kit(hub_shared={"AES_KEY_BASE64": "v2==", "FL_BACKEND": "nvflare"}))
 
         content = target.read_text()
-        _assert(content.count("AES_KEY_BASE64=") == 1, "no duplicate AES_KEY_BASE64")
+        _assert(_count_key(content, "AES_KEY_BASE64") == 1, "no duplicate AES_KEY_BASE64")
         _assert("AES_KEY_BASE64=v2==" in content, "AES key rotated to v2")
         _assert("FL_BACKEND=nvflare" in content, "FL_BACKEND rotated")
         _assert(content.count(tkl.SENTINEL) == 1, "exactly one sentinel")
-        _assert(content.count("TRUST_API_KEY=") == 1, "no duplicate TRUST_API_KEY")
+        _assert(_count_key(content, "TRUST_API_KEY") == 1, "no duplicate TRUST_API_KEY")
 
 
 def test_absent_target_no_example_creates_file() -> None:
@@ -201,7 +230,7 @@ def test_ec2_rerun_preserves_host_local_profile() -> None:
         _assert("GRAFANA_PORT=3301" in content, "host-local GRAFANA_PORT preserved")
         _assert("TRUST_API_KEY=existing-prod-key" in content, "existing prod creds preserved")
         _assert("AES_KEY_BASE64=new==" in content, "hub-shared rotated")
-        _assert(content.count("AES_KEY_BASE64=") == 1, "no duplicate AES_KEY_BASE64 after re-run")
+        _assert(_count_key(content, "AES_KEY_BASE64") == 1, "no duplicate AES_KEY_BASE64 after re-run")
 
 
 def test_dev_commented_hub_shared() -> None:
@@ -230,6 +259,22 @@ def test_dev_commented_hub_shared() -> None:
         _assert(content2.count("# AES_KEY_BASE64=") == 1, "no duplicate commented key on re-run")
 
 
+def test_enabled_aes_kid_is_not_switched_off_by_re_registration() -> None:
+    print("▶ a live TRUST_AES_KID set by the operator survives a re-run")
+    with tempfile.TemporaryDirectory() as td:
+        target = Path(td) / ".env.GSTT.development"
+        target.write_text("TRUST_AES_KID=trust-enabled-by-operator\n")
+
+        tkl.write_kit(target, _full_kit())
+
+        content = target.read_text()
+        _assert(
+            "TRUST_AES_KID=trust-enabled-by-operator" in content,
+            "operator's live kid preserved",
+        )
+        _assert(_count_key(content, "TRUST_AES_KID") == 1, "no second kid line added")
+
+
 def main() -> None:
     test_new_kit_writes_creds_meta_and_hub_shared()
     test_existing_world_readable_kit_is_tightened_before_creds_land()
@@ -238,6 +283,7 @@ def main() -> None:
     test_idempotent_rotation_no_dupes()
     test_absent_target_no_example_creates_file()
     test_ec2_rerun_preserves_host_local_profile()
+    test_enabled_aes_kid_is_not_switched_off_by_re_registration()
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
     sys.exit(0 if FAIL == 0 else 1)
