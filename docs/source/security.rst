@@ -43,8 +43,8 @@ HSTS, AWS WAF managed rules, and an internal-only Application Load Balancer. Not
 else in the platform is reachable from the public internet.
 
 **A site-to-site VPN is available on request.** Trust-to-hub traffic is encrypted in
-transit by default, and payloads carry their own encryption layer on top of
-that. Where a trust's own policy calls for network-layer separation as well, a
+transit by default, and payloads carry their own authenticated encryption layer
+(AES-256-GCM) on top of that. Where a trust's own policy calls for network-layer separation as well, a
 site-to-site VPN between the trust's network and the hub VPC can be provisioned,
 carrying all outbound polling and FL client traffic.
 
