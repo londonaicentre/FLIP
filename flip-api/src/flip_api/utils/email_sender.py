@@ -22,14 +22,20 @@ from flip_api.config import get_settings
 from flip_api.utils.logger import logger
 
 # Substrings marking a template-data key whose value must never reach the
-# logs. The console backend logs the payload, and flip-xnat-credentials
-# carries the user's decrypted XNAT password. Matched as substrings rather
+# logs. The console backend logs the payload, and flip-xnat-invite carries the
+# user's decrypted XNAT alias-token path. Matched as substrings rather
 # than exact names, and at every depth of the payload: a denylist guarding a
 # live credential has to fail safe, so a future `temp_password`, `api_secret`
 # or `access_token` field is redacted without anyone remembering to update
 # this set, and without depending on the payload staying flat the way today's
 # ISesTemplateData shapes happen to be.
-_REDACTED_KEY_MARKERS = ("password", "secret", "token", "credential")
+#
+# `setup_path` is here because it is the one credential-bearing field whose
+# name says nothing about it: FLIP-PT-079 replaced the emailed password with a
+# one-time set-password link, and its `?a=…&s=…` alias-token pair is a bearer
+# capability over that XNAT account. Nothing in "setup_path" matches the
+# markers above, so without this entry the invite link is logged in full.
+_REDACTED_KEY_MARKERS = ("password", "secret", "token", "credential", "setup_path")
 
 # Cap on a single logged template value. reason_for_access arrives on the
 # unauthenticated POST /users/access with no length bound.

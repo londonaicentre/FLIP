@@ -57,7 +57,7 @@ class TestSesData:
     project_name: str = "Brain Tumour Segmentation"
     project_id: str = "BTS-001"
     username: str = "jdoe"
-    password: str = "X7k!mP2$vR9n"
+    setup_path: str = "/app/template/XDATScreen_UpdateUser.vm?a=alias-123&s=secret-abc"
 
 
 class EmailTemplateTester:
@@ -83,7 +83,7 @@ class EmailTemplateTester:
         # Load SES templates
         ses_dir = aws_dir / "templates" / "ses"
         self.ACCESS_REQUEST_TEMPLATE_HTML = (ses_dir / "flip-access-request.html").read_text()
-        self.XNAT_CREDENTIALS_TEMPLATE_HTML = (ses_dir / "flip-xnat-credentials.html").read_text()
+        self.XNAT_INVITE_TEMPLATE_HTML = (ses_dir / "flip-xnat-invite.html").read_text()
 
     def substitute_placeholders(self, template: str) -> tuple[str, dict[str, str]]:
         """
@@ -112,7 +112,7 @@ class EmailTemplateTester:
             "{{project_name}}": self.test_ses.project_name,
             "{{project_id}}": self.test_ses.project_id,
             "{{username}}": self.test_ses.username,
-            "{{password}}": self.test_ses.password,
+            "{{setup_path}}": self.test_ses.setup_path,
         }
 
         rendered = template
@@ -192,7 +192,7 @@ class EmailTemplateTester:
             ("password_reset_code", self.PASSWORD_RESET_CODE_TEMPLATE_HTML),
             ("password_reset_link", self.PASSWORD_RESET_LINK_TEMPLATE_HTML),
             ("access_request", self.ACCESS_REQUEST_TEMPLATE_HTML),
-            ("xnat_credentials", self.XNAT_CREDENTIALS_TEMPLATE_HTML),
+            ("xnat_invite", self.XNAT_INVITE_TEMPLATE_HTML),
         ]
 
         for name, template in templates:
@@ -261,7 +261,7 @@ class EmailTemplateTester:
             ("Password Reset (Code)", self.PASSWORD_RESET_CODE_TEMPLATE_HTML),
             ("Password Reset (Link)", self.PASSWORD_RESET_LINK_TEMPLATE_HTML),
             ("Access Request", self.ACCESS_REQUEST_TEMPLATE_HTML),
-            ("XNAT Credentials", self.XNAT_CREDENTIALS_TEMPLATE_HTML),
+            ("XNAT Invite", self.XNAT_INVITE_TEMPLATE_HTML),
         ]
 
         results = []
@@ -353,7 +353,7 @@ def main():
     if args.serve:
         print(f"\n📧 Starting local HTTP server at http://localhost:{args.port}")
         print("Open the following URLs in your browser:")
-        for name in ["invite", "password_reset_code", "password_reset_link", "access_request", "xnat_credentials"]:
+        for name in ["invite", "password_reset_code", "password_reset_link", "access_request", "xnat_invite"]:
             print(f"  • http://localhost:{args.port}/flip_email_{name}.html")
         print("\nPress Ctrl+C to stop the server.\n")
 

@@ -25,7 +25,7 @@ from flip_api.domain.interfaces.trust import (
     ISesTemplateData,
 )
 from flip_api.private_services.project_images_helpers import insert_status
-from flip_api.utils.constants import IMAGING_CREDENTIALS_TEMPLATE_NAME, IMAGING_PROJECT_ACCESS_TEMPLATE_NAME
+from flip_api.utils.constants import IMAGING_INVITE_TEMPLATE_NAME, IMAGING_PROJECT_ACCESS_TEMPLATE_NAME
 from flip_api.utils.email_sender import EmailDispatchError, send_templated_email
 from flip_api.utils.encryption import decrypt
 from flip_api.utils.logger import logger
@@ -45,7 +45,7 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
     any recipient, so it aborts the run. Both callers (``trust_tasks`` and the
     ``stale_task_recovery`` sweep) clear ``needs_post_processing`` only on a
     clean return, so swallowing that would discard the retry and leave those
-    users with no credentials and no trace in the retry queue. Anything else,
+    users with no invite and no trace in the retry queue. Anything else,
     notably a ``ClientError`` such as SES ``MessageRejected`` on one bad
     address, is that recipient's problem alone: it is logged and skipped so the
     remaining recipients still get their mail and the task reaches a terminal
@@ -104,27 +104,27 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
     trust = db.exec(select(Trust).where(Trust.id == task.trust_id)).first()
     trust_name = trust.name if trust else "Unknown Trust"
 
-    # Send credential emails to newly created users
+    # Send invite emails to newly created users. The email carries a host-less "set your own
+    # password" link (an XNAT alias-token path), never a password (FLIP-PT-079). The link is
+    # decrypted here only to place it in the email — no standing credential is ever transmitted.
     for user in imaging_project.created_users:
         try:
-            decrypted_password = decrypt(user.encrypted_password)
+            setup_path = decrypt(user.encrypted_setup_path)
 
             template_data = ISesTemplateData(
                 trust_name=trust_name,
                 project_name=imaging_project.name,
                 project_id=project_id,
                 username=user.username,
-                password=decrypted_password,
+                setup_path=setup_path,
             )
 
             send_templated_email(
                 recipient=user.email,
-                template_name=IMAGING_CREDENTIALS_TEMPLATE_NAME,
+                template_name=IMAGING_INVITE_TEMPLATE_NAME,
                 template_data=template_data.model_dump(mode="json"),
             )
-            logger.info(
-                f"XNAT credentials notification dispatched to {user.email} for project '{imaging_project.name}'"
-            )
+            logger.info(f"XNAT invite dispatched to {user.email} for project '{imaging_project.name}'")
 
         except BotoCoreError as e:
             raise EmailDispatchError(
@@ -135,7 +135,7 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
         except Exception as e:
             # exception(), not error(): the traceback is what distinguishes a
             # rejected address from a template or decrypt fault.
-            logger.exception(f"Failed to send credentials email to {user.email}: {e}")
+            logger.exception(f"Failed to send invite email to {user.email}: {e}")
 
     # Send project access notifications to existing users (no password)
     for added_user in imaging_project.added_users:

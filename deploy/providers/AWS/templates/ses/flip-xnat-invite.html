@@ -45,24 +45,29 @@
             <td style="padding: 40px 30px;">
               <p style="margin: 0 0 24px 0; color: #301A37; font-size: 16px; line-height: 1.5;">Hello,</p>
 
-              <p style="margin: 0 0 24px 0; color: #434757; font-size: 16px; line-height: 1.6;">An XNAT account has been created at trust <strong>{{trust_name}}</strong>. You have been granted access to project: <strong>{{project_name}}</strong> (ID: <strong>{{project_id}}</strong>).</p>
+              <p style="margin: 0 0 24px 0; color: #434757; font-size: 16px; line-height: 1.6;">An XNAT account has been created for you at trust <strong>{{trust_name}}</strong>. You have been granted access to project: <strong>{{project_name}}</strong> (ID: <strong>{{project_id}}</strong>).</p>
 
-              <!-- Credentials section -->
+              <!-- Set-password section -->
               <div style="background-color: #F7F3F9; border-left: 4px solid #9452A8; padding: 20px; margin: 24px 0; border-radius: 4px;">
-                <p style="margin: 0 0 16px 0; color: #301A37; font-size: 14px; font-weight: 600;">Your XNAT credentials:</p>
+                <p style="margin: 0 0 16px 0; color: #301A37; font-size: 14px; font-weight: 600;">Set your password to activate your account:</p>
                 <table cellpadding="0" cellspacing="0" width="100%">
                   <tr>
                     <td style="padding: 8px 0; color: #61366e; font-weight: 600; width: 120px; font-size: 14px;">Username:</td>
                     <td style="padding: 8px 0; color: #301A37; font-family: 'Monaco', 'Courier New', monospace; font-size: 14px; word-break: break-word;">{{username}}</td>
                   </tr>
                   <tr>
-                    <td style="padding: 8px 0; color: #61366e; font-weight: 600; font-size: 14px;">Password:</td>
-                    <td style="padding: 8px 0; color: #301A37; font-family: 'Monaco', 'Courier New', monospace; font-size: 16px; letter-spacing: 2px; font-weight: 600;">{{password}}</td>
+                    <td style="padding: 8px 0; color: #61366e; font-weight: 600; font-size: 14px; vertical-align: top;">Set-password link:</td>
+                    <td style="padding: 8px 0; color: #301A37; font-family: 'Monaco', 'Courier New', monospace; font-size: 13px; word-break: break-all;">{{setup_path}}</td>
                   </tr>
                 </table>
               </div>
 
-              <p style="margin: 24px 0 0 0; color: #434757; font-size: 16px; line-height: 1.6;">Please change your password when you first log in.</p>
+              <p style="margin: 24px 0 0 0; color: #434757; font-size: 16px; line-height: 1.6;">Open your trust's XNAT in a web browser, then append the set-password link path above to its address and go to it. You'll be asked to choose your own password — no password is ever sent by email.</p>
+
+              <!-- Enclave network note -->
+              <div style="background-color: #FFF7E6; border-left: 4px solid #E0A106; padding: 16px 20px; margin: 24px 0; border-radius: 4px;">
+                <p style="margin: 0; color: #6B4E00; font-size: 14px; line-height: 1.6;"><strong>Important:</strong> XNAT is only reachable from inside {{trust_name}}'s secure network. Open this link from a machine connected to that network (for example, using the connection you normally use to reach XNAT). It cannot be opened over the public internet. The link can be used once and expires.</p>
+              </div>
 
               <!-- Confidentiality notice -->
               <p style="margin: 24px 0 0 0; color: #434757; font-size: 13px; line-height: 1.6;">This is an automated message. Please do not reply to this email. This message may contain confidential information. If you are not the intended recipient, please do not disclose, copy, or distribute it.</p>

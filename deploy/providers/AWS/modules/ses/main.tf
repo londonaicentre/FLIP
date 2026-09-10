@@ -25,11 +25,13 @@ resource "aws_ses_template" "flip_access_request" {
   text    = file("${var.templates_dir}/flip-access-request.txt")
 }
 
-resource "aws_ses_template" "flip_xnat_credentials" {
-  name    = var.template_name_prefix == "" ? "flip-xnat-credentials" : "${var.template_name_prefix}-flip-xnat-credentials"
-  subject = "Your XNAT credentials for {{trust_name}}"
-  html    = file("${var.templates_dir}/flip-xnat-credentials.html")
-  text    = file("${var.templates_dir}/flip-xnat-credentials.txt")
+# Invite email: carries a host-less "set your own password" link (an XNAT alias-token path),
+# never a password (FLIP-PT-079). Renamed from the retired flip-xnat-credentials template.
+resource "aws_ses_template" "flip_xnat_invite" {
+  name    = var.template_name_prefix == "" ? "flip-xnat-invite" : "${var.template_name_prefix}-flip-xnat-invite"
+  subject = "Set your XNAT password for {{trust_name}}"
+  html    = file("${var.templates_dir}/flip-xnat-invite.html")
+  text    = file("${var.templates_dir}/flip-xnat-invite.txt")
 }
 
 resource "aws_ses_template" "flip_xnat_added_to_project" {

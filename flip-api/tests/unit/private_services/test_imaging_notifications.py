@@ -74,8 +74,8 @@ def mock_insert_status():
 def test_sends_email_to_each_created_user(mock_send_email, mock_decrypt, mock_insert_status):
     """Should send one SES email per created user with correct template data."""
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
-        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},  # pragma: allowlist secret
+        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
+        {"username": "user2", "encrypted_setup_path": "enc2", "email": "user2@test.com"},
     ]
     task = _make_task(users)
 
@@ -98,7 +98,7 @@ def test_sends_email_to_each_created_user(mock_send_email, mock_decrypt, mock_in
     assert template_data["trust_name"] == "Trust_1"
     assert template_data["project_name"] == "Test Imaging Project"
     assert template_data["username"] == "user1"
-    assert template_data["password"] == "decrypted_enc1"  # pragma: allowlist secret
+    assert template_data["setup_path"] == "decrypted_enc1"
 
     # Verify second user's email
     second_call = mock_send_email.call_args_list[1]
@@ -110,7 +110,7 @@ def test_inserts_xnat_project_status(mock_send_email, mock_decrypt, mock_insert_
     from flip_api.db.models.main_models import XNATImageStatus
 
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
+        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
     ]
     task = _make_task(users)
 
@@ -139,7 +139,7 @@ def test_inserts_xnat_project_status(mock_send_email, mock_decrypt, mock_insert_
 def test_inserts_status_with_no_query(mock_send_email, mock_decrypt, mock_insert_status):
     """Should pass query_id=None when project has no queries."""
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
+        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
     ]
     task = _make_task(users)
 
@@ -185,8 +185,8 @@ def test_systemic_failure_raises_so_the_task_stays_retryable(mock_send_email, mo
     cannot be constructed cannot send to anyone.
     """
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
-        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},  # pragma: allowlist secret
+        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
+        {"username": "user2", "encrypted_setup_path": "enc2", "email": "user2@test.com"},
     ]
     task = _make_task(users, added_users=[{"username": "existing1", "email": "existing1@test.com"}])
 
@@ -216,7 +216,7 @@ def test_single_recipient_rejection_does_not_raise(mock_send_email, mock_decrypt
     task never reaching a terminal state.
     """
     task = _make_task([
-        {"username": "user1", "encrypted_password": "enc1", "email": "typo@test.com"},  # pragma: allowlist secret
+        {"username": "user1", "encrypted_setup_path": "enc1", "email": "typo@test.com"},
     ])
 
     mock_db = MagicMock()
@@ -242,7 +242,7 @@ def test_single_recipient_systemic_failure_raises(mock_send_email, mock_decrypt,
     the outcome is decided by the exception type rather than the count.
     """
     task = _make_task([
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
+        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
     ])
 
     mock_db = MagicMock()
@@ -278,8 +278,8 @@ def test_added_user_systemic_failure_raises(mock_send_email, mock_decrypt, mock_
 def test_partial_failure_does_not_raise(mock_send_email, mock_decrypt, mock_insert_status):
     """One bad address is not systemic: the run succeeds so the task is not retried forever."""
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
-        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},  # pragma: allowlist secret
+        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
+        {"username": "user2", "encrypted_setup_path": "enc2", "email": "user2@test.com"},
     ]
     task = _make_task(users)
 
@@ -300,8 +300,8 @@ def test_partial_failure_does_not_raise(mock_send_email, mock_decrypt, mock_inse
 def test_ses_failure_for_one_user_continues_to_next(mock_send_email, mock_decrypt, mock_insert_status):
     """Should continue sending to remaining users if the send fails for one."""
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
-        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},  # pragma: allowlist secret
+        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
+        {"username": "user2", "encrypted_setup_path": "enc2", "email": "user2@test.com"},
     ]
     task = _make_task(users)
 
@@ -322,8 +322,8 @@ def test_ses_failure_for_one_user_continues_to_next(mock_send_email, mock_decryp
 def test_decryption_failure_continues_to_next_user(mock_send_email, mock_insert_status):
     """Should continue to next user if decryption fails for one."""
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
-        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},  # pragma: allowlist secret
+        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
+        {"username": "user2", "encrypted_setup_path": "enc2", "email": "user2@test.com"},
     ]
     task = _make_task(users)
 
@@ -387,7 +387,7 @@ def test_missing_id_field_raises_value_error():
 
 
 def test_sends_project_access_email_to_added_users(mock_send_email, mock_decrypt, mock_insert_status):
-    """Should send project access emails (no password) to existing users added to the project."""
+    """Should send project access emails (no invite link) to existing users added to the project."""
     added_users = [
         {"username": "existing1", "email": "existing1@test.com"},
         {"username": "existing2", "email": "existing2@test.com"},
@@ -405,7 +405,7 @@ def test_sends_project_access_email_to_added_users(mock_send_email, mock_decrypt
 
     assert mock_send_email.call_count == 2
 
-    # Verify correct template is used (not credentials template)
+    # Verify correct template is used (not the invite template)
     first_call = mock_send_email.call_args_list[0]
     assert first_call.kwargs["recipient"] == "existing1@test.com"
     assert first_call.kwargs["template_name"] == "flip-xnat-added-to-project"
@@ -414,13 +414,13 @@ def test_sends_project_access_email_to_added_users(mock_send_email, mock_decrypt
     assert template_data["trust_name"] == "Trust_1"
     assert template_data["project_name"] == "Test Imaging Project"
     assert template_data["username"] == "existing1"
-    assert "password" not in template_data
+    assert "setup_path" not in template_data
 
 
-def test_sends_both_credential_and_access_emails(mock_send_email, mock_decrypt, mock_insert_status):
-    """Should send credential emails to created users AND access emails to added users."""
+def test_sends_both_invite_and_access_emails(mock_send_email, mock_decrypt, mock_insert_status):
+    """Should send invite emails to created users AND access emails to added users."""
     created_users = [
-        {"username": "new1", "encrypted_password": "enc1", "email": "new1@test.com"},  # pragma: allowlist secret
+        {"username": "new1", "encrypted_setup_path": "enc1", "email": "new1@test.com"},
     ]
     added_users = [
         {"username": "existing1", "email": "existing1@test.com"},
@@ -438,9 +438,9 @@ def test_sends_both_credential_and_access_emails(mock_send_email, mock_decrypt, 
 
     assert mock_send_email.call_count == 2
 
-    # First call: credentials email to new user
+    # First call: invite email to new user
     cred_call = mock_send_email.call_args_list[0]
-    assert cred_call.kwargs["template_name"] == "flip-xnat-credentials"
+    assert cred_call.kwargs["template_name"] == "flip-xnat-invite"
     assert cred_call.kwargs["recipient"] == "new1@test.com"
 
     # Second call: access email to existing user
