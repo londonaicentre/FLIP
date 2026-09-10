@@ -162,6 +162,14 @@ resource "aws_ecs_service" "fl_server_net_1" {
   launch_type            = "FARGATE"
   enable_execute_command = var.ecs_exec_enabled
 
+  # desired_count becomes app-managed once flip-api scales the FL server to
+  # zero between jobs and back up on demand (#735). Terraform must not
+  # reconcile it, or an unrelated `terraform apply` mid-idle spins the
+  # service back up. The app is the source of truth for runtime scale state.
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
+
   network_configuration {
     subnets          = module.flip_vpc.private_subnets
     security_groups  = [aws_security_group.ecs_fl_server.id]
