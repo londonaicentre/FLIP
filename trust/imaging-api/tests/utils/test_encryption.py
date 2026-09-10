@@ -10,12 +10,38 @@
 # limitations under the License.
 #
 
+"""Tests for the authenticated (AES-GCM) payload envelope."""
+
 import base64
+import json
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-from imaging_api.utils.encryption import decrypt, encrypt, get_aes_key
+from imaging_api.utils.encryption import SHARED_KID, decrypt, encrypt, get_aes_key
+
+OTHER_KEY = os.urandom(32)
+
+
+def _envelope(encoded: str) -> dict:
+    return json.loads(base64.b64decode(encoded))
+
+
+def _reencode(envelope: dict) -> str:
+    return base64.b64encode(json.dumps(envelope).encode()).decode()
+
+
+def _legacy_cbc(plaintext: str, key: bytes) -> str:
+    """The pre-#1179 wire format: ``iv[16] || AES-CBC/PKCS7 ciphertext``, base64-encoded."""
+    iv = os.urandom(16)
+    padder = padding.PKCS7(128).padder()
+    padded = padder.update(plaintext.encode()) + padder.finalize()
+    encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+    return base64.b64encode(iv + encryptor.update(padded) + encryptor.finalize()).decode()
 
 
 class TestGetAesKey:
@@ -38,33 +64,72 @@ class TestGetAesKey:
             get_aes_key()
 
 
-class TestEncryptDecrypt:
-    def test_roundtrip(self):
-        plaintext = "hello-project-id-12345"
-        key = get_aes_key()
-        encrypted = encrypt(plaintext, key)
-        decrypted = decrypt(encrypted, key)
-        assert decrypted == plaintext
+class TestWireFormat:
+    def test_envelope_is_versioned_json_under_the_shared_kid(self):
+        envelope = _envelope(encrypt("payload", get_aes_key()))
+
+        assert envelope["v"] == 1
+        assert envelope["kid"] == SHARED_KID
+        assert len(base64.b64decode(envelope["iv"])) == 12
+        assert base64.b64decode(envelope["ct"])
 
     def test_encrypt_produces_different_ciphertexts(self):
-        plaintext = "same-text"
         key = get_aes_key()
-        c1 = encrypt(plaintext, key)
-        c2 = encrypt(plaintext, key)
-        assert c1 != c2  # random IV → different ciphertexts
+        assert encrypt("same-text", key) != encrypt("same-text", key)  # fresh nonce per call
+
+
+class TestEncryptDecrypt:
+    @pytest.mark.parametrize("plaintext", ["", "hello-project-id-12345", "patient-name-日本語", "a" * 1000])
+    def test_roundtrip(self, plaintext):
+        key = get_aes_key()
+        assert decrypt(encrypt(plaintext, key), key) == plaintext
 
     def test_encrypt_uses_default_key(self):
-        plaintext = "auto-key-test"
-        encrypted = encrypt(plaintext)
-        decrypted = decrypt(encrypted)
-        assert decrypted == plaintext
+        assert decrypt(encrypt("auto-key-test")) == "auto-key-test"
 
-    def test_roundtrip_with_unicode(self):
-        plaintext = "patient-name-日本��"
+    def test_tampered_ciphertext_fails_closed(self):
         key = get_aes_key()
-        assert decrypt(encrypt(plaintext, key), key) == plaintext
+        envelope = _envelope(encrypt("payload", key))
+        ciphertext = bytearray(base64.b64decode(envelope["ct"]))
+        ciphertext[0] ^= 0x01
+        envelope["ct"] = base64.b64encode(bytes(ciphertext)).decode()
 
-    def test_roundtrip_with_long_text(self):
-        plaintext = "a" * 1000
+        with pytest.raises(InvalidTag):
+            decrypt(_reencode(envelope), key)
+
+    def test_kid_is_bound_into_the_tag(self):
         key = get_aes_key()
-        assert decrypt(encrypt(plaintext, key), key) == plaintext
+        envelope = _envelope(encrypt("payload", key))
+        envelope["kid"] = "trust-other"
+
+        with pytest.raises(InvalidTag):
+            decrypt(_reencode(envelope), key)
+
+    def test_wrong_key_fails_closed(self):
+        with pytest.raises(InvalidTag):
+            decrypt(encrypt("payload", get_aes_key()), OTHER_KEY)
+
+    def test_unknown_kid_raises(self):
+        envelope = _envelope(encrypt("payload"))
+        envelope["kid"] = "trust-unknown"
+
+        with pytest.raises(KeyError, match="trust-unknown"):
+            decrypt(_reencode(envelope))
+
+    def test_unsupported_version_raises(self):
+        key = get_aes_key()
+        envelope = _envelope(encrypt("payload", key))
+        envelope["v"] = 2
+
+        with pytest.raises(ValueError, match="version"):
+            decrypt(_reencode(envelope), key)
+
+    def test_legacy_cbc_payload_is_rejected(self):
+        """No CBC fallback: an unauthenticated pre-#1179 payload must not decrypt, even under the right key."""
+        key = get_aes_key()
+        with pytest.raises(ValueError, match="not a FLIP encryption envelope"):
+            decrypt(_legacy_cbc("payload", key), key)
+
+    def test_non_envelope_json_is_rejected(self):
+        with pytest.raises(ValueError, match="not a FLIP encryption envelope"):
+            decrypt(base64.b64encode(b'{"not": "an envelope"}').decode(), get_aes_key())

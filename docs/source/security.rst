@@ -215,13 +215,14 @@ Data in transit and at rest
 Central Hub runs over HTTPS, outbound from the trust only. On top of that transport
 encryption, task payloads are themselves encrypted before they are handed to the
 transport, so the payload body is never carried in the clear inside an established
-session. Stated precisely, because this page exists to be relied on: today the payload
-layer uses a **single platform-wide symmetric key**, and message integrity is provided
-by the TLS transport rather than by the payload cipher itself. An upgrade to
-**authenticated encryption with per-trust keys** — tampering makes decryption fail
-outright, each trust's traffic is protected by its own key so a compromise at one trust
-exposes no other's, and keys carry identifiers so they can be rotated without a
-synchronised cutover — is in delivery, not yet a shipped control.
+session. The payload layer is **authenticated encryption** (AES-256-GCM): a payload that
+has been tampered with in any way fails decryption outright rather than yielding altered
+content, so message integrity does not rest on the transport alone. Stated precisely,
+because this page exists to be relied on: the payload layer still uses a **single
+platform-wide symmetric key**. The upgrade to **per-trust keys** — each trust's traffic
+protected by its own key so a compromise at one trust exposes no other's, and keys
+carrying identifiers so they can be rotated without a synchronised cutover — is in
+delivery, not yet a shipped control.
 
 **At rest**, model and results storage uses S3 with managed encryption under a
 customer-managed KMS key, versioning, blocked public access, HTTPS-only bucket policies,

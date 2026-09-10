@@ -15,6 +15,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from cryptography.exceptions import InvalidTag
 
 import trust_api.services.task_poller as task_poller
 from trust_api.services.task_poller import (
@@ -404,6 +405,40 @@ async def test_process_task_invalid_payload():
 
         assert result["success"] is False
         assert "Invalid payload" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_process_task_rejects_payload_that_fails_authentication():
+    """A tampered payload, or one under another key, fails closed with a reason, not an empty error string."""
+    with (
+        patch("trust_api.services.task_poller.TASK_HANDLERS") as mock_handlers,
+        patch("trust_api.services.task_poller.decrypt", side_effect=InvalidTag()),
+    ):
+        handler = AsyncMock()
+        mock_handlers.get.return_value = handler
+
+        result = await _process_task({"id": "task-1", "task_type": "cohort_query", "payload": "tampered"})
+
+        assert result["success"] is False
+        assert "authentication" in result["error"].lower()
+        handler.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_task_rejects_payload_under_unknown_kid():
+    """A payload whose envelope names a key this trust does not hold is reported, naming the kid."""
+    with (
+        patch("trust_api.services.task_poller.TASK_HANDLERS") as mock_handlers,
+        patch("trust_api.services.task_poller.decrypt", side_effect=KeyError("No key registered for kid 'trust-x'")),
+    ):
+        handler = AsyncMock()
+        mock_handlers.get.return_value = handler
+
+        result = await _process_task({"id": "task-1", "task_type": "cohort_query", "payload": "foreign"})
+
+        assert result["success"] is False
+        assert "trust-x" in result["error"]
+        handler.assert_not_called()
 
 
 # ---- run_poller (integration) ----

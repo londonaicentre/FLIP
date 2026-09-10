@@ -10,22 +10,30 @@
 # limitations under the License.
 #
 
+"""Tests for the authenticated (AES-GCM) payload envelope."""
+
 import base64
 import binascii
+import json
+import os
 from unittest.mock import patch
 
 import pytest
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-from flip_api.utils.encryption import decrypt, encrypt, get_aes_key
+from flip_api.utils.encryption import SHARED_KID, decrypt, encrypt, get_aes_key
 
 # Must be exactly 32 bytes (AES-256)
 RAW_KEY_BYTES = b"ThisIsExactly32BytesLongKey!!!!1"
 ENCODED_KEY = base64.b64encode(RAW_KEY_BYTES).decode()
+OTHER_KEY = os.urandom(32)
 
 
 @pytest.fixture
 def mock_settings():
-    """Mock settings for AWS region."""
+    """Production-shaped settings with an empty key cache."""
     with (
         patch("flip_api.utils.encryption.get_settings") as mock_get_settings,
         patch("flip_api.utils.encryption._aes_key_cache", None),
@@ -35,17 +43,36 @@ def mock_settings():
         yield mock_get_settings
 
 
-def test_encryption_decryption_roundtrip():
-    plaintext = "This is a test message"
-    encrypted = encrypt(plaintext, RAW_KEY_BYTES)
-    decrypted = decrypt(encrypted, RAW_KEY_BYTES)
-    assert decrypted == plaintext
+@pytest.fixture
+def shared_key(mock_settings):
+    """Resolve the shared key from a (mocked) Secrets Manager, as production does."""
+    with patch("flip_api.utils.encryption.get_secret", return_value=ENCODED_KEY):
+        yield RAW_KEY_BYTES
+
+
+def _envelope(encoded: str) -> dict:
+    return json.loads(base64.b64decode(encoded))
+
+
+def _reencode(envelope: dict) -> str:
+    return base64.b64encode(json.dumps(envelope).encode()).decode()
+
+
+def _legacy_cbc(plaintext: str, key: bytes) -> str:
+    """The pre-#1179 wire format: ``iv[16] || AES-CBC/PKCS7 ciphertext``, base64-encoded."""
+    iv = os.urandom(16)
+    padder = padding.PKCS7(128).padder()
+    padded = padder.update(plaintext.encode()) + padder.finalize()
+    encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+    return base64.b64encode(iv + encryptor.update(padded) + encryptor.finalize()).decode()
+
+
+# ---- key resolution ----
 
 
 def test_get_aes_key_returns_decoded_bytes(mock_settings):
     with patch("flip_api.utils.encryption.get_secret", return_value=ENCODED_KEY):
-        key = get_aes_key()
-        assert key == RAW_KEY_BYTES
+        assert get_aes_key() == RAW_KEY_BYTES
 
 
 def test_get_aes_key_raises_if_secret_invalid_base64(mock_settings):
@@ -55,5 +82,94 @@ def test_get_aes_key_raises_if_secret_invalid_base64(mock_settings):
 
 
 def test_invalid_key_length_raises():
-    with pytest.raises(ValueError, match="Invalid key size"):
+    with pytest.raises(ValueError, match="key must be"):
         encrypt("data", b"short")
+
+
+# ---- wire format ----
+
+
+def test_envelope_is_versioned_json_under_the_shared_kid():
+    envelope = _envelope(encrypt("payload", RAW_KEY_BYTES))
+
+    assert envelope["v"] == 1
+    assert envelope["kid"] == SHARED_KID
+    assert len(base64.b64decode(envelope["iv"])) == 12
+    assert base64.b64decode(envelope["ct"])
+
+
+def test_nonce_is_fresh_per_call():
+    first = _envelope(encrypt("same", RAW_KEY_BYTES))
+    second = _envelope(encrypt("same", RAW_KEY_BYTES))
+
+    assert first["iv"] != second["iv"]
+    assert first["ct"] != second["ct"]
+
+
+# ---- round trips ----
+
+
+def test_roundtrip_with_explicit_key():
+    assert decrypt(encrypt("This is a test message", RAW_KEY_BYTES), RAW_KEY_BYTES) == "This is a test message"
+
+
+def test_roundtrip_via_shared_key(shared_key):
+    assert decrypt(encrypt("via the keyring")) == "via the keyring"
+
+
+@pytest.mark.parametrize("plaintext", ["", '{"patient_id": 42, "name": "日本語"}', "x" * 10000])
+def test_roundtrip_preserves_content(plaintext):
+    assert decrypt(encrypt(plaintext, RAW_KEY_BYTES), RAW_KEY_BYTES) == plaintext
+
+
+# ---- fails closed ----
+
+
+def test_tampered_ciphertext_fails_closed():
+    envelope = _envelope(encrypt("payload", RAW_KEY_BYTES))
+    ciphertext = bytearray(base64.b64decode(envelope["ct"]))
+    ciphertext[0] ^= 0x01
+    envelope["ct"] = base64.b64encode(bytes(ciphertext)).decode()
+
+    with pytest.raises(InvalidTag):
+        decrypt(_reencode(envelope), RAW_KEY_BYTES)
+
+
+def test_kid_is_bound_into_the_tag():
+    envelope = _envelope(encrypt("payload", RAW_KEY_BYTES))
+    envelope["kid"] = "trust-other"
+
+    with pytest.raises(InvalidTag):
+        decrypt(_reencode(envelope), RAW_KEY_BYTES)
+
+
+def test_wrong_key_fails_closed():
+    with pytest.raises(InvalidTag):
+        decrypt(encrypt("payload", RAW_KEY_BYTES), OTHER_KEY)
+
+
+def test_unknown_kid_raises(shared_key):
+    envelope = _envelope(encrypt("payload"))
+    envelope["kid"] = "trust-unknown"
+
+    with pytest.raises(KeyError, match="trust-unknown"):
+        decrypt(_reencode(envelope))
+
+
+def test_unsupported_version_raises():
+    envelope = _envelope(encrypt("payload", RAW_KEY_BYTES))
+    envelope["v"] = 2
+
+    with pytest.raises(ValueError, match="version"):
+        decrypt(_reencode(envelope), RAW_KEY_BYTES)
+
+
+def test_legacy_cbc_payload_is_rejected():
+    """No CBC fallback: an unauthenticated pre-#1179 payload must not decrypt, even under the right key."""
+    with pytest.raises(ValueError, match="not a FLIP encryption envelope"):
+        decrypt(_legacy_cbc("payload", RAW_KEY_BYTES), RAW_KEY_BYTES)
+
+
+def test_non_envelope_json_is_rejected():
+    with pytest.raises(ValueError, match="not a FLIP encryption envelope"):
+        decrypt(base64.b64encode(b'{"not": "an envelope"}').decode(), RAW_KEY_BYTES)

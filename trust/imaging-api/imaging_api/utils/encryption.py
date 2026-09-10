@@ -10,17 +10,35 @@
 # limitations under the License.
 #
 
-import base64
-import os
+"""Authenticated encryption for hub-trust payloads.
 
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+AES-256-GCM (AEAD) in a small, versioned, key-id'd envelope. GCM authenticates the
+ciphertext *and* the envelope's version and key id, so tampering with any of them raises
+``InvalidTag`` instead of decrypting to attacker-influenced plaintext, which is what the
+previous AES-CBC scheme did (it had no authentication, and a CBC ciphertext is malleable).
+
+Wire format: base64 of ``{"v": 1, "kid": "shared", "iv": <b64 nonce>, "ct": <b64 ciphertext||tag>}``,
+with a 12-byte nonce. ``v`` is a format discriminator so the envelope can change later
+without ambiguity; the algorithm is fixed rather than negotiated, which leaves no
+algorithm-confusion surface. ``kid`` names the key the payload was encrypted under. Today
+every service holds exactly one key, the platform-wide ``AES_KEY_BASE64`` registered as
+:data:`SHARED_KID`; per-trust keys (FLIP#845) add entries to the keyring and change
+nothing on the wire.
+
+There is deliberately no fallback to the pre-FLIP#1179 CBC format: an unauthenticated
+ciphertext is never accepted, so the hub and every trust move to this build together.
+"""
+
+import base64
+import json
+import os
+from typing import Any
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from imaging_api.config import get_settings
 
 
-# --- Step 1: Load AES key from environment file ---
 def get_aes_key() -> bytes:
     """Retrieve the AES key from the environment file and return it as bytes.
 
@@ -40,62 +58,96 @@ def get_aes_key() -> bytes:
     return key
 
 
-# --- Step 2: AES-CBC encryption ---
+#: Key id of the platform-wide shared key (``AES_KEY_BASE64``).
+SHARED_KID = "shared"
+
+_VERSION = 1
+_NONCE_BYTES = 12  # NIST SP 800-38D recommended nonce length for AES-GCM
+_ENVELOPE_FIELDS = frozenset({"v", "kid", "iv", "ct"})
+
+
+def _keyring() -> dict[str, bytes]:
+    """Return the ``kid -> key`` map payloads are encrypted under and resolved against.
+
+    One entry today. Per-trust keys (FLIP#845) are added here, which is why :func:`decrypt`
+    resolves the key from the envelope's ``kid`` rather than assuming the shared one.
+    """
+    return {SHARED_KID: get_aes_key()}
+
+
+def _aad(kid: str) -> bytes:
+    """Associated data bound into the GCM tag, so neither the version nor the ``kid`` can be altered."""
+    return f"FLIP|v{_VERSION}|{kid}".encode()
+
+
 def encrypt(plaintext: str, key: bytes | None = None) -> str:
-    """Encrypt plaintext using AES-CBC with PKCS7 padding. Returns Base64-encoded ciphertext.
+    """Encrypt ``plaintext`` with AES-256-GCM under the shared key.
 
     Args:
-        plaintext (str): The plaintext string to encrypt.
-        key (bytes | None): The AES key to use. If None, the shared AES key is retrieved via
-            :func:`get_aes_key`.
+        plaintext (str): The text to encrypt.
+        key (bytes | None): Explicit key. If ``None``, the shared key from :func:`get_aes_key`.
 
     Returns:
-        str: Base64-encoded ciphertext with the random 16-byte IV prepended to the ciphertext
-        bytes before encoding.
+        str: Base64-encoded envelope (see the module docstring for the format).
+
+    Raises:
+        ValueError: The key is not a valid AES key length.
     """
+    kid = SHARED_KID
     if key is None:
-        key = get_aes_key()
+        key = _keyring()[kid]
 
-    iv = os.urandom(16)
-
-    # Pad plaintext to 128-bit (16-byte) blocks
-    padder = padding.PKCS7(128).padder()
-    padded_data = padder.update(plaintext.encode()) + padder.finalize()
-
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-    encryptor = cipher.encryptor()
-    ciphertext = encryptor.update(padded_data) + encryptor.finalize()
-
-    # Combine IV and ciphertext, then encode for storage/transmission
-    encrypted_payload = iv + ciphertext
-    return base64.b64encode(encrypted_payload).decode()
+    nonce = os.urandom(_NONCE_BYTES)
+    ciphertext = AESGCM(key).encrypt(nonce, plaintext.encode(), _aad(kid))
+    envelope = {
+        "v": _VERSION,
+        "kid": kid,
+        "iv": base64.b64encode(nonce).decode(),
+        "ct": base64.b64encode(ciphertext).decode(),
+    }
+    return base64.b64encode(json.dumps(envelope).encode()).decode()
 
 
-# --- Step 3: AES-CBC decryption ---
+def _parse_envelope(raw: bytes) -> dict[str, Any]:
+    """Decode and shape-check an envelope.
+
+    Anything else, a pre-FLIP#1179 CBC payload included, is a ``ValueError``: CBC ciphertext is
+    indistinguishable from random bytes and never parses as a JSON object with these fields.
+    """
+    try:
+        envelope = json.loads(raw)
+    except ValueError:
+        raise ValueError("Payload is not a FLIP encryption envelope") from None
+    if not isinstance(envelope, dict) or not _ENVELOPE_FIELDS <= envelope.keys():
+        raise ValueError("Payload is not a FLIP encryption envelope")
+    if envelope["v"] != _VERSION:
+        raise ValueError(f"Unsupported payload version: {envelope['v']!r}")
+    return envelope
+
+
 def decrypt(encoded_payload: str, key: bytes | None = None) -> str:
-    """Decrypt Base64-encoded ciphertext using AES-CBC with PKCS7 padding. Returns the original plaintext.
+    """Decrypt an envelope produced by :func:`encrypt`.
 
     Args:
-        encoded_payload (str): Base64-encoded payload where the first 16 bytes are the IV and the
-            remaining bytes are the ciphertext.
-        key (bytes | None): The AES key to use. If None, the shared AES key is retrieved via
-            :func:`get_aes_key`.
+        encoded_payload (str): The base64-encoded envelope.
+        key (bytes | None): Explicit key. If ``None``, resolved from the envelope's ``kid``.
 
     Returns:
         str: The decrypted plaintext.
+
+    Raises:
+        cryptography.exceptions.InvalidTag: The payload failed authentication: tampered ciphertext
+            or nonce, wrong key, or altered ``kid``.
+        KeyError: The envelope's ``kid`` names a key this service does not hold.
+        ValueError: The payload is not a version-1 envelope (a pre-FLIP#1179 CBC payload lands here).
     """
+    envelope = _parse_envelope(base64.b64decode(encoded_payload))
+    kid = envelope["kid"]
     if key is None:
-        key = get_aes_key()
+        key = _keyring().get(kid)
+        if key is None:
+            raise KeyError(f"No key registered for kid {kid!r}")
 
-    encrypted_data = base64.b64decode(encoded_payload)
-    iv = encrypted_data[:16]
-    ciphertext = encrypted_data[16:]
-
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-    decryptor = cipher.decryptor()
-    padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
-
-    # Unpad to recover original plaintext
-    unpadder = padding.PKCS7(128).unpadder()
-    plaintext = unpadder.update(padded_plaintext) + unpadder.finalize()
-    return plaintext.decode()
+    nonce = base64.b64decode(envelope["iv"])
+    ciphertext = base64.b64decode(envelope["ct"])
+    return AESGCM(key).decrypt(nonce, ciphertext, _aad(kid)).decode()

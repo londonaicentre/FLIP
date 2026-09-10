@@ -30,6 +30,7 @@ import sys
 from typing import Any
 
 import httpx
+from cryptography.exceptions import InvalidTag
 
 from trust_api.config import get_settings
 from trust_api.services.health_collector import current_snapshot
@@ -241,7 +242,12 @@ async def _process_task(task: dict) -> dict:
 
     try:
         payload = json.loads(decrypt(payload_str))
-    except (ValueError, json.JSONDecodeError) as e:
+    except InvalidTag:
+        # Tampered in transit, or encrypted under a key this trust does not hold. The
+        # exception carries no message, so say what happened rather than echo it.
+        logger.error(f"Payload for task {task_id} failed authentication")
+        return {"success": False, "error": "Invalid payload: failed authentication"}
+    except (ValueError, KeyError) as e:  # JSONDecodeError is a ValueError
         logger.error(f"Failed to decrypt or parse payload for task {task_id}: {e}")
         return {"success": False, "error": f"Invalid payload: {e}"}
 
