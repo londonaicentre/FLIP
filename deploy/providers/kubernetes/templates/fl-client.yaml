@@ -171,6 +171,12 @@ spec:
             - {{ .Values.flClient.flower.superlink | quote }}
             - "--auth-supernode-private-key"
             - "/keys/supernode_credentials_{{ .Values.trustNumber }}"
+            # flwr>=1.36 replaced --clientappio-api-address with --host/--port.
+            # --host is rendered explicitly (not left at flower-supernode's own
+            # 127.0.0.1 default) because the probes below are dialled by kubelet
+            # against the pod IP — see the values.yaml comment and FLIP#1017.
+            - "--host"
+            - {{ .Values.flClient.flower.supernodeClientAppIoHost | quote }}
             - "--port"
             - {{ .Values.flClient.flower.supernodeClientAppIoPort | quote }}
             # ClientApp-side per-run dependency install (uv sync with the

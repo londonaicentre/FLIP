@@ -143,9 +143,10 @@ services:
       - ${SUPERNODE_1_CLIENTAPPIO_PORT:-9094}
       - --health-server-address
       - ${SUPERNODE_1_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
-      # ClientApp-side runtime dependency install (default-off on SuperNodes in
-      # flwr 1.32): resolves the app's declared deps per run (the fl-apps
-      # templates pin flip-utils to /opt/flip-utils via [tool.uv.sources]; FLIP#767).
+      # ClientApp-side runtime dependency install (still default-off on
+      # SuperNodes at flwr 1.36): resolves the app's declared deps per run
+      # (the fl-apps templates pin flip-utils to /opt/flip-utils via
+      # [tool.uv.sources]; FLIP#767).
       - --allow-runtime-dependency-installation
     deploy:
       resources:
@@ -193,9 +194,10 @@ services:
       - ${SUPERNODE_2_CLIENTAPPIO_PORT:-9095}
       - --health-server-address
       - ${SUPERNODE_2_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
-      # ClientApp-side runtime dependency install (default-off on SuperNodes in
-      # flwr 1.32): resolves the app's declared deps per run (the fl-apps
-      # templates pin flip-utils to /opt/flip-utils via [tool.uv.sources]; FLIP#767).
+      # ClientApp-side runtime dependency install (still default-off on
+      # SuperNodes at flwr 1.36): resolves the app's declared deps per run
+      # (the fl-apps templates pin flip-utils to /opt/flip-utils via
+      # [tool.uv.sources]; FLIP#767).
       - --allow-runtime-dependency-installation
     deploy:
       resources:

@@ -66,9 +66,10 @@ services:
       # never overridden in any FLIP env file).
       - --port
       - ${SUPERNODE_1_CLIENTAPPIO_PORT:-9094}
-      # ClientApp-side runtime dependency install (default-off on SuperNodes in
-      # flwr 1.32): resolves the app's deps per run, with flip-utils pinned to
-      # /opt/flip-utils via the template's [tool.uv.sources] (FLIP#767).
+      # ClientApp-side runtime dependency install (still default-off on
+      # SuperNodes at flwr 1.36): resolves the app's deps per run, with
+      # flip-utils pinned to /opt/flip-utils via the template's
+      # [tool.uv.sources] (FLIP#767).
       - --allow-runtime-dependency-installation
     networks:
       - default
