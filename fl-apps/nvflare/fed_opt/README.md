@@ -65,7 +65,7 @@ order.
 **Client — `config_fed_client.json` `executors` (by task):**
 
 - `init_training`, `post_validation` → `flip.nvflare.components.CleanupImages`
-- `train`, `validate` → `nvflare.app_common.executors.InProcessClientAPIExecutor` running
+- `train`, `validate` → `nvflare.app_common.executors.ClientAPIExecutor` (in-process mode) running
   `custom/trainer.py`
 
 Post-training evaluation covers only the aggregated global model at each participating trust;
