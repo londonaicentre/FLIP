@@ -88,7 +88,7 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
     # Get accession IDs from data access API. The endpoint projects the cohort
     # query to the accession_id column server-side, so no other columns are
     # transmitted across the trust boundary.
-    encrypted_project_id = encrypt(project_id)
+    encrypted_project_id = encrypt(project_id, context="project_id")
     try:
         accession_ids: list[str] = await get_accession_ids(encrypted_project_id, query)
     except CohortBelowThresholdError:
@@ -192,7 +192,7 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
             cannot be processed.
     """
     # Encrypt project ID to send to the data access API
-    encrypted_project_id = encrypt(project_id)
+    encrypted_project_id = encrypt(project_id, context="project_id")
 
     # Get accession IDs from data access API (server-side projection — no other
     # cohort columns leave the trust).

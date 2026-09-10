@@ -683,7 +683,7 @@ def start_training(
     from flip_api.fl_services.services import fl_scheduler_service
 
     required_info = fl_scheduler_service.get_required_training_details(model_id, session)
-    encrypted_project_id = encrypt(required_info.project_id)
+    encrypted_project_id = encrypt(required_info.project_id, context="project_id")
 
     training_details = IStartTrainingBody(
         project_id=encrypted_project_id,

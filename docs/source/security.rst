@@ -216,17 +216,22 @@ Central Hub runs over HTTPS, outbound from the trust only. On top of that transp
 encryption, task payloads are themselves encrypted before they are handed to the
 transport, so the payload body is never carried in the clear inside an established
 session. The payload layer is **authenticated encryption** (AES-256-GCM), and it is
-checked end to end: TLS terminates at the CDN edge and again at the load balancer, so
-transport integrity is only ever hop by hop, whereas the payload's authentication tag is
-verified by the receiving service itself. A payload altered at any hop or boundary fails
-decryption outright rather than yielding altered content. Stated precisely, because this
-page exists to be relied on: the payload layer still uses a **single platform-wide
-symmetric key**, so the tag proves that a holder of the platform key produced the payload,
-not which participant did — a compromised participant could still forge payloads for
-another. The upgrade to **per-trust keys** — each trust's traffic protected by its own key,
-so a compromise at one trust can neither read nor forge another's, and keys carrying
-identifiers so they can be rotated without a synchronised cutover — is in delivery, not yet
-a shipped control.
+checked end to end: TLS terminates at CloudFront and again at the load balancer in front
+of the hub, so transport integrity is only ever hop by hop, whereas the payload's
+authentication tag is verified by the receiving service itself — including on the leg
+from an FL client to the trust's own services, which has no TLS at all. A payload altered
+at any hop or boundary fails decryption outright rather than yielding altered content, and
+the tag also binds the payload's purpose, so an instruction the hub issued for one action
+cannot be re-labelled as another. Stated precisely, because this page exists to be relied
+on: this covers what the hub sends to a trust and what a trust's FL client presents to its
+own services; a trust's responses back to the hub (cohort statistics, task outcomes)
+travel as plain JSON under TLS alone. And the payload layer still uses a **single
+platform-wide symmetric key**, so the tag proves that a holder of the platform key
+produced the payload, not which participant did — a compromised participant could still
+forge payloads for another. The upgrade to **per-trust keys** — each trust's traffic
+protected by its own key, so a compromise at one trust can neither read nor forge
+another's, and keys carrying identifiers so they can be rotated without a synchronised
+cutover — is in delivery, not yet a shipped control.
 
 **At rest**, model and results storage uses S3 with managed encryption under a
 customer-managed KMS key, versioning, blocked public access, HTTPS-only bucket policies,

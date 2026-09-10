@@ -120,6 +120,27 @@ def test_get_pending_tasks_returns_tasks_with_identity(mock_pending_tasks, mock_
     app.dependency_overrides.pop(get_session, None)
 
 
+def test_get_pending_tasks_seals_each_payload_for_its_task_type(mock_pending_tasks, mock_auth, mock_trust):
+    """``task_type`` rides beside the payload unauthenticated, so it is bound into the tag instead."""
+    from cryptography.exceptions import InvalidTag
+
+    from flip_api.utils.encryption import decrypt
+
+    mock_db = MagicMock()
+    mock_db.exec.return_value.all.return_value = mock_pending_tasks
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    response = client.get("/api/tasks/pending")
+
+    assert response.status_code == 200
+    for sent, task in zip(response.json()["tasks"], mock_pending_tasks, strict=True):
+        assert decrypt(sent["payload"], context=f"task:{sent['task_type']}") == task.payload
+        with pytest.raises(InvalidTag):
+            decrypt(sent["payload"], context="task:delete_imaging")
+
+    app.dependency_overrides.pop(get_session, None)
+
+
 def test_get_pending_tasks_empty(mock_auth, mock_trust):
     """No queued tasks — handler still returns the identity block."""
     mock_db = MagicMock()

@@ -525,9 +525,13 @@ On top of TLS, three things are encrypted under the platform-wide `AES_KEY_BASE6
 payload, the encrypted project id the hub hands to FL clients (which forward it to imaging-api and
 data-access-api on every image download and cohort call), and the XNAT password imaging-api returns in a task
 result. Since FLIP#1179 the cipher is **AES-256-GCM** in a versioned envelope — base64 of
-`{"v": 1, "kid": "shared", "iv": <b64 12-byte nonce>, "ct": <b64 ciphertext||tag>}` — with the version and key
-id bound into the authentication tag, so a payload altered anywhere between the sending and the receiving
-service fails decryption outright instead of decrypting to altered content.
+`{"v": 1, "kid": "shared", "iv": <b64 12-byte nonce>, "ct": <b64 ciphertext||tag>}` — with the version, the key
+id and a **context** bound into the authentication tag, so a payload altered anywhere between the sending and the
+receiving service fails decryption outright instead of decrypting to altered content. The context is not carried
+on the wire; both sides derive it from what they already know (`task:<task_type>` for a task payload, `project_id`
+for the project id, `xnat_password` for the credential), so a task payload cannot be re-targeted at a different
+handler by rewriting the unauthenticated `task_type` beside it. What is *not* covered: the trust's own responses
+(cohort results, task outcomes) travel back to the hub as plain JSON under TLS only.
 
 Two operational consequences:
 

@@ -61,7 +61,7 @@ def mock_send_email():
 @pytest.fixture
 def mock_decrypt():
     with patch("flip_api.private_services.imaging_notifications.decrypt") as mock:
-        mock.side_effect = lambda x: f"decrypted_{x}"
+        mock.side_effect = lambda x, **kwargs: f"decrypted_{x}"
         yield mock
 
 
@@ -319,14 +319,35 @@ def test_ses_failure_for_one_user_continues_to_next(mock_send_email, mock_decryp
     assert mock_send_email.call_count == 2
 
 
-def test_decryption_failure_continues_to_next_user(mock_send_email, mock_insert_status):
-    """Should continue to next user if decryption fails for one."""
+def test_decrypts_passwords_for_the_xnat_password_context(mock_send_email, mock_decrypt, mock_insert_status):
+    """The credential is sealed by imaging-api under the ``xnat_password`` context and opened under the same."""
+    users = [{"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"}]  # pragma: allowlist secret
+    task = _make_task(users)
+    mock_db = MagicMock()
+    query_result = MagicMock()
+    query_result.first.return_value = _mock_query()
+    trust_result = MagicMock()
+    trust_result.first.return_value = _mock_trust()
+    mock_db.exec.side_effect = [query_result, trust_result]
+
+    handle_imaging_task_completed(task, mock_db)
+
+    mock_decrypt.assert_called_once_with("enc1", context="xnat_password")
+
+
+def test_decryption_failure_raises_so_the_task_stays_retryable(mock_send_email, mock_insert_status):
+    """A credential that fails authentication is a key or version mismatch with the trust, not a bad recipient.
+
+    Sending nothing and completing the task would lose the only copy of the password; raising leaves the task
+    for post-processing so it is retried once the keys agree.
+    """
+    from cryptography.exceptions import InvalidTag
+
     users = [
         {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},  # pragma: allowlist secret
         {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},  # pragma: allowlist secret
     ]
     task = _make_task(users)
-
     mock_db = MagicMock()
     query_result = MagicMock()
     query_result.first.return_value = _mock_query()
@@ -335,14 +356,12 @@ def test_decryption_failure_continues_to_next_user(mock_send_email, mock_insert_
     mock_db.exec.side_effect = [query_result, trust_result]
 
     with patch("flip_api.private_services.imaging_notifications.decrypt") as mock_decrypt:
-        mock_decrypt.side_effect = [Exception("Decryption failed"), "plain2"]
+        mock_decrypt.side_effect = [InvalidTag(), "plain2"]
 
-        handle_imaging_task_completed(task, mock_db)
+        with pytest.raises(EmailDispatchError, match="failed authentication"):
+            handle_imaging_task_completed(task, mock_db)
 
-        # Only second user should get an email
-        assert mock_send_email.call_count == 1
-        call_args = mock_send_email.call_args
-        assert call_args.kwargs["recipient"] == "user2@test.com"
+    mock_send_email.assert_not_called()
 
 
 def test_raises_when_result_is_none():

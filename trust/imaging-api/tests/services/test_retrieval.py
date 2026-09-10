@@ -11,7 +11,7 @@
 #
 
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -85,6 +85,7 @@ async def test_retrieve_images_success(
     result = await retrieve_images_for_project("proj1", "SELECT *", headers)
     assert result is True
     mock_queue.assert_called_once()
+    mock_encrypt.assert_called_once_with(ANY, context="project_id")
 
 
 @pytest.mark.asyncio

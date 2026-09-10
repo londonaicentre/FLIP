@@ -12,6 +12,8 @@
 
 from unittest.mock import AsyncMock, patch
 
+from cryptography.exceptions import InvalidTag
+
 from imaging_api.utils.exceptions import NotFoundError
 
 _REQUEST_BODY = {
@@ -22,6 +24,24 @@ _REQUEST_BODY = {
     "files": ["scan.nii"],
     "exist_ok": False,
 }
+
+
+def test_upload_data_rejects_a_project_id_that_fails_authentication(client):
+    with patch("imaging_api.routers.upload.decrypt", side_effect=InvalidTag()):
+        response = client.put("/upload/images/net1", json=_REQUEST_BODY)
+
+    assert response.status_code == 400
+    assert "failed authentication" in response.json()["detail"]
+
+
+def test_upload_data_rejects_a_malformed_envelope(client):
+    with patch(
+        "imaging_api.routers.upload.decrypt", side_effect=ValueError("Payload is not a FLIP encryption envelope")
+    ):
+        response = client.put("/upload/images/net1", json=_REQUEST_BODY)
+
+    assert response.status_code == 400
+    assert "not a FLIP encryption envelope" in response.json()["detail"]
 
 
 def test_upload_data_success(client):

@@ -97,7 +97,9 @@ def _get_pending_tasks(trust: Trust, db: Session) -> dict[str, object]:
                 TrustTaskResponse(
                     id=task.id,
                     task_type=task.task_type,
-                    payload=encrypt(task.payload),
+                    # Sealed for this task type: task_type rides beside the payload unauthenticated, so
+                    # binding it into the tag is what stops a hop re-targeting the payload at another handler.
+                    payload=encrypt(task.payload, context=f"task:{task.task_type}"),
                     created_at=task.created_at,
                 )
             )

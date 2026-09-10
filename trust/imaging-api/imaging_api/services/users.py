@@ -170,7 +170,7 @@ def create_user_from_central_hub_user(
     user_profile = create_user(create_user_request, headers)
     created_user = CreatedUser(
         username=user_profile.username,
-        encrypted_password=encrypt(create_user_request.password),
+        encrypted_password=encrypt(create_user_request.password, context="xnat_password"),
         email=create_user_request.email,
     )
     return created_user, user_profile

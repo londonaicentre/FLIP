@@ -12,6 +12,7 @@
 
 from typing import Annotated
 
+from cryptography.exceptions import InvalidTag
 from fastapi import APIRouter, Depends, HTTPException
 
 from imaging_api.routers.schemas import UploadDataRequest
@@ -48,9 +49,20 @@ async def upload_data(net_id: str, request_data: UploadDataRequest, headers: XNA
     # Decrypt project ID
     logger.info("Trying to decrypt Central Hub Project ID")
     try:
-        central_hub_project_id = decrypt(request_data.encrypted_central_hub_project_id)
+        central_hub_project_id = decrypt(request_data.encrypted_central_hub_project_id, context="project_id")
+    except InvalidTag:
+        # The caller's own payload is bad (tampered, sealed for another purpose, or the hub's
+        # AES_KEY_BASE64 is not this trust's): a 400 that says so, not a 500 with an empty reason.
+        logger.error("Central Hub project id failed authentication")
+        raise HTTPException(status_code=400, detail="Central Hub project id failed authentication")
+    except (ValueError, KeyError) as e:
+        logger.error(f"Central Hub project id is not a valid envelope: {e}")
+        raise HTTPException(status_code=400, detail=f"Central Hub project id is not a valid envelope: {e}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to decrypt IDs: {str(e)}")
+        # Not the caller's payload: a key that cannot be loaded, or a fault in the cipher itself.
+        # Name the type so an empty exception message never yields a blank reason.
+        logger.exception(f"Failed to decrypt Central Hub project id ({type(e).__name__}): {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to decrypt Central Hub project id ({type(e).__name__})")
 
     try:
         uploaded_files = await upload_data_to_xnat(

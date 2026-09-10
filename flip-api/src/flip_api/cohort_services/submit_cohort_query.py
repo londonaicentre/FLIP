@@ -294,7 +294,7 @@ def submit_cohort_query(
         queried_trust_ids: list[UUID] = []
 
         # Encrypt project_id before sending to trusts
-        encrypted_project_id = encrypt(str(cohort_query.project_id))
+        encrypted_project_id = encrypt(str(cohort_query.project_id), context="project_id")
         logger.debug("Checking if project_id is encrypted: %s", encrypted_project_id)
 
         # Queue a task for each trust (instead of direct HTTP calls)

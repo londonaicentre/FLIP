@@ -16,6 +16,7 @@ import json
 from uuid import UUID
 
 from botocore.exceptions import BotoCoreError
+from cryptography.exceptions import InvalidTag
 from sqlmodel import Session, col, select
 
 from flip_api.db.models.main_models import Queries, Trust, TrustTask, XNATImageStatus, XNATProjectStatus
@@ -104,11 +105,25 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
     trust = db.exec(select(Trust).where(Trust.id == task.trust_id)).first()
     trust_name = trust.name if trust else "Unknown Trust"
 
-    # Send credential emails to newly created users
-    for user in imaging_project.created_users:
-        try:
-            decrypted_password = decrypt(user.encrypted_password)
+    # Open every credential before sending anything. A credential that fails authentication is
+    # not a per-recipient problem: every password in this result was sealed by the same trust
+    # under the same key, so it means the hub's and the trust's AES_KEY_BASE64 differ or one side
+    # is on the other side of a payload-format change. Completing the task would lose the only
+    # copy of the password, so raise and let the task stay queued for post-processing instead.
+    try:
+        passwords = [
+            decrypt(user.encrypted_password, context="xnat_password") for user in imaging_project.created_users
+        ]
+    except (InvalidTag, KeyError, ValueError) as e:
+        raise EmailDispatchError(
+            f"XNAT credential from trust '{trust_name}' for task {task.id} failed authentication "
+            f"({type(e).__name__}): the hub's and the trust's AES_KEY_BASE64 differ, or the two run "
+            "builds with different payload formats — the task stays queued for retry"
+        ) from e
 
+    # Send credential emails to newly created users
+    for user, decrypted_password in zip(imaging_project.created_users, passwords, strict=True):
+        try:
             template_data = ISesTemplateData(
                 trust_name=trust_name,
                 project_name=imaging_project.name,
