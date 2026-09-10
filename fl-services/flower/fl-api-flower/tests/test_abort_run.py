@@ -25,7 +25,7 @@ def test_abort_run_success(client, src_root, mock_flwr_run):
 
     assert response.status_code == 200
     JobMetadata.model_validate(response.json())
-    assert response.json() == {"job_id": "9478652229627629048", "status": "STOPPED"}
+    assert response.json() == {"job_id": "9478652229627629048", "status": "STOPPED", "status_details": None}
 
 
 def test_abort_job_alias_returns_same_shape(client, src_root, mock_flwr_run):
@@ -34,7 +34,7 @@ def test_abort_job_alias_returns_same_shape(client, src_root, mock_flwr_run):
     response = client.delete("/abort_job/9478652229627629048")
 
     assert response.status_code == 200
-    assert response.json() == {"job_id": "9478652229627629048", "status": "STOPPED"}
+    assert response.json() == {"job_id": "9478652229627629048", "status": "STOPPED", "status_details": None}
 
 
 def test_abort_run_idempotent_for_terminal_run(client, src_root, mock_flwr_run):
@@ -57,7 +57,7 @@ def test_abort_run_idempotent_for_terminal_run(client, src_root, mock_flwr_run):
     response = client.delete("/abort_run/9478652229627629048")
 
     assert response.status_code == 200
-    assert response.json() == {"job_id": "9478652229627629048", "status": "FINISHED"}
+    assert response.json() == {"job_id": "9478652229627629048", "status": "FINISHED", "status_details": None}
 
 
 def test_abort_run_failure_when_run_not_terminal(client, src_root, mock_flwr_run):

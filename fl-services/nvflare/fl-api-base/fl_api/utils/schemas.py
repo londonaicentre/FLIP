@@ -163,6 +163,11 @@ class JobStatus(StrEnum):
     FINISHED = "FINISHED"
     FAILED = "FAILED"
     STOPPED = "STOPPED"
+    # A native status the map below does not recognise — i.e. a framework upgrade added one.
+    # Never guessed into a real state: FAILED now has destructive consumers on the hub (the
+    # failed-job reconcile errors the model and frees the net), and RUNNING would make the
+    # job abortable, so an unmapped status must reach the hub as explicitly unknowable.
+    UNKNOWN = "UNKNOWN"
 
 
 class JobMetadata(BaseModel):
@@ -170,6 +175,14 @@ class JobMetadata(BaseModel):
 
     job_id: str
     status: JobStatus
+    # Part of the shared contract, but always None here: NVFLARE has no native per-job
+    # explanation to carry. `nvflare.apis.job_def.JobMetaKey` exposes no error/details key —
+    # the closest are `job_deploy_detail` (per-target "OK"/failure of the *deployment* only;
+    # it reads `['server: OK', 'Trust_2: OK']` even on a job that then died with
+    # FINISHED:EXECUTION_EXCEPTION) and `schedule_history`. The cause of an NVFLARE run
+    # failure lives only in the fl-server container's stdout. Declared so the field means the
+    # same thing on both adapters and the hub never has to branch on backend to read it.
+    status_details: str | None = None
 
 
 # NVFLARE RunStatus (nvflare/apis/job_def.py) -> normalized contract status.
@@ -196,10 +209,11 @@ def normalize_status(native_status: str) -> JobStatus:
 
     Returns:
         JobStatus: The normalized status. Unknown / unmapped statuses are logged and
-            treated as ``FAILED`` — never silently surfaced as an abortable ``RUNNING``.
+            surfaced as ``UNKNOWN`` — never guessed into an abortable ``RUNNING`` or an
+            actionable ``FAILED`` (the hub's failed-job reconcile acts on FAILED).
     """
     normalized = _NVFLARE_STATUS_MAP.get(native_status.strip().upper())
     if normalized is None:
-        logger.warning("Unmapped NVFLARE job status %r; treating as FAILED.", native_status)
-        return JobStatus.FAILED
+        logger.warning("Unmapped NVFLARE job status %r; surfacing as UNKNOWN.", native_status)
+        return JobStatus.UNKNOWN
     return normalized

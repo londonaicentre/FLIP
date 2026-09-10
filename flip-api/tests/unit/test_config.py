@@ -78,6 +78,9 @@ def test_scan_int_settings_empty_string_falls_back_to_default():
     assert Settings(PICKLESCAN_TIMEOUT_SECONDS="45").PICKLESCAN_TIMEOUT_SECONDS == 45
     assert Settings(BANDIT_TIMEOUT_SECONDS="").BANDIT_TIMEOUT_SECONDS == 60
     assert Settings(BANDIT_TIMEOUT_SECONDS="30").BANDIT_TIMEOUT_SECONDS == 30
+    assert Settings(SCHEDULER_FL_JOB_RECONCILE_RATE="").SCHEDULER_FL_JOB_RECONCILE_RATE == 1
+    assert Settings(FL_JOB_UNLISTED_GRACE_MINUTES="").FL_JOB_UNLISTED_GRACE_MINUTES == 30
+    assert Settings(FL_JOB_UNLISTED_GRACE_MINUTES="45").FL_JOB_UNLISTED_GRACE_MINUTES == 45
 
 
 def test_suffix_list_passes_through_unexpected_types_for_pydantic_to_reject():

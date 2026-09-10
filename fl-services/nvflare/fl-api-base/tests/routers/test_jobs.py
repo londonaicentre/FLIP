@@ -70,8 +70,10 @@ def test_list_jobs_success(client):
     jobs = response.json()
     assert isinstance(jobs, list)
     assert jobs == [
-        {"job_id": "1234", "status": "FINISHED"},
-        {"job_id": "5678", "status": "RUNNING"},
+        # status_details is part of the shared contract but always None here: NVFLARE has
+        # no native per-job explanation to carry (see JobMetadata in utils/schemas.py).
+        {"job_id": "1234", "status": "FINISHED", "status_details": None},
+        {"job_id": "5678", "status": "RUNNING", "status_details": None},
     ]
 
 
@@ -108,7 +110,7 @@ def test_reset_errors_job_not_found(client):
 def test_abort_job_success(client):
     response = client.delete("/abort_job/1234")
     assert response.status_code == status.HTTP_200_OK
-    assert response.json() == {"job_id": "1234", "status": "STOPPED"}
+    assert response.json() == {"job_id": "1234", "status": "STOPPED", "status_details": None}
 
 
 def test_abort_job_not_found(client):

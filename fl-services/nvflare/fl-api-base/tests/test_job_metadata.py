@@ -31,15 +31,17 @@ from fl_api.utils.schemas import _NVFLARE_STATUS_MAP, JobMetadata, JobStatus, no
         ("FINISHED:ABANDONED", JobStatus.FAILED),
         ("running", JobStatus.RUNNING),
         ("  RUNNING  ", JobStatus.RUNNING),
-        ("", JobStatus.FAILED),
+        ("", JobStatus.UNKNOWN),
     ],
 )
 def test_normalize_status_maps_nvflare_runstatus(native, expected):
     assert normalize_status(native) == expected
 
 
-def test_normalize_status_unknown_is_failed():
-    assert normalize_status("some-future-status") == JobStatus.FAILED
+def test_normalize_status_unmapped_is_unknown():
+    # UNKNOWN, not FAILED: the hub's failed-job reconcile errors the model and frees the
+    # net on FAILED, so a status added by a framework upgrade must never be guessed into it.
+    assert normalize_status("some-future-status") == JobStatus.UNKNOWN
 
 
 def test_normalize_status_covers_every_runstatus_value():
@@ -49,9 +51,15 @@ def test_normalize_status_covers_every_runstatus_value():
         assert run_status.value in _NVFLARE_STATUS_MAP, f"RunStatus.{run_status.name} is unmapped"
 
 
-def test_job_metadata_has_exactly_job_id_and_status():
-    assert set(JobMetadata.model_fields) == {"job_id", "status"}
+def test_job_metadata_has_exactly_the_contract_fields():
+    # The other adapter and flip-api's IJobMetaData pin the same set. A field added here and
+    # nowhere else is invisible until a hub reads it, so all three move in the same PR.
+    assert set(JobMetadata.model_fields) == {"job_id", "status", "status_details"}
 
 
-def test_job_status_has_exactly_five_contract_values():
-    assert {s.value for s in JobStatus} == {"PENDING", "RUNNING", "FINISHED", "FAILED", "STOPPED"}
+def test_status_details_defaults_to_none():
+    assert JobMetadata(job_id="1", status=JobStatus.RUNNING).status_details is None
+
+
+def test_job_status_has_exactly_six_contract_values():
+    assert {s.value for s in JobStatus} == {"PENDING", "RUNNING", "FINISHED", "FAILED", "STOPPED", "UNKNOWN"}
