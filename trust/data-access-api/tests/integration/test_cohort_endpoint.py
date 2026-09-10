@@ -51,7 +51,7 @@ def _dataframe_payload(query: str) -> dict:
     """
     from data_access_api.utils.encryption import encrypt
 
-    return {"encrypted_project_id": encrypt("integration-project-1"), "query": query}
+    return {"encrypted_project_id": encrypt("integration-project-1", context="project_id"), "query": query}
 
 
 def test_cohort_endpoint_returns_aggregates_for_image_occurrences(http_client):
@@ -142,7 +142,7 @@ def test_dataframe_endpoint_returns_seeded_columns(http_client):
     from data_access_api.utils.encryption import encrypt
 
     payload = {
-        "encrypted_project_id": encrypt("integration-project-1"),
+        "encrypted_project_id": encrypt("integration-project-1", context="project_id"),
         "query": (
             "SELECT c.concept_code AS modality, io.accession_id "
             "FROM omop.image_occurrence io "

@@ -114,7 +114,7 @@ def _seed_completed_imaging_task(session, trust_id: UUID, project_id: UUID) -> T
     existing user being added to the project (gets a project-access
     notification).
     """
-    encrypted_password = encrypt("hunter2-the-password")  # pragma: allowlist secret
+    encrypted_password = encrypt("hunter2-the-password", context="xnat_password")  # pragma: allowlist secret
     payload = {"project_id": str(project_id)}
     # The result schema is the trust-side ``ICreatedImagingProject``, which the
     # parser deserialises with ``ID`` -> ``imaging_project_id``. Both

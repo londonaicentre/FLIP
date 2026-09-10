@@ -103,7 +103,7 @@ def test_imaging_notifications_log_both_templates_without_leaking_the_password(
                 "created_users": [
                     {
                         "username": "newbie@example.com",
-                        "encrypted_password": encrypt(XNAT_PASSWORD),
+                        "encrypted_password": encrypt(XNAT_PASSWORD, context="xnat_password"),
                         "email": "newbie@example.com",
                     }
                 ],
