@@ -151,9 +151,12 @@ def test_get_net_status_net_not_found(fake_request, mock_db):
 
 def test_get_net_status_status_missing(fake_request, mock_db, mock_get_net_by_name):
     with patch("flip_api.fl_services.get_net_status.fetch_client_status", return_value=None):
-        with pytest.raises(HTTPException) as exc:
-            get_net_status("net-name", fake_request, mock_db)
-        assert exc.value.status_code == 502
+        result = get_net_status("net-name", fake_request, mock_db)
+    assert result.name == "net-name"
+    assert result.fl_backend == FLBackend.NVFLARE
+    assert result.online is False
+    assert result.registered_clients == 0
+    assert result.clients == []
 
 
 def test_get_net_status_unexpected_error(fake_request, mock_db, mock_get_net_by_name):

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
 
+import httpx
 from fastapi import Request
 from sqlalchemy import Column
 from sqlmodel import Session, col, select
@@ -495,7 +496,11 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
     logger.debug(f"Checking server status at '{url}'")
     # Same generous timeout as check_client_status: the Flower FL API hits the SuperLink and can
     # be slower than httpx's 5s default.
-    response = http_get(url, timeout=30)
+    try:
+        response = http_get(url, timeout=30)
+    except httpx.RequestError as e:
+        logger.error(f"HTTP GET failed for {url}: {e}")
+        return None
     logger.debug(f"Server status response: {response}")
     if not response:
         logger.error(f"No response from FL API for server at endpoint {endpoint}")
@@ -519,7 +524,11 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
     # NOTE the Flower FL API queries the SuperLink (ControlServicer.ShowFederation) on each call,
     # which can take ~9s — past httpx's 5s default — so a single check would time out and fail the
     # whole run (run_jobs marks the model ERROR). Use the same generous timeout as Flower submit.
-    response = http_get(url, timeout=30)
+    try:
+        response = http_get(url, timeout=30)
+    except httpx.RequestError as e:
+        logger.error(f"HTTP GET failed for {url}: {e}")
+        return None
     logger.debug(f"Client status response: {response}")
     if not response:
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")
