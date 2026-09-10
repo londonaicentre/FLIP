@@ -1,0 +1,175 @@
+{
+  "name": "export_mask",
+  "label": "export_mask",
+  "description": "Convert an OHIF DICOM-SEG assessor to NIfTI and upload it back to XNAT",
+  "version": "1.0",
+  "schema-version": "1.0",
+  "info-url": "https://hub.docker.com/repository/docker/atriaybagur/aic-ohif-dicomseg-to-nifti/general",
+  "type": "docker",
+  "image": "atriaybagur/aic-ohif-dicomseg-to-nifti:latest",
+  "network": "#PLACEHOLDER_NETWORK#",
+  "command-line": "uv run convert_dicom_seg_assessor_to_nifti.py -i /segmentation-in -o /output --project #PROJECT# --experiment #SESSION# --assessor #ASSESSOR#",
+  "mounts": [
+    {
+      "name": "output",
+      "writable": true,
+      "path": "/output"
+    },
+    {
+      "name": "segmentation-in",
+      "writable": false,
+      "path": "/segmentation-in"
+    },
+    {
+      "name": "session-in",
+      "writable": false,
+      "path": "/session-in"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "assessor",
+      "description": "XNAT ID of the assessor",
+      "type": "string",
+      "required": true,
+      "replacement-key": "#ASSESSOR#"
+    },
+    {
+      "name": "label",
+      "description": "XNAT ID of the assessor",
+      "type": "string",
+      "required": true,
+      "replacement-key": "#LABEL#"
+    },
+    {
+      "name": "session",
+      "description": "XNAT ID of the session",
+      "type": "string",
+      "required": true,
+      "replacement-key": "#SESSION#"
+    },
+    {
+      "name": "subject",
+      "description": "XNAT ID of the subject",
+      "type": "string",
+      "required": true,
+      "replacement-key": "#SUBJECT#"
+    },
+    {
+      "name": "project",
+      "description": "XNAT ID of the project",
+      "type": "string",
+      "required": true,
+      "replacement-key": "#PROJECT#"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "analysis-results",
+      "description": "updated analysis results",
+      "required": true,
+      "mount": "output"
+    }
+  ],
+  "xnat": [
+    {
+      "name": "export_mask-assessor",
+      "label": "export_mask",
+      "description": "Convert OHIF mask to NIFTI",
+      "contexts": [
+        "icr:roiCollectionData"
+      ],
+      "external-inputs": [
+        {
+          "name": "assessor",
+          "description": "Input assessor",
+          "type": "Assessor",
+          "required": true,
+          "load-children": true,
+          "matcher": "'SEG' in @.resources[*].label"
+        }
+      ],
+      "derived-inputs": [
+        {
+          "name": "session",
+          "description": "Input session",
+          "type": "Session",
+          "required": true,
+          "load-children": true,
+          "derived-from-wrapper-input": "assessor",
+          "provides-files-for-command-mount": "session-in"
+        },
+        {
+          "name": "assessor-id",
+          "description": "The assessor's id",
+          "type": "string",
+          "derived-from-wrapper-input": "assessor",
+          "derived-from-xnat-object-property": "id",
+          "provides-value-for-command-input": "assessor"
+        },
+        {
+          "name": "assessor-label",
+          "description": "The assessor's id",
+          "type": "string",
+          "derived-from-wrapper-input": "assessor",
+          "derived-from-xnat-object-property": "label",
+          "provides-value-for-command-input": "label"
+        },
+        {
+          "name": "segmentation-dicom",
+          "type": "Resource",
+          "derived-from-wrapper-input": "assessor",
+          "matcher": "@.label == 'SEG'",
+          "provides-files-for-command-mount": "segmentation-in"
+        },
+        {
+          "name": "session-id",
+          "description": "The session's id",
+          "type": "string",
+          "derived-from-wrapper-input": "session",
+          "derived-from-xnat-object-property": "id",
+          "provides-value-for-command-input": "session"
+        },
+        {
+          "name": "subject",
+          "description": "Subject input derived from Session",
+          "type": "Subject",
+          "required": true,
+          "derived-from-wrapper-input": "session"
+        },
+        {
+          "name": "subject-label",
+          "description": "The subject's label",
+          "type": "string",
+          "derived-from-wrapper-input": "subject",
+          "derived-from-xnat-object-property": "label",
+          "provides-value-for-command-input": "subject"
+        },
+        {
+          "name": "project",
+          "description": "Project input derived from Session",
+          "type": "Project",
+          "required": true,
+          "derived-from-wrapper-input": "session"
+        },
+        {
+          "name": "project-id",
+          "description": "The project's id",
+          "type": "string",
+          "derived-from-wrapper-input": "project",
+          "derived-from-xnat-object-property": "id",
+          "provides-value-for-command-input": "project"
+        }
+      ],
+      "output-handlers": [
+        {
+          "name": "analysis-resource",
+          "accepts-command-output": "analysis-results",
+          "as-a-child-of-wrapper-input": "session",
+          "type": "Resource",
+          "label": "analysis"
+        }
+      ]
+    }
+  ]
+}

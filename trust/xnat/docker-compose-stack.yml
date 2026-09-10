@@ -71,6 +71,10 @@ services:
       - PACS_UTILIZATION_PERCENT=${PACS_UTILIZATION_PERCENT-100}
       - DQR_MAX_PACS_REQUEST_ATTEMPTS=${DQR_MAX_PACS_REQUEST_ATTEMPTS-100}
       - DQR_RETRY_WAIT_SECONDS=${DQR_RETRY_WAIT_SECONDS-300}
+      # Read by config/configure-export-mask.sh, which pins the export_mask container-service
+      # command to this trust's network so the converter can reach xnat-web to upload results.
+      # Named DOCKER_NETWORK_NAME at the stack level (see the networks block below).
+      - TRUST_NETWORK_NAME=${DOCKER_NETWORK_NAME}
       - XNAT_DATASOURCE_DRIVER=${XNAT_DATASOURCE_DRIVER}
       - XNAT_DATASOURCE_URL=${XNAT_DATASOURCE_URL}
       - XNAT_DATASOURCE_NAME=${XNAT_DATASOURCE_NAME}
