@@ -1,0 +1,224 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Check that generated OMOP tables reproduce the published export.
+
+Fetches the published CSVs for the pinned data version and diffs them against locally generated
+ones. This is the check that makes the vendored chain's faithfulness demonstrable rather than
+assumed — see the design spec's "What is and is not reproducible" (FLIP#1092).
+
+Project-agnostic: every dataset under ``fl-tutorials/datasets/`` gates through this one script,
+selected with ``--project``. Tables absent from a project's published export are skipped rather
+than failed (spleen ships ``measurement`` and no ``observation``; cxr the reverse), which is why
+``TABLES`` is the union across projects and why a run that compares nothing is a hard failure.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+import pandas as pd
+
+HF_TRUST_DATA_REPO = os.environ.get("HF_TRUST_DATA_REPO", "aicentreflip/trust-data")
+# Published tables are read at omop-csv/<project>/ on the data-version TAG the pin names. That is the
+# FLIP#1101 layout — one copy of every table, a data version being a git tag on the dataset — and it
+# is the convention for new code here.
+#
+# It is not the only layout the dataset carries today. The pre-#1101 copies at
+# omop-csv/<version>/<project>/ are still published and resolve to the same bytes, but nothing in
+# this repo reads them any more — trust/omop-db's omop_db_tools.dataset and this tree's
+# spleen/upload_spleen_labels_to_xnat.py both read the canonical layout since FLIP#1101. The
+# versioned-path copies go once stag/prod have bumped their pin.
+#
+# The pin itself is trust/.data_version — one tag for the whole dataset.
+PIN_FILES = ("trust/.data_version",)
+REPO_ROOT = Path(__file__).resolve().parents[3]
+TABLES = (
+    "person",
+    "procedure_occurrence",
+    "visit_occurrence",
+    "image_occurrence",
+    "image_feature",
+    "measurement",
+    "observation",
+)
+
+
+def pinned_revision() -> str:
+    """The data-version tag this checkout pins (the first PIN_FILES entry that exists)."""
+    for rel in PIN_FILES:
+        path = REPO_ROOT / rel
+        if path.is_file():
+            return path.read_text().strip()
+    raise SystemExit(f"no data-version pin found under {REPO_ROOT}: {PIN_FILES}")
+
+
+def published_url(revision: str, project: str, table: str) -> str:
+    """URL of one published table: under FLIP#1101 the version is the revision, not a path segment.
+
+    See the note above ``PIN_FILES`` for the pre-#1101 versioned-path layout the dataset also still
+    carries, and why this is deliberately not the URL construction ``omop_db_tools.dataset`` uses.
+    """
+    return f"https://huggingface.co/datasets/{HF_TRUST_DATA_REPO}/resolve/{revision}/omop-csv/{project}/{table}.csv"
+
+
+def fetch_published(revision: str, project: str, table: str) -> pd.DataFrame | None:
+    """Fetch one published table, or None when it is absent upstream.
+
+    Args:
+        revision: Dataset revision — a data-version tag such as ``20260729``, ``main``, or a sha.
+        project: Project directory on the dataset, e.g. ``spleen_project``.
+        table: OMOP table name.
+
+    Returns:
+        pd.DataFrame | None: The published table, or None if it 404s (optional tables such as
+        ``observation`` are not shipped by every project).
+    """
+    url = published_url(revision, project, table)
+    try:
+        with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310
+            return pd.read_csv(response)
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return None
+        raise
+
+
+def source_trust_of(trust: str) -> int:
+    """The published ``source_trust`` value for one generated trust directory.
+
+    The converters write ``omop/<trust>/<project>/`` with the ``trust`` column dropped, while the
+    published export is a single file per table carrying ``source_trust`` instead. Re-deriving it
+    from the directory name is what lets the federated split itself be compared — see ``compare``.
+
+    Args:
+        trust: Generated trust directory name, e.g. ``trust_1``.
+
+    Returns:
+        int: The provenance value the published export carries for that trust — ``trust_1`` is 1,
+        matching ``omop_db_tools.dataset``'s partition (index i holds ``source_trust`` i + 1).
+
+    Raises:
+        SystemExit: If the name carries no trailing number to derive it from.
+    """
+    number = trust.rsplit("_", 1)[-1]
+    if not number.isdigit():
+        raise SystemExit(f"cannot derive source_trust from --trusts entry {trust!r}: expected a trailing number")
+    return int(number)
+
+
+def compare(mine: pd.DataFrame, theirs: pd.DataFrame) -> tuple[bool, str]:
+    """Compare a generated table against its published counterpart.
+
+    The published export materialises some optional schema columns the converter omits — every one
+    is empty there — so shared columns are compared for equality and published-only columns are
+    required to be information-free. A published-only column carrying real data is a genuine gap.
+
+    ``source_trust`` is compared like any other column rather than dropped from both sides, so the
+    federated split is part of what the gate certifies. It has to be: both sides are sorted by the
+    surrogate key before comparison, so with the column dropped any reassignment of rows between
+    trust_1 and trust_2 compares byte-identical and still passes — and for cxr that column is a pure
+    function of row order in the input CSV (``df.index % len(TRUSTS)``), so a re-ordered or
+    re-published input would silently re-partition the cohort. The split decides which trust's OMOP
+    holds a person, hence which trust's cohort query returns them and whose imaging is pulled into
+    XNAT. A published table that carries no ``source_trust`` at all fails as a generated-only column,
+    which is the right answer: the export has lost the provenance the gate exists to check.
+
+    Args:
+        mine: Generated table, with any ``trust`` column already dropped and ``source_trust``
+            re-derived from the trust directory it was read from.
+        theirs: Published table, as published.
+
+    Returns:
+        tuple[bool, str]: Whether they match, and a one-line description.
+    """
+    extra = sorted(set(theirs.columns) - set(mine.columns))
+    carrying = [c for c in extra if theirs[c].replace({0: None, "0": None}).notna().any()]
+    if carrying:
+        return False, f"published-only columns carry data: {carrying}"
+    missing = sorted(set(mine.columns) - set(theirs.columns))
+    if missing:
+        return False, f"generated columns absent upstream: {missing}"
+    shared = sorted(set(mine.columns) & set(theirs.columns))
+    key = mine.columns[0]
+    left = mine.sort_values(key).reset_index(drop=True)[shared]
+    right = theirs.sort_values(key).reset_index(drop=True)[shared]
+    if not left.equals(right):
+        differing = next((c for c in shared if not left[c].equals(right[c])), "?")
+        return False, f"{left.shape} vs {right.shape}, first differing column: {differing}"
+    note = f"  (+{len(extra)} empty published-only col(s))" if extra else ""
+    return True, f"{len(left)} rows x {len(shared)} cols{note}"
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the comparison and return a process exit code."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--generated-dir", type=Path, default=Path("omop"))
+    parser.add_argument(
+        "--project",
+        required=True,
+        help="Project directory on the dataset and under omop/<trust>/, e.g. spleen_project.",
+    )
+    parser.add_argument("--trusts", nargs="+", default=["trust_1", "trust_2"])
+    parser.add_argument(
+        "--revision",
+        default=None,
+        help="Dataset revision to compare against: a data-version tag, main, or a sha. "
+        "Defaults to $HF_TRUST_DATA_REVISION, else the pinned tag.",
+    )
+    args = parser.parse_args(argv)
+
+    revision = args.revision or os.environ.get("HF_TRUST_DATA_REVISION") or pinned_revision()
+
+    failed: list[str] = []
+    compared = 0
+    for table in TABLES:
+        theirs = fetch_published(revision, args.project, table)
+        if theirs is None:
+            print(f"skip  {table}: not published for {args.project}")
+            continue
+        paths = [args.generated_dir / t / args.project / f"{table}.csv" for t in args.trusts]
+        missing = [p for p in paths if not p.is_file()]
+        if missing:
+            failed.append(table)
+            print(f"DIFF  {table}: generated file(s) missing: {[str(p) for p in missing]}")
+            continue
+        mine = pd.concat(
+            [pd.read_csv(p).assign(source_trust=source_trust_of(t)) for p, t in zip(paths, args.trusts)],
+            ignore_index=True,
+        )
+        ok, detail = compare(mine, theirs)
+        print(f"{'MATCH' if ok else 'DIFF '} {table}: {detail}")
+        compared += 1
+        if not ok:
+            failed.append(table)
+
+    print()
+    if compared == 0:
+        print(
+            f"GATE FAIL — no tables were compared for {args.project} at revision {revision}. "
+            "Check --revision (a tag on the dataset) and that the project is published there."
+        )
+        return 1
+    if failed:
+        print(f"GATE FAIL — {len(failed)} table(s) diverge from the published export: {failed}")
+        return 1
+    print(f"GATE PASS — every published table reproduces from {revision}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

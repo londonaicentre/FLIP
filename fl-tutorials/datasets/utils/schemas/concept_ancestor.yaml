@@ -1,0 +1,12 @@
+schema_type: dataframe
+columns:
+  ancestor_concept_id:
+    dtype: int64
+  descendant_concept_id:
+    dtype: int64
+  min_levels_of_separation:
+    dtype: int64
+  max_levels_of_separation:
+    dtype: int64
+strict: true
+drop_invalid_rows: false

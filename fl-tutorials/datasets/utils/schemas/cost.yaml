@@ -1,0 +1,85 @@
+schema_type: dataframe
+columns:
+  cost_id:
+    dtype: int64
+    unique: true
+  cost_event_id:
+    dtype: int64
+  cost_domain_id:
+    dtype: string[python]
+  cost_type_concept_id:
+    dtype: int64
+  currency_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  total_charge:
+    dtype: float64
+    nullable: true
+    required: false
+  total_cost:
+    dtype: float64
+    nullable: true
+    required: false
+  total_paid:
+    dtype: float64
+    nullable: true
+    required: false
+  paid_by_payer:
+    dtype: float64
+    nullable: true
+    required: false
+  paid_by_patient:
+    dtype: float64
+    nullable: true
+    required: false
+  paid_patient_copay:
+    dtype: float64
+    nullable: true
+    required: false
+  paid_patient_coinsurance:
+    dtype: float64
+    nullable: true
+    required: false
+  paid_patient_deductible:
+    dtype: float64
+    nullable: true
+    required: false
+  paid_by_primary:
+    dtype: float64
+    nullable: true
+    required: false
+  paid_ingredient_cost:
+    dtype: float64
+    nullable: true
+    required: false
+  paid_dispensing_fee:
+    dtype: float64
+    nullable: true
+    required: false
+  payer_plan_period_id:
+    dtype: int64
+    nullable: true
+    required: false
+  amount_allowed:
+    dtype: float64
+    nullable: true
+    required: false
+  revenue_code_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  revenue_code_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  drg_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  drg_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false
