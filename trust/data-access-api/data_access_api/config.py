@@ -78,6 +78,25 @@ class Settings(BaseSettings):
     CACHE_MAX_RESULT_ROWS: PositiveInt = 50_000  # Max rows per cached result; larger results skip caching
     CACHE_MAX_ENTRIES: PositiveInt = 64  # Max number of cached query results
 
+    # Approved-cohort snapshot store (FLIP#857). Directory where the cohort frozen at project
+    # approval is persisted, one sub-directory per hub project id — a dedicated bind mount in
+    # the compose files. The row-level routes serve ONLY these frozen artefacts (a project
+    # with no snapshot is refused), so an unset/unwritable directory means no row-level data
+    # can be released until the store is fixed — deliberately fail-closed.
+    COHORT_SNAPSHOT_DIR: str = ""
+
+    # Hard cap on one serialized snapshot. Over the cap the snapshot is REFUSED, never
+    # truncated — a partial cohort would silently poison training data.
+    SNAPSHOT_MAX_BYTES: PositiveInt = 536_870_912  # 512 MiB
+
+    @field_validator("SNAPSHOT_MAX_BYTES", mode="before")
+    @classmethod
+    def coerce_empty_snapshot_max_bytes(cls, v: object) -> object:
+        """Treat an empty-string cap as the default (same kit-file gotcha as the threshold)."""
+        if v is None or v == "":
+            return 536_870_912
+        return v
+
     #
     OMOP_DB_SERVICE_NAME: str = "omop-db"  # The name of the OMOP database service in Docker Compose or Kubernetes
     OMOP_DB_PORT: int = 5432  # Calls from another container use port 5432 (e.g. http://omop-db:5432)
@@ -95,6 +114,17 @@ class Settings(BaseSettings):
     # time compare. Every trust-internal service holds the same per-trust key.
     TRUST_INTERNAL_SERVICE_KEY_HEADER: str = "X-Trust-Internal-Service-Key"
     TRUST_INTERNAL_SERVICE_KEY: str = ""
+
+    # Cohort-write authorisation (FLIP#857). The snapshot create/delete routes carry a second
+    # gate on top of the trust-internal key: the caller must prove possession of AES_KEY_BASE64
+    # by sending the SHA-256 of the key in this header. This separates the services trusted to
+    # DEFINE a project's approved cohort (trust-api, data-access-api — both hold the AES key)
+    # from fl-client, which runs researcher training code, holds the trust-internal key for its
+    # imaging reads, and deliberately has no AES key. The read routes are unaffected, so
+    # fl-client's ``get_dataframe`` keeps working; only the cohort-defining writes are locked
+    # down. The digest — not the raw key — is transmitted, so a captured header or a log line
+    # never reveals the encryption key.
+    COHORT_ADMIN_KEY_HEADER: str = "X-Cohort-Admin-Key"
 
     # Define the database URL for the OMOP database
     @property

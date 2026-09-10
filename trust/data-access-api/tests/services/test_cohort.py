@@ -172,6 +172,47 @@ def test_get_statistics_genuine_zero_is_suppressed(mock_read_sql):
 
 
 @patch("pandas.read_sql")
+def test_get_records_use_cache_false_bypasses_a_poisoned_cache(mock_read_sql):
+    """Snapshot creation must freeze LIVE OMOP: a cached frame (e.g. from the statistics
+    run at submission) is skipped when use_cache=False, and the fresh read replaces it."""
+    import pandas as pd
+
+    from data_access_api.services.cohort import get_records
+    from data_access_api.services.query_cache import get_cached_result, set_cached_result
+
+    query = "SELECT person_id FROM omop.person"
+    stale = pd.DataFrame({"person_id": [1, 2]})
+    fresh = pd.DataFrame({"person_id": [1]})  # a person was removed from OMOP since
+    set_cached_result(query, stale)
+    mock_read_sql.return_value = fresh
+
+    result = get_records(query, use_cache=False)
+
+    pd.testing.assert_frame_equal(result, fresh)
+    mock_read_sql.assert_called_once()
+    # The fresh read updates the cache, so subsequent cached reads see the new state too.
+    pd.testing.assert_frame_equal(get_cached_result(query), fresh)
+
+
+@patch("pandas.read_sql")
+def test_get_records_serves_cache_by_default(mock_read_sql):
+    """Default behaviour is unchanged: a cached frame short-circuits the database read."""
+    import pandas as pd
+
+    from data_access_api.services.cohort import get_records
+    from data_access_api.services.query_cache import set_cached_result
+
+    query = "SELECT person_id FROM omop.person"
+    cached = pd.DataFrame({"person_id": [1, 2]})
+    set_cached_result(query, cached)
+
+    result = get_records(query)
+
+    pd.testing.assert_frame_equal(result, cached)
+    mock_read_sql.assert_not_called()
+
+
+@patch("pandas.read_sql")
 def test_get_records_undefined_table_error(mock_read_sql):
     """
     Test get_records with UndefinedTable error.

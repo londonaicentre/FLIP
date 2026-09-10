@@ -72,13 +72,18 @@ async def get_accession_ids(encrypted_project_id: str, query: str) -> list[str]:
 
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == httpx.codes.FORBIDDEN:
-            # A deliberate refusal, not a failure: the cohort is below the trust's disclosure
-            # threshold. Typed separately so callers can report it as a settled outcome rather
-            # than as a transport error they might retry.
-            message = (
-                "get_accession_ids: the Data Access API refused to release accession IDs — "
-                "the cohort is below the trust's minimum size."
-            )
+            # A deliberate refusal, not a failure — typed separately so callers can report it
+            # as a settled outcome rather than as a transport error they might retry. Two
+            # policy refusals arrive as 403: the frozen cohort is below the trust's disclosure
+            # threshold, or the project has no approved-cohort snapshot yet (FLIP#857 —
+            # e.g. imaging creation raced ahead of the snapshot task). Both mean "no
+            # identifiers releasable right now"; relay data-access-api's own detail so the
+            # two stay distinguishable in status reporting.
+            try:
+                detail = exc.response.json().get("detail", "")
+            except ValueError:
+                detail = ""
+            message = f"get_accession_ids: the Data Access API refused to release accession IDs — {detail}"
             logger.warning(message)
             raise CohortBelowThresholdError(message) from exc
         error_message = f"get_accession_ids: HTTP error occurred while calling the Data Access API: {exc}"

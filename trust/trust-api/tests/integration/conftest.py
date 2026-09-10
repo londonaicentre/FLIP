@@ -71,6 +71,10 @@ def compose_stack() -> Generator[DockerCompose, None, None]:
         # Wait for the compose-level healthchecks rather than `wait_for_logs` —
         # logs are noisy and fragile across image versions.
         wait=True,
+        # Rebuild the from-source service on every session: without it, `docker compose up`
+        # reuses a previously built image, so a dependency change (pyproject/uv.lock) never
+        # reaches the stack and the suite green-lights code that cannot run in a fresh build.
+        build=True,
     ) as compose:
         yield compose
 

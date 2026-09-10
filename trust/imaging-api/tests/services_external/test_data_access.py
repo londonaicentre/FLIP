@@ -80,10 +80,10 @@ class TestGetAccessionIds:
             await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")
 
     @staticmethod
-    def _client_returning_status(mock_client_cls, status_code: int):
+    def _client_returning_status(mock_client_cls, status_code: int, json_body: dict | None = None):
         """Wires the mocked client so ``raise_for_status`` raises for ``status_code``."""
         request = httpx.Request("POST", "http://data-access-api/cohort/accession-ids")
-        response = httpx.Response(status_code, request=request)
+        response = httpx.Response(status_code, request=request, json=json_body)
 
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock(
@@ -98,15 +98,28 @@ class TestGetAccessionIds:
 
     @pytest.mark.asyncio
     @patch("imaging_api.services_external.data_access.httpx.AsyncClient")
-    async def test_403_raises_cohort_below_threshold(self, mock_client_cls):
-        """A 403 is the trust refusing to release identifiers for a too-small cohort.
+    async def test_403_raises_cohort_below_threshold_with_relayed_detail(self, mock_client_cls):
+        """A 403 is the trust refusing to release identifiers — a policy decision, not a failure.
 
         It must be typed distinctly from a transport failure: callers report it as a settled
-        outcome rather than an error to retry, and retrying cannot change the answer.
+        outcome rather than an error to retry, and retrying cannot change the answer. Two
+        refusals arrive this way (below-threshold cohort, or no approved-cohort snapshot —
+        FLIP#857), so data-access-api's own detail is relayed to keep them distinguishable.
         """
+        self._client_returning_status(
+            mock_client_cls, 403, json_body={"detail": "Cohort is too small for row-level data to be released."}
+        )
+
+        with pytest.raises(CohortBelowThresholdError, match="Cohort is too small"):
+            await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services_external.data_access.httpx.AsyncClient")
+    async def test_403_without_json_body_still_raises_typed_refusal(self, mock_client_cls):
+        """A body-less 403 must not crash the detail relay — the typed refusal still surfaces."""
         self._client_returning_status(mock_client_cls, 403)
 
-        with pytest.raises(CohortBelowThresholdError, match="below the trust's minimum size"):
+        with pytest.raises(CohortBelowThresholdError, match="refused to release accession IDs"):
             await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")
 
     @pytest.mark.asyncio

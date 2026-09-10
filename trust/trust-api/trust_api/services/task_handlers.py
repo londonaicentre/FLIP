@@ -17,6 +17,7 @@ Each handler processes a specific task type and returns a result dict.
 """
 
 import datetime
+import hashlib
 import json
 from typing import Any
 
@@ -28,6 +29,7 @@ from trust_api.routers.schemas import (
     CohortQueryInput,
     DeleteImagingInput,
     GetImagingStatusInput,
+    PersistCohortInput,
     ReimportStudiesInput,
     UpdateProfileRequest,
 )
@@ -41,6 +43,8 @@ TRUST_API_KEY = get_settings().TRUST_API_KEY
 TRUST_API_KEY_HEADER = get_settings().TRUST_API_KEY_HEADER
 TRUST_INTERNAL_SERVICE_KEY = get_settings().TRUST_INTERNAL_SERVICE_KEY
 TRUST_INTERNAL_SERVICE_KEY_HEADER = get_settings().TRUST_INTERNAL_SERVICE_KEY_HEADER
+AES_KEY_BASE64 = get_settings().AES_KEY_BASE64
+COHORT_ADMIN_KEY_HEADER = get_settings().COHORT_ADMIN_KEY_HEADER
 
 
 def trust_internal_headers() -> dict[str, str]:
@@ -56,6 +60,22 @@ def trust_internal_headers() -> dict[str, str]:
     return {TRUST_INTERNAL_SERVICE_KEY_HEADER: TRUST_INTERNAL_SERVICE_KEY}
 
 
+def cohort_admin_headers() -> dict[str, str]:
+    """Headers for data-access-api's cohort-DEFINING write routes (snapshot create/delete).
+
+    Those routes require the trust-internal key AND proof of possessing ``AES_KEY_BASE64``
+    (FLIP#857) — the second gate is what stops fl-client's researcher code from rewriting or
+    deleting a project's frozen cohort, since fl-client holds no AES key. The proof is the
+    SHA-256 of the key, never the key itself, so it stays off the wire and out of logs. Layers
+    the cohort-admin header on top of the trust-internal one.
+
+    Returns:
+        dict[str, str]: The trust-internal header plus the cohort-admin proof header.
+    """
+    proof = hashlib.sha256(AES_KEY_BASE64.encode()).hexdigest()
+    return {**trust_internal_headers(), COHORT_ADMIN_KEY_HEADER: proof}
+
+
 # Task type constants — must match TaskType enum in flip-api/src/flip_api/domain/schemas/status.py
 TASK_COHORT_QUERY = "cohort_query"
 TASK_CREATE_IMAGING = "create_imaging"
@@ -63,6 +83,55 @@ TASK_DELETE_IMAGING = "delete_imaging"
 TASK_GET_IMAGING_STATUS = "get_imaging_status"
 TASK_REIMPORT_STUDIES = "reimport_studies"
 TASK_UPDATE_USER_PROFILE = "update_user_profile"
+TASK_PERSIST_COHORT = "persist_cohort"
+
+
+async def handle_persist_cohort(payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Freeze the approved cohort on this trust (FLIP#857).
+
+    Forwards the approval-time snapshot request to the local data-access-api, which runs
+    the approved query ONCE and persists the resulting dataframe as the project's frozen
+    artefact — the only thing the row-level routes serve from then on. The snapshot
+    response (aggregates only: row count, column names, timestamps) is returned as the
+    task result verbatim, so the hub can record its frozen-cohort audit row from it.
+
+    Failure (including a below-threshold cohort, which data-access-api refuses with 403)
+    marks the task FAILED at the hub with the category-only detail — nothing is persisted
+    trust-side in that case, and the project's row-level routes keep refusing.
+
+    Args:
+        payload: Task payload matching ``PersistCohortInput``.
+
+    Returns:
+        dict with success status, the snapshot facts as ``result``, or error details.
+    """
+    logger.info(f"Processing cohort snapshot task: project_id={payload.get('project_id')}")
+
+    try:
+        request = PersistCohortInput(**payload)
+        response = await make_request(
+            method="POST",
+            url=f"{DATA_ACCESS_API_URL}/cohort/snapshot",
+            json_body={
+                "encrypted_project_id": request.encrypted_project_id,
+                "query": request.query,
+            },
+            # Snapshot creation is a cohort-DEFINING write: it needs the cohort-admin proof on
+            # top of the trust-internal key (FLIP#857).
+            headers=cohort_admin_headers(),
+            # Snapshot creation runs the full cohort query, so it inherits the cohort
+            # query's timeout rather than the default request timeout.
+            timeout_seconds=get_settings().COHORT_QUERY_TIMEOUT_SECONDS,
+        )
+        logger.info(
+            f"Cohort snapshot persisted for project {request.project_id}: "
+            f"{response.get('row_count')} rows"  # type: ignore[union-attr]
+        )
+        return {"success": True, "result": json.dumps(response)}
+    except Exception as e:
+        logger.error(f"Error persisting cohort snapshot: {e}")
+        return {"success": False, "error": str(e)}
 
 
 async def handle_cohort_query(payload: dict[str, Any]) -> dict[str, Any]:
@@ -322,4 +391,5 @@ TASK_HANDLERS = {
     TASK_GET_IMAGING_STATUS: handle_get_imaging_status,
     TASK_REIMPORT_STUDIES: handle_reimport_studies,
     TASK_UPDATE_USER_PROFILE: handle_update_user_profile,
+    TASK_PERSIST_COHORT: handle_persist_cohort,
 }

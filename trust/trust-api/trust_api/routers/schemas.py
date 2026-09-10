@@ -29,6 +29,20 @@ class CohortQueryInput(BaseModel):
     trust_id: str = Field(..., description="The unique identifier for the trust")
 
 
+class PersistCohortInput(BaseModel):
+    """Payload of the approval-time PERSIST_COHORT task (FLIP#857).
+
+    Mirrors flip-api's ``IPersistCohort``: the approved cohort query of record plus the hub
+    project id, encrypted for forwarding to data-access-api and in the clear for logging.
+    """
+
+    project_id: str = Field(..., description="The central hub project id (clear, for logging)")
+    trust_id: str = Field(..., description="The unique identifier for the trust")
+    encrypted_project_id: str = Field(..., description="The hub project id, encrypted for data-access-api")
+    query: str = Field(..., description="The approved cohort SQL to freeze")
+    query_id: str | None = Field(default=None, description="The hub Queries row being frozen")
+
+
 # #########################
 # Imaging
 # #########################

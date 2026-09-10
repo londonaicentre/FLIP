@@ -114,6 +114,22 @@ class ICreateImagingProject(BaseModel):
     dicom_to_nifti: bool = True
 
 
+class IPersistCohort(BaseModel):
+    """Payload of the approval-time PERSIST_COHORT task (FLIP#857).
+
+    Carries everything the trust needs to freeze the approved cohort: the query of record
+    and the hub project id both in the clear (for the trust's own logging/keying) and
+    encrypted (what the trust forwards to data-access-api, whose routes take the encrypted
+    form — mirroring the cohort-query task).
+    """
+
+    project_id: UUID  # This is the central hub project ID
+    trust_id: UUID
+    encrypted_project_id: str
+    query: str
+    query_id: UUID | None = None
+
+
 class ICreatedImagingUser(BaseModel):
     """Represents a user created on XNAT. Used to be called IImageUser in the old repo."""
 
