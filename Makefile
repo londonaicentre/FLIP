@@ -14,7 +14,7 @@
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
 		check-aws-access generate-internal-service-key generate-xnat-credentials \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
-		sync-trust-kit sync-trust-kits lock checkov-lint \
+		sync-trust-kit sync-trust-kits lock checkov-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		demo-video demo-users seed-demo-projects
 
@@ -307,6 +307,21 @@ ci:
 # gitignored deploy env files, which contributors don't have.
 checkov-lint:
 	bash deploy/providers/AWS/scripts/checkov_lint.sh
+# Re-render the two committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ from
+# deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copy is rendered at docs
+# build time instead). Uses the local graphviz when `dot` is installed; the dev hosts have none,
+# so it otherwise runs the identical render in a throwaway python:3.12-slim container. Runs the
+# script directly rather than via deploy/providers/AWS/Makefile for the same credential-free
+# reason as checkov-lint.
+aws-diagram:
+ifneq ($(shell command -v dot 2>/dev/null),)
+	cd deploy/providers/AWS && uv run --no-project --with diagrams python -m architecture.central_hub --out docs
+else
+	docker run --rm -v "$(CURDIR):/work" -w /work/deploy/providers/AWS python:3.12-slim sh -c \
+	  "apt-get update -qq >/dev/null && apt-get install -y -qq graphviz >/dev/null && \
+	   pip -q install --root-user-action=ignore diagrams >/dev/null && \
+	   python -m architecture.central_hub --out docs && chown -R $(shell id -u):$(shell id -g) docs"
+endif
 ui:
 ifeq ($(strip $(PROD)),)
 	@echo "🚀 Starting UI..."

@@ -129,9 +129,13 @@ jobs:
       - name: Install uv
         run: pip install uv
 
+      # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
+      - name: Install graphviz
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
+
       - name: Run AWS deploy test suite
         working-directory: deploy/providers/AWS
-        run: uv run --no-project --with pytest --with jinja2 --with click pytest tests/ -v
+        run: uv run --no-project --with pytest --with jinja2 --with click --with diagrams pytest tests/ -v
 
   # Static checkov security lint (FLIP#1052 + the FLIP#1058 triage): a curated
   # check list over the whole AWS tree — IAM policy content (overly-broad
