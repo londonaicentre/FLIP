@@ -15,6 +15,14 @@
 # FLIP Cognito user pool + client + domain + seed users.
 
 resource "aws_cognito_user_pool" "flip_user_pool" {
+  # Feature tier. Null = never sent (legacy pools keep their grandfathered
+  # tier). The LZA mode pins LITE: ESSENTIALS -- the default for new pools --
+  # counts as "ManagedLogin configured", which Cognito refuses to serve over
+  # PrivateLink, and the interface endpoint is that account's only route to
+  # cognito-idp (FLIP#749). FLIP uses classic flows (SDK sign-in, TOTP MFA),
+  # all LITE features.
+  user_pool_tier = var.user_pool_tier
+
   name                     = var.user_pool_name
   username_attributes      = ["email"]
   auto_verified_attributes = ["email"]
@@ -111,9 +119,17 @@ resource "random_string" "cognito_domain" {
 }
 
 resource "aws_cognito_user_pool_domain" "main" {
+  # Gated off on LZA (FLIP#749): FLIP never uses the hosted UI (the app signs
+  # in via the SDK), and a domain object born with Managed Login keeps its
+  # "ManagedLogin configured" state through an in-place downgrade to v1 --
+  # Cognito then refuses PrivateLink API access to the whole pool, which is
+  # the LZA account's only route to cognito-idp. Proven empirically 2026-08-20:
+  # ListUsers through the interface endpoint returned the ManagedLogin error
+  # with the domain present (any version) and 200 once it was deleted.
+  count                 = var.create_hosted_ui_domain ? 1 : 0
   domain                = random_string.cognito_domain.result
   user_pool_id          = aws_cognito_user_pool.flip_user_pool.id
-  managed_login_version = 2
+  managed_login_version = var.managed_login_version
 
   lifecycle {
     prevent_destroy = true

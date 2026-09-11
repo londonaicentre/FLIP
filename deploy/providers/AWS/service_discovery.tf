@@ -26,7 +26,7 @@ resource "aws_service_discovery_private_dns_namespace" "flip_local" {
 
   name        = local.flip_local_domain
   description = "Private DNS for ECS service-to-service resolution"
-  vpc         = module.flip_vpc.vpc_id
+  vpc         = local.vpc_id
 }
 
 ############################

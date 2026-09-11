@@ -162,6 +162,28 @@ OPTIONAL_KEYS=(
     # configuration. Only stag sets it (to "false", for testing).
     ENFORCE_MFA
 
+    # The LZA keys (FLIP#749). CI drives only the two self-contained accounts —
+    # `TF_ENV` admits stag and prod alone, and a platform-managed estate is
+    # applied from a laptop with PROD=lza / PROD=lza-stag — so all five are
+    # expected to be *absent* from the aws-stag / aws-prod GitHub environments,
+    # and absent is the legacy value in every case:
+    #
+    #   ACCESS_LOGS_BUCKET_NAME  — "" derives flip-access-logs-<flip_alb_subdomain>
+    #   CF_LOGS_BUCKET_NAME      — "" derives flip-cf-logs-<flip_alb_subdomain>
+    #   EFS_PROVISION_IMAGE      — Makefile exports it only when set; variables.tf
+    #                              keeps the Docker Hub amazon/aws-cli default
+    #   LZA_VPC_NAME             — same `ifneq` guard; names the accelerator VPC
+    #   MANAGE_DNS               — Makefile `?= true`, i.e. the DNS-managed shape
+    #
+    # They are still carried through the workflows and listed here rather than
+    # exempted, so the drift guard above keeps covering them if CI ever gains an
+    # LZA environment.
+    ACCESS_LOGS_BUCKET_NAME
+    CF_LOGS_BUCKET_NAME
+    EFS_PROVISION_IMAGE
+    LZA_VPC_NAME
+    MANAGE_DNS
+
 )
 # Deliberately absent: PRESERVE_VPC. It is a make-level flag read only by
 # `make destroy` (scripts/destroy-selective.sh), never a Terraform input — and CI

@@ -125,12 +125,27 @@ def test_region_optional() -> None:
         shutil.rmtree(root)
 
 
+def test_lza_envs_name_the_kit_and_hint_the_prod_flag() -> None:
+    print("▶ LZA envs scaffold .env.<CODE>.lza-{prod,stag} and hint the PROD flag that reads them back")
+    for env, prod_flag in (("lza-stag", "lza-stag"), ("lza-prod", "lza")):
+        root = _temp_repo()
+        try:
+            res = _run(root, "--code", "LZA", "--name", "LZA Trust", "--env", env)
+            target = root / "trust" / f".env.LZA.{env}"
+            _assert(res.returncode == 0, f"--env {env}: exit 0", res.stderr)
+            _assert(target.exists(), f"--env {env}: kit scaffolded at .env.<CODE>.{env}")
+            _assert(f"PROD={prod_flag}" in res.stdout, f"--env {env}: next-step hint says PROD={prod_flag}", res.stdout)
+        finally:
+            shutil.rmtree(root)
+
+
 def main() -> None:
     if not NEW_TRUST.is_file():
         sys.exit(f"❌ {NEW_TRUST} not found")
     test_scaffolds_kit_with_identity_and_defaults()
     test_refuses_to_overwrite()
     test_region_optional()
+    test_lza_envs_name_the_kit_and_hint_the_prod_flag()
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
     sys.exit(0 if FAIL == 0 else 1)

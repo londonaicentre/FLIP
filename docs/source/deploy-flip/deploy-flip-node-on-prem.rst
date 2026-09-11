@@ -79,7 +79,11 @@ laptop):
 
 **Central Hub deployed in AWS** — required so the trust can resolve the hub
 URL, fetch the FL participant kit from S3, and so the operator can update the
-NLB security group with the trust's public IP. See :doc:`deploy-central-hub`.
+FL load balancer's security group with the trust's public IP
+(:doc:`deploy-central-hub-aws`; on a Landing Zone Accelerator estate the FL
+entry point is the networking account's edge instead, see
+:doc:`deploy-central-hub-aws-lza`). See :doc:`deploy-central-hub` for the
+shared prerequisites.
 
 ************************************
 Recommended end-to-end (hybrid) flow

@@ -193,7 +193,7 @@ locals {
     # Flower SuperLink (compose.production.flower.yml fl-server-net-1). TLS +
     # SuperNode-auth flags travel as the container command (ecs_tasks.tf), not
     # env. INTERNAL_SERVICE_KEY is injected via the secrets block.
-    fl_server_flower = {
+    fl_server_flower = merge({
       LOCAL_DEV                      = "false"
       NET_ID                         = "net-1"
       MIN_CLIENTS                    = tostring(var.MIN_CLIENTS)
@@ -201,7 +201,13 @@ locals {
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
       FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
       INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
-    }
+      }, var.lza_managed_network ? {
+      # Sealed egress (FLIP#749): the SuperLink's per-run `uv sync` cannot reach any
+      # package index, so the ServerApp runs in the image's preinstalled environment
+      # instead — Flower's documented restricted-network mode (exit-code 608 docs).
+      # Researcher package additions ship via image rebuild, not pyproject.
+      FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION = "1"
+    } : {})
     # Flower fl-api (compose.production.flower.yml fl-api-net-1). SuperLink
     # addresses use the Cloud Map name — the provisioned server cert must
     # carry it as a SAN (FLOWER_EXTRA_SERVER_SANS at provision time).

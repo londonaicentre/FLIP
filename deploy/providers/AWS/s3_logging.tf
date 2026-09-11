@@ -29,7 +29,10 @@ locals {
   # argument" on any environment where this bucket does not yet exist. The
   # module callers pass this local; first-apply ordering is still guaranteed
   # by their `depends_on = [aws_s3_bucket_acl.flip_access_logs]`.
-  access_logs_bucket_name = "flip-access-logs-${var.flip_alb_subdomain}"
+  # Name is derived from the subdomain unless overridden — the override exists
+  # because bucket names are global and the LZA env shares the eventual
+  # subdomain with legacy prod, which still owns the derived name (FLIP#749).
+  access_logs_bucket_name = var.ACCESS_LOGS_BUCKET_NAME != "" ? var.ACCESS_LOGS_BUCKET_NAME : "flip-access-logs-${var.flip_alb_subdomain}"
 }
 
 resource "aws_s3_bucket" "flip_access_logs" {

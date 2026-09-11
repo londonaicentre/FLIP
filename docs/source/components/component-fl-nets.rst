@@ -116,6 +116,7 @@ that omits it is rejected before bundling rather than defaulted.
 Once uploaded, the UI will indicate which files are required for the specific job.
 
 Then, the Central Hub API will take care of bundling together:
+
 - The files the user has uploaded
 - The static (non-modifiable) files that are required for the specific job type.
 
@@ -337,12 +338,17 @@ Data access and communication with external services
 ****************************************************
 
 Though the user is allowed to upload the training script that will run on the client side, the access to data will have
-to be via the FLIP package (see `https://github.com/londonaicentre/FLIP/tree/develop/flip-utils/flip`).
+to be via the FLIP package (see `flip-utils/flip/
+<https://github.com/londonaicentre/FLIP/tree/develop/flip-utils/flip>`_).
 This package, installed by default in client and server nodes, will make a series of functions available to the user.
 
 For data access:
-- `flip.get_dataframe(project_id, query)`: retrieves the dataframe linked to the project ID and query that have been used on the project.
-- `flip.get_by_accession_number(project_id, accession_id, resource_type)`: retrieves data of a certain type (e.g. NIFTI) associated with an accession ID. ``resource_type`` defaults to ``ResourceType.NIFTI`` and can be a single type or a list.
+
+- ``flip.get_dataframe(project_id, query)``: retrieves the dataframe linked to the project ID and query that have been
+  used on the project.
+- ``flip.get_by_accession_number(project_id, accession_id, resource_type)``: retrieves data of a certain type
+  (e.g. NIFTI) associated with an accession ID. ``resource_type`` defaults to ``ResourceType.NIFTI`` and can be a
+  single type or a list.
 
 These calls - among others - communicate with the Imaging API and retrieve the data from the project's XNAT.
 
@@ -354,9 +360,20 @@ content changed in XNAT, the Imaging API's download route accepts ``force_refres
 ``flip.add_resource`` invalidate the cache automatically).
 
 For communication with the Central Hub:
-- `flip.update_status(model_id, new_model_status)`: these calls will update the Central Hub about status on the specific model that is running (example: when it started training, or if there's an error).
-- `flip.send_metrics(client_name, model_id, label, value, global_round, x_value=None, x_label=None)`: sends a metric to the central hub so that it can plot the training results. ``global_round`` is provenance — always the FL global round the metric is reported in. Where the point is *plotted* is the optional coordinate pair: ``x_value`` is the x-coordinate (any float, e.g. an epoch counter) and ``x_label`` names the x-axis (e.g. ``"epoch"``); both default to the global round on the "Global Rounds" axis. A plot is identified by the ``(label, x_label)`` pair, so the same metric logged against different x-labels is shown as separate plots.
-- `flip.send_event(model_id, event_type, global_round, ...)`: sends a typed round-progress **fact** to the Central Hub — one of ``ROUND_STARTED``, ``CLIENT_RESULT_RECEIVED`` (with the serialized update size in ``details.size_bytes``) or ``ROUND_AGGREGATED`` (with ``returned``/``expected`` counts). The hub composes the display text shown in the model page's Live activity feed at serve time, so wording changes ship with a flip-api redeploy and never require rebuilding FL images. Rounds are 1-based on both backends.
+
+- ``flip.update_status(model_id, new_model_status)``: these calls will update the Central Hub about status on the
+  specific model that is running (example: when it started training, or if there's an error).
+- ``flip.send_metrics(client_name, model_id, label, value, global_round, x_value=None, x_label=None)``: sends a metric
+  to the central hub so that it can plot the training results. ``global_round`` is provenance — always the FL global
+  round the metric is reported in. Where the point is *plotted* is the optional coordinate pair: ``x_value`` is the
+  x-coordinate (any float, e.g. an epoch counter) and ``x_label`` names the x-axis (e.g. ``"epoch"``); both default to
+  the global round on the "Global Rounds" axis. A plot is identified by the ``(label, x_label)`` pair, so the same
+  metric logged against different x-labels is shown as separate plots.
+- ``flip.send_event(model_id, event_type, global_round, ...)``: sends a typed round-progress **fact** to the Central
+  Hub — one of ``ROUND_STARTED``, ``CLIENT_RESULT_RECEIVED`` (with the serialized update size in
+  ``details.size_bytes``) or ``ROUND_AGGREGATED`` (with ``returned``/``expected`` counts). The hub composes the display
+  text shown in the model page's Live activity feed at serve time, so wording changes ship with a flip-api redeploy and
+  never require rebuilding FL images. Rounds are 1-based on both backends.
 
 The fl-server emits these events automatically — NVFLARE via the FLIP ``ScatterAndGather``/``ServerEventHandler`` components (wired by path in each template's server config, so no app-template changes were required), Flower via the ``flip.flower.strategy.FlipFedAvg`` base strategy the app templates subclass. User training code never calls ``send_event`` directly. Pre-existing **Flower** apps (whose uploaded strategy subclasses stock ``FedAvg``) keep working and simply emit no round telemetry; pre-existing **NVFLARE** apps reference the FLIP components by path from the baked ``flip`` package, so they start emitting as soon as the fl-server image carries this version — with no app change.
 

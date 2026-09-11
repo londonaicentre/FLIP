@@ -271,8 +271,12 @@ This runbook is for the case where **you** have lost access to your TOTP device 
 
 The Central Hub has **one supported production deployment**: ECS Fargate via the Terraform root in
 [`deploy/providers/AWS/`](providers/AWS/README.md). The task definitions in `ecs_tasks.tf` (env maps in
-`locals.tf`) are the **canonical definition of production container config**. Deploying into an AWS
-LZA-governed account is an env-gated **mode** of that same root, not a separate path
+`locals.tf`) are the **canonical definition of production container config**. That root offers **two
+deployment modes**, both permanently supported: the default **self-contained single-account** shape
+(`PROD=stag`/`PROD=true`), where FLIP creates its own VPC and edge; and the **platform-managed** shape
+(`PROD=lza`, or `PROD=lza-stag` for a staging estate) for an AWS Landing Zone Accelerator estate, where the
+network and edge are owned by the accelerator. The second is an env-gated mode of the same root, not a separate path — see
+[Deploying onto an LZA estate](providers/AWS/README.md#deploying-onto-an-lza-estate-prodlza)
 ([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). The ECS FL task definitions serve **both
 FL backends** ([FLIP#566](https://github.com/londonaicentre/FLIP/issues/566)): `FL_BACKEND` in the env file
 switches the same task families between NVFLARE and Flower (SuperLink ports/command/creds — Flower
@@ -286,7 +290,8 @@ Cloud Map + public FL hostnames).
 > `compose.production*.yml` files remain maintained **only** as the local prod-image harness
 > (`make up PROD=stag|true` — the baked images, no dev mounts). When changing production config, change
 > Terraform first and update the compose files only as far as the local harness needs. Remaining hub-EC2
-> material is removed once the LZA migration's legacy decommission lands (FLIP#749 WP6).
+> material is removed once the AI Centre's own legacy account is decommissioned (FLIP#749 WP6) — that
+> retires one *account*, not the self-contained deployment mode, which stays supported.
 
 ### Trusts
 
