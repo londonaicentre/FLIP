@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from imaging_api.routers.schemas import (
     CentralHubProject,
     DownloadImagesRequestData,
+    ImportStudy,
     ImportStudyRequest,
     UploadDataRequest,
 )
@@ -105,6 +106,19 @@ def test_accession_id_accepts_safe_charset(good_accession_id: str):
     """RFC 3986 §2.3 unreserved charset must be accepted."""
     request = DownloadImagesRequestData(encrypted_central_hub_project_id="enc", accession_id=good_accession_id)
     assert request.accession_id == good_accession_id
+
+
+@pytest.mark.parametrize("bad_accession_number", ["", ".", "..", "../../OTHER", "ACC/123", "ACC 123"])
+def test_import_study_rejects_unsafe_accession_number(bad_accession_number: str):
+    """The accession number becomes the XNAT session label and later the download URL's
+    accession_id, so the same path-segment rule applies at import time (#908)."""
+    with pytest.raises(ValidationError, match="accessionNumber"):
+        ImportStudy(studyInstanceUid="1.2.3", accessionNumber=bad_accession_number)
+
+
+def test_import_study_accepts_safe_accession_number():
+    study = ImportStudy(studyInstanceUid="1.2.3", accessionNumber="ACC..123")
+    assert study.relabel_map["Session"] == "ACC..123"
 
 
 def test_import_study_request_deduplicates_studies():
