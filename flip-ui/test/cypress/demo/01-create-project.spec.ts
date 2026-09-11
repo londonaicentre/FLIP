@@ -110,10 +110,10 @@ describe("FLIP demo — create project", () => {
                 cy.getBySel("has-imaging-toggle").demoHover();
                 cy.demoPause(700);
                 cy.getBySel("has-imaging-toggle").demoClick();
-                // Assert on what is drawn, not on aria-checked: AiSwitch binds vee-validate's
-                // state to the Headless UI Switch through `:model`, which is not one of its
-                // props, so the switch runs uncontrolled and its aria-checked reports the
-                // inverse of the knob and label (observed live; worth its own fix).
+                // Assert on what is drawn — the label and the option that only exists while
+                // imaging is on — rather than on aria-checked, so the recording checks what the
+                // viewer sees. (aria-checked now follows the value too; it used to report the
+                // inverse when AiSwitch left the Headless UI Switch uncontrolled.)
                 cy.contains("Includes imaging data").parent().contains("Disabled").should("be.visible");
                 cy.contains("Convert DICOMs to NIfTI").should("not.exist");
                 cy.demoCaption("Imaging turned off — the hub creates no XNAT project and pulls nothing from PACS", 1800);
