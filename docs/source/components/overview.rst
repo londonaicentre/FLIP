@@ -8,16 +8,16 @@ Overview
 Architecture
 ************
 
-The overall FLIP solution comprises three parts:
+The overall FLIP solution comprises two parts:
 
 1. A **cloud-hosted Central Hub** providing researchers with the capability to define machine learning
    projects, discover appropriate datasets at participating Trusts and federate the testing and training of
    models across Trusts, culminating in the aggregation of a consensus model.
 2. A **Secure Enclave** (a *FLIP node*) hosted at each individual Trust, designed to permit only requests for
    training that the Trust itself has fetched from the Central Hub. A set of FLIP microservices runs inside the
-   enclave to serve those requests, alongside the Trust's imaging archive and its :term:`OMOP` database.
-3. **GPU compute at each Trust**, used by that Trust's FL client and nothing else: model training and evaluation
-   run on the Trust's own hardware, against the Trust's own data, and only model updates leave.
+   enclave to serve those requests, alongside the Trust's imaging archive, its :term:`OMOP` database and the GPU
+   compute its FL client trains on — so training and evaluation happen inside the enclave, against the Trust's
+   own data, and only model updates leave.
 
 .. figure:: ../assets/support/flip_architecture-flip_architecture.png
    :align: center
