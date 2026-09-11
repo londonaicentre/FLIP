@@ -159,8 +159,9 @@ module "fl_server_internal_nlb" {
     # ISSUED cert is impossible without a hosted zone (var.manage_dns=false),
     # so the listener is plain TCP until the zone lands, then TLS on the
     # DNS-validated cert. Same port either way so the relay never changes.
-    # Flipping to TLS is a cross-repo step: the relay is TCP passthrough, so the TLS client becomes CloudFront's VPC origin in the networking
-    # account (aicentre-lza-iac ingress_web.tf), which must switch to https-only with an origin host matching this cert's SAN at the same time.
+    # Flipping to TLS is a cross-repo step: the relay is TCP passthrough, so the TLS client becomes CloudFront's VPC
+    # origin in the networking account (aicentre-lza-iac ingress_web.tf), which must switch to https-only with an
+    # origin host matching this cert's SAN at the same time.
     "web-listener" = {
       port            = var.ALB_HTTPS_PORT
       protocol        = var.manage_dns ? "TLS" : "TCP"
@@ -261,7 +262,7 @@ resource "aws_ssm_parameter" "lza_web_nlb_dns_name" {
   # checkov:skip=CKV2_AWS_34:non-secret networking value read CROSS-ACCOUNT by the networking account's edge stack (aicentre-lza-iac) — an AWS-managed CMK cannot be decrypted from another account
   count       = var.lza_managed_network ? 1 : 0
   name        = "/flip/networking/web_nlb_dns_name"
-  description = "Internal NLB DNS name - the networking account's relay uses it only as the CloudFront origin host label (routing is by VPC origin id and the static IPs in fl_nlb_private_ips); no sync machinery"
+  description = "Internal NLB DNS name - informational (in-VPC verification, e.g. curl from a task); the networking-account edge does not consume it - it targets the static IPs in fl_nlb_private_ips"
   type        = "String"
   value       = module.fl_server_internal_nlb.dns_name
 }
