@@ -130,6 +130,18 @@ class ProjectStatus(StrEnum):
     APPROVED = "APPROVED"
 
 
+class ProjectType(StrEnum):
+    """Kind of project, for the projects-list filter (FLIP#1071): imaging, or tabular-only."""
+
+    IMAGING = "imaging"
+    OMOP_ONLY = "omop_only"
+
+    @property
+    def has_imaging(self) -> bool:
+        """The ``Projects.has_imaging`` value this kind corresponds to."""
+        return self is ProjectType.IMAGING
+
+
 class AccessRequestStatus(StrEnum):
     """Lifecycle state of a platform access request.
 
@@ -195,6 +207,27 @@ class XNATImageStatus(StrEnum):
     RETRIEVE_ERROR = "RETRIEVE_ERROR"
     CREATED = "CREATED"
     DELETED = "DELETED"
+
+
+class ImagingConnectionState(StrEnum):
+    """How the last imaging-status refresh for a trust's XNAT project turned out.
+
+    The per-trust imaging counts the hub serves are always the *last known* ones — they come
+    from the most recent ``GET_IMAGING_STATUS`` task that completed successfully. This value
+    says whether that snapshot is still current, so a consumer can tell a live 100% from a
+    stale one (GitHub issue #1022). Derived per request from the newest terminal task; not
+    persisted.
+
+    ``PROJECT_MISSING`` is narrower than ``UNREACHABLE``: it means the trust answered and XNAT
+    answered, but the imaging project is gone (imaging-api raises ``NotFoundError`` -> 404).
+    Anything else that stops a refresh landing — XNAT down (imaging-api 500), imaging-api
+    unreachable from trust-api (502), or the trust never picking the task up — is
+    ``UNREACHABLE``, which is also the fallback when a failure cannot be classified.
+    """
+
+    OK = "ok"
+    UNREACHABLE = "unreachable"
+    PROJECT_MISSING = "project-missing"
 
 
 class FLJobStatus(StrEnum):

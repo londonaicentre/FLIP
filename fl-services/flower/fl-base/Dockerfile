@@ -13,7 +13,7 @@
 # limitations under the License.
 #
 
-FROM flwr/base:${FLWR_VERSION:-1.32.0-py3.12-ubuntu24.04} AS base
+FROM flwr/base:${FLWR_VERSION:-1.36.0-py3.12-ubuntu24.04} AS base
 
 ARG LOCAL_DEV=false
 WORKDIR /app
@@ -46,7 +46,7 @@ WORKDIR /app
 COPY flip-utils/pyproject.toml flip-utils/README.md /opt/flip-utils/
 COPY flip-utils/docs/ /opt/flip-utils/docs/
 COPY flip-utils/flip/ /opt/flip-utils/flip/
-# flwr/base ships flwr==1.32.0, which pins cryptography>=46.0.7,<47.0.0 (GHSA-537c-gmf6-5ccf
+# flwr/base ships flwr==1.36.0, which pins cryptography>=46.0.7,<47.0.0 (GHSA-537c-gmf6-5ccf
 # needs >=48.0.1). This is a plain `pip install`, not a `uv sync`, so the
 # `[tool.uv] override-dependencies` escape hatch used in fl-api-flower/pyproject.toml
 # doesn't apply here — listing cryptography directly on the install line is the pip

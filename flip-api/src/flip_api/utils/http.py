@@ -13,8 +13,9 @@
 """HTTP utilities for internal service-to-service calls on the central hub.
 
 Used exclusively by the FL service to communicate with FL Net API endpoints
-(e.g. flip-fl-api-net-1:8000). These are plain HTTP calls between co-located
-Docker services — no TLS required.
+(e.g. the compose service name fl-api-net-1:8000, or fl-api-net-1.flip.local:8000
+on ECS). These are plain HTTP calls between co-located Docker services — no TLS
+required.
 
 NOT used for hub↔trust communication, which is handled via the task polling
 system (trusts poll the hub; see private_services/trust_tasks.py).

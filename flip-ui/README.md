@@ -130,6 +130,55 @@ Client ID are required for a production deployment.
 > [`vite.config.mts`](vite.config.mts)). Use `VITE_LOCAL` only with `npm run dev` against a mocked API, and never
 > set `VITE_DEMO` at all — the demo build gets it from `--mode demo`. Keep both out of CI and deploy environments.
 
+### Dependency scoping
+
+**Production source may not import a package that is only declared in `devDependencies`, nor one that is
+declared nowhere and resolves through npm's hoisting of a parent's tree.** "Production source" is everything
+the deployed bundles reach: `src/`, minus its test files, plus `mocks/` — which `build:demo` pulls into the
+public `/ark_demo` bundle.
+
+This is enforced, not just documented: the `flip-ui/dependency-scoping` block in
+[`eslint.config.mjs`](eslint.config.mjs) runs `import-x/no-extraneous-dependencies` over exactly that file
+set, so `npm run lint` fails in CI the moment an import lands in the wrong stanza.
+
+The rule exists for **Dependabot**, not the build. `vite build` tree-shakes from the entry points and bundles
+whatever they reach whichever stanza a package sits in, and every install path in the repo (`npm ci` in CI,
+the Dockerfile, `make deploy-ui`) installs both stanzas — so a wrong stanza breaks nothing and is invisible
+until it matters. What it changes is the **scope label on a security alert**: a package that ships to users
+but sits in `devDependencies` produces an alert labelled "Development", which reads as *not in the production
+bundle* and invites a wrongly-dismissed alert on code CloudFront is serving. FLIP#1041 corrected 19
+packages: 16 moved out of `devDependencies`, two that were declared nowhere at all (`codemirror`,
+`tippy.js` — they resolved only by hoisting), and `husky`, which had drifted the other way. Correct scoping
+is also the precondition for ever adopting `npm ci --omit=dev` here.
+
+Note the rule keys off the **import graph, not the bundle**: a package imported by production source is a
+`dependency` even if tree-shaking currently drops it. What production code imports is stable, whereas what
+survives tree-shaking silently flips the correct answer whenever an unrelated component starts or stops being
+used. (`@popperjs/core` was the worked example of this until FLIP#1063 removed its only importer along with
+the dead `AiSelect`/`AiChipSelect` components, at which point it left the manifest entirely — the honest
+resolution, and the one a lint rule cannot reach, since nothing flags an import that is merely unreachable.)
+
+Two traps when auditing this by hand:
+
+- **A `from "..."` grep under-reports.** `highlight.js` is loaded lazily via
+  `import("highlight.js/lib/core")` and `import("highlight.js/lib/languages/json")` in
+  [`src/utils/highlightJson.ts`](src/utils/highlightJson.ts), and is correctly a `dependency` despite having
+  no static import. Test files also live under `src/` (most under `__tests__/` directories, plus two flat
+  `*.spec.ts` and the `src/unit-tests/` tree), and their imports — `vitest`, `@vue/test-utils`,
+  `@pinia/testing` — are genuinely dev-only.
+- **A static import of a side-effecting module is never dropped, even from a branch that folds.** Neither
+  mock server may be imported statically from [`src/main.ts`](src/main.ts); both are loaded through dynamic
+  `import()` inside their own folded branch. `mocks/server` was static until FLIP#1041 and shipped ~230
+  modules — Mirage, Pretender, route-recognizer, inflected and all of lodash — in the production entry
+  chunk of every build, because miragejs patches `Error.prototype` at module scope. Making it dynamic cut
+  the entry chunk from 331 KB to 182 KB. See the comment above `bootstrap()`. This is enforced twice, because
+  `miragejs` is a legitimate `dependency` (the demo bundle ships it) and so invisible to the scoping rule
+  above: the `flip-ui/no-static-mirage` block in [`eslint.config.mjs`](eslint.config.mjs) fails `npm run
+  lint` on any static import of `miragejs`/`pretender`/the mock servers from `src/` (dynamic `import()`
+  stays legal), and [`scripts/assert-no-demo-artefacts.mjs`](scripts/assert-no-demo-artefacts.mjs) carries
+  Mirage/Pretender sentinels so the built artefact is checked too — the only guard that also catches a
+  folded branch that stops folding.
+
 ## Testing
 
 ### Unit tests (Vitest)
@@ -198,6 +247,16 @@ npm run test:start &       # in one shell — leave running
 npx cypress open           # in another — pick a spec
 ```
 
+#### Typecheck the test tree
+
+```bash
+npm run test:types         # tsc --noEmit -p test/tsconfig.json
+```
+
+The Cypress tree has its own TS project ([`test/tsconfig.json`](test/tsconfig.json)) that `npm run lint`
+(eslint over `src/` only) never sees, so CI runs this as a separate step to keep the custom-command
+declarations honest.
+
 #### Run a single group
 
 ```bash
@@ -219,12 +278,12 @@ make e2e_test               # full suite, end-to-end (boots Vite, runs cypress i
 # Or, if you already have npm run test:start running in another shell:
 docker run --rm --network host \
     -v "$PWD":/e2e -w /e2e --entrypoint cypress \
-    cypress/included:14.5.2 \
+    cypress/included:15.21.0 \
     run --browser electron \
     --spec 'test/cypress/integration/group-3/**/*.spec.ts'
 ```
 
-The image (`cypress/included:14.5.2`) is ~3 GB on first pull and cached
+The image (`cypress/included:15.21.0`) is ~3 GB on first pull and cached
 afterwards. Pin the tag to whatever `cypress` version is in `package.json` so
 the binary in the image matches the project config.
 
@@ -245,7 +304,7 @@ See [`test/cypress/demo/README.md`](test/cypress/demo/README.md) for the full co
 The Cypress suite runs on every PR and on push to `develop` / `main` via the `cypress-e2e` job in
 [`.github/workflows/test_flip_ui.yml`](../.github/workflows/test_flip_ui.yml). The job:
 
-- Uses `cypress-io/github-action@v6`, which caches the Cypress binary and `node_modules` between runs.
+- Uses `cypress-io/github-action@v7`, which caches the Cypress binary and `node_modules` between runs.
 - Fans out across the six spec groups via a `strategy.matrix.group` so wall-clock time stays short.
 - Boots the Vite dev server with the same `.env.e2e` stub shown above.
 - On failure, uploads `test/cypress/screenshots` as an artefact (`cypress-screenshots-<group>`, retained 7 days).

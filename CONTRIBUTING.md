@@ -51,11 +51,23 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
 ### Prerequisites
 
 - A Linux development host; a CUDA-capable GPU is required for GPU-backed tutorials and training
-- [Docker Engine](https://docs.docker.com/engine/install/) with Compose and Swarm mode
+- [Docker Engine](https://docs.docker.com/engine/install/) with Compose and Swarm mode. The trust
+  slot-collision guard identifies a running stack's owning kit through Compose's
+  `com.docker.compose.project.environment_file` container label (verified live on Compose v5.1.3);
+  a Compose too old to record that label does not lose the protection — the guard fails closed,
+  refusing the operation with an explicit "the kit that owns them cannot be identified" stop
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   on GPU hosts
 - GNU Make, `jq`, and `curl`
-- [Python 3.12+](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/)
+- [Python 3.12 or 3.13](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/) **>= 0.10.0** —
+  earlier uv cannot parse the `exclude-newer = "3 days"` cooldown (see
+  [Dependency cooldown](#dependency-cooldown-supply-chain-protection)); it warns, ignores the setting and
+  re-resolves `uv.lock` without any cooldown. `scripts/check-uv-version.sh` checks this at the two entry
+  points that re-resolve a lockfile with your own uv — `make lock` and
+  `fl-services/nvflare/provision/scripts/provision-network.sh`. It is not a global gate: a bare
+  `uv sync`, `uv run --project` or `uv lock` run by hand is unguarded, so keep your uv current rather
+  than relying on the check to catch you. (The `uv-lock` pre-commit hook is not a gap here — it pins its
+  own uv and runs `uv lock --check`, which verifies and never rewrites.)
 - The AWS CLI configured for SSO access to the development environment
 - [act](https://github.com/nektos/act) if you want to run GitHub Actions locally
 - **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:
@@ -182,13 +194,23 @@ make generate-internal-service-key
 This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into `.env.development` for
 fl-server-to-hub authentication.
 
+#### Updating an existing checkout
+
+Three changes affect checkouts created before them. None is picked up automatically, because
+`.env.development` and the trust kit files are gitignored and never rewritten for you.
+
+| What changed | What to do |
+| --- | --- |
+| `NLB_SUBDOMAIN` is now a live assignment in `.env.development.example` | Add `NLB_SUBDOMAIN=<your-nlb-subdomain>` to your `.env.development`. `scripts/check_env_vars.py` is a pre-commit hook requiring every variable in the example file to be present in yours, and its regex matches real `^KEY=` assignments only — so a still-commented `# NLB_SUBDOMAIN=` fails your next commit, naming the variable. Nothing in a purely local stack resolves the value; it is required because `scripts/trust_kit_lib.py` lists it among the Hub-shared keys. |
+| uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the NVFLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
+| `NUM_AVAILABLE_GPUS` now defaults to `0` in the dev trust kit examples | Only newly scaffolded kits are affected; existing `trust/.env.<CODE>.<env>` files keep their value. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
+
 For the full local stack, replace every placeholder in these minimum groups before running `make up`:
 
 | Group | Required development values |
 | --- | --- |
 | AWS session | `AWS_PROFILE`, `AWS_REGION` |
 | Central Hub auth | `AWS_COGNITO_USER_POOL_ID`, `AWS_COGNITO_APP_CLIENT_ID`, `ADMIN_USER_PASSWORD` |
-| Email | an SES-verified `SES_VERIFIED_EMAIL` |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Runtime S3 | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME`, `FLIP_APP_BUNDLES_BUCKET_NAME`, `AICENTRE_BUCKET_NAME` |
 | XNAT artifacts | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins) |
@@ -196,6 +218,13 @@ For the full local stack, replace every placeholder in these minimum groups befo
 Development uses these configured AWS services directly; there is no LocalStack fallback. Authorised FLIP developers
 can use the shared development values. Other deployers should create their own resources with the
 [Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
+
+**Email needs no configuration in development** (FLIP#919). flip-api defaults to `EMAIL_BACKEND=console` in dev, which
+logs the would-be message (recipient, template name, non-secret payload) instead of calling SES — so the access-request
+and XNAT-credentials paths work with no SES identity, verified address or templates. Staging and production keep
+`EMAIL_BACKEND=ses` and still require `AWS_SES_ADMIN_EMAIL_ADDRESS` / `AWS_SES_SENDER_EMAIL_ADDRESS`; the setting is
+type-narrowed in `ProdSettings`, so the console backend cannot be selected there. Note Cognito still sends real invite
+and password-reset emails in dev — those come from the user pool, not SES.
 
 Trusts are registered on the **running hub** with `make register-trusts` (shipped dev roster) or
 `make register-trust KIT=<CODE>` (one trust), which inserts each `trust` row (with its
@@ -289,6 +318,27 @@ Everything that **validates** your change still runs on your fork, and a red res
 lint, type-checking, unit and integration tests, docs, Terraform validation, Helm tests, and secret scanning.
 Coverage upload to Codecov is non-blocking (`fail_ci_if_error: false`), so a missing `CODECOV_TOKEN` on your fork
 never fails an otherwise-green job.
+
+### Checkov security lint (Terraform)
+
+`validate_terraform.yml` carries a `Checkov Security Lint` job (FLIP#1052 + the FLIP#1058 triage) alongside
+`fmt`/`validate`: a curated checkov check list runs statically over `deploy/providers/AWS/**` and **fails the
+PR's CI** on a regression. It covers IAM policy content — overly-broad statements such as a wildcard `Resource`/`Action` on a
+restrictable data-access action, data exfiltration or privilege-escalation shapes, on both policy syntaxes
+(`data "aws_iam_policy_document"` blocks and `jsonencode()` policies) — plus a small promoted set of
+infrastructure-posture checks (IMDSv2-only EC2, module version pinning, HSTS, WAF Log4j rule, SSM/KMS posture).
+No cloud credentials are needed, and checkov already knows which AWS actions support no resource-level scoping
+(e.g. `ssmmessages:*`, `ec2:Describe*`) — those wildcards pass without ceremony. Run it locally with
+`make checkov-lint` from the repo root (deliberately not the `deploy/providers/AWS` Makefile, whose parse-time
+env guard needs the gitignored deploy env files).
+
+Deliberate breadth or posture is acknowledged **in-code, with a rationale**, never by weakening the check list:
+put `# checkov:skip=<CHECK_ID>:<why this is deliberate>` inside the flagged resource/data block. The check
+list — including the classes triaged in FLIP#1058 and deliberately *not* promoted — lives in
+`deploy/providers/AWS/scripts/checkov_lint.sh`, which self-tests against a canary fixture before scanning so a
+broken checkov install can never produce a vacuous green. The script's own guards (version pin, unknown check
+IDs, skip rationale, canary) are regression-tested by `scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
+run by the same workflow's `Deploy script tests` job.
 
 ### Running the stack (pull vs. build)
 
@@ -423,7 +473,17 @@ make -C deploy/providers/kubernetes template-all-backends
 
 # Validate rendered templates against K8s schema (requires kubeconform)
 make -C deploy/providers/kubernetes validate
+
+# Place this trust's FL participant kit onto the node, BEFORE deploying
+make -C deploy/providers/kubernetes stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 ```
+
+`stage-kit` is a prerequisite of deploying with `flClient.enabled`: the chart never fetches
+the kit (a trust holds no FLIP AWS credentials), so `flClient.kitHostPath` must already exist
+on the node. It reads the backend from the kit's own shape and chowns to that backend's uid.
+The previous `make patch-aws-creds` target is gone along with the chart's in-cluster S3 fetch;
+see "Upgrading an install that fetched its kit from S3" in the K8s README for the full list of
+removed values.
 
 The chart has a `check_status.py` smoke test script and a `register_k8s_trust.py` registration script. See the [K8s README](deploy/providers/kubernetes/README.md) for details.
 
@@ -461,10 +521,11 @@ This rule applies across all services: `flip-api/tests/`, `trust/trust-api/tests
 
 ##### Tests for FL tutorials and app templates
 
-Two trees sit outside any service and have their own home:
+Two trees sit outside any service and have their own home. `fl-tutorials/tests/` carries **two** suites, split at `tests/datasets/` because the two halves need different dependencies — `make -C fl-tutorials test` runs ruff plus both, and `.github/workflows/fl-tutorials-tests.yml` runs the same on every PR touching `fl-tutorials/**`:
 
-- **`fl-tutorials/tests/`** — the CPU-only suite over the tutorial apps' transform chains (`make -C fl-tutorials test`, and `.github/workflows/fl-tutorials-tests.yml` on every PR touching `fl-tutorials/**`). A test belongs here if it can assert on tutorial code with **no GPU, no dataset download, no FL image and no network** — transform composition, import-time correctness, and what the preprocessing chain actually feeds the model. Fixtures are synthesised in-process (see `fl-tutorials/tests/dicom_phantom.py`), never committed as data. Anything that needs real training to observe — convergence, metric values, multi-round behaviour — belongs instead with the GPU simulator harness (`make -C fl-tutorials run-tutorial`), which is not run in CI.
+- **`fl-tutorials/tests/`, minus `tests/datasets/`** — the CPU-only suite over the tutorial apps' transform chains (`make -C fl-tutorials pytest`). A test belongs here if it can assert on tutorial code with **no GPU, no dataset download, no FL image and no network** — transform composition, import-time correctness, and what the preprocessing chain actually feeds the model. Fixtures are synthesised in-process (see `fl-tutorials/tests/dicom_phantom.py`), never committed as data. Anything that needs real training to observe — convergence, metric values, multi-round behaviour — belongs instead with the GPU simulator harness (`make -C fl-tutorials run-tutorial`), which is not run in CI.
   The suite runs in **flip-utils' environment** (`flip-utils[full]`), which is what the FL images give these apps at runtime; it deliberately has no `pyproject.toml` of its own, and the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tuning/pyproject.toml` does not declare `monai`, so that environment cannot import its own `data_utils.py`).
+- **`fl-tutorials/tests/datasets/`** — the CPU-only suite over `fl-tutorials/datasets/**`, the mock-OMOP generation tooling (`make -C fl-tutorials pytest-datasets`). Same no-GPU/no-download/**no-network** rule, with fixtures built in-process. It runs against **each dataset's own uv project**, one pytest invocation per entry in `DATASET_TEST_PROJECTS`, rather than in flip-utils' environment: this is workstation tooling that never runs on an FL image and has no business pulling `pandera`/`sqlglot` into the FL runtime environment. The per-project split is also the only thing in CI that checks a dataset's `pyproject.toml` declares what its code actually imports. `tests/datasets/` anchors its own pytest rootdir (`tests/datasets/pytest.ini`) so the tutorial-app `conftest.py`, which imports monai and pydicom at module scope, is not loaded into these runs. Anything needing the published export — the end-to-end verification gate — is a Make target (`make -C fl-tutorials reproduce-<project>-omop`), not a test: it reaches the network. See `fl-tutorials/tests/README.md` for the full rationale and `fl-tutorials/datasets/README.md` for the generation and verification targets.
 - **`fl-apps/`** — has no pytest suite; its invariant is the required-files manifest, checked by `fl-apps/check_required_files.sh` (pre-commit + `.github/workflows/fl-apps-check-required-files.yml`). Files that must stay byte-identical to another file — the Flower tutorial copies of the `fl-apps/flower/` templates, and the shared Ark+ evaluation sources — are pinned in `scripts/check_tutorial_sync.sh`.
 
 ##### flip-api: real-Postgres integration tests via Testcontainers
@@ -565,6 +626,7 @@ Before opening the release PR from `develop` to `main`:
 
 1. From a branch off `develop`, commit the version bumps above and open a PR targeting `develop` with title `Release v<X.Y.Z>`.
 1. Once that merges and CI is green, open a PR from `develop` to `main`. [`validate_branch_origin.yml`](.github/workflows/validate_branch_origin.yml) rejects any PR to `main` that does not come from `develop`.
+   **Merge it with a merge commit — never squash or rebase.** A squash leaves `main` with `develop`'s content but none of its history, so the *next* release PR conflicts on every file touched since the previous real merge (v0.5.0 was squashed and v0.6.0 hit 168 spurious conflicts). If that has already happened, reconcile once with `git merge -s ours --no-ff origin/main` on `develop` — it records `main` as an ancestor without changing a file — through a PR into `develop`.
 1. On that PR, check the automated gates before merging:
    - [`pr-release-notes-preview.yml`](.github/workflows/pr-release-notes-preview.yml) posts a **release-notes preview** comment — the rendered template header plus the generated changelog — and updates it in place on every push. Read it as the last check that the notes are right.
    - [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) and [`check-package-metadata.yml`](.github/workflows/check-package-metadata.yml) run when `flip-utils/**` changed.

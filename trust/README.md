@@ -80,6 +80,18 @@ COHORT_QUERY_THRESHOLD=10
 
 This is the minimum cohort size the trust will release anything about. Cohort statistics below it are privacy-suppressed (a genuine zero and a small count are indistinguishable), and both row-level routes refuse outright — `/cohort/dataframe`, which supplies FL training data, and `/cohort/accession-ids`, which decides whose imaging is pulled into XNAT. Raise it to release less. It is the operator's setting, not the hub's: trusts need not agree on a value, and the hub cannot lower it. See [`data-access-api/README.md`](data-access-api/README.md#row-level-data-and-the-disclosure-threshold). The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> PROD=<env>` handles the rest.
 
+#### Site-enforced FL privacy policy (optional, NVFLARE only)
+
+The kit file's Host-local profile can set `FL_SITE_PRIVACY_POLICY=percentile` (plus optional
+`FL_SITE_PRIVACY_*` parameters — see the commented block in `trust/.env.example`). The fl-client entrypoint
+renders these into the client's NVFLARE `local/privacy.json` at container start, so THIS trust's
+update-privacy filter is applied to every outgoing model update regardless of the researcher's app config
+(site filters run before app filters and jobs cannot opt out). Unset = no site policy (app-level filters
+only, the previous behavior). Invalid values stop the fl-client at startup — fail closed. Apply changes with
+`make -C trust up-fl-clients-kit KIT=<CODE>`; the fl-client log then shows
+`[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-nodes.rst`
+("Site-enforced privacy policy").
+
 ### 3. Start the trust against the hub
 
 ```sh
@@ -100,6 +112,64 @@ The plaintext keys aren't recoverable — only the hash is on disk. If you didn'
 
 * delete the row (`DELETE FROM trust WHERE name='<name>';` against `flip-db`, after freeing the slot: `UPDATE fl_kit_slot SET assigned_to_trust_id = NULL, assigned_at = NULL WHERE assigned_to_trust_id = '<trust-id>';`) and re-register, or
 * re-register with `make register-trust KIT=<CODE>`, which mints fresh keys and rewrites the kit file — this also rotates the keys.
+
+## Data versions
+
+All mock trust data — the pgdata and Orthanc storage snapshots, the canonical OMOP tables and
+the per-project DICOM sets — comes from one public Hugging Face dataset,
+[`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data), which
+holds **exactly one copy of every artefact at an unversioned path**:
+
+```
+trust<N>/trust<N>_pgdata.tar   trust<N>/trust<N>_orthanc_data.tar
+omop-csv/<project>/*.csv       omop-csv/<project>/source/…        dicom/<project>.tar.gz
+```
+
+A **data version is a git tag on that dataset**, and [`.data_version`](.data_version) in this
+directory pins one — a single pin for OMOP and Orthanc together, because a tag describes the
+whole dataset state. Every consumer (the `update-*-data` snapshot scripts, `seed-omop` /
+`seed-orthanc`, the spleen label uploader, the Ansible plays, the Helm chart) fetches
+`resolve/<tag>/<path>`, so an old version stays reachable at its tag forever and is never
+duplicated as a second directory or a suffixed filename. `HF_TRUST_DATA_REVISION` overrides the
+tag everywhere (`main` to work against files uploaded but not tagged yet; a sha to freeze one).
+
+Publishing a new version is one commit that replaces exactly the artefacts that changed, plus one
+tag. An existing tag is never moved, so a published version means one set of bytes for good. The
+commit and the tag are separate calls to the Hub: if the second fails, the bytes sit on `main` with
+nothing pinning them and no consumer resolving them — re-run the same command to finish it.
+
+```sh
+make -C omop-db export-pgdata                         # dist/trust<N>_pgdata.tar
+uv run orthanc/publish_dicom.py --project … --revision main --out orthanc/dist/dicom/<project>.tar.gz
+make publish-trust-data VERSION=20261001 DRY_RUN=1 \
+  PGDATA="omop-db/dist/trust1_pgdata.tar omop-db/dist/trust2_pgdata.tar" \
+  OMOP_CSV=omop-db/data/canonical DICOM=orthanc/dist/dicom/<project>.tar.gz [ORTHANC=… CARD=…]
+make publish-trust-data VERSION=20261001 …            # for real; then set .data_version to 20261001
+```
+
+(`hf auth login` with write access to the dataset is needed.) Bumping `.data_version` is what
+moves a checkout: the next `up-trust` re-snapshots — refusing, without `FORCE=1`, to discard a
+volume that was seeded — and every seed/enrichment run reads at the new tag.
+
+### Which partition a trust is seeded with
+
+`make -C trust seed KIT=<CODE>` loads the OMOP `source_trust` partition matching the trust's **FL
+kit slot** — partition 1 into the trust holding `Trust_1`, and so on. That is a default, not an
+invariant: the kit slot and the OMOP partition are separate axes that happen to line up on the
+shipped GSTT/KCH roster. Slots are claimed from a pool in registration order, so a re-registered
+trust, or a third one, can hold slot 2 while the data meant for it is partition 1.
+
+Seeded the wrong way round nothing complains — the OMOP rows and the PACS studies are selected by
+the same column, so they still agree with each other; they just belong to another institution.
+Override with `SOURCE_TRUST` when the two differ:
+
+```sh
+make -C trust seed KIT=<CODE> SOURCE_TRUST=1        # slot stays as assigned; load partition 1
+```
+
+`SOURCE_TRUST` moves only the partition. The trust's volumes, ports and the `.seeded` marker stay
+keyed to its kit slot, which is why it exists as its own variable rather than an override of
+`TRUST_NUM`.
 
 ## OMOP Database
 

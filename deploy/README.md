@@ -13,6 +13,44 @@
 
 # Pre-configurations needed for FLIP Deployment
 
+## Where things live
+
+Deployment artifacts are **not** all under `deploy/`. Two different concerns share the word "deploy", and
+they are filed by two different rules:
+
+1. **Application composition** — which containers form a stack. A compose file lives **next to the source
+   tree whose images it builds**, so most of them are outside this directory.
+2. **Infrastructure provisioning** — accounts, hosts, clusters. That is `deploy/providers/`.
+
+| I want to… | Go to |
+| ---------- | ----- |
+| Run/change the **Central Hub** container stack | `deploy/compose.*.yml` |
+| Run/change the **trust** container stack | [`trust/deploy/`](../trust/deploy/README.md) |
+| Run/change the **XNAT** swarm stack | `trust/xnat/docker-compose-stack*.yml` |
+| Build/populate the mock **OMOP** database | `trust/omop-db/compose.yml` |
+| Run the **FL** services standalone | `fl-services/<backend>/compose*.yml` |
+| Provision **AWS** (hub ECS + optional cloud trust EC2) | [`deploy/providers/AWS/`](providers/AWS/README.md) |
+| Provision an **on-prem** trust host | [`deploy/providers/local/`](providers/local/README.md) |
+| Deploy a trust to **Kubernetes** | [`deploy/providers/kubernetes/`](providers/kubernetes/README.md) |
+
+Every compose file in **this** directory is Central-Hub-only — `flip-ui`, `flip-api`, `flip-db`, `pgadmin`,
+and the `fl-api-net-*` / `fl-server-net-*` FL server side. No trust service is defined here. The one place
+hub compose touches "trust" is **networking**: `compose.development.yml` joins
+`central-hub-trust-apis-network`, `trust-network-1/2` and `fl-net-1/2` as `external: true` — exactly as
+the trust composes do. Neither side *creates* them; `make create-networks` does (the root target forwards
+to `trust/Makefile`, which owns all five).
+
+`fl-net-<N>` is the FL data plane, and carries exactly two services: the hub's `fl-server-net-<N>` and each
+trust's `fl-client-net-<N>`. It is the FL twin of `central-hub-trust-apis-network` (flip-api ↔ trust-api) —
+one hub service meeting one trust service. Everything else hub-side, `flip-api` and `fl-api-net-<N>`
+included, stays on the hub-internal network and reaches the FL server there over its control ports. An
+fl-client holds no Central Hub URL and no Central Hub credential by design, so it is given no route to one.
+
+Only **trusts** have more than one deployment target (AWS EC2, on-prem Ubuntu, Kubernetes), which is why
+`providers/` looks trust-heavy: the abstraction exists because trusts vary. The hub has exactly one
+supported production target — AWS ECS Fargate — so it needs no provider of its own. See
+[`providers/README.md`](providers/README.md) for the per-provider scope.
+
 ## Supported PostgreSQL Versions
 
 FLIP uses AWS RDS PostgreSQL with the following version support policy:
@@ -279,6 +317,7 @@ Each Dockerfile explicitly drops root privileges by running the application as a
 | xnat-nginx | `nginx` | Pre-existing in the base image (`nginx`) |
 | xnat-db | `postgres` | Pre-existing in the base image (`postgres`) |
 | xnat-socket-proxy | `root` | Upstream `tecnativa/docker-socket-proxy` image — HAProxy connects to the root-owned Docker socket as its owner. Runs under `cap_drop: ALL` with no capabilities added back. |
+| xnat-dcm2niix | `root` | Deliberately keeps the base image's root default, matching the output-file ownership the previous `xnat/dcm2niix` image produced on the Container Service's build mount (XNAT reads the converted NIfTIs back off that mount). Not a compose service: a one-shot container the Container Service launches per scan and then reaps, so it sits outside the `cap_drop` regime below, which the compose files impose. |
 | flip-db / omop-db | `postgres` | Pre-existing in the base image (`postgres`) |
 
 **Bind-mount ownership.** Because XNAT (`xnat`, UID 1001) and Orthanc (`orthanc`, UID 999) no
@@ -286,10 +325,29 @@ longer run as root, the host-side bind-mount source directories must be owned by
 UID. The Ansible playbooks `deploy/providers/AWS/site.yml` and
 `deploy/providers/local/site_local_trust.yml` provision `/opt/flip/xnat/**` as UID 1001 and
 `/opt/flip/orthanc/**` as UID 999 — including a recursive `chown` after extracting the Orthanc
-storage archive (which `tar` writes as root). If you provision a trust host outside Ansible, you
-must replicate this ownership or first-boot writes (archive ingest, SQLite index, log rotation)
-will fail with EACCES. In dev, `trust/orthanc/update_orthanc_data.sh` instead `chmod`s the mock
+storage archive (which `tar` writes as root). `make -C trust/xnat xnat-reset` is the third path
+onto the same invariant and provisions the XNAT directories as UID 1001 too, verifying it
+afterwards and failing with the exact `chown` to run rather than leaving a host half-provisioned
+(FLIP#1095 — it previously used a hardcoded 1000 on its remote branch and the invoking user's UID
+on the others). What the three paths share is the **UID, not the directory**: the playbooks
+provision `/opt/flip/xnat/**`, while `xnat-reset` and the compose stacks both read `XNAT_DATA_DIR`,
+which in stag/prod defaults to the per-slot `/opt/flip/xnat-trust<N>` so two trusts on one host stay
+isolated. `xnat-reset` is therefore the path that provisions the tree XNAT actually writes to, and
+an ownership change made against the playbooks' `/opt/flip/xnat` would not reach it. If you
+provision a trust host outside all three, you must replicate this ownership or first-boot writes
+(archive ingest, SQLite index, log rotation) will fail with EACCES. That
+failure is worth recognising because it does not look like a permissions problem: XNAT accepts the
+inbound DICOM association, fails the write and aborts it, so the PACS reports a *network* fault
+(`Peer aborted Association`), while the same EACCES stops XNAT writing the application logs that
+would name the cause. In dev, `trust/orthanc/update_orthanc_data.sh` instead `chmod`s the mock
 storage world-writable so a developer needs no `sudo` to re-seed it.
+
+XNAT's dev tree deliberately does **not** follow that convention. `xnat-reset` creates
+`trust/xnat/xnat-data-trust<N>/` under `sudo` and chowns it to UID 1001, so on a host whose developer
+is not themselves UID 1001 that tree is readable but not writable: deleting it, or running
+`git clean -fdx` over the checkout, needs `sudo`. Ownership is the whole of the fix here — it is
+what makes XNAT able to ingest at all — and the modes are left at their defaults rather than
+widened to buy back the convenience.
 
 ### Linux Capability Restrictions
 
@@ -308,10 +366,10 @@ below. The per-service grants in the compose files are:
 | Service(s) | Granted capabilities | Reason |
 |------------|----------------------|--------|
 | flip-api, fl-api (Flower), trust-api, imaging-api, data-access-api, xnat-web, loki, alloy, grafana | `CHOWN` | In-container init/entrypoint fixes ownership on volume paths it owns. |
-| fl-client-net-* (Flower — production and development; NVFLARE development) | *(none)* | Runs non-root (GHSA-8465), and Docker grants effective capabilities only to root — a `cap_add` here would land in the bounding set with `CapEff` still `0`, so it would buy nothing. Flower's `flower-supernode` entrypoint does no chmod/chown at all and its dev mounts are `:ro`. NVFLARE's dev kit (`provision/workspace-dev/`) is written by `make provision` as the host user whose UID is baked into the `:dev` image, so ownership already matches; when it doesn't (CI, a shared devbox, a teammate's prebuilt image) the fix is to `chown` the kit dirs to the container UID, not to grant a capability. |
+| fl-client-net-* (Flower — production and development; NVFLARE development) | *(none)* | Runs non-root (GHSA-8465), and Docker grants effective capabilities only to root — a `cap_add` here would land in the bounding set with `CapEff` still `0`, so it would buy nothing. Flower's `flower-supernode` entrypoint does no chmod/chown at all and its dev mounts are `:ro`. NVFLARE's dev kit (`provision/workspace-dev/`) is written by `make provision` as the host user. Since FLIP#1171 the image identity is fixed at `flip`/1000/1000 rather than baked from whoever built the image, and the dev composes pass `user: "${UID:-1000}:1000"` — so the container runs as the host user that already owns the kit, and no `chown` (and no capability) is needed. |
 | fl-client-net-* (NVFLARE, production) | `DAC_OVERRIDE`, `FOWNER` (production) | Inert for the current image, which runs non-root from PID 1 — the Ansible-provisioned `FL_KIT_DIR` is pre-chowned to the container's UID by `site.yml` / `site_local_trust.yml`. Kept for legacy root-image compat: trusts pin `DOCKER_FL_TAG` (an immutable `sha` tag is the documented norm), so `--pull always` cannot move a trust off a pre-GHSA-8465 **root** image, and under `cap_drop: ALL` such an image loses root's implicit DAC bypass on the `envsubst` write into the bind-mounted `local/` and `FOWNER` on the `chmod +x` of `startup/*.sh`. Its writes predate the `\|\| exit 1` guard, so it degrades to running NVFLARE against a stale/absent `resources.json` rather than crash-looping — a worse failure to diagnose. Same rationale as the orthanc row below. |
-| fl-api (NVFLARE) | `CHOWN` | The `flare-fl-api` image runs as user `flip` (UID 1001, non-root), so only the `CHOWN` baseline is needed; `DAC_OVERRIDE` and `FOWNER` are inert for non-root processes. |
-| fl-server (NVFLARE) | `CHOWN`, `DAC_OVERRIDE`, `FOWNER` | The container runs as root, but the provisioned NVFLARE kits are bind-mounted owned by the provisioning uid with 0600 keys. `cap_drop: ALL` strips root's implicit DAC bypass, so without `DAC_OVERRIDE` the fl-server crash-loops on `/app/startup/server.key`; the entrypoint also `chmod`s kit scripts it does not own (`FOWNER`). In dev, the same grant lets the root fl-server read the operator's 0600 AWS SSO token cache for the S3 results upload. |
+| fl-api (NVFLARE) | `CHOWN` | The `flare-fl-api` image runs as user `flip` (UID 1000, non-root — fixed by FLIP#1171; it previously varied with whoever built the image), so only the `CHOWN` baseline is needed; `DAC_OVERRIDE` and `FOWNER` are inert for non-root processes. |
+| fl-server (NVFLARE) | *(none)* | Runs non-root, so capabilities are inert here as they are for fl-client above — `CapEff` stays `0` and a `cap_add` sits unused in the bounding set. The grants that used to be here (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`) were removed by FLIP#1171 once measurement confirmed they had never taken effect; the comment claiming they were what made the host-owned mounts readable was wrong. What actually reads the provisioned kit's 0600 keys and the operator's 0600 AWS SSO token cache is the matching **uid**: the dev compose runs the container as the host user via `user: "${UID:-1000}:1000"`. |
 | fl-server (Flower, development only) | `CHOWN`, `DAC_OVERRIDE` | The dev compose runs the SuperLink as root (see the `user: "0:0"` comment in `compose.development.flower.yml`) to read the host-provisioned 0640 TLS keys and the operator's 0600 SSO token cache; `cap_drop: ALL` strips root's implicit DAC bypass, so `DAC_OVERRIDE` is granted back. Production runs the image's non-root user with instance-role AWS credentials and keeps the `CHOWN` baseline. |
 | flip-db, omop-db, xnat-db | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID` | The official postgres entrypoint runs as root and `gosu`-drops to the `postgres` user (`SETUID`/`SETGID`). On every start it re-runs `chmod 00700 $PGDATA` and a `chown` sweep over the persisted data dir, which on subsequent boots is already owned by `postgres` with mode `0700` — `chmod` on a dir owned by another uid needs `FOWNER` and traversing it needs `DAC_OVERRIDE`. Without them the container exits 1 on a persisted volume (see commit history, FLIP#485). |
 | orthanc | `CHOWN`, `DAC_OVERRIDE`, `FOWNER` (production) | Runs non-root (UID 999) from PID 1, so `DAC_OVERRIDE`/`FOWNER` are inert for the current image — they're kept for legacy root-image compat, since a pre-hardening orthanc image runs its entrypoint as root and crash-loops under `cap_drop: ALL` without them (hostid write, plugin symlink fixup). The storage bind mount is made 999-writable at the provisioning layer rather than fixed up with in-container caps; `CHOWN` is kept as the shared baseline. |
@@ -339,9 +397,14 @@ container.
 
 ### Docker Socket Isolation (XNAT Container Service)
 
-XNAT's Container Service plugin launches processing containers — currently `xnat/dcm2niix`,
-which every project created with DICOM→NIfTI conversion enabled triggers automatically on scan
-archive. It used to do this through `/var/run/docker.sock` mounted straight into `xnat-web`,
+XNAT's Container Service plugin launches processing containers — currently
+`ghcr.io/londonaicentre/xnat-dcm2niix` (a version-pinned build of dcm2niix; see
+`trust/xnat/dcm2niix/`), which every project created with DICOM→NIfTI conversion enabled
+triggers automatically on scan archive. That GHCR package must be **public** — the Container
+Service pulls it with no credentials, and org packages default to private, so a first publish (or
+any package recreate) needs a one-off operator visibility flip; see
+[`trust/xnat/README.md`](../trust/xnat/README.md#operator-action-the-ghcr-package-must-be-public).
+It used to do this through `/var/run/docker.sock` mounted straight into `xnat-web`,
 which is a root-equivalent capability: anything that compromises XNAT can exec into any container
 on the host, start privileged containers, or mount arbitrary host paths.
 
@@ -356,7 +419,11 @@ proxy at all. The Container Service is pointed at that endpoint by
 `trust/xnat/xnat/config/container-service-backend-configuration.json`, which
 `configure-dcm2niix.sh` POSTs to `/xapi/docker/server` — and the configure run now hard-fails if
 `/xapi/docker/server/ping` cannot reach Docker through the proxy, instead of leaving a
-registered-but-unlaunchable dcm2niix command behind.
+registered-but-unlaunchable dcm2niix command behind. The same script registers `ghcr.io` as a
+credential-less Container Service image host: swarm-mode launches resolve registry auth from the
+image-host list, and with no entry matching the image's registry hostname they NPE before any
+service is created — even though the public image needs no credentials (see
+`trust/xnat/README.md`).
 
 The proxy allowlists only what a swarm-mode Container Service launch needs — `SERVICES`
 (+ `POST` for the mutating calls), `TASKS`, `NODES`, `IMAGES` (pull-on-init), `INFO`, `SWARM`

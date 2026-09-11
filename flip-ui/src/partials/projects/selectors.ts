@@ -20,7 +20,8 @@ export const CreateProjectModal = {
     createButton: "[data-test=create-project-btn]",
     closeModal: "[data-test=close-create-project-btn]",
     createProject: "[data-test=close-create-project-btn]",
-    dicomToNiftiToggle: "[data-test=dicom-to-nifti-toggle]"
+    dicomToNiftiToggle: "[data-test=dicom-to-nifti-toggle]",
+    hasImagingToggle: "[data-test=has-imaging-toggle]"
 };
 
 export const ProjectStatusComponent = {

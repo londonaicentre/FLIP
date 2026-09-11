@@ -22,10 +22,25 @@ services:
     cap_drop:
       - ALL
     volumes:
-      # Mount the base images download directory to share images downloaded from XNAT with FL clients.
-      # Unset in the prod kit → /opt/flip/data/trust-${FL_KIT_SLOT_NUMBER} (see imaging-api in
-      # compose_trust.production.yml for the full rationale; mirrors ORTHANC_STORAGE_DIR's default).
-      - ${BASE_IMAGES_DOWNLOAD_DIR:-/opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}}:/app/data/images
+      # Share images downloaded from XNAT with this FL client — sliced to this
+      # net's subdirectory only (least privilege: imaging-api's returned paths
+      # all live under <IMAGES_DIR>/<NET_ID>/, and mounting the whole tree
+      # would let training code read every other net's cached studies). The
+      # container path keeps the net-1 suffix so imaging-api's absolute paths
+      # still resolve unchanged inside the client. The host net-1 dir must be
+      # pre-created writable by imaging-api's uid AND this client (which writes
+      # too: flip.add_resource stages under net-1/upload/). This client is the
+      # upstream flwr/base image, running as `app` (uid/gid 49999) with no
+      # supplementary group here, so on Flower the dir is provisioned
+      # <imaging-api-uid>:49999 + 0775 — owner write for imaging-api, group
+      # write for this client. AWS site.yml's per-net task, the on-prem local
+      # playbook, and `make up-trust`'s ownership-aware $(ensure_net_dirs) all
+      # do this (as does the K8s chart's images-init) — a Docker- or
+      # sudo-created root-owned source dir breaks those writes.
+      # Unset BASE_IMAGES_DOWNLOAD_DIR in the prod kit → /opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}
+      # (see imaging-api in compose_trust.production.yml for the full rationale;
+      # mirrors ORTHANC_STORAGE_DIR's default).
+      - ${BASE_IMAGES_DOWNLOAD_DIR:-/opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}}/net-1:/app/data/images/net-1
       # Provisioned Flower secrets (certificates, keys).
       # FL_KIT_DIR is the kit root on the trust host — Ansible-managed
       # /opt/flip/fl-kit on the AWS EC2 trust (see site.yml), or wherever
@@ -61,13 +76,17 @@ services:
       - ${NLB_SUBDOMAIN}:${FL_SERVER_PORT}
       - --auth-supernode-private-key
       - /keys/supernode_credentials_${FL_KIT_SLOT_NUMBER}
-      - --clientappio-api-address
-      - ${SUPERNODE_1_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9094}
-      # ClientApp-side runtime dependency install (default-off on SuperNodes in
-      # flwr 1.32): resolves the app's declared deps per run via `uv sync`, with
-      # flip-utils pinned to the copy baked at /opt/flip-utils by the template's
-      # [tool.uv.sources] (FLIP#767). NOTE: this requires outbound HTTPS from the
-      # trust host to PyPI + download.pytorch.org for the remaining deps.
+      # flwr>=1.36 split the old --clientappio-api-address into --host/--port;
+      # host stays at flower-supernode's own 127.0.0.1 default (loopback-only,
+      # never overridden in any FLIP env file).
+      - --port
+      - ${SUPERNODE_1_CLIENTAPPIO_PORT:-9094}
+      # ClientApp-side runtime dependency install (still default-off on
+      # SuperNodes at flwr 1.36): resolves the app's declared deps per run via
+      # `uv sync`, with flip-utils pinned to the copy baked at /opt/flip-utils
+      # by the template's [tool.uv.sources] (FLIP#767). NOTE: this requires
+      # outbound HTTPS from the trust host to PyPI + download.pytorch.org for
+      # the remaining deps.
       - --allow-runtime-dependency-installation
     shm_size: '8gb'
     # GPU passthrough via compose_trust.production.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)

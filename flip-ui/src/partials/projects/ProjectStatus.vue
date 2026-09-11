@@ -108,7 +108,11 @@
                                 <li
                                     v-for="project in sortedData"
                                     :key="project.trustId"
-                                    class="relative p-4 border border-gray-200 rounded-lg dark:border-dark-border hover:bg-gray-50 dark:hover:bg-dark-surface"
+                                    class="relative p-4 border rounded-lg hover:bg-gray-50 dark:hover:bg-dark-surface"
+                                    :class="isImportStale(project)
+                                        ? 'border-red-400 ring-[3px] ring-red-500/10 dark:border-red-500/70 dark:ring-red-500/15'
+                                        : 'border-gray-200 dark:border-dark-border'"
+                                    :data-test="`trust-card-${project.trustId}`"
                                 >
                                     <div class="flex flex-col gap-3">
                                         <!-- Top row: trust name + reimport count -->
@@ -118,12 +122,13 @@
                                             </h2>
                                             <div
                                                 v-if="project.reimportCount !== undefined && project.reimportCount !== null && project.projectCreationCompleted && maxReimportCount > 0"
-                                                v-tippy="{ content: project.reimportCount >= maxReimportCount ? ReimportCountLimitMessage : 'Reimport attempts', placement: 'top' }"
+                                                v-tippy="{ content: reimportTooltip(project), placement: 'top' }"
                                                 class="flex items-center gap-1.5 shrink-0"
                                             >
                                                 <icon-ph-arrows-clockwise
                                                     v-if="project.reimportCount < maxReimportCount"
-                                                    class="w-4 h-4 text-green-500"
+                                                    class="w-4 h-4"
+                                                    :class="isImportStale(project) ? 'text-gray-400 dark:text-gray-300' : 'text-green-500'"
                                                 />
                                                 <icon-ph-warning-circle-fill
                                                     v-else
@@ -144,25 +149,40 @@
                                              so every card has the same body height and the
                                              footer pin lands at the card bottom in the grid. -->
                                         <div class="flex flex-col gap-2 text-sm" :data-test="`import-bar-${project.trustId}`">
-                                            <div class="flex items-baseline justify-between">
-                                                <span
-                                                    class="font-heading font-semibold text-2xl leading-none"
-                                                    :class="rowTotal(project) === 0
-                                                        ? 'text-gray-400 dark:text-gray-300'
-                                                        : 'text-gray-900 dark:text-gray-100'"
-                                                    :data-test="`pct-retrieved-${project.trustId}`"
-                                                >
-                                                    {{ rowTotal(project) === 0
-                                                        ? "—"
-                                                        : floorPercent(rowRatio(project)) + "%" }}
+                                            <div class="flex items-baseline justify-between gap-2">
+                                                <span class="inline-flex items-baseline gap-2 min-w-0">
+                                                    <span
+                                                        class="font-heading font-semibold text-2xl leading-none"
+                                                        :class="rowTotal(project) === 0
+                                                            ? 'text-gray-400 dark:text-gray-300'
+                                                            : 'text-gray-900 dark:text-gray-100'"
+                                                        :data-test="`pct-retrieved-${project.trustId}`"
+                                                    >
+                                                        {{ rowTotal(project) === 0
+                                                            ? "—"
+                                                            : floorPercent(rowRatio(project)) + "%" }}
+                                                    </span>
+                                                    <!-- The counts are real but no longer confirmed; say so next to
+                                                         the number rather than letting it read as live. -->
+                                                    <span
+                                                        v-if="isImportStale(project) && rowTotal(project) > 0"
+                                                        class="font-mono text-[9px] uppercase tracking-[0.08em] rounded px-1.5 py-0.5 border border-red-200 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300"
+                                                        :data-test="`last-known-tag-${project.trustId}`"
+                                                    >
+                                                        Last known
+                                                    </span>
                                                 </span>
-                                                <span class="font-mono text-[11px] text-gray-500 dark:text-gray-300">
-                                                    {{ rowTotal(project) === 0
-                                                        ? "no imports yet"
-                                                        : `${project.importStatus?.successful ?? 0} / ${rowTotal(project)}` }}
+                                                <span
+                                                    class="font-mono text-[11px] text-gray-500 dark:text-gray-300 shrink-0"
+                                                    :data-test="`import-count-${project.trustId}`"
+                                                >
+                                                    {{ importCountLabel(project) }}
                                                 </span>
                                             </div>
-                                            <div class="flex h-2 rounded-full overflow-hidden bg-gray-100 dark:bg-dark-raised">
+                                            <div
+                                                class="flex h-2 rounded-full overflow-hidden bg-gray-100 dark:bg-dark-raised"
+                                                :class="{ 'opacity-[0.55]': isImportStale(project) }"
+                                            >
                                                 <template v-if="rowTotal(project) > 0">
                                                     <div
                                                         v-if="(project.importStatus?.successful ?? 0) > 0"
@@ -186,7 +206,10 @@
                                                     />
                                                 </template>
                                             </div>
-                                            <div class="flex justify-between font-mono text-[9px] uppercase tracking-wide text-gray-500 dark:text-gray-300">
+                                            <div
+                                                class="flex justify-between font-mono text-[9px] uppercase tracking-wide text-gray-500 dark:text-gray-300"
+                                                :class="{ 'opacity-[0.65]': isImportStale(project) }"
+                                            >
                                                 <span class="inline-flex items-center gap-1">
                                                     <span class="inline-block w-1.5 h-1.5 rounded-sm bg-emerald-500" />
                                                     <span
@@ -222,8 +245,31 @@
                                             </div>
                                         </div>
                                         <!-- Footer: project creation state (design ref:
-                                             06_imaging_status IPSCreationState) -->
-                                        <div class="flex items-center px-3 py-2 mt-1 -mx-4 -mb-4 border-t border-gray-100 bg-gray-50 dark:border-dark-border dark:bg-dark-surface/60">
+                                             06_imaging_status IPSCreationState), or the import
+                                             error state when the counts above have gone stale. -->
+                                        <div
+                                            v-if="importError(project)"
+                                            class="flex items-start gap-2 px-3 py-2 mt-1 -mx-4 -mb-4 border-t border-red-200 bg-red-50 dark:border-red-500/40 dark:bg-red-500/10"
+                                            :data-test="`import-error-${project.trustId}`"
+                                        >
+                                            <icon-ph-x-circle-fill
+                                                v-if="project.connectionState === 'project-missing'"
+                                                class="w-4 h-4 shrink-0 mt-px text-red-600 dark:text-red-400"
+                                            />
+                                            <icon-ph-warning-circle-fill
+                                                v-else
+                                                class="w-4 h-4 shrink-0 mt-px text-red-600 dark:text-red-400"
+                                            />
+                                            <span class="flex flex-col gap-0.5 min-w-0">
+                                                <span class="text-xs font-bold text-red-700 dark:text-red-300">
+                                                    {{ importError(project)?.title }}
+                                                </span>
+                                                <span class="text-[11px] leading-[1.4] text-red-600 dark:text-red-400">
+                                                    {{ importError(project)?.detail }}
+                                                </span>
+                                            </span>
+                                        </div>
+                                        <div v-else class="flex items-center px-3 py-2 mt-1 -mx-4 -mb-4 border-t border-gray-100 bg-gray-50 dark:border-dark-border dark:bg-dark-surface/60">
                                             <span
                                                 v-if="project.projectCreationCompleted"
                                                 class="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300"
@@ -304,7 +350,7 @@ import { useRoute } from "vue-router";
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiSkeleton from "@/components/AiSkeleton/AiSkeleton.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
-import { getImagingProjectsStatus } from "@/services/project-service";
+import { getImagingProjectsStatus, IImagingProjectStatus } from "@/services/project-service";
 import { useSiteDetailsStore } from "@/store/siteDetailsStore";
 
 interface IImagingProjectStatusProps {
@@ -414,6 +460,76 @@ const rowRatio = (p: IImagingProjectStatus): number => {
     const t = rowTotal(p);
 
     return t === 0 ? 0 : (p.importStatus?.successful ?? 0) / t;
+};
+
+// Import error states (FLIP#1022). The counts a trust reports are always the *last known*
+// ones; `connectionState` says whether they are still current. A trust that has dropped out
+// keeps its last percentage on screen, marked stale, rather than collapsing to zero — zero
+// would read as "the data went away", which is the opposite of what happened.
+//
+// `connectionState` is optional so a hub that predates the field renders as healthy rather
+// than flagging every card.
+const isImportStale = (p: IImagingProjectStatus): boolean =>
+    p.connectionState === "unreachable" || p.connectionState === "project-missing";
+
+// Copy per state. The two states send an admin to different places — one is a connectivity
+// problem at the Trust, the other is a data problem inside a reachable XNAT — so the titles
+// contrast reachability explicitly rather than both reading as "can't find the project".
+// `unreachable` covers everything that stopped a refresh landing except a confirmed-missing
+// project, so its wording stays about the connection rather than the project.
+const ImportErrorCopy = {
+    "unreachable": {
+        title: "Trust XNAT not reachable",
+        detail: "XNAT at this Trust did not respond — check the connection. Showing last known counts.",
+        reimportTooltip: "Reimport attempts — paused while the Trust is unreachable"
+    },
+    "project-missing": {
+        title: "Trust XNAT reachable, but project not found",
+        detail: "XNAT responded but this imaging project no longer exists at the Trust. "
+            + "Contact an XNAT administrator. Showing last known counts.",
+        reimportTooltip: "Reimport attempts — imaging project not found"
+    }
+} as const;
+
+const importError = (p: IImagingProjectStatus) => {
+    const state = p.connectionState;
+
+    return state === "unreachable" || state === "project-missing" ? ImportErrorCopy[state] : null;
+};
+
+// Short local time the counts were last confirmed, e.g. "13:58". Empty when the trust has
+// never reported successfully (nothing to be stale *since*) or the timestamp is unparseable,
+// so the caller can omit the "at …" suffix entirely rather than print "at Invalid Date".
+const lastSeenTime = (p: IImagingProjectStatus): string => {
+    if (!p.lastSeenAt) return "";
+    const parsed = new Date(p.lastSeenAt);
+
+    return Number.isNaN(parsed.getTime())
+        ? ""
+        : parsed.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false
+        });
+};
+
+// The mono count on the right of the percentage row, with the last-confirmed time appended
+// while the counts are stale.
+const importCountLabel = (p: IImagingProjectStatus): string => {
+    if (rowTotal(p) === 0) return "no imports yet";
+    const counts = `${p.importStatus?.successful ?? 0} / ${rowTotal(p)}`;
+    const seen = isImportStale(p) ? lastSeenTime(p) : "";
+
+    return seen ? `${counts} at ${seen}` : counts;
+};
+
+const reimportTooltip = (p: IImagingProjectStatus): string => {
+    const error = importError(p);
+    if (error) return error.reimportTooltip;
+
+    return p.reimportCount !== undefined && p.reimportCount >= maxReimportCount.value
+        ? ReimportCountLimitMessage
+        : "Reimport attempts";
 };
 
 const ReimportCountLimitMessage = "The max reimport count has been reached. Any failed studies will not be reimported. Please contact an XNAT administrator for assistance.";

@@ -57,10 +57,26 @@ Download and unzip a XNAT dataset to a local folder.
 }
 ```
 
+Query parameters: `assessor_type` (`scan`, default, or `assessor`), `resource_type` (`NIFTI` default; `DICOM`, `ALL`,
+or a custom XNAT resource label) and `force_refresh` (default `false`).
+
+Downloads are cached on the trust host. Extraction lands in
+`<BASE_IMAGES_DOWNLOAD_DIR>/<net_id>/<central_hub_project_id>/<accession_id>/` and a completeness sentinel
+(`.flip_complete-<assessor_type>-<resource_type>`) is written there only after successful extraction. When the
+sentinel is present the cached folder is returned without contacting XNAT, so FL training code that fetches the
+cohort every round stops re-downloading bytes already on disk. Sentinels match exactly per
+(assessor, resource); the per-project path segment keeps projects that share an accession from being served each
+other's copies. The cache is invalidated when an upload changes the accession's XNAT content (see Upload), by
+`force_refresh=true` (the sentinel is removed before the re-download starts and rewritten on success), and — on the
+NVFLARE backend — by `CleanupImages`, which empties the whole net directory at job start and end.
+
 ### Imaging
 
 Interfaces with XNAT's DICOM Query-Retrieve (DQR) plugin. Full DQR API docs available at
-`http://127.0.0.1:8104/xapi/swagger-ui.html#/dicom-query-retrieve-api`.
+`http://127.0.0.1:<XNAT_WEB_PORT>/xapi/swagger-ui.html#/dicom-query-retrieve-api` — `XNAT_WEB_PORT`
+is the per-trust host port for XNAT's web UI in the kit file (`trust/.env.<CODE>.<env>`), e.g. `8105`
+for the GSTT dev trust and `8107` for KCH. Not `XNAT_PORT`, which since FLIP#993 is the DICOM SCP
+receiver port (`8104`/`8106`) and serves no HTTP.
 
 - Query PACS with an accession number
 - Queue image retrieval from PACS to an XNAT project

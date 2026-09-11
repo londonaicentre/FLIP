@@ -37,7 +37,7 @@ license = "Apache-2.0"
 # used here because it makes `uv sync` unresolvable on a workstation, where the path does not
 # exist. Pick up flip-utils changes with `make build-fl FL_BACKEND=flower`.
 dependencies = [
-    "flwr[simulation]>=1.32.0",
+    "flwr[simulation]>=1.36.0",
     "monai>=1.6.0",
     "nibabel>=5.3.3",
     "numpy>=2.4.2",
@@ -76,6 +76,9 @@ flip-model-id = "uuid"
 flip-project-id = "uuid"
 flip-cohort-query = "*"
 flip-job-dir = "job-dir"
+# Placeholder matching flwr's own default; fl-api overrides it with the participating-trust
+# count at submit time (flwr rejects a --run-config key the app config does not declare).
+flip-min-clients = 2
 
 # Linter
 [tool.ruff]

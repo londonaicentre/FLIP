@@ -13,19 +13,68 @@ limitations under the License.
 
 # fl-tutorials tests
 
-CPU-only pytest suite over the tutorial apps' transform chains. No GPU, no dataset download, no FL
-image, no network — the fixtures are synthetic DICOMs built in-process, and the whole suite runs in
-a couple of seconds.
+CPU-only pytest suites over `fl-tutorials/`: the tutorial apps' transform chains plus a static
+drift guard on the Flower apps' `min_clients` wiring (which also covers `fl-apps/flower/`, the
+templates that actually deploy), and a second, dataset-tooling suite over `datasets/**`. No GPU,
+no dataset download, no FL image, no network — fixtures are synthesised in-process (synthetic
+DICOMs, or for the dataset-tooling tests, small in-memory DICOM/CSV fixtures), and each suite
+runs in well under a second.
 
 ```bash
-make -C fl-tutorials test        # ruff over fl-tutorials/ + this suite
-make -C fl-tutorials pytest      # this suite only
-make -C fl-tutorials lint        # ruff only
+make -C fl-tutorials test              # ruff over fl-tutorials/ + both suites below
+make -C fl-tutorials pytest            # tutorial-app suite only (tests/, minus tests/datasets/)
+make -C fl-tutorials pytest-datasets   # dataset-tooling suites only (tests/datasets/, one env per dataset)
+make -C fl-tutorials lint              # ruff only
 ```
 
-CI runs the same two commands on every pull request touching `fl-tutorials/**` or the flip-utils
-source/environment, and on pushes to main/develop (`.github/workflows/fl-tutorials-tests.yml`),
-for both backends.
+CI runs the same commands on every pull request touching `fl-tutorials/**`, `fl-apps/flower/**`
+or the flip-utils source/environment, and on pushes to main/develop
+(`.github/workflows/fl-tutorials-tests.yml`), for both backends.
+
+## Layout
+
+Tests mirror the source tree and are named for the file they cover —
+`tests/datasets/spleen/test_download_spleen_dataset.py` covers
+`datasets/spleen/download_spleen_dataset.py`, and `tests/datasets/cxr/test_omop_convert_cxr.py`
+covers `datasets/cxr/omop_convert_cxr.py` — the same convention as
+`trust/imaging-api/tests/routers/test_imaging.py`.
+
+Cross-cutting guards that assert a property across several source files
+(`test_dicom_orientation.py`, `test_flower_min_clients_wiring.py`,
+`test_spleen_inference_config_parity.py`) stay at the root of `tests/`, because
+no single source path describes what they cover.
+
+**Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
+the tutorial apps themselves and runs in flip-utils' environment (`flip-utils[full]` — monai,
+pydicom, torch, timm, sklearn), which is what the FL images give those apps at runtime — see
+"What it runs" below (`make -C fl-tutorials pytest`, which passes `--ignore=tests/datasets`).
+`tests/datasets/` instead covers `fl-tutorials/datasets/**`, which is workstation tooling that
+never runs on an FL image — it has no business pulling `pandera`/`sqlglot` (needed to validate
+the OMOP tables that tooling generates) into flip-utils' runtime environment.
+
+Those tests run against **each dataset's own uv project**, one pytest invocation per project
+(`DATASET_TEST_PROJECTS` in `fl-tutorials/Makefile`, currently `spleen cxr`), each declaring what
+that dataset's tooling actually needs. `make -C fl-tutorials pytest-datasets` runs them all.
+
+The split is not just tidiness: it is the only thing in CI that checks a dataset's
+`pyproject.toml` declares what its code actually imports. A dataset's tests import its converter,
+which imports the shared contract in `datasets/utils/`, so an undeclared transitive dependency
+fails that dataset's own run. It earned that immediately — adding `datasets/cxr` surfaced a
+missing `requests`, imported at module scope by `omop_schemas.py`. (Verified rather than assumed:
+deleting `requests` from `datasets/cxr/pyproject.toml` against a clean venv errors all 13 cxr
+tests. Note a *stale* venv hides this — `uv run` does not prune an already-installed package, so
+re-test with `rm -rf datasets/<name>/.venv` first.)
+
+`tests/datasets/utils/` — the shared contract itself — runs **once**, in the first listed
+project's environment (`DATASET_UTILS_PROJECT`). Any dataset environment can host it, and
+re-running it per project would only repeat the same assertions; it is not what catches the drift
+above.
+
+`tests/datasets/pytest.ini` is a second inifile, deliberately: it anchors this subtree's rootdir
+at `tests/datasets/`, which is what keeps `tests/conftest.py` out of these runs. That conftest
+imports monai and pydicom at module scope to build the tutorial-app fixtures, and pytest loads
+every conftest between rootdir and the collected tests — so without the second inifile, a dataset
+project that does not declare monai fails during *collection*, before running a single test.
 
 ## Why this exists
 
@@ -53,6 +102,10 @@ reconstructed here, so the test asserts on the shipped code.
 
 | Test | Asserts |
 | --- | --- |
+| `test_discovery_actually_finds_the_flip_flower_apps` | Both `fl-apps` and `fl-tutorials` contribute apps, so a moved tree cannot leave the rest silently green. |
+| `test_fl_api_writes_the_key_the_apps_read` | fl-api-flower writes the same `flip-min-clients` key the apps read — the two live in different packages. |
+| `test_strategy_gets_min_clients_from_the_injected_trust_count` | Every FLIP Flower app passes `min_clients` sourced from `min_clients_from_run_config(run_config)`, not a constant. |
+| `test_app_config_declares_flip_min_clients` | Each app declares the key in `[tool.flwr.app.config]` (flwr rejects undeclared overrides) at flwr's default of 2 or more. |
 | `test_phantom_has_no_dihedral_symmetry` | The fixture is non-square **and** distinguishable from all eight of its dihedral variants. |
 | `test_phantom_dicom_round_trips` | Each synthetic encoding decodes back to the phantom. |
 | `test_loader_prefix_matches_pixel_data` | The chain up to the first resampling transform is `np.array_equal` to `pydicom`'s `PixelData`. |
@@ -78,6 +131,21 @@ The fixture is synthesised, not committed: ~12 KB against ~640 KB for a downsamp
 provenance or PHI question, and the identical code path — the axis order is a property of the
 reader's convention, wholly independent of pixel content. It is parametrised over `MONOCHROME1`,
 `MONOCHROME2` and RLE Lossless, where the array path genuinely differs.
+
+## Bundle-export parity
+
+`test_spleen_inference_config_parity.py` pins the spleen tutorial's exported
+`export/inference.json` preprocessing to `app_files/transforms.py::get_val_transforms()`. That
+drift shipped once already (fixed in e4981613): the bundle resampled before windowing and dropped
+`CropForegroundd`, so a MAP built from it fed the model a field of view it never saw in training —
+quietly worse on five of six MSD cases, invisible without ground truth. The bundle is the
+deliberate image-only projection of the training chain, so the comparison normalises exactly three
+asymmetries (image-only `keys`, interpolation `mode` at the image slot, numbers as floats) and is
+strict about everything else: transform order by class name, declared parameter names, and values —
+with the load-bearing values (pixdim, the CT window, RAS, `allow_smaller`) pinned literally on
+both sides so even a consistent retune stops there. The bundle side is read as plain JSON, never
+instantiated via `monai.bundle`, so the check stays hermetic. This is a config-parity check, not a
+`DICOM_APPS` entry — the paragraph below still applies.
 
 ## What it does **not** cover
 

@@ -1,0 +1,19 @@
+schema_type: dataframe
+columns:
+  condition_era_id:
+    dtype: int64
+    unique: true
+  person_id:
+    dtype: int64
+  condition_concept_id:
+    dtype: int64
+  condition_era_start_date:
+    dtype: datetime64[ns]
+  condition_era_end_date:
+    dtype: datetime64[ns]
+  condition_occurrence_count:
+    dtype: int64
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

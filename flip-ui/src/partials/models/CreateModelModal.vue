@@ -130,9 +130,12 @@ import { Snackbar } from "@/utils/snackbar";
 
 interface ICreateModelModalProps {
     open: boolean;
+    // The project to create against. Optional so the project pages, which are mounted under a
+    // /project/:projectId route, keep working untouched via the route fallback below.
+    projectId?: string;
 }
 
-defineProps<ICreateModelModalProps>();
+const props = defineProps<ICreateModelModalProps>();
 
 const modalStore = useModalsStore();
 
@@ -154,7 +157,21 @@ const submitForm = async (v: unknown) => {
 
     try {
         const values = v as IModelCreate;
-        const projectId = route.params["projectId"].toString();
+        // Prop first, route second: the Models page opens this with a project from its ?project=
+        // query, where there is no :projectId route param to read.
+        const projectId = props.projectId ?? route.params["projectId"]?.toString();
+
+        if (!projectId) {
+            // Previously this threw on `.toString()` of undefined, which surfaced as a silent
+            // dead submit button.
+            Snackbar.error({
+                title: "No project selected",
+                text: "Pick a project before creating a model."
+            });
+            formSubmitting.value = false;
+
+            return;
+        }
 
         const { id: modelId } = await createModel("/model", {
             ...values,

@@ -34,11 +34,13 @@
                 v-if="tab.id === 'run' && live"
                 class="relative flex items-center justify-center w-1.5 h-1.5"
             >
+                <!-- Same purple pair as Training.vue's Live activity indicator so the
+                     two live dots read as one signal. -->
                 <span
                     data-test="tab-run-live"
-                    class="absolute inline-flex w-full h-full rounded-full opacity-60 animate-ping bg-fuchsia-500"
+                    class="absolute inline-flex w-full h-full rounded-full opacity-60 animate-ping bg-primary-500"
                 />
-                <span class="relative inline-flex w-1.5 h-1.5 rounded-full bg-fuchsia-500" />
+                <span data-test="tab-run-live-dot" class="relative inline-flex w-1.5 h-1.5 rounded-full bg-primary-600" />
             </span>
 
             <icon-ph-check-bold

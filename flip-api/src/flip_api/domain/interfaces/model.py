@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, validator
 
 from flip_api.db.models.main_models import UploadedFiles
 from flip_api.domain.schemas.actions import ModelAuditAction
-from flip_api.domain.schemas.status import ModelStatus, TrustIntersectStatus
+from flip_api.domain.schemas.status import ModelStatus, ProjectStatus, TrustIntersectStatus
 
 
 class ModelStatusEdit(StrEnum):
@@ -68,6 +68,22 @@ class IAllModelsResponse(BaseModel):
     queue_position: int | None = Field(default=None, alias="queuePosition")
 
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+
+
+class IModelsProjectOption(BaseModel):
+    """One entry of the Models page's project filter dropdown.
+
+    Deliberately minimal: the dropdown needs an id and a label, and the page needs the
+    project's status to decide whether the scoped "Create Model" button may show (a model
+    can only be created against an APPROVED project). Carrying the status here avoids a
+    second request when the filtered project has no models to read it from.
+    """
+
+    id: UUID
+    name: str
+    status: ProjectStatus
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class IModelsListResponse(BaseModel):

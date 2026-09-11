@@ -15,10 +15,10 @@
 name = "flip-fl-api-flower"
 version = "0.1.0"
 description = "FL API for Flower deployment runtime."
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "fastapi>=0.115.11",
-    "flwr>=1.32.0",
+    "flwr>=1.36.0",
     "pydantic>=2.11.0",
     "pydantic-settings>=2.11.0",
     "tomlkit>=0.14.0",

@@ -358,8 +358,9 @@ def ses_send_email_recorder(aws_mock, monkeypatch) -> list[dict]:
     Why a recorder instead of letting moto handle the call:
     moto v5's sesv2 backend explicitly raises ``NotImplementedError("Template
     functionality not ready")`` when ``send_email`` is invoked with
-    ``Content.Template`` — and every flip-api SES caller (``access_request``,
-    ``imaging_notifications``) uses templated content. Patching ``send_email``
+    ``Content.Template`` — and flip-api's only SES caller,
+    ``utils/email_sender._send_via_ses`` (reached from ``access_request`` and
+    ``imaging_notifications``), uses templated content. Patching ``send_email``
     on the boto3 ``sesv2`` client lets the production code path execute
     end-to-end up to the SDK boundary; we then assert the SDK was called with
     the expected shape (``FromEmailAddress``, ``Destination.ToAddresses``,
@@ -370,7 +371,15 @@ def ses_send_email_recorder(aws_mock, monkeypatch) -> list[dict]:
     Switching to a real moto round-trip is a one-line fixture change once
     moto implements sesv2 templates upstream
     (https://github.com/getmoto/moto/issues — search ``sesv2 template``).
+
+    Also pins ``EMAIL_BACKEND`` to ``"ses"``: development defaults to the
+    console backend (FLIP#919), so without this the SES path under test would
+    never be reached. The pin is load-bearing for the negative assertions too
+    (``recorder == []``), which would otherwise pass vacuously under the
+    console default, and it keeps the file independent of whatever
+    ``EMAIL_BACKEND`` the developer has in ``.env.development``.
     """
+    monkeypatch.setattr(get_settings(), "EMAIL_BACKEND", "ses")
     recorded: list[dict] = []
     real_client_factory = boto3.client
 
