@@ -81,7 +81,7 @@ def run_parse_form(tmp_path: Path, html: str, pattern: str) -> subprocess.Comple
     page = tmp_path / "page.html"
     page.write_text(html)
     return subprocess.run(
-        ["bash", "-c", f'source "$1"; parse_form "$2" "$3"', "_", str(SETUP_SCRIPT), str(page), pattern],
+        ["bash", "-c", 'source "$1"; parse_form "$2" "$3"', "_", str(SETUP_SCRIPT), str(page), pattern],
         capture_output=True,
         text=True,
         env=STUB_ENV,
@@ -223,7 +223,9 @@ def test_shellcheck_clean_if_available() -> None:
 # are "XNAT is configured wrong in a way nothing reports".
 
 CONFIGURE_XNAT = CONFIG_DIR / "configure-xnat.sh"
-K8S_INIT_JOB = Path(__file__).resolve().parents[3] / "deploy" / "providers" / "kubernetes" / "templates" / "xnat-init-job.yaml"
+K8S_INIT_JOB = (
+    Path(__file__).resolve().parents[3] / "deploy" / "providers" / "kubernetes" / "templates" / "xnat-init-job.yaml"
+)
 
 
 def test_site_url_is_browser_reachable_not_the_docker_internal_host() -> None:
@@ -235,8 +237,13 @@ def test_site_url_is_browser_reachable_not_the_docker_internal_host() -> None:
     """
     body = CONFIGURE_XNAT.read_text()
 
-    assert "${XNAT_SITE_URL:-http://127.0.0.1:${XNAT_PORT}}" in body, (
+    assert "${XNAT_SITE_URL:-http://127.0.0.1:${XNAT_WEB_PORT}}" in body, (
         "siteUrl must default to a browser-reachable URL, overridable via XNAT_SITE_URL"
+    )
+    # FLIP#993 split the port: XNAT_PORT is the DICOM receiver a PACS dials, XNAT_WEB_PORT the
+    # web UI a browser opens. A siteUrl on the receiver port renders the same black viewport.
+    assert "${XNAT_SITE_URL:-http://127.0.0.1:${XNAT_PORT}}" not in body, (
+        "siteUrl must use the web port, not the DICOM receiver port"
     )
     assert "${XNAT_SITE_URL:-$XNAT_URL}" not in body, (
         "XNAT_URL is the Docker-internal host and is not reachable from a browser"
@@ -244,11 +251,19 @@ def test_site_url_is_browser_reachable_not_the_docker_internal_host() -> None:
 
 
 def test_k8s_init_job_allows_a_browser_reachable_site_url() -> None:
-    """The chart cannot know the ingress URL, but it must let an operator supply one."""
+    """The chart cannot know the ingress URL, but it must let an operator supply one.
+
+    The init job activates the site by running configure-xnat.sh, so the override reaches it the
+    same way every other knob does: as environment on the configure-xnat-web container. The script
+    also refuses to start without XNAT_WEB_PORT, which is what it derives the default URL from.
+    """
     body = K8S_INIT_JOB.read_text()
 
-    assert body.count('SITE_URL="{{ .Values.xnat.web.siteUrl | default "" }}"') == 2, (
-        "both activation sites must honour the override"
+    assert "- name: XNAT_SITE_URL\n              value: {{ .Values.xnat.web.siteUrl | quote }}" in body, (
+        "xnat.web.siteUrl must reach configure-xnat.sh as XNAT_SITE_URL"
+    )
+    assert "- name: XNAT_WEB_PORT\n              value: {{ .Values.xnat.web.service.port | quote }}" in body, (
+        "configure-xnat.sh requires XNAT_WEB_PORT; the browser-facing port on k8s is the service port"
     )
     assert 'siteUrl\\": \\"${XNAT_URL}' not in body, "no site may hardcode the in-cluster URL"
 

@@ -106,6 +106,8 @@ BASE_ENV = {
     "XNAT_SERVICE_USER": "flipServiceAccount",
     "XNAT_SERVICE_PASSWORD": "service",  # pragma: allowlist secret
     "XNAT_PORT": "8104",
+    # The browser-facing port: configure-xnat.sh derives siteUrl from it, and refuses to run without it.
+    "XNAT_WEB_PORT": "8105",
     # The plugin-readiness wait polls until a DQR route answers, bounded only by wall clock. With
     # sleep stubbed out, a test that makes that route fail would spin at full speed for the default
     # 900s budget rather than failing; cap it so the harness can never hang on one.
