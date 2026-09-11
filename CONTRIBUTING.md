@@ -626,6 +626,7 @@ Before opening the release PR from `develop` to `main`:
 
 1. From a branch off `develop`, commit the version bumps above and open a PR targeting `develop` with title `Release v<X.Y.Z>`.
 1. Once that merges and CI is green, open a PR from `develop` to `main`. [`validate_branch_origin.yml`](.github/workflows/validate_branch_origin.yml) rejects any PR to `main` that does not come from `develop`.
+   **Merge it with a merge commit — never squash or rebase.** A squash leaves `main` with `develop`'s content but none of its history, so the *next* release PR conflicts on every file touched since the previous real merge (v0.5.0 was squashed and v0.6.0 hit 168 spurious conflicts). If that has already happened, reconcile once with `git merge -s ours --no-ff origin/main` on `develop` — it records `main` as an ancestor without changing a file — through a PR into `develop`.
 1. On that PR, check the automated gates before merging:
    - [`pr-release-notes-preview.yml`](.github/workflows/pr-release-notes-preview.yml) posts a **release-notes preview** comment — the rendered template header plus the generated changelog — and updates it in place on every push. Read it as the last check that the notes are right.
    - [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) and [`check-package-metadata.yml`](.github/workflows/check-package-metadata.yml) run when `flip-utils/**` changed.
