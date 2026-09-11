@@ -275,6 +275,16 @@ class ImportStudy(BaseModel):
     accession_number: str = Field(..., alias="accessionNumber")
     relabel_map: dict[str, str] = Field(default={}, alias="relabelMap")
 
+    # The accession number becomes XNAT's session label via set_relabel_map();
+    # it then round-trips the same download URL accession_id has to pass, so
+    # enforce that rule at import time — a value that passed import but fails
+    # the route validator would 422 on every download for the life of the
+    # experiment ("silently dropped study", #908) rather than at the boundary.
+    @field_validator("accession_number")
+    @classmethod
+    def _validate_accession_number(cls, v: str) -> str:
+        return _validate_url_path_segment(v)
+
     def set_relabel_map(self) -> None:
         """Sets the relabel_map dictionary for subject and session."""
         self.relabel_map = {
