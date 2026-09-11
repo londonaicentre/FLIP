@@ -218,7 +218,7 @@ stops the fl-client at startup, by design), and after ``up-onprem-trust`` the
 fl-client log shows a ``[site-privacy] site privacy policy ACTIVE: ...`` line.
 To change or drop the policy later, edit the kit file and restart the
 fl-clients (``make -C trust up-fl-clients-kit KIT=<CODE> PROD=true``). See
-:doc:`../components/component-fl-nodes` ("Site-enforced privacy policy") for
+:doc:`../components/component-fl-nets` ("Site-enforced privacy policy") for
 the parameter reference and enforcement semantics.
 
 **5. Open the AWS firewall (FLIP admin).** Once the operator reports their

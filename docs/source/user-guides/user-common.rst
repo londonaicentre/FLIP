@@ -10,7 +10,7 @@ Users with the ``admin`` role may perform all the functions of those with the ``
 
 FLIP uses the concept of a *project*, in which multiple AI models can be managed. Projects can have multiple users associated with them, allowing individuals to view and contribute to the project. The typical project flow involves the creation of a project, running a cohort query, staging the project for approval, uploading the model plus any associated files and initiating the training. Once training is complete, the results of training can be downloaded.
 
-To facilitate federated learning and concurrent training of multiple models on the platform, FLIP supports both :term:`NVIDIA FLARE` and the :term:`Flower Framework` as federated learning backends. This page covers concepts such as FL *nets* and job scheduling. For details on framework-specific file requirements and job types, see :ref:`the FL nodes component page <flip-fl-nodes>`.
+To facilitate federated learning and concurrent training of multiple models on the platform, FLIP supports both :term:`NVIDIA FLARE` and the :term:`Flower Framework` as federated learning backends. This page covers concepts such as FL *nets* and job scheduling. For details on framework-specific file requirements and job types, see :ref:`the FL nets component page <flip-fl-nets>`.
 
 .. _initial-login:
 
@@ -381,10 +381,10 @@ transforms) is bundled with the app and shipped to the participating Trusts. Two
 follow that rule: a file whose name matches one the platform's own app template supplies is quietly
 dropped in favour of the template's copy, and a checkpoint declared for server-side use stays on the
 FL server rather than travelling to the Trusts. Both are covered under
-:ref:`fl-required-files` on the FL nodes component page.
+:ref:`fl-required-files` on the FL nets component page.
 
 The full per-job-type file lists, and the configuration each backend accepts, are documented on
-the :ref:`FL nodes component page <flip-fl-nodes>`. For worked examples of complete, working apps,
+the :ref:`FL nets component page <flip-fl-nets>`. For worked examples of complete, working apps,
 see the `FLIP tutorials <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials>`_.
 
 .. warning::
@@ -499,7 +499,7 @@ FLIP allows for multiple models to be deployed to and trained at multiple Trust 
 
 FLIP uses the concept of *nets* that are deployed on the Central Hub and remote hardware at each Trust. Each *net* consists of a controller and worker (to manage the model training cycle) and FLIP uses a task scheduler to manage the resources available on the hardware at Trust sites. The scheduler maintains a queue of waiting *tasks*, when a *net* becomes free a *task* is assigned to it.
 
-This scheduling capability means model developers can submit their model for training via the UI and need not be concerned with matters such as GPU capacity or existing jobs that are running/queued. When initiating training the platform will check for available nets and assign the model training to an available net.
+This scheduling capability means model developers can submit their model for training via the UI and need not be concerned with matters such as GPU capacity or existing jobs that are running/queued. When initiating training the platform will check for available nets and assign the model training to an available net. How a net is put together and how the scheduler picks one is described on the :ref:`FL nets component page <flip-fl-nets>`.
 
 While a model is waiting for a net, its place in the queue is shown alongside its status — e.g. ``Model Queued (2)``, where position 1 is the next model to start — both on the Models page and on the model's page, and the model's Live activity feed logs a new line each time the model moves up the queue.
 
