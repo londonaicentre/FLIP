@@ -315,6 +315,13 @@ jobs:
   # Deliberately not `continue-on-error`: if the dispatch fails, production drift
   # silently stops being checked, which is the failure this whole arrangement
   # exists to avoid. The staging leg above is a separate job and still reports.
+  #
+  # One exception, handled in the step: `main` does not carry this workflow until
+  # the first develop -> main release, and GitHub resolves `--ref` against the
+  # workflow file on that ref, so the dispatch 422s until then. That is a known
+  # precondition rather than the breakage this job watches for, and failing on it
+  # would leave the nightly run permanently red — which is how a real dispatch
+  # failure comes to be ignored.
   dispatch-prod:
     name: Dispatch the production drift run on main
     if: github.ref_name != 'main'
@@ -329,5 +336,21 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+
+          if ! gh api "repos/${GH_REPO}/contents/.github/workflows/terraform_drift.yml?ref=main" \
+              --silent >/dev/null 2>&1; then
+            echo "::warning title=Production drift is not being checked::terraform_drift.yml is not on main yet, so the production leg cannot be dispatched. This resolves itself at the first develop -> main release. Staging drift is unaffected and reported separately."
+            {
+              echo "### Production drift not checked"
+              echo
+              echo "\`terraform_drift.yml\` is not on \`main\` yet, so the production leg could not be"
+              echo "dispatched. GitHub resolves \`--ref\` against the workflow file on that ref."
+              echo
+              echo "This resolves itself at the first \`develop\` → \`main\` release. **Production drift"
+              echo "is not being checked until then.** The staging leg is unaffected."
+            } >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
           gh workflow run terraform_drift.yml --ref main
           echo "Dispatched terraform_drift.yml on main — that run checks production."
