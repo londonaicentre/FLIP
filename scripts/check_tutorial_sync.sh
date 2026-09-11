@@ -40,6 +40,16 @@ PAIRS=(
   "fl-tutorials/flower/3d_spleen_segmentation/app/strategy.py:fl-apps/flower/standard/app/strategy.py"
   "fl-tutorials/flower/xray_classification/app/server_app.py:fl-apps/flower/standard/app/server_app.py"
   "fl-tutorials/flower/xray_classification/app/strategy.py:fl-apps/flower/standard/app/strategy.py"
+  "fl-tutorials/flower/ehr_risk_prediction/app/server_app.py:fl-apps/flower/standard/app/server_app.py"
+  "fl-tutorials/flower/ehr_risk_prediction/app/strategy.py:fl-apps/flower/standard/app/strategy.py"
+  # The EHR risk-prediction tutorial exists on both backends and shares its feature engineering and
+  # model factory as byte-identical copies (the same preprocessing/architecture must train on NVFLARE
+  # and Flower alike). The NVFLARE copy is the reference; resync by copying it over the Flower copy.
+  # These pairs' reference side lives under fl-tutorials/nvflare/tabular_classification/, which
+  # fl-apps-check-tutorial-sync.yml's path filters must include (see the NOTE below).
+  "fl-tutorials/flower/ehr_risk_prediction/app/feature_engineering.py:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files/feature_engineering.py"
+  "fl-tutorials/flower/ehr_risk_prediction/app/models.py:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files/models.py"
+  "fl-tutorials/flower/ehr_risk_prediction/query.sql:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql"
   # The two Ark+ evaluation apps differ only in how many checkpoints they score; their data
   # loading and their flattened model definitions are meant to be the same file -- and they have
   # already drifted once (the Client-API port landed in the baseline copy days before the

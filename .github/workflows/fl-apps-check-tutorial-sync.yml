@@ -22,6 +22,8 @@ on:
       - "fl-tutorials/flower/**"
       # The Ark+ evaluation pairs are nvflare-only, so the filter cannot stay flower-only.
       - "fl-tutorials/nvflare/image_evaluation/**"
+      # The EHR risk-prediction pairs' reference side is nvflare too.
+      - "fl-tutorials/nvflare/tabular_classification/**"
       - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-apps-check-tutorial-sync.yml"
   pull_request:
@@ -31,6 +33,8 @@ on:
       - "fl-tutorials/flower/**"
       # The Ark+ evaluation pairs are nvflare-only, so the filter cannot stay flower-only.
       - "fl-tutorials/nvflare/image_evaluation/**"
+      # The EHR risk-prediction pairs' reference side is nvflare too.
+      - "fl-tutorials/nvflare/tabular_classification/**"
       - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-apps-check-tutorial-sync.yml"
 

@@ -16,7 +16,7 @@ FLIP/
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
 ├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (all Client-API), fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
-├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion. Shared dataset tooling in fl-tutorials/datasets/ (download/derive/enrich, single copy for both backends — the download-*-data + upload-spleen-labels targets), outputs in the shared gitignored fl-tutorials/data/. fl-tutorials/datasets/utils/ holds the OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, the per-project surrogate-key blocks (omop_ids.py) and the one verification gate (verify_omop_tables.py --project <name>). spleen carries the full chain (`convert-spleen-to-dicom`, `create-spleen-metadata-table`, `build-spleen-omop-tables`, plus the reproducible-path/verification targets); cxr carries the OMOP conversion only (`reproduce-cxr-omop`) because image generation lives in the private londonaicentre/xraycat. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
+├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*,tabular_classification}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,ehr_risk_prediction} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion, EHR risk prediction (tabular/OMOP-only, Synthea open data → `make -C trust load-synthea-ehr`). Shared dataset tooling in fl-tutorials/datasets/ (download/derive/enrich, single copy for both backends — the download-*-data + upload-spleen-labels targets), outputs in the shared gitignored fl-tutorials/data/. fl-tutorials/datasets/utils/ holds the OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, the per-project surrogate-key blocks (omop_ids.py) and the one verification gate (verify_omop_tables.py --project <name>). spleen carries the full chain (`convert-spleen-to-dicom`, `create-spleen-metadata-table`, `build-spleen-omop-tables`, plus the reproducible-path/verification targets); cxr carries the OMOP conversion only (`reproduce-cxr-omop`) because image generation lives in the private londonaicentre/xraycat. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
 ├── map-apps/           # MONAI Application Package (MAP) templates for packaging FLIP-trained models for clinical deployment
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
@@ -223,9 +223,15 @@ as "no labels".
 **Tabular-only projects (no imaging stage — FLIP#1071).** A project created with "Includes imaging data"
 off (`has_imaging=false`, creation-time and immutable like `dicom_to_nifti`) is approved without the
 CREATE_IMAGING fan-out: no XNAT project, no accession-ids call, no pull, and `GET /projects/{id}/image/status`
-returns `200 []`. `make e2e_smoke EXTRA_ARGS="--no-imaging"` creates the project with the flag off and skips
-the image-pull wait; on `--project-id` reuse it reads `has_imaging` back off the project, so reuse honours it
-too. Imaging projects get fast feedback instead: submitting a cohort whose explicit SELECT list
+returns `200 []`. The EHR risk-prediction tutorials are the first such cohort: `make e2e_smoke_ehr [FL_BACKEND=flower]`
+(root or `-C flip-api`) picks that tutorial for the backend and pins `--no-imaging`, which creates the project
+with the flag off and skips the image-pull wait (the smoke reads `has_imaging` back off the project, so
+`--project-id` reuse honours it too; `make e2e_smoke EXTRA_ARGS="--no-imaging"` is the generic form). The flag
+rides in `TARGET_ARGS`, a third recipe slot placed between `ENRICHMENT_ARGS` and `EXTRA_ARGS`, for the same reason
+enrichment does not use `EXTRA_ARGS`. Prereq on the dev stack: `make -C trust load-synthea-ehr` on every trust
+(TRUST_INDEX=1 OMOP_DB_PORT=5434, TRUST_INDEX=2 OMOP_DB_PORT=5436), then restart both data-access-apis if the
+EHR query was ever submitted before the load (results are cached by query text). Imaging projects
+get fast feedback instead: submitting a cohort whose explicit SELECT list
 has no `accession_id` column is a 400 at submission (hub pre-check, not a security control — `SELECT *` passes
 through to the trust's authoritative check).
 
@@ -359,7 +365,8 @@ with a `demoCaption` subtitle verb) run in Docker (`cypress/included`, `--networ
 `flip-ui/scripts/assemble-demo-video.sh` (same crop constants as `videos-to-gifs.sh`). Prerequisites: stack up,
 live AWS SSO session, and ideally the demo Cognito users — `make demo-users` (reads `DEMO_RESEARCHER_PASSWORD` /
 `DEMO_ADMIN_PASSWORD` from env, never committed) then restart flip-api so seeding grants their roles; without them
-the recorder falls back to the well-known admin for both parts. Useful `DEMO_ARGS`: `--app spleen` (record the 3D
+the recorder falls back to the well-known admin for both parts. Useful `DEMO_ARGS`: `--app ehr` (record the tabular EHR
+risk-prediction tutorial: the project is created with imaging off and the XNAT segment is skipped), `--app spleen` (record the 3D
 spleen segmentation tutorial instead of chest X-ray; pair with `--data-enrichment-cwd/-cmd` for the off-camera
 label upload, same contract as `e2e_smoke`), `--publish-segmentations` (republish those NIfTI labels as DICOM-SEG
 ROI collections via `flip-api/tests/xnat_seg_upload.py` so segment 3 shows the segmentation overlaid in OHIF —
