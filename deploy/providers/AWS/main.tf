@@ -556,8 +556,13 @@ resource "aws_ec2_tag" "alb_security_group_flip_sg" {
 }
 
 module "alb" {
-  source                     = "terraform-aws-modules/alb/aws"
-  version                    = "~> 10.0"
+  source  = "terraform-aws-modules/alb/aws"
+  version = "~> 10.0"
+  # LZA (FLIP#749): the web leg terminates on the internal NLB's web listener
+  # (fl_ingress_lza.tf) — static IPs the networking relay registers once —
+  # so no ALB is created there. Legacy prod/stag are unchanged. Module create
+  # flag rather than count, to keep the state address stable on legacy.
+  create                     = !var.lza_managed_network
   name                       = "flip-alb"
   vpc_id                     = local.vpc_id
   internal                   = true
@@ -790,7 +795,17 @@ moved {
 # attach instance/IP targets here from terraform. target_type=ip is required
 # for awsvpc Fargate tasks (each task gets an ENI; the IP is what ECS
 # registers, not an instance id).
+# State migration for the count added below (FLIP#749): keeps existing legacy
+# states aligned without a manual `terraform state mv`.
+moved {
+  from = aws_lb_target_group.ecs_flip_api
+  to   = aws_lb_target_group.ecs_flip_api[0]
+}
+
 resource "aws_lb_target_group" "ecs_flip_api" {
+  # Legacy only: on LZA the ECS service registers with the NLB's TCP target
+  # group aws_lb_target_group.ecs_flip_api_lza (fl_ingress_lza.tf).
+  count       = var.lza_managed_network ? 0 : 1
   name        = "ecs-flip-api"
   port        = local.api_container_port
   protocol    = "HTTP"
@@ -815,13 +830,19 @@ resource "aws_lb_target_group" "ecs_flip_api" {
 # to the ECS Fargate target group above. The legacy `ec2-instance-api`
 # target group on the EC2 host is kept in module.alb for state continuity
 # but no longer wired to a listener rule.
+moved {
+  from = aws_lb_listener_rule.api_routing
+  to   = aws_lb_listener_rule.api_routing[0]
+}
+
 resource "aws_lb_listener_rule" "api_routing" {
+  count        = var.lza_managed_network ? 0 : 1
   listener_arn = module.alb.listeners["https-listener"].arn
   priority     = 98
 
   action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.ecs_flip_api.arn
+    target_group_arn = aws_lb_target_group.ecs_flip_api[0].arn
   }
 
   condition {

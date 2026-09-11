@@ -85,12 +85,12 @@ resource "aws_ecs_service" "flip_api" {
     registry_arn = aws_service_discovery_service.flip_api[0].arn
   }
 
-  # Register each running task's ENI IP with the ALB target group so
-  # /api/* on the public ALB reaches the Fargate task. Without this block
-  # the ECS service stays invisible to the ALB and the listener rule
-  # falls back to its default action (or stale legacy target).
+  # Register each running task's ENI IP with the front door's target group so
+  # /api/* reaches the Fargate task: the ALB's HTTP TG on legacy, the internal
+  # NLB's TCP TG on LZA (fl_ingress_lza.tf, FLIP#749). Without this block the
+  # service stays invisible to the load balancer.
   load_balancer {
-    target_group_arn = aws_lb_target_group.ecs_flip_api.arn
+    target_group_arn = var.lza_managed_network ? aws_lb_target_group.ecs_flip_api_lza[0].arn : aws_lb_target_group.ecs_flip_api[0].arn
     container_name   = "flip-api"
     container_port   = local.api_container_port
   }
