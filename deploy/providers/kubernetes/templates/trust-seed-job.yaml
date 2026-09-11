@@ -30,7 +30,10 @@ metadata:
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "6"
-    "helm.sh/hook-delete-policy": before-hook-creation
+    # Deleted once it has succeeded, like the snapshot Jobs it replaced: a completed hook pod is
+    # never Ready, and a release-wide readiness wait (CI's, an operator's) would otherwise hang on
+    # it. A FAILED Job is kept, with its log, until the next install/upgrade replaces it.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   backoffLimit: 2
   template:

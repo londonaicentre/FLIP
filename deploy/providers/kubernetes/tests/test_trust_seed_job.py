@@ -61,6 +61,11 @@ def test_seed_runs_after_the_vocab_load():
     assert "post-install,post-upgrade" in SEED_JOB.read_text()
 
 
+def test_a_succeeded_seed_job_is_removed_and_a_failed_one_kept():
+    """A completed hook pod is never Ready — a release-wide readiness wait would hang on it."""
+    assert "before-hook-creation,hook-succeeded" in SEED_JOB.read_text()
+
+
 def test_seed_job_runs_the_shared_script_at_a_pinned_ref():
     """The Job fetches trust/seed_trust.sh (the one procedure EC2 runs too) at trustData.seed.sourceRef."""
     text = SEED_JOB.read_text()

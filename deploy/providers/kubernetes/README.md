@@ -752,8 +752,8 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 
 **Mock-data seed** (`trust-seed`, FLIP#1187):
 
-- A Helm `post-install,post-upgrade` hook: `kubectl logs -n <ns> job/<release>-flip-trust-trust-seed`.
-  It fetches the canonical tables (and, with `trustData.seed.orthanc`, the DICOM sets) from
+- A Helm `post-install,post-upgrade` hook, deleted on success and kept on failure:
+  `kubectl logs -n <ns> job/<release>-flip-trust-trust-seed` after a failed release. It fetches the canonical tables (and, with `trustData.seed.orthanc`, the DICOM sets) from
   Hugging Face at `trustData.version`, installs the loaders from FLIP at `trustData.seed.sourceRef`,
   and loads this trust's `source_trust` slice. No AWS credentials are involved.
 - `omop-db:5432 not reachable after 10 minutes` → the database never started; check the

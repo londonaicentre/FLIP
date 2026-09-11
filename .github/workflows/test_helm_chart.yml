@@ -591,13 +591,21 @@ jobs:
             --overwrite
           kubectl apply -f deploy/providers/kubernetes/ci/test-secret.yaml
 
+      # The trust-seed hook installs its loaders from FLIP at trustData.seed.sourceRef (a GitHub
+      # source archive), so the install must point it at the commit under test — the chart
+      # default, `develop`, would seed with whatever loaders develop has, not this PR's. A fork's
+      # head sha is not in this repository's archives, so a fork PR falls back to develop.
       - name: Install chart
+        env:
+          SEED_REF: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'develop' || (github.event.pull_request.head.sha || github.sha) }}
         run: |
+          echo "trust-seed loaders from FLIP@${SEED_REF}"
           helm install trust-release deploy/providers/kubernetes/ \
             --namespace flip-trust \
             -f deploy/providers/kubernetes/ci/test-values.yaml \
             --set secrets.existingName=flip-trust-secrets \
-            --set trustApi.env.CENTRAL_HUB_API_URL=http://test-hub.example.com/api
+            --set trustApi.env.CENTRAL_HUB_API_URL=http://test-hub.example.com/api \
+            --set trustData.seed.sourceRef="${SEED_REF}"
 
       - name: Check pod status
         run: |
@@ -617,3 +625,5 @@ jobs:
         run: |
           kubectl describe pods -n flip-trust
           kubectl logs -n flip-trust -l app.kubernetes.io/component=trust-api --tail=50
+          # A failed trust-seed hook keeps its Job (only a succeeded one is deleted).
+          kubectl logs -n flip-trust job/trust-release-flip-trust-trust-seed --tail=100 || true
