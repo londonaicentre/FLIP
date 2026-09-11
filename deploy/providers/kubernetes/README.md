@@ -461,11 +461,37 @@ kubectl exec -it <xnat-db-pod> -- \
   psql -U postgres -c "ALTER ROLE postgres WITH PASSWORD '<xnat-datasource-admin-password>'"
 ```
 
-**Upgrading an install created before the roles were split:** those deployments
-set `POSTGRES_USER=xnat`, so their single role is a superuser named `xnat` and
-there is no `postgres` role to authenticate as. Either re-initialise the xnat-db
-PVC (destroys the XNAT database — export anything you need first), or keep the
-old install on the previous chart version.
+**Upgrading an install created before the roles were split (pre-`985563d8`):**
+those deployments set `POSTGRES_USER=xnat`, so their single role is a superuser
+named `xnat` and there is no `postgres` role to authenticate as. Applying this
+chart over such a PVC fails the hook on every start (`FATAL: role "postgres"
+does not exist`), the kubelet kills the container, and the `xnat-db` Service
+loses its endpoint — XNAT is down, not merely mis-authenticating. Because the
+container lives only ~2 s per restart cycle, `kubectl exec` is not a reliable
+entry point.
+
+Recovery:
+
+1. Scale the StatefulSet to 0: `kubectl scale statefulset/<release>-xnat-db --replicas=0`
+2. Start a debug StatefulSet that mounts the same PVC (replicas 1, the same
+   `postgres:12`-era image, a single `volumeMounts` entry for the existing
+   volume — the PVC name is the volumeClaimTemplate's, i.e.
+   `data-<release>-xnat-db-0`) with no `lifecycle` block of its own.
+3. Inside the debug pod, create the superuser role:
+   `psql -U xnat -d postgres -c "CREATE ROLE postgres WITH SUPERUSER LOGIN;"`
+   (on a pre-split volume `xnat` is the superuser, so this works without a
+   password under the trusted local socket).
+4. Scale the debug StatefulSet to 0, then scale `xnat-db` back to 1. The
+   `postStart` hook can now connect as `postgres` and will sync the password
+   normally.
+
+If a scale-to-0 is not possible (e.g. no scheduling room), the fallback is to
+temporarily strip the `lifecycle.postStart` block from the StatefulSet pod
+template (`kubectl edit statefulset`), let the container start unguarded, run
+the `CREATE ROLE` fix from inside it, then re-add the block.
+
+Alternatively, keep the old install on the previous chart version and plan a
+full migration (export the XNAT database, re-initialise the PVC, re-import).
 
 ## Architecture
 
