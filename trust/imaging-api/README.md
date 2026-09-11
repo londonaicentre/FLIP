@@ -132,7 +132,7 @@ Upload files to an XNAT experiment:
 
 ```json
 {
-  "encrypted_central_hub_project_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "encrypted_central_hub_project_id": "<base64 AES-256-GCM envelope of the project id, as issued by the hub>",
   "accession_id": "FAK09131796",
   "scan_id": "12345",
   "resource_id": "RES",
@@ -159,7 +159,7 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 | `XNAT_DATABASE_URL` | PostgreSQL connection string for the XNAT database (non-secret topology constant; defaults in `config.py`, and the default carries **no** password) |
 | `XNAT_DATASOURCE_PASSWORD` | Minted per-trust XNAT DB password from the kit file (FLIP-PT-056). When set, it replaces the password embedded in `XNAT_DATABASE_URL`; empty or the kit-template placeholder leaves the URL untouched, so a pre-mint deployment fails on its first query instead of falling back to a weak credential |
 | `DATA_ACCESS_API_URL` | Internal URL of the data-access-api |
-| `AES_KEY_BASE64` | AES encryption key for decrypting project identifiers |
+| `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Validated as inbound auth on every router except `/health`, and forwarded outbound on calls to data-access-api `/cohort/accession-ids`. |
 

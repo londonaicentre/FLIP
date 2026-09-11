@@ -12,6 +12,8 @@
 
 from unittest.mock import AsyncMock, patch
 
+from cryptography.exceptions import InvalidTag
+
 from imaging_api.utils.exceptions import LocalStorageError, NotFoundError
 
 _REQUEST_BODY = {
@@ -33,6 +35,35 @@ def test_download_images_success(client):
 
     assert response.status_code == 200
     assert response.json()["path"] == "/tmp/images/net1/ACC123"
+
+
+def test_download_images_decrypts_for_the_project_id_context(client):
+    with (
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id") as mock_decrypt,
+        patch("imaging_api.routers.download.download_and_unzip_images", new_callable=AsyncMock, return_value="/x"),
+    ):
+        client.post("/download/images/net1", json=_REQUEST_BODY)
+
+    mock_decrypt.assert_called_once_with("encrypted-id", context="project_id")
+
+
+def test_download_images_rejects_a_project_id_that_fails_authentication(client):
+    """The caller's own payload is bad: a 400 that says so, not a 500 with an empty reason."""
+    with patch("imaging_api.routers.download.decrypt", side_effect=InvalidTag()):
+        response = client.post("/download/images/net1", json=_REQUEST_BODY)
+
+    assert response.status_code == 400
+    assert "failed authentication" in response.json()["detail"]
+
+
+def test_download_images_rejects_a_malformed_envelope(client):
+    with patch(
+        "imaging_api.routers.download.decrypt", side_effect=ValueError("Payload is not a FLIP encryption envelope")
+    ):
+        response = client.post("/download/images/net1", json=_REQUEST_BODY)
+
+    assert response.status_code == 400
+    assert "not a FLIP encryption envelope" in response.json()["detail"]
 
 
 def test_download_images_force_refresh_threads_through(client):

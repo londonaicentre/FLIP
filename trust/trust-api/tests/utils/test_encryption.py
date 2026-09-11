@@ -10,29 +10,41 @@
 # limitations under the License.
 #
 
-"""Tests for AES-CBC decryption utility."""
+"""Tests for the authenticated (AES-GCM) payload envelope."""
 
 import base64
+import json
 import os
 from unittest.mock import patch
 
-from cryptography.hazmat.backends import default_backend
+import pytest
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 import trust_api.utils.encryption as encryption_module
-from trust_api.utils.encryption import decrypt, get_aes_key
+from trust_api.utils.encryption import SHARED_KID, decrypt, encrypt, get_aes_key
+
+KEY = os.urandom(32)
+OTHER_KEY = os.urandom(32)
 
 
-def _encrypt(plaintext: str, key: bytes) -> str:
-    """Encrypt plaintext using AES-CBC with PKCS7 padding (test helper)."""
+def _envelope(encoded: str) -> dict:
+    return json.loads(base64.b64decode(encoded))
+
+
+def _reencode(envelope: dict) -> str:
+    return base64.b64encode(json.dumps(envelope).encode()).decode()
+
+
+def _legacy_cbc(plaintext: str, key: bytes) -> str:
+    """The pre-#1179 wire format: ``iv[16] || AES-CBC/PKCS7 ciphertext``, base64-encoded."""
     iv = os.urandom(16)
     padder = padding.PKCS7(128).padder()
     padded = padder.update(plaintext.encode()) + padder.finalize()
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-    encryptor = cipher.encryptor()
-    ciphertext = encryptor.update(padded) + encryptor.finalize()
-    return base64.b64encode(iv + ciphertext).decode()
+    encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+    return base64.b64encode(iv + encryptor.update(padded) + encryptor.finalize()).decode()
 
 
 class TestGetAesKey:
@@ -40,19 +52,13 @@ class TestGetAesKey:
         encryption_module._aes_key_cache = None
 
     def test_returns_decoded_bytes(self):
-        raw_key = os.urandom(32)
-        b64_key = base64.b64encode(raw_key).decode()
-        mock_settings = type("S", (), {"AES_KEY_BASE64": b64_key})()
+        mock_settings = type("S", (), {"AES_KEY_BASE64": base64.b64encode(KEY).decode()})()
 
         with patch("trust_api.utils.encryption.get_settings", return_value=mock_settings):
-            result = get_aes_key()
-
-        assert result == raw_key
+            assert get_aes_key() == KEY
 
     def test_caches_after_first_call(self):
-        raw_key = os.urandom(32)
-        b64_key = base64.b64encode(raw_key).decode()
-        mock_settings = type("S", (), {"AES_KEY_BASE64": b64_key})()
+        mock_settings = type("S", (), {"AES_KEY_BASE64": base64.b64encode(KEY).decode()})()
 
         with patch("trust_api.utils.encryption.get_settings", return_value=mock_settings) as mock_get:
             first = get_aes_key()
@@ -61,43 +67,170 @@ class TestGetAesKey:
         assert first is second
         mock_get.assert_called_once()
 
+    @pytest.mark.parametrize("length", [16, 24])
+    def test_rejects_non_256_bit_keys(self, length):
+        """AESGCM would run AES-128/192 under a shorter key; the platform contract is AES-256, so refuse at load."""
+        mock_settings = type("S", (), {"AES_KEY_BASE64": base64.b64encode(os.urandom(length)).decode()})()
+
+        with patch("trust_api.utils.encryption.get_settings", return_value=mock_settings):
+            with pytest.raises(ValueError, match=f"AES key must be 32 bytes \\(AES-256-GCM\\), got {length}"):
+                get_aes_key()
+
+    @pytest.mark.parametrize("length", [5, 16, 24])
+    def test_explicit_key_of_wrong_length_is_rejected(self, length):
+        with pytest.raises(ValueError, match="key must be 32 bytes"):
+            encrypt("data", os.urandom(length))
+        with pytest.raises(ValueError, match="key must be 32 bytes"):
+            decrypt(encrypt("data", KEY), os.urandom(length))
+
+
+class TestWireFormat:
+    def test_envelope_is_versioned_json_under_the_shared_kid(self):
+        envelope = _envelope(encrypt("payload", KEY))
+
+        assert envelope["v"] == 1
+        assert envelope["kid"] == SHARED_KID
+        assert len(base64.b64decode(envelope["iv"])) == 12
+        assert base64.b64decode(envelope["ct"])
+
+    def test_nonce_is_fresh_per_call(self):
+        assert _envelope(encrypt("same", KEY))["iv"] != _envelope(encrypt("same", KEY))["iv"]
+
 
 class TestDecrypt:
-    def test_decrypts_valid_payload(self):
-        key = os.urandom(32)
-        plaintext = "hello, trust!"
-        encrypted = _encrypt(plaintext, key)
-
-        result = decrypt(encrypted, key=key)
-
-        assert result == plaintext
-
-    def test_decrypts_empty_string(self):
-        key = os.urandom(32)
-        encrypted = _encrypt("", key)
-
-        assert decrypt(encrypted, key=key) == ""
-
-    def test_decrypts_unicode_content(self):
-        key = os.urandom(32)
-        plaintext = '{"patient_id": 42, "name": "Test"}'
-        encrypted = _encrypt(plaintext, key)
-
-        assert decrypt(encrypted, key=key) == plaintext
+    @pytest.mark.parametrize("plaintext", ["", "hello, trust!", '{"patient_id": 42, "name": "日本語"}', "x" * 10000])
+    def test_roundtrip_with_explicit_key(self, plaintext):
+        assert decrypt(encrypt(plaintext, KEY), KEY) == plaintext
 
     def test_uses_get_aes_key_when_no_key_provided(self):
-        key = os.urandom(32)
-        plaintext = "auto-key test"
-        encrypted = _encrypt(plaintext, key)
+        with patch("trust_api.utils.encryption.get_aes_key", return_value=KEY):
+            assert decrypt(encrypt("auto-key test")) == "auto-key test"
 
-        with patch("trust_api.utils.encryption.get_aes_key", return_value=key):
-            result = decrypt(encrypted)
+    def test_tampered_ciphertext_fails_closed(self):
+        envelope = _envelope(encrypt("payload", KEY))
+        ciphertext = bytearray(base64.b64decode(envelope["ct"]))
+        ciphertext[0] ^= 0x01
+        envelope["ct"] = base64.b64encode(bytes(ciphertext)).decode()
 
-        assert result == plaintext
+        with pytest.raises(InvalidTag):
+            decrypt(_reencode(envelope), KEY)
 
-    def test_decrypts_long_payload(self):
-        key = os.urandom(32)
-        plaintext = "x" * 10000
-        encrypted = _encrypt(plaintext, key)
+    def test_kid_is_bound_into_the_tag(self):
+        envelope = _envelope(encrypt("payload", KEY))
+        envelope["kid"] = "trust-other"
 
-        assert decrypt(encrypted, key=key) == plaintext
+        with pytest.raises(InvalidTag):
+            decrypt(_reencode(envelope), KEY)
+
+    def test_wrong_key_fails_closed(self):
+        with pytest.raises(InvalidTag):
+            decrypt(encrypt("payload", KEY), OTHER_KEY)
+
+    def test_unknown_kid_raises(self):
+        envelope = _envelope(encrypt("payload", KEY))
+        envelope["kid"] = "trust-unknown"
+
+        with patch("trust_api.utils.encryption.get_aes_key", return_value=KEY):
+            with pytest.raises(KeyError, match="trust-unknown"):
+                decrypt(_reencode(envelope))
+
+    def test_unsupported_version_raises(self):
+        envelope = _envelope(encrypt("payload", KEY))
+        envelope["v"] = 2
+
+        with pytest.raises(ValueError, match="version"):
+            decrypt(_reencode(envelope), KEY)
+
+    def test_legacy_cbc_payload_is_rejected(self):
+        """No CBC fallback: an unauthenticated pre-#1179 payload must not decrypt, even under the right key."""
+        with pytest.raises(ValueError, match="not a FLIP encryption envelope"):
+            decrypt(_legacy_cbc("payload", KEY), KEY)
+
+    def test_non_envelope_json_is_rejected(self):
+        with pytest.raises(ValueError, match="not a FLIP encryption envelope"):
+            decrypt(base64.b64encode(b'{"not": "an envelope"}').decode(), KEY)
+
+
+# ---- cross-service contract: the same vector must decrypt in every service ----
+
+KAT_KEY = bytes.fromhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+KAT_CONTEXT = "kat"
+KAT_PLAINTEXT = "known-answer"
+#: encrypt(KAT_PLAINTEXT, KAT_KEY, context=KAT_CONTEXT) with nonce 0x00..0x0b. Identical in all four services'
+#: test suites, so a copy that drifts from the others fails here instead of in production.
+KAT_ENVELOPE = (
+    "eyJ2IjogMSwgImtpZCI6ICJzaGFyZWQiLCAiaXYiOiAiQUFFQ0F3UUZCZ2NJQ1FvTCIsICJj"  # pragma: allowlist secret
+    "dCI6ICJMR3k1Ykt2SW8zWCtOdkw1MFo3MFNwSTgzd1NLbGlyaUxJa25PQT09In0="  # pragma: allowlist secret
+)
+
+
+def test_known_answer_vector_decrypts():
+    assert decrypt(KAT_ENVELOPE, KAT_KEY, context=KAT_CONTEXT) == KAT_PLAINTEXT
+
+
+def test_context_is_bound_into_the_tag():
+    """A payload authenticated for one purpose must not verify when presented for another."""
+    sealed = encrypt("payload", KAT_KEY, context="task:get_imaging_status")
+
+    with pytest.raises(InvalidTag):
+        decrypt(sealed, KAT_KEY, context="task:delete_imaging")
+
+
+def test_context_defaults_to_empty_on_both_sides():
+    assert decrypt(encrypt("payload", KAT_KEY), KAT_KEY) == "payload"
+
+
+def test_tampered_nonce_fails_closed():
+    envelope = _envelope(encrypt("payload", KAT_KEY))
+    nonce = bytearray(base64.b64decode(envelope["iv"]))
+    nonce[0] ^= 0x01
+    envelope["iv"] = base64.b64encode(bytes(nonce)).decode()
+
+    with pytest.raises(InvalidTag):
+        decrypt(_reencode(envelope), KAT_KEY)
+
+
+@pytest.mark.parametrize("raw", [b"[1, 2, 3]", b'"envelope"', b"42", b"null"])
+def test_non_dict_json_is_rejected(raw):
+    with pytest.raises(ValueError, match="not a FLIP encryption envelope"):
+        decrypt(base64.b64encode(raw).decode(), KAT_KEY)
+
+
+@pytest.mark.parametrize(("field", "value"), [("kid", ["shared"]), ("iv", 5), ("ct", None), ("v", True)])
+def test_wrong_field_types_are_rejected(field, value):
+    """Shape alone is not enough: every field must also be the right type, or callers see a TypeError."""
+    envelope = _envelope(encrypt("payload", KAT_KEY))
+    envelope[field] = value
+
+    with pytest.raises(ValueError, match="not a FLIP encryption envelope"):
+        decrypt(_reencode(envelope), KAT_KEY)
+
+
+@pytest.mark.parametrize("payload", ["not base64!!", "abc"])
+def test_invalid_base64_payload_is_rejected(payload):
+    with pytest.raises(ValueError, match="not a FLIP encryption envelope"):
+        decrypt(payload, KAT_KEY)
+
+
+def test_invalid_base64_inside_envelope_is_rejected():
+    envelope = _envelope(encrypt("payload", KAT_KEY))
+    envelope["iv"] = "!!!"
+
+    with pytest.raises(ValueError, match="not a FLIP encryption envelope"):
+        decrypt(_reencode(envelope), KAT_KEY)
+
+
+@pytest.mark.parametrize("length", [8, 16])
+def test_nonce_of_wrong_length_is_rejected_before_decryption(length):
+    """AESGCM accepts any 8..128-byte nonce; the wire format says 12, so a 16-byte one is not an envelope."""
+    nonce = os.urandom(length)
+    aad = f"FLIP|v1|{SHARED_KID}|".encode()
+    envelope = {
+        "v": 1,
+        "kid": SHARED_KID,
+        "iv": base64.b64encode(nonce).decode(),
+        "ct": base64.b64encode(AESGCM(KEY).encrypt(nonce, b"payload", aad)).decode(),
+    }
+
+    with pytest.raises(ValueError, match=f"Nonce must be 12 bytes, got {length}"):
+        decrypt(_reencode(envelope), KEY)

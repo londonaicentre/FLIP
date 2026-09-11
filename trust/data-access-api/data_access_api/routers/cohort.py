@@ -12,6 +12,7 @@
 
 from typing import Any
 
+from cryptography.exceptions import InvalidTag
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -23,7 +24,7 @@ from data_access_api.routers.schema import (
     StatisticsResponse,
 )
 from data_access_api.services.cohort import get_records, get_statistics, validate_query
-from data_access_api.utils.encryption import decrypt
+from data_access_api.utils.encryption import PROJECT_ID_CONTEXT, decrypt
 from data_access_api.utils.internal_auth import authenticate_internal_service
 from data_access_api.utils.logger import logger
 
@@ -36,6 +37,23 @@ _BELOW_THRESHOLD_DETAIL = "Cohort is too small for row-level data to be released
 
 
 # Create Router
+def _open_project_id(encrypted_project_id: str) -> str:
+    """Open the hub-sealed project id the FL client forwards, or answer 400 with the reason.
+
+    The id is authenticated under the ``project_id`` context. A failure is the caller's payload
+    (tampered, sealed for another purpose, or the hub's ``AES_KEY_BASE64`` is not this trust's),
+    so it is a 400 that names the cause rather than a bare 500.
+    """
+    try:
+        return decrypt(encrypted_project_id, context=PROJECT_ID_CONTEXT)
+    except InvalidTag:
+        logger.error("encrypted_project_id failed authentication")
+        raise HTTPException(status_code=400, detail="encrypted_project_id failed authentication")
+    except (ValueError, KeyError) as e:
+        logger.error(f"encrypted_project_id is not a valid envelope: {e}")
+        raise HTTPException(status_code=400, detail=f"encrypted_project_id is not a valid envelope: {e}")
+
+
 router = APIRouter(prefix="/cohort", tags=["Cohort"], dependencies=[Depends(authenticate_internal_service)])
 
 
@@ -129,7 +147,7 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
         HTTPException: 400 if the query is invalid, 403 if the cohort is below
             the disclosure threshold, 500 if the query fails to execute.
     """
-    project_id = decrypt(query_input.encrypted_project_id)
+    project_id = _open_project_id(query_input.encrypted_project_id)
 
     logger.info(f"Received DataFrame query for project {project_id}")
 
@@ -203,7 +221,7 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
             ``accession_id`` column, 403 if the cohort is below the disclosure
             threshold, 500 if the query fails to execute.
     """
-    project_id = decrypt(query_input.encrypted_project_id)
+    project_id = _open_project_id(query_input.encrypted_project_id)
 
     logger.info(f"Received accession-ids query for project {project_id}")
 

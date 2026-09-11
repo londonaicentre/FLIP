@@ -12,12 +12,13 @@
 
 from typing import Annotated
 
+from cryptography.exceptions import InvalidTag
 from fastapi import APIRouter, Depends, HTTPException
 
 from imaging_api.routers.schemas import DownloadImagesRequestData, DownloadImagesResponse
 from imaging_api.services.download import download_and_unzip_images
 from imaging_api.utils.auth import get_xnat_auth_headers
-from imaging_api.utils.encryption import decrypt
+from imaging_api.utils.encryption import PROJECT_ID_CONTEXT, decrypt
 from imaging_api.utils.exceptions import LocalStorageError, NotFoundError
 from imaging_api.utils.internal_auth import authenticate_internal_service
 from imaging_api.utils.logger import logger
@@ -66,11 +67,20 @@ async def download_images_by_accession_number(
     # Decrypt project ID
     logger.info("Trying to decrypt Central Hub Project ID")
     try:
-        central_hub_project_id = decrypt(request_data.encrypted_central_hub_project_id)
+        central_hub_project_id = decrypt(request_data.encrypted_central_hub_project_id, context=PROJECT_ID_CONTEXT)
+    except InvalidTag:
+        # The caller's own payload is bad (tampered, sealed for another purpose, or the hub's
+        # AES_KEY_BASE64 is not this trust's): a 400 that says so, not a 500 with an empty reason.
+        logger.error("Central Hub project id failed authentication")
+        raise HTTPException(status_code=400, detail="Central Hub project id failed authentication")
+    except (ValueError, KeyError) as e:
+        logger.error(f"Central Hub project id is not a valid envelope: {e}")
+        raise HTTPException(status_code=400, detail=f"Central Hub project id is not a valid envelope: {e}")
     except Exception as e:
-        error_msg = f"Failed to decrypt Central Hub Project ID: {str(e)}"
-        logger.error(error_msg)
-        raise HTTPException(status_code=500, detail=error_msg)
+        # Not the caller's payload: a key that cannot be loaded, or a fault in the cipher itself.
+        # Name the type so an empty exception message never yields a blank reason.
+        logger.exception(f"Failed to decrypt Central Hub project id ({type(e).__name__}): {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to decrypt Central Hub project id ({type(e).__name__})")
 
     try:
         downloaded_folder = await download_and_unzip_images(

@@ -11,7 +11,7 @@
 #
 
 import re
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -269,7 +269,7 @@ def test_create_user_success(mock_post, mock_get_profile, headers):
     mock_get_profile.return_value = User(**_SAMPLE_USER_DICT)
 
     user_req = CreateUser(
-        username="alice", password="pass", firstName="Alice",
+        username="alice", password="pass", firstName="Alice",  # pragma: allowlist secret
         lastName="A", email="alice@test.com",
     )
     profile = create_user(user_req, headers)
@@ -281,7 +281,7 @@ def test_create_user_conflict(mock_post, headers):
     mock_post.return_value = MagicMock(status_code=409, text="conflict")
 
     user_req = CreateUser(
-        username="alice", password="pass", firstName="Alice",
+        username="alice", password="pass", firstName="Alice",  # pragma: allowlist secret
         lastName="A", email="alice@test.com",
     )
     with pytest.raises(AlreadyExistsError, match="already exists"):
@@ -293,7 +293,7 @@ def test_create_user_server_error(mock_post, headers):
     mock_post.return_value = MagicMock(status_code=500, text="Server Error")
 
     user_req = CreateUser(
-        username="alice", password="pass", firstName="Alice",
+        username="alice", password="pass", firstName="Alice",  # pragma: allowlist secret
         lastName="A", email="alice@test.com",
     )
     with pytest.raises(Exception, match="XNAT user creation failed"):
@@ -308,7 +308,7 @@ def test_create_user_server_error(mock_post, headers):
 @patch("imaging_api.services.users.to_create_imaging_user")
 def test_create_user_from_central_hub_user(mock_to_create, mock_create, mock_encrypt, headers):
     mock_to_create.return_value = CreateUser(
-        username="alice", password="secret", firstName="Alice",
+        username="alice", password="secret", firstName="Alice",  # pragma: allowlist secret
         lastName="A", email="alice@test.com",
     )
     mock_create.return_value = User(**_SAMPLE_USER_DICT)
@@ -317,7 +317,8 @@ def test_create_user_from_central_hub_user(mock_to_create, mock_create, mock_enc
     created_user, user_profile = create_user_from_central_hub_user(hub_user, headers)
 
     assert created_user.username == "alice"
-    assert created_user.encrypted_password == "encrypted_pwd"
+    assert created_user.encrypted_password == "encrypted_pwd"  # pragma: allowlist secret
+    mock_encrypt.assert_called_once_with(ANY, context="xnat_password")
     assert user_profile.username == "alice"
 
 

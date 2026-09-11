@@ -12,9 +12,11 @@
 
 import asyncio
 import json
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from cryptography.exceptions import InvalidTag
 
 import trust_api.services.task_poller as task_poller
 from trust_api.services.task_poller import (
@@ -25,6 +27,7 @@ from trust_api.services.task_poller import (
     _send_heartbeat,
     run_poller,
 )
+from trust_api.utils.encryption import encrypt
 
 
 @pytest.fixture(autouse=True)
@@ -353,7 +356,7 @@ async def test_process_task_dispatches_cohort_query():
     """Should dispatch to the correct handler based on task_type."""
     with (
         patch("trust_api.services.task_poller.TASK_HANDLERS") as mock_handlers,
-        patch("trust_api.services.task_poller.decrypt", side_effect=lambda x: x),
+        patch("trust_api.services.task_poller.decrypt", side_effect=lambda x, **kwargs: x),
     ):
         mock_handler = AsyncMock(return_value={"success": True})
         mock_handlers.get.return_value = mock_handler
@@ -390,7 +393,7 @@ async def test_process_task_invalid_payload():
     """Should return failure for invalid JSON payload."""
     with (
         patch("trust_api.services.task_poller.TASK_HANDLERS") as mock_handlers,
-        patch("trust_api.services.task_poller.decrypt", side_effect=lambda x: x),
+        patch("trust_api.services.task_poller.decrypt", side_effect=lambda x, **kwargs: x),
     ):
         mock_handlers.get.return_value = AsyncMock()
 
@@ -404,6 +407,75 @@ async def test_process_task_invalid_payload():
 
         assert result["success"] is False
         assert "Invalid payload" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_process_task_rejects_payload_that_fails_authentication():
+    """A tampered payload, or one under another key, fails closed with a reason, not an empty error string."""
+    with (
+        patch("trust_api.services.task_poller.TASK_HANDLERS") as mock_handlers,
+        patch("trust_api.services.task_poller.decrypt", side_effect=InvalidTag()),
+    ):
+        handler = AsyncMock()
+        mock_handlers.get.return_value = handler
+
+        result = await _process_task({"id": "task-1", "task_type": "cohort_query", "payload": "tampered"})
+
+        assert result["success"] is False
+        assert "authentication" in result["error"].lower()
+        handler.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_task_rejects_payload_under_unknown_kid():
+    """A payload whose envelope names a key this trust does not hold is reported, naming the kid."""
+    with (
+        patch("trust_api.services.task_poller.TASK_HANDLERS") as mock_handlers,
+        patch("trust_api.services.task_poller.decrypt", side_effect=KeyError("No key registered for kid 'trust-x'")),
+    ):
+        handler = AsyncMock()
+        mock_handlers.get.return_value = handler
+
+        result = await _process_task({"id": "task-1", "task_type": "cohort_query", "payload": "foreign"})
+
+        assert result["success"] is False
+        assert "trust-x" in result["error"]
+        handler.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_task_opens_a_payload_sealed_for_its_task_type():
+    """End to end with the real cipher: the hub seals under ``task:<task_type>`` and the poller opens likewise."""
+    key = os.urandom(32)
+    sealed = encrypt(json.dumps({"query_id": "q1"}), key, context="task:cohort_query")
+    handler = AsyncMock(return_value={"success": True})
+
+    with (
+        patch("trust_api.services.task_poller.TASK_HANDLERS", {"cohort_query": handler}),
+        patch("trust_api.utils.encryption.get_aes_key", return_value=key),
+    ):
+        result = await _process_task({"id": "task-1", "task_type": "cohort_query", "payload": sealed})
+
+    assert result["success"] is True
+    handler.assert_awaited_once_with({"query_id": "q1"})
+
+
+@pytest.mark.asyncio
+async def test_process_task_rejects_a_payload_sealed_for_another_task_type():
+    """Rewriting the unauthenticated ``task_type`` must not re-target a genuine payload at another handler."""
+    key = os.urandom(32)
+    sealed = encrypt(json.dumps({"imaging_project_id": "p1"}), key, context="task:get_imaging_status")
+    handler = AsyncMock()
+
+    with (
+        patch("trust_api.services.task_poller.TASK_HANDLERS", {"delete_imaging": handler}),
+        patch("trust_api.utils.encryption.get_aes_key", return_value=key),
+    ):
+        result = await _process_task({"id": "task-1", "task_type": "delete_imaging", "payload": sealed})
+
+    assert result["success"] is False
+    assert "authentication" in result["error"].lower()
+    handler.assert_not_called()
 
 
 # ---- run_poller (integration) ----
