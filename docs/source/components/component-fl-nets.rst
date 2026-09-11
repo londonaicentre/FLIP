@@ -141,7 +141,6 @@ These tutorials run on the local NVFLARE simulator from the repo root — e.g.
 .. figure:: ../assets/fl/job_types.jpg
    :alt: A user uploads the files for a job type; the hub bundles them with that job type's template before
          submitting the job.
-   :width: 300px
    :align: center
 
    Workflow of how the user uploads files for a specific job type.
