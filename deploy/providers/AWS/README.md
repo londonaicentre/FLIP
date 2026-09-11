@@ -788,6 +788,15 @@ Everything else (ECS Fargate, RDS + Proxy, Cognito, S3 + CMK, Secrets Manager, S
 remains FLIP-managed exactly as on legacy prod; the legacy WAF/OAC/CloudFront-function components stay standing
 unused on LZA to keep legacy churn minimal.
 
+![Central Hub on an LZA estate — request and FL paths](docs/central-hub-aws-lza-network.png "Central Hub on an LZA estate — request and FL paths")
+
+![Central Hub on an LZA estate — data and platform services](docs/central-hub-aws-lza-data.png "Central Hub on an LZA estate — data and platform services")
+
+The two pictures are the LZA pair from [`architecture/central_hub.py`](architecture/central_hub.py) — the same
+script and node map as the self-contained pair in [Architecture](#architecture), rendered with the LZA-gated
+resources drawn and the legacy-gated ones left out (`VARIANT_ONLY_LABELS`). The networking account's edge and the
+Transit Gateway are drawn from the handoff contract, not from Terraform in this repository.
+
 **Edge wiring is two-phase — by construction, not configuration.** The networking account's edge stack
 ([aicentre-lza-iac](https://github.com/londonaicentre/aicentre-lza-iac)) is built *from* this stack's outputs: the
 first workload `apply` publishes the `/flip/networking/*` SSM handoff params (NLB private IPs, FL port, web port,
@@ -1644,9 +1653,12 @@ the direction of the request flow.
 ![Central Hub on AWS — data and platform services](docs/central-hub-aws-data.png "Central Hub on AWS — data and platform services")
 
 Both pictures are rendered from [`architecture/central_hub.py`](architecture/central_hub.py) (the `diagrams`
-library over graphviz), not drawn by hand. `make aws-diagram` at the repo root regenerates these two committed
-copies; the ReadTheDocs [Central Hub page](https://londonaicentreflip.readthedocs.io/en/latest/components/component-central-hub.html)
-renders the same script at build time. `tests/test_architecture_diagram.py` pins the script's node map to the
+library over graphviz), not drawn by hand; they show the self-contained mode, and the LZA mode has its own pair
+under ["Deploying onto an LZA estate"](#deploying-onto-an-lza-estate-prodlza) below. `make aws-diagram` at the
+repo root regenerates all four committed copies; the ReadTheDocs pages
+[Deploy the Central Hub on AWS](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws.html)
+and [on AWS (LZA)](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws-lza.html)
+render the same script at build time. `tests/test_architecture_diagram.py` pins the script's node map to the
 `.tf` files in both directions — a drawn resource that disappears, or a new ECS service / bucket / load balancer
 that is not drawn, fails the `AWS deploy tests` CI job — so a change to a drawn resource updates
 `TERRAFORM_ADDRESSES` in the same PR. The committed copies are the container render (`python:3.12-slim`
