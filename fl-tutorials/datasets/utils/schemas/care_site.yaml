@@ -1,0 +1,27 @@
+schema_type: dataframe
+columns:
+  care_site_id:
+    dtype: int64
+    unique: true
+  care_site_name:
+    dtype: string[python]
+    nullable: true
+    required: false
+  place_of_service_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  location_id:
+    dtype: int64
+    nullable: true
+    required: false
+  care_site_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  place_of_service_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false
