@@ -25,7 +25,8 @@ result, which supplies one POLYGON annotation per nucleus as a DICOM Microscopy 
 Annotation (Supplement 222).
 
 Nothing is re-hosted: `make -C fl-tutorials download-idc-pathology-data` pulls from IDC's public
-buckets with no credentials, using `idc-index`. Roughly 2.1 GB for the default subset.
+buckets with no credentials, using `idc-index`. Roughly 6.4 GB for the default subset: 24 slides, 12 per
+site, plus their annotation series.
 
 ### Reproducibility without republishing the imaging
 
@@ -113,7 +114,7 @@ travels.
 
 ## Prerequisites
 
-- The tutorial dataset (~2.1 GB), fetched below. No credentials, no GPU.
+- The tutorial dataset (~6.4 GB), fetched below. No credentials, no GPU.
 - Everything else comes from `flip-utils[full]`, which the Makefile uses directly.
 
 ## Run it
@@ -130,9 +131,9 @@ simulation), `make summary` (recompute the table from the last run).
 
 ```text
 Site       Slides  Tiles  Ref nuclei  Precision   Recall      F1  Patient F1 IQR
-site-1          5    120        2319      0.793    0.569   0.662           0.041
-site-2          5    120        1461      0.625    0.582   0.603           0.138
-POOLED                          3780      0.718    0.574   0.638
+site-1         12    288        5145      0.770    0.588   0.667           0.045
+site-2         12    281        3224      0.607    0.587   0.597           0.123
+POOLED                          8369      0.698    0.588   0.638
 ```
 
 **Pooled, not averaged.** Global precision/recall/F1 come from summed TP/FP/FN, so each site is
@@ -140,8 +141,8 @@ weighted by its evidence. The unweighted mean across sites is reported separatel
 `macro_site_f1` and never called a global score — averaging would weight a site with 200 nuclei the
 same as one with 20,000.
 
-**The gap is not a result.** In the run above the between-site F1 gap is 0.059 while the widest
-within-site patient IQR is 0.138 — more than twice as large. `summarise_results.py` prints a note
+**The gap is not a result.** In the run above the between-site F1 gap is 0.070 while the widest
+within-site patient IQR is 0.123 — nearly twice as large. `summarise_results.py` prints a note
 whenever that is the case, because a cross-site difference smaller than the within-site spread is
 not evidence of a site effect. Tiles from one patient are not independent samples, so tile-level
 intervals would be overconfident by roughly the square root of the tiles-per-patient count.
@@ -201,7 +202,8 @@ A test pins the returned key set, because this is the tutorial's central claim.
   0.67, so this is the ceiling of the family rather than a tuning failure. Cellpose reaches ~0.83 on
   the same tiles but needs dependencies the FL runtime does not carry.
 - **The reference is automatic**, so some disagreement is reference error.
-- **Slides are size-capped** so the tutorial downloads ~2.1 GB rather than ~11 GB. That biases the
+- **Slides are size-capped** (400 MB per instance) so the tutorial downloads ~6.4 GB rather than the
+  tens of GB that base-resolution slides run to (median ~890 MB, up to 3 GB each). That biases the
   subset toward smaller tissue sections, and toward the two sites that have such slides.
 - **Defaults were tuned on one site-1 slide**, so site-1 has a slight home advantage. The
   improvement was checked on site-2 before being adopted.

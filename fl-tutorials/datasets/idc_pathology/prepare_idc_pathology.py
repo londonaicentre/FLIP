@@ -63,7 +63,7 @@ NUCLEI_MODALITY = "ANN"
 
 DEFAULT_COLLECTION = "tcga_brca"
 DEFAULT_SITES = ("A8", "A7")
-DEFAULT_SLIDES_PER_SITE = 5
+DEFAULT_SLIDES_PER_SITE = 12
 
 # The manifest lives beside this script, not under the gitignored data root: it is the lockfile that
 # makes a run reproducible, and it is small enough to review in a diff.

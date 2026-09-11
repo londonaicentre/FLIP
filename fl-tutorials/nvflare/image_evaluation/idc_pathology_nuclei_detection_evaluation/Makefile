@@ -61,7 +61,7 @@ check-data:
 		echo "            $(SITE2_DATAFRAME)"; \
 		echo ""; \
 		echo "Fetch it with:  make -C ../../.. download-idc-pathology-data"; \
-		echo "(~2.1 GB from the NCI Imaging Data Commons public buckets; no credentials needed)"; \
+		echo "(~6.4 GB from the NCI Imaging Data Commons public buckets; no credentials needed)"; \
 		exit 1; \
 	fi
 

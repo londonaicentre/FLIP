@@ -121,11 +121,12 @@ download-arkplus-eval-data:
 # Pan-Cancer-Nuclei-Seg bulk annotations, partitioned into FLIP sites by TCGA tissue source site.
 #
 # Downloads straight from IDC's public buckets -- no credentials, and no DICOM is re-hosted anywhere.
-# SLIDES_PER_SITE and SITES tune the subset; the defaults pull ~2.1 GB, chosen because base-resolution
-# instances in this collection run to 3 GB each (median ~890 MB) and the default sites are the two with
-# the most slides under the size cap.
+# SLIDES_PER_SITE and SITES tune the subset; the defaults pull ~6.4 GB (24 slides, 12 per site, plus their
+# annotations). The size cap matters because base-resolution instances in this collection run to 3 GB each
+# (median ~890 MB); the default sites are the two with the most slides under it. Twelve per site rather
+# than five because a trust releases no row-level data for a cohort below COHORT_QUERY_THRESHOLD (10).
 IDC_SITES ?= A8,A7
-IDC_SLIDES_PER_SITE ?= 5
+IDC_SLIDES_PER_SITE ?= 12
 IDC_MAX_SLIDE_MB ?= 400
 
 # Reproduces the committed manifest by default, so every developer downloads the same slides even as

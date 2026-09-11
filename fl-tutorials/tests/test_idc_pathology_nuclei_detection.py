@@ -10,7 +10,7 @@
 # limitations under the License.
 """CPU-only tests for the IDC digital-pathology nuclei-detection tutorial.
 
-Nothing here needs the 2.1 GB dataset, a GPU or network access: the DICOM-shaped inputs are
+Nothing here needs the 6.4 GB dataset, a GPU or network access: the DICOM-shaped inputs are
 synthesised in-process and the geometry is checked against values computed by hand.
 
 The properties pinned are the ones whose failure would be **silent** -- producing plausible numbers
