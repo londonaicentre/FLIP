@@ -377,7 +377,7 @@ has no ``off`` switch:
        any positive value; a larger ``gamma`` merely weakens the truncation.
      - ``10`` / ``0.01``
 
-Semantics — verified against NVFLARE 2.8.0:
+Semantics — verified against NVFLARE 2.9.0:
 
 - **The site policy composes with, and cannot be bypassed by, the app config.** NVFLARE applies site scope
   filters *before* the job's ``task_result_filters`` in one chain (``nvflare/apis/utils/task_utils.py``);
