@@ -397,14 +397,14 @@ host, and Orthanc starts with zero studies. The seed that populates it
 (`ensure-seeded`) runs against the Orthanc on the machine where `up-trust`
 runs — not on the EC2.
 
-**Fix (stopgap — seed the live Orthanc on the EC2):**
+**Fix (stopgap — re-seed the EC2's data directories from the laptop):**
 
 ```bash
-ssh flip-trust
-cd /opt/flip/trust   # the checkout the host runs from
-# Posts this trust's slice of the default projects through Orthanc's REST API at the pinned data
-# version (trust/.data_version); the kit supplies the port and credentials.
-make seed-orthanc KIT=<CODE> PROD=true
+# The seed play starts throwaway containers on the host's data directories, so the
+# stack must be down while it runs (deploy-trust already sequences it that way).
+DOCKER_CONTEXT=flip-trust make -C trust down-trust-ec2 KIT=<CODE> PROD=true   # what deploy-trust does before seeding
+make -C deploy/providers/AWS seed-trust-data KIT=<CODE> PROD=true               # OMOP rows + Orthanc studies + vocabulary
+DOCKER_CONTEXT=flip-trust make up-trust-ec2 KIT=<CODE> PROD=true
 ```
 
 Verify a cohort accession is findable, then re-trigger the pull from the UI

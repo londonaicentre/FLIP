@@ -325,7 +325,7 @@ jobs:
       - name: Trust-seed hook renders, snapshots do not
         run: |
           helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit > /tmp/seed-default.yaml
-          for want in 'name: trust-release-flip-trust-trust-seed' 'omop_db_tools.import_tables' 'load_dicom_vocab --vocab-dir'; do
+          for want in 'name: trust-release-flip-trust-trust-seed' '/trust/seed_trust.sh' 'exec bash /work/seed_trust.sh'; do
             if ! grep -qF -e "${want}" /tmp/seed-default.yaml; then
               echo "::error::the trust-seed hook did not render (missing: ${want})"
               exit 1

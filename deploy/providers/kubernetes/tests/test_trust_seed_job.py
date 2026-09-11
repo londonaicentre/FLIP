@@ -61,14 +61,24 @@ def test_seed_runs_after_the_vocab_load():
     assert "post-install,post-upgrade" in SEED_JOB.read_text()
 
 
-def test_seed_job_uses_the_repository_tools_at_a_pinned_ref():
-    """The Job installs omop_db_tools and seed_orthanc.py from FLIP at trustData.seed.sourceRef."""
+def test_seed_job_runs_the_shared_script_at_a_pinned_ref():
+    """The Job fetches trust/seed_trust.sh (the one procedure EC2 runs too) at trustData.seed.sourceRef."""
     text = SEED_JOB.read_text()
-    assert "https://github.com/londonaicentre/FLIP/archive/${FLIP_REF}.tar.gz#subdirectory=trust/omop-db" in text
-    assert "raw.githubusercontent.com/londonaicentre/FLIP/${FLIP_REF}/trust/orthanc/seed_orthanc.py" in text
+    assert "raw.githubusercontent.com/londonaicentre/FLIP/${FLIP_REF}/trust/seed_trust.sh" in text
+    assert "exec bash /work/seed_trust.sh" in text
     assert 'required "trustData.seed.sourceRef is required' in text
-    assert "omop_db_tools.load_dicom_vocab --vocab-dir" in text and "--skip-if-loaded" in text
-    assert "--clean projects" in text and "--clean all" not in text
+    for env in ("TRUST_DATA_VERSION", "SOURCE_TRUST", "NUM_TRUSTS", "PROJECTS", "SEED_OMOP", "SEED_ORTHANC", "ORTHANC_URL", "WORK_DIR"):
+        assert f"- name: {env}\n" in text, env
+
+
+def test_the_shared_script_installs_the_repository_loaders_without_git():
+    """trust/seed_trust.sh: omop_db_tools from a source archive (no git in the image), seed_orthanc.py by URL."""
+    script = (CHART_DIR.parents[2] / "trust" / "seed_trust.sh").read_text()
+    assert "https://github.com/londonaicentre/FLIP/archive/${FLIP_REF}.tar.gz#subdirectory=trust/omop-db" in script
+    assert "raw.githubusercontent.com/londonaicentre/FLIP/${FLIP_REF}/trust/orthanc/seed_orthanc.py" in script
+    assert "omop_db_tools.load_dicom_vocab --vocab-dir" in script and "--skip-if-loaded" in script
+    assert "--clean projects" in script and "--clean all" not in script
+    assert "git+" not in script
 
 
 def test_seed_values_defaults():
