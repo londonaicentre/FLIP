@@ -24,7 +24,7 @@ from data_access_api.routers.schema import (
     StatisticsResponse,
 )
 from data_access_api.services.cohort import get_records, get_statistics, validate_query
-from data_access_api.utils.encryption import decrypt
+from data_access_api.utils.encryption import PROJECT_ID_CONTEXT, decrypt
 from data_access_api.utils.internal_auth import authenticate_internal_service
 from data_access_api.utils.logger import logger
 
@@ -45,7 +45,7 @@ def _open_project_id(encrypted_project_id: str) -> str:
     so it is a 400 that names the cause rather than a bare 500.
     """
     try:
-        return decrypt(encrypted_project_id, context="project_id")
+        return decrypt(encrypted_project_id, context=PROJECT_ID_CONTEXT)
     except InvalidTag:
         logger.error("encrypted_project_id failed authentication")
         raise HTTPException(status_code=400, detail="encrypted_project_id failed authentication")

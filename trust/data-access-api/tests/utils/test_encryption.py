@@ -21,6 +21,7 @@ import pytest
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from data_access_api.utils.encryption import SHARED_KID, decrypt, encrypt, get_aes_key
 
@@ -63,11 +64,21 @@ def test_get_aes_key_missing(mock_get_settings):
         get_aes_key()
 
 
+@pytest.mark.parametrize("length", [8, 16, 24])
 @patch("data_access_api.utils.encryption.get_settings")
-def test_get_aes_key_invalid_length(mock_get_settings):
-    mock_get_settings.return_value.AES_KEY_BASE64 = base64.b64encode(b"shortkey").decode()
-    with pytest.raises(ValueError, match="Invalid AES key length"):
+def test_get_aes_key_rejects_non_256_bit_keys(mock_get_settings, length):
+    """AESGCM would run AES-128/192 under a 16/24-byte key; the platform contract is AES-256, so refuse at load."""
+    mock_get_settings.return_value.AES_KEY_BASE64 = base64.b64encode(os.urandom(length)).decode()
+    with pytest.raises(ValueError, match=f"AES key must be 32 bytes \\(AES-256-GCM\\), got {length}"):
         get_aes_key()
+
+
+@pytest.mark.parametrize("length", [5, 16, 24])
+def test_explicit_key_of_wrong_length_is_rejected(length):
+    with pytest.raises(ValueError, match="key must be 32 bytes"):
+        encrypt("data", os.urandom(length))
+    with pytest.raises(ValueError, match="key must be 32 bytes"):
+        decrypt(encrypt("data", VALID_KEY), os.urandom(length))
 
 
 # ---- wire format ----
@@ -225,3 +236,19 @@ def test_invalid_base64_inside_envelope_is_rejected():
 
     with pytest.raises(ValueError, match="not a FLIP encryption envelope"):
         decrypt(_reencode(envelope), KAT_KEY)
+
+
+@pytest.mark.parametrize("length", [8, 16])
+def test_nonce_of_wrong_length_is_rejected_before_decryption(length):
+    """AESGCM accepts any 8..128-byte nonce; the wire format says 12, so a 16-byte one is not an envelope."""
+    nonce = os.urandom(length)
+    aad = f"FLIP|v1|{SHARED_KID}|".encode()
+    envelope = {
+        "v": 1,
+        "kid": SHARED_KID,
+        "iv": base64.b64encode(nonce).decode(),
+        "ct": base64.b64encode(AESGCM(VALID_KEY).encrypt(nonce, b"payload", aad)).decode(),
+    }
+
+    with pytest.raises(ValueError, match=f"Nonce must be 12 bytes, got {length}"):
+        decrypt(_reencode(envelope), VALID_KEY)

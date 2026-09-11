@@ -132,7 +132,7 @@ Upload files to an XNAT experiment:
 
 ```json
 {
-  "encrypted_central_hub_project_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "encrypted_central_hub_project_id": "<base64 AES-256-GCM envelope of the project id, as issued by the hub>",
   "accession_id": "FAK09131796",
   "scan_id": "12345",
   "resource_id": "RES",

@@ -537,7 +537,11 @@ Two operational consequences:
 
 - **The key must be byte-identical on the hub and on every trust container that decrypts** (trust-api,
   imaging-api, data-access-api). A mismatch fails closed: trust-api reports every task as
-  `Invalid payload: failed authentication`, and imaging-api / data-access-api answer the FL client with a 500.
+  `Invalid payload: failed authentication`, and imaging-api / data-access-api answer the FL client with a **400**
+  (`... failed authentication`; a payload that is not an envelope at all is a 400 `... is not a valid envelope`).
+  A 500 from either is a different class of fault — the key could not be loaded, or the cipher itself failed —
+  not a mismatch. The key must decode to exactly 32 bytes (AES-256); every service refuses a shorter one at
+  key load rather than silently running AES-128/192 under the same envelope.
   On stag/prod the hub's copy is whatever the CI Terraform apply wrote into Secrets Manager from the GitHub
   environment, which is not necessarily the operator's `.env.<env>` copy — recover the deployed inputs with
   `deploy/providers/AWS/scripts/reconcile_ci_env.py` before minting or refreshing trust kits.

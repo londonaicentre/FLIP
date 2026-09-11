@@ -28,7 +28,7 @@ from flip_api.domain.interfaces.trust import (
 from flip_api.private_services.project_images_helpers import insert_status
 from flip_api.utils.constants import IMAGING_CREDENTIALS_TEMPLATE_NAME, IMAGING_PROJECT_ACCESS_TEMPLATE_NAME
 from flip_api.utils.email_sender import EmailDispatchError, send_templated_email
-from flip_api.utils.encryption import decrypt
+from flip_api.utils.encryption import XNAT_PASSWORD_CONTEXT, decrypt
 from flip_api.utils.logger import logger
 
 
@@ -112,7 +112,7 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
     # copy of the password, so raise and let the task stay queued for post-processing instead.
     try:
         passwords = [
-            decrypt(user.encrypted_password, context="xnat_password") for user in imaging_project.created_users
+            decrypt(user.encrypted_password, context=XNAT_PASSWORD_CONTEXT) for user in imaging_project.created_users
         ]
     except (InvalidTag, KeyError, ValueError) as e:
         raise EmailDispatchError(

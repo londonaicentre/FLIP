@@ -53,6 +53,18 @@ from flip_api.utils.get_secrets import get_secret
 _aes_key_cache: bytes | None = None
 
 
+#: Length of the shared key: AES-256, as every README and ``deploy/README.md`` promise. ``AESGCM``
+#: itself would also take a 16- or 24-byte key and silently run AES-128/192 under the same envelope.
+_KEY_BYTES = 32
+
+
+def _require_aes256(key: bytes) -> bytes:
+    """Return ``key`` if it is a 32-byte AES-256 key, else raise ``ValueError``."""
+    if len(key) != _KEY_BYTES:
+        raise ValueError(f"AES key must be {_KEY_BYTES} bytes (AES-256-GCM), got {len(key)}")
+    return key
+
+
 def get_aes_key() -> bytes:
     """Retrieve the AES key and return it as bytes.
 
@@ -60,7 +72,10 @@ def get_aes_key() -> bytes:
     Cached after first call — the key does not change during the lifetime of a process.
 
     Returns:
-        bytes: The decoded AES key.
+        bytes: The decoded 32-byte AES-256 key.
+
+    Raises:
+        ValueError: The decoded key is not 32 bytes.
     """
     global _aes_key_cache  # noqa: PLW0603
     if _aes_key_cache is not None:
@@ -68,12 +83,23 @@ def get_aes_key() -> bytes:
 
     stt = get_settings()
     aes_key_b64 = get_secret("aes_key") if stt.ENV == "production" else stt.AES_KEY_BASE64
-    _aes_key_cache = base64.b64decode(aes_key_b64)
+    _aes_key_cache = _require_aes256(base64.b64decode(aes_key_b64))
     return _aes_key_cache
 
 
 #: Key id of the platform-wide shared key (``AES_KEY_BASE64``).
 SHARED_KID = "shared"
+
+#: Context labels (see the module docstring). Producer and consumer must pass the same one, and a
+#: mismatch fails closed as an opaque ``InvalidTag``, so call sites use these rather than literals.
+PROJECT_ID_CONTEXT = "project_id"
+XNAT_PASSWORD_CONTEXT = "xnat_password"  # pragma: allowlist secret — a context label, not a credential
+
+
+def task_context(task_type: str) -> str:
+    """Context label for a task payload: ``task:<task_type>``."""
+    return f"task:{task_type}"
+
 
 _VERSION = 1
 _NONCE_BYTES = 12  # NIST SP 800-38D recommended nonce length for AES-GCM
@@ -121,14 +147,14 @@ def encrypt(plaintext: str, key: bytes | None = None, *, context: str = "") -> s
         str: Base64-encoded envelope (see the module docstring for the format).
 
     Raises:
-        ValueError: The key is not a valid AES key length.
+        ValueError: The key is not 32 bytes.
     """
     kid = SHARED_KID
     if key is None:
         key = _keyring()[kid]
 
     nonce = os.urandom(_NONCE_BYTES)
-    ciphertext = AESGCM(key).encrypt(nonce, plaintext.encode(), _aad(kid, context))
+    ciphertext = AESGCM(_require_aes256(key)).encrypt(nonce, plaintext.encode(), _aad(kid, context))
     envelope = {
         "v": _VERSION,
         "kid": kid,
@@ -188,7 +214,7 @@ def decrypt(encoded_payload: str, key: bytes | None = None, *, context: str = ""
             (a ``KeyError``).
         ValueError: The payload is not a well-formed version-1 envelope: not base64, not JSON,
             missing or wrongly typed fields, another version (a pre-FLIP#1179 CBC payload lands
-            here), or a nonce of an invalid length.
+            here), a nonce that is not 12 bytes, or an explicit ``key`` that is not 32 bytes.
     """
     envelope = _parse_envelope(_b64decode(encoded_payload))
     kid = envelope["kid"]
@@ -198,5 +224,8 @@ def decrypt(encoded_payload: str, key: bytes | None = None, *, context: str = ""
             raise UnknownKeyIdError(f"No key registered for kid {kid!r}")
 
     nonce = _b64decode(envelope["iv"])
+    if len(nonce) != _NONCE_BYTES:
+        # AESGCM would take any 8..128-byte nonce; the wire format says 12, so hold it to that.
+        raise ValueError(f"Nonce must be {_NONCE_BYTES} bytes, got {len(nonce)}")
     ciphertext = _b64decode(envelope["ct"])
-    return AESGCM(key).decrypt(nonce, ciphertext, _aad(kid, context)).decode()
+    return AESGCM(_require_aes256(key)).decrypt(nonce, ciphertext, _aad(kid, context)).decode()

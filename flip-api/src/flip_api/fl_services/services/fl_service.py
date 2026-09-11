@@ -33,7 +33,7 @@ from flip_api.domain.interfaces.fl import (
 )
 from flip_api.domain.schemas.status import FLJobStatus, FLTargets, JobStatus
 from flip_api.domain.schemas.types import FLBackend
-from flip_api.utils.encryption import encrypt
+from flip_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 from flip_api.utils.exceptions import JobAbortedError, NotFoundError
 from flip_api.utils.http import http_delete, http_get, http_post
 from flip_api.utils.logger import logger
@@ -683,7 +683,7 @@ def start_training(
     from flip_api.fl_services.services import fl_scheduler_service
 
     required_info = fl_scheduler_service.get_required_training_details(model_id, session)
-    encrypted_project_id = encrypt(required_info.project_id, context="project_id")
+    encrypted_project_id = encrypt(required_info.project_id, context=PROJECT_ID_CONTEXT)
 
     training_details = IStartTrainingBody(
         project_id=encrypted_project_id,
