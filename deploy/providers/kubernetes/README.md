@@ -470,33 +470,51 @@ loses its endpoint — XNAT is down, not merely mis-authenticating. Because the
 container lives only ~2 s per restart cycle, `kubectl exec` is not a reliable
 entry point.
 
-The reason is in the container's waiting-state message, not the event text —
-the `FailedPostStartHook` event says only `PostStartHook failed`:
+The reason is easy to miss: the `FailedPostStartHook` event carries only the
+fixed text `PostStartHook failed`, `kubectl describe` shows `CrashLoopBackOff`
+except for the instant the hook error itself is being reported, and the hook's
+own stderr reaches only the kubelet journal. What is always there is Postgres's
+side of the refused connection, in the container log:
 
 ```bash
-kubectl describe pod <xnat-db-pod>
-# Containers -> xnat-db -> State/Last State -> Message: FATAL: role "postgres" does not exist
+kubectl logs <release>-flip-trust-xnat-db-0 --previous | grep FATAL
+# FATAL:  role "postgres" does not exist
 ```
 
-Recovery:
+Recovery (the names are the ones the chart renders, the same as in the
+rotation commands above — the StatefulSet is `<release>-flip-trust-xnat-db`
+and its volume `data-<release>-flip-trust-xnat-db-0`):
 
-1. Scale the StatefulSet to 0: `kubectl scale statefulset/<release>-xnat-db --replicas=0`
-2. Start a debug StatefulSet that mounts the same PVC (replicas 1, the same
-   `postgres:12`-era image, a single `volumeMounts` entry for the existing
-   volume — the PVC name is the volumeClaimTemplate's, i.e.
-   `data-<release>-xnat-db-0`) with no `lifecycle` block of its own.
+1. Scale the StatefulSet to 0:
+   `kubectl scale statefulset/<release>-flip-trust-xnat-db --replicas=0`
+2. Start a debug Pod (or single-replica StatefulSet) on the same PVC with **no
+   `lifecycle` block**: copy the xnat-db container spec — same image *and* the
+   same two password env vars, because the image's entrypoint guard refuses to
+   start without them — and mount `data-<release>-flip-trust-xnat-db-0` as a
+   plain `persistentVolumeClaim` volume at `/var/lib/postgresql/data`. A stock
+   `postgres:12-alpine` with no env at all works on the volume too.
 3. Inside the debug pod, create the superuser role:
    `psql -U xnat -d postgres -c "CREATE ROLE postgres WITH SUPERUSER LOGIN;"`
    (on a pre-split volume `xnat` is the superuser, so this works without a
    password under the trusted local socket).
-4. Scale the debug StatefulSet to 0, then scale `xnat-db` back to 1. The
-   `postStart` hook can now connect as `postgres` and will sync the password
-   normally.
+4. Delete the debug pod, then scale `xnat-db` back to 1. The `postStart` hook
+   can now connect as `postgres` and will sync the password normally.
 
 If a scale-to-0 is not possible (e.g. no scheduling room), the fallback is to
 temporarily strip the `lifecycle.postStart` block from the StatefulSet pod
-template (`kubectl edit statefulset`), let the container start unguarded, run
-the `CREATE ROLE` fix from inside it, then re-add the block.
+template (`kubectl edit statefulset/<release>-flip-trust-xnat-db`) **and then
+delete the pod by hand**:
+
+```bash
+kubectl delete pod <release>-flip-trust-xnat-db-0
+```
+
+The edit alone changes nothing: with the default `OrderedReady` policy the
+StatefulSet controller will not roll a pod that is not Running and Ready, so
+the crash-looping pod stays on the old template indefinitely and only picks up
+the new one once it is deleted. Let the container start unguarded, run the
+`CREATE ROLE` fix from inside it, then re-add the block (or re-run `helm
+upgrade`) — with the pod now healthy, that update rolls on its own.
 
 Alternatively, keep the old install on the previous chart version and plan a
 full migration (export the XNAT database, re-initialise the PVC, re-import).
