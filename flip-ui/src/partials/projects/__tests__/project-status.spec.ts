@@ -330,9 +330,10 @@ describe("ProjectStatus", () => {
             expect(grid.classes()).toContain("overflow-y-auto");
             expect(grid.classes()).toContain("flex-1");
             expect(grid.classes()).toContain("min-h-0");
-            // Without auto-rows-max the implicit rows are sized against the scroll
-            // container's height instead of their content, and because every trust
-            // card is overflow-hidden (min size 0) they collapse to a sliver.
+            // Without auto-rows-max / content-start the definite-height grid
+            // stretches its auto rows into the free space, so a short roster gets
+            // every trust card stretched to fill the scroller instead of sized to
+            // its content (the <li> is not a scroll container, so it never collapses).
             expect(grid.classes()).toContain("auto-rows-max");
             expect(grid.classes()).toContain("content-start");
 
@@ -447,6 +448,18 @@ describe("ProjectStatus", () => {
             const wrapper = mountProjectStatus(true);
 
             expect(wrapper.find(ProjectStatusComponent.noProjectStatusMessage).exists()).toBe(true);
+        });
+
+        it("lets the awaiting message own the fill-height area instead of sharing it with an empty grid", () => {
+            mockSwrvData.value = [];
+            const wrapper = mountProjectStatus(true);
+
+            // The grid and the message are both flex-1. Rendered as siblings they
+            // split the card's height ~50/50 around an empty scroller, so the
+            // grid must not render at all when there is nothing to list.
+            expect(wrapper.find("ul[role=list]").exists()).toBe(false);
+            const message = wrapper.find(ProjectStatusComponent.noProjectStatusMessage);
+            expect(message.element.parentElement?.className).toContain("flex-1");
         });
 
         it("displays correct overview counts with empty data", () => {

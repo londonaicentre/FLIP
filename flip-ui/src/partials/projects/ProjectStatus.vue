@@ -102,12 +102,17 @@
                         </div>
                     </div>
 
-                    <!-- The only scroller in the card. auto-rows-max is load-bearing:
-                         a definite-height grid sizes auto rows against the available
-                         space, and each <li> has an automatic minimum size of zero, so
-                         without it every trust card collapses to a sliver. content-start
-                         stops the rows being distributed down the container. -->
-                    <ul role="list" class="grid flex-1 min-h-0 grid-cols-1 gap-3 p-3 overflow-y-auto auto-rows-max content-start xl:grid-cols-2">
+                    <!-- The only scroller in the card. auto-rows-max + content-start are
+                         load-bearing: the grid has a definite height (flex-1 min-h-0), and a
+                         definite-height grid with the default align-content stretches its
+                         auto rows to fill the free space, so a roster shorter than the
+                         scroller would have every trust card stretched to fill it (measured
+                         in Chrome: 239px cards for 112px of content). max-content rows are
+                         not stretchable and content-start packs them at the top instead.
+                         The <li> is not a scroll container, so it keeps its content-based
+                         minimum size; the sliver collapse only happens to overflow-hidden
+                         items, and nothing here relies on that. -->
+                    <ul v-if="sortedData.length > 0" role="list" class="grid flex-1 min-h-0 grid-cols-1 gap-3 p-3 overflow-y-auto auto-rows-max content-start xl:grid-cols-2">
                         <li
                             v-for="project in sortedData"
                             :key="project.trustId"
@@ -297,7 +302,10 @@
                             </div>
                         </li>
                     </ul>
-                    <div v-if="sortedData?.length === 0" class="flex flex-row items-center flex-1">
+                    <!-- v-else, not a sibling v-if: the <ul> above is flex-1 too, and in a
+                         fill-height card two flex-1 siblings split the height between an empty
+                         scroller and this message instead of the message owning it. -->
+                    <div v-else class="flex flex-row items-center flex-1">
                         <p class="flex items-center justify-center gap-2 flex-1 text-center" data-test="no-project-status-message">
                             <icon-ph-clock class="w-5 h-5" />
                             Awaiting imaging project creation from trusts…
