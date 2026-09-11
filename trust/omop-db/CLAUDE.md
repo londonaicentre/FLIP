@@ -28,7 +28,7 @@ environment loads it ONCE into the running database via `files/load_core_vocab.s
 `COPY FROM STDIN` over TCP — no mounts, no server-side files; idempotent via core-aware guards that
 tolerate the DICOM vocab already present in the tarballs):
 
-- **Dev**: `make load-omop-vocab [OMOP_DB_PORT=5436]` (after `update-omop-data` + stack up). Cohort
+- **Dev**: `make load-omop-vocab [OMOP_DB_PORT=5436]` (after the stack is up and seeded). Cohort
   queries joining `omop.concept` return nothing until this runs.
 - **EC2**: the "load OMOP core vocabulary on Trust EC2" Ansible play (part of `seed-trust-data`;
   throwaway container on loopback port 15499; kit credentials passed by the AWS Makefile).
@@ -75,25 +75,26 @@ tolerate the DICOM vocab already present in the tarballs):
   projects' rows (`import_tables --clean projects`, by the projects' own `person_id`s — Synthea rows
   and other projects untouched, one transaction per project) and their DICOMs (`orthanc/seed_orthanc.py`)
   into that trust, selected by `source_trust == FL_KIT_SLOT_NUMBER`. Same lifecycle as
-  `load-omop-vocab`: one-time post-snapshot, idempotent, persists in the bind-mounted volume. A
-  `.seeded` marker beside `db_data` makes `update_omop_data.sh` refuse to re-snapshot on a bump
-  without `FORCE=1`. `populate` is the same loader with `--clean all`.
+  `load-omop-vocab`: idempotent, persists in the bind-mounted volume. `up-trust` runs it at bring-up
+  (`make -C trust ensure-seeded`, #1187) on the empty database the container initialises; a `.seeded`
+  marker beside `db_data` records projects/partition/version so a later `up` skips it and a
+  `.data_version` bump re-seeds. `load-dicom-vocab` runs first (skipped when present — its
+  relationship rows have no unique key). `populate` is the same loader with `--clean all`.
 - The populate scripts run on the **host** against published ports (`OMOP_DB_HOST` defaults to
   localhost) and need postgresql-client (`psql`/`pg_isready`).
 
 ## Commands
 
 ```bash
-make update-omop-data [TRUST=1|2]   # consumer path: sync vocab-free pgdata volumes from HF
 make load-omop-vocab [OMOP_DB_PORT=5436]  # seed the licensed vocab + constraints into a running trust DB
+make load-dicom-vocab [OMOP_DB_PORT=5436] # the Apache-licensed DICOM vocab (anonymous HF fetch); no-op when present
 cp .env.build.example .env.build    # once, before any build-pipeline target
 make build                          # plain docker build — no data inputs, no credentials
 make up-build / down-build          # the standalone per-trust build DBs
 make populate [NUM_TRUSTS=N PARTITION=modulo]  # core vocab + DICOM vocab + N trust slices (shipped
                                                # stack is two-trust; N>2 needs a compose service + port)
-make populate CORE_VOCAB=0          # vocab-free flavour for publishable tarballs (skip apply-constraints!)
+make populate CORE_VOCAB=0          # vocab-free flavour (skip apply-constraints!)
 make seed-omop TRUST_INDEX=2 OMOP_DB_PORT=5436 PROJECTS="…"  # seed a RUNNING trust; normally via `make -C trust seed KIT=…`
-make export-pgdata                  # tar each volume -> dist/trust<N>_pgdata.tar (version = the tag publish-trust-data puts on it)
 make apply-constraints              # AFTER a full populate
 make push [OMOP_DB_TAG=...]         # manual publish escape hatch (CI publishes normally); confirms first
 make local_test                     # ruff + mypy + pytest tests/unit (no DB needed)

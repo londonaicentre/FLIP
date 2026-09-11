@@ -960,8 +960,8 @@ OMOP_POSTGRES_DB_KIT := $(shell sed -n 's/^OMOP_POSTGRES_DB=//p' ../../../trust/
 
 # The data version read from the canonical trust/.data_version — a git tag on the
 # aicentreflip/trust-data dataset that pins OMOP and Orthanc mock data together. It
-# governs both the local update-omop-data / update-orthanc-data scripts and the
-# Ansible plays, which fetch every archive at that tag.
+# governs both the local seed (`make -C trust ensure-seeded`) and the Ansible plays,
+# which fetch the canonical tables and DICOM sets at that tag.
 TRUST_DATA_VERSION := $(shell cat ../../../trust/.data_version 2>/dev/null | tr -d ' \n\r\t')
 
 .PHONY: deploy-trust

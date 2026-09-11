@@ -64,10 +64,6 @@ def touch(path: Path) -> Path:
 
 
 class TestLayout:
-    def test_volumes_land_under_their_trust(self, pub, tmp_path):
-        assert pub.path_in_repo(tmp_path / "trust1_pgdata.tar", "volume") == "trust1/trust1_pgdata.tar"
-        assert pub.path_in_repo(tmp_path / "trust2_orthanc_data.tar", "volume") == "trust2/trust2_orthanc_data.tar"
-
     def test_dicom_sets_and_the_card(self, pub, tmp_path):
         assert pub.path_in_repo(tmp_path / "prostate_project.tar.gz", "dicom") == "dicom/prostate_project.tar.gz"
         assert pub.path_in_repo(tmp_path / "README.md", "card") == "README.md"
@@ -75,15 +71,16 @@ class TestLayout:
     def test_a_versioned_filename_is_refused(self, pub, tmp_path):
         """The version is the tag; a suffixed file would be the old layout's second copy."""
         with pytest.raises(SystemExit, match="version is the tag"):
-            pub.path_in_repo(tmp_path / "trust1_pgdata_20260729.tar", "volume")
-        with pytest.raises(SystemExit, match="version is the tag"):
             pub.path_in_repo(tmp_path / "cxr_project_20260729.tar.gz", "dicom")
 
     def test_an_unknown_name_is_refused(self, pub, tmp_path):
-        with pytest.raises(SystemExit, match="trust<N>_pgdata.tar"):
-            pub.path_in_repo(tmp_path / "backup.tar", "volume")
         with pytest.raises(SystemExit, match="dicom/<project>.tar.gz"):
             pub.path_in_repo(tmp_path / "prostate_project.zip", "dicom")
+
+    def test_volume_snapshots_are_no_longer_a_kind(self, pub, tmp_path):
+        """The pgdata/Orthanc volume tarballs were retired with FLIP#1187: a trust seeds from canonical."""
+        with pytest.raises(SystemExit, match="unknown artefact kind"):
+            pub.path_in_repo(tmp_path / "trust1_pgdata.tar", "volume")
 
     def test_canonical_tree_maps_project_by_project(self, pub, tmp_path):
         canonical = tmp_path / "canonical"
@@ -107,17 +104,17 @@ class TestLayout:
 
 class TestBuildOperations:
     def test_only_what_is_passed_is_published(self, pub, tmp_path):
-        pg = touch(tmp_path / "trust1_pgdata.tar")
-        ops = pub.build_operations([pg], None, [], None)
-        assert [op.path_in_repo for op in ops] == ["trust1/trust1_pgdata.tar"]
+        dicom = touch(tmp_path / "spleen_project.tar.gz")
+        ops = pub.build_operations(None, [dicom], None)
+        assert [op.path_in_repo for op in ops] == ["dicom/spleen_project.tar.gz"]
 
     def test_a_missing_local_file_is_refused_before_anything_uploads(self, pub, tmp_path):
         with pytest.raises(SystemExit, match="missing local file"):
-            pub.build_operations([tmp_path / "trust1_pgdata.tar"], None, [], None)
+            pub.build_operations(None, [tmp_path / "spleen_project.tar.gz"], None)
 
     def test_nothing_to_publish_is_refused(self, pub):
         with pytest.raises(SystemExit, match="nothing to publish"):
-            pub.build_operations([], None, [], None)
+            pub.build_operations(None, [], None)
 
 
 class TestVersionFormat:
@@ -125,7 +122,7 @@ class TestVersionFormat:
 
     def test_a_version_that_is_not_a_date_is_refused(self, pub, tmp_path):
         with pytest.raises(SystemExit, match="YYYYMMDD"):
-            pub.main(["--version", "2026101", "--pgdata", str(touch(tmp_path / "trust1_pgdata.tar"))])
+            pub.main(["--version", "2026101", "--dicom", str(touch(tmp_path / "spleen_project.tar.gz"))])
 
     def test_allow_any_tag_gets_past_the_format_check(self, pub):
         # It should fall through to the artefact checks — the tag's shape is no longer what stops it.
@@ -137,19 +134,19 @@ class TestVersionFormat:
 class TestPublish:
     def test_one_commit_then_the_tag_on_that_commit(self, pub, tmp_path):
         api = FakeApi(tags=["20260729"])
-        ops = pub.build_operations([touch(tmp_path / "trust1_pgdata.tar")], None, [], touch(tmp_path / "README.md"))
+        ops = pub.build_operations(None, [touch(tmp_path / "spleen_project.tar.gz")], touch(tmp_path / "README.md"))
 
         oid = pub.publish(api, "20261001", ops, "org/data", dry_run=False)
 
         assert oid == "sha-1"
         assert len(api.commits) == 1
-        assert [op.path_in_repo for op in api.commits[0]["operations"]] == ["trust1/trust1_pgdata.tar", "README.md"]
+        assert [op.path_in_repo for op in api.commits[0]["operations"]] == ["dicom/spleen_project.tar.gz", "README.md"]
         assert api.commits[0]["message"] == "trust-data 20261001: 2 file(s)"
         assert api.created_tags == [{"tag": "20261001", "revision": "sha-1"}]
 
     def test_an_existing_tag_is_never_moved(self, pub, tmp_path):
         api = FakeApi(tags=["20260729", "20260901"])
-        ops = pub.build_operations([touch(tmp_path / "trust1_pgdata.tar")], None, [], None)
+        ops = pub.build_operations(None, [touch(tmp_path / "spleen_project.tar.gz")], None)
 
         with pytest.raises(SystemExit, match="already exists"):
             pub.publish(api, "20260901", ops, "org/data", dry_run=False)
@@ -160,7 +157,7 @@ class TestPublish:
         # The commit and the tag are two Hub calls, so the bytes CAN land untagged. The operator
         # must be told which commit holds them and that re-running finishes the job.
         api = FakeApi(tags=[], tag_error=RuntimeError("503 Service Unavailable"))
-        ops = pub.build_operations([touch(tmp_path / "trust1_pgdata.tar")], None, [], None)
+        ops = pub.build_operations(None, [touch(tmp_path / "spleen_project.tar.gz")], None)
 
         with pytest.raises(SystemExit) as excinfo:
             pub.publish(api, "20261001", ops, "org/data", dry_run=False)
@@ -174,9 +171,9 @@ class TestPublish:
 
     def test_dry_run_uploads_and_tags_nothing(self, pub, tmp_path, capsys):
         api = FakeApi(tags=[])
-        ops = pub.build_operations([touch(tmp_path / "trust2_orthanc_data.tar")], None, [], None)
+        ops = pub.build_operations(None, [touch(tmp_path / "cxr_project.tar.gz")], None)
 
         assert pub.publish(api, "20261001", ops, "org/data", dry_run=True) is None
         assert api.commits == []
         assert api.created_tags == []
-        assert "trust2/trust2_orthanc_data.tar" in capsys.readouterr().out
+        assert "dicom/cxr_project.tar.gz" in capsys.readouterr().out

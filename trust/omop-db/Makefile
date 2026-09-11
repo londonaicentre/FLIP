@@ -58,42 +58,45 @@ down-test-omop-trust1:
 shell:
 	docker exec -it $$(docker ps -qf "name=$(service_name)") /bin/bash
 
-# Sync mock omop data (used in development / staging environments where real data is not available)
-# Fetched anonymously from the public Hugging Face dataset (no AWS CLI / credentials needed)
-# Pass TRUST=1 or TRUST=2 to update only a single trust; defaults to all.
-update-omop-data:
-	TRUST=$(TRUST) \
-	CLEAN_AFTER_UPDATE=True \
-	OMOP_DATA_DIR_TRUST_1=$(OMOP_DATA_DIR_TRUST_1) \
-	OMOP_DATA_DIR_TRUST_2=$(OMOP_DATA_DIR_TRUST_2) \
-	./update_omop_data.sh
-
 # Load the licensed core vocabulary into a RUNNING trust omop-db and apply the
-# FK constraints. The published pgdata tarballs are vocab-free, so after
-# `make update-omop-data` + starting the stack this runs once per trust — the
-# one credentialed seeding step (see README "The core vocabulary bundle").
+# FK constraints. A trust starts vocab-free (the image carries no licensed
+# vocabulary and the seed pipeline loads none), so this runs once per trust after
+# `up-trust` — the one credentialed seeding step (see README "The core
+# vocabulary bundle"). Idempotent: already-loaded tables are skipped and the
+# constraints guard themselves. Seeded project rows may already be present; the
+# constraints validate them, which is fine because every concept they reference
+# is either in the core bundle or in the DICOM vocabulary seed-omop loads first.
 # Port defaults to the GSTT kit's OMOP_DB_PORT; override for other trusts,
 # e.g. `make load-omop-vocab OMOP_DB_PORT=5436` (KCH).
 load-omop-vocab: fetch-vocab-core
 	OMOP_DB_PORT=$(OMOP_DB_PORT) ./files/load_core_vocab.sh \
 		data/$(VOCAB_CORE_BUNDLE) files/OMOPCDM_postgresql_5.4_constraints.sql
 
+# Load the (Apache-licensed, anonymously fetched) DICOM vocabulary into a RUNNING
+# trust omop-db. Skips itself when the vocabulary is already there — the loader's
+# concept_relationship rows carry no unique key, so a blind re-run would duplicate
+# them (FORCE_DICOM_VOCAB=1 re-runs anyway, for a partial load).
+load-dicom-vocab: fetch-vocab-dicom
+	OMOP_DB_PORT=$(OMOP_DB_PORT) uv run python -m omop_db_tools.load_dicom_vocab \
+		--vocab-dir data/$(VOCAB_DICOM_BUNDLE) $(if $(filter 1,$(FORCE_DICOM_VOCAB)),--force,--skip-if-loaded)
+
 # Seed a RUNNING trust omop-db with the listed projects' rows for this trust
-# (FLIP#1100). Same lifecycle as load-omop-vocab: a one-time post-snapshot step
-# against the published port, idempotent to re-run, and reset by a .data_version
-# bump. Scoped, not destructive — only the listed projects' own rows are
-# replaced (by their person_ids), so Synthea EHR rows and other projects stay.
-# Loads by `source_trust`, the same column the per-project DICOM sets are keyed
-# on, so this trust's OMOP rows and the studies seed-orthanc puts in its PACS
-# agree by construction. Works against the constrained, vocab-loaded database
-# a running trust is (CANONICAL_TABLES is FK-ordered; one transaction per
-# project). Normally reached via `make -C trust seed-omop KIT=<CODE>`, which
+# (FLIP#1100). Idempotent to re-run; `make -C trust ensure-seeded` runs it at
+# bring-up and again on a .data_version bump. Scoped, not destructive — only the
+# listed projects' own rows are replaced (by their person_ids), so Synthea EHR
+# rows and other projects stay. Loads by `source_trust`, the same column the
+# per-project DICOM sets are keyed on, so this trust's OMOP rows and the studies
+# seed-orthanc puts in its PACS agree by construction. Works against a fresh,
+# unconstrained database and against the constrained, vocab-loaded one a trust
+# becomes after load-omop-vocab (CANONICAL_TABLES is FK-ordered; one transaction
+# per project); the DICOM vocabulary is loaded first so imaging concepts resolve
+# either way. Normally reached via `make -C trust seed-omop KIT=<CODE>`, which
 # supplies TRUST_INDEX, SOURCE_TRUST, the port and the credentials from the kit;
 # direct use:
 #   make seed-omop TRUST_INDEX=2 OMOP_DB_PORT=5436 PROJECTS="spleen_project cxr_project"
 # Writes a .seeded marker BESIDE the trust's db_data (so it follows the data,
-# whichever checkout runs the scripts) and update_omop_data.sh then refuses to
-# re-snapshot over the seed on the next bump without FORCE=1.
+# whichever checkout runs the scripts) recording projects, partition and data
+# version — what ensure-seeded compares against to decide whether to re-seed.
 # TRUST_INDEX names the TRUST — its FL kit slot, and so its volume and marker.
 # SOURCE_TRUST names the OMOP PARTITION to load into it. They are two axes that
 # coincide by convention on the shipped GSTT/KCH roster, not by construction:
@@ -104,10 +107,12 @@ load-omop-vocab: fetch-vocab-core
 TRUST_INDEX ?= 1
 SOURCE_TRUST ?= $(TRUST_INDEX)
 PROJECTS ?= cxr_project spleen_project
+# OMOP_DATA_DIR_TRUST_<N> arrives absolute from trust/Makefile; the default is this
+# directory's own volumes tree (direct use). Either way the marker lands beside db_data.
 SEED_DATA_DIR = $(or $(OMOP_DATA_DIR_TRUST_$(TRUST_INDEX)),volumes/Trust_$(TRUST_INDEX)/db_data)
 SEED_MARKER = $(dir $(SEED_DATA_DIR)).seeded
 
-seed-omop: fetch-dataset
+seed-omop: fetch-dataset load-dicom-vocab
 	OMOP_DB_PORT=$(OMOP_DB_PORT) uv run python -m omop_db_tools.import_tables \
 		--trust-index $(SOURCE_TRUST) --num-trusts $(NUM_TRUSTS) --partition $(PARTITION) \
 		--clean projects --projects $(PROJECTS) --data-dir data/canonical
@@ -168,9 +173,9 @@ build:
 
 # Docker creates a missing bind-mount source itself — as root — so a build stack
 # started before anything else touched volumes/ leaves volumes/ and
-# volumes/Trust_<N>/ root-owned, and update_omop_data.sh, which downloads its
-# archives and writes its per-trust markers into volumes/, then fails with
-# "Permission denied". Create the sources as the invoking user first; postgres
+# volumes/Trust_<N>/ root-owned, and seed-omop, which writes its per-trust marker
+# beside db_data, then fails with "Permission denied". Create the sources as the
+# invoking user first; postgres
 # still chowns db_data itself to uid 999 at init, only the parents need to be
 # ours. A parent we cannot write to fails loudly here rather than one target
 # later, with the fix spelled out.
@@ -285,28 +290,6 @@ apply-constraints: check-num-trusts check-build-env $(addprefix apply-constraint
 apply-constraints-trust-%:
 	@echo "🔗 Applying OMOP CDM constraints (trust $*)..."
 	$(build_compose) exec -T omop-db-trust$* psql -v ON_ERROR_STOP=1 -U $(OMOP_POSTGRES_USER) -d $(OMOP_POSTGRES_DB) -f /flip/omop/constraints.sql
-
-# Produce the publishable vocab-free pgdata tarballs (README "Populating"):
-# run the pipeline with `make populate CORE_VOCAB=0` (and WITHOUT
-# apply-constraints — the FKs reference the absent vocab), then export each
-# populated volume. Tar runs in a root container because the pgdata trees are
-# uid-999-owned; the archive root is the db_data CONTENTS, matching what
-# update_omop_data.sh extracts. The archive name carries no version: the
-# version is the tag `make -C trust publish-trust-data VERSION=…` puts on the
-# commit that uploads it.
-
-export-pgdata: check-num-trusts $(addprefix export-pgdata-trust-,$(shell seq 1 $(NUM_TRUSTS)))
-
-# The tar runs as root because postgres owns the data tree (uid 999, mode 700);
-# the archive is handed back to the invoking user before the container exits,
-# otherwise it leaves a root-owned file in dist/ that the user can neither
-# overwrite on the next export nor delete.
-export-pgdata-trust-%:
-	@mkdir -p dist
-	docker run --rm -v "$$(pwd)/volumes/Trust_$*/db_data:/d:ro" -v "$$(pwd)/dist:/out" alpine \
-		sh -c 'tar -czf "/out/trust$*_pgdata.tar" -C /d . \
-			&& chown $(shell id -u):$(shell id -g) "/out/trust$*_pgdata.tar"'
-	@echo "📦 dist/trust$*_pgdata.tar"
 
 # Push the already-built image to GHCR. Do `docker login ghcr.io` first if
 # needed. Interactive confirmation: OMOP_DB_TAG defaults to :latest here, which

@@ -282,23 +282,21 @@ deterministically split across however many mock Trusts are stood up.
 Getting the data
 ================
 
-Dev stacks do not build the database — they download a ready-populated PostgreSQL data volume per
-Trust from the same public dataset, roughly 11 MB each, at
-``https://huggingface.co/datasets/aicentreflip/trust-data/resolve/<version>/trust<N>/trust<N>_pgdata.tar``
-(gzip-compressed despite the ``.tar`` name). There is one copy of each archive; a data version is a
-git tag on the dataset, pinned by ``trust/.data_version`` (one pin for OMOP and Orthanc together), and
-the download is anonymous — no AWS credentials. Bringing a Trust up syncs it automatically; to do it
-by hand:
+Dev stacks do not build the database — the container initialises an empty schema on first start and
+the Trust's slice of the mock projects is then seeded into it from the canonical per-project tables at
+``https://huggingface.co/datasets/aicentreflip/trust-data/resolve/<version>/omop-csv/<project>/``.
+There is one copy of each table; a data version is a git tag on the dataset, pinned by
+``trust/.data_version`` (one pin for OMOP and Orthanc together), and the download is anonymous — no
+AWS credentials. Bringing a Trust up seeds it automatically and a later start finds the seeded volume
+in place; to run the step by hand:
 
 .. code-block:: bash
 
-   make -C trust update-omop-data            # both dev Trusts
-   make -C trust update-omop-data TRUST=1    # Trust_1 (GSTT) only
+   make -C trust ensure-seeded KIT=GSTT             # seed unless already seeded at this version
+   make -C trust seed KIT=GSTT PROJECTS="…"         # load further published projects
 
-The canonical CSVs behind those volumes live under ``omop-csv/<project>/`` in the same dataset, at
-the same tag. Every
-row carries a ``source_trust`` column, and standing up N Trusts is a deterministic split of that one
-dataset — see ``trust/omop-db/README.md`` for the partition modes and for rebuilding the volumes.
+Every row carries a ``source_trust`` column, and standing up N Trusts is a deterministic split of that
+one dataset — see ``trust/omop-db/README.md`` for the partition modes.
 
 Seeding the vocabulary
 ======================
