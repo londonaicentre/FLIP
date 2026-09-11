@@ -118,3 +118,12 @@ def test_ssm_handoff_publishes_nlb_dns_not_alb_dns():
     assert "/flip/networking/alb_dns_name" not in stripped
     assert "/flip/networking/web_nlb_dns_name" in stripped
     assert 'resource "aws_security_group_rule" "alb_ingress_web_from_networking"' not in stripped
+
+
+def test_lza_only_resources_are_count_gated():
+    for header in (
+        'resource "aws_security_group_rule" "ecs_flip_api_ingress_internal_nlb"',
+        'resource "aws_ssm_parameter" "lza_web_nlb_dns_name"',
+    ):
+        block = _strip_comments(_block(FL_INGRESS_LZA_TF, header))
+        assert re.search(r"count\s*=\s*var\.lza_managed_network \? 1 : 0", block), header

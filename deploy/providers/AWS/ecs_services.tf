@@ -99,9 +99,14 @@ resource "aws_ecs_service" "flip_api" {
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
 
+  # module.fl_server_internal_nlb: on LZA the flip-api TG is only "associated with a load
+  # balancer" once the NLB's web-listener exists; without this the service update can race it
+  # (InvalidParameterException). The legacy guard is the listener rule, which is count-0 on
+  # LZA. On legacy the module creates nothing, so the plan is unchanged.
   depends_on = [
     aws_ecs_task_definition.flip_api,
     aws_lb_listener_rule.api_routing,
+    module.fl_server_internal_nlb,
   ]
 }
 

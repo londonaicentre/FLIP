@@ -159,6 +159,8 @@ module "fl_server_internal_nlb" {
     # ISSUED cert is impossible without a hosted zone (var.manage_dns=false),
     # so the listener is plain TCP until the zone lands, then TLS on the
     # DNS-validated cert. Same port either way so the relay never changes.
+    # Flipping to TLS is a cross-repo step: the relay is TCP passthrough, so the TLS client becomes CloudFront's VPC origin in the networking
+    # account (aicentre-lza-iac ingress_web.tf), which must switch to https-only with an origin host matching this cert's SAN at the same time.
     "web-listener" = {
       port            = var.ALB_HTTPS_PORT
       protocol        = var.manage_dns ? "TLS" : "TCP"
