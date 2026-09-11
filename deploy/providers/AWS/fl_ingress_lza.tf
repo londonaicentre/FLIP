@@ -24,11 +24,13 @@
 #        its per-subnet IPs are assigned (not discovered) via subnet_mapping,
 #        so the networking account registers them once, with no sync
 #        machinery.
-#   Web: CloudFront + WAF → relay NLB (networking account, target-synced to
-#        this stack's ALB IPs) → firewall → TGW → module.alb. The ALB itself
-#        is unchanged; the only LZA addition is the ingress rule below —
-#        legacy admits CloudFront via the SG-drift stack, which is gated off
-#        here.
+#   Web: CloudFront + WAF → relay NLB (networking account) → firewall → TGW
+#        → the SAME internal NLB below on :{ALB_HTTPS_PORT} → flip-api ECS task.
+#        The ALB (module.alb) is gated off on LZA: ALB IPs rotate, which forced
+#        the networking account to run a target-sync Lambda per environment;
+#        the NLB's assigned IPs do not, so the relay registers them once —
+#        the FL leg's contract, now shared by both legs. Legacy prod/stag keep
+#        the ALB unchanged.
 #
 # Everything in this file is inert on legacy prod/stag (count/create-gated on
 # var.lza_managed_network, list arguments emptied) — the legacy plan is
@@ -99,6 +101,14 @@ module "fl_internal_nlb_security_group" {
       port        = var.FL_SERVER_PORT
       description = "FL TCP from the networking-account edge NLB path and VPC-internal callers"
       cidr_blocks = concat([local.vpc_cidr_block], var.networking_ingress_cidrs)
+    },
+    {
+      # Web leg: the networking-account relay NLB (CloudFront VPC origin →
+      # relay → firewall → TGW) dials the internal NLB's web listener. Same
+      # sources as the FL rule; the VPC CIDR keeps in-VPC probe curls working.
+      port        = var.ALB_HTTPS_PORT
+      description = "Web from the networking-account relay NLB path and VPC-internal callers"
+      cidr_blocks = concat([local.vpc_cidr_block], var.networking_ingress_cidrs)
     }
   ]
 }
@@ -143,6 +153,24 @@ module "fl_server_internal_nlb" {
         target_group_arn = var.lza_managed_network ? aws_lb_target_group.ecs_fl_server_tcp_lza[0].arn : null
       }
     }
+
+    # Web leg (FLIP#749): CloudFront's relay dials this listener; the ALB is
+    # gated off on LZA. Protocol mirrors the ALB's zone-less gating — an
+    # ISSUED cert is impossible without a hosted zone (var.manage_dns=false),
+    # so the listener is plain TCP until the zone lands, then TLS on the
+    # DNS-validated cert. Same port either way so the relay never changes.
+    # Flipping to TLS is a cross-repo step: the relay is TCP passthrough, so the TLS client becomes CloudFront's VPC
+    # origin in the networking account (aicentre-lza-iac ingress_web.tf), which must switch to https-only with an
+    # origin host matching this cert's SAN at the same time.
+    "web-listener" = {
+      port            = var.ALB_HTTPS_PORT
+      protocol        = var.manage_dns ? "TLS" : "TCP"
+      certificate_arn = var.manage_dns ? aws_acm_certificate.flip[0].arn : null
+      ssl_policy      = var.manage_dns ? "ELBSecurityPolicy-TLS13-1-3-2021-06" : null
+      forward = {
+        target_group_arn = var.lza_managed_network ? aws_lb_target_group.ecs_flip_api_lza[0].arn : null
+      }
+    }
   }
 
   target_groups = {}
@@ -176,21 +204,37 @@ resource "aws_lb_target_group" "ecs_fl_server_tcp_lza" {
   deregistration_delay = 30
 }
 
-# Web leg: admit the networking-account relay (CloudFront VPC origin →
-# relay NLB → firewall → TGW) onto the ALB's main listener. Legacy admits
-# CloudFront through the SG-drift stack instead; empty ingress CIDRs create
-# nothing, so the stack still applies standalone.
-resource "aws_security_group_rule" "alb_ingress_web_from_networking" {
+# LZA web leg counterpart of aws_lb_target_group.ecs_flip_api (main.tf): the
+# internal NLB forwards its web listener here. NLB target groups are TCP, but
+# the health check is HTTP on the API's own liveness route so an unhealthy
+# task is pulled exactly as the ALB did. Registered by the ECS service's
+# load_balancer block (ecs_services.tf), never by Terraform.
+resource "aws_lb_target_group" "ecs_flip_api_lza" {
   count       = var.lza_managed_network ? 1 : 0
-  type        = "ingress"
-  description = "Web from the networking-account relay NLB path (CloudFront VPC origin) and VPC-internal callers"
-  protocol    = "tcp"
-  from_port   = var.ALB_HTTPS_PORT
-  to_port     = var.ALB_HTTPS_PORT
-  # VPC CIDR: in-VPC verification (probe curls) and internal callers -- the
-  # same shape as the FL NLB SG above. The networking CIDRs are the relay path.
-  cidr_blocks       = concat([local.vpc_cidr_block], var.networking_ingress_cidrs)
-  security_group_id = module.alb_security_group.security_group.id
+  name        = "ecs-flip-api-lza"
+  port        = local.api_container_port
+  protocol    = "TCP"
+  target_type = "ip"
+  vpc_id      = local.vpc_id
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  health_check {
+    enabled             = true
+    protocol            = "HTTP"
+    path                = "/api/health"
+    port                = "traffic-port"
+    matcher             = "200"
+    healthy_threshold   = 3
+    unhealthy_threshold = 3
+    interval            = 30
+  }
+
+  # Same drain as the ALB TG: long enough for in-flight requests, short
+  # enough not to stretch every ECS rollout.
+  deregistration_delay = 30
 }
 
 # SSM handoff parameters — the contract with the networking account's edge
@@ -200,7 +244,7 @@ resource "aws_ssm_parameter" "lza_fl_nlb_private_ips" {
   # checkov:skip=CKV2_AWS_34:non-secret networking value read CROSS-ACCOUNT by the networking account's edge stack (aicentre-lza-iac) — an AWS-managed CMK cannot be decrypted from another account
   count       = var.lza_managed_network ? 1 : 0
   name        = "/flip/networking/fl_nlb_private_ips"
-  description = "Internal FL NLB static private IPs (comma-separated, assigned via subnet_mapping so they are stable by construction; TGW-reachable AZs only) - registered as IP targets on the networking account's edge NLB FL listener"
+  description = "Internal NLB static private IPs (comma-separated, assigned via subnet_mapping so they are stable by construction; TGW-reachable AZs only) - registered ONCE as IP targets on the networking account's edge NLB FL listener AND its web relay target group"
   type        = "StringList"
   value       = join(",", local.lza_fl_nlb_published_ips)
 }
@@ -214,20 +258,20 @@ resource "aws_ssm_parameter" "lza_fl_port" {
   value       = tostring(var.FL_SERVER_PORT)
 }
 
-resource "aws_ssm_parameter" "lza_alb_dns_name" {
+resource "aws_ssm_parameter" "lza_web_nlb_dns_name" {
   # checkov:skip=CKV2_AWS_34:non-secret networking value read CROSS-ACCOUNT by the networking account's edge stack (aicentre-lza-iac) — an AWS-managed CMK cannot be decrypted from another account
   count       = var.lza_managed_network ? 1 : 0
-  name        = "/flip/networking/alb_dns_name"
-  description = "Internal web ALB DNS name - the networking account's target-sync Lambda resolves this on a cadence to keep the web relay NLB targets current (ALB IPs rotate)"
+  name        = "/flip/networking/web_nlb_dns_name"
+  description = "Internal NLB DNS name - informational (in-VPC verification, e.g. curl from a task); the networking-account edge does not consume it - it targets the static IPs in fl_nlb_private_ips"
   type        = "String"
-  value       = module.alb.dns_name
+  value       = module.fl_server_internal_nlb.dns_name
 }
 
 resource "aws_ssm_parameter" "lza_web_port" {
   # checkov:skip=CKV2_AWS_34:non-secret networking value read CROSS-ACCOUNT by the networking account's edge stack (aicentre-lza-iac) — an AWS-managed CMK cannot be decrypted from another account
   count       = var.lza_managed_network ? 1 : 0
   name        = "/flip/networking/web_port"
-  description = "Workload-side web ingress port (the ALB's main listener; plain HTTP on the zone-less bring-up) - the relay NLB's target port on the networking side"
+  description = "Workload-side web ingress port (the internal NLB's web listener; plain TCP on the zone-less bring-up, TLS once manage_dns is true) - the relay NLB's target port on the networking side"
   type        = "String"
   value       = tostring(var.ALB_HTTPS_PORT)
 }
@@ -248,6 +292,21 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_internal_nlb" {
   protocol                 = "tcp"
   source_security_group_id = module.fl_internal_nlb_security_group[0].security_group.id
   security_group_id        = aws_security_group.ecs_fl_server.id
+}
+
+# Same admission for flip-api: the internal NLB's web listener (relayed
+# CloudFront traffic + its HTTP health checks) reaches the task on the API
+# port. Without it the TG parks the task unhealthy exactly as the fl-server
+# rule above describes.
+resource "aws_security_group_rule" "ecs_flip_api_ingress_internal_nlb" {
+  count                    = var.lza_managed_network ? 1 : 0
+  type                     = "ingress"
+  description              = "HTTP from the internal NLB web listener (edge-relayed CloudFront traffic + health checks)"
+  from_port                = local.api_container_port
+  to_port                  = local.api_container_port
+  protocol                 = "tcp"
+  source_security_group_id = module.fl_internal_nlb_security_group[0].security_group.id
+  security_group_id        = aws_security_group.ecs_flip_api.id
 }
 
 # The NVFLARE admin kit (provisioned from net-1_project_prod.yml) targets the

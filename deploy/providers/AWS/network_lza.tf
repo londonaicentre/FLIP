@@ -29,7 +29,7 @@
 #   - app subnets (<vpc>-app-*): default-route 0.0.0.0/0 to the Transit
 #     Gateway, so they reach the central interface endpoints in the Network
 #     account. Anything that talks to AWS APIs, pulls images, or terminates
-#     traffic lives here: ECS tasks, the internal ALB, the RDS Proxy, EFS mount
+#     traffic lives here: ECS tasks, the internal NLB, the RDS Proxy, EFS mount
 #     targets, and the EC2 hosts.
 #   - data subnets (<vpc>-data-*): local routes only — fully isolated (same-VPC
 #     traffic works; no TGW, endpoint, or internet reach). Only the RDS

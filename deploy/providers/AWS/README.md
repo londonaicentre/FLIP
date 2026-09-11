@@ -769,7 +769,7 @@ fixed per account by design.
   override the name via `LZA_VPC_NAME`). Subnet lookups match ALL `-app-*` / `-data-*` hits, so subnets the platform
   team adds later — as the second AZ's were — appear on the next plan with no code change;
 - **places by connectivity need**: RDS instances go to the isolated **data** subnets (local routes only — nothing
-  there can reach TGW/endpoints, and RDS doesn't need to); ECS tasks, the internal ALB, the RDS Proxy, EFS mount
+  there can reach TGW/endpoints, and RDS doesn't need to); ECS tasks, the internal NLB, the RDS Proxy, EFS mount
   targets and the EC2 hosts go to the TGW-routed **app** subnets (they need the central endpoints / image pulls);
 - **gates off**: the SG-drift CloudTrail→EventBridge→Lambda stack (`security.tf` — the org baseline of Control Tower
   org trail, GuardDuty, Security Hub and Config covers it), the public FL-server NLB + target group + DNS record +
@@ -777,18 +777,21 @@ fixed per account by design.
   distribution + its VPC origin (the `GRCLOUDFRONTVPCORIGIN` SCP denies VPC origins by design — a VPC origin dials
   the ALB inside the VPC, bypassing the TGW + central firewall). Ingress instead rides the networking account's
   two-tier edge (proven end-to-end in FLIP#829/PR#830 and now serving the real stack): the edge CloudFront serves
-  the UI bucket via cross-account OAC and relays `/api/*` to the internal ALB, and the edge NLB forwards FL traffic
-  over TGW to the internal FL NLB in `fl_ingress_lza.tf` (static per-subnet IPs the edge registers once as targets),
-  which fronts `fl-server-net-1`.
+  the UI bucket via cross-account OAC and relays `/api/*` to the internal NLB's `:443` web listener, and the edge
+  NLB forwards FL traffic over TGW to the same internal NLB's `:8002` listener (`fl_ingress_lza.tf`; static
+  per-subnet IPs the edge registers once as targets for BOTH legs — no target-sync Lambda). The ALB (`module.alb`)
+  is therefore gated off on LZA too. Behavioural deltas versus the ALB on LZA: no `/api`-only path filter or
+  default 404 at the load balancer (CloudFront's behaviours and WAF are the only L7 gate), no ALB-injected
+  `X-Forwarded-*` headers (flip-api reads none), and an NLB idle timeout of 350s rather than 60s.
 
-Everything else (ECS Fargate, RDS + Proxy, Cognito, S3 + CMK, Secrets Manager, SES, EFS, Cloud Map, internal ALB)
+Everything else (ECS Fargate, RDS + Proxy, Cognito, S3 + CMK, Secrets Manager, SES, EFS, Cloud Map)
 remains FLIP-managed exactly as on legacy prod; the legacy WAF/OAC/CloudFront-function components stay standing
 unused on LZA to keep legacy churn minimal.
 
 **Edge wiring is two-phase — by construction, not configuration.** The networking account's edge stack
 ([aicentre-lza-iac](https://github.com/londonaicentre/aicentre-lza-iac)) is built *from* this stack's outputs: the
-first workload `apply` publishes the `/flip/networking/*` SSM handoff params (FL NLB private IPs + port, ALB DNS
-name, web port) that the edge NLB and relay consume, so the workload account necessarily applies before the edge
+first workload `apply` publishes the `/flip/networking/*` SSM handoff params (NLB private IPs, FL port, web port,
+NLB DNS name) that the edge NLB and relay consume, so the workload account necessarily applies before the edge
 distribution exists. On that first apply `TF_VAR_lza_web_edge_domain` and `TF_VAR_lza_web_edge_distribution_arn`
 are still empty: the UI-bucket policy then grants no principal (fail-closed — the edge simply cannot read the
 bucket yet) and `local.ui_origin` is a placeholder. Once the edge stack is up, set both values in `.env.lza-prod`
