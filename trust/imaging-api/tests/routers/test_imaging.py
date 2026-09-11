@@ -206,3 +206,43 @@ def test_queue_image_import_request_not_found(client):
 
     assert response.status_code == 404
     assert "No studies found on PACS with the study instance UID(s) provided" in response.json()["detail"]
+
+
+def test_study_parses_without_type_2_attributes():
+    """PatientSex and ReferringPhysicianName are DICOM Type 2 and may be absent.
+
+    Every de-identified TCGA whole-slide study omits both. Requiring them rejected the entire cohort
+    during the PACS query, surfacing only as QueueFailed=N with the actual cause buried in the log.
+    """
+    from imaging_api.routers.schemas import Study
+
+    study = Study.model_validate({
+        "studyInstanceUid": "2.25.1",
+        "studyDescription": "Histopathology",
+        "accessionNumber": "TCGA-A7-A0CH",
+        "studyDate": "2010-04-23",
+        "modalitiesInStudy": ["ANN", "SM"],
+        "patient": {"id": "TCGA-A7-A0CH", "name": "TCGA-A7-A0CH"},
+    })
+
+    assert study.accession_number == "TCGA-A7-A0CH"
+    assert study.referring_physician_name == ""
+    assert study.patient.sex == ""
+
+
+def test_study_still_carries_the_attributes_when_present():
+    """Relaxing the requirement must not stop the values being read when a PACS does send them."""
+    from imaging_api.routers.schemas import Study
+
+    study = Study.model_validate({
+        "studyInstanceUid": "2.25.1",
+        "studyDescription": "CT Chest",
+        "accessionNumber": "ACC1",
+        "studyDate": "2024-01-01",
+        "modalitiesInStudy": ["CT"],
+        "referringPhysicianName": "Dr Smith",
+        "patient": {"id": "P1", "name": "Patient One", "sex": "F"},
+    })
+
+    assert study.referring_physician_name == "Dr Smith"
+    assert study.patient.sex == "F"

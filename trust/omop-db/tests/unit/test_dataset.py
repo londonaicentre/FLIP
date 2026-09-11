@@ -310,13 +310,15 @@ class TestFetchCanonical:
         assert seen == [canonical_table_url("20260901", "spleen_project", t) for t in CANONICAL_TABLES]
 
     def test_optional_404_skipped_required_fetched(self, tmp_path, monkeypatch):
-        required = ["person", "procedure_occurrence", "visit_occurrence", "image_occurrence", "image_feature"]
+        required = ["person", "procedure_occurrence", "visit_occurrence", "image_occurrence"]
         served = {f"/{table}.csv": self.CSV for table in required}
         monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen(served))
 
         fetch_canonical("v1", tmp_path, projects=["cxr_project"])
 
         assert (tmp_path / "cxr_project" / "person.csv").read_bytes() == self.CSV
+        # A project whose labels live in XNAT publishes no image_feature (the pathology project).
+        assert not (tmp_path / "cxr_project" / "image_feature.csv").exists()
         assert not (tmp_path / "cxr_project" / "measurement.csv").exists()
         assert not (tmp_path / "cxr_project" / "observation.csv").exists()
 

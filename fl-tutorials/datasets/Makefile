@@ -42,7 +42,9 @@ SPLEEN_UV := uv run --project spleen
 
 .PHONY: download-xray-data download-spleen-data download-spleen-msd-data \
 	download-spleen-flip-format-data download-arkplus-finetuning-data \
-	download-arkplus-eval-data upload-spleen-labels \
+	download-arkplus-eval-data upload-spleen-labels download-idc-pathology-data \
+	fetch-idc-pathology-manifest build-idc-pathology-omop verify-idc-pathology-omop-tables \
+	reproduce-idc-pathology-omop seed-idc-pathology upload-idc-pathology-annotations \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
 	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
 	reproduce-spleen-omop \
@@ -116,6 +118,96 @@ download-arkplus-eval-data:
 		--label hold-out \
 		--next-step "make -C fl-tutorials run-tutorial TUTORIAL=arkplus_baseline_classification_evaluation (or arkplus_multimodel_classification_evaluation)"
 
+# NCI Imaging Data Commons digital pathology: DICOM Slide Microscopy whole-slide images plus their
+# Pan-Cancer-Nuclei-Seg bulk annotations, partitioned into FLIP sites by TCGA tissue source site.
+#
+# Downloads straight from IDC's public buckets -- no credentials, and no DICOM is re-hosted anywhere.
+# SLIDES_PER_SITE and SITES tune the subset; the defaults pull ~6.4 GB (24 slides, 12 per site, plus their
+# annotations). The size cap matters because base-resolution instances in this collection run to 3 GB each
+# (median ~890 MB); the default sites are the two with the most slides under it. Twelve per site rather
+# than five because a trust releases no row-level data for a cohort below COHORT_QUERY_THRESHOLD (10).
+IDC_SITES ?= A8,A7
+IDC_SLIDES_PER_SITE ?= 12
+IDC_MAX_SLIDE_MB ?= 400
+
+# The slide selection is a lockfile, and it is published rather than committed: it lives on
+# aicentreflip/trust-data at omop-csv/pathology_project/source/manifest.csv -- where the cxr project
+# keeps the metadata table its OMOP export was built from -- at the data version trust/.data_version
+# pins, and is fetched into the gitignored data root. So every developer downloads the same slides
+# even as IDC issues new index releases, and the repository carries no data file. IDC_RESOLVE=1
+# re-selects instead, writing a fresh manifest to the same place; that goes out as a NEW data version
+# (publish-trust-data, then bump the pin), which is the review point for a dataset change.
+IDC_MANIFEST = $(DATA_DIR)/idc_pathology/manifest.csv
+IDC_MANIFEST_URL = $(HF_TRUST_DATA_BASE)/omop-csv/pathology_project/source/manifest.csv
+
+fetch-idc-pathology-manifest:
+	@mkdir -p $(dir $(IDC_MANIFEST)) && curl -fsSL "$(IDC_MANIFEST_URL)" -o $(IDC_MANIFEST)
+	@echo "✅ manifest at $(abspath $(IDC_MANIFEST)) (revision $(TRUST_DATA_REVISION))"
+
+download-idc-pathology-data:
+	@$(if $(IDC_RESOLVE),:,$(MAKE) --no-print-directory fetch-idc-pathology-manifest)
+	@uv run --no-project --with idc-index --with pandas python idc_pathology/prepare_idc_pathology.py \
+		$(if $(IDC_RESOLVE),--resolve --sites $(IDC_SITES) --slides-per-site $(IDC_SLIDES_PER_SITE) \
+			--max-slide-mb $(IDC_MAX_SLIDE_MB) --manifest-out $(IDC_MANIFEST),--manifest $(IDC_MANIFEST)) \
+		--out-dir $(DATA_DIR)/idc_pathology
+	@$(MAKE) --no-print-directory build-idc-pathology-omop
+	@echo ""
+	@echo "Next step: make -C fl-tutorials run-tutorial TUTORIAL=idc_pathology_nuclei_detection_evaluation"
+
+# Manifest -> omop/<trust>/pathology_project/*.csv, the same per-trust layout the spleen and cxr
+# chains write (gitignored; verified against the published export, never committed). Runs from
+# fl-tutorials/ like the other chains so omop/ lands in the one place the gate reads. The builder is
+# deterministic -- same manifest in, byte-identical tables out -- which is what the gate certifies.
+build-idc-pathology-omop:
+	@cd .. && uv run --no-project --with pandas python datasets/idc_pathology/build_omop_project.py \
+		--manifest data/idc_pathology/manifest.csv --out omop
+
+# Diff the generated tables against the published export for the pinned data version. Same gate
+# script as spleen and cxr, selected by --project; tables a project does not publish are skipped.
+verify-idc-pathology-omop-tables:
+	@cd .. && uv run --no-project --with pandas python datasets/utils/verify_omop_tables.py \
+		--project pathology_project --revision $(TRUST_DATA_REVISION)
+
+# The whole reproducible path in one command: fetch the published manifest, derive, verify. Needs no
+# slide download.
+reproduce-idc-pathology-omop: fetch-idc-pathology-manifest build-idc-pathology-omop verify-idc-pathology-omop-tables
+
+# Seed the pathology slides and their OMOP rows into RUNNING dev trusts, so the tutorial can be
+# driven through the platform (cohort query -> imaging pull -> XNAT -> viewer) rather than only in
+# the simulator. Additive on purpose: update-orthanc-data / update-omop-data replace a trust's whole
+# data directory from a prepared tarball and cannot add to a live one.
+#
+# Two halves, keyed on the same published manifest at the same tag so they agree by construction:
+# - OMOP rows: the platform's own seed pipeline (make -C trust seed-omop, FLIP#1101), which fetches
+#   the published omop-csv/pathology_project/ tables and loads each kit's source_trust slice. Its
+#   DICOM half (seed-orthanc) is NOT used -- it expects dicom/<project>.tar.gz on the dataset, and
+#   re-hosting the slides is exactly what this tutorial avoids.
+# - Slides: posted into each trust's Orthanc from the local IDC download by seed_slides.py.
+#
+# IDC_KITS names the kits seed-omop runs for; IDC_TRUSTS is "<n>=<orthanc-url>[,<user>:<pass>]" per
+# trust, defaulting to the shipped dev roster's published ports. Credentials come from the kit
+# files, which are gitignored, so they are read at run time rather than baked in here.
+IDC_KITS ?= GSTT KCH
+IDC_TRUST_1 ?= 1=http://127.0.0.1:8042,$(ORTHANC_AUTH_1)
+IDC_TRUST_2 ?= 2=http://127.0.0.1:8044,$(ORTHANC_AUTH_2)
+IDC_TRUSTS ?= $(IDC_TRUST_1) $(IDC_TRUST_2)
+
+# Pull each value out of its kit file at expansion time; a missing kit yields an empty string and the
+# seeder then fails on connect rather than seeding the wrong place.
+kit_value = $(shell sed -n 's/^$(2)=//p' ../../trust/.env.$(1).development 2>/dev/null | head -1)
+ORTHANC_AUTH_1 ?= $(call kit_value,GSTT,ORTHANC_USERNAME):$(call kit_value,GSTT,ORTHANC_PASSWORD)
+ORTHANC_AUTH_2 ?= $(call kit_value,KCH,ORTHANC_USERNAME):$(call kit_value,KCH,ORTHANC_PASSWORD)
+
+seed-idc-pathology: fetch-idc-pathology-manifest
+	@$(if $(DRY_RUN),echo "⏭️  DRY_RUN=1 -- skipping the OMOP half (make -C trust seed-omop has no dry run)",\
+		for kit in $(IDC_KITS); do \
+			$(MAKE) -C ../../trust seed-omop KIT=$$kit PROJECTS=pathology_project || exit 1; \
+		done)
+	@uv run --no-project --with requests python idc_pathology/seed_slides.py \
+		--manifest $(IDC_MANIFEST) \
+		$(foreach t,$(IDC_TRUSTS),--trust "$(t)") \
+		$(if $(DRY_RUN),--dry-run)
+
 # Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT, so the spleen
 # apps find a label_*.nii.gz beside each pulled input_*.nii.gz. Needs NUM_CASES=41 on the MSD
 # download above to cover every mapped accession.
@@ -133,8 +225,9 @@ download-arkplus-eval-data:
 # It runs via `uv run --no-project --with <flip-utils>` rather than spleen/'s env, so uploading
 # labels never drags in the simulator's MONAI/torch stack.
 SPLEEN_LABELS_DIR ?= $(abspath $(if $(filter flower,$(FL_BACKEND)),$(DATA_DIR)/spleen/accession-resources,$(DATA_DIR)/spleen/images))
-# upload-spleen-labels runs against the in-tree flip-utils, not the PyPI release, so the enrichment
-# CLI always matches this checkout (flip.xnat may be newer here than the last published version).
+# The enrichment uploaders run against the in-tree flip-utils, not the PyPI release, so the
+# enrichment CLI always matches this checkout (flip.xnat may be newer here than the last
+# published version). Shared by upload-spleen-labels and upload-idc-pathology-annotations.
 FLIP_UTILS_DIR ?= $(abspath ../../flip-utils)
 
 upload-spleen-labels:
@@ -142,6 +235,32 @@ upload-spleen-labels:
 	@uv run --no-project --with $(FLIP_UTILS_DIR) python spleen/upload_spleen_labels_to_xnat.py \
 		--flip-project-id $(FLIP_PROJECT_ID) \
 		--labels-dir $(SPLEEN_LABELS_DIR) \
+		$(if $(TRUST),--trust $(TRUST)) \
+		$(foreach url,$(XNAT_URLS),--xnat-url $(url)) \
+		$(foreach cfg,$(XNAT_CREDENTIALS_FILES) $(XNAT_CREDENTIALS_FILE),--credentials-file $(cfg)) \
+		$(if $(OVERWRITE),--overwrite) \
+		$(if $(ALLOW_NO_OP),--allow-no-op) \
+		$(if $(REQUIRE_FULL_COVERAGE),--require-full-coverage) \
+		$(if $(DRY_RUN),--dry-run)
+
+# Data enrichment: upload the IDC pathology reference annotations into a real FLIP project's XNAT,
+# so the nuclei-detection evaluation app finds an annotation.dcm beside each pulled slide.
+#
+# This is NOT optional polish -- it is how the annotations reach a Trust at all. XNAT's DICOM
+# receiver (dcm4che 2.0.29) has no entry for the Microscopy Bulk Simple Annotations SOP class, so a
+# C-STORE of one is refused; and because slide and annotation share an accession, leaving the
+# annotation in Orthanc fails the whole study's C-MOVE and the slide never arrives either. So
+# seed-idc-pathology seeds slides only and this target delivers the annotations over XNAT's REST
+# API, which negotiates no presentation contexts. See idc_pathology/upload_annotations_to_xnat.py.
+#
+# Enrich EVERY Trust in the project: each Trust's XNAT holds only its own studies. Pass a
+# space-separated XNAT_URLS (credentials from XNAT_USER/XNAT_PASS), or repeat XNAT_CREDENTIALS_FILES
+# for per-Trust logins. TRUST=N filters the manifest by its site partition and is rarely needed.
+upload-idc-pathology-annotations:
+	@[ -n "$(FLIP_PROJECT_ID)" ] || (echo "❌  FLIP_PROJECT_ID is required. Usage: make upload-idc-pathology-annotations FLIP_PROJECT_ID=<uuid> [XNAT_URLS=\"http://host1 http://host2\"] [DRY_RUN=1]"; exit 1)
+	@uv run --no-project --with $(FLIP_UTILS_DIR) python idc_pathology/upload_annotations_to_xnat.py \
+		--flip-project-id $(FLIP_PROJECT_ID) \
+		--data-dir $(DATA_DIR)/idc_pathology \
 		$(if $(TRUST),--trust $(TRUST)) \
 		$(foreach url,$(XNAT_URLS),--xnat-url $(url)) \
 		$(foreach cfg,$(XNAT_CREDENTIALS_FILES) $(XNAT_CREDENTIALS_FILE),--credentials-file $(cfg)) \

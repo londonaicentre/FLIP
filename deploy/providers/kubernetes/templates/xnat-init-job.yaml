@@ -131,6 +131,15 @@ spec:
               value: {{ .Values.xnat.web.dicomPort | quote }}
             - name: XNAT_AETITLE
               value: {{ .Values.xnat.web.dicomAet | quote }}
+            # The port a *browser* opens, which is what siteUrl must carry (FLIP#993 split it from
+            # the DICOM receiver port above). configure-xnat.sh refuses to run without it and
+            # derives http://127.0.0.1:<port> — right for a port-forward onto the service port. The
+            # OHIF viewer fetches its DICOMweb tiles from the user's machine, so a trust fronting
+            # XNAT with an ingress sets xnat.web.siteUrl instead; empty keeps the derived URL.
+            - name: XNAT_WEB_PORT
+              value: {{ .Values.xnat.web.service.port | quote }}
+            - name: XNAT_SITE_URL
+              value: {{ .Values.xnat.web.siteUrl | quote }}
             # Upstream PACS. Defaults are the mocked Orthanc; a real trust overrides them.
             - name: PACS_HOST
               value: {{ .Values.pacs.host | quote }}

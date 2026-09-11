@@ -190,6 +190,33 @@ Two shape differences from spleen, both inherited from what the dataset is:
   outside every project's reserved block in `utils/omop_ids.py`. Nothing collides today, but do not
   assume that band is reserved. It is annotated at the line that builds it.
 
+### IDC pathology: from a published slide manifest
+
+[`idc_pathology/`](idc_pathology/) is the third shape. Its imaging is neither generated in-tree
+(spleen) nor private (cxr) but **public and fetched on demand** from the NCI Imaging Data Commons,
+so nothing of it is re-hosted on `aicentreflip/trust-data` — there is no
+`dicom/pathology_project.tar.gz` and no snapshot. What is published is the fixed input and the
+export it yields, in the cxr shape: `omop-csv/pathology_project/source/manifest.csv` (the lockfile
+naming every selected slide, its UIDs, its site and the IDC index version) and the four tables
+`build_omop_project.py` derives from it, first published as tag `20260911`. No `image_feature`:
+the labels are nuclei annotations that reach a trust's XNAT by data enrichment, not OMOP rows.
+
+```bash
+make -C fl-tutorials fetch-idc-pathology-manifest      # the published canonical input -> data/idc_pathology/
+make -C fl-tutorials build-idc-pathology-omop          # -> omop/<trust>/pathology_project/*.csv
+make -C fl-tutorials verify-idc-pathology-omop-tables  # faithfulness gate
+make -C fl-tutorials reproduce-idc-pathology-omop      # the three above, chained
+```
+
+`download-idc-pathology-data` runs the fetch itself before pulling the slides, so every developer
+downloads the same subset. Re-selecting (`IDC_RESOLVE=1`) writes a fresh manifest to the same
+gitignored place and is published as a **new data version** rather than committed: build the
+canonical tree from the per-trust output (`trust/omop-db`: `omop_db_tools.dataset build`), drop the
+manifest in as `pathology_project/source/manifest.csv`, `make -C trust publish-trust-data
+VERSION=<tag> OMOP_CSV=<tree>`, bump `trust/.data_version`, and re-run the gate. Seeding a running
+trust follows the same split: OMOP through `make -C trust seed-omop PROJECTS=pathology_project`,
+slides from the local IDC download (`seed-idc-pathology`).
+
 ### The shared contract
 
 [`utils/`](utils/) holds what every dataset's converter agrees on, and nothing that is a property
@@ -201,7 +228,7 @@ of one dataset:
 - `omop_mappings.py` — concept-ID mappings, plus the handful of scalar concept ids more than one
   converter uses.
 - `omop_ids.py` — the per-project surrogate-key blocks (`cxr_project` 1M, `spleen_project` 2M,
-  `prostate_project` 3M). All projects load into the same trust database, so these must not
+  `prostate_project` 3M, `pathology_project` 4M). All projects load into the same trust database, so these must not
   collide. `person_id` is deliberately *not* blocked: it derives from a random NHS number.
 - `verify_omop_tables.py` — the verification gate, shared because nothing in it is dataset-specific.
   `--project` selects which published export to diff against; tables a project does not publish are

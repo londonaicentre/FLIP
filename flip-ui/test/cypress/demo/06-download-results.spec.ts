@@ -30,18 +30,46 @@ describe("FLIP demo — download results", () => {
         demoVisit(`/project/${projectId}/model/${modelId}`);
         cy.getBySel("training-timeline", { timeout: 60000 }).should("exist");
         cy.getBySel("download-results-btn", { timeout: 120000 }).should("exist");
+        // The download button appears before /metrics and /logs have answered, so revealing on it
+        // alone films the dashboard mid-load: an empty "Any metrics sent during the run will show
+        // here" panel next to a spinning Live activity feed, held for several seconds. So wait for
+        // the run's own data to have arrived before revealing.
+        // A rendered log line is the signal, and the only one: a canvas proves nothing, because the
+        // chart mounts with axes and legend before /metrics answers -- as the comment that used to
+        // sit here said itself. Waiting on the canvas as well was therefore redundant for a run
+        // that has metrics, and wrong for one that has none: an evaluation job emits no metrics at
+        // all (the analytics bridge is wired into the training recipes but not flip_eval_recipe, so
+        // nothing carries them to the hub), so the panel correctly renders "Any metrics sent during
+        // the run will show here" and no canvas ever appears. Waiting for one timed out after two
+        // minutes and failed the segment on a run that had completed and uploaded its results.
+        cy.getBySel("log-timestamp", { timeout: 120000 }).should("have.length.greaterThan", 0);
         revealDemo();
 
         cy.demoCaption("Training complete — results are uploaded from the FL network", 1200);
         cy.getBySel("training-timeline").should("be.visible");
         cy.demoPause(2000);
 
+        // Show the finished run the same way segment 5 shows the live one: every metric at once,
+        // per trust, rather than one plot the viewer has to click through. Conditional on the
+        // toggle existing, because a run that emitted no metrics renders the empty-state panel and
+        // no view switcher at all -- an unconditional click would fail the segment on a run that
+        // completed correctly.
+        cy.get("body").then(($body) => {
+            if ($body.find("[data-test=metrics-view-grid]").length === 0) {
+                return;
+            }
+            cy.demoCaption("Every metric from the completed run — each trust's own curve", 600);
+            cy.getBySel("metrics-view-grid").demoClick();
+            cy.getBySel("metrics-grid").should("be.visible");
+            cy.demoPause(4000);
+        });
+
         cy.demoCaption("Downloading the aggregated global model", 800);
         cy.getBySel("download-results-btn", { timeout: 120000 }).should("not.be.disabled");
         cy.getBySel("download-results-btn").demoClick();
         cy.demoPause(3500);
 
-        cy.demoCaption("A model trained across every hospital — while the data never left any of them", 500);
+        cy.demoCaption(requireEnv("DEMO_CLOSING_CAPTION"), 500);
         cy.demoPause(4000);
     });
 });
