@@ -470,6 +470,14 @@ loses its endpoint — XNAT is down, not merely mis-authenticating. Because the
 container lives only ~2 s per restart cycle, `kubectl exec` is not a reliable
 entry point.
 
+The reason is in the container's waiting-state message, not the event text —
+the `FailedPostStartHook` event says only `PostStartHook failed`:
+
+```bash
+kubectl describe pod <xnat-db-pod>
+# Containers -> xnat-db -> State/Last State -> Message: FATAL: role "postgres" does not exist
+```
+
 Recovery:
 
 1. Scale the StatefulSet to 0: `kubectl scale statefulset/<release>-xnat-db --replicas=0`
