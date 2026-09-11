@@ -19,9 +19,13 @@ RUN apt-get update && apt-get install -y gettext-base \
 # a locally-built :dev image is identical to CI's :stag. See fl-base/Dockerfile for
 # the full rationale; in short, this identity used to be the building developer's and
 # the dev composes reused it as runtime config, so published images and local ones
-# behaved differently. This image keeps running as `flip`: unlike fl-server and
-# fl-client it is not given a `user:` override, because it writes only its own
-# image-owned /app/admin/transfer and the FL_JOBS_DIR bind mount.
+# behaved differently. Whether the runtime uid is re-pointed depends on what the
+# compose bind-mounts: the deploy composes (deploy/compose.development.nvflare.yml)
+# give this image only the kit's read-only admin/local and admin/startup, so they
+# set no `user:` and it keeps running as `flip`; the standalone harness
+# (fl-services/nvflare/compose.dev.yml) also mounts the host-provisioned
+# admin/transfer, which fl-api writes, so there it runs as the host uid like
+# fl-server and fl-client (see scripts/tests/test_container_identity.py).
 ARG UID=1000
 ARG GID=1000
 ARG UNAME=flip
