@@ -43,6 +43,10 @@ services:
       POSTGRES_USER: ${OMOP_POSTGRES_USER}
       POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
       POSTGRES_DB: ${OMOP_POSTGRES_DB}
+      # Read by the image's init script on a FIRST start (empty data dir) to create the
+      # data_analyst_reader role data-access-api connects as; the same kit value that
+      # service receives. Without it the init aborts and the trust has no schema (FLIP#1187).
+      DATA_ACCESS_POSTGRES_PASSWORD: ${DATA_ACCESS_POSTGRES_PASSWORD}
     volumes:
       - ${OMOP_DATA_DIR:-/opt/flip/omop/db_data}:/var/lib/postgresql/data
 

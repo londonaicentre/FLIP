@@ -51,8 +51,8 @@ HF_TRUST_DATA_REVISION = os.environ.get("HF_TRUST_DATA_REVISION")
 """Override of the dataset revision to read the mapping at (a sha, ``main``, or another tag).
 
 Unset by default, which means the data-version tag pinned in ``trust/.data_version`` — the same
-pin ``trust/omop-db/update_omop_data.sh`` and ``trust/orthanc/update_orthanc_data.sh`` read, so the
-mock DICOMs, the pgdata and this mapping are all read at one revision of that one dataset.
+pin the trust seed pipeline (``omop_db_tools.dataset``, ``seed_orthanc.py``) reads, so the mock
+DICOMs, the OMOP tables and this mapping are all read at one revision of that one dataset.
 """
 
 MAPPING_CACHE_FILENAME = ".accession_map.csv"

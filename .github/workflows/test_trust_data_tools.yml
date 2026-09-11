@@ -12,10 +12,8 @@
 name: Trust - Data tools CI
 
 # The trust-level data tooling that has no service container: the PACS seeder
-# (trust/orthanc/seed_orthanc.py), the dataset publisher
-# (trust/publish_trust_data.py) and the .seeded guard that stops a data-version
-# bump discarding a seeded volume (trust/tests/test_seed_guard.sh, which drives
-# both update_*_data.sh against a sandbox with curl/tar/sudo stubbed).
+# (trust/orthanc/seed_orthanc.py) and the dataset publisher
+# (trust/publish_trust_data.py).
 # The scripts are PEP 723 with their own pytest suites; nothing here needs
 # Orthanc, Postgres or Hugging Face credentials.
 # Deliberately its own workflow rather than a job on "Trust - OMOP DB CI": the
@@ -29,9 +27,7 @@ on:
       - "trust/orthanc/publish_dicom.py"
       - "trust/orthanc/tests/**"
       - "trust/orthanc/Makefile"
-      - "trust/orthanc/update_orthanc_data.sh"
       - "trust/omop-db/Makefile"
-      - "trust/omop-db/update_omop_data.sh"
       - "trust/publish_trust_data.py"
       - "trust/tests/**"
       - "trust/Makefile"

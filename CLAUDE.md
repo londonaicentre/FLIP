@@ -323,24 +323,29 @@ make -C trust seed-trusts PROJECTS="spleen_project cxr_project"   # Seed the RUN
 make -C trust seed KIT=GSTT PROJECTS="…"   # one trust; seed-omop / seed-orthanc for one half
 ```
 
-**Trust data has two paths.** `make up` mounts pre-built snapshots (`update-omop-data` /
-`update-orthanc-data`, pinned by `trust/.data_version`) — a fixed two-project, two-trust cut.
-**Seeding** loads a chosen set of projects into a *running* trust instead: OMOP rows via
-`omop_db_tools.import_tables` and DICOMs via `trust/orthanc/seed_orthanc.py`, both selected by the
-same `source_trust` column of the published canonical tables, so a trust's OMOP rows and the studies
-in its PACS agree by construction. Same lifecycle as `load-omop-vocab`: one-time after `up-trusts`,
-idempotent, persists in the bind-mounted volumes until a `.data_version` bump — which the update
-scripts then refuse to apply over a seeded volume without `FORCE=1`. Adding a dataset means
-publishing its `omop-csv/<project>/` tables and `dicom/<project>.tar.gz`
-(`trust/orthanc/publish_dicom.py` verifies both agree before packaging), not a new pair of tarballs.
-The FL simulator (`make -C fl-tutorials run-tutorial`) is a third, separate path: LOCAL_DEV reads
-`fl-tutorials/data/` straight from disk and touches no trust service.
+**Trust data has one path: seeding (FLIP#1101/#1187).** `make up` starts each trust's omop-db and
+Orthanc on empty, pre-created volumes and then runs `make -C trust ensure-seeded`, which loads
+`PROJECTS` (default `cxr_project spleen_project`) from the published canonical tables at the pinned
+`trust/.data_version`: OMOP rows via `omop_db_tools.import_tables` (the DICOM vocabulary first,
+skipped if present) and DICOMs via `trust/orthanc/seed_orthanc.py`, both selected by the same
+`source_trust` column, so a trust's OMOP rows and the studies in its PACS agree by construction. Each
+half leaves a marker beside its store (`volumes/Trust_<N>/.seeded`, `orthanc/.orthanc-storage-trust<N>.seeded`)
+recording projects/partition/version; a matching marker means a later `up` fetches and uploads
+nothing and the volumes just persist on the host, a differing one (a `.data_version` bump, a changed
+`PROJECTS`) re-seeds those projects — rows replaced, studies cleared and re-uploaded. There is no
+`FORCE` and no snapshot: the pre-#1187 `trust<N>_pgdata.tar` / `trust<N>_orthanc_data.tar` volume
+tarballs, `update-*-data` scripts and `export-pgdata` are gone. The first bring-up on a fresh host
+posts ~2 GB of DICOM per trust through Orthanc's REST API (minutes); the OMOP half is seconds. The
+omop-db image's init scripts need `DATA_ACCESS_POSTGRES_PASSWORD` in the container env (compose
+passes it) to create the read-only role on that first start. Adding a dataset means publishing its
+`omop-csv/<project>/` tables and `dicom/<project>.tar.gz` (`trust/orthanc/publish_dicom.py` verifies
+both agree before packaging). The FL simulator (`make -C fl-tutorials run-tutorial`) is a separate
+path: LOCAL_DEV reads `fl-tutorials/data/` straight from disk and touches no trust service.
 
 **One copy of every artefact; a data version is a git tag.** `aicentreflip/trust-data` holds each
-file once, at an unversioned path on `main` (`trust<N>/trust<N>_pgdata.tar`,
-`trust<N>/trust<N>_orthanc_data.tar`, `omop-csv/<project>/`, `dicom/<project>.tar.gz`). A data
+file once, at an unversioned path on `main` (`omop-csv/<project>/`, `dicom/<project>.tar.gz`). A data
 version is a tag on that dataset, and `trust/.data_version` is the ONE pin, for OMOP and Orthanc
-together: every consumer (the two update scripts, `omop_db_tools.dataset`, `seed_orthanc.py`, the
+together: every consumer (`omop_db_tools.dataset`, `seed_orthanc.py`, the
 spleen uploader, Ansible, the Helm chart) fetches `resolve/<tag>/<path>`, so old versions stay
 reachable at their tags forever and are never duplicated. `HF_TRUST_DATA_REVISION` overrides the
 tag (`main` to work against content that is not tagged yet). Publishing a version is

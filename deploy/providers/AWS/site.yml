@@ -621,36 +621,56 @@
         -a fetch-config -m ec2
         -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
 
-- name: download and restore OMOP PGDATA on Trust EC2
+- name: seed the trust's OMOP database and Orthanc from the canonical dataset on Trust EC2
   hosts: trust_ec2
   become: true
-  tags: [data, omop]
+  tags: [data, seed]
+  # FLIP#1187: the stores start empty and are seeded, before the stack is deployed, exactly the
+  # way a dev host (`make -C trust ensure-seeded`) and the Kubernetes chart (the trust-seed hook)
+  # seed them — the one procedure in trust/seed_trust.sh, run here in uv's image against two
+  # throwaway containers on the host's data directories (the same pattern the vocabulary play
+  # below uses): omop-db initialises its schema and roles on the empty volume, Orthanc its index,
+  # and the seeder loads this trust's `source_trust` slice of each project through them. The
+  # loaders come from THIS checkout (copied over, like the vocabulary loader), so the host runs
+  # what the operator deploys. No snapshot, no S3: the data is fetched anonymously from Hugging
+  # Face at the pinned tag. Idempotent — a .data_version bump re-runs it and replaces only the
+  # listed projects' rows and studies.
   vars:
     omop_dir: "/opt/flip/omop"
-    # trust_num selects which trust's data package to load (e.g. "1" or "2").
-    # Pass via -e trust_num=2 for Trust_2 hosts. Defaults to "1" for
-    # backwards-compat with single-trust deployments.
+    orthanc_base_dir: "/opt/flip/orthanc"
+    orthanc_data_dir: "/opt/flip/orthanc/orthanc-storage"
+    seed_dir: "/opt/flip/seed"
     trust_num: "{{ trust_num | default('1') }}"
-    # trust_data_version is the tag from trust/.data_version, passed as an extra-var
-    # by the Makefile seed-trust-data target. One copy of each archive lives at an
-    # unversioned path on the dataset; the version is the revision the URL resolves at.
-    pgdata_trust_dir: "trust{{ trust_num }}"
-    pgdata_archive: "trust{{ trust_num }}_pgdata.tar"
-    # Mock data is fetched anonymously over HTTPS from the public Hugging Face
-    # dataset (no AWS CLI / credentials needed). Laid out per trust; archives are
-    # gzip-compressed tarballs named .tar (tar auto-detects gzip on extraction).
+    source_trust: "{{ source_trust | default(trust_num) }}"
+    num_trusts: "{{ num_trusts | default('2') }}"
+    seed_projects: "{{ seed_projects | default('cxr_project spleen_project', true) }}"
+    seed_orthanc: "{{ seed_orthanc | default(true) }}"
     hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
     hf_trust_data_revision: "{{ trust_data_hf_revision | default(trust_data_version) }}"
-    hf_base_url: "https://huggingface.co/datasets/{{ hf_trust_data_repo }}/resolve/{{ hf_trust_data_revision }}"
+    omop_db_image: "ghcr.io/londonaicentre/omop-db:{{ omop_db_tag | default('stag', true) }}"
+    orthanc_image: "ghcr.io/londonaicentre/orthanc:{{ omop_db_tag | default('stag', true) }}"
+    # uv's image, pinned by digest — the same one the Helm chart's trust-seed hook runs in.
+    uv_image: "ghcr.io/astral-sh/uv@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58"
+    seed_omop_port: "15499"
+    seed_orthanc_port: "15442"
+    omop_postgres_user: "{{ omop_postgres_user | default('postgres', true) }}"
+    omop_postgres_db: "{{ omop_postgres_db | default('trustomopdb', true) }}"
   tasks:
-    - name: install tar
-      apt:
-        name:
-          - tar
-        state: present
-        update_cache: yes
+    - name: assert the kit credentials are set
+      assert:
+        that:
+          - omop_postgres_password is defined and omop_postgres_password | length > 0
+          - data_access_postgres_password is defined and data_access_postgres_password | length > 0
+          - (not seed_orthanc | bool) or (orthanc_username is defined and orthanc_username | length > 0)
+          - (not seed_orthanc | bool) or (orthanc_password is defined and orthanc_password | length > 0)
+        fail_msg: >-
+          omop_postgres_password, data_access_postgres_password and (with seed_orthanc) orthanc_username /
+          orthanc_password are required — the kit's OMOP_POSTGRES_PASSWORD, DATA_ACCESS_POSTGRES_PASSWORD,
+          ORTHANC_USERNAME and ORTHANC_PASSWORD, passed by make seed-trust-data
 
-    - name: create OMOP directories
+    # omop-db's entrypoint takes ownership of its data dir itself (it runs as root with CHOWN);
+    # Orthanc runs as uid 999 with no way to chown, so its directories must be 999-owned first.
+    - name: create the OMOP data directory
       file:
         path: "{{ item }}"
         state: directory
@@ -659,53 +679,110 @@
         - "{{ omop_dir }}"
         - "{{ omop_dir }}/db_data"
 
-    - name: download OMOP PGDATA archive from Hugging Face
-      ansible.builtin.get_url:
-        url: "{{ hf_base_url }}/{{ pgdata_trust_dir }}/{{ pgdata_archive }}"
-        # Version-stamped destination, matching the source. get_url defaults to
-        # force: false ("downloaded only if the destination does not exist"), so a
-        # fixed name means a bumped omop_data_version silently reuses the PREVIOUS
-        # archive — and the wipe + extract below then restore the old dataset while
-        # reporting success. Nothing downstream can tell; the symptom is cohort
-        # counts that quietly do not match the data version that was asked for.
-        dest: "{{ omop_dir }}/{{ pgdata_archive }}"
+    - name: create the Orthanc storage directory owned by container UID 999
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "999"
+        group: "999"
+        mode: "0755"
+      loop:
+        - "{{ orthanc_base_dir }}"
+        - "{{ orthanc_data_dir }}"
+
+    - name: create the seed working directory
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ seed_dir }}"
+        - "{{ seed_dir }}/omop-db"
+        - "{{ seed_dir }}/work"
+
+    - name: copy the seed procedure and the loaders from the repo checkout
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ seed_dir }}/{{ item.dest }}"
         mode: "0644"
+      loop:
+        - { src: "../../../trust/seed_trust.sh", dest: "seed_trust.sh" }
+        - {
+            src: "../../../trust/orthanc/seed_orthanc.py",
+            dest: "seed_orthanc.py",
+          }
+        - {
+            src: "../../../trust/omop-db/pyproject.toml",
+            dest: "omop-db/pyproject.toml",
+          }
+        - { src: "../../../trust/omop-db/README.md", dest: "omop-db/README.md" }
+        - { src: "../../../trust/omop-db/src/", dest: "omop-db/src/" }
 
-    - name: clear existing PGDATA directory
-      shell: rm -rf {{ omop_dir }}/db_data/*
-      changed_when: false
+    - name: seed, cleaning up the throwaway containers whatever happens
+      block:
+        - name: start a throwaway omop-db on the data volume (initialises the schema on an empty one)
+          command: >
+            docker run -d --name omop-seed
+            -v {{ omop_dir }}/db_data:/var/lib/postgresql/data
+            -p 127.0.0.1:{{ seed_omop_port }}:5432
+            -e POSTGRES_USER={{ omop_postgres_user }}
+            -e POSTGRES_PASSWORD={{ omop_postgres_password }}
+            -e POSTGRES_DB={{ omop_postgres_db }}
+            -e DATA_ACCESS_POSTGRES_PASSWORD={{ data_access_postgres_password }}
+            {{ omop_db_image }}
+          no_log: true
 
-    - name: extract OMOP PGDATA
-      command: >
-        tar -xf {{ omop_dir }}/{{ pgdata_archive }}
-        -C {{ omop_dir }}/db_data
+        - name: start a throwaway Orthanc on the storage directory
+          command: >
+            docker run -d --name orthanc-seed
+            -v {{ orthanc_data_dir }}:/var/lib/orthanc/db
+            -p 127.0.0.1:{{ seed_orthanc_port }}:8042
+            -e ORTHANC__REGISTERED_USERS={{ {orthanc_username: orthanc_password} | to_json | quote }}
+            {{ orthanc_image }}
+          no_log: true
+          when: seed_orthanc | bool
 
-    # The version-stamped destination above means every omop_data_version bump
-    # leaves the previous multi-GB archive behind, and nothing else touches it —
-    # omop_dir would grow by one tarball per bump for the life of the host. Drop
-    # this trust's other archives now that the current one has extracted cleanly.
-    - name: find superseded OMOP PGDATA archives
-      ansible.builtin.find:
-        paths: "{{ omop_dir }}"
-        patterns: "trust{{ trust_num }}_pgdata_*.tar"
-        excludes: "{{ pgdata_archive }}"
-        file_type: file
-        recurse: false
-      register: superseded_pgdata_archives
+        - name: run the seed procedure against both (uv image, host network, loaders from this checkout)
+          command: >
+            docker run --rm --network host
+            -v {{ seed_dir }}:/seed
+            -e WORK_DIR=/seed/work
+            -e TOOLS_SPEC="omop-db-tools @ /seed/omop-db"
+            -e SEEDER=/seed/seed_orthanc.py
+            -e TRUST_DATA_VERSION={{ hf_trust_data_revision }}
+            -e HF_TRUST_DATA_REPO={{ hf_trust_data_repo }}
+            -e PROJECTS="{{ seed_projects }}"
+            -e SOURCE_TRUST={{ source_trust }}
+            -e NUM_TRUSTS={{ num_trusts }}
+            -e SEED_OMOP=true
+            -e SEED_ORTHANC={{ 'true' if seed_orthanc | bool else 'false' }}
+            -e OMOP_DB_HOST=127.0.0.1
+            -e OMOP_DB_PORT={{ seed_omop_port }}
+            -e OMOP_POSTGRES_USER={{ omop_postgres_user }}
+            -e OMOP_POSTGRES_PASSWORD={{ omop_postgres_password }}
+            -e OMOP_POSTGRES_DB={{ omop_postgres_db }}
+            -e ORTHANC_URL=http://127.0.0.1:{{ seed_orthanc_port }}
+            -e ORTHANC_USERNAME={{ orthanc_username | default('') }}
+            -e ORTHANC_PASSWORD={{ orthanc_password | default('') }}
+            {{ uv_image }} bash /seed/seed_trust.sh
+          no_log: true
+          register: seed_run
 
-    - name: remove superseded OMOP PGDATA archives
-      ansible.builtin.file:
-        path: "{{ item.path }}"
-        state: absent
-      loop: "{{ superseded_pgdata_archives.files }}"
-      loop_control:
-        label: "{{ item.path }}"
+        - name: seed summary
+          debug:
+            msg: "{{ seed_run.stdout_lines | select('search', '^(seed_trust:|✅)') | list }}"
+      always:
+        - name: stop the throwaway containers
+          command: docker rm -f {{ item }}
+          loop: [omop-seed, orthanc-seed]
+          register: seed_rm
+          changed_when: false
+          failed_when: seed_rm.rc != 0 and 'No such container' not in (seed_rm.stderr | default(''))
 
-    - name: set Postgres ownership and permissions
-      shell: |
-        chown -R 999:999 {{ omop_dir }}/db_data
-        chmod 700 {{ omop_dir }}/db_data
-      changed_when: false
+        - name: drop the fetched tables and DICOM sets (the seeded stores keep the data)
+          file:
+            path: "{{ seed_dir }}/work"
+            state: absent
 
 - name: load OMOP core vocabulary on Trust EC2
   # The published pgdata tarballs are vocab-free (FLIP#842/#843): the licensed
@@ -837,98 +914,3 @@
           register: vocab_rm
           changed_when: false
           failed_when: vocab_rm.rc != 0 and 'No such container' not in (vocab_rm.stderr | default(''))
-
-- name: restore Orthanc storage on Trust EC2
-  hosts: trust_ec2
-  become: true
-  tags: [data, orthanc]
-  vars:
-    # trust_num selects which trust's data package to load (e.g. "1" or "2").
-    # Passed via -e trust_num=2 for Trust_2 hosts. Defaults to "1".
-    trust_num: "{{ trust_num | default('1') }}"
-    # trust_data_version is the tag from trust/.data_version (the same pin the OMOP
-    # play uses), passed as an extra-var by the Makefile seed-trust-data target.
-    # The archive path carries no version; the revision the URL resolves at does.
-    orthanc_trust_dir: "trust{{ trust_num }}"
-    archive: "trust{{ trust_num }}_orthanc_data.tar"
-    base_dir: "/opt/flip/orthanc"
-    data_dir: "/opt/flip/orthanc/orthanc-storage"
-    # Mock data is fetched anonymously over HTTPS from the public Hugging Face
-    # dataset (no AWS CLI / credentials needed). Laid out per trust; archives are
-    # gzip-compressed tarballs named .tar (tar auto-detects gzip on extraction).
-    hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
-    hf_trust_data_revision: "{{ trust_data_hf_revision | default(trust_data_version) }}"
-    hf_base_url: "https://huggingface.co/datasets/{{ hf_trust_data_repo }}/resolve/{{ hf_trust_data_revision }}"
-  tasks:
-    - name: install tar
-      apt:
-        name:
-          - tar
-        state: present
-        update_cache: yes
-
-    # Orthanc runs as the in-image `orthanc` user (UID 999) after the
-    # Docker-hardening pass on `trust/orthanc/Dockerfile`. The base and data
-    # directories — and everything extracted into them by `tar` (which runs
-    # as root) — must end up owned by UID 999 or Orthanc cannot write its
-    # SQLite index, ingest new DICOM, or update the storage area.
-    - name: ensure orthanc base directory exists
-      file:
-        path: "{{ base_dir }}"
-        state: directory
-        owner: "999"
-        group: "999"
-        mode: "0755"
-
-    - name: download Orthanc archive from Hugging Face
-      ansible.builtin.get_url:
-        url: "{{ hf_base_url }}/{{ orthanc_trust_dir }}/{{ archive }}"
-        # Version-stamped for the same reason as the OMOP archive above: with a fixed
-        # name, get_url (force: false) skips the download when orthanc_data_version is
-        # bumped and the extract below restores the previous version's DICOM.
-        dest: "{{ base_dir }}/{{ archive }}"
-        mode: "0644"
-
-    - name: clear existing Orthanc storage
-      shell: rm -rf {{ data_dir }}/*
-      changed_when: false
-
-    - name: ensure orthanc data directory exists
-      file:
-        path: "{{ data_dir }}"
-        state: directory
-        owner: "999"
-        group: "999"
-        mode: "0755"
-
-    - name: extract Orthanc data into orthanc-storage
-      command: >
-        tar -xf {{ base_dir }}/{{ archive }} -C {{ data_dir }}
-
-    # Same accumulation as the OMOP archive: the stamped name keeps each
-    # orthanc_data_version's tarball on disk for good. Keep only the one just
-    # extracted.
-    - name: find superseded Orthanc archives
-      ansible.builtin.find:
-        paths: "{{ base_dir }}"
-        patterns: "trust{{ trust_num }}_orthanc_data_*.tar"
-        excludes: "{{ archive }}"
-        file_type: file
-        recurse: false
-      register: superseded_orthanc_archives
-
-    - name: remove superseded Orthanc archives
-      ansible.builtin.file:
-        path: "{{ item.path }}"
-        state: absent
-      loop: "{{ superseded_orthanc_archives.files }}"
-      loop_control:
-        label: "{{ item.path }}"
-
-    - name: ensure Orthanc storage is owned by container UID 999 and writable
-      file:
-        path: "{{ data_dir }}"
-        owner: "999"
-        group: "999"
-        mode: "0755"
-        recurse: true

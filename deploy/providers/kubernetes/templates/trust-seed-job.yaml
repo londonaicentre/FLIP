@@ -1,0 +1,107 @@
+{{- /*
+Seed this trust from the canonical dataset (FLIP#1101/#1187): its slice of each listed project's
+OMOP rows into omop-db and the matching studies into Orthanc, both selected by the dataset's own
+`source_trust` column so the rows and the PACS agree by construction. This replaced the pgdata /
+Orthanc volume snapshots: the two stores start on empty PVCs (omop-db initialises its schema and
+roles on first start; Orthanc its index) and this post-install/post-upgrade hook fills them.
+
+Idempotent and cheap on an upgrade: the OMOP loader replaces only the listed projects' rows, the
+DICOM vocabulary loader skips itself when the vocabulary is present, and Orthanc dedupes on
+SOPInstanceUID. Weight 6 — after the vocab-load hook (5), so on a cluster that loads the licensed
+vocabulary the rows land in a constrained database, which the loader handles (the DICOM vocabulary
+goes in first, so every imaging concept the rows reference resolves).
+
+The procedure is trust/seed_trust.sh in the repository, and the loaders it runs are the repository's
+own (trust/omop-db's omop_db_tools and trust/orthanc/seed_orthanc.py); all three are fetched at run
+time from the FLIP git ref `trustData.seed.sourceRef` (the package as a GitHub source archive — the
+image has no git), so the chart carries no copy of them and needs no extra image. The Job therefore
+needs egress to github.com, huggingface.co and PyPI in addition to the two in-cluster services.
+*/}}
+{{- if and .Values.trustData.seed.enabled (or (and .Values.omopDb.enabled .Values.trustData.seed.omop) (and .Values.orthanc.enabled .Values.trustData.seed.orthanc)) }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-trust-seed
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: trust-seed
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "6"
+    # Deleted once it has succeeded, like the snapshot Jobs it replaced: a completed hook pod is
+    # never Ready, and a release-wide readiness wait (CI's, an operator's) would otherwise hang on
+    # it. A FAILED Job is kept, with its log, until the next install/upgrade replaces it.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: trust-seed
+    spec:
+      restartPolicy: Never
+      enableServiceLinks: false
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: seed
+          image: "{{ .Values.trustData.seed.image.repository }}{{ with .Values.trustData.seed.image.digest }}@{{ . }}{{ else }}:{{ $.Values.trustData.seed.image.tag }}{{ end }}"
+          imagePullPolicy: {{ .Values.trustData.seed.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              # One seeding procedure for every deployment shape — trust/seed_trust.sh in the
+              # repository, fetched at the same ref the loaders come from. Everything it needs
+              # is in the environment below.
+              mkdir -p /work
+              python3 -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])' \
+                "https://raw.githubusercontent.com/londonaicentre/FLIP/${FLIP_REF}/trust/seed_trust.sh" /work/seed_trust.sh
+              exec bash /work/seed_trust.sh
+          env:
+            {{- include "flip-trust.omopVocabDbEnv" . | nindent 12 }}
+            - name: TRUST_DATA_VERSION
+              value: {{ required "trustData.version is required — the trust-data tag every artefact is fetched at" .Values.trustData.version | quote }}
+            - name: HF_TRUST_DATA_REPO
+              value: {{ .Values.trustData.hfRepo | quote }}
+            - name: FLIP_REF
+              value: {{ required "trustData.seed.sourceRef is required — the FLIP git ref the seed tools are installed from" .Values.trustData.seed.sourceRef | quote }}
+            - name: PROJECTS
+              value: {{ .Values.trustData.seed.projects | quote }}
+            - name: SOURCE_TRUST
+              value: {{ default .Values.trustNumber .Values.trustData.seed.sourceTrust | quote }}
+            - name: NUM_TRUSTS
+              value: {{ .Values.trustData.seed.numTrusts | quote }}
+            - name: VOCAB_DICOM_BUNDLE
+              value: {{ .Values.trustData.seed.dicomVocabBundle | quote }}
+            - name: WORK_DIR
+              value: /work
+            - name: SEED_OMOP
+              value: {{ and .Values.omopDb.enabled .Values.trustData.seed.omop | quote }}
+            - name: SEED_ORTHANC
+              value: {{ and .Values.orthanc.enabled .Values.trustData.seed.orthanc | quote }}
+            - name: ORTHANC_URL
+              value: "http://orthanc:{{ .Values.orthanc.service.port }}"
+            {{- if and .Values.orthanc.enabled .Values.trustData.seed.orthanc }}
+            - name: ORTHANC_REGISTERED_USERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: orthanc-registered-users
+            {{- end }}
+          resources:
+            {{- toYaml .Values.trustData.seed.resources | nindent 12 }}
+          volumeMounts:
+            - name: work
+              mountPath: /work
+      volumes:
+        - name: work
+          emptyDir:
+            sizeLimit: {{ .Values.trustData.seed.workDirSize }}
+{{- end }}

@@ -561,19 +561,17 @@ def check_unrotated_passwords(
 def check_data_dir(
     label: str,
     var_name: str,
-    update_target: str,
     kit_vars: dict[str, str],
     kit_present: bool,
     repo_root: Path,
 ) -> Check:
-    """Validate a per-trust data dir (OMOP, Orthanc) — set, exists, non-empty.
+    """Validate a per-trust data dir (OMOP, Orthanc) — set; exists and non-empty if real data.
 
-    Mocked test data lives under trust/ — when ORTHANC_STORAGE_DIR / OMOP_DATA_DIR
-    is a relative path it resolves from trust/ and is populated by the
-    `make -C trust update-{orthanc,omop}-data` targets. For a real hospital
-    deployment the operator would point these at absolute paths backed by real
-    PACS / OMOP data; the check then flags an empty mount, with the right
-    "point at real data" hint instead.
+    A missing or empty dir is a WARN, not a FAIL: `make -C trust up-trust` creates
+    the dir and seeds it from the canonical mock dataset at bring-up (FLIP#1187),
+    so before the first `up` empty is the expected state. It is only wrong for a
+    real hospital deployment, where the operator points these at absolute paths
+    backed by real PACS / OMOP data — hence the hint.
     """
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
@@ -585,13 +583,11 @@ def check_data_dir(
         resolved = Path(raw)
     else:
         resolved = repo_root / "trust" / raw.removeprefix("./")
+    seed_hint = "Mocked test data: `make -C trust up-trust KIT=<CODE>` creates and seeds it, nothing to do."
     if not resolved.is_dir():
         return Check(
-            label, Status.FAIL, f"{resolved} (dir does not exist)",
-            hints=[
-                f"If using the mocked test data, run: make -C trust {update_target}",
-                f"Otherwise point {var_name} at the host path holding your real data.",
-            ],
+            label, Status.WARN, f"{resolved} (dir does not exist yet)",
+            hints=[seed_hint, f"Real data: point {var_name} at the host path holding it."],
         )
     try:
         is_empty = not any(resolved.iterdir())
@@ -612,11 +608,8 @@ def check_data_dir(
         )
     if is_empty:
         return Check(
-            label, Status.FAIL, f"{resolved} (dir is empty)",
-            hints=[
-                f"If using the mocked test data, run: make -C trust {update_target}",
-                f"Otherwise populate {resolved} with your trust's real data.",
-            ],
+            label, Status.WARN, f"{resolved} (dir is empty)",
+            hints=[seed_hint, f"Real data: populate {resolved} with your trust's data."],
         )
     return Check(label, Status.PASS, str(resolved))
 
@@ -644,14 +637,8 @@ def run_checks(kit: str, repo_root: Path) -> list[Check]:
         check_gpu_capacity(kit_vars, kit_present, kit),
         check_site_privacy_policy(kit_vars, kit_present, kit, repo_root),
         check_unrotated_passwords(kit_vars, kit_present, repo_root, kit),
-        check_data_dir(
-            "OMOP data dir", "OMOP_DATA_DIR", "update-omop-data",
-            kit_vars, kit_present, repo_root,
-        ),
-        check_data_dir(
-            "Orthanc storage dir", "ORTHANC_STORAGE_DIR", "update-orthanc-data",
-            kit_vars, kit_present, repo_root,
-        ),
+        check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, kit_present, repo_root),
+        check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root),
     ]
 
 

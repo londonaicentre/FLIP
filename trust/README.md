@@ -115,19 +115,19 @@ The plaintext keys aren't recoverable — only the hash is on disk. If you didn'
 
 ## Data versions
 
-All mock trust data — the pgdata and Orthanc storage snapshots, the canonical OMOP tables and
-the per-project DICOM sets — comes from one public Hugging Face dataset,
+All mock trust data — the canonical OMOP tables and the per-project DICOM sets — comes from one
+public Hugging Face dataset,
 [`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data), which
-holds **exactly one copy of every artefact at an unversioned path**:
+holds **exactly one copy of every artefact at an unversioned path**, one pair per project:
 
 ```
-trust<N>/trust<N>_pgdata.tar   trust<N>/trust<N>_orthanc_data.tar
 omop-csv/<project>/*.csv       omop-csv/<project>/source/…        dicom/<project>.tar.gz
 ```
 
-A **data version is a git tag on that dataset**, and [`.data_version`](.data_version) in this
-directory pins one — a single pin for OMOP and Orthanc together, because a tag describes the
-whole dataset state. Every consumer (the `update-*-data` snapshot scripts, `seed-omop` /
+A trust is stood up by **seeding** those into its running omop-db and Orthanc (`up-trust` does it,
+see below); there are no volume snapshots to download. A **data version is a git tag on that
+dataset**, and [`.data_version`](.data_version) in this directory pins one — a single pin for OMOP
+and Orthanc together, because a tag describes the whole dataset state. Every consumer (`seed-omop` /
 `seed-orthanc`, the spleen label uploader, the Ansible plays, the Helm chart) fetches
 `resolve/<tag>/<path>`, so an old version stays reachable at its tag forever and is never
 duplicated as a second directory or a suffixed filename. `HF_TRUST_DATA_REVISION` overrides the
@@ -139,17 +139,33 @@ commit and the tag are separate calls to the Hub: if the second fails, the bytes
 nothing pinning them and no consumer resolving them — re-run the same command to finish it.
 
 ```sh
-make -C omop-db export-pgdata                         # dist/trust<N>_pgdata.tar
 uv run orthanc/publish_dicom.py --project … --revision main --out orthanc/dist/dicom/<project>.tar.gz
 make publish-trust-data VERSION=20261001 DRY_RUN=1 \
-  PGDATA="omop-db/dist/trust1_pgdata.tar omop-db/dist/trust2_pgdata.tar" \
-  OMOP_CSV=omop-db/data/canonical DICOM=orthanc/dist/dicom/<project>.tar.gz [ORTHANC=… CARD=…]
+  OMOP_CSV=omop-db/data/canonical DICOM=orthanc/dist/dicom/<project>.tar.gz [CARD=…]
 make publish-trust-data VERSION=20261001 …            # for real; then set .data_version to 20261001
 ```
 
 (`hf auth login` with write access to the dataset is needed.) Bumping `.data_version` is what
-moves a checkout: the next `up-trust` re-snapshots — refusing, without `FORCE=1`, to discard a
-volume that was seeded — and every seed/enrichment run reads at the new tag.
+moves a checkout: the next `up-trust` (its `ensure-seeded` step) re-seeds the trust's projects at
+the new tag — OMOP rows replaced project by project, PACS studies cleared and re-uploaded — and
+every seed/enrichment run reads at the new tag.
+
+### Seeding at bring-up
+
+`up-trust` starts omop-db and Orthanc on empty, pre-created volumes and then runs
+`ensure-seeded`, which loads `PROJECTS` (default `cxr_project spleen_project`) from the dataset at
+the pinned version. Each half leaves a marker beside its store — `<omop dir>/../.seeded` and
+`<orthanc parent>/.<storage dir>.seeded` — recording projects, partition and version; a marker
+that matches means nothing to do, so a second `up` fetches and uploads nothing and the seeded
+volumes simply persist on the host. A first bring-up on a fresh host is the one slow step:
+roughly 2 GB of DICOM per trust posted through Orthanc's REST API (a few minutes); the OMOP half
+takes seconds. The DICOM vocabulary is loaded with the rows; the licensed core vocabulary is still
+the separate credentialed `make -C trust/omop-db load-omop-vocab` step.
+
+```sh
+make -C trust ensure-seeded KIT=GSTT PROJECTS="spleen_project cxr_project"   # what up-trust runs; safe to repeat
+make -C trust seed KIT=GSTT PROJECTS="prostate_project"                       # add a project, unconditionally
+```
 
 ### Which partition a trust is seeded with
 
@@ -205,10 +221,10 @@ need only your trust's kit file (`trust/.env.<CODE>.<env>`).
    - Laptop-against-prod: `make -C trust up-trust KIT=<CODE> PROD=true` (no sudo —
      your workstation isn't provisioned by the on-prem playbook)
 
-   The on-prem path skips the dev-only `update-omop-data` / `update-orthanc-data`
-   steps (which pull test fixtures from S3 and need hub AWS credentials) —
-   real on-prem operators populate `./omop-db/volumes/<CODE>/db_data` and
-   `./orthanc/orthanc-storage-<…>` themselves.
+   On-prem, `up-trust` seeds the mock projects the same way it does in dev (anonymous
+   Hugging Face download, no hub credentials) — real on-prem operators point
+   `OMOP_DATA_DIR` / `ORTHANC_STORAGE_DIR` at their real data instead, and skip
+   `ensure-seeded`.
 
 ### Refreshing shared values (when the hub admin rotates an AES key etc.)
 
