@@ -62,6 +62,7 @@ def test_central_hub_project_rejects_xml_control_chars_in_name(bad_name: str):
 @pytest.mark.parametrize(
     "bad_accession_id",
     [
+        "",
         "../../etc/passwd",
         "ACC/123",
         "ACC\\123",
@@ -70,7 +71,7 @@ def test_central_hub_project_rejects_xml_control_chars_in_name(bad_name: str):
         "ACC?format=json",
         "ACC#frag",
         "..",
-        "ACC..123",
+        ".",
     ],
 )
 def test_accession_id_rejects_traversal_and_url_metacharacters(bad_accession_id: str):
@@ -96,10 +97,12 @@ def test_accession_id_rejects_traversal_and_url_metacharacters(bad_accession_id:
         "ACC-123",
         "ACC_123",
         "ACC.123",
+        "ACC..123",  # embedded dots are fine — only an entire "." or ".." segment traverses
         "1.2.840.113619.2.55.3",
     ],
 )
 def test_accession_id_accepts_safe_charset(good_accession_id: str):
+    """RFC 3986 §2.3 unreserved charset must be accepted."""
     request = DownloadImagesRequestData(encrypted_central_hub_project_id="enc", accession_id=good_accession_id)
     assert request.accession_id == good_accession_id
 

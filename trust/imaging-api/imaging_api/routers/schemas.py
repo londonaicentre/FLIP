@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import string
 import uuid
 from typing import Annotated, Literal
 from uuid import UUID
@@ -30,41 +31,49 @@ XNAT_PORT = get_settings().XNAT_PORT
 # instead of letting the corrupted entity reach XNAT.
 _XML_FORBIDDEN_CHARS = ("<", ">", "&")
 
-# Accession IDs are interpolated directly into XNAT URLs issued with the XNAT
-# service-admin session, so a traversal payload ("../../") would reach XNAT
-# before any filesystem guard could run. Keep the charset conservative until
-# the production PACS accession distribution is confirmed (see #908): letters,
-# digits, dot, underscore and hyphen only — no path separators, percent escapes,
-# whitespace, query/fragment delimiters, or double-dot segments.
-_ACCESSION_ID_ALLOWED_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
+# Accession IDs, scan IDs and resource IDs are all interpolated directly into
+# XNAT URLs issued with the XNAT service-admin session, so a traversal payload
+# would reach XNAT before any filesystem guard could run.
+#
+# Charset: RFC 3986 §2.3 *unreserved* characters — the only characters that
+# are never percent-encoded and never a URL delimiter, so a value composed
+# solely of them cannot change the structure of a URL.  They also contain no
+# path separator on any OS, which is why the same set covers the filesystem
+# cache path. (see #908)
+#
+# Dot-segment: RFC 3986 §5.2.4 — only a segment that is *entirely* "." or ".."
+# is collapsed during path resolution, which is the urllib3 behaviour that made
+# the original blind-SSRF possible.  A value like "ACC..123" is harmless in
+# both a URL and a filesystem path.
+_URL_UNRESERVED = frozenset(string.ascii_letters + string.digits + "-._~")
 
-# Known XNAT resource labels accepted on the download route. Deliberately a
-# closed list for now — custom resource labels were previously accepted and
-# should be re-confirmed against production XNAT projects before widening.
-ResourceType = Literal["DICOM", "NIFTI", "SEG", "ALL"]
 
-
-def _validate_accession_id(value: str) -> str:
-    """Rejects accession IDs that could traverse or inject into an XNAT URL.
+def _validate_url_path_segment(value: str) -> str:
+    """Rejects values that could traverse or inject into an XNAT URL.
 
     Args:
-        value (str): The caller-supplied accession ID.
+        value (str): The caller-supplied identifier.
 
     Returns:
-        str: The unchanged accession ID when it is safe.
+        str: The unchanged value when it is safe.
 
     Raises:
-        ValueError: If the value is empty, contains a character outside the
-            conservative ``[A-Za-z0-9._-]`` set, or contains a double-dot
-            segment.
+        ValueError: If the value is empty, an RFC 3986 §5.2.4 dot-segment, or
+            contains a character outside the RFC 3986 §2.3 unreserved set.
     """
     if not value:
-        raise ValueError("accession_id must not be empty")
-    if any(char not in _ACCESSION_ID_ALLOWED_CHARS for char in value):
-        raise ValueError("accession_id must contain only [A-Za-z0-9._-]")
-    if ".." in value:
-        raise ValueError("accession_id must not contain '..'")
+        raise ValueError("must not be empty")
+    if value in (".", ".."):
+        raise ValueError("must not be a dot-segment ('.' or '..')")
+    if not set(value) <= _URL_UNRESERVED:
+        raise ValueError("must contain only RFC 3986 unreserved characters [A-Za-z0-9._~-]")
     return value
+
+
+# Known XNAT resource labels accepted on the download route. Matches the
+# flip-utils ResourceType enum (flip/constants/flip_constants.py: DICOM, NIFTI,
+# SEG, ALL) — the only in-tree caller of this route — kept in sync here.
+ResourceType = Literal["DICOM", "NIFTI", "SEG", "ALL"]
 
 
 class _AccessionIdRequest(BaseModel):
@@ -75,7 +84,7 @@ class _AccessionIdRequest(BaseModel):
     @field_validator("accession_id")
     @classmethod
     def _reject_unsafe_accession_id(cls, v: str) -> str:
-        return _validate_accession_id(v)
+        return _validate_url_path_segment(v)
 
 # #########################
 # Users
@@ -386,3 +395,8 @@ class UploadDataRequest(_AccessionIdRequest):
     resource_id: str
     files: list[str]
     exist_ok: bool = False
+
+    @field_validator("scan_id", "resource_id")
+    @classmethod
+    def _reject_unsafe_path_segment(cls, v: str) -> str:
+        return _validate_url_path_segment(v)
