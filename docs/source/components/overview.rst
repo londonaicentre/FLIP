@@ -36,8 +36,8 @@ available Trusts, view statistics about the available data, tweak and refine the
 on a dataset on which to train and test their model. Following this, the model is distributed, trained and
 tested within the Secure Enclave at each selected Trust before the resultant model is centrally aggregated.
 
-The hub is the only internet-facing part of FLIP. It runs on AWS; its services and the AWS shape they take are
-described on :doc:`component-central-hub`.
+The hub is the only internet-facing part of FLIP. Its services are described on :doc:`component-central-hub`;
+the AWS shape they take, in either of the two supported deployment modes, on :ref:`deploy-central-hub`.
 
 Secure Enclave
 ==============
@@ -63,8 +63,8 @@ Central Hub
 ===========
 
 The web UI (``flip-ui``), the central API (``flip-api``) with its PostgreSQL database, and the hub half of every
-FL net. On AWS these run as ECS Fargate tasks behind CloudFront, with Cognito for authentication and S3 for
-model files and results. See :doc:`component-central-hub`.
+FL net, with Cognito for authentication and S3 for model files and results. See :doc:`component-central-hub`
+for the services and :ref:`deploy-central-hub` for how they are laid out on AWS.
 
 FL nets
 =======
@@ -113,7 +113,8 @@ inside the Trust. See :doc:`component-logging-stack`.
 Deployment targets
 ==================
 
-The Central Hub is provisioned on AWS with Terraform/OpenTofu — :ref:`deploy-central-hub`. A Trust node runs
+The Central Hub is provisioned on AWS with Terraform/OpenTofu, self-contained in one account or on a Landing
+Zone Accelerator estate — :ref:`deploy-central-hub`. A Trust node runs
 as a Docker Compose stack on a host inside the Trust (:doc:`/deploy-flip/deploy-flip-node-on-prem`), inside a
 Trusted Research Environment (:doc:`/deploy-flip/deploy-flip-node-in-tre`), or on Kubernetes via the Helm chart
 at `deploy/providers/kubernetes/ <https://github.com/londonaicentre/FLIP/blob/develop/deploy/providers/kubernetes/README.md>`_.
