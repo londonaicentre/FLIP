@@ -12,19 +12,31 @@
 -->
 
 <template>
-    <AiCard>
-        <div class="p-4">
-            <h2 class="text-lg font-semibold font-heading grow leading-loose">
-                Trust Approval
-            </h2>
+    <AiCard class="flex flex-col h-full">
+        <div class="p-4 shrink-0">
+            <div class="flex items-baseline justify-between gap-3">
+                <h2 class="text-lg font-semibold font-heading grow leading-loose">
+                    Trust Approval
+                </h2>
+                <span
+                    v-if="sortedApprovedTrusts.length"
+                    data-test="trust-approval-count"
+                    class="font-mono text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-300 shrink-0"
+                >
+                    {{ approvedCount }} of {{ sortedApprovedTrusts.length }} approved
+                </span>
+            </div>
         </div>
         <Form
             v-if="canApprove || projectApproved"
             v-slot="{errors}"
             :validation-schema="schema"
+            class="flex flex-col flex-1 min-h-0"
             @submit="approveProject"
         >
-            <div class="w-full gap-3 text-xs">
+            <!-- The scroller wraps the <ul> rather than being the <ul>, so its border-y
+                 stays pinned at the top of the scroll area instead of scrolling away. -->
+            <div class="w-full flex-1 min-h-0 overflow-y-auto text-xs">
                 <ul role="list" class="border-gray-200 divide-y divide-gray-200 dark:divide-dark-border dark:border-dark-border border-y">
                     <li v-for="(trust, idx) in sortedApprovedTrusts" :key="trust.id">
                         <div class="flex items-center py-4 transition hover:bg-gray-50 dark:hover:bg-dark-surface group">
@@ -76,7 +88,7 @@
                 </ul>
             </div>
             <AiGuard :permissions="['CanApproveProjects']">
-                <div v-if="canApprove && !projectApproved" class="p-4">
+                <div v-if="canApprove && !projectApproved" class="p-4 shrink-0 mt-auto">
                     <div v-if="!projectApproved" class="inline-flex justify-end w-full space-x-4">
                         <AiButton
                             class="ml-2"
@@ -122,6 +134,10 @@ const props = defineProps<IProjectApprovalProps>();
 const sortedApprovedTrusts = computed(() =>
     [...props.approvedTrusts].sort((a, b) => (a.code || a.name).localeCompare(b.code || b.name))
 );
+
+// The card is now taller than its content on small rosters; the eyebrow answers
+// "did everyone approve?" without scrolling the list.
+const approvedCount = computed(() => props.approvedTrusts.filter(t => t.approved).length);
 
 const emits = defineEmits(["approveProject", "stageProject"]);
 
