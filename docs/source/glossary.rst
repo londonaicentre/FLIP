@@ -20,6 +20,12 @@ Glossary
     **Flower Framework**
       Flower is an open-source framework for building federated learning systems. It provides tools and libraries to facilitate the development and deployment of federated learning applications. For more information, please see its `official documentation <https://flower.ai/docs/framework/>`_.
 
+    **Landing Zone Accelerator (LZA)**
+      AWS's reference implementation of a multi-account estate with centrally managed network,
+      guardrails and logging. FLIP's Central Hub can be deployed onto such an estate as its
+      platform-managed mode (``PROD=lza``), where the workload account discovers the network it is
+      given and ingress arrives through the estate's edge. See :ref:`deploy-central-hub-aws-lza`.
+
     **MI-CDM**
       Medical Imaging Common Data Model. The OHDSI extension that adds imaging to the OMOP CDM,
       contributing the ``image_occurrence`` and ``image_feature`` tables. FLIP implements it and
