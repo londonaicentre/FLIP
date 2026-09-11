@@ -271,7 +271,13 @@ standalone compose stack. The app code is identical either way — site identity
 `context.node_config`'s `partition-id`, falling back to the `SUPERNODE_NAME` a container sets
 (`flip.flower.identity`). Under `LOCAL_DEV` both paths hand every client the same
 `DEV_DATAFRAME`, so `partition_cohort` slices it per site; deployed, each trust's
-data-access-api already serves its own cohort and no partitioning happens.
+data-access-api already serves its own cohort and no partitioning happens. The one thing the
+Flower simulator supplies in place of fl-api's submit step is the evaluation tutorial's
+checkpoint: `sim-tutorial.sh` passes `--run-config` pointing `flip-job-dir` at
+`fl-tutorials/data/model_checkpoints` (fetched by `download-spleen-checkpoint`, part of
+`download-spleen-data`) and `checkpoint` at `model.pt`, so
+`make -C fl-tutorials sim-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower`
+runs unchanged app code too.
 
 To iterate on the FL images, `make build-fl` builds them locally as `:dev` (see `fl-services/nvflare/README.md`);
 run the stack on them with `make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`.

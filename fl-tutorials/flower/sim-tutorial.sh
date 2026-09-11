@@ -39,6 +39,8 @@ if [ ! -d "$HERE/$TUTORIAL/app" ]; then echo "❌ Unknown tutorial '$TUTORIAL'. 
 # Same per-tutorial dev data mapping as run-tutorial.sh — LOCAL_DEV reads these directly
 # instead of the bind mounts the compose stack would provide.
 DATA_ROOT="$REPO_ROOT/fl-tutorials/data"
+# Run-config overrides the simulator has to supply in place of the platform's submit step.
+RUN_CONFIG=""
 case "$TUTORIAL" in
   3d_spleen_segmentation|3d_spleen_segmentation_evaluation)
     # The MSD build both backends read, honouring NUM_CASES.
@@ -51,7 +53,17 @@ case "$TUTORIAL" in
     DATASET_TARGET=xray ;;
   *) echo "❌ No data mapping for '$TUTORIAL'"; exit 1 ;;
 esac
-for p in "$DEV_IMAGES_DIR" "$DEV_DATAFRAME"; do
+REQUIRED=("$DEV_IMAGES_DIR" "$DEV_DATAFRAME")
+if [ "$TUTORIAL" = 3d_spleen_segmentation_evaluation ]; then
+  # The evaluation ServerApp opens `<flip-job-dir>/<checkpoint>`. On the platform fl-api sets
+  # flip-job-dir to the uploaded bundle's directory at submit time and config.toml names the
+  # checkpoint; the simulator has neither, so point both at the checkpoint the spleen download
+  # fetches (download-spleen-checkpoint) — the app code stays identical.
+  CHECKPOINT_DIR="$DATA_ROOT/model_checkpoints"
+  RUN_CONFIG="flip-job-dir=\"$CHECKPOINT_DIR\" checkpoint=\"model.pt\""
+  REQUIRED+=("$CHECKPOINT_DIR/model.pt")
+fi
+for p in "${REQUIRED[@]}"; do
   if [ ! -e "$p" ]; then
     echo "❌ Dataset missing: $p"
     echo "   Run: make -C fl-tutorials download-${DATASET_TARGET}-data"
@@ -101,6 +113,7 @@ echo "   sites=$SITES"
 echo "   DEV_IMAGES_DIR=$DEV_IMAGES_DIR"
 echo "   DEV_DATAFRAME=$DEV_DATAFRAME"
 echo "   WORKING_DIR=$WORKING_DIR"
+[ -n "$RUN_CONFIG" ] && echo "   run-config: $RUN_CONFIG"
 
 # Run in flip-utils' env so the app sees the same flip package a SuperNode image carries.
 #
@@ -110,5 +123,7 @@ echo "   WORKING_DIR=$WORKING_DIR"
 # migrates such a block into the user's ~/.flwr/config.toml and REWRITES the pyproject.toml to
 # comment it out (flwr/cli/config_migration.py) — which would dirty a tracked file every run.
 cd "$HERE/$TUTORIAL"
+# A later --run-config on the command line overrides the same keys, so "$@" comes last.
 exec uv run --project "$REPO_ROOT/flip-utils" --extra full \
-  flwr run . local --federation-config "num-supernodes=$SITES" --stream "$@"
+  flwr run . local --federation-config "num-supernodes=$SITES" --stream \
+  ${RUN_CONFIG:+--run-config "$RUN_CONFIG"} "$@"
