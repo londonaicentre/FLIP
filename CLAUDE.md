@@ -223,9 +223,15 @@ as "no labels".
 **Tabular-only projects (no imaging stage — FLIP#1071).** A project created with "Includes imaging data"
 off (`has_imaging=false`, creation-time and immutable like `dicom_to_nifti`) is approved without the
 CREATE_IMAGING fan-out: no XNAT project, no accession-ids call, no pull, and `GET /projects/{id}/image/status`
-returns `200 []`. `make e2e_smoke EXTRA_ARGS="--no-imaging"` creates the project with the flag off and skips
-the image-pull wait; on `--project-id` reuse it reads `has_imaging` back off the project, so reuse honours it
-too. Imaging projects get fast feedback instead: submitting a cohort whose explicit SELECT list
+returns `200 []`. The EHR risk-prediction tutorials are the first such cohort: `make e2e_smoke_ehr [FL_BACKEND=flower]`
+(root or `-C flip-api`) picks that tutorial for the backend and pins `--no-imaging`, which creates the project
+with the flag off and skips the image-pull wait (the smoke reads `has_imaging` back off the project, so
+`--project-id` reuse honours it too; `make e2e_smoke EXTRA_ARGS="--no-imaging"` is the generic form). The flag
+rides in `TARGET_ARGS`, a third recipe slot placed between `ENRICHMENT_ARGS` and `EXTRA_ARGS`, for the same reason
+enrichment does not use `EXTRA_ARGS`. Prereq on the dev stack: `make -C trust load-synthea-ehr` on every trust
+(TRUST_INDEX=1 OMOP_DB_PORT=5434, TRUST_INDEX=2 OMOP_DB_PORT=5436), then restart both data-access-apis if the
+EHR query was ever submitted before the load (results are cached by query text). Imaging projects
+get fast feedback instead: submitting a cohort whose explicit SELECT list
 has no `accession_id` column is a 400 at submission (hub pre-check, not a security control — `SELECT *` passes
 through to the trust's authoritative check).
 
@@ -359,7 +365,8 @@ with a `demoCaption` subtitle verb) run in Docker (`cypress/included`, `--networ
 `flip-ui/scripts/assemble-demo-video.sh` (same crop constants as `videos-to-gifs.sh`). Prerequisites: stack up,
 live AWS SSO session, and ideally the demo Cognito users — `make demo-users` (reads `DEMO_RESEARCHER_PASSWORD` /
 `DEMO_ADMIN_PASSWORD` from env, never committed) then restart flip-api so seeding grants their roles; without them
-the recorder falls back to the well-known admin for both parts. Useful `DEMO_ARGS`: `--app spleen` (record the 3D
+the recorder falls back to the well-known admin for both parts. Useful `DEMO_ARGS`: `--app ehr` (record the tabular EHR
+risk-prediction tutorial: the project is created with imaging off and the XNAT segment is skipped), `--app spleen` (record the 3D
 spleen segmentation tutorial instead of chest X-ray; pair with `--data-enrichment-cwd/-cmd` for the off-camera
 label upload, same contract as `e2e_smoke`), `--publish-segmentations` (republish those NIfTI labels as DICOM-SEG
 ROI collections via `flip-api/tests/xnat_seg_upload.py` so segment 3 shows the segmentation overlaid in OHIF —
