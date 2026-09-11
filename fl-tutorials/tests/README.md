@@ -41,7 +41,8 @@ covers `datasets/cxr/omop_convert_cxr.py` — the same convention as
 
 Cross-cutting guards that assert a property across several source files
 (`test_dicom_orientation.py`, `test_flower_min_clients_wiring.py`,
-`test_spleen_inference_config_parity.py`) stay at the root of `tests/`, because
+`test_spleen_inference_config_parity.py`, `test_fl_tutorials_make_targets.py`,
+`test_sim_tutorial_stale_guard.py`) stay at the root of `tests/`, because
 no single source path describes what they cover.
 
 **Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
@@ -117,6 +118,9 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_monai_deprecations_escalate_to_errors` | `pytest.ini`'s blanket `ignore::` lines still leave MONAI's own deprecations escalated to errors — the notice that a pinned reader convention is about to change must not rejoin the ignored torch/numpy noise. |
 | `test_loader_pins_its_reader` | The chain names `PydicomReader(swap_ij=False)` instead of inheriting a reader. |
 | `test_chain_composes` / `test_validation_chain_is_deterministic` | Both chains import, compose, run, and the validation chain is reproducible. |
+| `test_documented_root_target_resolves` | Every `make -C fl-tutorials <target>` the docs quote resolves at the fl-tutorials root, whose Makefile only forwards a fixed name list — a dataset target documented in the root form but left off that list fails here, not with "No rule to make target" on a reader's machine. |
+| `test_kills_only_this_checkouts_processes_in_this_pid_namespace` | `sim-tutorial.sh`'s stale-SuperLink guard, lifted out of the script and run against decoys: it stops the one from this checkout, spares one from another checkout, and spares one in another PID namespace (a container's, under any runtime — the dev stack's fl-server matches the same `pgrep` pattern). Skips the namespace case where unprivileged `unshare` is unavailable. |
+| `test_guard_decides_containment_by_pid_namespace_not_cgroup_string` | The guard compares `/proc/<pid>/ns/pid`, not a runtime-specific `/proc/<pid>/cgroup` string, which only docker's systemd driver produces. |
 
 Three design points are load-bearing, and each is itself asserted rather than assumed:
 

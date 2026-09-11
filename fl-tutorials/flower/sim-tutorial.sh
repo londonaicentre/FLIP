@@ -73,10 +73,17 @@ mkdir -p "$WORKING_DIR"
 # Deliberately NOT `pkill -f flower-superlink`: on a host running the FLIP dev stack that also
 # matches deploy-fl-server-net-*'s superlink, because container processes are visible in the host
 # PID namespace. Kill only processes that are (a) not in a container and (b) from this checkout.
+# (a) compares PID namespaces rather than grepping /proc/<pid>/cgroup for a runtime-specific
+# string: every container runtime gives its processes their own PID namespace, whereas the cgroup
+# path spells "docker-<id>.scope" only under docker's systemd driver (the cgroupfs driver writes
+# /docker/<id>, kubelet /kubepods/...). An unreadable namespace link (a root-owned container
+# process) skips the pid, so the check fails closed.
 stop_stale_superlinks() {
-  local pid
+  local pid own_ns pid_ns
+  own_ns="$(readlink /proc/$$/ns/pid)"
   for pid in $(pgrep -f "flwr-simulation|flwr-serverapp|flower-superlink" 2>/dev/null || true); do
-    grep -q "docker-" "/proc/$pid/cgroup" 2>/dev/null && continue          # containerised, not ours
+    pid_ns="$(readlink "/proc/$pid/ns/pid" 2>/dev/null)" || continue       # unreadable: not ours
+    [ "$pid_ns" = "$own_ns" ] || continue                                  # containerised, not ours
     tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q "$REPO_ROOT" || continue
     kill "$pid" 2>/dev/null && echo "   stopped stale simulator process $pid"
   done

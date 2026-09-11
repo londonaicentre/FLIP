@@ -16,7 +16,8 @@
 # the documented entrypoints keep working:
 #
 #   make -C fl-tutorials download-xray-data
-#   make -C fl-tutorials download-spleen-data [NUM_CASES=<1-41>] [FL_BACKEND=flower]
+#   make -C fl-tutorials download-spleen-data [NUM_CASES=<1-41>]
+#   make -C fl-tutorials download-spleen-checkpoint   # evaluation-tutorial checkpoint only
 #   make -C fl-tutorials download-arkplus-finetuning-data
 #   make -C fl-tutorials download-arkplus-eval-data
 #   make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrichment
@@ -24,7 +25,6 @@
 # Everything lands under the shared, gitignored fl-tutorials/data/ — see README.md here for
 # the per-dataset layout. Every dataset is backend-agnostic: one copy, read by both harnesses.
 
-FL_BACKEND ?= nvflare
 DATA_DIR := ../data
 HF_CACHE := $(DATA_DIR)/.hf
 
