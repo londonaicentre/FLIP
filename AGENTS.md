@@ -16,7 +16,7 @@ FLIP/
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
 ├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (all Client-API), fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
-├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion. Shared dataset tooling in fl-tutorials/datasets/ (download/derive/enrich, single copy for both backends — the download-*-data + upload-spleen-labels targets), outputs in the shared gitignored fl-tutorials/data/. fl-tutorials/datasets/utils/ holds the OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, the per-project surrogate-key blocks (omop_ids.py) and the one verification gate (verify_omop_tables.py --project <name>). spleen carries the full chain (`convert-spleen-to-dicom`, `create-spleen-metadata-table`, `build-spleen-omop-tables`, plus the reproducible-path/verification targets); cxr carries the OMOP conversion only (`reproduce-cxr-omop`) because image generation lives in the private londonaicentre/xraycat. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
+├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion. Shared dataset tooling in fl-tutorials/datasets/ (download/derive/enrich, single copy for both backends — the download-*-data + upload-spleen-labels targets), outputs in the shared gitignored fl-tutorials/data/. fl-tutorials/datasets/utils/ holds the OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, the per-project surrogate-key blocks (omop_ids.py) and the one verification gate (verify_omop_tables.py --project <name>). spleen carries the full chain (`convert-spleen-to-dicom`, `create-spleen-metadata-table`, `build-spleen-omop-tables`, plus the reproducible-path/verification targets); cxr carries the OMOP conversion only (`reproduce-cxr-omop`) because image generation lives in the private londonaicentre/xraycat; idc_pathology derives its tables from a published slide manifest (`reproduce-idc-pathology-omop`) because the slides stay on IDC — no DICOM set on trust-data. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
 ├── map-apps/           # MONAI Application Package (MAP) templates for packaging FLIP-trained models for clinical deployment
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
@@ -274,6 +274,7 @@ verified against the published export by one shared gate
 ```bash
 make -C fl-tutorials reproduce-spleen-omop          # fetch -> build -> verify, chained
 make -C fl-tutorials reproduce-cxr-omop             # same three for cxr_project
+make -C fl-tutorials reproduce-idc-pathology-omop   # same three for pathology_project (input: the slide manifest)
 make -C fl-tutorials fetch-spleen-metadata-table    # or step by step: pinned metadata table
 make -C fl-tutorials build-spleen-omop-tables       # -> omop/<trust>/spleen_project/*.csv
 make -C fl-tutorials verify-spleen-omop-tables      # diff against the published export
@@ -287,7 +288,11 @@ DICOM write and their metadata extraction live in the private `londonaicentre/xr
 in-tree provenance chain starts at the published metadata table. Neither regeneration path
 reproduces the published export byte-for-byte anyway (spleen re-synthesises patient identities on
 every run), which is why the gate's fixed input is the published metadata table rather than the
-images.
+images. **idc_pathology publishes tables and a manifest but no imaging**: the whole-slide images
+are fetched from the public NCI Imaging Data Commons on demand, so `aicentreflip/trust-data` carries
+`omop-csv/pathology_project/` (with `source/manifest.csv`, the lockfile the tables derive from) and
+no `dicom/pathology_project.tar.gz`. Nothing of it is committed either — the manifest is fetched into
+the gitignored data root, and a re-selection is published as a new data version, not a diff.
 
 See `fl-tutorials/datasets/README.md` ("OMOP mock-data generation") for both chains, the shared
 contract in `datasets/utils/`, and the `download-spleen-msd-raw` regeneration-path first step.

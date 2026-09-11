@@ -59,8 +59,10 @@ logger = logging.getLogger(__name__)
 
 # The pinned selection these annotations belong to. Committed beside this script, because the
 # imaging is fetched from IDC on demand and never re-hosted -- see build_omop_project.py.
-DEFAULT_MANIFEST = Path(__file__).resolve().parent / "manifest.csv"
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "idc_pathology"
+# The published manifest (omop-csv/pathology_project/source/manifest.csv on aicentreflip/trust-data), as
+# fetched into the data root by `make -C fl-tutorials fetch-idc-pathology-manifest`.
+DEFAULT_MANIFEST = DEFAULT_DATA_DIR / "manifest.csv"
 
 ANNOTATION_FILENAME = "annotation.dcm"
 
@@ -86,14 +88,14 @@ def annotation_path(data_dir: Path, site: str, accession_id: str) -> Path:
 def build_manifest(data_dir: Path, manifest_csv: Path, trust: str | None = None) -> list[EnrichmentItem]:
     """Build the upload manifest from the pinned selection.
 
-    Built from the committed manifest rather than by walking the download tree, so a partial
+    Built from the published manifest rather than by walking the download tree, so a partial
     download is reported as missing files naming the command that fetches them, instead of silently
     enriching a subset of the cohort -- which would leave some slides unscoreable while the run
     still looked clean.
 
     Args:
         data_dir (Path): Root of the downloaded tree.
-        manifest_csv (Path): The committed ``manifest.csv``.
+        manifest_csv (Path): The published ``manifest.csv``, fetched into the data root.
         trust (str | None): Restrict to one Trust, given either as ``Trust_1`` or as ``1``. This is
             the dataset's own per-site partition, not the FL kit slot of the same name.
 
@@ -106,7 +108,10 @@ def build_manifest(data_dir: Path, manifest_csv: Path, trust: str | None = None)
         ValueError: If the manifest carries no rows for the requested Trust.
     """
     if not manifest_csv.is_file():
-        raise FileNotFoundError(f"{manifest_csv} is missing — this file is committed, so the checkout is incomplete.")
+        raise FileNotFoundError(
+            f"{manifest_csv} is missing — fetch the published manifest with "
+            "`make -C fl-tutorials fetch-idc-pathology-manifest`."
+        )
 
     wanted = f"Trust_{trust}" if trust and trust.isdigit() else trust
 
@@ -163,7 +168,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--manifest",
         type=Path,
         default=DEFAULT_MANIFEST,
-        help=f"Committed manifest naming the pinned selection (default: {DEFAULT_MANIFEST.name}).",
+        help=f"Published manifest of the pinned selection, fetched into the data root (default: {DEFAULT_MANIFEST}).",
     )
     parser.add_argument(
         "--trust",

@@ -23,11 +23,16 @@ see the tutorial README.
 Selection is deterministic: candidates are ordered by (download size, SeriesInstanceUID) and the
 smallest are taken, one slide per patient so no patient spans two sites and no patient contributes
 twice. The resulting manifest is a **lockfile** — regenerable from the criteria, but pinned so a run
-reproduces across IDC releases.
+reproduces across IDC releases. It is published, not committed: it lives on the
+``aicentreflip/trust-data`` dataset at ``omop-csv/pathology_project/source/manifest.csv`` (the same
+place the cxr project keeps the metadata table its OMOP export was built from), pinned by
+``trust/.data_version`` and fetched into the gitignored data root by
+``make -C fl-tutorials fetch-idc-pathology-manifest``. A re-resolve writes a new manifest there and
+goes out as a new data version — never as a repository diff.
 
 Outputs, under ``--out-dir`` (default ``fl-tutorials/data/idc_pathology``)::
 
-    datasets/idc_pathology/manifest.csv     # the lockfile: every selected slide, its site, its UIDs
+    <out>/manifest.csv                      # the lockfile: every selected slide, its site, its UIDs
     <out>/<site>/dataframe.csv              # the FLIP dataframe for that site (needs accession_id)
     <out>/<site>/accession-resources/<accession_id>/{slide.dcm,annotation.dcm}
 
@@ -36,8 +41,9 @@ Usage::
     # resolve a fresh selection and download it
     python prepare_idc_pathology.py --resolve --sites BH,A2 --slides-per-site 5
 
-    # reproduce a pinned selection (no index query -- exact same slides)
-    python prepare_idc_pathology.py --manifest manifest.csv
+    # reproduce the pinned selection (no index query -- exact same slides); fetch it first with
+    # `make -C fl-tutorials fetch-idc-pathology-manifest`
+    python prepare_idc_pathology.py --manifest
 
     # see what would be selected and how big it is, without downloading
     python prepare_idc_pathology.py --resolve --dry-run
@@ -65,9 +71,10 @@ DEFAULT_COLLECTION = "tcga_brca"
 DEFAULT_SITES = ("A8", "A7")
 DEFAULT_SLIDES_PER_SITE = 12
 
-# The manifest lives beside this script, not under the gitignored data root: it is the lockfile that
-# makes a run reproducible, and it is small enough to review in a diff.
-_DEFAULT_MANIFEST = Path(__file__).resolve().parent / "manifest.csv"
+# The gitignored data root every tutorial dataset lands in (fl-tutorials/data/). The manifest is
+# fetched into it from the published dataset, and a fresh resolve writes there too.
+_DEFAULT_OUT_DIR = Path(__file__).resolve().parents[2] / "data" / "idc_pathology"
+_DEFAULT_MANIFEST = _DEFAULT_OUT_DIR / "manifest.csv"
 
 SLIDE_FILENAME = "slide.dcm"
 ANNOTATION_FILENAME = "annotation.dcm"
@@ -356,7 +363,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         nargs="?",
         const=_DEFAULT_MANIFEST,
-        help="Reproduce a pinned subset. Defaults to the committed manifest beside this script.",
+        help=(
+            "Reproduce a pinned subset. Defaults to the published manifest fetched into the data root by "
+            "`make -C fl-tutorials fetch-idc-pathology-manifest`."
+        ),
     )
     parser.add_argument("--collection", default=DEFAULT_COLLECTION, help="IDC collection id.")
     parser.add_argument(
@@ -375,12 +385,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "it is why the default sites are A8/A7 rather than the largest ones."
         ),
     )
-    parser.add_argument("--out-dir", type=Path, default=Path(__file__).resolve().parents[2] / "data" / "idc_pathology")
+    parser.add_argument("--out-dir", type=Path, default=_DEFAULT_OUT_DIR)
     parser.add_argument(
         "--manifest-out",
         type=Path,
         default=_DEFAULT_MANIFEST,
-        help="Where to write the resolved manifest. Defaults beside this script, where it is committed.",
+        help="Where to write a resolved manifest (--resolve only). Defaults into the data root; publish it "
+        "as a new data version with `make -C trust publish-trust-data`.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Resolve and report, but download nothing.")
     return parser.parse_args(argv)
@@ -401,6 +412,12 @@ def main(argv: list[str] | None = None) -> int:
     idc_version = str(getattr(idc_index_data, "__version__", "unknown"))
 
     if args.manifest:
+        if not args.manifest.is_file():
+            raise SystemExit(
+                f"No manifest at {args.manifest}. Fetch the published one first with:\n"
+                "  make -C fl-tutorials fetch-idc-pathology-manifest\n"
+                "or resolve a fresh selection with IDC_RESOLVE=1."
+            )
         manifest = pd.read_csv(args.manifest, dtype={"tss": str})
         logger.info("Reproducing pinned selection: %d slide(s) from %s", len(manifest), args.manifest)
     else:

@@ -108,5 +108,9 @@ def test_annotations_are_written_into_the_slide_scans_dicom_resource() -> None:
     assert uploader.ANNOTATION_RESOURCE == "DICOM"
 
 
-def test_the_committed_manifest_is_the_default_and_exists() -> None:
-    assert uploader.DEFAULT_MANIFEST.is_file(), "manifest.csv is committed beside the uploader"
+def test_the_default_manifest_is_the_fetched_published_one(tmp_path) -> None:
+    """The manifest is published on trust-data and fetched into the data root, never committed."""
+    assert uploader.DEFAULT_MANIFEST == uploader.DEFAULT_DATA_DIR / "manifest.csv"
+    assert not (Path(uploader.__file__).parent / "manifest.csv").exists(), "a committed manifest would fork the source"
+    with pytest.raises(FileNotFoundError, match="fetch-idc-pathology-manifest"):
+        uploader.build_manifest(tmp_path, tmp_path / "manifest.csv")

@@ -30,20 +30,33 @@ site, plus their annotation series.
 
 ### Reproducibility without republishing the imaging
 
-Slides are fetched from IDC on demand and never copied into another dataset. What *is* saved is the
-much smaller thing needed to make a run repeatable:
+Slides are fetched from IDC on demand and never copied into another dataset. What *is* published is
+the much smaller thing needed to make a run repeatable, and it lives where every other project's
+tables do — on [`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data)
+under `omop-csv/pathology_project/`, at the data version `trust/.data_version` pins (first published
+as tag `20260911`). Nothing is committed to this repository:
 
-- **`datasets/idc_pathology/manifest.csv`** — the lockfile. One row per slide, pinning its UIDs, its
-  site and the IDC index version the selection was resolved against. IDC issues versioned releases
-  and series come and go, so without this pin "the same criteria" silently resolves to a different
-  subset later. The download target reproduces from it **by default**; `IDC_RESOLVE=1` re-selects
-  and rewrites it, which should be reviewed as a deliberate dataset change.
-- **`datasets/idc_pathology/omop/pathology_project/*.csv`** — the OMOP mock rows, derived from the
-  manifest by `build_omop_project.py`. Deterministic: the same manifest regenerates them
-  byte-identically.
+- **`omop-csv/pathology_project/source/manifest.csv`** — the lockfile. One row per slide, pinning
+  its UIDs, its site and the IDC index version the selection was resolved against. IDC issues
+  versioned releases and series come and go, so without this pin "the same criteria" silently
+  resolves to a different subset later. It sits beside the tables exactly as the cxr project's
+  metadata table does (`omop-csv/cxr_project/source/dicom_metadata.csv`): the fixed input its OMOP
+  export was built from. `make -C fl-tutorials fetch-idc-pathology-manifest` fetches it into the
+  gitignored `fl-tutorials/data/idc_pathology/`, and the download target does that **by default**;
+  `IDC_RESOLVE=1` re-selects instead and writes a fresh manifest there, which goes out as a **new data
+  version** (`make -C trust publish-trust-data`, then bump the pin) — that publish is the review
+  point for a dataset change, in place of a repository diff.
+- **`omop-csv/pathology_project/*.csv`** — the four OMOP tables (`person`, `visit_occurrence`,
+  `procedure_occurrence`, `image_occurrence`), derived from the manifest by
+  `datasets/idc_pathology/build_omop_project.py`. Deterministic: the same manifest regenerates them
+  byte-identically, which is what the shared gate certifies —
+  `make -C fl-tutorials reproduce-idc-pathology-omop` fetches the manifest, rebuilds the tables into
+  the gitignored `fl-tutorials/omop/<trust>/pathology_project/` and diffs them against the published
+  export (`GATE PASS` at `20260911`). No `image_feature` is published: the labels are the nuclei
+  annotations, which live in XNAT (data enrichment), not in OMOP.
 
-Together these are a few kilobytes, so the repository carries the *selection* and its *description*
-while the gigabytes stay at their source.
+Together these are about 20 KB, so the dataset carries the *selection* and its *description* while
+the gigabytes stay at their source — there is deliberately no `dicom/pathology_project.tar.gz`.
 
 No demographics are invented. TCGA pathology DICOM is de-identified — every `PatientSex` and
 `PatientBirthDate` in this collection is empty — so those columns carry OMOP's "No matching concept"
@@ -178,7 +191,7 @@ needed to look at one — for example the first Trust_1 slide, `TCGA-A8-A0AB`:
 <https://viewer.imaging.datacommons.cancer.gov/slim/studies/2.25.305523966109504368018351018821035186810/series/1.3.6.1.4.1.5962.99.1.1343238082.2143638158.1637725810626.2.0>
 
 A link for any slide in the subset is `.../slim/studies/<slide_study_uid>/series/<slide_series_uid>`,
-both of which are columns in `manifest.csv`.
+both of which are columns in the published `manifest.csv`.
 
 Viewing them in **FLIP's own** stack is a different matter: XNAT here has no OHIF viewer at all (it is
 deliberately not installed, FLIP#662), and OHIF's slide support is a separate microscopy extension
@@ -218,10 +231,19 @@ the federated evaluation run itself is still to be confirmed on a trust. It take
 rather than one, and the second is not optional.
 
 ```bash
-make -C fl-tutorials seed-idc-pathology                                  # slides + OMOP rows
+make -C fl-tutorials seed-idc-pathology                                  # OMOP rows + slides
 make -C fl-tutorials upload-idc-pathology-annotations \                  # annotations, after the pull
     FLIP_PROJECT_ID=<uuid> XNAT_URLS="http://host-1 http://host-2"
 ```
+
+`seed-idc-pathology` is two halves keyed on the same published manifest. The OMOP rows go through the
+platform's own seed pipeline — `make -C trust seed-omop KIT=<CODE> PROJECTS=pathology_project` for
+each kit in `IDC_KITS` (default `GSTT KCH`), which fetches the published tables at the pinned data
+version and loads that kit's `source_trust` slice. The slides are then posted into each trust's
+Orthanc from the local IDC download by `datasets/idc_pathology/seed_slides.py`, because the seed
+pipeline's DICOM half (`seed-orthanc`) expects a `dicom/<project>.tar.gz` on the dataset and
+re-hosting the slides is exactly what this tutorial avoids. `DRY_RUN=1` reports the slide half and
+skips the OMOP half (which has no dry run).
 
 **Why two steps: the annotations cannot travel with the slides.** XNAT's DICOM receiver runs on
 dcm4che 2.0.29, whose UID table has no entry for the Microscopy Bulk Simple Annotations SOP class

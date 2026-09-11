@@ -8,30 +8,33 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Seed the pathology slides and their OMOP rows into running dev trusts.
+"""Seed the pathology slides into running dev trusts' Orthanc, one trust per manifest site.
 
 The pathology tutorial normally runs under ``LOCAL_DEV``, reading slides straight off disk. To drive
 it through the *platform* -- a cohort query that resolves, an imaging pull into XNAT, a viewer that
 has something to show -- the same data has to exist where the platform looks for it: whole-slide
 DICOM in each trust's Orthanc, and the matching OMOP rows in each trust's database.
 
-This puts it there, additively, against an already-running stack. It is deliberately not folded into
-``make update-orthanc-data`` / ``update-omop-data``: those replace a trust's whole data directory
-from a prepared tarball, so they cannot add to a live one, and hosting ~1.4 GB of whole-slide imaging
-in that shared archive is exactly what the tutorial's download-on-demand design avoids.
+This is the Orthanc half. The OMOP half is the platform's own seed pipeline
+(``make -C trust seed-omop KIT=<CODE> PROJECTS=pathology_project``), which fetches the published
+``omop-csv/pathology_project/`` tables at the pinned data version and loads this trust's
+``source_trust`` slice; ``make -C fl-tutorials seed-idc-pathology`` runs both halves. The seed
+pipeline's DICOM half (``seed-orthanc``) is deliberately *not* used: it expects
+``dicom/<project>.tar.gz`` on the dataset, and re-hosting gigabytes of a public archive is exactly what
+this tutorial's download-on-demand design avoids. The slides are posted here from the local IDC
+download instead.
 
-Both stores are seeded by one script because they have to agree. A slide in Orthanc with no OMOP row
-is invisible to a cohort query; an OMOP row with no slide is a pull that stalls. Splitting them into
-two commands would make disagreement the easy mistake.
-
-**The OMOP ``source_trust`` column decides which trust gets what** -- not the ``Trust_N`` directory
-names, which were generated from that same column. Reading the column keeps one source of truth, and
-lets the agreement between the two be asserted rather than assumed.
+The two halves still agree by construction: both are keyed on the same published manifest at the same
+tag. The OMOP tables are derived from it (``build_omop_project.py``, gated by
+``utils/verify_omop_tables.py``), and this script reads its ``site`` column to decide which trust
+receives which slide -- ``Trust_N`` is the manifest's name for OMOP ``source_trust`` N. A slide in
+Orthanc with no OMOP row is invisible to a cohort query; an OMOP row with no slide is a pull that
+stalls; sharing one input rules both out.
 
 Usage::
 
-    python seed_trusts.py --trust 1=http://127.0.0.1:8042,postgresql://...@127.0.0.1:5434/trustomopdb \\
-                          --trust 2=http://127.0.0.1:8044,postgresql://...@127.0.0.1:5436/trustomopdb
+    python seed_slides.py --trust 1=http://127.0.0.1:8042,orthanc:orthanc \\
+                          --trust 2=http://127.0.0.1:8044,orthanc:orthanc
 """
 
 from __future__ import annotations
@@ -44,96 +47,54 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import psycopg2
 import requests
 
-logger = logging.getLogger("seed_trusts")
+logger = logging.getLogger("seed_slides")
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-OMOP_DIR = Path(__file__).resolve().parent / "omop" / "pathology_project"
-DEFAULT_SLIDES_DIR = REPO_ROOT / "fl-tutorials" / "data" / "idc_pathology"
+FL_TUTORIALS_DIR = Path(__file__).resolve().parents[2]
+DEFAULT_SLIDES_DIR = FL_TUTORIALS_DIR / "data" / "idc_pathology"
+DEFAULT_MANIFEST = DEFAULT_SLIDES_DIR / "manifest.csv"
 
-# Written in dependency order: person before the visit that references it, and so on. image_occurrence
-# last, because it references all three.
-OMOP_TABLES = ("person", "visit_occurrence", "procedure_occurrence", "image_occurrence")
-
-# The column naming each row's trust. Present in every table this seeds.
-TRUST_COLUMN = "source_trust"
+# The manifest column naming each slide's site, ``Trust_<N>`` -- N is the OMOP source_trust the
+# published tables carry for that slide, so the same number selects the trust's rows on both sides.
+SITE_COLUMN = "site"
 
 TIMEOUT_SECONDS = 600
 
 
 @dataclass(frozen=True)
 class Trust:
-    """One dev trust's two write targets."""
+    """One dev trust's Orthanc."""
 
     number: str
     orthanc_url: str
-    omop_dsn: str
     orthanc_auth: tuple[str, str] | None = None
 
     def __str__(self) -> str:
         return f"trust {self.number}"
 
 
-def read_table(name: str) -> list[dict[str, str]]:
-    path = OMOP_DIR / f"{name}.csv"
+def read_manifest(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         raise FileNotFoundError(
-            f"{path} is missing. Run `make -C fl-tutorials build-idc-pathology-omop` to derive it."
+            f"{path} is missing. Fetch the published manifest first: "
+            "`make -C fl-tutorials fetch-idc-pathology-manifest`."
         )
     with path.open(newline="") as handle:
         return list(csv.DictReader(handle))
 
 
-def rows_for(table: list[dict[str, str]], trust_number: str) -> list[dict[str, str]]:
-    return [row for row in table if row.get(TRUST_COLUMN) == trust_number]
+def trust_number_of(site: str) -> str:
+    """The OMOP ``source_trust`` a manifest site label names: ``Trust_2`` is ``"2"``."""
+    digits = "".join(character for character in site if character.isdigit())
+    if not digits:
+        raise ValueError(f"Cannot derive a trust number from site {site!r}; expected a name like 'Trust_1'.")
+    return str(int(digits))
 
 
-def seed_omop(trust: Trust, tables: dict[str, list[dict[str, str]]], dry_run: bool) -> int:
-    """Replace this trust's rows for the patients the pathology project owns.
-
-    Delete-then-insert, scoped by ``person_source_value``, rather than an insert that skips
-    conflicts. The surrogate ids look stable but are not: re-resolving the manifest renumbers every
-    table from ID_BASE, so the same slide comes back under a new ``image_occurrence_id``. Skipping
-    on primary-key conflict therefore does not deduplicate -- it silently doubles the cohort, which
-    is how a 12-slide trust briefly became a 17-row one here.
-
-    Scoping by the patient barcode instead means re-running converges on exactly what the CSVs say,
-    whatever the ids did, and touches nothing outside this mock project.
-    """
-    # Report without connecting: a dry run is for checking what would happen, so it must not also
-    # require working database credentials.
-    if dry_run:
-        for name in OMOP_TABLES:
-            logger.info("  [dry-run] %s: would insert %d row(s)", name, len(rows_for(tables[name], trust.number)))
-        return 0
-
-    barcodes = [row["person_source_value"] for row in rows_for(tables["person"], trust.number)]
-    inserted = 0
-    with psycopg2.connect(trust.omop_dsn) as connection, connection.cursor() as cursor:
-        # Clear first, in reverse dependency order so the foreign keys hold at every step.
-        cursor.execute("SELECT person_id FROM omop.person WHERE person_source_value = ANY(%s);", (barcodes,))
-        person_ids = [row[0] for row in cursor.fetchall()]
-        if person_ids:
-            for name in reversed(OMOP_TABLES[1:]):
-                cursor.execute(f"DELETE FROM omop.{name} WHERE person_id = ANY(%s);", (person_ids,))
-            cursor.execute("DELETE FROM omop.person WHERE person_id = ANY(%s);", (person_ids,))
-
-        for name in OMOP_TABLES:
-            rows = rows_for(tables[name], trust.number)
-            if not rows:
-                continue
-            # source_trust is a partition marker for the mock data, not part of the OMOP CDM, so it
-            # is dropped before the insert -- the trust's own database has no such column.
-            columns = [c for c in rows[0] if c != TRUST_COLUMN]
-            placeholders = ", ".join(["%s"] * len(columns))
-            statement = f"INSERT INTO omop.{name} ({', '.join(columns)}) VALUES ({placeholders})"
-            for row in rows:
-                cursor.execute(statement, [row[c] or None for c in columns])
-                inserted += cursor.rowcount
-            logger.info("  %s: %d row(s)", name, len(rows))
-    return inserted
+def accessions_for(manifest: list[dict[str, str]], trust_number: str) -> list[str]:
+    """Every accession the manifest assigns to one trust, sorted, each exactly once."""
+    return sorted({row["accession_id"] for row in manifest if trust_number_of(row[SITE_COLUMN]) == trust_number})
 
 
 # Only the slide is seeded into Orthanc. The reference annotations reach XNAT by data enrichment
@@ -254,18 +215,16 @@ def prune_annotations(trust: Trust, accessions: list[str], dry_run: bool) -> int
 
 
 def parse_trust(value: str) -> Trust:
-    """Parse ``<number>=<orthanc-url>,<omop-dsn>[,<user>:<password>]``."""
+    """Parse ``<number>=<orthanc-url>[,<user>:<password>]``."""
     number, _, rest = value.partition("=")
     parts = [p for p in rest.split(",") if p]
-    if not number.isdigit() or len(parts) < 2:
-        raise argparse.ArgumentTypeError(
-            f"--trust expects '<number>=<orthanc-url>,<omop-dsn>[,<user>:<password>]', got {value!r}"
-        )
+    if not number.isdigit() or not parts:
+        raise argparse.ArgumentTypeError(f"--trust expects '<number>=<orthanc-url>[,<user>:<password>]', got {value!r}")
     auth: tuple[str, str] | None = None
-    if len(parts) > 2:
-        user, _, password = parts[2].partition(":")
+    if len(parts) > 1:
+        user, _, password = parts[1].partition(":")
         auth = (user, password)
-    return Trust(number=number, orthanc_url=parts[0], omop_dsn=parts[1], orthanc_auth=auth)
+    return Trust(number=number, orthanc_url=parts[0], orthanc_auth=auth)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -275,8 +234,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         required=True,
         type=parse_trust,
-        metavar="N=ORTHANC_URL,OMOP_DSN[,USER:PASS]",
-        help="A trust to seed. Repeat for each; the number must match the OMOP source_trust value.",
+        metavar="N=ORTHANC_URL[,USER:PASS]",
+        help="A trust to seed. Repeat for each; the number must match the manifest's Trust_N site (OMOP source_trust).",
+    )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=DEFAULT_MANIFEST,
+        help=f"The published manifest, as fetched by make fetch-idc-pathology-manifest (default: {DEFAULT_MANIFEST}).",
     )
     parser.add_argument(
         "--slides-dir",
@@ -292,26 +257,24 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     args = build_parser().parse_args(argv)
 
-    tables = {name: read_table(name) for name in OMOP_TABLES}
-    images = tables["image_occurrence"]
+    manifest = read_manifest(args.manifest)
 
     seeded_any = False
     for trust in args.trust:
-        accessions = sorted({row["accession_id"] for row in rows_for(images, trust.number)})
+        accessions = accessions_for(manifest, trust.number)
         if not accessions:
-            logger.warning("%s: no rows with %s=%s -- skipping", trust, TRUST_COLUMN, trust.number)
+            logger.warning("%s: no manifest rows for site Trust_%s -- skipping", trust, trust.number)
             continue
         logger.info("%s: %d slide(s)", trust, len(accessions))
         prune_annotations(trust, accessions, args.dry_run)
         seed_orthanc(trust, accessions, args.slides_dir, args.dry_run)
-        seed_omop(trust, tables, args.dry_run)
         seeded_any = True
 
-    # A run that seeds nothing anywhere is almost always a wrong --trust number or an unbuilt CSV,
-    # and it would otherwise surface much later as a cohort query that matches nothing. Fail here,
+    # A run that seeds nothing anywhere is almost always a wrong --trust number or the wrong manifest,
+    # and it would otherwise surface much later as a pull that finds nothing to move. Fail here,
     # where the cause is still on screen -- the same reasoning as the spleen uploader's no-op guard.
     if not seeded_any:
-        logger.error("Nothing was seeded: no trust matched a %s value in the OMOP data.", TRUST_COLUMN)
+        logger.error("Nothing was seeded: no trust matched a %s value in the manifest.", SITE_COLUMN)
         return 1
     return 0
 

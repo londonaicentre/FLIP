@@ -10,24 +10,28 @@
 # limitations under the License.
 """Generate the OMOP mock rows for the IDC digital-pathology project from the pinned manifest.
 
-The tutorial's imaging comes from IDC on demand and is never re-hosted. What has to be *saved* for a
-run to be reproducible is the much smaller thing: which slides were chosen, and the OMOP rows that
-describe them. Those rows are derived here rather than published, so the repository carries a
-manifest of a few hundred bytes per slide instead of gigabytes of DICOM.
+The tutorial's imaging comes from IDC on demand and is never re-hosted. What is published instead is
+the much smaller thing that makes a run reproducible: the manifest (which slides were chosen) and the
+OMOP rows that describe them, both on ``aicentreflip/trust-data`` under ``omop-csv/pathology_project/``
+like every other project's tables -- the manifest at ``source/manifest.csv``, exactly where the cxr
+project keeps the metadata table its export was built from. The repository commits neither; this
+script is the provenance chain from the one to the other, and ``utils/verify_omop_tables.py`` is the
+gate that proves the published tables reproduce from the published manifest.
 
 Everything is a deterministic function of ``manifest.csv``: same manifest in, byte-identical CSVs out.
 Nothing is randomised and no demographics are invented -- TCGA pathology DICOM is de-identified of
 sex and age (every ``PatientSex`` in this collection is empty), so those columns carry OMOP's
 "No matching concept" (0) rather than a fabricated value that downstream analysis might believe.
 
-Output follows the seed pipeline's per-project layout, carrying the ``source_trust`` column the
-partitioning is driven by::
+Output is the per-trust layout the spleen and cxr converters write, and the one the verification gate
+and ``trust/omop-db``'s ``build_canonical`` read -- each trust's rows in its own directory, with the
+partition given by the directory rather than a column::
 
-    <out>/pathology_project/{person,visit_occurrence,procedure_occurrence,image_occurrence}.csv
+    <out>/trust_<N>/pathology_project/{person,visit_occurrence,procedure_occurrence,image_occurrence}.csv
 
 Usage::
 
-    python build_omop_project.py
+    python build_omop_project.py [--manifest <path>] [--out <dir>]
 """
 
 from __future__ import annotations
@@ -43,6 +47,12 @@ logger = logging.getLogger("build_omop_project")
 
 PROJECT_NAME = "pathology_project"
 SOURCE_TRUST_COLUMN = "source_trust"
+
+# Where the published manifest is fetched to (make fetch-idc-pathology-manifest) and where the tables
+# are written: the gitignored data root and the gitignored omop/ output every OMOP chain uses.
+FL_TUTORIALS_DIR = Path(__file__).resolve().parents[2]
+DEFAULT_MANIFEST = FL_TUTORIALS_DIR / "data" / "idc_pathology" / "manifest.csv"
+DEFAULT_OUT = FL_TUTORIALS_DIR / "omop"
 
 # Concept ids, all resolved against the vocabulary the dev OMOP database already loads. Notably the
 # modality concept needs nothing added: the DICOM vocabulary already carries Slide microscopy.
@@ -63,9 +73,10 @@ UNKNOWN_YEAR_OF_BIRTH = 1900
 # way (for example 'Chest X-ray'), so query.sql can select this cohort without touching concept ids.
 PROCEDURE_SOURCE_VALUE = "Histopathology slide"
 
-# Existing projects occupy 1000002-3000900 across person/visit/procedure/image_occurrence, so this
-# project is given its own band. Keeping the bands disjoint means several projects can be loaded into
-# one trust without primary-key collisions.
+# The project's reserved surrogate-key block, as registered in utils/omop_ids.py (cxr 1M, spleen 2M,
+# prostate 3M): keeping the blocks disjoint means several projects can be loaded into one trust
+# without primary-key collisions. Ids here are base + 2 + row index — the published export carries
+# that offset, so it is recorded in omop_ids.py rather than re-aligned to its allocator.
 ID_BASE = 4_000_000
 
 
@@ -101,7 +112,8 @@ def build_tables(manifest: pd.DataFrame) -> dict[str, pd.DataFrame]:
         manifest: The pinned selection, one row per slide.
 
     Returns:
-        A mapping of table name to dataframe, each carrying ``source_trust``.
+        A mapping of table name to dataframe, each carrying ``source_trust`` -- the canonical form
+        the published export has. ``write_per_trust`` splits it into the per-trust layout.
     """
     rows = manifest.reset_index(drop=True)
     # Row position drives every surrogate key, and the manifest's own ordering is deterministic, so
@@ -169,38 +181,61 @@ def build_tables(manifest: pd.DataFrame) -> dict[str, pd.DataFrame]:
     }
 
 
+def write_per_trust(tables: dict[str, pd.DataFrame], out: Path) -> list[Path]:
+    """Write the canonical tables in the per-trust layout, ``<out>/trust_<N>/pathology_project/``.
+
+    The partition becomes the directory and the ``source_trust`` column is dropped, which is what
+    the spleen and cxr converters produce and what ``verify_omop_tables.py`` (re-deriving the
+    column from the directory name) and ``omop_db_tools.dataset build`` (re-adding it) consume.
+
+    Args:
+        tables: The canonical tables from ``build_tables``.
+        out: Root to write under.
+
+    Returns:
+        The files written, in table order within each trust.
+    """
+    written: list[Path] = []
+    trusts = sorted({int(value) for frame in tables.values() for value in frame[SOURCE_TRUST_COLUMN]})
+    for trust in trusts:
+        destination = out / f"trust_{trust}" / PROJECT_NAME
+        destination.mkdir(parents=True, exist_ok=True)
+        for name, frame in tables.items():
+            path = destination / f"{name}.csv"
+            rows = frame[frame[SOURCE_TRUST_COLUMN] == trust].drop(columns=SOURCE_TRUST_COLUMN)
+            rows.to_csv(path, index=False)
+            logger.info("Wrote %s (%d row(s))", path, len(rows))
+            written.append(path)
+    return written
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--manifest",
         type=Path,
-        default=Path(__file__).resolve().parent / "manifest.csv",
-        help="The pinned slide selection to derive rows from.",
+        default=DEFAULT_MANIFEST,
+        help="The pinned slide selection to derive rows from (default: the fetched published manifest).",
     )
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path(__file__).resolve().parent / "omop",
-        help="Directory to write <project>/<table>.csv into. Committed, so runs stay reproducible.",
+        default=DEFAULT_OUT,
+        help="Directory to write trust_<N>/<project>/<table>.csv into (default: fl-tutorials/omop, gitignored).",
     )
     args = parser.parse_args(argv)
 
     if not args.manifest.exists():
         raise SystemExit(
-            f"No manifest at {args.manifest}. Generate one first with:\n"
-            "  make -C fl-tutorials download-idc-pathology-data"
+            f"No manifest at {args.manifest}. Fetch the published one first with:\n"
+            "  make -C fl-tutorials fetch-idc-pathology-manifest\n"
+            "or resolve a fresh selection with `make -C fl-tutorials download-idc-pathology-data IDC_RESOLVE=1`."
         )
 
     manifest = pd.read_csv(args.manifest, dtype={"tss": str, "study_date": str})
     tables = build_tables(manifest)
-
-    destination = args.out / PROJECT_NAME
-    destination.mkdir(parents=True, exist_ok=True)
-    for name, frame in tables.items():
-        path = destination / f"{name}.csv"
-        frame.to_csv(path, index=False)
-        logger.info("Wrote %s (%d row(s))", path, len(frame))
+    write_per_trust(tables, args.out)
 
     counts = manifest["site"].value_counts().to_dict()
     logger.info("Project %r covers %d patient(s) across %s", PROJECT_NAME, len(manifest), counts)
