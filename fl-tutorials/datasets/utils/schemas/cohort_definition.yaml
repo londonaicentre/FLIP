@@ -1,0 +1,24 @@
+schema_type: dataframe
+columns:
+  cohort_definition_id:
+    dtype: int64
+  cohort_definition_name:
+    dtype: string[python]
+  cohort_definition_description:
+    dtype: string[python]
+    nullable: true
+    required: false
+  definition_type_concept_id:
+    dtype: int64
+  cohort_definition_syntax:
+    dtype: string[python]
+    nullable: true
+    required: false
+  subject_concept_id:
+    dtype: int64
+  cohort_initiation_date:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

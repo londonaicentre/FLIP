@@ -25,9 +25,10 @@ single-model ``validate`` task and reuses the same cross-site validation path th
   :class:`~flip.nvflare.components.EvaluationJsonGenerator` collects the returned metrics
   into ``evaluation_results.json`` (unchanged output contract); ``PersistToS3AndCleanup`` zips + uploads
   the run dir to S3.
-* client: the stock ``InProcessClientAPIExecutor`` runs the evaluator script, which is the canonical
-  Client-API ``is_evaluate()`` loop — receive the global model, score it on local data, send back an
-  aggregate-only metrics ``FLModel``. No ``Executor``/``Shareable`` plumbing, no ``COLLECTION`` unwrap.
+* client: the stock ``ClientAPIExecutor`` (in-process mode) runs the evaluator script, which is the
+  canonical Client-API ``is_evaluate()`` loop — receive the global model, score it on local data, send
+  back an aggregate-only metrics ``FLModel``. No ``Executor``/``Shareable`` plumbing, no ``COLLECTION``
+  unwrap.
 
 The recipe runs identically across SimEnv/PocEnv/ProdEnv and exports the standard NVFLARE FedJob layout
 for the FLIP-API, exactly like :class:`FlipFedAvgRecipe`. ``model_id`` is resolved lazily by the FLIP
@@ -42,11 +43,10 @@ from pathlib import Path
 from typing import Any
 
 from nvflare import FedJob
-from nvflare.app_common.executors.in_process_client_api_executor import InProcessClientAPIExecutor
+from nvflare.app_common.executors.client_api_executor import ClientAPIExecutor, ExecutionMode
 from nvflare.app_common.workflows.global_model_eval import GlobalModelEval
 from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
 from nvflare.job_config.defs import FilterType
-from nvflare.recipe.spec import Recipe
 
 from flip.constants import FlipTasks
 from flip.nvflare.components import (
@@ -59,6 +59,7 @@ from flip.nvflare.components import (
     ServerEventHandler,
 )
 from flip.nvflare.controllers import BroadcastTask, InitEvaluation
+from flip.nvflare.recipes.base import FlipRecipe
 from flip.nvflare.runtime import FLIP_CUSTOM_PROPS_KEY, FLIP_MODEL_ID_KEY
 
 # Default UUID used by SimEnv/PocEnv runs when the caller doesn't pass one. Pinned so dev runs are
@@ -66,7 +67,7 @@ from flip.nvflare.runtime import FLIP_CUSTOM_PROPS_KEY, FLIP_MODEL_ID_KEY
 _DEV_MODEL_ID = "00000000-0000-0000-0000-000000000001"
 
 
-class FlipEvalRecipe(Recipe):
+class FlipEvalRecipe(FlipRecipe):
     """FLIP evaluation recipe wired for the NVFLARE Client API.
 
     Args:
@@ -158,7 +159,8 @@ class FlipEvalRecipe(Recipe):
 
         # Clients: Client API evaluator for the validate task.
         job.to_clients(
-            InProcessClientAPIExecutor(
+            ClientAPIExecutor(
+                execution_mode=ExecutionMode.IN_PROCESS,
                 task_script_path=self.eval_script,
                 task_script_args=self.eval_args,
                 evaluate_task_name=self.evaluate_task_name,

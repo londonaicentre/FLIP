@@ -78,16 +78,15 @@ services:
     # image (its workflow is a CI smoke test; prod serves it from S3/CloudFront).
     image: ${DOCKER_REGISTRY}flip-api:${DOCKER_TAG}
     pull_policy: always
-    # Dev-on-pull: the GHCR image bakes uid 1000 (flip); run the pulled image as
-    # the HOST uid so it can write the host-owned bind mounts (src/, ~/.aws).
-    # Paired with the HOME/UV_* env below so it never writes the image-owned
-    # .venv. No effect under BUILD=true (the image is already host-uid).
+    # Run the image as the HOST uid so it can write the host-owned bind mounts
+    # (src/, ~/.aws). Paired with the HOME/UV_* env below so it never writes the
+    # image-owned .venv. Applies equally to a pulled image and a BUILD=true one:
+    # since FLIP#1171 both bake flip/1000/1000, so neither is host-uid by itself.
     user: "${UID}:${GID}"
     build:
-      args:
-        UID: ${UID}
-        GID: ${GID}
-        UNAME: ${UNAME}
+      # No UID/GID/UNAME args: the Dockerfile fixes the identity at flip/1000/1000 so a
+      # locally-built image matches the pulled one (FLIP#1171). `user:` above still runs
+      # it as the host uid either way.
       context: ../flip-api
       # fl-apps/ lives at the repo root, outside the flip-api build context. Pass it as a named
       # additional context so the Dockerfile can `COPY --from=fl_apps` the base FL templates into
@@ -114,8 +113,8 @@ services:
       # Bind-mount the base FL app templates over the baked-in copy so template edits take effect
       # without a rebuild (the bundler reads them from FL_APP_BASE_DIR=/app/fl-apps). FLIP#724.
       - ../fl-apps/:/app/fl-apps/
-      - ~/.aws/config:/home/${UNAME}/.aws/config:ro
-      - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
+      - ~/.aws/config:/home/flip/.aws/config:ro
+      - ~/.aws/sso/cache:/home/flip/.aws/sso/cache:rw
     # Deliberately NOT on `fl-net-*`: flip-api fronts the database and holds the hub's
     # credentials, and nothing on the FL data plane calls it. The traffic that looks like
     # it needs this is the fl-server → flip-api callback, and fl-server reaches it over
@@ -132,7 +131,13 @@ services:
       # the runtime editable install (UV_NO_SYNC) so the host-uid process never
       # writes the image-owned .venv; keep uv's cache + HOME writable. HOME
       # matches the ~/.aws mount path below so boto3 still finds credentials.
-      - HOME=/home/${UNAME}
+      - HOME=/home/flip
+      # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises.
+      # getpass.getuser() consults these first (FLIP#1171). Latent here today —
+      # nothing under src/ calls getuser() — but the same condition that the
+      # PGUSER line below works around for libpq.
+      - USER=flip
+      - LOGNAME=flip
       - UV_CACHE_DIR=/tmp/uv-cache
       - UV_NO_SYNC=1
       - PYTHONPATH=/app/src
@@ -165,6 +170,16 @@ services:
       - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
       - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
+      # Email dispatch. Dev needs no SES: left unset these three reach DevSettings
+      # as empty strings, which it coerces to the console backend and the
+      # placeholder addresses. They are passed anyway so the documented
+      # `EMAIL_BACKEND=ses` override in .env.development actually reaches the app —
+      # this service has an explicit environment list and no env_file, so a
+      # variable absent here is invisible to it no matter what the env file says,
+      # and the override would silently keep logging to the console (FLIP#1081).
+      - EMAIL_BACKEND=${EMAIL_BACKEND:-}
+      - AWS_SES_ADMIN_EMAIL_ADDRESS=${AWS_SES_ADMIN_EMAIL_ADDRESS:-}
+      - AWS_SES_SENDER_EMAIL_ADDRESS=${AWS_SES_SENDER_EMAIL_ADDRESS:-}
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - DB_HOST=${DB_HOST}
@@ -180,8 +195,6 @@ services:
       - INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
       - AES_KEY_BASE64=${AES_KEY_BASE64}
       - AWS_SECRET_NAME=${AWS_SECRET_NAME}
-      - AWS_SES_ADMIN_EMAIL_ADDRESS=${AWS_SES_ADMIN_EMAIL_ADDRESS}
-      - AWS_SES_SENDER_EMAIL_ADDRESS=${AWS_SES_SENDER_EMAIL_ADDRESS}
       - UPLOADED_MODEL_FILES_BUCKET=${UPLOADED_MODEL_FILES_BUCKET}
       - SCANNED_MODEL_FILES_BUCKET=${SCANNED_MODEL_FILES_BUCKET}
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}

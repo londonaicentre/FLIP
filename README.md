@@ -49,7 +49,7 @@ own environment.
 
 - Docker Engine with Compose and Swarm mode, plus the NVIDIA Container Toolkit on GPU hosts
 - GNU Make, `jq`, the AWS CLI, and [uv](https://docs.astral.sh/uv/)
-- An AWS SSO profile with access to the development Cognito, S3, and SES resources
+- An AWS SSO profile with access to the development Cognito and S3 resources
 - GitHub Container Registry access for the published FLIP images
 
 The complete tool list and environment-variable checklist are in [CONTRIBUTING.md](CONTRIBUTING.md#prerequisites).
@@ -58,7 +58,7 @@ The complete tool list and environment-variable checklist are in [CONTRIBUTING.m
 
 ```bash
 cp .env.development.example .env.development
-# Fill the required AWS, Cognito, SES, database, encryption, and S3 values.
+# Fill the required AWS, Cognito, database, encryption, and S3 values.
 
 aws sso login --profile <your-profile>
 docker login ghcr.io

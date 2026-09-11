@@ -54,13 +54,12 @@ from typing import Any
 
 from nvflare import FedJob
 from nvflare.app_common.aggregators import InTimeAccumulateWeightedAggregator
-from nvflare.app_common.executors.in_process_client_api_executor import InProcessClientAPIExecutor
+from nvflare.app_common.executors.client_api_executor import ClientAPIExecutor, ExecutionMode
 from nvflare.app_common.shareablegenerators.full_model_shareable_generator import FullModelShareableGenerator
 from nvflare.app_common.widgets.intime_model_selector import IntimeModelSelector
 from nvflare.app_common.workflows.cross_site_model_eval import CrossSiteModelEval
 from nvflare.app_common.workflows.global_model_eval import GlobalModelEval
 from nvflare.job_config.defs import FilterType
-from nvflare.recipe.spec import Recipe
 
 from flip.constants import FlipTasks
 from flip.nvflare.components import (
@@ -81,6 +80,7 @@ from flip.nvflare.components import (
     PercentilePrivacy as PercentilePrivacyFilter,
 )
 from flip.nvflare.controllers import BroadcastTask, InitTraining, ScatterAndGather
+from flip.nvflare.recipes.base import FlipRecipe
 from flip.nvflare.runtime import FLIP_CUSTOM_PROPS_KEY, FLIP_MODEL_ID_KEY
 
 # Default UUID used by SimEnv/PocEnv runs when the caller doesn't pass one. Pinned so dev runs
@@ -105,7 +105,7 @@ class PercentilePrivacy:
     off: bool = False
 
 
-class FlipFedAvgRecipe(Recipe):
+class FlipFedAvgRecipe(FlipRecipe):
     """FLIP FedAvg recipe wired for the NVFLARE Client API.
 
     Head-only (frozen-backbone) aggregation is canonically driven in production by the fl-server's
@@ -340,7 +340,8 @@ class FlipFedAvgRecipe(Recipe):
         if self.submit_model_task_name:
             executor_tasks.insert(1, self.submit_model_task_name)
         job.to_clients(
-            InProcessClientAPIExecutor(
+            ClientAPIExecutor(
+                execution_mode=ExecutionMode.IN_PROCESS,
                 task_script_path=self.train_script,
                 task_script_args=self.train_args,
                 train_task_name=self.train_task_name,
