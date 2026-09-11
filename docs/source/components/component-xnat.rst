@@ -194,7 +194,7 @@ FLIP replaces the default script with a site-wide anonymization script (``anon_s
 The script is configured automatically during XNAT initialization via ``configure-xnat.sh``. It is applied to all incoming DICOM data when the SCP receiver has ``anonymizationEnabled`` set to ``true``.
 
 Limits of the profile
----------------------
+^^^^^^^^^^^^^^^^^^^^^
 
 The script is a denylist: 28 removal rules naming specific tags. It removes what it enumerates, and anything unenumerated survives. Three boundaries are worth stating explicitly, because a trust connecting a real PACS (see :doc:`component-pacs`) sends this script real patient data rather than the synthetic studies it has been exercised against:
 
@@ -293,4 +293,4 @@ The following methods are available to be used in training, located in the `flip
 - ``get_by_accession_number(project_id: str, accession_id: str, resource_type: ResourceType | list[ResourceType] = ResourceType.NIFTI) -> Path``
     Downloads scans of the requested resource type (``NIFTI`` by default) and places them in a directory made available to the FL training script. Takes the project ID and an accession ID (which can be obtained from ``get_dataframe``) and an optional ``resource_type`` (single value or list). Returns the path to where the scans are stored.
 
-See the :doc:`/components/component-fl-nodes` documentation for the full list of ``flip.*`` calls available to user training code.
+See the :doc:`/components/component-fl-nets` documentation for the full list of ``flip.*`` calls available to user training code.

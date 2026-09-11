@@ -471,7 +471,7 @@ and one of them does nothing until you turn it on.
 
    It is not on by default, so a node that has never been configured for it is sending updates
    constrained only by the platform-side reduction. See
-   :doc:`../components/component-fl-nodes` for the parameters and exact semantics.
+   :doc:`../components/component-fl-nets` for the parameters and exact semantics.
 
 What these controls do not do
 ------------------------------

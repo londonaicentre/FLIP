@@ -29,5 +29,7 @@ docs:
 clean:
 	# Remove the build directory and its contents
 	rm -rf $(BUILDDIR)/*
+	# Remove the figures the conf.py build hook renders from deploy/providers/AWS/architecture/
+	rm -rf $(SOURCEDIR)/assets/generated
 	# Remove the API documentation directory except the index.rst file
 	cd $(SOURCEDIR)/autoapi && find . -mindepth 1 -type d -exec rm -rf {} +
