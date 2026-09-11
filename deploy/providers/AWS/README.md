@@ -1395,7 +1395,10 @@ copies; the ReadTheDocs [Central Hub page](https://londonaicentreflip.readthedoc
 renders the same script at build time. `tests/test_architecture_diagram.py` pins the script's node map to the
 `.tf` files in both directions — a drawn resource that disappears, or a new ECS service / bucket / load balancer
 that is not drawn, fails the `AWS deploy tests` CI job — so a change to a drawn resource updates
-`TERRAFORM_ADDRESSES` in the same PR.
+`TERRAFORM_ADDRESSES` in the same PR. The committed copies are the container render (`python:3.12-slim`
++ Debian graphviz), which is byte-stable from run to run; a host `dot` of another graphviz version lays the
+same graph out differently and legitimately produces a different file for an unchanged diagram, so do not
+commit a re-render whose only change is the graphviz that made it.
 
 ### Central Hub Infrastructure
 

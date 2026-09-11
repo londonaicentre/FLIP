@@ -316,12 +316,14 @@ def _draw_data(drawn: _Drawn) -> None:
     kms - Edge(style="dotted") - secrets
 
 
-def render(out_dir: Path, name: str = DEFAULT_NAME) -> list[Path]:
+def render(out_dir: Path) -> list[Path]:
     """Render the Central Hub diagrams as PNG.
+
+    Each picture is ``<DEFAULT_NAME>-<suffix>.png`` (see ``DIAGRAMS``); the stem is fixed because the README
+    image links and the Sphinx figure paths embed it.
 
     Args:
         out_dir (Path): Directory to write into; created if missing.
-        name (str): File-stem prefix; each picture is ``<name>-<suffix>.png`` (see ``DIAGRAMS``).
 
     Returns:
         list[Path]: The rendered files, in ``DIAGRAMS`` order.
@@ -339,7 +341,7 @@ def render(out_dir: Path, name: str = DEFAULT_NAME) -> list[Path]:
     painters = {"network": _draw_network, "data": _draw_data}
     outputs: list[Path] = []
     for suffix, title, direction in DIAGRAMS:
-        target = out_dir / f"{name}-{suffix}"
+        target = out_dir / f"{DEFAULT_NAME}-{suffix}"
         drawn.start_picture()
         with Diagram(
             title, filename=str(target), outformat="png", show=False, direction=direction, graph_attr=GRAPH_ATTR
@@ -361,9 +363,8 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(description="Render the FLIP Central Hub AWS architecture diagram.")
     parser.add_argument("--out", type=Path, default=Path("docs"), help="output directory (default: docs)")
-    parser.add_argument("--name", default=DEFAULT_NAME, help=f"output file stem (default: {DEFAULT_NAME})")
     args = parser.parse_args(argv)
-    for path in render(args.out, args.name):
+    for path in render(args.out):
         print(path)
     return 0
 

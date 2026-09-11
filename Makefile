@@ -310,9 +310,11 @@ checkov-lint:
 # Re-render the two committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ from
 # deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copy is rendered at docs
 # build time instead). Uses the local graphviz when `dot` is installed; the dev hosts have none,
-# so it otherwise runs the identical render in a throwaway python:3.12-slim container. Runs the
-# script directly rather than via deploy/providers/AWS/Makefile for the same credential-free
-# reason as checkov-lint.
+# so it otherwise runs the identical render in a throwaway python:3.12-slim container. The two
+# paths are not byte-identical: the committed copies are the container render (byte-stable across
+# runs), and a host `dot` of another graphviz version produces a different file for an unchanged
+# diagram, so don't commit a re-render that only differs by graphviz. Runs the script directly
+# rather than via deploy/providers/AWS/Makefile for the same credential-free reason as checkov-lint.
 aws-diagram:
 ifneq ($(shell command -v dot 2>/dev/null),)
 	cd deploy/providers/AWS && uv run --no-project --with diagrams python -m architecture.central_hub --out docs
