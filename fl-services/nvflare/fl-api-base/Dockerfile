@@ -15,11 +15,22 @@ FROM python:3.12-slim-bookworm AS development
 RUN apt-get update && apt-get install -y gettext-base \
     && rm -rf /var/lib/apt/lists/*
 
-ARG UID
-ARG GID
-ARG UNAME
+# Fixed image identity, defaulted here rather than supplied per-build (FLIP#1171) so
+# a locally-built :dev image is identical to CI's :stag. See fl-base/Dockerfile for
+# the full rationale; in short, this identity used to be the building developer's and
+# the dev composes reused it as runtime config, so published images and local ones
+# behaved differently. Whether the runtime uid is re-pointed depends on what the
+# compose bind-mounts: the deploy composes (deploy/compose.development.nvflare.yml)
+# give this image only the kit's read-only admin/local and admin/startup, so they
+# set no `user:` and it keeps running as `flip`; the standalone harness
+# (fl-services/nvflare/compose.dev.yml) also mounts the host-provisioned
+# admin/transfer, which fl-api writes, so there it runs as the host uid like
+# fl-server and fl-client (see scripts/tests/test_container_identity.py).
+ARG UID=1000
+ARG GID=1000
+ARG UNAME=flip
 RUN groupadd -g ${GID} ${UNAME}
-# Create a user with the same UID and GID as the host user with home directory at /home/${UNAME}
+# Create the non-root user, with home directory at /home/${UNAME}
 RUN useradd -u ${UID} -g ${GID} -m -d /home/${UNAME} -s /bin/bash ${UNAME}
 WORKDIR /app
 RUN chown -R ${UNAME}:${UNAME} /app

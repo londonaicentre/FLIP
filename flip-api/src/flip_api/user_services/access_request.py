@@ -10,11 +10,9 @@
 # limitations under the License.
 #
 
-import json
 from datetime import datetime
 from uuid import UUID
 
-import boto3
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func
 from sqlmodel import Session, col, select
@@ -31,6 +29,7 @@ from flip_api.domain.interfaces.shared import (
 )
 from flip_api.domain.schemas.status import AccessRequestStatus
 from flip_api.utils.constants import ACCESS_REQUEST_TEMPLATE_NAME
+from flip_api.utils.email_sender import send_templated_email
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import IPagedData, get_paging_details, get_total_pages
 
@@ -55,21 +54,15 @@ def _notify_admins_of_access_request(request: IAccessRequest, access_request: Ac
         None
     """
     try:
-        sesv2 = boto3.client("sesv2", region_name=get_settings().AWS_REGION)
         template_data = {
             "email": request.email,
             "name": request.full_name,
             "purpose": request.reason_for_access,
         }
-        sesv2.send_email(
-            FromEmailAddress=get_settings().AWS_SES_SENDER_EMAIL_ADDRESS,
-            Destination={"ToAddresses": [get_settings().AWS_SES_ADMIN_EMAIL_ADDRESS]},
-            Content={
-                "Template": {
-                    "TemplateName": ACCESS_REQUEST_TEMPLATE_NAME,
-                    "TemplateData": json.dumps(template_data),
-                }
-            },
+        send_templated_email(
+            recipient=get_settings().AWS_SES_ADMIN_EMAIL_ADDRESS,
+            template_name=ACCESS_REQUEST_TEMPLATE_NAME,
+            template_data=template_data,
         )
         access_request.email_notified = True
         access_request.updated_at = datetime.utcnow()

@@ -1,0 +1,33 @@
+schema_type: dataframe
+columns:
+  metadata_id:
+    dtype: int64
+    unique: true
+  metadata_concept_id:
+    dtype: int64
+  metadata_type_concept_id:
+    dtype: int64
+  name:
+    dtype: string[python]
+  value_as_string:
+    dtype: string[python]
+    nullable: true
+    required: false
+  value_as_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  value_as_number:
+    dtype: float64
+    nullable: true
+    required: false
+  metadata_date:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  metadata_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

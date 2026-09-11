@@ -171,6 +171,29 @@ class ScatterAndGather(NVFlareScatterAndGather):
         except Exception as e:
             self.log_debug(fl_ctx, f"Could not probe the client update's data kind: {e}")
 
+    def _is_running_a_round(self) -> bool:
+        """Whether this controller is currently inside its own round loop.
+
+        Every controller receives every fired event, so in a multi-phase job (the LDM
+        ``train_ae`` → ``train_dm`` split wires one ``ScatterAndGatherLDM`` per phase) a
+        controller is routinely handed events belonging to a *sibling's* round. Acting on
+        one means answering for a round this controller never ran.
+
+        Used by the zero-acceptance guard only. Two states must be excluded, and checking just
+        the first is what caused FLIP#1177:
+
+        * **not started** — stock initialises ``_current_round`` to ``None``.
+        * **finished** — stock's ``control_flow`` is
+          ``while self._current_round < self._start_round + self._num_rounds`` with a
+          post-increment, so a controller that has completed its loop is left holding one
+          round *past* the last it actually ran. That round has no ``_round_acceptances``
+          entry and never will, so the zero-acceptance guard read it as "nothing accepted"
+          and aborted every LDM run, while the active controller was aggregating normally.
+        """
+        if self._current_round is None:
+            return False
+        return bool(self._current_round < self._start_round + self._num_rounds)
+
     def _panic_if_round_accepted_nothing(self, fl_ctx: FLContext) -> None:
         """Abort the job when a training round is about to aggregate zero accepted results.
 
@@ -179,9 +202,14 @@ class ScatterAndGather(NVFlareScatterAndGather):
         an empty diff, applies it as a no-op, and completes every remaining round — the job ends
         COMPLETED with a "trained" model bit-identical to round 0.
         """
-        round_num = self._current_round
-        if round_num is None:
+        if not self._is_running_a_round():
+            self.log_debug(
+                fl_ctx,
+                "Zero-acceptance guard skipped: not inside this controller's round loop "
+                f"(current_round={self._current_round}, bound={self._start_round + self._num_rounds}).",
+            )
             return
+        round_num = self._current_round
         expected = getattr(self, "_current_num_targets", None)
         if not expected or self._round_acceptances.get(round_num):
             return
@@ -249,9 +277,11 @@ class ScatterAndGather(NVFlareScatterAndGather):
     def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
         super().handle_event(event_type, fl_ctx)
         if event_type == AppEventType.BEFORE_AGGREGATION:
-            # Every controller receives every fired event; the _current_round guard inside keeps
-            # a not-yet-started sibling controller (multi-phase jobs) from panicking on the
-            # active one's rounds, and a finished sibling's last round always has acceptances.
+            # Every controller receives every fired event; the guards inside keep a sibling
+            # controller (multi-phase jobs) from panicking on the active one's rounds — whether it
+            # has not started yet (_current_round is None) or has already finished (_current_round
+            # left past its last round). See FLIP#1177: the "a finished sibling's last round always
+            # has acceptances" this comment used to claim is false, and it aborted every LDM run.
             self._panic_if_round_accepted_nothing(fl_ctx)
         if event_type == FlipEvents.SEND_RESULT:
             event_data = fl_ctx.get_prop(FLContextKey.EVENT_DATA, None)
@@ -263,6 +293,14 @@ class ScatterAndGather(NVFlareScatterAndGather):
                 # diffusion AE/DM split) a controller whose control_flow has not started yet still
                 # has _current_round is None (as stock initialises it); it must not relay another
                 # controller's metric with a None round. The active controller relays it.
+                #
+                # Deliberately NOT _is_running_a_round(): cross-site validation (GlobalModelEval)
+                # runs AFTER the SAG loop exits, so at that point no controller is inside a round
+                # and that stricter test drops every held-out metric the validate task emits —
+                # TEST_LOSS and TEST-*-* on xray/Ark+, val_l1_loss/val_ssim on LDM — silently.
+                # A finished controller does still relay phase-2 metrics under its own stale round
+                # (a duplicate at the wrong global_round); fixing that needs a discriminator for
+                # "whose metric is this", not "am I running", so it is tracked separately.
                 return
             handle_metrics_event(event_data, self._current_round, self._resolve_model_id(fl_ctx), flip=self.flip)
 

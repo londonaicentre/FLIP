@@ -99,11 +99,13 @@ services:
       # deployed to clients (mirrors the Flower backend's /app/src mount).
       - ${FL_JOBS_DIR}/net-1:/app/server-checkpoints
       # Mount the AWS credentials (needed to upload model results to S3).
-      # The image now runs as the non-root ${UNAME} user with
-      # HOME=/home/${UNAME} (GHSA-8465), so the mount lands under
-      # /home/${UNAME}/.aws/ — the SDK's default lookup path for that user.
-      - ~/.aws/config:/home/${UNAME}/.aws/config:ro
-      - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
+      # The image runs non-root as `flip` with HOME=/home/flip (GHSA-8465), so the
+      # mount lands under /home/flip/.aws/ — the SDK's default lookup path. Both the
+      # path and the user are FIXED, not ${UNAME}-derived: the image identity no
+      # longer varies with who built it (FLIP#1171), and `user:` below re-points only
+      # the runtime uid, which is what actually has to match these host-owned files.
+      - ~/.aws/config:/home/flip/.aws/config:ro
+      - ~/.aws/sso/cache:/home/flip/.aws/sso/cache:rw
     environment:
       - NET_ID=net-1
       - LOCAL_DEV=false
@@ -115,21 +117,35 @@ services:
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
-      - HOME=/home/${UNAME}
+      - HOME=/home/flip
+      # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises
+      # KeyError: 'getpwuid(): uid not found'. getpass.getuser() consults these first
+      # and only falls back to pwd, so naming the image's user here keeps every
+      # getuser() caller working without mounting the host's passwd file (FLIP#1171).
+      - USER=flip
+      - LOGNAME=flip
+    # Run as the HOST user's uid, with the image's gid (FLIP#1171). The bind mounts
+    # below — the provisioned NVFLARE kit and the operator's 0600 AWS SSO token — are
+    # owned by whoever ran `make provision` and `aws sso login`, so only a matching
+    # uid can read and write them. A 0600 file cannot be reached by group membership
+    # at all, which is why group_add is not an option here (the Flower dev fl-server
+    # makes the same point in compose.development.flower.yml). The gid stays the
+    # image's so /app and /home/flip — group-writable in fl-base — remain writable for
+    # NVFLARE's job workspace and torch's cache. On EC2/on-prem the host user is uid
+    # 1000, so this resolves to the baked identity and nothing changes there; prod
+    # composes set no `user:` at all and keep running as `flip`.
+    user: "${UID:-1000}:1000"
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
-      # The container runs as the non-root ${UNAME} user (GHSA-8465), but its bind
-      # mounts (the provisioned NVFLARE kit with 0600 keys; on fl-server also the
-      # operator's 0600 AWS SSO token cache) are owned by the host uid. cap_drop: ALL
-      # strips the implicit DAC bypass root would otherwise have, so DAC_OVERRIDE is
-      # needed to read them; the entrypoint also chmods kit scripts it does not own
-      # (FOWNER). Without these the container crash-loops (FLIP#485).
-      - DAC_OVERRIDE
-      - FOWNER
+    # No cap_add. The previous CHOWN/DAC_OVERRIDE/FOWNER grants were inert and always
+    # had been: Docker gives effective capabilities only to uid 0, and this container
+    # is non-root, so they landed in the bounding set alone (verified in the running
+    # container: CapBnd 0xb, CapEff 0). They could not have been what made the
+    # host-owned mounts readable — a matching uid was, which is exactly what broke
+    # when the published images' uid stopped matching the developer's. Reading the
+    # mounts is now the `user:` override's job, honestly and least-privileged.
     # `default` is the hub-internal network. fl-server is the one FL service that calls back
     # into flip-api (FLIP_API_INTERNAL_URL + INTERNAL_SERVICE_KEY above), and flip-api is
     # deliberately not on the FL net — see the networks block in compose.development.yml.
@@ -151,11 +167,13 @@ services:
       # deployed to clients (mirrors the Flower backend's /app/src mount).
       - ${FL_JOBS_DIR}/net-2:/app/server-checkpoints
       # Mount the AWS credentials (needed to upload model results to S3).
-      # The image now runs as the non-root ${UNAME} user with
-      # HOME=/home/${UNAME} (GHSA-8465), so the mount lands under
-      # /home/${UNAME}/.aws/ — the SDK's default lookup path for that user.
-      - ~/.aws/config:/home/${UNAME}/.aws/config:ro
-      - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
+      # The image runs non-root as `flip` with HOME=/home/flip (GHSA-8465), so the
+      # mount lands under /home/flip/.aws/ — the SDK's default lookup path. Both the
+      # path and the user are FIXED, not ${UNAME}-derived: the image identity no
+      # longer varies with who built it (FLIP#1171), and `user:` below re-points only
+      # the runtime uid, which is what actually has to match these host-owned files.
+      - ~/.aws/config:/home/flip/.aws/config:ro
+      - ~/.aws/sso/cache:/home/flip/.aws/sso/cache:rw
     environment:
       - NET_ID=net-2
       - LOCAL_DEV=false
@@ -167,21 +185,35 @@ services:
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
-      - HOME=/home/${UNAME}
+      - HOME=/home/flip
+      # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises
+      # KeyError: 'getpwuid(): uid not found'. getpass.getuser() consults these first
+      # and only falls back to pwd, so naming the image's user here keeps every
+      # getuser() caller working without mounting the host's passwd file (FLIP#1171).
+      - USER=flip
+      - LOGNAME=flip
+    # Run as the HOST user's uid, with the image's gid (FLIP#1171). The bind mounts
+    # below — the provisioned NVFLARE kit and the operator's 0600 AWS SSO token — are
+    # owned by whoever ran `make provision` and `aws sso login`, so only a matching
+    # uid can read and write them. A 0600 file cannot be reached by group membership
+    # at all, which is why group_add is not an option here (the Flower dev fl-server
+    # makes the same point in compose.development.flower.yml). The gid stays the
+    # image's so /app and /home/flip — group-writable in fl-base — remain writable for
+    # NVFLARE's job workspace and torch's cache. On EC2/on-prem the host user is uid
+    # 1000, so this resolves to the baked identity and nothing changes there; prod
+    # composes set no `user:` at all and keep running as `flip`.
+    user: "${UID:-1000}:1000"
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
-      # The container runs as the non-root ${UNAME} user (GHSA-8465), but its bind
-      # mounts (the provisioned NVFLARE kit with 0600 keys; on fl-server also the
-      # operator's 0600 AWS SSO token cache) are owned by the host uid. cap_drop: ALL
-      # strips the implicit DAC bypass root would otherwise have, so DAC_OVERRIDE is
-      # needed to read them; the entrypoint also chmods kit scripts it does not own
-      # (FOWNER). Without these the container crash-loops (FLIP#485).
-      - DAC_OVERRIDE
-      - FOWNER
+    # No cap_add. The previous CHOWN/DAC_OVERRIDE/FOWNER grants were inert and always
+    # had been: Docker gives effective capabilities only to uid 0, and this container
+    # is non-root, so they landed in the bounding set alone (verified in the running
+    # container: CapBnd 0xb, CapEff 0). They could not have been what made the
+    # host-owned mounts readable — a matching uid was, which is exactly what broke
+    # when the published images' uid stopped matching the developer's. Reading the
+    # mounts is now the `user:` override's job, honestly and least-privileged.
     # `default` is the hub-internal network — see fl-server-net-1 above.
     networks:
       - default

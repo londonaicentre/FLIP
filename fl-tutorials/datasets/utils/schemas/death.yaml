@@ -1,0 +1,28 @@
+schema_type: dataframe
+columns:
+  person_id:
+    dtype: int64
+  death_date:
+    dtype: datetime64[ns]
+  death_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  death_type_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  cause_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  cause_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  cause_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

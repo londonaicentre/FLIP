@@ -15,10 +15,35 @@
  * Identity constants for the public Ark+ demo (VITE_DEMO build).
  *
  * The register itself — every API payload the demo serves — is the *real*
- * platform record of the Ark+ chest X-ray federated fine-tuning experiment
- * (project f48850b7…, model 24985ec3…), captured verbatim from the production
- * API on 2026-07-17 and stored as JSON under ./data/. The edits applied to the
- * capture were:
+ * platform record of the Ark+ chest X-ray federated experiments, captured
+ * verbatim from the production API and stored as JSON under ./data/.
+ *
+ * It spans two captures, which is why there are two capture-date constants
+ * below:
+ *   * the fine-tuning project (project 2b837f54…, model 31569b0b…) was
+ *     captured 2026-08-22. It REPLACED an earlier fine-tuning run
+ *     (f48850b7…/24985ec3…, captured 2026-07-17) whose every metric was
+ *     measured on 90°-rotated radiographs: MONAI's LoadImaged returns a
+ *     transposed pixel array and the Ark+ apps' orientation step never undid
+ *     it, so Ark+ — pretrained on upright chest X-rays — was scored under a
+ *     large distribution shift (FLIP#821, fixed by mt.Transposed). The demo
+ *     must not exhibit those numbers as the platform's output.
+ *   * the evaluation project (8e404e78…) is still the 2026-07-17 capture, and
+ *     its two models are ALSO pre-FLIP#821. Re-capturing it from post-fix runs
+ *     is outstanding; see DEMO_EVALUATION_CAPTURE_DATE.
+ *
+ * KNOWN INCONSISTENCY while the two projects are captured apart: the
+ * evaluation project's multimodel run is named "…(finetune 24985ec3)" and its
+ * description says it scores "the federated fine-tuned checkpoint produced by
+ * the companion training project (model 24985ec3)" — the fine-tuning run that
+ * the 2026-08-22 capture replaced. That lineage now dangles: the exhibit shows
+ * an evaluation of a training run it no longer contains. Those strings are
+ * REAL captured platform metadata and are deliberately left alone — rewriting
+ * them to name 31569b0b… would assert a comparison that never ran. The fix is
+ * to re-capture the evaluation project from runs that actually scored the new
+ * checkpoint, which closes this and the pre-FLIP#821 metrics together.
+ *
+ * The edits applied to a capture are:
  *   1. every e-mail address replaced with demo@flip.local;
  *   2. every personal name (e.g. the query creator's) replaced with the
  *      demo identity "FLIP Demo" — the register is published
@@ -49,13 +74,25 @@
  *      step that happens before trust approval and implies no involvement in
  *      the project. The evaluation capture therefore carried AI Centre Private,
  *      an internal node approved for neither demo project: it was registered on
- *      the hub between the two captures, which is the only reason the
- *      fine-tuning project (queried 6 Jul) has two trusts and the evaluation
+ *      the hub between the two captures, which is the only reason the original
+ *      fine-tuning project (queried 6 Jul) had two trusts and the evaluation
  *      project (queried 17 Jul) had three. Publishing that put a private node's
  *      per-finding record counts on an unauthenticated page, and made a project
  *      named "(2-trust)" with two approved trusts advertise a cohort of 1,414
  *      that only added up by counting the non-participant. It is now 946
  *      (FLIP#794 review).
+ *
+ *      The 2026-08-22 fine-tuning capture shows how routine this is: it was
+ *      broadcast to FOUR registered trusts and approved for two. Guy's and St
+ *      Thomas' answered with a below-threshold cohort (so it arrived already
+ *      `trustSuppressed`, carrying a record count of 0) and AI Centre Private
+ *      was cancelled. Both are stripped from `queriedTrustIds`,
+ *      `respondedTrustIds`, `emptyTrustIds`, `cancelledTrustIds`,
+ *      `trustRecordCounts` and `trustSuppressed`. Here the totals happened to
+ *      need no recomputation — neither non-participant contributed a row, so
+ *      `recordCount` and `query.totalCohort` were already the two-trust sum
+ *      (1,910 + 1,872 = 3,782) — but CHECK rather than assume: that is a
+ *      property of this capture, not a rule.
  *
  *      The roster goes with it. Keeping an estate view "truthful" is a
  *      semantic borrowed from the live app, and this is a curated snapshot of
@@ -101,31 +138,79 @@
  *      forbids — but two names for one id is a contradiction the register
  *      should not carry.
  *
+ *   8. the fine-tuning project's and model's TITLES AND DESCRIPTIONS carried
+ *      over from the run the 2026-08-22 capture replaced, by decision of the
+ *      project owner. This is the one edit that adds prose rather than removing
+ *      it, so it is called out separately from the seven rules above: the real
+ *      prod records carry an empty description and the model name
+ *      "finetunning", which reads as a broken exhibit on a public page.
+ *
+ *      It is sound because the re-run is the SAME experiment — the earlier
+ *      copy describes this run correctly, and every specific claim in it was
+ *      checked against the new capture rather than assumed: Swin-Large at
+ *      768px (ARKPLUS.MODEL_NAME/INPUT_SIZE), frozen encoder with a fresh
+ *      5-class head (LOAD_BACKBONE_ONLY, AGGREGATE_ONLY_REGEX omni_heads,
+ *      NUM_CLASSES_LIST [5]), 50 global rounds of 5 local epochs
+ *      (GLOBAL_ROUNDS/LOCAL_ROUNDS), batch size 4 (BATCH_SIZE), LR 1.5e-3 to
+ *      1.5e-4 (LR_START/LR_END), 20% held out per site (VAL_SPLIT), and
+ *      "per-round payloads in the tens of kilobytes" — which the captured
+ *      logs put at 26.9 KB a round.
+ *
+ *      One claim did NOT survive that check and was dropped: the old model
+ *      name pinned the app build "(arkplus-apps 8a188867)", which is the
+ *      PRE-FLIP#821 build. This run used the fixed apps, so carrying it would
+ *      have named the wrong code. The name is now "Ark+ Finetuning 50r
+ *      client_api".
+ *
+ *      If the prod records are ever given real titles and descriptions, drop
+ *      this rule and capture them instead — a value read from the platform
+ *      always beats one restored by hand.
+ *
  * Institution names are shown verbatim by decision of the project owner: the
  * two participating trusts (King's College London, Bangkok Dusit Medical
  * Services), and Guy's and St Thomas' NHS Foundation Trust, which after rule 7
  * appears only as a copyright holder in the licence header of the cohort SQL —
  * rendered on the cohort page — rather than as the name of any trust.
  *
- * Re-capturing the register means re-applying all seven rules. Project and model
+ * Re-capturing the register means re-applying rules 1-7, and deciding afresh
+ * whether rule 8 is still needed. Project and model
  * ids are deliberately NOT scrubbed: they are public URL path segments.
  */
 
 /** The real Ark+ experiment record (public URL path segments). */
-export const DEMO_PROJECT_ID = "f48850b7-3101-46d1-8fa7-a00bf01d2597";
-export const DEMO_MODEL_ID = "24985ec3-3349-435b-afcd-f38972d8695d";
+export const DEMO_PROJECT_ID = "2b837f54-8052-4bfa-b75b-c05f036e6086";
+export const DEMO_MODEL_ID = "31569b0b-7698-4bf4-a446-59643c6674e0";
 
 /**
- * The date the register was captured from the production API (see the
- * provenance note above) — the single source of truth for the demo's
- * "snapshot of …, captured …" labelling. Consumed by:
+ * The date the fine-tuning project was captured from the production API (see
+ * the provenance note above) — and the newest capture in the register, so it
+ * identifies the snapshot as a whole. Consumed by:
  *   1. src/demo/DemoBanner.vue, rendered on every page of the demo build; and
  *   2. scripts/generate-demo-window-js.sh, which greps this file for the
  *      value so window.RELEASE_VERSION can't drift from it independently.
  * Update this constant (and the prose above) together when the register is
  * re-captured.
  */
-export const DEMO_CAPTURE_DATE = "2026-07-17";
+export const DEMO_CAPTURE_DATE = "2026-08-22";
+
+/**
+ * The evaluation project's capture date, which is NOT the same as
+ * DEMO_CAPTURE_DATE: the fine-tuning project was re-captured on its own when
+ * the Ark+ apps' image-orientation bug was fixed (FLIP#821 — every metric in
+ * the original capture was measured on 90°-rotated radiographs), and the
+ * evaluation project was left on its earlier capture.
+ *
+ * The register consequently spans two dates and the banner names both. Do not
+ * collapse this back to one constant while the two projects are captured
+ * apart: a single date would misdate half the exhibit, and the register's whole
+ * provenance discipline rests on the labelling being exactly true.
+ *
+ * The evaluation project's numbers are ALSO pre-FLIP#821 — its two models were
+ * scored on the same rotated images — so re-capturing it from post-fix runs is
+ * outstanding work, after which both dates converge again and this constant
+ * should go.
+ */
+export const DEMO_EVALUATION_CAPTURE_DATE = "2026-07-17";
 
 /**
  * Read-only viewer identity seeded by src/demo/bootstrap.ts and served from

@@ -10,7 +10,7 @@ Users with the ``admin`` role may perform all the functions of those with the ``
 
 FLIP uses the concept of a *project*, in which multiple AI models can be managed. Projects can have multiple users associated with them, allowing individuals to view and contribute to the project. The typical project flow involves the creation of a project, running a cohort query, staging the project for approval, uploading the model plus any associated files and initiating the training. Once training is complete, the results of training can be downloaded.
 
-To facilitate federated learning and concurrent training of multiple models on the platform, FLIP supports both :term:`NVIDIA FLARE` and the :term:`Flower Framework` as federated learning backends. This page covers concepts such as FL *nets* and job scheduling. For details on framework-specific file requirements and job types, see :ref:`the FL nodes component page <flip-fl-nodes>`.
+To facilitate federated learning and concurrent training of multiple models on the platform, FLIP supports both :term:`NVIDIA FLARE` and the :term:`Flower Framework` as federated learning backends. This page covers concepts such as FL *nets* and job scheduling. For details on framework-specific file requirements and job types, see :ref:`the FL nets component page <flip-fl-nets>`.
 
 .. _initial-login:
 
@@ -116,8 +116,9 @@ Create Project
 
 1. Click the 'Create Project' button on the top right-hand corner of the page
 2. Enter the project name and description
-3. If necessary, enter the email addresses of other FLIP users and click the 'Add' button to enable them to view, edit, and/or contribute to the project
-4. Click the 'Create Project' button
+3. Leave 'Includes imaging data' on for an imaging cohort. Turn it off for a tabular-only cohort (for example EHR data): no imaging is pulled from PACS, no XNAT project is created at the trusts, and the project page shows no imaging status. Like 'Convert DICOMs to NIfTI', this is fixed when the project is created
+4. If necessary, enter the email addresses of other FLIP users and click the 'Add' button to enable them to view, edit, and/or contribute to the project
+5. Click the 'Create Project' button
 
 .. figure:: ../assets/flip/create-project.gif
    :width: 600
@@ -177,7 +178,7 @@ Project List
 
 All projects which you are able to access are visible on the project list, including those which you have created or have been granted access to. Users with the ``admin`` role will be able to view all projects.
 
-Users can apply a filters to view only projects based on, for example, the current user, keywords found in the project and/or project description.
+Users can apply filters to view only projects based on, for example, the current user, keywords found in the project and/or project description. Every project also carries a type chip — **Imaging + OMOP**, or **OMOP only** for a project created with 'Includes imaging data' turned off — and the toolbar's **Type** control narrows the list to either kind.
 
 .. figure:: ../assets/flip/filter-project.gif
    :width: 600
@@ -190,7 +191,7 @@ Cohort Query
 
 Cohort data is stored within a `PostgreSQL <https://www.postgresql.org/>`_ database conforming to the OMOP Common Data Model, extended with the :term:`MI-CDM` imaging tables — see :ref:`the schema reference <omop-schema>` for the tables a query can draw on, and :ref:`omop-sample-queries` for two worked examples.
 
-The ``image_occurrence`` table has been modified to include an ``accession_id`` field which contains the reference to the associated DICOM study. As this is the field that XNAT will read from when retrieving the associated DICOM series from PACS, the 'accession_id' needs to be included in all queries if relevant images are to be made available.
+The ``image_occurrence`` table has been modified to include an ``accession_id`` field which contains the reference to the associated DICOM study. As this is the field that XNAT will read from when retrieving the associated DICOM series from PACS, the 'accession_id' needs to be included in all queries if relevant images are to be made available. This applies to projects that include imaging: a project created with 'Includes imaging data' turned off needs no ``accession_id`` column, while an imaging project whose query lists its columns explicitly and omits it is rejected at submission with a message naming the fix. That rejection is new: such a query used to be accepted and then failed later, once the platform tried to retrieve the images. Because 'Includes imaging data' is fixed when the project is created, an existing imaging project whose cohort genuinely has no imaging has to be re-created with the option turned off.
 
 .. _create-cohort-query:
 
@@ -380,10 +381,10 @@ transforms) is bundled with the app and shipped to the participating Trusts. Two
 follow that rule: a file whose name matches one the platform's own app template supplies is quietly
 dropped in favour of the template's copy, and a checkpoint declared for server-side use stays on the
 FL server rather than travelling to the Trusts. Both are covered under
-:ref:`fl-required-files` on the FL nodes component page.
+:ref:`fl-required-files` on the FL nets component page.
 
 The full per-job-type file lists, and the configuration each backend accepts, are documented on
-the :ref:`FL nodes component page <flip-fl-nodes>`. For worked examples of complete, working apps,
+the :ref:`FL nets component page <flip-fl-nets>`. For worked examples of complete, working apps,
 see the `FLIP tutorials <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials>`_.
 
 .. warning::
@@ -498,7 +499,7 @@ FLIP allows for multiple models to be deployed to and trained at multiple Trust 
 
 FLIP uses the concept of *nets* that are deployed on the Central Hub and remote hardware at each Trust. Each *net* consists of a controller and worker (to manage the model training cycle) and FLIP uses a task scheduler to manage the resources available on the hardware at Trust sites. The scheduler maintains a queue of waiting *tasks*, when a *net* becomes free a *task* is assigned to it.
 
-This scheduling capability means model developers can submit their model for training via the UI and need not be concerned with matters such as GPU capacity or existing jobs that are running/queued. When initiating training the platform will check for available nets and assign the model training to an available net.
+This scheduling capability means model developers can submit their model for training via the UI and need not be concerned with matters such as GPU capacity or existing jobs that are running/queued. When initiating training the platform will check for available nets and assign the model training to an available net. How a net is put together and how the scheduler picks one is described on the :ref:`FL nets component page <flip-fl-nets>`.
 
 While a model is waiting for a net, its place in the queue is shown alongside its status — e.g. ``Model Queued (2)``, where position 1 is the next model to start — both on the Models page and on the model's page, and the model's Live activity feed logs a new line each time the model moves up the queue.
 

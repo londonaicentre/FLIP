@@ -1,0 +1,26 @@
+schema_type: dataframe
+columns:
+  source_code:
+    dtype: string[python]
+  source_concept_id:
+    dtype: int64
+  source_vocabulary_id:
+    dtype: string[python]
+  source_code_description:
+    dtype: string[python]
+    nullable: true
+    required: false
+  target_concept_id:
+    dtype: int64
+  target_vocabulary_id:
+    dtype: string[python]
+  valid_start_date:
+    dtype: datetime64[ns]
+  valid_end_date:
+    dtype: datetime64[ns]
+  invalid_reason:
+    dtype: string[python]
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false
