@@ -1,32 +1,93 @@
+.. _flip-fl-nets:
 .. _flip-fl-nodes:
 
-#########################
-Federated Learning Nodes
-#########################
+#######
+FL nets
+#######
 
-FLIP supports two federated learning frameworks: NVFLARE and Flower AI. 
-In both settings, the minimum components are:
+FLIP supports two federated learning frameworks, :term:`NVIDIA FLARE` and the :term:`Flower Framework`. In
+both, the federated learning services are deployed as a collection of **nets**: each net is one FL API and one
+FL server on the Central Hub plus one FL client at every participating Trust, and the hub's scheduler hands
+each queued training job to whichever net is free.
 
-- FL server: orchestrates the training process across sites and performs the aggregation of weights. It also uploads results at the end of the training.
-- FL client: performs local training on the data at each site and sends the weights to the server.
-- FL API: launches the training and acts as interface between the other FL components and the Central Hub API.
+.. contents:: On this page
+   :local:
+   :depth: 2
 
-The FL API and Server are hosted at the Central Hub (in the Cloud), while client nodes are launched in the sites participating in a specific project (Cloud or on-premise).
+**********************
+Nets and the scheduler
+**********************
 
-.. figure:: ../../images/nodes_fl.jpg
-   :alt: Diagram of federated learning nodes showing FL server, FL clients, and FL API interactions.
-   :width: 300px
+.. figure:: ../assets/support/flip_components_nets_and_scheduler.png
    :align: center
-   
-   Depiction of the FL nodes and the services they communicate with.
+   :alt: The FLIP scheduler on the cloud-hosted hub connected to two nets. Each net has an FL API and an FL
+         server on the hub and an FL client with a GPU at Trust A and at Trust B, on either backend.
 
-Only the client will be running deep learning training, and therefore, requires access to GPU units.
+   The FLIP scheduler assigns queued jobs to a free net. Each net is one FL API and FL server on the hub and
+   one FL client per participating Trust, running either backend.
 
-Job types 
-------------------------
+What a net is made of
+=====================
+
+- **FL server** — orchestrates the training process across sites and aggregates the weights; it also uploads
+  the results at the end of training. NVFLARE: the FLARE server. Flower: the SuperLink.
+- **FL client** — performs local training on the data at its site and sends weight updates to the server. One
+  per Trust per net, and the only component that runs deep learning — so the only one that needs a GPU.
+  NVFLARE: a FLARE client holding that Trust's signed startup kit. Flower: a SuperNode.
+- **FL API** — a small FastAPI service in front of the server that launches jobs and reports their status; it
+  is the only FL component the Central Hub API talks to. The NVFLARE one wraps the FLARE admin session, the
+  Flower one wraps ``flwr`` (a Flower net also runs a one-shot job at start-up to register the SuperNodes'
+  authentication keys with the SuperLink).
+
+The FL API and server are hosted at the Central Hub (in the cloud), while clients are launched at the Trusts
+participating in a project (cloud or on-premise). Service names follow the net: ``fl-api-net-N`` and
+``fl-server-net-N`` on the hub, ``fl-client-net-N`` at each Trust. The FL data plane is a dedicated network
+per net (``fl-net-N``) whose only members are that net's server and clients — the Central Hub API and the FL
+API are deliberately not on it, and an FL client carries no hub URL and no hub credential. Trusts connect
+**outbound** to the server, with mutual TLS on both backends using the per-participant certificates from the
+provisioned kits.
+
+Kit slots and client names
+==========================
+
+The FL server knows a client by the name in its certificate, not by the Trust's hub-side name. Those names
+are the **FL kit slots** (``Trust_1``, ``Trust_2``, …): a fixed pool provisioned once per net, from which a
+Trust claims one slot when it registers with the hub. The slot name is what appears in FL logs and what an
+app's ``AGGREGATION_WEIGHTS`` keys must use (see :ref:`fl-training-configuration`).
+
+How a job reaches a net
+=======================
+
+Initiating training on a model creates a **job** in the hub's queue. Every ``SCHEDULER_RUN_JOBS_RATE``
+minutes (default 1) the Central Hub API's scheduler:
+
+1. frees any net whose job has already finished or been deleted;
+2. stops here if **deployment mode** is on (below);
+3. locks one net whose status is ``AVAILABLE`` and marks it ``BUSY``;
+4. takes the oldest ``QUEUED`` job — retiring any whose Trusts are no longer approved for the model — and
+   marks it ``IN_PROGRESS``, or releases the net again if the queue is empty;
+5. bundles the app (the researcher's uploaded files plus the platform's template for the job type, see
+   :ref:`fl-required-files`), uploads it to that net's FL API and submits it.
+
+Each net trains one job at a time; the queue is first-come, first-served, and a model's queue position is
+shown in the UI while it waits. The backend of each net (NVFLARE or Flower) is recorded on the hub when the
+nets are seeded and decides which template is bundled: a deployment chooses the backend, a model does not.
+
+Deployment mode (quiescing the nets)
+====================================
+
+Replacing an FL server kills any training run in flight on its net. Administrators can therefore switch the
+hub into **deployment mode**: the scheduler stops picking up queued jobs (they keep their place and resume,
+oldest first, when the mode is switched off) while running jobs finish and free their nets.
+``GET /api/fl/quiesce`` reports both the mode and whether any net is still ``BUSY`` — the safe-to-redeploy
+signal. The admin workflow is on :doc:`/sys-admin/admin-project-and-user-management`.
+
+*********
+Job types
+*********
 
 Due to security restrictions, FLIP users are not allowed to control what happens on the server side.
-Although most adjustable aspects of machine learning training happen on the client side 
+Although most adjustable aspects of machine learning training happen on the client side
 (e.g. dataloading, training loop, model architecture), FLIP provides different job types
 that the user can choose based on their needs.
 Which job types are available depends on the backend.
@@ -77,17 +138,19 @@ These tutorials run on the local NVFLARE simulator from the repo root — e.g.
 `fl-tutorials/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare>`_ README).
 
 
-.. figure:: ../../images/job_types.jpg
-   :alt: Example figure
+.. figure:: ../assets/fl/job_types.jpg
+   :alt: A user uploads the files for a job type; the hub bundles them with that job type's template before
+         submitting the job.
    :width: 300px
    :align: center
-   
+
    Workflow of how the user uploads files for a specific job type.
 
 .. _fl-required-files:
 
+***************************
 Required files per job type
----------------------------
+***************************
 
 Each job type declares its own set of required files. A submission missing any of them is rejected
 before anything is shipped to a Trust, with a message naming the missing files.
@@ -138,11 +201,12 @@ how apps ship helper modules and transforms. Two exceptions are worth knowing:
 
 .. _fl-training-configuration:
 
+**********************
 Training configuration
-----------------------
+**********************
 
 NVFLARE ``config.json``
-~~~~~~~~~~~~~~~~~~~~~~~
+=======================
 
 For NVFLARE job types, ``config.json`` carries both the job type and the platform-recognised
 training settings. Every setting has a default, so an app that declares only ``job_type`` is valid.
@@ -253,7 +317,7 @@ settings, and they are neither validated nor defaulted. A misspelled key of this
 silently absent at runtime rather than reported as an error.
 
 Flower run configuration
-~~~~~~~~~~~~~~~~~~~~~~~~
+========================
 
 Flower apps do not use the NVFLARE keys above. Their run configuration lives in the
 ``[tool.flwr.app.config]`` table of the base template's ``pyproject.toml``, which the platform
@@ -269,12 +333,13 @@ For a worked example of both files, see the Flower tutorials under
 `fl-tutorials/flower/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/flower>`_
 and :doc:`/working-with-flip-apps/create-flip-app-from-flower`.
 
+****************************************************
 Data access and communication with external services
-----------------------------------------------------
+****************************************************
 
 Though the user is allowed to upload the training script that will run on the client side, the access to data will have
 to be via the FLIP package (see `https://github.com/londonaicentre/FLIP/tree/develop/flip-utils/flip`).
-This package, installed by default in client and server nodes, will make a series of functions available to the user. 
+This package, installed by default in client and server nodes, will make a series of functions available to the user.
 
 For data access:
 - `flip.get_dataframe(project_id, query)`: retrieves the dataframe linked to the project ID and query that have been used on the project.
@@ -301,15 +366,16 @@ Note the reported upload sizes measure slightly different things per backend —
 The server will also use the package to update the status, as well as to upload the final results, which will be first saved in the server, to the final S3 buckets users can download from.
 
 
+***************************************
 Privacy filters on shared model updates
----------------------------------------
+***************************************
 
 Both backends privatise a client's training result before it leaves the site, but with different
 mechanisms: NVFLARE sparsifies and clips without noise, while Flower clips and adds calibrated
 Gaussian noise for a formal ``(epsilon, delta)`` guarantee.
 
 NVFLARE: percentile sparsification
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+==================================
 
 Before a client's training result leaves a site, the NVFLARE training job types (`standard`, `fed_opt`,
 `diffusion_model`) pass it through a percentile-based
@@ -337,10 +403,10 @@ run with ``off: true``. Two caveats for anyone changing them:
   (review of the uploaded app code and aggregate-only results).
 
 Site-enforced privacy policy (per trust)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+========================================
 
 The filter above is part of the **app**: it is configured in the job's ``config_fed_client.json``, so its
-parameters — including ``off: true`` — are chosen on the researcher's side. Since FLIP#851 each trust can
+parameters — including ``off: true`` — are chosen on the researcher's side. Since `FLIP#851 <https://github.com/londonaicentre/FLIP/issues/851>`__ each trust can
 additionally enforce its **own** update-privacy filter through NVFLARE's site privacy policy
 (``local/privacy.json`` in the client's workspace), configured entirely on the trust's side:
 
@@ -393,10 +459,10 @@ Semantics — verified against NVFLARE 2.9.0:
   client's audit trail — never a silent unfiltered send.
 - **NVFLARE only.** Flower has no site-side filter hook, so this enforcement point does not exist on the
   Flower backend; the app-level review of uploaded training code remains the control there (Flower parity is
-  tracked in FLIP#852).
+  tracked in `FLIP#852 <https://github.com/londonaicentre/FLIP/issues/852>`__).
 
 Flower: local differential privacy
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+==================================
 
 The Flower counterpart is ``flip.flower.privacy.flip_local_dp_mod``, a Flower *mod* that runs on the
 SuperNode. It clips the local update to a fixed L2 norm and adds Gaussian noise scaled to the configured
@@ -432,14 +498,14 @@ real budget calibrates ``dp-sensitivity`` to the local dataset and accounts for 
 which this mod does not do — every round spends the budget again.
 
 
-Disclaimer: some things are still under construction!
------------------------------------------------------
+**********************************************
+Where the template ends and your upload begins
+**********************************************
 
-There are currently some elements that are still under construction, and might not adjust exactly to 
-the description above:
+Two facts about how an app is assembled are easy to miss:
 
 - for every NVFLARE job type the user upload is intentionally minimal — see :ref:`fl-required-files` for the per-job-type set — and the rest of the app is filled in from
-  the static (non-modifiable) templates baked into the flip-api image at `FL_APP_BASE_DIR` (`fl-apps/`, see FLIP#724).
+  the static (non-modifiable) templates baked into the flip-api image at `FL_APP_BASE_DIR` (`fl-apps/`, see `FLIP#724 <https://github.com/londonaicentre/FLIP/issues/724>`__).
   These templates used to be published to an S3 bucket; that path has been removed. You can check what a fully bundled app looks like by consulting
   the per-job-type implementations under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`__.
 - every NVFLARE job type takes a plain training/evaluation script that calls

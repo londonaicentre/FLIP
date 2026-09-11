@@ -433,10 +433,11 @@ After changes, evaluate if docs need updating:
 | Changed env vars | `.env.development.example`, `CONTRIBUTING.md`, `docs/source/sys-admin.rst` |
 | New dependencies | `CONTRIBUTING.md`, service `README.md` |
 | Changed deployment config | `deploy/README.md`, `docs/source/sys-admin.rst` |
+| Central Hub AWS resources (`deploy/providers/AWS/*.tf`) | `deploy/providers/AWS/architecture/central_hub.py` — the drawn-node map; `tests/test_architecture_diagram.py` fails CI when a drawn resource disappears or a load-bearing one is added undrawn. Then `make aws-diagram` for the README copies; `docs/source/components/component-central-hub.rst` if the prose changes |
 | New Make targets | `CONTRIBUTING.md`, this file |
 | User-facing workflow changes | `docs/source/user-guides.rst` |
-| FL framework features | `docs/source/components/component-fl-nodes.rst` |
-| Trust service changes | `trust/README.md`, relevant `trust/*/README.md` |
+| FL framework features | `docs/source/components/component-fl-nets.rst` |
+| Trust service changes | `trust/README.md`, relevant `trust/*/README.md`, `docs/source/components/component-trust-apis.rst` |
 | Auth/role changes | `docs/source/sys-admin/admin-user-roles.rst` |
 | Agent instructions (this file's `CLAUDE`/`AGENTS` pair, at any level) | Both members of the pair, in the same PR: every `CLAUDE`-named instructions file has an `AGENTS`-named mirror in the same directory — an exact copy with only the file name substituted (title + cross-references). Edit the `CLAUDE`-named file, then regenerate its twin from it with `sed 's/CLAUDE\.md/AGENTS.md/g'`; never edit the `AGENTS`-named twin directly. |
 
