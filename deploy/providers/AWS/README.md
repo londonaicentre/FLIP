@@ -780,7 +780,9 @@ fixed per account by design.
   the UI bucket via cross-account OAC and relays `/api/*` to the internal NLB's `:443` web listener, and the edge
   NLB forwards FL traffic over TGW to the same internal NLB's `:8002` listener (`fl_ingress_lza.tf`; static
   per-subnet IPs the edge registers once as targets for BOTH legs — no target-sync Lambda). The ALB (`module.alb`)
-  is therefore gated off on LZA too.
+  is therefore gated off on LZA too. Behavioural deltas versus the ALB on LZA: no `/api`-only path filter or
+  default 404 at the load balancer (CloudFront's behaviours and WAF are the only L7 gate), no ALB-injected
+  `X-Forwarded-*` headers (flip-api reads none), and an NLB idle timeout of 350s rather than 60s.
 
 Everything else (ECS Fargate, RDS + Proxy, Cognito, S3 + CMK, Secrets Manager, SES, EFS, Cloud Map)
 remains FLIP-managed exactly as on legacy prod; the legacy WAF/OAC/CloudFront-function components stay standing

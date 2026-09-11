@@ -118,8 +118,9 @@ resource "aws_cloudfront_vpc_origin" "flip_api" {
   # cloudfront:CreateVpcOrigin in workload accounts -- deliberately, since a
   # VPC origin reaches the ALB inside the VPC and bypasses the TGW + central
   # firewall. On LZA the networking account's edge distribution is the front
-  # door (aicentre-lza-iac); fl_ingress_lza.tf admits its relay path onto the
-  # ALB instead of the SG rule below.
+  # door (aicentre-lza-iac); the LZA relay path terminates on the internal
+  # NLB's web listener instead (fl_ingress_lza.tf), so neither this VPC
+  # origin nor the SG rule below exist there.
   count = var.lza_managed_network ? 0 : 1
 
   vpc_origin_endpoint_config {

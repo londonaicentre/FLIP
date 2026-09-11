@@ -43,7 +43,7 @@ variable "lza_vpc_name" {
 }
 
 variable "networking_ingress_cidrs" {
-  description = "CIDRs of the networking account's ingress-VPC subnets (the edge NLB and CloudFront relay path over the TGW), admitted onto the LZA FL NLB and the ALB's main listener (fl_ingress_lza.tf). Empty by default so the stack applies standalone; the value comes from the networking account. LZA-only — legacy prod/stag never reads it."
+  description = "CIDRs of the networking account's ingress-VPC subnets (the edge NLB and CloudFront relay path over the TGW), admitted onto the LZA internal NLB's FL and web listeners (fl_ingress_lza.tf). Empty by default so the stack applies standalone; the value comes from the networking account. LZA-only — legacy prod/stag never reads it."
   type        = list(string)
   default     = []
 }
@@ -422,7 +422,7 @@ variable "FL_SERVER_PORT" {
 
 
 variable "manage_dns" {
-  description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (first LZA bring-up, before the zone moves in the platform DNS migration — FLIP#749) skips the zone lookup, every Route53 record, and both DNS-validated ACM certs: CloudFront then serves on its default *.cloudfront.net domain with the default viewer certificate (allowed only when no aliases are set), and the CloudFront→ALB origin leg falls back to plain HTTP over the private VPC-origin ENI, because an ALB HTTPS listener needs an ISSUED certificate and issuance needs DNS validation. Legacy prod/stag keep the default true."
+  description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (first LZA bring-up, before the zone moves in the platform DNS migration — FLIP#749) skips the zone lookup, every Route53 record, and both DNS-validated ACM certs: CloudFront then serves on its default *.cloudfront.net domain with the default viewer certificate (allowed only when no aliases are set), and the CloudFront→ALB origin leg falls back to plain HTTP over the private VPC-origin ENI, because an ALB HTTPS listener needs an ISSUED certificate and issuance needs DNS validation (legacy; on LZA the same gating applies to the internal NLB's web listener — TCP until a cert can be ISSUED, then TLS). Legacy prod/stag keep the default true."
   type        = bool
   default     = true
 }
