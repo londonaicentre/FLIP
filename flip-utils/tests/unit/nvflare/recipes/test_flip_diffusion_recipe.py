@@ -31,21 +31,21 @@ class TestFlipDiffusionRecipe:
     def test_builds_fed_job_with_flip_components(self):
         """A default recipe should construct a FedJob with the FLIP latent-diffusion wiring."""
         recipe = FlipDiffusionRecipe()
-        assert recipe.job is not None
-        assert recipe.job.name == "flip_diffusion"
-        assert recipe.job.job.min_clients == 1
+        assert recipe._job is not None
+        assert recipe._job.name == "flip_diffusion"
+        assert recipe._job.job.min_clients == 1
 
     def test_meta_props_carry_model_id_into_custom_props(self):
         """The FedJob's meta carries the FLIP model_id into custom_props so components resolve it lazily."""
         recipe = FlipDiffusionRecipe()
-        meta = recipe.job.job.meta_props
+        meta = recipe._job.job.meta_props
         assert FLIP_CUSTOM_PROPS_KEY in meta
         assert meta[FLIP_CUSTOM_PROPS_KEY][FLIP_MODEL_ID_KEY] == _DEV_MODEL_ID
 
     def test_custom_model_id_propagates_to_meta_props(self):
         custom_id = "abcdef01-2345-6789-abcd-ef0123456789"
         recipe = FlipDiffusionRecipe(model_id=custom_id)
-        assert recipe.job.job.meta_props[FLIP_CUSTOM_PROPS_KEY][FLIP_MODEL_ID_KEY] == custom_id
+        assert recipe._job.job.meta_props[FLIP_CUSTOM_PROPS_KEY][FLIP_MODEL_ID_KEY] == custom_id
 
     def test_train_script_normalisation(self):
         """Bare ``trainer.py`` is rewritten to ``custom/trainer.py``; explicit prefix kept."""
@@ -86,7 +86,7 @@ class TestFlipDiffusionRecipe:
             recipe = FlipDiffusionRecipe()
             recipe.export(tmp_path)
 
-            job_dir = tmp_path / recipe.job.name
+            job_dir = tmp_path / recipe._job.name
             assert (job_dir / "meta.json").exists()
             server_cfg_path = job_dir / "app" / "config" / "config_fed_server.json"
             client_cfg_path = job_dir / "app" / "config" / "config_fed_client.json"

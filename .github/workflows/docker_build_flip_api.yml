@@ -47,10 +47,12 @@ jobs:
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: londonaicentre/flip-api
-      BUILD_ARGS: |
-        --build-arg UID=1000
-        --build-arg GID=1000
-        --build-arg UNAME=flip
+      # Empty since FLIP#1171: flip-api/Dockerfile fixes the image identity at
+      # flip/1000/1000, so CI and a local BUILD=true image are identical. Passing
+      # UID/GID/UNAME here as well would be a second source of truth that can drift
+      # from the Dockerfile defaults. Kept as a variable so the build line below and
+      # the sibling workflows keep the same shape.
+      BUILD_ARGS: ""
     steps:
       - name: Checkout code
         uses: actions/checkout@v5

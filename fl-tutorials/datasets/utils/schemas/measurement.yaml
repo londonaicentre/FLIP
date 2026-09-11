@@ -1,0 +1,87 @@
+schema_type: dataframe
+columns:
+  measurement_id:
+    dtype: int64
+    unique: true
+  person_id:
+    dtype: int64
+  measurement_concept_id:
+    dtype: int64
+  measurement_date:
+    dtype: datetime64[ns]
+  measurement_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  measurement_time:
+    dtype: string[python]
+    nullable: true
+    required: false
+  measurement_type_concept_id:
+    dtype: int64
+  operator_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  value_as_number:
+    dtype: float64
+    nullable: true
+    required: false
+  value_as_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  unit_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  range_low:
+    dtype: float64
+    nullable: true
+    required: false
+  range_high:
+    dtype: float64
+    nullable: true
+    required: false
+  provider_id:
+    dtype: int64
+    nullable: true
+    required: false
+  visit_occurrence_id:
+    dtype: int64
+    nullable: true
+    required: false
+  visit_detail_id:
+    dtype: int64
+    nullable: true
+    required: false
+  measurement_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  measurement_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  unit_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  unit_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  value_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  measurement_event_id:
+    dtype: int64
+    nullable: true
+    required: false
+  meas_event_field_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false
