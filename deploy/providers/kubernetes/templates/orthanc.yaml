@@ -70,66 +70,16 @@ spec:
         {{- include "flip-trust.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: orthanc
     spec:
+      # Orthanc runs as uid 999 and writes its index and storage into the PVC; a fresh
+      # volume is root-owned, so fsGroup hands it to Orthanc's group before the first
+      # start (the snapshot initContainer that used to untar into it as root is gone —
+      # the trust-seed hook fills the store over REST instead, FLIP#1187).
+      securityContext:
+        fsGroup: 999
       enableServiceLinks: false
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
 {{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
-      {{- end }}
-      {{- if .Values.orthanc.initJob.enabled }}
-      initContainers:
-        - name: seed-data
-          image: amazon/aws-cli:2.22.0
-          securityContext:
-            runAsUser: 0
-          command:
-            - /bin/sh
-            - -c
-            - |
-              set -euo pipefail
-              # Skip if Orthanc data already exists (index file present and non-empty)
-              if [ -f /var/lib/orthanc/db/index ] && [ -s /var/lib/orthanc/db/index ]; then
-                echo "Orthanc data directory already populated. Skipping seed."
-                exit 0
-              fi
-              microdnf install -y tar gzip curl 2>/dev/null || yum install -y tar gzip curl 2>/dev/null
-              TRUST_NUM="{{ .Values.trustNumber }}"
-              DATA_VERSION="{{ required "trustData.version is required — the trust-data tag every snapshot is fetched at (was omopDb.initJob.dataVersion / orthanc.initJob.dataVersion before FLIP#1100)" .Values.trustData.version }}"
-              S3_BUCKET="{{ .Values.orthanc.initJob.s3Bucket }}"
-              mkdir -p /var/lib/orthanc/db
-              if [ -n "$S3_BUCKET" ]; then
-                ARCHIVE_NAME="{{ .Values.orthanc.initJob.archiveName }}"
-                if [ -z "$ARCHIVE_NAME" ]; then
-                  TRUST_NAME="{{ .Values.trustName }}"
-                  ARCHIVE_NAME="${TRUST_NAME}_orthanc_data_${DATA_VERSION}.tar.gz"
-                fi
-                ARCHIVE_URL="s3://${S3_BUCKET}/orthanc/${ARCHIVE_NAME}"
-                echo "Downloading Orthanc data from S3: ${ARCHIVE_URL}..."
-                aws s3 cp "${ARCHIVE_URL}" /tmp/orthanc-data.tar
-                rm -rf /var/lib/orthanc/db/*
-                tar xf /tmp/orthanc-data.tar -C /var/lib/orthanc/db
-              else
-                # One copy per archive on the dataset; the data version is the git
-                # tag the URL resolves at, never part of the filename.
-                HF_REPO="{{ .Values.trustData.hfRepo }}"
-                HF_REVISION="${DATA_VERSION}"
-                ARCHIVE="trust${TRUST_NUM}_orthanc_data.tar"
-                ARCHIVE_URL="https://huggingface.co/datasets/${HF_REPO}/resolve/${HF_REVISION}/trust${TRUST_NUM}/${ARCHIVE}"
-                echo "Downloading Orthanc data from HuggingFace (trust${TRUST_NUM}): ${ARCHIVE_URL}..."
-                curl -fSL "${ARCHIVE_URL}" -o /tmp/orthanc-data.tar
-                rm -rf /var/lib/orthanc/db/*
-                tar xf /tmp/orthanc-data.tar -C /var/lib/orthanc/db
-              fi
-              echo "Orthanc data seed complete."
-          volumeMounts:
-            - name: data
-              mountPath: /var/lib/orthanc/db
-          {{- if .Values.orthanc.initJob.hostAwsMount.enabled }}
-          env:
-            - name: AWS_DEFAULT_REGION
-              value: {{ default "eu-west-2" .Values.awsRegion | quote }}
-            - name: AWS_PROFILE
-              value: {{ .Values.orthanc.initJob.awsProfile | quote }}
-          {{- end }}
       {{- end }}
       containers:
         - name: orthanc

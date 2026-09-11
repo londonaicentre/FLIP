@@ -19,7 +19,7 @@ logLevel: INFO
 
 # AWS region for the OMOP and Orthanc data Jobs — the seed restores and the OMOP
 # vocabulary load — which read from S3 with the operator credentials mounted at
-# omopDb.initJob.hostAwsMount / orthanc.initJob.hostAwsMount. Not used by the FL client:
+# omopDb.vocabLoad.hostAwsMount. Not used by the FL client:
 # it holds no AWS credentials and its kit is staged onto the node out-of-band.
 awsRegion: "eu-west-2"
 
@@ -30,19 +30,65 @@ uploadedFederatedDataBucket: ""
 # Supported values: "nvflare" | "flower"
 flBackend: "nvflare"
 
-# Mock trust data (the public aicentreflip/trust-data dataset on Hugging Face), restored by the
-# OMOP and Orthanc init jobs when no S3 bucket is configured. One value covers both: a data
-# version is a git TAG on that dataset (FLIP pins it in trust/.data_version) and every archive is
-# fetched at that tag from an unversioned path. Also the version suffix of the default S3 archive
-# names below, which is where a version still has to live in a filename.
+# Mock trust data (the public aicentreflip/trust-data dataset on Hugging Face). One value
+# covers both stores: a data version is a git TAG on that dataset (FLIP pins it in
+# trust/.data_version) and every artefact — the canonical OMOP tables omop-csv/<project>/
+# and the DICOM sets dicom/<project>.tar.gz — is fetched at that tag from an unversioned path.
 #
-# BREAKING (FLIP#1100): replaces omopDb.initJob.dataVersion and orthanc.initJob.dataVersion, and
-# OMOP_DATA_VERSION becomes TRUST_DATA_VERSION on the env side. Helm ignores unknown keys, so an
+# BREAKING (FLIP#1100): replaced omopDb.initJob.dataVersion and orthanc.initJob.dataVersion, and
+# OMOP_DATA_VERSION became TRUST_DATA_VERSION on the env side. Helm ignores unknown keys, so an
 # existing values file pinning the old ones keeps installing and silently stops taking effect —
 # see README "Upgrading: trustData.version replaces the two per-store pins".
 trustData:
   version: "20260901"
   hfRepo: "aicentreflip/trust-data"
+  # Seeding (FLIP#1187). The trust-seed post-install/post-upgrade hook loads this trust's slice
+  # of `projects` from the dataset into the running omop-db (rows, plus the DICOM vocabulary)
+  # and — when `orthanc` is on — the matching studies into Orthanc over its REST API. It
+  # replaced the pgdata / Orthanc volume snapshots (the former omopDb.initJob / orthanc.initJob):
+  # both stores start on empty PVCs and are filled here. Idempotent on every upgrade: only the
+  # listed projects' rows are replaced, the vocabulary load skips itself when present, Orthanc
+  # dedupes on SOPInstanceUID. The licensed core vocabulary is still omopDb.vocabLoad.
+  seed:
+    enabled: true
+    omop: true
+    # Off by default: the two default projects are ~2 GB of DICOM per trust, posted instance by
+    # instance (minutes, once — the PVC persists). Enable for a trust whose PACS must hold the
+    # mock studies (an imaging pull needs them); CI and API-only clusters leave it off.
+    orthanc: false
+    projects: "cxr_project spleen_project"
+    # The dataset partition (source_trust) this trust receives; defaults to trustNumber. The
+    # two are separate axes — see trust/README.md "Which partition a trust is seeded with".
+    sourceTrust: ""
+    numTrusts: 2
+    # The FLIP git ref the seed tools (trust/omop-db's omop_db_tools, trust/orthanc/
+    # seed_orthanc.py) are installed from at run time — the chart ships no copy and no
+    # image of them. Use the ref your service images were built from: `main` for :prod
+    # tags, `develop` for :stag, a sha for a pinned deploy.
+    sourceRef: "develop"
+    # uv's official image (python + uv, Debian slim). GHCR carries floating tags only, so the
+    # digest is what pins it: with `digest` set the image is `<repository>@<digest>` and `tag`
+    # is documentation. Refresh with `docker buildx imagetools inspect ghcr.io/astral-sh/uv:<tag>`.
+    image:
+      repository: ghcr.io/astral-sh/uv
+      tag: "python3.12-bookworm-slim"
+      digest: "sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58"
+      pullPolicy: IfNotPresent
+    # The Apache-licensed DICOM vocabulary bundle on the dataset (omop-vocab/<name>.zip), loaded
+    # before the rows so their imaging concepts resolve even without the core vocabulary.
+    dicomVocabBundle: "vocab_dicom_paulnagy_20260109"
+    # Scratch for the fetched tables, the vocabulary zip and — with `orthanc` on — the DICOM
+    # sets and their extraction (~2 GB + ~2 GB for the two default projects).
+    workDirSize: 8Gi
+    resources:
+      requests:
+        cpu: "250m"
+        memory: 512Mi
+        ephemeral-storage: 1Gi
+      limits:
+        cpu: "1"
+        memory: 2Gi
+        ephemeral-storage: 10Gi
 
 # Global image pull secrets (optional — for private registries)
 imagePullSecrets: []
@@ -459,7 +505,7 @@ omopDb:
   # FLIP#842/843).
   #
   # The bundle CANNOT be publicly mirrored (SNOMED CT / LOINC / Read v2 / dm+d
-  # licences — see trust/omop-db/README.md), so unlike initJob there is no
+  # licences — see trust/omop-db/README.md), so unlike the mock-data seed there is no
   # credential-free fallback. The Job therefore runs only when s3Bucket names a
   # bucket this cluster can read; left empty, the release installs cleanly with
   # NO vocabulary loaded.
@@ -538,29 +584,17 @@ omopDb:
         cpu: "500m"
         memory: 512Mi
         ephemeral-storage: 12Gi
-  initJob:
-    enabled: true
-    s3Bucket: ""
-    # S3 archive file name. When empty, derived from trust name + trustData.version:
-    #   {trustName}_pgdata_{trustData.version}.tar.gz
-    # Override to point at a different archive (e.g. reuse Trust_2's data):
-    #   archiveName: "trust2_pgdata_20260729.tar.gz"
-    # (Only the S3 path uses it; the Hugging Face fallback fetches trust<N>_pgdata.tar
-    # at the trustData.version tag.)
-    archiveName: ""
-    # AWS profile to use for S3 authentication (uses SSO cached credentials)
+    # AWS credentials for the bundle fetch on clusters whose node holds the operator's
+    # SSO session (k3s, minikube's `none` driver); IRSA on EKS. The profile only reaches
+    # the Job when hostAwsMount is enabled.
     awsProfile: "default"
-    # Mount host's ~/.aws directory for SSO-based S3 authentication.
-    # Enabled for local K8s clusters; disable for EKS (use IRSA instead).
-    # hostPath has NO default: it is the ~/.aws of whoever runs the *node*, so any
-    # shipped value is one developer's home directory and silently wrong on every
-    # other machine. Set it explicitly when enabling, e.g.
-    #   --set omopDb.initJob.hostAwsMount.hostPath=$HOME/.aws
-    # Left empty while enabled, rendering fails with a named error rather than
-    # mounting a path that does not exist on this node.
-    # On kind the node is a container and your ~/.aws is not in it: add an
-    # extraMounts entry to the kind config and point hostPath at the node-side
-    # path (README, "Local clusters (kind)"), or pre-seed and leave this off.
+    # hostPath has NO default: it is the ~/.aws of whoever runs the *node*, so any shipped
+    # value is one developer's home directory and silently wrong on every other machine.
+    # Set it explicitly when enabling, e.g. --set omopDb.vocabLoad.hostAwsMount.hostPath=$HOME/.aws
+    # Left empty while enabled, rendering fails with a named error rather than mounting a
+    # path that does not exist on this node. On kind the node is a container and your
+    # ~/.aws is not in it: add an extraMounts entry to the kind config and point hostPath
+    # at the node-side path (README, "Local clusters (kind)"), or pre-seed and leave this off.
     hostAwsMount:
       enabled: false
       hostPath: ""
@@ -604,33 +638,6 @@ orthanc:
     limits:
       memory: "1Gi"
       cpu: "500m"
-  initJob:
-    enabled: false
-    s3Bucket: ""
-    # S3 archive file name. When empty, derived from trust name + trustData.version:
-    #   {trustName}_orthanc_data_{trustData.version}.tar.gz
-    # Override to point at a different archive (e.g. reuse Trust_2's data):
-    #   archiveName: "trust2_orthanc_data_20260729.tar.gz"
-    # (Only the S3 path uses it; the Hugging Face fallback fetches trust<N>_orthanc_data.tar
-    # at the trustData.version tag.)
-    archiveName: ""
-    # AWS profile to use for S3 authentication (uses SSO cached credentials)
-    awsProfile: "default"
-    # Mount host's ~/.aws directory for SSO-based S3 authentication.
-    # Enabled for local K8s clusters; disable for EKS (use IRSA instead).
-    # hostPath has NO default: it is the ~/.aws of whoever runs the *node*, so any
-    # shipped value is one developer's home directory and silently wrong on every
-    # other machine. Set it explicitly when enabling, e.g.
-    #   --set orthanc.initJob.hostAwsMount.hostPath=$HOME/.aws
-    # Left empty while enabled, rendering fails with a named error rather than
-    # mounting a path that does not exist on this node.
-    # On kind the node is a container and your ~/.aws is not in it: add an
-    # extraMounts entry to the kind config and point hostPath at the node-side
-    # path (README, "Local clusters (kind)"), or pre-seed and leave this off.
-    hostAwsMount:
-      enabled: false
-      hostPath: ""
-
 # ---------------------------------------------------------------------------
 # XNAT — Neuroimaging platform (multi-component)
 # ---------------------------------------------------------------------------

@@ -319,6 +319,44 @@ jobs:
             exit 1
           fi
 
+      # The trust-seed hook is how a Kubernetes trust gets its mock data at all since the
+      # volume snapshots were retired (FLIP#1187). It renders by default with the OMOP half on
+      # and the Orthanc half off; nothing may untar a trust<N>_*.tar snapshot any more.
+      - name: Trust-seed hook renders, snapshots do not
+        run: |
+          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit > /tmp/seed-default.yaml
+          for want in 'name: trust-release-flip-trust-trust-seed' 'omop_db_tools.import_tables' 'load_dicom_vocab --vocab-dir'; do
+            if ! grep -qF -e "${want}" /tmp/seed-default.yaml; then
+              echo "::error::the trust-seed hook did not render (missing: ${want})"
+              exit 1
+            fi
+          done
+          for bad in 'restore-data' 'seed-data' '_pgdata' '_orthanc_data'; do
+            if grep -qF -e "${bad}" /tmp/seed-default.yaml; then
+              echo "::error::a volume-snapshot restore rendered (found: ${bad}) — the snapshots were retired in FLIP#1187"
+              exit 1
+            fi
+          done
+          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+            --show-only templates/trust-seed-job.yaml > /tmp/seedjob.yaml
+          if ! grep -A1 'name: SEED_ORTHANC' /tmp/seedjob.yaml | grep -q '"false"'; then
+            echo "::error::the Orthanc half must default OFF (2 GB of DICOM per trust)"
+            exit 1
+          fi
+          # The env ENTRY, not the name: the script body mentions the variable in both renders.
+          if grep -q -- '- name: ORTHANC_REGISTERED_USERS' /tmp/seedjob.yaml; then
+            echo "::error::the Orthanc credentials must not be mounted when the Orthanc half is off"
+            exit 1
+          fi
+          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+            --set trustData.seed.orthanc=true --show-only templates/trust-seed-job.yaml | grep -q -- '- name: ORTHANC_REGISTERED_USERS' \
+            || { echo "::error::with trustData.seed.orthanc=true the Job must carry the Orthanc credentials"; exit 1; }
+          if helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+            --set trustData.seed.enabled=false | grep -q 'trust-release-flip-trust-trust-seed'; then
+            echo "::error::trustData.seed.enabled=false must render no seed Job"
+            exit 1
+          fi
+
       # The probe stage is what keeps a routine `helm upgrade` from re-downloading
       # the multi-GB bundle into a fresh emptyDir. Drop it and nothing breaks
       # loudly — the Job still loads correctly, just slowly, on the critical path

@@ -232,8 +232,15 @@ already-listed IP is a no-op (idempotent — #596).
 | `imagePullSecrets` | `[]` | Registry credentials for private images |
 | `namespace.create` | `true` | Whether to create the namespace |
 | `namespace.name` | `""` | Namespace name (defaults to release namespace) |
-| `trustData.version` | `20260901` | Mock trust-data version — a git tag on the Hugging Face dataset, fetched by the OMOP and Orthanc init jobs. One value for both stores |
-| `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the init jobs fetch from |
+| `trustData.version` | `20260901` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
+| `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the seed fetches from |
+| `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc |
+| `trustData.seed.omop` / `.orthanc` | `true` / `false` | Which stores to seed. Orthanc is off by default: ~2 GB of DICOM per trust, posted over REST (minutes, once) |
+| `trustData.seed.projects` | `cxr_project spleen_project` | Published projects to load (`omop-csv/<project>/` + `dicom/<project>.tar.gz`) |
+| `trustData.seed.sourceTrust` | `""` (= `trustNumber`) | The dataset partition (`source_trust`) this trust receives |
+| `trustData.seed.sourceRef` | `develop` | FLIP git ref the seed tools are installed from at run time — match the ref your images were built from (`main` for `:prod`) |
+| `trustData.seed.image.*` | `ghcr.io/astral-sh/uv@sha256:…` | The uv image the hook runs in (pinned by digest) |
+| `trustData.seed.workDirSize` | `8Gi` | Scratch emptyDir for the fetched tables, vocabulary zip and DICOM sets |
 
 #### Upgrading: `trustData.version` replaces the two per-store pins (FLIP#1100)
 
@@ -259,7 +266,34 @@ unaffected — it names an **S3** object, and S3 has no revisions, so a version 
 filename.
 
 The templates read the pin through Helm's `required`, so an empty `trustData.version` fails at
-template time instead of 404-ing inside the init job.
+template time instead of 404-ing inside the seed hook.
+
+#### Upgrading: the volume snapshots are gone (FLIP#1187)
+
+`omopDb.initJob.*` and `orthanc.initJob.*` — the Jobs and initContainers that untarred a
+`trust<N>_pgdata.tar` / `trust<N>_orthanc_data.tar` volume snapshot into each PVC, from S3 or
+Hugging Face — no longer exist. Both stores now start on empty PVCs (omop-db initialises its
+schema and roles on first start; Orthanc its index, on a PVC `fsGroup` 999 hands it) and the
+`trust-seed` hook fills them from the canonical per-project tables and DICOM sets, so the same
+loader serves dev, EC2 and Kubernetes. Helm ignores the retired keys silently — an old values
+file still installs, with the seed's defaults in force — so move any override across:
+
+| Before | After |
+| ------ | ----- |
+| `omopDb.initJob.enabled: false` (pre-seeded PVC) | `trustData.seed.omop: false` |
+| `orthanc.initJob.enabled: true` | `trustData.seed.orthanc: true` |
+| `omopDb.initJob.s3Bucket` / `archiveName` (S3 snapshot) | no equivalent — the mock data is fetched anonymously from Hugging Face; an air-gapped cluster pre-seeds the PVCs by hand |
+| `omopDb.initJob.awsProfile` / `.hostAwsMount` | `omopDb.vocabLoad.awsProfile` / `.hostAwsMount` — they only ever served the vocab-load hook |
+
+An existing PVC restored from a snapshot keeps working: the hook's OMOP half replaces only the
+listed projects' rows and its Orthanc half dedupes on `SOPInstanceUID`, so the first upgrade
+onto this chart re-loads the same data over what the snapshot held.
+
+The hook needs egress to `huggingface.co` (the dataset), `github.com` / `raw.githubusercontent.com`
+(the tools at `trustData.seed.sourceRef`) and PyPI (their dependencies), plus the in-cluster
+`omop-db` and `orthanc` services. It runs after the vocab-load hook (weight 6 after 5); on a
+cluster that never loads the licensed vocabulary the rows still land — the DICOM vocabulary is
+loaded first so their imaging concepts resolve.
 
 ### Secrets
 
@@ -327,12 +361,12 @@ the external host instead of deploying the service itself.
 
 ### OMOP core vocabulary
 
-The `omop-db` image and the pgdata archive restored by `omopDb.initJob` are both
+The `omop-db` image and the database the `trust-seed` hook fills are both
 **vocab-free** (FLIP#842/843). The licensed core vocabulary — SNOMED CT, LOINC,
-Read v2, dm+d — is streamed in afterwards by the `omop-vocab-load`
+Read v2, dm+d — is streamed in by the `omop-vocab-load`
 post-install/post-upgrade hook.
 
-That bundle cannot be publicly mirrored, so unlike `initJob` there is **no
+That bundle cannot be publicly mirrored, so unlike the mock-data seed there is **no
 anonymous fallback**. The hook runs only when `omopDb.vocabLoad.s3Bucket` names
 a bucket the cluster can read; the chart default is empty, so a default install
 succeeds with **no vocabulary loaded** (`helm install` prints a warning).
@@ -353,11 +387,10 @@ the repo-root `make sync-kit` does not exist, and the root `deploy-trust-k8s`
 forwards to the chart's plain `deploy` target, so `KIT=` never reaches the
 per-trust override file.
 
-AWS credentials for the fetch are shared with the init job:
-`omopDb.initJob.awsProfile` and `omopDb.initJob.hostAwsMount` (a host `~/.aws`
-mount for clusters whose node *is* the machine holding your SSO session — k3s,
-minikube's `none` driver; IRSA on EKS). Note `awsProfile` only reaches this Job
-when `hostAwsMount` is enabled.
+AWS credentials for the fetch: `omopDb.vocabLoad.awsProfile` and
+`omopDb.vocabLoad.hostAwsMount` (a host `~/.aws` mount for clusters whose node *is*
+the machine holding your SSO session — k3s, minikube's `none` driver; IRSA on
+EKS). Note `awsProfile` only reaches this Job when `hostAwsMount` is enabled.
 
 #### Local clusters (kind): the mount is resolved on the node, not your workstation
 
@@ -395,15 +428,15 @@ nodes:
 ```sh
 kind create cluster --name <name> --config kind-config.yaml
 helm upgrade --install <release> . -n <ns> ... \
-  --set omopDb.initJob.hostAwsMount.enabled=true \
-  --set omopDb.initJob.hostAwsMount.hostPath=/host-aws
+  --set omopDb.vocabLoad.hostAwsMount.enabled=true \
+  --set omopDb.vocabLoad.hostAwsMount.hostPath=/host-aws
 ```
 
-The Job sees the mount as `/root/.aws` with `AWS_PROFILE=<omopDb.initJob.awsProfile>`,
+The Job sees the mount as `/root/.aws` with `AWS_PROFILE=<omopDb.vocabLoad.awsProfile>`,
 so that profile must exist in your `~/.aws/config` and its SSO session must be
 live on the host (`aws sso login`) before any install or upgrade that has to
 fetch — the mount is read-only, so the CLI inside the Job cannot refresh a
-token itself. One mapping serves `orthanc.initJob.hostAwsMount` too.
+token itself.
 
 **Or pre-seed the database from the host and leave the hook off.** Keep
 `omopDb.vocabLoad.s3Bucket` empty (the Job is then not rendered at all), fetch
@@ -710,19 +743,29 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 | **Plugin loading** | XNAT loads plugins at startup | No workaround — plugins are image-baked. Each plugin adds ~30s startup time. |
 | **PVC speed** | Slow storage class delays archive/DB I/O | Use SSD-backed storage classes (e.g., `gp3` on EKS, `Premium` on AKS). |
 
-### Orthanc / OMOP init job fails
+### Orthanc / trust-seed job fails
 
 **Orthanc**:
 
 - Check `orthanc-registered-users` secret — must be valid JSON. Test with `echo '<value>' | python3 -m json.tool`.
 - Orthanc uses SQLite embedded DB — `replicas` must stay at 1. The PVC is `ReadWriteOnce`.
 
-**OMOP init job** (`omop-db-init-job`):
+**Mock-data seed** (`trust-seed`, FLIP#1187):
 
-- The init Job is a Helm `post-install,post-upgrade` hook that downloads and restores OMOP data from S3.
-- If the Job fails: check `s3-bucket` and `s3-path` values, and that `omopDb.initJob.hostAwsMount` points at a readable AWS config dir ON THE NODE (this Job authenticates via that mount, not via cluster-stored credentials).
-- PVC name must match the StatefulSet's `volumeClaimTemplates` — the Job expects a PVC named `<release-name>-omop-db-data`.
-- To re-run: `helm upgrade trust-release . --set omopDb.initJob.enabled=true` or delete the Job and let Helm re-create it.
+- A Helm `post-install,post-upgrade` hook: `kubectl logs -n <ns> job/<release>-flip-trust-trust-seed`.
+  It fetches the canonical tables (and, with `trustData.seed.orthanc`, the DICOM sets) from
+  Hugging Face at `trustData.version`, installs the loaders from FLIP at `trustData.seed.sourceRef`,
+  and loads this trust's `source_trust` slice. No AWS credentials are involved.
+- `omop-db:5432 not reachable after 10 minutes` → the database never started; check the
+  `omop-db` pod. A first start on an empty PVC runs the schema scripts and needs
+  `data-access-postgres-password` in the secret (the read-only role), or the init aborts.
+- `uv` failing to resolve `omop-db-tools @ git+…` / the seeder URL 404-ing → the cluster has no
+  egress to github.com, or `sourceRef` names a ref that does not exist.
+- `Required table CSV not found` → `trustData.version` predates a project in `projects`, or
+  `hfRepo` is wrong.
+- Re-running `helm upgrade` is safe: the OMOP half replaces only the listed projects' rows,
+  the DICOM vocabulary load skips itself when present, and Orthanc reports `AlreadyStored`
+  for instances it holds. `--set trustData.seed.enabled=false` skips the hook entirely.
 
 **OMOP vocabulary load** (`omop-vocab-load`):
 
@@ -732,7 +775,7 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
   by design — see "OMOP core vocabulary" above.
 - `aws s3 cp` denied in the `fetch-bundle` initContainer → wrong bucket for this
   environment (each env reads its own; no cross-account read), or no credentials
-  (`omopDb.initJob.hostAwsMount` for local clusters, IRSA on EKS).
+  (`omopDb.vocabLoad.hostAwsMount` for local clusters, IRSA on EKS).
 - Job pod stuck in `ContainerCreating` with `MountVolume.SetUp failed … is not a
   directory` → `hostAwsMount.hostPath` names a workstation path the node cannot
   see (the `kind` case). Map it in with `extraMounts` or pre-seed instead — see
@@ -748,8 +791,7 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
   run that died between the load and the constraints heals here).
 - `probe-vocab` fails with `omop-db not reachable after 60 attempts` → the database
   never became ready within five minutes. This is a hard failure: the Pod fails,
-  and after `backoffLimit` so does the release. Check the `omop-db` pod and the
-  init Job that restores its PVC. (`load-vocab` waits the same way and fails the
+  and after `backoffLimit` so does the release. Check the `omop-db` pod. (`load-vocab` waits the same way and fails the
   same way, which is what stops a database restart during a long download from
   discarding the bundle that was just fetched.)
 - A database that *is* reachable but cannot answer the probe — wrong password,
