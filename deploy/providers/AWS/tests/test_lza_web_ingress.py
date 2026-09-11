@@ -38,6 +38,11 @@ MAIN_TF = (AWS_PROVIDER_DIR / "main.tf").read_text()
 ECS_SERVICES_TF = (AWS_PROVIDER_DIR / "ecs_services.tf").read_text()
 ALL_TF = "\n".join(p.read_text() for p in AWS_PROVIDER_DIR.glob("*.tf"))
 
+EXPECTED_ECS_TARGET_GROUP = (
+    "var.lza_managed_network ? aws_lb_target_group.ecs_flip_api_lza[0].arn"
+    " : aws_lb_target_group.ecs_flip_api[0].arn"
+)
+
 
 def _strip_comments(source: str) -> str:
     """Drop ``#`` comment lines so no assertion can be satisfied by prose."""
@@ -62,7 +67,7 @@ def _block(source: str, header: str) -> str:
 def test_internal_nlb_has_web_listener_on_https_port():
     nlb = _strip_comments(_block(FL_INGRESS_LZA_TF, 'module "fl_server_internal_nlb"'))
     listener = _block(nlb, '"web-listener"')
-    assert "port     = var.ALB_HTTPS_PORT" in listener or re.search(r"port\s*=\s*var\.ALB_HTTPS_PORT", listener)
+    assert re.search(r"port\s*=\s*var\.ALB_HTTPS_PORT", listener)
     assert re.search(r'protocol\s*=\s*var\.manage_dns \? "TLS" : "TCP"', listener)
     assert "aws_lb_target_group.ecs_flip_api_lza[0].arn" in listener
 
@@ -81,7 +86,7 @@ def test_lza_flip_api_target_group_is_tcp_with_http_health_check():
 def test_ecs_flip_api_registers_with_nlb_target_group_on_lza():
     service = _strip_comments(_block(ECS_SERVICES_TF, 'resource "aws_ecs_service" "flip_api"'))
     lb = _block(service, "load_balancer")
-    assert "var.lza_managed_network ? aws_lb_target_group.ecs_flip_api_lza[0].arn : aws_lb_target_group.ecs_flip_api[0].arn" in lb
+    assert EXPECTED_ECS_TARGET_GROUP in lb
 
 
 def test_alb_and_its_routing_are_gated_off_on_lza():
@@ -95,7 +100,7 @@ def test_alb_and_its_routing_are_gated_off_on_lza():
 
 def test_nlb_security_group_admits_web_port_from_networking_ingress():
     sg = _strip_comments(_block(FL_INGRESS_LZA_TF, 'module "fl_internal_nlb_security_group"'))
-    assert "port        = var.ALB_HTTPS_PORT" in sg or re.search(r"port\s*=\s*var\.ALB_HTTPS_PORT", sg)
+    assert re.search(r"port\s*=\s*var\.ALB_HTTPS_PORT", sg)
     assert sg.count("var.networking_ingress_cidrs") == 2, "both the FL and the web rule admit the relay path"
 
 
