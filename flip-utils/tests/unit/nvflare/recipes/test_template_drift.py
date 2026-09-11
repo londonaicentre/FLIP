@@ -60,7 +60,7 @@ def test_committed_template_matches_recipe_export(tmp_path: Path, template: str,
     recipe = recipe_cls()
     recipe.export(tmp_path)
     rel_path = "meta.json" if config_name == "meta.json" else f"app/config/{config_name}"
-    exported = tmp_path / recipe._job.name / rel_path
+    exported = tmp_path / recipe.job.name / rel_path
     committed = _FL_APPS_NVFLARE / template / rel_path
 
     assert committed.is_file(), f"committed template file missing: {committed}"

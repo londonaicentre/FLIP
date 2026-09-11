@@ -67,8 +67,8 @@ class TestFlipFedOptRecipe:
         FedAvg layout, since the client contract is identical."""
         recipe = FlipFedOptRecipe()
         recipe.export(tmp_path)
-        job_dir = tmp_path / recipe._job.name
-        assert recipe._job.name == "flip_fedopt"
+        job_dir = tmp_path / recipe.job.name
+        assert recipe.job.name == "flip_fedopt"
 
         server_cfg = json.loads((job_dir / "app" / "config" / "config_fed_server.json").read_text())
         components = {c["id"]: c for c in server_cfg["components"]}
