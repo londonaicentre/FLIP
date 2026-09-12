@@ -34,7 +34,11 @@ Which job types are available depends on the backend.
 (job type `evaluation`) — for a Flower app, those two are the whole set.
 **NVFLARE** adds two-stage diffusion model training (job type `diffusion_model`) and federated
 optimisation (job type `fed_opt`, which shares `standard`'s client contract and differs only in
-the server-side optimizer aggregation). Every NVFLARE job type drives the client code through the
+the server-side optimizer aggregation). The `diffusion_model` job type remains registered and
+supported, but **no tutorial demonstrates it any more**: the image-synthesis tutorials were split
+into three independent single-stage `standard` jobs (see the tutorial list below), so a latent
+diffusion model is now trained as an autoencoder job followed by a separate diffusion job.
+Every NVFLARE job type drives the client code through the
 modern **NVFLARE Client API** — a plain training/evaluation script using ``nvflare.client``
 (these Client-API templates briefly lived under `*_client_api` names alongside the Executor-based
 ones, then took over the plain names when those were retired).
@@ -66,11 +70,22 @@ The NVFLARE tutorials (all Client-API apps):
 - `xray_classification <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_classification/xray_classification>`_ (job type `standard`)
 - `3d_spleen_segmentation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation>`_ (job type `standard`)
 - `3d_spleen_segmentation_evaluation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation>`_ (job type `evaluation`)
-- `latent_diffusion_model <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_synthesis/latent_diffusion_model>`_ (job type `diffusion_model`)
+- `arkplus_fine_tuning <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_classification/arkplus_fine_tuning>`_ (job type `standard`, frozen backbone via `SERVER_CHECKPOINT`)
+- `autoencoder <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_synthesis/autoencoder>`_ (job type `standard`)
+- `diffusion_model <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_synthesis/diffusion_model>`_ (job type `standard` — pixel-space diffusion; note the directory name is *not* the job type)
+- `latent_diffusion_model <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_synthesis/latent_diffusion_model>`_ (job type `standard`, frozen autoencoder via `SERVER_CHECKPOINT`)
 
-The two `standard` examples show how the same job type runs different user-uploaded
-applications: both perform a supervised federated averaging training, but the data, architecture
+The `standard` examples show how the same job type runs different user-uploaded
+applications: they perform a supervised federated averaging training, but the data, architecture
 and training configuration are different.
+
+The three image-synthesis tutorials are worth reading as a set. They are **independent
+single-stage jobs**: `autoencoder` trains an autoencoder on images, `diffusion_model` trains a
+diffusion model on images directly, and `latent_diffusion_model` trains one inside the latent space
+of a *frozen* autoencoder that it takes as an uploaded checkpoint. So the two halves of a latent
+diffusion model are trained separately, and an autoencoder can be trained once and re-used. No
+tutorial now uses the two-stage `diffusion_model` job type, which remains registered and working
+for existing models.
 
 These tutorials run on the local NVFLARE simulator from the repo root — e.g.
 ``make -C fl-tutorials run-tutorial TUTORIAL=xray_classification`` (requires a GPU; see the

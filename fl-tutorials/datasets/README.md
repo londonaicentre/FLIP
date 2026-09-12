@@ -36,8 +36,8 @@ make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrich
 
 | Dataset | Source | Output under `fl-tutorials/data/` | Consumed by |
 | --- | --- | --- | --- |
-| xray | HF `aicentreflip/flip-fl-base-test-data` | `xrays_mini_300/{accession-resources/, dataframe.csv}` | xray_classification (both backends) |
-| spleen (MSD build) | MSD Task09_Spleen | `spleen/{images/, dataframe.csv}` | 3d_spleen_segmentation + evaluation + latent_diffusion_model (NVFLARE sim); enrichment labels |
+| xray | HF `aicentreflip/flip-fl-base-test-data` | `xrays_mini_300/{accession-resources/, dataframe.csv}` | xray_classification (both backends); the three image_synthesis tutorials (autoencoder, diffusion_model, latent_diffusion_model) |
+| spleen (MSD build) | MSD Task09_Spleen | `spleen/{images/, dataframe.csv}` | 3d_spleen_segmentation + evaluation (NVFLARE sim); enrichment labels |
 | spleen (FLIP-format) | HF `aicentreflip/flip-fl-base-test-data` | `spleen/{accession-resources/, sample_get_dataframe_response.csv}` + `model_checkpoints/model.pt` | 3d_spleen_segmentation + evaluation (Flower stack) |
 | arkplus | HF `aicentreflip/tutorials-arkplus-cxr-classification` | `arkplus/site{1,2}[,_holdoff]/` | the three Ark+ tutorials (NVFLARE) |
 
