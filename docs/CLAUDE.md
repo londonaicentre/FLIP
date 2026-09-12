@@ -25,6 +25,10 @@
 | `source/deploy-flip/` | Per-target deployment guides (central hub, TRE, on-prem) |
 | `source/working-with-flip-apps/` | Step-by-step FLARE / Flower app authoring |
 
+## Paired pages
+
+`source/working-with-flip-apps/create-flip-app-from-flare.rst` and `create-flip-app-from-flower.rst` are twins: same section order, same SDK touchpoints, each ending in a `Common pitfalls` list, and each carrying a note at the top pointing at the other. When one page changes — a new SDK call, a renamed run-config key, a new pitfall, a restructured section — check whether the other needs the same change, and make both edits in the same PR. The backend-specific facts differ (the comparison table at the top of the FLARE page summarises them), but the *shape* of the two pages should not drift apart.
+
 ## How to Read
 
 When implementing a feature that touches documentation, read the relevant `.rst` file(s) above. These are ReStructuredText format used by Sphinx for ReadTheDocs builds.
