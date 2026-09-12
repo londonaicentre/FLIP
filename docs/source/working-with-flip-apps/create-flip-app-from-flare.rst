@@ -203,7 +203,7 @@ Once you have the cohort DataFrame, iterate its ``accession_id`` column and call
 
 .. note::
 
-   ``ResourceType`` is an enum in ``flip.constants``. The samples use ``ResourceType.NIFTI`` and ``ResourceType.SEGMENTATION``; you may pass either a single value or a list. The first call per (project, accession, resource type) downloads the study out of XNAT; later calls — including the same loop running in local development — return the cached local copy, so there is no need to build your own on-disk guards.
+   ``ResourceType`` is an enum in ``flip.constants``. The samples use ``ResourceType.NIFTI`` and ``ResourceType.SEGMENTATION``; you may pass either a single value or a list. On-platform, the first call per (project, accession, resource type) downloads the study out of XNAT and later calls return the cached local copy, so there is no need to build your own on-disk guards. In local development (``LOCAL_DEV``) nothing is downloaded: the call returns ``DEV_IMAGES_DIR/<accession_id>`` and, if that directory is missing, silently **creates an empty one** rather than raising — so the ``except`` branch above is only exercised on the platform, and a local run with a missing accession folder just yields no samples for it.
 
 The round loop
 ==============
@@ -299,7 +299,7 @@ Per-epoch, per-site metrics are published through NVFLARE's own tracking API —
 
 .. note::
 
-   **Arbitrary x-axis.** The tag grammar is ``<label>[@<x_label>]``: the part after ``@`` names the x-axis and ``global_step`` is the coordinate on it. With no ``@`` suffix the metric is plotted at its FL global round on an axis titled "Global Rounds" — pass ``global_step=0`` (or omit it) for a once-per-run value such as ``TEST_DICE``. A plot is identified by the ``(label, x_label)`` pair, so the same metric logged under two different x-labels is shown as two separate plots in the UI. This is the same grammar the Flower metric keys use; the ``.x_<V>`` suffix is not needed here because ``global_step`` carries the coordinate.
+   **Arbitrary x-axis.** The tag grammar is ``<label>[@<x_label>]``: the part after ``@`` names the x-axis and ``global_step`` is the coordinate on it. With no ``@`` suffix the axis is titled "Global Rounds"; the coordinate is still ``global_step`` when you pass one, and only an *omitted* ``global_step`` is backfilled server-side with the current FL global round. So for a once-per-run value such as ``TEST_DICE`` either omit ``global_step`` (plotted at the final round) or pass ``global_step=0`` (plotted at x=0) — pick one convention and keep it, or repeated runs will not line up. A plot is identified by the ``(label, x_label)`` pair, so the same metric logged under two different x-labels is shown as two separate plots in the UI. This is the same grammar the Flower metric keys use; the ``.x_<V>`` suffix is not needed here because ``global_step`` carries the coordinate.
 
 .. _flare-models-py:
 
@@ -373,7 +373,7 @@ config.json: job type and run settings
 
 - ``job_type`` selects the template that is bundled (``standard`` here; see *Job types* on :ref:`flip-fl-nets`).
 - ``GLOBAL_ROUNDS`` is read by the platform and written into the server workflow at submit time — it is the only way to set the round count of a platform run.
-- ``LOCAL_ROUNDS`` is **not** read by the platform: your trainer reads it (``config["LOCAL_ROUNDS"]``), so the value reaches your code verbatim.
+- ``LOCAL_ROUNDS`` is not used by the server workflow: your trainer reads it (``config["LOCAL_ROUNDS"]``). The FL API does touch it at submit, though — it writes ``LOCAL_ROUNDS: 1`` into your ``config.json`` when the key is absent (so a ``config.get("LOCAL_ROUNDS", 5)`` fallback in the trainer never fires), and it requires the only local-rounds key to be named exactly ``LOCAL_ROUNDS`` (a ``LOCAL_ROUNDS_<stage>`` key needs a matching ``GLOBAL_ROUNDS_<stage>``). A key that is present but out of the 1–1000 range is left as written and reaches your code verbatim.
 - ``BEST_MODEL_METRIC`` (optional) turns on best-global-model selection — see the next section.
 - Everything else (``LEARNING_RATE``, ``VAL_SPLIT``, ``net_config``, …) is an app convention: passed through untouched, neither validated nor defaulted.
 
@@ -405,7 +405,7 @@ When ``config.json`` names a ``BEST_MODEL_METRIC``, FLIP injects NVFLARE's stock
            )
        )
 
-Selection skips round 0 (no aggregated model exists yet), so ``BEST_MODEL_METRIC`` requires ``GLOBAL_ROUNDS >= 2``; the platform rejects the upload otherwise. Set ``BEST_MODEL_METRIC_MINIMIZE`` to ``true`` for loss-like metrics. The final aggregated model is never re-evaluated for selection, so "best" means best among the intermediate global models.
+Selection skips round 0 (no aggregated model exists yet), so ``BEST_MODEL_METRIC`` requires ``GLOBAL_ROUNDS >= 2``. The check runs at **Initiate Training**, not at file upload: every file uploads and scans green, and the job is then refused with a ``ValueError`` naming the two keys. Set ``BEST_MODEL_METRIC_MINIMIZE`` to ``true`` for loss-like metrics. The final aggregated model is never re-evaluated for selection, so "best" means best among the intermediate global models.
 
 ************************************
 Submitting the app to FLIP
@@ -504,12 +504,11 @@ Two execution modes come from that one script:
 
 .. code-block:: bash
 
-   make build-fl                                          # once: builds the flare-fl-base image
    make -C fl-tutorials download-spleen-data              # reference dataset into fl-tutorials/data/
    make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation
    # or, inside the app directory: make sim NUM_ROUNDS=10 N_CLIENTS=2
 
-Run ``job.py`` in the ``flip-utils`` environment with the ``full`` extra, as the tutorial Makefiles do — a bare ``uv run`` from the repo root resolves to a venv without ``torch``/``nvflare``/``monai``. The tutorial harness (``run-tutorial``) runs the simulator inside the locally built ``flare-fl-base`` image, so ``make build-fl`` is a genuine prerequisite.
+Run ``job.py`` in the ``flip-utils`` environment with the ``full`` extra, as the tutorial Makefiles do — a bare ``uv run`` from the repo root resolves to a venv without ``torch``/``nvflare``/``monai``. The tutorial harness (``run-tutorial``) is just ``make -C <tutorial> run`` → ``sim`` on the host — no container is involved, so ``make build-fl`` is **not** a prerequisite; what you need is ``uv sync --extra full`` in ``flip-utils`` and a GPU visible to that venv.
 
 .. note::
 
@@ -542,6 +541,6 @@ Common pitfalls
 - **``models.py`` that cannot import on the server.** The persistor instantiates ``models.get_model()`` on the FL server with no data mounted. Keep ``models.py`` free of trainer imports and of anything that opens files other than ``config.json`` next to it.
 - **Reading ``config.json`` from the working directory.** On-platform the trainer's CWD is not ``custom/``. Resolve ``config.json`` (and ``config_fed_client.json``) relative to ``__file__``.
 - **Expecting ``GLOBAL_ROUNDS`` to reach your code.** It is consumed by the platform; ``LOCAL_ROUNDS`` is the one your trainer reads. A ``GLOBAL_ROUNDS`` value outside 1–1000 is silently discarded and the run defaults to a **single** round — check it if training finishes suspiciously early.
-- **``BEST_MODEL_METRIC`` with one round.** Selection skips round 0, so the platform rejects the combination; use ``GLOBAL_ROUNDS >= 2`` or drop the key.
+- **``BEST_MODEL_METRIC`` with one round.** Selection skips round 0, so the platform refuses the job at Initiate Training (after the files have uploaded cleanly); use ``GLOBAL_ROUNDS >= 2`` or drop the key.
 - **Missing ``ResourceType`` or labels.** If a Trust does not have the resource type you requested for a given accession, ``get_by_accession_number`` raises — skip the accession. If *no* accession yields a usable sample, raise with a message pointing at the data-enrichment step rather than letting the DataLoader fail on ``num_samples=0``.
 - **Uploading NVFLARE config files.** ``config_fed_server.json``, ``config_fed_client.json``, ``meta.json`` and ``job.py`` are not read on the platform; the template's copies are used. Only the files under ``app_files/`` matter.
