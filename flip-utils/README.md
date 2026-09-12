@@ -223,13 +223,23 @@ Paths below are relative to `../fl-tutorials/nvflare/` (the NVFLARE tutorials tr
 | App | Tutorial |
 |-----|----------|
 | `standard` | `image_classification/xray_classification` |
+| `standard` | `image_classification/arkplus_fine_tuning` |
 | `standard` | `image_segmentation/3d_spleen_segmentation` |
+| `standard` | `image_synthesis/autoencoder` |
+| `standard` | `image_synthesis/diffusion_model` (pixel-space; the directory name is not the job type) |
+| `standard` | `image_synthesis/latent_diffusion_model` |
 | `evaluation` | `image_evaluation/3d_spleen_segmentation_evaluation` |
-| `diffusion_model` | `image_synthesis/latent_diffusion_model` |
+| `diffusion_model` | *(no tutorial — see below)* |
 
 The plain job-type names (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) are the
 Client-API templates — the legacy Executor syntax (`FLIP_TRAINER`-style classes) is retired and
 such apps can no longer run.
+
+`diffusion_model` is the two-stage (autoencoder-then-diffusion) job type. It remains registered and
+working for existing models, but no tutorial uses it: the image-synthesis tutorials are three
+independent single-stage `standard` jobs, so a latent diffusion model is trained as an
+`autoencoder` run followed by a separate `latent_diffusion_model` run that takes the resulting
+autoencoder as a frozen `SERVER_CHECKPOINT`.
 
 ---
 

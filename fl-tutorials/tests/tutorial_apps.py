@@ -16,9 +16,11 @@ into a job and imported flat, so nothing here is importable by dotted name. Each
 from its file path under a unique module name, which also keeps the three same-named
 ``data_utils`` modules from colliding in ``sys.modules``.
 
-**Scope.** Only apps that read 2-D DICOM through MONAI's ``LoadImaged`` belong here. The spleen and
-latent-diffusion tutorials load 3-D NIfTI through ``Orientationd``/``Spacingd``, where the
-axis-order correction these tests pin would be actively wrong — they are deliberately absent.
+**Scope.** Only apps that read 2-D DICOM through MONAI's ``LoadImaged`` belong here. The spleen
+tutorials load 3-D NIfTI through ``Orientationd``/``Spacingd``, where the axis-order correction these
+tests pin would be actively wrong — they are deliberately absent. The three ``image_synthesis``
+tutorials are registered: they read the same 2-D DICOM chest X-rays as ``xray_classification``,
+through a copy of its chain, so the same orientation guarantees must hold for them.
 """
 
 from __future__ import annotations
@@ -154,6 +156,21 @@ DICOM_APPS: tuple[TutorialApp, ...] = (
         app_id="flower_xray_classification",
         backend="flower",
         module_path="flower/xray_classification/app/transforms.py",
+    ),
+    TutorialApp(
+        app_id="nvflare_autoencoder",
+        backend="nvflare",
+        module_path="nvflare/image_synthesis/autoencoder/app_files/transforms.py",
+    ),
+    TutorialApp(
+        app_id="nvflare_diffusion_model",
+        backend="nvflare",
+        module_path="nvflare/image_synthesis/diffusion_model/app_files/transforms.py",
+    ),
+    TutorialApp(
+        app_id="nvflare_latent_diffusion_model",
+        backend="nvflare",
+        module_path="nvflare/image_synthesis/latent_diffusion_model/app_files/transforms.py",
     ),
 )
 
