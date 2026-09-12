@@ -57,8 +57,11 @@ Download and unzip a XNAT dataset to a local folder.
 }
 ```
 
-Query parameters: `assessor_type` (`scan`, default, or `assessor`), `resource_type` (`NIFTI` default; `DICOM`, `ALL`,
-or a custom XNAT resource label) and `force_refresh` (default `false`).
+Query parameters: `assessor_type` (`scan`, default, or `assessor`), `resource_type` (`NIFTI` default; `DICOM`, `SEG`
+or `ALL` — a closed allow-list matching flip-utils' `ResourceType` enum, since the value is interpolated into the
+XNAT download URL; anything else is a 422) and `force_refresh` (default `false`). `accession_id`, like `scan_id` and
+`resource_id` on the upload route, must be a single RFC 3986 path segment (unreserved characters only, not `.` or
+`..`); other values are rejected with a 422 before any XNAT request is made (#908).
 
 Downloads are cached on the trust host. Extraction lands in
 `<BASE_IMAGES_DOWNLOAD_DIR>/<net_id>/<central_hub_project_id>/<accession_id>/` and a completeness sentinel

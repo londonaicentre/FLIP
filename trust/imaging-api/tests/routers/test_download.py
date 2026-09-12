@@ -65,6 +65,49 @@ def test_download_images_force_refresh_defaults_to_false(client):
     assert mock_service.await_args.kwargs["force_refresh"] is False
 
 
+def test_download_images_rejects_accession_id_traversal_before_service_call(client):
+    """A traversal accession_id must fail body validation (422) and never reach
+    the download service, which would otherwise issue an admin-authenticated
+    XNAT request to the traversed URL."""
+    body = {**_REQUEST_BODY, "accession_id": "../../etc/passwd"}
+    with patch(
+        "imaging_api.routers.download.download_and_unzip_images",
+        new_callable=AsyncMock,
+    ) as mock_service:
+        response = client.post("/download/images/net1", json=body)
+
+    assert response.status_code == 422
+    mock_service.assert_not_called()
+
+
+def test_download_images_rejects_resource_type_outside_allow_list_before_service_call(client):
+    """resource_type is interpolated into the XNAT download URL; anything outside
+    the known resource-type allow-list must 422 before the service is invoked."""
+    with patch(
+        "imaging_api.routers.download.download_and_unzip_images",
+        new_callable=AsyncMock,
+    ) as mock_service:
+        response = client.post("/download/images/net1?resource_type=../../etc/passwd", json=_REQUEST_BODY)
+
+    assert response.status_code == 422
+    mock_service.assert_not_called()
+
+
+def test_download_images_accepts_known_resource_type(client):
+    with (
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
+        patch(
+            "imaging_api.routers.download.download_and_unzip_images",
+            new_callable=AsyncMock,
+            return_value="/tmp/images/net1/ACC123",
+        ) as mock_service,
+    ):
+        response = client.post("/download/images/net1?resource_type=DICOM", json=_REQUEST_BODY)
+
+    assert response.status_code == 200
+    assert mock_service.await_args.kwargs["resource_type"] == "DICOM"
+
+
 def test_download_images_not_found(client):
     with (
         patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
