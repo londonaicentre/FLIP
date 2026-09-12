@@ -19,11 +19,11 @@
 # variables are forwarded to the sub-make automatically.
 FL_BACKEND ?= nvflare
 
-TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials
-# Dataset targets are backend-agnostic (shared data root, single copy in datasets/);
-# FL_BACKEND still selects a per-harness variant where one exists (the two spleen downloads).
-DATASET_TARGETS := download-xray-data download-spleen-data upload-spleen-labels \
-	download-arkplus-finetuning-data download-arkplus-eval-data \
+TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials sim-tutorial
+# Dataset targets are backend-agnostic: one download per dataset under the shared data root,
+# read by both harnesses (single copy in datasets/), so FL_BACKEND plays no part in them.
+DATASET_TARGETS := download-xray-data download-spleen-data download-spleen-checkpoint \
+	upload-spleen-labels download-arkplus-finetuning-data download-arkplus-eval-data \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
 	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
 	reproduce-spleen-omop \
@@ -34,7 +34,7 @@ $(TUTORIAL_TARGETS):
 	@$(MAKE) --no-print-directory -C $(FL_BACKEND) $@
 
 $(DATASET_TARGETS):
-	@$(MAKE) --no-print-directory -C datasets $@ FL_BACKEND=$(FL_BACKEND)
+	@$(MAKE) --no-print-directory -C datasets $@
 
 # ---------------------------------------------------------------------------
 # Lint / autoformat the tutorial sources. Runs ruff over the whole tree; ruff

@@ -261,7 +261,23 @@ make -C fl-tutorials list-tutorials
 make -C fl-tutorials download-xray-data                  # xray dataset (HF); spleen: download-spleen-data
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
 make -C fl-tutorials run-all-tutorials                   # every tutorial (heavy; stops on first failure)
+make -C fl-tutorials sim-tutorial TUTORIAL=xray_classification FL_BACKEND=flower   # simulator, no containers
 ```
+
+`sim-tutorial` means "no containers" on both backends. On NVFLARE it is an alias for
+`run-tutorial`, which already runs the simulator; on Flower it runs `flwr run` in-process
+(no SuperLink, no SuperNodes, no fl-api, no Docker) where `run-tutorial` brings up the
+standalone compose stack. The app code is identical either way — site identity comes from
+`context.node_config`'s `partition-id`, falling back to the `SUPERNODE_NAME` a container sets
+(`flip.flower.identity`). Under `LOCAL_DEV` both paths hand every client the same
+`DEV_DATAFRAME`, so `partition_cohort` slices it per site; deployed, each trust's
+data-access-api already serves its own cohort and no partitioning happens. The one thing the
+Flower simulator supplies in place of fl-api's submit step is the evaluation tutorial's
+checkpoint: `sim-tutorial.sh` passes `--run-config` pointing `flip-job-dir` at
+`fl-tutorials/data/model_checkpoints` (fetched by `download-spleen-checkpoint`, part of
+`download-spleen-data`) and `checkpoint` at `model.pt`, so
+`make -C fl-tutorials sim-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower`
+runs unchanged app code too.
 
 To iterate on the FL images, `make build-fl` builds them locally as `:dev` (see `fl-services/nvflare/README.md`);
 run the stack on them with `make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`.

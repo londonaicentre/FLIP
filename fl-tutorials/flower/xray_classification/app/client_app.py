@@ -19,11 +19,11 @@ through the upload flow.
 """
 
 import json
-import os
 from logging import INFO
 from pathlib import Path
 
 import torch
+from flip.flower.identity import client_identity, partition_cohort
 from flip.flower.privacy import flip_local_dp_mod
 from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
@@ -66,6 +66,8 @@ def _build_flip_utils(context: Context) -> FLIP_BASE:
     flip_utils.project_id = context.run_config.get("flip-project-id", "xray-flower-tutorial")
     flip_utils.query = context.run_config.get("flip-cohort-query", "*")
     flip_utils.fetch_dataframe()
+    # Slice the shared dev cohort so the simulated sites really differ; a no-op off LOCAL_DEV.
+    flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
     return flip_utils
 
 
@@ -100,7 +102,7 @@ def train(msg: Message, context: Context) -> Message:
 
     lesions, value_to_numerical, normal_key = _build_lesions(config)
 
-    client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
+    client_name = client_identity(context)
     global_round = int(msg.content["config"]["server-round"]) - 1
 
     if val_split + test_split >= 1.0:
@@ -172,7 +174,7 @@ def evaluate(msg: Message, context: Context) -> Message:
     batch_size = int(config["BATCH_SIZE"])
     lesions, value_to_numerical, normal_key = _build_lesions(config)
 
-    client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
+    client_name = client_identity(context)
 
     flip_utils = _build_flip_utils(context)
     test_datalist = flip_utils.get_image_and_label_list(

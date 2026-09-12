@@ -17,8 +17,8 @@ from collections.abc import Iterable
 from logging import INFO
 
 from flip.flower.strategy import FlipFedAvg
-from flwr.common import MetricRecord, log
-from flwr.common.message import Message
+from flwr.app import Message, MetricRecord
+from flwr.common import log
 
 # MetricRecord key that FedAvg uses as the aggregation weight; it is bookkeeping,
 # not a reportable metric, so it is excluded from the per-client JSON breakdown.

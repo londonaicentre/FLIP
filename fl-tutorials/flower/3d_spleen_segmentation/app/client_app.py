@@ -20,10 +20,10 @@ hub credential. Per-epoch granularity is preserved via the
 ``flip.flower.metrics.handle_client_metrics`` (FLIP#148).
 """
 
-import os
 from logging import INFO
 
 import torch
+from flip.flower.identity import check_splits_are_populated, client_identity, partition_cohort, partition_count
 from flip.flower.privacy import flip_local_dp_mod
 from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
@@ -59,7 +59,7 @@ def train(msg: Message, context: Context) -> Message:
     batch_size = int(run_config.get("batch-size", 2))
 
     # NOTE this needs to match the name of the trust in the central hub database
-    client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
+    client_name = client_identity(context)
 
     # global_round from server is 1-based - convert to 0-based for easier calculations of round numbers during training
     global_round = int(msg.content["config"]["server-round"]) - 1
@@ -70,6 +70,8 @@ def train(msg: Message, context: Context) -> Message:
     flip_utils.query = run_config.get("flip-cohort-query", "*")
     log(INFO, "Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
     flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
+    # Slice the shared dev cohort so the simulated sites really differ; a no-op off LOCAL_DEV.
+    flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
     log(INFO, f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
 
     # Setup device
@@ -86,6 +88,12 @@ def train(msg: Message, context: Context) -> Message:
 
     train_datalist, val_datalist = flip_utils.get_image_and_label_list(
         _val_split=val_split, _test_split=test_split, is_test=False
+    )
+    check_splits_are_populated(
+        {"train": len(train_datalist), "val": len(val_datalist)},
+        cohort_rows=len(flip_utils.dataframe),
+        client_name=client_name,
+        num_partitions=partition_count(context),
     )
     dataset_train = Dataset(train_datalist, transform=get_train_transforms())
     dataset_val = Dataset(val_datalist, transform=get_val_transforms())
@@ -190,7 +198,7 @@ def evaluate(msg: Message, context: Context) -> Message:
     test_split = float(run_config.get("test-split", 0.2))
 
     # NOTE this needs to match the name of the trust in the central hub database
-    client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
+    client_name = client_identity(context)
 
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -202,10 +210,18 @@ def evaluate(msg: Message, context: Context) -> Message:
     flip_utils.query = run_config.get("flip-cohort-query", "*")
     log(INFO, "Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
     flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
+    # Slice the shared dev cohort so the simulated sites really differ; a no-op off LOCAL_DEV.
+    flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
     log(INFO, f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
 
     # Get test data
     test_datalist = flip_utils.get_image_and_label_list(_val_split=val_split, _test_split=test_split, is_test=True)
+    check_splits_are_populated(
+        {"test": len(test_datalist)},
+        cohort_rows=len(flip_utils.dataframe),
+        client_name=client_name,
+        num_partitions=partition_count(context),
+    )
     test_dataset = Dataset(test_datalist, transform=get_val_transforms())
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
