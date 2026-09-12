@@ -114,9 +114,14 @@ contract, and should not be mistaken for it. Untested here:
 - End-to-end training behaviour, which stays with the GPU simulator harness
   (`make -C fl-tutorials run-tutorial`).
 
-**Out of scope by design:** the spleen and latent-diffusion tutorials. They load 3-D NIfTI through
+**Out of scope by design:** the spleen tutorials. They load 3-D NIfTI through
 `Orientationd`/`Spacingd`, where this correction would be actively wrong. Do not add them to
 `DICOM_APPS`.
+
+The three `image_synthesis` tutorials (`autoencoder`, `diffusion_model`, `latent_diffusion_model`)
+**are** registered: they read the same 2-D DICOM chest X-rays as `xray_classification`, through a
+copy of its chain, so the same orientation guarantees apply. A generative model trained on sideways
+or mirrored radiographs would go on to synthesise them.
 
 Tutorials are copy-and-adapt example code, and a repository test cannot follow a copy out of the
 repository. It can keep the thing being copied correct, which is the point: `fl-apps/` (the
