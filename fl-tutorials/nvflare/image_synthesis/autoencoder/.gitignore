@@ -1,6 +1,4 @@
 fl_job/
 app_files/torch_hub/
-# The frozen autoencoder is produced locally by `make prepare-checkpoint`, never committed.
-app_files/pretrained_autoencoder.pt
 # Client-local debug images (SAVE_DEBUG_SAMPLES); patient-derived, never committed.
 app_files/debug_samples/

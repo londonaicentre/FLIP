@@ -9,27 +9,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NVFLARE Client API script for the FLIP latent diffusion tutorial.
+"""NVFLARE Client API script for the FLIP pixel-space diffusion tutorial.
 
-Trains a ``DiffusionModelUNet`` inside a **frozen** autoencoder's latent space, as an ordinary
-single-stage FedAvg job: one ``train`` task and one ``validate`` task, dispatched on
-``flare.is_train()`` / ``flare.is_evaluate()``.
+Trains a ``DiffusionModelUNet`` to denoise **images directly**, as an ordinary single-stage FedAvg
+job: one ``train`` task and one ``validate`` task, dispatched on ``flare.is_train()`` /
+``flare.is_evaluate()``.
 
-The autoencoder is not trained here. It arrives as an uploaded checkpoint declared by
-``SERVER_CHECKPOINT`` in ``config.json``, which the FL server loads into the round-0 global model and
-broadcasts — so this script never reads the checkpoint file, it simply receives autoencoder weights
-along with the diffusion model's at round 0. Thereafter ``AGGREGATE_ONLY_REGEX`` keeps only
-``diffusion_model.*`` on the wire, and the client rebuilds the full model from its cached round-0
-broadcast.
+The denoising objective is the same as the latent diffusion tutorial's — sample a timestep, add
+noise, predict it, score with MSE — but it runs at full image resolution, so there is no
+autoencoder in the loop and none of the latent-geometry machinery that comes with one:
 
-Because the autoencoder is fixed for the whole run, this script freezes it explicitly
-(``requires_grad_(False)`` + ``eval()``). The previous two-stage job left it *implicitly* frozen —
-merely absent from the optimizer — which meant gradients accumulated on its parameters every step
-and were never applied, and training ran it in ``train()`` mode while validation ran it in
-``eval()``. Freezing is numerically neutral here (``AutoencoderKL`` uses GroupNorm and no dropout)
-and removes both wrinkles.
+* ``DiffusionInferer`` replaces ``LatentDiffusionInferer`` (it takes only a scheduler, and no
+  ``autoencoder_model`` argument);
+* there is no latent scale factor to derive, so no sample batch has to be encoded before training;
+* the noise tensor is sampled at **image** shape, not at a padded latent shape.
 
-The denoising maths is unchanged from that job's ``train_dm`` phase.
+The trade-off is cost: denoising at full image resolution is heavier than denoising a compressed
+latent — the gap is far starker in 3-D, but it is the same trade-off here. See the README on sizing
+``net_config`` and ``BATCH_SIZE``.
 """
 
 import argparse
@@ -44,9 +41,9 @@ import torch
 from debug_samples import samples_enabled, save_grid
 from flip import FLIP
 from flip.constants import FlipConstants, ResourceType
-from latent_utils import build_inferer
 from models import get_model
 from monai.data import DataLoader, Dataset
+from monai.inferers import DiffusionInferer
 from monai.networks.schedulers import DDPMScheduler
 from nvflare.client.tracking import SummaryWriter
 from torch.amp import GradScaler, autocast
@@ -92,19 +89,19 @@ def batch_accumulation_step(batch_size: int) -> int:
     return 1
 
 
-def freeze_autoencoder(model: torch.nn.Module) -> None:
-    """Freeze the supplied autoencoder: no gradients, always eval mode.
+def image_noise_shape(config: dict, batch_size: int) -> list[int]:
+    """Noise shape for a pixel-space diffusion step: ``[B, image_channels, *spatial_shape]``.
 
-    The autoencoder is fixed for the whole run (it comes from ``SERVER_CHECKPOINT`` and is excluded
-    from aggregation by ``AGGREGATE_ONLY_REGEX``), so there is no reason to build a gradient graph
-    through it or to let its normalisation behave differently between training and validation.
+    The latent tutorial pads the latent grid so the UNet can downsample it cleanly; here the UNet
+    consumes the image directly, so the noise simply matches the image. ``spatial_shape`` must
+    therefore be divisible by ``2 ** (len(channels) - 1)`` — the transform chain resizes every
+    image to exactly that shape, so this is a config invariant rather than a per-batch check.
     """
-    model.autoencoder.requires_grad_(False)
-    model.autoencoder.eval()
+    return [batch_size, config["net_config"]["diffusion_model"]["in_channels"], *config["spatial_shape"]]
 
 
-class LatentDiffusionTrainer:
-    """Holds the model, loss, optimizer, scheduler, and data for latent diffusion training.
+class DiffusionTrainer:
+    """Holds the model, loss, optimizer, scheduler, and data for pixel-space diffusion training.
 
     One instance lives for the whole ``flare.is_running()`` loop, so the optimizer state persists
     across global rounds.
@@ -119,7 +116,6 @@ class LatentDiffusionTrainer:
         # Model creation
         self.model = get_model()
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        freeze_autoencoder(self.model)
 
         self.losses_dm = {"loss": torch.nn.functional.mse_loss}
         self.optimizers_dm = {
@@ -201,25 +197,14 @@ class LatentDiffusionTrainer:
 
     def load_weights(self, weights: dict[str, torch.Tensor]) -> None:
         self.model.load_state_dict(state_dict=weights, strict=False)
-        # The broadcast carries the autoencoder at round 0; re-assert the freeze afterwards so a
-        # load can never quietly re-enable grads or training mode on it.
-        freeze_autoencoder(self.model)
 
     def train(self, writer: SummaryWriter, global_round: int) -> int:
         """One ``train`` round: local diffusion-model epochs. Returns the iteration count."""
         accumulation_step = batch_accumulation_step(self.config["BATCH_SIZE"])
         train_loader, val_loader = self.make_loaders(self.config["BATCH_SIZE"])
         self.model.diffusion_model.to(device=self.device)
-        self.model.autoencoder.to(device=self.device)
 
-        inferer, ldm_latent_shape = build_inferer(
-            self.model,
-            self.optimizers_dm["scheduler"],
-            self.config["spatial_shape"],
-            next(iter(train_loader))["image"],
-            self.device,
-            self.config.get("LATENT_SCALE_FACTOR"),
-        )
+        inferer = DiffusionInferer(scheduler=self.optimizers_dm["scheduler"])
         scaler = GradScaler()
 
         # Basic training
@@ -235,11 +220,7 @@ class LatentDiffusionTrainer:
                 images = batch["image"].to(self.device)
 
                 with autocast(enabled=False, device_type=self.device.type):
-                    noise = torch.randn(
-                        [images.shape[0]]
-                        + [self.model.autoencoder.encoder.blocks[-1].out_channels]
-                        + ldm_latent_shape
-                    ).to(self.device)
+                    noise = torch.randn(image_noise_shape(self.config, images.shape[0])).to(self.device)
                     timesteps = torch.randint(
                         0,
                         self.optimizers_dm["scheduler"].num_train_timesteps,
@@ -249,7 +230,6 @@ class LatentDiffusionTrainer:
                     noise_pred = inferer(
                         inputs=images,
                         diffusion_model=self.model.diffusion_model,
-                        autoencoder_model=self.model.autoencoder,
                         noise=noise,
                         timesteps=timesteps,
                         condition=None,
@@ -278,11 +258,7 @@ class LatentDiffusionTrainer:
                 images = batch["image"].to(self.device)
                 self.model.diffusion_model.eval()
                 with autocast(enabled=False, device_type=self.device.type):
-                    noise = torch.randn(
-                        [images.shape[0]]
-                        + [self.model.autoencoder.encoder.blocks[-1].out_channels]
-                        + ldm_latent_shape
-                    ).to(self.device)
+                    noise = torch.randn(image_noise_shape(self.config, images.shape[0])).to(self.device)
                     timesteps = torch.randint(
                         0,
                         self.optimizers_dm["scheduler"].num_train_timesteps,
@@ -293,7 +269,6 @@ class LatentDiffusionTrainer:
                         noise_pred = inferer(
                             inputs=images,
                             diffusion_model=self.model.diffusion_model,
-                            autoencoder_model=self.model.autoencoder,
                             noise=noise,
                             timesteps=timesteps,
                             condition=None,
@@ -323,7 +298,7 @@ def validate(
     """Score the aggregated diffusion model on the local held-out split.
 
     Args:
-        model (torch.nn.Module): The composite LDM network with the broadcast global weights loaded.
+        model (torch.nn.Module): The diffusion network with the broadcast global weights loaded.
         test_loader (DataLoader): Held-out data loader.
         scheduler (DDPMScheduler): The DDPM noise scheduler.
         config (dict): The user app config (``config.json``).
@@ -336,35 +311,19 @@ def validate(
     loss_fn = torch.nn.functional.mse_loss
 
     model.diffusion_model.to(device=device)
-    model.autoencoder.to(device=device)
-    inferer, ldm_latent_shape = build_inferer(
-        model,
-        scheduler,
-        config["spatial_shape"],
-        next(iter(test_loader))["image"],
-        device,
-        config.get("LATENT_SCALE_FACTOR"),
-    )
-
+    inferer = DiffusionInferer(scheduler=scheduler)
     model.diffusion_model.eval()
-    model.autoencoder.eval()
 
     val_loss = []
     for batch in test_loader:
         images = batch["image"].to(device)
         with autocast(enabled=False, device_type=device.type):
             with torch.no_grad():
-                noise = torch.randn(
-                    [images.shape[0]] + [model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape
-                ).to(device)
-                timesteps = torch.randint(
-                    0, scheduler.num_train_timesteps, (images.shape[0],), device=device
-                ).long()
-                logger.info(f"Sizes: images = {images.shape}, noise = {noise.shape}")
+                noise = torch.randn(image_noise_shape(config, images.shape[0])).to(device)
+                timesteps = torch.randint(0, scheduler.num_train_timesteps, (images.shape[0],), device=device).long()
                 noise_pred = inferer(
                     inputs=images,
                     diffusion_model=model.diffusion_model,
-                    autoencoder_model=model.autoencoder,
                     noise=noise,
                     timesteps=timesteps,
                     condition=None,
@@ -373,25 +332,17 @@ def validate(
             val_loss.append(loss_fn(noise.float(), noise_pred.float()).item())
 
     # Sampling is the only honest read on a diffusion model: the noise-prediction MSE above barely
-    # moves between a model that generates radiographs and one that generates texture. It also
-    # exercises the frozen autoencoder's DECODER, which nothing else in this job touches — so a
-    # mis-loaded checkpoint (tolerated by strict=False) shows up here as noise and nowhere else.
-    # Run it when either the dev sanity check or client-local debug images are asked for; it is a full
-    # reverse diffusion (num_train_timesteps steps), so it stays off the per-epoch path.
+    # moves between a model that generates radiographs and one that generates texture. Run it when
+    # either the dev sanity check or client-local debug images are asked for — it is a full reverse
+    # diffusion (num_train_timesteps steps), so it stays off the per-epoch path.
     if FlipConstants.LOCAL_DEV or samples_enabled(config):
         logger.info("[DEBUG]: Sampling images...")
-        noise = torch.randn(
-            [config["BATCH_SIZE"]] + [model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape
-        ).to(device)
-        # save_intermediates=False: LatentDiffusionInferer would otherwise retain the whole denoising
-        # trajectory (one decoded tensor per timestep) and the second return value is discarded.
+        noise = torch.randn(image_noise_shape(config, config["BATCH_SIZE"])).to(device)
         sampled_images = inferer.sample(
             input_noise=noise,
-            conditioning=None,
             diffusion_model=model.diffusion_model,
             scheduler=scheduler,
-            save_intermediates=False,
-            autoencoder_model=model.autoencoder,
+            conditioning=None,
         )
         logger.info(f"Sampled images shape: {sampled_images.detach().cpu().numpy().shape}")
         save_grid({"sample": sampled_images}, "samples", config, site_name=flare.get_site_name())
@@ -409,13 +360,10 @@ def to_torch_weights(input_model: flare.FLModel) -> dict[str, torch.Tensor]:
 
 
 def send_weight_diff(original_params: dict, model: torch.nn.Module, n_iterations: int) -> None:
-    """Send the weight diff for a completed training round.
+    """Send the full-model weight diff for a completed training round.
 
     Built one tensor at a time to avoid holding a second full copy of the model in RAM (mirrors
-    ``flip.utils.get_model_weights_diff``). The diff covers the whole composite model, but the
-    ``KeepOnlyVars`` result filter (wired from ``AGGREGATE_ONLY_REGEX``) drops everything outside
-    ``diffusion_model.*`` before it goes on the wire — which also keeps the frozen autoencoder's
-    zero diffs out of the DP filter's percentile cutoff, where they would otherwise flatten it.
+    ``flip.utils.get_model_weights_diff``).
     """
     diff = {}
     for k, v in model.state_dict().items():
@@ -440,7 +388,7 @@ def main() -> None:
     flare.init()
     writer = SummaryWriter()
 
-    trainer = LatentDiffusionTrainer(config, project_id=args.project_id, query=load_query())
+    trainer = DiffusionTrainer(config, project_id=args.project_id, query=load_query())
 
     while flare.is_running():
         input_model = flare.receive()
@@ -451,14 +399,13 @@ def main() -> None:
         global_round = input_model.current_round or 0
 
         if flare.is_train():
-            logger.info(f"[LDM trainer] received train task (round {global_round})")
+            logger.info(f"[diffusion trainer] received train task (round {global_round})")
             trainer.load_weights(weights)
             n_iterations = trainer.train(writer, global_round)
             send_weight_diff(input_model.params, trainer.model, n_iterations)
 
         elif flare.is_evaluate():
-            trainer.model.load_state_dict({k: v.to(trainer.device) for k, v in weights.items()}, strict=False)
-            freeze_autoencoder(trainer.model)
+            trainer.model.load_state_dict({k: v.to(trainer.device) for k, v in weights.items()})
             test_loader = trainer.val_loader(config["BATCH_SIZE"])
             val_loss = validate(
                 trainer.model, test_loader, trainer.optimizers_dm["scheduler"], config, trainer.device, writer

@@ -11,7 +11,3 @@ FLIP_QUERY=
 # Optional local-run knobs (Makefile defaults: NUM_ROUNDS=1, N_CLIENTS=2; CLI overrides win, e.g. `make run NUM_ROUNDS=2`)
 # NUM_ROUNDS=2
 # N_CLIENTS=2
-
-# Point at a finished `autoencoder` tutorial run to build app_files/pretrained_autoencoder.pt
-# (`make prepare-checkpoint`). Not needed once that file exists.
-# RAW_CHECKPOINT=/tmp/nvflare/autoencoder/.../FL_global_model.pt

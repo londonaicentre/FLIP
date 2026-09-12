@@ -9,17 +9,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Latent diffusion network for the FLIP latent diffusion tutorial.
+
+Composes a **frozen** autoencoder with the diffusion model that is actually trained. The
+autoencoder compresses images into a latent space; the ``DiffusionModelUNet`` denoises within that
+space, so its ``in_channels``/``out_channels`` are the autoencoder's ``latent_channels`` (3 here),
+not the image channel count.
+
+Two things about this network exist because the autoencoder is supplied rather than trained:
+
+* **There is no discriminator.** It only ever served the autoencoder's adversarial training, which
+  happens in the separate `autoencoder` tutorial. The checkpoint uploaded here is therefore
+  autoencoder-only.
+* **The submodule must be named ``autoencoder``**, matching the `autoencoder` tutorial's network, so
+  the uploaded checkpoint's ``autoencoder.*`` keys land on it. ``InitialCheckpointPTModelPersistor``
+  loads with ``strict=False``, so a name or shape mismatch is *silently tolerated* — the diffusion
+  model would then train against a randomly-initialised encoder while reporting plausible losses.
+  ``net_config.stage_1`` must likewise match that tutorial's block exactly.
+
+The trained submodule is ``diffusion_model``, which is what ``AGGREGATE_ONLY_REGEX`` in
+``config.json`` selects for per-round aggregation.
+"""
+
 import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from monai.networks.nets import AutoencoderKL, DiffusionModelUNet, PatchDiscriminator
+from monai.networks.nets import AutoencoderKL, DiffusionModelUNet
 from torch import nn
 
 
-# Here is where we can load the config file with network params if necessary, for example:
 def load_net_config():
+    """Read the ``net_config`` block from the ``config.json`` next to this file."""
     config_path = Path(__file__).parent / "config.json"
     with open(config_path, "r") as f:
         config = json.load(f)
@@ -29,10 +51,10 @@ def load_net_config():
 
 
 class LatentDiffusionModelNetwork(nn.Module):
-    """Creates a multi-stage latent diffusion model containing a:
-    - Variational Autoencoder (to compress inputs into latent space)
-    - Discriminator (to adversarially train the autoencoder)
-    - Diffusion Model (to generate samples in the latent space)
+    """Creates a latent diffusion model containing a:
+    - Variational Autoencoder (to compress inputs into latent space) — FROZEN, supplied via
+      ``SERVER_CHECKPOINT``
+    - Diffusion Model (to generate samples in the latent space) — the module actually trained
     """
 
     def __init__(self):
@@ -48,14 +70,6 @@ class LatentDiffusionModelNetwork(nn.Module):
             latent_channels=net_config["stage_1"]["latent_channels"],
             with_encoder_nonlocal_attn=False,
             with_decoder_nonlocal_attn=False,
-        )
-
-        self.discriminator = PatchDiscriminator(
-            spatial_dims=net_config["discriminator"]["spatial_dims"],
-            in_channels=net_config["discriminator"]["in_channels"],
-            channels=net_config["discriminator"]["channels"],
-            out_channels=net_config["discriminator"]["out_channels"],
-            num_layers_d=net_config["discriminator"]["num_layers_d"],
         )
 
         self.diffusion_model = DiffusionModelUNet(
@@ -77,14 +91,8 @@ class LatentDiffusionModelNetwork(nn.Module):
     def forward_dm(self, x):
         return self.diffusion_model(x)
 
-    def discriminate(self, x):
-        return self.discriminator(x)
-
     def load_autoencoder_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
         self.autoencoder.load_state_dict(state_dict, strict=strict)
-
-    def load_discriminator_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
-        self.discriminator.load_state_dict(state_dict, strict=strict)
 
     def load_diffusion_model_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
         self.diffusion_model.load_state_dict(state_dict, strict=strict)

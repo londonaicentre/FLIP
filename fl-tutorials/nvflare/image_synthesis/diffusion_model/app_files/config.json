@@ -1,7 +1,5 @@
 {
     "job_type": "standard",
-    "SERVER_CHECKPOINT": "pretrained_autoencoder.pt",
-    "AGGREGATE_ONLY_REGEX": "^diffusion_model\\.",
     "GLOBAL_ROUNDS": 1,
     "LOCAL_ROUNDS": 1,
     "PATIENCE_STEPS": 10,
@@ -11,52 +9,33 @@
     "BATCH_SIZE": 8,
     "SAVE_DEBUG_SAMPLES": false,
     "DEBUG_SAMPLES_MAX": 8,
-    "LATENT_SCALE_FACTOR": null,
     "spatial_shape": [
         256,
         256
     ],
     "net_config": {
         "spatial_dims": 2,
-        "stage_1": {
-            "in_channels": 1,
-            "spatial_dims": 2,
-            "out_channels": 1,
-            "num_res_blocks": [
-                2,
-                2,
-                2
-            ],
-            "channels": [
-                64,
-                128,
-                128
-            ],
-            "attention_levels": [
-                false,
-                false,
-                false
-            ],
-            "latent_channels": 3
-        },
         "diffusion_model": {
-            "in_channels": 3,
-            "out_channels": 3,
+            "in_channels": 1,
+            "out_channels": 1,
             "with_conditioning": false,
             "cross_attention_dim": 0,
             "channels": [
+                64,
                 128,
-                256,
+                192,
                 256
             ],
             "num_res_blocks": [
                 2,
                 2,
+                2,
                 2
             ],
             "attention_levels": [
                 false,
-                true,
+                false,
+                false,
                 true
             ]
         }

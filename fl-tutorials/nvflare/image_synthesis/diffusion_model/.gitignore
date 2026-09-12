@@ -1,0 +1,3 @@
+fl_job/
+# Client-local debug images (SAVE_DEBUG_SAMPLES); patient-derived, never committed.
+app_files/debug_samples/
