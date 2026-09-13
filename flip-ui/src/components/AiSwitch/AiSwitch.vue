@@ -24,10 +24,16 @@
                  just aria-disabled): Headless UI's internal handlers never check the
                  prop, so only the browser refusing to deliver events keeps them — and
                  the aria-checked flip they'd announce — unreachable. -->
+            <!-- Controlled: the Headless UI Switch draws (aria-checked, its hidden
+                 checkbox) from vee-validate's value, and reports every toggle — mouse
+                 click or Space — through one event, which is the only place the value
+                 changes. Bound through anything else it keeps a private counter that
+                 starts at false whatever the field's initial value, so aria-checked
+                 announces the inverse of the knob and Space moves nothing but ARIA. -->
             <Switch
                 :id="uuid"
                 :name="name"
-                :model="checked"
+                :model-value="checked"
                 :data-test="dataTest"
                 :disabled="disabled"
                 :aria-disabled="disabled || undefined"
@@ -38,7 +44,7 @@
                     checked ? 'bg-primary-600 dark:bg-primary-400' : 'bg-gray-300 dark:bg-dark-raised',
                     disabled && 'opacity-60 cursor-not-allowed'
                 ]"
-                @click.capture="() => {
+                @update:model-value="() => {
                     if (disabled) { return; }
                     handleChange(value)
                 }"

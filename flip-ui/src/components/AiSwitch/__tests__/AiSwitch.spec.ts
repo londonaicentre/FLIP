@@ -15,7 +15,9 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
+import { Form as VeeForm } from "vee-validate";
 import { expect, it, vi } from "vitest";
+import { defineComponent } from "vue";
 
 import * as helpers from "@/utils/helpers";
 
@@ -65,6 +67,58 @@ describe("AiSwitch", () => {
         expect(comp.get("[data-test=switch-knob]").classes()).toContain("translate-x-6");
         // On, and still no tick: the knob has moved, which is the whole signal.
         expect(comp.find("svg").exists()).toBe(false);
+    });
+
+    // A field that starts ON is where the two sources of truth used to diverge: the knob and
+    // label came from vee-validate, while aria-checked (and Space) came from Headless UI's own
+    // internal state, which was never told the field started on. Mount inside a form with an
+    // initial value so the switch is drawn on from the first render.
+    const mountOn = () =>
+        mount(
+            defineComponent({
+                components: {
+                    AiSwitch,
+                    VeeForm
+                },
+                template: `
+                    <VeeForm :initial-values="{ flag: true }">
+                        <AiSwitch name="flag" :value="true" :label="{ enabled: 'On', disabled: 'Off' }" />
+                    </VeeForm>`
+            }),
+            {
+                global: {
+                    plugins: [createTestingPinia({
+                        createSpy: vi.fn,
+                        stubActions: false
+                    })]
+                }
+            }
+        );
+
+    it("announces the state it draws: aria-checked follows the knob, not a private counter", async () => {
+        const comp = mountOn();
+        const control = comp.get("button[role=\"switch\"]");
+
+        expect(comp.get("[data-test=switch-knob]").classes()).toContain("translate-x-6");
+        expect(comp.text()).toContain("On");
+        expect(control.attributes("aria-checked")).toBe("true");
+
+        await control.trigger("click");
+
+        expect(comp.get("[data-test=switch-knob]").classes()).toContain("translate-x-1");
+        expect(comp.text()).toContain("Off");
+        expect(control.attributes("aria-checked")).toBe("false");
+    });
+
+    it("toggles from the keyboard: Space changes the value, not just the announcement", async () => {
+        const comp = mountOn();
+        const control = comp.get("button[role=\"switch\"]");
+
+        await control.trigger("keyup", { key: " " });
+
+        expect(comp.get("[data-test=switch-knob]").classes()).toContain("translate-x-1");
+        expect(comp.text()).toContain("Off");
+        expect(control.attributes("aria-checked")).toBe("false");
     });
 
     it("drops its label on a narrow window — the knob's position already says it", () => {

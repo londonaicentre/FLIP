@@ -10,4 +10,4 @@
 # limitations under the License.
 #
 
-"""quickstart-monai: A Flower / MONAI app."""
+"""3d-spleen-segmentation-evaluation: A Flower / MONAI app for spleen-segmentation model evaluation."""

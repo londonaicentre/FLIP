@@ -98,6 +98,36 @@ APPS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "ehr": {
+        "project_name": "Federated Type-2 Diabetes Risk Prediction",
+        "project_description": (
+            "Multi-trust federated study: an MLP predicting type-2-diabetes onset from OMOP "
+            "demographics, condition history and visit history."
+        ),
+        "model_name": "T2DM Risk MLP",
+        "model_description": (
+            "Multi-layer perceptron trained with federated averaging on each trust's own OMOP "
+            "records — tabular only, no imaging leaves any hospital."
+        ),
+        # FLIP's tabular/EHR path: the cohort arrives through flip.get_dataframe as arbitrary SQL
+        # over each trust's OMOP CDM, and no DICOM is touched at all. The project must therefore be
+        # created with "Includes imaging data" off (FLIP#1071's has_imaging). Left on -- which is the
+        # form's default -- the hub dispatches CREATE_IMAGING, each trust queues pulls that can never
+        # succeed, and the run dies at the image-pull wait or the XNAT segment.
+        "has_imaging": False,
+        "backends": {
+            "nvflare": {
+                "app_dir": "fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files",
+                "query_file": "fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql",
+                "label": "NVFLARE",
+            },
+            "flower": {
+                "app_dir": "fl-tutorials/flower/ehr_risk_prediction/app",
+                "query_file": "fl-tutorials/flower/ehr_risk_prediction/query.sql",
+                "label": "Flower",
+            },
+        },
+    },
     "spleen": {
         "project_name": "Federated 3D Spleen Segmentation",
         "model_name": "Spleen 3D U-Net",
@@ -462,6 +492,9 @@ def app_files_for(app_dir: Path) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     profile = APPS[args.app]
+    # Imaging unless the app says otherwise: only the tabular tutorials opt out, and a
+    # missing value must not silently mean "imaging" (see 01-create-project.spec.ts).
+    has_imaging_env = "true" if profile.get("has_imaging", True) else "false"
     tutorial = profile["backends"][args.fl_backend]
     if bool(args.data_enrichment_cwd) != bool(args.data_enrichment_cmd):
         raise SmokeFailure("--data-enrichment-cwd and --data-enrichment-cmd must be provided together")
@@ -531,6 +564,7 @@ def main(argv: list[str] | None = None) -> int:
                 "DEMO_PROJECT_NAME": project_name,
                 "DEMO_PROJECT_DESCRIPTION": project_description,
                 "DEMO_QUERY_FILE": query_rel,
+                "DEMO_HAS_IMAGING": has_imaging_env,
             },
             video_scale=args.video_scale,
         )
@@ -553,20 +587,28 @@ def main(argv: list[str] | None = None) -> int:
                 "DEMO_ADMIN_EMAIL": admin[0],
                 "DEMO_ADMIN_PASSWORD": admin[1],
                 "DEMO_PROJECT_ID": project_id,
+                "DEMO_HAS_IMAGING": has_imaging_env,
                 **({"DEMO_CREDENTIALS_FALLBACK": "admin"} if "admin" in fallback_roles else {}),
             },
             video_scale=args.video_scale,
         )
 
     # ── Off-camera: the imaging import (the ~6 min wait) ──────────────────
-    e2e_smoke.wait_for_image_pull(
-        client,
-        headers,
-        project_id,
-        threshold=args.image_pull_threshold,
-        timeout_s=args.image_pull_timeout,
-        required_trust_names=required_trust_names,
-    )
+    # A non-imaging study dispatches no CREATE_IMAGING, so no import tasks are ever created and the
+    # wait has nothing to converge on: it sees total == 0 and loops to its timeout rather than
+    # returning. Skip it outright rather than leaning on --image-pull-threshold 0, which only masks
+    # the same absence.
+    if profile.get("has_imaging", True):
+        e2e_smoke.wait_for_image_pull(
+            client,
+            headers,
+            project_id,
+            threshold=args.image_pull_threshold,
+            timeout_s=args.image_pull_timeout,
+            required_trust_names=required_trust_names,
+        )
+    else:
+        _log("⏭️  No imaging for this study — skipping the image-pull wait")
 
     # ── Off-camera: optional data enrichment (e.g. spleen labels) ────────
     if args.data_enrichment_cwd and args.data_enrichment_cmd:
@@ -587,7 +629,10 @@ def main(argv: list[str] | None = None) -> int:
             raise SmokeFailure("publishing DICOM-SEG collections failed — see the log above")
 
     # ── Segment 3: XNAT + OHIF at one trust ───────────────────────────────
-    if not args.skip_xnat and args.from_segment <= 3:
+    # A non-imaging study has no XNAT project and never will, so the segment cannot pass:
+    # derive the skip from the app rather than making the operator remember --skip-xnat.
+    records_xnat = not args.skip_xnat and profile.get("has_imaging", True)
+    if records_xnat and args.from_segment <= 3:
         xnat_ids = resolve_xnat_ids(args.xnat_url, args.xnat_username, args.xnat_password, project_id)
         run_segment(
             "03-xnat-ohif",

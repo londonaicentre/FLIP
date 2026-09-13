@@ -13,7 +13,7 @@
 .PHONY: build dev prod clean stop up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
 	create-networks remove-networks recreate-networks tests \
-	update-omop-data update-orthanc-data seed-omop seed-orthanc seed seed-trusts \
+	update-omop-data update-orthanc-data seed-omop seed-orthanc seed seed-trusts load-synthea-ehr \
 	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle
 # PROD selects the compose-file suffix (__DCKR_SUFFIX: stag collapses to the
 # production compose) and the kit-file env token (ENV: stag stays distinct, so
@@ -551,6 +551,14 @@ update-omop-data:
 
 update-orthanc-data:
 	$(ORTHANC_CMD) update-orthanc-data TRUST=$(TRUST)
+
+# Load the public Synthea-in-OMOP EHR cohort into a running trust omop-db — the populate step for
+# the EHR risk-prediction tutorial (fl-tutorials/.../ehr_risk_prediction; the shipped mock OMOP has
+# no condition rows). Run once per trust with that trust's index + published OMOP port, e.g.
+#   make -C trust load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT
+#   make -C trust load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
+load-synthea-ehr:
+	$(OMOP_DB_CMD) load-synthea-ehr TRUST_INDEX=$(TRUST_INDEX) OMOP_DB_PORT=$(OMOP_DB_PORT)
 
 # Seed a running trust with the listed projects (FLIP#1100) — OMOP rows into its
 # omop-db, keyed by `source_trust`, the same column the per-project DICOM sets
