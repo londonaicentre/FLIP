@@ -80,11 +80,33 @@ The flip-api is configured via environment variables. In development these are s
 | `AWS_REGION` | AWS region for Cognito and S3 |
 | `AWS_COGNITO_USER_POOL_ID` | AWS Cognito User Pool ID |
 | `AWS_COGNITO_APP_CLIENT_ID` | AWS Cognito App Client ID |
+| `AWS_SECRET_NAME` | Name of the AWS Secrets Manager secret `flip_api/utils/get_secrets.py` reads by default |
 | `AES_KEY_BASE64` | Base64-encoded AES-256 key used to encrypt trust task payloads and project IDs. Shared between hub (encryption) and trusts (decryption) |
 | `UPLOADED_MODEL_FILES_BUCKET` | S3 bucket for uploaded model files |
 | `UPLOADED_FEDERATED_DATA_BUCKET` | S3 bucket for storing models and artefacts |
 
 See [`.env.development.example`](../.env.development.example) for the full list of required variables.
+
+### Tunables
+
+A handful of scheduler and task-queue settings have no entry in `.env.development.example` because
+their `config.py` defaults are meant to be left alone in normal operation; override them only when
+diagnosing or deliberately changing that behaviour.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `HEARTBEAT_TIMEOUT_SECONDS` | `30` | How long since a trust's last heartbeat before it's considered offline |
+| `TASK_STALE_TIMEOUT_MINUTES` | `30` | How long a task can sit `IN_PROGRESS` before it's considered stale |
+| `TASK_MAX_RETRIES` | `3` | Max times a stale task is retried before being marked `FAILED` |
+| `SCHEDULER_STALE_TASK_RECOVERY_RATE` | `10` (minutes) | How often the scheduler checks for stale tasks |
+| `MAX_TASK_RESULT_LENGTH` | `10_000_000` (characters) | Max size of a task result payload |
+| `PROJECT_REIMPORT_RATE` | `60` (minutes) | How often to reimport studies for a given project |
+| `MAX_REIMPORT_COUNT` | `5` | Max reimport attempts before a project's imaging import stops retrying |
+| `SCHEDULE_RUN_JOBS_EXECUTION` | `true` | Master switch for the scheduler running any jobs at all |
+| `SCHEDULER_RUN_JOBS_RATE` | `1` (minute) | How often the scheduler's FL job-pickup pass runs |
+| `SCHEDULER_KEEP_FL_API_SESSION_ALIVE_RATE` | `2` (minutes) | How often the scheduler pings fl-api to keep its session alive |
+| `SCHEDULER_REIMPORT_IMAGING_PROJECT_STUDIES_RATE` | `30` (minutes) | How often the scheduler checks for projects with unimported studies |
+| `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE` | `1` (minute) | How often the scheduler re-checks uploads left `SCANNING` by a restart mid-scan |
 
 ## Database migrations
 
@@ -185,7 +207,7 @@ Three developer utilities drive the **running dev stack** end to end (none run i
   honest lifecycle states through the real API; `--states` phases the pull-heavy approved entries, `--cleanup`
   removes everything it recorded in `tests/seed_demo_projects.json`. Idempotent: a re-run skips catalogue
   entries whose project name already exists on the hub, so it never duplicates the real imaging imports.
-- `flip_api/scripts/create_demo_users.py` (`make create_demo_users`) — provisions the demo Cognito users the
+- `src/flip_api/scripts/create_demo_users.py` (`make create_demo_users`) — provisions the demo Cognito users the
   recorder signs in as (`DEMO_RESEARCHER_PASSWORD` / `DEMO_ADMIN_PASSWORD` from env, never committed); restart
   flip-api afterwards so boot seeding grants their roles. Before any write it resolves the target pool's
   name/region/AWS account and requires an interactive `yes`, so a stale `AWS_COGNITO_USER_POOL_ID` or wrong

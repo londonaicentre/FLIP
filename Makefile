@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build build-fl dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
+.PHONY: build build-fl clean up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
 		check-aws-access generate-internal-service-key generate-xnat-credentials \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \

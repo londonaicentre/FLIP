@@ -26,9 +26,7 @@ image and is imported as `from flip import ...` by user-uploaded training code. 
 - **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples per backend (`nvflare/`, `flower/`)
 - **[`../fl-services/`](../fl-services/)** — Docker images and network provisioning for FL networks per backend (`nvflare/`, `flower/`); each backend's `Makefile` owns build / provision / up / down / submit
 
-Paths like `tutorials/` referenced in older sections of this README refer to the now-sibling top-level
-[`../fl-tutorials/`](../fl-tutorials/) tree, and Make targets called out below run from the `flip-utils/` directory
-unless otherwise noted.
+Make targets called out below run from the `flip-utils/` directory unless otherwise noted.
 
 ## Table of Contents
 
@@ -43,9 +41,8 @@ unless otherwise noted.
   - [App / Tutorial Compatibility](#app--tutorial-compatibility)
 - [FL Services API](#fl-services-api)
   - [Prerequisites](#prerequisites)
-  - [Provisioning a Network](#provisioning-a-network)
-  - [Running the Network](#running-the-network)
-  - [Integration Testing](#integration-testing)
+  - [Provisioning the 2 Networks](#provisioning-the-2-networks)
+  - [Running a Network](#running-a-network)
   - [CI/CD](#cicd)
   - [Makefile Reference](#makefile-reference)
 - [Security](#security)
@@ -300,7 +297,7 @@ make -C fl-tutorials run-all-tutorials
 
 GitHub Actions workflows use OIDC to authenticate to AWS (no long-lived keys).
 
-The base FL application templates (this `fl-apps/` tree) are **no longer published to S3**. They are
+The base FL application templates ([`../fl-apps/`](../fl-apps/)) are **no longer published to S3**. They are
 baked into the flip-api image at build time and read from a local directory (`FL_APP_BASE_DIR`,
 default `/app/fl-apps`); flip-api validates job types and bundles applications straight from that
 tree (FLIP#724). Two CI checks still guard the templates on every PR:

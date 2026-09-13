@@ -424,37 +424,40 @@ def check_gpu_capacity(kit_vars: dict[str, str], kit_present: bool, kit: str) ->
         return Check("fl-client GPU capacity", Status.PENDING, "pending — needs kit file")
     raw = (kit_vars.get("NUM_AVAILABLE_GPUS") or "").strip()
     if not raw:
-        return Check(
-            "fl-client GPU capacity", Status.PASS,
-            "NUM_AVAILABLE_GPUS unset in kit (template treats as 0 → CPU-only)",
-        )
-    try:
-        kit_gpus = int(raw)
-    except ValueError:
-        return Check(
-            "fl-client GPU capacity", Status.FAIL,
-            f"NUM_AVAILABLE_GPUS='{raw}' is not an integer",
-            hints=[f"Edit trust/.env.{kit} → Trust-local credentials section."],
-        )
+        # fl-client's entrypoint.sh does `NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS:-1}` — an unset
+        # kit value defaults to 1 (expects a GPU), not 0, so fall through and check it like an
+        # explicit "1" rather than reporting a false CPU-only PASS.
+        kit_gpus = 1
+        gpu_label = "NUM_AVAILABLE_GPUS unset in kit (fl-client entrypoint defaults it to 1 → expects a GPU)"
+    else:
+        try:
+            kit_gpus = int(raw)
+        except ValueError:
+            return Check(
+                "fl-client GPU capacity", Status.FAIL,
+                f"NUM_AVAILABLE_GPUS='{raw}' is not an integer",
+                hints=[f"Edit trust/.env.{kit} → Trust-local credentials section."],
+            )
+        gpu_label = f"NUM_AVAILABLE_GPUS={kit_gpus}"
     if kit_gpus <= 0:
         return Check(
             "fl-client GPU capacity", Status.PASS,
-            f"NUM_AVAILABLE_GPUS={kit_gpus} (CPU-only)",
+            f"{gpu_label} (CPU-only)",
         )
     host_gpus = detect_host_gpu_count()
     if host_gpus is None:
         return Check(
             "fl-client GPU capacity", Status.PASS,
-            f"NUM_AVAILABLE_GPUS={kit_gpus}; host GPU count undetectable (nvidia-smi errored)",
+            f"{gpu_label}; host GPU count undetectable (nvidia-smi errored)",
         )
     if host_gpus >= kit_gpus:
         return Check(
             "fl-client GPU capacity", Status.PASS,
-            f"NUM_AVAILABLE_GPUS={kit_gpus} ≤ host NVIDIA GPUs ({host_gpus})",
+            f"{gpu_label} ≤ host NVIDIA GPUs ({host_gpus})",
         )
     return Check(
         "fl-client GPU capacity", Status.WARN,
-        f"NUM_AVAILABLE_GPUS={kit_gpus} but host exposes {host_gpus} NVIDIA GPU(s)",
+        f"{gpu_label} but host exposes {host_gpus} NVIDIA GPU(s)",
         hints=[
             "fl-client will crash-loop on `num_of_gpus specified exceeds available GPUs`.",
             f"Edit trust/.env.{kit} → set NUM_AVAILABLE_GPUS=0 and MEMORY_PER_GPU_IN_GIB=0",
