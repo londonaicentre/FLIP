@@ -25,6 +25,7 @@ from data_access_api.routers.schema import CohortQueryInput
 from data_access_api.services.cohort import (
     ALLOWED_SCHEMA,
     MAX_QUERY_LENGTH,
+    count_distinct_subjects,
     get_age_distribution,
     get_counts,
     get_null_counts,
@@ -71,7 +72,8 @@ def test_get_statistics(mock_read_sql, mock_df):
     """
     Test the get_statistics function.
     """
-    mock_read_sql.return_value = mock_df
+    # Accession-only frame, so the one read_sql call is the subject lookup: 21 rows, 21 people.
+    mock_read_sql.return_value = pd.DataFrame({"subject_count": [21]})
 
     query_input = CohortQueryInput(
         encrypted_project_id="my_project",
@@ -97,7 +99,7 @@ def test_get_statistics_below_threshold(mock_read_sql, mock_df_below_threshold):
     here previously caused trust-api to skip reporting back to the hub, leaving
     the per-trust UI status stuck on "running".
     """
-    mock_read_sql.return_value = mock_df_below_threshold
+    mock_read_sql.return_value = pd.DataFrame({"subject_count": [2]})
 
     query_input = CohortQueryInput(
         encrypted_project_id="my_project",
@@ -130,7 +132,7 @@ def test_get_statistics_fails_global_threshold(mock_read_sql):
         "accession_id": [f"id_{i}" for i in range(8)],
     })
 
-    mock_read_sql.return_value = mock_df_medium
+    mock_read_sql.return_value = pd.DataFrame({"subject_count": [8]})
 
     query_input = CohortQueryInput(
         encrypted_project_id="my_project",
@@ -1450,7 +1452,7 @@ def test_get_statistics_no_person_id_column(mock_read_sql):
         "accession_id": [f"id_{i}" for i in range(30)],
     })
 
-    mock_read_sql.return_value = mock_df
+    mock_read_sql.return_value = pd.DataFrame({"subject_count": [30]})
 
     query_input = CohortQueryInput(
         encrypted_project_id="my_project",
@@ -1486,7 +1488,9 @@ def test_get_statistics_with_person_id_column(mock_read_sql):
     """
     # Mock the main query result with person_id
     mock_df = pd.DataFrame({
-        "person_id": [1, 2, 3, 4, 5] * 6,  # 30 records with 5 unique person IDs
+        # 30 records, 30 distinct people. Five people across 30 rows would now be suppressed:
+        # the threshold counts subjects, not rows.
+        "person_id": list(range(30)),
         "modality": ["CT", "MR", "XR"] * 10,
         "accession_id": [f"id_{i}" for i in range(30)],
     })
@@ -1626,3 +1630,102 @@ def test_get_statistics_with_person_id_and_low_count_categories(mock_read_sql):
     other_sex = next((item for item in sex_data["results"] if item["value"] == "Other"), None)
     assert other_sex is not None
     assert other_sex["count"] == 8
+
+
+# ---------------------------------------------------------------------------
+# count_distinct_subjects — the unit the disclosure threshold is measured in
+# ---------------------------------------------------------------------------
+
+
+@patch("pandas.read_sql")
+def test_count_distinct_subjects_counts_people_not_rows(mock_read_sql):
+    """Thirty studies belonging to three people are three subjects, not thirty."""
+    df = pd.DataFrame({"person_id": [1, 2, 3] * 10, "accession_id": [f"id_{i}" for i in range(30)]})
+
+    assert count_distinct_subjects(df) == 3
+    # person_id is authoritative and direct, so no database round trip is needed for it.
+    mock_read_sql.assert_not_called()
+
+
+@patch("pandas.read_sql")
+def test_count_distinct_subjects_resolves_accessions_through_image_occurrence(mock_read_sql):
+    """Without person_id, an imaging cohort is counted through omop.image_occurrence."""
+    mock_read_sql.return_value = pd.DataFrame({"subject_count": [4]})
+    df = pd.DataFrame({"accession_id": [f"id_{i}" for i in range(20)]})
+
+    assert count_distinct_subjects(df) == 4
+
+    executed = str(mock_read_sql.call_args[0][0])
+    assert "COUNT(DISTINCT io.person_id)" in executed
+    assert "omop.image_occurrence" in executed
+    # Accession numbers are bound, never interpolated into the SQL.
+    assert mock_read_sql.call_args.kwargs["params"]["accession_ids"] == [f"id_{i}" for i in range(20)]
+
+
+@patch("pandas.read_sql")
+def test_count_distinct_subjects_deduplicates_accessions_before_binding(mock_read_sql):
+    """Duplicate accession numbers are one study, so they are collapsed before the lookup (#1123)."""
+    mock_read_sql.return_value = pd.DataFrame({"subject_count": [1]})
+
+    count_distinct_subjects(pd.DataFrame({"accession_id": ["ACC1", "ACC1", "ACC1"]}))
+
+    assert mock_read_sql.call_args.kwargs["params"]["accession_ids"] == ["ACC1"]
+
+
+def test_count_distinct_subjects_returns_none_when_cohort_exposes_neither():
+    """A cohort with no subject column cannot be counted, and None must not read as zero."""
+    assert count_distinct_subjects(pd.DataFrame({"age": range(30)})) is None
+
+
+@patch("pandas.read_sql")
+def test_count_distinct_subjects_unresolved_accessions_count_nothing(mock_read_sql):
+    """Accession numbers belonging to no imaging study contribute no subject — fail closed."""
+    mock_read_sql.return_value = pd.DataFrame({"subject_count": [0]})
+
+    assert count_distinct_subjects(pd.DataFrame({"accession_id": ["not-an-accession"]})) == 0
+
+
+@patch("pandas.read_sql")
+def test_count_distinct_subjects_survives_an_unexpected_result_shape(mock_read_sql):
+    """An unexpected shape fails closed instead of raising a KeyError the routes would 500 on."""
+    mock_read_sql.return_value = pd.DataFrame({"something_else": [7]})
+
+    assert count_distinct_subjects(pd.DataFrame({"accession_id": ["ACC1"]})) == 0
+
+
+@patch("pandas.read_sql")
+def test_get_statistics_suppresses_many_studies_from_few_patients(mock_read_sql):
+    """Thirty studies from three patients is below a floor of ten, however many rows it is."""
+    mock_read_sql.return_value = pd.DataFrame({"subject_count": [3]})
+    df = pd.DataFrame({"accession_id": [f"id_{i}" for i in range(30)], "modality": ["CT"] * 30})
+
+    query_input = CohortQueryInput(
+        encrypted_project_id="my_project",
+        query_id="1",
+        query_name="few_patients",
+        query="SELECT accession_id, modality FROM omop.image_occurrence",
+        trust_id="mock_trust",
+    )
+    stats = get_statistics(df, query_input, threshold=10)
+
+    assert stats.suppressed is True
+    assert stats.record_count == 0
+    assert stats.data == []
+
+
+@patch("pandas.read_sql")
+def test_get_statistics_suppresses_a_cohort_whose_subjects_cannot_be_counted(mock_read_sql):
+    """An unestablished subject count is not a safe one, so it suppresses like a small one."""
+    df = pd.DataFrame({"age": range(50)})
+
+    query_input = CohortQueryInput(
+        encrypted_project_id="my_project",
+        query_id="1",
+        query_name="no_subject_column",
+        query="SELECT age FROM omop.person",
+        trust_id="mock_trust",
+    )
+    stats = get_statistics(df, query_input, threshold=10)
+
+    assert stats.suppressed is True
+    assert stats.record_count == 0

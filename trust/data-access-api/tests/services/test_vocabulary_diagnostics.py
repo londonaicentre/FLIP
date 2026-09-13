@@ -114,12 +114,19 @@ def test_above_threshold_never_probes(query_input: CohortQueryInput) -> None:
     """The hot path must stay free of the diagnostic query.
 
     Deliberately no ``person_id`` column: that would send get_statistics down the age/sex
-    distribution path, which issues its own SQL and is irrelevant to what is under test.
+    distribution path, which issues its own SQL and is irrelevant to what is under test. The
+    cohort is counted through its accession numbers instead, which it must expose either way
+    now that the disclosure threshold is measured in subjects rather than rows.
     """
-    with patch("data_access_api.services.cohort._warn_if_vocabulary_missing") as probe:
-        stats = get_statistics(
-            pd.DataFrame({"image_occurrence_id": list(range(50))}), query_input, threshold=10
-        )
+    cohort = pd.DataFrame({"accession_id": [f"ACC{i}" for i in range(50)]})
+    with (
+        patch("data_access_api.services.cohort._warn_if_vocabulary_missing") as probe,
+        patch(
+            "data_access_api.services.cohort.get_records",
+            return_value=pd.DataFrame({"subject_count": [50]}),
+        ),
+    ):
+        stats = get_statistics(cohort, query_input, threshold=10)
 
     assert stats.suppressed is False
     assert not probe.called, "a healthy result must not pay for the diagnostic"
