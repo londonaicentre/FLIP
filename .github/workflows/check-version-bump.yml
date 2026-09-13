@@ -52,16 +52,20 @@ jobs:
           fi
 
           # ── Resolve latest released version from git tags ─────────────────
-          # Tags are created by the release workflow in the form vMAJOR.MINOR.PATCH
-          LATEST_TAG=$(git tag --list 'v*.*.*' | sort -V | tail -n1)
+          # flip-utils releases carry their own tag namespace, created by release-pypi.yml in the
+          # form flip-utils-vMAJOR.MINOR.PATCH. Gate against that namespace only: the bare `v*`
+          # tags belong to the platform release train, whose version advances independently, so
+          # comparing against them would reject a legitimate flip-utils bump whenever the platform
+          # version had moved further ahead.
+          LATEST_TAG=$(git tag --list 'flip-utils-v*.*.*' | sort -V | tail -n1)
 
           if [[ -z "$LATEST_TAG" ]]; then
             echo ""
-            echo "No previous release tags found — first release, version ${NEW_VERSION} is accepted."
+            echo "No previous flip-utils release tags found — first release, version ${NEW_VERSION} is accepted."
             exit 0
           fi
 
-          LATEST_VERSION="${LATEST_TAG#v}"
+          LATEST_VERSION="${LATEST_TAG#flip-utils-v}"
           echo "Latest released version: ${LATEST_VERSION} (tag: ${LATEST_TAG})"
 
           # ── Check 3: new version must be strictly greater than latest ─────
