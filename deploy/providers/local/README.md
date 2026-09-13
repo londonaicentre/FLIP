@@ -137,8 +137,56 @@ make provision-local-trust
 
 1. Runs the Ansible playbook (`site_local_trust.yml`) which:
    - Installs Docker and required system packages
-   - Creates application directories under `/opt/flip/`
+   - Creates `/opt/flip/` and `/opt/flip/data/images/`, owned by `ubuntu`
+   - Creates the **per-net images bind sources** `/opt/flip/data/images/net-1`
+     and `net-2`. Each fl-client mounts only its own net's slice, and both
+     imaging-api and the fl-client *write* there, so these must exist and be
+     writable before the first `up-trust` (which runs under `sudo` on-prem — a
+     root-created `net-N` makes every image download 500 and training later fail
+     with a misleading `num_samples=0`). Ownership is **backend-aware**, driven by
+     the `fl_backend` extra-var the make target passes: NVFLARE's client shares
+     imaging-api's uid, so `ubuntu:ubuntu` + `0755`; Flower's runs as `app`
+     (uid/gid 49999) on upstream `flwr/base`, so group `49999` + `0775`. Re-run
+     the playbook (or fix by hand) if you switch `FL_BACKEND`.
+   - Creates the **XNAT bind mounts** `/opt/flip/xnat`,
+     `/opt/flip/xnat/xnat-data/{tomcat_logs,archive,build,cache}` and
+     `/opt/flip/xnat/xnat-db-data`, owned by **UID/GID 1001** — the in-image
+     `xnat` user (`trust/xnat/xnat/Dockerfile`), not the login user. See the
+     XNAT-directory warning below.
+   - Creates the **FL participant kit tree** under `/opt/flip/fl-kit` — the
+     default `FL_KIT_DIR`, matching what the prod trust compose mounts:
+     `${FL_KIT_DIR}/net-1/services/<slot>/{local,startup,transfer}` for NVFLARE
+     and `${FL_KIT_DIR}/net-1/{certificates,keys}` for Flower. The slot
+     sub-tree is **hard-coded to `Trust_2`** in the playbook's loop. If the hub
+     assigned this trust a different slot (check `FL_KIT_SLOT` in
+     `trust/.env.<CODE>.<env>`), either edit the four `.../services/Trust_2...`
+     entries in the `Create FL participant kit directories` task before running
+     the playbook, or just create the tree yourself afterwards:
+
+     ```bash
+     sudo install -d -o ubuntu -g ubuntu -m 0755 \
+       /opt/flip/fl-kit/net-1/services/<slot>/{local,startup,transfer}
+     ```
+
+     An operator who overrides `FL_KIT_DIR` in their kit file owns the whole
+     directory tree themselves — the playbook only ever provisions the default.
 2. Downloads the FL participant kit from S3 and stages it under `/tmp`, printing the `sudo rsync` commands to deploy it into `${FL_KIT_DIR}/net-1/...` (default `/opt/flip/fl-kit/net-1/...`).
+
+> **Warning — the playbook's XNAT directory is not the one XNAT uses under
+> `PROD`.** Both this playbook and `deploy/providers/AWS/site.yml` provision
+> `/opt/flip/xnat/...`, but `trust/xnat/Makefile` resolves `XNAT_DATA_DIR` to the
+> **per-slot** `/opt/flip/xnat-trust$(TRUST_NUM)` whenever `PROD` is `stag` or
+> `true` (`TRUST_NUM` is the kit's `FL_KIT_SLOT_NUMBER`) — a deliberate split so
+> two trusts sharing a host stay isolated. Compose, `xnat-reset` and the
+> ownership check all read that variable, so on a `PROD=stag`/`PROD=true` host
+> the live tree is `/opt/flip/xnat-trust<N>/xnat-data/{tomcat_logs,archive,build,cache}`
+> plus `/opt/flip/xnat-trust<N>/xnat-db-data`, and chowning `/opt/flip/xnat`
+> looks right but changes nothing. Set `XNAT_DATA_DIR` explicitly in
+> `trust/.env.<CODE>.<env>` if you want one fixed path, and chown **that** to
+> `1001:1001`. `up-xnat` runs `xnat-reset`, which **deletes and recreates**
+> `XNAT_DATA_DIR` with the right owner for the value actually in effect, then
+> verifies it and fails naming the exact `chown` when it is wrong — so treat it
+> as destructive, not as a repair tool for a populated archive.
 
 Opening the AWS FL-server NLB to the trust's public IP is a **separate** step — `make allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip>` — run by the FLIP admin once the operator reports their IP.
 

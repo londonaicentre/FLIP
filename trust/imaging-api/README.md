@@ -156,12 +156,18 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 
 | Variable | Description |
 | --- | --- |
-| `XNAT_URL` | URL of the XNAT instance |
+| `XNAT_URL` | URL of the XNAT instance (default `http://xnat-web:8080` — a compose-topology constant, not a kit field) |
+| `XNAT_PORT` | **Required.** XNAT's DICOM SCP receiver port. Paired with `XNAT_AETITLE` as the C-MOVE destination handed to the PACS, so it must be the receiver port, not the web-UI `XNAT_WEB_PORT` |
+| `XNAT_AETITLE` | XNAT's own AE title (default `XNAT`). Must match `XNAT_AETITLE` in `configure-xnat.sh`: DQR matches the C-MOVE destination against a registered SCP receiver by exact AE title **and** port |
+| `PACS_ID` | Fallback PACS id (default `1`). A trust XNAT retrieves from exactly one PACS and `configure-xnat.sh` enforces that, so the id is normally resolved from XNAT at runtime; this value is used only when XNAT cannot be reached |
 | `XNAT_SERVICE_USER` | XNAT service account username |
 | `XNAT_SERVICE_PASSWORD` | XNAT service account password |
 | `XNAT_DATABASE_URL` | PostgreSQL connection string for the XNAT database (non-secret topology constant; defaults in `config.py`, and the default carries **no** password) |
 | `XNAT_DATASOURCE_PASSWORD` | Minted per-trust XNAT DB password from the kit file (FLIP-PT-056). When set, it replaces the password embedded in `XNAT_DATABASE_URL`; empty or the kit-template placeholder leaves the URL untouched, so a pre-mint deployment fails on its first query instead of falling back to a weak credential |
-| `DATA_ACCESS_API_URL` | Internal URL of the data-access-api |
+| `DATA_ACCESS_API_URL` | Internal URL of the data-access-api (default `http://data-access-api:8000`) |
+| `DCM2NIIX_IMAGE` | Container Service image used for automatic DICOM→NIfTI conversion (default `ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724`). The per-project event subscription looks the XNAT command up by this **exact** image string, so it must match what `trust/xnat/xnat/config/dcm2niix_command.json` (and the K8s init job's inline copy) registers — pinned by version tag, never `latest` |
+| `BASE_IMAGES_DOWNLOAD_DIR` | **Required.** Root of the downloaded-images tree on the trust host. imaging-api mounts the whole tree; each fl-client mounts only its own `net-N` slice |
+| `REIMPORT_STUDIES_ENABLED` | Whether the retry-failed-imports route is available (default `true`). When `false`, `POST` to the reimport endpoint returns `418` with "Reimport studies feature is not enabled" |
 | `AES_KEY_BASE64` | AES encryption key for decrypting project identifiers |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Validated as inbound auth on every router except `/health`, and forwarded outbound on calls to data-access-api `/cohort/accession-ids`. |
