@@ -430,6 +430,7 @@ def _validate_query_ast(query: str) -> str:
 def get_records(
     query: str | TextClause,
     params: Mapping[str, Any] | None = None,
+    use_cache: bool = True,
 ) -> pd.DataFrame:
     """
     Executes a SQL query and returns results.
@@ -439,6 +440,12 @@ def get_records(
             parameters when the query is parameterized.
         params (Mapping[str, Any] | None): Optional mapping of bind parameter names to values
             for parameterized queries.
+        use_cache (bool): Whether a cached result may be served. Cohort SNAPSHOT creation
+            passes False: the statistics run at submission caches the same SQL for
+            ``CACHE_TTL_DAYS``, so a cached read would freeze a stale frame — and on
+            RE-approval, which is precisely the event that must propagate OMOP-side
+            removals/opt-outs into the artefact (FLIP#857), it would silently re-freeze the
+            pre-removal cohort. A fresh read still updates the cache afterwards.
 
     Returns:
         pd.DataFrame: The results of the query as a DataFrame.
@@ -448,9 +455,10 @@ def get_records(
     """
     logger.info("Executing SQL query")
 
-    cached = get_cached_result(query, params)
-    if cached is not None:
-        return cached
+    if use_cache:
+        cached = get_cached_result(query, params)
+        if cached is not None:
+            return cached
 
     try:
         # TODO: Trace the query filtering to understand what the final user can see.

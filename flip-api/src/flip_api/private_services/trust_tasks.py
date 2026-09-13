@@ -33,6 +33,7 @@ from flip_api.db.models.main_models import Trust, TrustTask
 from flip_api.domain.schemas.private import TaskResultInput, TrustHeartbeatInput, TrustTaskResponse
 from flip_api.domain.schemas.status import TaskStatus, TaskType
 from flip_api.private_services.imaging_notifications import handle_imaging_task_completed
+from flip_api.private_services.snapshot_notifications import handle_snapshot_task_completed
 from flip_api.utils.encryption import encrypt
 from flip_api.utils.logger import logger
 from flip_api.utils.rate_limiter import limiter
@@ -157,7 +158,10 @@ def _submit_task_result(
                 detail=f"Task {task_id} is not in progress (current status: {task.status})",
             )
 
-        needs_post_processing = task_result.success and task.task_type == TaskType.CREATE_IMAGING
+        needs_post_processing = task_result.success and task.task_type in (
+            TaskType.CREATE_IMAGING,
+            TaskType.PERSIST_COHORT,
+        )
 
         task.status = TaskStatus.COMPLETED if task_result.success else TaskStatus.FAILED
         task.result = task_result.result
@@ -165,15 +169,19 @@ def _submit_task_result(
         task.needs_post_processing = needs_post_processing
         db.commit()
 
-        # Post-process successful imaging project creation (persist status + send credential emails).
+        # Post-process by type: imaging creation persists status + sends credential emails;
+        # cohort snapshots record the frozen-cohort audit row and surface membership drift.
         if needs_post_processing:
             try:
-                handle_imaging_task_completed(task, db)
+                if task.task_type == TaskType.CREATE_IMAGING:
+                    handle_imaging_task_completed(task, db)
+                else:
+                    handle_snapshot_task_completed(task, db)
                 task.needs_post_processing = False
                 db.commit()
             except Exception as post_err:
                 logger.error(
-                    f"Failed post-processing for imaging task {task_id}: {post_err}. "
+                    f"Failed post-processing for {task.task_type} task {task_id}: {post_err}. "
                     "The stale task recovery job will retry this."
                 )
 
