@@ -714,6 +714,60 @@ def get_age_distribution(df: pd.DataFrame) -> dict:
     }
 
 
+def get_modality_distribution(df: pd.DataFrame) -> dict:
+    """Returns how the cohort's imaging studies break down by modality.
+
+    Only meaningful when the cohort actually covers imaging, which trust-side is exactly the
+    question "does it project ``accession_id``". The trust never sees the project's ``has_imaging``
+    flag (that is hub state), and it does not need to: a cohort with no accession numbers has no
+    studies to describe.
+
+    Counted in **studies**, not people, because modality is a property of an imaging study rather
+    than of a patient: one person contributing a CT and an MR is one row in the age and sex
+    distributions and two here. That is a different unit from its sibling charts on purpose.
+
+    The concept join is a LEFT JOIN falling back to the raw ``modality_concept_id``, because a
+    trust can be missing its OMOP vocabulary entirely (FLIP#967) and a readable label is worth
+    less than an answer.
+
+    Args:
+        df (pd.DataFrame): The cohort DataFrame. Must include an ``accession_id`` column;
+            otherwise an empty result set is returned.
+
+    Returns:
+        dict: ``{"name": "Modality Distribution", "results": [{"value": <modality>,
+        "count": <int>}, ...]}``, ordered by descending count.
+    """
+    if ACCESSION_ID_COLUMN not in df.columns:
+        return {"name": "Modality Distribution", "results": []}
+
+    accession_ids = [str(value) for value in df[ACCESSION_ID_COLUMN].dropna().unique()]
+    if not accession_ids:
+        return {"name": "Modality Distribution", "results": []}
+
+    modality_database_query = text("""
+    SELECT
+    COALESCE(c.concept_name, CAST(io.modality_concept_id AS VARCHAR)) AS modality,
+    COUNT(DISTINCT io.image_occurrence_id) AS count
+    FROM omop.image_occurrence io
+    LEFT JOIN omop.concept c ON c.concept_id = io.modality_concept_id
+    WHERE io.accession_id IN :accession_ids
+    GROUP BY modality
+    ORDER BY count DESC
+    """).bindparams(bindparam("accession_ids", expanding=True))
+    modalities = get_records(
+        query=modality_database_query,
+        params={"accession_ids": accession_ids},
+    )
+    if modalities.empty or not {"modality", "count"} <= set(modalities.columns):
+        return {"name": "Modality Distribution", "results": []}
+
+    return {
+        "name": "Modality Distribution",
+        "results": [{"value": row["modality"], "count": int(row["count"])} for _, row in modalities.iterrows()],
+    }
+
+
 def verify_cardinality(df: pd.DataFrame, threshold: float = 0.05) -> bool:
     """
     Verifies that the number of unique values in each column of the DataFrame is not smaller than the threshold.
@@ -773,6 +827,11 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
 
     - Counts the number of records.
     - Aggregates the number of occurrences of each unique value per column.
+    - Adds the age and sex distributions when the cohort projects ``person_id``, and the modality
+      distribution when it projects ``accession_id``. Each chart is a named series; the hub
+      aggregates whatever names arrive and the UI renders them, so neither has to know about a
+      new one. A trust that omits a chart is simply skipped for it, which is what lets one roster
+      mix imaging and tabular trusts.
 
     Below-threshold counts are privacy-suppressed by returning a ``StatisticsResponse``
     with ``record_count=0``, empty ``data`` and ``suppressed=True`` — the count itself is
@@ -857,4 +916,13 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
         sex["results"] = make_other_category(sex["results"], min_count=threshold)
 
         stats.data += [age, sex]
+
+    if ACCESSION_ID_COLUMN in df.columns:
+        logger.info("accession_id column found in the query results; including modality distribution.")
+        modality = get_modality_distribution(df)
+        # Small buckets group into "Other" like every other distribution: a modality carried by one
+        # study is as identifying as an age bracket carried by one patient.
+        modality["results"] = make_other_category(modality["results"], min_count=threshold)
+
+        stats.data += [modality]
     return stats

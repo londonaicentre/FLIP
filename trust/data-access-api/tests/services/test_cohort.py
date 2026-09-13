@@ -28,6 +28,7 @@ from data_access_api.services.cohort import (
     count_distinct_subjects,
     get_age_distribution,
     get_counts,
+    get_modality_distribution,
     get_null_counts,
     get_records,
     get_sex_distribution,
@@ -1452,7 +1453,12 @@ def test_get_statistics_no_person_id_column(mock_read_sql):
         "accession_id": [f"id_{i}" for i in range(30)],
     })
 
-    mock_read_sql.return_value = pd.DataFrame({"subject_count": [30]})
+    def read_sql_side_effect(query, *args, **kwargs):
+        if "modality" in str(query):
+            return pd.DataFrame({"modality": ["CT", "MR", "XR"], "count": [15, 10, 5]})
+        return pd.DataFrame({"subject_count": [30]})
+
+    mock_read_sql.side_effect = read_sql_side_effect
 
     query_input = CohortQueryInput(
         encrypted_project_id="my_project",
@@ -1465,7 +1471,9 @@ def test_get_statistics_no_person_id_column(mock_read_sql):
     result = get_statistics(mock_df, query_input, threshold=10)
 
     assert result.record_count == 30
-    assert len(result.data) == 2
+    # Counts, Nulls and Modality Distribution: the cohort projects accession_id, so it describes
+    # imaging even though it exposes no person_id for the age/sex charts.
+    assert len(result.data) == 3
 
     # Check that counts are present
     counts_data = next((item for item in result.data if item["name"] == "Counts"), None)
@@ -1478,6 +1486,15 @@ def test_get_statistics_no_person_id_column(mock_read_sql):
 
     sex_data = next((item for item in result.data if item["name"] == "Sex Distribution"), None)
     assert sex_data is None
+
+    modality_data = next((item for item in result.data if item["name"] == "Modality Distribution"), None)
+    assert modality_data is not None
+    # The 5-study XR bucket is below the threshold of 10 and groups into "Other".
+    assert modality_data["results"] == [
+        {"value": "CT", "count": 15},
+        {"value": "MR", "count": 10},
+        {"value": "Other", "count": 5},
+    ]
 
 
 @patch("pandas.read_sql")
@@ -1514,6 +1531,8 @@ def test_get_statistics_with_person_id_column(mock_read_sql):
             return mock_age_data
         elif "gender_source_value" in query_str:
             return mock_sex_data
+        elif "modality" in query_str:
+            return pd.DataFrame({"modality": ["CT", "MR"], "count": [20, 10]})
         else:
             # Main query
             return mock_df
@@ -1531,7 +1550,8 @@ def test_get_statistics_with_person_id_column(mock_read_sql):
     result = get_statistics(mock_df, query_input, threshold=10)
 
     assert result.record_count == 30
-    assert len(result.data) == 4  # Counts, Nulls, Age Distribution, Sex Distribution
+    # Counts, Nulls, Age Distribution, Sex Distribution, Modality Distribution
+    assert len(result.data) == 5
 
     # Check that counts and nulls are present
     counts_data = next((item for item in result.data if item["name"] == "Counts"), None)
@@ -1729,3 +1749,60 @@ def test_get_statistics_suppresses_a_cohort_whose_subjects_cannot_be_counted(moc
 
     assert stats.suppressed is True
     assert stats.record_count == 0
+
+
+# ---------------------------------------------------------------------------
+# get_modality_distribution — only meaningful when the cohort covers imaging
+# ---------------------------------------------------------------------------
+
+
+@patch("pandas.read_sql")
+def test_get_modality_distribution_breaks_studies_down_by_modality(mock_read_sql):
+    """The cohort's accession numbers are resolved to their studies' modalities."""
+    mock_read_sql.return_value = pd.DataFrame({"modality": ["CT", "MR"], "count": [12, 8]})
+    df = pd.DataFrame({"accession_id": [f"ACC{i}" for i in range(20)]})
+
+    result = get_modality_distribution(df)
+
+    assert result["name"] == "Modality Distribution"
+    assert result["results"] == [{"value": "CT", "count": 12}, {"value": "MR", "count": 8}]
+
+    executed = str(mock_read_sql.call_args[0][0])
+    assert "omop.image_occurrence" in executed
+    # LEFT JOIN with a fallback: a trust missing its OMOP vocabulary still gets an answer,
+    # labelled with the raw concept id rather than a name (FLIP#967).
+    assert "LEFT JOIN omop.concept" in executed
+    assert "COALESCE" in executed
+    # Accession numbers are bound, never interpolated.
+    assert mock_read_sql.call_args.kwargs["params"]["accession_ids"] == [f"ACC{i}" for i in range(20)]
+
+
+@patch("pandas.read_sql")
+def test_get_modality_distribution_counts_studies_not_people(mock_read_sql):
+    """Modality is a property of a study, so the query counts distinct image occurrences.
+
+    This is deliberately a different unit from the age and sex charts beside it: one patient with
+    a CT and an MR is one person there and two studies here.
+    """
+    mock_read_sql.return_value = pd.DataFrame({"modality": ["CT"], "count": [2]})
+
+    get_modality_distribution(pd.DataFrame({"accession_id": ["ACC1", "ACC2"]}))
+
+    assert "COUNT(DISTINCT io.image_occurrence_id)" in str(mock_read_sql.call_args[0][0])
+
+
+@patch("pandas.read_sql")
+def test_get_modality_distribution_is_empty_without_accession_ids(mock_read_sql):
+    """A tabular cohort has no studies to describe, so the chart is empty and costs no query."""
+    result = get_modality_distribution(pd.DataFrame({"person_id": range(30), "age": range(30)}))
+
+    assert result == {"name": "Modality Distribution", "results": []}
+    mock_read_sql.assert_not_called()
+
+
+@patch("pandas.read_sql")
+def test_get_modality_distribution_survives_an_unexpected_result_shape(mock_read_sql):
+    """An unexpected shape yields an empty chart rather than raising into the statistics path."""
+    mock_read_sql.return_value = pd.DataFrame({"something_else": [1]})
+
+    assert get_modality_distribution(pd.DataFrame({"accession_id": ["ACC1"]}))["results"] == []

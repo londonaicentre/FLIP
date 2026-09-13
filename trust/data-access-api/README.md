@@ -220,6 +220,25 @@ stay byte-identical across a zero cohort, a below-threshold one and an uncountab
 three return the same 403. Accession numbers that resolve to no imaging study contribute no
 subject, so a query aliasing an unrelated column to that name fails closed.
 
+### Cohort charts
+
+`/cohort` returns its aggregates as **named series** (`{"name": ..., "results": [{"value", "count"}]}`).
+The hub collects whatever names the trusts send and the UI renders them with no fixed list on either
+side, so adding a chart is a trust-side change alone. A trust that omits one is skipped for it, which
+is how a single roster can mix imaging and tabular trusts.
+
+| Chart | Emitted when | Counted in |
+|---|---|---|
+| Counts / Nulls | always | rows, per column |
+| Age Distribution, Sex Distribution | the cohort projects `person_id` | distinct subjects |
+| Modality Distribution | the cohort projects `accession_id` | distinct studies |
+
+Modality is counted in studies rather than people on purpose: it is a property of an imaging study,
+so one patient contributing a CT and an MR is one row in the age and sex charts and two here. The
+concept lookup is a LEFT JOIN falling back to the raw `modality_concept_id`, so a trust missing its
+OMOP vocabulary (FLIP#967) still gets an answer, just an unlabelled one. Every distribution passes
+through `make_other_category`, so a bucket below the threshold groups into "Other".
+
 `/cohort` returns aggregate statistics and suppresses any count below `COHORT_QUERY_THRESHOLD`,
 including a genuine zero, so the response cannot reveal that at least one patient matched. A cohort
 whose subjects cannot be established is suppressed the same way, rather than raised: this route
