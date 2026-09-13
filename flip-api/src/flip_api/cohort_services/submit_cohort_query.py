@@ -214,8 +214,9 @@ def submit_cohort_query(
         SubmitCohortQueryOutput: The result of the submission to each trust
 
     Raises:
-        HTTPException: If the query contains forbidden commands, if the SQL syntax is invalid, if no trusts are found,
-        or if there is an error communicating with the trusts.
+        HTTPException: If the query is over length, unparseable, not exactly one statement, or not
+        SELECT-shaped (see `validate_query`); if no trusts are found; or if there is an error
+        communicating with the trusts.
     """
     try:
         if not can_modify_project(user_id, cohort_query.project_id, db):

@@ -90,11 +90,12 @@ so confirm the running container carries your change by inspecting the file you 
 > `import flip` falls through the prepended per-run path to the image's baked-in copy — the same
 > flip-utils the platform runs.
 >
-> Declaring it is the trap: `uv sync` would resolve `flip-utils` from **PyPI** (currently 0.1.8,
-> against the repo's 0.4.0) into the per-run environment, which is prepended to `sys.path` and so
-> shadows the image copy. PyPI 0.1.8 has no `flip/flower/strategy.py`, so a declared dependency
-> breaks `from flip.flower.strategy import FlipFedAvg` before training starts. Either way, a
-> flip-utils change reaches the tutorials only via an image rebuild
+> Declaring it is the trap: `uv sync` would resolve `flip-utils` from **PyPI** (whatever release is
+> current there) into the per-run environment, which is prepended to `sys.path` and so shadows the
+> image copy. Any drift between that PyPI release and the repo's in-tree `flip-utils/` means the
+> tutorials no longer exercise the same code the platform runs, and a symbol added since (for
+> example the Flower-side strategy helpers) is silently unavailable — the import fails before
+> training starts. Either way, a flip-utils change reaches the tutorials only via an image rebuild
 > (`make build-fl FL_BACKEND=flower`).
 
 ## Step-by-step provisioning
@@ -117,7 +118,7 @@ provision/creds/net-<N>/
 How many key pairs: `make provision` mints one per entry in this environment's `FL_KIT_SLOT_NAMES`,
 falling back to 2 where no pool is named (a dev env file). A trust staged into slot *N* fetches
 `keys/supernode_credentials_N`, so a kit that stops short of the pool leaves the later slots unable
-to start — and there is no add-a-node path, unlike NVFLARE's `provision --add_user`: a re-run
+to start — and there is no add-a-node path, unlike NVFLARE's `provision --add_client`: a re-run
 regenerates the CA and invalidates every node already holding credentials. Override with
 `NUM_SUPERNODES=<n>` (or `FLOWER_NUM_SUPERNODES=<n>` when calling the script directly).
 

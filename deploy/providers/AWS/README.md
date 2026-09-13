@@ -1648,25 +1648,28 @@ deploy/providers/AWS/
 │       ├── flip-access-request.txt          # Plain-text fallback
 │       ├── flip-xnat-credentials.html       # XNAT credential notification
 │       └── flip-xnat-credentials.txt        # Plain-text fallback
-├── services.tf                              # Cognito config - loads cognito/ templates via file()
-├── main.tf                                  # SES config - loads ses/ templates via file()
+├── services.tf                              # Instantiates module "cognito" (which loads cognito/ templates via file())
+├── main.tf                                  # Instantiates module "ses" (which loads ses/ templates via file())
+├── modules/
+│   ├── cognito/main.tf                      # Cognito config - loads cognito/ templates via file() (uses var.templates_dir)
+│   └── ses/main.tf                          # SES config - loads ses/ templates via file() (uses var.templates_dir)
 └── tests/
     └── test_email_templates.py              # Test utility for all templates
 ```
 
 ### How Templates Are Loaded
 
-**Cognito templates** (services.tf):
+**Cognito templates** (`modules/cognito/main.tf`; `services.tf` only wires the module):
 
 ```hcl
-email_message = file("${path.module}/templates/cognito/invite.html")
+email_message = file("${var.templates_dir}/invite.html")
 ```
 
-**SES templates** (main.tf):
+**SES templates** (`modules/ses/main.tf`; `main.tf` only wires the module):
 
 ```hcl
-html = file("${path.module}/templates/ses/flip-access-request.html")
-text = file("${path.module}/templates/ses/flip-access-request.txt")
+html = file("${var.templates_dir}/flip-access-request.html")
+text = file("${var.templates_dir}/flip-access-request.txt")
 ```
 
 Changes to template files are automatically picked up on next `terraform apply` or test run.
@@ -1680,7 +1683,7 @@ Changes to template files are automatically picked up on next `terraform apply` 
 | `{username}` | Cognito username (email) | <john.smith@example.com> |
 | `{####}` | 6-digit temporary password or verification code | 123456 |
 | `{flip_alb_subdomain}` | ALB domain from Terraform var | flip-app.example.com |
-| `{reset_link}` | Password reset link with token | <https://flip.../reset?token=xyz> |
+| `{## Reset Password ##}` | Cognito-substituted reset link (link text between `{##` and `##}`) | \<a>Reset Password\</a> |
 
 **SES templates** use double-brace (Mustache) placeholders substituted at send time:
 
