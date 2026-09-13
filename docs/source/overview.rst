@@ -21,11 +21,11 @@ Data from across the Trusts' patient records systems will be transferred into th
 
    FLIP node at a glance.
 
-The secure enclave is comprised of multiple hardware and software components. We use high-performance NVIDIA DGX 1 processors to train our algorithms, which have the computing power to analyse hundreds of thousands of medical imaging scans in minutes.
+The secure enclave is comprised of multiple hardware and software components. Training runs on the Trust's own GPU hardware: a FLIP node requires at least one NVIDIA GPU and the NVIDIA Container Toolkit, so the federated learning containers can train against local imaging without any of it leaving the Trust.
 
 XNAT, an open-source image informatics platform that ingests Digital Imaging and Communications in Medicine (DICOM, the industry-standard for medical images and related data) images from PACS, allows us to run our algorithms against automatically anonymised images safely.
 
-Natural Language Processing (NLP) is used for information retrieval and extraction. The platform can process unstructured data from multiple sources and extract data from semantic information. 
+Alongside the imaging, structured clinical data from the Trust's records is harmonised into an OMOP Common Data Model database, which is what a project's cohort query is run against to select the patients and studies a model trains on.
 
 A secure enclave (FLIP node) is created at partner sites and networked with the FLIP central hub.
 
@@ -50,6 +50,6 @@ To harmonise this heterogeneous data, we use ontological and data interoperabili
 *******************
 How FLIP adds value
 *******************
-Our Federated Learning Interoperability Platform (FLIP) ensures a high level of fidelity in AI output models compared to traditional aggregative data strategies because the data it trains on does not need to be anonymised before use.
+Our Federated Learning Interoperability Platform (FLIP) ensures a high level of fidelity in AI output models compared to traditional aggregative data strategies because the data it trains on never leaves the Trust that holds it. Imaging is anonymised by XNAT as it arrives in the secure enclave, and models train on it in place — only model weights cross the Trust boundary, so no patient data has to be extracted, pooled or de-identified for sharing.
 
 FLIP also allows us to adhere to each Trust's governance and data privacy regulations and ensures that our models are scalable in international contexts in full compliance with international laws and guidance.

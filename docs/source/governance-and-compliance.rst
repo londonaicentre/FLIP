@@ -14,11 +14,11 @@ Where a governance guarantee rests on a technical control, this page states the
 guarantee and links there for the mechanism.
 
 FLIP is designed so that **each participating organisation keeps control of its own
-data**. Patient data never leaves the trust that holds it. No project can use a trust's
-data until that trust has explicitly approved that project. A trust can decline any
-individual project without leaving the federation and without affecting any other
-participant. Nothing in the platform can override that decision, because the data and
-the approval both live on the trust's own infrastructure.
+data**. Patient data never leaves the trust that holds it. No project uses a trust's data
+until that trust has agreed to take part in it. A trust can decline any individual project
+without leaving the federation and without affecting any other participant. The controls
+that decide what may leave a trust run on the trust's own infrastructure, alongside the
+data they protect.
 
 *****************************************
 Each site can veto any individual project
@@ -27,9 +27,11 @@ Each site can veto any individual project
 Approval in FLIP is **per project, per trust** — not a blanket agreement to
 participate.
 
-When a research project is created, it must be approved separately by an administrator
-at each trust whose data it proposes to use. Approval is recorded against that specific
-project–trust pairing, timestamped and attributed. A trust that declines is simply not
+When a research project is staged, each trust whose data it proposes to use decides
+whether to take part. That decision is taken **offline**, between the project and the
+trust's information governance function; its outcome is then recorded in FLIP by a Central
+Hub administrator against that specific project–trust pairing, timestamped and attributed
+(see :ref:`admin-project-and-user-management`). A trust that declines is simply not
 included: the project proceeds with the trusts that approved it, and the declining
 trust's data is never queried, never imported, and never contributes to the model.
 
@@ -38,8 +40,13 @@ Three consequences matter for information governance:
 - **Participation is not all-or-nothing.** A trust can support one research question and
   decline another — on clinical, ethical, or capacity grounds — without renegotiating
   its involvement in the platform.
-- **The decision sits with the data holder.** The approval gate runs on the trust's own
-  deployment, so it cannot be bypassed by the Central Hub or by another participant.
+- **The decision sits with the data holder.** The agreement itself is made by the trust;
+  the platform records the outcome rather than making the decision. What the platform
+  enforces *on the trust's own deployment*, independently of that record, is narrower and
+  more concrete: every cohort query is validated and executed by the trust's own
+  ``data-access-api`` against a read-only database role, row-level results are withheld
+  below the trust's own minimum group size, and the trust reaches the Central Hub by
+  outbound polling only — nothing is pushed into a trust from outside. See :ref:`security`.
 - **The decision is auditable.** Who approved what, and when, is recorded and can be
   produced for an audit or an ethics review.
 
@@ -147,9 +154,9 @@ by the organisations involved — and for a Caldicott or IG function these are t
 questions, so this page names them explicitly rather than leaving them implied.
 
 The architecture gives those determinations a clean starting point: patient data
-remains in the custody and on the infrastructure of the trust that holds it, each
-trust's approval gate runs locally, and what crosses the boundary is enumerated above.
-For each deployment the items to record are:
+remains in the custody and on the infrastructure of the trust that holds it, the
+disclosure controls over that data run locally on the trust's own deployment, and what
+crosses the boundary is enumerated above. For each deployment the items to record are:
 
 - **Controllership**, per flow: the imaging held in the trust's own XNAT, the cohort
   statistics that leave, and the model updates and trained model.

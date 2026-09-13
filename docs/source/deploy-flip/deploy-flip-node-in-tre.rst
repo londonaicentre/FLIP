@@ -247,7 +247,7 @@ Once data is loaded, the FLIP workflow proceeds largely as normal:
    inside the TRE. This selects from the pre-loaded project subset, not the full Trust
    population.
 3. Once the cohort is selected, XNAT pulls DICOMs from the TRE's internal PACS -- using the
-   same C-MOVE/C-GET pattern it would use against a production PACS.
+   same C-FIND/C-MOVE pattern it would use against a production PACS.
 4. The FLIP user submits FL training or evaluation jobs.
 
 .. important::

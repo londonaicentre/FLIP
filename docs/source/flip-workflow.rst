@@ -24,6 +24,10 @@ Once a sufficient cohort of data has been identified, the Model Developer indica
 
    Approved project.
 
+.. note::
+
+   A project created with 'Includes imaging data' turned off — a tabular-only cohort — skips the imaging stages that follow. Approval creates no XNAT project at any Trust and pulls nothing from PACS, there is no image enrichment step, and training reads the OMOP cohort dataframe alone. Like 'Convert DICOMs to NIfTI', the option is fixed when the project is created.
+
 ******************
 Image Enrichment
 ******************

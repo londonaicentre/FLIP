@@ -24,6 +24,7 @@
 #
 import os
 import sys
+import tomllib
 from pathlib import Path
 
 from sphinx.errors import SphinxError
@@ -47,8 +48,29 @@ project = "FLIP"
 copyright = "2026, The London AI Centre for Value-Based Healthcare"
 author = "The London AI Centre for Value-Based Healthcare"
 
-# The full version of the documentation, including alpha/beta/rc tags
-release = ""
+# The FLIP platform version, read from the repository's root pyproject.toml so the docs
+# never carry a hand-maintained copy of it. Falls back to an empty string if the file is
+# missing or unparseable (e.g. a docs-only checkout), which is what Sphinx defaults to.
+
+
+def _platform_version() -> str:
+    """Read ``project.version`` from the repository root ``pyproject.toml``.
+
+    Returns:
+        str: The declared platform version, or ``""`` if it cannot be read.
+    """
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    try:
+        with pyproject.open("rb") as fh:
+            return str(tomllib.load(fh)["project"]["version"])
+    except (OSError, KeyError, tomllib.TOMLDecodeError):
+        logger.warning(f"Could not read the platform version from {pyproject}; leaving it unset.")
+        return ""
+
+
+# The short X.Y version, and the full version including alpha/beta/rc tags
+release = _platform_version()
+version = release
 
 # The full version of the FLIP platform, including alpha/beta/rc tags
 # The rst_epilog list makes items within it globally-available to compiled .rst files.

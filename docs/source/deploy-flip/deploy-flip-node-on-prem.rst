@@ -110,8 +110,11 @@ so all docker-touching commands on the trust host run via ``sudo``:
    cd ../../..
    sudo -E env PROD=<stag|true> make -C trust up-trust KIT=<CODE>   # the trust code you scaffolded
 
-Then verify the trust is polling: ``sudo docker logs -f trust-api`` should
-show successful task polls against the Central Hub.
+Then verify the trust is polling: ``sudo docker logs -f trust<N>-trust-api-1`` should
+show successful task polls against the Central Hub. No trust service sets
+``container_name``, so compose names the container from the trust's project —
+``trust<N>``, where ``<N>`` is the FL kit slot number the hub assigned
+(``FL_KIT_SLOT_NUMBER`` in the kit file).
 
 ******************************************
 Onboarding an on-prem trust (step by step)
@@ -139,7 +142,7 @@ hub-managed blocks.
 
 .. code-block:: shell
 
-   make register-trust KIT=<CODE> PROD=true
+   make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=true
 
 This registers the trust on the prod hub and fills **both** managed blocks in
 one step: the Kit credentials (``TRUST_API_KEY``,
@@ -231,8 +234,9 @@ host's public IP, open the FL-server NLB to it:
 ``allow-local-trust-nlb`` runs a normal ``terraform plan``/``apply`` — the IPs
 are real config, so later full applies stay idempotent (no drift).
 
-Then verify the trust is polling: ``sudo docker logs -f trust-api`` should
-show successful task polls against the Central Hub.
+Then verify the trust is polling: ``sudo docker logs -f trust<N>-trust-api-1`` should
+show successful task polls against the Central Hub (``<N>`` is the assigned FL kit
+slot number, as above).
 
 **Rotation (later, no re-mint).** When the admin rotates a Hub-shared value
 (``AES_KEY_BASE64``, image tags, ``FL_BACKEND``), refresh only the Hub-shared
@@ -277,11 +281,11 @@ that trust. The trust's env must contain:
 connect):
 
 1. The trust must be registered on the hub — a row in the ``trust`` table with
-   its ``api_key_hash`` — via ``make register-trust KIT=<CODE>`` or the
-   Add-Trust admin flow (``POST /admin/trusts``).
-2. ``make register-trust KIT=<CODE>`` mints the trust's API key and internal
-   service key into the kit file (``trust/.env.<CODE>.production`` for the
-   on-prem trust) as part of registration.
+   its ``api_key_hash`` — via ``make -C deploy/providers/AWS register-trusts
+   KIT=<CODE>`` or the Add-Trust admin flow (``POST /admin/trusts``).
+2. That same target mints the trust's API key and internal service key into the
+   kit file (``trust/.env.<CODE>.production`` for the on-prem trust) as part of
+   registration.
 3. No hub redeploy is needed — the trust registry is the live database, read
    on every request.
 

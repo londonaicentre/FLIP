@@ -162,9 +162,10 @@ for full details):
 - **Trust API keys** — minted by the ``register_trust`` service when a trust is
   registered. The hub stores only the SHA-256 hash in the ``api_key_hash``
   column of the ``trust`` table; the plaintext is written once into that
-  trust's kit file (``trust/.env.<CODE>.<env>``). Trusts are registered with
-  ``make register-trust KIT=<CODE>`` (or ``make register-trusts`` for the
-  shipped dev roster).
+  trust's kit file (``trust/.env.<CODE>.<env>``). Trusts are registered from
+  ``deploy/providers/AWS`` with ``make register-trusts KIT=<CODE>`` for a single
+  kit, or ``make register-trusts`` with no ``KIT`` for every
+  ``trust/.env.*.<env>`` kit present.
 - **Internal service key** — single hub-internal key for fl-server → flip-api
   calls. Generated with ``make generate-internal-service-key``.
 - **Trust-internal service keys** — per-trust shared secret used inside each

@@ -6,7 +6,7 @@ User Roles
 
 .. note::
 
-   Roles are **exclusive**: each user holds exactly one of ``admin``, ``researcher`` or ``viewer``. The ``admin`` role already includes every ``researcher`` capability, so administrators do not need additional role grants to perform researcher actions.
+   The Admin Area assigns **one role per user** — ``admin``, ``researcher`` or ``viewer`` — and re-assigning a role replaces the one held rather than adding to it. The ``admin`` role already includes every ``researcher`` capability, so administrators do not need additional role grants to perform researcher actions. Where a user does hold more than one role, their effective permissions are the union of the permissions each role grants.
 
 .. list-table::
    :widths: 5 90
@@ -66,9 +66,13 @@ The following table summarises the permissions assigned to each role:
      - Yes
      - No
      - No
-   * - Manage projects (create, edit, stage, train)
+   * - Create projects, and manage projects they own or are a member of (edit, stage, train)
      - Yes
      - Yes
+     - No
+   * - Manage all projects (bypasses the per-project ownership/membership check)
+     - Yes
+     - No
      - No
 
 .. note::
