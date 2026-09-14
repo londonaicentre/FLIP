@@ -30,10 +30,14 @@
                  changes. Bound through anything else it keeps a private counter that
                  starts at false whatever the field's initial value, so aria-checked
                  announces the inverse of the knob and Space moves nothing but ARIA.
-                 The event carries the new state, so write exactly that (setValue): the
-                 checkbox handleChange ignores its argument once checkedValue is set and
-                 toggles instead, which happens to agree but is a rule of vee-validate's,
-                 not of this component's. -->
+                 The value is written through the checkbox handleChange, not setValue,
+                 because a switch is not always a field of its own: several sharing one
+                 name (the trust pickers, name="trusts" / "trust_ids") are one checkbox
+                 GROUP whose field is the array of values switched on, and handleChange is
+                 what knows to add or remove only this switch's value there — setValue
+                 would overwrite the group with one value. It ignores its argument once
+                 checkedValue is configured and toggles, so the emitted boolean is not
+                 needed; the spec covers both the single and the group case. -->
             <Switch
                 :id="uuid"
                 :name="name"
@@ -48,9 +52,9 @@
                     checked ? 'bg-primary-600 dark:bg-primary-400' : 'bg-gray-300 dark:bg-dark-raised',
                     disabled && 'opacity-60 cursor-not-allowed'
                 ]"
-                @update:model-value="(on: boolean) => {
+                @update:model-value="() => {
                     if (disabled) { return; }
-                    setValue(on ? value : undefined)
+                    handleChange(value)
                 }"
             >
                 <span
@@ -108,8 +112,8 @@ const { name, value } = toRefs(props);
 const {
     checked,
     errorMessage,
-    setValue
-} = useField<string | undefined>(
+    handleChange
+} = useField(
     name,
     undefined,
     {
