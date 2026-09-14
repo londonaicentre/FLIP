@@ -18,21 +18,27 @@ on:
   push:
     branches: [develop]
     paths:
-      # Only the Ark+ nvflare pair is left in this script; the Flower pairs moved to
-      # fl-tutorials/tests/test_flower_platform_parity.py, which FL Tutorials CI runs.
+      # The tutorial-to-template Flower pairs moved to
+      # fl-tutorials/tests/test_flower_platform_parity.py, which FL Tutorials CI runs. What is
+      # left here is tutorial-to-tutorial, and a pair only stays guarded while BOTH of its sides
+      # are filtered: the Ark+ pair lives entirely under nvflare/image_evaluation; the EHR pair's
+      # reference is nvflare/tabular_classification and its copy flower/ehr_risk_prediction.
       - "fl-tutorials/nvflare/image_evaluation/**"
-      # The EHR risk-prediction pairs' reference side is nvflare too.
       - "fl-tutorials/nvflare/tabular_classification/**"
+      - "fl-tutorials/flower/ehr_risk_prediction/**"
       - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-apps-check-tutorial-sync.yml"
   pull_request:
     branches: [develop]
     paths:
-      # Only the Ark+ nvflare pair is left in this script; the Flower pairs moved to
-      # fl-tutorials/tests/test_flower_platform_parity.py, which FL Tutorials CI runs.
+      # The tutorial-to-template Flower pairs moved to
+      # fl-tutorials/tests/test_flower_platform_parity.py, which FL Tutorials CI runs. What is
+      # left here is tutorial-to-tutorial, and a pair only stays guarded while BOTH of its sides
+      # are filtered: the Ark+ pair lives entirely under nvflare/image_evaluation; the EHR pair's
+      # reference is nvflare/tabular_classification and its copy flower/ehr_risk_prediction.
       - "fl-tutorials/nvflare/image_evaluation/**"
-      # The EHR risk-prediction pairs' reference side is nvflare too.
       - "fl-tutorials/nvflare/tabular_classification/**"
+      - "fl-tutorials/flower/ehr_risk_prediction/**"
       - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-apps-check-tutorial-sync.yml"
 

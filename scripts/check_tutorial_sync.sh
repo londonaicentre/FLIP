@@ -47,9 +47,10 @@ PAIRS=(
   # model factory as byte-identical copies (the same preprocessing/architecture must train on NVFLARE
   # and Flower alike). Tutorial-to-tutorial like the Ark+ pair below, so nothing in the tree says the
   # two apps are meant to share a file and the parity test cannot derive them. The NVFLARE copy is the
-  # reference; resync by copying it over the Flower copy. These pairs' reference side lives under
-  # fl-tutorials/nvflare/tabular_classification/, which fl-apps-check-tutorial-sync.yml's path filters
-  # must include (see the NOTE below).
+  # reference; resync by copying it over the Flower copy. Both sides of these pairs live outside
+  # fl-tutorials/nvflare/image_evaluation/, so fl-apps-check-tutorial-sync.yml's path filters must
+  # carry the reference tree AND the copy tree, or a drift commit on either side skips the check
+  # (see the NOTE below).
   "fl-tutorials/flower/ehr_risk_prediction/app/feature_engineering.py:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files/feature_engineering.py"
   "fl-tutorials/flower/ehr_risk_prediction/app/models.py:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files/models.py"
   "fl-tutorials/flower/ehr_risk_prediction/query.sql:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql"
