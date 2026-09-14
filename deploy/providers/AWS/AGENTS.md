@@ -118,7 +118,11 @@ Things worth knowing before touching any of it:
   carries it — which is what keeps `PowerUserAccess` + IAM write from being
   administrator-equivalent. Adding a role means adding its literal name to
   `var.managed_role_names` in `ci/variables.tf` and re-applying `ci/` from a laptop
-  first, or the apply cannot pass or re-trust it.
+  first, or the apply cannot pass or re-trust it. **Except on the LZA modes**: the
+  Makefile exports the variable as `""` for `PROD=lza` / `PROD=lza-stag` (env file
+  can override), because those accounts are applied by hand, never receive `ci/`,
+  and so hold no boundary policy to attach — `tests/test_lza_iam_boundary.py`
+  guards the export. Re-attach when LZA applies move to CI (FLIP#1199).
 - **The pytest suite under `tests/` runs in CI** as the `AWS deploy tests` job in
   `validate_terraform.yml`. The root `make unit_test` does not reach this directory
   and `make -C deploy/providers/AWS test` cannot be used (parse-time env guard), so

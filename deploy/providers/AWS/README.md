@@ -757,6 +757,7 @@ fixed per account by design.
 | `TF_VAR_lza_managed_network` | `true` — the platform-managed-network toggle, orthogonal to `environment` (see below) |
 | Trust kit suffix | `trust/.env.<CODE>.lza-prod` — a separate namespace so legacy prod kits are never overwritten |
 | `deploy-centralhub` git ref | `origin/main` (same as legacy prod) |
+| `TF_VAR_iam_permissions_boundary_name` | `""` (both LZA modes) — the `AICentre-FLIPTerraformBoundary` policy is declared by the `ci/` root, which exists to fence the GitHub OIDC apply role and is applied only in the accounts whose applies run through that pipeline. LZA applies are manual, `ci/` has never been applied there, and attaching a name that does not resolve fails every role update with `NoSuchEntity`. The env file can still set the variable to re-attach a boundary. Unattended LZA applies, and the boundary with them, are [FLIP#1199](https://github.com/londonaicentre/FLIP/issues/1199) |
 
 **Platform-managed vs FLIP-managed.** The LZA account's network is owned by the accelerator pipeline
 ([londonaicentre/lza](https://github.com/londonaicentre/lza)) and VPC-layer creation is SCP-denied in-account, so with

@@ -119,6 +119,19 @@ ifneq ($(LZA_VPC_NAME),)
 export TF_VAR_lza_vpc_name=$(LZA_VPC_NAME)
 endif
 
+# IAM permissions boundary (FLIP#1082): the boundary policy is owned by the ci/
+# root, which exists to fence the GitHub OIDC apply role and is applied only in
+# the accounts whose applies run through that pipeline. The LZA workload accounts
+# are applied by hand under the platform's admin permission set and never receive
+# ci/, so the policy does not exist there and attaching it fails every role
+# update with NoSuchEntity. Detach it on the LZA modes unless the env file says
+# otherwise — variables.tf documents "" as the correct value for an account where
+# ci/ has never been applied. Re-attach (drop this default) the day LZA applies
+# move to CI and ci/ is applied there first.
+ifneq ($(filter lza lza-stag,$(PROD)),)
+export TF_VAR_iam_permissions_boundary_name ?=
+endif
+
 # Kit-file env suffix: PROD=true → .production kits, PROD=lza → .lza-prod kits (a
 # separate namespace so the parallel-running legacy prod kits are never touched
 # during the FLIP#749 migration), PROD=lza-stag → .lza-stag kits, otherwise → .stag.
