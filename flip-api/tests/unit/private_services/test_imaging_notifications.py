@@ -19,6 +19,7 @@ from botocore.exceptions import ClientError, NoCredentialsError, NoRegionError
 
 from flip_api.private_services.imaging_notifications import handle_imaging_task_completed
 from flip_api.utils.email_sender import EmailDispatchError
+from flip_api.utils.encryption import XNAT_PASSWORD_CONTEXT
 
 TRUST_ID = uuid4()
 PROJECT_ID = str(uuid4())
@@ -332,7 +333,7 @@ def test_decrypts_passwords_for_the_xnat_password_context(mock_send_email, mock_
 
     handle_imaging_task_completed(task, mock_db)
 
-    mock_decrypt.assert_called_once_with("enc1", context="xnat_password")
+    mock_decrypt.assert_called_once_with("enc1", context=XNAT_PASSWORD_CONTEXT)
 
 
 def test_decryption_failure_raises_so_the_task_stays_retryable(mock_send_email, mock_insert_status):

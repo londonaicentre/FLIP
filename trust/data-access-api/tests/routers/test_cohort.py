@@ -20,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from data_access_api.main import app
 from data_access_api.routers.schema import StatisticsResponse
+from data_access_api.utils.encryption import PROJECT_ID_CONTEXT
 from tests.conftest import AUTH_HEADERS
 
 client = TestClient(app)
@@ -207,7 +208,7 @@ def test_get_dataframe_success(mock_validate_query, mock_get_records, mock_decry
 
     assert response.status_code == 200
     assert response.json() == sample_df_dict
-    mock_decrypt.assert_called_once_with("encrypted-id", context="project_id")
+    mock_decrypt.assert_called_once_with("encrypted-id", context=PROJECT_ID_CONTEXT)
     mock_validate_query.assert_called_once_with(sample_dataframe_query["query"])
     # The engine receives what validate_query emitted from the checked AST,
     # never the caller's raw string.
@@ -235,6 +236,17 @@ def test_get_dataframe_rejects_a_malformed_envelope(mock_decrypt):
 
     assert response.status_code == 400
     assert "not a FLIP encryption envelope" in response.json()["detail"]
+
+
+@patch("data_access_api.routers.cohort.decrypt")
+def test_get_dataframe_reports_an_unexpected_decrypt_fault_as_500(mock_decrypt):
+    """Not the caller's payload (key load, cipher fault): a logged 500 naming the type, as imaging-api answers."""
+    mock_decrypt.side_effect = Exception("bad key")
+
+    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Failed to decrypt encrypted_project_id (Exception)"
 
 
 @patch("data_access_api.routers.cohort.decrypt")
@@ -377,7 +389,7 @@ def test_get_accession_ids_success(mock_get_records, mock_decrypt, mock_get_sett
 
     assert response.status_code == 200
     assert response.json() == {"accession_ids": ["ACC1", "ACC2", "ACC3"]}
-    mock_decrypt.assert_called_once_with("encrypted-id", context="project_id")
+    mock_decrypt.assert_called_once_with("encrypted-id", context=PROJECT_ID_CONTEXT)
     # The caller's query must be wrapped server-side so only accession_id is projected.
     called_query = mock_get_records.call_args[0][0]
     assert called_query.startswith("SELECT accession_id FROM (")

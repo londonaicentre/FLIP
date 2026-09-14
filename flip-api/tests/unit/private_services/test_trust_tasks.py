@@ -124,7 +124,7 @@ def test_get_pending_tasks_seals_each_payload_for_its_task_type(mock_pending_tas
     """``task_type`` rides beside the payload unauthenticated, so it is bound into the tag instead."""
     from cryptography.exceptions import InvalidTag
 
-    from flip_api.utils.encryption import decrypt
+    from flip_api.utils.encryption import decrypt, task_context
 
     mock_db = MagicMock()
     mock_db.exec.return_value.all.return_value = mock_pending_tasks
@@ -134,9 +134,9 @@ def test_get_pending_tasks_seals_each_payload_for_its_task_type(mock_pending_tas
 
     assert response.status_code == 200
     for sent, task in zip(response.json()["tasks"], mock_pending_tasks, strict=True):
-        assert decrypt(sent["payload"], context=f"task:{sent['task_type']}") == task.payload
+        assert decrypt(sent["payload"], context=task_context(sent["task_type"])) == task.payload
         with pytest.raises(InvalidTag):
-            decrypt(sent["payload"], context="task:delete_imaging")
+            decrypt(sent["payload"], context=task_context("delete_imaging"))
 
     app.dependency_overrides.pop(get_session, None)
 

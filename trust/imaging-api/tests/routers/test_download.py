@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, patch
 
 from cryptography.exceptions import InvalidTag
 
+from imaging_api.utils.encryption import PROJECT_ID_CONTEXT
 from imaging_api.utils.exceptions import LocalStorageError, NotFoundError
 
 _REQUEST_BODY = {
@@ -44,7 +45,7 @@ def test_download_images_decrypts_for_the_project_id_context(client):
     ):
         client.post("/download/images/net1", json=_REQUEST_BODY)
 
-    mock_decrypt.assert_called_once_with("encrypted-id", context="project_id")
+    mock_decrypt.assert_called_once_with("encrypted-id", context=PROJECT_ID_CONTEXT)
 
 
 def test_download_images_rejects_a_project_id_that_fails_authentication(client):

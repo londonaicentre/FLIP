@@ -27,7 +27,7 @@ from trust_api.services.task_poller import (
     _send_heartbeat,
     run_poller,
 )
-from trust_api.utils.encryption import encrypt
+from trust_api.utils.encryption import encrypt, task_context
 
 
 @pytest.fixture(autouse=True)
@@ -447,7 +447,7 @@ async def test_process_task_rejects_payload_under_unknown_kid():
 async def test_process_task_opens_a_payload_sealed_for_its_task_type():
     """End to end with the real cipher: the hub seals under ``task:<task_type>`` and the poller opens likewise."""
     key = os.urandom(32)
-    sealed = encrypt(json.dumps({"query_id": "q1"}), key, context="task:cohort_query")
+    sealed = encrypt(json.dumps({"query_id": "q1"}), key, context=task_context("cohort_query"))
     handler = AsyncMock(return_value={"success": True})
 
     with (
@@ -464,7 +464,7 @@ async def test_process_task_opens_a_payload_sealed_for_its_task_type():
 async def test_process_task_rejects_a_payload_sealed_for_another_task_type():
     """Rewriting the unauthenticated ``task_type`` must not re-target a genuine payload at another handler."""
     key = os.urandom(32)
-    sealed = encrypt(json.dumps({"imaging_project_id": "p1"}), key, context="task:get_imaging_status")
+    sealed = encrypt(json.dumps({"imaging_project_id": "p1"}), key, context=task_context("get_imaging_status"))
     handler = AsyncMock()
 
     with (

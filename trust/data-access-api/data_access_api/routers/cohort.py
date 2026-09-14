@@ -42,7 +42,9 @@ def _open_project_id(encrypted_project_id: str) -> str:
 
     The id is authenticated under the ``project_id`` context. A failure is the caller's payload
     (tampered, sealed for another purpose, or the hub's ``AES_KEY_BASE64`` is not this trust's),
-    so it is a 400 that names the cause rather than a bare 500.
+    so it is a 400 that names the cause rather than a bare 500. Anything else is a fault on this
+    side (the key cannot be loaded, the cipher itself) and is a logged 500 that names the type —
+    the same taxonomy as imaging-api's routers, which open the same envelope.
     """
     try:
         return decrypt(encrypted_project_id, context=PROJECT_ID_CONTEXT)
@@ -52,6 +54,10 @@ def _open_project_id(encrypted_project_id: str) -> str:
     except (ValueError, KeyError) as e:
         logger.error(f"encrypted_project_id is not a valid envelope: {e}")
         raise HTTPException(status_code=400, detail=f"encrypted_project_id is not a valid envelope: {e}")
+    except Exception as e:
+        # Not the caller's payload. Name the type so an empty exception message never yields a blank reason.
+        logger.exception(f"Failed to decrypt encrypted_project_id ({type(e).__name__}): {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to decrypt encrypted_project_id ({type(e).__name__})")
 
 
 router = APIRouter(prefix="/cohort", tags=["Cohort"], dependencies=[Depends(authenticate_internal_service)])

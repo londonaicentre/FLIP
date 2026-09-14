@@ -27,6 +27,7 @@ from flip_api.cohort_services.submit_cohort_query import (
 from flip_api.db.models.main_models import TrustTask
 from flip_api.domain.schemas.cohort import SubmitCohortQuery
 from flip_api.domain.schemas.status import TaskType
+from flip_api.utils.encryption import PROJECT_ID_CONTEXT
 
 # Mocking the project ID for the test
 project_id = uuid.uuid4()
@@ -374,7 +375,7 @@ def test_submit_cohort_query_seals_the_project_id_for_its_context(
 
     submit_cohort_query(mock_request, sample_query, _db(trusts=[mock_trust]), user_id)
 
-    mock_encrypt.assert_called_once_with(str(sample_query.project_id), context="project_id")
+    mock_encrypt.assert_called_once_with(str(sample_query.project_id), context=PROJECT_ID_CONTEXT)
 
 
 @pytest.mark.parametrize(

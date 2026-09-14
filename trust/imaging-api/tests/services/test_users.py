@@ -26,6 +26,7 @@ from imaging_api.services.users import (
     to_create_imaging_user,
     user_exists,
 )
+from imaging_api.utils.encryption import XNAT_PASSWORD_CONTEXT
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
 
 
@@ -318,7 +319,7 @@ def test_create_user_from_central_hub_user(mock_to_create, mock_create, mock_enc
 
     assert created_user.username == "alice"
     assert created_user.encrypted_password == "encrypted_pwd"  # pragma: allowlist secret
-    mock_encrypt.assert_called_once_with(ANY, context="xnat_password")
+    mock_encrypt.assert_called_once_with(ANY, context=XNAT_PASSWORD_CONTEXT)
     assert user_profile.username == "alice"
 
 

@@ -23,7 +23,15 @@ from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from imaging_api.utils.encryption import SHARED_KID, decrypt, encrypt, get_aes_key
+from imaging_api.utils.encryption import (
+    PROJECT_ID_CONTEXT,
+    SHARED_KID,
+    XNAT_PASSWORD_CONTEXT,
+    decrypt,
+    encrypt,
+    get_aes_key,
+    task_context,
+)
 
 OTHER_KEY = os.urandom(32)
 
@@ -159,6 +167,18 @@ KAT_ENVELOPE = (
 
 def test_known_answer_vector_decrypts():
     assert decrypt(KAT_ENVELOPE, KAT_KEY, context=KAT_CONTEXT) == KAT_PLAINTEXT
+
+
+def test_context_labels_are_the_cross_service_wire_strings():
+    """The KAT pins the envelope format; this pins the *values* the other three services seal and open with.
+
+    Each service carries its own copy of these constants and every other test reaches them by name, so
+    nothing else notices when one copy drifts — the other side just answers ``InvalidTag`` at runtime.
+    Change a value here only together with the three sibling modules.
+    """
+    assert PROJECT_ID_CONTEXT == "project_id"
+    assert XNAT_PASSWORD_CONTEXT == "xnat_password"  # pragma: allowlist secret — a context label, not a credential
+    assert task_context("cohort_query") == "task:cohort_query"
 
 
 def test_context_is_bound_into_the_tag():
