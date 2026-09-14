@@ -220,6 +220,16 @@ The uploader derives each target filename from the converted `input_*.nii.gz`, s
 skips every scan (reported as *skipped (no image in resource)*) — i.e. a broken XNAT Container Service surfaces
 as "no labels".
 
+**Smoking a REMOTE hub (stag / prod / an LZA account).** The smoke's base URL is `flip_api.utils.constants.BASE_URL`,
+which defaults to `http://localhost:8080/api` — the *local dev hub* — unless `FLIP_E2E_BASE_URL` is set; forgetting it
+hands your remote token to the dev hub, which answers `500 Internal server error during authentication`, and nothing on
+the remote hub logs a request. Remote hubs enforce MFA, so the Cognito password flow is out: pass a pre-obtained bearer
+as `FLIP_E2E_TOKEN` (the Cognito **AccessToken** of a TOTP-enrolled admin) plus `FLIP_E2E_REFRESH_TOKEN` so the smoke
+can renew it across a long training run. The module also imports flip-api `Settings`, whose dev class requires
+`POSTGRES_PASSWORD` even though the smoke never opens the database — export any dummy value on an LZA env, which has
+none (IAM DB auth). Run it through the root target so `PROD` selects the env file:
+`FLIP_E2E_BASE_URL=https://<edge>/api FLIP_E2E_TOKEN=… FLIP_E2E_REFRESH_TOKEN=… POSTGRES_PASSWORD=x make e2e_smoke_ehr PROD=lza-stag FL_BACKEND=nvflare EXTRA_ARGS="--trusts <CODE>"`.
+
 **Tabular-only projects (no imaging stage — FLIP#1071).** A project created with "Includes imaging data"
 off (`has_imaging=false`, creation-time and immutable like `dicom_to_nifti`) is approved without the
 CREATE_IMAGING fan-out: no XNAT project, no accession-ids call, no pull, and `GET /projects/{id}/image/status`
