@@ -16,7 +16,7 @@
 from logging import INFO
 
 import torch
-from flip.flower.identity import client_identity, partition_cohort
+from flip.flower.identity import check_splits_are_populated, client_identity, partition_cohort, partition_count
 from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from flwr.common import log
@@ -49,6 +49,16 @@ def evaluate(msg: Message, context: Context) -> Message:
     # Slice the shared dev cohort so the simulated sites really differ; a no-op off LOCAL_DEV.
     flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
     log(INFO, f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
+    # Evaluation-only, so the whole partition is the test set. Checked here, before the datalist
+    # is built, because get_test_data_list() already refuses an empty datalist — but blaming a
+    # missing label enrichment ("0 accession(s), none with a matching label_*.nii.gz"), which is
+    # the wrong cause when the partition itself is starved.
+    check_splits_are_populated(
+        {"test": len(flip_utils.dataframe)},
+        cohort_rows=len(flip_utils.dataframe),
+        client_name=client_name,
+        num_partitions=partition_count(context),
+    )
 
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

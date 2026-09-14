@@ -24,6 +24,7 @@ import pytest
 
 from flip.flower import identity
 from flip.flower.identity import (
+    COMPOSE_STACK_SUPERNODES,
     UNKNOWN_CLIENT,
     check_splits_are_populated,
     client_identity,
@@ -70,10 +71,23 @@ def test_unresolvable_identity_is_unknown(monkeypatch: pytest.MonkeyPatch):
     assert client_identity(SimpleNamespace()) == UNKNOWN_CLIENT
 
 
-def test_partition_count_prefers_explicit_then_node_config_then_two():
+def test_partition_count_prefers_explicit_then_node_config_then_the_compose_stack():
     assert partition_count(_context({"num-partitions": "4"}), 3) == 3
     assert partition_count(_context({"num-partitions": "4"})) == 4
-    assert partition_count(_context()) == 2
+    assert partition_count(_context()) == COMPOSE_STACK_SUPERNODES == 2
+
+
+def test_partition_count_is_one_outside_local_dev(monkeypatch: pytest.MonkeyPatch):
+    """A deployed trust's cohort is never split, so a guard reporting on it must not say it was.
+
+    check_splits_are_populated appends "after partitioning a shared cohort N ways" for any N > 1;
+    fed the compose-stack fallback on a real trust, an empty val split would blame a partition
+    that never happened.
+    """
+    monkeypatch.setattr(identity, "FlipConstants", SimpleNamespace(LOCAL_DEV=False))
+    assert partition_count(_context({"num-partitions": "4"}), 3) == 1
+    assert partition_count(_context({"num-partitions": "4"})) == 1
+    assert partition_count(_context()) == 1
 
 
 def _cohort(n: int, column: str = "accession_id") -> pd.DataFrame:

@@ -51,6 +51,16 @@ NUM_PARTITIONS_KEY = "num-partitions"
 UNKNOWN_CLIENT = "unknown_client"
 # Cohort columns tried in order when no key column is named.
 DEFAULT_KEY_COLUMNS = ("person_id", "accession_id")
+# The fallback partition count, reached only on the local compose stack (fl-services/flower): its
+# compose files run exactly this many SuperNodes (Trust_1, Trust_2) off one shared CSV and pass no
+# --node-config, so nothing else tells a ClientApp the site count. Deliberately NOT the tutorial's
+# flip-min-clients — that is a quorum, not a site count. A tutorial declaring 1 would hand the whole
+# CSV to both SuperNodes (partition_cohort does not split at <= 1), the silent non-federation it
+# exists to prevent; one declaring 3 never starts a round. The simulator cannot drift from this:
+# sim-tutorial.sh derives its site count from flip-min-clients and passes it as num-partitions.
+# A compose stack running a different number of SuperNodes must say so the same way —
+# --node-config 'partition-id=<i> num-partitions=<N>' on each — rather than edit this value.
+COMPOSE_STACK_SUPERNODES = 2
 
 
 def client_identity(context: Context) -> str:
@@ -80,21 +90,25 @@ def partition_count(context: Context, num_partitions: int | None = None) -> int:
     """How many partitions a shared dev cohort is split into for this run.
 
     Single source for the count, so a caller reporting on a split cannot disagree with the
-    split :func:`partition_cohort` actually performed.
+    split :func:`partition_cohort` actually performed — including outside ``LOCAL_DEV``, where
+    no split happens and a failure message must not claim one did.
 
     Args:
         context (Context): The Flower ``Context``; only ``node_config`` is read.
-        num_partitions (int | None): An explicit override, returned as-is when given.
+        num_partitions (int | None): An explicit override, returned as-is when given under
+            ``LOCAL_DEV`` — the same condition under which :func:`partition_cohort` honours it.
 
     Returns:
-        int: ``num_partitions`` if given, else ``node_config``'s ``num-partitions``, else 2 —
-        the compose stack sets no ``node_config`` but does run two SuperNodes off one CSV, and
-        every shipped tutorial declares ``flip-min-clients = 2``.
+        int: 1 outside ``LOCAL_DEV`` (a deployed trust's cohort is never partitioned). Otherwise
+        ``num_partitions`` if given, else ``node_config``'s ``num-partitions``, else
+        :data:`COMPOSE_STACK_SUPERNODES`.
     """
+    if not FlipConstants.LOCAL_DEV:
+        return 1
     if num_partitions is not None:
         return num_partitions
     declared = getattr(context, "node_config", {}).get(NUM_PARTITIONS_KEY)
-    return int(declared) if declared is not None else 2
+    return int(declared) if declared is not None else COMPOSE_STACK_SUPERNODES
 
 
 def _partition_index(context: Context, num_partitions: int) -> int | None:
