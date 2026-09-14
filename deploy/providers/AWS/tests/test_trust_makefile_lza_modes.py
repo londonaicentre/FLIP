@@ -91,6 +91,22 @@ def test_xnat_makefile_maps_every_deployed_prod_value(prod: str, env_suffix: str
     assert "development" not in stack_files
 
 
+@pytest.mark.parametrize(
+    ("prod", "expected"),
+    [("lza-stag", 'if [ -n "lza-stag" ]'), ("lza", 'if [ -n "lza" ]'), ("", 'if [ -n "" ]')],
+)
+def test_xnat_reset_recipe_branches_on_deployed_envs(prod: str, expected: str) -> None:
+    """The recipe-level branch in ``xnat-reset`` follows DEPLOYED_ENVS too (it was a fourth ``true||stag``)."""
+    result = subprocess.run(
+        ["make", "-n", "xnat-reset", f"PROD={prod}", "KIT=ZZPROBE", "TRUST_NUM=1", "FL_BACKEND=nvflare"],
+        text=True,
+        capture_output=True,
+        cwd=XNAT_DIR,
+        check=True,
+    )
+    assert expected in result.stdout
+
+
 def test_development_paths_are_unchanged() -> None:
     env, compose_suffix, _ = _probe(TRUST_DIR, TRUST_PROBE, "")
     assert (env, compose_suffix) == ("development", "development")

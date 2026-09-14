@@ -511,7 +511,7 @@ xnat-reset:
 	fi
 	@set -e; \
 	echo "Deleting previous XNAT data and creating new directories for $(KIT) ..."; \
-	if [ "$(PROD)" = "true" ] || [ "$(PROD)" = "stag" ]; then \
+	if [ -n "$(filter $(DEPLOYED_ENVS),$(PROD))" ]; then \
 		echo "  📍 Using prod data dir: $(XNAT_DATA_DIR)/"; \
 		xnat_ctx="$$(docker context show)"; \
 		xnat_endpoint="$$(docker context inspect "$$xnat_ctx" --format '{{.Endpoints.docker.Host}}' 2>/dev/null)"; \
