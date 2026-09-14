@@ -356,7 +356,10 @@ def main():
     if args.serve:
         print(f"\n📧 Starting local HTTP server at http://localhost:{args.port}")
         print("Open the following URLs in your browser:")
-        for name in ["invite", "password_reset_code", "password_reset_link", "access_request", "xnat_credentials"]:
+        for name in [
+            "invite", "password_reset_code", "password_reset_link",
+            "access_request", "xnat_credentials", "xnat_added_to_project",
+        ]:
             print(f"  • http://localhost:{args.port}/flip_email_{name}.html")
         print("\nPress Ctrl+C to stop the server.\n")
 

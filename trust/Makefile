@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build clean up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
+.PHONY: build up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
 	create-networks remove-networks recreate-networks tests \
 	update-omop-data update-orthanc-data seed-omop seed-orthanc seed seed-trusts \

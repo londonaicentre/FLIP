@@ -61,8 +61,10 @@ jobs:
 
           if [[ -z "$LATEST_TAG" ]]; then
             echo ""
-            echo "No previous flip-utils release tags found — first release, version ${NEW_VERSION} is accepted."
-            exit 0
+            echo "ERROR: no flip-utils-v*.*.* tags found, but flip-utils has been released before (flip-utils-v0.4.1 onwards)."
+            echo "The checkout did not bring the tags — check fetch-depth on actions/checkout, or run 'git fetch --tags'."
+            echo "Refusing to accept ${NEW_VERSION} unverified: release-pypi.yml would otherwise publish a lower version."
+            exit 1
           fi
 
           LATEST_VERSION="${LATEST_TAG#flip-utils-v}"

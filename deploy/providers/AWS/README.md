@@ -1832,6 +1832,6 @@ Before testing emails:
 ### Making Template Changes
 
 1. **Edit template file** in `templates/cognito/` or `templates/ses/`
-2. **Test locally**: `python3 tests/test_email_templates.py` (verify all 5 pass)
+2. **Test locally**: `python3 tests/test_email_templates.py` (verify all 6 pass)
 3. **Review**: Check generated `email_previews/*.html` files in browser
 4. **Deploy**: Changes are picked up on next `terraform apply`

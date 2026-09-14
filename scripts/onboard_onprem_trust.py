@@ -424,40 +424,52 @@ def check_gpu_capacity(kit_vars: dict[str, str], kit_present: bool, kit: str) ->
         return Check("fl-client GPU capacity", Status.PENDING, "pending — needs kit file")
     raw = (kit_vars.get("NUM_AVAILABLE_GPUS") or "").strip()
     if not raw:
-        # fl-client's entrypoint.sh does `NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS:-1}` — an unset
-        # kit value defaults to 1 (expects a GPU), not 0, so fall through and check it like an
-        # explicit "1" rather than reporting a false CPU-only PASS.
-        kit_gpus = 1
-        gpu_label = "NUM_AVAILABLE_GPUS unset in kit (fl-client entrypoint defaults it to 1 → expects a GPU)"
-    else:
-        try:
-            kit_gpus = int(raw)
-        except ValueError:
+        if kit_vars.get("FL_BACKEND", "").strip().lower() != "nvflare":
             return Check(
-                "fl-client GPU capacity", Status.FAIL,
-                f"NUM_AVAILABLE_GPUS='{raw}' is not an integer",
-                hints=[f"Edit trust/.env.{kit} → Trust-local credentials section."],
+                "fl-client GPU capacity", Status.PASS,
+                "NUM_AVAILABLE_GPUS unset in kit (CPU-only; the Flower client does not read it)",
             )
-        gpu_label = f"NUM_AVAILABLE_GPUS={kit_gpus}"
+        # `make up-trust` applies the GPU passthrough overlay only when the kit sets
+        # NUM_AVAILABLE_GPUS > 0 (trust/Makefile GPU_OVERRIDE), so an unset value gets no
+        # device — yet fl-client's entrypoint.sh resolves that same unset value to 1
+        # (`${NUM_AVAILABLE_GPUS:-1}`) and NVFLARE then demands a GPU it was never given.
+        # That crash-loops whatever the host carries, so there is no host count worth probing.
+        return Check(
+            "fl-client GPU capacity", Status.WARN,
+            "NUM_AVAILABLE_GPUS unset in kit: the GPU overlay is skipped but fl-client defaults to 1 GPU",
+            hints=[
+                "fl-client will crash-loop on `num_of_gpus specified (1) exceeds available GPUs: 0`.",
+                f"Edit trust/.env.{kit} → set NUM_AVAILABLE_GPUS explicitly: 0 (with MEMORY_PER_GPU_IN_GIB=0)",
+                "  for CPU-only, or N on a host exposing N NVIDIA GPU(s) to enable passthrough.",
+            ],
+        )
+    try:
+        kit_gpus = int(raw)
+    except ValueError:
+        return Check(
+            "fl-client GPU capacity", Status.FAIL,
+            f"NUM_AVAILABLE_GPUS='{raw}' is not an integer",
+            hints=[f"Edit trust/.env.{kit} → Trust-local credentials section."],
+        )
     if kit_gpus <= 0:
         return Check(
             "fl-client GPU capacity", Status.PASS,
-            f"{gpu_label} (CPU-only)",
+            f"NUM_AVAILABLE_GPUS={kit_gpus} (CPU-only)",
         )
     host_gpus = detect_host_gpu_count()
     if host_gpus is None:
         return Check(
             "fl-client GPU capacity", Status.PASS,
-            f"{gpu_label}; host GPU count undetectable (nvidia-smi errored)",
+            f"NUM_AVAILABLE_GPUS={kit_gpus}; host GPU count undetectable (nvidia-smi errored)",
         )
     if host_gpus >= kit_gpus:
         return Check(
             "fl-client GPU capacity", Status.PASS,
-            f"{gpu_label} ≤ host NVIDIA GPUs ({host_gpus})",
+            f"NUM_AVAILABLE_GPUS={kit_gpus} ≤ host NVIDIA GPUs ({host_gpus})",
         )
     return Check(
         "fl-client GPU capacity", Status.WARN,
-        f"{gpu_label} but host exposes {host_gpus} NVIDIA GPU(s)",
+        f"NUM_AVAILABLE_GPUS={kit_gpus} but host exposes {host_gpus} NVIDIA GPU(s)",
         hints=[
             "fl-client will crash-loop on `num_of_gpus specified exceeds available GPUs`.",
             f"Edit trust/.env.{kit} → set NUM_AVAILABLE_GPUS=0 and MEMORY_PER_GPU_IN_GIB=0",

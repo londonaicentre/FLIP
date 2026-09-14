@@ -49,36 +49,32 @@ copyright = "2026, The London AI Centre for Value-Based Healthcare"
 author = "The London AI Centre for Value-Based Healthcare"
 
 # The FLIP platform version, read from the repository's root pyproject.toml so the docs
-# never carry a hand-maintained copy of it. Falls back to an empty string if the file is
-# missing or unparseable (e.g. a docs-only checkout), which is what Sphinx defaults to.
+# never carry a hand-maintained copy of it. It reaches the HTML title and the search index,
+# so an unreadable file fails the build rather than quietly producing an unversioned site —
+# the same stance the diagram hook below takes.
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _platform_version() -> str:
     """Read ``project.version`` from the repository root ``pyproject.toml``.
 
     Returns:
-        str: The declared platform version, or ``""`` if it cannot be read.
+        str: The declared platform version.
+
+    Raises:
+        SphinxError: If the file is missing, unparseable, or carries no ``project.version``.
     """
-    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    pyproject = REPO_ROOT / "pyproject.toml"
     try:
         with pyproject.open("rb") as fh:
             return str(tomllib.load(fh)["project"]["version"])
-    except (OSError, KeyError, tomllib.TOMLDecodeError):
-        logger.warning(f"Could not read the platform version from {pyproject}; leaving it unset.")
-        return ""
+    except (OSError, KeyError, tomllib.TOMLDecodeError) as exc:
+        raise SphinxError(f"Could not read project.version from {pyproject} ({exc!r}).") from exc
 
 
 # The short X.Y version, and the full version including alpha/beta/rc tags
 release = _platform_version()
 version = release
-
-# The full version of the FLIP platform, including alpha/beta/rc tags
-# The rst_epilog list makes items within it globally-available to compiled .rst files.
-# rst_epilog = """
-# .. |flip_version| replace:: {flip_version}
-# """.format(
-#     flip_version="1.0",
-# )
 
 # -- General configuration ---------------------------------------------------
 
@@ -185,7 +181,6 @@ html_static_path = ["_static"]
 # it documents and no PNG has to be kept in sync by hand. Needs graphviz `dot`: ReadTheDocs installs it via
 # build.apt_packages, the docs CI job via apt-get.
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 AWS_PROVIDER_DIR = REPO_ROOT / "deploy" / "providers" / "AWS"
 GENERATED_ASSETS_DIR = Path(__file__).resolve().parent / "assets" / "generated"
 SKIP_DIAGRAMS_ENV = "FLIP_DOCS_SKIP_DIAGRAMS"

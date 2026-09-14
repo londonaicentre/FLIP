@@ -141,9 +141,11 @@ make provision-local-trust
    - Creates the **per-net images bind sources** `/opt/flip/data/images/net-1`
      and `net-2`. Each fl-client mounts only its own net's slice, and both
      imaging-api and the fl-client *write* there, so these must exist and be
-     writable before the first `up-trust` (which runs under `sudo` on-prem — a
-     root-created `net-N` makes every image download 500 and training later fail
-     with a misleading `num_samples=0`). Ownership is **backend-aware**, driven by
+     writable before the first `up-trust`. `make up-trust` repairs their ownership
+     itself (`ensure_net_dirs` in `trust/Makefile`, which runs under `sudo` on-prem
+     and fails loudly if it cannot), so the trap is a `net-N` created root-owned by
+     a path that bypasses make: then every image download 500s and training later
+     fails with a misleading `num_samples=0`. Ownership is **backend-aware**, driven by
      the `fl_backend` extra-var the make target passes: NVFLARE's client shares
      imaging-api's uid, so `ubuntu:ubuntu` + `0755`; Flower's runs as `app`
      (uid/gid 49999) on upstream `flwr/base`, so group `49999` + `0775`. Re-run

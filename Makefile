@@ -10,8 +10,8 @@
 # limitations under the License.
 #
 
-.PHONY: build build-fl clean up down up-no-trust up-trusts central-fl central-hub \
-		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
+.PHONY: build build-fl clean up down up-no-trust up-trusts central-hub \
+		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
 		check-aws-access generate-internal-service-key generate-xnat-credentials \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock checkov-lint aws-diagram \

@@ -159,7 +159,7 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 | `XNAT_URL` | URL of the XNAT instance (default `http://xnat-web:8080` — a compose-topology constant, not a kit field) |
 | `XNAT_PORT` | **Required.** XNAT's DICOM SCP receiver port. Paired with `XNAT_AETITLE` as the C-MOVE destination handed to the PACS, so it must be the receiver port, not the web-UI `XNAT_WEB_PORT` |
 | `XNAT_AETITLE` | XNAT's own AE title (default `XNAT`). Must match `XNAT_AETITLE` in `configure-xnat.sh`: DQR matches the C-MOVE destination against a registered SCP receiver by exact AE title **and** port |
-| `PACS_ID` | Fallback PACS id (default `1`). A trust XNAT retrieves from exactly one PACS and `configure-xnat.sh` enforces that, so the id is normally resolved from XNAT at runtime; this value is used only when XNAT cannot be reached |
+| `PACS_ID` | Fallback PACS id (default `1`). A trust XNAT retrieves from exactly one PACS and `configure-xnat.sh` enforces that, so the id is normally resolved from XNAT at runtime; this value is used only as a fallback, when XNAT cannot be reached or reports no registered PACS (both logged at error) |
 | `XNAT_SERVICE_USER` | XNAT service account username |
 | `XNAT_SERVICE_PASSWORD` | XNAT service account password |
 | `XNAT_DATABASE_URL` | PostgreSQL connection string for the XNAT database (non-secret topology constant; defaults in `config.py`, and the default carries **no** password) |
