@@ -15,7 +15,9 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
+import { Form as VeeForm } from "vee-validate";
 import { expect, it, vi } from "vitest";
+import { defineComponent } from "vue";
 
 import * as helpers from "@/utils/helpers";
 
@@ -65,6 +67,107 @@ describe("AiSwitch", () => {
         expect(comp.get("[data-test=switch-knob]").classes()).toContain("translate-x-6");
         // On, and still no tick: the knob has moved, which is the whole signal.
         expect(comp.find("svg").exists()).toBe(false);
+    });
+
+    // A field that starts ON is where the two sources of truth used to diverge: the knob and
+    // label came from vee-validate, while aria-checked (and Space) came from Headless UI's own
+    // internal state, which was never told the field started on. Mount inside a form with an
+    // initial value so the switch is drawn on from the first render.
+    const mountOn = () =>
+        mount(
+            defineComponent({
+                components: {
+                    AiSwitch,
+                    VeeForm
+                },
+                template: `
+                    <VeeForm :initial-values="{ flag: true }">
+                        <AiSwitch name="flag" :value="true" :label="{ enabled: 'On', disabled: 'Off' }" />
+                    </VeeForm>`
+            }),
+            {
+                global: {
+                    plugins: [createTestingPinia({
+                        createSpy: vi.fn,
+                        stubActions: false
+                    })]
+                }
+            }
+        );
+
+    it("announces the state it draws: aria-checked follows the knob, not a private counter", async () => {
+        const comp = mountOn();
+        const control = comp.get("button[role=\"switch\"]");
+
+        expect(comp.get("[data-test=switch-knob]").classes()).toContain("translate-x-6");
+        expect(comp.text()).toContain("On");
+        expect(control.attributes("aria-checked")).toBe("true");
+
+        await control.trigger("click");
+
+        expect(comp.get("[data-test=switch-knob]").classes()).toContain("translate-x-1");
+        expect(comp.text()).toContain("Off");
+        expect(control.attributes("aria-checked")).toBe("false");
+    });
+
+    it("toggles from the keyboard: Space changes the value, not just the announcement", async () => {
+        const comp = mountOn();
+        const control = comp.get("button[role=\"switch\"]");
+
+        await control.trigger("keyup", { key: " " });
+
+        expect(comp.get("[data-test=switch-knob]").classes()).toContain("translate-x-1");
+        expect(comp.text()).toContain("Off");
+        expect(control.attributes("aria-checked")).toBe("false");
+    });
+
+    // Several switches sharing one name are one checkbox GROUP — the trust pickers in
+    // ProjectApproval (name="trusts") and TrainingOptions (name="trust_ids") — and the field
+    // is then an array of the values switched on. Each switch must add or remove only its own
+    // value; writing the field directly would collapse the group to the last switch touched
+    // (which is exactly what the staging and training e2e specs then fail on).
+    it("shares a name with its siblings as a group: each toggle adds or removes only its own value", async () => {
+        const submitted: unknown[] = [];
+        const comp = mount(
+            defineComponent({
+                components: {
+                    AiSwitch,
+                    VeeForm
+                },
+                setup: () => ({ onSubmit: (values: unknown) => submitted.push(values) }),
+                template: `
+                    <VeeForm @submit="onSubmit">
+                        <AiSwitch name="trusts" value="KCH" data-test="kch" />
+                        <AiSwitch name="trusts" value="UCLH" data-test="uclh" />
+                        <button type="submit">go</button>
+                    </VeeForm>`
+            }),
+            {
+                global: {
+                    plugins: [createTestingPinia({
+                        createSpy: vi.fn,
+                        stubActions: false
+                    })]
+                }
+            }
+        );
+        const kch = comp.get("[data-test=kch]");
+        const uclh = comp.get("[data-test=uclh]");
+
+        await kch.trigger("click");
+        await uclh.trigger("click");
+        await comp.get("form").trigger("submit");
+        await vi.waitFor(() => expect(submitted).toHaveLength(1));
+        expect(submitted[0]).toEqual({ trusts: ["KCH", "UCLH"] });
+        expect(kch.attributes("aria-checked")).toBe("true");
+        expect(uclh.attributes("aria-checked")).toBe("true");
+
+        await kch.trigger("click");
+        await comp.get("form").trigger("submit");
+        await vi.waitFor(() => expect(submitted).toHaveLength(2));
+        expect(submitted[1]).toEqual({ trusts: ["UCLH"] });
+        expect(kch.attributes("aria-checked")).toBe("false");
+        expect(uclh.attributes("aria-checked")).toBe("true");
     });
 
     it("drops its label on a narrow window — the knob's position already says it", () => {

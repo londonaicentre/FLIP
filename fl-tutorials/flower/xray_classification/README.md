@@ -93,37 +93,26 @@ column shape `query.sql` returns from the trust mock OMOP DB (concept ids
 accession number — `flip.get_by_accession_number(..., resource_type=[ResourceType.DICOM])`
 reads them directly when `LOCAL_DEV=true`.
 
-### Not recommended: Flower Simulation Engine (`flwr run`)
+### Run on the flwr simulator (no containers)
 
-We deliberately do **not** document a `flwr run` invocation for this tutorial.
-Running it via the Simulation Engine is technically possible but brittle, for
-reasons specific to this project:
+```bash
+make -C fl-tutorials sim-tutorial TUTORIAL=xray_classification FL_BACKEND=flower
+```
 
-1. **Long-lived `flower-superlink` caches its environment.** `flwr run`
-   submits jobs to an already-running `flower-superlink` daemon. Ray worker
-   subprocesses inherit the superlink's env, *not* the env you exported on the
-   `flwr run` command line — so changing `DEV_DATAFRAME=…` between runs has
-   no effect until you `pkill -f flower-superlink`.
-2. **ClientApp CWD is not your project directory.** `flwr run` installs a
-   snapshot of the app under `~/.flwr/apps/<publisher>.<name>.<version>.<hash>/`
-   and runs ClientApp subprocesses from there, so relative paths like
-   `../../data/...` resolve to `~/.flwr/data/...` and fail.
-3. **FLIP's `DevSettings` singleton is pinned at import time.**
-   `flip/constants/pt_constants.py` reads `FlipConstants.LOCAL_DEV` at
-   class-body time, which forces pydantic-settings to materialise the
-   singleton before any run starts. Once pinned, later `os.environ[...]`
-   writes don't propagate, so mid-run path overrides are a dead end.
+Runs every ClientApp in-process — no SuperLink container, no SuperNodes, no fl-api, no Docker —
+with the same `app/` code the compose stack deploys: site identity comes from
+`context.node_config`'s `partition-id`, which the simulator populates and a deployed SuperNode
+accepts via `--node-config`. Use it while iterating on app code; use the compose stack above
+before merging, since only that path exercises the deployment wiring (TLS, fl-api submit,
+SuperNode registration).
 
-Under Docker Compose none of these bite: each container starts fresh, env
-vars are applied from `env_file`/`environment:` at container start, and CWDs
-are fixed by `working_dir:`.
-
-If you still want to experiment with `flwr run` locally you will have to
-(a) `pkill -f flower-superlink` before every run with new env, (b) use
-absolute paths (`$(git rev-parse --show-toplevel)/data/...`), and (c) accept
-that some FLIP-side behaviour driven by the import-time singleton will still
-reflect whatever env the superlink was born with. Don't do it for real work —
-use the compose stack above.
+A raw `flwr run` has three sharp edges in this project — a long-lived SuperLink caches its
+environment, the ClientApp's working directory is a snapshot under `~/.flwr/apps/`, and
+`WORKING_DIR` defaults to a container path — which is why the path is a make target rather than
+a command: `sim-tutorial.sh` handles all three, and stops only its *own* stale simulator
+processes (a blanket `pkill -f flower-superlink` would also kill the FLIP dev stack's fl-server,
+whose processes are visible in the host PID namespace). See the
+[3D spleen segmentation README](../3d_spleen_segmentation/README.md) for the details.
 
 ## Hyperparameters
 

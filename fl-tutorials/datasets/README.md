@@ -28,21 +28,23 @@ Invoke the targets through the fl-tutorials root Makefile (which forwards here):
 ```bash
 make -C fl-tutorials download-xray-data
 make -C fl-tutorials download-spleen-data              # MSD build (NUM_CASES=<1-41>, default 10)
-make -C fl-tutorials download-spleen-data FL_BACKEND=flower   # pre-built FLIP-format tree
+make -C fl-tutorials download-spleen-checkpoint        # evaluation-tutorial checkpoint only
 make -C fl-tutorials download-arkplus-finetuning-data  # large (~6.3 GB)
 make -C fl-tutorials download-arkplus-eval-data        # (~1.6 GB)
+make -C fl-tutorials download-synthea-data             # EHR tabular dataset (~5 MB, backend-agnostic)
 make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrichment
 ```
 
 | Dataset | Source | Output under `fl-tutorials/data/` | Consumed by |
 | --- | --- | --- | --- |
 | xray | HF `aicentreflip/flip-fl-base-test-data` | `xrays_mini_300/{accession-resources/, dataframe.csv}` | xray_classification (both backends) |
-| spleen (MSD build) | MSD Task09_Spleen | `spleen/{images/, dataframe.csv}` | 3d_spleen_segmentation + evaluation + latent_diffusion_model (NVFLARE sim); enrichment labels |
-| spleen (FLIP-format) | HF `aicentreflip/flip-fl-base-test-data` | `spleen/{accession-resources/, sample_get_dataframe_response.csv}` + `model_checkpoints/model.pt` | 3d_spleen_segmentation + evaluation (Flower stack) |
+| spleen | MSD Task09_Spleen (`NUM_CASES`, default 10) | `spleen/{images/, dataframe.csv}` | 3d_spleen_segmentation + evaluation + latent_diffusion_model (**both backends**); enrichment labels |
+| spleen checkpoint | HF `aicentreflip/flip-fl-base-test-data` | `model_checkpoints/model.pt` | 3d_spleen_segmentation_evaluation |
 | arkplus | HF `aicentreflip/tutorials-arkplus-cxr-classification` | `arkplus/site{1,2}[,_holdoff]/` | the three Ark+ tutorials (NVFLARE) |
+| synthea | Synthea-in-OMOP, 1k persons (AWS Open Data Registry) | `synthea/{dataframe.csv, site{1,2}/dataframe.csv}` | ehr_risk_prediction (both backends); on the platform the same data goes into each trust's OMOP via `make -C trust load-synthea-ehr` |
 
-The two spleen variants coexist in `data/spleen/` — the FLIP-format download removes only
-its own outputs, never an MSD build beside it.
+One spleen tree serves both backends. `download-spleen-data` refuses to overwrite an
+existing `data/spleen/images` — remove it first to rebuild at a different `NUM_CASES`.
 
 ## Per-dataset scripts
 
@@ -58,10 +60,9 @@ pandas, natsort; `uv.lock` is gitignored):
   [spleen tutorial README](../nvflare/image_segmentation/3d_spleen_segmentation/README.md)
   for the full walkthrough, and the repo-root `CLAUDE.md` for its `e2e_smoke` wiring). Runs
   against the in-tree `flip-utils`, not `spleen/`'s env.
-- `download_spleen_flip_format_dataset.py` — fetch the pre-built FLIP-format tree (fixed
-  6-case snapshot) plus the evaluation checkpoint from Hugging Face, replacing only its own
-  outputs in `data/spleen/`. A pure Hugging Face fetch, so like the xray/arkplus scripts it
-  runs via `uv run --no-project --with huggingface_hub`, not in `spleen/`'s env.
+- `download_spleen_checkpoint.py` — fetch the evaluation-tutorial checkpoint from Hugging
+  Face. A pure Hugging Face fetch, so like the xray/arkplus scripts it runs via
+  `uv run --no-project --with huggingface_hub`, not in `spleen/`'s env.
 
 [`cxr/`](cxr/) owns the `cxr_project` OMOP converter and its uv project (`pyproject.toml` —
 pandas, pandera, sqlglot, tqdm; `uv.lock` is gitignored). It has no download script: the images
@@ -83,6 +84,19 @@ against `flip-utils` without adopting `spleen/`'s env:
   Hugging Face and normalise each into `accession-resources/` +
   `sample_get_dataframe_response.csv`. Parameterised by `--sites`, so one script backs both
   `download-arkplus-finetuning-data` and `download-arkplus-eval-data`.
+
+[`synthea/`](synthea/) owns the single EHR script, in the smallest of the dataset uv projects
+(pandas only — the project exists so its tests run in an environment declaring exactly what the
+script imports, like the other two):
+
+- `build_synthea_dataframe.py` — fetch three OMOP tables (`person`, `condition_occurrence`,
+  `visit_occurrence`) of the public Synthea-in-OMOP dataset and derive the EHR risk-prediction
+  tutorial's feature dataframe: one row per person labelled with first type-2-diabetes diagnosis,
+  plus `site1/`/`site2/` `person_id`-modulo splits. Its feature logic mirrors the tutorial's
+  `query.sql` (the OMOP SQL a deployed run sends to each trust) — change one and change the other
+  (see the [EHR tutorial README](../nvflare/tabular_classification/ehr_risk_prediction/README.md)).
+  `tests/datasets/synthea/` keeps the two honest: it runs the actual `query.sql` on SQLite over the
+  same tiny tables and diffs it against `derive_features` row for row.
 
 ## OMOP mock-data generation (FLIP#1092)
 
