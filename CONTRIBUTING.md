@@ -626,6 +626,7 @@ Before opening the release PR from `develop` to `main`:
 
 1. From a branch off `develop`, commit the version bumps above and open a PR targeting `develop` with title `Release v<X.Y.Z>`.
 1. Once that merges and CI is green, open a PR from `develop` to `main`. [`validate_branch_origin.yml`](.github/workflows/validate_branch_origin.yml) rejects any PR to `main` that does not come from `develop`.
+   **Merge it with a merge commit — never squash or rebase.** A squash leaves `main` with `develop`'s content but none of its history, so the *next* release PR conflicts on every file touched since the previous real merge (v0.5.0 was squashed and v0.6.0 hit 168 spurious conflicts). If that has already happened, reconcile once with `git merge -s ours --no-ff origin/main` on `develop` — it records `main` as an ancestor without changing a file — through a PR into `develop`.
 1. On that PR, check the automated gates before merging:
    - [`pr-release-notes-preview.yml`](.github/workflows/pr-release-notes-preview.yml) posts a **release-notes preview** comment — the rendered template header plus the generated changelog — and updates it in place on every push. Read it as the last check that the notes are right.
    - [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) and [`check-package-metadata.yml`](.github/workflows/check-package-metadata.yml) run when `flip-utils/**` changed.
@@ -740,6 +741,21 @@ make -C flip-api delete_testing_projects
 
 These are also available as VS Code tasks via **Terminal > Run Task** — look for `Create testing projects` and
 `Delete testing projects`.
+
+## Building the documentation
+
+The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs docs` (see
+[`docs/README.md`](docs/README.md)). Two things about that build are easy to trip over:
+
+- It needs **graphviz** (`dot` on PATH). `docs/source/conf.py` renders the Central Hub AWS diagrams from
+  `deploy/providers/AWS/architecture/central_hub.py` at build time — no PNG is committed for the site — and
+  fails loudly without it. `FLIP_DOCS_SKIP_DIAGRAMS=1 make -C docs docs` gives a text-only build on a host
+  without graphviz. ReadTheDocs and the docs CI job install graphviz themselves.
+- Those diagrams are **drift-guarded against the Terraform**: `deploy/providers/AWS/tests/test_architecture_diagram.py`
+  fails when a drawn resource disappears from the `.tf` files or a load-bearing one (an ECS service, bucket,
+  load balancer, …) is added without being drawn. A Terraform change of that kind updates
+  `TERRAFORM_ADDRESSES` in the script in the same PR, then `make aws-diagram` refreshes the two committed
+  copies the AWS README embeds.
 
 ## Documentation GIFs
 

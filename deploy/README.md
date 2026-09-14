@@ -366,10 +366,10 @@ below. The per-service grants in the compose files are:
 | Service(s) | Granted capabilities | Reason |
 |------------|----------------------|--------|
 | flip-api, fl-api (Flower), trust-api, imaging-api, data-access-api, xnat-web, loki, alloy, grafana | `CHOWN` | In-container init/entrypoint fixes ownership on volume paths it owns. |
-| fl-client-net-* (Flower — production and development; NVFLARE development) | *(none)* | Runs non-root (GHSA-8465), and Docker grants effective capabilities only to root — a `cap_add` here would land in the bounding set with `CapEff` still `0`, so it would buy nothing. Flower's `flower-supernode` entrypoint does no chmod/chown at all and its dev mounts are `:ro`. NVFLARE's dev kit (`provision/workspace-dev/`) is written by `make provision` as the host user whose UID is baked into the `:dev` image, so ownership already matches; when it doesn't (CI, a shared devbox, a teammate's prebuilt image) the fix is to `chown` the kit dirs to the container UID, not to grant a capability. |
+| fl-client-net-* (Flower — production and development; NVFLARE development) | *(none)* | Runs non-root (GHSA-8465), and Docker grants effective capabilities only to root — a `cap_add` here would land in the bounding set with `CapEff` still `0`, so it would buy nothing. Flower's `flower-supernode` entrypoint does no chmod/chown at all and its dev mounts are `:ro`. NVFLARE's dev kit (`provision/workspace-dev/`) is written by `make provision` as the host user. Since FLIP#1171 the image identity is fixed at `flip`/1000/1000 rather than baked from whoever built the image, and the dev composes pass `user: "${UID:-1000}:1000"` — so the container runs as the host user that already owns the kit, and no `chown` (and no capability) is needed. |
 | fl-client-net-* (NVFLARE, production) | `DAC_OVERRIDE`, `FOWNER` (production) | Inert for the current image, which runs non-root from PID 1 — the Ansible-provisioned `FL_KIT_DIR` is pre-chowned to the container's UID by `site.yml` / `site_local_trust.yml`. Kept for legacy root-image compat: trusts pin `DOCKER_FL_TAG` (an immutable `sha` tag is the documented norm), so `--pull always` cannot move a trust off a pre-GHSA-8465 **root** image, and under `cap_drop: ALL` such an image loses root's implicit DAC bypass on the `envsubst` write into the bind-mounted `local/` and `FOWNER` on the `chmod +x` of `startup/*.sh`. Its writes predate the `\|\| exit 1` guard, so it degrades to running NVFLARE against a stale/absent `resources.json` rather than crash-looping — a worse failure to diagnose. Same rationale as the orthanc row below. |
-| fl-api (NVFLARE) | `CHOWN` | The `flare-fl-api` image runs as user `flip` (UID 1001, non-root), so only the `CHOWN` baseline is needed; `DAC_OVERRIDE` and `FOWNER` are inert for non-root processes. |
-| fl-server (NVFLARE) | `CHOWN`, `DAC_OVERRIDE`, `FOWNER` | The container runs as root, but the provisioned NVFLARE kits are bind-mounted owned by the provisioning uid with 0600 keys. `cap_drop: ALL` strips root's implicit DAC bypass, so without `DAC_OVERRIDE` the fl-server crash-loops on `/app/startup/server.key`; the entrypoint also `chmod`s kit scripts it does not own (`FOWNER`). In dev, the same grant lets the root fl-server read the operator's 0600 AWS SSO token cache for the S3 results upload. |
+| fl-api (NVFLARE) | `CHOWN` | The `flare-fl-api` image runs as user `flip` (UID 1000, non-root — fixed by FLIP#1171; it previously varied with whoever built the image), so only the `CHOWN` baseline is needed; `DAC_OVERRIDE` and `FOWNER` are inert for non-root processes. |
+| fl-server (NVFLARE) | *(none)* | Runs non-root, so capabilities are inert here as they are for fl-client above — `CapEff` stays `0` and a `cap_add` sits unused in the bounding set. The grants that used to be here (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`) were removed by FLIP#1171 once measurement confirmed they had never taken effect; the comment claiming they were what made the host-owned mounts readable was wrong. What actually reads the provisioned kit's 0600 keys and the operator's 0600 AWS SSO token cache is the matching **uid**: the dev compose runs the container as the host user via `user: "${UID:-1000}:1000"`. |
 | fl-server (Flower, development only) | `CHOWN`, `DAC_OVERRIDE` | The dev compose runs the SuperLink as root (see the `user: "0:0"` comment in `compose.development.flower.yml`) to read the host-provisioned 0640 TLS keys and the operator's 0600 SSO token cache; `cap_drop: ALL` strips root's implicit DAC bypass, so `DAC_OVERRIDE` is granted back. Production runs the image's non-root user with instance-role AWS credentials and keeps the `CHOWN` baseline. |
 | flip-db, omop-db, xnat-db | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID` | The official postgres entrypoint runs as root and `gosu`-drops to the `postgres` user (`SETUID`/`SETGID`). On every start it re-runs `chmod 00700 $PGDATA` and a `chown` sweep over the persisted data dir, which on subsequent boots is already owned by `postgres` with mode `0700` — `chmod` on a dir owned by another uid needs `FOWNER` and traversing it needs `DAC_OVERRIDE`. Without them the container exits 1 on a persisted volume (see commit history, FLIP#485). |
 | orthanc | `CHOWN`, `DAC_OVERRIDE`, `FOWNER` (production) | Runs non-root (UID 999) from PID 1, so `DAC_OVERRIDE`/`FOWNER` are inert for the current image — they're kept for legacy root-image compat, since a pre-hardening orthanc image runs its entrypoint as root and crash-loops under `cap_drop: ALL` without them (hostid write, plugin symlink fixup). The storage bind mount is made 999-writable at the provisioning layer rather than fixed up with in-container caps; `CHOWN` is kept as the shared baseline. |
@@ -518,6 +518,41 @@ never sees these keys: they live only in trust-side env (the trust's kit file `t
 
 FL clients (trust side) **do not** have Central Hub API credentials. Only the fl-server communicates with flip-api.
 FL clients relay metrics and exceptions to the fl-server, which forwards them to the Central Hub.
+
+### Payload Encryption (flip-api ↔ trust-api, and the project id the FL client carries)
+
+On top of TLS, three things are encrypted under the platform-wide `AES_KEY_BASE64`: every hub → trust task
+payload, the encrypted project id the hub hands to FL clients (which forward it to imaging-api and
+data-access-api on every image download and cohort call), and the XNAT password imaging-api returns in a task
+result. Since FLIP#1179 the cipher is **AES-256-GCM** in a versioned envelope — base64 of
+`{"v": 1, "kid": "shared", "iv": <b64 12-byte nonce>, "ct": <b64 ciphertext||tag>}` — with the version, the key
+id and a **context** bound into the authentication tag, so a payload altered anywhere between the sending and the
+receiving service fails decryption outright instead of decrypting to altered content. The context is not carried
+on the wire; both sides derive it from what they already know (`task:<task_type>` for a task payload, `project_id`
+for the project id, `xnat_password` for the credential), so a task payload cannot be re-targeted at a different
+handler by rewriting the unauthenticated `task_type` beside it. What is *not* covered: the trust's own responses
+(cohort results, task outcomes) travel back to the hub as plain JSON under TLS only.
+
+Two operational consequences:
+
+- **The key must be byte-identical on the hub and on every trust container that decrypts** (trust-api,
+  imaging-api, data-access-api). A mismatch fails closed: trust-api reports every task as
+  `Invalid payload: failed authentication`, and imaging-api / data-access-api answer the FL client with a **400**
+  (`... failed authentication`; a payload that is not an envelope at all is a 400 `... is not a valid envelope`).
+  A 500 from either is a different class of fault — the key could not be loaded, or the cipher itself failed —
+  not a mismatch. The key must decode to exactly 32 bytes (AES-256); every service refuses a shorter one at
+  key load rather than silently running AES-128/192 under the same envelope.
+  On stag/prod the hub's copy is whatever the CI Terraform apply wrote into Secrets Manager from the GitHub
+  environment, which is not necessarily the operator's `.env.<env>` copy — recover the deployed inputs with
+  `deploy/providers/AWS/scripts/reconcile_ci_env.py` before minting or refreshing trust kits.
+- **There is no compatibility with the pre-FLIP#1179 AES-CBC format.** A hub and its trusts must cross that
+  boundary together: enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, redeploy the hub
+  and every trust, then disable Deployment Mode. Anything still encrypted under the old format at the moment
+  of upgrade fails afterwards — a task collected under CBC stays `IN_PROGRESS` (reset it to `PENDING`), and a
+  running FL job carrying a CBC project id fails at imaging-api once that trust upgrades.
+
+Per-trust keys — a distinct key per trust, so a compromised trust can neither read nor forge another's traffic —
+are the follow-up in FLIP#845; they add keyring entries without changing the wire format.
 
 The fl-server must reach flip-api via `FLIP_API_INTERNAL_URL` — a Docker-network URL such as
 `http://flip-api:8000/api`. It must **not** go through the public `CENTRAL_HUB_API_URL` because the

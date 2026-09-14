@@ -532,7 +532,8 @@ Objective B — Protecting against cyber attacks and data breaches
      - —
    * - **B3.b** Data in transit
      - Hub + Node
-     - Encrypted transport throughout, with an additional payload-encryption layer;
+     - Encrypted transport throughout, with an additional authenticated
+       (AES-256-GCM) payload-encryption layer;
        mutually authenticated TLS between federated learning participants.
      - —
    * - **B3.c** Stored data

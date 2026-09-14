@@ -12,6 +12,11 @@ Glossary
     **Federated learning**
       Federated learning is a machine learning (ML) technique that trains an algorithm across multiple decentralized edge devices or servers holding local data samples, without exchanging them.
 
+    **FL net**
+      One federation unit in FLIP: an FL API and an FL server on the Central Hub plus one FL client at each
+      participating Trust. The hub's scheduler assigns each queued training job to a free net. See
+      :ref:`flip-fl-nets`.
+
     **Flower Framework**
       Flower is an open-source framework for building federated learning systems. It provides tools and libraries to facilitate the development and deployment of federated learning applications. For more information, please see its `official documentation <https://flower.ai/docs/framework/>`_.
 

@@ -178,7 +178,10 @@ Key environment variables (set via ``.env`` or Docker secrets):
    * - ``TRUST_API_KEY`` / ``TRUST_API_KEY_HEADER``
      - Per-trust authentication header used on every outbound request.
    * - ``AES_KEY_BASE64``
-     - Symmetric key shared with the hub; used to decrypt task payloads.
+     - Symmetric key shared with the hub; task payloads are AES-256-GCM
+       envelopes (FLIP#1179). A key that differs from the hub's fails every
+       task as ``failed authentication``, and the node must be upgraded in
+       step with the hub across that change (no CBC compatibility).
    * - ``TRUST_INTERNAL_SERVICE_KEY``
      - Per-trust shared secret used inside the trust for calls between
        trust-api / imaging-api / fl-client and imaging-api /
@@ -471,7 +474,7 @@ and one of them does nothing until you turn it on.
 
    It is not on by default, so a node that has never been configured for it is sending updates
    constrained only by the platform-side reduction. See
-   :doc:`../components/component-fl-nodes` for the parameters and exact semantics.
+   :doc:`../components/component-fl-nets` for the parameters and exact semantics.
 
 What these controls do not do
 ------------------------------
