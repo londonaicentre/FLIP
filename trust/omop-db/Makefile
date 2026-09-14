@@ -80,6 +80,27 @@ load-dicom-vocab: fetch-vocab-dicom
 	OMOP_DB_PORT=$(OMOP_DB_PORT) uv run python -m omop_db_tools.load_dicom_vocab \
 		--vocab-dir data/$(VOCAB_DICOM_BUNDLE) $(if $(filter 1,$(FORCE_DICOM_VOCAB)),--force,--skip-if-loaded)
 
+# Load the public Synthea-in-OMOP EHR cohort (person + conditions + visits) into a RUNNING trust
+# omop-db — the populate side of the EHR risk-prediction tutorial
+# (fl-tutorials/{nvflare/tabular_classification,flower}/ehr_risk_prediction). The shipped mock OMOP
+# carries no condition rows, so that tutorial's query.sql returns nothing until this runs. Downloads
+# ~5 MB from the AWS Open Data Registry at run time (anonymous HTTPS, cached under data/synthea-ehr/,
+# never committed) and appends a per-trust person_id-modulo slice (ids shifted clear of the imaging
+# cohorts' person_id range at insert time). Idempotent: reloads delete by provenance
+# (person_source_value, never by id range — see synthea_ehr.py's clean_reserved_band), so an imaging
+# cohort person is never at risk regardless of where its id falls. Run once per trust, giving that
+# trust's index + published port (same shape as load-omop-vocab):
+#   make load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT
+#   make load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
+SYNTHEA_EHR_BASE_URL ?= https://synthea-omop.s3.amazonaws.com/synthea1k
+SYNTHEA_EHR_CACHE_DIR ?= data/synthea-ehr
+TRUST_INDEX ?= 1
+
+load-synthea-ehr:
+	OMOP_DB_PORT=$(OMOP_DB_PORT) uv run python -m omop_db_tools.synthea_ehr \
+		--trust-index $(TRUST_INDEX) --num-trusts $(NUM_TRUSTS) \
+		--base-url $(SYNTHEA_EHR_BASE_URL) --cache-dir $(SYNTHEA_EHR_CACHE_DIR)
+
 # Seed a RUNNING trust omop-db with the listed projects' rows for this trust
 # (FLIP#1100). Idempotent to re-run; `make -C trust ensure-seeded` runs it at
 # bring-up and again on a .data_version bump. Scoped, not destructive — only the

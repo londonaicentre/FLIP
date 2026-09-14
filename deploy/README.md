@@ -339,8 +339,9 @@ provision a trust host outside all three, you must replicate this ownership or f
 failure is worth recognising because it does not look like a permissions problem: XNAT accepts the
 inbound DICOM association, fails the write and aborts it, so the PACS reports a *network* fault
 (`Peer aborted Association`), while the same EACCES stops XNAT writing the application logs that
-would name the cause. In dev, `trust/orthanc/update_orthanc_data.sh` instead `chmod`s the mock
-storage world-writable so a developer needs no `sudo` to re-seed it.
+would name the cause. In dev, `trust/Makefile`'s `ensure_data_dirs` instead chowns the mock
+storage directory to uid 999 before the first start (through a throwaway alpine container when the
+caller is not root), so a developer needs no `sudo` to seed it.
 
 XNAT's dev tree deliberately does **not** follow that convention. `xnat-reset` creates
 `trust/xnat/xnat-data-trust<N>/` under `sudo` and chowns it to UID 1001, so on a host whose developer

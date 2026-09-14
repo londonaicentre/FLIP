@@ -241,4 +241,56 @@ describe("ProjectApproval", () => {
         expect(chip.text()).toContain("Approved");
         expect(chip.attributes("title")).toBe("UCLH approved");
     });
+
+    test("counts the approved trusts in the header eyebrow", async () => {
+        const wrapper = mountProjectApproval({
+            projectApproved: true,
+            approvedTrusts: [
+                {
+                    id: "t1",
+                    name: "UCLH",
+                    code: "UCH",
+                    approved: true
+                },
+                {
+                    id: "t2",
+                    name: "Kings College Hospital",
+                    code: "KCH",
+                    approved: false
+                }
+            ]
+        });
+        await flushPromises();
+
+        expect(wrapper.find("[data-test=trust-approval-count]").text()).toBe("1 of 2 approved");
+    });
+
+    test("omits the eyebrow when the project has no trusts", async () => {
+        const wrapper = mountProjectApproval({ approvedTrusts: [] });
+        await flushPromises();
+
+        expect(wrapper.find("[data-test=trust-approval-count]").exists()).toBe(false);
+    });
+
+    test("scrolls the trust list internally and pins the save button to the card bottom", async () => {
+        const wrapper = mountProjectApproval({
+            approvedTrusts: [{
+                id: "t1",
+                name: "UCLH",
+                code: "UCH"
+            }]
+        });
+        await flushPromises();
+
+        // The scroller wraps the <ul> so its border-y stays put at the top of the
+        // scroll area rather than scrolling away with the first row.
+        const scroller = wrapper.find("ul[role=list]").element.parentElement;
+        expect(scroller?.className).toContain("overflow-y-auto");
+        expect(scroller?.className).toContain("flex-1");
+        expect(scroller?.className).toContain("min-h-0");
+
+        const save = wrapper.find("[data-test=approve-project-btn]").element.closest("div.p-4");
+        expect(save?.className).toContain("shrink-0");
+        expect(save?.className).toContain("mt-auto");
+    });
 });

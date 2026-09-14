@@ -13,10 +13,12 @@ Two halves of one pipeline (merged from the retired private `flip-omop-db` repo,
    (`docker_build_omop_db.yml`, gated on the "Trust - OMOP DB CI" test workflow like the other
    services). FK **constraints are deliberately absent from init** — they are applied only AFTER data
    load (loading after constraints fails).
-2. **Consumer harness** for the dev trust stacks: `update_omop_data.sh` downloads ready-populated,
-   **vocab-free** pgdata volumes (~11 MB each, fetched at the tag pinned by `trust/.data_version`) from the public HF dataset
-   `aicentreflip/trust-data` into `volumes/Trust_<N>/db_data`, which
-   `trust/deploy/compose_trust.<env>.yml` mounts.
+2. **Seed loaders** for the dev trust stacks (FLIP#1187): the container initialises an empty schema on
+   `volumes/Trust_<N>/db_data` (which `trust/deploy/compose_trust.<env>.yml` mounts) and
+   `omop_db_tools.import_tables` then loads this trust's `source_trust` slice of the published
+   per-project tables (`omop-csv/<project>/`, fetched anonymously from the public HF dataset
+   `aicentreflip/trust-data` at the tag pinned by `trust/.data_version`). No pgdata snapshot is
+   downloaded any more — `make -C trust up-trust` runs the seed at bring-up.
 
 `compose.yml` here is the **standalone build/populate stack** (one empty DB per trust + opt-in pgadmin
 profile; config from gitignored `.env.build`), NOT the runtime trust stack.
@@ -80,6 +82,25 @@ tolerate the DICOM vocab already present in the tarballs):
   marker beside `db_data` records projects/partition/version so a later `up` skips it and a
   `.data_version` bump re-seeds. `load-dicom-vocab` runs first (skipped when present — its
   relationship rows have no unique key). `populate` is the same loader with `--clean all`.
+- **Synthea EHR cohort** (`src/omop_db_tools/synthea_ehr.py`, `make load-synthea-ehr`): the populate
+  side of the EHR risk-prediction tutorial. The shipped mock OMOP has NO `condition_occurrence`
+  rows, so that tutorial's `query.sql` returns nothing until this loads the public 1k-person
+  Synthea-in-OMOP set (AWS Open Data Registry, anonymous HTTPS, downloaded at run time, never
+  committed) into a running DB. Synthea ids are shifted by `PERSON_ID_OFFSET` so they never collide
+  with the imaging cohorts' keys at INSERT time (the per-trust split is taken on the raw id before
+  the shift, and the raw id is kept in `person_source_value` — never re-derive a trust from a
+  shifted id) — but that offset is not what makes reloading safe: imaging `person_id` is
+  `nhs_number_to_integer(PatientID)`, the first 9 digits of a real NHS number, so it scatters across
+  the whole 9-digit range rather than staying "small", and a plain id-range delete silently destroys
+  imaging persons (and, via `ON DELETE CASCADE`, their `image_occurrence`/`procedure_occurrence`
+  rows) that happen to land above the threshold — confirmed live at ~10% of one trust's imaging
+  cohort per reload before this was fixed. `clean_reserved_band` therefore deletes by
+  **provenance**: only rows whose `person_source_value` carries this loader's `synthea-` prefix are
+  ever removed, never by `person_id` range. The tutorial's `query.sql` scopes to persons that HAVE a
+  condition — i.e. exactly these rows. FK-safe: `gender_concept_id` keeps Synthea's standard
+  8507/8532 (`query.sql` reads it), every other `*_concept_id` is zeroed to `0` ("No matching
+  concept"), conditions match on the `condition_source_value` SNOMED string. Idempotent; unit-tested
+  in `tests/unit/test_synthea_ehr.py`.
 - The populate scripts run on the **host** against published ports (`OMOP_DB_HOST` defaults to
   localhost) and need postgresql-client (`psql`/`pg_isready`).
 
@@ -88,6 +109,9 @@ tolerate the DICOM vocab already present in the tarballs):
 ```bash
 make load-omop-vocab [OMOP_DB_PORT=5436]  # seed the licensed vocab + constraints into a running trust DB
 make load-dicom-vocab [OMOP_DB_PORT=5436] # the Apache-licensed DICOM vocab (anonymous HF fetch); no-op when present
+make load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434  # EHR risk-prediction tutorial: load public
+                                    # Synthea-in-OMOP conditions/visits/persons into a running trust DB
+                                    # (once per trust; downloads ~5MB from AWS Open Data at run time)
 cp .env.build.example .env.build    # once, before any build-pipeline target
 make build                          # plain docker build — no data inputs, no credentials
 make up-build / down-build          # the standalone per-trust build DBs
