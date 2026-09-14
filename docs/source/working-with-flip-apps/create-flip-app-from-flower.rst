@@ -4,7 +4,7 @@ Create a FLIP app from a Flower app
 
 .. warning::
 
-   This page assumes you are familiar with the :ref:`flip-fl-nodes` component page and with the project / model lifecycle described in :doc:`/user-guides/user-common`. Before starting, you must already have: a FLIP account with the ``researcher`` role, an approved project with a saved cohort query, and a model created under that project (so you have a ``flip-model-id``).
+   This page assumes you are familiar with the :ref:`flip-fl-nets` component page and with the project / model lifecycle described in :doc:`/user-guides/user-common`. Before starting, you must already have: a FLIP account with the ``researcher`` role, an approved project with a saved cohort query, and a model created under that project (so you have a ``flip-model-id``).
 
 This page walks through the code changes required to adapt a stock Flower app (for example, one copied from the official `Flower quickstart examples <https://flower.ai/docs/examples.html>`_ or pulled from the internal FLIP app hub) so that it can run on FLIP. The walkthrough covers the four first-class SDK calls a FLIP-compatible app needs:
 

@@ -14,6 +14,7 @@ from typing import Annotated
 
 import pandas as pd
 from fastapi import Depends, HTTPException, status
+from pydantic import ValidationError
 
 from imaging_api.db.get_direct_archive_sessions_by_project import (
     get_direct_archive_sessions_by_project,
@@ -30,7 +31,7 @@ from imaging_api.services.imaging import query_by_accession_number, queue_image_
 from imaging_api.services.projects import get_experiments, get_project
 from imaging_api.services_external.data_access import get_accession_ids
 from imaging_api.utils.auth import get_xnat_auth_headers
-from imaging_api.utils.encryption import encrypt
+from imaging_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 from imaging_api.utils.exceptions import CohortBelowThresholdError, NotFoundError
 from imaging_api.utils.logger import logger
 
@@ -88,7 +89,7 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
     # Get accession IDs from data access API. The endpoint projects the cohort
     # query to the accession_id column server-side, so no other columns are
     # transmitted across the trust boundary.
-    encrypted_project_id = encrypt(project_id)
+    encrypted_project_id = encrypt(project_id, context=PROJECT_ID_CONTEXT)
     try:
         accession_ids: list[str] = await get_accession_ids(encrypted_project_id, query)
     except CohortBelowThresholdError:
@@ -131,10 +132,22 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
                     f"Multiple studies found for accession number {idx}/{total_accessions}. Using the first one."
                 )
 
-        import_study = ImportStudy(
-            studyInstanceUid=study.study_instance_uid,
-            accessionNumber=study.accession_number,
-        )
+        # The accession number is validated as a URL path segment here (#908). PACS
+        # accession numbers are DICOM SH values and may carry characters outside
+        # that rule, so treat a rejection like a failed query: skip this study and
+        # keep the rest of the batch. Letting it raise would abort the whole import
+        # from inside a background task, with nothing but a server-log traceback.
+        try:
+            import_study = ImportStudy(
+                studyInstanceUid=study.study_instance_uid,
+                accessionNumber=study.accession_number,
+            )
+        except ValidationError as e:
+            logger.error(
+                f"Skipping accession number {idx}/{total_accessions}: the PACS returned an accession number that "
+                f"is not a valid XNAT session label / URL path segment: {e}"
+            )
+            continue
         studies_list.append(import_study)
 
     # Check that we have at least one study to import
@@ -192,7 +205,7 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
             cannot be processed.
     """
     # Encrypt project ID to send to the data access API
-    encrypted_project_id = encrypt(project_id)
+    encrypted_project_id = encrypt(project_id, context=PROJECT_ID_CONTEXT)
 
     # Get accession IDs from data access API (server-side projection — no other
     # cohort columns leave the trust).
@@ -369,10 +382,22 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
 
         logger.info(f"Study found for accession number {idx}/{total_retries}")
 
-        import_study = ImportStudy(
-            studyInstanceUid=study.study_instance_uid,
-            accessionNumber=study.accession_number,
-        )
+        # The accession number is validated as a URL path segment here (#908). PACS
+        # accession numbers are DICOM SH values and may carry characters outside
+        # that rule, so treat a rejection like a failed query: skip this study and
+        # keep the rest of the batch. Letting it raise would abort the whole import
+        # from inside a background task, with nothing but a server-log traceback.
+        try:
+            import_study = ImportStudy(
+                studyInstanceUid=study.study_instance_uid,
+                accessionNumber=study.accession_number,
+            )
+        except ValidationError as e:
+            logger.error(
+                f"Skipping accession number {idx}/{total_retries}: the PACS returned an accession number that "
+                f"is not a valid XNAT session label / URL path segment: {e}"
+            )
+            continue
         studies_list.append(import_study)
 
     # Check that we have at least one study to import

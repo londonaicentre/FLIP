@@ -69,13 +69,28 @@ compose pulls FL images by tag, so their build definitions live only in [`compos
 
 ### Containers run as a non-root user (GHSA-8465)
 
-`fl-server`, `fl-client`, and `fl-base` run as a non-root user created from the `UID`/`GID`/`UNAME` build
-args (default `1000`/`1000`/`flip`; the dev compose overrides them with the host user so bind-mounted
-provision directories stay writable). Anywhere one of these containers bind-mounts a host path — a
-provisioned startup kit, the AWS SSO credential cache — that host path must already be owned by a uid the
-container can write, or the entrypoint fails (loudly, since the entrypoint scripts now exit non-zero when
-they can't write their generated config). Letting Docker auto-create the bind source leaves it root-owned
-and silently breaks the container. See `deploy/providers/AWS/TROUBLESHOOTING.md` for the failure mode and
+`fl-server`, `fl-client`, and `fl-base` run as a non-root user baked at `1000`/`1000`/`flip`. That identity
+is **fixed**, not taken from the building developer's environment: build-time identity and runtime identity
+are two different things and conflating them was FLIP#1171.
+
+- **Build time** — every image, whether built by CI as `:stag` or locally as `:dev`, contains the same
+  `flip` user. This is what lets the composes name `/home/flip` literally, and it means a local build is a
+  faithful stand-in for the published image. `1000` also matches the `ubuntu` uid that EC2/on-prem trust
+  hosts stage kits as.
+- **Run time** — the dev composes pass `user: "${UID:-1000}:1000"`, so the process runs as
+  the **host** user with the image's gid. The host uid is what has to match the bind mounts: the
+  provisioned kit is written by whoever ran `make provision`, and the AWS SSO token cache by whoever ran
+  `aws sso login`. A `0600` token cannot be reached by group membership at all, so only a uid match works —
+  `group_add` is not an alternative here. The gid stays the image's because `/app` and `/home/flip` are
+  group-writable (see `fl-base/Dockerfile`), which is what keeps NVFLARE's job workspace and torch's cache
+  writable for a foreign uid. Production sets no `user:` and runs as `flip` unchanged.
+
+Previously the build args carried the developer's own uid, so images worked for whoever built them and
+crash-looped for everyone else — including on every published image, for any developer not on uid 1000.
+Anywhere one of these containers bind-mounts a host path, that path must still be owned by the uid the
+container runs as, or the entrypoint fails (loudly, since the entrypoint scripts exit non-zero when they
+can't write their generated config). Letting Docker auto-create the bind source leaves it root-owned and
+silently breaks the container. See `deploy/providers/AWS/TROUBLESHOOTING.md` for the failure mode and
 `deploy/providers/AWS/site.yml` / `deploy/providers/local/site_local_trust.yml` for how the provisioning
 Ansible pre-creates these paths with the right owner.
 
@@ -90,8 +105,8 @@ The trust-deployment `fl-client-net-*` services (`trust/deploy/compose_trust.{pr
 also set `security_opt: [no-new-privileges:true]` and `cap_drop: [ALL]`, matching every other trust-side
 service. Development adds nothing back: the image is non-root, and Docker makes a `cap_add` effective only
 for root, so a grant there would sit unused in the bounding set (`CapEff` stays `0`). A `provision/workspace-dev/`
-kit whose ownership doesn't match the image's baked-in UID is fixed by the `chown -R` above, not by a
-capability. Production adds back `DAC_OVERRIDE` and `FOWNER`, equally inert for the current non-root image
+kit whose ownership doesn't match is not fixed by a capability either — it is fixed by the `user:` override
+above, which runs the container as the host user that already owns the kit. Production adds back `DAC_OVERRIDE` and `FOWNER`, equally inert for the current non-root image
 but retained for legacy root-image compat — a trust pinning a pre-GHSA-8465 `DOCKER_FL_TAG` still runs that
 entrypoint as root, and `cap_drop: ALL` would strip the DAC bypass its unguarded kit writes rely on (see
 [`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions) for the full rationale). None of

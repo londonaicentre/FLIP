@@ -26,11 +26,27 @@ on:
     paths:
       - "scripts/**"
       - ".github/workflows/test_trust_kit_scripts.yml"
+      # test_container_identity.py asserts on the compose files, not on scripts/, so it
+      # must be triggered by changes to THEM or the guard silently never runs on the very
+      # edit it exists to catch — the same trap test_trust_xnat.yml documents. FLIP#1171
+      # was reintroduced once in fl-services/nvflare/compose.dev.yml by a change that
+      # touched no file under scripts/.
+      - "deploy/compose*.yml"
+      - "trust/deploy/compose*.yml"
+      - "fl-services/nvflare/compose.dev.yml"
   pull_request:
     branches: [develop]
     paths:
       - "scripts/**"
       - ".github/workflows/test_trust_kit_scripts.yml"
+      # test_container_identity.py asserts on the compose files, not on scripts/, so it
+      # must be triggered by changes to THEM or the guard silently never runs on the very
+      # edit it exists to catch — the same trap test_trust_xnat.yml documents. FLIP#1171
+      # was reintroduced once in fl-services/nvflare/compose.dev.yml by a change that
+      # touched no file under scripts/.
+      - "deploy/compose*.yml"
+      - "trust/deploy/compose*.yml"
+      - "fl-services/nvflare/compose.dev.yml"
 
 permissions:
   contents: read

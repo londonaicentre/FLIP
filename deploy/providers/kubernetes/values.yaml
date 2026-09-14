@@ -362,7 +362,17 @@ flClient:
       gamma: ""
   flower:
     superlink: ""
-    supernodeClientAppIoAddress: "127.0.0.1:9094"
+    # flwr>=1.36 split --clientappio-api-address into separate --host/--port
+    # flags. Both get a chart value: under Kubernetes the bind host is not a
+    # detail an operator can leave alone, because the tcpSocket probes below
+    # are dialled by kubelet against the POD IP, not loopback. flower-supernode's
+    # own --host default (127.0.0.1) therefore renders a SuperNode that no probe
+    # can ever reach (FLIP#1017) — deliberately NOT the compose default, where
+    # the container is the network namespace and loopback does answer. Set
+    # 0.0.0.0 here to bind the Runtime API on all pod interfaces; keep 127.0.0.1
+    # only alongside an `exec` probe override under flClient.probes.
+    supernodeClientAppIoHost: "0.0.0.0"
+    supernodeClientAppIoPort: "9094"
   resources:
     requests:
       memory: "8Gi"
