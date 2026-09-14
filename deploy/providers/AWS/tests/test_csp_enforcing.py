@@ -26,11 +26,12 @@ half can silently regress:
   that is the pen-test finding itself, and no amount of "fixing a broken page" justifies it;
 * the standard hardening directives stay present.
 
-``style-src`` is deliberately NOT pinned to a fixed value. It currently retains ``'unsafe-inline'``
-for one dependency (the CodeMirror wrapper on the cohort-query page injects a ``<style>`` element
-at module load); tightening it later is an improvement these tests must not block. What is pinned
-is that the carve-out cannot spread: it is asserted per-directive, so relaxing ``script-src`` fails
-here even if someone relaxes ``style-src`` at the same time.
+``style-src`` is bounded rather than pinned. It currently retains ``'unsafe-inline'`` for one
+dependency (the CodeMirror wrapper on the cohort-query page injects a ``<style>`` element at module
+load — FLIP#1200); tightening it to ``'self'`` is an improvement this suite must not block, but the
+carve-out must not *spread* either, so the test allows any subset of ``{'self', 'unsafe-inline'}``
+and nothing beyond it. The unsafe-token check is asserted per directive, so relaxing ``script-src``
+fails here even if ``style-src`` is relaxed in the same edit.
 
 Parsing is the same credential-free ``read_text()`` + ``re`` approach as the rest of this suite —
 no ``terraform`` binary, no state, no credentials — so it runs on fork PRs.
@@ -40,6 +41,7 @@ import re
 from pathlib import Path
 
 import pytest
+from hcl_helpers import hcl_block
 
 AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
 CLOUDFRONT_TF = AWS_PROVIDER_DIR / "cloudfront.tf"
@@ -49,42 +51,18 @@ ENFORCING_POLICIES = ("flip_ui_spa", "ark_demo_spa")
 
 UNSAFE_TOKENS = ("'unsafe-inline'", "'unsafe-eval'")
 
-
-def _cloudfront_hcl() -> str:
-    assert CLOUDFRONT_TF.is_file(), f"missing {CLOUDFRONT_TF}"
-    return CLOUDFRONT_TF.read_text(encoding="utf-8")
+# The only sources style-src may carry while the FLIP#1200 carve-out stands.
+STYLE_SRC_ALLOWED = {"'self'", "'unsafe-inline'"}
 
 
 def _policy_block(hcl: str, resource_name: str) -> str:
-    """Return the body of one ``aws_cloudfront_response_headers_policy`` resource.
-
-    Brace-matched from the resource header so a nested block cannot truncate the body, which a
-    non-greedy regex to the first ``\\n}`` would do.
-    """
-    header = re.search(
-        r'resource\s+"aws_cloudfront_response_headers_policy"\s+"' + re.escape(resource_name) + r'"\s*\{',
-        hcl,
-    )
-    assert header, f"no aws_cloudfront_response_headers_policy resource named {resource_name!r}"
-    start = header.end()
-    depth = 1
-    for index in range(start, len(hcl)):
-        char = hcl[index]
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return hcl[start:index]
-    raise AssertionError(f"unbalanced braces in policy {resource_name!r}")
+    header = f'resource "aws_cloudfront_response_headers_policy" "{resource_name}"'
+    assert header in hcl, f"no aws_cloudfront_response_headers_policy resource named {resource_name!r}"
+    return hcl_block(hcl, header)
 
 
 def _directive(policy_body: str, name: str) -> str:
-    """Return the source expression of one CSP directive, without comment lines.
-
-    The policy is built with ``join(" ", [...])`` and carries ``#`` comments between entries, so
-    the directive is read from the quoted string that starts with its name.
-    """
+    """Return the source expression of one CSP directive, read from its quoted ``"name ...;"`` entry."""
     uncommented = "\n".join(line for line in policy_body.splitlines() if not line.lstrip().startswith("#"))
     match = re.search(r'"' + re.escape(name) + r'\s+([^"]*?);"', uncommented)
     assert match, f"CSP directive {name!r} not found"
@@ -93,7 +71,7 @@ def _directive(policy_body: str, name: str) -> str:
 
 @pytest.fixture(scope="module")
 def hcl() -> str:
-    return _cloudfront_hcl()
+    return CLOUDFRONT_TF.read_text(encoding="utf-8")
 
 
 def test_report_only_header_is_gone(hcl: str) -> None:
@@ -114,7 +92,7 @@ def test_policy_ships_enforcing(hcl: str, resource_name: str) -> None:
 
 
 @pytest.mark.parametrize("resource_name", ENFORCING_POLICIES)
-@pytest.mark.parametrize("directive", ("script-src", "default-src"))
+@pytest.mark.parametrize("directive", ["script-src", "default-src"])
 def test_script_and_default_src_have_no_unsafe_tokens(hcl: str, resource_name: str, directive: str) -> None:
     """The pen-test finding itself (§4.7). Never relax these to fix a rendering bug."""
     value = _directive(_policy_block(hcl, resource_name), directive)
@@ -126,9 +104,19 @@ def test_script_and_default_src_have_no_unsafe_tokens(hcl: str, resource_name: s
 
 
 @pytest.mark.parametrize("resource_name", ENFORCING_POLICIES)
+def test_style_src_carve_out_cannot_spread(hcl: str, resource_name: str) -> None:
+    """style-src may tighten toward 'self' freely, but may not admit any source beyond the carve-out."""
+    sources = set(_directive(_policy_block(hcl, resource_name), "style-src").split())
+    assert sources <= STYLE_SRC_ALLOWED, (
+        f"{resource_name}: style-src carries {sorted(sources - STYLE_SRC_ALLOWED)} beyond the "
+        f"FLIP#1200 carve-out ({sorted(STYLE_SRC_ALLOWED)}). Fix the offending styles at source."
+    )
+
+
+@pytest.mark.parametrize("resource_name", ENFORCING_POLICIES)
 @pytest.mark.parametrize(
     ("directive", "expected"),
-    (("object-src", "'none'"), ("frame-ancestors", "'none'"), ("base-uri", "'none'")),
+    [("object-src", "'none'"), ("frame-ancestors", "'none'"), ("base-uri", "'none'")],
 )
 def test_hardening_directives_present(hcl: str, resource_name: str, directive: str, expected: str) -> None:
     assert _directive(_policy_block(hcl, resource_name), directive) == expected

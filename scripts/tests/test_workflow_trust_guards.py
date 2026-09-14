@@ -53,8 +53,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 
-# The expression that closes FLIP#882. Matched on a comment-stripped, single line so the
-# folded `if: >-` block and the explanatory comment above it cannot satisfy it by accident.
+# The expression that closes FLIP#882, on a single line of the folded `if: >-` block.
 SAME_REPO_GUARD = "github.event.workflow_run.head_repository.full_name == github.repository"
 
 # A checkout input that hands the job the triggering run's code. Either field alone is enough
@@ -64,6 +63,7 @@ FORK_CONTROLLED_CHECKOUT = re.compile(
 )
 
 TRIGGER_WORKFLOW_RUN = re.compile(r"^\s+workflow_run:\s*$")
+FIRST_STEPS = re.compile(r"^\s+steps:\s*$")
 
 
 def _stripped_lines(path: Path) -> list[str]:
@@ -96,7 +96,7 @@ def _has_job_level_same_repo_guard(lines: list[str]) -> bool:
         if line.startswith("jobs:"):
             in_jobs = True
             continue
-        if in_jobs and re.match(r"^\s+steps:\s*$", line):
+        if in_jobs and FIRST_STEPS.match(line):
             return False
         if in_jobs and SAME_REPO_GUARD in line:
             return True
@@ -116,29 +116,21 @@ def check_workflow_run_builds_are_guarded(failures: list[str]) -> None:
                 guarded_count += 1
             else:
                 failures.append(
-                    f"{rel}: triggers on workflow_run and checks out the triggering run's "
-                    f"head_repository/head_sha, but has no job-level `if:` containing\n"
-                    f"      {SAME_REPO_GUARD}\n"
-                    f"    A fork PR whose head branch is named main/develop reaches this job in the "
-                    f"trusted context with packages: write and gets its code built and pushed under "
-                    f"the org namespace (FLIP#882). Add the guard to the job's `if:` — see any of the "
-                    f"docker_build_* siblings for the exact block."
+                    f"{rel}: workflow_run build checks out the triggering run but its job-level `if:` "
+                    f"lacks `{SAME_REPO_GUARD}` — a fork PR reaches it with packages: write (FLIP#882; "
+                    f"copy the block from any docker_build_* sibling)."
                 )
         elif checks_out and not triggers:
             failures.append(
-                f"{rel}: passes github.event.workflow_run.head_repository/head_sha to a checkout but "
-                f"does not trigger on workflow_run. Those fields are empty on every event this file "
-                f"receives, so this is dead today — and the exact fork-controlled checkout FLIP#882 "
-                f"closes, which would re-open here unguarded the moment a workflow_run trigger is "
-                f"added. Use the default checkout instead (the way docker_build_orthanc.yml now does)."
+                f"{rel}: checks out workflow_run.head_repository/head_sha without a workflow_run trigger — "
+                f"inert today, but the FLIP#882 fork-controlled checkout one added trigger away from "
+                f"re-opening unguarded. Use the default checkout (see module docstring)."
             )
 
     if guarded_count == 0:
         failures.append(
-            "no workflow_run-triggered build with a checkout of the triggering run was found under "
-            f"{WORKFLOWS_DIR.relative_to(REPO_ROOT)} — the guard has nothing to guard. Either the "
-            "docker_build_* workflows were renamed/restructured (update this test) or the parser "
-            "missed them; a green run on an empty set is not a pass."
+            f"no workflow_run build with a triggering-run checkout found under "
+            f"{WORKFLOWS_DIR.relative_to(REPO_ROOT)} — parser miss or rename; an empty set is not a pass."
         )
 
 

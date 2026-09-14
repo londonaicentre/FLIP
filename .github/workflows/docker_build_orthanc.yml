@@ -47,14 +47,8 @@ jobs:
       IMAGE_NAME: londonaicentre/orthanc
       BUILD_ARGS: ""
     steps:
-      # This workflow triggers on push/pull_request, never workflow_run, so the
-      # default checkout (github.repository @ github.sha) is the right one. It
-      # used to pass `workflow_run.head_repository` / `head_sha` here — copied
-      # from the workflow_run-triggered siblings — which evaluated to empty on
-      # every event this file actually receives, so it was a no-op. It was also
-      # the exact fork-controlled checkout that FLIP#882 closes in those siblings:
-      # left in place, adding a workflow_run trigger later would have re-opened
-      # it here with no guard. Removed rather than guarded.
+      # Default checkout on purpose: no workflow_run trigger here (FLIP#882,
+      # scripts/tests/test_workflow_trust_guards.py).
       - name: Checkout code
         uses: actions/checkout@v5
 

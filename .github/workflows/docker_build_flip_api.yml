@@ -31,21 +31,12 @@ jobs:
   build-and-push:
     # Only publish when the upstream test run passed. workflow_dispatch (manual)
     # has no workflow_run context, so allow it through unconditionally.
-    #
-    # The head_repository guard is the one that matters (FLIP#882). A workflow_run
-    # event always fires in THIS repo, so `github.repository == 'londonaicentre/FLIP'`
-    # is true for a fork PR too — it only stops a fork's own copy of this file from
-    # running in the fork, where it could not push to ghcr.io/londonaicentre anyway.
-    # What a fork PR CAN do is satisfy every other gate: the `branches:` filter
-    # matches the triggering run's head branch, so a fork branch named `develop`
-    # passes it; and the test workflow runs from the PR head, so the attacker makes
-    # it succeed. The checkout below then fetches head_repository@head_sha — the
-    # fork's code — into this trusted context, and the push step (no `if` of its
-    # own) publishes the resulting image under the org namespace as :<sha>,
-    # :sha-<short7> and :<branch> (:stag/:prod stay withheld by the `push`-event
-    # check in "Determine tags"). Requiring the triggering run to have come from
-    # this repository closes that: a fork's head_repository is `<fork>/FLIP`.
-    # Same guard terraform_plan.yml applies to its pull_request trigger.
+    # The head_repository clause is the trust boundary (FLIP#882): a fork PR's
+    # test run satisfies every other gate, and the checkout below fetches the
+    # triggering run's code. `github.repository == …` only stops a fork's own
+    # copy of this file running in the fork. Rationale + regression guard:
+    # scripts/tests/test_workflow_trust_guards.py; the same clause guards
+    # terraform_plan.yml. One shared workflow for these copies: FLIP#1201.
     if: >-
       (github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&

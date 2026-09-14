@@ -52,13 +52,9 @@ jobs:
         --build-arg XNAT_ROOT=/data/xnat
         --build-arg XNAT_HOME=/data/xnat/home
     steps:
+      # Default checkout on purpose: no workflow_run trigger here (FLIP#882,
+      # scripts/tests/test_workflow_trust_guards.py).
       - name: Checkout code
-        # push/workflow_dispatch only, never workflow_run: the default checkout
-        # (github.repository @ github.sha) is the right one. The former
-        # `workflow_run.head_repository` / `head_sha` inputs here were a copy of
-        # the workflow_run-triggered siblings' fork-controlled checkout, empty and
-        # inert on every event this file receives, and exactly what FLIP#882
-        # closes over there. Removed rather than left waiting for a trigger.
         uses: actions/checkout@v5
 
       # Single source for the XNAT version: trust/xnat/.env — the same pin the

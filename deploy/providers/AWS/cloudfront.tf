@@ -634,18 +634,11 @@ resource "aws_wafv2_web_acl_logging_configuration" "flip_ui_cloudfront" {
 # coordinated PR, not here.
 #
 # CSP is ENFORCING (FLIP#417 stage 2). It shipped report-only from the
-# original pen-test remediation (§4.7) so legitimate violations could surface
-# without blocking traffic; that phase is over and the policy now blocks.
-#
-# Why it was safe to promote without a violation-report corpus: no `report-uri`
-# was ever configured, so the "no real-user violations" bar the previous comment
-# set here had no evidence source and could not be met by waiting. The rollout
-# was instead de-risked by auditing the built bundle directly — see the
-# `style-src` note below — which is a stronger check than console-watching,
-# because it enumerates every inline-style sink that actually ships rather than
-# only the ones a tester happens to click.
-#
-# Verify after deploy:
+# original pen-test remediation (§4.7) so violations could surface first; no
+# `report-uri` was ever configured, so there was never a violation corpus to
+# wait for, and the promotion was de-risked instead by auditing the built
+# bundle for inline-style sinks (see style-src below). Pinned by
+# tests/test_csp_enforcing.py. Verify after deploy:
 #   curl -sI https://<domain>/ | grep -i content-security-policy
 # (the `-Report-Only` suffix must be absent)
 resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
@@ -684,45 +677,24 @@ resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
         # the pool is moved to a different region.
         "connect-src 'self' https://cognito-idp.eu-west-2.amazonaws.com https://cognito-identity.eu-west-2.amazonaws.com;",
         "img-src 'self' data:;",
-        # style-src KEEPS 'unsafe-inline', and this is a deliberate, scoped
-        # regression of GHSA-vp94-g35p-29w8 stage 1 — not an oversight.
-        #
-        # Stage 1 dropped 'unsafe-inline' from style-src while the policy was
-        # still report-only, i.e. while nothing was enforced and the removal
-        # cost nothing. Promoting to enforcing with `style-src 'self'` WOULD
-        # break the cohort-query page: `codemirror-editor-vue3` ships a
-        # `styleInject()` that runs at module load, creating a <style> element
-        # and appending its component CSS as a text node
-        # (node_modules/codemirror-editor-vue3/dist/codemirror-editor-vue3.js).
-        # A strict style-src blocks that stylesheet and the SQL editor loses
-        # its layout. The Ark+ demo policy below already flagged this risk.
-        #
-        # Scope was measured against the built bundle, not guessed: a produced
-        # `vite build` has ZERO inline <style>/style= in dist/index.html, all
-        # component CSS emitted as static .css files ('self', unaffected), and
-        # exactly ONE runtime style-element injection across every shipped
-        # chunk — the cohort-query chunk above. So this carve-out buys back
-        # exactly one dependency's behaviour and nothing else.
-        #
-        # Removing it (tracked in FLIP#417 follow-up) means fixing at source:
-        # extract that dependency's CSS to a static import, replace the
-        # wrapper, or pin a 'sha256-...' hash of the injected block. A hash
-        # would work today but silently re-breaks on any dependency bump that
-        # changes one byte of that CSS, so it needs a test pinning it before
-        # it is worth taking. Do NOT re-add 'unsafe-inline' to script-src or
-        # default-src to fix anything — that is the pen-test finding itself.
+        # 'unsafe-inline' here is a deliberate, scoped regression of
+        # GHSA-vp94-g35p-29w8 stage 1 (which dropped it while nothing was yet
+        # enforced): `codemirror-editor-vue3` runs a styleInject() at module
+        # load that creates a <style> element, so `style-src 'self'` strips the
+        # cohort-query SQL editor. A `vite build` audit found that the ONLY
+        # runtime style injection in the bundle — every other stylesheet is a
+        # static .css file — so this buys back one dependency and nothing else.
+        # Removal at source is FLIP#1200; test_csp_enforcing.py bounds this
+        # directive to {'self', 'unsafe-inline'} so the carve-out cannot spread.
         "style-src 'self' 'unsafe-inline';",
         # The substantive XSS control, and the actual §4.7 remediation.
         "script-src 'self';",
         "object-src 'none';",
         "frame-ancestors 'none';",
-        # Hardening the demo policy already carries. Verified safe for the
-        # real app against the built bundle: dist/index.html emits no <base>
-        # tag, and the SPA performs no native <form> submission (every form is
-        # a JS handler), so neither directive can break a current flow.
-        # form-action is 'self' rather than the demo's 'none' because the real
-        # app may legitimately grow a same-origin POST; 'self' still blocks
-        # the exfiltration case of a form retargeted at an external host.
+        # No <base> tag in the built index.html and no native <form> submission
+        # in the SPA, so neither directive touches a current flow. 'self' rather
+        # than the demo's 'none' so a same-origin POST stays possible; it still
+        # blocks a form retargeted at an external host.
         "base-uri 'none';",
         "form-action 'self';",
       ])
@@ -771,17 +743,10 @@ resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
 # 'none'` costs no demo functionality — confirmed by the PR's Chrome net-log
 # audit (no egress besides 127.0.0.1) and by the mocks/__tests__ egress spec.
 #
-# Shipped enforcing from the start: every resource the demo loads is 'self' (no
-# third-party CDN that could break unpredictably), and there was no established
-# live-traffic population to observe for false positives the way the real app's
-# CSP rollout needed.
-#
-# flip_ui_spa is now enforcing too (FLIP#417 stage 2), so the two policies no
-# longer differ in mode — only in strictness. This one keeps the tighter
-# `style-src 'self'`, `connect-src 'none'` and `form-action 'none'`; the real
-# app's style-src has to retain 'unsafe-inline' for the CodeMirror wrapper on
-# the cohort-query page (rationale in that policy above). The demo has no such
-# dependency, so do not relax this one to match.
+# Stricter than flip_ui_spa on purpose (`style-src 'self'`, `connect-src 'none'`,
+# `form-action 'none'`): the demo is a static, self-contained bundle with no
+# CodeMirror dependency, so nothing here needs the app's style-src carve-out.
+# Do not relax it to match; tests/test_csp_enforcing.py pins the difference.
 resource "aws_cloudfront_response_headers_policy" "ark_demo_spa" {
   # checkov:skip=CKV_AWS_259:HSTS is sent (1y max-age, includeSubDomains); preload deliberately withheld until the domain is submitted to the browser preload list
   count   = local.demo_assets_enabled ? 1 : 0
@@ -822,10 +787,8 @@ resource "aws_cloudfront_response_headers_policy" "ark_demo_spa" {
         "script-src 'self';",
         "object-src 'none';",
         "frame-ancestors 'none';",
-        # Extra hardening not yet applied to the real app's (report-only,
-        # in-progress) CSP: safe to ship immediately here since the demo is
-        # a static, self-contained bundle with no legitimate use for a
-        # <base> tag or a form POST target.
+        # 'none' rather than the app's form-action 'self': the demo has no form
+        # POST target at all.
         "base-uri 'none';",
         "form-action 'none';",
       ])
