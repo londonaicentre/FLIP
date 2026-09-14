@@ -80,14 +80,12 @@ def visit() -> pd.DataFrame:
     )
 
 
-def test_offset_is_even_and_clears_the_imaging_ceiling():
-    # Even → the person_id-modulo per-trust split (computed on the raw id) is unchanged by the shift.
+def test_offset_clears_the_imaging_ceiling():
     # >= 1_000_000_000 → clear of the imaging cohorts' person_id ceiling: nhs_number_to_integer takes
     # only the first 9 digits of a real NHS number, so an imaging person_id can be anywhere up to
     # 999_999_999 (NOT merely "small" — it scatters across the whole 9-digit range, which is exactly
     # what made the old id-band *delete* unsafe; that safety now comes from clean_reserved_band's
     # provenance filter, not from this offset — this assertion only protects the INSERT path).
-    assert PERSON_ID_OFFSET % 2 == 0
     assert PERSON_ID_OFFSET >= 1_000_000_000
 
 
@@ -99,6 +97,28 @@ def test_trust_split_is_disjoint_and_covering(person: pd.DataFrame):
     # trust_index 1 gets person_id % 2 == 0, i.e. the even ids.
     assert first == {2, 4}
     assert second == {1, 3}
+
+
+@pytest.mark.parametrize("num_trusts", [2, 3])
+def test_trust_split_is_on_the_raw_id_and_the_raw_id_is_written_back(person: pd.DataFrame, num_trusts: int):
+    """Ownership is `raw_id % num_trusts`, decided before the shift, and the raw id is persisted.
+
+    The offset is not a multiple of every trust count (1_000_000_000 % 3 == 1), so for three trusts
+    the SHIFTED id's modulo names a different trust than the raw id's. That must not matter: the
+    split is taken on the raw id, and the raw id is written into person_source_value, which is what
+    anything needing the trust back must read — never `person_id % num_trusts` on the stored row.
+    """
+    for trust_index in range(1, num_trusts + 1):
+        raw_ids = _trust_person_ids(person, num_trusts=num_trusts, trust_index=trust_index)
+        assert all(raw % num_trusts == trust_index - 1 for raw in raw_ids)
+        rows = build_person_rows(person, raw_ids)
+        for shifted, source_value in zip(rows["person_id"], rows["person_source_value"], strict=True):
+            raw = int(source_value.removeprefix(SYNTHEA_SOURCE_VALUE_PREFIX))
+            assert shifted == raw + PERSON_ID_OFFSET
+            assert raw % num_trusts == trust_index - 1
+    if PERSON_ID_OFFSET % num_trusts:  # the counts where the shifted id would mislead (3 here)
+        misled = [raw for raw in person["person_id"] if (raw + PERSON_ID_OFFSET) % num_trusts != raw % num_trusts]
+        assert misled, "expected at least one id whose shifted modulo names another trust"
 
 
 def test_build_person_rows_offsets_and_sanitises_concepts(person: pd.DataFrame):
@@ -268,6 +288,54 @@ class TestCleanReservedBandProvenance:
                 {"marker": f"{SYNTHEA_SOURCE_VALUE_PREFIX}%"},
             ).one()
         assert total == len(person)  # not doubled by the reload
+
+    def test_failed_reload_rolls_back_to_the_previous_load(
+        self,
+        engine,
+        person: pd.DataFrame,
+        condition: pd.DataFrame,
+        visit: pd.DataFrame,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """The clean and the three inserts are one transaction: a failure part-way leaves the DB as it was.
+
+        Committed separately, a reload that dies on its second insert would leave the previous Synthea
+        rows deleted and only the new person rows present — a cohort query then finds persons with no
+        conditions, i.e. an empty cohort, although the command exited non-zero.
+        """
+        tables = {"person": person, "condition_occurrence": condition, "visit_occurrence": visit}
+        load_synthea_ehr(engine, tables, num_trusts=1, trust_index=1)
+
+        def poisoned_visit_rows(*args, **kwargs) -> pd.DataFrame:
+            rows = build_visit_rows(*args, **kwargs)
+            return rows.assign(no_such_column=1)  # omop.visit_occurrence has no such column → INSERT fails
+
+        monkeypatch.setattr(synthea_ehr, "build_visit_rows", poisoned_visit_rows)
+        with pytest.raises(Exception, match="no_such_column"):
+            load_synthea_ehr(engine, tables, num_trusts=1, trust_index=1)
+
+        marker = f"{SYNTHEA_SOURCE_VALUE_PREFIX}%"
+        with engine.connect() as conn:
+            (persons,) = conn.execute(
+                text("SELECT COUNT(*) FROM omop.person WHERE person_source_value LIKE :marker"), {"marker": marker}
+            ).one()
+            (conditions,) = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM omop.condition_occurrence WHERE person_id IN "
+                    "(SELECT person_id FROM omop.person WHERE person_source_value LIKE :marker)"
+                ),
+                {"marker": marker},
+            ).one()
+            (visits,) = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM omop.visit_occurrence WHERE person_id IN "
+                    "(SELECT person_id FROM omop.person WHERE person_source_value LIKE :marker)"
+                ),
+                {"marker": marker},
+            ).one()
+        assert persons == len(person), "the failed reload's clean was committed on its own"
+        assert conditions == len(condition), "the previous load's condition rows did not survive the failed reload"
+        assert visits == len(visit), "the previous load's visit rows did not survive the failed reload"
 
 
 # ---------------------------------------------------------------------------------------------
