@@ -23,11 +23,10 @@ import { demoVisit, requireEnv, revealDemo } from "./support/demoFlow";
 describe("FLIP demo — follow training progress", () => {
     it("shows the live training dashboard with metrics", () => {
         const email = requireEnv("DEMO_RESEARCHER_EMAIL");
-        const password = requireEnv("DEMO_RESEARCHER_PASSWORD");
         const projectId = requireEnv("DEMO_PROJECT_ID");
         const modelId = requireEnv("DEMO_MODEL_ID");
 
-        cy.demoLogin(email, password, { stealth: true });
+        cy.demoLogin(email, "DEMO_RESEARCHER_PASSWORD", { stealth: true });
         demoVisit(`/project/${projectId}/model/${modelId}`);
         // Everything is still hidden — wait on existence, then reveal onto a
         // fully-rendered dashboard.

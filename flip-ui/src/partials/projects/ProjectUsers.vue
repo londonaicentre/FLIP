@@ -115,12 +115,15 @@ import { object } from "yup";
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiInput from "@/components/AiInput/AiInput.vue";
-import { IProjectUser, validateUser } from "@/services/user-service";
+import { IProjectUserLookup, lookupProjectUser } from "@/services/user-service";
 import { useAuthStore } from "@/store/auth";
 import { emailValidation } from "@/utils/forms/validation";
 
 export interface IProjectUsersProps {
-    users?: IProjectUser[];
+    // Only the narrow shape is needed here — this component reads id / email / isDisabled and
+    // nothing else. Existing members (IProjectUser) are assignable to it, and newly looked-up
+    // ones only ever carry these three fields (FLIP#907).
+    users?: IProjectUserLookup[];
     readonly?: boolean;
 }
 
@@ -141,7 +144,10 @@ const currentUserId = authStore.user?.userId;
 
 const formSubmit = ref<boolean>(false);
 let enteredEmail: string;
-const userList = ref<IProjectUser[]>(props.users);
+// Copy rather than alias `props.users`: the list is mutated in place on add/remove, and newly
+// looked-up members are the narrower IProjectUserLookup shape, so writing them straight back into
+// the parent's IProjectUser[] would be unsound as well as a prop mutation.
+const userList = ref<IProjectUserLookup[]>([...props.users]);
 const displayUsers = computed(() => userList.value.filter(u => u.id !== currentUserId));
 const invalidUser = ref<string[]>([]);
 const userIsDirty = ref(false);
@@ -162,7 +168,7 @@ const submit = async(v: unknown, { resetForm }: {resetForm: () => void} ): Promi
             return handleError(`${email} has already been added to the list`);
         }
 
-        const user = await validateUser(email);
+        const user = await lookupProjectUser(email);
 
         if (user) {
             if (user.isDisabled) {

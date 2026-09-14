@@ -29,7 +29,7 @@
         </button>
 
         <AiButton
-            light
+            primary
             data-test="download-results-btn"
             aria-label="Download Results"
             tooltip="Download Results"

@@ -25,7 +25,10 @@ describe("docs: connection status", () => {
         cy.login();
 
         // A healthy per-container snapshot as trust-api's collector reports it.
-        const healthyServices = () => ({
+        // Both fields are nullable: the collector's _entry("down") reports no
+        // version and no latency, so the type has to admit what the platform emits.
+        type ServiceProbe = { status: string; version: string | null; response_ms: number | null };
+        const healthyServices = (): Record<string, ServiceProbe> => ({
             "trust-api": {
                 status: "healthy",
                 version: "0.3.0",

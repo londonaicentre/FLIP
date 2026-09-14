@@ -14,6 +14,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.3 imaging-api Gets 401 from XNAT (flipServiceAccount)](#23-imaging-api-gets-401-from-xnat-flipserviceaccount)
    - [2.3a dcm2niix Never Registered (admin missing ContainerManager)](#23a-dcm2niix-never-registered-admin-missing-containermanager)
    - [2.3b dcm2niix Runs but Produces No NIfTI (Container Service PVC mounts)](#23b-dcm2niix-runs-but-produces-no-nifti-container-service-pvc-mounts)
+   - [2.3c dcm2niix Registered Against a Stale Image](#23c-dcm2niix-registered-against-a-stale-image)
    - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
    - [2.5 C-MOVE Testing from the DCMTK Pod](#25-c-move-testing-from-the-dcmtk-pod)
    - [2.6 Checking DICOM Connectivity](#26-checking-dicom-connectivity)
@@ -355,6 +356,43 @@ xnat:
       storageClassName: efs-sc        # any RWX-capable provisioner
 ```
 
+### 2.3c dcm2niix Registered Against a Stale Image
+
+**Symptom:** studies pull and archive fine, conversion never runs, and
+imaging-api reports the mismatch by listing what *is* registered, e.g.
+
+```
+No commands found for container 'ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724'.
+The Container Service is installed and has 1 command(s) registered:
+'dcm2niix' -> 'xnat/dcm2niix:latest'. If one of those is the same tool on an older
+image, this XNAT's registration predates the current pin ...
+```
+
+The Container Service is healthy and the command is enabled; it is simply bound
+to the image this XNAT was provisioned with.
+
+**Root Cause:** the registration lives in XNAT's database, not derived from the
+chart at run time, so an XNAT provisioned before the FLIP#980 pin keeps
+converting with the 2021 `xnat/dcm2niix:latest` image and looks perfectly
+healthy. FLIP#980 changed the *repository* as well as the tag, so comparing
+tags alone does not reveal it. `trust/xnat/dcm2niix/check_image_pin_sync.sh`
+cannot catch it either: it compares files in the repository and never calls a
+running XNAT, so a live registration that disagrees with the pin is invisible
+to it. Both staging trusts sat in this state.
+
+**Check:**
+
+```bash
+kubectl exec -n flip-trust "$XNAT_POD" -- \
+  curl -s -u admin:<admin-pass> http://localhost:8080/xapi/commands \
+  | jq -r '.[] | "\(.name) -> \(.image)"'
+```
+
+**Fix:** re-register against the pinned image — re-run the `xnat-init` Job
+(`helm upgrade` re-fires the post-install hook) on Kubernetes, or
+`configure-dcm2niix.sh` on Compose. Then confirm the listing above names the
+image the trust's imaging-api requests.
+
 ### 2.4 Forcing a Re-pull (status stuck on "Processing")
 
 **Symptom:** A pull went wrong (e.g. §2.2's unrouted studies), the executed
@@ -455,11 +493,20 @@ The study data is sent to XNAT's prearchive.
 
 #### DICOM Port Map
 
-| Service | AE Title | Host | Port | Purpose |
-|---------|---------|------|------|---------|
-| XNAT SCP | `XNAT` | xnat-web | 8104 | Receives C-STORE from PACS |
-| Orthanc | `ORTHANC` | orthanc | 4242 | PACS — stores DICOM studies |
-| Imaging Worker | `FLIPIMPORT` | (any) | — | C-MOVE source AE |
+Values below are the shipped defaults for the mocked Orthanc; a trust PACS overrides them
+through the Helm values named in each cell.
+
+| Service | AE title | Host | Port | Purpose |
+|---------|----------|------|------|---------|
+| XNAT SCP receiver | `XNAT` (`xnat.web.dicomAet`) | xnat-web (`pacs.host` dials it back) | 8104 (`xnat.web.dicomPort`) | Receives the C-STORE the PACS opens after a C-MOVE |
+| PACS | `ORTHANC` (`pacs.aeTitle`) | orthanc (`pacs.host`) | 4242 (`pacs.qrPort`) | Serves C-FIND and C-MOVE |
+| DQR calling AE | same as the SCP receiver | — | — | The AE XNAT presents when it queries the PACS |
+
+There is no separate AE for the imaging worker: imaging-api drives retrieval through XNAT's DQR
+REST API, so every association on the wire is between XNAT and the PACS. The SCP receiver's AE
+title and the DQR calling AE are both `xnat.web.dicomAet` and must stay equal — DQR matches the
+C-MOVE destination against a registered receiver by exact `AE:port`, so a mismatch means the PACS
+sends the studies to an address XNAT is not listening on.
 
 #### XNAT SCP Receiver Configuration
 
@@ -470,7 +517,8 @@ kubectl exec -n flip-trust trust-release-flip-trust-xnat-db-0 -- psql -U xnat -d
   "SELECT id, ae_title, port, direct_archive, custom_processing, identifier FROM xhbm_dicomscpinstance;"
 ```
 
-Expected output:
+Expected output (`ae_title` and `port` follow `xnat.web.dicomAet` / `xnat.web.dicomPort`; the
+rest are fixed by `configure-xnat.sh`):
 `ae_title=XNAT, port=8104, direct_archive=t, custom_processing=t, identifier=dqrObjectIdentifier`
 
 If missing or wrong, recreate it via the REST API (see §2.2 — prefer the API

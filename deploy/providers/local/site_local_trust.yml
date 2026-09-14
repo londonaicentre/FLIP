@@ -28,6 +28,14 @@
   become: true
   vars:
     flip_dir: /opt/flip
+    # Which FL backend this trust will run. Only affects the ownership of the
+    # per-net images bind sources below (the Flower client runs as a different
+    # UID from imaging-api). `make provision-local-trust` passes the deployment's
+    # FL_BACKEND; a standalone run needs `-e fl_backend=flower` explicitly.
+    # Getting it wrong is not fatal — `make -C trust up-trust` runs under sudo
+    # on-prem and its $(ensure_net_dirs) re-applies the right ownership — but it
+    # leaves the first bring-up to do the fixing.
+    fl_backend: nvflare
 
   tasks:
     # ── System packages ──────────────────────────────────────────────────────
@@ -60,6 +68,28 @@
       loop:
         - "{{ flip_dir }}"
         - "{{ flip_dir }}/data/images"
+
+    # Per-net fl-client bind sources — each fl-client mounts only its own net's
+    # slice, so these must exist ubuntu-owned before first `up-trust` (which runs
+    # under sudo on-prem): a root-created net-N dir is unwritable by imaging-api
+    # (uid 1000) and every image download 500s.
+    # The group is backend-aware because the fl-client writes inside net-N too
+    # (flip.add_resource staging, NVFLARE CleanupImages): NVFLARE's client shares
+    # imaging-api's uid 1000, but Flower's is built on upstream flwr/base and runs
+    # as `app` (uid/gid 49999) with no supplementary group, so it needs group
+    # 49999 + 0775 or add_resource fails with EACCES.
+    # Keep in sync with deploy/providers/AWS/site.yml's net-N task, the K8s
+    # chart's images-init, and trust/Makefile's $(ensure_net_dirs).
+    - name: Create per-net images bind-mount directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: "{{ '49999' if fl_backend == 'flower' else 'ubuntu' }}"
+        mode: "{{ '0775' if fl_backend == 'flower' else '0755' }}"
+      loop:
+        - "{{ flip_dir }}/data/images/net-1"
+        - "{{ flip_dir }}/data/images/net-2"
 
     # XNAT containers run as the in-image `xnat` user (UID 1001) after the
     # Docker-hardening pass on `trust/xnat/xnat/Dockerfile`. Bind-mounted host

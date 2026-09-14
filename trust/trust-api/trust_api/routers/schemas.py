@@ -54,9 +54,13 @@ class CentralHubProject(BaseModel):
 
 
 class DeleteImagingInput(BaseModel):
-    """Input for deleting an imaging project."""
+    """Input for deleting an imaging project.
 
-    imaging_project_id: str = Field(..., description="The XNAT project ID to delete")
+    The id is interpolated into the imaging-api URL path, so it is validated as a UUID here rather
+    than trusted as a raw string — the hub always emits one (``str(xnat_project_id)``, a UUID column).
+    """
+
+    imaging_project_id: UUID = Field(..., description="The XNAT project ID to delete")
 
 
 class GetImagingStatusInput(BaseModel):

@@ -234,6 +234,10 @@ describe("LatestModels — defensive data access", () => {
         expect(wrapper.text()).toContain("Beta");
         // The View-All button only renders when data.data.length > 0.
         expect(wrapper.text()).toContain("View All Models");
+        // It deep-links into the estate list scoped to this project — the per-project models
+        // page it used to open no longer exists.
+        expect(wrapper.find("[data-test='view-all-models-btn']").attributes("link"))
+            .toBe("/models?project=project-1");
     });
 
     test("lays out as a flex column whose list region scrolls when the card height is pinned", async () => {

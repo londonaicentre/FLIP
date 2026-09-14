@@ -129,7 +129,7 @@ def test_get_project_details_invalid_id(client, mock_db):
 
 
 def test_get_project_details_returns_users_as_objects(client, mock_db, mock_project):
-    """Test that users are returned as objects with id, email, and isDisabled fields."""
+    """Test that users are returned as objects with id, email, and isDisabled — and nothing more."""
     owner_user = CognitoUser(id=TEST_OWNER_ID, email="owner@example.com", is_disabled=False)
     access_user = CognitoUser(id=TEST_USER_ID, email="user@example.com", is_disabled=False)
 
@@ -164,6 +164,14 @@ def test_get_project_details_returns_users_as_objects(client, mock_db, mock_proj
         assert "email" in user
         assert "isDisabled" in user
         assert user["isDisabled"] is False
+        # A project co-member must not learn anyone's name or organisation — that is the
+        # disclosure FLIP#907 closed on `/users/{user_id}`, and this path is currently narrow only
+        # because it never calls `apply_user_profile` (see the comment on IReturnedProject.users).
+        # The keys are still on the wire because CognitoUser defaults them to "", so assert they
+        # are empty rather than absent; enriching this path would populate them and fail here.
+        # FLIP#996 tracks making the response model enforce it instead.
+        assert user.get("name", "") == ""
+        assert user.get("organisation", "") == ""
 
 
 def test_get_project_details_filters_disabled_users(client, mock_db, mock_project):
@@ -194,3 +202,29 @@ def test_get_project_details_filters_disabled_users(client, mock_db, mock_projec
     # Only the non-disabled owner should be in the list
     assert len(data["users"]) == 1
     assert data["users"][0]["email"] == "owner@example.com"
+
+
+def test_get_project_details_surfaces_has_imaging_false(client, mock_db, mock_project):
+    """The detail route is what the UI's chip/layout and the smoke read the flag off (FLIP#1071)."""
+    owner_user = CognitoUser(id=TEST_OWNER_ID, email="owner@example.com", is_disabled=False)
+    mock_project.description = "Test description"
+    mock_project.creation_timestamp = datetime(2023, 1, 1)
+    mock_project.has_imaging = False
+    mock_project.dicom_to_nifti = False
+
+    with (
+        patch("flip_api.project_services.get_project.can_access_project", return_value=True),
+        patch("flip_api.project_services.get_project.get_project", return_value=mock_project),
+        patch("flip_api.project_services.get_project.get_trusts_approval_status_for_project", return_value=[]),
+        patch("flip_api.project_services.get_project.get_users_with_access", return_value=[]),
+        patch("flip_api.project_services.get_project.get_project_query", return_value=None),
+        patch("flip_api.project_services.get_project.get_settings") as mock_settings,
+        patch("flip_api.project_services.get_project.get_user_by_email_or_id", return_value=owner_user),
+    ):
+        mock_settings.return_value.AWS_COGNITO_USER_POOL_ID = "test-pool"
+
+        response = client.get(f"/api/projects/{TEST_PROJECT_ID}")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["has_imaging"] is False
+    assert response.json()["dicom_to_nifti"] is False

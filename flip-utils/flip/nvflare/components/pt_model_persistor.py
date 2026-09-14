@@ -52,7 +52,7 @@ class InitialCheckpointPTModelPersistor(PTFileModelPersistor):
         super().__init__(model=model, **kwargs)
         self._model_id_arg = model_id
 
-    def _resolve_backbone(self, fl_ctx: FLContext):
+    def _resolve_backbone(self, fl_ctx: FLContext) -> str | None:
         """Locate the declared backbone checkpoint, or ``None`` if none is declared/found."""
         app_dir = fl_ctx.get_engine().get_workspace().get_app_dir(fl_ctx.get_job_id())
         config_path = os.path.join(app_dir, "custom", "config.json")

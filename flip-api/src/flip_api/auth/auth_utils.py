@@ -18,9 +18,45 @@ from flip_api.db.models.user_models import PermissionRef, Role, RolePermission, 
 from flip_api.utils.logger import logger
 
 
+def _user_permission_ids(user_id: UUID, db: Session) -> set[UUID]:
+    """
+    Collect the IDs of every permission granted to a user through their roles.
+
+    Raises rather than swallowing DB errors: each caller converts a failure into a deny, so the
+    fail-closed behaviour stays visible at the point where the access decision is made.
+
+    Args:
+        user_id (UUID): The ID of the user to collect permissions for.
+        db (Session): The database session to query user roles and permissions.
+
+    Returns:
+        set[UUID]: The permission IDs granted by the user's roles.
+    """
+    # Get user roles
+    user_roles = db.exec(select(Role).join(UserRole).where(UserRole.user_id == user_id)).all()
+
+    # Get all permissions for these roles
+    user_permission_ids: set[UUID] = set()
+    for role in user_roles:
+        role_permissions = db.exec(select(RolePermission.permission_id).where(RolePermission.role_id == role.id)).all()
+        user_permission_ids.update(role_permissions)
+
+    return user_permission_ids
+
+
 def has_permissions(user_id: UUID, required_permissions: list[PermissionRef], db: Session) -> bool:
     """
-    Check if a user has the required permissions.
+    Check if a user has ALL of the required permissions.
+
+    This is an AND check — ``has_permissions(uid, [A, B], db)`` is True only when the user holds
+    both A and B. For an OR check, use :func:`has_any_permission`; passing two permissions here
+    when either would do silently denies everyone who holds just one of them.
+
+    An empty list grants nothing (returns False), matching :func:`has_any_permission`, so a caller
+    cannot accidentally allow everyone by passing no permissions. That guard is explicit here
+    because the natural implementation fails *open*: ``all()`` over an empty sequence is True, and
+    the ``except`` below would not catch it — with nothing to check, the query succeeds and the
+    generator never runs.
 
     Args:
         user_id (UUID): The ID of the user to check permissions for.
@@ -30,21 +66,44 @@ def has_permissions(user_id: UUID, required_permissions: list[PermissionRef], db
     Returns:
         bool: True if the user has all required permissions, False otherwise
     """
-    try:
-        # Get user roles
-        user_roles = db.exec(select(Role).join(UserRole).where(UserRole.user_id == user_id)).all()
+    # Deny before touching the DB. A dynamically built list that filtered down to nothing is a
+    # caller bug, so it is worth a log line rather than a silent deny.
+    if not required_permissions:
+        logger.error(f"Refusing to authorize user {user_id} against an empty required-permission list")
+        return False
 
-        # Get all permissions for these roles
-        user_permission_ids: list[UUID] = []
-        for role in user_roles:
-            role_permissions = db.exec(
-                select(RolePermission.permission_id).where(RolePermission.role_id == role.id)
-            ).all()
-            user_permission_ids.extend(role_permissions)
+    try:
+        user_permission_ids = _user_permission_ids(user_id, db)
 
         # Check if user has all required permissions
         return all(permission.value in user_permission_ids for permission in required_permissions)
 
     except Exception as e:
-        logger.error(f"Error checking permissions: {str(e)}")
+        logger.error(f"Error checking all-of permissions for user {user_id}: {str(e)}")
+        return False
+
+
+def has_any_permission(user_id: UUID, permissions: list[PermissionRef], db: Session) -> bool:
+    """
+    Check if a user has AT LEAST ONE of the given permissions.
+
+    The OR counterpart to :func:`has_permissions`, which is an AND check. An empty list grants
+    nothing (returns False), so a caller cannot accidentally allow everyone by passing no
+    permissions.
+
+    Args:
+        user_id (UUID): The ID of the user to check permissions for.
+        permissions (list[PermissionRef]): The permissions to check against the user's roles.
+        db (Session): The database session to query user roles and permissions.
+
+    Returns:
+        bool: True if the user holds any one of the given permissions, False otherwise.
+    """
+    try:
+        user_permission_ids = _user_permission_ids(user_id, db)
+
+        return any(permission.value in user_permission_ids for permission in permissions)
+
+    except Exception as e:
+        logger.error(f"Error checking any-of permissions for user {user_id}: {str(e)}")
         return False

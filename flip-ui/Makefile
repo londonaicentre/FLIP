@@ -10,30 +10,39 @@
 # limitations under the License.
 #
 
+# Repo-root-relative FILENAME, never a path — the root Makefile exports it that way and each
+# sub-Makefile prepends its own `../`. Baking `../` in here instead would silently lose the file
+# whenever the value is overridden (`make up MAIN_ENV_FILE=.env.b.development` for a second
+# stack), because the include below is guarded by a wildcard and just skips a missing file.
 ifeq ($(PROD),true)
-MAIN_ENV_FILE=../.env.production
+MAIN_ENV_FILE ?= .env.production
 else ifeq ($(PROD),stag)
-MAIN_ENV_FILE=../.env.stag
+MAIN_ENV_FILE ?= .env.stag
 else
-MAIN_ENV_FILE=../.env.development
+MAIN_ENV_FILE ?= .env.development
 endif
 
 $(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
 
 # replace environment variables by the values from the .env files
-ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
-include $(MAIN_ENV_FILE)
-export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
+ifneq ("$(wildcard ../$(MAIN_ENV_FILE))","")
+include ../$(MAIN_ENV_FILE)
+export $(shell sed 's/=.*//' ../$(MAIN_ENV_FILE))
 endif
 
-docker_command = docker compose -f ../deploy/compose.development.yml
+include ../deploy/instance.mk
+
+# -p is explicit rather than inherited: compose would otherwise derive the project from the
+# directory of the first -f file (always deploy/), pinning every instance to `deploy` and, on
+# a second stack, running these one-shots against the default stack's project (FLIP#957).
+docker_command = docker compose -p $(COMPOSE_PROJECT) -f ../deploy/compose.development.yml
 
 unit_test:
-	$(docker_command) run --rm --remove-orphans --name flip-ui-test flip-ui npm run test:unit:update
+	$(docker_command) run --rm --remove-orphans --name $(INSTANCE_PREFIX)flip-ui-test flip-ui npm run test:unit:update
 shell:
-	$(docker_command) run --rm --remove-orphans --name flip-ui-shell flip-ui sh
+	$(docker_command) run --rm --remove-orphans --name $(INSTANCE_PREFIX)flip-ui-shell flip-ui sh
 npm-install:
-	$(docker_command) run --rm --remove-orphans --name flip-ui-npm-install flip-ui npm install
+	$(docker_command) run --rm --remove-orphans --name $(INSTANCE_PREFIX)flip-ui-npm-install flip-ui npm install
 
 # Cypress runs on the host (matching CI), not inside the dev container — Chrome
 # needs to be available locally. Requires Node >=20.19 and `npm install` to have

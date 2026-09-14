@@ -29,14 +29,21 @@ chart. Text parsing sees every branch.
 
 import importlib.util
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 CHART_DIR = Path(__file__).resolve().parents[1]
 TEMPLATES_DIR = CHART_DIR / "templates"
 SECRETS_TEMPLATE = TEMPLATES_DIR / "secrets.yaml"
 XNAT_DB_TEMPLATE = TEMPLATES_DIR / "xnat-db.yaml"
+REPO_ROOT = CHART_DIR.parents[2]
+
+# Repo-relative, because that is what git wants and what the ignore rule sees.
+GENERATED_VALUES_FILE = "deploy/providers/kubernetes/values-secrets.yaml"
+EXAMPLE_VALUES_FILE = "deploy/providers/kubernetes/values-secrets.yaml.example"
 
 _SCRIPT = CHART_DIR / "scripts" / "generate_values.py"
 _spec = importlib.util.spec_from_file_location("generate_values", _SCRIPT)
@@ -124,6 +131,22 @@ def test_secret_var_map_targets_exist_in_the_secret_template():
     assert orphaned == set(), f"SECRET_VAR_MAP entries with no key in templates/secrets.yaml: {sorted(orphaned)}"
 
 
+def test_chart_key_slots_have_no_duplicate_entries():
+    """``SECRET_VAR_MAP`` is ``dict(CHART_KEY_SLOTS)``, which swallows duplicates.
+
+    A repeated env var silently keeps only the last pair, and a repeated Secret
+    key means two env vars race for one slot. Either reads as a working mapping
+    and deploys an empty or wrong credential, so check the tuple itself rather
+    than the dict built from it.
+    """
+    env_vars = [env_var for env_var, _key in generate_values.CHART_KEY_SLOTS]
+    keys = [key for _env_var, key in generate_values.CHART_KEY_SLOTS]
+
+    assert len(env_vars) == len(set(env_vars)), "duplicate env var in CHART_KEY_SLOTS"
+    assert len(keys) == len(set(keys)), "duplicate Secret key in CHART_KEY_SLOTS"
+    assert len(generate_values.SECRET_VAR_MAP) == len(generate_values.CHART_KEY_SLOTS)
+
+
 def test_xnat_db_superuser_and_app_role_use_distinct_secret_keys():
     """xnat-db's two passwords must not resolve to the same Secret key.
 
@@ -135,8 +158,8 @@ def test_xnat_db_superuser_and_app_role_use_distinct_secret_keys():
     """
     refs = _secret_key_refs(XNAT_DB_TEMPLATE)
 
-    assert refs["POSTGRES_PASSWORD"] == "xnat-datasource-admin-password"
-    assert refs["XNAT_DATASOURCE_PASSWORD"] == "xnat-datasource-password"
+    assert refs["POSTGRES_PASSWORD"] == "xnat-datasource-admin-password"  # pragma: allowlist secret
+    assert refs["XNAT_DATASOURCE_PASSWORD"] == "xnat-datasource-password"  # pragma: allowlist secret
     assert refs["POSTGRES_PASSWORD"] != refs["XNAT_DATASOURCE_PASSWORD"]
 
 
@@ -181,3 +204,133 @@ def test_default_values_declare_every_rendered_key():
     missing = {key for key in _rendered_keys() if not re.search(rf"^\s+{re.escape(key)}:", content, re.MULTILINE)}
 
     assert missing == set(), f"values.yaml secrets.data is missing keys: {sorted(missing)}"
+
+
+def _git(*args: str) -> subprocess.CompletedProcess:
+    """Run a git query at the repo root.
+
+    Args:
+        *args (str): Arguments to pass to ``git``.
+
+    Returns:
+        subprocess.CompletedProcess: The completed process, un-checked, so the
+            caller can assert on an exact exit status.
+    """
+    return subprocess.run(["git", *args], cwd=REPO_ROOT, capture_output=True, text=True)
+
+
+def _example_secret_data() -> dict:
+    """Parse the ``secrets.data`` block out of the tracked example.
+
+    Parsed rather than pattern-matched on purpose: a regex over the raw text
+    only sees the indentation and casing it was written for, so an uppercase
+    key, a re-indented block or a differently quoted value slips past it. The
+    parser sees whatever Helm would see.
+
+    Returns:
+        dict: ``{secret key: value}`` as YAML loads it.
+    """
+    example = CHART_DIR / "values-secrets.yaml.example"
+    assert example.exists(), "values-secrets.yaml.example is the tracked field reference"
+
+    loaded = yaml.safe_load(example.read_text())
+    assert isinstance(loaded, dict), "example must parse as a YAML mapping"
+    assert "secrets" in loaded, "example must declare a top-level secrets block"
+
+    data = loaded["secrets"].get("data")
+    assert isinstance(data, dict), "example must declare secrets.data as a mapping"
+    return data
+
+
+def test_generated_secrets_file_is_not_tracked():
+    """values-secrets.yaml is generated and must never be committed.
+
+    generate_values.py writes it from a trust kit with mode 0600 and warns that
+    it holds sensitive data, but it was tracked anyway and shipped live trust
+    credentials on a public repository (GHSA-5mgf-f773-9gmr). Untracking it is
+    only half the fix — without this assertion the next `git add -A` in that
+    directory puts it straight back.
+    """
+    tracked = _git("ls-files", "--error-unmatch", GENERATED_VALUES_FILE)
+
+    # Exactly 1 — "known to git, and this path is not it". 128 is git refusing
+    # to answer at all (outside a repository, or `dubious ownership`), which a
+    # `!= 0` assertion would read as a pass: green precisely when it cannot run.
+    assert tracked.returncode == 1, (
+        f"expected exit 1 (untracked) from `git ls-files --error-unmatch {GENERATED_VALUES_FILE}`, "
+        f"got {tracked.returncode}: {tracked.stderr.strip() or tracked.stdout.strip()}. "
+        "Exit 0 means the file is tracked again — it is generated by scripts/generate_values.py "
+        "and carries live trust credentials, so keep it gitignored and edit "
+        "values-secrets.yaml.example instead. Any other exit means git could not run the check."
+    )
+
+    # Positive control: the same invocation on a file that IS tracked must
+    # return 0. Without it the assertion above cannot tell "not tracked" from
+    # "git never looked".
+    control = _git("ls-files", "--error-unmatch", EXAMPLE_VALUES_FILE)
+    assert control.returncode == 0, (
+        f"positive control failed: `git ls-files --error-unmatch {EXAMPLE_VALUES_FILE}` returned "
+        f"{control.returncode}, so the untracked assertion above proves nothing"
+    )
+
+
+def test_the_generated_secrets_filename_is_ignored_from_any_directory():
+    """The ignore rule must not be anchored to the chart directory.
+
+    ``generate_values.py`` defaults ``--output-dir`` to the current directory,
+    so the file lands wherever the operator happened to run it. A rule anchored
+    to ``deploy/providers/kubernetes/`` leaves every other cwd — the repo root
+    included — writing an un-ignored file full of live trust credentials.
+    """
+    for path in (GENERATED_VALUES_FILE, "values-secrets.yaml", "some/other/dir/values-secrets.yaml"):
+        ignored = _git("check-ignore", "-q", path)
+        assert ignored.returncode == 0, (
+            f"{path} is not gitignored (`git check-ignore -q` returned {ignored.returncode}). "
+            "The rule must stay unanchored (**/values-secrets.yaml) — the generator writes the "
+            "file relative to the cwd, not to the chart directory."
+        )
+
+    # Positive control: the tracked example must NOT be swept up by the rule.
+    control = _git("check-ignore", "-q", EXAMPLE_VALUES_FILE)
+    assert control.returncode == 1, (
+        f"the ignore rule also matches {EXAMPLE_VALUES_FILE} (returned {control.returncode}); "
+        "the tracked field reference must stay visible to git"
+    )
+
+
+def test_the_example_declares_exactly_the_rendered_keys():
+    """The example is the operator-facing field list, so it must not rot.
+
+    A key the Secret template can emit but the example omits is one an operator
+    has no way to discover; a key the example lists but nothing renders is dead
+    config that reads as real (``values.yaml``'s ``xnat-admin-user`` is the
+    standing example of the second).
+    """
+    assert set(_example_secret_data()) == _rendered_keys(), (
+        "values-secrets.yaml.example and templates/secrets.yaml disagree: "
+        f"only in the example {sorted(set(_example_secret_data()) - _rendered_keys())}, "
+        f"only in the template {sorted(_rendered_keys() - set(_example_secret_data()))}"
+    )
+
+
+def test_the_example_carries_no_populated_secret():
+    """Every slot in the tracked example must be empty.
+
+    Empty, not "a placeholder that looks harmless": ``templates/secrets.yaml``
+    guards each key with ``if index``, so an empty slot is omitted from the
+    Secret and the pod that mounts it dies with ``CreateContainerConfigError``.
+    That is what makes "copying the example into place does not deploy" true —
+    a placeholder string deploys perfectly well, on a value published in a
+    public repository.
+
+    It is also the only guard on two of these values. detect-secrets does not
+    flag the trust-key slots, and a file nobody edits is never re-scanned, so
+    nothing else would notice a real credential pasted in here "just to test" —
+    which is how the original file came to hold a live key.
+    """
+    populated = {key: value for key, value in _example_secret_data().items() if value is not None and value != ""}
+
+    assert populated == {}, (
+        f"values-secrets.yaml.example must keep every slot empty; populated: {sorted(populated)}. "
+        "Put the value in the generated values-secrets.yaml (gitignored), never here."
+    )

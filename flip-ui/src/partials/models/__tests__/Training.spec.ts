@@ -40,7 +40,13 @@ vi.mock("@/services/model-service", async (importOriginal) => {
     };
 });
 
-const alertStub = { template: "<div data-test=\"alert-stub\"><slot /></div>" };
+const alertStub = {
+    props: ["variant", "actionText"],
+    emits: ["action"],
+    template: "<div data-test=\"alert-stub\" :data-variant=\"variant\"><slot />"
+        + "<button v-if=\"actionText\" data-test=\"alert-action\" @click=\"$emit('action')\">"
+        + "{{ actionText }}</button></div>"
+};
 const buttonStub = { template: "<button data-test=\"initiate-training-btn\"><slot /></button>" };
 const actionsMenuStub = { template: "<div data-test=\"training-actions-menu\" />" };
 
@@ -53,6 +59,8 @@ interface MountOpts {
     uploadedFileNames?: string[];
     jobType?: string;
     flBackendLabel?: string;
+    jobTypesError?: boolean;
+    jobTypesLoading?: boolean;
     runTrusts?: string[];
     formValues?: Record<string, unknown>;
 }
@@ -70,6 +78,8 @@ function mountTraining(options: MountOpts = {}) {
         uploadedFileNames = [],
         jobType = "standard",
         flBackendLabel,
+        jobTypesError = false,
+        jobTypesLoading = false,
         // Mirrors the page default: nothing to watch until the model is dispatched.
         view = status === "PENDING" ? "prepare" : "run",
         runTrusts = [],
@@ -128,6 +138,8 @@ function mountTraining(options: MountOpts = {}) {
             uploadedFileNames,
             jobType,
             flBackendLabel,
+            jobTypesError,
+            jobTypesLoading,
             view,
             runTrusts
         }
@@ -570,5 +582,68 @@ describe("Training reads the real vee-validate form", () => {
             expect(wrapper.text()).toContain("You must select a minimum of one trust for training.");
         });
         expect(vi.mocked(initialiseTraining)).not.toHaveBeenCalled();
+    });
+});
+
+describe("Training job-types failure", () => {
+    // The required-files list is per-backend, so when it can't be loaded there is nothing honest
+    // to show. The card says so rather than falling through to copy that implies we know.
+    it("renders an error alert instead of the required-files messaging", () => {
+        const wrapper = mountTraining({
+            jobTypesError: true,
+            requiredFiles: []
+        });
+        const alert = wrapper.find("[data-test=job-types-error-alert]");
+
+        expect(alert.exists()).toBe(true);
+        expect(alert.attributes("data-variant")).toBe("error");
+        expect(wrapper.text()).not.toContain("required files are");
+        expect(wrapper.text()).not.toContain("All required model files must be uploaded");
+        expect(wrapper.text()).not.toContain("Missing:");
+    });
+
+    it("emits retryJobTypes once when the retry action is clicked", async () => {
+        const wrapper = mountTraining({
+            jobTypesError: true,
+            requiredFiles: []
+        });
+
+        await wrapper.find("[data-test=job-types-error-alert] [data-test=alert-action]").trigger("click");
+
+        expect(wrapper.emitted("retryJobTypes")).toHaveLength(1);
+    });
+
+    it("drops the retry affordance while a retry is in flight", () => {
+        const wrapper = mountTraining({
+            jobTypesError: true,
+            jobTypesLoading: true,
+            requiredFiles: []
+        });
+        const alert = wrapper.find("[data-test=job-types-error-alert]");
+
+        expect(alert.find("[data-test=alert-action]").exists()).toBe(false);
+        expect(alert.text()).toContain("Retrying");
+    });
+
+    it("shows nothing once the model has been dispatched", () => {
+        // Past PENDING the file set is settled and the card belongs to the run, so a failure to
+        // load the required files is no longer something the user can act on.
+        const wrapper = mountTraining({
+            jobTypesError: true,
+            status: "RUNNING",
+            view: "prepare"
+        });
+
+        expect(wrapper.find("[data-test=job-types-error-alert]").exists()).toBe(false);
+    });
+
+    it("shows nothing on the run view", () => {
+        const wrapper = mountTraining({
+            jobTypesError: true,
+            status: "RUNNING",
+            view: "run"
+        });
+
+        expect(wrapper.find("[data-test=job-types-error-alert]").exists()).toBe(false);
     });
 });

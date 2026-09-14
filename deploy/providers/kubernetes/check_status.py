@@ -243,6 +243,33 @@ def kubectl_list(items: list[str], namespace: str, timeout: int = 15) -> list[st
     return [line.strip() for line in output.split("\n") if line.strip()]
 
 
+def _fl_client_kit_missing(pod: str, namespace: str) -> bool:
+    """Report whether an unready fl-client pod is blocked on its un-staged FL kit.
+
+    The kit is a hostPath volume with `type: Directory` (templates/fl-client.yaml), so
+    an unstaged kit surfaces as a pod stuck outside Running with a kubelet event naming
+    the path — not as an application error. Matching on the event keeps this specific:
+    a genuinely broken fl-client still reports FAIL.
+
+    Args:
+        pod: Pod resource name as returned by kubectl_list (e.g. 'pod/fl-client-xxx')
+        namespace: Kubernetes namespace.
+
+    Returns:
+        True if the pod is not Running and a mount event names a hostPath failure.
+    """
+    success, phase = run_command(["kubectl", "get", pod, "-n", namespace, "-o", "jsonpath={.status.phase}"])
+    if not success or phase.strip().strip("'\"") == "Running":
+        return False
+    # Events carry the diagnosis; the pod status only says ContainerCreating.
+    success, events = run_command([
+        "kubectl", "get", "events", "-n", namespace,
+        "--field-selector", f"involvedObject.name={pod.split('/')[-1]}",
+        "-o", "jsonpath={.items[*].message}",
+    ])
+    return success and "hostPath type check failed" in events
+
+
 def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 200) -> bool:
     """Check HTTP endpoint availability.
 
@@ -456,30 +483,19 @@ def main(
         if ready >= min_ready:
             print_status("PASS", f"'{svc}': {ready}/{len(svc_pods)} ready")
         else:
-            # For fl-client, a CrashLoopBackOff in the kit-init container almost always
-            # means the S3 kit bucket hasn't been configured yet (no KIT synced).
-            # Downgrade from FAIL to INFO so a bare deployment doesn't look broken.
-            if svc == "fl-client":
-                # If the init container has restarted at all, it crashed — the bucket/kit
-                # is not configured yet rather than the service itself being broken.
-                init_restarts = 0
-                if svc_pods:
-                    _, rc_str = run_command([
-                        "kubectl", "get", svc_pods[0], "-n", namespace, "-o",
-                        "jsonpath={.status.initContainerStatuses[0].restartCount}",
-                    ])
-                    try:
-                        init_restarts = int(rc_str.strip().strip("'\""))
-                    except (ValueError, TypeError):
-                        init_restarts = 0
-                if init_restarts > 0:
-                    print_status(
-                        "INFO",
-                        "fl-client kit-init is failing — S3 kit bucket not configured. "
-                        "Run: make sync-kit KIT=<KIT> PROD=<env>",
-                    )
-                else:
-                    print_status("FAIL", f"'fl-client': {ready}/{len(svc_pods)} ready (expected at least {min_ready})")
+            # For fl-client, the overwhelmingly common cause is that the FL participant
+            # kit was never staged onto the node. The chart mounts it as a hostPath with
+            # `type: Directory` (templates/fl-client.yaml), so a missing path is a mount
+            # failure naming that path, not a broken workload — report the remediation
+            # instead of a bare FAIL. (The chart holds no AWS credentials and no init
+            # container: it cannot fetch the kit, which arrives out-of-band.)
+            if svc == "fl-client" and _fl_client_kit_missing(svc_pods[0], namespace):
+                print_status(
+                    "INFO",
+                    "fl-client cannot mount its FL participant kit — the path in "
+                    "flClient.kitHostPath does not exist on the node. Stage it first: "
+                    "make stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<context>",
+                )
             else:
                 print_status("FAIL", f"'{svc}': {ready}/{len(svc_pods)} ready (expected at least {min_ready})")
 

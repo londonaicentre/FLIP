@@ -27,13 +27,15 @@ trust.
 import asyncio
 import json
 import sys
+from typing import Any
 
 import httpx
+from cryptography.exceptions import InvalidTag
 
 from trust_api.config import get_settings
 from trust_api.services.health_collector import current_snapshot
 from trust_api.services.task_handlers import TASK_HANDLERS
-from trust_api.utils.encryption import decrypt
+from trust_api.utils.encryption import decrypt, task_context
 from trust_api.utils.logger import logger
 
 CENTRAL_HUB_API_URL = get_settings().CENTRAL_HUB_API_URL
@@ -175,12 +177,19 @@ async def _report_task_result(client: httpx.AsyncClient, task_id: str, result: d
     Args:
         client (httpx.AsyncClient): HTTP client for making requests.
         task_id (str): The ID of the completed task.
-        result (dict): Result dict with ``success`` and optional ``result`` / ``error`` fields.
+        result (dict): Result dict with ``success`` and optional ``result`` / ``error`` /
+            ``status_code`` fields.
     """
     result_data = result.get("result")
-    # Include error details in the result field when reporting failures
+    # Include error details in the result field when reporting failures. ``status_code`` rides
+    # along when the handler knew one, so the hub can tell a missing XNAT project (404) from an
+    # unreachable one without parsing the error string (FLIP#1022). Absent codes stay absent
+    # rather than becoming null, so the hub's fallback parsing still kicks in.
     if not result.get("success", False) and result.get("error") and not result_data:
-        result_data = json.dumps({"error": result["error"]})
+        error_payload: dict[str, Any] = {"error": result["error"]}
+        if result.get("status_code") is not None:
+            error_payload["status_code"] = result["status_code"]
+        result_data = json.dumps(error_payload)
 
     payload = {
         "success": result.get("success", False),
@@ -232,8 +241,16 @@ async def _process_task(task: dict) -> dict:
         return {"success": False, "error": f"Unknown task type: {task_type}"}
 
     try:
-        payload = json.loads(decrypt(payload_str))
-    except (ValueError, json.JSONDecodeError) as e:
+        # The context binds the task type into the tag: a payload the hub sealed for one
+        # handler cannot be re-targeted at another by rewriting the unauthenticated task_type.
+        payload = json.loads(decrypt(payload_str, context=task_context(task_type)))
+    except InvalidTag:
+        # Tampered in transit, sealed for a different task type, or the hub's AES_KEY_BASE64
+        # is not this trust's copy (an envelope naming a kid we do not hold is the KeyError
+        # below). The exception carries no message, so say what happened rather than echo it.
+        logger.error(f"Payload for task {task_id} failed authentication")
+        return {"success": False, "error": "Invalid payload: failed authentication"}
+    except (ValueError, KeyError) as e:  # JSONDecodeError is a ValueError
         logger.error(f"Failed to decrypt or parse payload for task {task_id}: {e}")
         return {"success": False, "error": f"Invalid payload: {e}"}
 
@@ -267,7 +284,7 @@ async def run_poller() -> None:
                         result = await _process_task(task)
                         await _report_task_result(client, task_id, result)
                     except Exception as e:
-                        logger.error(f"Unhandled error processing task {task_id}: {e}")
+                        logger.exception(f"Unhandled error processing task {task_id}: {e}")
                         await _report_task_result(
                             client, task_id, {"success": False, "error": str(e)}
                         )

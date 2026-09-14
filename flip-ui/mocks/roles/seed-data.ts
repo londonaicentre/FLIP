@@ -28,6 +28,4 @@ export const roleResearcher: IRole = {
     roledescription: "A researcher."
 };
 
-export const allRoles: IRoleResponse = {
-    roles: [roleAdmin, roleResearcher]
-};
+export const allRoles: IRoleResponse = { roles: [roleAdmin, roleResearcher] };

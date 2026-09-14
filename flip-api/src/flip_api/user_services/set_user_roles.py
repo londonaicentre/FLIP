@@ -21,8 +21,9 @@ from flip_api.config import get_settings
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef, Role, UserRole, UsersAudit
 from flip_api.domain.interfaces.user import IRoles
-from flip_api.utils.cognito_helpers import get_username, validate_roles
+from flip_api.utils.cognito_helpers import get_username
 from flip_api.utils.logger import logger
+from flip_api.utils.user_roles import validate_roles
 
 router = APIRouter(prefix="/users", tags=["user_services"])
 

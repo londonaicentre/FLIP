@@ -48,7 +48,7 @@ split between [`fl-apps/`](../fl-apps) (job-type templates) and
 map-apps/
 ├── segmentation/          DICOM SEG output — bundle-driven inference
 ├── classification/        DICOM SR output  — custom operator + SR writer
-└── holoscan-source.json   pinned base-image manifest (see below)
+└── tests/                 CPU-only tests over the custom operator (run in CI: test_map_apps.yml)
 ```
 
 ## Choosing a template
@@ -63,8 +63,8 @@ image; it has no way to emit a label.
 
 ## Building a MAP
 
-Both templates are packaged the same way. `holoscan-source.json` and the UID flags are
-**required**, not optional — see the guide for why.
+Both templates are packaged the same way. The UID flags are **required**, not optional — see the
+guide for why. Package with `holoscan-cli` **4.2.0**: 4.3.0 removed MAP packaging altogether.
 
 ```bash
 holoscan package map-apps/segmentation \
@@ -72,19 +72,47 @@ holoscan package map-apps/segmentation \
     --models   <bundle-dir>/model.ts \
     --tag      my_flip_map:latest \
     --platform x86_64 \
+    --cuda     13 \
     --sdk      monai-deploy \
-    --source   map-apps/holoscan-source.json \
     --uid $(id -u) --gid $(id -g)
 
 holoscan run my_flip_map-x64-workstation-dgpu-linux-amd64:latest -i <dicom-dir> -o ./output
 ```
 
-### `holoscan-source.json`
+### Python here is 3.12, and stays 3.12
 
-The packager normally downloads a base-image manifest from GitHub, where most versions now return
-404. This file pins the manifest locally and selects a **CUDA 12 / Ubuntu 24.04** base image:
-CUDA 13 images require NVIDIA driver ≥580, and Ubuntu 24.04 is required because the CLI pins
-Python 3.12.3 package versions.
+**A MAP does not share an interpreter with FLIP.** `requirements.txt` is installed *inside* the
+container the packager builds, on a base image that pins Python 3.12.3. Nothing here is affected by
+what the rest of the repo runs on, and nothing here should be bumped in step with it.
+
+That matters because this corner is capped and the rest of the repo is not:
+
+| | Python | why |
+| --- | --- | --- |
+| `map-apps/` | **3.12, fixed** | `monai-deploy-app-sdk` declares `>=3.10,<3.14`; the holoscan CLI pins Ubuntu 24.04 package versions, so the base image must match |
+| everything else | `>=3.12,<3.14` | a deliberate cap (FLIP#1018), not a hard limit — every Python service's unit suite passes on 3.14 |
+
+So when FLIP eventually moves past 3.14, **leave these templates alone**. The cap is the App SDK's,
+it is not ours to lift, and it costs nothing: the MAP is a self-contained container that takes DICOM
+in and emits DICOM out. Bumping it "for consistency" would break packaging for no benefit.
+
+The pins in `requirements.txt` are load-bearing for a different reason — see the comments there and
+the prerequisites table in the packaging guide. In short: `monai>=1.6.0` (four high-severity
+advisories are patched only there, it matches what FLIP trains with, and the inherited `<=1.5.0`
+capped `torch<2.7`, which has no `sm_120` and so cannot use a Blackwell GPU), `torch==2.13.0` from
+PyPI's default cu130 line, and `holoscan-cu13` 4.2.0 with `monai-deploy-app-sdk` 4.0.0 — one
+coherent CUDA-13 generation, at the cost of the driver floor below.
+
+### The driver floor
+
+The base image is **CUDA 13 / Ubuntu 24.04** (`nvcr.io/nvidia/cuda:13.0.0-runtime-ubuntu24.04`),
+so packaging and running both need **NVIDIA driver ≥ 580**. Check `nvidia-smi` first. Ubuntu 24.04
+is not incidental either — the CLI pins Python 3.12.3 package versions, so the base image must
+match.
+
+The manifest naming that image is fetched from GitHub, where only `holoscan-cli` 4.2.0's is
+published; that is the second reason for the CLI pin, and why no local `--source` file is kept in
+this directory any more.
 
 ## Verifying the output
 
@@ -96,8 +124,18 @@ A MAP that exits cleanly has proved nothing about correctness. Check the artefac
 - **DICOM SR** — read `ContentSequence` back. Keep report text ASCII: the writer does not set
   `SpecificCharacterSet`, so non-ASCII characters are stored as `?`.
 
+`--models` takes a `model.ts` file for either template. `flip.export --form directory` writes a
+directory bundle instead, which needs no `torch.jit` — but only `classification/` can consume one in
+a packaged MAP: the SDK's `ModelFactory` does not recognise a directory bundle and still hands
+`MonaiBundleInferenceOperator` a placeholder with no predictor, so `segmentation/` fails inside
+inference. Verified on an RTX 5090. The packaging guide has the detail, and FLIP#1019 the background.
+
 ## Do not commit weights
 
-Exported bundles (`model.ts`) are build artefacts. `*.ts` cannot be globally ignored because
-`flip-ui` is TypeScript, so `.gitignore` carries targeted rules for the paths where TorchScript
-models appear.
+Exported bundles are build artefacts. `*.ts` cannot be globally ignored because `flip-ui` is
+TypeScript, so `.gitignore` carries targeted rules for the paths where TorchScript models appear,
+alongside the global `*.pt` rule that covers a directory bundle's weights.
+
+A directory bundle also copies your whole application into `scripts/`, which no weights rule
+catches — so `flip.export` writes a `.gitignore` into the bundle itself. That covers any `--out`
+you choose, and any repository you export into, which a rule here could not.

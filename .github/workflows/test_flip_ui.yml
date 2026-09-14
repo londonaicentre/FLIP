@@ -58,6 +58,11 @@ jobs:
       - name: Run lint
         run: npm run lint
 
+      # Typechecks the Cypress test tree (test/tsconfig.json), which nothing
+      # else covers: lint is eslint-only and the build typechecks src/ alone.
+      - name: Run test-tree typecheck
+        run: npm run test:types
+
       - name: Run tests with npm
         run: npm run test:unit
 

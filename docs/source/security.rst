@@ -24,21 +24,27 @@ automated checks that run against every change are publicly inspectable.
 Network and perimeter
 *********************
 
-**Trust systems accept no inbound connections.** Each participating trust runs FLIP
-services that reach *out* to the Central Hub to collect work and report results.
-Nothing on the internet can open a connection to a trust's FLIP services. This is
-enforced in the infrastructure definitions themselves — the security groups permit no
-inbound traffic at all — rather than depending on configuration discipline.
-Operator access is via AWS Systems Manager Session Manager, so port 22 is never
-opened.
+**Trust systems accept no inbound connections from the internet or the Central Hub.**
+Each participating trust runs FLIP services that reach *out* to the Central Hub to
+collect work and report results. This is enforced in the infrastructure definitions
+themselves — the AWS trust security groups define no ingress rules at all — rather
+than depending on configuration discipline. Operator access is via AWS Systems Manager
+Session Manager, so port 22 is never opened.
+
+The one inbound connection in the design applies only where FLIP is connected to a
+trust's own PACS, which today means an on-premises deployment. FLIP asks the PACS for a
+study, and the PACS opens a connection back to XNAT to deliver it, on the DICOM port
+alone. It stays inside the trust's own network. AWS-hosted trusts have no such path:
+they run FLIP's own bundled Orthanc, which XNAT reaches over the container network, so
+their security groups keep no ingress rules at all.
 
 **Only the Central Hub is internet-facing.** It sits behind CloudFront with modern TLS,
 HSTS, AWS WAF managed rules, and an internal-only Application Load Balancer. Nothing
 else in the platform is reachable from the public internet.
 
 **A site-to-site VPN is available on request.** Trust-to-hub traffic is encrypted in
-transit by default, and payloads carry their own encryption layer on top of
-that. Where a trust's own policy calls for network-layer separation as well, a
+transit by default, and payloads carry their own authenticated encryption layer
+(AES-256-GCM) on top of that. Where a trust's own policy calls for network-layer separation as well, a
 site-to-site VPN between the trust's network and the hub VPC can be provisioned,
 carrying all outbound polling and FL client traffic.
 
@@ -83,10 +89,12 @@ which never transmits the password itself. Access tokens are verified on every r
 the signature algorithm is pinned, the issuer and audience are checked, and ID tokens
 presented in place of access tokens are rejected.
 
-**Multi-factor authentication is mandatory.** MFA is enforced at the application
-boundary on *every* authenticated request, not only at the moment of login, so a
-session cannot outlive the requirement. A user who has not enrolled cannot reach any
-protected function, and an administrative MFA reset takes effect immediately.
+**Multi-factor authentication is mandatory.** MFA enrolment is verified at the
+application boundary on *every* authenticated request, not only at the moment of
+login, so a session cannot outlive the requirement: a user who has not enrolled
+cannot reach any protected function, and an administrative MFA reset takes effect
+immediately. (The second factor itself is presented at sign-in; what runs
+per-request is the enrolment check.)
 
 **Access is role-based and default-deny.** Users hold one of three defined roles —
 **Admin**, **Researcher**, or **Viewer** — each carrying an explicit permission set (see
@@ -94,8 +102,9 @@ protected function, and an administrative MFA reset takes effect immediately.
 rather than assumed: a request with no matching grant is refused. Role membership alone
 is not sufficient for project data, which additionally requires membership of that
 specific project, re-checked on every access. Credential comparisons are constant-time,
-so response timing cannot be used to guess a secret. Access is reviewed annually and
-dormant accounts are removed.
+so response timing cannot be used to guess a secret. Periodic review of accounts and
+removal of dormant access is an operating commitment of the organisation running the
+hub, supported by the platform's role and membership records.
 
 **Role separation continues inside the trust.** Access control is not only a hub
 concern. XNAT enforces its own roles, and the ability to query and retrieve from the
@@ -206,13 +215,23 @@ Data in transit and at rest
 Central Hub runs over HTTPS, outbound from the trust only. On top of that transport
 encryption, task payloads are themselves encrypted before they are handed to the
 transport, so the payload body is never carried in the clear inside an established
-session. Stated precisely, because this page exists to be relied on: today the payload
-layer uses a **single platform-wide symmetric key**, and message integrity is provided
-by the TLS transport rather than by the payload cipher itself. An upgrade to
-**authenticated encryption with per-trust keys** — tampering makes decryption fail
-outright, each trust's traffic is protected by its own key so a compromise at one trust
-exposes no other's, and keys carry identifiers so they can be rotated without a
-synchronised cutover — is in delivery, not yet a shipped control.
+session. The payload layer is **authenticated encryption** (AES-256-GCM), and it is
+checked end to end: TLS terminates at CloudFront and again at the load balancer in front
+of the hub, so transport integrity is only ever hop by hop, whereas the payload's
+authentication tag is verified by the receiving service itself — including on the leg
+from an FL client to the trust's own services, which has no TLS at all. A payload altered
+at any hop or boundary fails decryption outright rather than yielding altered content, and
+the tag also binds the payload's purpose, so an instruction the hub issued for one action
+cannot be re-labelled as another. Stated precisely, because this page exists to be relied
+on: this covers what the hub sends to a trust and what a trust's FL client presents to its
+own services; a trust's responses back to the hub (cohort statistics, task outcomes)
+travel as plain JSON under TLS alone. And the payload layer still uses a **single
+platform-wide symmetric key**, so the tag proves that a holder of the platform key
+produced the payload, not which participant did — a compromised participant could still
+forge payloads for another. The upgrade to **per-trust keys** — each trust's traffic
+protected by its own key, so a compromise at one trust can neither read nor forge
+another's, and keys carrying identifiers so they can be rotated without a synchronised
+cutover — is in delivery, not yet a shipped control.
 
 **At rest**, model and results storage uses S3 with managed encryption under a
 customer-managed KMS key, versioning, blocked public access, HTTPS-only bucket policies,
@@ -276,10 +295,10 @@ Software supply chain and change control
 Assurance and vulnerability reporting
 *************************************
 
-FLIP is subject to independent security review and to a commissioned penetration test,
-with findings tracked and re-verified rather than left to age. Automated security
-checking runs continuously in the delivery pipeline, so regressions are caught at the
-point of change.
+FLIP is subject to a commissioned penetration test and to recurring structured
+security review supported by automated analysis, with findings tracked and re-verified
+rather than left to age. Automated security checking runs continuously in the delivery
+pipeline, so regressions are caught at the point of change.
 
 Vulnerability reports are welcome. FLIP publishes a security policy with a private
 reporting route and a coordinated disclosure process — see |SECURITY.md|_ in the

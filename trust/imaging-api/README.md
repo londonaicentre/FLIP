@@ -57,10 +57,29 @@ Download and unzip a XNAT dataset to a local folder.
 }
 ```
 
+Query parameters: `assessor_type` (`scan`, default, or `assessor`), `resource_type` (`NIFTI` default; `DICOM`, `SEG`
+or `ALL` — a closed allow-list matching flip-utils' `ResourceType` enum, since the value is interpolated into the
+XNAT download URL; anything else is a 422) and `force_refresh` (default `false`). `accession_id`, like `scan_id` and
+`resource_id` on the upload route, must be a single RFC 3986 path segment (unreserved characters only, not `.` or
+`..`); other values are rejected with a 422 before any XNAT request is made (#908).
+
+Downloads are cached on the trust host. Extraction lands in
+`<BASE_IMAGES_DOWNLOAD_DIR>/<net_id>/<central_hub_project_id>/<accession_id>/` and a completeness sentinel
+(`.flip_complete-<assessor_type>-<resource_type>`) is written there only after successful extraction. When the
+sentinel is present the cached folder is returned without contacting XNAT, so FL training code that fetches the
+cohort every round stops re-downloading bytes already on disk. Sentinels match exactly per
+(assessor, resource); the per-project path segment keeps projects that share an accession from being served each
+other's copies. The cache is invalidated when an upload changes the accession's XNAT content (see Upload), by
+`force_refresh=true` (the sentinel is removed before the re-download starts and rewritten on success), and — on the
+NVFLARE backend — by `CleanupImages`, which empties the whole net directory at job start and end.
+
 ### Imaging
 
 Interfaces with XNAT's DICOM Query-Retrieve (DQR) plugin. Full DQR API docs available at
-`http://127.0.0.1:8104/xapi/swagger-ui.html#/dicom-query-retrieve-api`.
+`http://127.0.0.1:<XNAT_WEB_PORT>/xapi/swagger-ui.html#/dicom-query-retrieve-api` — `XNAT_WEB_PORT`
+is the per-trust host port for XNAT's web UI in the kit file (`trust/.env.<CODE>.<env>`), e.g. `8105`
+for the GSTT dev trust and `8107` for KCH. Not `XNAT_PORT`, which since FLIP#993 is the DICOM SCP
+receiver port (`8104`/`8106`) and serves no HTTP.
 
 - Query PACS with an accession number
 - Queue image retrieval from PACS to an XNAT project
@@ -116,7 +135,7 @@ Upload files to an XNAT experiment:
 
 ```json
 {
-  "encrypted_central_hub_project_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "encrypted_central_hub_project_id": "<base64 AES-256-GCM envelope of the project id, as issued by the hub>",
   "accession_id": "FAK09131796",
   "scan_id": "12345",
   "resource_id": "RES",
@@ -143,7 +162,7 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 | `XNAT_DATABASE_URL` | PostgreSQL connection string for the XNAT database (non-secret topology constant; defaults in `config.py`, and the default carries **no** password) |
 | `XNAT_DATASOURCE_PASSWORD` | Minted per-trust XNAT DB password from the kit file (FLIP-PT-056). When set, it replaces the password embedded in `XNAT_DATABASE_URL`; empty or the kit-template placeholder leaves the URL untouched, so a pre-mint deployment fails on its first query instead of falling back to a weak credential |
 | `DATA_ACCESS_API_URL` | Internal URL of the data-access-api |
-| `AES_KEY_BASE64` | AES encryption key for decrypting project identifiers |
+| `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Validated as inbound auth on every router except `/health`, and forwarded outbound on calls to data-access-api `/cohort/accession-ids`. |
 

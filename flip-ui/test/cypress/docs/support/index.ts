@@ -26,10 +26,10 @@ import "./demoCursor";
 // the AUT iframe takes most of the recording. The residual dark bezel + URL bar
 // strip get cropped in scripts/videos-to-gifs.sh before encoding to GIF.
 //
-// Selectors below target Cypress 14's runner-internal DOM (.reporter-wrap,
+// Selectors below target Cypress 15's runner-internal DOM (.reporter-wrap,
 // [data-cy="reporter"], …) and will silently rot on a runner refactor. Cypress
-// is pinned to an exact version in package.json ("cypress": "14.5.2", not
-// "^14.5.2") to keep these stable; before bumping it, re-run docs:record + visually
+// is pinned to an exact version in package.json ("cypress": "15.21.0", not
+// "^15.21.0") to keep these stable; before bumping it, re-run docs:record + visually
 // verify the GIFs in docs/source/assets/admin/ don't show the command log.
 before(() => {
     const top = window.parent;

@@ -201,7 +201,7 @@ import { object, string } from "yup";
 
 import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
 import AiInput from "@/components/AiInput/AiInput.vue";
-import { IOption } from "@/components/AiSelect/interfaces";
+import { IOption } from "@/interfaces/select";
 import { IRole } from "@/services/role-service";
 import { IRegisterUserDto, registerUser } from "@/services/user-service";
 import { useErrorStore } from "@/store/error";

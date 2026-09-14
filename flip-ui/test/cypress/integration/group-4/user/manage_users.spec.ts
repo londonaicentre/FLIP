@@ -129,10 +129,10 @@ describe("Manage Users as Administrator", () => {
         cy.getBySel("organisation-field").type("King's College London");
         cy.getBySel("email-field").type("testperson@test.com");
         cy.getBySel("register-user-confirm-btn").click();
-        // Same as the email-validation case — the new modal's role chooser
-        // surfaces its yup error inline. Also note the wording changed with
-        // the Listbox refactor: "Please select a role" (was "Select at least
-        // 1 role" in the old chip-select form).
+        // Same as the email-validation case — the modal's role chooser surfaces
+        // its yup error inline. The wording changed with the Listbox refactor
+        // (84a2004f): "Please select a role", where the superseded multi-select
+        // said "Select at least 1 role".
         cy.contains("Please select a role").should("be.visible");
     });
 

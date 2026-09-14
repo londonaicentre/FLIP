@@ -40,8 +40,13 @@ class Settings(BaseSettings):
 
     #
     XNAT_PORT: int
-    # XNAT registers exactly one PACS (configure-xnat.sh), which it assigns id 1,
-    # so this defaults to 1 rather than being a required, mis-settable kit field.
+    # XNAT's own AE title. Must match XNAT_AETITLE in configure-xnat.sh, because this value becomes
+    # the C-MOVE destination handed to the PACS and DQR matches it against a registered SCP receiver
+    # by exact AE title and port (FLIP#993).
+    XNAT_AETITLE: str = "XNAT"
+    # A trust XNAT retrieves from exactly one PACS, and configure-xnat.sh enforces that, so the id
+    # is resolved at runtime as "the registered one" rather than assumed. This value is only the
+    # fallback for when XNAT cannot be reached: historically XNAT registered one PACS as id 1.
     PACS_ID: int = 1
 
     # Internal trust-network URLs: docker service name + the service's container
@@ -78,6 +83,14 @@ class Settings(BaseSettings):
 
     #
     DATA_ACCESS_API_URL: str = "http://data-access-api:8000"
+
+    # Container Service image for automatic DICOM→NIfTI conversion. The per-project
+    # event subscription looks the XNAT command up by this exact image string, so it
+    # must match what trust/xnat/xnat/config/dcm2niix_command.json (and the K8s
+    # init-job's inline copy) registers at deploy time. Pinned by version tag, never
+    # `latest`: Docker Hub's mutable `xnat/dcm2niix:latest` resolved to a 2021 build
+    # that silently dropped slices from valid series (FLIP#980).
+    DCM2NIIX_IMAGE: str = "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724"
 
     #
     BASE_IMAGES_DOWNLOAD_DIR: str

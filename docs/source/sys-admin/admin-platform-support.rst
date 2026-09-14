@@ -8,7 +8,8 @@ Networking
 
 All trust communication is **outbound** — trusts poll the Central Hub for tasks over HTTPS
 (via the ALB), and FL clients connect outbound to the FL server via the NLB. The hub never
-makes inbound connections to trusts, so no inbound firewall rules or port forwarding are
+makes inbound connections to trusts, so no inbound firewall rules or port forwarding from the
+internet are
 required on trust hosts. Operator access is via AWS Systems Manager Session Manager
 (SSH-over-SSM); XNAT, Orthanc, and the trust-api Swagger docs are reachable only through SSM
 port forwarding (``make forward-trust``). Orthanc additionally requires HTTP basic auth — log in
@@ -36,9 +37,12 @@ opened.
    * - Description
      - Inbound
      - Outbound
-   * - DICOM ingestion from local PACS into the trust XNAT
+   * - DICOM query/retrieve from the local PACS (XNAT → PACS)
      -
-     - local PACS DICOM ports
+     - local PACS query/retrieve port
+   * - DICOM C-STORE return leg (PACS → XNAT)
+     - XNAT DICOM port (``XNAT_PORT``, 8104 by default)
+     -
    * - Trust → Central Hub task polling (HTTPS)
      -
      - 443
@@ -64,6 +68,13 @@ As a system, the FLIP solution handles the following types of data:
 1. Persistent OMOP Common Data Model data, covering demographic, diagnosis and imaging details.
 2. Transient XNAT cached image data, potentially enriched locally with segmentation, labelling, etc., sourced from Trust PACS.
 3. Log files including event logs and other information generated as part of the operation of the system.
+
+.. note::
+
+   The XNAT cached image data at item 2 **survives deletion of the project it belongs to**. Deleting a project
+   in FLIP is a soft delete of the platform record and does not remove anything from a Trust's XNAT, because
+   the local enrichment (segmentation, labelling, contours, annotations) cannot be re-derived from PACS the way
+   the images themselves can. Removing that data is an explicit administrator action taken at the Trust.
 
 Backup
 ======

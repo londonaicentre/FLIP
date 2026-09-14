@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+#
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """
 generate_values.py - Env-to-Helm-values mapping script.
 
@@ -6,10 +17,10 @@ Reads a .env file and generates:
   - values-override.yaml  (non-sensitive Helm values)
   - values-secrets.yaml   (sensitive values, never printed to stdout)
 
-Usage:
-  python3 scripts/generate_values.py \\
-      --env-file ../../.env.development \\
-      --output-dir .
+Usage (from the repo root):
+  python3 deploy/providers/kubernetes/scripts/generate_values.py \\
+      --env-file trust/.env.<CODE>.<env> \\
+      --output-dir deploy/providers/kubernetes
 
 No third-party dependencies (stdlib only).
 """
@@ -28,32 +39,63 @@ ENV_VAR_MAP = {
     "ENV": ("environment", False),
     "FL_BACKEND": ("flBackend", False),
     "UPLOADED_FEDERATED_DATA_BUCKET": ("uploadedFederatedDataBucket", False),
-    "S3_BUCKET": ("flClient.nvflare.kitFromS3.bucket", False),
-    "S3_BUCKET_FLOWER": ("flClient.flower.kitFromS3.bucket", False),
-    "S3_KIT_DATE": ("flClient.nvflare.kitFromS3.kitDate", False),
-    "S3_KIT_DATE_FLOWER": ("flClient.flower.kitFromS3.kitDate", False),
+    # No S3 kit fetch: the chart mounts an already-provisioned kit from the node
+    # (flClient.kitHostPath). A trust holds no FLIP AWS credentials. Falls back to
+    # DEFAULT_KIT_HOST_PATH when the kit omits it — see build_values.
+    "FL_KIT_DIR": ("flClient.kitHostPath", False),
     "AICENTRE_BUCKET_NAME": ("omopDb.initJob.s3Bucket", False),
-    "OMOP_DATA_VERSION": ("omopDb.initJob.dataVersion", False),
+    "TRUST_DATA_VERSION": ("trustData.version", False),
 }
 
-SECRET_VAR_MAP = {
-    "AES_KEY_BASE64": "aes-key-base64",
-    "TRUST_API_KEY": "trust-api-key",
-    "TRUST_INTERNAL_SERVICE_KEY_HEADER": "trust-internal-service-key-header",
-    "TRUST_INTERNAL_SERVICE_KEY": "trust-internal-service-key",
-    "OMOP_POSTGRES_PASSWORD": "omop-postgres-password",
-    "DATA_ACCESS_POSTGRES_PASSWORD": "data-access-postgres-password",
-    "ORTHANC_REGISTERED_USERS": "orthanc-registered-users",
-    "XNAT_ADMIN_PASSWORD": "xnat-admin-password",
-    "XNAT_SERVICE_USER": "xnat-service-user",
-    "XNAT_SERVICE_PASSWORD": "xnat-service-password",
-    "XNAT_DATASOURCE_PASSWORD": "xnat-datasource-password",
-    "XNAT_DATASOURCE_ADMIN_PASSWORD": "xnat-datasource-admin-password",
-    "GRAFANA_ADMIN_PASSWORD": "grafana-admin-password",
-    "AWS_ACCESS_KEY_ID": "s3-access-key-id",
-    "AWS_SECRET_ACCESS_KEY": "s3-secret-access-key",
-    "AWS_SESSION_TOKEN": "aws-session-token",
+# Env vars this script used to read, and what replaced them. Dropping one from
+# ENV_VAR_MAP is silent by construction: the variable simply stops reaching the
+# generated values and the deployment follows the chart default instead — a
+# changed data version rather than an error. An operator environment that has
+# not caught up gets told (FLIP#1100).
+RENAMED_ENV_VARS = {
+    "OMOP_DATA_VERSION": "TRUST_DATA_VERSION",
 }
+
+# Where the operator placed this trust's kit ON THE NODE when the kit file does not say.
+# The canonical FLIP kit path: every shipped kit sets FL_KIT_DIR to it, the Ansible
+# EC2/on-prem plays stage to it, and the chart Makefile's stage-kit KIT_DEST defaults to it.
+# Same fallback as sync_k8s_kit.render_override, so both generators of a Helm override
+# agree on what a kit file without FL_KIT_DIR means.
+DEFAULT_KIT_HOST_PATH = "/opt/flip/fl-kit"
+
+# The chart's credential slots, as (env var name, Secret key name) pairs. Both
+# sides are identifiers; no value appears here, which is why the entries
+# detect-secrets' keyword rule matches carry an inline pragma. Nothing in this
+# file is ever a credential.
+#
+# The pairs are kept here, rather than inline in SECRET_VAR_MAP below, so that
+# the "which slots are unfilled" report in main() can be built from a plain list
+# of names that never held a value and cannot be confused - by a reader or by a
+# static analyser - with the map the values are read into.
+#
+# No AWS slots: the fl-client holds no AWS credentials and never fetches its own
+# kit (FLIP#965) — it is staged onto the node and mounted from flClient.kitHostPath.
+# templates/secrets.yaml renders no s3-access-key-id / s3-secret-access-key /
+# aws-session-token key, so a pair here would be a slot with nowhere to land, and
+# test_chart_secrets.test_secret_var_map_targets_exist_in_the_secret_template
+# fails on exactly that.
+CHART_KEY_SLOTS = (
+    ("AES_KEY_BASE64", "aes-key-base64"),
+    ("TRUST_API_KEY", "trust-api-key"),  # pragma: allowlist secret
+    ("TRUST_INTERNAL_SERVICE_KEY_HEADER", "trust-internal-service-key-header"),  # pragma: allowlist secret
+    ("TRUST_INTERNAL_SERVICE_KEY", "trust-internal-service-key"),  # pragma: allowlist secret
+    ("OMOP_POSTGRES_PASSWORD", "omop-postgres-password"),  # pragma: allowlist secret
+    ("DATA_ACCESS_POSTGRES_PASSWORD", "data-access-postgres-password"),  # pragma: allowlist secret
+    ("ORTHANC_REGISTERED_USERS", "orthanc-registered-users"),
+    ("XNAT_ADMIN_PASSWORD", "xnat-admin-password"),  # pragma: allowlist secret
+    ("XNAT_SERVICE_USER", "xnat-service-user"),
+    ("XNAT_SERVICE_PASSWORD", "xnat-service-password"),  # pragma: allowlist secret
+    ("XNAT_DATASOURCE_PASSWORD", "xnat-datasource-password"),  # pragma: allowlist secret
+    ("XNAT_DATASOURCE_ADMIN_PASSWORD", "xnat-datasource-admin-password"),  # pragma: allowlist secret
+    ("GRAFANA_ADMIN_PASSWORD", "grafana-admin-password"),  # pragma: allowlist secret
+)
+
+SECRET_VAR_MAP = dict(CHART_KEY_SLOTS)
 
 
 def deep_set(d, key_path, value):
@@ -82,8 +124,25 @@ def parse_env_file(path):
     return env
 
 
+def warn_renamed(env):
+    """Name any env var that has been renamed away, so its loss is not silent."""
+    for old, new in RENAMED_ENV_VARS.items():
+        if not env.get(old):
+            continue
+        if env.get(new):
+            print(f"⚠️  {old} is no longer read; {new}={env[new]} is in effect.", file=sys.stderr)
+        else:
+            print(
+                f"⚠️  {old}={env[old]} is no longer read — it is now {new} (one pin covering OMOP "
+                f"and Orthanc). Set {new}={env[old]} to keep the version you had, or the chart "
+                f"default applies.",
+                file=sys.stderr,
+            )
+
+
 def build_values(env):
     """Build (values_overrides, secrets_dict) from parsed env vars."""
+    warn_renamed(env)
     overrides = {}
     for env_var, (yaml_path, _) in ENV_VAR_MAP.items():
         if env_var not in env or not env[env_var]:
@@ -92,10 +151,14 @@ def build_values(env):
         # Normalise flBackend: accept any casing
         if env_var == "FL_BACKEND":
             val = val.lower().replace(" ", "")
-        # Also set Flower kit bucket when S3_BUCKET is set without explicit FLOWER variant
-        if env_var == "S3_BUCKET" and "S3_BUCKET_FLOWER" not in env:
-            deep_set(overrides, "flClient.flower.kitFromS3.bucket", val)
         deep_set(overrides, yaml_path, val)
+
+    # flClient.kitHostPath is `required` by the chart, so dropping it like any other
+    # absent value would only move the failure to render time. A kit missing or
+    # blanking FL_KIT_DIR still renders the canonical path — the one the default
+    # `make stage-kit` actually wrote to — exactly as sync_k8s_kit.render_override does.
+    if not env.get("FL_KIT_DIR", "").strip():
+        deep_set(overrides, "flClient.kitHostPath", DEFAULT_KIT_HOST_PATH)
 
     secrets = {}
     for env_var, secret_key in SECRET_VAR_MAP.items():
@@ -211,9 +274,25 @@ def main():
         print("Wrote secrets values to: {} (permissions: 0o600)".format(secrets_path))
         print("WARNING: values-secrets.yaml contains sensitive data.", file=sys.stderr)
         print(
-            "   Do not commit it to version control. Add it to .gitignore.",
+            "   Do not commit it. Inside this repository .gitignore already matches "
+            "**/values-secrets.yaml; elsewhere, add the same rule.",
             file=sys.stderr,
         )
+
+        # Say which slots the env file could not fill. templates/secrets.yaml omits
+        # an empty key, so the pod that mounts it dies with CreateContainerConfigError
+        # — better to hear it here than from a crash-looping container.
+        unfilled = sorted(key for _env_var, key in CHART_KEY_SLOTS if key not in secrets)
+        if unfilled:
+            print(
+                "WARNING: no value in the env file for: {}".format(", ".join(unfilled)),
+                file=sys.stderr,
+            )
+            print(
+                "   Fill by hand whichever your deployment needs — an omitted key fails the pod "
+                "at container creation, not at render.",
+                file=sys.stderr,
+            )
     else:
         print("No secrets env vars found; no secrets file written.")
 

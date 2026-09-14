@@ -2,11 +2,21 @@
     "extends": "../tsconfig.json",
     "include": [
         "../node_modules/cypress",
+        // Specs import "@/services/*", pulling src files into this project by
+        // module resolution only — which misses the ambient declarations they
+        // rely on (window.AWS_*, the vite virtual: modules). Include them.
+        "../src/env.d.ts",
         "./**/*.ts"
     ],
     "compilerOptions": {
         "types": [
-            "cypress"
+            "cypress",
+            "vite/client",
+            // src/router/index.ts (reached via the "@/services/*" imports)
+            // needs virtual:generated-layouts; src/env.d.ts still references
+            // the plugin's pre-rename name, so the root tsconfig supplies this
+            // and overriding "types" here dropped it.
+            "vite-plugin-vue-layouts-next/client"
         ],
         "target": "es2019",
         "lib": [
@@ -14,6 +24,10 @@
             "dom.iterable",
             "es2022"
         ],
+        // vite 8 ships a pure `exports` map with no top-level `types`/`main`, which
+        // classic node resolution cannot read — hence "Cannot find module 'vite'"
+        // in iconStubPlugin.ts. "bundler" is the correct mode for a Vite project.
+        "moduleResolution": "bundler",
         "isolatedModules": false,
         "allowJs": true,
         "noEmit": true,

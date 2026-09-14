@@ -402,9 +402,10 @@ runs — not on the EC2.
 ```bash
 ssh flip-trust
 DIR=$(docker inspect trust1-orthanc-1 --format '{{range .Mounts}}{{if eq .Destination "/var/lib/orthanc/db"}}{{.Source}}{{end}}{{end}}')
-# Version from trust/orthanc/.data_version (e.g. 20260106); trust slot from the kit (trust1/trust2)
+# Data version from trust/.data_version — a tag on the dataset (e.g. 20260729) that the URL resolves
+# at; the archive name itself carries no version. Trust slot from the kit (trust1/trust2).
 curl -fSL -o /tmp/orthanc-data.tar \
-  "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/trust1/trust1_orthanc_data_20260106.tar"
+  "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/20260729/trust1/trust1_orthanc_data.tar"
 docker stop trust1-orthanc-1
 sudo rm -rf "$DIR"/*          # wipe the stale empty index
 sudo tar xf /tmp/orthanc-data.tar -C "$DIR"
@@ -581,6 +582,13 @@ If you see `Permission denied` on `/app/data/images/...`, you have the same bug.
 ssh flip-trust 'sudo chown -R 1000:1000 /opt/flip/data/trust-1 /opt/flip/data/trust-2'
 ```
 
+**Flower variant — same symptom, different writer.** Each fl-client bind-mounts only its own net's slice (`<base>/net-N`), and it writes there too (`flip.add_resource` stages under `net-N/upload/`). On NVFLARE the client is uid 1000, so the ownership above covers it. The Flower client is built on upstream `flwr/base` and runs as `app` (uid/gid **49999**): on a `1000:1000` `0755` net dir it is only "other", and `add_resource` fails with EACCES while imaging-api's own downloads succeed. `site.yml` provisions the `net-N` dirs `ubuntu:49999` `0775` when `fl_backend == flower` (matching the K8s chart's `images-init`), and `trust/Makefile`'s `$(ensure_net_dirs)` now *fails* the bring-up rather than warning if it cannot apply that. Hot-fix on an existing host:
+
+```bash
+ssh flip-trust 'sudo chown 1000:49999 /opt/flip/data/trust-{1,2}/net-{1,2} && \
+                sudo chmod 0775 /opt/flip/data/trust-{1,2}/net-{1,2}'
+```
+
 The general principle: anywhere a non-root container bind-mounts a host path, pre-create the host path with the right uid in Ansible. Letting Docker auto-create it leaves a root-owned source that silently breaks every non-root container that touches it.
 
 ---
@@ -644,9 +652,13 @@ Wait ~1–3 min for the CloudFront invalidation to clear, then hard-refresh the 
 
 **Symptom**: flip-api logs show `[Errno -2] Name or service not known` for `fl-api-net-1.flip.local:8000`.
 
-**Root cause**: `NET_ENDPOINTS` points to Service Discovery FQDNs designed for ECS Fargate (PR 2). On EC2 with Docker Compose, containers communicate via Docker's built-in DNS using container names.
+**Root cause**: `NET_ENDPOINTS` points to Service Discovery FQDNs designed for ECS Fargate (PR 2). On a compose-hosted hub, containers communicate via Docker's built-in DNS.
 
-**Fix**: Set `NET_ENDPOINTS={"net-1":"http://flip-fl-api-net-1:8000"}` in `.env.stag` AND update the `fl_nets` table in the database (see Section 3.2).
+**Fix**: Set `NET_ENDPOINTS={"net-1":"http://fl-api-net-1:8000"}` in `.env.stag`. Use the compose
+**service** name `fl-api-net-1` — docker registers it as a network alias on every network the
+container joins. The pre-FLIP#957 spelling `flip-fl-api-net-1` was a `container_name`, which the
+compose files no longer set, so it now resolves nowhere. No manual `fl_nets` update is needed: the
+flip-api startup seed reconciles the row to `NET_ENDPOINTS` (see Section 3.2, which is the ECS case).
 
 ---
 
@@ -701,9 +713,9 @@ Canonical checks pass (Terraform, EC2, RDS, HTTPS, ECS), the XNAT web interface 
 
 1. **`#` in password value (Make comment char)**: The Make `include` directive treats `#` as a comment start. If `.env.stag` contains:
    ```
-   XNAT_SERVICE_PASSWORD=bH@BDC#Myl0lev6WQW#0u8GD
+   XNAT_SERVICE_PASSWORD=EXAMPLE#not-a-real#password
    ```
-   Make reads this as `XNAT_SERVICE_PASSWORD=bH@BDC` — everything after the first `#` is silently discarded. The XNAT service account was configured with the truncated value.
+   Make reads this as `XNAT_SERVICE_PASSWORD=EXAMPLE` — everything after the first `#` is silently discarded. The XNAT service account was configured with the truncated value.
 
 2. **`$` in SQL UPDATE values (shell expansion)**: When running SQL via `docker exec sh -c "psql ... \"UPDATE ... SET pw='{bcrypt}\$2a\$10\$...';\""`, the `\$` escapes may not survive the nesting: `sh → psql → SQL`. The `$` signs get consumed by shell expansion, producing a corrupt hash like `{bcrypt}a` instead of `{bcrypt}$2a$10$...`. Always write sensitive SQL to a file via `scp` + `docker cp`.
 

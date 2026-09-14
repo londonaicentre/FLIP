@@ -1,0 +1,66 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# CPU-only checks over map-apps/: ruff, then the classifier-operator tests in map-apps/tests/,
+# which synthesise directory bundles in tmp_path — no GPU, dataset or MAP packaging involved.
+# The environment is the template's own requirements.txt so the tests import the same
+# monai/monai-deploy/holoscan the MAP pins, with two CPU-runner substitutions:
+#   * torch comes from the CPU wheel index first; 2.13.0+cpu satisfies the ==2.13.0 pin, so the
+#     -r install keeps it rather than pulling the multi-GB cu130 wheel.
+#   * holoscan-cu13 links libcudart.so.13 but does not ship it (it expects a system CUDA 13);
+#     the nvidia-cuda-runtime wheel provides it and map-apps/tests/conftest.py preloads it.
+name: MAP Apps CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "map-apps/**"
+      - ".github/workflows/test_map_apps.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "map-apps/**"
+      - ".github/workflows/test_map_apps.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  map-apps-tests:
+    name: Lint + classifier operator tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Lint map-apps
+        run: |
+          pip install ruff
+          ruff check map-apps/
+
+      - name: Install the MAP toolchain (CPU wheels)
+        run: |
+          pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r map-apps/classification/requirements.txt
+          pip install "nvidia-cuda-runtime>=13,<14" pytest
+
+      # ulimit: holoscan recommends a 32 MB stack and warns below it (segfault risk).
+      - name: Run the MAP template tests
+        run: |
+          ulimit -s 32768
+          python -m pytest map-apps/tests -v

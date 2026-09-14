@@ -41,3 +41,20 @@ Check the stack is up:
 
     See deploy/providers/kubernetes/README.md → "OMOP core vocabulary".
 {{- end }}
+{{- if and .Values.flClient.enabled (not .Values.sharedImagesPvc.enabled) }}
+
+⚠️  fl-client and imaging-api do NOT share an images volume
+
+    sharedImagesPvc.enabled is false, so the `images` volume is a per-pod
+    emptyDir: imaging-api "successfully" downloads studies into its own pod
+    while the fl-client's copy of {{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}
+    stays empty. Nothing errors — training just finds no data and dies with
+    num_samples=0.
+
+    For a functional FL trust, set sharedImagesPvc.enabled=true and re-run
+    `helm upgrade`. The shipped default is ReadWriteOnce, which every storage
+    class this chart is validated on provides; the fl-client is pinned to
+    imaging-api's node (flClient.affinity) so the single-node mount that RWO
+    implies is satisfied. Only move to an RWX-capable class if you need the two
+    pods on different nodes, and relax that affinity if you do.
+{{- end }}

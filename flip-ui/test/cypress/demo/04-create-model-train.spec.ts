@@ -21,7 +21,6 @@ import { requireEnv, saveDemoState } from "./support/demoFlow";
 describe("FLIP demo — create model and start training", () => {
     it("creates the model, uploads the app files and initiates training", () => {
         const email = requireEnv("DEMO_RESEARCHER_EMAIL");
-        const password = requireEnv("DEMO_RESEARCHER_PASSWORD");
         const projectId = requireEnv("DEMO_PROJECT_ID");
         const modelName = requireEnv("DEMO_MODEL_NAME");
         const modelDescription = requireEnv("DEMO_MODEL_DESCRIPTION");
@@ -30,9 +29,9 @@ describe("FLIP demo — create model and start training", () => {
             .split(",")
             .map((f) => f.trim())
             .filter(Boolean);
-        const backendLabel = String(Cypress.env("DEMO_BACKEND_LABEL") || "NVFLARE");
+        const backendLabel = String(Cypress.expose("DEMO_BACKEND_LABEL") || "NVFLARE");
 
-        cy.demoLogin(email, password);
+        cy.demoLogin(email, "DEMO_RESEARCHER_PASSWORD");
         cy.demoCaption("Imaging is in place — the researcher returns to the approved project", 1000);
         cy.visit(`/project/${projectId}`);
         cy.demoPause(1500);

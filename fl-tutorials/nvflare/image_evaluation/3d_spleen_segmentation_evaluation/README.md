@@ -41,11 +41,11 @@ The checkpoint URL is configured in `.env.app` as `MODEL_CHECKPOINT_URL`.
 Default local development settings are in `.env.app`:
 
 - `JOB_TYPE=evaluation`
-- `DEV_IMAGES_DIR=../../data/spleen/images`
-- `DEV_DATAFRAME=../../data/spleen/dataframe.csv`
+- `DEV_IMAGES_DIR=../../../data/spleen/images`
+- `DEV_DATAFRAME=../../../data/spleen/dataframe.csv`
 - `MODEL_CHECKPOINT_URL=https://huggingface.co/aicentreflip/tutorials-evaluation-3d-seg-model/resolve/main/model.pt`
 
-The `DEV_*` paths point at the shared, gitignored `fl-tutorials/nvflare/data/spleen` dataset produced by
+The `DEV_*` paths point at the shared, gitignored `fl-tutorials/data/spleen` dataset produced by
 `make -C fl-tutorials download-spleen-data`; `make sim` resolves them to absolute paths so the
 simulator's client workers find the data. Evaluation settings (e.g. `num_classes`, the `models`
 checkpoint mapping) are in `app_files/config.json`.

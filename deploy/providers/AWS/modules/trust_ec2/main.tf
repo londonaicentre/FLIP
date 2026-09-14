@@ -39,6 +39,17 @@ resource "aws_instance" "trust_host" {
     encrypted             = true
   }
 
+  # IMDSv2 only (FLIP#1058): session tokens close the classic SSRF →
+  # instance-credential-theft read. Hop limit 2 (not the default 1) because
+  # this host runs the trust Docker stack — a containerized AWS SDK call
+  # reaches IMDS through one extra network hop, and 1 would break it silently
+  # (no container makes such calls today, but the stack evolves).
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
+
   tags = {
     Name = "trust-host-${var.name_prefix}"
   }

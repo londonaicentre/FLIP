@@ -496,6 +496,7 @@ resource "aws_cloudfront_origin_request_policy" "flip_api" {
 # with no false positives, flip its `override_action` (for managed groups)
 # or `action` (for the custom rate-limit) to `block` / `none` + `block`.
 resource "aws_wafv2_web_acl" "flip_ui_cloudfront" {
+  # checkov:skip=CKV_AWS_192:AWSManagedRulesKnownBadInputsRuleSet (the Log4j AMR) is attached; count-mode rollout is deliberate — flip to block after sampled-traffic review
   provider = aws.us_east_1
   name     = "flip-ui-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
   scope    = "CLOUDFRONT"
@@ -610,7 +611,7 @@ resource "aws_wafv2_web_acl" "flip_ui_cloudfront" {
 resource "aws_cloudwatch_log_group" "flip_ui_waf" {
   provider          = aws.us_east_1
   name              = "aws-waf-logs-flip-ui-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
-  retention_in_days = 30
+  retention_in_days = local.log_retention_days
 }
 
 resource "aws_wafv2_web_acl_logging_configuration" "flip_ui_cloudfront" {
@@ -639,6 +640,7 @@ resource "aws_wafv2_web_acl_logging_configuration" "flip_ui_cloudfront" {
 # to `content_security_policy` (enforcing). Tracked in
 # https://github.com/londonaicentre/FLIP/issues/417.
 resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
+  # checkov:skip=CKV_AWS_259:HSTS is sent (1y max-age, includeSubDomains); preload deliberately withheld until the domain is submitted to the browser preload list
   name    = "flip-ui-spa-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
   comment = "Security response headers for the flip-ui SPA at ${var.flip_alb_subdomain}"
 
@@ -748,6 +750,7 @@ resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
 # report-only — worth an eyeball on any page that injects a runtime <style>
 # (CodeMirror does, on the cohort-query page) before a public launch.
 resource "aws_cloudfront_response_headers_policy" "ark_demo_spa" {
+  # checkov:skip=CKV_AWS_259:HSTS is sent (1y max-age, includeSubDomains); preload deliberately withheld until the domain is submitted to the browser preload list
   count   = local.demo_assets_enabled ? 1 : 0
   name    = "flip-ui-ark-demo-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
   comment = "Security response headers for the public Ark+ demo SPA at ${var.flip_alb_subdomain}/ark_demo/"
@@ -807,6 +810,7 @@ resource "aws_cloudfront_response_headers_policy" "ark_demo_spa" {
 # bundle uploaded with a wrong or missing Content-Type from being sniffed and
 # rendered as a document on the same origin as the real app.
 resource "aws_cloudfront_response_headers_policy" "ark_demo_assets" {
+  # checkov:skip=CKV_AWS_259:HSTS is sent (1y max-age, includeSubDomains); preload deliberately withheld until the domain is submitted to the browser preload list
   count   = local.demo_assets_enabled ? 1 : 0
   name    = "flip-ui-ark-demo-assets-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
   comment = "Security response headers for the public Ark+ demo download bundles at ${var.flip_alb_subdomain}/ark_demo/assets/"
@@ -844,6 +848,7 @@ resource "aws_cloudfront_response_headers_policy" "ark_demo_assets" {
 # excluded — it belongs on the SPA (HTML) only, and applying it here
 # would leak CSP policy into every API response for no security benefit.
 resource "aws_cloudfront_response_headers_policy" "flip_api" {
+  # checkov:skip=CKV_AWS_259:HSTS is sent (1y max-age, includeSubDomains); preload deliberately withheld until the domain is submitted to the browser preload list
   name    = "flip-api-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
   comment = "Security response headers for /api/* at ${var.flip_alb_subdomain}"
 
@@ -872,6 +877,7 @@ resource "aws_cloudfront_response_headers_policy" "flip_api" {
 }
 
 resource "aws_cloudfront_distribution" "flip_ui" {
+  # checkov:skip=CKV2_AWS_47:the attached ACL carries AWSManagedRulesKnownBadInputsRuleSet (Log4j AMR); count-mode rollout is deliberate — see the web ACL above
   enabled             = true
   is_ipv6_enabled     = true
   http_version        = "http2"

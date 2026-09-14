@@ -33,13 +33,27 @@ vi.mock("@/services/project-service", async (importOriginal) => {
 
 vi.mock("@/router", () => ({ routeChange: { viewProject: vi.fn() } }));
 
+// vee-validate's Form, reduced to what these tests need: it submits its values and exposes the live
+// `values` to its default slot. `emitted` overrides what a submit carries, standing in for the real
+// component's behaviour of dropping a field whose input has unmounted.
+const formStub = (emitted?: Record<string, string>) => ({
+    computed: {
+        // `emitted` stands in for the values the real Form would carry: it drops a field whose input
+        // has unmounted, and AiSwitch reports an unchecked switch as an empty value.
+        submitted(): unknown {
+            return emitted ?? (this as unknown as { $attrs: Record<string, unknown> }).$attrs["initial-values"];
+        }
+    },
+    template: "<form @submit.prevent=\"$emit('submit', submitted)\"><slot :values=\"submitted\" /></form>"
+});
+
 const stubs = {
     TransitionRoot: { template: "<div><slot /></div>" },
     Dialog: { template: "<div><slot /></div>" },
     DialogPanel: { template: "<div><slot /></div>" },
     DialogTitle: { template: "<div><slot /></div>" },
     TransitionChild: { template: "<div><slot /></div>" },
-    Form: { template: "<form @submit.prevent=\"$emit('submit', $attrs['initial-values'])\"><slot /></form>" },
+    Form: formStub(),
     "icon-mdi-close": { template: "<span>×</span>" },
     "ProjectUsers": { template: "<div>Project Users Component</div>" }
 };
@@ -103,14 +117,11 @@ describe("Create Project Modal", () => {
                 })],
                 stubs: {
                     ...stubs,
-                    Form: {
-                        template: "<form @submit.prevent=\"$emit('submit', $attrs['initial-values'])\"><slot /></form>",
-                        mounted() {
-                            // Override initial-values to simulate unchecked toggle
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            (this as any).$attrs["initial-values"].dicom_to_nifti = "";
-                        }
-                    }
+                    // Imaging on, the DICOM switch unchecked (AiSwitch reports that as an empty value).
+                    Form: formStub({
+                        has_imaging: "true",
+                        dicom_to_nifti: ""
+                    })
                 }
             }
         });
@@ -122,5 +133,47 @@ describe("Create Project Modal", () => {
         const submittedValues = mockCreateProject.mock.calls[0][1];
         expect(submittedValues.dicom_to_nifti).toBe(false);
         expect(typeof submittedValues.dicom_to_nifti).toBe("boolean");
+    });
+
+    it("Includes imaging data toggle exists and defaults on, so the DICOM to NIfTI toggle is shown", () => {
+        expect(component.find(CreateProjectModal.hasImagingToggle).exists()).toBe(true);
+        expect(component.find(CreateProjectModal.dicomToNiftiToggle).exists()).toBe(true);
+    });
+
+    it("has_imaging string 'true' is coerced to boolean true on submit", async () => {
+        await component.find("form").trigger("submit");
+        await vi.waitFor(() => expect(mockCreateProject).toHaveBeenCalled());
+
+        const submittedValues = mockCreateProject.mock.calls[0][1];
+        expect(submittedValues.has_imaging).toBe(true);
+        expect(submittedValues.dicom_to_nifti).toBe(true);
+    });
+
+    it("turning imaging off hides the DICOM to NIfTI toggle and submits has_imaging=false with dicom_to_nifti at its default", async () => {
+        component = mount(NewProject, {
+            props: { open: true },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })],
+                stubs: {
+                    ...stubs,
+                    // The real Form drops an unmounted field from `values` (AiSwitch reports an
+                    // unchecked switch as undefined): mirror that — no dicom_to_nifti key.
+                    Form: formStub({ has_imaging: "" })
+                }
+            }
+        });
+
+        expect(component.find(CreateProjectModal.hasImagingToggle).exists()).toBe(true);
+        expect(component.find(CreateProjectModal.dicomToNiftiToggle).exists()).toBe(false);
+
+        await component.find("form").trigger("submit");
+        await vi.waitFor(() => expect(mockCreateProject).toHaveBeenCalled());
+
+        const submittedValues = mockCreateProject.mock.calls[0][1];
+        expect(submittedValues.has_imaging).toBe(false);
+        expect(submittedValues.dicom_to_nifti).toBe(true);
     });
 });

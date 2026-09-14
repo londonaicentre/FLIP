@@ -2,10 +2,10 @@
     "name": "dcm2niix",
     "label": "dcm2niix",
     "description": "Runs dcm2niix",
-    "version": "1.6",
+    "version": "1.7",
     "schema-version": "1.0",
     "info-url": "https://github.com/rordenlab/dcm2niix",
-    "image": "xnat/dcm2niix:latest",
+    "image": "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724",
     "type": "docker",
     "command-line": "dcm2niix [BIDS] [GZIP] [OTHER_OPTIONS] -o /output /input",
     "mounts": [

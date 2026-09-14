@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from trust_api.services.task_handlers import (
     TASK_HANDLERS,
@@ -185,12 +186,26 @@ async def test_handle_delete_imaging_success(mock_make_request):
     """Should call imaging-api to delete project."""
     mock_make_request.return_value = {"status": "deleted"}
 
-    result = await handle_delete_imaging({"imaging_project_id": "img-123"})
+    imaging_project_id = str(uuid4())
+    result = await handle_delete_imaging({"imaging_project_id": imaging_project_id})
 
     assert result["success"] is True
+    mock_make_request.assert_awaited_once()
     call_args = mock_make_request.call_args
     assert call_args.kwargs["method"] == "DELETE"
+    assert call_args.kwargs["url"].endswith(f"/projects/{imaging_project_id}")
+    assert "params" not in call_args.kwargs
     _assert_trust_internal_auth_header(call_args)
+
+
+@pytest.mark.asyncio
+async def test_handle_delete_imaging_rejects_non_uuid_id(mock_make_request):
+    """Should refuse an id that is not a UUID instead of interpolating it into the URL path."""
+    result = await handle_delete_imaging({"imaging_project_id": "../other-resource"})
+
+    assert result["success"] is False
+    assert "imaging_project_id" in result["error"]
+    mock_make_request.assert_not_called()
 
 
 # ---- Get imaging status handler ----
@@ -270,7 +285,7 @@ async def test_handle_delete_imaging_error(mock_make_request):
     """Should return failure on error."""
     mock_make_request.side_effect = Exception("Service unavailable")
 
-    result = await handle_delete_imaging({"imaging_project_id": "img-123"})
+    result = await handle_delete_imaging({"imaging_project_id": str(uuid4())})
 
     assert result["success"] is False
     assert "Service unavailable" in result["error"]
@@ -288,6 +303,50 @@ async def test_handle_get_imaging_status_error(mock_make_request):
 
     assert result["success"] is False
     assert "Service unavailable" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_handle_get_imaging_status_reports_upstream_status_code(mock_make_request):
+    """A 404 from imaging-api means the XNAT project is gone, which the hub renders differently
+    from an unreachable trust (FLIP#1022). Report the code structurally so the hub does not have
+    to sniff it out of the error string."""
+    mock_make_request.side_effect = HTTPException(status_code=404, detail="Project not found")
+
+    result = await handle_get_imaging_status({
+        "imaging_project_id": "img-123",
+        "encoded_query": "base64query",
+    })
+
+    assert result["success"] is False
+    assert result["status_code"] == 404
+
+
+@pytest.mark.asyncio
+async def test_handle_get_imaging_status_reports_transport_status_code(mock_make_request):
+    """make_request maps transport failures to 502; that is an unreachable XNAT, not a missing project."""
+    mock_make_request.side_effect = HTTPException(status_code=502, detail="Failed to connect")
+
+    result = await handle_get_imaging_status({
+        "imaging_project_id": "img-123",
+        "encoded_query": "base64query",
+    })
+
+    assert result["success"] is False
+    assert result["status_code"] == 502
+
+
+@pytest.mark.asyncio
+async def test_handle_get_imaging_status_omits_status_code_for_non_http_errors(mock_make_request):
+    """A non-HTTP failure has no meaningful status code — omit the key rather than invent one."""
+    mock_make_request.side_effect = Exception("Service unavailable")
+
+    result = await handle_get_imaging_status({
+        "imaging_project_id": "img-123",
+        "encoded_query": "base64query",
+    })
+
+    assert result["success"] is False
+    assert "status_code" not in result
 
 
 @pytest.mark.asyncio

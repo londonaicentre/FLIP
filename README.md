@@ -49,7 +49,7 @@ own environment.
 
 - Docker Engine with Compose and Swarm mode, plus the NVIDIA Container Toolkit on GPU hosts
 - GNU Make, `jq`, the AWS CLI, and [uv](https://docs.astral.sh/uv/)
-- An AWS SSO profile with access to the development Cognito, S3, and SES resources
+- An AWS SSO profile with access to the development Cognito and S3 resources
 - GitHub Container Registry access for the published FLIP images
 
 The complete tool list and environment-variable checklist are in [CONTRIBUTING.md](CONTRIBUTING.md#prerequisites).
@@ -58,7 +58,7 @@ The complete tool list and environment-variable checklist are in [CONTRIBUTING.m
 
 ```bash
 cp .env.development.example .env.development
-# Fill the required AWS, Cognito, SES, database, encryption, and S3 values.
+# Fill the required AWS, Cognito, database, encryption, and S3 values.
 
 aws sso login --profile <your-profile>
 docker login ghcr.io
@@ -76,7 +76,25 @@ make up
 ```
 
 If Swarm is already active, `docker swarm init` reports that and can be skipped. Open `https://localhost` for the UI
-and `http://localhost:8080/docs` for the Central Hub API documentation.
+and `http://localhost:8080/api/docs` for the Central Hub API documentation.
+
+### Load the OMOP vocabulary
+
+`make up` fetches each Trust's OMOP data automatically, but the published tarballs are **vocab-free**. Load the core
+vocabulary once per Trust, then restart the readers so they drop their cached query results:
+
+```bash
+make -C trust/omop-db load-omop-vocab                    # Trust_1 (GSTT, port 5434)
+make -C trust/omop-db load-omop-vocab OMOP_DB_PORT=5436  # Trust_2 (KCH)
+
+docker restart trust1-data-access-api-1 trust2-data-access-api-1
+```
+
+Skip it and every cohort query returns zero rows, which surfaces several steps later as a project that cannot be
+staged — `returned no cohort records (zero or privacy-suppressed)` — so it reads as a disclosure-threshold problem
+rather than a missing vocabulary. This is the one step needing credentials for the AI Centre's bundle; contributors
+without that access self-serve from OHDSI Athena. See
+[`trust/omop-db/README.md`](trust/omop-db/README.md#the-core-vocabulary-bundle) for the bundle and both routes.
 
 To run the scripted project lifecycle against the running stack:
 
@@ -134,6 +152,7 @@ FLIP is maintained as one monorepo. Each major area owns its detailed setup and 
 | [`fl-services/`](fl-services/) | NVFLARE and Flower network services, images, and provisioning |
 | [`fl-apps/`](fl-apps/) | Backend-specific application templates bundled by the Central Hub |
 | [`fl-tutorials/`](fl-tutorials/) | Worked federated-learning applications and local runners |
+| [`map-apps/`](map-apps/) | MONAI Application Package (MAP) templates for packaging FLIP-trained models for clinical deployment |
 | [`deploy/`](deploy/) | Compose configuration and AWS, on-premises, and Kubernetes providers |
 | [`docs/`](docs/) | Sphinx source published on ReadTheDocs |
 | [`scripts/`](scripts/) | Repository-wide development and deployment helpers |

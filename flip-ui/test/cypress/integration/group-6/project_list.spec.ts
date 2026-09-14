@@ -166,4 +166,109 @@ describe("project list", () => {
 
         cy.getBySel("project-name").should("not.contain", "Example project");
     });
+
+    // The facts this guards — column x-offsets, rendered font weight, the dot's actual hue
+    // — are all computed style. jsdom compiles no Tailwind, so the unit tests can only
+    // assert classes; this is the only layer that sees the real thing. All three are
+    // batched into one visit deliberately.
+    it("aligns the description column, drops the anchor's bold, and ties the staged dot to the spine", () => {
+        const trust = (code: string, approved: boolean) =>
+            ({
+                id: code,
+                name: `${code} NHS Foundation Trust`,
+                code,
+                approved
+            });
+        // The rows vary in exactly what used to size the `auto` tracks: trust count,
+        // next-action text and cohort figure. Newest first, so the STAGED row is row 0
+        // under the default "created" sort.
+        const project = (day: number, fields: Record<string, unknown>) => ({
+            id: `p-${day}`,
+            ownerId: "u1",
+            ownerEmail: "r.patel@example.com",
+            ownerName: "Riya Patel",
+            creationtimestamp: `2026-08-0${day}T10:00:00`,
+            users: [],
+            userCount: 3,
+            ...fields
+        });
+        const rows = [
+            project(3, {
+                name: "Stroke triage",
+                description: "Federated stroke triage across participating trusts, with a longer blurb.",
+                status: "STAGED",
+                approvedTrusts: [trust("GSTT", false), trust("KCH", true)],
+                query: { totalCohort: 1234 }
+            }),
+            project(2, {
+                name: "Chest X-ray screening",
+                description: "Short blurb.",
+                status: "APPROVED",
+                approvedTrusts: [trust("GSTT", true), trust("KCH", true), trust("UCLH", true), trust("OUH", false)],
+                query: { totalCohort: 98765 }
+            }),
+            project(1, {
+                name: "Spleen segmentation",
+                description: "Federated spleen segmentation across participating trusts, with a longer blurb again.",
+                status: "UNSTAGED",
+                approvedTrusts: []
+            })
+        ];
+
+        // Pinned rather than inherited from cypress.config: the trusts column is
+        // `hidden lg:flex`, so the assertions below need a viewport at or above `lg`.
+        cy.viewport(1366, 900);
+        cy.intercept("GET", "/projects?pageNumber=1&pageSize=20", {
+            body: {
+                data: rows,
+                totalPages: 1,
+                page: 1,
+                totalRecords: rows.length
+            }
+        }).as("getVariedProjects");
+        cy.visit("/projects");
+        cy.wait("@getVariedProjects");
+
+        // Every row's description starts on the same edge, whatever the other columns hold.
+        cy.getBySel("project-row-description").should("have.length", rows.length).then(($cells) => {
+            const lefts = [...$cells].map(cell => Math.round(cell.getBoundingClientRect().left));
+            expect(new Set(lefts).size, `description left edges: ${lefts.join(", ")}`).to.equal(1);
+        });
+
+        // Body weight: the row is an <a>, which main.css would otherwise render at 600.
+        cy.getBySel("project-row-description").first().should("have.css", "font-weight", "400");
+
+        // Staged row: the chip dots are painted the same colour as that row's spine.
+        // Compared as computed colours, so a repaint of either side fails here.
+        // `within` rather than a getBySel chain: getBySel wraps cy.get, a parent command
+        // that always queries from the document root, so chaining it off a row would
+        // match every row's dots.
+        let stagedDotColour = "";
+        cy.getBySel("project-list-item-0").within(() => {
+            cy.getBySel("project-status-spine").then(($spine) => {
+                stagedDotColour = window.getComputedStyle($spine[0]).backgroundColor;
+            });
+            cy.getBySel("trust-status-dot").should("have.length", 2)
+                .each(($dot) => expect(window.getComputedStyle($dot[0]).backgroundColor).to.equal(stagedDotColour));
+        });
+
+        // Approved row: the three signed-off trusts share one colour, distinct from the
+        // staged amber, and the trust still pending keeps exactly that amber. The dot does
+        // NOT match this row's spine — the APPROVED spine is a darker emerald.
+        cy.getBySel("project-list-item-1").within(() => {
+            cy.getBySel("trust-status-dot").should("have.length", 4).then(($dots) => {
+                // Chips sort by trust name: GSTT, KCH, OUH (pending), UCLH.
+                const colours = [...$dots].map(dot => window.getComputedStyle(dot).backgroundColor);
+                expect(colours[2], "the pending trust keeps the staged colour").to.equal(stagedDotColour);
+                const signedOff = [colours[0], colours[1], colours[3]];
+                expect(new Set(signedOff).size, "signed-off trusts share one colour").to.equal(1);
+                expect(signedOff[0], "signed-off reads differently from pending").to.not.equal(stagedDotColour);
+            });
+        });
+
+        // Draft row: no dots at all.
+        cy.getBySel("project-list-item-2").within(() => {
+            cy.getBySel("trust-status-dot").should("not.exist");
+        });
+    });
 });

@@ -114,7 +114,7 @@ Cypress.Commands.add("demoCaption", (text: string, holdMs = 900) => {
 declare global {
     // eslint-disable-next-line @typescript-eslint/no-namespace
     namespace Cypress {
-        interface Chainable {
+        interface Chainable<Subject = any> {
             demoCaption(text: string, holdMs?: number): Chainable<void>;
         }
     }

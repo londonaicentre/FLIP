@@ -23,18 +23,31 @@ services:
       - ALL
     # No capability is added back. The image runs non-root (GHSA-8465) and Docker
     # grants effective capabilities only to root, so a cap_add here would land in
-    # the bounding set and never take effect (CapEff stays 0). provision/workspace-dev/
-    # (gitignored) is written by `make provision` as the host user and the image's UID
-    # is baked in at build time (fl-base's UID/GID build args) from that same user's
-    # .env.development, so build+provision by the same developer already match. When
-    # they don't (CI, a shared devbox, a teammate's prebuilt :dev image) the fix is to
-    # chown the provisioned kit dirs to the container UID — see fl-services/nvflare/README.md
-    # — not a capability grant. What aborts the entrypoint in that case is the envsubst
+    # the bounding set and never take effect (CapEff stays 0).
+    #
+    # provision/workspace-dev/ (gitignored) is written by `make provision` as the host
+    # user. The image's identity is now FIXED at flip/1000/1000 rather than baked from
+    # the building developer's .env.development (FLIP#1171), so the two no longer
+    # coincide by luck for whoever built the image and mismatch for everyone else —
+    # published :stag images used to crash-loop here for any developer who was not uid
+    # 1000. Instead of chowning the kit dirs to the container (the previous advice, and
+    # what this comment used to say), `user:` below runs the container as the host user
+    # that already owns them. What aborted the entrypoint in that case was the envsubst
     # write into the bind-mounted local/ (guarded by `|| exit 1`); the `chmod +x` calls
     # on startup/*.sh are unguarded and do not crash-loop.
+    #
+    # uid = the host user, so the provisioned kit and this net's images slice are
+    # readable and writable without any chown; gid = the image's, so /app stays
+    # writable for NVFLARE's job workspace (fl-base makes it group-writable). On
+    # EC2/on-prem the host user is uid 1000 and this resolves to the baked identity.
+    user: "${UID:-1000}:1000"
     volumes:
-      # Mount the base images download directory to share images downloaded from XNAT with FL clients
-      - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+      # This net's slice of the images download directory, at the unchanged container
+      # path — see compose_trust.production.nvflare.yml for the least-privilege
+      # rationale; `make up-trust` / `up-fl-clients` pre-create the host net dirs.
+      # The :? guard keeps an unset var loud — a bare ${VAR}/net-1 would silently
+      # mount a root-created /net-1 from the host's filesystem root.
+      - ${BASE_IMAGES_DOWNLOAD_DIR:?set in the trust kit file}/net-1:/app/data/images/net-1
       # Provisioned NVFLARE secrets (certificates, fed_client.json) — mounted from the
       # FL kit slot assigned by the hub, NOT the trust's friendly name. The slot dir's
       # fed_client.json baked-in CN is the identity the FL server sees on registration.
@@ -42,6 +55,24 @@ services:
       - ${FL_PROVISIONED_DIR}/net-1/services/${FL_KIT_SLOT}/startup:/app/startup
       - ${FL_PROVISIONED_DIR}/net-1/services/${FL_KIT_SLOT}/transfer:/app/transfer
     environment:
+      # Explicit because `user:` above runs the container as the host uid, which has no
+      # /etc/passwd entry in the image — so getpwuid finds nothing and HOME falls back to
+      # "/", where nothing is writable. torch then dies on $HOME/.cache with
+      # "PermissionError: [Errno 13] Permission denied: '/.cache'" and the client aborts
+      # the train task mid-job, which surfaces server-side only as a bare TASK_ABORTED
+      # (FLIP#1171). The image's own user supplied this for free before the override, and
+      # compose.development.yml makes the same point about libpq's getpwuid for flip-api.
+      - HOME=/home/flip
+      # Same reason HOME is set: the overridden uid is absent from /etc/passwd, so
+      # pwd.getpwuid() raises KeyError. torch hits this inside torch.optim.Adam ->
+      # import torch._dynamo, which then dies *partway* through the module — after
+      # @CacheArtifactFactory.register has recorded "precompile" but before the import
+      # completes. Python discards the half-imported module while the registry keeps
+      # the entry, so the retry re-runs the decorator and raises the far more
+      # confusing "Artifact of type=precompile already registered in mega-cache
+      # artifact factory". getpass.getuser() checks these vars before pwd (FLIP#1171).
+      - USER=flip
+      - LOGNAME=flip
       - NET_ID=net-1
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
       - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
@@ -57,9 +88,15 @@ services:
       # This key is per-trust and never leaves the trust environment.
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
+      # Site-enforced NVFLARE privacy policy (FLIP#851) — set in the trust's kit file
+      # (Host-local profile) and rendered into /app/local/privacy.json by the fl-client
+      # entrypoint at container start. Unset/empty = no site policy (previous behavior).
+      - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
+      - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
+      - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
     networks:
       - default
-      - deploy_shared-net-1
+      - fl-net-1
     shm_size: '32gb'
     # GPU passthrough via compose_trust.development.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
 
@@ -69,15 +106,34 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    # No capability added back — see fl-client-net-1 above.
+    # No capability added back, and the same host-uid override — see fl-client-net-1.
+    user: "${UID:-1000}:1000"
     volumes:
-      # Mount the base images download directory to share images downloaded from XNAT with FL clients
-      - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+      # This net's slice of the images download directory (see fl-client-net-1 above)
+      - ${BASE_IMAGES_DOWNLOAD_DIR:?set in the trust kit file}/net-2:/app/data/images/net-2
       # Provisioned NVFLARE secrets (certificates, fed_client.json)
       - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/local:/app/local
       - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/startup:/app/startup
       - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/transfer:/app/transfer
     environment:
+      # Explicit because `user:` above runs the container as the host uid, which has no
+      # /etc/passwd entry in the image — so getpwuid finds nothing and HOME falls back to
+      # "/", where nothing is writable. torch then dies on $HOME/.cache with
+      # "PermissionError: [Errno 13] Permission denied: '/.cache'" and the client aborts
+      # the train task mid-job, which surfaces server-side only as a bare TASK_ABORTED
+      # (FLIP#1171). The image's own user supplied this for free before the override, and
+      # compose.development.yml makes the same point about libpq's getpwuid for flip-api.
+      - HOME=/home/flip
+      # Same reason HOME is set: the overridden uid is absent from /etc/passwd, so
+      # pwd.getpwuid() raises KeyError. torch hits this inside torch.optim.Adam ->
+      # import torch._dynamo, which then dies *partway* through the module — after
+      # @CacheArtifactFactory.register has recorded "precompile" but before the import
+      # completes. Python discards the half-imported module while the registry keeps
+      # the entry, so the retry re-runs the decorator and raises the far more
+      # confusing "Artifact of type=precompile already registered in mega-cache
+      # artifact factory". getpass.getuser() checks these vars before pwd (FLIP#1171).
+      - USER=flip
+      - LOGNAME=flip
       - NET_ID=net-2
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
       - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
@@ -93,8 +149,12 @@ services:
       # This key is per-trust and never leaves the trust environment.
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
+      # Site-enforced NVFLARE privacy policy (FLIP#851) — see the fl-client-net-1 note.
+      - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
+      - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
+      - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
     networks:
       - default
-      - deploy_shared-net-2
+      - fl-net-2
     shm_size: '32gb'
     # GPU passthrough via compose_trust.development.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)

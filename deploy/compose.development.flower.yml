@@ -13,11 +13,15 @@
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
 
+# No `container_name` here either — see the header of compose.development.yml. The service KEYS
+# are load-bearing and must not be renamed: `fl-server-net-<N>` is the SAN in the SuperLink's
+# provisioned TLS certificate (`DNS:fl-server-net-1`), so a SuperNode's certificate check fails
+# outright if that name stops resolving, and `fl-api-net-<N>` is what NET_ENDPOINTS and
+# FL_API_ADDRESS below dial.
 services:
   #################### CENTRAL HUB FL ####################
 
   fl-api-net-1:
-    container_name: flip-fl-api-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
@@ -30,7 +34,9 @@ services:
       - FLOWER_SRC_ROOT=/app/src
     ports:
       - "${FL_API_PORT}:8000"
-      - "5679:5679"
+      # Loopback-only — an exposed debugpy port is arbitrary code execution for anyone
+      # who can reach it; see compose.development.yml's flip-api ports (FLIP#959).
+      - "127.0.0.1:${FL_API_DEBUG_PORT:-5679}:5679"
     depends_on:
       - fl-server-net-1
     security_opt:
@@ -41,7 +47,6 @@ services:
       - CHOWN
     networks:
       - default
-      - shared-net-1
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json', timeout=3)"]
@@ -51,7 +56,6 @@ services:
       start_period: 10s
 
   fl-api-net-2:
-    container_name: flip-fl-api-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
@@ -72,7 +76,6 @@ services:
       - CHOWN
     networks:
       - default
-      - shared-net-2
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json', timeout=3)"]
@@ -82,7 +85,6 @@ services:
       start_period: 10s
 
   fl-server-net-1:
-    container_name: fl-server-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     # Dev-only: run as root so the server can read BOTH the host-provisioned
     # 0640 TLS keys AND the host operator's AWS SSO cache. The app user (uid
@@ -129,7 +131,7 @@ services:
       - --health-server-address
       - 0.0.0.0:9097
     ports:
-      - 9093:9093
+      - ${FLOWER_SUPERLINK_NET_1_PORT:-9093}:9093
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -140,19 +142,28 @@ services:
       # the host-owned 0640 TLS key and 0600 SSO token cache — root's implicit DAC
       # bypass is itself a capability, and it is dropped here (FLIP#485).
       - DAC_OVERRIDE
+    # `default` is the hub-internal network. fl-server is the one FL service that calls back
+    # into flip-api (FLIP_API_INTERNAL_URL + INTERNAL_SERVICE_KEY above), and flip-api is
+    # deliberately not on the FL net — see the networks block in compose.development.yml.
     networks:
-      - shared-net-1
+      - default
+      - fl-net-1
     restart: unless-stopped
     init: true
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys-net-1:
-    container_name: register-supernode-keys-net-1
     # It doesn't really matter if we use FL server or FL base image here since register-supernode-keys.sh is in both
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     environment:
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
-      - FL_API_ADDRESS=http://flip-fl-api-net-1:8000
+      # Service name (`fl-api-net-1`), which is the only name that resolves: with no
+      # container_name the container is named by the compose project, and the old
+      # `flip-fl-api-net-1` spelling is not a DNS name in any stack. Getting this wrong
+      # fails SILENTLY — register-supernode-keys.sh swallows the DNS error and still exits
+      # 0, leaving SuperNode keys unlabelled and FL metrics attributed to unknown_client
+      # (FLIP#957).
+      - FL_API_ADDRESS=http://fl-api-net-1:8000
       # The script reads ${TRUST_NAMES} as a label list, but the underlying identity it's
       # labelling is the per-slot SuperNode key — one entry per provisioned slot. Feed
       # FL_KIT_SLOT_NAMES through so trusts admin-created later (and bound to a slot via
@@ -172,10 +183,9 @@ services:
       fl-api-net-1:
         condition: service_healthy
     networks:
-      - shared-net-1
+      - default
 
   fl-server-net-2:
-    container_name: fl-server-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     # Dev-only: run as root so the server can read BOTH the host-provisioned
     # 0640 TLS keys AND the host operator's AWS SSO cache. The app user (uid
@@ -222,7 +232,7 @@ services:
       - --health-server-address
       - 0.0.0.0:9097
     ports:
-      - 9095:9093
+      - ${FLOWER_SUPERLINK_NET_2_PORT:-9095}:9093
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -233,19 +243,21 @@ services:
       # the host-owned 0640 TLS key and 0600 SSO token cache — root's implicit DAC
       # bypass is itself a capability, and it is dropped here (FLIP#485).
       - DAC_OVERRIDE
+    # `default` is the hub-internal network — see fl-server-net-1 above.
     networks:
-      - shared-net-2
+      - default
+      - fl-net-2
     restart: unless-stopped
     init: true
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys-net-2:
-    container_name: register-supernode-keys-net-2
     # It doesn't really matter if we use FL server or FL base image here since register-supernode-keys.sh is in both
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     environment:
       - SUPERLINK_ADDRESS=fl-server-net-2:9093
-      - FL_API_ADDRESS=http://flip-fl-api-net-2:8000
+      # Service name — see net-1 above.
+      - FL_API_ADDRESS=http://fl-api-net-2:8000
       # See net-1 above — feed FL_KIT_SLOT_NAMES so all provisioned slots get labelled.
       - TRUST_NAMES=${FL_KIT_SLOT_NAMES}
     volumes:
@@ -260,4 +272,4 @@ services:
       fl-api-net-2:
         condition: service_healthy
     networks:
-      - shared-net-2
+      - default

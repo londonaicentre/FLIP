@@ -1,0 +1,14 @@
+schema_type: dataframe
+columns:
+  domain_concept_id_1:
+    dtype: int64
+  fact_id_1:
+    dtype: int64
+  domain_concept_id_2:
+    dtype: int64
+  fact_id_2:
+    dtype: int64
+  relationship_concept_id:
+    dtype: int64
+strict: true
+drop_invalid_rows: false

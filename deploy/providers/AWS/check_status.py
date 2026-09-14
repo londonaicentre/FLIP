@@ -1363,7 +1363,7 @@ def main(
             # Grafana is part of the optional observability stack — treat its
             # absence as WARN, not FAIL.
             trust_endpoints = [
-                ("XNAT", "http://127.0.0.1:8104/", ["200", "302"], "FAIL"),
+                ("XNAT", "http://127.0.0.1:8105/", ["200", "302"], "FAIL"),
                 # Auth is always enforced (FLIP-PT-091): a 200 without
                 # credentials means an unauthenticated PACS — fail.
                 ("Orthanc", "http://127.0.0.1:8042/", ["401"], "FAIL"),
@@ -1539,9 +1539,11 @@ def main(
                     "docker network ls --format '{{.Name}}' 2>/dev/null",
                 )
 
+                # Only the trust overlay is load-bearing here. A production trust
+                # attaches to `default` alone (trust/deploy/compose_trust.production.yml),
+                # so deploy_fl-net-{1,2} — which exist only in the single-host dev
+                # topology — were never used on a trust EC2 and warned every run (FLIP#959).
                 expected_networks = [
-                    "deploy_shared-net-1",
-                    "deploy_shared-net-2",
                     "deploy_trust-network-1",
                 ]
                 if success:

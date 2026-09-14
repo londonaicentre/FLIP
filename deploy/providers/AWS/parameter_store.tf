@@ -24,6 +24,7 @@ locals {
 }
 
 resource "aws_ssm_parameter" "flip_api_internal_url" {
+  # checkov:skip=CKV2_AWS_34:non-secret operational config by design (see file header) — SecureString adds KMS coupling for no confidentiality gain
   name        = "${local.ssm_prefix}/flip_api_internal_url"
   description = "Internal hostname:port for fl-server -> flip-api callbacks (Service Discovery)"
   type        = "String"
@@ -31,6 +32,7 @@ resource "aws_ssm_parameter" "flip_api_internal_url" {
 }
 
 resource "aws_ssm_parameter" "flip_model_files_uploads_bucket" {
+  # checkov:skip=CKV2_AWS_34:non-secret operational config by design (see file header) — SecureString adds KMS coupling for no confidentiality gain
   name        = "${local.ssm_prefix}/flip_model_files_uploads_bucket"
   description = "S3 URI of the researcher model-files-uploads bucket (browser presigned-PUT target today; flips to presigned POST once PR #438 lands; flip-api reads/deletes)"
   type        = "String"
@@ -38,6 +40,7 @@ resource "aws_ssm_parameter" "flip_model_files_uploads_bucket" {
 }
 
 resource "aws_ssm_parameter" "flip_fl_results_bucket" {
+  # checkov:skip=CKV2_AWS_34:non-secret operational config by design (see file header) — SecureString adds KMS coupling for no confidentiality gain
   name        = "${local.ssm_prefix}/flip_fl_results_bucket"
   description = "S3 URI of the FL training-results bucket (fl-server writes; researcher downloads via browser presigned-GET)"
   type        = "String"
@@ -45,6 +48,7 @@ resource "aws_ssm_parameter" "flip_fl_results_bucket" {
 }
 
 resource "aws_ssm_parameter" "flip_app_bundles_bucket" {
+  # checkov:skip=CKV2_AWS_34:non-secret operational config by design (see file header) — SecureString adds KMS coupling for no confidentiality gain
   name        = "${local.ssm_prefix}/flip_app_bundles_bucket"
   description = "S3 URI of the FL app-bundles bucket (server-only; flip-api copies base → destination during FL bundling)"
   type        = "String"
@@ -57,6 +61,7 @@ resource "aws_ssm_parameter" "flip_app_bundles_bucket" {
 # avoids tag-collision ambiguity during VPC migrations).
 
 resource "aws_ssm_parameter" "vpc_id" {
+  # checkov:skip=CKV2_AWS_34:non-secret networking value read CROSS-ACCOUNT by aicentre-iac — an AWS-managed CMK cannot be decrypted from another account
   name        = "${local.ssm_prefix}/networking/vpc_id"
   description = "FLIP-Prod VPC ID — consumed cross-account by aicentre-iac's TGW VPC attachment"
   type        = "String"
@@ -64,6 +69,7 @@ resource "aws_ssm_parameter" "vpc_id" {
 }
 
 resource "aws_ssm_parameter" "private_subnet_ids" {
+  # checkov:skip=CKV2_AWS_34:non-secret networking value read CROSS-ACCOUNT by aicentre-iac — an AWS-managed CMK cannot be decrypted from another account
   name        = "${local.ssm_prefix}/networking/private_subnet_ids"
   description = "FLIP-Prod private subnet IDs (comma-separated) — consumed cross-account by aicentre-iac's TGW VPC attachment"
   type        = "StringList"
@@ -79,6 +85,7 @@ resource "aws_ssm_parameter" "private_subnet_ids" {
 # *string* from the env file (flip-api json.loads it). Not a secret — just the
 # roster of pre-provisioned kit slots, hence SSM per the /flip convention above.
 resource "aws_ssm_parameter" "fl_kit_slot_names" {
+  # checkov:skip=CKV2_AWS_34:non-secret operational config by design (see file header and the comment above) — SecureString adds KMS coupling for no confidentiality gain
   name        = "${local.ssm_prefix}/fl_kit_slot_names"
   description = "JSON list of FL kit-slot names seeding/reconciling flip-api's fl_kit_slot pool (register_trust claims from it)"
   type        = "String"
