@@ -41,7 +41,8 @@ covers `datasets/cxr/omop_convert_cxr.py` — the same convention as
 
 Cross-cutting guards that assert a property across several source files
 (`test_dicom_orientation.py`, `test_flower_min_clients_wiring.py`,
-`test_spleen_inference_config_parity.py`) stay at the root of `tests/`, because
+`test_spleen_inference_config_parity.py`, `test_fl_tutorials_make_targets.py`,
+`test_sim_tutorial_stale_guard.py`) stay at the root of `tests/`, because
 no single source path describes what they cover.
 
 **Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
@@ -106,6 +107,9 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_fl_api_writes_the_key_the_apps_read` | fl-api-flower writes the same `flip-min-clients` key the apps read — the two live in different packages. |
 | `test_strategy_gets_min_clients_from_the_injected_trust_count` | Every FLIP Flower app passes `min_clients` sourced from `min_clients_from_run_config(run_config)`, not a constant. |
 | `test_app_config_declares_flip_min_clients` | Each app declares the key in `[tool.flwr.app.config]` (flwr rejects undeclared overrides) at flwr's default of 2 or more. |
+| `test_tutorial_declares_a_job_type_backed_by_a_template` | Each Flower tutorial's `config.json` names a job type that has an `fl-apps/flower/<job_type>/` template and a `required_files.json` entry — otherwise the researcher's first upload dies inside the bundler. |
+| `test_tutorial_ships_every_file_its_job_type_requires` | The manifest's required files are all present, so the gap fails here rather than mid-e2e after a trust has already pulled imaging. |
+| `test_platform_owned_files_are_identical_in_the_tutorial` | Every file the fl-apps template ships is present and equivalent in the tutorial's `app/`. flip-api **reserves** those names and discards the researcher's copy, so a drifted tutorial runs one thing on the simulator and deploys another. Files with no executable code in either tree may differ, which is what lets each tutorial keep its own `__init__.py` docstring. |
 | `test_phantom_has_no_dihedral_symmetry` | The fixture is non-square **and** distinguishable from all eight of its dihedral variants. |
 | `test_phantom_dicom_round_trips` | Each synthetic encoding decodes back to the phantom. |
 | `test_loader_prefix_matches_pixel_data` | The chain up to the first resampling transform is `np.array_equal` to `pydicom`'s `PixelData`. |
@@ -114,6 +118,9 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_monai_deprecations_escalate_to_errors` | `pytest.ini`'s blanket `ignore::` lines still leave MONAI's own deprecations escalated to errors — the notice that a pinned reader convention is about to change must not rejoin the ignored torch/numpy noise. |
 | `test_loader_pins_its_reader` | The chain names `PydicomReader(swap_ij=False)` instead of inheriting a reader. |
 | `test_chain_composes` / `test_validation_chain_is_deterministic` | Both chains import, compose, run, and the validation chain is reproducible. |
+| `test_documented_root_target_resolves` | Every `make -C fl-tutorials <target>` the docs quote resolves at the fl-tutorials root, whose Makefile only forwards a fixed name list — a dataset target documented in the root form but left off that list fails here, not with "No rule to make target" on a reader's machine. |
+| `test_kills_only_this_checkouts_processes_in_this_pid_namespace` | `sim-tutorial.sh`'s stale-SuperLink guard, lifted out of the script and run against decoys: it stops the one from this checkout, spares one from another checkout, and spares one in another PID namespace (a container's, under any runtime — the dev stack's fl-server matches the same `pgrep` pattern). Skips the namespace case where unprivileged `unshare` is unavailable. |
+| `test_guard_decides_containment_by_pid_namespace_not_cgroup_string` | The guard compares `/proc/<pid>/ns/pid`, not a runtime-specific `/proc/<pid>/cgroup` string, which only docker's systemd driver produces. |
 
 Three design points are load-bearing, and each is itself asserted rather than assumed:
 
