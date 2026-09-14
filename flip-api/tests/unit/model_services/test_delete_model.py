@@ -143,4 +143,5 @@ def test_delete_model_unexpected_error(
     with patch("flip_api.model_services.delete_model.delete_model", side_effect=Exception("Unexpected error")):
         response = client.delete(f"/api/model/{test_model_id}")
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "Unexpected error" in response.json()["detail"]
+        assert response.json()["detail"] == "Internal server error"
+        assert "Unexpected error" not in response.json()["detail"]

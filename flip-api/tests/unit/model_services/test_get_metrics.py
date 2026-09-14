@@ -159,4 +159,5 @@ def test_get_metrics_unexpected_error(
     with patch("flip_api.model_services.get_metrics.get_metrics", side_effect=RuntimeError("Boom")):
         response = client.get(f"/api/model/{test_model_id}/metrics")
         assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
-        assert "Boom" in response.json()["detail"]
+        assert response.json()["detail"] == "Internal server error"
+        assert "Boom" not in response.json()["detail"]

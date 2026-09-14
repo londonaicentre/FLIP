@@ -245,7 +245,9 @@ class TestGetUploadedFilesInfo:
             get_uploaded_files_info(file_ids="invalid-uuid,another-invalid", db=MagicMock(), user_id=uuid.uuid4())
 
         assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-        assert "Invalid UUID format" in exc_info.value.detail
+        # Category only — the stdlib's "badly formed hexadecimal UUID string" stays in the log (#906).
+        assert exc_info.value.detail == "Invalid UUID format"
+        assert "badly formed" not in exc_info.value.detail
 
     def test_get_files_info_unexpected_error(self, mock_db_session, sample_files):
         """Test handling of unexpected errors."""
@@ -262,7 +264,8 @@ class TestGetUploadedFilesInfo:
                 get_uploaded_files_info(file_ids=file_ids_str, db=mock_db_session, user_id=uuid.uuid4())
 
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "Internal server error" in exc_info.value.detail
+        assert exc_info.value.detail == "Internal server error"
+        assert "Database connection error" not in exc_info.value.detail
 
 
 class TestGetUploadedFilesInfoPost:
@@ -330,4 +333,5 @@ class TestGetUploadedFilesInfoPost:
                 get_uploaded_files_info_post(id_list=id_list, db=mock_db_session, user_id=uuid.uuid4())
 
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "Internal server error" in exc_info.value.detail
+        assert exc_info.value.detail == "Internal server error"
+        assert "Database connection error" not in exc_info.value.detail

@@ -146,5 +146,5 @@ async def approve_project_step_function_endpoint(
         # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        logger.exception(f"Unhandled error in approve_project: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to approve project: {str(e)}")
+        logger.exception("Unhandled error in approve_project")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
