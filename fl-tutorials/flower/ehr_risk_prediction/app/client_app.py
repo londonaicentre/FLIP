@@ -57,7 +57,7 @@ def _load_config() -> dict:
         return json.load(fh)
 
 
-def _fetch_cohort(config: dict, context: Context, client_name: str):
+def _fetch_cohort(context: Context, client_name: str):
     """Fetch this client's cohort dataframe via FLIP.
 
     Deployed: each trust's data-access-api already serves a disjoint cohort. LOCAL_DEV
@@ -125,7 +125,7 @@ def train(msg: Message, context: Context) -> Message:
     client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
     global_round = int(msg.content["config"]["server-round"]) - 1
 
-    dataframe = _fetch_cohort(config, context, client_name)
+    dataframe = _fetch_cohort(context, client_name)
     loaders, pos_weight = _build_loaders(config, dataframe)
 
     model, device = _load_model_on_device(msg)
@@ -180,7 +180,7 @@ def evaluate(msg: Message, context: Context) -> Message:
     config = _load_config()
     client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
 
-    dataframe = _fetch_cohort(config, context, client_name)
+    dataframe = _fetch_cohort(context, client_name)
     loaders, _ = _build_loaders(config, dataframe)
 
     model, device = _load_model_on_device(msg)
