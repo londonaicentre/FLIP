@@ -34,6 +34,10 @@ on:
       - "deploy/compose*.yml"
       - "trust/deploy/compose*.yml"
       - "fl-services/nvflare/compose.dev.yml"
+      # test_workflow_trust_guards.py asserts on the image-build workflows (FLIP#882) —
+      # same trap: the guard must run on the very edit that could drop the same-repo
+      # check or re-add a fork-controlled checkout.
+      - ".github/workflows/docker_build_*.yml"
   pull_request:
     branches: [develop]
     paths:
@@ -47,6 +51,10 @@ on:
       - "deploy/compose*.yml"
       - "trust/deploy/compose*.yml"
       - "fl-services/nvflare/compose.dev.yml"
+      # test_workflow_trust_guards.py asserts on the image-build workflows (FLIP#882) —
+      # same trap: the guard must run on the very edit that could drop the same-repo
+      # check or re-add a fork-controlled checkout.
+      - ".github/workflows/docker_build_*.yml"
 
 permissions:
   contents: read

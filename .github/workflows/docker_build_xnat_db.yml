@@ -43,10 +43,13 @@ jobs:
         --build-arg PG_VERSION=12.2-alpine
     steps:
       - name: Checkout code
+        # push/workflow_dispatch only, never workflow_run: the default checkout
+        # (github.repository @ github.sha) is the right one. The former
+        # `workflow_run.head_repository` / `head_sha` inputs here were a copy of
+        # the workflow_run-triggered siblings' fork-controlled checkout, empty and
+        # inert on every event this file receives, and exactly what FLIP#882
+        # closes over there. Removed rather than left waiting for a trigger.
         uses: actions/checkout@v5
-        with:
-          repository: ${{ github.event.workflow_run.head_repository.full_name }}
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Determine tags
         id: tags
