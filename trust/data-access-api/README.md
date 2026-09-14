@@ -64,7 +64,7 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 | `DATA_ACCESS_POSTGRES_USER` | PostgreSQL username for OMOP database access |
 | `DATA_ACCESS_POSTGRES_PASSWORD` | PostgreSQL password for OMOP database access |
 | `OMOP_POSTGRES_DB` | Name of the OMOP PostgreSQL database |
-| `AES_KEY_BASE64` | AES encryption key for decrypting project identifiers |
+| `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Required on every `/cohort` request. |
 

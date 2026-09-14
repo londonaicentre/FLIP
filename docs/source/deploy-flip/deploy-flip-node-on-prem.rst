@@ -265,8 +265,11 @@ that trust. The trust's env must contain:
 | ``CENTRAL_HUB_API_URL``          | Public hub URL the trust polls (e.g.                   |
 |                                  | ``https://app.flip.aicentre.co.uk``).                  |
 +----------------------------------+--------------------------------------------------------+
-| ``AES_KEY_BASE64``               | Symmetric key shared with the hub for encrypted        |
-|                                  | payloads.                                              |
+| ``AES_KEY_BASE64``               | Symmetric key shared with the hub for the AES-256-GCM  |
+|                                  | payload envelope. Must match the hub's key byte for    |
+|                                  | byte; a mismatch fails every task as ``failed          |
+|                                  | authentication``. Upgrade in step with the hub across  |
+|                                  | FLIP#1179 (no CBC compatibility).                      |
 +----------------------------------+--------------------------------------------------------+
 | ``TRUST_INTERNAL_SERVICE_KEY``   | Per-trust shared secret used inside the trust for      |
 |                                  | calls between trust-api / imaging-api / fl-client and  |

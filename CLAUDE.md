@@ -158,14 +158,16 @@ risk-prediction tutorials are the first such cohort and have their own target,
 make -C fl-tutorials list-tutorials
 make -C fl-tutorials download-xray-data                  # xray dataset (HF); spleen: download-spleen-data
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
+make -C fl-tutorials sim-tutorial TUTORIAL=xray_classification FL_BACKEND=flower   # simulator, no containers
 make -C fl-tutorials test                                # ruff + the CPU-only transform-chain suite
 ```
 
 `make run` delegates to `make sim` (NVFLARE simulator, needs a GPU; per-tutorial `make export` builds
-the job config without one). Mock OMOP data is generated in-tree per dataset under
-`fl-tutorials/datasets/`. Tutorial layout, the dataset regeneration chains and their
-verification gate: [`fl-tutorials/CLAUDE.md`](fl-tutorials/CLAUDE.md). FL image building
-(`make build-fl`, the `:dev` tag): [`fl-services/CLAUDE.md`](fl-services/CLAUDE.md).
+the job config without one). `sim-tutorial` means "no containers" on both backends — an alias for
+`run-tutorial` on NVFLARE, an in-process `flwr run` on Flower. Mock OMOP data is generated in-tree
+per dataset under `fl-tutorials/datasets/`. Tutorial layout, the simulator paths, the dataset
+regeneration chains and their verification gate: [`fl-tutorials/CLAUDE.md`](fl-tutorials/CLAUDE.md).
+FL image building (`make build-fl`, the `:dev` tag): [`fl-services/CLAUDE.md`](fl-services/CLAUDE.md).
 
 ### Linting & Type Checking
 
@@ -327,7 +329,7 @@ Cross-cutting keys and URLs live here. The rest are documented where they are co
 [`flip-api/CLAUDE.md`](flip-api/CLAUDE.md#hub-environment-variables).
 
 - `PROD` — `true` (production), `stag` (staging), unset (development)
-- `AES_KEY_BASE64` — encryption key for trust communication
+- `AES_KEY_BASE64` — the platform-wide key for the hub↔trust payload envelope: AES-256-GCM since FLIP#1179 (base64 of `{"v":1,"kid":"shared","iv","ct"}`; version, kid and a caller-supplied *context* — `task:<task_type>`, `project_id`, `xnat_password` — bound into the tag, so every `encrypt`/`decrypt` call site passes the same `context=` and a payload sealed for one purpose does not open for another), with **no compatibility for the pre-#1179 CBC format**, so a hub and every trust registered to it upgrade across that change together (Deployment Mode → quiesce → redeploy hub + trusts). Must be byte-identical on the hub and every trust container that decrypts (trust-api, imaging-api, data-access-api) and decode to exactly 32 bytes — every `get_aes_key()` refuses a 16- or 24-byte key rather than silently running AES-128/192; a mismatch fails closed as `Invalid payload: failed authentication` on every task (imaging-api / data-access-api answer the FL client with a 400). On stag/prod the hub's copy is what the CI Terraform apply wrote into Secrets Manager from the GitHub environment — reconcile the operator env file from deployed state (`deploy/providers/AWS/scripts/reconcile_ci_env.py`), never the other way round. Per-trust keys are the FLIP#845 follow-up.
 - A remote trust operator only needs their kit file (`trust/.env.<KIT>`) — no hub `.env.<env>` needed on trust hosts.
   See `trust/README.md` for the standalone-operator quick-start.
 - `TRUST_API_KEY` — single per-trust plaintext API key, lives only in that trust's kit file (`trust/.env.<CODE>.<env>`), never on the hub
@@ -401,7 +403,7 @@ TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict marker
 - Never commit secrets/credentials (pre-commit hooks enforce this).
 - SSH-over-SSM mandatory (no port 22 exposed).
 - Never bypass TLS (`curl -k` prohibited).
-- Use `AES_KEY_BASE64` for trust communication encryption.
+- Use `AES_KEY_BASE64` for trust communication encryption (AES-256-GCM envelope; see the env var entry above for the key-match and flag-day rules).
 - AWS Cognito for hub auth, per-trust API keys for trust-to-hub auth.
 - Internal service key for fl-server-to-hub auth (separate from trust keys).
 - Trust-internal service key for trust-api / imaging-api / fl-client → imaging-api / data-access-api auth (per-trust, never leaves trust env). See **Trust-internal Service Authentication** below.
