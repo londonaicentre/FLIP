@@ -31,11 +31,13 @@ Consumer: [`map-apps/`](../../../map-apps/README.md) (the MAP templates a bundle
 | --- | --- | --- |
 | Output | One `.ts` file, `inference.json`/`metadata.json` embedded as TorchScript extra files | A directory: weights under `models/`, configs under `configs/`, the application's own code copied under `scripts/` |
 | Needs `torch.jit` | Yes (script or trace) | No |
-| MAP packaging today | The only form the MONAI Deploy App SDK's `ModelFactory` recognises | Not usable in a packaged MAP yet — the SDK hands `MonaiBundleInferenceOperator` a predictor-less placeholder instead of the directory branch |
+| MAP packaging today | Both `map-apps/` templates — the form the MONAI Deploy App SDK's `ModelFactory` recognises | **`classification` only** — the SDK's `ModelFactory` does not recognise a directory bundle and hands `MonaiBundleInferenceOperator` a predictor-less placeholder, so `segmentation` fails inside inference; the classification operator loads the bundle itself |
 | Cost | The architecture must be scriptable (or traceable with a probe input) | Ships the application source alongside the weights, and rebuilds the architecture at inference time under whatever MONAI the consuming container has — a mismatch breaks the strict `load_state_dict` |
 
-TorchScript is on a removal path in PyTorch (deprecated on 3.12, unsupported on 3.14+), and
-`torch.export` is not an option (no released MONAI Deploy App SDK loads an `ExportedProgram`), so
+TorchScript is on a removal path in PyTorch (deprecated since torch 2.5, on every Python;
+`torch.jit.script` reports itself unsupported on Python 3.14+), and `torch.export` is not an option
+(the MONAI Deploy App SDK through 4.0.0, the version the MAP templates pin, loads `.ts` and `.pt`,
+not an `ExportedProgram`), so
 `form="directory"` is the escape hatch for a model that will not script — see FLIP#1019 and the
 packaging guide for the detail.
 
@@ -65,9 +67,9 @@ python -m flip.export \
 | `--allow-pickle` | Load the checkpoint with `weights_only=False`. Only for checkpoints of known provenance. |
 | `--model-id`, `--project-id`, `--trusts`, `--global-rounds`, `--local-rounds`, `--metric`, `--fl-backend` | Provenance fields recorded into the bundle's `metadata.json` (see below). |
 
-`--form directory` writes a bundle directory instead of a single TorchScript file; only
-`--form torchscript` is consumable by the `classification` MAP template today (`segmentation` fails
-inside inference against a directory bundle — see `map-apps/README.md`).
+`--form directory` writes a bundle directory instead of a single TorchScript file. `--form
+torchscript` is consumable by both MAP templates; a directory bundle only by `classification`
+(`segmentation` fails inside inference against one — see `map-apps/README.md`).
 
 ## Python API
 
@@ -83,11 +85,14 @@ inside inference against a directory bundle — see `map-apps/README.md`).
   other job type (e.g. `evaluation`, which produces no new model) only triggers a warning, not a
   refusal.
 - `Provenance` (`flip.export.provenance`) — the federated-run record embedded under
-  `PROVENANCE_KEY` (`"flip_provenance"`) in the bundle's `metadata.json`: `model_id`, `project_id`,
-  `participating_trusts`, `global_rounds`, `local_rounds`, `final_aggregate_metric`,
+  `PROVENANCE_KEY` (`"flip_provenance"`) in the bundle's `metadata.json`. Fields: `model_id`,
+  `project_id`, `participating_trusts`, `global_rounds`, `local_rounds`, `final_aggregate_metric`,
   `source_checkpoint`, `fl_backend`, `flip_version`, `architecture`, plus caller-supplied `extra`
-  fields. `.as_dict()` stamps `exported_at` and always sets `not_for_clinical_use: True` — a
-  federated research model is neither CE-marked nor FDA-cleared. `.merged_into(metadata)` returns a
+  fields. `.as_dict()` writes them under the JSON keys `flip_model_id` and `flip_project_id` (the
+  rest keep their field names), drops empty values, stamps `exported_at` and sets
+  `not_for_clinical_use: True` — a federated research model is neither CE-marked nor FDA-cleared.
+  `extra` is applied after the fixed keys, so it can shadow any of them, that flag included;
+  nothing in FLIP does. `.merged_into(metadata)` returns a
   copy of the author's metadata with the provenance block added. Embedded, not shipped alongside,
   so a deployed artefact can never become separated from the record of the run that produced it —
   packaging does not call the Central Hub, so every field is caller-supplied rather than discovered.
@@ -95,7 +100,7 @@ inside inference against a directory bundle — see `map-apps/README.md`).
   `.pt` file; `state_dict_from(data)` and `describe_checkpoint(data, path) -> CheckpointFacts`
   normalise either on-disk shape FLIP produces — NVFLARE's persistence format (a `model` key plus
   optional `train_conf`/`meta_props`, as `PTFileModelPersistor` writes `FL_global_model.pt` and
-  per-client `local_model.pt`) or a bare state dict (as carried by user-uploaded evaluation
+  `best_FL_global_model.pt`) or a bare state dict (as carried by user-uploaded evaluation
   checkpoints) — via NVFLARE's own `PTModelPersistenceFormatManager`, so reading stays faithful to
   how FLIP itself reads a checkpoint. `load_app_model(app_dir)` instantiates the architecture from
   `models.py::get_model()`; `load_weights_into_app_model(checkpoint, app_dir, allow_pickle=False)`

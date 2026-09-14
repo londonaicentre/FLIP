@@ -71,22 +71,27 @@ trust's kit file (`trust/.env.<CODE>.<env>`); hub-shared values (`AES_KEY_BASE64
 | `TRUST_API_KEY` | Per-trust API key for authenticating with the Central Hub. Lives in this trust's kit file (`trust/.env.<CODE>.<env>`), written by `make register-trust KIT=<CODE>` |
 | `AES_KEY_BASE64` | Base64-encoded AES-256 key shared with the hub; task payloads arrive as AES-256-GCM envelopes (FLIP#1179). Must be byte-identical to the hub's key: a mismatch fails closed, reporting every task as `Invalid payload: failed authentication` |
 | `POLL_INTERVAL_SECONDS` | Polling frequency in seconds (default: 5) |
-| `COHORT_QUERY_TIMEOUT_SECONDS` | Timeout on a cohort-query request to data-access-api (default: 300). A cohort re-runs against OMOP at every stage, so this bounds the slowest of those calls |
+| `COHORT_QUERY_TIMEOUT_SECONDS` | Timeout on trust-api's one cohort-query request, `POST /cohort` to data-access-api (default: 300). A cohort re-runs against OMOP at every later stage too, but those are other services' calls (imaging-api → `/cohort/accession-ids`, fl-client → `/cohort/dataframe`) and this setting does not reach them |
 | `HEALTH_COLLECT_INTERVAL_SECONDS` | How often the health collector probes the trust services (default: 30) |
 | `HEALTH_PROBE_DEGRADED_MS` | A successful probe slower than this reports `degraded` (default: 1000) |
 | `XNAT_URL` | Internal URL of XNAT for the health probe (default `http://xnat-web:8080`) |
 | `OMOP_DB_HOST` / `OMOP_DB_PORT` | OMOP PostgreSQL address for the TCP health probe (defaults `omop-db` / 5432) |
+| `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
+| `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Forwarded outbound on every call to imaging-api and data-access-api so those services can authenticate the caller. Minted by `register_trust` (`make register-trust KIT=<CODE>`) into this trust's kit file (`trust/.env.<CODE>.<env>`). |
 
 `XNAT_URL`, `OMOP_DB_HOST`/`OMOP_DB_PORT`, `DATA_ACCESS_API_URL`, `IMAGING_API_URL` and
 `TRUST_INTERNAL_SERVICE_KEY_HEADER` are internal-topology constants fixed by the compose network,
-so they default in `trust_api/config.py` and appear in **no** kit file and in **no** compose
+so they default in `trust_api/config.py` and none of them is injected into trust-api's own compose
 `environment:` block — injecting them would let an empty `${VAR}` from a kit that omits the line
-override the code default. Override them through the environment only for a non-standard
-deployment. Note the kit's own `OMOP_DB_PORT` is a different variable: it is the *host*-published
-port for the omop-db container, while trust-api probes the container port over the trust network.
-
-| `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
-| `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Forwarded outbound on every call to imaging-api and data-access-api so those services can authenticate the caller. Minted by `register_trust` (`make register-trust KIT=<CODE>`) into this trust's kit file (`trust/.env.<CODE>.<env>`). |
+override the code default. `XNAT_URL` and `OMOP_DB_HOST` appear in no kit file at all (the kit's
+`OMOP_DB_PORT` is a different variable, see below). The last three *are* in
+every kit file (`trust/.env.example`, the GSTT/KCH examples) and in the fl-client's compose block,
+because the fl-client reads them from env too and its own code defaults are `localhost` URLs, not
+the trust-network names; the Helm chart also injects them into trust-api itself
+(`deploy/providers/kubernetes/templates/trust-api.yaml`). Override them through the environment
+only for a non-standard deployment. Note the kit's own `OMOP_DB_PORT` is a different variable: it
+is the *host*-published port for the omop-db container, while trust-api probes the container port
+over the trust network.
 
 ## Authentication
 

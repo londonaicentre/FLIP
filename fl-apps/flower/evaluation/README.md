@@ -34,7 +34,8 @@ run** and reports aggregate + per-client metrics natively through `FedAvg`.
 1. Reports `INITIATED`, then loads the checkpoint named by the `checkpoint` run-config key from
    `flip-job-dir` — the app directory on the shared volume that the FL API stages the uploaded
    bundle (sources + checkpoint) into at submission time. The checkpoint is loaded strictly
-   (`load_state_dict(..., strict=True)`) onto CPU: a mismatch between the checkpoint and
+   (a plain `load_state_dict(state_dict)`, i.e. torch's default `strict=True`) onto CPU: a
+   mismatch between the checkpoint and
    `get_model()`'s architecture fails loudly rather than evaluating a partially-random model.
 2. Packs the loaded weights into an `ArrayRecord` and starts `EvaluationStrategy` for
    `num-server-rounds` (default 1) rounds — `fraction_train=0.0` so no round trains,
@@ -66,10 +67,12 @@ The required files (see [`required_files.json`](./required_files.json)) are:
 The model checkpoint itself (e.g. `model.pt`) is uploaded alongside these and staged into the app
 directory by the FL API; its filename is supplied per run via the `checkpoint` run-config key.
 
-`app/server_app.py`, `app/strategy.py` and `pyproject.toml` ship with the template. Base files win
-over uploaded ones — [`bundle_flower_application`](../../../flip-api/src/flip_api/fl_services/services/fl_service.py)
-skips any uploaded file whose name collides with a base file — so a user cannot replace the server
-app, the strategy, or the project config.
+`app/server_app.py`, `app/strategy.py` and `pyproject.toml` ship with the template. Uploaded files
+are copied only into the template's `app/`, and a base file there wins —
+[`bundle_flower_application`](../../../flip-api/src/flip_api/fl_services/services/fl_service.py)
+skips any uploaded file whose name collides with one inside `app/` — so a user cannot replace the
+server app or the strategy. An uploaded `pyproject.toml` lands harmlessly at `app/pyproject.toml`,
+never over the project config at the bundle root.
 
 ## Run-config keys
 
@@ -79,7 +82,7 @@ overridden per run via `config.toml`):
 | Key | Purpose |
 | --- | --- |
 | `num-server-rounds` | Evaluation rounds (default `1` — evaluation only needs one pass). |
-| `checkpoint` | Filename of the checkpoint to evaluate, relative to `flip-job-dir`. Dummy placeholder in `pyproject.toml`; the real value is injected per run. |
+| `checkpoint` | Filename of the checkpoint to evaluate, relative to `flip-job-dir`. Dummy placeholder in `pyproject.toml`; the real value comes from the researcher's uploaded `config.toml` (the FL API injects only the `flip-*` keys below). |
 | `flip-model-id` / `flip-project-id` / `flip-cohort-query` / `flip-job-dir` | FLIP plumbing injected by the FL API at submission time. |
 | `flip-min-clients` | Quorum for the run; the FL API overrides the placeholder with the participating-trust count at submit time (`flwr` rejects a `--run-config` key the app config does not declare). A malformed or zero value raises out of `min_clients_from_run_config` / the `EvaluationStrategy` constructor and the model is marked `ERROR`. |
 | `local-epochs`, `learning-rate`, `batch-size`, `spatial-dims`, `num-classes` | Placeholders for model/training config consumed by user code; unused by this template's own server logic. |
@@ -88,9 +91,13 @@ overridden per run via `config.toml`):
 
 There is no server-side simulator run for this template on its own — it needs a real checkpoint and
 connected clients. The shipped consumer, `fl-tutorials/flower/3d_spleen_segmentation_evaluation`,
-is explicitly **not** run via `flwr run` / the Simulation Engine (see its README for the reasons —
-a long-lived `flower-superlink` caching stale env, `ClientApp` running from a snapshot directory,
-and FLIP's `DevSettings` singleton pinning `LOCAL_DEV` at import time). Instead:
+runs on the flwr simulator via
+`make -C fl-tutorials sim-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower`
+(`fl-tutorials/flower/sim-tutorial.sh`, which wraps `flwr run`). What its README discourages is a
+**raw** `flwr run`, for three reasons the script handles — a long-lived SuperLink caches its
+environment, the `ClientApp` runs from a snapshot under `~/.flwr/apps/`, and `WORKING_DIR` defaults
+to a container path. Only the compose stack exercises the deployment wiring (TLS, fl-api submit,
+SuperNode registration):
 
 ```bash
 make -C fl-tutorials/flower/3d_spleen_segmentation_evaluation download-checkpoints  # fetch model.pt

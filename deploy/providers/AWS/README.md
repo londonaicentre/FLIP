@@ -102,14 +102,14 @@ This command executes the following steps in order:
 2. **`aws-login`**: Authenticate with AWS SSO
 3. **`init`**: Initialize Terraform with environment-specific S3 backend
 4. **`import-persistent`**: Import existing persistent AWS resources to prevent replacement
-5. **`generate-internal-service-key`**: Mint the fl-server → hub `INTERNAL_SERVICE_KEY` (idempotent — skipped if already set)
+5. **`generate-internal-service-key`**: Check the fl-server → hub `INTERNAL_SERVICE_KEY` and its hash are in sync (re-syncing a stale hash). It cannot mint a first key from this directory — the Makefile refuses to parse at all while `INTERNAL_SERVICE_KEY` is unset in the env file — so mint it beforehand from the repo root: `make generate-internal-service-key ENV_FILE=$(pwd)/.env.<env>`
 6. **`plan`**: Generate and review the initial Terraform execution plan
 7. **`apply`**: Apply infrastructure changes
 8. **`update-env`**: Refresh the root environment file with Terraform outputs
 9. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
 10. **`ansible-init`**: Patch both hosts, install `psql` on the Central Hub bastion, and provision Docker, AWS CLI, CloudWatch, and FL assets on the Trust EC2 (the FL kit is staged as `Trust_1` at this point — no slot has been assigned yet)
 11. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3 + invalidate CloudFront
-12. **`register-trusts`**: Register every locally-present trust kit file (`trust/.env.<CODE>.<env>`) on the running hub and fill each kit with hub-shared values
+12. **`register-trusts`**: Register every locally-present trust kit file (`trust/.env.<CODE>.<env>`) on the running hub and write its credentials back. Only the two hub-shared values the ECS task env carries (`TRUST_API_KEY_HEADER`, `FL_BACKEND`) come back with it — the rest of the block needs `make sync-trust-kit KIT=<CODE> PROD=<env>` from the repo root afterwards (see [Registering trusts against the ECS hub](#registering-trusts-against-the-ecs-hub))
 13. **`deploy-trust`**: Seed the Trust EC2 with that trust's OMOP + Orthanc mock data (`seed-trust-data`, a ~1 GB HuggingFace fetch at the `trust/.data_version` tag plus the OMOP vocabulary load — re-run it standalone after a data-version bump), re-stage the FL participant kit for the slot the hub assigned at registration (`stage-fl-kit`, reading `FL_KIT_SLOT_NUMBER` from the kit file — idempotent when the host really is `Trust_1`), then deploy Trust services via Docker Compose to the Trust EC2
 14. **`status`**: Run comprehensive health checks
 
@@ -174,30 +174,43 @@ make register-trusts PROD=stag              # every live trust/.env.*.<env> kit
 make register-trusts KIT=<CODE> PROD=stag   # only trust/.env.<CODE>.<env>
 ```
 
-Per kit it:
+Once per invocation it reads the live `flip-api` service's subnets and security groups,
+and waits (advisorily) for the service to be stable: its entrypoint seeds the DB, including
+the FL kit-slot pool `register_trust` claims from. A waiter timeout warns and proceeds.
+Then, per kit, it:
 
 1. Reads `TRUST_NAME` / `TRUST_CODE` / `TRUST_REGION` out of `trust/.env.<CODE>.<env>`
    (`PROD=true` selects `.production` kits, anything else `.stag`). Scaffold the kit
    first — `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." PROD=<env>` from the repo
    root — the trust's identity comes from the kit, never from env vars.
-2. Reads the live `flip-api` service's subnets and security groups, and waits
-   (advisorily) for the service to be stable: its entrypoint seeds the DB, including the
-   FL kit-slot pool `register_trust` claims from. A waiter timeout warns and proceeds.
-3. Runs `flip_api.scripts.register_trust` as a one-off Fargate task on the `flip-api`
+2. Runs `flip_api.scripts.register_trust` as a one-off Fargate task on the `flip-api`
    task definition, passing `--out-ssm-parameter /flip/trust-kits/ephemeral/<uuid>` so
    the kit body is PUT as a SecureString and never reaches CloudWatch — only the
    parameter *name* transits stdout. The script then GETs the parameter with decryption,
    deletes it, and deletes the task's log stream.
-4. Writes the kit into `trust/.env.<CODE>.<env>` through
+3. Writes the kit into `trust/.env.<CODE>.<env>` through
    `scripts/distribute_trust_kits.py`, the same in-place upsert writer the dev path and
-   `sync-trust-kit` use: credentials on first registration only, the hub-shared block
-   refreshed every run, operator host-local edits preserved.
+   `sync-trust-kit` use: credentials on first registration only, operator host-local
+   edits preserved, and the hub-shared block upserted with whatever the task's
+   environment carried — which on ECS is only `TRUST_API_KEY_HEADER` and `FL_BACKEND`
+   (`AES_KEY_BASE64` is a Secrets Manager value, never in the task env, and the other
+   hub-shared keys are not in the task definition at all).
+4. **Required follow-up:** fill the rest of the hub-shared block from the admin's local
+   `.env.<env>` — from the repo root, `make sync-trust-kit KIT=<CODE> PROD=<env>` (or
+   `make sync-trust-kits` for every local kit). Without it the kit's `AES_KEY_BASE64`,
+   `CENTRAL_HUB_API_URL`, kit dates and image tags stay unfilled.
 
 Registration is **idempotent** — an already-registered trust returns a metadata-only kit
 (the hub keeps only the SHA-256 hash of the API key), logged as *already registered —
 refreshing hub-shared block*. Delivery to a host is deliberately separate and
-command-driven: `make deploy-trust` pushes the kit to the Trust EC2, and
-`make package-onprem-trust-kit KIT=<slot>` tarballs it for an on-prem operator.
+command-driven, and nothing copies the kit file anywhere: `make deploy-trust KIT=<CODE>`
+reads `trust/.env.<CODE>.<env>` locally and drives the Trust EC2's Docker daemon over the
+`flip-trust` SSH context (`up-trust-ec2`), so the values reach the host only as container
+environment. For an on-prem operator, `make package-onprem-trust-kit KIT=<slot>` tarballs a
+kit plus its FL-kit slice — but it reads the legacy slot-named `trust/.env.<slot>` (no env
+suffix) and requires its `FL_KIT_SLOT` to equal `KIT`, so it does not consume the
+`trust/.env.<CODE>.<env>` file `register-trusts` writes; populate `trust/.env.<slot>` as its
+own instructions describe (UI *Add Trust* lines + `make sync-trust-kit`) first.
 
 Then mint the XNAT stack passwords, which are runtime-only trust-side secrets and are
 **not** part of the hub kit:
@@ -221,7 +234,9 @@ the hub's env, and the claimed FL kit slot maps onto the matching SuperNode key
 - **A batch run attempts every kit** and exits non-zero if any failed, so one bad kit
   never strands the rest and a partial failure can't read as success.
 - **`No trust/.env.*.<suffix> kits found`** means no live kit exists for this
-  environment (`.example` templates are not matched) — run `make new-trust` first.
+  environment (`.example` templates are not matched) — run `make new-trust` first. It
+  is a warning, not a failure: the script exits 0, so a `full-deploy` chain carries on
+  past it.
 - **Interactive debugging inside the running service** is still possible with ECS Exec,
   which is off by default (`var.ecs_exec_enabled`):
 
@@ -477,7 +492,9 @@ make init
 # 4. Import existing persistent resources (prevents replacement errors)
 make import-persistent
 
-# 5. Mint the fl-server -> hub INTERNAL_SERVICE_KEY (idempotent; skipped if already set)
+# 5. Check the fl-server -> hub INTERNAL_SERVICE_KEY + hash are in sync (the key must already be
+#    set in the env file or the Makefile will not parse; mint it first from the repo root with
+#    `make generate-internal-service-key ENV_FILE=$(pwd)/.env.<env>`)
 make generate-internal-service-key
 
 # 6. Plan changes
@@ -486,7 +503,7 @@ make plan
 # 7. Apply infrastructure
 make apply
 
-# 8. Refresh the root env file with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
+# 8. Refresh the root env file with Terraform outputs (DB_HOST, POSTGRES_SECRET_ARN, the two Cognito IDs)
 make update-env
 
 # 9. Configure SSH access
@@ -498,8 +515,10 @@ make ansible-init
 # 11. Deploy the Central Hub
 make deploy-centralhub
 
-# 12. Register every locally-present trust kit file on the hub and fill each kit with hub-shared values
+# 12. Register every locally-present trust kit file on the hub and write its credentials back
 make register-trusts
+#     ...then fill the rest of each kit's hub-shared block from the local env file (repo root):
+#     make sync-trust-kit KIT=<CODE> PROD=<env>
 
 # 13. Deploy trust services (depends on seed-trust-data + stage-fl-kit; needs KIT=<CODE>)
 make deploy-trust KIT=<CODE>

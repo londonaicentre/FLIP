@@ -43,7 +43,7 @@ Initial Login
 
 .. note::
 
-   MFA enrolment is **mandatory** and cannot be deferred: until it is complete, the enrolment page is the only page you can reach. Keep the authenticator entry — you need a fresh code from it at every subsequent sign-in. If you lose the device, an administrator can reset your MFA so you can enrol again (see :ref:`admin-project-and-user-management`). Local development deployments run with ``ENFORCE_MFA=false``, which skips enrolment and the code prompt; staging and production always enforce them.
+   MFA enrolment is **mandatory** and cannot be deferred: until it is complete, every page of the application redirects you to the enrolment page — only the sign-in and password pages, the access-request form and the privacy policy and terms of service remain reachable. Keep the authenticator entry — you need a fresh code from it at every subsequent sign-in. If you lose the device, an administrator can reset your MFA so you can enrol again (see :ref:`admin-project-and-user-management`). Local development deployments run with ``ENFORCE_MFA=false``, which skips enrolment and the code prompt; staging and production enforce them by default (``ENFORCE_MFA`` defaults to ``true`` there and is only ever set to ``false`` deliberately, for testing).
 
 .. figure:: ../assets/flip/flip-first-login.gif
    :width: 600

@@ -166,10 +166,13 @@ In development (when `PROD` is not set), `make up` also mounts the local `xnat/p
 > can reach. Either way the containers it spawns run on the *host*, so they need XNAT's data through
 > host paths — the data directories (`archive`, `build`, `cache`, `tomcat_logs`) must therefore be
 > bind-mounted rather than using named volumes. Per-instance isolation comes from `XNAT_DATA_DIR`,
-> which `Makefile` derives from the trust's kit slot (`TRUST_NUM` = `FL_KIT_SLOT_NUMBER`):
-> `/opt/flip/xnat-trust<N>` under `PROD=stag|true`, `./xnat-data-trust<N>` in development. Set
-> `XNAT_DATA_DIR` in the kit file to override it per host. See
-> `docker-compose-stack.development.yml` for the full volume configuration.
+> which the kit file's Host-local profile sets and every shipped kit carries (`./xnat-data` in
+> `trust/.env.example`, hence in anything `make new-trust` scaffolds; `./xnat-data-GSTT` /
+> `./xnat-data-KCH` in the dev examples) — a relative value resolves against `trust/xnat/`. Only
+> when the kit omits the key does `Makefile` fall back to a per-slot default derived from
+> `TRUST_NUM` (= `FL_KIT_SLOT_NUMBER`): `/opt/flip/xnat-trust<N>` under `PROD=stag|true`,
+> `./xnat-data-trust<N>` in development. See `docker-compose-stack.development.yml` for the full
+> volume configuration.
 
 If successful, you will be able to log in to XNAT with the service account credentials (specified in the trust's kit file, `trust/.env.<CODE>.<env>`) and see the registered PACS in the DICOM Query-Retrieve plugin.
 
@@ -185,8 +188,8 @@ rather than silently falling back.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `XNAT_AETITLE` | `XNAT` | XNAT's **own** AE title. Applied in three places that must agree: the SCP receiver, the DQR calling AE, and the C-MOVE destination handed to the PACS. DQR matches that destination against a registered receiver by exact `AE:port`, so no translation is possible on that leg. |
-| `XNAT_PORT` | — (required) | XNAT's **DICOM SCP receiver** port. |
-| `XNAT_WEB_PORT` | — (required) | The host-published **web-UI** port. |
+| `XNAT_PORT` | `8104` | XNAT's **DICOM SCP receiver** port. Defaults to the Trust_1 allocation so a single-trust host need not set it. |
+| `XNAT_WEB_PORT` | — (required) | The host-published **web-UI** port. No default of its own: it falls back to `XNAT_PORT`, which collides, so every kit must set it. |
 | `PACS_HOST` | `orthanc` | Upstream PACS hostname — the compose/k8s service name, or a real PACS host. |
 | `PACS_AETITLE` | `ORTHANC` | The PACS's AE title. |
 | `PACS_QR_PORT` | `4242` | The PACS query/retrieve port XNAT dials. Must be reachable **from the XNAT container** — not a host-published port. |
@@ -208,9 +211,12 @@ port). Both are host-published — the receiver so a real PACS can complete the 
 a retrieval, and dev keeps the same wiring — so they must differ; `xnat-reset` refuses to deploy if
 they collide or are non-numeric. The dev allocation is 8104/8105 (GSTT) and 8106/8107 (KCH).
 
-`configure-xnat.sh` updates an existing PACS registration in place when the host or port drift, and
-keeps exactly one registration — which is why imaging-api can read the PACS id back from XNAT at
-runtime rather than assuming `1`.
+`configure-xnat.sh` updates an existing PACS registration in place when any of its kit-managed
+fields drift (host, query/retrieve port, label, extended-negotiation flag), and deletes every
+registration other than the configured one so exactly one survives — which is why imaging-api can
+read the PACS id back from XNAT at runtime rather than assuming `1`. The delete is conditional: if
+foreign registrations exist while `PACS_AETITLE`/`PACS_HOST` are still the mocked-Orthanc defaults,
+the script refuses and exits 1 rather than remove a real PACS the operator never declared (FLIP#993).
 
 ## Plugins
 

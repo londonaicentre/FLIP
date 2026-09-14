@@ -72,7 +72,7 @@ def _platform_version() -> str:
         raise SphinxError(f"Could not read project.version from {pyproject} ({exc!r}).") from exc
 
 
-# The short X.Y version, and the full version including alpha/beta/rc tags
+# Both Sphinx version strings carry the full platform version (no separate X.Y short form).
 release = _platform_version()
 version = release
 

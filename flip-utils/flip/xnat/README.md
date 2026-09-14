@@ -94,10 +94,13 @@ The reference consumer is
 which builds an `EnrichmentItem` manifest from the MSD spleen download and the published
 accession↔MSD-case mapping (`trust-data`'s `omop-csv/spleen_project/image_occurrence.csv`, pinned
 by `trust/.data_version`), then calls `run_enrichment` directly rather than going through the CLI
-(so it can add its own `--trust` filter and its own mapping-fetch/caching logic):
+(so it can add its own `--trust` filter and its own mapping-fetch/caching logic). Run it against
+the checkout (`--with ./flip-utils`, from the repo root), not the PyPI release, so the enrichment
+code matches this tree — `make -C fl-tutorials upload-spleen-labels` does the same via
+`FLIP_UTILS_DIR`:
 
 ```bash
-uv run --no-project --with flip-utils python fl-tutorials/datasets/spleen/upload_spleen_labels_to_xnat.py \
+uv run --no-project --with ./flip-utils python fl-tutorials/datasets/spleen/upload_spleen_labels_to_xnat.py \
   --flip-project-id "$FLIP_PROJECT_ID" \
   --labels-dir fl-tutorials/data/spleen/images \
   --xnat-url http://127.0.0.1:8105 --xnat-url http://127.0.0.1:8107 \

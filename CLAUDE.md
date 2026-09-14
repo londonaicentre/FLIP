@@ -81,7 +81,7 @@ make ui                    # Start UI only
 make ui-off                # Stop the UI container (no-op message when PROD is set — flip-ui runs from S3+CloudFront)
 make up-pgadmin            # Start pgadmin only
 make clean                 # Remove all stopped containers, networks, and images
-make recreate-networks     # Remove + recreate all networks (overlay driver, for swarm)
+make recreate-networks     # Remove + recreate all networks (bridge, except the two trust networks: overlay, for the XNAT swarm stack)
 make ci                    # Run CI pipeline locally using act
 make central-hub           # Start flip-api + database (no UI)
 make print-docker-tag      # Print the resolved DOCKER_TAG value
@@ -336,6 +336,10 @@ make debug SERVICE=trust-api       # Available: flip-api, trust-api, imaging-api
 make debug-off SERVICE=flip-api    # Stop debug mode
 ```
 
+Quirk: `debug-off` does not accept `SERVICE=fl-api-net-1` — its case arm spells the FL API `fl-api`,
+a name no compose service carries — so `make debug-off SERVICE=fl-api-net-1` is rejected as unknown
+and the `fl-api` spelling fails in compose. Recreate `fl-api-net-1` with `DEBUG=false` directly.
+
 Debug ports (hub `API_DEBUG_PORT`, trust `TRUST/IMAGING/DATA_ACCESS_DEBUG_PORT`) publish on
 `127.0.0.1` only, so the debugger must attach from the same host — for a remote dev box, tunnel the
 port (SSH/SSM) rather than exposing it on the LAN.
@@ -430,7 +434,7 @@ make sync-trust-kits                  # Refresh every locally-present kit file
 make generate-internal-service-key    # Generate fl-server-to-hub key
 ```
 
-Per-trust lifecycle, run from `trust/` (KIT=<CODE>, or all registered kits when omitted):
+Per-trust lifecycle, run from `trust/` (KIT handling differs per target: `down-fl-clients` loops over every registered kit; `down-fl-clients-kit` and `down-trust-ec2` require `KIT=<CODE>`; the `debug-*` targets default to the first dev kit when KIT is omitted):
 
 ```bash
 make -C trust down-fl-clients          # Stop + remove FL client containers for every registered kit, rest of the stack stays up
@@ -580,9 +584,10 @@ GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml` (per
 `test_trust_omop_db.yml`, `test_trust_xnat.yml`, plus `test_trust_data_tools.yml` for the
 orthanc/omop-db data-publishing scripts and `test_trust_kit_scripts.yml` for `scripts/**` +
 the compose files' container-identity contract), `fl-tutorials-tests.yml`, `test_map_apps.yml`,
-`docker_build_*.yml` (per-service GHCR publish, gated on that service's test workflow — see
-"Docker image builds" below; also covers `docker_build_xnat_{db,dcm2niix,nginx,web}.yml`,
-`docker_build_omop_db.yml`, `docker_build_orthanc.yml`), `validate_terraform.yml` (fmt/validate + a checkov security lint over `deploy/providers/AWS/**` — IAM policy content plus promoted posture checks; static, credential-free; local run `make checkov-lint` **from the repo root** (the AWS Makefile's parse-time env guard blocks the `-C` form for contributors), deliberate breadth/posture suppressed in-code with `# checkov:skip=<ID>:<rationale>` — FLIP#1052, FLIP#1058; plus an `AWS deploy tests` job running the credential-free pytest suite in `deploy/providers/AWS/tests/` over the stack's static artefacts — rendered templates, deploy scripts, and Terraform source itself, including the Cognito `callback_urls` = browser CORS allowlist invariants), `terraform_plan.yml`, `terraform_apply.yml`, `terraform_drift.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+`docker_build_*.yml` (per-service GHCR publish; the application images and
+`docker_build_omop_db.yml` are gated on that service's test workflow, while
+`docker_build_orthanc.yml` and `docker_build_xnat_{db,dcm2niix,nginx,web}.yml` publish
+straight from a push — see "Docker image builds" below), `validate_terraform.yml` (fmt/validate + a checkov security lint over `deploy/providers/AWS/**` — IAM policy content plus promoted posture checks; static, credential-free; local run `make checkov-lint` **from the repo root** (the AWS Makefile's parse-time env guard blocks the `-C` form for contributors), deliberate breadth/posture suppressed in-code with `# checkov:skip=<ID>:<rationale>` — FLIP#1052, FLIP#1058; plus an `AWS deploy tests` job running the credential-free pytest suite in `deploy/providers/AWS/tests/` over the stack's static artefacts — rendered templates, deploy scripts, and Terraform source itself, including the Cognito `callback_urls` = browser CORS allowlist invariants), `terraform_plan.yml`, `terraform_apply.yml`, `terraform_drift.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
 
 Further workflows, grouped: **unit tests** — `unit-tests.yml` (flip-utils + the NVFLARE
 fl-api-base, on push) and `unit-tests-heavy.yml` (flip-utils, GPU-adjacent suite, push or
@@ -592,8 +597,10 @@ manual dispatch). **Per-backend FL API** — `fl-api-test-flower.yml` / `fl-api-
 `fl-services/<backend>/**` images on push to main/develop, or manual dispatch; also triggered
 by `flip-utils/**` since the fl-base image bakes it in). **FL app/tutorial consistency guards**
 — `fl-apps-check-required-files.yml` (CI backstop for the `fl-apps-required-files` pre-commit
-hook), `fl-apps-check-tutorial-sync.yml` (flower `fl-apps/`/`fl-tutorials/` file parity, plus
-the NVFLARE-only Ark+ evaluation pairs), `fl-api-validation-sync.yml` (the two backends'
+hook), `fl-apps-check-tutorial-sync.yml` (now only the NVFLARE Ark+ evaluation pairs in
+`scripts/check_tutorial_sync.sh`; Flower `fl-apps/`/`fl-tutorials/` parity is derived from the
+tree by `fl-tutorials/tests/test_flower_platform_parity.py`, run by `fl-tutorials-tests.yml`),
+`fl-api-validation-sync.yml` (the two backends'
 `fl_api/utils/validation.py` guards stay in sync), `fl_round_metrics_tests.yml` (tests over
 `scripts/fl_round_metrics/**`). **Deploy-target tests** — `test_helm_chart.yml`
 (`deploy/providers/kubernetes/**`), `test_local_trust_playbook.yml`
@@ -605,7 +612,9 @@ PRs to develop/main), `validate_branch_origin.yml` (PRs targeting `main` must or
 `develop`), `release.yml` (creates a GitHub Release on push to `main`), `release-pypi.yml`
 (publishes flip-utils to PyPI on push to `main`), `pr-release-notes-preview.yml` (previews
 release notes on a PR to `main`), `regenerate_docs_gifs.yml` (re-records the docs GIFs from
-Cypress on push to `develop` touching `flip-ui/**`, or manual dispatch).
+Cypress on push to `develop` touching `flip-ui/src/**` or the Cypress docs harness —
+`flip-ui/test/cypress/docs/**`, `cypress.docs.config.ts`, `scripts/videos-to-gifs.sh` — or
+manual dispatch).
 
 ### Terraform runs in CI (FLIP#962)
 
@@ -665,7 +674,7 @@ Wait for green completion (`gh run list --workflow=docker_build_flip_api.yml --b
 
 ## Pre-commit Hooks
 
-TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict markers, YAML validation, end-of-file-fixer, private key detection, env var validation, fl-apps required-files generation (`fl-apps-required-files` — regenerates each `fl-apps/<backend>/required_files.json` from its per-template arrays via `fl-apps/check_required_files.sh`; rewrites-and-fails on drift like `prettier`, so re-stage and commit again — backstopped by the `check-required-files` CI workflow. The aggregate is `linguist-generated` in `.gitattributes`; never hand-edit it — edit the per-template `required_files.json`), `xnat-dcm2niix-pin-sync` (checks the pinned `DCM2NIIX_VERSION` image tag stays in sync across the four hand-written sites that reference it; report-only, backstopped by the dcm2niix-pin-sync job in `test_trust_xnat.yml` — #980), `prettier` (scoped to `deploy/providers/AWS/**/*.{yml,yaml}`), uv lockfile sync (`uv-lock`, one entry per uv project). Install: `pre-commit install`.
+TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict markers, YAML validation, end-of-file-fixer, private key detection, env var validation, fl-apps required-files generation (`fl-apps-required-files` — regenerates each `fl-apps/<backend>/required_files.json` from its per-template arrays via `fl-apps/check_required_files.sh`; rewrites-and-fails on drift like `prettier`, so re-stage and commit again — backstopped by the `fl-apps-check-required-files.yml` CI workflow. The aggregate is `linguist-generated` in `.gitattributes`; never hand-edit it — edit the per-template `required_files.json`), `xnat-dcm2niix-pin-sync` (checks the pinned `DCM2NIIX_VERSION` image tag stays in sync across the four hand-written sites that reference it; report-only, backstopped by the dcm2niix-pin-sync job in `test_trust_xnat.yml` — #980), `prettier` (scoped to `deploy/providers/AWS/**/*.{yml,yaml}`), uv lockfile sync (`uv-lock`, one entry per uv project). Install: `pre-commit install`.
 
 ## Security Rules
 

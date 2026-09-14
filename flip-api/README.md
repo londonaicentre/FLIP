@@ -89,9 +89,10 @@ See [`.env.development.example`](../.env.development.example) for the full list 
 
 ### Tunables
 
-A handful of scheduler and task-queue settings have no entry in `.env.development.example` because
-their `config.py` defaults are meant to be left alone in normal operation; override them only when
-diagnosing or deliberately changing that behaviour.
+A handful of scheduler and task-queue settings are absent from `.env.development.example` (all but
+`SCHEDULER_MALWARE_SCAN_RECONCILE_RATE`, which appears there commented out under the malware-scan
+block) because their `config.py` defaults are meant to be left alone in normal operation; override
+them only when diagnosing or deliberately changing that behaviour.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -102,7 +103,7 @@ diagnosing or deliberately changing that behaviour.
 | `MAX_TASK_RESULT_LENGTH` | `10_000_000` (characters) | Max size of a task result payload |
 | `PROJECT_REIMPORT_RATE` | `60` (minutes) | How often to reimport studies for a given project |
 | `MAX_REIMPORT_COUNT` | `5` | Max reimport attempts before a project's imaging import stops retrying |
-| `SCHEDULE_RUN_JOBS_EXECUTION` | `true` | Master switch for the scheduler running any jobs at all |
+| `SCHEDULE_RUN_JOBS_EXECUTION` | `true` | Whether the scheduler registers the FL job-pickup pass (`run_jobs_scheduled_task`). Only that one job is gated: the fl-api keep-alive, imaging reimport, stale-task recovery and malware-scan reconcile jobs are registered regardless |
 | `SCHEDULER_RUN_JOBS_RATE` | `1` (minute) | How often the scheduler's FL job-pickup pass runs |
 | `SCHEDULER_KEEP_FL_API_SESSION_ALIVE_RATE` | `2` (minutes) | How often the scheduler pings fl-api to keep its session alive |
 | `SCHEDULER_REIMPORT_IMAGING_PROJECT_STUDIES_RATE` | `30` (minutes) | How often the scheduler checks for projects with unimported studies |

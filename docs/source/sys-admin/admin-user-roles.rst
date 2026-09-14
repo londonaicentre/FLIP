@@ -66,7 +66,7 @@ The following table summarises the permissions assigned to each role:
      - Yes
      - No
      - No
-   * - Create projects, and manage projects they own or are a member of (edit, stage, train)
+   * - Create projects; manage projects they own (edit, stage, delete, train); contribute models and train on projects they are a member of
      - Yes
      - Yes
      - No

@@ -14,7 +14,7 @@
 # scripts/
 
 Repo-root utility scripts: trust kit lifecycle (scaffold, register, sync, distribute, onboard),
-local environment/status checks, cross-service drift guards run by pre-commit and CI, and secret
+local environment/status checks, cross-service drift guards run by `make` targets or CI, and secret
 scanning. Most are invoked through `make` targets rather than run directly — see each section
 below for the wrapping target.
 
@@ -25,10 +25,11 @@ trust's identity, credentials, and Hub-shared configuration. `trust_kit_lib.py` 
 in-place-upsert implementation behind the others, so a kit file's operator edits (host-local
 ports, bind dirs) always survive a re-run.
 
-- **`new_trust.py`** (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." ENV=<env>`) — scaffolds
-  `trust/.env.<CODE>.<env>` from the base template (`trust/.env.example`), prepending the trust's
-  identity (`TRUST_NAME` / `TRUST_CODE` / `TRUST_REGION`). Refuses to overwrite an existing kit.
-  The result is ready for `make register-trust KIT=<CODE>` to fill in credentials.
+- **`new_trust.py`** (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." PROD=<stag|true>`; leave
+  `PROD` unset for development) — scaffolds `trust/.env.<CODE>.<env>` from the base template
+  (`trust/.env.example`), prepending the trust's identity (`TRUST_NAME` / `TRUST_CODE` /
+  `TRUST_REGION`). Refuses to overwrite an existing kit. The result is ready for
+  `make register-trust KIT=<CODE>` to fill in credentials.
 - **`trust_kit_lib.py`** — the single kit-file writer behind `distribute_trust_kits.py`,
   `sync_trust_kit.py`, and the AWS registration path. Merges a kit dict into a kit file while
   preserving operator edits: credentials (`TRUST_API_KEY` / `TRUST_INTERNAL_SERVICE_KEY`) are
@@ -37,13 +38,15 @@ ports, bind dirs) always survive a re-run.
   upserted unconditionally, the latter under a sentinel header added once on first write. Writes
   every kit file `0600`.
 - **`distribute_trust_kits.py`** — writes trust kit files from `register_trust`'s JSON output.
-  Array mode (default) reads a JSON array of kits on stdin and writes each to
-  `trust/.env.<fl_kit_slot>`, seeding a host-local profile from the matching `.example` on first
-  write; used by the dev `register-trust` Makefile pipe. `--target PATH` mode writes a single kit
-  (object or one-element array) to an explicit path; used by
-  `deploy/providers/AWS/scripts/register-trusts.sh` for stag/prod.
+  `--target PATH` mode writes a single kit (object or one-element array) to an explicit path; it
+  is what every caller uses — the dev `register-trust` Makefile pipe
+  (`--target trust/.env.<CODE>.<env>`) and `deploy/providers/AWS/scripts/register-trusts.sh` for
+  stag/prod alike. Array mode (the
+  default without `--target`) reads a JSON array of kits on stdin and writes each to the legacy
+  slot-named `trust/.env.<fl_kit_slot>`, seeding a host-local profile from the matching
+  `.example` on first write; nothing in the repo invokes it any more.
 - **`sync_trust_kit.py`** (`make sync-trust-kit KIT=<CODE> PROD=<env>`) — refreshes only the
-  Hub-shared block in `trust/.env.<KIT>` from the caller's environment (the root Makefile
+  Hub-shared block in `trust/.env.<CODE>.<env>` from the caller's environment (the root Makefile
   `include`s the right `.env.<env>` and exports it first). Credentials and operator edits are left
   untouched. Portable across dev/stag/prod — no docker compose exec, no ECS round-trip.
 - **`onboard_onprem_trust.py`** (`make onboard-onprem-trust KIT=<slot>`) — a readiness checklist
@@ -68,30 +71,34 @@ ports, bind dirs) always survive a re-run.
   in `.env.development.example` is also present in `.env.development`, so the example file stays
   up to date and a new required variable can't be missed silently.
 
-## Drift guards (pre-commit + CI backstop)
+## Drift guards
 
-Each of these is a pre-commit hook with a matching CI job as the backstop for a commit made
-without pre-commit installed:
+None of these is a pre-commit hook. The first two are `make`-time guards that run in no CI
+workflow; the other two are CI-only:
 
-- **`check-fl-provisioned.sh`** — fails fast when a backend's per-net FL credentials are missing,
-  instead of letting the FL containers crash-loop. Neither backend's credentials are created by
-  `make up` — they come from `make -C fl-services/<backend> provision...`.
-- **`check-uv-version.sh`** — fails fast when `uv` is too old to understand the dependency
-  cooldown (`exclude-newer = "3 days"`, which needs uv >= 0.10.0). An older uv silently discards
-  the whole `[tool.uv]` table and resolves with no cooldown at all, rewriting `uv.lock` with no
-  warning worth noticing.
-- **`check_fl_api_validation_sync.sh`** — verifies that `safe_join` and `validate_bundle_url`
-  (the SSRF and path-traversal guards in front of the server-side bundle fetch) stay
-  byte-identical between the NVFLARE and Flower fl-api services. They're intentionally separate
-  copies (different Docker build contexts, uv projects, and images), so a fix applied to one and
-  not the other would silently leave the second vulnerable.
-- **`check_tutorial_sync.sh`** — verifies that tutorial files kept as byte-identical copies of
-  another file (Flower tutorial files copied from `fl-apps/flower/` templates; Ark+ NVFLARE files
-  shared between the two evaluation apps) have not drifted. These can't be symlinks — `flwr build`
-  excludes symlinks from the FAB — so each keeps a real copy that must be resynced by hand when
-  its reference changes.
+- **`check-fl-provisioned.sh`** (the `make up` / `make up-no-trust` guard, via the root
+  Makefile's `_check-fl-provisioned`) — fails fast when a backend's per-net FL credentials are
+  missing, instead of letting the FL containers crash-loop. Neither backend's credentials are
+  created by `make up` — they come from `make -C fl-services/<backend> provision...`.
+- **`check-uv-version.sh`** (the `make lock` guard) — fails fast when `uv` is too old to
+  understand the dependency cooldown (`exclude-newer = "3 days"`, which needs uv >= 0.10.0). An
+  older uv silently discards the whole `[tool.uv]` table and resolves with no cooldown at all,
+  rewriting `uv.lock` with no warning worth noticing.
+- **`check_fl_api_validation_sync.sh`** (CI: `fl-api-validation-sync.yml`) — verifies that
+  `safe_join` and `validate_bundle_url` (the SSRF and path-traversal guards in front of the
+  server-side bundle fetch) stay byte-identical between the NVFLARE and Flower fl-api services.
+  They're intentionally separate copies (different Docker build contexts, uv projects, and
+  images), so a fix applied to one and not the other would silently leave the second vulnerable.
+- **`check_tutorial_sync.sh`** (CI: `fl-apps-check-tutorial-sync.yml`) — verifies that tutorial
+  files kept as byte-identical copies of another file have not drifted. It now holds only the
+  Ark+ NVFLARE pair (`data_utils.py` and `arkplus_flat_models.py`, shared between the two
+  evaluation apps); the Flower tutorial-vs-`fl-apps/flower/` template pairs moved to
+  `fl-tutorials/tests/test_flower_platform_parity.py`, which derives them from the tree. These
+  can't be symlinks — `flwr build` excludes symlinks from the FAB — so each keeps a real copy that
+  must be resynced by hand when its reference changes.
 - **`utils.sh`** — shared shell helpers (colour-coded `log_info` / `log_success` / etc.) sourced
-  by the shell scripts above; not run directly.
+  only by the two secret-scanning scripts (`scan-secrets.sh`, `setup-secret-scanning.sh`); the
+  drift guards above are self-contained. Not run directly.
 
 ## fl_round_metrics/
 

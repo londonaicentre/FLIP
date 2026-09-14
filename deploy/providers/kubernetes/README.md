@@ -237,10 +237,21 @@ make -C deploy/providers/kubernetes undeploy   # helm uninstall the release
 
 `undeploy` is `helm uninstall $(RELEASE_NAME) --namespace $(NAMESPACE)`; `down`
 and `undeploy-trust-k8s` are aliases for it, and the repo root forwards
-`make undeploy-trust-k8s` here. It removes only the Helm release — the namespace
-itself, any PersistentVolumeClaims the chart's stateful services left behind, and
-the FL kit staged on the node by `stage-kit` all survive, so a re-`deploy` picks
-up the same data. Delete them explicitly if you want a clean slate.
+`make undeploy-trust-k8s` here. It removes the Helm release and **everything the
+release owns — including the standalone PVCs and their data**: Orthanc's PACS store
+(`templates/orthanc.yaml`), XNAT's archive, prearchive, build and cache
+(`templates/xnat-web.yaml`), Grafana's state (`templates/grafana.yaml`) and the
+shared images cache (`templates/shared-images-pvc.yaml`) are plain
+`kind: PersistentVolumeClaim` release resources with no
+`helm.sh/resource-policy: keep`, so `helm uninstall` deletes them, and the bound
+volumes go with them under the cluster default storage class's usual `Delete`
+reclaim policy. Only the PVCs created from StatefulSet `volumeClaimTemplates`
+— `omop-db`, `xnat-db`, `loki` — survive, as do the namespace itself and the FL kit
+staged on the node by `stage-kit`. A re-`deploy` therefore comes back with the OMOP
+and XNAT databases but an empty PACS and an empty XNAT archive — and an `xnat-db`
+whose sessions point at archive files that no longer exist. Snapshot or back up
+those PVs before uninstalling if the data matters; delete the surviving StatefulSet
+PVCs explicitly if you want a clean slate.
 
 ## Configuration Reference
 

@@ -14,7 +14,8 @@ Glossary
 
     **FL kit slot**
       The name an FL client is known by inside a federation (``Trust_1``, ``Trust_2``, …), taken from
-      the certificate in its provisioned participant kit. Slots are a fixed pool provisioned once per
+      the certificate in its provisioned participant kit (NVFLARE) or the SuperNode key pair labelled
+      for that slot (Flower). Slots are a fixed pool provisioned once per
       :term:`FL net`; a Trust claims one when it registers with the Central Hub, and that name — not
       the Trust's hub-side name — is what appears in FL logs and in an app's ``AGGREGATION_WEIGHTS``
       keys. See :ref:`flip-fl-nets`.
@@ -70,7 +71,8 @@ Glossary
     **Secure enclave**
       The FLIP node at a partner Trust: dedicated storage and compute inside the Trust's firewall,
       holding that Trust's imaging and OMOP data and running the FL client that trains on it. Patient
-      data stays within the enclave; only model updates leave. See :doc:`overview`.
+      data stays within the enclave; only model updates and aggregate cohort statistics leave. See
+      :doc:`overview`.
 
     **TRE**
       Trusted Research Environment. A governed, access-controlled analysis environment holding an

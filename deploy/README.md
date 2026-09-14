@@ -68,7 +68,7 @@ FLIP uses AWS RDS PostgreSQL with the following version support policy:
 | Version | EOL | Status |
 | ------- | --- | ------ |
 | PostgreSQL 13 | November 2025 | ❌ EXPIRED — do not use |
-| PostgreSQL 14 | November 2026 | ⚠️ EOL imminent — below the minimum, do not use |
+| PostgreSQL 14 | 12 November 2026 | ⚠️ Below the minimum, do not use |
 | PostgreSQL 15 | October 2027 | ⚠️ Deprecating soon |
 | PostgreSQL 16 | October 2028 | ✓ Supported |
 | PostgreSQL 17 | November 2029 | ✓ Current (Terraform default) |

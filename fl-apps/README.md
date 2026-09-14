@@ -85,20 +85,34 @@ trust. The allowlist fails **closed**: for an operator-provided `FL_APP_BASE_DIR
 file is silently omitted rather than shipped, so a hotfix to a base template ships by rebuilding
 (and, in prod, redeploying) the flip-api image, not by editing files in place at a trust.
 
-## The Flower tutorial-sync guard
+## The tutorial-sync guards
 
-Some `fl-tutorials/flower/*` files are kept as byte-identical copies of the `fl-apps/flower/`
-templates they build on (`server_app.py`, `strategy.py` for the standard/evaluation job types), and
-two of the NVFLARE Ark+ evaluation tutorials share a data-loading/model module pair with each other.
-`flwr build` excludes symlinks from a FAB, so these have to be real copies rather than links —
-[`scripts/check_tutorial_sync.sh`](../scripts/check_tutorial_sync.sh) diffs each pair and fails if
-one has drifted, run by the `fl-apps-check-tutorial-sync.yml` CI workflow on any push/PR touching
-`fl-apps/flower/**`, `fl-tutorials/flower/**`, or the NVFLARE Ark+ evaluation tutorials. Resync by
-copying the reference file (the template, or the baseline Ark+ app) over the drifted copy. Adding a
-new such pair means extending that workflow's path filters too, or drift on the new path goes
-uncaught. `pyproject.toml` files are deliberately **not** paired — the template's `[tool.uv]` tables
-pin `flip-utils` to the in-image `/opt/flip-utils` source and torch to the cu128 index, neither of
-which apply to a tutorial's workstation venv.
+Some tutorial files are kept as byte-identical copies of another file, and two guards police them
+— one derived from the tree, one hand-listed:
+
+- **Flower tutorials vs. the `fl-apps/flower/` templates.** Every `fl-tutorials/flower/*/app` ships
+  its own copy of the platform-owned `app/*.py` (`server_app.py`, `strategy.py`) of the template its
+  `config.json` job type selects: `flwr build` excludes symlinks from a FAB, so these have to be
+  real copies rather than links, and since the bundler discards an uploaded copy in favour of the
+  base file (see above), the tutorial must carry what the platform will actually run.
+  [`fl-tutorials/tests/test_flower_platform_parity.py`](../fl-tutorials/tests/test_flower_platform_parity.py)
+  **derives** the pairs from the tree — every tutorial app against its template's `app/*.py` — and
+  fails if a copy differs (a module that is inert in both trees, such as a docstring-only
+  `__init__.py`, may). It runs under `make -C fl-tutorials test` and the `fl-tutorials-tests.yml`
+  CI workflow (paths `fl-apps/flower/**`, `fl-tutorials/**`), so a new Flower tutorial is covered
+  the moment it exists — there is no list and no path filter to extend. Resync by copying the
+  template file over the drifted copy.
+- **The Ark+ NVFLARE pair.** The two Ark+ evaluation tutorials share `data_utils.py` and
+  `arkplus_flat_models.py` with each other; nothing in the tree says so, which is why this is the
+  one pair still hand-listed, in [`scripts/check_tutorial_sync.sh`](../scripts/check_tutorial_sync.sh)
+  (`PAIRS`), run by the `fl-apps-check-tutorial-sync.yml` CI workflow on any push/PR touching
+  `fl-tutorials/nvflare/image_evaluation/**`. Resync by copying the baseline app's file over the
+  multimodel copy. Adding another hand-listed pair means extending that workflow's path filters
+  too, or drift on the new path goes uncaught.
+
+`pyproject.toml` files are deliberately **not** paired — the template's `[tool.uv]` tables pin
+`flip-utils` to the in-image `/opt/flip-utils` source and torch to the cu128 index, neither of which
+apply to a tutorial's workstation venv.
 
 ## Where to look next
 

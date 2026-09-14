@@ -174,21 +174,24 @@ make provision-local-trust
      directory tree themselves — the playbook only ever provisions the default.
 2. Downloads the FL participant kit from S3 and stages it under `/tmp`, printing the `sudo rsync` commands to deploy it into `${FL_KIT_DIR}/net-1/...` (default `/opt/flip/fl-kit/net-1/...`).
 
-> **Warning — the playbook's XNAT directory is not the one XNAT uses under
-> `PROD`.** Both this playbook and `deploy/providers/AWS/site.yml` provision
-> `/opt/flip/xnat/...`, but `trust/xnat/Makefile` resolves `XNAT_DATA_DIR` to the
-> **per-slot** `/opt/flip/xnat-trust$(TRUST_NUM)` whenever `PROD` is `stag` or
-> `true` (`TRUST_NUM` is the kit's `FL_KIT_SLOT_NUMBER`) — a deliberate split so
-> two trusts sharing a host stay isolated. Compose, `xnat-reset` and the
-> ownership check all read that variable, so on a `PROD=stag`/`PROD=true` host
-> the live tree is `/opt/flip/xnat-trust<N>/xnat-data/{tomcat_logs,archive,build,cache}`
-> plus `/opt/flip/xnat-trust<N>/xnat-db-data`, and chowning `/opt/flip/xnat`
-> looks right but changes nothing. Set `XNAT_DATA_DIR` explicitly in
-> `trust/.env.<CODE>.<env>` if you want one fixed path, and chown **that** to
-> `1001:1001`. `up-xnat` runs `xnat-reset`, which **deletes and recreates**
-> `XNAT_DATA_DIR` with the right owner for the value actually in effect, then
-> verifies it and fails naming the exact `chown` when it is wrong — so treat it
-> as destructive, not as a repair tool for a populated archive.
+> **Warning — the playbook's XNAT directory is not the one XNAT uses.** Both this
+> playbook and `deploy/providers/AWS/site.yml` provision `/opt/flip/xnat/...`, but
+> the tree XNAT actually writes to is whatever `XNAT_DATA_DIR` resolves to in
+> `trust/xnat/Makefile`, and the kit file's value wins. Every scaffolded kit sets one
+> — `trust/.env.example`, which `make new-trust` copies, carries
+> `XNAT_DATA_DIR=./xnat-data`, resolved against `trust/xnat/` (so
+> `<checkout>/trust/xnat/xnat-data`). Only when the kit omits the key does the
+> Makefile fall back to the **per-slot** `/opt/flip/xnat-trust$(TRUST_NUM)` under
+> `PROD=stag|true` (`TRUST_NUM` is the kit's `FL_KIT_SLOT_NUMBER`; `./xnat-data-trust<N>`
+> in dev) — a deliberate split so two trusts sharing a host stay isolated. Compose,
+> `xnat-reset` and the ownership check all read that same variable, so the live tree
+> is `<XNAT_DATA_DIR>/xnat-data/{tomcat_logs,archive,build,cache}` plus
+> `<XNAT_DATA_DIR>/xnat-db-data`, and chowning `/opt/flip/xnat` looks right but changes
+> nothing. Check the kit's `XNAT_DATA_DIR` (set it explicitly there if you want one
+> fixed path) and chown **that** to `1001:1001`. `up-xnat` runs `xnat-reset`, which
+> **deletes and recreates** `XNAT_DATA_DIR` with the right owner for the value actually
+> in effect, then verifies it and fails naming the exact `chown` when it is wrong — so
+> treat it as destructive, not as a repair tool for a populated archive.
 
 Opening the AWS FL-server NLB to the trust's public IP is a **separate** step — `make allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip>` — run by the FLIP admin once the operator reports their IP.
 

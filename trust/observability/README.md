@@ -33,15 +33,20 @@ alongside `trust-api`, `imaging-api`, `data-access-api`, `orthanc` and `omop-db`
 [`log_config/`](log_config/) at `/app/log_config`; the observability trio's own configs are bind-
 mounted read-only the same way. In production the same three configs are read from
 `${OBSERVABILITY_CONFIG_DIR:-/opt/flip/config/observability}` instead, and Loki/Grafana data
-persist in the named volumes `trust-local-{loki,grafana}-data`.
+persist in `${LOKI_DATA_VOLUME:-trust-local-loki-data}` / `${GRAFANA_DATA_VOLUME:-trust-local-grafana-data}`
+— named volumes by default (compose-prefixed on disk, e.g. `trust<N>_trust-local-loki-data`), which
+an Ansible-provisioned EC2/on-prem kit overrides to bind paths under `/opt/flip/volumes/{loki,grafana}`,
+directories `deploy/providers/AWS/site.yml` creates with the right ownership.
 
 ## What is collected
 
 Each trust API writes single-line JSON to stdout via `log_config.configure_logging()` — no log
 files are read from disk. `LoggingMiddleware` tags every request with `request.started` /
 `request.completed` / `request.failed` events, a `request_id` (from `X-Request-ID` or a generated
-UUID), `method`, `path`, `status_code` and `duration_ms`. Alloy discovers all three API containers
-via `discovery.docker`, extracts `container` / `service` / `project` Docker labels, and its
+UUID), `method`, `path`, `status_code` and `duration_ms`. Alloy discovers **every** container on the
+host's Docker daemon via `discovery.docker` — `config.alloy` applies no filter, so `orthanc`,
+`omop-db`, the fl-client, XNAT and anything else running there ship too, a non-JSON line carrying
+only the container labels — extracts `container` / `service` / `project` Docker labels, and its
 `loki.process` stage parses each JSON line and promotes `level`, `api` and `event` to Loki labels
 (`request_id` is kept in the log body but not promoted to a label). The provisioned **Trust APIs**
 Grafana dashboard (`grafana/provisioning/dashboards/trust-apis.json`) reads these labels for
@@ -64,8 +69,11 @@ opens an `aws ssm start-session --document-name AWS-StartPortForwardingSession` 
 (port `3000`) alongside XNAT, Orthanc, and the three API Swagger UIs, in one command:
 
 ```bash
-deploy/providers/AWS/scripts/forward-trust-all.sh   # then open http://localhost:3000
+make -C deploy/providers/AWS forward-trust   # then open http://localhost:3000
 ```
+
+(The make target, not the script directly: its first line is `terraform output -raw
+TrustEc2InstanceId`, which only resolves from `deploy/providers/AWS/`.)
 
 On a local dev stack, `GRAFANA_PORT` (and `LOKI_PORT`) are published straight to the host by
 `trust/deploy/compose_trust.development.yml`, so `http://localhost:3000` works directly with no
@@ -74,9 +82,10 @@ tunnel needed.
 ## Credentials
 
 Grafana's admin password is `GRAFANA_ADMIN_PASSWORD` (`GF_SECURITY_ADMIN_PASSWORD` inside the
-container). It is a **Trust-local credential** — set per trust in `trust/.env.example` (dev
-default `admin`; see `trust/README.md`'s kit walkthrough, "Fill in the Trust-local credentials
-block") and never sent to or stored on the Central Hub.
+container). It is a **Trust-local credential** — set per trust in its kit file
+`trust/.env.<CODE>.<env>` (`trust/.env.example` is the template, dev default `admin`; see
+`trust/README.md`'s kit walkthrough, "Fill in the Trust-local credentials block") and never sent
+to or stored on the Central Hub.
 
 ## Configuration
 
