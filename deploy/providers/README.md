@@ -55,7 +55,9 @@ reach the hub:
 - `make -C deploy/providers/AWS full-deploy-with-k8s` calls `$(MAKE) -C ../kubernetes sync-kit / up / status`
 
 So a trust-only provider is not hub-independent: whichever one you use, the trust is still registered on the
-hub (`make register-trust KIT=<CODE>`) and still receives its kit file from the hub admin.
+hub (`make -C deploy/providers/AWS register-trusts KIT=<CODE>` — the AWS provider's
+ECS-aware target; the root `make register-trust` is the dev-only, local-container form) and
+still receives its kit file from the hub admin.
 
 ## Note on the AWS Terraform root
 

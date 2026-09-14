@@ -1,10 +1,139 @@
-# Secret Scanning Scripts
+<!--
+    Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+        http://www.apache.org/licenses/LICENSE-2.0
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
 
-This directory contains scripts for detecting secrets and sensitive information in the FLIP monorepo.
+# scripts/
 
-## Quick Start
+Repo-root utility scripts: trust kit lifecycle (scaffold, register, sync, distribute, onboard),
+local environment/status checks, cross-service drift guards run by `make` targets or CI, and secret
+scanning. Most are invoked through `make` targets rather than run directly — see each section
+below for the wrapping target.
 
-### Prerequisites
+## Trust kit scripts
+
+These scaffold, write, and keep in sync the `trust/.env.<CODE>.<env>` kit files that carry a
+trust's identity, credentials, and Hub-shared configuration. `trust_kit_lib.py` is the shared
+in-place-upsert implementation behind the others, so a kit file's operator edits (host-local
+ports, bind dirs) always survive a re-run.
+
+- **`new_trust.py`** (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." PROD=<stag|true>`; leave
+  `PROD` unset for development) — scaffolds `trust/.env.<CODE>.<env>` from the base template
+  (`trust/.env.example`), prepending the trust's identity (`TRUST_NAME` / `TRUST_CODE` /
+  `TRUST_REGION`). Refuses to overwrite an existing kit. The result is ready for
+  `make register-trust KIT=<CODE>` to fill in credentials.
+- **`trust_kit_lib.py`** — the single kit-file writer behind `distribute_trust_kits.py`,
+  `sync_trust_kit.py`, and the AWS registration path. Merges a kit dict into a kit file while
+  preserving operator edits: credentials (`TRUST_API_KEY` / `TRUST_INTERNAL_SERVICE_KEY`) are
+  written only on a new registration and never clobbered on an idempotent re-run; metadata
+  (`EXPECTED_TRUST_ID` / `FL_KIT_SLOT` / `FL_KIT_SLOT_NUMBER`) and the Hub-shared block are
+  upserted unconditionally, the latter under a sentinel header added once on first write. Writes
+  every kit file `0600`.
+- **`distribute_trust_kits.py`** — writes trust kit files from `register_trust`'s JSON output.
+  `--target PATH` mode writes a single kit (object or one-element array) to an explicit path; it
+  is what every caller uses — the dev `register-trust` Makefile pipe
+  (`--target trust/.env.<CODE>.<env>`) and `deploy/providers/AWS/scripts/register-trusts.sh` for
+  stag/prod alike. Array mode (the
+  default without `--target`) reads a JSON array of kits on stdin and writes each to the legacy
+  slot-named `trust/.env.<fl_kit_slot>`, seeding a host-local profile from the matching
+  `.example` on first write; nothing in the repo invokes it any more.
+- **`sync_trust_kit.py`** (`make sync-trust-kit KIT=<CODE> PROD=<env>`) — refreshes only the
+  Hub-shared block in `trust/.env.<CODE>.<env>` from the caller's environment (the root Makefile
+  `include`s the right `.env.<env>` and exports it first). Credentials and operator edits are left
+  untouched. Portable across dev/stag/prod — no docker compose exec, no ECS round-trip.
+- **`onboard_onprem_trust.py`** (`make onboard-onprem-trust KIT=<slot>`) — a readiness checklist
+  for an on-prem trust host, run as a precheck by `up-onprem-trust`. Diagnoses what's missing
+  before `make up-onprem-trust` will succeed: public IP, docker swarm state, kit file presence,
+  Hub-shared block, kit credentials, `FL_KIT_DIR` contents, OMOP/Orthanc data dirs, and GPU
+  capacity (`NUM_AVAILABLE_GPUS` vs. what the host actually exposes). Each check renders ✅ / ❌ /
+  ⏳ (pending on an earlier check) and exits non-zero if anything fails, so an operator gets
+  concrete diagnostics instead of a cryptic compose or pydantic failure deeper in the stack.
+
+## Status and environment checks
+
+- **`check_local_status.py`** (run directly: `python3 scripts/check_local_status.py`) — verifies
+  the local Docker Compose stack is functioning: Docker daemon, containers, networks, application
+  endpoints (UI, API, FL API), trust endpoints (trust-api, imaging-api, data-access-api), database
+  connectivity, and system resources. Exits 0 when all checks pass (warnings are acceptable), 1
+  otherwise. Options include `--skip-endpoints`, `--skip-docker`, `--project-dir`, and `--env-file`.
+  Resolves container and network names through compose project labels (honouring `FLIP_INSTANCE` /
+  `MAIN_ENV_FILE`) so it reports correctly against a prefixed second stack, not just the default
+  one.
+- **`check_env_vars.py`** (pre-commit hook `check-env-vars`) — verifies every variable declared
+  in `.env.development.example` is also present in `.env.development`, so the example file stays
+  up to date and a new required variable can't be missed silently.
+
+## Drift guards
+
+None of these is a pre-commit hook. The first two are `make`-time guards that run in no CI
+workflow; the other two are CI-only:
+
+- **`check-fl-provisioned.sh`** (the `make up` / `make up-no-trust` guard, via the root
+  Makefile's `_check-fl-provisioned`) — fails fast when a backend's per-net FL credentials are
+  missing, instead of letting the FL containers crash-loop. Neither backend's credentials are
+  created by `make up` — they come from `make -C fl-services/<backend> provision...`.
+- **`check-uv-version.sh`** (the `make lock` guard) — fails fast when `uv` is too old to
+  understand the dependency cooldown (`exclude-newer = "3 days"`, which needs uv >= 0.10.0). An
+  older uv silently discards the whole `[tool.uv]` table and resolves with no cooldown at all,
+  rewriting `uv.lock` with no warning worth noticing.
+- **`check_fl_api_validation_sync.sh`** (CI: `fl-api-validation-sync.yml`) — verifies that
+  `safe_join` and `validate_bundle_url` (the SSRF and path-traversal guards in front of the
+  server-side bundle fetch) stay byte-identical between the NVFLARE and Flower fl-api services.
+  They're intentionally separate copies (different Docker build contexts, uv projects, and
+  images), so a fix applied to one and not the other would silently leave the second vulnerable.
+- **`check_tutorial_sync.sh`** (CI: `fl-apps-check-tutorial-sync.yml`) — verifies that tutorial
+  files kept as byte-identical copies of another file have not drifted. It now holds only the
+  Ark+ NVFLARE pair (`data_utils.py` and `arkplus_flat_models.py`, shared between the two
+  evaluation apps); the Flower tutorial-vs-`fl-apps/flower/` template pairs moved to
+  `fl-tutorials/tests/test_flower_platform_parity.py`, which derives them from the tree. These
+  can't be symlinks — `flwr build` excludes symlinks from the FAB — so each keeps a real copy that
+  must be resynced by hand when its reference changes.
+- **`utils.sh`** — shared shell helpers (colour-coded `log_info` / `log_success` / etc.) sourced
+  only by the two secret-scanning scripts (`scan-secrets.sh`, `setup-secret-scanning.sh`); the
+  drift guards above are self-contained. Not run directly.
+
+## fl_round_metrics/
+
+Tooling for extracting and comparing per-round FL timings (not model metrics) from either a live
+platform run (CloudWatch logs) or a local NVFLARE simulator workspace. See
+[`fl_round_metrics/README.md`](fl_round_metrics/README.md) for the tools and the
+`make round-metrics` / `make reproduce-overhead` wrapper in the arkplus fine-tuning tutorial.
+
+## tests/
+
+Stdlib-only tests for the scripts in this directory (`scripts/tests/test_*.py`), each following
+the same `if __name__ == "__main__": main()` contract — no pytest, no external services beyond
+`uv` itself (needed because `test_sync_trust_kit.py` drives `sync_trust_kit.py` through
+`uv run --no-config`). Run the whole directory:
+
+```bash
+for test_file in scripts/tests/test_*.py; do
+  echo "== $test_file"
+  python3 "$test_file" || exit 1
+done
+```
+
+CI runs the same loop in [`.github/workflows/test_trust_kit_scripts.yml`](../.github/workflows/test_trust_kit_scripts.yml),
+triggered on changes under `scripts/**` and on the hub/trust compose files that
+`test_container_identity.py` asserts against (so an edit to those triggers the guard even though
+it touches nothing under `scripts/`).
+
+## Secret scanning
+
+This directory also contains scripts for detecting secrets and sensitive information in the FLIP
+monorepo.
+
+### Quick Start
+
+#### Prerequisites
 
 This monorepo uses `uv` for Python package management. If you haven't installed it yet:
 
@@ -12,7 +141,7 @@ This monorepo uses `uv` for Python package management. If you haven't installed 
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### Initial Setup
+#### Initial Setup
 
 Run the setup script once to install and configure all secret scanning tools:
 
@@ -51,16 +180,21 @@ Check all files:
 pre-commit run --all-files
 ```
 
-**Available Pre-commit Hooks:**
+**Available Pre-commit Hooks** (see [`.pre-commit-config.yaml`](../.pre-commit-config.yaml) for
+the authoritative list):
 
 - **check-env-vars**: Verifies that all variables in `.env.development.example` exist in `.env.development`. This ensures the example file stays up to date and developers are aware of new required environment variables.
+- **fl-apps-required-files**: Regenerates each backend's `fl-apps/<backend>/required_files.json` from its per-template `required_files.json` arrays. Rewrites-and-fails on drift (like `prettier`), so re-stage and commit again.
+- **xnat-dcm2niix-pin-sync**: Checks that the dcm2niix Container Service image pin (`ARG DCM2NIIX_VERSION` in its Dockerfile) agrees across the three deploy configs that reference it as a literal tag string. Report-only — the sites are hand-written, not generated.
 - **trufflehog**: Scans for high-entropy strings and verified secrets
 - **detect-secrets**: Pattern-based secret detection with baseline support
 - **check-added-large-files**: Prevents committing files larger than 1000 KiB (`--maxkb=1000` — the hook compares against `getsize // 1024`, so the cap is ~1.024 MB)
 - **check-merge-conflict**: Detects merge conflict markers
 - **check-yaml**: Validates YAML syntax
+- **prettier**: Formats YAML under `deploy/providers/AWS/`
 - **end-of-file-fixer**: Ensures files end with a newline
 - **detect-private-key**: Detects private SSH/SSL keys
+- **uv-lock** (one entry per uv project — root, flip-api, docs, trust-api, imaging-api, data-access-api, omop-db, xnat-tests, aws-deploy, flip-utils, fl-api-flower, fl-api-base): verifies each project's `uv.lock` is in sync with its `pyproject.toml` (`--check`, so it fails on drift instead of silently regenerating). Use `make lock` to regenerate when a `pyproject.toml` legitimately changes.
 
 #### Component-Specific Scans
 
