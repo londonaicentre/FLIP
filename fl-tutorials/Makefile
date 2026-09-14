@@ -81,7 +81,7 @@ PYTEST ?= uv run --project ../flip-utils --extra full --group dev pytest
 # tests/datasets/utils/ is the shared contract and runs ONCE, in the first listed project's
 # environment. Any dataset environment can host it; re-running it per project would just repeat the
 # same assertions, and is not what catches the dependency drift above.
-DATASET_TEST_PROJECTS ?= spleen cxr
+DATASET_TEST_PROJECTS ?= spleen cxr synthea
 DATASET_UTILS_PROJECT ?= $(firstword $(DATASET_TEST_PROJECTS))
 
 .PHONY: pytest pytest-datasets test unit_test

@@ -37,8 +37,10 @@ or the flip-utils source/environment, and on pushes to main/develop
 
 Tests mirror the source tree and are named for the file they cover —
 `tests/datasets/spleen/test_download_spleen_dataset.py` covers
-`datasets/spleen/download_spleen_dataset.py`, and `tests/datasets/cxr/test_omop_convert_cxr.py`
-covers `datasets/cxr/omop_convert_cxr.py` — the same convention as
+`datasets/spleen/download_spleen_dataset.py`, `tests/datasets/cxr/test_omop_convert_cxr.py`
+covers `datasets/cxr/omop_convert_cxr.py`, and
+`tests/datasets/synthea/test_build_synthea_dataframe.py` covers
+`datasets/synthea/build_synthea_dataframe.py` — the same convention as
 `trust/imaging-api/tests/routers/test_imaging.py`.
 
 Cross-cutting guards that assert a property across several source files
@@ -56,8 +58,8 @@ never runs on an FL image — it has no business pulling `pandera`/`sqlglot` (ne
 the OMOP tables that tooling generates) into flip-utils' runtime environment.
 
 Those tests run against **each dataset's own uv project**, one pytest invocation per project
-(`DATASET_TEST_PROJECTS` in `fl-tutorials/Makefile`, currently `spleen cxr`), each declaring what
-that dataset's tooling actually needs. `make -C fl-tutorials pytest-datasets` runs them all.
+(`DATASET_TEST_PROJECTS` in `fl-tutorials/Makefile`, currently `spleen cxr synthea`), each declaring
+what that dataset's tooling actually needs. `make -C fl-tutorials pytest-datasets` runs them all.
 
 The split is not just tidiness: it is the only thing in CI that checks a dataset's
 `pyproject.toml` declares what its code actually imports. A dataset's tests import its converter,

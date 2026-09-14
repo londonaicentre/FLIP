@@ -85,8 +85,9 @@ against `flip-utils` without adopting `spleen/`'s env:
   `sample_get_dataframe_response.csv`. Parameterised by `--sites`, so one script backs both
   `download-arkplus-finetuning-data` and `download-arkplus-eval-data`.
 
-[`synthea/`](synthea/) owns the single EHR script — no dedicated uv project, it needs only pandas
-and runs via `uv run --no-project --with pandas`:
+[`synthea/`](synthea/) owns the single EHR script, in the smallest of the dataset uv projects
+(pandas only — the project exists so its tests run in an environment declaring exactly what the
+script imports, like the other two):
 
 - `build_synthea_dataframe.py` — fetch three OMOP tables (`person`, `condition_occurrence`,
   `visit_occurrence`) of the public Synthea-in-OMOP dataset and derive the EHR risk-prediction
@@ -94,6 +95,8 @@ and runs via `uv run --no-project --with pandas`:
   plus `site1/`/`site2/` `person_id`-modulo splits. Its feature logic mirrors the tutorial's
   `query.sql` (the OMOP SQL a deployed run sends to each trust) — change one and change the other
   (see the [EHR tutorial README](../nvflare/tabular_classification/ehr_risk_prediction/README.md)).
+  `tests/datasets/synthea/` keeps the two honest: it runs the actual `query.sql` on SQLite over the
+  same tiny tables and diffs it against `derive_features` row for row.
 
 ## OMOP mock-data generation (FLIP#1092)
 
