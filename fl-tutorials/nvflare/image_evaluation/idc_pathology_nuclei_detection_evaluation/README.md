@@ -225,10 +225,10 @@ A test pins the returned key set, because this is the tutorial's central claim.
 
 ## Running this on a real trust
 
-Yes, as far as the data path goes. Cohort query → imaging pull → XNAT archive → viewer → data
-enrichment has been driven through the platform against two dev trusts, not only in the simulator;
-the federated evaluation run itself is still to be confirmed on a trust. It takes **two** data steps
-rather than one, and the second is not optional.
+Yes. The whole path — cohort query → imaging pull → XNAT archive → viewer → data enrichment →
+federated evaluation → results download — has been driven through the platform against two dev
+trusts, not only in the simulator, and the evaluation returns the same per-site counts the simulator
+does. It takes **two** data steps rather than one, and the second is not optional.
 
 ```bash
 make -C fl-tutorials seed-idc-pathology                                  # OMOP rows + slides
