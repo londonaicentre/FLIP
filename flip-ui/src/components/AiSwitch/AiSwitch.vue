@@ -29,7 +29,11 @@
                  click or Space — through one event, which is the only place the value
                  changes. Bound through anything else it keeps a private counter that
                  starts at false whatever the field's initial value, so aria-checked
-                 announces the inverse of the knob and Space moves nothing but ARIA. -->
+                 announces the inverse of the knob and Space moves nothing but ARIA.
+                 The event carries the new state, so write exactly that (setValue): the
+                 checkbox handleChange ignores its argument once checkedValue is set and
+                 toggles instead, which happens to agree but is a rule of vee-validate's,
+                 not of this component's. -->
             <Switch
                 :id="uuid"
                 :name="name"
@@ -44,9 +48,9 @@
                     checked ? 'bg-primary-600 dark:bg-primary-400' : 'bg-gray-300 dark:bg-dark-raised',
                     disabled && 'opacity-60 cursor-not-allowed'
                 ]"
-                @update:model-value="() => {
+                @update:model-value="(on: boolean) => {
                     if (disabled) { return; }
-                    handleChange(value)
+                    setValue(on ? value : undefined)
                 }"
             >
                 <span
@@ -104,8 +108,8 @@ const { name, value } = toRefs(props);
 const {
     checked,
     errorMessage,
-    handleChange
-} = useField(
+    setValue
+} = useField<string | undefined>(
     name,
     undefined,
     {
