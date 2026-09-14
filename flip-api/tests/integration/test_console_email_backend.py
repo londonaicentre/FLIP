@@ -37,7 +37,7 @@ from flip_api.utils.constants import (
     IMAGING_CREDENTIALS_TEMPLATE_NAME,
     IMAGING_PROJECT_ACCESS_TEMPLATE_NAME,
 )
-from flip_api.utils.encryption import encrypt
+from flip_api.utils.encryption import XNAT_PASSWORD_CONTEXT, encrypt
 
 XNAT_PASSWORD = "hunter2-the-password"  # pragma: allowlist secret
 
@@ -103,7 +103,7 @@ def test_imaging_notifications_log_both_templates_without_leaking_the_password(
                 "created_users": [
                     {
                         "username": "newbie@example.com",
-                        "encrypted_password": encrypt(XNAT_PASSWORD),
+                        "encrypted_password": encrypt(XNAT_PASSWORD, context=XNAT_PASSWORD_CONTEXT),
                         "email": "newbie@example.com",
                     }
                 ],

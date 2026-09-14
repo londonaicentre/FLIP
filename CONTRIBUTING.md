@@ -742,6 +742,21 @@ make -C flip-api delete_testing_projects
 These are also available as VS Code tasks via **Terminal > Run Task** — look for `Create testing projects` and
 `Delete testing projects`.
 
+## Building the documentation
+
+The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs docs` (see
+[`docs/README.md`](docs/README.md)). Two things about that build are easy to trip over:
+
+- It needs **graphviz** (`dot` on PATH). `docs/source/conf.py` renders the Central Hub AWS diagrams from
+  `deploy/providers/AWS/architecture/central_hub.py` at build time — no PNG is committed for the site — and
+  fails loudly without it. `FLIP_DOCS_SKIP_DIAGRAMS=1 make -C docs docs` gives a text-only build on a host
+  without graphviz. ReadTheDocs and the docs CI job install graphviz themselves.
+- Those diagrams are **drift-guarded against the Terraform**: `deploy/providers/AWS/tests/test_architecture_diagram.py`
+  fails when a drawn resource disappears from the `.tf` files or a load-bearing one (an ECS service, bucket,
+  load balancer, …) is added without being drawn. A Terraform change of that kind updates
+  `TERRAFORM_ADDRESSES` in the script in the same PR, then `make aws-diagram` refreshes the two committed
+  copies the AWS README embeds.
+
 ## Documentation GIFs
 
 The admin user-action GIFs under `docs/source/assets/admin/` (referenced from

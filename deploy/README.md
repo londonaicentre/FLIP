@@ -519,6 +519,41 @@ never sees these keys: they live only in trust-side env (the trust's kit file `t
 FL clients (trust side) **do not** have Central Hub API credentials. Only the fl-server communicates with flip-api.
 FL clients relay metrics and exceptions to the fl-server, which forwards them to the Central Hub.
 
+### Payload Encryption (flip-api ↔ trust-api, and the project id the FL client carries)
+
+On top of TLS, three things are encrypted under the platform-wide `AES_KEY_BASE64`: every hub → trust task
+payload, the encrypted project id the hub hands to FL clients (which forward it to imaging-api and
+data-access-api on every image download and cohort call), and the XNAT password imaging-api returns in a task
+result. Since FLIP#1179 the cipher is **AES-256-GCM** in a versioned envelope — base64 of
+`{"v": 1, "kid": "shared", "iv": <b64 12-byte nonce>, "ct": <b64 ciphertext||tag>}` — with the version, the key
+id and a **context** bound into the authentication tag, so a payload altered anywhere between the sending and the
+receiving service fails decryption outright instead of decrypting to altered content. The context is not carried
+on the wire; both sides derive it from what they already know (`task:<task_type>` for a task payload, `project_id`
+for the project id, `xnat_password` for the credential), so a task payload cannot be re-targeted at a different
+handler by rewriting the unauthenticated `task_type` beside it. What is *not* covered: the trust's own responses
+(cohort results, task outcomes) travel back to the hub as plain JSON under TLS only.
+
+Two operational consequences:
+
+- **The key must be byte-identical on the hub and on every trust container that decrypts** (trust-api,
+  imaging-api, data-access-api). A mismatch fails closed: trust-api reports every task as
+  `Invalid payload: failed authentication`, and imaging-api / data-access-api answer the FL client with a **400**
+  (`... failed authentication`; a payload that is not an envelope at all is a 400 `... is not a valid envelope`).
+  A 500 from either is a different class of fault — the key could not be loaded, or the cipher itself failed —
+  not a mismatch. The key must decode to exactly 32 bytes (AES-256); every service refuses a shorter one at
+  key load rather than silently running AES-128/192 under the same envelope.
+  On stag/prod the hub's copy is whatever the CI Terraform apply wrote into Secrets Manager from the GitHub
+  environment, which is not necessarily the operator's `.env.<env>` copy — recover the deployed inputs with
+  `deploy/providers/AWS/scripts/reconcile_ci_env.py` before minting or refreshing trust kits.
+- **There is no compatibility with the pre-FLIP#1179 AES-CBC format.** A hub and its trusts must cross that
+  boundary together: enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, redeploy the hub
+  and every trust, then disable Deployment Mode. Anything still encrypted under the old format at the moment
+  of upgrade fails afterwards — a task collected under CBC stays `IN_PROGRESS` (reset it to `PENDING`), and a
+  running FL job carrying a CBC project id fails at imaging-api once that trust upgrades.
+
+Per-trust keys — a distinct key per trust, so a compromised trust can neither read nor forge another's traffic —
+are the follow-up in FLIP#845; they add keyring entries without changing the wire format.
+
 The fl-server must reach flip-api via `FLIP_API_INTERNAL_URL` — a Docker-network URL such as
 `http://flip-api:8000/api`. It must **not** go through the public `CENTRAL_HUB_API_URL` because the
 CloudFront distribution in front of flip-api whitelists only `Authorization`, `Content-Type`, and

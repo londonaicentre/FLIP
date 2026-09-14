@@ -89,7 +89,7 @@ update-privacy filter is applied to every outgoing model update regardless of th
 (site filters run before app filters and jobs cannot opt out). Unset = no site policy (app-level filters
 only, the previous behavior). Invalid values stop the fl-client at startup — fail closed. Apply changes with
 `make -C trust up-fl-clients-kit KIT=<CODE>`; the fl-client log then shows
-`[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-nodes.rst`
+`[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-nets.rst`
 ("Site-enforced privacy policy").
 
 ### 3. Start the trust against the hub

@@ -104,37 +104,36 @@ The dev compose stack (`deploy/compose.development.yml` +
   volume, and the evaluation ServerApp reads the checkpoint from the path in the
   `flip-job-dir` run-config value the FL API injects at submission time.
 
-### Not recommended: Flower Simulation Engine (`flwr run`)
+### Run on the flwr simulator (no containers)
 
-We deliberately do **not** document a `flwr run` invocation for this tutorial.
-Running it via the Simulation Engine is technically possible but brittle, for
-reasons specific to this project:
+```bash
+make -C fl-tutorials download-spleen-data          # MSD images + the evaluation checkpoint
+make -C fl-tutorials sim-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower
+```
 
-1. **Long-lived `flower-superlink` caches its environment.** `flwr run`
-   submits jobs to an already-running `flower-superlink` daemon. Ray worker
-   subprocesses inherit the superlink's env, *not* the env you exported on
-   the `flwr run` command line — so changing `DEV_DATAFRAME=…` between runs
-   has no effect until you `pkill -f flower-superlink`.
-2. **ClientApp CWD is not your project directory.** `flwr run` installs a
-   snapshot of the app under `~/.flwr/apps/<publisher>.<name>.<version>.<hash>/`
-   and runs ClientApp subprocesses from there, so relative paths like
-   `../../data/...` resolve to `~/.flwr/data/...` and fail.
-3. **FLIP's `DevSettings` singleton is pinned at import time.**
-   `flip/constants/pt_constants.py` reads `FlipConstants.LOCAL_DEV` at
-   class-body time, which forces pydantic-settings to materialise the
-   singleton before any run starts. Once pinned, later `os.environ[...]`
-   writes don't propagate, so mid-run path overrides are a dead end.
+Runs every ClientApp in-process — no SuperLink container, no SuperNodes, no fl-api, no Docker —
+with the same `app/` code the compose stack deploys. The one thing the simulator has to supply
+itself is what fl-api injects at submit time on the platform: the ServerApp opens
+`<flip-job-dir>/<checkpoint>`, so `sim-tutorial.sh` passes a `--run-config` pointing
+`flip-job-dir` at `fl-tutorials/data/model_checkpoints` (where `download-spleen-checkpoint`,
+part of `download-spleen-data`, puts `model.pt`) and `checkpoint` at that file. Nothing in
+`app/` knows which runtime it is in. Use the compose stack above before merging, since only that
+path exercises the deployment wiring (TLS, fl-api submit, SuperNode registration).
 
-Under Docker Compose none of these bite: each container starts fresh, env
-vars are applied from `env_file`/`environment:` at container start, and CWDs
-are fixed by `working_dir:`. Use the compose stack above.
+A raw `flwr run` has three sharp edges in this project — a long-lived SuperLink caches its
+environment, the ClientApp's working directory is a snapshot under `~/.flwr/apps/`, and
+`WORKING_DIR` defaults to a container path — which is why the path is a make target rather than
+a command: `sim-tutorial.sh` handles all three, and stops only its *own* stale simulator
+processes (a blanket `pkill -f flower-superlink` would also kill the FLIP dev stack's fl-server,
+whose processes are visible in the host PID namespace). See the
+[3D spleen segmentation README](../3d_spleen_segmentation/README.md) for the details.
 
 ## Data Location
 
 By default, the app reads from:
 
-- `data/sample_get_dataframe_response.csv`
-- `data/accession-resources`
+- `data/spleen/dataframe.csv`
+- `data/spleen/images`
 
 ## Architecture
 

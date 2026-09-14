@@ -24,6 +24,12 @@
 #
 import os
 import sys
+from pathlib import Path
+
+from sphinx.errors import SphinxError
+from sphinx.util import logging as sphinx_logging
+
+logger = sphinx_logging.getLogger(__name__)
 
 # Treat each API directory as an independent package
 sys.path.insert(0, os.path.abspath("../../flip-api/src"))
@@ -65,7 +71,14 @@ extensions = [
     "sphinx.ext.coverage",
     "sphinx.ext.ifconfig",
     "sphinxcontrib.bibtex",
+    "sphinx_reredirects",
 ]
+
+# Pages renamed in FLIP#364 keep their old URLs as HTML redirect stubs (target is relative to the old page).
+redirects = {
+    "components/architecture-overview": "overview.html",
+    "components/component-fl-nodes": "component-fl-nets.html",
+}
 
 autoapi_type = "python"
 
@@ -141,3 +154,48 @@ html_logo = 'assets/flip-logo.png'
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ["_static"]
+
+
+# -- Generated figures -------------------------------------------------------
+# The Central Hub AWS diagram is diagram-as-code kept beside the Terraform it depicts
+# (deploy/providers/AWS/architecture/central_hub.py, drift-guarded by that tree's tests). It is rendered here at
+# build time into assets/generated/ (gitignored), so the published page always shows the picture for the commit
+# it documents and no PNG has to be kept in sync by hand. Needs graphviz `dot`: ReadTheDocs installs it via
+# build.apt_packages, the docs CI job via apt-get.
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+AWS_PROVIDER_DIR = REPO_ROOT / "deploy" / "providers" / "AWS"
+GENERATED_ASSETS_DIR = Path(__file__).resolve().parent / "assets" / "generated"
+SKIP_DIAGRAMS_ENV = "FLIP_DOCS_SKIP_DIAGRAMS"
+
+
+def _render_generated_figures(app):
+    """Render the Central Hub AWS diagrams before Sphinx reads the sources.
+
+    Fails the build when graphviz is missing rather than publishing a page with an empty figure. A developer
+    without graphviz can opt out with ``FLIP_DOCS_SKIP_DIAGRAMS=1`` for a text-only local build; that prints a
+    warning here and Sphinx's own "image file not readable" warning on the Central Hub page, never silently.
+    """
+    if os.environ.get(SKIP_DIAGRAMS_ENV) == "1":
+        logger.warning(
+            "%s=1: not rendering the Central Hub AWS diagrams; the Central Hub page will report missing images",
+            SKIP_DIAGRAMS_ENV,
+        )
+        return
+    sys.path.insert(0, str(AWS_PROVIDER_DIR))
+    from architecture.central_hub import render  # noqa: PLC0415  (import deferred so `diagrams` is only needed here)
+
+    try:
+        outputs = render(GENERATED_ASSETS_DIR)
+    except RuntimeError as exc:
+        raise SphinxError(
+            f"{exc} On ReadTheDocs graphviz comes from build.apt_packages in .readthedocs.yaml; locally, "
+            f"`apt-get install graphviz`, or set {SKIP_DIAGRAMS_ENV}=1 for a text-only build."
+        ) from exc
+    for path in outputs:
+        logger.info("rendered %s", path.relative_to(REPO_ROOT))
+
+
+def setup(app):
+    app.connect("builder-inited", _render_generated_figures)
+    return {"parallel_read_safe": True, "parallel_write_safe": True}
