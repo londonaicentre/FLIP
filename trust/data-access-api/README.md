@@ -149,11 +149,14 @@ tree. Underneath all of this the service connects as `data_analyst_reader`, a ro
 only and `INSERT`/`UPDATE`/`DELETE`/`TRUNCATE`/`CREATE` never granted, so DDL and DML are refused by
 Postgres itself. That is why `validate_query` does not keyword-filter for `DROP` and friends.
 
-The role bounds *writes*, not *reads*, and its read scope differs by deployment: the Kubernetes
-chart grants it `pg_read_all_data` (every table in every schema), while the Compose path grants
-only `omop`. Rule 5 is therefore the sole barrier keeping a caller inside `omop` on a Kubernetes
-trust — it is not a redundant layer over a narrow grant, and must not be weakened as though it were.
-Narrowing the chart's grant to match Compose is tracked in [FLIP#904](https://github.com/londonaicentre/FLIP/issues/904).
+The role's read scope is the `omop` schema alone, on both deployment paths: Compose and the
+Kubernetes chart provision it from the same `trust/omop-db/files/create_readonly_users.sql`
+(the chart runs the image's copy from its omop-db `postStart` hook, since a restored PVC skips
+initdb — FLIP#904; the chart used to grant `pg_read_all_data`, every table in every schema). Rule 5
+is nonetheless kept as a full barrier in its own right, not a redundant layer: the grant is applied
+by the *image's* copy of that file, so an image tag built before FLIP#904 leaves a Kubernetes role
+as wide as before (the hook logs a warning naming it), and unqualified `pg_catalog` names resolve
+regardless of any schema grant. Do not weaken it on the assumption the role is scoped.
 
 Emitting from `validate_query` rather than from a second helper is deliberate: it keeps one parse
 and one policy, so there is no second copy of the single-statement and SELECT-shape rules to drift

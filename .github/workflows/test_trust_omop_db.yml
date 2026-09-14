@@ -64,6 +64,12 @@ jobs:
       # publish (docker_build_omop_db.yml runs on this workflow's success), so a
       # broken image cannot reach a cluster, where the symptom would be
       # `unzip: command not found` inside a failing release hook.
+      #
+      # The same contract covers create_readonly_users.sql (FLIP#904): the chart's
+      # omop-db postStart hook `\i`-includes the image's copy on every pod start so
+      # that data_analyst_reader gets exactly the grants Compose applies at first
+      # initdb, and a PVC restored from a snapshot — which skips initdb.d — is
+      # provisioned at all. Without the file, every omop-db pod start fails its hook.
       - name: Image carries the seed-time loader contract
         run: |
           docker build -t omop-db-ci-check .
@@ -71,6 +77,7 @@ jobs:
             command -v unzip > /dev/null || { echo "unzip missing from the image"; exit 1; }
             test -x /flip/omop/load_core_vocab.sh || { echo "load_core_vocab.sh missing or not executable"; exit 1; }
             test -f /flip/omop/constraints.sql || { echo "constraints.sql missing"; exit 1; }
+            test -f /flip/omop/create_readonly_users.sql || { echo "create_readonly_users.sql missing — the Kubernetes omop-db hook runs it"; exit 1; }
             /flip/omop/load_core_vocab.sh 2>&1 | grep -q "usage:" || { echo "loader did not run"; exit 1; }
           '
 

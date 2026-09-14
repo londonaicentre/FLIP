@@ -411,6 +411,27 @@ jobs:
             exit 1
           fi
 
+      # FLIP#904: the omop-db postStart hook provisions data_analyst_reader from the SQL the image
+      # ships — the same file the Compose trust runs at first initdb — rather than an inline copy.
+      # The inline copy it replaced granted pg_read_all_data (SELECT on every schema, present and
+      # future) where Compose grants USAGE on omop alone, and the render looked identical either
+      # way. Asserted on the RENDERED manifest, not the template: a `{{- if }}` around the hook
+      # would pass a text check while leaving the role unprovisioned on a restored PVC. Comment
+      # lines are dropped first — the hook's own comments name the old grant. Explicit `if` rather
+      # than `! grep -q`, and a positive control, for the reasons given on the vocab-load step.
+      - name: omop-db hook provisions the reader from the image's SQL, never pg_read_all_data (FLIP#904)
+        run: |
+          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+            --show-only templates/omop-db.yaml | grep -vE '^\s*#' > /tmp/omop-db.rendered.yaml
+          if ! grep -qF '\i /flip/omop/create_readonly_users.sql' /tmp/omop-db.rendered.yaml; then
+            echo "::error::the omop-db postStart hook no longer runs /flip/omop/create_readonly_users.sql — the reader's grants are defined twice again"
+            exit 1
+          fi
+          if grep -nE '\bGRANT\s+pg_read_all_data\b' /tmp/omop-db.rendered.yaml; then
+            echo "::error::the rendered omop-db manifest grants pg_read_all_data — SELECT on every schema, not just omop"
+            exit 1
+          fi
+
       # FLIP-PT-091: the orthanc user map must stay a required secret reference.
       # With optional: true, an install whose Secret lacks the key boots a PACS
       # with no registered users instead of failing the pod.
