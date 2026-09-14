@@ -237,8 +237,12 @@ fetch-vocab-dicom:
 		mv "data/$(VOCAB_DICOM_BUNDLE).zip.tmp" "data/$(VOCAB_DICOM_BUNDLE).zip"; \
 	fi
 
+# Fetches the projects being seeded (PROJECTS), not a fixed pair: a project published for the seed
+# pipeline alone (prostate, pathology) is otherwise never fetched and seed-omop then fails on a
+# missing CSV that the default fetch had no reason to download.
 fetch-dataset:
-	uv run python -m omop_db_tools.dataset fetch --revision $(HF_TRUST_DATA_REVISION) --dest data/canonical
+	uv run python -m omop_db_tools.dataset fetch --revision $(HF_TRUST_DATA_REVISION) --dest data/canonical \
+		--projects $(PROJECTS)
 
 # Every fan-out below is `$(addprefix …,$(shell seq 1 $(NUM_TRUSTS)))`. `$(shell)`
 # is expanded at parse time and make never fails on its exit status, so a

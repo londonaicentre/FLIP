@@ -1,0 +1,19 @@
+{
+  "job_type": "evaluation",
+  "TILES_PER_SLIDE": 24,
+  "SEED": 42,
+  "models": {
+    "haematoxylin_peak_detector": {
+      "path": "detection.HaematoxylinPeakDetector",
+      "checkpoint": "detector_specification.pt",
+      "parameters": {
+        "nucleus_diameter_um": 6.0,
+        "smoothing_sigma_um": 0.5,
+        "threshold_sigma": 1.5,
+        "background_disk_um": 9.0,
+        "min_tissue_fraction": 0.1,
+        "matching_radius_um": 6.0
+      }
+    }
+  }
+}

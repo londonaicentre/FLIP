@@ -97,6 +97,12 @@ TUTORIALS: dict[str, TutorialCopy] = {
         "Checking how accurately an existing spleen-outlining model traces the spleen on each participating "
         "trust's abdominal CT scans, without retraining it.",
     ),
+    "idc_pathology_nuclei_detection_evaluation": TutorialCopy(
+        "Nuclei detection on digital pathology",
+        "Measuring how accurately a nucleus detector finds cell nuclei on each participating trust's "
+        "whole-slide pathology images, scored against that trust's own reference annotations, without "
+        "retraining it.",
+    ),
     "arkplus_fine_tuning": TutorialCopy(
         "Ark+ fine-tuning",
         "Adapting the Ark+ chest X-ray foundation model to the participating trusts' own radiographs so it "

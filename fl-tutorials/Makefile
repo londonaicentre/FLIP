@@ -24,6 +24,9 @@ TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials sim-tutorial
 # read by both harnesses (single copy in datasets/), so FL_BACKEND plays no part in them.
 DATASET_TARGETS := download-xray-data download-spleen-data download-spleen-checkpoint \
 	upload-spleen-labels download-arkplus-finetuning-data download-arkplus-eval-data \
+	download-idc-pathology-data fetch-idc-pathology-manifest build-idc-pathology-omop \
+	verify-idc-pathology-omop-tables reproduce-idc-pathology-omop \
+	seed-idc-pathology upload-idc-pathology-annotations \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
 	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
 	reproduce-spleen-omop \

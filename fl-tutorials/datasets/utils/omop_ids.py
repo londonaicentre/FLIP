@@ -11,9 +11,10 @@
 
 """Per-project surrogate-key blocks, shared by the dataset converters (FLIP#1092 task 9).
 
-Both spleen_project and cxr_project load into the same trust database, and prostate_project will be
-a third. Surrogate keys (visit_occurrence_id, procedure_occurrence_id, image_occurrence_id) must not
-collide across projects, so each project gets a reserved 1,000,000-wide block.
+Both spleen_project and cxr_project load into the same trust database, and prostate_project and
+pathology_project after them. Surrogate keys (visit_occurrence_id, procedure_occurrence_id,
+image_occurrence_id) must not collide across projects, so each project gets a reserved
+1,000,000-wide block.
 
 ``image_feature_id`` is block-allocated for spleen but **derived** for cxr, which is why it is not in
 that list — see ``DERIVED_ID_BANDS`` for the band it lands in instead.
@@ -27,6 +28,10 @@ PROJECT_ID_BLOCKS = {
     "cxr_project": 1_000_000,
     "spleen_project": 2_000_000,
     "prostate_project": 3_000_000,
+    # Allocated by idc_pathology/build_omop_project.py from its own manifest row index (base + 2 + i,
+    # so the block's first id is 4_000_002): an offset the published export already carries, recorded
+    # here rather than re-aligned to surrogate_ids() — that would change published ids.
+    "pathology_project": 4_000_000,
 }
 BLOCK_SIZE = 1_000_000
 

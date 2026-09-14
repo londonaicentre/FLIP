@@ -98,6 +98,49 @@ APPS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "digipath": {
+        "project_name": "Federated Nuclei Detection on Digital Pathology",
+        "project_description": (
+            "Multi-trust federated evaluation: nuclei detection on DICOM whole-slide images."
+        ),
+        "model_name": "Nuclei Detector",
+        "model_description": (
+            "Haematoxylin-peak nuclei detector, evaluated against each trust's own reference "
+            "annotations without the slides or the per-nucleus coordinates leaving the trust."
+        ),
+        # Evaluation-only, and NVFLARE-only: there is no Flower counterpart. No evaluation-specific
+        # wiring is needed here -- as with e2e_smoke_spleen_evaluation, pointing at the evaluation
+        # app directory is the whole difference.
+        "backends": {
+            "nvflare": {
+                "app_dir": (
+                    "fl-tutorials/nvflare/image_evaluation/"
+                    "idc_pathology_nuclei_detection_evaluation/app_files"
+                ),
+                "query_file": (
+                    "fl-tutorials/nvflare/image_evaluation/"
+                    "idc_pathology_nuclei_detection_evaluation/query.sql"
+                ),
+                "label": "NVFLARE",
+            },
+        },
+        # The reference annotations cannot travel with the slides: XNAT's DICOM receiver has no
+        # presentation context for the Microscopy Bulk Simple Annotations SOP class, and because
+        # slide and annotation share an accession, leaving the annotation in Orthanc fails the whole
+        # study's C-MOVE. They are delivered here instead, off-camera between the pull and training,
+        # exactly as the spleen tutorial delivers its NIfTI labels. Without this the run pulls, then
+        # dies at scoring with nothing to compare against.
+        #
+        # This tutorial scores an existing detector; it never trains one, so the closing line of
+        # segment 6 must not say "trained". The default is written for the training apps.
+        "closing_caption": (
+            "A detector scored at every hospital — while the slides never left any of them"
+        ),
+        "enrichment": {
+            "cwd": "fl-tutorials/datasets",
+            "make_target": "upload-idc-pathology-annotations",
+        },
+    },
     "spleen": {
         "project_name": "Federated 3D Spleen Segmentation",
         "model_name": "Spleen 3D U-Net",
@@ -190,6 +233,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Name the OHIF Masks > Import dialog lists the DICOM-SEG collection under — must match the "
             "--collection-name given to tests.xnat_seg_upload during data enrichment"
+        ),
+    )
+    parser.add_argument(
+        "--xnat-urls",
+        default="http://127.0.0.1:8105 http://127.0.0.1:8107",
+        help=(
+            "Space-separated XNAT base URLs, one per trust, for the data-enrichment step. Enrichment "
+            "must visit EVERY trust: each XNAT holds only its own studies, so a trust left un-enriched "
+            "fails at scoring. Web-UI ports (XNAT_WEB_PORT), not the DICOM SCP ports."
         ),
     )
     parser.add_argument("--xnat-username", default=os.environ.get("XNAT_ADMIN_USER", "admin"))
@@ -459,6 +511,37 @@ def app_files_for(app_dir: Path) -> list[str]:
     return names
 
 
+def _resolve_enrichment(args: argparse.Namespace, profile: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Return the ``(cwd, cmd)`` for the off-camera data-enrichment step, or ``(None, None)``.
+
+    An explicit ``--data-enrichment-cwd``/``--data-enrichment-cmd`` pair always wins, so the flags
+    keep their existing meaning. Otherwise a profile may carry its own step: a tutorial whose labels
+    cannot travel with its imaging needs enrichment to run every time, not only when the caller
+    remembers the flags, because forgetting it produces a run that pulls and trains and then fails
+    at scoring -- or worse, scores against nothing.
+
+    Args:
+        args (argparse.Namespace): Parsed arguments.
+        profile (dict[str, Any]): The selected app profile.
+
+    Returns:
+        tuple[str | None, str | None]: Directory to run in, and the shell command.
+    """
+    if args.data_enrichment_cwd and args.data_enrichment_cmd:
+        return args.data_enrichment_cwd, args.data_enrichment_cmd
+
+    enrichment = profile.get("enrichment")
+    if not enrichment:
+        return None, None
+
+    cwd = str(REPO_ROOT / enrichment["cwd"])
+    cmd = (
+        f"make {enrichment['make_target']} "
+        f'FLIP_PROJECT_ID="$FLIP_PROJECT_ID" XNAT_URLS="{args.xnat_urls}"'
+    )
+    return cwd, cmd
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     profile = APPS[args.app]
@@ -478,6 +561,11 @@ def main(argv: list[str] | None = None) -> int:
     project_description = args.project_description or describe_tutorial(app_dir).task
     model_name = args.model_name or profile["model_name"]
     model_description = args.model_description or profile["model_description"]
+    # Segments 1 and 2 both read this, and both use requireEnv -- an unset value is a hard failure
+    # rather than a silently-wrong project, which is the point. An imaging default carries every
+    # imaging tutorial; the key exists so a tabular profile (e.g. ehr) can say otherwise.
+    has_imaging_env = "true" if profile.get("has_imaging", True) else "false"
+    enrichment_cwd, enrichment_cmd = _resolve_enrichment(args, profile)
 
     researcher, admin, fallback_roles = resolve_ui_credentials()
     _log(f"🎭 Researcher part: {researcher[0]} | Admin part: {admin[0]}")
@@ -531,6 +619,7 @@ def main(argv: list[str] | None = None) -> int:
                 "DEMO_PROJECT_NAME": project_name,
                 "DEMO_PROJECT_DESCRIPTION": project_description,
                 "DEMO_QUERY_FILE": query_rel,
+                "DEMO_HAS_IMAGING": has_imaging_env,
             },
             video_scale=args.video_scale,
         )
@@ -553,6 +642,7 @@ def main(argv: list[str] | None = None) -> int:
                 "DEMO_ADMIN_EMAIL": admin[0],
                 "DEMO_ADMIN_PASSWORD": admin[1],
                 "DEMO_PROJECT_ID": project_id,
+                "DEMO_HAS_IMAGING": has_imaging_env,
                 **({"DEMO_CREDENTIALS_FALLBACK": "admin"} if "admin" in fallback_roles else {}),
             },
             video_scale=args.video_scale,
@@ -569,8 +659,12 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # ── Off-camera: optional data enrichment (e.g. spleen labels) ────────
-    if args.data_enrichment_cwd and args.data_enrichment_cmd:
-        e2e_smoke.run_data_enrichment(Path(args.data_enrichment_cwd), args.data_enrichment_cmd, project_id)
+    if enrichment_cwd and enrichment_cmd:
+        # The uploader reads XNAT_USER / XNAT_PASS from its environment rather than the command
+        # line, so the password never reaches an argv a `ps` can read.
+        os.environ.setdefault("XNAT_USER", args.xnat_username)
+        os.environ.setdefault("XNAT_PASS", args.xnat_password)
+        e2e_smoke.run_data_enrichment(Path(enrichment_cwd), enrichment_cmd, project_id)
 
     # Second half of enrichment for a segmentation app: the NIfTI labels the app
     # trains on are invisible to a viewer, so republish them as DICOM-SEG for the
@@ -618,6 +712,9 @@ def main(argv: list[str] | None = None) -> int:
                 "DEMO_APP_DIR": app_dir_rel,
                 "DEMO_APP_FILES": ",".join(app_files_for(app_dir)),
                 "DEMO_BACKEND_LABEL": tutorial["label"],
+                # Segment 4 opens by saying what just finished off-camera. For a tabular study
+                # nothing was imported, so the imaging wording would describe a step that never ran.
+                "DEMO_HAS_IMAGING": has_imaging_env,
             },
             video_scale=args.video_scale,
         )
@@ -628,10 +725,25 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── Off-camera: training spins up and produces its first metrics ─────
     e2e_smoke.wait_for_model_advanced(client, headers, model_id, timeout_s=args.training_start_timeout)
-    wait_for_first_metrics(client, headers, model_id, timeout_s=args.metrics_timeout)
+    # Only segment 5 films the live charts, so only segment 5 needs to wait for metrics. Ungated,
+    # `--from-segment 6` paid the full metrics timeout (25 min by default) before recording a
+    # segment that does not plot anything -- and for an evaluation job, which emits no metrics at
+    # all, that wait can never be satisfied, so the flag was effectively unusable.
+    if args.from_segment <= 5:
+        wait_for_first_metrics(client, headers, model_id, timeout_s=args.metrics_timeout)
 
     # ── Segment 5: live progress ──────────────────────────────────────────
-    ids_env = {**researcher_env, "DEMO_PROJECT_ID": project_id, "DEMO_MODEL_ID": model_id}
+    ids_env = {
+        **researcher_env,
+        "DEMO_PROJECT_ID": project_id,
+        "DEMO_MODEL_ID": model_id,
+        # Always supplied, so the spec can requireEnv it: a profile that says nothing gets the
+        # training wording, and one that trains nothing says so instead.
+        "DEMO_CLOSING_CAPTION": profile.get(
+            "closing_caption",
+            "A model trained across every hospital — while the data never left any of them",
+        ),
+    }
     if args.from_segment <= 5:
         run_segment("05-follow-progress", ids_env, video_scale=args.video_scale)
 

@@ -30,9 +30,20 @@ describe("FLIP demo — create model and start training", () => {
             .map((f) => f.trim())
             .filter(Boolean);
         const backendLabel = String(Cypress.expose("DEMO_BACKEND_LABEL") || "NVFLARE");
+        // Required, not defaulted: an unset value would silently narrate an imaging import for a
+        // study that never had one, which is exactly the error this caption used to make.
+        const hasImaging = requireEnv("DEMO_HAS_IMAGING");
 
         cy.demoLogin(email, "DEMO_RESEARCHER_PASSWORD");
-        cy.demoCaption("Imaging is in place — the researcher returns to the approved project", 1000);
+        // This segment opens on whatever finished off-camera. For an imaging study that is the
+        // DICOM import; for a tabular one nothing was imported at all, and claiming otherwise
+        // describes a step the viewer never saw and the platform never ran.
+        cy.demoCaption(
+            hasImaging === "false"
+                ? "The cohort is approved — the researcher returns to the project"
+                : "Imaging is in place — the researcher returns to the approved project",
+            1000
+        );
         cy.visit(`/project/${projectId}`);
         cy.demoPause(1500);
 
