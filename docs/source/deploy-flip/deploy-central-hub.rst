@@ -177,7 +177,7 @@ for full details):
 (``.env.stag`` or ``.env.production``) and preserves any keys that already
 exist; ``make register-trusts`` writes the per-trust keys into the kit files.
 
-***********************
+***********************************************************
 Upgrading across the payload-encryption change (FLIP#1179)
 ***********************************************************
 
