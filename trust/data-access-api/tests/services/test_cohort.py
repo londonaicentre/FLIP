@@ -1714,6 +1714,25 @@ def test_count_distinct_subjects_survives_an_unexpected_result_shape(mock_read_s
 
 
 @patch("pandas.read_sql")
+def test_count_distinct_subjects_is_cached_per_cohort_not_per_query_text(mock_read_sql):
+    """Every accession lookup is the same SQL text with a different bound list, and the result goes
+    through the query cache. The cache must key on the bound list too, or the second cohort to be
+    counted is gated on the first cohort's subjects. A repeat of the same list is a cache hit."""
+    counts = {("ACC1", "ACC2"): 2, ("ACC3", "ACC4", "ACC5"): 7}
+    mock_read_sql.side_effect = lambda query, engine, params: pd.DataFrame(
+        {"subject_count": [counts[tuple(params["accession_ids"])]]}
+    )
+
+    assert count_distinct_subjects(pd.DataFrame({"accession_id": ["ACC1", "ACC2"]})) == 2
+    assert count_distinct_subjects(pd.DataFrame({"accession_id": ["ACC3", "ACC4", "ACC5"]})) == 7
+    assert mock_read_sql.call_count == 2
+
+    # Same cohort again: served from the cache, still its own count.
+    assert count_distinct_subjects(pd.DataFrame({"accession_id": ["ACC1", "ACC2"]})) == 2
+    assert mock_read_sql.call_count == 2
+
+
+@patch("pandas.read_sql")
 def test_get_statistics_suppresses_many_studies_from_few_patients(mock_read_sql):
     """Thirty studies from three patients is below a floor of ten, however many rows it is."""
     mock_read_sql.return_value = pd.DataFrame({"subject_count": [3]})
@@ -1798,6 +1817,28 @@ def test_get_modality_distribution_is_empty_without_accession_ids(mock_read_sql)
 
     assert result == {"name": "Modality Distribution", "results": []}
     mock_read_sql.assert_not_called()
+
+
+@patch("pandas.read_sql")
+def test_get_modality_distribution_is_empty_when_every_accession_id_is_null(mock_read_sql):
+    """The column being projected is not enough: with no accession numbers in it there is nothing to
+    look up, and an empty ``IN`` list must never reach the database."""
+    result = get_modality_distribution(pd.DataFrame({"accession_id": [None, None, float("nan")]}))
+
+    assert result == {"name": "Modality Distribution", "results": []}
+    mock_read_sql.assert_not_called()
+
+
+@patch("pandas.read_sql")
+def test_get_modality_distribution_binds_each_accession_id_once_and_skips_nulls(mock_read_sql):
+    """Duplicates collapse and nulls drop before the lookup, so the bound list is the cohort's
+    distinct studies (a duplicate accession would otherwise not double a count, but a null in the
+    ``IN`` list is a wasted, and on some drivers invalid, bind)."""
+    mock_read_sql.return_value = pd.DataFrame({"modality": ["CT"], "count": [2]})
+
+    get_modality_distribution(pd.DataFrame({"accession_id": ["ACC1", None, "ACC2", "ACC1"]}))
+
+    assert mock_read_sql.call_args.kwargs["params"]["accession_ids"] == ["ACC1", "ACC2"]
 
 
 @patch("pandas.read_sql")
