@@ -39,7 +39,7 @@ from fl_api.schemas import (
     normalize_status,
 )
 from fl_api.utils.upload import upload_application
-from fl_api.utils.validation import safe_join, validate_tutorial_folder_name
+from fl_api.utils.validation import safe_join, validate_tutorial_folder_name, warn_if_bundle_url_allow_list_empty
 
 logger = logging.getLogger("uvicorn")
 
@@ -51,6 +51,12 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    """Report an empty bundle-fetch allow-list where an operator looks first: the boot log (FLIP#905)."""
+    warn_if_bundle_url_allow_list_empty()
 
 
 _state_lock = threading.Lock()

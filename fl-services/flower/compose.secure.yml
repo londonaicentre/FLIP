@@ -39,6 +39,9 @@ services:
       - SUPERLINK_ROOT_CERTIFICATES=${SUPERLINK_ROOT_CERTIFICATES:-/certs/ca.crt}
       - SUPERLINK_HEALTH_ADDRESS=${SUPERLINK_HEALTH_ADDRESS:-superlink:9097}
       - FLOWER_SRC_ROOT=/app/src
+      # No BUNDLE_URL_ALLOWED_HOSTS here on purpose: this harness has no hub, so nothing presigns
+      # bundle URLs for it (jobs are submitted by folder name) and the fl-api logs the documented
+      # empty-allow-list warning at startup. Every hub deployment sets it — see deploy/compose.*.yml.
     volumes:
       - ../../fl-tutorials/flower:/app/src
       - ../../fl-services/flower/fl-api-flower/fl_api:/app/fl_api

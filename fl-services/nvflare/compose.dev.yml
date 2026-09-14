@@ -82,6 +82,9 @@ services:
       - FL_ADMIN_DIRECTORY=/app/admin
       - DEBUG=${DEBUG}
       - LOG_LEVEL=${LOG_LEVEL}
+      # No BUNDLE_URL_ALLOWED_HOSTS here on purpose: this harness has no hub, so nothing presigns
+      # bundle URLs for it (jobs are submitted by folder name) and the fl-api logs the documented
+      # empty-allow-list warning at startup. Every hub deployment sets it — see deploy/compose.*.yml.
     ports:
       - "${FL_API_PORT}:8000"
       - "5679:5679"

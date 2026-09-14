@@ -122,7 +122,9 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     for url in bundle_urls:
         logger.info(f"Downloading file from {url}")
 
-        # The FL API fetches each URL server-side, so reject non-https / off-origin URLs.
+        # The FL API fetches each URL server-side, so reject non-https / off-origin URLs. The check resolves
+        # the name itself; requests resolves it again on connect, and that pair is the DNS-rebinding residual
+        # validate_bundle_url documents — the host allow-list, not this pair, is the control that closes it.
         validate_bundle_url(url)
 
         # Reconstruct structure under job_dir using the URL path after model_id
