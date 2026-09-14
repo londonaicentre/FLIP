@@ -432,6 +432,30 @@ idempotent and takes ~25 min for the full bundle; afterwards
 so the empty answer would otherwise be replayed. Later `helm upgrade`s neither
 re-fetch nor undo the seeded vocabulary.
 
+**The same route loads the Synthea EHR slice** that the EHR risk-prediction
+tutorial needs (`trust/omop-db/README.md`, "The Synthea EHR cohort"). The
+tutorial READMEs give only the compose form, `OMOP_DB_PORT=<host port>`, which
+assumes a published port a cluster trust does not have. The loader reads the
+same `OMOP_DB_HOST` / `OMOP_POSTGRES_*` settings as above, but pass them as
+`make` variables rather than exporting them: `trust/omop-db/Makefile` includes
+the example kit file, and a makefile assignment beats the environment, so an
+exported password is silently replaced by the example one. `TRUST_INDEX` is the
+trust's slot number, as in the compose examples.
+
+```sh
+kubectl -n <ns> port-forward svc/omop-db 5999:5432 &
+PW=$(kubectl -n <ns> get secret <secret> \
+       -o jsonpath='{.data.omop-postgres-password}' | base64 -d)
+make -C trust/omop-db load-synthea-ehr TRUST_INDEX=2 \
+  OMOP_DB_HOST=127.0.0.1 OMOP_DB_PORT=5999 OMOP_POSTGRES_USER=postgres \
+  OMOP_POSTGRES_PASSWORD="$PW" OMOP_POSTGRES_DB=trustomopdb
+kubectl -n <ns> rollout restart deployment/<release>-flip-trust-data-access-api
+```
+
+The restart is not optional here either: the tutorial's `query.sql` is a fixed
+text, so an empty answer cached from a cohort submitted before the load would be
+replayed to every later project that submits it.
+
 The hook probes before it fetches: `probe-vocab` asks the database what is
 missing, and only if something is does `fetch-bundle` download the bundle. This
 matters because the hook is on the critical path of *every* `helm upgrade` and a

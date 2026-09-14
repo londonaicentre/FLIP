@@ -126,6 +126,11 @@ make -C trust/omop-db load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # Trust
 make -C trust/omop-db load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # Trust_2 (KCH)
 ```
 
+A Kubernetes trust publishes no host port: port-forward `svc/omop-db` and pass the connection as
+`make` variables instead — recipe in
+[`deploy/providers/kubernetes/README.md`](../../deploy/providers/kubernetes/README.md), "Local
+clusters (kind)".
+
 Design (see `src/omop_db_tools/synthea_ehr.py`): Synthea ids are shifted by `PERSON_ID_OFFSET` so
 they never collide with the imaging cohorts' existing keys at insert time, and the tutorial's
 `query.sql` scopes to persons that have at least one condition — i.e. exactly the rows loaded here,
