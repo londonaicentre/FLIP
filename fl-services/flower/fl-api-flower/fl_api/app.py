@@ -18,11 +18,12 @@ import subprocess
 import tempfile
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 import grpc
 from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import Path as PathParam
 from grpc_health.v1.health_pb2 import HealthCheckRequest, HealthCheckResponse
 from grpc_health.v1.health_pb2_grpc import HealthStub
 from tomlkit import dumps, parse
@@ -72,6 +73,11 @@ _UNKNOWN_RUN_MARKER = "Invalid run_id"
 # string, not a log, so this is a sanity bound rather than a real truncation policy — but
 # the text is a researcher-authored exception message, so it is not trusted to be short.
 _MAX_STATUS_DETAILS_CHARS = 500
+# A Flower run id on a route: an unsigned integer (flwr's run ids are uint64), so FastAPI
+# rejects anything else with 422 before it can become a `flwr` argv element. Beyond the
+# obvious non-numeric case, a negative number would reach the CLI as a bare `-1` and be read
+# as an option rather than a run id.
+FlowerRunId = Annotated[int, PathParam(ge=0)]
 # `flwr ls` writes this literal for a run with nothing to say (a healthy or still-running
 # one), rather than omitting the key. Carrying it through would put "N/A" in the hub's
 # activity feed as though it were a cause.
@@ -411,7 +417,7 @@ def _tail(text: str, max_chars: int) -> tuple[str, bool]:
 
 
 @app.get("/run_logs/{run_id}", status_code=status.HTTP_200_OK, response_model=RunLogs)
-def run_logs(run_id: int) -> RunLogs:
+def run_logs(run_id: FlowerRunId) -> RunLogs:
     """Return a bounded, secret-masked tail of a run's ServerApp log.
 
     Exists so a run that dies after submission — an import error at ServerApp module
@@ -421,9 +427,9 @@ def run_logs(run_id: int) -> RunLogs:
     model's activity feed.
 
     Args:
-        run_id (int): The Flower run id. Typed as ``int`` for the same reason as
-            ``abort_run``: FastAPI rejects any non-numeric segment with 422 before it
-            can reach the ``flwr`` argv.
+        run_id (int): The Flower run id. Typed as ``FlowerRunId`` for the same reason as
+            ``abort_run``: FastAPI rejects anything but an unsigned integer with 422
+            before it can reach the ``flwr`` argv.
 
     Returns:
         RunLogs: The run id, the log tail, and whether the head was dropped.
@@ -599,11 +605,11 @@ def _find_terminal_run(src_root: Path, run_id: str) -> JobMetadata | None:
 
 @app.delete("/abort_run/{run_id}", status_code=status.HTTP_200_OK, response_model=JobMetadata)
 @app.delete("/abort_job/{run_id}", include_in_schema=False)  # alias, hide from docs
-def abort_run(run_id: int) -> JobMetadata:
-    # Flower run ids are integers (flwr Context.run_id: int). Typing the path param as int
-    # makes FastAPI reject any non-numeric value with 422 before it can reach the `flwr
-    # stop` argv, closing the command-line-injection surface; downstream code keeps using
-    # the string form.
+def abort_run(run_id: FlowerRunId) -> JobMetadata:
+    # Flower run ids are unsigned integers (flwr Context.run_id: int). Typing the path param
+    # as FlowerRunId makes FastAPI reject anything else with 422 before it can reach the
+    # `flwr stop` argv, closing the command-line-injection surface; downstream code keeps
+    # using the string form.
     src_root = _get_src_root()
     run_id_str = str(run_id)
     command = ["uvx", "flwr", "stop", run_id_str, "local", "--format", "json"]

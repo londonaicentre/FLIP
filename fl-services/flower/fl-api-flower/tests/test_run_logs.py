@@ -12,6 +12,8 @@
 
 import subprocess
 
+import pytest
+
 from fl_api.schemas import RunLogs
 
 _SERVERAPP_FAILURE = (
@@ -179,11 +181,17 @@ def test_run_logs_returns_500_when_flwr_times_out(client, src_root, mock_flwr_ru
     assert response.status_code == 500
 
 
-def test_run_logs_rejects_non_numeric_run_id(client, src_root):
-    # Same guard as /abort_run: a non-numeric segment never reaches the `flwr` argv.
-    response = client.get("/run_logs/not-a-number")
+@pytest.mark.parametrize("run_id", ["not-a-number", "-1"])
+def test_run_logs_rejects_a_run_id_that_is_not_an_unsigned_integer(client, src_root, mock_flwr_run, run_id):
+    # Same guard as /abort_run: only an unsigned integer reaches the `flwr` argv. A negative
+    # number is not a Flower run id, and as a bare `-1` argv element it would be read by the
+    # CLI as an option rather than a run id.
+    commands = mock_flwr_run(stdout=_SERVERAPP_FAILURE)
+
+    response = client.get(f"/run_logs/{run_id}")
 
     assert response.status_code == 422
+    assert commands == []
 
 
 def test_run_logs_invalid_max_chars_falls_back_to_default(client, src_root, mock_flwr_run, monkeypatch):
