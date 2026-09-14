@@ -99,16 +99,17 @@
             </header>
 
             <!-- Lifecycle lifted out of the card grid so the grid can be the single
-                 flex-1 row. p-4 on top of the track's my-4 keeps the ~32px of breathing
-                 room above and below that the grid's padding/gap used to provide. -->
-            <div class="p-4 shrink-0">
+                 flex-1 row. The 32px above the track is this pt-4 plus the track's my-4;
+                 the 32px below is the track's my-4 plus the grid's own p-4 (what the
+                 grid's gap-4 used to add), so no bottom padding here. -->
+            <div class="px-4 pt-4 shrink-0">
                 <LifecycleTrack :steps="steps" class="my-4" />
             </div>
 
             <div
                 data-test="project-workspace"
                 :class="[
-                    'relative grid grid-cols-1 gap-4 p-4 pt-0 lg:flex-1 lg:min-h-0 lg:items-stretch',
+                    'relative grid grid-cols-1 gap-4 p-4 lg:flex-1 lg:min-h-0 lg:items-stretch',
                     hasImaging
                         ? 'lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,1.5fr)_minmax(17rem,0.75fr)]'
                         : 'lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,2.25fr)]'
