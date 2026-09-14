@@ -641,10 +641,15 @@
     orthanc_data_dir: "/opt/flip/orthanc/orthanc-storage"
     seed_dir: "/opt/flip/seed"
     trust_num: "{{ trust_num | default('1') }}"
-    source_trust: "{{ source_trust | default(trust_num) }}"
-    num_trusts: "{{ num_trusts | default('2') }}"
-    seed_projects: "{{ seed_projects | default('cxr_project spleen_project', true) }}"
-    seed_orthanc: "{{ seed_orthanc | default(true) }}"
+    # Optional extra-vars get DISTINCT internal names (like hf_trust_data_repo above): a play
+    # var that references itself (`x: "{{ x | default(...) }}"`) is fine only while an
+    # extra-var of the same name shadows it, and these four are passed by `make
+    # seed-trust-data` only when the operator sets them — unset, the first use would recurse
+    # ("Recursive loop detected in template").
+    seed_source_trust: "{{ source_trust | default(trust_num) }}"
+    seed_num_trusts: "{{ num_trusts | default('2') }}"
+    seed_project_list: "{{ seed_projects | default('cxr_project spleen_project', true) }}"
+    seed_orthanc_enabled: "{{ seed_orthanc | default(true) }}"
     hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
     hf_trust_data_revision: "{{ trust_data_hf_revision | default(trust_data_version) }}"
     omop_db_image: "ghcr.io/londonaicentre/omop-db:{{ omop_db_tag | default('stag', true) }}"
@@ -661,12 +666,28 @@
         that:
           - omop_postgres_password is defined and omop_postgres_password | length > 0
           - data_access_postgres_password is defined and data_access_postgres_password | length > 0
-          - (not seed_orthanc | bool) or (orthanc_username is defined and orthanc_username | length > 0)
-          - (not seed_orthanc | bool) or (orthanc_password is defined and orthanc_password | length > 0)
+          - (not seed_orthanc_enabled | bool) or (orthanc_username is defined and orthanc_username | length > 0)
+          - (not seed_orthanc_enabled | bool) or (orthanc_password is defined and orthanc_password | length > 0)
         fail_msg: >-
           omop_postgres_password, data_access_postgres_password and (with seed_orthanc) orthanc_username /
           orthanc_password are required — the kit's OMOP_POSTGRES_PASSWORD, DATA_ACCESS_POSTGRES_PASSWORD,
           ORTHANC_USERNAME and ORTHANC_PASSWORD, passed by make seed-trust-data
+
+    # The FL kit slot is only the DEFAULT partition (trust/Makefile says why: slots are claimed in
+    # registration order, partitions are a property of the dataset). A slot past the dataset's
+    # partition count — Trust_3 on the two-partition mock data, i.e. any third registered trust —
+    # has no slice of its own; the loader would refuse it ten minutes in, from inside the no_log'd
+    # container. Name the fix here instead.
+    - name: assert the source_trust partition exists in the dataset
+      assert:
+        that:
+          - seed_source_trust | int >= 1
+          - seed_source_trust | int <= seed_num_trusts | int
+        fail_msg: >-
+          source_trust {{ seed_source_trust }} is not a partition of the dataset (it has
+          {{ seed_num_trusts }}): this trust's FL kit slot number is being used as the default and
+          exceeds it. Pick the partition this trust should receive and pass it explicitly, e.g.
+          make seed-trust-data KIT=<CODE> PROD=<env> SOURCE_TRUST=1
 
     # omop-db's entrypoint takes ownership of its data dir itself (it runs as root with CHOWN);
     # Orthanc runs as uid 999 with no way to chown, so its directories must be 999-owned first.
@@ -740,7 +761,7 @@
             -e ORTHANC__REGISTERED_USERS={{ {orthanc_username: orthanc_password} | to_json | quote }}
             {{ orthanc_image }}
           no_log: true
-          when: seed_orthanc | bool
+          when: seed_orthanc_enabled | bool
 
         - name: run the seed procedure against both (uv image, host network, loaders from this checkout)
           command: >
@@ -751,11 +772,11 @@
             -e SEEDER=/seed/seed_orthanc.py
             -e TRUST_DATA_VERSION={{ hf_trust_data_revision }}
             -e HF_TRUST_DATA_REPO={{ hf_trust_data_repo }}
-            -e PROJECTS="{{ seed_projects }}"
-            -e SOURCE_TRUST={{ source_trust }}
-            -e NUM_TRUSTS={{ num_trusts }}
+            -e PROJECTS="{{ seed_project_list }}"
+            -e SOURCE_TRUST={{ seed_source_trust }}
+            -e NUM_TRUSTS={{ seed_num_trusts }}
             -e SEED_OMOP=true
-            -e SEED_ORTHANC={{ 'true' if seed_orthanc | bool else 'false' }}
+            -e SEED_ORTHANC={{ 'true' if seed_orthanc_enabled | bool else 'false' }}
             -e OMOP_DB_HOST=127.0.0.1
             -e OMOP_DB_PORT={{ seed_omop_port }}
             -e OMOP_POSTGRES_USER={{ omop_postgres_user }}
@@ -771,6 +792,17 @@
         - name: seed summary
           debug:
             msg: "{{ seed_run.stdout_lines | select('search', '^(seed_trust:|✅)') | list }}"
+      # The command above is no_log (its argv carries the kit passwords), which also hides the
+      # reason when it fails. The loaders print no secrets, so show the tail of what they said —
+      # a broken download, a partition that does not exist, an unreachable store — before failing.
+      rescue:
+        - name: seed procedure output (last lines)
+          debug:
+            msg: "{{ ((seed_run.stdout_lines | default([])) + (seed_run.stderr_lines | default([])))[-40:] }}"
+          when: seed_run is defined
+        - name: the seed procedure failed
+          fail:
+            msg: "seed_trust.sh failed on the Trust EC2 — see the output above (rc {{ seed_run.rc | default('?') }})"
       always:
         - name: stop the throwaway containers
           command: docker rm -f {{ item }}
