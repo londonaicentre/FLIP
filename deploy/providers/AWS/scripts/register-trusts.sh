@@ -123,7 +123,18 @@ register_one_kit() {
     # `--args -- ` is required: cmd_args contains dash-prefixed values (`-m`, `--name`, ...)
     # and jq scans the whole argv for options regardless of `--args`. The `--` end-of-options
     # marker is what makes jq treat the rest as positional. Holds on jq 1.6 and 1.7+.
-    overrides="$(jq -n '{containerOverrides:[{name:"flip-api",command:$ARGS.positional}]}' --args -- "${cmd_args[@]}")"
+    #
+    # The two environment entries re-create what /app/entrypoint.sh exports before it
+    # execs the API: the image declares no ENTRYPOINT (only `CMD ["/app/entrypoint.sh"]`),
+    # so this command override REPLACES the entrypoint and inherits none of its exports.
+    # Without them `uv run` re-resolves the project on start and fetches the setuptools
+    # build backend from PyPI — a wasted round-trip on a NAT'd legacy account, a hard
+    # failure on an egress-less LZA one (FLIP#749: "Failed to fetch
+    # https://pypi.org/simple/setuptools/ ... operation timed out", no kit ever reaches
+    # SSM). UV_NO_SYNC makes the build-time venv authoritative; PYTHONPATH is what makes
+    # `flip_api` importable from that venv, since the boot-time sync was also what used to
+    # install the package.
+    overrides="$(jq -n '{containerOverrides:[{name:"flip-api",command:$ARGS.positional,environment:[{name:"UV_NO_SYNC",value:"1"},{name:"PYTHONPATH",value:"/app/src"}]}]}' --args -- "${cmd_args[@]}")"
 
     local net_cfg
     net_cfg="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SGS}]"
