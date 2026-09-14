@@ -30,6 +30,7 @@ from flip_api.domain.interfaces.fl import (
 from flip_api.domain.schemas.status import ClientStatus, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_service
+from flip_api.utils.encryption import PROJECT_ID_CONTEXT
 from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
 
 
@@ -264,6 +265,7 @@ def test_start_training_with_config(
     )
     mock_upload.assert_called_once()
     mock_submit.assert_called_once()
+    mock_encrypt.assert_called_once_with("proj", context=PROJECT_ID_CONTEXT)
 
 
 @patch("flip_api.fl_services.services.fl_service.submit_job")
