@@ -180,8 +180,10 @@ class JobMetadata(BaseModel):
     # the closest are `job_deploy_detail` (per-target "OK"/failure of the *deployment* only;
     # it reads `['server: OK', 'Trust_2: OK']` even on a job that then died with
     # FINISHED:EXECUTION_EXCEPTION) and `schedule_history`. The cause of an NVFLARE run
-    # failure lives only in the fl-server container's stdout. Declared so the field means the
-    # same thing on both adapters and the hub never has to branch on backend to read it.
+    # failure is not on the job meta at all: it is in the server job log (`log.txt`, served
+    # by `Session.get_job_logs(job_id, "server")`), which this adapter does not expose yet.
+    # Declared so the field means the same thing on both adapters and the hub never has to
+    # branch on backend to read it.
     status_details: str | None = None
 
 

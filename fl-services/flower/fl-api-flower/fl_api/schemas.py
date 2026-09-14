@@ -84,10 +84,11 @@ class JobMetadata(BaseModel):
     status: JobStatus
     # One-line native explanation of the status, when the backend supplies one. Flower's
     # `flwr ls` carries `status-details`, which for a failed run is the ServerApp's exception
-    # type and message — the cause, from the call the hub already makes, with no second
-    # request and no log fetch. Optional because it is not universal: NVFLARE's job meta has
-    # no equivalent field (checked against `nvflare.apis.job_def.JobMetaKey`, which carries
-    # only `job_deploy_detail` / `schedule_history`, neither of which explains an
+    # message prefixed `ServerApp failed with exception:` (the type name is in the log tail,
+    # not here) — the cause, from the call the hub already makes, with no second request and
+    # no log fetch. Optional because it is not universal: NVFLARE's job meta has no
+    # equivalent field (checked against `nvflare.apis.job_def.JobMetaKey`, whose closest
+    # members are `job_deploy_detail` / `schedule_history`, neither of which explains an
     # execution exception), so that adapter leaves this None.
     status_details: str | None = None
 

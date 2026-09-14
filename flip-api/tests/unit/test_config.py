@@ -83,6 +83,19 @@ def test_scan_int_settings_empty_string_falls_back_to_default():
     assert Settings(FL_JOB_UNLISTED_GRACE_MINUTES="45").FL_JOB_UNLISTED_GRACE_MINUTES == 45
 
 
+@pytest.mark.parametrize("value", ["0", "-5"])
+@pytest.mark.parametrize("name", ["SCHEDULER_FL_JOB_RECONCILE_RATE", "FL_JOB_UNLISTED_GRACE_MINUTES"])
+def test_fl_reconcile_intervals_must_be_positive(name, value):
+    """Zero and negatives are destructive here, not merely odd.
+
+    A zero reconcile rate becomes apscheduler's one-second floor (every FL API polled every
+    second); a zero grace makes every unlisted run "past the grace" on its first unlisted
+    tick, so the transient listing hiccup the grace exists to absorb errors a healthy run.
+    """
+    with pytest.raises(ValidationError):
+        Settings(**{name: value})
+
+
 def test_suffix_list_passes_through_unexpected_types_for_pydantic_to_reject():
     """A non-string, non-list value must reach Pydantic's own validation.
 

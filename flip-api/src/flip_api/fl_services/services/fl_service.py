@@ -13,7 +13,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 from uuid import UUID
 
 from fastapi import Request
@@ -1211,6 +1211,46 @@ def get_bundle_urls(s3_path: str) -> list[str]:
         raise RuntimeError(error_msg)
 
 
+def _list_backend_job(net_endpoint: str, fl_backend_job_id: str) -> list[IJobMetaData]:
+    """Return every ``GET /list_jobs`` entry for one backend job id, validated against the contract.
+
+    The backend lists every run it remembers -- NVFLARE all historic jobs, the SuperLink
+    every finished run -- so the list routinely carries entries the hub has no interest in.
+    Only the entries for the requested id are held to ``IJobMetaData``: validating the whole
+    list first would let one foreign entry the hub cannot read (a status from a newer
+    adapter, during a rolling deploy) block every lookup on that net.
+
+    Args:
+        net_endpoint (str): The endpoint of the FL API service.
+        fl_backend_job_id (str): The backend-assigned job id to look up.
+
+    Returns:
+        list[IJobMetaData]: The matching entries -- normally none or one.
+
+    Raises:
+        httpx.HTTPError: If the FL API cannot be reached or answers with an error status.
+            Propagated deliberately: an unreachable backend says nothing about the run,
+            and callers must never read it as "the run is not listed".
+        ValueError: If the FL server response is not a list.
+        pydantic.ValidationError: If a matching entry does not conform to ``IJobMetaData``
+            -- failing loudly here is intentional.
+    """
+    url = f"{net_endpoint}/list_jobs"
+    # Same generous timeout as the other FL status checks: the Flower FL API lists runs from the
+    # SuperLink and can exceed httpx's 5s default; this is polled during a run, so a 5s timeout
+    # would risk flipping a healthy in-flight model to ERROR.
+    response = http_get(url, timeout=30)
+    logger.debug(f"Current job data: {response}")
+
+    if not isinstance(response, list):
+        error_msg = f"Unexpected response format from {url}: {response}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    matches = [entry for entry in response if isinstance(entry, dict) and str(entry.get("job_id")) == fl_backend_job_id]
+    return [IJobMetaData.model_validate(entry) for entry in matches]
+
+
 def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobMetaData | None:
     """
     Extract the currently-running FL job matching ``fl_backend_job_id``.
@@ -1226,31 +1266,14 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
     Raises:
         ValueError: If the FL server response is not a list, or more than one running
             job shares the same ID.
-        pydantic.ValidationError: If a returned item does not conform to ``IJobMetaData``
+        pydantic.ValidationError: If the matching item does not conform to ``IJobMetaData``
             (e.g. an unknown status from a non-conforming FL-API adapter) — failing loudly
             here is intentional.
     """
-    url = f"{net_endpoint}/list_jobs"
-    # Same generous timeout as the other FL status checks: the Flower FL API lists runs from the
-    # SuperLink and can exceed httpx's 5s default; this is polled during a run, so a 5s timeout
-    # would risk flipping a healthy in-flight model to ERROR.
-    current_job_data = http_get(url, timeout=30)
-    logger.debug(f"Current job data: {current_job_data}")
-
-    # Validate the response format
-    if not isinstance(current_job_data, list):
-        error_msg = f"Unexpected response format from {url}: {current_job_data}"
-        logger.error(error_msg)
-        raise ValueError(error_msg)
-
-    current_job_data = [IJobMetaData.model_validate(j) for j in current_job_data]
-
     # Get the running jobs only
-    current_job_data = [j for j in current_job_data if j.status == FLJobStatus.RUNNING]
-    logger.debug(f"Running jobs: {current_job_data}")
-
-    # Filter the fl_backend_job_id
-    current_job_data = [j for j in current_job_data if j.job_id == fl_backend_job_id]
+    current_job_data = [
+        j for j in _list_backend_job(net_endpoint, fl_backend_job_id) if j.status == FLJobStatus.RUNNING
+    ]
     logger.debug(f"Current job data for job ID {fl_backend_job_id}: {current_job_data}")
 
     if not current_job_data:
@@ -1291,53 +1314,64 @@ def get_backend_job_metadata(net_endpoint: str, fl_backend_job_id: str) -> IJobM
             failure).
 
     Raises:
+        httpx.HTTPError: If the FL API cannot be reached or answers with an error status --
+            never swallowed into ``None``, see :func:`_list_backend_job`.
         ValueError: If the FL server response is not a list.
-        pydantic.ValidationError: If an entry does not conform to ``IJobMetaData``.
+        pydantic.ValidationError: If the matching entry does not conform to ``IJobMetaData``.
     """
-    url = f"{net_endpoint}/list_jobs"
-    # Same generous timeout as the other FL status checks: listing runs goes through to the
-    # SuperLink / FLARE admin session and can exceed httpx's 5s default.
-    response = http_get(url, timeout=30)
-
-    if not isinstance(response, list):
-        error_msg = f"Unexpected response format from {url}: {response}"
-        logger.error(error_msg)
-        raise ValueError(error_msg)
-
-    for job in (IJobMetaData.model_validate(entry) for entry in response):
-        if job.job_id == fl_backend_job_id:
-            return job
+    matches = _list_backend_job(net_endpoint, fl_backend_job_id)
+    if matches:
+        return matches[0]
 
     logger.info(f"Job {fl_backend_job_id} is not listed by the FL API at {net_endpoint}.")
     return None
 
 
-def fetch_run_logs(net_endpoint: str, fl_backend_job_id: str) -> str | None:
+# Longer than fl-api-flower's own cap on the `flwr log` subprocess (60s), so a wedged CLI
+# surfaces as that adapter's 500 -- which names the reason -- rather than as the hub's own
+# read timeout at the same instant.
+_RUN_LOGS_TIMEOUT_SECONDS = 90
+
+
+class RunLogTail(NamedTuple):
+    """One ``GET /run_logs/{id}`` answer: the log tail and whether the adapter cut its head off."""
+
+    log: str
+    truncated: bool = False
+
+
+def fetch_run_logs(net_endpoint: str, fl_backend_job_id: str, fl_backend: FLBackend | None = None) -> RunLogTail | None:
     """Fetch the FL backend's log tail for one job, best-effort.
 
     Only fl-api-flower serves ``/run_logs`` today, and it is diagnostic detail rather than
     control flow, so every failure mode — endpoint absent, FL API down, malformed body —
-    degrades to ``None`` and the caller reports the failure without it.
+    degrades to ``None`` and the caller reports the failure without it. An answered-but-empty
+    log is *not* a failure: it comes back as a tail whose ``log`` is ``""``, so the caller can
+    say "the FL API returned nothing" rather than "the FL API could not be reached".
 
     Args:
         net_endpoint (str): The endpoint of the FL API service.
         fl_backend_job_id (str): The backend-assigned job id whose log to fetch.
+        fl_backend (FLBackend | None): The net's backend, named in the degrade warning so an
+            NVFLARE net's by-design 404 stays distinguishable from a Flower net on an image
+            that predates the endpoint.
 
     Returns:
-        str | None: The log tail, or ``None`` when it could not be retrieved.
+        RunLogTail | None: The tail, or ``None`` when it could not be retrieved.
     """
     url = f"{net_endpoint}/run_logs/{fl_backend_job_id}"
+    backend = fl_backend.value if fl_backend else "unknown backend"
     try:
-        response = http_get(url, timeout=60)
+        response = http_get(url, timeout=_RUN_LOGS_TIMEOUT_SECONDS)
     except Exception as e:
-        logger.warning(f"Could not fetch run logs from {url}: {type(e).__name__}: {e}")
+        logger.warning(f"Could not fetch run logs from {url} ({backend}): {type(e).__name__}: {e}")
         return None
 
     if not isinstance(response, dict) or not isinstance(response.get("log"), str):
-        logger.warning(f"Unexpected run-logs response format from {url}: {type(response).__name__}")
+        logger.warning(f"Unexpected run-logs response format from {url} ({backend}): {type(response).__name__}")
         return None
 
-    return cast(str, response["log"])
+    return RunLogTail(log=cast(str, response["log"]), truncated=bool(response.get("truncated", False)))
 
 
 def abort_model_training(request: Request, model_id: UUID, session: Session) -> None:
@@ -1400,8 +1434,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     if extract_current_job_data(net_endpoint, fl_backend_job_id) is None:
         fl_scheduler_service.release_scheduler_for_model(model_id, session)
         logger.info(
-            f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); "
-            f"already stopped — nothing to abort."
+            f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); already stopped — nothing to abort."
         )
         return
 

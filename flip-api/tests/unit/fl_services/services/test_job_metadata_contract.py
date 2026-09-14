@@ -58,3 +58,30 @@ def test_job_metadata_ignores_extra_fields():
     job = IJobMetaData.model_validate({"job_id": "abc", "status": "RUNNING", "job_name": "legacy"})
     assert job.job_id == "abc"
     assert not hasattr(job, "job_name")
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # flwr's literal for "nothing to say" -- normalised away by the Flower adapter, and
+        # again here in case an adapter does not.
+        ("N/A", None),
+        ("", None),
+        ("   \n ", None),
+        # Whitespace collapsed to one line: the field leads the feed row as a headline.
+        ("ServerApp failed with exception:\n   boom  \t here", "ServerApp failed with exception: boom here"),
+    ],
+)
+def test_status_details_is_normalised_on_the_hub_too(raw, expected):
+    job = IJobMetaData.model_validate({"job_id": "abc", "status": "FAILED", "status_details": raw})
+
+    assert job.status_details == expected
+
+
+def test_status_details_is_bounded_on_the_hub_too():
+    # The Flower adapter caps it at 500 chars; the hub stores it into a UI-visible row, so
+    # it re-applies the bound rather than trusting every adapter (present and future) to.
+    job = IJobMetaData.model_validate({"job_id": "abc", "status": "FAILED", "status_details": "x" * 900})
+
+    assert job.status_details is not None
+    assert len(job.status_details) == 500

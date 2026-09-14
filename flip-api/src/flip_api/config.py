@@ -14,7 +14,7 @@ import json
 import logging
 from typing import Annotated, Literal
 
-from pydantic import EmailStr, SecretStr, ValidationInfo, field_validator
+from pydantic import EmailStr, Field, SecretStr, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from flip_api.domain.schemas.types import FLBackend
@@ -134,13 +134,16 @@ class Settings(BaseSettings):
     SCHEDULER_MALWARE_SCAN_RECONCILE_RATE: int = 1  # How often to reconcile stuck SCANNING uploads (in minutes)
     # How often to ask each net's FL API whether an in-flight job has failed (in minutes).
     # Bounds how long a run that dies after submission can leave its model looking alive.
-    SCHEDULER_FL_JOB_RECONCILE_RATE: int = 1
+    # ge=1: a zero rate is apscheduler's one-second floor -- every FL API polled every second.
+    SCHEDULER_FL_JOB_RECONCILE_RATE: int = Field(default=1, ge=1)
     # How long (in minutes) an in-flight job may go unlisted by its FL backend before the
     # reconcile treats it as dead. Covers a backend restart losing its run state (the
     # SuperLink's is in-memory by default): the run can never report, so waiting longer
     # just leaves the model looking alive. Generous so a transient listing hiccup never
     # errors a healthy run.
-    FL_JOB_UNLISTED_GRACE_MINUTES: int = 30
+    # ge=1: at zero every unlisted run is "past the grace" on its first unlisted tick, and
+    # the hiccup the grace exists to absorb errors a healthy run.
+    FL_JOB_UNLISTED_GRACE_MINUTES: int = Field(default=30, ge=1)
 
     # Database settings
     DB_PORT: int
@@ -203,14 +206,14 @@ class Settings(BaseSettings):
             return True
         if isinstance(v, bool):
             return v
-        return v.lower() in ("true", "1")    # type: ignore[union-attr]
+        return v.lower() in ("true", "1")  # type: ignore[union-attr]
 
     @field_validator("EMAIL_BACKEND", mode="before")
     @classmethod
     def coerce_empty_email_backend(cls, v: object, info: ValidationInfo) -> object:
         """Treat empty-string EMAIL_BACKEND as the per-class field default.
 
-        Same rationale as ``coerce_empty_scan_int``: a name that merely
+        Same rationale as ``coerce_empty_interval_int``: a name that merely
         appears in an env file (even commented out) is exported as an empty
         string by the Makefile's ``export $(shell sed ...)``. Resolving via
         ``model_fields`` keeps the coercion right per class: "ses" on the
@@ -321,8 +324,7 @@ class Settings(BaseSettings):
                 # flip_api.utils.logger imports get_settings(), so it cannot be
                 # imported here without a cycle — use the same underlying logger.
                 logging.getLogger("uvicorn").warning(
-                    f"{info.field_name} resolved to an empty list from {v!r}; "
-                    f"falling back to the default {default}"
+                    f"{info.field_name} resolved to an empty list from {v!r}; falling back to the default {default}"
                 )
                 return default
             return normalised
@@ -376,7 +378,7 @@ class DevSettings(Settings):
     @field_validator("AWS_SES_ADMIN_EMAIL_ADDRESS", "AWS_SES_SENDER_EMAIL_ADDRESS", mode="before")
     @classmethod
     def coerce_empty_ses_address(cls, v: object, info: ValidationInfo) -> object:
-        """Treat an empty-string SES address as the dev default (same shape as ``coerce_empty_scan_int``)."""
+        """Treat an empty-string SES address as the dev default (same shape as ``coerce_empty_interval_int``)."""
         if v is None or v == "":
             return cls.model_fields[info.field_name].default  # type: ignore[index]
         return v

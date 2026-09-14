@@ -683,9 +683,7 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
     mock_verify.return_value = None
 
     if job_type == "invalid":
-        with pytest.raises(
-            fl_service.UnknownJobTypeError, match=f"Unknown job_type in config.json: {job_type}"
-        ):
+        with pytest.raises(fl_service.UnknownJobTypeError, match=f"Unknown job_type in config.json: {job_type}"):
             _ = fl_service.bundle_nvflare_application(model_id)
     else:
         dest_bucket_s3_path = fl_service.bundle_nvflare_application(model_id)
@@ -883,9 +881,7 @@ def test_bundle_flower_application_file_wrong_job_type_in_config(
     mock_verify.return_value = None
 
     if job_type == "invalid":
-        with pytest.raises(
-            fl_service.UnknownJobTypeError, match=f"Unknown job_type in config.json: {job_type}"
-        ):
+        with pytest.raises(fl_service.UnknownJobTypeError, match=f"Unknown job_type in config.json: {job_type}"):
             _ = fl_service.bundle_flower_application(model_id)
     else:
         dest_bucket_s3_path = fl_service.bundle_flower_application(model_id)
@@ -1211,6 +1207,65 @@ def test_get_backend_job_metadata_tolerates_absent_status_details(mock_http_get)
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
+def test_get_backend_job_metadata_ignores_a_malformed_foreign_entry(mock_http_get):
+    # The backend lists every run it remembers (NVFLARE: all historic jobs; the SuperLink:
+    # every finished run). One entry the hub's contract cannot validate -- a status from a
+    # newer adapter, a run with no status at all -- must not poison the lookup of a
+    # different job, or one bad row blocks reconciling (and aborting) every job on the net.
+    from flip_api.fl_services.services.fl_service import get_backend_job_metadata
+
+    mock_http_get.return_value = [
+        {"job_id": "job000", "status": "SOME-FUTURE-STATUS"},
+        {"job_id": "job001"},
+        {"job_id": "job123", "status": "FAILED"},
+    ]
+
+    assert get_backend_job_metadata("http://fl-api-endpoint", "job123").status == FLJobStatus.FAILED
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_get_backend_job_metadata_still_rejects_a_malformed_match(mock_http_get):
+    # Only the entry the caller asked about is held to the contract -- and it is.
+    from pydantic import ValidationError
+
+    from flip_api.fl_services.services.fl_service import get_backend_job_metadata
+
+    mock_http_get.return_value = [{"job_id": "job123", "status": "SOME-FUTURE-STATUS"}]
+
+    with pytest.raises(ValidationError):
+        get_backend_job_metadata("http://fl-api-endpoint", "job123")
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_get_backend_job_metadata_propagates_an_unreachable_backend(mock_http_get):
+    # The sweep reads None as "the backend does not list this run" and, past the grace,
+    # errors the model. An unreachable backend says nothing about the run and must raise,
+    # never return None -- or a 30-minute FL API outage would error every in-flight model.
+    import httpx
+
+    from flip_api.fl_services.services.fl_service import get_backend_job_metadata
+
+    mock_http_get.side_effect = httpx.ConnectError("connection refused")
+
+    with pytest.raises(httpx.ConnectError):
+        get_backend_job_metadata("http://fl-api-endpoint", "job123")
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_extract_current_job_data_ignores_a_malformed_foreign_entry(mock_http_get):
+    # Same guard on the abort path: an old hub seeing a newer adapter's status on some
+    # other run must still be able to find (and abort) the one it is asking about.
+    from flip_api.fl_services.services.fl_service import extract_current_job_data
+
+    mock_http_get.return_value = [
+        {"job_id": "job000", "status": "SOME-FUTURE-STATUS"},
+        {"job_id": "job123", "status": "RUNNING"},
+    ]
+
+    assert extract_current_job_data("http://fl-api-endpoint", "job123").status == FLJobStatus.RUNNING
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
 def test_get_backend_job_metadata_rejects_non_list_response(mock_http_get):
     from flip_api.fl_services.services.fl_service import get_backend_job_metadata
 
@@ -1226,8 +1281,43 @@ def test_fetch_run_logs_returns_the_log_tail(mock_http_get):
 
     mock_http_get.return_value = {"run_id": "42", "log": "ERROR: Exit Code: 607", "truncated": True}
 
-    assert fetch_run_logs("http://fl-api-endpoint", "42") == "ERROR: Exit Code: 607"
-    mock_http_get.assert_called_once_with("http://fl-api-endpoint/run_logs/42", timeout=60)
+    tail = fetch_run_logs("http://fl-api-endpoint", "42")
+
+    assert tail is not None
+    assert tail.log == "ERROR: Exit Code: 607"
+    assert tail.truncated is True
+    # Longer than the fl-api's own 60s subprocess cap on `flwr log`, so a wedged CLI surfaces
+    # as the fl-api's 500 (with the reason) rather than as the hub's own read timeout.
+    mock_http_get.assert_called_once_with("http://fl-api-endpoint/run_logs/42", timeout=90)
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_fetch_run_logs_keeps_an_empty_log_distinct_from_no_log(mock_http_get):
+    # "" is an answer (the FL API had nothing for this run); None is the absence of one.
+    # The feed row words those two differently.
+    from flip_api.fl_services.services.fl_service import fetch_run_logs
+
+    mock_http_get.return_value = {"run_id": "42", "log": "", "truncated": False}
+
+    tail = fetch_run_logs("http://fl-api-endpoint", "42")
+
+    assert tail is not None
+    assert tail.log == ""
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_fetch_run_logs_names_the_backend_when_it_degrades(mock_http_get, caplog):
+    # An NVFLARE net 404s /run_logs by design; a Flower net on an old fl-api image 404s it
+    # by regression. The warning has to say which, or the deliberate case hides the other.
+    from flip_api.domain.schemas.types import FLBackend
+    from flip_api.fl_services.services.fl_service import fetch_run_logs
+
+    mock_http_get.side_effect = RuntimeError("404 Not Found")
+
+    with caplog.at_level("WARNING"):
+        assert fetch_run_logs("http://fl-api-endpoint", "42", fl_backend=FLBackend.NVFLARE) is None
+
+    assert any("nvflare" in record.message.lower() and "404" in record.message for record in caplog.records)
 
 
 @pytest.mark.parametrize(
@@ -1826,9 +1916,7 @@ def test_bundle_flower_application_clears_existing_dest(
 
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
-def test_bundle_flower_application_missing_config_json_is_rejected(
-    mock_s3, mock_required, mocked_settings, model_id
-):
+def test_bundle_flower_application_missing_config_json_is_rejected(mock_s3, mock_required, mocked_settings, model_id):
     """config.json is a required Flower file, so a submission without one never reaches a Trust.
 
     Without it the bundler cannot know the job type, and silently defaulting to ``standard`` would
