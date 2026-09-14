@@ -69,7 +69,7 @@ trust's kit file (`trust/.env.<CODE>.<env>`); hub-shared values (`AES_KEY_BASE64
 | `IMAGING_API_URL` | Internal URL of the imaging-api |
 | `CENTRAL_HUB_API_URL` | URL of the Central Hub API (for task polling) |
 | `TRUST_API_KEY` | Per-trust API key for authenticating with the Central Hub. Lives in this trust's kit file (`trust/.env.<CODE>.<env>`), written by `make register-trust KIT=<CODE>` |
-| `AES_KEY_BASE64` | Base64-encoded AES-256 key shared with the hub, used to decrypt encrypted task payloads |
+| `AES_KEY_BASE64` | Base64-encoded AES-256 key shared with the hub; task payloads arrive as AES-256-GCM envelopes (FLIP#1179). Must be byte-identical to the hub's key: a mismatch fails closed, reporting every task as `Invalid payload: failed authentication` |
 | `POLL_INTERVAL_SECONDS` | Polling frequency in seconds (default: 5) |
 | `COHORT_QUERY_TIMEOUT_SECONDS` | Timeout on a cohort-query request to data-access-api (default: 300). A cohort re-runs against OMOP at every stage, so this bounds the slowest of those calls |
 | `HEALTH_COLLECT_INTERVAL_SECONDS` | How often the health collector probes the trust services (default: 30) |

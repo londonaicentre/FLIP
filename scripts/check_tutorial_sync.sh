@@ -11,10 +11,17 @@
 # limitations under the License.
 #
 # Verify that tutorial files kept as byte-identical copies of another file have not
-# drifted. Two families are checked:
+# drifted. What remains here is the Ark+ NVFLARE pair: two evaluation apps that share
+# data_utils.py and arkplus_flat_models.py between themselves.
 #
-#   1. Flower tutorial files copied from the fl-apps/flower/ templates.
-#   2. Ark+ NVFLARE tutorial files shared between the two evaluation apps.
+# The Flower half used to live here too, as six hand-written pairs. It moved to
+# fl-tutorials/tests/test_flower_platform_parity.py, which derives the same pairs from the
+# tree -- every fl-tutorials/flower/*/app against the fl-apps template its config.json job
+# type selects. A hand-maintained list only holds while every future author remembers to
+# extend it, and a new tutorial that never got added would have deployed drifted code with
+# CI green. These NVFLARE pairs stay listed because they are tutorial-to-tutorial: nothing
+# in the tree says the two Ark+ apps are meant to share a file, so there is nothing to
+# derive them from.
 #
 # These files cannot be symlinks: `flwr build` excludes symlinks from the FAB,
 # so each tutorial keeps a real copy of the shared ServerApp and strategy, and an
@@ -34,12 +41,6 @@ cd "$(dirname "$0")/.." || exit 1
 
 # "<copy>:<reference file it must match>"
 PAIRS=(
-  "fl-tutorials/flower/3d_spleen_segmentation_evaluation/app/server_app.py:fl-apps/flower/evaluation/app/server_app.py"
-  "fl-tutorials/flower/3d_spleen_segmentation_evaluation/app/strategy.py:fl-apps/flower/evaluation/app/strategy.py"
-  "fl-tutorials/flower/3d_spleen_segmentation/app/server_app.py:fl-apps/flower/standard/app/server_app.py"
-  "fl-tutorials/flower/3d_spleen_segmentation/app/strategy.py:fl-apps/flower/standard/app/strategy.py"
-  "fl-tutorials/flower/xray_classification/app/server_app.py:fl-apps/flower/standard/app/server_app.py"
-  "fl-tutorials/flower/xray_classification/app/strategy.py:fl-apps/flower/standard/app/strategy.py"
   # The two Ark+ evaluation apps differ only in how many checkpoints they score; their data
   # loading and their flattened model definitions are meant to be the same file -- and they have
   # already drifted once (the Client-API port landed in the baseline copy days before the
