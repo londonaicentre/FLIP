@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -161,3 +162,20 @@ def test_edit_model_unexpected_error(
         assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
         assert response.json()["detail"] == "Internal server error"
         assert "Unexpected error" not in response.json()["detail"]
+
+
+def test_edit_model_http_exception_passes_through(
+    mock_can_modify_true,
+    mock_model_status_editable,
+):
+    # A domain HTTPException raised inside the try must reach the caller with its own status and
+    # detail, not be re-wrapped by the generic handler into an opaque 500.
+    detail = f"Model ID: {test_model_id} does not exist"
+    with patch(
+        "flip_api.model_services.edit_model.edit_model",
+        side_effect=HTTPException(status_code=HTTPStatus.NOT_FOUND, detail=detail),
+    ):
+        response = client.put(f"/api/model/{test_model_id}", json=test_model_details)
+        assert response.status_code == HTTPStatus.NOT_FOUND
+        assert response.json()["detail"] == detail
+        assert response.json()["detail"] != "Internal server error"
