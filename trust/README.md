@@ -205,6 +205,12 @@ need only your trust's kit file (`trust/.env.<CODE>.<env>`).
    - Laptop-against-prod: `make -C trust up-trust KIT=<CODE> PROD=true` (no sudo —
      your workstation isn't provisioned by the on-prem playbook)
 
+   `PROD` names the hub you are joining, and with it the kit-file suffix the
+   trust Makefiles read: `true` → `.env.<CODE>.production`, `stag` → `.stag`,
+   and on an LZA estate (FLIP#749) `lza` → `.lza-prod`, `lza-stag` → `.lza-stag`.
+   All four run the production compose and stack files; only `PROD` unset is
+   the development stack.
+
    The on-prem path skips the dev-only `update-omop-data` / `update-orthanc-data`
    steps (which pull test fixtures from S3 and need hub AWS credentials) —
    real on-prem operators populate `./omop-db/volumes/<CODE>/db_data` and
