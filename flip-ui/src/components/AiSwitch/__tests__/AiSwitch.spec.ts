@@ -121,6 +121,55 @@ describe("AiSwitch", () => {
         expect(control.attributes("aria-checked")).toBe("false");
     });
 
+    // Several switches sharing one name are one checkbox GROUP — the trust pickers in
+    // ProjectApproval (name="trusts") and TrainingOptions (name="trust_ids") — and the field
+    // is then an array of the values switched on. Each switch must add or remove only its own
+    // value; writing the field directly would collapse the group to the last switch touched
+    // (which is exactly what the staging and training e2e specs then fail on).
+    it("shares a name with its siblings as a group: each toggle adds or removes only its own value", async () => {
+        const submitted: unknown[] = [];
+        const comp = mount(
+            defineComponent({
+                components: {
+                    AiSwitch,
+                    VeeForm
+                },
+                setup: () => ({ onSubmit: (values: unknown) => submitted.push(values) }),
+                template: `
+                    <VeeForm @submit="onSubmit">
+                        <AiSwitch name="trusts" value="KCH" data-test="kch" />
+                        <AiSwitch name="trusts" value="UCLH" data-test="uclh" />
+                        <button type="submit">go</button>
+                    </VeeForm>`
+            }),
+            {
+                global: {
+                    plugins: [createTestingPinia({
+                        createSpy: vi.fn,
+                        stubActions: false
+                    })]
+                }
+            }
+        );
+        const kch = comp.get("[data-test=kch]");
+        const uclh = comp.get("[data-test=uclh]");
+
+        await kch.trigger("click");
+        await uclh.trigger("click");
+        await comp.get("form").trigger("submit");
+        await vi.waitFor(() => expect(submitted).toHaveLength(1));
+        expect(submitted[0]).toEqual({ trusts: ["KCH", "UCLH"] });
+        expect(kch.attributes("aria-checked")).toBe("true");
+        expect(uclh.attributes("aria-checked")).toBe("true");
+
+        await kch.trigger("click");
+        await comp.get("form").trigger("submit");
+        await vi.waitFor(() => expect(submitted).toHaveLength(2));
+        expect(submitted[1]).toEqual({ trusts: ["UCLH"] });
+        expect(kch.attributes("aria-checked")).toBe("false");
+        expect(uclh.attributes("aria-checked")).toBe("true");
+    });
+
     it("drops its label on a narrow window — the knob's position already says it", () => {
         const comp = mount(AiSwitch, {
             props: {

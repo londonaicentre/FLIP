@@ -51,7 +51,7 @@ import urllib.request
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Connection, Engine, create_engine, text
 
 from omop_db_tools.config import get_settings
 
@@ -70,14 +70,18 @@ REQUIRED_SOURCE_COLUMNS = {
 
 # Shift Synthea ids clear of the imaging cohorts' person_id range at INSERT time. This offset is
 # *not* what makes clean_reserved_band's delete safe (see that function and the module docstring) —
-# it only has to satisfy: (1) large enough that no shifted Synthea id can equal an imaging person_id,
-# and (2) even, so the person_id-modulo per-trust split (computed on the raw, unshifted id in
-# _trust_person_ids) is unchanged when read back off the shifted id. The imaging cohorts' person_id
-# is nhs_number_to_integer(PatientID) — the first 9 digits of a real NHS number — so it is bounded
-# above by 999_999_999; any offset >= 1_000_000_000 therefore satisfies (1) by construction. This is
-# the one place that bound is load-bearing: if NHS-number generation ever changes to emit more than
-# 9 digits, this offset must be revisited. Stays far below the int32 ceiling (2_147_483_647) to leave
-# ample room for Synthea's persons.
+# it only has to be large enough that no shifted Synthea id can equal an imaging person_id. The
+# imaging cohorts' person_id is nhs_number_to_integer(PatientID) — the first 9 digits of a real NHS
+# number — so it is bounded above by 999_999_999; any offset >= 1_000_000_000 therefore satisfies
+# that by construction. This is the one place that bound is load-bearing: if NHS-number generation
+# ever changes to emit more than 9 digits, this offset must be revisited. Stays far below the int32
+# ceiling (2_147_483_647) to leave ample room for Synthea's persons.
+#
+# The per-trust split does NOT depend on the offset: _trust_person_ids takes person_id % num_trusts
+# on the RAW Synthea id, before the shift, and the raw id survives in person_source_value
+# ("synthea-<raw id>"). A shifted id keeps the raw modulo only for counts that divide the offset
+# (2, 4, 5, 8, 10, …; 1_000_000_000 % 3 == 1), so never re-derive a trust from a shifted id — read
+# it back from person_source_value instead.
 PERSON_ID_OFFSET = 1_000_000_000
 
 # Written into person_source_value by build_person_rows and nowhere else — the actual ownership
@@ -193,8 +197,11 @@ def build_visit_rows(visit: pd.DataFrame, person_ids: set[int]) -> pd.DataFrame:
     )
 
 
-def clean_reserved_band(engine: Engine) -> None:
+def clean_reserved_band(conn: Connection) -> None:
     """Delete any previously loaded Synthea rows, identified by provenance — makes reloads idempotent.
+
+    Runs on the caller's connection rather than opening its own transaction, so the delete commits
+    together with the inserts that replace it (see ``load_synthea_ehr``) — never on its own.
 
     Deliberately does **not** filter on ``PERSON_ID_OFFSET`` (an id-range threshold): the imaging
     cohorts' ``person_id`` is derived from a real, effectively random NHS number
@@ -215,30 +222,38 @@ def clean_reserved_band(engine: Engine) -> None:
     """
     marker = f"{SYNTHEA_SOURCE_VALUE_PREFIX}%"
     owned_persons_subquery = "SELECT person_id FROM omop.person WHERE person_source_value LIKE :marker"
-    with engine.begin() as conn:
-        conn.execute(
-            text(f"DELETE FROM omop.condition_occurrence WHERE person_id IN ({owned_persons_subquery})"),
-            {"marker": marker},
-        )
-        conn.execute(
-            text(f"DELETE FROM omop.visit_occurrence WHERE person_id IN ({owned_persons_subquery})"),
-            {"marker": marker},
-        )
-        conn.execute(text("DELETE FROM omop.person WHERE person_source_value LIKE :marker"), {"marker": marker})
+    conn.execute(
+        text(f"DELETE FROM omop.condition_occurrence WHERE person_id IN ({owned_persons_subquery})"),
+        {"marker": marker},
+    )
+    conn.execute(
+        text(f"DELETE FROM omop.visit_occurrence WHERE person_id IN ({owned_persons_subquery})"),
+        {"marker": marker},
+    )
+    conn.execute(text("DELETE FROM omop.person WHERE person_source_value LIKE :marker"), {"marker": marker})
 
 
 def load_synthea_ehr(engine: Engine, tables: dict[str, pd.DataFrame], num_trusts: int, trust_index: int) -> int:
-    """Load this trust's Synthea slice into the OMOP database. Returns the person count loaded."""
+    """Load this trust's Synthea slice into the OMOP database. Returns the person count loaded.
+
+    One transaction: the provenance-scoped clean and all three inserts commit together or not at all
+    (the same shape as ``import_tables.load_project``). Each ``to_sql`` handed the engine instead would
+    commit on its own, so a failure part-way — a constraint violation on the second table, an
+    interrupted run — would leave the previous rows gone and only some of the new ones present: a
+    cohort query then returns a truncated (or empty) EHR cohort even though the command exited
+    non-zero. Rolled back as a unit, a failed reload leaves the previous load in place.
+    """
     person_ids = _trust_person_ids(tables["person"], num_trusts, trust_index)
     person_rows = build_person_rows(tables["person"], person_ids)
     condition_rows = build_condition_rows(tables["condition_occurrence"], person_ids)
     visit_rows = build_visit_rows(tables["visit_occurrence"], person_ids)
 
-    clean_reserved_band(engine)
-    # person first (parents), then the child tables — correct whether or not FK constraints exist.
-    person_rows.to_sql("person", engine, if_exists="append", index=False, schema="omop")
-    visit_rows.to_sql("visit_occurrence", engine, if_exists="append", index=False, schema="omop")
-    condition_rows.to_sql("condition_occurrence", engine, if_exists="append", index=False, schema="omop")
+    with engine.begin() as conn:
+        clean_reserved_band(conn)
+        # person first (parents), then the child tables — correct whether or not FK constraints exist.
+        person_rows.to_sql("person", conn, if_exists="append", index=False, schema="omop")
+        visit_rows.to_sql("visit_occurrence", conn, if_exists="append", index=False, schema="omop")
+        condition_rows.to_sql("condition_occurrence", conn, if_exists="append", index=False, schema="omop")
 
     positives = int(condition_rows["condition_source_value"].eq("44054006").sum())
     print(

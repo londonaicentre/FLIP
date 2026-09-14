@@ -35,8 +35,9 @@ ARKPLUS_DATA_REPO := aicentreflip/tutorials-arkplus-cxr-classification
 # Number of MSD spleen cases to download for the spleen tutorials (1-41).
 NUM_CASES ?= 10
 # The MSD download/derive scripts run in spleen/'s own uv project (MONAI, pandas, natsort) —
-# --project keeps the cwd here while resolving that env.
+# --project keeps the cwd here while resolving that env. Same shape for the Synthea build.
 SPLEEN_UV := uv run --project spleen
+SYNTHEA_UV := uv run --project synthea
 
 .PHONY: download-xray-data download-spleen-data download-spleen-msd-data \
 	download-spleen-checkpoint download-arkplus-finetuning-data \
@@ -114,7 +115,7 @@ download-arkplus-eval-data:
 # each trust's OMOP with `make -C trust load-synthea-ehr` (see the tutorial README).
 download-synthea-data:
 	@echo "⬇️  Downloading Synthea-in-OMOP tabular dataset (AWS Open Data Registry)..."
-	@uv run --no-project --with pandas python synthea/build_synthea_dataframe.py --output-dir $(DATA_DIR)/synthea
+	@$(SYNTHEA_UV) python synthea/build_synthea_dataframe.py --output-dir $(DATA_DIR)/synthea
 	@echo "✅ Synthea data ready at $(abspath $(DATA_DIR))/synthea/ — make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction"
 
 # Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT, so the spleen

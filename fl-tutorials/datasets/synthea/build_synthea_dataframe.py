@@ -30,7 +30,10 @@ is empty throughout), which is why the features are condition-history flags rath
 labs/vitals.
 
 Run via the Makefile (``make -C fl-tutorials download-synthea-data``), which invokes:
-    uv run --no-project --with pandas python synthea/build_synthea_dataframe.py --output-dir ../data/synthea
+    uv run --project synthea python synthea/build_synthea_dataframe.py --output-dir ../data/synthea
+
+``derive_features`` is pinned to ``query.sql`` by ``fl-tutorials/tests/datasets/synthea/``, which runs
+the query itself on SQLite over the same tiny tables and diffs the two row for row.
 """
 
 from __future__ import annotations

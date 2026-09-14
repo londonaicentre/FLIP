@@ -29,7 +29,15 @@
                  click or Space — through one event, which is the only place the value
                  changes. Bound through anything else it keeps a private counter that
                  starts at false whatever the field's initial value, so aria-checked
-                 announces the inverse of the knob and Space moves nothing but ARIA. -->
+                 announces the inverse of the knob and Space moves nothing but ARIA.
+                 The value is written through the checkbox handleChange, not setValue,
+                 because a switch is not always a field of its own: several sharing one
+                 name (the trust pickers, name="trusts" / "trust_ids") are one checkbox
+                 GROUP whose field is the array of values switched on, and handleChange is
+                 what knows to add or remove only this switch's value there — setValue
+                 would overwrite the group with one value. It ignores its argument once
+                 checkedValue is configured and toggles, so the emitted boolean is not
+                 needed; the spec covers both the single and the group case. -->
             <Switch
                 :id="uuid"
                 :name="name"

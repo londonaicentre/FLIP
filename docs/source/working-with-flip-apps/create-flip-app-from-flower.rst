@@ -59,7 +59,7 @@ ServerApp: reporting model lifecycle status
 On the server side, the FLIP integration is a single object (``FLIP``) injected into the ``@app.main()`` function plus four status transitions around ``strategy.start(...)``.
 
 Imports
-=======
+========
 
 .. code-block:: python
 
