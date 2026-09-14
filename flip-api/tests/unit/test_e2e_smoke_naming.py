@@ -33,6 +33,8 @@ from tests.e2e_smoke import (
 @pytest.mark.parametrize(
     ("path", "label"),
     [
+        ("../fl-tutorials/flower/ehr_risk_prediction/app", "EHR risk prediction"),
+        ("../fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files", "EHR risk prediction"),
         ("../fl-tutorials/nvflare/image_classification/xray_classification/app_files", "Chest X-ray classification"),
         ("../fl-tutorials/flower/3d_spleen_segmentation_evaluation/app", "3D spleen segmentation evaluation"),
         # An unknown app: sentence-cased, de-hyphenated directory name.
@@ -40,6 +42,7 @@ from tests.e2e_smoke import (
         # An unknown app whose directory name carries an acronym: it survives unchanged.
         ("/srv/MRI_segmentation/app", "MRI segmentation"),
         # The tutorial directory itself, without its app/ leaf.
+        ("../fl-tutorials/flower/ehr_risk_prediction", "EHR risk prediction"),
         ("../fl-tutorials/flower/3d_spleen_segmentation_evaluation", "3D spleen segmentation evaluation"),
     ],
 )
@@ -54,10 +57,13 @@ def test_defaults_name_the_tutorial_not_xrays():
 
 def test_task_states_the_clinical_task_not_the_harness():
     """The projects list is read by clinicians: the description says what the project is for."""
+    ehr = describe_tutorial(Path("../fl-tutorials/flower/ehr_risk_prediction/app")).task
+    assert ehr.startswith("Predicting which patients will go on to develop type 2 diabetes")
     xray = describe_tutorial(Path("../fl-tutorials/nvflare/image_classification/xray_classification/app_files")).task
     assert "pleural effusion" in xray
     assert "chest X-rays" in xray
     for technical in ("smoke", "e2e", "backend", "flower", "nvflare", "cohort", ".py"):
+        assert technical not in ehr.lower()
         assert technical not in xray.lower()
 
     unknown = describe_tutorial(Path("/srv/my_custom-app/app")).task

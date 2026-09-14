@@ -35,12 +35,13 @@ ARKPLUS_DATA_REPO := aicentreflip/tutorials-arkplus-cxr-classification
 # Number of MSD spleen cases to download for the spleen tutorials (1-41).
 NUM_CASES ?= 10
 # The MSD download/derive scripts run in spleen/'s own uv project (MONAI, pandas, natsort) —
-# --project keeps the cwd here while resolving that env.
+# --project keeps the cwd here while resolving that env. Same shape for the Synthea build.
 SPLEEN_UV := uv run --project spleen
+SYNTHEA_UV := uv run --project synthea
 
 .PHONY: download-xray-data download-spleen-data download-spleen-msd-data \
 	download-spleen-checkpoint download-arkplus-finetuning-data \
-	download-arkplus-eval-data upload-spleen-labels \
+	download-arkplus-eval-data download-synthea-data upload-spleen-labels \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
 	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
 	reproduce-spleen-omop \
@@ -104,6 +105,18 @@ download-arkplus-eval-data:
 		--sites site1_holdoff site2_holdoff \
 		--label hold-out \
 		--next-step "make -C fl-tutorials run-tutorial TUTORIAL=arkplus_baseline_classification_evaluation (or arkplus_multimodel_classification_evaluation)"
+
+# Derive the EHR risk-prediction tutorial's tabular dataset (data/synthea/, gitignored) from three
+# OMOP tables of the public 1k-person Synthea dataset (AWS Open Data Registry, anonymous HTTPS,
+# ~5 MB): one feature row per person plus site1/site2 person_id-modulo splits. Backend-agnostic,
+# no FL_BACKEND variant — the NVFLARE .env.app reads the site splits, the Flower stack mounts
+# dataframe.csv. Idempotent; the raw tables are cached under data/synthea/.synthea-raw/. Needs
+# only pandas, so it runs outside any project venv. On the platform the same data is loaded into
+# each trust's OMOP with `make -C trust load-synthea-ehr` (see the tutorial README).
+download-synthea-data:
+	@echo "⬇️  Downloading Synthea-in-OMOP tabular dataset (AWS Open Data Registry)..."
+	@$(SYNTHEA_UV) python synthea/build_synthea_dataframe.py --output-dir $(DATA_DIR)/synthea
+	@echo "✅ Synthea data ready at $(abspath $(DATA_DIR))/synthea/ — make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction"
 
 # Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT, so the spleen
 # apps find a label_*.nii.gz beside each pulled input_*.nii.gz. Needs NUM_CASES=41 on the MSD
