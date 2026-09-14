@@ -229,7 +229,11 @@ def test_10_gpu_unset_on_nvflare_warns_without_probing() -> None:
     result, probe = _gpu_check({"FL_BACKEND": "nvflare"}, host_gpus=1)
     _assert(result.status == mod.Status.WARN, "status is WARN, not a false CPU-only PASS", result.detail)
     _assert(not probe.called, "host GPU count is irrelevant and was not consulted")
-    _assert("unset" in result.detail and "defaults to 1" in result.detail, "detail explains the mismatch", result.detail)
+    _assert(
+        "unset" in result.detail and "defaults to 1" in result.detail,
+        "detail explains the mismatch",
+        result.detail,
+    )
     _assert(any("explicitly" in h for h in result.hints), "hint tells the operator to set it explicitly")
 
 

@@ -427,7 +427,7 @@ def check_gpu_capacity(kit_vars: dict[str, str], kit_present: bool, kit: str) ->
         if kit_vars.get("FL_BACKEND", "").strip().lower() != "nvflare":
             return Check(
                 "fl-client GPU capacity", Status.PASS,
-                "NUM_AVAILABLE_GPUS unset in kit (CPU-only; the Flower client does not read it)",
+                "NUM_AVAILABLE_GPUS unset in kit (CPU-only; only the NVFLARE client reads it)",
             )
         # `make up-trust` applies the GPU passthrough overlay only when the kit sets
         # NUM_AVAILABLE_GPUS > 0 (trust/Makefile GPU_OVERRIDE), so an unset value gets no
