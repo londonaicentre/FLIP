@@ -65,6 +65,9 @@ _node_trust_mapping: dict[str, str] = {}  # Flower node_id → trust name
 # deadline is 5s, so anything past this means the CLI itself is wedged (unreachable
 # SuperLink, uvx resolving the package) rather than a slow run.
 _RUN_LOG_COMMAND_TIMEOUT_SECONDS = 60
+# What `flwr log` writes to stderr on gRPC NOT_FOUND (flwr/cli/log.py::print_logs) before
+# exiting zero with nothing on stdout.
+_UNKNOWN_RUN_MARKER = "Invalid run_id"
 # Cap on the `status-details` one-liner carried on each list_jobs item. It is a status
 # string, not a log, so this is a sanity bound rather than a real truncation policy — but
 # the text is a researcher-authored exception message, so it is not trusted to be short.
@@ -164,6 +167,9 @@ def _run_flwr_command(
             cwd=str(cwd),
             capture_output=True,
             text=True,
+            # Researcher code writes this stream; one undecodable byte must not turn a
+            # retrievable log into a 500.
+            errors="replace",
             check=False,
             timeout=timeout,
         )
@@ -270,7 +276,7 @@ def _parse_runs_payload(payload: dict[str, Any]) -> list[JobMetadata]:
                 JobMetadata(
                     job_id=str(run["run-id"]),
                     status=normalize_status(run["status"]),
-                    # Absent on older flwr versions -- .get, so a missing key is simply no
+                    # Not a required contract key -- .get, so a missing value is simply no
                     # detail rather than the 500 a missing run-id/status earns below.
                     status_details=_clean_status_details(run.get("status-details")),
                 )
@@ -394,8 +400,12 @@ def _tail(text: str, max_chars: int) -> tuple[str, bool]:
         return text, False
 
     tail = text[-max_chars:]
+    # The window opens mid-line unless the character just before it is a newline. Drop
+    # that partial line — but only when something follows it, or a single over-long line
+    # (the per-run `Installed: [...]` dump, say) would tail to an empty string.
+    opens_mid_line = text[-max_chars - 1] != "\n"
     newline = tail.find("\n")
-    if newline != -1:
+    if opens_mid_line and newline != -1 and newline + 1 < len(tail):
         tail = tail[newline + 1 :]
     return tail, True
 
@@ -419,20 +429,43 @@ def run_logs(run_id: int) -> RunLogs:
         RunLogs: The run id, the log tail, and whether the head was dropped.
 
     Raises:
-        HTTPException: 500 when the ``flwr log`` command cannot be run or fails.
+        HTTPException: 404 when the SuperLink does not know the run, 502 when it returned
+            no log at all, 500 when the ``flwr log`` command cannot be run or fails.
     """
     run_id_str = str(run_id)
-    # --show prints what the SuperLink has stored for the run and exits; the default
-    # --stream would follow the log forever and never return to the caller.
+    # --show prints what the SuperLink has stored and exits under the CLI's own 5s
+    # deadline whatever the run's state. --stream returns only once the run is FINISHED,
+    # so it would hang this request on a run that is still going.
     command = ["uvx", "flwr", "log", run_id_str, "local", "--show"]
     result = _run_flwr_command(command, _get_src_root(), "log", timeout=_RUN_LOG_COMMAND_TIMEOUT_SECONDS)
+    stderr = result.stderr.strip()
 
     if result.returncode != 0:
-        stderr = result.stderr.strip()
         logger.error("Flower log failed for run %s: %s", run_id_str, stderr)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Flower log command failed with code {result.returncode}. stderr: {redact_secrets(stderr)}",
+        )
+
+    # `flwr log` exits ZERO for its two realistic failures: gRPC NOT_FOUND (an unknown or
+    # forgotten run id) logs "Invalid run_id" to stderr and returns, and DEADLINE_EXCEEDED
+    # (a SuperLink busy with another run's dependency install) is swallowed outright.
+    # Both leave stdout empty. A run the hub asks about has failed, so its log always
+    # carries at least the exit-code line: empty means nothing was retrieved, not that
+    # the run said nothing — and a 200 here would make the hub tell the reader to run
+    # the very command that just printed nothing.
+    if not result.stdout.strip():
+        if _UNKNOWN_RUN_MARKER in stderr:
+            logger.warning("SuperLink does not know run %s: %s", run_id_str, stderr)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"SuperLink does not know run {run_id_str}: {redact_secrets(stderr)}",
+            )
+        logger.warning("Flower log returned no output for run %s (stderr: %s)", run_id_str, stderr or "<empty>")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"SuperLink returned no log for run {run_id_str}"
+            + (f": {redact_secrets(stderr)}" if stderr else " (deadline exceeded or empty stream)"),
         )
 
     # Redact before truncating, not after: the tail is cut from the middle of the log, and

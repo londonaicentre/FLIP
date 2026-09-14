@@ -46,9 +46,7 @@ def test_abort_run_idempotent_for_terminal_run(client, src_root, mock_flwr_run):
             "list": {
                 "returncode": 0,
                 "stdout": (
-                    '{"success": true, "runs": ['
-                    '{"run-id": "9478652229627629048", "status": "finished:completed"}'
-                    "]}"
+                    '{"success": true, "runs": [{"run-id": "9478652229627629048", "status": "finished:completed"}]}'
                 ),
             },
         }
@@ -91,6 +89,27 @@ def test_abort_run_failure_when_terminal_run_missing_status(client, src_root, mo
             "list": {
                 "returncode": 0,
                 "stdout": '{"success": true, "runs": [{"run-id": "9478652229627629048"}]}',
+            },
+        }
+    )
+
+    response = client.delete("/abort_run/9478652229627629048")
+
+    assert response.status_code == 500
+
+
+def test_abort_run_failure_when_terminal_run_has_an_unmapped_status(client, src_root, mock_flwr_run):
+    # `flwr stop` fails and `flwr list` shows the run with a status this adapter cannot
+    # interpret (a future flwr value). UNKNOWN is never proof the run is terminal, so the
+    # abort must 500 loudly rather than no-op as though it had succeeded.
+    mock_flwr_run(
+        by_command={
+            "stop": {"returncode": 1, "stderr": "boom"},
+            "list": {
+                "returncode": 0,
+                "stdout": (
+                    '{"success": true, "runs": [{"run-id": "9478652229627629048", "status": "some-future-status"}]}'
+                ),
             },
         }
     )

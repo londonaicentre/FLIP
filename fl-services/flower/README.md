@@ -193,11 +193,16 @@ is the model page rather than a shell. To read the full stream by hand — or to
 submitted outside the hub, e.g. via `make submit` — exec into the net's FL API container:
 
 ```bash
-docker exec -it flip-fl-api-net-1 uvx flwr log <run-id> local --show     # hub multi-net stack
+docker exec -it deploy-fl-api-net-1-1 uvx flwr log <run-id> local --show   # hub dev stack (net 1)
 docker compose -f fl-services/flower/compose.dev.yml exec fl-api \
-    uvx flwr log <run-id> local --show                                   # standalone dev stack
+    uvx flwr log <run-id> local --show                                     # standalone dev stack
 ```
 
-`--show` prints the stored log and exits; the `flwr log` default (`--stream`) follows it forever.
-Run ids come from `uvx flwr list local` in the same container, or from the `run-id` the submit
-returned. A ServerApp that died at import time ends with a traceback and `ERROR: Exit Code: 607`.
+(No hub service sets `container_name`, so compose names the hub's FL API `deploy-fl-api-net-<n>-1`
+on the default stack; on ECS there is no docker — use `aws ecs execute-command` against the
+`fl-api-net-<n>` task.) `--show` prints the stored log and exits under the CLI's own 5 s deadline;
+the `flwr log` default (`--stream`) returns only once the run is FINISHED, so on a run that is
+still going it follows the log until then. Run ids come from `uvx flwr list local` in the same
+container, or from the `run-id` the submit returned. A ServerApp that died at import time ends with
+a traceback and `ERROR: Exit Code: 607`. A run the SuperLink has forgotten (it keeps run state in
+memory, so a restart forgets every run) prints `Invalid run_id` and nothing else.

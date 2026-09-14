@@ -59,11 +59,41 @@ def test_run_logs_keeps_the_tail_and_flags_truncation(client, src_root, mock_flw
     body = response.json()
     assert response.status_code == 200
     assert body["truncated"] is True
-    assert "ERROR: Exit Code: 607" in body["log"]
-    assert "Installed package-0" not in body["log"]
-    # The cut is advanced to a line boundary, so the tail never opens mid-line.
-    assert not body["log"].startswith("nstalled")
-    assert len(body["log"]) <= 120
+    # Exactly the last whole lines that fit in 120 chars: the raw 120-char window opens
+    # mid-way through the `from flip.flower...` line, and the cut is advanced past it.
+    assert body["log"] == ("ImportError: cannot import name 'min_clients_from_run_config'\nERROR: Exit Code: 607\n")
+
+
+def test_run_logs_tail_keeps_a_line_that_ends_exactly_at_the_cut(client, src_root, mock_flwr_run, monkeypatch):
+    # When the window opens exactly on a line boundary there is no partial line to drop;
+    # advancing anyway would throw away a whole intact line.
+    monkeypatch.setenv("FLOWER_RUN_LOG_MAX_CHARS", "12")
+    mock_flwr_run(stdout="line1\nline2\nline3\n")
+
+    response = client.get("/run_logs/1")
+
+    assert response.json() == {"run_id": "1", "log": "line2\nline3\n", "truncated": True}
+
+
+def test_run_logs_tail_of_a_single_giant_line_is_never_empty(client, src_root, mock_flwr_run, monkeypatch):
+    # The only newline inside the window is its last character (one over-long line, e.g.
+    # the per-run `Installed: [...]` dump, then a newline). Advancing past it would return
+    # "" with truncated=True, and the hub would report a log that exists as unretrievable.
+    monkeypatch.setenv("FLOWER_RUN_LOG_MAX_CHARS", "50")
+    mock_flwr_run(stdout="x" * 200 + "\n")
+
+    response = client.get("/run_logs/1")
+
+    assert response.json() == {"run_id": "1", "log": "x" * 49 + "\n", "truncated": True}
+
+
+def test_run_logs_tail_with_no_newline_is_the_raw_window(client, src_root, mock_flwr_run, monkeypatch):
+    monkeypatch.setenv("FLOWER_RUN_LOG_MAX_CHARS", "50")
+    mock_flwr_run(stdout="x" * 200)
+
+    response = client.get("/run_logs/1")
+
+    assert response.json() == {"run_id": "1", "log": "x" * 50, "truncated": True}
 
 
 def test_run_logs_redacts_credentials(client, src_root, mock_flwr_run):
@@ -76,13 +106,68 @@ def test_run_logs_redacts_credentials(client, src_root, mock_flwr_run):
     assert "ERROR: Exit Code: 607" in response.json()["log"]
 
 
+def test_run_logs_redacts_before_truncating(client, src_root, mock_flwr_run, monkeypatch):
+    # A cut landing inside `key: value` must not strip the keyword the matcher needs:
+    # tail-then-redact would leave "ey: s3cr3t-value", redact-then-tail cannot.
+    monkeypatch.setenv("FLOWER_RUN_LOG_MAX_CHARS", "16")
+    mock_flwr_run(stdout="X-Internal-Service-Key: s3cr3t-value")
+
+    response = client.get("/run_logs/1")
+
+    assert response.status_code == 200
+    assert "s3cr3t" not in response.json()["log"]
+
+
 def test_run_logs_returns_500_when_flwr_fails(client, src_root, mock_flwr_run):
-    mock_flwr_run(returncode=1, stderr="Invalid run_id `1`, exiting")
+    # A gRPC error other than NOT_FOUND / DEADLINE_EXCEEDED is re-raised by `flwr log` and
+    # exits non-zero with a traceback on stderr.
+    mock_flwr_run(returncode=1, stderr="grpc._channel._MultiThreadedRendezvous: StatusCode.UNAVAILABLE")
 
     response = client.get("/run_logs/1")
 
     assert response.status_code == 500
+    assert "UNAVAILABLE" in response.json()["detail"]
+
+
+def test_run_logs_500_detail_is_redacted(client, src_root, mock_flwr_run):
+    mock_flwr_run(returncode=1, stderr="failed: token=abc123 refused")
+
+    response = client.get("/run_logs/1")
+
+    assert response.status_code == 500
+    assert "abc123" not in response.json()["detail"]
+
+
+def test_run_logs_returns_404_when_the_superlink_does_not_know_the_run(client, src_root, mock_flwr_run):
+    # `flwr log` (1.36) handles gRPC NOT_FOUND by logging "Invalid run_id" to stderr and
+    # exiting ZERO with empty stdout. A 200 with an empty log would make the hub tell the
+    # reader to run the very command that just printed nothing.
+    mock_flwr_run(returncode=0, stdout="", stderr="ERROR: Invalid run_id `1`, exiting")
+
+    response = client.get("/run_logs/1")
+
+    assert response.status_code == 404
     assert "Invalid run_id" in response.json()["detail"]
+
+
+def test_run_logs_returns_502_when_the_superlink_returns_nothing(client, src_root, mock_flwr_run):
+    # gRPC DEADLINE_EXCEEDED (SuperLink busy) is swallowed by `flwr log` with `pass`: exit
+    # zero, empty stdout, empty stderr. Nothing was retrieved, so say so.
+    mock_flwr_run(returncode=0, stdout="", stderr="")
+
+    response = client.get("/run_logs/1")
+
+    assert response.status_code == 502
+
+
+def test_run_logs_runs_flwr_under_a_timeout(client, src_root, mock_flwr_run):
+    # A wedged `flwr log` must not hold a worker forever: the subprocess call carries the
+    # run-log timeout (the list/stop commands deliberately run without one).
+    commands = mock_flwr_run(stdout=_SERVERAPP_FAILURE)
+
+    client.get("/run_logs/1")
+
+    assert commands.kwargs[0]["timeout"] == 60
 
 
 def test_run_logs_returns_500_when_flwr_times_out(client, src_root, mock_flwr_run):
@@ -110,3 +195,19 @@ def test_run_logs_invalid_max_chars_falls_back_to_default(client, src_root, mock
 
     assert response.status_code == 200
     assert response.json()["log"] == _SERVERAPP_FAILURE
+
+
+def test_run_flwr_command_tolerates_non_utf8_output(tmp_path):
+    # Researcher code can print anything; one undecodable byte must not turn a retrievable
+    # log into a 500. Exercised against a real subprocess, not the mock.
+    from fl_api.app import _run_flwr_command
+
+    result = _run_flwr_command(
+        ["python3", "-c", "import sys; sys.stdout.buffer.write(b'before \\xff after\\n')"],
+        tmp_path,
+        "log",
+        timeout=30,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "before \ufffd after\n"

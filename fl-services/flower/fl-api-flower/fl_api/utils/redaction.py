@@ -21,8 +21,9 @@ limitation on a channel that should not carry secrets in the first place, not a
 guarantee that none get through: a secret printed without a recognisable
 keyword still passes.
 
-Deliberately biased towards over-redaction. Masking a stray ``max_tokens=512``
-costs a reader nothing; leaking a service key costs a rotation.
+Deliberately biased towards over-redaction. Masking a stray ``monkey=banana``
+or ``learning_rate_key=0.1`` costs a reader nothing; leaking a service key
+costs a rotation.
 """
 
 import re
@@ -34,19 +35,28 @@ _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # capability against the bucket for the life of the signature, so they are
     # masked individually rather than dropping the whole URL — the object path
     # is the useful half of the line.
+    # No separator is required before the parameter name: whatever logged the URL
+    # may have escaped `&` as `&amp;`, `\u0026` or `%26`, and a signature is a
+    # signature however it was delimited.
     (
-        re.compile(r"(?i)([?&](?:X-Amz-Signature|X-Amz-Credential|X-Amz-Security-Token)=)[^&\s\"']+"),
+        re.compile(r"(?i)\b((?:X-Amz-Signature|X-Amz-Credential|X-Amz-Security-Token)=)[^&\s\"']+"),
         rf"\1{REDACTED}",
     ),
-    # `<something>key|token|secret|password|credential` followed by `:` or `=`.
+    # `Authorization: Bearer <jwt>` / `Basic <b64>` carry no keyword before the
+    # separator, so the keyword rule below never sees them.
+    (re.compile(r"(?i)\b((?:Bearer|Basic)\s+)[^\s\"',}]+"), rf"\1{REDACTED}"),
+    # `<something>key|token|secret|password|credential|signature`, optionally
+    # followed by one short suffix (`_BASE64`, `_HASH`, `_ID`), then `:` or `=`.
     # Covers header dumps (`X-Internal-Service-Key: ...`), env dumps
-    # (`AWS_SECRET_ACCESS_KEY=...`) and kwargs repr in a traceback frame.
-    # Requiring the separator immediately after the keyword keeps prose and
-    # `KeyError: 'x'` out of it; stopping the value at `&` keeps it from eating
-    # the rest of a query string the rule above has already masked.
+    # (`AWS_SECRET_ACCESS_KEY=...`, `AES_KEY_BASE64=...`), the SigV4 header form
+    # (`Signature=...`) and kwargs repr in a traceback frame. Requiring the
+    # separator right after the (suffixed) keyword keeps prose and `KeyError: 'x'`
+    # out of it; stopping the value at `&` keeps it from eating the rest of a
+    # query string the rule above has already masked.
     (
         re.compile(
-            r"(?i)((?:[\w-]{0,64}(?:key|token|secret|password|passwd|credential))[\"']?\s*[:=]\s*[\"']?)"
+            r"(?i)((?:[\w-]{0,64}(?:key|token|secret|password|passwd|credential|signature)"
+            r"(?:[_-][a-z0-9]{1,12})?)[\"']?\s*[:=]\s*[\"']?)"
             r"[^\s\"',}&]+"
         ),
         rf"\1{REDACTED}",

@@ -86,7 +86,7 @@ def test_status_details_is_collapsed_redacted_and_bounded(client, src_root, mock
     # The text is a researcher-authored exception message from a container holding a hub
     # service key, so it gets the same masking the run log does — and a length bound, since
     # nothing upstream constrains how long an exception message can be.
-    secret = "aws_secret_access_key=" + "b" * 900
+    secret = "aws_secret_access_key=" + "b" * 900  # pragma: allowlist secret
     mock_flwr_run(
         stdout=(
             '{"success": true, "runs": [{"run-id":"7","fab-name":"x","status":"finished:failed",'
@@ -103,9 +103,26 @@ def test_status_details_is_collapsed_redacted_and_bounded(client, src_root, mock
     assert len(details) <= 500
 
 
+def test_status_details_is_bounded_at_500_chars(client, src_root, mock_flwr_run):
+    # A non-secret message, so nothing but the bound itself can shorten it (the redaction
+    # case above collapses its 900-char secret to "[REDACTED]" before the slice).
+    message = "ServerApp failed with exception: " + "x" * 900
+    mock_flwr_run(
+        stdout=(
+            '{"success": true, "runs": [{"run-id":"7","fab-name":"x","status":"finished:failed",'
+            f'"status-details":"{message}"}}]}}'
+        )
+    )
+
+    details = client.get("/list_runs").json()[0]["status_details"]
+
+    assert len(details) == 500
+    assert details == message[:500]
+
+
 def test_status_details_absent_key_is_not_an_error(client, src_root, mock_flwr_run):
-    # Older flwr versions have no such key. Unlike run-id/status (which 500 when missing),
-    # this one is simply absent detail.
+    # Not a required contract key: a missing value is absent detail, not the 500 a missing
+    # run-id/status earns.
     mock_flwr_run(stdout='{"success": true, "runs": [{"run-id":"7","fab-name":"x","status":"running"}]}')
 
     assert client.get("/list_runs").json() == [{"job_id": "7", "status": "RUNNING", "status_details": None}]

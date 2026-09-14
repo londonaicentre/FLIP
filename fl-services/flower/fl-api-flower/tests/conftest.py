@@ -47,17 +47,31 @@ def reset_node_mapping():
     app_module._node_trust_mapping.clear()
 
 
+class RecordedCommands(list):
+    """The argv lists handed to ``subprocess.run``, plus the keyword arguments of each call.
+
+    A plain list of argv keeps the existing ``commands == [[...]]`` assertions working;
+    ``kwargs`` is there for the tests that care how a command was run (its ``timeout``,
+    its decoding), which a bare argv comparison cannot see.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.kwargs: list[dict] = []
+
+
 @pytest.fixture
 def mock_flwr_run(monkeypatch):
     # Returns the list of argv lists the app handed to subprocess.run, so a test can
     # assert on the command it built as well as on the response.
     def _mock(*, returncode=0, stdout="", stderr="", exception=None, by_command=None):
-        commands: list[list[str]] = []
+        commands = RecordedCommands()
 
         if exception is not None:
 
             def _raise(command=None, *_args, **_kwargs):
                 commands.append(command)
+                commands.kwargs.append(_kwargs)
                 raise exception
 
             monkeypatch.setattr(app_module.subprocess, "run", _raise)
@@ -68,6 +82,7 @@ def mock_flwr_run(monkeypatch):
             # e.g. {"stop": {...}, "list": {...}}. command is ["uvx", "flwr", "<subcommand>", ...].
             def _dispatch(command, *_args, **_kwargs):
                 commands.append(command)
+                commands.kwargs.append(_kwargs)
                 subcommand = command[2] if len(command) > 2 else ""
                 spec = by_command.get(subcommand, {})
                 return subprocess.CompletedProcess(
@@ -82,6 +97,7 @@ def mock_flwr_run(monkeypatch):
 
         def _fixed(command=None, *_args, **_kwargs):
             commands.append(command)
+            commands.kwargs.append(_kwargs)
             return subprocess.CompletedProcess(
                 args=command or [],
                 returncode=returncode,

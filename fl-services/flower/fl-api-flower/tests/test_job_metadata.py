@@ -51,8 +51,15 @@ def test_normalize_status_covers_every_flwr_status_value():
     """
     from flwr.common.constant import Status, SubStatus
 
-    non_terminal = [Status.PENDING, Status.STARTING, Status.RUNNING]
-    terminal = [f"{Status.FINISHED}:{sub}" for sub in (SubStatus.COMPLETED, SubStatus.FAILED, SubStatus.STOPPED)]
+    # Status / SubStatus are plain classes, not Enums, so their members are read off the
+    # class rather than listed by hand — a value added by a flwr upgrade must fail here.
+    statuses = {name: value for name, value in vars(Status).items() if name.isupper()}
+    sub_statuses = {name: value for name, value in vars(SubStatus).items() if name.isupper()}
+    assert len(statuses) >= 4, "flwr Status vocabulary not found"
+    assert len(sub_statuses) >= 3, "flwr SubStatus vocabulary not found"
+
+    non_terminal = [value for name, value in statuses.items() if name != "FINISHED"]
+    terminal = [f"{Status.FINISHED}:{sub}" for sub in sub_statuses.values()]
     for native in non_terminal + terminal:
         assert native in _FLOWER_STATUS_MAP, f"flwr status {native!r} is unmapped"
 
