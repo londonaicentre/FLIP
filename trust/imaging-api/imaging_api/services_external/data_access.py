@@ -30,6 +30,16 @@ class AccessionIdsRequest(BaseModel):
     query: str = Field(..., description="The raw SQL query to execute")
 
 
+# C-FIND matching characters that turn one accession number into a pattern: `*` and `?` are the
+# DICOM wildcards for string keys, `\\` separates the values of a multi-valued key (list matching).
+_MULTI_STUDY_CHARACTERS = frozenset("*?\\")
+
+
+def _is_single_study_accession(value: object) -> bool:
+    """Whether ``value`` is an accession number that names at most one study to a PACS."""
+    return isinstance(value, str) and bool(value.strip()) and not (_MULTI_STUDY_CHARACTERS & set(value))
+
+
 async def get_accession_ids(encrypted_project_id: str, query: str) -> list[str]:
     """
     Calls the data-access-api ``/cohort/accession-ids`` endpoint and returns the
@@ -42,8 +52,14 @@ async def get_accession_ids(encrypted_project_id: str, query: str) -> list[str]:
         encrypted_project_id (str): The encrypted project ID.
         query (str): The SQL query to execute.
 
+    A cohort query may return several rows per study — one ``image_occurrence`` per series, say — and
+    an accession is one study, imported once: the ids are de-duplicated here, first occurrence wins,
+    query order kept, so the same accession is neither queried and queued once per row nor counted
+    once per row in the import status (FLIP#1123). Ids that could match more than one study — blank,
+    or carrying a C-FIND wildcard or value delimiter — are dropped with a warning, never sent.
+
     Returns:
-        list[str]: The accession IDs returned by the cohort query, in query order.
+        list[str]: The distinct, single-study accession IDs returned by the cohort query, in query order.
 
     Raises:
         CohortBelowThresholdError: If the cohort is smaller than the trust's
@@ -68,7 +84,29 @@ async def get_accession_ids(encrypted_project_id: str, query: str) -> list[str]:
             )
 
         response.raise_for_status()
-        return list(response.json().get("accession_ids", []))
+        rows = list(response.json().get("accession_ids", []))
+        # An accession that can match more than one study must never reach the PACS. The value goes
+        # into a C-FIND key, and to a PACS a zero-length key is universal matching (DQR answered with
+        # 500 studies, the page cap, on the dev PACS), `*` and `?` are wildcards, and `\\` is DICOM's
+        # value delimiter (list matching: two studies for "A\\B") — with the import taking the first
+        # study an answer returns, any of them would attach a study outside the cohort to the
+        # project. None occurs in a real accession number (`\\` is illegal in the SH VR; `*` and `?`
+        # are reserved for matching), so such a value is a defect in the trust's OMOP, not a cohort
+        # with less imaging (image_occurrence.accession_id is required for every imaging row; see the
+        # OMOP component docs), and the row is dropped and counted here rather than sent.
+        usable = [value for value in rows if _is_single_study_accession(value)]
+        if len(usable) != len(rows):
+            logger.warning(
+                f"get_accession_ids: dropping {len(rows) - len(usable)} accession id(s) that are blank or carry a "
+                "C-FIND wildcard (*, ?) or value delimiter (\\) — each would match more than one study in the PACS; "
+                "every image_occurrence row in the cohort must carry exactly one study's accession number"
+            )
+        accession_ids = list(dict.fromkeys(usable))
+        if len(accession_ids) != len(usable):
+            logger.info(
+                f"get_accession_ids: {len(usable)} cohort rows collapse to {len(accession_ids)} distinct accession(s)"
+            )
+        return accession_ids
 
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == httpx.codes.FORBIDDEN:
