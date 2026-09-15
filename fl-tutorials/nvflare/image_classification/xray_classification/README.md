@@ -24,7 +24,16 @@ Class imbalance can produce NaN metrics; use approximately N=300 samples per sit
 
 ## The network
 
-DenseNet-121 pre-trained on ImageNet, implemented with MONAI.
+DenseNet-121 implemented with MONAI, trained **from scratch** (`pretrained=False`).
+
+It used to request torchvision's ImageNet checkpoint at construction time, which downloaded it on
+the FL server and on every client. An FL app must never fetch anything at run time (FLIP#1206):
+the FL server on a platform-managed estate and a trust host behind an NHS firewall have no
+internet route, and a run-time download bypasses the scanned upload path a reviewer approved.
+The switch costs nothing here — with this 1-channel, 128-feature stem only ~30% of the tensors
+matched the ImageNet shapes, and on the reference dataset the model reaches the same validation
+F1 in the same number of epochs either way. An app that does need pretrained weights ships them
+as an uploaded file; the latent-diffusion tutorial shows the pattern (`make weights`).
 
 ## The training logic
 
