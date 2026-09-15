@@ -51,23 +51,26 @@ image, not from installing it per job.)
 ## Shipped weights: the perceptual-loss backbone (`make weights`)
 
 The perceptual loss needs a pretrained backbone, and `lpips` fetches it through `torch.hub` on
-first use. **An FL app must never download at run time** (FLIP#1206): the FL server on a
-platform-managed estate and a trust host behind an NHS firewall have no internet route, so the
-job would hang; and a run-time fetch bypasses the scanned upload path — the reviewer approved
-the code, not whatever a URL serves later. So the backbone travels *with* the app:
+first use. **An FL app must never download at run time** (FLIP#1206): on a platform-managed estate
+the FL server has no internet route, nor does a trust host behind an NHS firewall, so the job
+would hang; and a run-time fetch bypasses the scanned upload path — the file a Trust can inspect
+before training would not be the file that runs. So the backbone travels *with* the app:
 
 ```bash
-make weights            # → app_files/squeezenet1_1-b8a52dc0.pth  (gitignored; `make sim` runs this for you)
+make weights            # → app_files/squeezenet1_1-b8a52dc0.pth  (gitignored; `make sim` and `make export` run this for you)
 ```
 
 That copies torchvision's SqueezeNet checkpoint from the shared download
-(`make -C fl-tutorials download-ldm-weights`, fetched once with torchvision's own hash check)
-into `app_files/`. **Upload it with the other app files** — it is a `.pth`, so the platform's
-picklescan gates it like any checkpoint. At start-up `trainer.py` copies it into a `torch.hub`
-`checkpoints/` dir beside itself and points torch there, so `PerceptualLoss(network_type="squeeze")`
-finds it offline. Without the file the trainer raises at construction rather than reaching for
-the network. SqueezeNet replaces the AlexNet this tutorial used before: 5 MB per job to every
-trust instead of 233, same LPIPS family.
+(`make -C fl-tutorials download-weights ARCH=squeezenet1_1`, fetched once with torch.hub's own
+sha256-prefix check) into `app_files/`. **Upload it with the other app files** — it is a `.pth`, so
+the platform's picklescan gates it like any checkpoint. At start-up `trainer.py` checks the file is
+the one torchvision will ask for (`SqueezeNet1_1_Weights.IMAGENET1K_V1`) and that its sha256 starts
+with the prefix in its name — torch.hub reuses a file already in its `checkpoints/` dir without
+re-checking it — then copies it into a `torch.hub` dir beside itself and points torch there, so
+`PerceptualLoss(network_type="squeeze")` finds it offline. A missing, renamed or corrupt file
+raises at construction, naming this target, rather than reaching for the network. SqueezeNet
+replaces the AlexNet this tutorial used before: 5 MB per job to every trust instead of 233, same
+LPIPS family.
 
 ## FLIP-specific values
 
@@ -103,7 +106,8 @@ any 3D CT NIfTI collection works.
 
 ### Against a running FLIP stack
 
-Upload `app_files/` as the model files of a project whose `config.json` declares
+Run `make weights` first, then upload `app_files/` (the `.pth` included) as the model files of a
+project whose `config.json` declares
 `"job_type": "diffusion_model"` (the e2e smoke does this with
 `MODEL_FILES_DIR=fl-tutorials/nvflare/image_synthesis/latent_diffusion_model/app_files
 QUERY_FILE=...`).
