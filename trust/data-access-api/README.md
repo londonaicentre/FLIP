@@ -199,8 +199,50 @@ hub's response.
 
 ### Row-level data and the disclosure threshold
 
+The threshold counts **distinct subjects, not rows**. The floor exists to stop a response revealing
+that at least one *patient* matched, and rows only stood in for patients while every cohort was one
+row per person. A cohort can now be one row per imaging study, where ten rows may be one patient
+with ten X-rays, and tabular projects (FLIP#1071) changed the grain again. Distinct subjects is
+never greater than the row count, so counting subjects is strictly stronger and replaces the row
+check rather than supplementing it.
+
+A cohort exposes its subjects one of two ways, resolved by `count_distinct_subjects`:
+
+| Projected column | How subjects are counted |
+|---|---|
+| `person_id` | Counted directly from the dataframe, no database round trip |
+| `accession_id` | Resolved through `omop.image_occurrence`; imaging projects must already project it |
+
+A cohort exposing neither cannot be gated and is refused. `/cohort/dataframe` reports that as a
+**400** naming the missing column, which is safe to be specific about because it describes the
+query's shape and never its contents. `/cohort/accession-ids` cannot do the same: its refusal must
+stay byte-identical across a zero cohort, a below-threshold one and an uncountable one, so all
+three return the same 403. Accession numbers that resolve to no imaging study contribute no
+subject, so a query aliasing an unrelated column to that name fails closed.
+
+### Cohort charts
+
+`/cohort` returns its aggregates as **named series** (`{"name": ..., "results": [{"value", "count"}]}`).
+The hub collects whatever names the trusts send and the UI renders them with no fixed list on either
+side, so adding a chart is a trust-side change alone. A trust that omits one is skipped for it, which
+is how a single roster can mix imaging and tabular trusts.
+
+| Chart | Emitted when | Counted in |
+|---|---|---|
+| Counts / Nulls | always | rows, per column |
+| Age Distribution, Sex Distribution | the cohort projects `person_id` | distinct subjects |
+| Modality Distribution | the cohort projects `accession_id` | distinct studies |
+
+Modality is counted in studies rather than people on purpose: it is a property of an imaging study,
+so one patient contributing a CT and an MR is one row in the age and sex charts and two here. The
+concept lookup is a LEFT JOIN falling back to the raw `modality_concept_id`, so a trust missing its
+OMOP vocabulary (FLIP#967) still gets an answer, just an unlabelled one. Every distribution passes
+through `make_other_category`, so a bucket below the threshold groups into "Other".
+
 `/cohort` returns aggregate statistics and suppresses any count below `COHORT_QUERY_THRESHOLD`,
-including a genuine zero, so the response cannot reveal that at least one patient matched.
+including a genuine zero, so the response cannot reveal that at least one patient matched. A cohort
+whose subjects cannot be established is suppressed the same way, rather than raised: this route
+answers below-threshold cohorts with a normal response so trust-api still reports back to the hub.
 
 `/cohort/dataframe` is the training-data path — user FL code reaches it through
 `flip.get_dataframe(...)` — so it necessarily returns row-level records; a model trains on rows.

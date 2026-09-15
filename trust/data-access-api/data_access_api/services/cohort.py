@@ -108,6 +108,12 @@ def _warn_if_vocabulary_missing() -> None:
 # defence in depth and stops the parser allocating an arbitrarily large AST.
 MAX_QUERY_LENGTH = 10_240  # 10 KiB
 
+# Columns a cohort can expose its subjects through, checked in this order by
+# ``count_distinct_subjects``. ``accession_id`` matches the column the imaging pull selects and
+# that the hub requires of every imaging project.
+SUBJECT_ID_COLUMN = "person_id"
+ACCESSION_ID_COLUMN = "accession_id"
+
 # Top-level statement shapes that count as SELECT-like for the cohort API. This is an
 # allowlist and must stay one — never add ``exp.Command``, sqlglot's catch-all for syntax it
 # does not model (``EXPLAIN`` lands there, as does anything a future sqlglot stops
@@ -521,6 +527,82 @@ def get_records(
         raise HTTPException(status_code=500, detail="internal_error") from e
 
 
+def count_distinct_subjects(df: pd.DataFrame) -> int | None:
+    """Returns how many distinct people a cohort covers, or None when that cannot be established.
+
+    ``COHORT_QUERY_THRESHOLD`` is a floor on *individuals*: the suppression it drives exists so a
+    response cannot reveal that ">=1 patient matched" (membership disclosure, issue #519). Counting
+    rows only matched that intent while every cohort was one row per person, which stopped being
+    true once a cohort could be one row per imaging *study* (a patient with ten X-rays is ten rows)
+    and once tabular, imaging-free projects arrived (FLIP#1071). Distinct subjects is never greater
+    than the row count, so gating on it is strictly stronger and replaces the row check rather than
+    adding to it.
+
+    Two ways to establish the count, in order of directness:
+
+    - ``person_id`` in the projection — counted directly, no database round trip.
+    - ``accession_id`` in the projection — resolved through ``omop.image_occurrence``. Imaging
+      projects must already project this column (the hub 400s without it), so an imaging cohort is
+      covered without asking researchers to expose ``person_id`` to the training dataframe.
+
+    A cohort that resolves to neither returns None and the caller must fail closed: an
+    unestablished count is not a small one, but it is not a safe one either.
+
+    Args:
+        df (pd.DataFrame): The cohort DataFrame.
+
+    Returns:
+        int | None: Distinct subjects covered, or None when the cohort exposes no column this can
+        be derived from.
+    """
+    if SUBJECT_ID_COLUMN in df.columns:
+        return int(df[SUBJECT_ID_COLUMN].nunique(dropna=True))
+    if ACCESSION_ID_COLUMN in df.columns:
+        return _subjects_behind_accessions(df[ACCESSION_ID_COLUMN])
+    return None
+
+
+def _subjects_behind_accessions(accession_ids: pd.Series) -> int:
+    """Counts the distinct people the given accession numbers belong to.
+
+    Accession ids are the pointer set into imaging, so ``omop.image_occurrence`` is authoritative
+    for whose studies they are. An id that resolves to no row contributes no subject, which makes
+    the count fail closed: a cohort whose accession numbers are not real imaging accessions (a
+    tabular query aliasing some other column to that name, say) counts zero subjects and is refused
+    rather than waved through on its row count.
+
+    Args:
+        accession_ids (pd.Series): The cohort's ``accession_id`` column.
+
+    This is a second round trip on top of the cohort query itself, and ``/cohort/accession-ids`` is
+    re-polled roughly every ten seconds during an imaging pull. It stays an indexed aggregate over
+    a list the caller already materialised, against a route that re-runs the whole cohort SQL each
+    time, so the added cost is marginal. Counting inside the route's existing wrapper was the
+    alternative and was rejected: joining ``image_occurrence`` into it would risk changing which
+    accession numbers come back, which is the one thing that route must not do.
+
+    Returns:
+        int: Distinct ``person_id`` values behind those accession numbers.
+    """
+    ids = [str(value) for value in accession_ids.dropna().unique()]
+    if not ids:
+        return 0
+
+    subject_count_query = text("""
+    SELECT COUNT(DISTINCT io.person_id) AS subject_count
+    FROM omop.image_occurrence io
+    WHERE io.accession_id IN :accession_ids
+    """).bindparams(bindparam("accession_ids", expanding=True))
+    result = get_records(query=subject_count_query, params={"accession_ids": ids})
+    if result.empty or "subject_count" not in result.columns:
+        # Cannot happen against a real database: the aggregate above always yields one labelled
+        # row. Guarded anyway so an unexpected shape fails closed as "no subjects established"
+        # rather than raising a KeyError the routes would surface as an opaque 500.
+        logger.error("Subject-count query returned an unexpected shape; treating it as no subjects")
+        return 0
+    return int(result["subject_count"].iloc[0])
+
+
 def get_counts(df: pd.DataFrame) -> dict:
     """
     Returns counts of non-null values for each column in the DataFrame.
@@ -632,6 +714,60 @@ def get_age_distribution(df: pd.DataFrame) -> dict:
     }
 
 
+def get_modality_distribution(df: pd.DataFrame) -> dict:
+    """Returns how the cohort's imaging studies break down by modality.
+
+    Only meaningful when the cohort actually covers imaging, which trust-side is exactly the
+    question "does it project ``accession_id``". The trust never sees the project's ``has_imaging``
+    flag (that is hub state), and it does not need to: a cohort with no accession numbers has no
+    studies to describe.
+
+    Counted in **studies**, not people, because modality is a property of an imaging study rather
+    than of a patient: one person contributing a CT and an MR is one row in the age and sex
+    distributions and two here. That is a different unit from its sibling charts on purpose.
+
+    The concept join is a LEFT JOIN falling back to the raw ``modality_concept_id``, because a
+    trust can be missing its OMOP vocabulary entirely (FLIP#967) and a readable label is worth
+    less than an answer.
+
+    Args:
+        df (pd.DataFrame): The cohort DataFrame. Must include an ``accession_id`` column;
+            otherwise an empty result set is returned.
+
+    Returns:
+        dict: ``{"name": "Modality Distribution", "results": [{"value": <modality>,
+        "count": <int>}, ...]}``, ordered by descending count.
+    """
+    if ACCESSION_ID_COLUMN not in df.columns:
+        return {"name": "Modality Distribution", "results": []}
+
+    accession_ids = [str(value) for value in df[ACCESSION_ID_COLUMN].dropna().unique()]
+    if not accession_ids:
+        return {"name": "Modality Distribution", "results": []}
+
+    modality_database_query = text("""
+    SELECT
+    COALESCE(c.concept_name, CAST(io.modality_concept_id AS VARCHAR)) AS modality,
+    COUNT(DISTINCT io.image_occurrence_id) AS count
+    FROM omop.image_occurrence io
+    LEFT JOIN omop.concept c ON c.concept_id = io.modality_concept_id
+    WHERE io.accession_id IN :accession_ids
+    GROUP BY modality
+    ORDER BY count DESC
+    """).bindparams(bindparam("accession_ids", expanding=True))
+    modalities = get_records(
+        query=modality_database_query,
+        params={"accession_ids": accession_ids},
+    )
+    if modalities.empty or not {"modality", "count"} <= set(modalities.columns):
+        return {"name": "Modality Distribution", "results": []}
+
+    return {
+        "name": "Modality Distribution",
+        "results": [{"value": row["modality"], "count": int(row["count"])} for _, row in modalities.iterrows()],
+    }
+
+
 def verify_cardinality(df: pd.DataFrame, threshold: float = 0.05) -> bool:
     """
     Verifies that the number of unique values in each column of the DataFrame is not smaller than the threshold.
@@ -691,6 +827,11 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
 
     - Counts the number of records.
     - Aggregates the number of occurrences of each unique value per column.
+    - Adds the age and sex distributions when the cohort projects ``person_id``, and the modality
+      distribution when it projects ``accession_id``. Each chart is a named series; the hub
+      aggregates whatever names arrive and the UI renders them, so neither has to know about a
+      new one. A trust that omits a chart is simply skipped for it, which is what lets one roster
+      mix imaging and tabular trusts.
 
     Below-threshold counts are privacy-suppressed by returning a ``StatisticsResponse``
     with ``record_count=0``, empty ``data`` and ``suppressed=True`` — the count itself is
@@ -720,14 +861,26 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
     # override actually applies.
     threshold = max(threshold, get_settings().COHORT_QUERY_THRESHOLD)
 
-    if record_count < threshold:
+    # The floor is on people, not rows (see count_distinct_subjects). A cohort whose subjects
+    # cannot be established is suppressed rather than rejected: this route deliberately answers
+    # a below-threshold cohort with a normal response so trust-api still reports back to the hub
+    # (raising here previously stranded the per-trust UI on "running"), and an unestablished
+    # count is no safer than a small one.
+    subject_count = count_distinct_subjects(df)
+    if subject_count is None:
+        logger.warning(
+            "Cohort exposes neither person_id nor accession_id, so its subject count cannot be "
+            "established; suppressing the statistics response"
+        )
+
+    if subject_count is None or subject_count < threshold:
         # Privacy-suppress every below-threshold count, INCLUDING a genuine zero: a true
         # zero and a small (1..threshold-1) count return identically (record_count=0,
         # suppressed=True) so the response can't reveal that >=1 patient matched.
         # Distinguishing them would leak membership/existence (issue #519, security review).
         logger.info(
-            f"Query returned {record_count} records (< {threshold});"
-            " returning privacy-suppressed 0-count response"
+            f"Query returned {record_count} records covering {subject_count} subject(s) "
+            f"(< {threshold}); returning privacy-suppressed 0-count response"
         )
         if record_count == 0:
             # Trust-side only, and deliberately AFTER the response has been decided — this
@@ -763,4 +916,13 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
         sex["results"] = make_other_category(sex["results"], min_count=threshold)
 
         stats.data += [age, sex]
+
+    if ACCESSION_ID_COLUMN in df.columns:
+        logger.info("accession_id column found in the query results; including modality distribution.")
+        modality = get_modality_distribution(df)
+        # Small buckets group into "Other" like every other distribution: a modality carried by one
+        # study is as identifying as an age bracket carried by one patient.
+        modality["results"] = make_other_category(modality["results"], min_count=threshold)
+
+        stats.data += [modality]
     return stats

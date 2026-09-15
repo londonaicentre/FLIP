@@ -50,7 +50,15 @@ observation_value AS (
     GROUP BY
         fo.image_occurrence_id
 )
+-- Row grain is one row per imaging STUDY (image_occurrence), which is what the app trains on:
+-- it expands each accession_id into that study's DICOM files, and the findings below are
+-- recorded per study, not per patient. person_id is projected so the trust can additionally
+-- report per-SUBJECT demographics -- get_age_distribution / get_sex_distribution key off that
+-- column, dedupe it with .unique() and count rows in omop.person, so a patient with several
+-- studies is counted once. Without the column both distributions come back empty.
 SELECT
+    -- subject (drives the per-subject age/sex distributions; the app ignores the column)
+    io.person_id,
     -- image occurrence
     io.accession_id,
     io.image_occurrence_date AS "Image date",

@@ -25,6 +25,25 @@ from tests.conftest import AUTH_HEADERS
 
 client = TestClient(app)
 
+
+@pytest.fixture(autouse=True)
+def one_subject_per_accession():
+    """Resolve every accession number to a subject of its own, unless a test says otherwise.
+
+    That is the one-study-per-patient world ``COHORT_QUERY_THRESHOLD`` was written for, so the
+    gate tests below keep testing exactly what they always tested. The subject lookup lives in the
+    service module, so patching the router's ``get_records`` does not reach it. Tests that
+    exercise the per-subject rule itself patch this with their own count.
+    """
+
+    def resolve(query=None, params=None, **kwargs):
+        accession_ids = (params or {}).get("accession_ids", [])
+        return pd.DataFrame({"subject_count": [len(set(accession_ids))]})
+
+    with patch("data_access_api.services.cohort.get_records", side_effect=resolve) as stub:
+        yield stub
+
+
 # Sample input request and output
 sample_query_input = {
     "encrypted_project_id": "my_project",
@@ -190,6 +209,9 @@ sample_dataframe_query = {
 
 # Expected output
 sample_df_dict = {
+    # person_id is what lets the disclosure threshold be applied per subject; a cohort exposing
+    # neither it nor accession_id is refused before any row is released.
+    "person_id": [1, 2, 3],
     "age": [25, 30, 40],
     "gender": ["M", "F", "M"],
 }
@@ -313,7 +335,7 @@ def test_get_dataframe_rejects_cohort_below_threshold(mock_get_records, mock_dec
     """Row-level data is withheld for cohorts smaller than COHORT_QUERY_THRESHOLD."""
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
     mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.return_value = pd.DataFrame({"age": range(9)})
+    mock_get_records.return_value = pd.DataFrame({"age": range(9), "person_id": range(9)})
 
     response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
 
@@ -332,7 +354,7 @@ def test_get_dataframe_below_threshold_does_not_disclose_row_count(
 
     details = []
     for row_count in (0, 9):
-        mock_get_records.return_value = pd.DataFrame({"age": range(row_count)})
+        mock_get_records.return_value = pd.DataFrame({"age": range(row_count), "person_id": range(row_count)})
         response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
         details.append(response.json()["detail"])
 
@@ -347,7 +369,7 @@ def test_get_dataframe_allows_cohort_at_threshold(mock_get_records, mock_decrypt
     """A cohort exactly at the threshold is released — the gate is not off-by-one."""
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
     mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.return_value = pd.DataFrame({"age": range(10)})
+    mock_get_records.return_value = pd.DataFrame({"age": range(10), "person_id": range(10)})
 
     response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
 
@@ -680,3 +702,110 @@ def test_validate_query_rejects_dml_and_ddl(query: str):
         validate_query(query)
     assert exc_info.value.status_code == 400
     assert "SELECT" in exc_info.value.detail
+
+
+# ---------------------------------------------------------------------------
+# The disclosure threshold counts subjects, not rows
+# ---------------------------------------------------------------------------
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_records")
+def test_get_dataframe_rejects_many_rows_from_too_few_subjects(
+    mock_get_records, mock_decrypt, mock_get_settings
+):
+    """Forty rows covering three people is below a floor of ten.
+
+    This is the case the row count used to wave through: the floor exists to stop a response
+    revealing that ">=1 patient matched", and forty rows from three patients protects nobody.
+    """
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
+    mock_decrypt.return_value = "decrypted-id"
+    mock_get_records.return_value = pd.DataFrame({"person_id": [1, 2, 3] * 40, "age": range(120)})
+
+    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 403
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_records")
+def test_get_dataframe_refuses_a_cohort_whose_subjects_cannot_be_counted(
+    mock_get_records, mock_decrypt, mock_get_settings
+):
+    """No person_id and no accession_id means the floor cannot be applied, so nothing is released."""
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
+    mock_decrypt.return_value = "decrypted-id"
+    mock_get_records.return_value = pd.DataFrame({"age": range(500)})
+
+    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    # 400, not the 403: this reports the shape of the query, never anything about the data, so it
+    # is safe to name the missing column and useless as a membership oracle.
+    assert response.status_code == 400
+    assert "person_id" in response.json()["detail"]
+    assert "accession_id" in response.json()["detail"]
+    assert "500" not in response.json()["detail"]
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_records")
+def test_get_dataframe_counts_subjects_not_rows_at_the_boundary(
+    mock_get_records, mock_decrypt, mock_get_settings
+):
+    """Exactly ten distinct people is allowed however many rows they contribute."""
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
+    mock_decrypt.return_value = "decrypted-id"
+    mock_get_records.return_value = pd.DataFrame({"person_id": list(range(10)) * 3, "age": range(30)})
+
+    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_records")
+def test_get_accession_ids_rejects_many_studies_from_too_few_subjects(
+    mock_get_records, mock_decrypt, mock_get_settings, one_subject_per_accession
+):
+    """Thirty studies that resolve to three patients do not clear a floor of ten."""
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
+    mock_decrypt.return_value = "decrypted-id"
+    mock_get_records.return_value = pd.DataFrame({"accession_id": [f"ACC{i}" for i in range(30)]})
+    one_subject_per_accession.side_effect = None
+    one_subject_per_accession.return_value = pd.DataFrame({"subject_count": [3]})
+
+    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 403
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_records")
+def test_get_accession_ids_uncountable_is_indistinguishable_from_below_threshold(
+    mock_get_records, mock_decrypt, mock_get_settings, one_subject_per_accession
+):
+    """On this route an unestablished count must look exactly like a small one.
+
+    Unlike /cohort/dataframe there is no separate 400 here: the refusal has to stay byte-identical
+    across a zero cohort, a below-threshold one, and one whose subjects could not be resolved, or
+    the refusal itself becomes the oracle the threshold exists to prevent.
+    """
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
+    mock_decrypt.return_value = "decrypted-id"
+    mock_get_records.return_value = pd.DataFrame({"accession_id": [f"ACC{i}" for i in range(30)]})
+    one_subject_per_accession.side_effect = None
+
+    responses = []
+    for subject_count in (0, 3):
+        one_subject_per_accession.return_value = pd.DataFrame({"subject_count": [subject_count]})
+        responses.append(client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS))
+
+    assert responses[0].status_code == responses[1].status_code == 403
+    assert responses[0].json()["detail"] == responses[1].json()["detail"]
+    assert "3" not in responses[1].json()["detail"]
