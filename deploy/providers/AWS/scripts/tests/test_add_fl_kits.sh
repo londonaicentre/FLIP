@@ -120,6 +120,7 @@ FAIL=0
 STARTUP_OVERRIDES=()
 KEYCOUNT_OVERRIDES=()
 YES_MODE=""
+PROD_MODE=""  # PROD value for the next run_case (default stag)
 
 run_case() {
     local name="$1" N="$2" env_json="$3" nets="$4"
@@ -144,7 +145,7 @@ run_case() {
     LAST_ENVF="$(mktemp --tmpdir="${TEST_ROOT}")"
     printf 'SOMETHING=1\nFL_KIT_SLOT_NAMES=%s\nOTHER=2\n' "${env_json}" > "${LAST_ENVF}"
     LAST_OUT="$(printf 'n\n' | env PATH="${MOCKBIN}:${PATH}" \
-        N="${N}" PROD=stag AICENTRE_BUCKET_NAME=testbucket FLARE_KIT_DATE=2026-01-01 \
+        N="${N}" PROD="${PROD_MODE:-stag}" AICENTRE_BUCKET_NAME=testbucket FLARE_KIT_DATE=2026-01-01 \
         MAIN_ENV_FILE="${LAST_ENVF}" FL_BACKEND=nvflare FIXTURE_DIR="${fx}" YES="${YES_MODE}" \
         bash "${SCRIPT}" 2>&1)"
     LAST_RC=$?
@@ -154,6 +155,7 @@ run_case() {
     STARTUP_OVERRIDES=()
     KEYCOUNT_OVERRIDES=()
     YES_MODE=""
+    PROD_MODE=""
 }
 
 check() {  # assert the plan's activate/mint lines
@@ -288,6 +290,24 @@ run_case "guard abort after upload keeps recovery guidance (N=1)" 1 '["Trust_1",
 check_refuses "refuses net-2 overwrite" "already has objects — refusing to overwrite"
 check_refuses "reports the net-1 upload" "Kits already uploaded this run: net-1/Trust_3"
 check_refuses "warns against the instinctive re-run" "Do NOT re-run add-fl-kits"
+
+# --- PROD values (FLIP#749): the LZA pair rides the legacy env workspaces; anything else is refused ---
+
+PROD_MODE=lza-stag
+run_case "PROD=lza-stag plans as the stag env (N=2)" 2 '["Trust_1", "Trust_2"]' "net-1 net-2" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
+check "activate none, mint Trust_3 Trust_4" "(none — no spare kits)" "Trust_3 Trust_4  (existing max: Trust_2)"
+check_contains "plan header names the stag env" 1 "Plan (stag):"
+
+PROD_MODE=lza
+run_case "PROD=lza plans as the prod env (N=1)" 1 '["Trust_1", "Trust_2"]' "net-1 net-2" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
+check_contains "plan header names the prod env" 1 "Plan (prod):"
+
+PROD_MODE=lza-bogus
+run_case "unknown PROD value refused (N=1)" 1 '["Trust_1", "Trust_2"]' "net-1 net-2" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
+check_refuses "rejects PROD=lza-bogus before touching anything" "PROD must be one of"
 
 echo ""
 echo "==== ${PASS} passed, ${FAIL} failed ===="

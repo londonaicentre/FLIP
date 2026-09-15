@@ -24,6 +24,16 @@ ENV=production
 else ifeq ($(PROD),stag)
 __DCKR_SUFFIX=production
 ENV=stag
+# The LZA pair (FLIP#749) runs the production compose like stag/prod but reads
+# its own kit suffix — trust/.env.<CODE>.lza-prod / .lza-stag, the files the
+# AWS-side register-trusts writes for PROD=lza / lza-stag. Left out, PROD=lza-stag
+# fell through to the DEVELOPMENT compose and the bare legacy .env.<KIT>.
+else ifeq ($(PROD),lza)
+__DCKR_SUFFIX=production
+ENV=lza-prod
+else ifeq ($(PROD),lza-stag)
+__DCKR_SUFFIX=production
+ENV=lza-stag
 else
 __DCKR_SUFFIX=development
 ENV=development

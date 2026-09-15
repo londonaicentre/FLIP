@@ -9,7 +9,7 @@
 | `source/sys-admin.rst` | System administration, deployment, auth configuration |
 | `source/user-guides.rst` | User-facing workflows and guides |
 | `source/api-reference.rst` | REST API endpoint reference |
-| `source/deploy-flip.rst` | Deployment instructions (central hub, TRE, on-prem) |
+| `source/deploy-flip.rst` | Deployment instructions (central hub — a parent page with one child per AWS deployment mode — TRE, on-prem) |
 | `source/working-with-flip-apps.rst` | Building FL apps (NVFLARE / Flower) |
 | `source/flip-workflow.rst` | End-to-end FLIP workflow |
 | `source/faqs.rst` | Frequently asked questions |
@@ -19,10 +19,10 @@
 
 | Directory | Topic |
 |-----------|-------|
-| `source/components/` | Per-component deep dives: `overview` (component map), `component-central-hub` (hub services + the generated AWS diagram), `component-fl-nets` (nets, scheduler, job types, config, privacy filters), `component-trust-apis` (trust-api / imaging-api / data-access-api), OMOP, XNAT, PACS, logging stack |
+| `source/components/` | Per-component deep dives: `overview` (component map), `component-central-hub` (hub services, deployment-agnostic), `component-fl-nets` (nets, scheduler, job types, config, privacy filters), `component-trust-apis` (trust-api / imaging-api / data-access-api), OMOP, XNAT, PACS, logging stack |
 | `source/sys-admin/` | Admin tasks (user roles, project/user management, platform support) |
 | `source/user-guides/` | User guide files |
-| `source/deploy-flip/` | Per-target deployment guides (central hub, TRE, on-prem) |
+| `source/deploy-flip/` | Per-target deployment guides: `deploy-central-hub` (modes table + shared sections) with children `deploy-central-hub-aws` (self-contained, the legacy generated diagrams) and `deploy-central-hub-aws-lza` (platform-managed, the LZA generated diagrams); TRE; on-prem |
 | `source/working-with-flip-apps/` | Step-by-step FLARE / Flower app authoring |
 
 ## How to Read

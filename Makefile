@@ -26,6 +26,18 @@ else ifeq ($(PROD),stag)
 MAIN_ENV_FILE=.env.stag
 __DCKR_SUFFIX=production
 ENV=stag
+# LZA estate (FLIP#749): the hub itself deploys via deploy/providers/AWS, but the
+# kit-file targets here (new-trust, sync-trust-kit[s]) must name
+# trust/.env.<CODE>.$(ENV) the way that Makefile's KIT_ENV_SUFFIX and
+# register-trusts.sh read it back — .lza-prod / .lza-stag, never .stag.
+else ifeq ($(PROD),lza)
+MAIN_ENV_FILE=.env.lza-prod
+__DCKR_SUFFIX=production
+ENV=lza-prod
+else ifeq ($(PROD),lza-stag)
+MAIN_ENV_FILE=.env.lza-stag
+__DCKR_SUFFIX=production
+ENV=lza-stag
 else
 MAIN_ENV_FILE=.env.development
 __DCKR_SUFFIX=development
@@ -307,8 +319,9 @@ ci:
 # gitignored deploy env files, which contributors don't have.
 checkov-lint:
 	bash deploy/providers/AWS/scripts/checkov_lint.sh
-# Re-render the two committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ from
-# deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copy is rendered at docs
+# Re-render the four committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ — the
+# self-contained pair (central-hub-aws-{network,data}.png) and the LZA pair (-lza-{network,data}) —
+# from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
 # build time instead). Uses the local graphviz when `dot` is installed; the dev hosts have none,
 # so it otherwise runs the identical render in a throwaway python:3.12-slim container. The two
 # paths are not byte-identical: the committed copies are the container render (byte-stable across

@@ -32,7 +32,8 @@
 # trust registration — flip-api reconciles its pool on a miss, so no restart and no
 # task-definition change is needed.
 #
-# Invoked by `make -C deploy/providers/AWS add-fl-kits N=<n> PROD=stag|true [YES=1]`,
+# Invoked by `make -C deploy/providers/AWS add-fl-kits N=<n> PROD=<env> [YES=1]`
+# (PROD=stag|true, or lza|lza-stag for the LZA estate — FLIP#749),
 # which exports the env-file vars this script reads (AICENTRE_BUCKET_NAME,
 # FLARE_KIT_DATE, AWS_PROFILE, FL_BACKEND, PROD) plus N / YES / MAIN_ENV_FILE.
 #
@@ -52,9 +53,9 @@
 set -euo pipefail
 
 N="${N:?N is required (number of kit slots to add, e.g. N=2)}"
-PROD="${PROD:?PROD is required (stag|true)}"
-AICENTRE_BUCKET_NAME="${AICENTRE_BUCKET_NAME:?AICENTRE_BUCKET_NAME must be set (run via make with PROD=stag|true)}"
-FLARE_KIT_DATE="${FLARE_KIT_DATE:?FLARE_KIT_DATE must be set (run via make with PROD=stag|true)}"
+PROD="${PROD:?PROD is required (stag|true|lza|lza-stag)}"
+AICENTRE_BUCKET_NAME="${AICENTRE_BUCKET_NAME:?AICENTRE_BUCKET_NAME must be set (run via make with PROD=<env>)}"
+FLARE_KIT_DATE="${FLARE_KIT_DATE:?FLARE_KIT_DATE must be set (run via make with PROD=<env>)}"
 MAIN_ENV_FILE="${MAIN_ENV_FILE:?MAIN_ENV_FILE must be set (the env file to append FL_KIT_SLOT_NAMES to)}"
 YES="${YES:-}"
 
@@ -69,11 +70,16 @@ if ! [[ "${N}" =~ ^[0-9]+$ ]] || [[ "${N}" -lt 1 ]]; then
     exit 1
 fi
 
+# ENV_NAME selects the CA workspace and project YAML (provision/workspace-<env>,
+# net-N_project_<env>.yml). The LZA environments deliberately reuse the legacy
+# ones: their kits carry the same server FQDN and root CA, so trusts keep their
+# client kits across the DNS cutover (FLIP#749). A staging estate provisioned
+# with a fresh CA instead trips the fingerprint guard below, never a silent mint.
 case "${PROD}" in
-true) ENV_NAME="prod" ;;
-stag) ENV_NAME="stag" ;;
+true | lza) ENV_NAME="prod" ;;
+stag | lza-stag) ENV_NAME="stag" ;;
 *)
-    echo "❌ PROD must be 'stag' or 'true', got '${PROD}'." >&2
+    echo "❌ PROD must be one of 'stag', 'true', 'lza', 'lza-stag' — got '${PROD}'." >&2
     exit 1
     ;;
 esac
