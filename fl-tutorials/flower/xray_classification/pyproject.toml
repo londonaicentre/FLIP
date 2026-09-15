@@ -37,7 +37,7 @@ license = "Apache-2.0"
 # used here because it makes `uv sync` unresolvable on a workstation, where the path does not
 # exist. Pick up flip-utils changes with `make build-fl FL_BACKEND=flower`.
 dependencies = [
-    "flwr[simulation]>=1.32.0",
+    "flwr[simulation]>=1.36.0",
     "monai>=1.6.0",
     "numpy>=2.4.2",
     "pandas>=3.0.0",

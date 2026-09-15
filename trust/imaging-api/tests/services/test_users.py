@@ -27,6 +27,7 @@ from imaging_api.services.users import (
     to_create_imaging_user,
     user_exists,
 )
+from imaging_api.utils.encryption import XNAT_SETUP_PATH_CONTEXT
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
 
 
@@ -348,7 +349,9 @@ def test_create_user_from_central_hub_user(mock_to_create, mock_create, mock_iss
     assert created_user.encrypted_setup_path == "encrypted_setup"
     assert user_profile.username == "alice"
     mock_issue.assert_called_once_with(user_profile.username, headers)
-    mock_encrypt.assert_called_once_with("/app/template/XDATScreen_UpdateUser.vm?a=al&s=se")
+    mock_encrypt.assert_called_once_with(
+        "/app/template/XDATScreen_UpdateUser.vm?a=al&s=se", context=XNAT_SETUP_PATH_CONTEXT
+    )
 
 
 # ---------------------------------------------------------------------------

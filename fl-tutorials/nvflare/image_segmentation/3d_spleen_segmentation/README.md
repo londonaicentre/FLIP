@@ -195,8 +195,8 @@ it as "no matching scan".
 
 The accession-to-case mapping is fetched at run time from the public `aicentreflip/trust-data` dataset
 (the same mock data the Trusts are seeded from), so nothing needs to be checked in. It is cached beside
-the labels directory, so a re-run needs no network. Set `HF_TRUST_DATA_REVISION=<sha>` to pin the
-dataset revision rather than reading the moving `main`.
+the labels directory, so a re-run needs no network. It is read at the data-version tag pinned in
+`trust/.data_version`; set `HF_TRUST_DATA_REVISION=<sha|main>` to read another revision.
 
 `TRUST=N` filters the manifest to one site using that dataset's `source_trust` column (`1` is GSTT,
 `2` is KCH), and is rarely needed now that one run covers the roster. It is the **OMOP data

@@ -1385,7 +1385,20 @@ the direction of the request flow.
                   └─────────────────────────────┘    └──────────────────────────────┘
 ```
 
-![AWS architecture](docs/AWS.drawio.png "AWS architecture")
+![Central Hub on AWS — request and FL paths](docs/central-hub-aws-network.png "Central Hub on AWS — request and FL paths")
+
+![Central Hub on AWS — data and platform services](docs/central-hub-aws-data.png "Central Hub on AWS — data and platform services")
+
+Both pictures are rendered from [`architecture/central_hub.py`](architecture/central_hub.py) (the `diagrams`
+library over graphviz), not drawn by hand. `make aws-diagram` at the repo root regenerates these two committed
+copies; the ReadTheDocs [Central Hub page](https://londonaicentreflip.readthedocs.io/en/latest/components/component-central-hub.html)
+renders the same script at build time. `tests/test_architecture_diagram.py` pins the script's node map to the
+`.tf` files in both directions — a drawn resource that disappears, or a new ECS service / bucket / load balancer
+that is not drawn, fails the `AWS deploy tests` CI job — so a change to a drawn resource updates
+`TERRAFORM_ADDRESSES` in the same PR. The committed copies are the container render (`python:3.12-slim`
++ Debian graphviz), which is byte-stable from run to run; a host `dot` of another graphviz version lays the
+same graph out differently and legitimately produces a different file for an unchanged diagram, so do not
+commit a re-render whose only change is the graphviz that made it.
 
 ### Central Hub Infrastructure
 
@@ -1404,7 +1417,7 @@ the direction of the request flow.
 - **Route53**: `A` alias records for the canonical subdomain (→ CloudFront) and for the FL-server NLB.
 - **EFS**: Shared file systems and access points used by the FL services for workspace volumes (configs, certs, transfer dir). Mount targets live in the **private subnets**.
 - **Cloud Map (Service Discovery)**: Private DNS namespace `flip.local` used for ECS task-to-task resolution (e.g. `fl-api-net-1.flip.local`).
-- **VPC endpoints**: Interface endpoints (Secrets Manager, SSM, CloudWatch Logs, ECR API + DKR) in the **private subnets** plus an S3 gateway endpoint. Allow Fargate tasks to reach AWS APIs without traversing the NAT Gateway.
+- **VPC endpoints**: Interface endpoints (Secrets Manager, SSM, CloudWatch Logs) in the **private subnets** plus an S3 gateway endpoint. Allow Fargate tasks to reach those AWS APIs without traversing the NAT Gateway. There are deliberately no ECR endpoints: images are pulled from GHCR (and Docker Hub) through the NAT Gateway, see the header of `vpc_endpoints.tf`.
 - **RDS**: PostgreSQL 17 managed database (Terraform default, see `var.postgres_version`), in the **private subnets**. Subnet group + security group ingress restricted to the Central Hub bastion SG and the `flip-api` ECS task SG.
 - **CloudWatch**: Logging and monitoring for ECS tasks, the Trust EC2, the WAFv2 ACL, and VPC endpoints. The minimal Central Hub bastion does not run the CloudWatch agent.
 - **Secrets Manager**: Secure storage for API secrets and database credentials (`FLIP_API` secret).
@@ -1424,7 +1437,7 @@ the direction of the request flow.
 | ECS Fargate tasks (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) | **Private** | `assign_public_ip = false`, awsvpc ENIs |
 | RDS (PostgreSQL) | **Private** | DB subnet group spans both private subnets |
 | EFS mount targets | **Private** | One per AZ |
-| VPC interface endpoints (Secrets Manager, SSM, Logs, ECR API/DKR) | **Private** | One ENI per AZ |
+| VPC interface endpoints (Secrets Manager, SSM, Logs) | **Private** | One ENI per AZ |
 | S3 gateway endpoint | (routes attached to private route tables) | No ENI |
 
 ### Trust Infrastructure

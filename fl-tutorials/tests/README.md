@@ -13,20 +13,73 @@ limitations under the License.
 
 # fl-tutorials tests
 
-CPU-only pytest suite over the tutorial apps: their transform chains, plus a static drift guard on
-the Flower apps' `min_clients` wiring (which also covers `fl-apps/flower/`, the templates that
-actually deploy). No GPU, no dataset download, no FL image, no network — the fixtures are synthetic
-DICOMs built in-process, and the whole suite runs in a couple of seconds.
+CPU-only pytest suites over `fl-tutorials/`: the tutorial apps' transform chains plus a static
+drift guard on the Flower apps' `min_clients` wiring (which also covers `fl-apps/flower/`, the
+templates that actually deploy), the EHR risk-prediction tutorial's shared feature engineering +
+model contract (`test_ehr_feature_engineering.py` — that app reads no DICOM, so it is deliberately
+absent from `DICOM_APPS`), and a second, dataset-tooling suite over `datasets/**`. No GPU,
+no dataset download, no FL image, no network — fixtures are synthesised in-process (synthetic
+DICOMs and dataframes, or for the dataset-tooling tests, small in-memory DICOM/CSV fixtures), and
+each suite runs in well under a second.
 
 ```bash
-make -C fl-tutorials test        # ruff over fl-tutorials/ + this suite
-make -C fl-tutorials pytest      # this suite only
-make -C fl-tutorials lint        # ruff only
+make -C fl-tutorials test              # ruff over fl-tutorials/ + both suites below
+make -C fl-tutorials pytest            # tutorial-app suite only (tests/, minus tests/datasets/)
+make -C fl-tutorials pytest-datasets   # dataset-tooling suites only (tests/datasets/, one env per dataset)
+make -C fl-tutorials lint              # ruff only
 ```
 
-CI runs the same two commands on every pull request touching `fl-tutorials/**`, `fl-apps/flower/**`
+CI runs the same commands on every pull request touching `fl-tutorials/**`, `fl-apps/flower/**`
 or the flip-utils source/environment, and on pushes to main/develop
 (`.github/workflows/fl-tutorials-tests.yml`), for both backends.
+
+## Layout
+
+Tests mirror the source tree and are named for the file they cover —
+`tests/datasets/spleen/test_download_spleen_dataset.py` covers
+`datasets/spleen/download_spleen_dataset.py`, `tests/datasets/cxr/test_omop_convert_cxr.py`
+covers `datasets/cxr/omop_convert_cxr.py`, and
+`tests/datasets/synthea/test_build_synthea_dataframe.py` covers
+`datasets/synthea/build_synthea_dataframe.py` — the same convention as
+`trust/imaging-api/tests/routers/test_imaging.py`.
+
+Cross-cutting guards that assert a property across several source files
+(`test_dicom_orientation.py`, `test_flower_min_clients_wiring.py`,
+`test_spleen_inference_config_parity.py`, `test_fl_tutorials_make_targets.py`,
+`test_sim_tutorial_stale_guard.py`) stay at the root of `tests/`, because
+no single source path describes what they cover.
+
+**Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
+the tutorial apps themselves and runs in flip-utils' environment (`flip-utils[full]` — monai,
+pydicom, torch, timm, sklearn), which is what the FL images give those apps at runtime — see
+"What it runs" below (`make -C fl-tutorials pytest`, which passes `--ignore=tests/datasets`).
+`tests/datasets/` instead covers `fl-tutorials/datasets/**`, which is workstation tooling that
+never runs on an FL image — it has no business pulling `pandera`/`sqlglot` (needed to validate
+the OMOP tables that tooling generates) into flip-utils' runtime environment.
+
+Those tests run against **each dataset's own uv project**, one pytest invocation per project
+(`DATASET_TEST_PROJECTS` in `fl-tutorials/Makefile`, currently `spleen cxr synthea`), each declaring
+what that dataset's tooling actually needs. `make -C fl-tutorials pytest-datasets` runs them all.
+
+The split is not just tidiness: it is the only thing in CI that checks a dataset's
+`pyproject.toml` declares what its code actually imports. A dataset's tests import its converter,
+which imports the shared contract in `datasets/utils/`, so an undeclared transitive dependency
+fails that dataset's own run. It earned that immediately — adding `datasets/cxr` surfaced a
+missing `requests`, imported at module scope by `omop_schemas.py`. (Verified rather than assumed:
+deleting `requests` from `datasets/cxr/pyproject.toml` against a clean venv errors all 13 cxr
+tests. Note a *stale* venv hides this — `uv run` does not prune an already-installed package, so
+re-test with `rm -rf datasets/<name>/.venv` first.)
+
+`tests/datasets/utils/` — the shared contract itself — runs **once**, in the first listed
+project's environment (`DATASET_UTILS_PROJECT`). Any dataset environment can host it, and
+re-running it per project would only repeat the same assertions; it is not what catches the drift
+above.
+
+`tests/datasets/pytest.ini` is a second inifile, deliberately: it anchors this subtree's rootdir
+at `tests/datasets/`, which is what keeps `tests/conftest.py` out of these runs. That conftest
+imports monai and pydicom at module scope to build the tutorial-app fixtures, and pytest loads
+every conftest between rootdir and the collected tests — so without the second inifile, a dataset
+project that does not declare monai fails during *collection*, before running a single test.
 
 ## Why this exists
 
@@ -58,6 +111,9 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_fl_api_writes_the_key_the_apps_read` | fl-api-flower writes the same `flip-min-clients` key the apps read — the two live in different packages. |
 | `test_strategy_gets_min_clients_from_the_injected_trust_count` | Every FLIP Flower app passes `min_clients` sourced from `min_clients_from_run_config(run_config)`, not a constant. |
 | `test_app_config_declares_flip_min_clients` | Each app declares the key in `[tool.flwr.app.config]` (flwr rejects undeclared overrides) at flwr's default of 2 or more. |
+| `test_tutorial_declares_a_job_type_backed_by_a_template` | Each Flower tutorial's `config.json` names a job type that has an `fl-apps/flower/<job_type>/` template and a `required_files.json` entry — otherwise the researcher's first upload dies inside the bundler. |
+| `test_tutorial_ships_every_file_its_job_type_requires` | The manifest's required files are all present, so the gap fails here rather than mid-e2e after a trust has already pulled imaging. |
+| `test_platform_owned_files_are_identical_in_the_tutorial` | Every file the fl-apps template ships is present and equivalent in the tutorial's `app/`. flip-api **reserves** those names and discards the researcher's copy, so a drifted tutorial runs one thing on the simulator and deploys another. Files with no executable code in either tree may differ, which is what lets each tutorial keep its own `__init__.py` docstring. |
 | `test_phantom_has_no_dihedral_symmetry` | The fixture is non-square **and** distinguishable from all eight of its dihedral variants. |
 | `test_phantom_dicom_round_trips` | Each synthetic encoding decodes back to the phantom. |
 | `test_loader_prefix_matches_pixel_data` | The chain up to the first resampling transform is `np.array_equal` to `pydicom`'s `PixelData`. |
@@ -66,6 +122,9 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_monai_deprecations_escalate_to_errors` | `pytest.ini`'s blanket `ignore::` lines still leave MONAI's own deprecations escalated to errors — the notice that a pinned reader convention is about to change must not rejoin the ignored torch/numpy noise. |
 | `test_loader_pins_its_reader` | The chain names `PydicomReader(swap_ij=False)` instead of inheriting a reader. |
 | `test_chain_composes` / `test_validation_chain_is_deterministic` | Both chains import, compose, run, and the validation chain is reproducible. |
+| `test_documented_root_target_resolves` | Every `make -C fl-tutorials <target>` the docs quote resolves at the fl-tutorials root, whose Makefile only forwards a fixed name list — a dataset target documented in the root form but left off that list fails here, not with "No rule to make target" on a reader's machine. |
+| `test_kills_only_this_checkouts_processes_in_this_pid_namespace` | `sim-tutorial.sh`'s stale-SuperLink guard, lifted out of the script and run against decoys: it stops the one from this checkout, spares one from another checkout, and spares one in another PID namespace (a container's, under any runtime — the dev stack's fl-server matches the same `pgrep` pattern). Skips the namespace case where unprivileged `unshare` is unavailable. |
+| `test_guard_decides_containment_by_pid_namespace_not_cgroup_string` | The guard compares `/proc/<pid>/ns/pid`, not a runtime-specific `/proc/<pid>/cgroup` string, which only docker's systemd driver produces. |
 
 Three design points are load-bearing, and each is itself asserted rather than assumed:
 

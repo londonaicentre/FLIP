@@ -27,6 +27,7 @@ from flip_api.cohort_services.submit_cohort_query import (
 from flip_api.db.models.main_models import TrustTask
 from flip_api.domain.schemas.cohort import SubmitCohortQuery
 from flip_api.domain.schemas.status import TaskType
+from flip_api.utils.encryption import PROJECT_ID_CONTEXT
 
 # Mocking the project ID for the test
 project_id = uuid.uuid4()
@@ -55,8 +56,8 @@ def sample_query():
 @pytest.fixture
 def mock_encrypt():
     """Mock the encrypt function to return a fixed value."""
-    with patch("flip_api.cohort_services.submit_cohort_query.encrypt", return_value="encrypted_project_id"):
-        yield
+    with patch("flip_api.cohort_services.submit_cohort_query.encrypt", return_value="encrypted_project_id") as mock:
+        yield mock
 
 
 @pytest.fixture
@@ -363,6 +364,18 @@ def test_submit_cohort_query_task_payload_contains_query(
     # Payload should be a JSON string containing the query
     assert "SELECT * FROM patients" in added_task.payload
     assert "encrypted_project_id" in added_task.payload
+
+
+def test_submit_cohort_query_seals_the_project_id_for_its_context(
+    mock_request, sample_query, mock_encrypt, mock_can_modify
+):
+    """The project id is opened by data-access-api / imaging-api under the ``project_id`` context."""
+    mock_trust = MagicMock(id="trust_1", name="Trust A", endpoint="http://trust-a.com")
+    mock_trust.name = "Trust A"
+
+    submit_cohort_query(mock_request, sample_query, _db(trusts=[mock_trust]), user_id)
+
+    mock_encrypt.assert_called_once_with(str(sample_query.project_id), context=PROJECT_ID_CONTEXT)
 
 
 @pytest.mark.parametrize(

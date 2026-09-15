@@ -37,7 +37,7 @@ from flip_api.utils.constants import (
     IMAGING_INVITE_TEMPLATE_NAME,
     IMAGING_PROJECT_ACCESS_TEMPLATE_NAME,
 )
-from flip_api.utils.encryption import encrypt
+from flip_api.utils.encryption import XNAT_SETUP_PATH_CONTEXT, encrypt
 
 # The invite link PT-079 sends in place of a password: an XNAT alias-token path, whose
 # a=/s= pair is a bearer capability to set that user's password.
@@ -105,7 +105,7 @@ def test_imaging_notifications_log_both_templates_without_leaking_the_invite_lin
                 "created_users": [
                     {
                         "username": "newbie@example.com",
-                        "encrypted_setup_path": encrypt(XNAT_SETUP_PATH),
+                        "encrypted_setup_path": encrypt(XNAT_SETUP_PATH, context=XNAT_SETUP_PATH_CONTEXT),
                         "email": "newbie@example.com",
                     }
                 ],

@@ -5,8 +5,10 @@ FLIP components
 .. toctree::
    :maxdepth: 2
 
-   components/architecture-overview
-   components/component-fl-nodes
+   components/overview
+   components/component-central-hub
+   components/component-fl-nets
+   components/component-trust-apis
    components/component-omop-database
    components/component-xnat
    components/component-pacs

@@ -49,7 +49,7 @@ from flip_api.utils.constants import (
     IMAGING_INVITE_TEMPLATE_NAME,
     IMAGING_PROJECT_ACCESS_TEMPLATE_NAME,
 )
-from flip_api.utils.encryption import encrypt
+from flip_api.utils.encryption import XNAT_SETUP_PATH_CONTEXT, encrypt
 
 # ---------------------------------------------------------------------------
 # POST /api/users/access  (access_request)
@@ -114,7 +114,9 @@ def _seed_completed_imaging_task(session, trust_id: UUID, project_id: UUID) -> T
     one already-existing user being added to the project (gets a project-access
     notification).
     """
-    encrypted_setup_path = encrypt("/app/template/XDATScreen_UpdateUser.vm?a=alias&s=secret")
+    encrypted_setup_path = encrypt(
+        "/app/template/XDATScreen_UpdateUser.vm?a=alias&s=secret", context=XNAT_SETUP_PATH_CONTEXT
+    )
     payload = {"project_id": str(project_id)}
     # The result schema is the trust-side ``ICreatedImagingProject``, which the
     # parser deserialises with ``ID`` -> ``imaging_project_id``. Both

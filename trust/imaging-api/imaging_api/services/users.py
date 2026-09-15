@@ -17,7 +17,7 @@ import requests
 
 from imaging_api.config import get_settings
 from imaging_api.routers.schemas import CentralHubUser, CreatedUser, CreateUser, User
-from imaging_api.utils.encryption import encrypt
+from imaging_api.utils.encryption import XNAT_SETUP_PATH_CONTEXT, encrypt
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
 from imaging_api.utils.logger import logger
 from imaging_api.utils.passwords import generate_complex_password
@@ -215,7 +215,7 @@ def create_user_from_central_hub_user(
     setup_path = issue_setup_token(user_profile.username, headers)
     created_user = CreatedUser(
         username=user_profile.username,
-        encrypted_setup_path=encrypt(setup_path),
+        encrypted_setup_path=encrypt(setup_path, context=XNAT_SETUP_PATH_CONTEXT),
         email=create_user_request.email,
     )
     return created_user, user_profile

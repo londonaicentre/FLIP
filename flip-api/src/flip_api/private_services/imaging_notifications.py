@@ -16,6 +16,7 @@ import json
 from uuid import UUID
 
 from botocore.exceptions import BotoCoreError
+from cryptography.exceptions import InvalidTag
 from sqlmodel import Session, col, select
 
 from flip_api.db.models.main_models import Queries, Trust, TrustTask, XNATImageStatus, XNATProjectStatus
@@ -27,14 +28,14 @@ from flip_api.domain.interfaces.trust import (
 from flip_api.private_services.project_images_helpers import insert_status
 from flip_api.utils.constants import IMAGING_INVITE_TEMPLATE_NAME, IMAGING_PROJECT_ACCESS_TEMPLATE_NAME
 from flip_api.utils.email_sender import EmailDispatchError, send_templated_email
-from flip_api.utils.encryption import decrypt
+from flip_api.utils.encryption import XNAT_SETUP_PATH_CONTEXT, decrypt
 from flip_api.utils.logger import logger
 
 
 def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
     """Post-process a successful CREATE_IMAGING task: persist status and send email notifications.
 
-    Sends credential emails to newly created users, and project access notifications
+    Sends invite emails to newly created users, and project access notifications
     to existing users who were added to the project.
 
     Called after the task result has been committed to the database.
@@ -104,13 +105,28 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
     trust = db.exec(select(Trust).where(Trust.id == task.trust_id)).first()
     trust_name = trust.name if trust else "Unknown Trust"
 
+    # Open every invite before sending anything. A link that fails authentication is not a
+    # per-recipient problem: every setup path in this result was sealed by the same trust under
+    # the same key, so it means the hub's and the trust's AES_KEY_BASE64 differ or one side is on
+    # the other side of a payload-format change. Completing the task would lose the only copy of
+    # the single-use link, so raise and let the task stay queued for post-processing instead.
+    try:
+        setup_paths = [
+            decrypt(user.encrypted_setup_path, context=XNAT_SETUP_PATH_CONTEXT)
+            for user in imaging_project.created_users
+        ]
+    except (InvalidTag, KeyError, ValueError) as e:
+        raise EmailDispatchError(
+            f"XNAT invite from trust '{trust_name}' for task {task.id} failed authentication "
+            f"({type(e).__name__}): the hub's and the trust's AES_KEY_BASE64 differ, or the two run "
+            "builds with different payload formats — the task stays queued for retry"
+        ) from e
+
     # Send invite emails to newly created users. The email carries a host-less "set your own
     # password" link (an XNAT alias-token path), never a password (FLIP-PT-079). The link is
     # decrypted here only to place it in the email — no standing credential is ever transmitted.
-    for user in imaging_project.created_users:
+    for user, setup_path in zip(imaging_project.created_users, setup_paths, strict=True):
         try:
-            setup_path = decrypt(user.encrypted_setup_path)
-
             template_data = ISesTemplateData(
                 trust_name=trust_name,
                 project_name=imaging_project.name,
