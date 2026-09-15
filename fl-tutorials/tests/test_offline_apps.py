@@ -13,63 +13,79 @@
 # limitations under the License.
 """FL apps must not fetch anything from the internet at run time (FLIP#1206).
 
-Every weight, checkpoint or auxiliary network an app needs arrives through the scanned
-model-file upload path, so what a reviewer approved is byte-for-byte what runs on the hub's FL
-server and on every trust's client. A ``pretrained=True``, ``torch.hub`` or ``from_pretrained``
-call sidesteps that: the app is reviewed, the weights are fetched later from a URL that can serve
-different bytes, and ``torch.load`` on a swapped checkpoint is code execution next to patient
-data. It is also a functional failure — the FL server on a platform-managed estate and a trust
-host behind an NHS firewall have no internet route at all (a ``pretrained=True`` ServerApp
-hangs, the client dies with ``cannot sync with server Runner``).
+Every weight, checkpoint or auxiliary network an app needs arrives through the scanned model-file
+upload path, so the file a Trust can inspect before training is byte-for-byte the file that runs
+— on the hub's FL server and on every trust's client. A ``pretrained=True``, ``torch.hub`` or
+``from_pretrained`` call sidesteps that, and on a platform-managed estate (or behind an NHS
+firewall) there is no internet route anyway, so the job hangs. The user guide's *Model Files*
+section is the canonical statement of the rule.
 
 This guard walks every shipped app — the tutorials' ``app_files/`` and ``app/`` trees and the
-``fl-apps/`` templates — parses each module and fails on the *call sites* that download.
-Working on the AST rather than the text means a docstring or comment that mentions
-``pretrained=True`` (as the fixed apps do, to explain themselves) is not an offence. Dataset
-tooling under ``fl-tutorials/datasets/`` is host-side and deliberately exempt: it is *supposed*
-to download, into the gitignored ``fl-tutorials/data/``.
+``fl-apps/`` templates, discovered through ``git ls-files`` so gitignored build output and venvs
+can never be scanned — parses each module and fails on the common call shapes that download.
+It is a lint for honest mistakes, not a sandbox: it resolves import aliases and module-level
+constants, but not ``getattr``, ``**kwargs`` or values computed at run time. Working on the AST
+means a docstring or comment that mentions ``pretrained=True`` (as the fixed apps do, to explain
+themselves) is not an offence. Dataset tooling under ``fl-tutorials/datasets/`` is host-side and
+deliberately exempt: it is *supposed* to download, into the gitignored ``fl-tutorials/data/``.
 
-Apps that consume weights do so from a file beside their code, produced by that tutorial's
-``make weights`` target; the last test keeps the two in step.
+Two rules are positive rather than name-based, because the negative form kept missing spellings:
+any ``weights=`` that names a torchvision weights enum or weight name downloads, whatever the
+model builder; and constructing MONAI's ``PerceptualLoss`` (or lpips' ``LPIPS``) fetches its
+backbone through torch.hub *whatever* ``network_type`` says — ``squeeze`` included — unless the
+module first stages a hub dir (``torch.hub.set_dir``), which is what the LDM tutorial does.
 """
 
 from __future__ import annotations
 
 import ast
 import re
+import subprocess
+from collections import defaultdict
 from pathlib import Path
 
 import pytest
+from tutorial_apps import TUTORIALS_ROOT
 
-FL_TUTORIALS = Path(__file__).resolve().parents[1]
-REPO_ROOT = FL_TUTORIALS.parent
-FL_APPS = REPO_ROOT / "fl-apps"
+REPO_ROOT = TUTORIALS_ROOT.parent
+APP_DIR_NAMES = {"app_files", "app"}
 
-# Functions that download by design. Matched on the final attribute/name of the callee, so
-# `torch.hub.load_state_dict_from_url(...)` and a bare imported `load_state_dict_from_url(...)`
-# are both caught.
+# Downloaders by canonical dotted name (after import-alias resolution) …
+DOWNLOADERS = {
+    "torch.hub.load",
+    "torch.hub.load_state_dict_from_url",
+    "torch.hub.download_url_to_file",
+    "huggingface_hub.hf_hub_download",
+    "huggingface_hub.snapshot_download",
+    "monai.apps.download_url",
+    "monai.apps.download_and_extract",
+    "monai.apps.utils.download_url",
+    "monai.apps.utils.download_and_extract",
+    "monai.bundle.download",
+    "monai.bundle.load",
+    "urllib.request.urlretrieve",
+}
+# … and by final name wherever they come from, for the ones whose name is unambiguous.
 DOWNLOADING_CALLEES = {
     "load_state_dict_from_url",
     "download_url_to_file",
     "hf_hub_download",
     "snapshot_download",
+    "download_url",
+    "download_and_extract",
+    "urlretrieve",
 }
-# Perceptual-loss backbones MONAI/lpips resolve through torch.hub at first use. SqueezeNet is
-# the one small enough to ship; the rest download.
-HUB_BACKBONES = re.compile(r"^(alex|vgg|radimagenet_.*|medicalnet_.*|resnet50)$")
+HUB_BACKED_LOSSES = {"PerceptualLoss", "LPIPS"}
+STAGES_HUB_DIR = "torch.hub.set_dir"
+# torchvision weight names: `weights="DEFAULT"`, `weights="IMAGENET1K_V1"`, `weights="COCO_V1"`.
+WEIGHT_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
+LOCAL_PATH_PREFIXES = ("/", "./", "../", "~")
 
-
-def _callee_name(node: ast.Call) -> str:
-    func = node.func
-    if isinstance(func, ast.Attribute):
-        return func.attr
-    if isinstance(func, ast.Name):
-        return func.id
-    return ""
+_UNKNOWN = object()
 
 
 def _dotted(node: ast.expr) -> str:
-    """`torch.hub.load` for an Attribute chain, '' for anything else."""
+    """`torch.hub.load` for a Name/Attribute chain, the bare name for a Name, '' for anything else."""
     parts: list[str] = []
     while isinstance(node, ast.Attribute):
         parts.append(node.attr)
@@ -80,63 +96,125 @@ def _dotted(node: ast.expr) -> str:
     return ""
 
 
-def _is_true(node: ast.expr) -> bool:
-    return isinstance(node, ast.Constant) and node.value is True
+def _import_aliases(tree: ast.Module) -> dict[str, str]:
+    """Local name -> canonical dotted name, for `import a.b as c` and `from a.b import c as d`."""
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    aliases[alias.asname] = alias.name
+                else:  # `import torch.hub` binds `torch`
+                    aliases[alias.name.split(".")[0]] = alias.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            for alias in node.names:
+                aliases[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return aliases
 
 
-def _is_hub_id(node: ast.expr) -> bool:
-    """A string literal shaped like a Hugging Face repo id (`org/name`), i.e. not a local path."""
-    return (
-        isinstance(node, ast.Constant)
-        and isinstance(node.value, str)
-        and "/" in node.value
-        and not node.value.startswith(("/", "./", "../", "~"))
-    )
+def _module_constants(tree: ast.Module) -> dict[str, object]:
+    """Module-level `NAME = <literal>` bindings, so `network_type=BACKBONE` can be checked."""
+    constants: dict[str, object] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    constants[target.id] = node.value.value
+    return constants
+
+
+def _canonical(func: ast.expr, aliases: dict[str, str]) -> str:
+    dotted = _dotted(func)
+    if not dotted:
+        return ""
+    head, _, rest = dotted.partition(".")
+    if head in aliases:
+        dotted = aliases[head] + (f".{rest}" if rest else "")
+    return dotted
+
+
+def _value(node: ast.expr | None, constants: dict[str, object]) -> object:
+    """The literal a keyword carries, through one module-level constant; `_UNKNOWN` otherwise."""
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        return constants.get(node.id, _UNKNOWN)
+    return _UNKNOWN
+
+
+def _is_torchvision_weights(node: ast.expr | None, constants: dict[str, object]) -> bool:
+    if node is None:
+        return False
+    if any(part.endswith("_Weights") for part in _dotted(node).split(".")):
+        return True
+    value = _value(node, constants)
+    return isinstance(value, str) and bool(WEIGHT_NAME.match(value))
+
+
+def _is_hub_id(value: object) -> bool:
+    """A string shaped like a Hugging Face repo id rather than a local path (write `./dir` for a local dir)."""
+    return isinstance(value, str) and not value.startswith(LOCAL_PATH_PREFIXES)
 
 
 def offences_in(source: str) -> list[tuple[int, str]]:
     """Every run-time download call site in ``source``, as (line, label)."""
+    tree = ast.parse(source)
+    aliases = _import_aliases(tree)
+    constants = _module_constants(tree)
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    stages_hub_dir = any(_canonical(call.func, aliases) == STAGES_HUB_DIR for call in calls)
+
     found: list[tuple[int, str]] = []
-    for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.Call):
-            continue
-        name = _callee_name(node)
-        dotted = _dotted(node.func)
+    for node in calls:
+        canonical = _canonical(node.func, aliases)
+        final = canonical.rsplit(".", 1)[-1] if canonical else getattr(node.func, "attr", "")
         keywords = {k.arg: k.value for k in node.keywords if k.arg}
-        if "pretrained" in keywords and _is_true(keywords["pretrained"]):
+
+        if _value(keywords.get("pretrained"), constants) is True:
             found.append((node.lineno, "pretrained=True"))
-        weights = keywords.get("weights")
-        if weights is not None and _dotted(weights).split(".")[0].endswith("_Weights"):
-            found.append((node.lineno, "weights=<torchvision enum> (downloads)"))
-        if name in DOWNLOADING_CALLEES:
-            found.append((node.lineno, f"{name}("))
-        if dotted == "torch.hub.load":
-            found.append((node.lineno, "torch.hub.load("))
-        if name == "from_pretrained" and node.args and _is_hub_id(node.args[0]):
-            found.append((node.lineno, "from_pretrained(<hub id>)"))
-        backbone = keywords.get("network_type")
-        if isinstance(backbone, ast.Constant) and isinstance(backbone.value, str):
-            if HUB_BACKBONES.match(backbone.value):
-                found.append((node.lineno, f"network_type={backbone.value!r} is fetched via torch.hub"))
+        for kwarg in ("weights", "weights_backbone"):
+            if _is_torchvision_weights(keywords.get(kwarg), constants):
+                found.append((node.lineno, f"{kwarg}=<torchvision weights> (downloads)"))
+        if canonical in DOWNLOADERS or final in DOWNLOADING_CALLEES:
+            found.append((node.lineno, f"{final}("))
+        if final == "from_pretrained":
+            target = node.args[0] if node.args else keywords.get("pretrained_model_name_or_path")
+            if _is_hub_id(_value(target, constants)):
+                found.append((node.lineno, "from_pretrained(<hub id>)"))
+        if final in HUB_BACKED_LOSSES and not stages_hub_dir:
+            found.append((node.lineno, f"{final}( fetches its backbone through torch.hub unless the app stages it"))
     return sorted(found)
 
 
-def _app_dirs() -> list[Path]:
-    """Every directory whose contents are uploaded or bundled as an FL app."""
-    dirs: set[Path] = set()
-    for backend in ("nvflare", "flower"):
-        root = FL_TUTORIALS / backend
-        dirs.update(p for p in root.rglob("app_files") if p.is_dir())
-        dirs.update(p for p in root.rglob("app") if p.is_dir())
-    for backend in ("nvflare", "flower"):
-        root = FL_APPS / backend
-        if root.is_dir():
-            dirs.update(p for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))
-    return sorted(d for d in dirs if ".venv" not in d.parts and "__pycache__" not in d.parts)
+def _app_dir_of(path: Path) -> Path | None:
+    """The shipped-app directory a tracked file belongs to, or None if it is not app code."""
+    parts = path.relative_to(REPO_ROOT).parts
+    if parts[0] == "fl-apps":  # fl-apps/<backend>/<template>/...
+        return REPO_ROOT.joinpath(*parts[:3]) if len(parts) > 3 else None
+    for depth, part in enumerate(parts):
+        if part in APP_DIR_NAMES:
+            return REPO_ROOT.joinpath(*parts[: depth + 1])
+    return None
 
 
-def _python_files(app_dir: Path) -> list[Path]:
-    return sorted(p for p in app_dir.rglob("*.py") if ".venv" not in p.parts and "__pycache__" not in p.parts)
+def _tracked(*subtrees: str) -> list[Path]:
+    out = subprocess.run(
+        ["git", "ls-files", "-z", "--", *subtrees], cwd=REPO_ROOT, check=True, capture_output=True
+    ).stdout
+    return [REPO_ROOT / p for p in out.decode().split("\0") if p]
+
+
+def _discover() -> dict[Path, list[Path]]:
+    """Every shipped app dir -> its tracked Python files (so gitignored output is never scanned)."""
+    files: dict[Path, list[Path]] = defaultdict(list)
+    for path in _tracked("fl-tutorials/nvflare", "fl-tutorials/flower", "fl-apps"):
+        if path.suffix == ".py" and (app_dir := _app_dir_of(path)) is not None:
+            files[app_dir].append(path)
+    return dict(sorted(files.items()))
+
+
+APP_FILES = _discover()
+APP_DIRS = list(APP_FILES)
 
 
 def _relative(path: Path) -> str:
@@ -144,8 +222,8 @@ def _relative(path: Path) -> str:
 
 
 def test_the_guard_sees_every_shipped_app():
-    dirs = {_relative(d) for d in _app_dirs()}
-    # The three apps that motivated FLIP#1206 must be in scope, or the guard guards nothing.
+    dirs = {_relative(d) for d in APP_DIRS}
+    # The apps that motivated FLIP#1206, plus a template per backend — or the guard guards nothing.
     for expected in (
         "fl-tutorials/nvflare/image_classification/xray_classification/app_files",
         "fl-tutorials/flower/xray_classification/app",
@@ -156,76 +234,86 @@ def test_the_guard_sees_every_shipped_app():
         assert expected in dirs, f"{expected} not discovered as an app directory"
 
 
-@pytest.mark.parametrize("app_dir", _app_dirs(), ids=lambda p: _relative(p))
+def test_every_tutorial_has_a_guarded_app_dir():
+    """A tutorial whose app dir is named something new would otherwise be silently out of scope."""
+    roots = [p.parent for p in _tracked("fl-tutorials/nvflare") if p.name == ".env.app"]
+    roots += [
+        p.parent
+        for p in _tracked("fl-tutorials/flower")
+        if p.name == "pyproject.toml" and p.parent.parent.name == "flower"
+    ]
+    assert roots, "no tutorial roots found — has the tutorial layout changed?"
+    for root in roots:
+        guarded = [d for d in APP_DIRS if d.is_relative_to(root) and APP_FILES[d]]
+        assert guarded, f"{_relative(root)}: no app dir named {sorted(APP_DIR_NAMES)} with Python files under it"
+
+
+@pytest.mark.parametrize("app_dir", APP_DIRS, ids=_relative)
 def test_app_fetches_nothing_at_run_time(app_dir: Path):
     offences = [
         f"{_relative(py)}:{lineno}: {label}"
-        for py in _python_files(app_dir)
+        for py in APP_FILES[app_dir]
         for lineno, label in offences_in(py.read_text(encoding="utf-8"))
     ]
     assert not offences, (
         "run-time download in a shipped app (FLIP#1206) — ship the weights through the upload path "
-        "(see the tutorial's `make weights`):\n  " + "\n  ".join(offences)
+        "(see the LDM tutorial's `make weights`):\n  " + "\n  ".join(offences)
     )
 
 
-def test_guard_catches_the_call_shapes_it_claims_to():
-    sample = "\n".join(
-        [
-            '"""A docstring saying pretrained=True and torch.hub.load( is not a download."""',
-            "net = DenseNet121(spatial_dims=2, pretrained=True)",
-            "m = torchvision.models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)",
-            "torch.hub.load('facebookresearch/dino', 'dino_vits16')",
-            "sd = load_state_dict_from_url(URL)",
-            "sd = torch.hub.load_state_dict_from_url(URL)",
-            "tok = AutoTokenizer.from_pretrained('bert-base-uncased/')",
-            "tok = AutoTokenizer.from_pretrained('org/model')",
-            "path = hf_hub_download(repo_id='x/y', filename='w.safetensors')",
-            "loss = PerceptualLoss(2, network_type='alex')",
-            "loss = PerceptualLoss(spatial_dims=2, network_type='radimagenet_resnet50')",
-            "# pretrained=True in a comment is fine",
-            "net = DenseNet121(spatial_dims=2, pretrained=False)  # pretrained=True was here",
-            "tok = AutoTokenizer.from_pretrained(local_dir)",
-            "tok = AutoTokenizer.from_pretrained('./weights/tok')",
-            "ok = PerceptualLoss(2, network_type='squeeze')",
-        ]
-    )
-    assert [label for _, label in offences_in(sample)] == [
-        "pretrained=True",
-        "weights=<torchvision enum> (downloads)",
-        "torch.hub.load(",
-        "load_state_dict_from_url(",
-        "load_state_dict_from_url(",
-        "from_pretrained(<hub id>)",
-        "from_pretrained(<hub id>)",
-        "hf_hub_download(",
-        "network_type='alex' is fetched via torch.hub",
-        "network_type='radimagenet_resnet50' is fetched via torch.hub",
-    ]
+WEIGHTS = "weights=<torchvision weights> (downloads)"
+HUB_LOSS = "PerceptualLoss( fetches its backbone through torch.hub unless the app stages it"
+CAUGHT = [
+    ("net = DenseNet121(spatial_dims=2, pretrained=True)", "pretrained=True"),
+    ("PRETRAINED = True\nnet = DenseNet121(spatial_dims=2, pretrained=PRETRAINED)", "pretrained=True"),
+    ("m = torchvision.models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)", WEIGHTS),
+    ("m = torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.DEFAULT)", WEIGHTS),
+    ("m = models.resnet50(weights='DEFAULT')", WEIGHTS),
+    ("m = torchvision.models.get_model('resnet50', weights='IMAGENET1K_V1')", WEIGHTS),
+    (
+        "m = fasterrcnn_resnet50_fpn(weights=None, weights_backbone=ResNet50_Weights.DEFAULT)",
+        "weights_backbone=<torchvision weights> (downloads)",
+    ),
+    ("torch.hub.load('facebookresearch/dino', 'dino_vits16')", "load("),
+    ("from torch import hub\nhub.load('facebookresearch/dino', 'dino_vits16')", "load("),
+    ("from torch.hub import load as hub_load\nhub_load('facebookresearch/dino', 'dino_vits16')", "load("),
+    ("import torch.hub as th\nsd = th.load_state_dict_from_url(URL)", "load_state_dict_from_url("),
+    ("sd = load_state_dict_from_url(URL)", "load_state_dict_from_url("),
+    ("from huggingface_hub import hf_hub_download as dl\np = dl(repo_id='x/y', filename='w.pt')", "hf_hub_download("),
+    ("from monai.bundle import load\nnet = load(name='spleen_ct_segmentation', bundle_dir='.')", "load("),
+    ("monai.apps.download_url(URL, 'w.pt')", "download_url("),
+    ("urllib.request.urlretrieve(URL, 'w.pt')", "urlretrieve("),
+    ("tok = AutoTokenizer.from_pretrained('bert-base-uncased')", "from_pretrained(<hub id>)"),
+    ("tok = AutoTokenizer.from_pretrained('org/model')", "from_pretrained(<hub id>)"),
+    ("MODEL_ID = 'org/model'\ntok = AutoTokenizer.from_pretrained(MODEL_ID)", "from_pretrained(<hub id>)"),
+    ("tok = AutoTokenizer.from_pretrained(pretrained_model_name_or_path='org/model')", "from_pretrained(<hub id>)"),
+    ("loss = PerceptualLoss(2)", HUB_LOSS),
+    ("loss = PerceptualLoss(2, 'alex')", HUB_LOSS),
+    ("loss = PerceptualLoss(2, network_type='squeeze')", HUB_LOSS),
+    ("BACKBONE = 'radimagenet_resnet50'\nloss = monai.losses.PerceptualLoss(3, network_type=BACKBONE)", HUB_LOSS),
+    ("net = lpips.LPIPS(net='alex')", HUB_LOSS.replace("PerceptualLoss", "LPIPS")),
+]
+
+ACCEPTED = [
+    '"""A docstring saying pretrained=True and torch.hub.load( is not a download."""',
+    "# pretrained=True in a comment is fine",
+    "net = DenseNet121(spatial_dims=2, pretrained=False)  # pretrained=True was here",
+    "mean = np.average(values, weights=sample_weights)",
+    "m = torchvision.models.resnet50(weights=None)",
+    "tok = AutoTokenizer.from_pretrained('./weights/tok')",
+    "tok = AutoTokenizer.from_pretrained(local_dir)",
+    "torch.hub.set_dir(str(working_dir / 'torch_hub'))\nloss = PerceptualLoss(2, network_type='squeeze')",
+    "import torch.hub as th\nth.set_dir(hub_dir)\nloss = PerceptualLoss(2, network_type='squeeze')",
+    "state = torch.load('shipped.pt', weights_only=True)",
+]
 
 
-WEIGHTS_FILE_REFERENCE = re.compile(r"[\"']([A-Za-z0-9_.-]+\.(?:safetensors|pth|pt))[\"']")
+@pytest.mark.parametrize(("snippet", "label"), CAUGHT, ids=[c[0].splitlines()[-1][:60] for c in CAUGHT])
+def test_guard_catches_the_call_shapes_it_claims_to(snippet: str, label: str):
+    labels = [found for _, found in offences_in(snippet)]
+    assert labels == [label], f"{snippet!r} → {labels}"
 
 
-@pytest.mark.parametrize(
-    "app_dir",
-    [d for d in _app_dirs() if d.is_relative_to(FL_TUTORIALS)],
-    ids=lambda p: _relative(p),
-)
-def test_tutorial_that_loads_a_weights_file_has_a_weights_target(app_dir: Path):
-    """An app loading weights from beside its code must have a `make weights` step producing them."""
-    references: set[str] = set()
-    for py in _python_files(app_dir):
-        text = py.read_text(encoding="utf-8")
-        if "WEIGHTS_FILE" in text or "HUB_CHECKPOINT" in text:
-            references.update(WEIGHTS_FILE_REFERENCE.findall(text))
-    if not references:
-        pytest.skip("app loads no weights file")
-    makefile = app_dir.parent / "Makefile"
-    assert makefile.is_file(), f"{_relative(app_dir)} loads {sorted(references)} but its tutorial has no Makefile"
-    text = makefile.read_text(encoding="utf-8")
-    assert re.search(r"^weights:", text, re.M), (
-        f"{_relative(makefile)} has no `weights` target, yet the app loads {sorted(references)}"
-    )
-    for ref in references:
-        assert ref in text, f"{_relative(makefile)} `weights` does not produce {ref}"
+@pytest.mark.parametrize("snippet", ACCEPTED, ids=[s.splitlines()[-1][:60] for s in ACCEPTED])
+def test_guard_accepts_the_offline_shapes(snippet: str):
+    assert offences_in(snippet) == [], snippet

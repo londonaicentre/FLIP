@@ -16,7 +16,7 @@
 # the documented entrypoints keep working:
 #
 #   make -C fl-tutorials download-xray-data
-#   make -C fl-tutorials download-ldm-weights         # SqueezeNet .pth for the LDM perceptual loss
+#   make -C fl-tutorials download-weights ARCH=squeezenet1_1   # a pretrained backbone a tutorial ships (LDM)
 #   make -C fl-tutorials download-spleen-data [NUM_CASES=<1-41>]
 #   make -C fl-tutorials download-spleen-checkpoint   # evaluation-tutorial checkpoint only
 #   make -C fl-tutorials download-arkplus-finetuning-data
@@ -39,15 +39,17 @@ NUM_CASES ?= 10
 # --project keeps the cwd here while resolving that env. Same shape for the Synthea build.
 SPLEEN_UV := uv run --project spleen
 SYNTHEA_UV := uv run --project synthea
-# Pretrained-weight staging needs torch: the flip-utils `full` env, which every tutorial
-# already runs in, so no extra project. Weights land under data/weights/ and are then copied
-# into the tutorial's app dir by that tutorial's own `make weights` (FLIP#1206) — the download
-# is shared tooling, the consumption belongs to the app that ships the file.
-WEIGHTS_UV := uv run --project ../../flip-utils --extra full
+# The in-tree flip-utils, not the PyPI release, so the tooling always matches this checkout
+# (upload-spleen-labels: flip.xnat may be newer here; download-weights: the `full` env is the
+# one every tutorial already runs in, so pretrained-weight staging needs no extra project).
+FLIP_UTILS_DIR ?= $(abspath ../../flip-utils)
+# Pretrained weights land flat under data/weights/ and are then copied into the tutorial's app
+# dir by that tutorial's own `make weights` (FLIP#1206) — the download is shared tooling, the
+# consumption belongs to the app that ships the file.
+WEIGHTS_UV := uv run --project $(FLIP_UTILS_DIR) --extra full
 WEIGHTS_DIR := $(DATA_DIR)/weights
-WEIGHTS_CACHE := $(WEIGHTS_DIR)/.torchvision
 
-.PHONY: download-xray-data download-ldm-weights \
+.PHONY: download-xray-data download-weights \
 	download-spleen-data download-spleen-msd-data \
 	download-spleen-checkpoint download-arkplus-finetuning-data \
 	download-arkplus-eval-data download-synthea-data upload-spleen-labels \
@@ -66,13 +68,13 @@ download-xray-data:
 		--output-dir $(DATA_DIR)/xrays_mini_300 \
 		--repo-id $(HF_TEST_DATA_REPO)
 
-# SqueezeNet for the latent-diffusion tutorial's perceptual loss (lpips resolves it through
-# torch.hub, so it stays a .pth under a hub `checkpoints/` layout the app points torch at).
-# Downloaded ONCE here with torchvision's hash check; the app never downloads (FLIP#1206).
-download-ldm-weights:
-	@$(WEIGHTS_UV) python weights/fetch_weights.py squeezenet1_1 \
-		--cache-dir $(WEIGHTS_CACHE) \
-		--out $(WEIGHTS_DIR)/torch_hub/checkpoints
+# A pretrained network a tutorial ships beside its code (FLIP#1206): downloaded ONCE here, with
+# torch.hub's own sha256-prefix check, into data/weights/<torchvision filename>. Keyed by
+# architecture, not tutorial — a backbone is shared by construction (`weights/fetch_weights.py`
+# lists the known ones). Today: `ARCH=squeezenet1_1`, the latent-diffusion perceptual loss.
+download-weights:
+	@[ -n "$(ARCH)" ] || (echo "❌  ARCH is required. Usage: make download-weights ARCH=squeezenet1_1"; exit 1)
+	@$(WEIGHTS_UV) python weights/fetch_weights.py $(ARCH) --out $(WEIGHTS_DIR)
 
 # One spleen dataset for both backends: the MSD build, honouring NUM_CASES, plus the
 # checkpoint only the evaluation tutorial needs. The checkpoint comes FIRST because
@@ -151,9 +153,6 @@ download-synthea-data:
 # backends read, and can be overridden. It runs via `uv run --no-project --with <flip-utils>`
 # rather than spleen/'s env, so uploading labels never drags in the simulator's MONAI/torch stack.
 SPLEEN_LABELS_DIR ?= $(abspath $(DATA_DIR)/spleen/images)
-# upload-spleen-labels runs against the in-tree flip-utils, not the PyPI release, so the enrichment
-# CLI always matches this checkout (flip.xnat may be newer here than the last published version).
-FLIP_UTILS_DIR ?= $(abspath ../../flip-utils)
 
 upload-spleen-labels:
 	@[ -n "$(FLIP_PROJECT_ID)" ] || (echo "❌  FLIP_PROJECT_ID is required. Usage: make upload-spleen-labels FLIP_PROJECT_ID=<uuid> [XNAT_URLS=\"http://host1 http://host2\"] [DRY_RUN=1]"; exit 1)

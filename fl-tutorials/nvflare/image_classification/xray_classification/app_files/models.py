@@ -23,17 +23,11 @@ def get_model():
 
 
 class DenseNet(nn.Module):
-    """
-    Calls the Densenet121 module.
+    """Wraps MONAI's DenseNet121 for 2D chest-X-ray multi-label classification.
 
-    Trained from scratch, deliberately. ``pretrained=True`` downloaded torchvision's ImageNet
-    checkpoint at construction time — on the FL server and on every client — and an FL app must
-    never fetch anything at run time (FLIP#1206): the FL server on a platform-managed estate and a
-    trust host behind an NHS firewall have no internet route, and a run-time download bypasses the
-    scanned upload path a reviewer approved. It also bought little here: with this 1-channel,
-    128-feature stem only ~30% of the tensors matched the ImageNet shapes, and the tutorial reaches
-    the same validation F1 in the same number of epochs without them. An app that does need
-    pretrained weights ships them as an uploaded file — see the latent-diffusion tutorial.
+    ``pretrained=False``, deliberately: FL apps never download at run time (FLIP#1206 — the user
+    guide's *Model Files* section has the why). The xray tutorial README records why the ImageNet
+    initialisation was dropped rather than shipped, and that it cost nothing measurable here.
     """
 
     def __init__(self):

@@ -410,8 +410,12 @@ fl-services/nvflare/provision/workspace-prod/
 **/fed_server.json
 **/fed_admin.json
 
-# Tutorial-generated files
+# Tutorial-generated files — and pretrained weights a tutorial stages beside its app code with
+# `make weights` (FLIP#1206): a copy of fl-tutorials/data/weights/ that travels with the app
+# through the upload path, never fetched at run time (e.g. the LDM tutorial's torchvision .pth).
 *.pt
+*.pth
+*.safetensors
 
 # flip-utils build artifacts
 flip-utils/dist/
@@ -439,9 +443,6 @@ fl-services/nvflare/provision/workspace-prod/
 **/fed_server.json
 **/fed_admin.json
 
-# Tutorial-generated files
-*.pt
-
 # flip-utils build artifacts
 flip-utils/dist/
 .ralph/
@@ -465,12 +466,6 @@ fl-tutorials/data/
 fl-tutorials/datasets/spleen/uv.lock
 fl-tutorials/datasets/cxr/uv.lock
 fl-tutorials/datasets/synthea/uv.lock
-# Pretrained weights a tutorial stages beside its app code with `make weights` (FLIP#1206): a
-# copy of fl-tutorials/data/weights/ that travels with the app through the upload path, never
-# fetched at run time. The LDM tutorial's perceptual-loss network keeps torchvision's .pth name,
-# and the app copies it into a torch.hub `checkpoints/` dir beside itself at run time.
-fl-tutorials/**/squeezenet1_1-*.pth
-fl-tutorials/**/torch_hub/
 
 # Output of the spleen and cxr OMOP generation chains (FLIP#1092). Regenerated on demand and verified against
 # the published export — never committed. The scripts write cwd-relative, and the Make recipes run
