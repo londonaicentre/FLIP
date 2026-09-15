@@ -189,12 +189,18 @@ class SiteImages(unittest.TestCase):
         }
         assert all(ref.startswith("ghcr.io/londonaicentre/") for ref in refs)
 
-    def test_flower_sites_check_the_supernode_and_a_pinned_omop_db_is_left_alone(self):
-        refs = su.site_images({"FL_BACKEND": "flower", "OMOP_DB_TAG": "latest"}, "v0.6.1")
-        names = {ref.rsplit("/", 1)[1] for ref in refs}
+    def test_flower_sites_check_the_supernode(self):
+        names = {ref.rsplit("/", 1)[1] for ref in su.site_images({"FL_BACKEND": "flower"}, "v0.6.1")}
         assert "flower-supernode:v0.6.1" in names
         assert "flare-fl-client:v0.6.1" not in names
-        assert not any(name.startswith("omop-db:") for name in names)
+
+    def test_a_separately_pinned_image_is_checked_at_its_pin(self):
+        kit = {"OMOP_DB_TAG": "latest", "ORTHANC_TAG": "sha-2bf07b9", "XNAT_TAG": "v0.6.0"}
+        names = {ref.rsplit("/", 1)[1] for ref in su.site_images(kit, "v0.6.1")}
+        pinned = {"omop-db:latest", "orthanc:sha-2bf07b9", "xnat-web:v0.6.0", "xnat-db:v0.6.0", "xnat-nginx:v0.6.0"}
+        assert pinned <= names
+        assert not any(name in {"omop-db:v0.6.1", "orthanc:v0.6.1", "xnat-web:v0.6.1"} for name in names)
+        assert "trust-api:v0.6.1" in names
 
     def test_missing_images_are_the_ones_the_registry_does_not_serve(self):
         def probe(ref: str, timeout: float = 0) -> bool:

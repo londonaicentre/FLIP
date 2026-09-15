@@ -46,8 +46,11 @@ services:
     volumes:
       - ${OMOP_DATA_DIR:-/opt/flip/omop/db_data}:/var/lib/postgresql/data
 
+  # ORTHANC_TAG: the same opt-out as OMOP_DB_TAG above — orthanc's CI build is
+  # path-filtered to trust/orthanc/**, so a sha- tag of a commit that did not touch
+  # it has no orthanc image at all (release tags build every image, FLIP#1204).
   orthanc:
-    image: ghcr.io/londonaicentre/orthanc:${DOCKER_TAG}
+    image: ghcr.io/londonaicentre/orthanc:${ORTHANC_TAG:-${DOCKER_TAG}}
     restart: always
     ports:
       - "${PACS_UI_PORT}:8042"

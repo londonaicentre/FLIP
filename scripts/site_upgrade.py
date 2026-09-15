@@ -76,12 +76,22 @@ EXIT_MISSING_IMAGES = 5
 _HUB_TIMEOUT_SECONDS = 10.0
 _MANIFEST_TIMEOUT_SECONDS = 60.0
 
-#: Every repo-built image a compose site pulls at ``DOCKER_TAG`` / ``DOCKER_FL_TAG``
-#: (`trust/deploy/compose_trust.production.yml`, `trust/xnat/docker-compose-stack.yml`,
-#: `trust/deploy/compose_trust.production.<backend>.yml`). ``omop-db`` joins the list only
-#: when the kit does not pin it separately with ``OMOP_DB_TAG``.
+#: Every repo-built image a compose site pulls (`trust/deploy/compose_trust.production.yml`,
+#: `trust/xnat/docker-compose-stack.yml`, `trust/deploy/compose_trust.production.<backend>.yml`)
+#: with the kit key that pins it away from ``DOCKER_TAG`` when set — the compose files'
+#: ``${OMOP_DB_TAG:-${DOCKER_TAG}}`` / ``${ORTHANC_TAG:-…}`` opt-outs and the XNAT Makefile's
+#: ``XNAT_TAG ?= ${DOCKER_TAG}``. A pinned image is checked at its pin, not at the target.
 _DEFAULT_REGISTRY = "ghcr.io/londonaicentre/"
-_SITE_IMAGES = ("trust-api", "imaging-api", "data-access-api", "orthanc", "xnat-web", "xnat-db", "xnat-nginx")
+_SITE_IMAGE_PINS = {
+    "trust-api": None,
+    "imaging-api": None,
+    "data-access-api": None,
+    "omop-db": "OMOP_DB_TAG",
+    "orthanc": "ORTHANC_TAG",
+    "xnat-web": "XNAT_TAG",
+    "xnat-db": "XNAT_TAG",
+    "xnat-nginx": "XNAT_TAG",
+}
 _FL_CLIENT_IMAGE = {"nvflare": "flare-fl-client", "flower": "flower-supernode"}
 
 
@@ -170,11 +180,9 @@ def resolve_target(cli_tag: str | None, hub_url: str) -> tuple[str, str]:
 def site_images(kit: dict[str, str], tag: str) -> list[str]:
     """Every image reference the site would pull once the kit pins ``tag``."""
     registry = kit.get("DOCKER_REGISTRY") or _DEFAULT_REGISTRY
-    names = list(_SITE_IMAGES)
-    if not kit.get("OMOP_DB_TAG"):
-        names.append("omop-db")
-    names.append(_FL_CLIENT_IMAGE.get(kit.get("FL_BACKEND") or "nvflare", _FL_CLIENT_IMAGE["nvflare"]))
-    return [f"{registry}{name}:{tag}" for name in names]
+    refs = [f"{registry}{name}:{(pin and kit.get(pin)) or tag}" for name, pin in _SITE_IMAGE_PINS.items()]
+    fl_client = _FL_CLIENT_IMAGE.get(kit.get("FL_BACKEND") or "nvflare", _FL_CLIENT_IMAGE["nvflare"])
+    return [*refs, f"{registry}{fl_client}:{tag}"]
 
 
 def manifest_exists(ref: str, timeout: float = _MANIFEST_TIMEOUT_SECONDS) -> bool:

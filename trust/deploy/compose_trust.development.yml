@@ -51,7 +51,9 @@ services:
 
   orthanc:
     # Pull from GHCR by default; `make up BUILD=true` rebuilds from build: below.
-    image: ghcr.io/londonaicentre/orthanc:${DOCKER_TAG}
+    # ORTHANC_TAG: the same opt-out as OMOP_DB_TAG above (orthanc's build is
+    # path-filtered, so most sha- tags carry no orthanc image).
+    image: ghcr.io/londonaicentre/orthanc:${ORTHANC_TAG:-${DOCKER_TAG}}
     pull_policy: always
     build:
       context: ./orthanc

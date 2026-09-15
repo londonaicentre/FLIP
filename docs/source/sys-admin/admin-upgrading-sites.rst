@@ -70,12 +70,14 @@ follow.
    - resolves the target: ``TAG=`` if given, else the hub's ``/api/health`` ``version``. It
      prints ``site <current> → target <release>`` and asks you to confirm (``YES=1`` skips the
      prompt for a scripted run). A move to an older release is refused unless ``FORCE=1``;
-   - checks the registry (``docker manifest inspect``) for every image the site pulls at that
-     tag — the three APIs, Orthanc, the three XNAT images, ``omop-db`` unless the kit pins
-     ``OMOP_DB_TAG``, and the FL client — and stops, naming the missing references, before
-     anything is written. Release tags build every image; a ``sha-`` tag only carries the
-     images that commit changed, so ``TAG=sha-…`` is refused whenever one of them was never
-     built at it;
+   - checks the registry (``docker manifest inspect``) for every image the site pulls — the
+     three APIs, Orthanc, ``omop-db``, the three XNAT images and the FL client — at that tag,
+     or at the kit's own pin for the ones that have one (``OMOP_DB_TAG``, ``ORTHANC_TAG``,
+     ``XNAT_TAG``), and stops, naming the missing references, before anything is written.
+     Release tags build every image; a ``sha-`` tag only carries the images that commit
+     changed, so ``TAG=sha-…`` is refused whenever one of them was never built at it — pin
+     that one image in the kit (e.g. ``ORTHANC_TAG=sha-…`` of its last build) if you must
+     move to a ``sha-`` tag;
    - writes the tag into your kit (``DOCKER_TAG`` and ``DOCKER_FL_TAG``), so the kit always
      records what is installed;
    - pulls the images and recreates only the containers whose image or configuration changed
