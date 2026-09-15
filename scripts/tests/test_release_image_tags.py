@@ -54,16 +54,16 @@ TAG_TRIGGER = re.compile(
 
 class ReleaseImageTags(unittest.TestCase):
     def test_workflow_roster_is_not_empty(self) -> None:
-        self.assertGreaterEqual(len(IMAGE_WORKFLOWS), 12, [p.name for p in IMAGE_WORKFLOWS])
+        assert len(IMAGE_WORKFLOWS) >= 12, [p.name for p in IMAGE_WORKFLOWS]
 
     def test_every_image_workflow_triggers_on_release_tags(self) -> None:
         for wf in IMAGE_WORKFLOWS:
             text = wf.read_text()
             with self.subTest(workflow=wf.name):
-                # assertTrue rather than assertRegex/assertIn: their failure messages dump the
-                # whole workflow file, which buries the one line that matters.
-                self.assertTrue(TAG_TRIGGER.search(text), "no `push.tags: ['v*.*.*']` trigger")
-                self.assertTrue("refs/tags/v" in text, "the tag step never branches on refs/tags/v*")
+                # Plain asserts with a short message: an assertRegex/assertIn failure would dump
+                # the whole workflow file, burying the one line that matters.
+                assert TAG_TRIGGER.search(text), f"{wf.name}: no `push.tags: ['v*.*.*']` trigger"
+                assert "refs/tags/v" in text, f"{wf.name}: the tag step never branches on refs/tags/v*"
 
     def test_release_tag_never_moves_prod_or_stag(self) -> None:
         """The `:prod` / `:stag` floating tags follow main / develop pushes, never a release tag."""
@@ -72,8 +72,8 @@ class ReleaseImageTags(unittest.TestCase):
             with self.subTest(workflow=wf.name):
                 for line in text.splitlines():
                     if "refs/tags/v" in line:
-                        self.assertNotIn(":prod", line)
-                        self.assertNotIn(":stag", line)
+                        assert ":prod" not in line, f"{wf.name}: {line.strip()}"
+                        assert ":stag" not in line, f"{wf.name}: {line.strip()}"
 
     def test_workflow_run_gated_builds_let_the_tag_push_through(self) -> None:
         """A tag push has no workflow_run context, so the success gate must admit event_name push."""
@@ -82,7 +82,7 @@ class ReleaseImageTags(unittest.TestCase):
             if "workflow_run:" not in text:
                 continue
             with self.subTest(workflow=wf.name):
-                self.assertTrue("github.event_name == 'push'" in text, "job `if` gate does not admit a tag push")
+                assert "github.event_name == 'push'" in text, f"{wf.name}: job `if` gate does not admit a tag push"
 
 
 if __name__ == "__main__":
