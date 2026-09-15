@@ -35,11 +35,13 @@ Everything that decides *what* to move to happens here, before any container is 
    the operator confirms the printed ``site vA → target vB`` unless ``--yes``.
 3. **Pin.** ``DOCKER_TAG`` and ``DOCKER_FL_TAG`` in the kit's Hub-shared block are rewritten
    in place, so the kit always records what is installed. The Makefile then re-includes the
-   kit in a sub-make and does the pull / recreate.
+   kit in a sub-make and does the pull / recreate. ``--fl-tag`` pins ``DOCKER_FL_TAG`` apart
+   from the rest (the FL images' CI builds are path-filtered like orthanc's, so a ``sha-``
+   move usually needs it); a release moves everything to one tag and never does.
 
 Usage:
     uv run --no-config scripts/site_upgrade.py plan --kit-file trust/.env.<CODE>.<env> \\
-        [--tag vX.Y.Z] [--force] [--yes] [--hub-url URL] [--dry-run]
+        [--tag vX.Y.Z] [--fl-tag vX.Y.Z] [--force] [--yes] [--hub-url URL] [--dry-run]
 
 Exit codes (the Makefile's contract): 0 pinned; 2 needs ``--tag``; 3 refused downgrade
 (pass ``--force``); 4 not confirmed (pass ``--yes`` for a scripted run); 5 an image is
@@ -177,12 +179,12 @@ def resolve_target(cli_tag: str | None, hub_url: str) -> tuple[str, str]:
     return reported, "hub"
 
 
-def site_images(kit: dict[str, str], tag: str) -> list[str]:
-    """Every image reference the site would pull once the kit pins ``tag``."""
+def site_images(kit: dict[str, str], tag: str, fl_tag: str | None = None) -> list[str]:
+    """Every image reference the site would pull once the kit pins ``tag`` (FL client at ``fl_tag``)."""
     registry = kit.get("DOCKER_REGISTRY") or _DEFAULT_REGISTRY
     refs = [f"{registry}{name}:{(pin and kit.get(pin)) or tag}" for name, pin in _SITE_IMAGE_PINS.items()]
     fl_client = _FL_CLIENT_IMAGE.get(kit.get("FL_BACKEND") or "nvflare", _FL_CLIENT_IMAGE["nvflare"])
-    return [*refs, f"{registry}{fl_client}:{tag}"]
+    return [*refs, f"{registry}{fl_client}:{fl_tag or tag}"]
 
 
 def manifest_exists(ref: str, timeout: float = _MANIFEST_TIMEOUT_SECONDS) -> bool:
@@ -196,19 +198,19 @@ def manifest_exists(ref: str, timeout: float = _MANIFEST_TIMEOUT_SECONDS) -> boo
     return result.returncode == 0
 
 
-def missing_images(kit: dict[str, str], tag: str) -> list[str]:
-    """The site's image references that the registry does not serve at ``tag``."""
-    return [ref for ref in site_images(kit, tag) if not manifest_exists(ref)]
+def missing_images(kit: dict[str, str], tag: str, fl_tag: str | None = None) -> list[str]:
+    """The site's image references that the registry does not serve at ``tag`` / ``fl_tag``."""
+    return [ref for ref in site_images(kit, tag, fl_tag) if not manifest_exists(ref)]
 
 
-def write_tags(kit_file: Path, tag: str) -> None:
-    """Pin ``DOCKER_TAG`` and ``DOCKER_FL_TAG`` in the kit, touching nothing else, kit kept 0600."""
+def write_tags(kit_file: Path, tag: str, fl_tag: str | None = None) -> None:
+    """Pin ``DOCKER_TAG`` (and ``DOCKER_FL_TAG``, to ``fl_tag`` or the same) in the kit, kit kept 0600."""
     lines = kit_file.read_text().split("\n")
     trailing_newline = lines and lines[-1] == ""
     if trailing_newline:
         lines = lines[:-1]
-    for key in ("DOCKER_TAG", "DOCKER_FL_TAG"):
-        lines = tkl.upsert(lines, key, tag)
+    lines = tkl.upsert(lines, "DOCKER_TAG", tag)
+    lines = tkl.upsert(lines, "DOCKER_FL_TAG", fl_tag or tag)
     tkl.write_secure(kit_file, lines)
 
 
@@ -237,8 +239,14 @@ def plan(args: argparse.Namespace) -> int:
         print(f"❌ {e}")
         return EXIT_NEEDS_TAG
 
+    fl_tag = args.fl_tag
+    if fl_tag is not None and not is_image_tag(fl_tag):
+        print(f"❌ FL_TAG={fl_tag!r} is not an image tag (vX.Y.Z or sha-<short7>).")
+        return EXIT_NEEDS_TAG
+
     origin = "from the hub" if source == "hub" else "from TAG="
-    print(f"⬆️  site {current} → target {target} ({origin})")
+    fl_note = f", FL client {kit.get('DOCKER_FL_TAG', '') or '<unset>'} → {fl_tag}" if fl_tag else ""
+    print(f"⬆️  site {current} → target {target} ({origin}{fl_note})")
     if target == current:
         print("   The kit already pins this tag — re-applying (the pull + recreate only touches what changed).")
     elif is_downgrade(current, target):
@@ -250,25 +258,27 @@ def plan(args: argparse.Namespace) -> int:
     if shutil.which("docker") is None:
         print("   ⚠️  docker CLI not found — skipping the registry check; the pull will report a missing image")
     else:
-        missing = missing_images(kit, target)
+        missing = missing_images(kit, target, fl_tag)
         if missing:
             print(f"❌ {target} is not published for every image this site runs (log in to the registry first):")
             for ref in missing:
                 print(f"     {ref}")
             print("   A release tag (vX.Y.Z) builds every image; a sha- tag only carries the images that")
-            print("   commit changed. Nothing changed — pick a tag that exists for all of them.")
+            print("   commit changed. Nothing changed — pick a tag that exists for all of them, or hold")
+            print("   the odd one at its own build (FL_TAG=, or OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG in the kit).")
             return EXIT_MISSING_IMAGES
-        print(f"   ✓ all {len(site_images(kit, target))} images are published at {target}")
+        print(f"   ✓ all {len(site_images(kit, target, fl_tag))} images are published")
 
     if args.dry_run:
         print("   (dry run — kit not modified)")
         return 0
-    if not _confirm(f"   This pins DOCKER_TAG and DOCKER_FL_TAG in {kit_file} to {target}.", args.yes):
+    pins = f"DOCKER_TAG={target} DOCKER_FL_TAG={fl_tag}" if fl_tag else f"DOCKER_TAG=DOCKER_FL_TAG={target}"
+    if not _confirm(f"   This pins {pins} in {kit_file}.", args.yes):
         print("❌ Not confirmed — nothing changed.")
         return EXIT_NOT_CONFIRMED
 
-    write_tags(kit_file, target)
-    print(f"✅ {kit_file.name}: DOCKER_TAG=DOCKER_FL_TAG={target}")
+    write_tags(kit_file, target, fl_tag)
+    print(f"✅ {kit_file.name}: {pins}")
     return 0
 
 
@@ -280,6 +290,7 @@ def main() -> None:
     p = sub.add_parser("plan", help="resolve the target release, confirm, and pin the kit to it")
     p.add_argument("--kit-file", required=True, help="trust/.env.<CODE>.<env>")
     p.add_argument("--tag", default=None, help="release to move to (default: the build the hub runs)")
+    p.add_argument("--fl-tag", default=None, help="pin the FL client apart from the rest (default: same as --tag)")
     p.add_argument("--hub-url", default=None, help="override the kit's CENTRAL_HUB_API_URL")
     p.add_argument("--force", action="store_true", help="allow a release downgrade")
     p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")

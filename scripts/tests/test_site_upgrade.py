@@ -194,6 +194,11 @@ class SiteImages(unittest.TestCase):
         assert "flower-supernode:v0.6.1" in names
         assert "flare-fl-client:v0.6.1" not in names
 
+    def test_the_fl_client_is_checked_at_its_own_tag_when_one_is_given(self):
+        names = {ref.rsplit("/", 1)[1] for ref in su.site_images({}, "sha-1234567", "sha-03fdb61")}
+        assert "flare-fl-client:sha-03fdb61" in names
+        assert "trust-api:sha-1234567" in names
+
     def test_a_separately_pinned_image_is_checked_at_its_pin(self):
         kit = {"OMOP_DB_TAG": "latest", "ORTHANC_TAG": "sha-2bf07b9", "XNAT_TAG": "v0.6.0"}
         names = {ref.rsplit("/", 1)[1] for ref in su.site_images(kit, "v0.6.1")}
@@ -313,6 +318,25 @@ class Plan(unittest.TestCase):
                 code, out = self._run(kit, "--tag", "v0.6.0", stdin="y\n")
             assert code == 5, out
             assert "Proceed?" not in out
+
+    def test_plan_pins_the_fl_client_apart_with_fl_tag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp))
+            code, out = self._run(kit, "--tag", "sha-1234567", "--fl-tag", "sha-03fdb61", "--yes")
+            assert code == 0, out
+            assert "FL client sha-badcff1 → sha-03fdb61" in out
+            text = kit.read_text()
+            assert "DOCKER_TAG=sha-1234567" in text
+            assert "DOCKER_FL_TAG=sha-03fdb61" in text  # pragma: allowlist secret
+        assert self.missing_images.call_args.args[1:] == ("sha-1234567", "sha-03fdb61")  # pragma: allowlist secret
+
+    def test_plan_rejects_a_floating_fl_tag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp))
+            code, out = self._run(kit, "--tag", "v0.6.0", "--fl-tag", "stag", "--yes")
+            assert code == 2, out
+            assert "FL_TAG=" in out
+            assert "DOCKER_TAG=sha-badcff1" in kit.read_text()
 
     def test_plan_without_a_docker_cli_warns_and_leaves_it_to_the_pull(self):
         with tempfile.TemporaryDirectory() as tmp:

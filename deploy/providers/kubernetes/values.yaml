@@ -360,6 +360,12 @@ flClient:
   image:
     repository: ghcr.io/londonaicentre
     tag: stag
+    # Beats global.image.tag for the FL client alone — the compose stack's DOCKER_FL_TAG.
+    # sync-kit fills it from the kit only when DOCKER_FL_TAG names an immutable image
+    # (vX.Y.Z / sha-…); a dev kit's local `dev` or the floating `stag` leaves the client
+    # on the release pin. The FL images' builds are path-filtered like orthanc's, so a
+    # sha- move usually needs it (`make upgrade-trust-k8s … FL_TAG=`); a release never does.
+    pin: ""
     pullPolicy: Always
   nvflare:
     # Site-enforced privacy policy (FLIP#851): rendered into /app/local/privacy.json

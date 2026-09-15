@@ -9,7 +9,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-HELM := helm
 NAMESPACE ?= flip-trust
 
 # Where the FL participant kit lives ON THE NODE, and the uid that must own it.
@@ -74,8 +73,13 @@ KIT_UID ?= $(if $(filter flower,$(KIT_BACKEND)),49999,1000)
 # Which cluster to act on. Defaults to kubectl's current context, but stage-kit
 # REQUIRES it explicitly: it writes to a node's filesystem, and a machine running
 # several kind clusters will otherwise silently stage into whichever one kubectl
-# happens to point at.
+# happens to point at. When set it reaches every helm / kubectl call below and the
+# sync script, so `make upgrade-trust-k8s … KUBE_CONTEXT=<ctx>` moves that cluster only.
 KUBE_CONTEXT ?=
+HELM_BIN := helm
+KUBECTL := kubectl$(if $(KUBE_CONTEXT), --context $(KUBE_CONTEXT))
+HELM := $(HELM_BIN)$(if $(KUBE_CONTEXT), --kube-context $(KUBE_CONTEXT))
+KUBE_CONTEXT_ARG := $(if $(KUBE_CONTEXT),--kube-context $(KUBE_CONTEXT))
 RELEASE_NAME ?= trust-release
 CHART_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 VALUES_FILE ?= $(CHART_DIR)/values.yaml
@@ -149,7 +153,8 @@ preflight: ## Check all prerequisites before deploying (tools, cluster, files, k
 	 NAMESPACE="$(NAMESPACE)" \
 	 RELEASE_NAME="$(RELEASE_NAME)" \
 	 OVERRIDES_FILE="$(OVERRIDES_FILE)" \
-	 HELM="$(HELM)" \
+	 HELM="$(HELM_BIN)" \
+	 KUBE_CONTEXT="$(KUBE_CONTEXT)" \
 	 bash $(CHART_DIR)/scripts/preflight.sh
 
 stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE deploy)
@@ -188,7 +193,7 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	  echo "✅ Kit staged. Deploy with --set flClient.kitHostPath=$(KIT_DEST)"
 
 deploy: preflight ## Deploy the Helm chart to the cluster
-	kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		--timeout 20m \
@@ -224,18 +229,22 @@ undeploy-trust-k8s: undeploy ## Remove trust services from K8s (alias for undepl
 # populated data, and the API deployments roll onto the new images. The kit-side twin
 # of the compose path's `make -C trust upgrade-trust` — the resolver pins the kit too, so
 # the next `sync-kit` regenerates the same tag into the override rather than reverting it.
-#   make upgrade-trust-k8s KIT=<CODE> [TAG=vX.Y.Z] [PROD=<env>] [KUBE_CONTEXT=<ctx>]
-# TAG defaults to the release the hub runs (site_upgrade.py reads it from the kit's hub).
+#   make upgrade-trust-k8s KIT=<CODE> [TAG=vX.Y.Z] [FL_TAG=vX.Y.Z] [PROD=<env>] [KUBE_CONTEXT=<ctx>]
+# TAG defaults to the release the hub runs (site_upgrade.py reads it from the kit's hub);
+# FL_TAG pins the FL client apart from the rest (sha- moves only).
 upgrade-trust-k8s: ## Move a deployed trust to a release tag (data-safe helm upgrade)
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> is required"; exit 1; }
 	@[ -f "$(CHART_DIR)/k8s-trust-$(KIT).yaml" ] || { echo "❌ $(CHART_DIR)/k8s-trust-$(KIT).yaml not found — run make sync-kit KIT=$(KIT) first"; exit 1; }
-	uv run --no-config $(REPO_ROOT)/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FORCE),--force) $(if $(YES),--yes)
+	uv run --no-config $(REPO_ROOT)/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes)
 	$(MAKE) _upgrade-trust-k8s-apply KIT=$(KIT) PROD=$(PROD)
 
-# Phase 2: re-read the kit the resolver just pinned and deploy at that tag.
+# Phase 2: regenerate the override from the kit the resolver just pinned — that is how
+# global.image.tag and the per-image pins (omopDb/orthanc/xnat/flClient image.pin, from the
+# kit's OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG / DOCKER_FL_TAG) reach Helm — re-patch the
+# Secret from the same kit, then a plain `helm upgrade` at that tag.
 _upgrade-trust-k8s-apply:
+	$(MAKE) sync-kit KIT=$(KIT)
 	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1)
-	$(MAKE) patch-kit-secrets KIT=$(KIT)
 	@echo "✅ $(KIT) is on $$(sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1). Verify: kubectl -n $(NAMESPACE) get pods; trust-api /health reports the new version."
 
 status: ## Show the status of the Helm release and run smoke tests
@@ -307,17 +316,17 @@ xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is
 		--namespace $(NAMESPACE) \
 		$(VALUES_OPTS) \
 		--set xnat.initJob.enabled=true \
-		| kubectl apply -n $(NAMESPACE) -f - \
+		| $(KUBECTL) apply -n $(NAMESPACE) -f - \
 		--selector app.kubernetes.io/component=xnat-init
 	@echo "⏳  Waiting for xnat-init job to complete (timeout 15m)..."
-	@kubectl wait job \
+	@$(KUBECTL) wait job \
 		--selector app.kubernetes.io/component=xnat-init \
 		--for=condition=complete \
 		--namespace $(NAMESPACE) \
 		--timeout=15m && \
 	echo "✅  XNAT init complete." || \
 	(echo "❌  XNAT init failed — check logs:"; \
-	 kubectl logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \
+	 $(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \
 	 exit 1)
 
 patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Secret WITHOUT overwriting the override YAML (safe after helm upgrade)
@@ -329,12 +338,13 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
 		--release-name $(RELEASE_NAME) \
 		--output-dir $(CHART_DIR) \
+		$(KUBE_CONTEXT_ARG) \
 		--no-write-override
 	@for svc in trust-api data-access-api imaging-api; do \
-		kubectl rollout restart deployment/$(RELEASE_NAME)-flip-trust-$$svc -n $(NAMESPACE); \
+		$(KUBECTL) rollout restart deployment/$(RELEASE_NAME)-flip-trust-$$svc -n $(NAMESPACE); \
 	done
 	@for svc in trust-api data-access-api imaging-api; do \
-		kubectl rollout status deployment/$(RELEASE_NAME)-flip-trust-$$svc -n $(NAMESPACE) --timeout=120s; \
+		$(KUBECTL) rollout status deployment/$(RELEASE_NAME)-flip-trust-$$svc -n $(NAMESPACE) --timeout=120s; \
 	done
 
 sync-kit: ## Sync a registered trust KIT into the cluster (patches Secret + writes k8s-trust-<KIT>.yaml override)
@@ -345,4 +355,5 @@ sync-kit: ## Sync a registered trust KIT into the cluster (patches Secret + writ
 		--namespace $(NAMESPACE) \
 		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
 		--release-name $(RELEASE_NAME) \
-		--output-dir $(CHART_DIR)
+		--output-dir $(CHART_DIR) \
+		$(KUBE_CONTEXT_ARG)

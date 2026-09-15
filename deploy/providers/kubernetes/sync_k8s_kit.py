@@ -50,6 +50,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -103,6 +104,16 @@ def read_env_vars(env_path: Path) -> dict[str, str]:
     return pairs
 
 
+#: The kubectl invocation every call below starts from. `--kube-context` appends
+#: `--context <ctx>` so the whole sync acts on one named cluster rather than whichever
+#: cluster kubectl currently points at (a workstation with several kind clusters).
+KUBECTL: list[str] = ["kubectl"]
+
+
+#: An immutable, pullable image tag — a release or a CI sha tag (scripts/site_upgrade.py).
+IMMUTABLE_IMAGE_TAG = re.compile(r"^(?:v\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?|sha-[0-9a-f]{7})$")
+
+
 def _kubectl_ns(namespace: str) -> list[str]:
     """kubectl namespace args (empty for the default namespace)."""
     return ["-n", namespace] if namespace and namespace != "default" else []
@@ -122,12 +133,12 @@ def stamp_helm_ownership(secret_name: str, namespace: str, release_name: str) ->
     ns = _kubectl_ns(namespace)
     rel_ns = namespace or "default"
     subprocess.run(
-        ["kubectl", "label", "secret", secret_name, *ns,
+        [*KUBECTL, "label", "secret", secret_name, *ns,
          "app.kubernetes.io/managed-by=Helm", "--overwrite"],
         check=True,
     )
     subprocess.run(
-        ["kubectl", "annotate", "secret", secret_name, *ns,
+        [*KUBECTL, "annotate", "secret", secret_name, *ns,
          f"meta.helm.sh/release-name={release_name}",
          f"meta.helm.sh/release-namespace={rel_ns}", "--overwrite"],
         check=True,
@@ -149,7 +160,7 @@ def patch_k8s_secret(secret_name: str, namespace: str, entries: dict[str, str], 
     """
     ns = _kubectl_ns(namespace)
     exists = subprocess.run(
-        ["kubectl", "get", "secret", secret_name, *ns],
+        [*KUBECTL, "get", "secret", secret_name, *ns],
         capture_output=True, text=True,
     ).returncode == 0
 
@@ -157,12 +168,12 @@ def patch_k8s_secret(secret_name: str, namespace: str, entries: dict[str, str], 
         data = {k: base64.b64encode(v.encode()).decode() for k, v in entries.items()}
         patch = json.dumps({"data": data})
         subprocess.run(
-            ["kubectl", "patch", "secret", secret_name, *ns, "--type", "merge", "-p", patch],
+            [*KUBECTL, "patch", "secret", secret_name, *ns, "--type", "merge", "-p", patch],
             check=True,
         )
         verb = "Patched"
     else:
-        args = ["kubectl", "create", "secret", "generic", secret_name, *ns]
+        args = [*KUBECTL, "create", "secret", "generic", secret_name, *ns]
         for k, v in entries.items():
             args += ["--from-literal", f"{k}={v}"]
         subprocess.run(args, check=True)
@@ -239,6 +250,12 @@ def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
         pin = kit.get(kit_key, "").strip()
         if pin:
             lines += [f"{values_key}:", "  image:", f"    pin: {pin}", ""]
+    # The FL client follows the kit's DOCKER_FL_TAG (as the compose stack does) only when it
+    # names an immutable image the registry serves — vX.Y.Z or sha-…; a dev kit's locally
+    # built `dev` or the floating `stag` leaves it on the release pin (generate_values.py
+    # fl_client_pin applies the same rule).
+    fl_tag = kit.get("DOCKER_FL_TAG", "").strip()
+    fl_client_pin = fl_tag if IMMUTABLE_IMAGE_TAG.match(fl_tag) else ""
     lines += [
         "trustApi:",
         "  env:",
@@ -269,6 +286,8 @@ def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
         "flClient:",
         f"  kitHostPath: {kit_host_path}",
     ]
+    if fl_client_pin:
+        fl_section += ["  image:", f"    pin: {fl_client_pin}"]
     lines += fl_section
 
     # FL-server egress (FLIP#593 pt.3): the default-deny egress NetworkPolicy
@@ -343,7 +362,7 @@ def main(code: str, env: str, namespace: str, secret_name: str,
     entries = build_secret_entries(kit)
     if apply_secret:
         ns_present = subprocess.run(
-            ["kubectl", "get", "ns", namespace],
+            [*KUBECTL, "get", "ns", namespace],
             capture_output=True, text=True,
         ).returncode == 0
         if ns_present:
@@ -409,6 +428,11 @@ if __name__ == "__main__":
     )
     parser.add_argument("--aws-region", default="eu-west-2", help="AWS region for S3 access")
     parser.add_argument(
+        "--kube-context",
+        default="",
+        help="kubectl context to act on (default: kubectl's current context)",
+    )
+    parser.add_argument(
         "--no-apply-secret",
         dest="apply_secret",
         action="store_false",
@@ -421,6 +445,8 @@ if __name__ == "__main__":
         help="Only patch the Kubernetes Secret; do not overwrite the values override file",
     )
     args = parser.parse_args()
+    if args.kube_context:
+        KUBECTL += ["--context", args.kube_context]
 
     # Resolve env suffix the same way the rest of the tooling does.
     if args.env is None:

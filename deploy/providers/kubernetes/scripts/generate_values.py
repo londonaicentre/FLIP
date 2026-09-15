@@ -27,6 +27,7 @@ No third-party dependencies (stdlib only).
 
 import argparse
 import os
+import re
 import sys
 
 # Map of env-var name -> (YAML path as dotted key, is_sensitive)
@@ -55,6 +56,20 @@ ENV_VAR_MAP = {
     "ORTHANC_TAG": ("orthanc.image.pin", False),
     "XNAT_TAG": ("xnat.image.pin", False),
 }
+
+# The compose stack runs the FL client at DOCKER_FL_TAG outright; the chart follows it only
+# when it names an immutable, pullable image — a release (vX.Y.Z) or a CI sha- tag. A dev
+# kit's `dev` (a locally built tag) or the floating `stag` would otherwise pin a kind
+# deployment to an image the registry never serves, so those leave the client on the
+# release pin / the chart's own tag. Same shape as scripts/site_upgrade.py's is_image_tag.
+IMMUTABLE_IMAGE_TAG = re.compile(r"^(?:v\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?|sha-[0-9a-f]{7})$")
+
+
+def fl_client_pin(env: dict) -> str:
+    """The kit's DOCKER_FL_TAG when it is an immutable image tag, else empty (no pin)."""
+    tag = (env.get("DOCKER_FL_TAG") or "").strip()
+    return tag if IMMUTABLE_IMAGE_TAG.match(tag) else ""
+
 
 # Env vars this script used to read, and what replaced them. Dropping one from
 # ENV_VAR_MAP is silent by construction: the variable simply stops reaching the
@@ -168,6 +183,8 @@ def build_values(env):
     # `make stage-kit` actually wrote to — exactly as sync_k8s_kit.render_override does.
     if not env.get("FL_KIT_DIR", "").strip():
         deep_set(overrides, "flClient.kitHostPath", DEFAULT_KIT_HOST_PATH)
+    if fl_client_pin(env):
+        deep_set(overrides, "flClient.image.pin", fl_client_pin(env))
 
     secrets = {}
     for env_var, secret_key in SECRET_VAR_MAP.items():

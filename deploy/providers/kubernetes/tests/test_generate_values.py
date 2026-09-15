@@ -98,3 +98,14 @@ def test_the_kits_image_opt_outs_become_chart_pins():
     unpinned, _secrets = generate_values.build_values({**_KIT, "DOCKER_TAG": "v0.6.0"})
     assert "pin" not in unpinned.get("omopDb", {}).get("image", {})
     assert "orthanc" not in unpinned or "image" not in unpinned["orthanc"]
+
+
+def test_the_fl_client_follows_docker_fl_tag_only_when_it_names_an_immutable_image():
+    """Compose runs the client at DOCKER_FL_TAG outright; the chart does so for a release or a
+    CI sha- tag, and leaves a dev kit's locally built `dev` / the floating `stag` alone."""
+    for tag in ("v0.6.1", "v0.6.1-rc.1", "sha-03fdb61"):
+        overrides, _secrets = generate_values.build_values({**_KIT, "DOCKER_TAG": "v0.6.1", "DOCKER_FL_TAG": tag})
+        assert overrides["flClient"]["image"]["pin"] == tag, tag
+    for tag in ("dev", "stag", "prod", "latest", ""):
+        overrides, _secrets = generate_values.build_values({**_KIT, "DOCKER_TAG": "stag", "DOCKER_FL_TAG": tag})
+        assert "image" not in overrides["flClient"], tag

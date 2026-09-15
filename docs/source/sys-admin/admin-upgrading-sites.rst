@@ -75,9 +75,10 @@ follow.
      or at the kit's own pin for the ones that have one (``OMOP_DB_TAG``, ``ORTHANC_TAG``,
      ``XNAT_TAG``), and stops, naming the missing references, before anything is written.
      Release tags build every image; a ``sha-`` tag only carries the images that commit
-     changed, so ``TAG=sha-…`` is refused whenever one of them was never built at it — pin
-     that one image in the kit (e.g. ``ORTHANC_TAG=sha-…`` of its last build) if you must
-     move to a ``sha-`` tag;
+     changed, so ``TAG=sha-…`` is refused whenever one of them was never built at it — hold
+     that one image at its own build if you must move to a ``sha-`` tag: ``FL_TAG=sha-…`` for
+     the FL client (it becomes the kit's ``DOCKER_FL_TAG``), ``OMOP_DB_TAG`` / ``ORTHANC_TAG``
+     / ``XNAT_TAG`` in the kit for the data services;
    - writes the tag into your kit (``DOCKER_TAG`` and ``DOCKER_FL_TAG``), so the kit always
      records what is installed;
    - pulls the images and recreates only the containers whose image or configuration changed
@@ -115,15 +116,19 @@ fills it from the kit's ``DOCKER_TAG``; the upgrade verb sets it explicitly:
 
    make -C deploy/providers/kubernetes upgrade-trust-k8s KIT=<CODE> PROD=<env> [TAG=vX.Y.Z] [KUBE_CONTEXT=<ctx>]
 
-This is a plain ``helm upgrade`` at the new tag: PersistentVolumeClaims survive it, the init
-hooks short-circuit on populated data, and the API deployments roll onto the new images. The
-resolver pins your kit too, so a later ``sync-kit`` regenerates the same tag rather than
-reverting it. The same registry preflight runs first, and the kit's ``OMOP_DB_TAG`` /
-``ORTHANC_TAG`` / ``XNAT_TAG`` opt-outs reach the chart as ``omopDb.image.pin`` /
-``orthanc.image.pin`` / ``xnat.image.pin``, which beat ``global.image.tag`` for that one
-image — the only way to move a Kubernetes site to a ``sha-`` tag one of them was never built
-at (a StatefulSet rolled onto a tag that does not exist stays down; a release tag never
-needs a pin).
+The resolver pins your kit exactly as on Compose; ``sync-kit`` then regenerates the override
+from it (``global.image.tag``, and the per-image pins below) and re-patches the Secret; then a
+plain ``helm upgrade`` at the new tag. PersistentVolumeClaims survive it, the init hooks
+short-circuit on populated data, and the API deployments roll onto the new images.
+``KUBE_CONTEXT`` names the cluster for every ``helm`` / ``kubectl`` call the verb makes
+(default: kubectl's current context — on a workstation with several clusters, name it).
+
+The kit's ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` / ``XNAT_TAG`` opt-outs reach the chart as
+``omopDb.image.pin`` / ``orthanc.image.pin`` / ``xnat.image.pin``, and ``DOCKER_FL_TAG`` as
+``flClient.image.pin`` when it names a release or ``sha-`` tag; each beats ``global.image.tag``
+for that one image. That is the only way to move a Kubernetes site to a ``sha-`` tag one of
+them was never built at — a StatefulSet rolled onto a tag that does not exist stays down — and
+a release tag never needs one.
 
 Cloud (EC2) trust
 =================

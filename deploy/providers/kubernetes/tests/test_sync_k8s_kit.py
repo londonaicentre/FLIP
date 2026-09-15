@@ -132,6 +132,17 @@ def test_render_override_holds_pinned_images_back_from_the_release():
     assert "pin:" not in plain
 
 
+def test_render_override_pins_the_fl_client_to_an_immutable_docker_fl_tag():
+    """One flClient block (a second top-level key would be a YAML duplicate): kitHostPath and,
+    when the kit's DOCKER_FL_TAG is a release or sha- tag, image.pin. `dev` / `stag` emit none."""
+    out = sync_k8s_kit.render_override({**_FL_KIT, "DOCKER_FL_TAG": "sha-03fdb61"}, "Trust_K8s", "eu-west-2")
+    assert out.count("\nflClient:\n") == 1
+    assert "\nflClient:\n  kitHostPath: /opt/flip/fl-kit\n  image:\n    pin: sha-03fdb61\n" in out
+    for tag in ("dev", "stag"):
+        out = sync_k8s_kit.render_override({**_FL_KIT, "DOCKER_FL_TAG": tag}, "Trust_K8s", "eu-west-2")
+        assert "pin:" not in out, tag
+
+
 def test_render_override_sets_kit_host_path_from_kit():
     """flClient.kitHostPath comes from the kit's FL_KIT_DIR. It is `required` in the
     chart, so an override that omits it (or nests it wrong) fails the render — and one

@@ -1010,7 +1010,7 @@ upgrade-trust-ec2: check-trust-ec2-enabled ssh-config ## Move the EC2 trust to a
 	@echo "👷 Create docker context if not exists, pointing to flip-trust to ssh://flip-trust"
 	@docker context create flip-trust --docker "host=ssh://flip-trust" || echo "   Context 'flip-trust' already exists"
 	@echo "⬆️  Upgrading Trust services on EC2 (KIT=$(KIT))..."
-	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../trust upgrade-trust KIT=$(KIT) PROD=${PROD} TAG=$(TAG) FORCE=$(FORCE) YES=$(YES)
+	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../trust upgrade-trust KIT=$(KIT) PROD=${PROD} TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES)
 	@echo "✅ Trust upgrade complete!"
 
 .PHONY: provision-local-trust

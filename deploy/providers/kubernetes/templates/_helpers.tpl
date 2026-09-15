@@ -139,7 +139,7 @@ FL client image name based on backend selection
 */}}
 {{- define "flip-trust.flClientImage" -}}
 {{- $registry := .Values.flClient.image.repository }}
-{{- $tag := include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.flClient.image.tag) }}
+{{- $tag := include "flip-trust.imageTag" (dict "pin" .Values.flClient.image.pin "global" .Values.global.image.tag "own" .Values.flClient.image.tag) }}
 {{- if eq .Values.flBackend "nvflare" }}
 {{- printf "%s/flare-fl-client:%s" $registry $tag }}
 {{- else }}

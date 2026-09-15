@@ -225,11 +225,12 @@ up-onprem-trust:
 # changed, redeploy XNAT WITHOUT xnat-reset. Never up-trust: that is the first-install
 # verb and wipes the XNAT archive. TAG defaults to the release the hub runs (read from
 # the hub's /health), so a plain `make upgrade-onprem-trust KIT=<slot>` is "catch up
-# with the hub"; FORCE=1 allows a downgrade, YES=1 skips the confirmation.
+# with the hub"; FL_TAG= pins the FL client apart (sha- moves only — a release builds every
+# image at one tag); FORCE=1 allows a downgrade, YES=1 skips the confirmation.
 upgrade-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
 	@$(MAKE) onboard-onprem-trust KIT=$(KIT)
-	$(MAKE) -C trust upgrade-trust KIT=$(KIT) PROD=$(or $(PROD),true) TAG=$(TAG) FORCE=$(FORCE) YES=$(YES)
+	$(MAKE) -C trust upgrade-trust KIT=$(KIT) PROD=$(or $(PROD),true) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
 # so an operator doesn't have to remember the -C trust path or PROD value.
