@@ -17,7 +17,12 @@ Flower port of the chest-X-ray tutorial that lives at
 `fl-tutorials/nvflare/image_classification/xray_classification`. It scores
 every X-ray against the lesions named in `app/config.json` (Effusion + Edema
 by default, with "Lungs in normal arrangement" as a negative override) using
-a MONAI DenseNet121 trained with multi-label BCE.
+a MONAI DenseNet121 trained with multi-label BCE — from scratch, `pretrained=False`.
+An FL app must never download at run time (FLIP#1206: no internet route from the FL
+server or a trust host, and a run-time fetch bypasses the scanned upload path), and the
+ImageNet initialisation bought nothing measurable on this dataset. Apps that do need
+pretrained weights ship them as an uploaded file; the NVFLARE latent-diffusion tutorial
+shows the pattern (`make weights`).
 
 The cohort query (`query.sql`) is copied verbatim from the NVFLARE tutorial
 and matches the chest-X-ray data seeded into the trust mock OMOP DB

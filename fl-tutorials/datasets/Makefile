@@ -16,6 +16,7 @@
 # the documented entrypoints keep working:
 #
 #   make -C fl-tutorials download-xray-data
+#   make -C fl-tutorials download-ldm-weights         # SqueezeNet .pth for the LDM perceptual loss
 #   make -C fl-tutorials download-spleen-data [NUM_CASES=<1-41>]
 #   make -C fl-tutorials download-spleen-checkpoint   # evaluation-tutorial checkpoint only
 #   make -C fl-tutorials download-arkplus-finetuning-data
@@ -38,8 +39,16 @@ NUM_CASES ?= 10
 # --project keeps the cwd here while resolving that env. Same shape for the Synthea build.
 SPLEEN_UV := uv run --project spleen
 SYNTHEA_UV := uv run --project synthea
+# Pretrained-weight staging needs torch: the flip-utils `full` env, which every tutorial
+# already runs in, so no extra project. Weights land under data/weights/ and are then copied
+# into the tutorial's app dir by that tutorial's own `make weights` (FLIP#1206) — the download
+# is shared tooling, the consumption belongs to the app that ships the file.
+WEIGHTS_UV := uv run --project ../../flip-utils --extra full
+WEIGHTS_DIR := $(DATA_DIR)/weights
+WEIGHTS_CACHE := $(WEIGHTS_DIR)/.torchvision
 
-.PHONY: download-xray-data download-spleen-data download-spleen-msd-data \
+.PHONY: download-xray-data download-ldm-weights \
+	download-spleen-data download-spleen-msd-data \
 	download-spleen-checkpoint download-arkplus-finetuning-data \
 	download-arkplus-eval-data download-synthea-data upload-spleen-labels \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
@@ -56,6 +65,14 @@ download-xray-data:
 		--cache-dir $(HF_CACHE) \
 		--output-dir $(DATA_DIR)/xrays_mini_300 \
 		--repo-id $(HF_TEST_DATA_REPO)
+
+# SqueezeNet for the latent-diffusion tutorial's perceptual loss (lpips resolves it through
+# torch.hub, so it stays a .pth under a hub `checkpoints/` layout the app points torch at).
+# Downloaded ONCE here with torchvision's hash check; the app never downloads (FLIP#1206).
+download-ldm-weights:
+	@$(WEIGHTS_UV) python weights/fetch_weights.py squeezenet1_1 \
+		--cache-dir $(WEIGHTS_CACHE) \
+		--out $(WEIGHTS_DIR)/torch_hub/checkpoints
 
 # One spleen dataset for both backends: the MSD build, honouring NUM_CASES, plus the
 # checkpoint only the evaluation tutorial needs. The checkpoint comes FIRST because
