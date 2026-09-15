@@ -8,7 +8,7 @@
 | `source/components.rst` | Toctree of the component pages (Overview, Central Hub, FL nets, Trust APIs, OMOP, XNAT, PACS, Logging Stack) |
 | `source/sys-admin.rst` | System administration, deployment, auth configuration |
 | `source/user-guides.rst` | User-facing workflows and guides |
-| `source/api-reference.rst` | REST API endpoint reference |
+| `source/api-reference.rst` | Auto-generated Python module reference (sphinx-autoapi); the REST endpoint table lives in `source/components/component-central-hub.rst` |
 | `source/deploy-flip.rst` | Deployment instructions (central hub, TRE, on-prem) |
 | `source/working-with-flip-apps.rst` | Building FL apps (NVFLARE / Flower) |
 | `source/flip-workflow.rst` | End-to-end FLIP workflow |

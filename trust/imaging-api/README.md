@@ -152,7 +152,7 @@ Create users, update user details, or add a user to an XNAT project.
 
 ## Configuration
 
-Key environment variables (set in [`.env.development.example`](../../.env.development.example)):
+Key environment variables (set in the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>`):
 
 | Variable | Description |
 | --- | --- |

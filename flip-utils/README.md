@@ -79,6 +79,10 @@ flip/
 ├── core/         # FLIPBase, FLIPStandardProd/Dev implementations, FLIP() factory
 ├── constants/    # FlipConstants (pydantic-settings), enums, PTConstants
 ├── utils/        # General utilities: Utils, model weight helpers
+├── schemas.py    # Shared Pydantic schemas
+├── exceptions.py # Package-level exception types
+├── xnat/         # XNAT protocol client and enrichment helpers (also exposed as the `flip-xnat` CLI)
+├── export/       # Model-export bundling (`python -m flip.export`; see map-apps/README.md)
 ├── nvflare/      # NVFLARE-specific logic and components
 │   ├── controllers/  # FLIP workflows (ScatterAndGather, BroadcastTask, …)
 │   ├── components/   # Event handlers, persistors, privacy filters, locators, …
@@ -87,6 +91,7 @@ flip/
 │   └── metrics.py    # Metrics collection and reporting
 └── flower/       # Flower-specific server-side helpers
     ├── metrics.py    # handle_client_metrics / handle_client_exception
+    ├── privacy.py    # flip_local_dp_mod (Flower local DP: clipping + Gaussian noise)
     ├── progress.py   # RoundTelemetry + typed round events
     ├── selection.py  # BestModelSelector + best-model run-config parsing
     └── strategy.py   # FlipFedAvg (hub telemetry + best-model wiring; needs flwr)
@@ -257,7 +262,7 @@ This uses the network-specific provisioning project files (`fl-services/nvflare/
 
 ### Provisioning Networks for Staging/Production
 
-Note the provisioning project file `net-1_project_stag.yml` changes the name of the FL server to the full domain name i.e. `stag.flip.aicentre.co.uk` instead of `fl-server-net-1`, since the FL
+Note the provisioning project file `net-1_project_stag.yml` changes the name of the FL server to the full domain name i.e. `fl.stag.flip.aicentre.co.uk` instead of `fl-server-net-1`, since the FL
 clients won't be on the same Docker network as the FL server (as they are in development) and won't be able to resolve internal Docker hostnames.
 
 Run:
