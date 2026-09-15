@@ -301,8 +301,11 @@ def check_hub_shared_current(kit_vars: dict[str, str], kit_present: bool) -> Che
     runs (FLIP#1204); trust-api compares the key with its own and reports both on ``/health``.
     A kit whose key was rotated under it (a hub Terraform apply wrote a new key into Secrets
     Manager while the operator kept the old kit) otherwise surfaces only as every task failing
-    to decrypt. A kit pinned behind the hub's release is a WARN, not a FAIL: the upgrade verb
-    runs this checklist first, and the warning names it.
+    to decrypt. Only a confirmed mismatch FAILs. Everything short of that is a WARN, never a
+    PENDING: a first install has no trust-api to ask yet, and a site built before FLIP#1204
+    runs a trust-api that cannot answer — and the upgrade verb, which runs this checklist as
+    its gate, is exactly what fixes the latter. A kit pinned behind the hub's release is a
+    WARN naming that verb.
     """
     label = "Hub-shared block current"
     if not kit_present:
@@ -312,15 +315,16 @@ def check_hub_shared_current(kit_vars: dict[str, str], kit_present: bool) -> Che
         health = fetch_local_trust_health(port)
     except Exception:
         return Check(
-            label, Status.PENDING,
-            f"pending — trust-api not answering on 127.0.0.1:{port} (verified once the stack is up)",
+            label, Status.WARN,
+            f"not verified — trust-api not answering on 127.0.0.1:{port} (checked once the stack is up)",
         )
     key_match = health.get("hub_key_match")
     hub_version = health.get("hub_version")
     if key_match is None:
         return Check(
-            label, Status.PENDING,
-            "pending — trust-api has not yet heard back from the hub (or predates FLIP#1204)",
+            label, Status.WARN,
+            "not verified — trust-api has not heard back from the hub yet, or predates FLIP#1204 "
+            "(upgrading it fixes that)",
         )
     if key_match is False:
         return Check(

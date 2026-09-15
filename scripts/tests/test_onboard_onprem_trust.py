@@ -246,16 +246,18 @@ def test_11_hub_shared_current_passes_and_notes_the_release_gap() -> None:
     _assert(any("upgrade-onprem-trust" in h for h in behind.hints), "hint names the upgrade verb")
 
 
-def test_12_hub_shared_current_is_pending_until_trust_api_answers() -> None:
-    """First install (trust-api not running) or an older trust-api -> PENDING, never FAIL."""
-    print("▶ hub-shared currency: trust-api unreachable / pre-FLIP#1204 -> PENDING")
+def test_12_hub_shared_current_warns_until_trust_api_can_answer() -> None:
+    """First install (trust-api not running) or a pre-FLIP#1204 trust-api -> WARN, never FAIL or PENDING:
+    the upgrade verb runs this checklist as its gate, and is exactly what gives the site a trust-api that
+    can answer — a PENDING here would make an old site un-upgradeable."""
+    print("▶ hub-shared currency: trust-api unreachable / pre-FLIP#1204 -> WARN")
     kit = {"TRUST_API_PORT": "8020", "DOCKER_TAG": "v0.6.0"}
     down = _hub_shared_current(kit, ConnectionRefusedError("refused"))
-    _assert(down.status == mod.Status.PENDING, "unreachable trust-api -> PENDING")
+    _assert(down.status == mod.Status.WARN, "unreachable trust-api -> WARN")
     old = _hub_shared_current(kit, {"version": "0.5.0"})
-    _assert(old.status == mod.Status.PENDING, "trust-api without hub_key_match -> PENDING")
+    _assert(old.status == mod.Status.WARN, "trust-api without hub_key_match -> WARN")
     unknown = _hub_shared_current(kit, {"version": "v0.6.0", "hub_version": None, "hub_key_match": None})
-    _assert(unknown.status == mod.Status.PENDING, "hub_key_match None (no heartbeat reply yet) -> PENDING")
+    _assert(unknown.status == mod.Status.WARN, "hub_key_match None (no heartbeat reply yet) -> WARN")
 
 
 def main() -> None:
@@ -273,7 +275,7 @@ def main() -> None:
     test_9_site_privacy_rejects_misspelt_variable()
     test_10_hub_shared_current_flags_a_stale_key()
     test_11_hub_shared_current_passes_and_notes_the_release_gap()
-    test_12_hub_shared_current_is_pending_until_trust_api_answers()
+    test_12_hub_shared_current_warns_until_trust_api_can_answer()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
