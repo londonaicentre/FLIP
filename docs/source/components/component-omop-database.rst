@@ -198,11 +198,14 @@ column is not part of MI-CDM and no standard DDL or ETL knows about it:
 
 Two rules follow from how the value is used:
 
-- **Never empty.** The accession list a cohort produces goes to the PACS as-is, and in DICOM an
-  empty query key is *universal matching*: it returns every study the PACS holds (up to the query's
-  page limit), not none. A NULL or blank ``accession_id`` is therefore not "a row with no imaging";
-  it must not exist in any row a cohort query can return. Rows without a study belong in the
-  clinical tables, not in ``image_occurrence``.
+- **Never empty.** In DICOM an empty query key is *universal matching*: it returns every study the
+  PACS holds (up to the query's page limit), not none. The imaging API therefore drops a blank
+  ``accession_id`` from the pull list before anything reaches the PACS, with a warning in the
+  trust's imaging-api log naming how many rows it dropped — nothing is sent, but nothing tells the
+  researcher either: from the project's side a blank row is simply a study that is never pulled.
+  A NULL or blank ``accession_id`` is therefore not "a row with no imaging"; it must not exist in
+  any row a cohort query can return. Rows without a study belong in the clinical tables, not in
+  ``image_occurrence``.
 - **Pseudonymise both sides or neither.** Where imaging is de-identified on its way into the PACS
   (a TRE, for instance), the accession number written into OMOP must be the one the de-identified
   study carries, not the original.

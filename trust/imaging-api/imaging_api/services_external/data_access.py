@@ -45,10 +45,11 @@ async def get_accession_ids(encrypted_project_id: str, query: str) -> list[str]:
     A cohort query may return several rows per study — one ``image_occurrence`` per series, say — and
     an accession is one study, imported once: the ids are de-duplicated here, first occurrence wins,
     query order kept, so the same accession is neither queried and queued once per row nor counted
-    once per row in the import status (FLIP#1123).
+    once per row in the import status (FLIP#1123). Blank ids are dropped with a warning, never sent:
+    to a PACS an empty accession number is a query that matches every study.
 
     Returns:
-        list[str]: The distinct accession IDs returned by the cohort query, in query order.
+        list[str]: The distinct, non-blank accession IDs returned by the cohort query, in query order.
 
     Raises:
         CohortBelowThresholdError: If the cohort is smaller than the trust's
@@ -74,10 +75,22 @@ async def get_accession_ids(encrypted_project_id: str, query: str) -> list[str]:
 
         response.raise_for_status()
         rows = list(response.json().get("accession_ids", []))
-        accession_ids = list(dict.fromkeys(rows))
-        if len(accession_ids) != len(rows):
+        # A blank accession must never reach the PACS. In DICOM a zero-length query key is universal
+        # matching: DQR answers with every study the PACS holds (500, the page cap, on the dev PACS)
+        # and the import would take the first of them — a study outside the cohort. A blank
+        # image_occurrence.accession_id is a defect in the trust's OMOP, not a cohort with less
+        # imaging (the column is required for every imaging row; see the OMOP component docs), so
+        # such rows are dropped and counted here rather than sent.
+        usable = [value for value in rows if isinstance(value, str) and value.strip()]
+        if len(usable) != len(rows):
+            logger.warning(
+                f"get_accession_ids: dropping {len(rows) - len(usable)} blank accession id(s) — an empty accession "
+                "number matches every study in the PACS; every image_occurrence row in the cohort must carry one"
+            )
+        accession_ids = list(dict.fromkeys(usable))
+        if len(accession_ids) != len(usable):
             logger.info(
-                f"get_accession_ids: {len(rows)} cohort rows collapse to {len(accession_ids)} distinct accession(s)"
+                f"get_accession_ids: {len(usable)} cohort rows collapse to {len(accession_ids)} distinct accession(s)"
             )
         return accession_ids
 

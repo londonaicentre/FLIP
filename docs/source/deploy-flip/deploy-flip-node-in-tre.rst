@@ -308,7 +308,8 @@ Data
   ``(0008,0050)`` of the matching study in the PACS, and pseudonymisation must change both
   or neither. ``accession_id`` is FLIP's addition to MI-CDM, so the ingest step must create
   and populate it — see :ref:`omop-accession-id` — and must never leave it empty: to a PACS
-  an empty accession number is a query that matches every study, not a missing one.
+  an empty accession number is a query that matches every study, so FLIP drops such rows from
+  the pull (with a warning in the trust's imaging-api log) and the study is never pulled.
 
 Software
 ---------
