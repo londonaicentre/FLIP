@@ -18,9 +18,9 @@ An XNAT account has been created for you at trust {{trust_name}}. You have been 
 
 Set your password to activate your account:
   Username: {{username}}
-  Set-password link: {{setup_path}}
+  Set-password link: <your trust's XNAT address>{{setup_path}}
 
-Open your trust's XNAT in a web browser, then append the set-password link path above to its address and go to it. You'll be asked to choose your own password - no password is ever sent by email.
+Open the link in a web browser, replacing <your trust's XNAT address> with the address you normally use to open XNAT at {{trust_name}} (your trust's XNAT administrator can tell you it) and keeping the rest of the link exactly as shown. You'll be asked to choose your own password - no password is ever sent by email.
 
 IMPORTANT: XNAT is only reachable from inside {{trust_name}}'s secure network. Open this link from a machine connected to that network (for example, using the connection you normally use to reach XNAT). It cannot be opened over the public internet. The link can be used once and expires.
 
