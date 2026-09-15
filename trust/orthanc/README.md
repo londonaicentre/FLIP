@@ -23,17 +23,18 @@ Orthanc username and password are set by `ORTHANC_USERNAME` and `ORTHANC_PASSWOR
 
 Only humans consume these credentials (the Orthanc Explorer UI on the published `PACS_UI_PORT`, or via the XNAT nginx `/orthanc/` reverse proxy, which passes the browser's `Authorization` header through). The platform's data path is plain DICOM (DIMSE) on port 4242 — XNAT's DQR plugin does C-FIND/C-MOVE by AE title, which involves no HTTP credentials. The DICOM-Web plugin is not enabled: nothing in FLIP issues QIDO/WADO/STOW requests.
 
-You'll need to populate Orthanc with DICOM files in order to test FLIP locally. We have prepared mock DICOM data for each of the 2 dev trusts (GSTT and KCH) as Orthanc storage volumes, published to the public Hugging Face dataset [`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data). In order to set up the storage locally, these data volumes need to be downloaded/extracted. They are fetched anonymously over HTTPS — no AWS CLI or credentials required. This is handled automatically when bringing up the trust containers via `make up` / `make up-trusts` (from the repository root) or `make -C trust up-trust KIT=GSTT` / `make -C trust up-trust KIT=KCH` for a single trust, and similarly they will be updated locally when the desired version changes (note for devs: this is controlled by the `.data_version` file in this directory).
-
-```sh
-make update-orthanc-data           # both trusts (default)
-make update-orthanc-data TRUST=1   # Trust_1 only
-make update-orthanc-data TRUST=2   # Trust_2 only
-```
+You'll need to populate Orthanc with DICOM files in order to test FLIP locally. The mock DICOM is the
+per-project sets published to the public Hugging Face dataset
+[`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data)
+(`dicom/<project>.tar.gz`), fetched anonymously over HTTPS — no AWS CLI or credentials required.
+Bringing a trust up (`make up-trusts` from the repository root, or `make -C trust up-trust KIT=GSTT`
+for one) starts Orthanc on an empty, 999-owned storage dir and then seeds this trust's slice of the
+default projects into it (below); the storage persists, so a later `up` uploads nothing. The version
+is `trust/.data_version`, a git tag on that dataset.
 
 ## Seeding a running Orthanc with datasets (FLIP#1100)
 
-The storage volume above is a fixed two-project, two-trust snapshot. To put a
+Seeding is how Orthanc gets its studies — at bring-up, and to put a
 chosen set of projects' studies into a **running** trust's PACS — the PACS half
 of `make -C trust seed KIT=<CODE>` — seed it:
 
@@ -56,9 +57,10 @@ upload anything if an accession in the OMOP slice has no directory in the
 archive. Orthanc dedupes on `SOPInstanceUID` and never overwrites, so a re-run
 is a no-op (`AlreadyStored`) and replacing instances needs `CLEAR=1`.
 
-A seed writes `.seeded` inside the storage dir. On the next `.data_version`
-bump, `update-orthanc-data` refuses to re-snapshot over a seeded volume unless
-`FORCE=1`, before the ~1 GB download.
+A seed writes a marker beside the storage dir (`<parent>/.<storage dir>.seeded`, the
+dir itself being owned by Orthanc's uid) recording projects, partition and data
+version; `make -C trust ensure-seeded` compares it to decide whether to re-seed,
+and on a `.data_version` bump re-runs the seed with `CLEAR=1` for the listed projects.
 
 ### Publishing a project's DICOM set
 
@@ -88,10 +90,5 @@ instance, which makes MONAI Deploy's loader drop the series — see
 absent; populated ones are untouched. Published sets (`dicom/`, at every tag
 from `20260729` on): `spleen_project` (41 studies, 3,650 instances, filled) and
 `cxr_project` (8,332 studies). Both are the original generator outputs, verified
-against the published OMOP — not extractions from the storage tarballs.
-
-To cut a new storage tarball (the snapshot path, for EC2/k8s): seed a fresh
-Orthanc with `seed-orthanc`, then `tar -C <storage dir> -cf trust<N>_orthanc_data.tar .`
-and publish it with `make -C trust publish-trust-data VERSION=… ORTHANC=…` — the
-DICOM sets are the source, the tarball is derived from them, and the version is
-the tag, not the filename.
+against the published OMOP. They are the only DICOM artefacts: every trust —
+dev, on-prem, EC2, Kubernetes — seeds its Orthanc from them (FLIP#1187).

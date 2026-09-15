@@ -511,13 +511,13 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 	@[ -n "$(TRUST_DATA_VERSION)" ] || (echo "❌  trust/.data_version not found"; exit 1)
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
-	@# --skip-tags omop-vocab: the vocabulary load needs the trust's OMOP cluster
-	@# credentials, which live in the kit file. This target runs BEFORE
-	@# register-trusts in every deploy chain, so it has no KIT in scope (hence
-	@# trust_num falling back to 1 above) and cannot supply them. The vocabulary
-	@# is seeded later by `make seed-trust-data KIT=<CODE>`, which does have them.
+	@# --skip-tags omop-vocab,seed: the vocabulary load and the data seed need the
+	@# trust's OMOP cluster credentials, which live in the kit file. This target
+	@# runs BEFORE register-trusts in every deploy chain, so it has no KIT in scope
+	@# (hence trust_num falling back to 1 above) and cannot supply them. Both run
+	@# later from `make seed-trust-data KIT=<CODE>`, which does have them.
 	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; uv run ansible-playbook site.yml \
-		--skip-tags omop-vocab \
+		--skip-tags omop-vocab,seed \
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e fl_backend=$(FL_BACKEND) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
@@ -545,12 +545,15 @@ check-trust-ec2-enabled:
 	@[ "$(DEPLOY_TRUST_EC2)" != "false" ] || (echo "❌  DEPLOY_TRUST_EC2=false (hub-only deployment) — there is no cloud Trust EC2. On-prem trusts join via register-trusts + allow-local-trust-nlb and run 'sudo -E make -C trust up-trust' on their own host."; exit 1)
 
 .PHONY: seed-trust-data
-seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP + Orthanc mock data onto the Trust EC2 (re-run after data version bump; requires KIT=)
+seed-trust-data: check-trust-ec2-enabled ssh-config ## Seed the Trust EC2's OMOP + Orthanc from the canonical dataset, then load the vocabulary (re-run after a data version bump; requires KIT=)
+	@# SEED_PROJECTS / SEED_ORTHANC / SOURCE_TRUST thread through to the seed play (FLIP#1187):
+	@#   make seed-trust-data KIT=GSTT PROD=stag SEED_PROJECTS="spleen_project prostate_project" SEED_ORTHANC=false
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make seed-trust-data KIT=Trust_2 PROD=stag"; exit 1)
 	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo "❌  FL_KIT_SLOT_NUMBER not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — run register-trusts first"; exit 1)
 	@[ -n "$(TRUST_DATA_VERSION)" ] || (echo "❌  trust/.data_version not found"; exit 1)
-	@[ -n "$(OMOP_POSTGRES_PASSWORD_KIT)" ] || (echo "❌  OMOP_POSTGRES_PASSWORD not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — the vocab-load play needs the cluster credentials"; exit 1)
-	@echo "🗄️  Seeding Trust EC2 with trust$(FL_KIT_SLOT_NUMBER) data (trust-data $(TRUST_DATA_VERSION))..."
+	@[ -n "$(OMOP_POSTGRES_PASSWORD_KIT)" ] || (echo "❌  OMOP_POSTGRES_PASSWORD not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — the seed and vocab-load plays need the cluster credentials"; exit 1)
+	@[ -n "$(DATA_ACCESS_POSTGRES_PASSWORD_KIT)" ] || (echo "❌  DATA_ACCESS_POSTGRES_PASSWORD not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — omop-db's first start needs it to create the read-only role"; exit 1)
+	@echo "🗄️  Seeding Trust EC2 (slot $(FL_KIT_SLOT_NUMBER)) from trust-data $(TRUST_DATA_VERSION)..."
 	@uv run ansible-playbook site.yml \
 		--tags data \
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
@@ -560,6 +563,12 @@ seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP 
 		-e omop_postgres_user=$(OMOP_POSTGRES_USER_KIT) \
 		-e omop_postgres_password=$(OMOP_POSTGRES_PASSWORD_KIT) \
 		-e omop_postgres_db=$(OMOP_POSTGRES_DB_KIT) \
+		-e data_access_postgres_password=$(DATA_ACCESS_POSTGRES_PASSWORD_KIT) \
+		-e orthanc_username=$(ORTHANC_USERNAME_KIT) \
+		-e orthanc_password=$(ORTHANC_PASSWORD_KIT) \
+		$(if $(SEED_PROJECTS),-e seed_projects="$(SEED_PROJECTS)") \
+		$(if $(SEED_ORTHANC),-e seed_orthanc=$(SEED_ORTHANC)) \
+		$(if $(SOURCE_TRUST),-e source_trust=$(SOURCE_TRUST)) \
 		-e vocab_s3_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e omop_db_tag=$(DOCKER_TAG)
 	@echo "✅ Trust data seeding complete."
@@ -575,12 +584,11 @@ stage-fl-kit: check-trust-ec2-enabled ssh-config ## Stage the FL participant kit
 	@# Trust_2+ (re-registration, slot churn, second EC2 trust) would silently run
 	@# with Trust_1's FL identity. Idempotent: the plays wipe-then-sync, so a
 	@# re-run on a genuine Trust_1 host is a cheap no-op.
-	@# omop/orthanc_data_version are not used by the flkit plays but are asserted
-	@# by the always-tagged inventory play, same as every site.yml invocation.
+	@# trust_data_version is not used by the flkit plays but is asserted by the
+	@# always-tagged inventory play, same as every site.yml invocation.
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make stage-fl-kit KIT=Trust_2 PROD=stag"; exit 1)
 	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo "❌  FL_KIT_SLOT_NUMBER not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — run register-trusts first"; exit 1)
-	@[ -n "$(OMOP_DATA_VERSION)" ] || (echo "❌  trust/omop-db/.data_version not found"; exit 1)
-	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
+	@[ -n "$(TRUST_DATA_VERSION)" ] || (echo "❌  trust/.data_version not found"; exit 1)
 	@echo "🎫 Staging the $(FL_BACKEND) participant kit for slot Trust_$(FL_KIT_SLOT_NUMBER) onto the Trust EC2..."
 	@uv run ansible-playbook site.yml \
 		--tags flkit \
@@ -588,8 +596,7 @@ stage-fl-kit: check-trust-ec2-enabled ssh-config ## Stage the FL participant kit
 		-e fl_backend=$(FL_BACKEND) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
 		-e trust_num=$(FL_KIT_SLOT_NUMBER) \
-		-e omop_data_version=$(OMOP_DATA_VERSION) \
-		-e orthanc_data_version=$(ORTHANC_DATA_VERSION)
+		-e trust_data_version=$(TRUST_DATA_VERSION)
 	@echo "✅ FL participant kit staged for slot Trust_$(FL_KIT_SLOT_NUMBER)."
 
 .PHONY: deploy-centralhub
@@ -952,16 +959,20 @@ deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and dep
 FL_KIT_SLOT = $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 FL_KIT_SLOT_NUMBER = $(shell sed -n 's/^FL_KIT_SLOT_NUMBER=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 
-# Trust-local OMOP DB credentials from the kit — passed to the vocab-load play
-# (they must match the values the restored pgdata cluster was built with).
+# Trust-local OMOP DB / Orthanc credentials from the kit — passed to the seed and
+# vocab-load plays (the throwaway containers they start on the data directories
+# must be initialised with the same credentials the deployed stack will use).
 OMOP_POSTGRES_USER_KIT := $(shell sed -n 's/^OMOP_POSTGRES_USER=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 OMOP_POSTGRES_PASSWORD_KIT := $(shell sed -n 's/^OMOP_POSTGRES_PASSWORD=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 OMOP_POSTGRES_DB_KIT := $(shell sed -n 's/^OMOP_POSTGRES_DB=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+DATA_ACCESS_POSTGRES_PASSWORD_KIT := $(shell sed -n 's/^DATA_ACCESS_POSTGRES_PASSWORD=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+ORTHANC_USERNAME_KIT := $(shell sed -n 's/^ORTHANC_USERNAME=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+ORTHANC_PASSWORD_KIT := $(shell sed -n 's/^ORTHANC_PASSWORD=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 
 # The data version read from the canonical trust/.data_version — a git tag on the
 # aicentreflip/trust-data dataset that pins OMOP and Orthanc mock data together. It
-# governs both the local update-omop-data / update-orthanc-data scripts and the
-# Ansible plays, which fetch every archive at that tag.
+# governs both the local seed (`make -C trust ensure-seeded`) and the Ansible plays,
+# which fetch the canonical tables and DICOM sets at that tag.
 TRUST_DATA_VERSION := $(shell cat ../../../trust/.data_version 2>/dev/null | tr -d ' \n\r\t')
 
 .PHONY: deploy-trust

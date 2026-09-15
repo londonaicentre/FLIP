@@ -77,7 +77,7 @@ def _assert(condition: bool, label: str, detail: str = "") -> None:
 def _check(path: Path):
     """Run check_data_dir for an OMOP dir at an absolute path (kit present)."""
     return mod.check_data_dir(
-        "OMOP data dir", "OMOP_DATA_DIR", "update-omop-data",
+        "OMOP data dir", "OMOP_DATA_DIR",
         {"OMOP_DATA_DIR": str(path)}, True, SCRIPTS_DIR.parent,
     )
 
@@ -113,24 +113,25 @@ def test_2_populated_dir_passes() -> None:
         _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
 
 
-def test_3_empty_dir_fails() -> None:
-    """A readable but empty data dir -> FAIL with the populate hint."""
+def test_3_empty_dir_warns() -> None:
+    """A readable but empty data dir -> WARN: up-trust seeds it (FLIP#1187), so it is not a blocker."""
     print("▶ empty data dir -> FAIL")
     with tempfile.TemporaryDirectory() as td:
         d = Path(td) / "db_data"
         d.mkdir()
         result = _check(d)
-        _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
+        _assert(result.status == mod.Status.WARN, "status is WARN", result.detail)
         _assert("empty" in result.detail, "detail mentions empty")
+        _assert(any("up-trust" in h for h in result.hints), "hint names the seeding target")
 
 
-def test_4_missing_dir_fails() -> None:
+def test_4_missing_dir_warns() -> None:
     """A non-existent data dir -> FAIL with the does-not-exist message."""
     print("▶ missing data dir -> FAIL")
     with tempfile.TemporaryDirectory() as td:
         d = Path(td) / "does_not_exist"
         result = _check(d)
-        _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
+        _assert(result.status == mod.Status.WARN, "status is WARN", result.detail)
         _assert("does not exist" in result.detail, "detail mentions missing")
 
 
@@ -218,8 +219,8 @@ def main() -> None:
 
     test_1_unreadable_dir_warns_not_crashes()
     test_2_populated_dir_passes()
-    test_3_empty_dir_fails()
-    test_4_missing_dir_fails()
+    test_3_empty_dir_warns()
+    test_4_missing_dir_warns()
     test_5_site_privacy_uses_runtime_validator()
     test_6_site_privacy_rejects_non_finite_value()
     test_7_site_privacy_rejects_unsupported_backend()
