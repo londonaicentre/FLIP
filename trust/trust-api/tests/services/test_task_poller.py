@@ -153,6 +153,20 @@ async def test_send_heartbeat_success():
 
 
 @pytest.mark.asyncio
+async def test_send_heartbeat_records_what_the_hub_says_about_itself():
+    """The reply's hub_version / aes_key_fingerprint land in hub_status (FLIP#1204)."""
+    mock_client = AsyncMock()
+    response = MagicMock(is_success=True)
+    response.json.return_value = {"trust_id": "abc", "trust_name": "T", "hub_version": "v0.7.0"}
+    mock_client.post.return_value = response
+
+    with patch("trust_api.services.task_poller.hub_status") as recorder:
+        await _send_heartbeat(mock_client)
+
+    recorder.record.assert_called_once_with(response.json.return_value)
+
+
+@pytest.mark.asyncio
 async def test_send_heartbeat_posts_no_body_before_first_collection():
     """Until the health collector has a snapshot, the heartbeat must stay bodyless —
     the exact wire behavior of pre-collector trust-api builds."""

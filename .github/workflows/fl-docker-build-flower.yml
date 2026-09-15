@@ -15,6 +15,12 @@ name: Build and Push Flower FL Docker Images
 on:
   push:
     branches: [main, develop]
+    # Release builds (FLIP#1204): the v<X.Y.Z> tag that release.yml creates on main rebuilds
+    # the whole Flower image set at the release commit and pushes :v<X.Y.Z>. GitHub does
+    # not apply the paths filter to tag pushes, so a release tags every image, changed or
+    # not — the superlink a hub deploys and the supernode a site pins carry the same flwr
+    # by construction.
+    tags: ['v*.*.*']
     paths:
       - "fl-services/flower/**"
       # The fl-base image installs the in-repo flip-utils, so flip-utils changes
@@ -66,6 +72,15 @@ jobs:
           SERVER_TAGS="${REGISTRY}/${ORG}/${SERVER_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${SERVER_IMAGE}:sha-${SHORT_SHA}"
           CLIENT_TAGS="${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${CLIENT_IMAGE}:sha-${SHORT_SHA}"
           API_TAGS="${REGISTRY}/${ORG}/${API_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${API_IMAGE}:sha-${SHORT_SHA}"
+
+          # Release tag (FLIP#1204): refs/tags/v<X.Y.Z> → :v<X.Y.Z> on all four images. The
+          # ref name is read from the environment, not templated into the script.
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            BASE_TAGS="${BASE_TAGS},${REGISTRY}/${ORG}/${BASE_IMAGE}:${GITHUB_REF_NAME}"
+            SERVER_TAGS="${SERVER_TAGS},${REGISTRY}/${ORG}/${SERVER_IMAGE}:${GITHUB_REF_NAME}"
+            CLIENT_TAGS="${CLIENT_TAGS},${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${GITHUB_REF_NAME}"
+            API_TAGS="${API_TAGS},${REGISTRY}/${ORG}/${API_IMAGE}:${GITHUB_REF_NAME}"
+          fi
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             BASE_TAGS="${BASE_TAGS},${REGISTRY}/${ORG}/${BASE_IMAGE}:prod"

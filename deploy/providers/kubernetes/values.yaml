@@ -12,6 +12,17 @@
 # ---------------------------------------------------------------------------
 # Global trust-wide configuration
 # ---------------------------------------------------------------------------
+global:
+  image:
+    # The release this site runs (FLIP#1204): one pin for every FLIP-built image — trust-api,
+    # imaging-api, data-access-api, the fl-client, omop-db, orthanc and the three XNAT images.
+    # `make upgrade-trust-k8s KIT=<CODE> TAG=vX.Y.Z` sets it; `sync-kit` fills it from the kit's
+    # DOCKER_TAG. Empty = each service's own image.tag below applies (the mutable `stag`, which
+    # moves under a site on every develop merge). Observability images and xnat-dcm2niix carry
+    # upstream versions of their own and never follow it. omop-db, orthanc and the XNAT trio can
+    # be held back from it with their `image.pin` (the kit's OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG).
+    tag: ""
+
 trustName: "Trust_1"
 trustNumber: 1
 environment: production
@@ -349,6 +360,12 @@ flClient:
   image:
     repository: ghcr.io/londonaicentre
     tag: stag
+    # Beats global.image.tag for the FL client alone — the compose stack's DOCKER_FL_TAG.
+    # sync-kit fills it from the kit only when DOCKER_FL_TAG names an immutable image
+    # (vX.Y.Z / sha-…); a dev kit's local `dev` or the floating `stag` leaves the client
+    # on the release pin. The FL images' builds are path-filtered like orthanc's, so a
+    # sha- move usually needs it (`make upgrade-trust-k8s … FL_TAG=`); a release never does.
+    pin: ""
     pullPolicy: Always
   nvflare:
     # Site-enforced privacy policy (FLIP#851): rendered into /app/local/privacy.json
@@ -420,6 +437,9 @@ omopDb:
     # own /flip/omop/load_core_vocab.sh, which only exists in CI-published
     # (vocab-free, FLIP#842) images.
     tag: stag
+    # Beats global.image.tag for this one image (the kit's OMOP_DB_TAG): omop-db only
+    # rebuilds when trust/omop-db/** changes, so most sha- tags carry no omop-db image.
+    pin: ""
     pullPolicy: Always
   persistence:
     enabled: true
@@ -578,6 +598,9 @@ orthanc:
   image:
     repository: ghcr.io/londonaicentre/orthanc
     tag: stag
+    # Beats global.image.tag for this one image (the kit's ORTHANC_TAG): orthanc only
+    # rebuilds when trust/orthanc/** changes, so most sha- tags carry no orthanc image.
+    pin: ""
     pullPolicy: Always
   replicas: 1
   service:
@@ -636,6 +659,10 @@ orthanc:
 # ---------------------------------------------------------------------------
 xnat:
   enabled: true
+  image:
+    # Beats global.image.tag for xnat-web, xnat-db and xnat-nginx together (the kit's
+    # XNAT_TAG, the same role it plays for the compose stack in trust/xnat/Makefile).
+    pin: ""
   initJob:
     enabled: true
   web:

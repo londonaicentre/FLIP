@@ -67,7 +67,7 @@ spec:
       {{- end }}
       containers:
         - name: data-access-api
-          image: "{{ .Values.dataAccessApi.image.repository }}:{{ .Values.dataAccessApi.image.tag }}"
+          image: "{{ .Values.dataAccessApi.image.repository }}:{{ include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.dataAccessApi.image.tag) }}"
           imagePullPolicy: {{ .Values.dataAccessApi.image.pullPolicy }}
           {{- with .Values.securityContext }}
           securityContext:

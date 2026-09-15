@@ -87,8 +87,27 @@ jobs:
                     echo "No previous platform tag found — generating notes from the start."
                   fi
 
-                  gh api "repos/${{ github.repository }}/releases/generate-notes" \
-                    "${API_ARGS[@]}" --jq '.body' > /tmp/release_notes.md
+                  GENERATED=$(gh api "repos/${{ github.repository }}/releases/generate-notes" \
+                    "${API_ARGS[@]}" --jq '.body')
+
+                  # The curated header (Highlights, Breaking Changes, Site upgrade, …) from the
+                  # release-notes template goes ABOVE the generated changelog, the same way
+                  # release-pypi.yml publishes it (FLIP#1204: before this, the template only
+                  # reached the PR preview and the flip-utils release, so the "Site upgrade"
+                  # section trust operators act on never appeared on the platform release).
+                  # The licence block is stripped by its whole-line delimiters — see
+                  # release-pypi.yml for why an unanchored range would eat every section.
+                  VERSION="${{ steps.version.outputs.version }}"
+                  HEADER=$(sed '/^<!--$/,/^-->$/d' "$GITHUB_WORKSPACE/.github/RELEASE_NOTES_TEMPLATE.md" \
+                    | sed "s/{{PROJECT}}/FLIP/g" \
+                    | sed "s/{{VERSION}}/${VERSION}/g" \
+                    | sed "s/{{TAG}}/${TAG}/g" \
+                    | sed "s/{{PREV_TAG}}/${PREV_TAG:-initial release}/g")
+
+                  {
+                    printf '%s\n\n' "$HEADER"
+                    printf '%s\n' "$GENERATED"
+                  } > /tmp/release_notes.md
 
                   echo "notes_file=/tmp/release_notes.md" >> "$GITHUB_OUTPUT"
 

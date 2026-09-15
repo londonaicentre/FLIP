@@ -242,7 +242,15 @@ block from the admin's local env file — credentials are preserved:
 
    make sync-trust-kit KIT=<CODE> PROD=true
 
-Re-transmit the refreshed kit to the operator over the same encrypted channel.
+Re-transmit the refreshed kit to the operator over the same encrypted channel. The
+operator replaces only the Hub-shared block and re-applies it with
+``sudo -E make upgrade-onprem-trust KIT=<slot> YES=1`` — not ``up-onprem-trust``, which
+is the first-install verb and resets XNAT.
+
+**Upgrading to a release (later).** Sites move between releases with
+``sudo -E make upgrade-onprem-trust KIT=<slot>`` — the operator's command, defaulting to
+the release the hub runs. See :doc:`/sys-admin/admin-upgrading-sites` for the runbook,
+including when the admin has to re-issue kits first.
 
 ***********************
 Trust authentication

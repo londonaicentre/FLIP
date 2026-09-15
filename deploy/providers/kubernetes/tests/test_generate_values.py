@@ -71,3 +71,41 @@ def test_both_override_generators_share_the_fallback():
     sync_spec.loader.exec_module(sync_k8s_kit)
     out = sync_k8s_kit.render_override({"FL_BACKEND": "nvflare"}, "Trust_K8s", "eu-west-2")
     assert f"\nflClient:\n  kitHostPath: {generate_values.DEFAULT_KIT_HOST_PATH}\n" in out
+
+
+def test_the_kits_docker_tag_becomes_the_charts_release_pin():
+    """The kit's Hub-shared DOCKER_TAG is the release the site runs (FLIP#1204); before this it
+    never reached Helm, and a Kubernetes site stayed on nine hand-edited `image.tag: stag`."""
+    overrides, _secrets = generate_values.build_values({**_KIT, "DOCKER_TAG": "v0.6.0"})
+    assert overrides["global"]["image"]["tag"] == "v0.6.0"
+
+
+def test_a_kit_without_docker_tag_leaves_the_release_pin_alone():
+    """Dev kits keep the Hub-shared block commented out; the chart's own per-service tags apply."""
+    overrides, _secrets = generate_values.build_values(_KIT)
+    assert "global" not in overrides
+
+
+def test_the_kits_image_opt_outs_become_chart_pins():
+    """OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG hold one image back from DOCKER_TAG on compose
+    (`${OMOP_DB_TAG:-${DOCKER_TAG}}`); the chart's `<svc>.image.pin` is their twin."""
+    pins = {"OMOP_DB_TAG": "latest", "ORTHANC_TAG": "sha-2bf07b9", "XNAT_TAG": "v0.6.0"}
+    kit = {**_KIT, "DOCKER_TAG": "sha-badcff1", **pins}
+    overrides, _secrets = generate_values.build_values(kit)
+    assert overrides["omopDb"]["image"]["pin"] == "latest"
+    assert overrides["orthanc"]["image"]["pin"] == "sha-2bf07b9"
+    assert overrides["xnat"]["image"]["pin"] == "v0.6.0"
+    unpinned, _secrets = generate_values.build_values({**_KIT, "DOCKER_TAG": "v0.6.0"})
+    assert "pin" not in unpinned.get("omopDb", {}).get("image", {})
+    assert "orthanc" not in unpinned or "image" not in unpinned["orthanc"]
+
+
+def test_the_fl_client_follows_docker_fl_tag_only_when_it_names_an_immutable_image():
+    """Compose runs the client at DOCKER_FL_TAG outright; the chart does so for a release or a
+    CI sha- tag, and leaves a dev kit's locally built `dev` / the floating `stag` alone."""
+    for tag in ("v0.6.1", "v0.6.1-rc.1", "sha-03fdb61"):
+        overrides, _secrets = generate_values.build_values({**_KIT, "DOCKER_TAG": "v0.6.1", "DOCKER_FL_TAG": tag})
+        assert overrides["flClient"]["image"]["pin"] == tag, tag
+    for tag in ("dev", "stag", "prod", "latest", ""):
+        overrides, _secrets = generate_values.build_values({**_KIT, "DOCKER_TAG": "stag", "DOCKER_FL_TAG": tag})
+        assert "image" not in overrides["flClient"], tag

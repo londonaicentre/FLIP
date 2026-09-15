@@ -34,6 +34,16 @@
 - **NVFLARE 2.9.0** (#1174) carries upstream breaking changes for custom jobs; see the tutorial and template updates in that PR.
 - **Database migration** (#1129): flip-api adds the `has_imaging` column via Alembic; it runs at boot.
 
+## :arrows_counterclockwise: Site upgrade
+
+<!-- The prompt to trust operators (FLIP#1204). Sites upgrade on their own schedule and to the
+     release their hub runs; this section is how they learn what this release asks of them. -->
+
+- **Required:** yes — this release changes the hub↔site contract (`FLIP_RELEASE` build identity in every image; hub-version and key-fingerprint fields in the heartbeat reply). Sites on v0.6.0 keep working against a {{TAG}} hub, but their Connection Status versions read as "informational" numbers until they move.
+- **Ordering:** hub first, then sites at their own pace. No flag-day: an older site's heartbeat is still accepted.
+- **Refreshed kit needed:** no — the Hub-shared block is unchanged by this release. (If the hub's AES key or FL kit date changed with your hub deploy, re-sync: `make sync-trust-kit KIT=<CODE> PROD=<env>` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>`.)
+- **Operator command:** `make upgrade-onprem-trust KIT=<slot>` — defaults to the release the hub runs once the hub is on {{TAG}}; pass `TAG={{TAG}}` explicitly before that. Kubernetes: `make -C deploy/providers/kubernetes upgrade-trust-k8s KIT=<CODE> TAG={{TAG}}`; EC2: `make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env> TAG={{TAG}}`. Runbook: *docs → System administrators → Upgrading a site*.
+
 ## :seedling: New Features
 
 - Real Trust PACS configuration and DQR (#994); tabular-only projects (#1129); per-trust FL privacy policy (#853).

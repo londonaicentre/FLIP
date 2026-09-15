@@ -12,8 +12,9 @@
 
 from fastapi import APIRouter
 
+from trust_api.services import hub_status
 from trust_api.utils.background import dead_background_tasks
-from trust_api.utils.version import service_version
+from trust_api.utils.version import build_identity
 
 router = APIRouter(prefix="/health", tags=["Health"])
 
@@ -30,12 +31,17 @@ async def health_check() -> dict[str, object]:
 
     Returns:
         dict[str, object]: The service status, its version (the same contract as
-        the sibling trust services' /health), and any dead background tasks.
+        the sibling trust services' /health), any dead background tasks, and what
+        the hub said about itself on the last heartbeat reply — ``hub_version`` (the
+        release a site upgrade defaults to) and ``hub_key_match`` (whether this kit's
+        AES key still matches the hub's; ``None`` until a reply has been seen or when
+        the hub predates FLIP#1204). The on-prem readiness checklist reads both.
     """
     dead = dead_background_tasks()
 
     return {
         "status": "degraded" if dead else "ok",
-        "version": service_version(),
+        "version": build_identity(),
+        **hub_status.current(),
         "dead_tasks": sorted(dead),
     }
