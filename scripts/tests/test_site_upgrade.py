@@ -170,8 +170,57 @@ class WriteTags(unittest.TestCase):
             assert su.read_kit(kit)["CENTRAL_HUB_API_URL"] == "https://hub.example/api"
 
 
+class SiteImages(unittest.TestCase):
+    """The registry preflight covers exactly what the compose files pull at the kit's tags."""
+
+    def test_lists_every_repo_built_image_at_the_target_tag(self):
+        refs = su.site_images({"DOCKER_REGISTRY": "ghcr.io/londonaicentre/"}, "v0.6.1")
+        names = {ref.rsplit("/", 1)[1] for ref in refs}
+        assert names == {
+            "trust-api:v0.6.1",
+            "imaging-api:v0.6.1",
+            "data-access-api:v0.6.1",
+            "orthanc:v0.6.1",
+            "xnat-web:v0.6.1",
+            "xnat-db:v0.6.1",
+            "xnat-nginx:v0.6.1",
+            "omop-db:v0.6.1",
+            "flare-fl-client:v0.6.1",
+        }
+        assert all(ref.startswith("ghcr.io/londonaicentre/") for ref in refs)
+
+    def test_flower_sites_check_the_supernode_and_a_pinned_omop_db_is_left_alone(self):
+        refs = su.site_images({"FL_BACKEND": "flower", "OMOP_DB_TAG": "latest"}, "v0.6.1")
+        names = {ref.rsplit("/", 1)[1] for ref in refs}
+        assert "flower-supernode:v0.6.1" in names
+        assert "flare-fl-client:v0.6.1" not in names
+        assert not any(name.startswith("omop-db:") for name in names)
+
+    def test_missing_images_are_the_ones_the_registry_does_not_serve(self):
+        def probe(ref: str, timeout: float = 0) -> bool:
+            return "orthanc" not in ref
+
+        with mock.patch.object(su, "manifest_exists", side_effect=probe):
+            assert su.missing_images({}, "sha-badcff1") == ["ghcr.io/londonaicentre/orthanc:sha-badcff1"]
+
+    def test_manifest_probe_is_the_docker_exit_code(self):
+        with mock.patch.object(su.subprocess, "run", return_value=mock.Mock(returncode=0)) as run:
+            assert su.manifest_exists("ghcr.io/x/y:v1")
+        assert run.call_args.args[0] == ["docker", "manifest", "inspect", "ghcr.io/x/y:v1"]
+        with mock.patch.object(su.subprocess, "run", return_value=mock.Mock(returncode=1)):
+            assert not su.manifest_exists("ghcr.io/x/y:v1")
+        with mock.patch.object(su.subprocess, "run", side_effect=OSError("no docker")):
+            assert not su.manifest_exists("ghcr.io/x/y:v1")
+
+
 class Plan(unittest.TestCase):
     """End-to-end through main(): exit codes are the Makefile's contract."""
+
+    def setUp(self):
+        # Every image is published unless a test says otherwise — never probe a registry from a unit test.
+        patcher = mock.patch.object(su, "missing_images", return_value=[])
+        self.missing_images = patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _run(self, kit: Path, *argv: str, stdin: str = "") -> tuple[int, str]:
         out = io.StringIO()
@@ -236,6 +285,38 @@ class Plan(unittest.TestCase):
             assert code == 0, out
             assert "dry run" in out
             assert "DOCKER_TAG=sha-badcff1" in kit.read_text()
+
+    def test_plan_refuses_a_tag_some_image_was_never_built_at(self):
+        # orthanc only rebuilds when trust/orthanc/** changes, so most sha- tags have no orthanc image:
+        # refuse before the kit is rewritten, naming the reference, so the pull never fails half-way.
+        self.missing_images.return_value = ["ghcr.io/londonaicentre/orthanc:sha-1234567"]
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp))
+            code, out = self._run(kit, "--tag", "sha-1234567", "--yes")
+            assert code == 5, out
+            assert "ghcr.io/londonaicentre/orthanc:sha-1234567" in out
+            assert "DOCKER_TAG=sha-badcff1" in kit.read_text()
+        self.missing_images.assert_called_once()
+        assert self.missing_images.call_args.args[1] == "sha-1234567"
+
+    def test_plan_checks_the_registry_before_asking_the_operator(self):
+        self.missing_images.return_value = ["ghcr.io/londonaicentre/xnat-web:v0.6.0"]
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp))
+            with mock.patch.object(sys.stdin, "isatty", return_value=True, create=True):
+                code, out = self._run(kit, "--tag", "v0.6.0", stdin="y\n")
+            assert code == 5, out
+            assert "Proceed?" not in out
+
+    def test_plan_without_a_docker_cli_warns_and_leaves_it_to_the_pull(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp))
+            with mock.patch.object(su.shutil, "which", return_value=None):
+                code, out = self._run(kit, "--tag", "v0.6.0", "--yes")
+            assert code == 0, out
+            assert "skipping the registry check" in out
+            assert "DOCKER_TAG=v0.6.0" in kit.read_text()
+        self.missing_images.assert_not_called()
 
 
 if __name__ == "__main__":

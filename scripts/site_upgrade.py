@@ -27,8 +27,12 @@ Everything that decides *what* to move to happens here, before any container is 
    script stop and ask for ``TAG=`` rather than guess.
 2. **Guards.** The tag must look like an image tag (``v<X.Y.Z>`` or ``sha-<short7>`` — never
    ``prod``/``stag``, which move under a site); a release→release downgrade needs
-   ``--force``; and the operator confirms the printed ``site vA → target vB`` unless
-   ``--yes``.
+   ``--force``; every image the site pulls must exist at that tag in the registry
+   (``docker manifest inspect``, so a tag that was only ever built for *some* images — every
+   ``sha-`` tag, since each image's CI build is path-filtered — is refused before the kit is
+   rewritten, rather than failing half-way through ``compose pull`` or, worse, letting
+   ``docker stack deploy`` stop a running XNAT task for an image that cannot be pulled); and
+   the operator confirms the printed ``site vA → target vB`` unless ``--yes``.
 3. **Pin.** ``DOCKER_TAG`` and ``DOCKER_FL_TAG`` in the kit's Hub-shared block are rewritten
    in place, so the kit always records what is installed. The Makefile then re-includes the
    kit in a sub-make and does the pull / recreate.
@@ -38,7 +42,8 @@ Usage:
         [--tag vX.Y.Z] [--force] [--yes] [--hub-url URL] [--dry-run]
 
 Exit codes (the Makefile's contract): 0 pinned; 2 needs ``--tag``; 3 refused downgrade
-(pass ``--force``); 4 not confirmed (pass ``--yes`` for a scripted run).
+(pass ``--force``); 4 not confirmed (pass ``--yes`` for a scripted run); 5 an image is
+missing at the target tag.
 """
 
 from __future__ import annotations
@@ -46,6 +51,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -64,8 +71,18 @@ _SHA_TAG = re.compile(r"^sha-[0-9a-f]{7}$")
 EXIT_NEEDS_TAG = 2
 EXIT_DOWNGRADE = 3
 EXIT_NOT_CONFIRMED = 4
+EXIT_MISSING_IMAGES = 5
 
 _HUB_TIMEOUT_SECONDS = 10.0
+_MANIFEST_TIMEOUT_SECONDS = 60.0
+
+#: Every repo-built image a compose site pulls at ``DOCKER_TAG`` / ``DOCKER_FL_TAG``
+#: (`trust/deploy/compose_trust.production.yml`, `trust/xnat/docker-compose-stack.yml`,
+#: `trust/deploy/compose_trust.production.<backend>.yml`). ``omop-db`` joins the list only
+#: when the kit does not pin it separately with ``OMOP_DB_TAG``.
+_DEFAULT_REGISTRY = "ghcr.io/londonaicentre/"
+_SITE_IMAGES = ("trust-api", "imaging-api", "data-access-api", "orthanc", "xnat-web", "xnat-db", "xnat-nginx")
+_FL_CLIENT_IMAGE = {"nvflare": "flare-fl-client", "flower": "flower-supernode"}
 
 
 class NeedsTag(Exception):
@@ -150,6 +167,32 @@ def resolve_target(cli_tag: str | None, hub_url: str) -> tuple[str, str]:
     return reported, "hub"
 
 
+def site_images(kit: dict[str, str], tag: str) -> list[str]:
+    """Every image reference the site would pull once the kit pins ``tag``."""
+    registry = kit.get("DOCKER_REGISTRY") or _DEFAULT_REGISTRY
+    names = list(_SITE_IMAGES)
+    if not kit.get("OMOP_DB_TAG"):
+        names.append("omop-db")
+    names.append(_FL_CLIENT_IMAGE.get(kit.get("FL_BACKEND") or "nvflare", _FL_CLIENT_IMAGE["nvflare"]))
+    return [f"{registry}{name}:{tag}" for name in names]
+
+
+def manifest_exists(ref: str, timeout: float = _MANIFEST_TIMEOUT_SECONDS) -> bool:
+    """``docker manifest inspect`` as an existence probe: the registry's answer, nothing pulled."""
+    try:
+        result = subprocess.run(
+            ["docker", "manifest", "inspect", ref], capture_output=True, text=True, timeout=timeout, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def missing_images(kit: dict[str, str], tag: str) -> list[str]:
+    """The site's image references that the registry does not serve at ``tag``."""
+    return [ref for ref in site_images(kit, tag) if not manifest_exists(ref)]
+
+
 def write_tags(kit_file: Path, tag: str) -> None:
     """Pin ``DOCKER_TAG`` and ``DOCKER_FL_TAG`` in the kit, touching nothing else, kit kept 0600."""
     lines = kit_file.read_text().split("\n")
@@ -195,6 +238,19 @@ def plan(args: argparse.Namespace) -> int:
             print(f"❌ {current} → {target} is a downgrade. Re-run with FORCE=1 if that is intended.")
             return EXIT_DOWNGRADE
         print("   ⚠️  downgrade forced (FORCE=1) — XNAT database migrations are forward-only; restore from a dump")
+
+    if shutil.which("docker") is None:
+        print("   ⚠️  docker CLI not found — skipping the registry check; the pull will report a missing image")
+    else:
+        missing = missing_images(kit, target)
+        if missing:
+            print(f"❌ {target} is not published for every image this site runs (log in to the registry first):")
+            for ref in missing:
+                print(f"     {ref}")
+            print("   A release tag (vX.Y.Z) builds every image; a sha- tag only carries the images that")
+            print("   commit changed. Nothing changed — pick a tag that exists for all of them.")
+            return EXIT_MISSING_IMAGES
+        print(f"   ✓ all {len(site_images(kit, target))} images are published at {target}")
 
     if args.dry_run:
         print("   (dry run — kit not modified)")

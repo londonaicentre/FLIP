@@ -223,8 +223,10 @@ sudo -E make upgrade-onprem-trust KIT=<slot> TAG=v0.7.0   # → a named release
 Runs the readiness checklist, resolves the target (the hub's `/api/health`
 `version`, or `TAG=`), asks you to confirm `site <current> → target <release>`,
 writes the tag into your kit's Hub-shared block, pulls, recreates what changed,
-and upgrades XNAT in place (database dump first, no reset). `FORCE=1` allows a
-downgrade, `YES=1` skips the prompt. The full runbook — ordering, refreshed kits,
+and upgrades XNAT in place (database dump first, no reset). Before the kit is touched
+it asks the registry for every image at the target and refuses a tag any of them was
+never built at (each `sha-` build is path-filtered; a release tag builds them all).
+`FORCE=1` allows a downgrade, `YES=1` skips the prompt. The full runbook — ordering, refreshed kits,
 Kubernetes and EC2 variants, rollback — is
 `docs/source/sys-admin/admin-upgrading-sites.rst`.
 
