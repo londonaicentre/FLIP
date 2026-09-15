@@ -13,7 +13,7 @@
 
 // Demo segment 3 — inside one trust: the imported cohort has landed in XNAT,
 // and a study is opened in the OHIF DICOM viewer. This segment runs with
-// CYPRESS_BASE_URL pointed at the trust's XNAT (e.g. http://localhost:8104);
+// CYPRESS_BASE_URL pointed at the trust's XNAT (e.g. http://localhost:8105);
 // the orchestrator resolves the XNAT project (matched on secondary_ID ==
 // FLIP project id) and an experiment id before launching it. Navigating
 // straight to /VIEWER/ keeps OHIF in the recorded tab — the XNAT UI's own

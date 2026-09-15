@@ -1,0 +1,203 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Terraform plan on PR, against the staging account (FLIP#962).
+#
+# validate_terraform.yml already runs fmt/validate with `-backend=false`, which
+# catches HCL errors and nothing else — it never reads real state, so an
+# infrastructure change reaches review with no diff attached. This workflow
+# authenticates through OIDC and posts the actual plan.
+#
+# Two things to know before changing it:
+#
+#   * The job declares `environment: aws-stag` because that is the only way a
+#     workflow can read environment secrets, and the plan needs the real input
+#     values to produce a truthful diff. A consequence worth being explicit
+#     about: any same-repo PR can therefore reach the staging secrets. Fork PRs
+#     cannot — GitHub withholds both the OIDC token and environment secrets from
+#     them — and the job skips outright rather than failing halfway.
+#   * Declaring an environment also changes the OIDC `sub` claim to
+#     `repo:ORG/REPO:environment:aws-stag`, which carries no ref. What keeps a PR
+#     from assuming the *apply* role is the `job_workflow_ref` condition in
+#     deploy/providers/AWS/ci/main.tf, not the ref in `sub`.
+#
+# The image tags are resolved, not read from configuration. `vars.DOCKER_TAG` is
+# the mutable `:stag`, while an apply writes the immutable `sha-<short7>` pin
+# (FLIP#751) into the task definition — so a plan that read the configured tag
+# would report a permanent `sha-… -> :stag` diff on every task definition,
+# including the FL ones, which the apply workflow's FL gate then holds on. The
+# resolver runs here in its `RESOLVE_SHA_TAG=false` mode: read the tag each
+# service is running, never wait on a registry.
+#
+# Known limitation: this plans staging for every PR, including a release PR into
+# `main`. Staging and production hold different input values, so a staging plan
+# is a good proxy for a production one but not a substitute — read a prod diff
+# from the nightly drift run or a laptop plan before a release that changes
+# something environment-specific. Planning both would need an `aws-prod-plan`
+# environment (prod secrets are not readable from a PR by design); worth adding
+# if release PRs start carrying risky infrastructure changes.
+
+name: Terraform Plan
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "deploy/providers/AWS/**"
+      - ".github/workflows/terraform_plan.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tf-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Plan (stag)
+    # Belt and braces on top of GitHub withholding OIDC and environment secrets
+    # from forks: skip explicitly, so a fork PR shows a skipped job rather than a
+    # confusing credential failure.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: aws-stag
+    permissions:
+      contents: read
+      id-token: write # mint the OIDC token
+      pull-requests: write # post the plan comment
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ vars.TF_PLAN_ROLE_ARN }}
+          role-session-name: flip-tf-plan-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # Read the tags the staging services are running, rather than the
+      # configured mutable ones. RESOLVE_SHA_TAG=false skips the GHCR probe
+      # entirely: a PR's merge commit has no published image and never will, so
+      # there is nothing to wait for and no registry credential is needed.
+      # DOCKER_TAG / DOCKER_FL_TAG reach the compose step below through
+      # $GITHUB_ENV, which is why they are absent from its `env:` block.
+      - name: Resolve the image tags the services are running
+        env:
+          GIT_SHA: ${{ github.event.pull_request.head.sha }}
+          DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
+          FALLBACK_DOCKER_TAG: ${{ vars.DOCKER_TAG }}
+          FALLBACK_DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}
+          FL_BACKEND: ${{ vars.FL_BACKEND }}
+          RESOLVE_SHA_TAG: "false"
+        run: deploy/providers/AWS/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"
+
+      # The Makefile reads its inputs from ../../../.env.stag. Composing that file
+      # rather than exporting TF_VAR_* directly keeps the Makefile as the single
+      # definition of how env values map onto Terraform inputs — see the script's
+      # header, and `make print-tf-env` below.
+      - name: Compose the Terraform env file
+        env:
+          TF_ENV: stag
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          VPC_NAME: ${{ vars.VPC_NAME }}
+          FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}
+          AICENTRE_BUCKET_NAME: ${{ vars.AICENTRE_BUCKET_NAME }}
+          FLIP_APP_BUNDLES_BUCKET_NAME: ${{ vars.FLIP_APP_BUNDLES_BUCKET_NAME }}
+          FLIP_FL_RESULTS_BUCKET_NAME: ${{ vars.FLIP_FL_RESULTS_BUCKET_NAME }}
+          FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME: ${{ vars.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME }}
+          FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
+          FLIP_BUCKET_NAME: ${{ vars.FLIP_BUCKET_NAME }}
+          API_PORT: ${{ vars.API_PORT }}
+          DB_PORT: ${{ vars.DB_PORT }}
+          UI_PORT: ${{ vars.UI_PORT }}
+          FL_API_PORT: ${{ vars.FL_API_PORT }}
+          FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
+          ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
+          DEMO_ASSETS_BUCKET_NAME: ${{ vars.DEMO_ASSETS_BUCKET_NAME }}
+          FL_ADMIN_DIRECTORY: ${{ vars.FL_ADMIN_DIRECTORY }}
+          INTERNAL_SERVICE_KEY_HEADER: ${{ vars.INTERNAL_SERVICE_KEY_HEADER }}
+          TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}
+          MIN_CLIENTS: ${{ vars.MIN_CLIENTS }}
+          SES_VERIFIED_EMAIL: ${{ vars.SES_VERIFIED_EMAIL }}
+          ALB_SUBDOMAIN: ${{ vars.ALB_SUBDOMAIN }}
+          NLB_SUBDOMAIN: ${{ vars.NLB_SUBDOMAIN }}
+          DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
+          FL_BACKEND: ${{ vars.FL_BACKEND }}
+          FL_KIT_SLOT_NAMES: ${{ vars.FL_KIT_SLOT_NAMES }}
+          FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
+          FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
+          DEPLOY_TRUST_EC2: ${{ vars.DEPLOY_TRUST_EC2 }}
+          LOCAL_TRUST_PUBLIC_IPS: ${{ vars.LOCAL_TRUST_PUBLIC_IPS }}
+          K8S_TRUST_PUBLIC_IPS: ${{ vars.K8S_TRUST_PUBLIC_IPS }}
+          JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
+          JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: ${{ vars.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB }}
+          ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
+          AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
+          INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
+          INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
+          POSTGRES_DB: ${{ vars.POSTGRES_DB }}
+          POSTGRES_USER: ${{ vars.POSTGRES_USER }}
+        run: deploy/providers/AWS/scripts/compose-ci-env.sh .env.stag
+
+      # aws_key_pair.public_key is ForceNew and neither keypair is behind a
+      # `count`, so a runner without this file plans a replacement of
+      # flip-keypair and host-aws — which ripples into aws_instance.ec2_instance.
+      # The bytes come from SSM rather than a checked-in file so they cannot drift
+      # from what is actually in state; `make seed-ci-keypair-param` publishes them.
+      - name: Write the EC2 keypair public key
+        run: |
+          mkdir -p "$HOME/.ssh"
+          if ! aws ssm get-parameter \
+            --name /flip/ci/host_aws_public_key \
+            --query Parameter.Value --output text > "$HOME/.ssh/host-aws.pub"; then
+            echo "::error::/flip/ci/host_aws_public_key is missing. Seed it with:" \
+                 "make -C deploy/providers/AWS seed-ci-keypair-param"
+            exit 1
+          fi
+          chmod 600 "$HOME/.ssh/host-aws.pub"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "~> 1.13"
+          terraform_wrapper: false
+
+      # The Makefile owns the env-to-TF_VAR mapping (TF_VAR_environment, the
+      # VPC/subnet CIDRs, the FL image names via deploy/fl_backend.mk, the kit-date
+      # selection). tf-via-pr calls terraform directly, so hand it those values
+      # rather than re-deriving them here and drifting from a laptop plan.
+      - name: Export the Terraform variables
+        working-directory: deploy/providers/AWS
+        run: make --no-print-directory print-tf-env >> "$GITHUB_ENV"
+
+      - name: Terraform plan
+        uses: op5dev/tf-via-pr@39ed2635c056ca408ed24cc5c2baf0ef4381a7a5 # v13.7.4
+        with:
+          command: plan
+          working-directory: deploy/providers/AWS
+          arg-backend-config: bucket=${{ vars.FLIP_TFSTATE_BUCKET_NAME }},region=${{ vars.AWS_REGION }}
+          # Never take the state lock for a PR plan: an operator mid-`make apply`
+          # must not be blocked by someone else opening a pull request.
+          arg-lock: false
+          validate: true
+          format: true
+          comment-pr: on-diff
+          # MUST stay false. tf-via-pr defaults this to true, and the plan file
+          # it uploads is a zip containing the full tfstate — which holds
+          # AES_KEY_BASE64, INTERNAL_SERVICE_KEY and ADMIN_USER_PASSWORD in
+          # plaintext. This repository is public, so that artifact is a public
+          # download. Nothing downstream needs it: this job only comments the
+          # diff, and terraform_apply.yml re-plans from scratch rather than
+          # consuming a plan produced here.
+          upload-plan: false

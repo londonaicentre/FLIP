@@ -12,9 +12,11 @@
 """Per-project surrogate-key blocks, shared by the dataset converters (FLIP#1092 task 9).
 
 Both spleen_project and cxr_project load into the same trust database, and prostate_project will be
-a third. Surrogate keys (visit_occurrence_id, procedure_occurrence_id, image_occurrence_id,
-image_feature_id) must not collide across projects, so each project gets a reserved 1,000,000-wide
-block.
+a third. Surrogate keys (visit_occurrence_id, procedure_occurrence_id, image_occurrence_id) must not
+collide across projects, so each project gets a reserved 1,000,000-wide block.
+
+``image_feature_id`` is block-allocated for spleen but **derived** for cxr, which is why it is not in
+that list — see ``DERIVED_ID_BANDS`` for the band it lands in instead.
 
 ``person_id`` is deliberately NOT covered here: it comes from ``nhs_number_to_integer(PatientID)``,
 the first nine digits of a random NHS number, so it is outside our control and scatters across the
@@ -27,6 +29,21 @@ PROJECT_ID_BLOCKS = {
     "prostate_project": 3_000_000,
 }
 BLOCK_SIZE = 1_000_000
+
+# Ids a converter DERIVES rather than allocating from its block, recorded here so the allocator
+# carries the constraint instead of only the call site that creates them: whoever adds the next
+# project reads this file, not omop_convert_cxr.py.
+#
+# cxr's image_feature_id is the image_occurrence_id with a two-digit finding index appended
+# (``int(f"{image_occurrence_id}{entry_id:02d}")``), so the band is cxr's own block shifted two
+# decimal places — 1_000_001 -> 100_000_100 at the bottom, 2_000_000 -> 200_000_099 at the top. The
+# published 20260901 export occupies 100_000_100..100_833_201 of it. Changing the scheme would change
+# published ids, so the band is recorded rather than moved.
+#
+# Keep PROJECT_ID_BLOCKS clear of these: test_omop_ids.py asserts they do not intersect.
+DERIVED_ID_BANDS = {
+    ("cxr_project", "image_feature_id"): (100_000_100, 200_000_099),
+}
 
 
 def surrogate_ids(project: str, count: int) -> range:

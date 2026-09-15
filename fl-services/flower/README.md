@@ -111,18 +111,31 @@ which drives the vendored `generate_creds.py` to produce, per network:
 ```
 provision/creds/net-<N>/
 ├── certificates/   ca.crt, ca.key, server.pem, server.key   # TLS for SuperLink/SuperNode/CLI
-└── keys/           supernode_credentials_<i>{,.pub}          # SuperNode auth key pairs (2 by default)
+└── keys/           supernode_credentials_<i>{,.pub}          # SuperNode auth key pairs, one per kit slot
 ```
 
-> ⚠️ These are development credentials. Configure validity, organization, the server SANs
-> (`SERVER_SAN_IPS`), or the number of SuperNode key pairs by editing the globals at the top
-> of [`provision/scripts/generate_creds.py`](provision/scripts/generate_creds.py).
+How many key pairs: `make provision` mints one per entry in this environment's `FL_KIT_SLOT_NAMES`,
+falling back to 2 where no pool is named (a dev env file). A trust staged into slot *N* fetches
+`keys/supernode_credentials_N`, so a kit that stops short of the pool leaves the later slots unable
+to start — and there is no add-a-node path, unlike NVFLARE's `provision --add_user`: a re-run
+regenerates the CA and invalidates every node already holding credentials. Override with
+`NUM_SUPERNODES=<n>` (or `FLOWER_NUM_SUPERNODES=<n>` when calling the script directly).
+
+> ⚠️ These are development credentials. Configure validity, organization or the server SANs
+> (`SERVER_SAN_IPS`) by editing the globals at the top of
+> [`provision/scripts/generate_creds.py`](provision/scripts/generate_creds.py); extra DNS SANs for a
+> hub deployment go in `FLOWER_EXTRA_SERVER_SANS` without editing anything.
 
 ### Provisioning command
 
 ```bash
 make -C fl-services/flower provision NET_NUMBER=1   # → provision/creds/net-1/
 make -C fl-services/flower provision NET_NUMBER=2   # second net for the default dev stack
+
+# A stag/prod kit: PROD selects the env file the slot pool is read from, and the
+# SuperLink cert needs the hub's own names.
+FLOWER_EXTRA_SERVER_SANS="fl-server-net-1.flip.local,fl.stag.flip.aicentre.co.uk" \
+  make -C fl-services/flower provision NET_NUMBER=1 PROD=stag
 ```
 
 `creds/` is the gitignored `FL_PROVISIONED_DIR` for Flower (see

@@ -96,7 +96,12 @@ restructure_participant() {
     local start_script="${dest_path}/startup/start.sh"
     if [[ -f "${start_script}" ]]; then
         vlog "Modifying start.sh script to run 'sub_start.sh' process in foreground (removing &)"
-        sed -i 's|\$DIR/sub_start.sh &|\$DIR/sub_start.sh|g' "${start_script}"
+        # `sed -i` without a suffix is GNU-only: BSD/macOS sed reads the next
+        # argument as the backup suffix, so the script becomes the suffix and the
+        # file becomes the script ("extra characters at the end of p command").
+        # `-i.bak` is accepted by both; drop the backup afterwards.
+        sed -i.bak 's|\$DIR/sub_start.sh &|\$DIR/sub_start.sh|g' "${start_script}"
+        rm -f "${start_script}.bak"
     fi
 
     # Create log_config.template.json

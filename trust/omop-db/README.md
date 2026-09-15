@@ -58,7 +58,12 @@ make -C trust/omop-db load-omop-vocab OMOP_DB_PORT=5436  # Trust_2 (KCH)
 
 Cohort queries that join `omop.concept` return nothing until this step has
 run. On EC2 trusts the equivalent load is part of `seed-trust-data` (Ansible);
-on Kubernetes it is the chart's `omop-vocab-load` post-install job.
+on Kubernetes it is the chart's `omop-vocab-load` post-install job — when
+`omopDb.vocabLoad.s3Bucket` is set and the Job can reach AWS credentials, which
+on a local `kind` cluster it cannot without extra setup (the node is a container
+that does not see your `~/.aws`). The chart README's "Local clusters (kind)"
+covers both routes: an `extraMounts` mapping, or pre-seeding over a port-forward
+with this script directly.
 
 To ask a database whether it has been loaded — without a bundle, and without
 loading anything — run the script's probe mode. It exits 0 only when every
@@ -103,6 +108,35 @@ volume — that would discard the seed *and* the vocabulary load — unless
 For database-only debugging (without the rest of the trust stack), `make -C trust/omop-db up-test-omop-trust1` will start just the first dev trust's OMOP container.
 
 Bringing the container up should not run any initialization scripts — the data volume already contains a populated database.
+
+### The Synthea EHR cohort (for the EHR risk-prediction tutorial)
+
+The shipped mock OMOP is built from the imaging projects and carries **no `condition_occurrence`
+rows**. The EHR risk-prediction tutorial
+([`fl-tutorials/{nvflare/tabular_classification,flower}/ehr_risk_prediction`](../../fl-tutorials))
+runs a cohort query over person demographics + condition/visit history, so it needs those tables
+populated. `load-synthea-ehr` fetches the fully synthetic 1k-person
+[Synthea-in-OMOP dataset](https://registry.opendata.aws/synthea-omop/) from the AWS Open Data
+Registry (anonymous HTTPS, no credentials, ~5 MB, downloaded at run time and cached under
+`data/synthea-ehr/`, never committed) and appends each trust's `person_id`-modulo slice into a
+**running** trust database — once per trust, the same shape as `load-omop-vocab`:
+
+```sh
+make -C trust/omop-db load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # Trust_1 (GSTT)
+make -C trust/omop-db load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # Trust_2 (KCH)
+```
+
+Design (see `src/omop_db_tools/synthea_ehr.py`): Synthea ids are shifted by `PERSON_ID_OFFSET` so
+they never collide with the imaging cohorts' existing keys at insert time, and the tutorial's
+`query.sql` scopes to persons that have at least one condition — i.e. exactly the rows loaded here,
+transparently excluding the imaging-only persons. That offset is not what makes reloading safe,
+though: imaging `person_id` is derived from a real NHS number and scatters across the whole 9-digit
+range, so idempotency deletes by **provenance** (the `synthea-` prefix each loaded row carries in
+`person_source_value`) rather than by an id-range threshold — the latter was tried first and
+silently deleted a chunk of the imaging cohort (and its cascaded rows) on every reload. The load is
+FK-safe (it keeps Synthea's standard gender concepts and zeroes the rest, matching conditions on
+their SNOMED `condition_source_value`) and idempotent. It is a dev/demo convenience: a real trust
+already holds real condition data, so `query.sql` runs against it unchanged.
 
 ## Building the image
 

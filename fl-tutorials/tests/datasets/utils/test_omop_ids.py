@@ -81,3 +81,39 @@ def test_surrogate_ids_exactly_fills_the_block_without_error(omop_ids: ModuleTyp
     assert len(ids) == omop_ids.BLOCK_SIZE
     assert ids.start == 2_000_001
     assert ids.stop == 3_000_001
+
+
+def test_derived_bands_do_not_intersect_any_allocated_block(omop_ids: ModuleType) -> None:
+    """The point of recording a derived band: a future block base must not be picked inside one.
+
+    cxr's image_feature_id is derived from its image_occurrence_id rather than allocated, so it
+    lands outside every reserved block. Allocating a new project a base that fell inside that band
+    would collide in a database all these projects share, and nothing else would catch it — the
+    allocator has no idea the band exists unless it is written down here.
+    """
+    for (project, column), (low, high) in omop_ids.DERIVED_ID_BANDS.items():
+        assert low <= high, f"{project}.{column}: band bounds are inverted"
+        for other, base in omop_ids.PROJECT_ID_BLOCKS.items():
+            allocated_low, allocated_high = base + 1, base + omop_ids.BLOCK_SIZE
+            assert allocated_high < low or allocated_low > high, (
+                f"{project}.{column} band {low}..{high} intersects {other}'s allocated block "
+                f"{allocated_low}..{allocated_high}"
+            )
+
+
+def test_cxr_derived_band_matches_the_scheme_that_produces_it(omop_ids: ModuleType) -> None:
+    """Pins the band to omop_convert_cxr's ``int(f"{image_occurrence_id}{entry_id:02d}")``.
+
+    Derived from cxr's block edges rather than from the current dataset, so re-running the converter
+    on more rows cannot silently leave the recorded band behind.
+    """
+    base = omop_ids.PROJECT_ID_BLOCKS["cxr_project"]
+    first_occurrence, last_occurrence = base + 1, base + omop_ids.BLOCK_SIZE
+    expected = (int(f"{first_occurrence}{0:02d}"), int(f"{last_occurrence}{99:02d}"))
+
+    assert omop_ids.DERIVED_ID_BANDS[("cxr_project", "image_feature_id")] == expected
+
+    # The published 20260901 export sits inside it: 8332 occurrences, at most two findings each.
+    low, high = expected
+    assert low <= 100_000_100
+    assert high >= 100_833_201

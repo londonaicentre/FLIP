@@ -180,7 +180,7 @@ export XNAT_USER=your-username
 export XNAT_PASS=your-password
 
 make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<project-uuid> \
-  XNAT_URLS="http://127.0.0.1:8104 http://127.0.0.1:8106" DRY_RUN=1
+  XNAT_URLS="http://127.0.0.1:8105 http://127.0.0.1:8107" DRY_RUN=1
 ```
 
 `DRY_RUN=1` reports what would happen without changing anything — do that first, then drop it to
@@ -188,8 +188,8 @@ upload.
 
 **Enrich every Trust.** Each Trust's XNAT holds only its own studies, so the project is enriched
 only once all of them are; a Trust left without labels fails training at the zero-pairs guard. The
-`XNAT_URLS` list above is the dev roster — GSTT on 8104, KCH on 8106 — and one invocation covers
-both. Where the Trusts need different logins, repeat `XNAT_CREDENTIALS_FILES` instead. Sending the
+`XNAT_URLS` list above is the dev roster — GSTT on 8105, KCH on 8107, the XNAT **web** ports; 8104
+and 8106 are the DICOM receivers and will not answer a REST call — and one invocation covers both. Where the Trusts need different logins, repeat `XNAT_CREDENTIALS_FILES` instead. Sending the
 whole mapping to every Trust is safe: an accession exists at exactly one site, and the others report
 it as "no matching scan".
 

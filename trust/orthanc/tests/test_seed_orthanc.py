@@ -76,6 +76,31 @@ class TestSelectAccessions:
     def test_a_trust_with_no_rows_gets_nothing(self, seed):
         assert seed.select_accessions([{"accession_id": "FAK1", "source_trust": "1"}], 3) == []
 
+    def test_a_table_without_the_column_says_so(self, seed):
+        # A brand-new dataset published without source_trust used to die as a bare KeyError.
+        rows = [{"accession_id": "FAK1", "person_id": "7"}]
+        with pytest.raises(SystemExit, match="no 'source_trust' column"):
+            seed.select_accessions(rows, 1)
+
+    def test_a_blank_cell_names_the_line(self, seed):
+        rows = [{"accession_id": "FAK1", "source_trust": "1"}, {"accession_id": "FAK2", "source_trust": ""}]
+        with pytest.raises(SystemExit, match="line 3"):
+            seed.select_accessions(rows, 1)
+
+    def test_an_empty_table_is_not_a_column_error(self, seed):
+        assert seed.select_accessions([], 1) == []
+
+
+class TestRequireEnv:
+    def test_returns_the_value(self, seed, monkeypatch):
+        monkeypatch.setenv("PACS_UI_PORT", "8042")
+        assert seed.require_env("PACS_UI_PORT", "hint") == "8042"
+
+    def test_an_unset_variable_is_named(self, seed, monkeypatch):
+        monkeypatch.delenv("ORTHANC_PASSWORD", raising=False)
+        with pytest.raises(SystemExit, match="ORTHANC_PASSWORD is not set"):
+            seed.require_env("ORTHANC_PASSWORD", "it comes from the kit")
+
 
 class TestMissingAccessions:
     def test_reports_every_accession_without_a_directory(self, seed, tmp_path):

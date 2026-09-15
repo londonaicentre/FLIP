@@ -33,10 +33,18 @@ from pathlib import Path
 import pandas as pd
 
 HF_TRUST_DATA_REPO = os.environ.get("HF_TRUST_DATA_REPO", "aicentreflip/trust-data")
-# The dataset holds ONE copy of every table at omop-csv/<project>/; a data version is a git tag on it,
-# and the pin names that tag. trust/.data_version once FLIP#1101 lands (one tag for the whole
-# dataset), trust/omop-db/.data_version until then.
-PIN_FILES = ("trust/.data_version", "trust/omop-db/.data_version")
+# Published tables are read at omop-csv/<project>/ on the data-version TAG the pin names. That is the
+# FLIP#1101 layout — one copy of every table, a data version being a git tag on the dataset — and it
+# is the convention for new code here.
+#
+# It is not the only layout the dataset carries today. The pre-#1101 copies at
+# omop-csv/<version>/<project>/ are still published and resolve to the same bytes, but nothing in
+# this repo reads them any more — trust/omop-db's omop_db_tools.dataset and this tree's
+# spleen/upload_spleen_labels_to_xnat.py both read the canonical layout since FLIP#1101. The
+# versioned-path copies go once stag/prod have bumped their pin.
+#
+# The pin itself is trust/.data_version — one tag for the whole dataset.
+PIN_FILES = ("trust/.data_version",)
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TABLES = (
     "person",
@@ -59,7 +67,11 @@ def pinned_revision() -> str:
 
 
 def published_url(revision: str, project: str, table: str) -> str:
-    """URL of one published table at a revision — the version is the revision, never the path."""
+    """URL of one published table: under FLIP#1101 the version is the revision, not a path segment.
+
+    See the note above ``PIN_FILES`` for the pre-#1101 versioned-path layout the dataset also still
+    carries, and why this is deliberately not the URL construction ``omop_db_tools.dataset`` uses.
+    """
     return f"https://huggingface.co/datasets/{HF_TRUST_DATA_REPO}/resolve/{revision}/omop-csv/{project}/{table}.csv"
 
 
@@ -85,6 +97,29 @@ def fetch_published(revision: str, project: str, table: str) -> pd.DataFrame | N
         raise
 
 
+def source_trust_of(trust: str) -> int:
+    """The published ``source_trust`` value for one generated trust directory.
+
+    The converters write ``omop/<trust>/<project>/`` with the ``trust`` column dropped, while the
+    published export is a single file per table carrying ``source_trust`` instead. Re-deriving it
+    from the directory name is what lets the federated split itself be compared — see ``compare``.
+
+    Args:
+        trust: Generated trust directory name, e.g. ``trust_1``.
+
+    Returns:
+        int: The provenance value the published export carries for that trust — ``trust_1`` is 1,
+        matching ``omop_db_tools.dataset``'s partition (index i holds ``source_trust`` i + 1).
+
+    Raises:
+        SystemExit: If the name carries no trailing number to derive it from.
+    """
+    number = trust.rsplit("_", 1)[-1]
+    if not number.isdigit():
+        raise SystemExit(f"cannot derive source_trust from --trusts entry {trust!r}: expected a trailing number")
+    return int(number)
+
+
 def compare(mine: pd.DataFrame, theirs: pd.DataFrame) -> tuple[bool, str]:
     """Compare a generated table against its published counterpart.
 
@@ -92,9 +127,20 @@ def compare(mine: pd.DataFrame, theirs: pd.DataFrame) -> tuple[bool, str]:
     is empty there — so shared columns are compared for equality and published-only columns are
     required to be information-free. A published-only column carrying real data is a genuine gap.
 
+    ``source_trust`` is compared like any other column rather than dropped from both sides, so the
+    federated split is part of what the gate certifies. It has to be: both sides are sorted by the
+    surrogate key before comparison, so with the column dropped any reassignment of rows between
+    trust_1 and trust_2 compares byte-identical and still passes — and for cxr that column is a pure
+    function of row order in the input CSV (``df.index % len(TRUSTS)``), so a re-ordered or
+    re-published input would silently re-partition the cohort. The split decides which trust's OMOP
+    holds a person, hence which trust's cohort query returns them and whose imaging is pulled into
+    XNAT. A published table that carries no ``source_trust`` at all fails as a generated-only column,
+    which is the right answer: the export has lost the provenance the gate exists to check.
+
     Args:
-        mine: Generated table, with any ``trust`` column already dropped.
-        theirs: Published table, with ``source_trust`` already dropped.
+        mine: Generated table, with any ``trust`` column already dropped and ``source_trust``
+            re-derived from the trust directory it was read from.
+        theirs: Published table, as published.
 
     Returns:
         tuple[bool, str]: Whether they match, and a one-line description.
@@ -150,8 +196,11 @@ def main(argv: list[str] | None = None) -> int:
             failed.append(table)
             print(f"DIFF  {table}: generated file(s) missing: {[str(p) for p in missing]}")
             continue
-        mine = pd.concat([pd.read_csv(p) for p in paths], ignore_index=True)
-        ok, detail = compare(mine, theirs.drop(columns=["source_trust"], errors="ignore"))
+        mine = pd.concat(
+            [pd.read_csv(p).assign(source_trust=source_trust_of(t)) for p, t in zip(paths, args.trusts)],
+            ignore_index=True,
+        )
+        ok, detail = compare(mine, theirs)
         print(f"{'MATCH' if ok else 'DIFF '} {table}: {detail}")
         compared += 1
         if not ok:

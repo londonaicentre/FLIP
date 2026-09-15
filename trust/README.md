@@ -89,7 +89,7 @@ update-privacy filter is applied to every outgoing model update regardless of th
 (site filters run before app filters and jobs cannot opt out). Unset = no site policy (app-level filters
 only, the previous behavior). Invalid values stop the fl-client at startup — fail closed. Apply changes with
 `make -C trust up-fl-clients-kit KIT=<CODE>`; the fl-client log then shows
-`[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-nodes.rst`
+`[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-nets.rst`
 ("Site-enforced privacy policy").
 
 ### 3. Start the trust against the hub
@@ -134,7 +134,9 @@ duplicated as a second directory or a suffixed filename. `HF_TRUST_DATA_REVISION
 tag everywhere (`main` to work against files uploaded but not tagged yet; a sha to freeze one).
 
 Publishing a new version is one commit that replaces exactly the artefacts that changed, plus one
-tag — a version can never be half-published, and an existing tag is never moved:
+tag. An existing tag is never moved, so a published version means one set of bytes for good. The
+commit and the tag are separate calls to the Hub: if the second fails, the bytes sit on `main` with
+nothing pinning them and no consumer resolving them — re-run the same command to finish it.
 
 ```sh
 make -C omop-db export-pgdata                         # dist/trust<N>_pgdata.tar
@@ -148,6 +150,26 @@ make publish-trust-data VERSION=20261001 …            # for real; then set .da
 (`hf auth login` with write access to the dataset is needed.) Bumping `.data_version` is what
 moves a checkout: the next `up-trust` re-snapshots — refusing, without `FORCE=1`, to discard a
 volume that was seeded — and every seed/enrichment run reads at the new tag.
+
+### Which partition a trust is seeded with
+
+`make -C trust seed KIT=<CODE>` loads the OMOP `source_trust` partition matching the trust's **FL
+kit slot** — partition 1 into the trust holding `Trust_1`, and so on. That is a default, not an
+invariant: the kit slot and the OMOP partition are separate axes that happen to line up on the
+shipped GSTT/KCH roster. Slots are claimed from a pool in registration order, so a re-registered
+trust, or a third one, can hold slot 2 while the data meant for it is partition 1.
+
+Seeded the wrong way round nothing complains — the OMOP rows and the PACS studies are selected by
+the same column, so they still agree with each other; they just belong to another institution.
+Override with `SOURCE_TRUST` when the two differ:
+
+```sh
+make -C trust seed KIT=<CODE> SOURCE_TRUST=1        # slot stays as assigned; load partition 1
+```
+
+`SOURCE_TRUST` moves only the partition. The trust's volumes, ports and the `.seeded` marker stay
+keyed to its kit slot, which is why it exists as its own variable rather than an override of
+`TRUST_NUM`.
 
 ## OMOP Database
 

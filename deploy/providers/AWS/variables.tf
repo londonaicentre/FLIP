@@ -46,12 +46,50 @@ variable "private_subnets" {
   type = list(string)
 }
 
+# POSTGRES_USER / POSTGRES_DB are configuration, not credentials, and are treated
+# as such consistently (FLIP#962): NOT `sensitive` here, and stored as GitHub
+# environment *variables* rather than environment secrets.
+#
+# The inconsistency this replaces was storing them as secrets while leaving them
+# un-`sensitive`. That bought nothing: both land in the flip-api container
+# definition (locals.tf), and the PR plan comment on this public repository is
+# built by tf-via-pr from the plan output — GitHub's log masking does not reach an
+# API payload, so a "secret" appeared there in the clear anyway.
+#
+# Marking them `sensitive` is the other way to make it consistent, and is worse:
+# sensitivity propagates, so the whole `container_definitions` attribute renders
+# as `(sensitive value)` and the image-tag diff that the FLIP#751 pin exists to
+# make reviewable disappears with it.
+#
+# Neither is a credential. Production authenticates to Postgres through RDS Proxy
+# with a per-connection IAM token (rds_proxy.tf, FLIP#556) — there is no password
+# in the task environment, and the database sits in a private subnet with no
+# public endpoint. A database name and a role name are configuration.
+#
+# Moving them means re-running scripts/setup-github-environments.sh for both
+# environments: it derives the secret-vs-variable split from terraform_plan.yml,
+# so it creates the variables, but the now-unread secrets of the same name linger
+# until an admin deletes them.
 variable "POSTGRES_USER" {
   type = string
 }
 
 variable "POSTGRES_DB" {
   type = string
+}
+
+# Permissions boundary attached to every IAM role this root owns.
+#
+# The policy itself is declared in ci/ — the root the pipeline does not apply —
+# and the CI apply role may only create a role, or write an inline policy onto
+# one, when that role carries this boundary (ci/main.tf, apply_iam). Set the name
+# to "" to detach it, which is only correct in an account where ci/ has never
+# been applied: an automated apply into an account whose roles have no boundary
+# is denied, loudly, on the first CreateRole.
+variable "iam_permissions_boundary_name" {
+  description = "Managed-policy name used as the permissions boundary on this root's IAM roles; \"\" disables it."
+  type        = string
+  default     = "AICentre-FLIPTerraformBoundary"
 }
 
 variable "postgres_version" {

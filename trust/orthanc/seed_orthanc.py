@@ -59,6 +59,17 @@ DEFAULT_PROJECTS = ["cxr_project", "spleen_project"]
 # same file, so the CSVs and the DICOM set are always the same version.
 DATA_VERSION_FILE = Path(__file__).resolve().parents[1] / ".data_version"
 COMPLETE_MARKER = ".complete"
+# The published column that says which trust a study belongs to — the same one omop_db_tools
+# partitions by, which is what makes a trust's OMOP rows and its PACS studies agree.
+SOURCE_TRUST_COLUMN = "source_trust"
+
+
+def require_env(name: str, hint: str) -> str:
+    """One environment variable, or a message naming it — never a bare ``KeyError`` traceback."""
+    value = os.environ.get(name)
+    if not value:
+        raise SystemExit(f"❌ {name} is not set — {hint}")
+    return value
 
 
 def hf_url(revision: str, path: str, repo: str = HF_TRUST_DATA_REPO) -> str:
@@ -80,10 +91,30 @@ def select_accessions(rows: list[dict[str, str]], trust_index: int) -> list[str]
 
     Returns:
         list[str]: Accession ids, in table order, duplicates removed.
+
+    Raises:
+        SystemExit: If the published table carries no ``source_trust`` column, or a row's value is
+            not an integer. This tool is the one most likely to be pointed at a brand-new dataset
+            by hand, so it says what is wrong with the data rather than surfacing a KeyError.
     """
+    if rows and SOURCE_TRUST_COLUMN not in rows[0]:
+        raise SystemExit(
+            f"❌ the published image_occurrence table carries no {SOURCE_TRUST_COLUMN!r} column "
+            f"(columns: {', '.join(rows[0])}).\n"
+            f"   The seed selects a trust's studies by that column, so the dataset has to be "
+            f"republished with it — see trust/omop-db/README.md."
+        )
     seen: dict[str, None] = {}
-    for row in rows:
-        if int(row["source_trust"]) == trust_index:
+    for line, row in enumerate(rows, start=2):  # +2: the header is line 1
+        raw = row[SOURCE_TRUST_COLUMN]
+        try:
+            source_trust = int(raw)
+        except (TypeError, ValueError):
+            raise SystemExit(
+                f"❌ image_occurrence line {line}: {SOURCE_TRUST_COLUMN}={raw!r} is not a trust number. "
+                f"Every row needs one — republish the table with the column filled in."
+            ) from None
+        if source_trust == trust_index:
             seen.setdefault(row["accession_id"], None)
     return list(seen)
 
@@ -221,9 +252,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     revision = resolve_revision(args.revision)
-    orthanc_url = args.orthanc_url or f"http://127.0.0.1:{os.environ['PACS_UI_PORT']}"
+    kit_hint = "it comes from the trust's kit file; use `make -C trust seed-orthanc KIT=<CODE>` to supply it"
+    orthanc_url = args.orthanc_url or f"http://127.0.0.1:{require_env('PACS_UI_PORT', kit_hint)}"
     session = requests.Session()
-    session.auth = (os.environ["ORTHANC_USERNAME"], os.environ["ORTHANC_PASSWORD"])
+    session.auth = (require_env("ORTHANC_USERNAME", kit_hint), require_env("ORTHANC_PASSWORD", kit_hint))
 
     if not args.dry_run:
         session.get(f"{orthanc_url}/system", timeout=30).raise_for_status()

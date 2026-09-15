@@ -98,9 +98,17 @@ def get_concepts_from_pathologies(pathologies_str: str, conditioning: str) -> li
                 "location": MAPPING_ANATOMIC_SITE[location],
                 "negative": 1 if "no_" in pathology else 0,
             }
-        except Exception as e:
-            pathology_entry = {}
-            print(e)
+        except KeyError as e:
+            # Upstream this caught Exception, printed it and appended {}. Nothing downstream guarded
+            # the empty dict, so it reached entry["concept"] ~190 lines later and the run died with
+            # KeyError: 'concept', with the real cause visible only on stdout. Unreachable for the
+            # published data — every finding and location it carries maps — but this tree exists for
+            # the next dataset added to it, and this is the branch that one is most likely to hit.
+            raise KeyError(
+                f"unmapped finding/location in pathologies {pathologies_str!r}: finding "
+                f"{pathology_description!r}, location {location!r} — add it to utils.omop_mappings "
+                "(MAPPING_FINDING / MAPPING_ANATOMIC_SITE)"
+            ) from e
 
         output_pathology_entries.append(pathology_entry)
 
@@ -254,6 +262,14 @@ def transform_dicom_metadata_to_omop_tables(csv_file_path: str, omop_root: str =
         ]
     ].copy()
 
+    # One lookup for the whole loop, instead of two boolean scans of the whole frame per row. The
+    # loop below runs once per image occurrence (8332 for the published export), so the scans were
+    # ~3.7s of a ~15s run. drop_duplicates keeps the first occurrence of each accession number,
+    # which is exactly what the .iloc[0] this replaces documented, so the output is unchanged.
+    report_by_accession = df.drop_duplicates("AccessionNumber").set_index("AccessionNumber")[
+        ["conditioning", "pathologies"]
+    ]
+
     rows_image_feature = []
     rows_observation = []
     cells_trust = []
@@ -261,10 +277,11 @@ def transform_dicom_metadata_to_omop_tables(csv_file_path: str, omop_root: str =
         image_feature_ms.iterrows(), total=len(image_feature_ms), desc="image features and observations"
     ):
         accession_id = row["accession_id"]
-        # Find conditioning and pathology strings, using first entry in case of multiple occurrences of the accession
-        # number
-        conditioning = df.loc[df["AccessionNumber"].eq(accession_id), "conditioning"].iloc[0]
-        pathologies = df.loc[df["AccessionNumber"].eq(accession_id), "pathologies"].iloc[0]
+        # Conditioning and pathology strings for this accession — first entry in case of multiple
+        # occurrences, which is what building report_by_accession above already picked.
+        report = report_by_accession.loc[accession_id]
+        conditioning = report["conditioning"]
+        pathologies = report["pathologies"]
 
         # Process pathologies and conditioning to get individual sets of concepts
         finding_entries = get_concepts_from_pathologies(pathologies, conditioning)
@@ -281,32 +298,39 @@ def transform_dicom_metadata_to_omop_tables(csv_file_path: str, omop_root: str =
             # scheme would change published ids, so it stays as-is and is documented instead.
             this_id = int(f"{row['image_occurrence_id']}{entry_id:02d}")
 
-            # Expand image_feature rows
-            row_if = pd.Series()
-            row_if["image_feature_id"] = this_id
-            row_if["person_id"] = row["person_id"]
-            row_if["image_occurrence_id"] = row["image_occurrence_id"]
-            row_if["image_feature_concept_id"] = entry["concept"]
-            row_if["anatomic_site_concept_id"] = entry["location"]
-            row_if["image_feature_type_concept_id"] = MAPPING_CXR["ehr_radiology_report"]  # EHR Radiology Report
-            row_if["image_feature_event_field_concept_id"] = MAPPING_CXR["observation"]
-            row_if["image_feature_event_id"] = this_id  # Reference to observation_id
-            rows_image_feature.append(row_if)
+            # Expand image_feature rows. Accumulated as plain dicts rather than one-row pd.Series:
+            # building 11660 Series before stacking them cost ~4.9s, and the DataFrame constructor
+            # takes dicts directly. Key order is the column order of the written CSV, so it must
+            # stay exactly as it was.
+            rows_image_feature.append(
+                {
+                    "image_feature_id": this_id,
+                    "person_id": row["person_id"],
+                    "image_occurrence_id": row["image_occurrence_id"],
+                    "image_feature_concept_id": entry["concept"],
+                    "anatomic_site_concept_id": entry["location"],
+                    "image_feature_type_concept_id": MAPPING_CXR["ehr_radiology_report"],  # EHR Radiology Report
+                    "image_feature_event_field_concept_id": MAPPING_CXR["observation"],
+                    "image_feature_event_id": this_id,  # Reference to observation_id
+                }
+            )
 
             # For each row in feature we register observation table entry with yes/no.
-            row_ob = pd.Series()
-            row_ob["observation_id"] = this_id
-            row_ob["person_id"] = row["person_id"]
-            row_ob["observation_concept_id"] = entry["concept"]
-            row_ob["observation_type_concept_id"] = MAPPING_CXR["ehr_radiology_report"]
-            row_ob["observation_date"] = row["image_occurrence_date"]
-            row_ob["value_as_concept_id"] = MAPPING_YES_NO["no"] if entry["negative"] else MAPPING_YES_NO["yes"]
-            row_ob["value_as_number"] = 0.0 if entry["negative"] else 1.0
-            rows_observation.append(row_ob)
+            rows_observation.append(
+                {
+                    "observation_id": this_id,
+                    "person_id": row["person_id"],
+                    "observation_concept_id": entry["concept"],
+                    "observation_type_concept_id": MAPPING_CXR["ehr_radiology_report"],
+                    "observation_date": row["image_occurrence_date"],
+                    "value_as_concept_id": MAPPING_YES_NO["no"] if entry["negative"] else MAPPING_YES_NO["yes"],
+                    "value_as_number": 0.0 if entry["negative"] else 1.0,
+                }
+            )
 
             cells_trust.append(row["trust"])
 
-    # Convert lists of series to dataframes, one row per series
+    # One row per accumulated dict
     image_feature = pd.DataFrame(rows_image_feature)
     image_feature = schemas["image_feature"].validate(image_feature)
     print("Created and validated table: image_feature")

@@ -38,8 +38,9 @@ def pub() -> ModuleType:
 class FakeApi:
     """Records what the publisher asks of the Hub; answers with a fixed set of existing tags."""
 
-    def __init__(self, tags: list[str]):
+    def __init__(self, tags: list[str], tag_error: Exception | None = None):
         self.tags = tags
+        self.tag_error = tag_error
         self.commits: list[dict] = []
         self.created_tags: list[dict] = []
 
@@ -51,6 +52,8 @@ class FakeApi:
         return SimpleNamespace(oid=f"sha-{len(self.commits)}")
 
     def create_tag(self, repo, tag, revision, repo_type, tag_message):
+        if self.tag_error is not None:
+            raise self.tag_error
         self.created_tags.append({"tag": tag, "revision": revision})
 
 
@@ -117,6 +120,20 @@ class TestBuildOperations:
             pub.build_operations([], None, [], None)
 
 
+class TestVersionFormat:
+    """The tag is the half that cannot be corrected later, so it is checked like a filename is."""
+
+    def test_a_version_that_is_not_a_date_is_refused(self, pub, tmp_path):
+        with pytest.raises(SystemExit, match="YYYYMMDD"):
+            pub.main(["--version", "2026101", "--pgdata", str(touch(tmp_path / "trust1_pgdata.tar"))])
+
+    def test_allow_any_tag_gets_past_the_format_check(self, pub):
+        # It should fall through to the artefact checks — the tag's shape is no longer what stops it.
+        with pytest.raises(SystemExit) as excinfo:
+            pub.main(["--version", "rc1", "--allow-any-tag"])
+        assert "YYYYMMDD" not in str(excinfo.value)
+
+
 class TestPublish:
     def test_one_commit_then_the_tag_on_that_commit(self, pub, tmp_path):
         api = FakeApi(tags=["20260729"])
@@ -137,6 +154,22 @@ class TestPublish:
         with pytest.raises(SystemExit, match="already exists"):
             pub.publish(api, "20260901", ops, "org/data", dry_run=False)
         assert api.commits == []
+        assert api.created_tags == []
+
+    def test_a_tag_failure_after_the_commit_names_the_commit_and_the_recovery(self, pub, tmp_path):
+        # The commit and the tag are two Hub calls, so the bytes CAN land untagged. The operator
+        # must be told which commit holds them and that re-running finishes the job.
+        api = FakeApi(tags=[], tag_error=RuntimeError("503 Service Unavailable"))
+        ops = pub.build_operations([touch(tmp_path / "trust1_pgdata.tar")], None, [], None)
+
+        with pytest.raises(SystemExit) as excinfo:
+            pub.publish(api, "20261001", ops, "org/data", dry_run=False)
+
+        message = str(excinfo.value)
+        assert "sha-1" in message
+        assert "503 Service Unavailable" in message
+        assert "Re-run" in message
+        assert len(api.commits) == 1
         assert api.created_tags == []
 
     def test_dry_run_uploads_and_tags_nothing(self, pub, tmp_path, capsys):

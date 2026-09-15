@@ -65,7 +65,7 @@ def get_projects_paginated_orm(
         user_id (UUID | None): The requesting user's ID. When provided, results are restricted to
             projects the user owns or has explicit access to.
         paging_details (PagingInfo): Page size, offset, and optional search string.
-        filter_details (FilterInfo): Additional filter criteria (e.g. owner ID).
+        filter_details (FilterInfo): Additional filter criteria (owner, project type).
 
     Returns:
         IPagedResponse[IProject]: Paginated list of projects and total row count.
@@ -91,6 +91,11 @@ def get_projects_paginated_orm(
     # Owner filter condition
     if filter_owner_id:
         base_conditions.append(Projects.owner_id == filter_owner_id)
+
+    # Project-type filter (FLIP#1071): imaging projects vs tabular-only ones.
+    if filter_details.project_type is not None:
+        wants_imaging = filter_details.project_type.has_imaging
+        base_conditions.append(Projects.has_imaging.is_(wants_imaging))  # type: ignore[attr-defined]
 
     # User access condition (user can see projects they own or have access to)
     if user_id:
@@ -148,6 +153,7 @@ def get_projects_paginated_orm(
             creation_timestamp=project.creation_timestamp.isoformat(timespec="milliseconds") + "Z",
             staged_at=staged_at_by_project.get(project.id),
             status=project.status,
+            has_imaging=project.has_imaging,
             approved_trusts=trusts_by_project.get(project.id, []),
             query=queries_by_project.get(project.id),
         )  # type: ignore[call-arg]

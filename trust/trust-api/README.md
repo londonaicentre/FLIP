@@ -69,12 +69,11 @@ trust's kit file (`trust/.env.<CODE>.<env>`); hub-shared values (`AES_KEY_BASE64
 | `IMAGING_API_URL` | Internal URL of the imaging-api |
 | `CENTRAL_HUB_API_URL` | URL of the Central Hub API (for task polling) |
 | `TRUST_API_KEY` | Per-trust API key for authenticating with the Central Hub. Lives in this trust's kit file (`trust/.env.<CODE>.<env>`), written by `make register-trust KIT=<CODE>` |
-| `AES_KEY_BASE64` | Base64-encoded AES-256 key shared with the hub, used to decrypt encrypted task payloads |
+| `AES_KEY_BASE64` | Base64-encoded AES-256 key shared with the hub; task payloads arrive as AES-256-GCM envelopes (FLIP#1179). Must be byte-identical to the hub's key: a mismatch fails closed, reporting every task as `Invalid payload: failed authentication` |
 | `POLL_INTERVAL_SECONDS` | Polling frequency in seconds (default: 5) |
 | `HEALTH_COLLECT_INTERVAL_SECONDS` | How often the health collector probes the trust services (default: 30) |
 | `HEALTH_PROBE_DEGRADED_MS` | A successful probe slower than this reports `degraded` (default: 1000) |
 | `XNAT_URL` | Internal URL of XNAT for the health probe (default `http://xnat-web:8080`) |
-| `PACS_ID` | XNAT DQR PACS id used for the `ping_pacs` deep probe (default: 1) |
 | `OMOP_DB_HOST` / `OMOP_DB_PORT` | OMOP PostgreSQL address for the TCP health probe (defaults `omop-db` / 5432) |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Forwarded outbound on every call to imaging-api and data-access-api so those services can authenticate the caller. Minted by `register_trust` (`make register-trust KIT=<CODE>`) into this trust's kit file (`trust/.env.<CODE>.<env>`). |

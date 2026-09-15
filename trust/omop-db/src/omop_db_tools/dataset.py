@@ -27,9 +27,9 @@ Standing up N trusts is a deterministic split of that single dataset:
   the studies in its PACS agree by construction. A dataset may carry more
   sources than the stack has trusts (one center per trust, the surplus waiting
   for a trust that does not exist yet); every trust being stood up must have
-  rows. Any trust count the column
-  carries. ``legacy`` is an accepted alias from when this mode existed only to
-  reproduce the original two-trust cut baked into the published Orthanc tarballs.
+  rows, and any trust count the column can supply is supported. ``legacy`` is an
+  accepted alias from when this mode existed only to reproduce the original
+  two-trust cut baked into the published Orthanc tarballs.
 - ``modulo``: partition by ``person_id % num_trusts``. For a dataset that carries
   no partition column, and only then — it ignores whatever the generator decided.
 
@@ -45,9 +45,6 @@ from pathlib import Path
 
 import pandas as pd
 
-# Insert order: person first. Populate targets constraint-free databases
-# (constraints are applied only after the load), so order is convention, not FK
-# correctness.
 # In FK-safe insert order, so the same list serves loading (as listed) and
 # cleaning (reversed) against a database with constraints applied — which is
 # every running trust after `make load-omop-vocab`, and the seed path's target

@@ -141,6 +141,7 @@ demo_video:
 # target-specific one, so folding the enrichment flags into EXTRA_ARGS meant
 # `make e2e_smoke_spleen EXTRA_ARGS="--project-id <uuid>"` — the documented fast-iterate flow —
 # silently dropped enrichment and died at the zero-pairs guard minutes later.
+# TARGET_ARGS is the same idea for any other flag a variant target must pin (e.g. --no-imaging).
 FL_BACKEND ?= nvflare
 ifeq ($(FL_BACKEND),flower)
 MODEL_FILES_DIR ?= ../fl-tutorials/flower/xray_classification/app
@@ -151,7 +152,7 @@ QUERY_FILE ?= $(MODEL_FILES_DIR)/../query.sql
 endif
 e2e_smoke:
 	@echo "🚀 Running e2e smoke (model files: $(MODEL_FILES_DIR), query: $(QUERY_FILE))..."
-	env DB_HOST=localhost uv run python -m tests.e2e_smoke --model-files-dir "$(MODEL_FILES_DIR)" --query-file "$(QUERY_FILE)" $(ENRICHMENT_ARGS) $(EXTRA_ARGS)
+	env DB_HOST=localhost uv run python -m tests.e2e_smoke --model-files-dir "$(MODEL_FILES_DIR)" --query-file "$(QUERY_FILE)" $(ENRICHMENT_ARGS) $(TARGET_ARGS) $(EXTRA_ARGS)
 
 # Spleen-segmentation variant of e2e_smoke: same recipe, with the spleen tutorial
 # defaults plus a data-enrichment step that uploads segmentation labels into every
@@ -164,8 +165,9 @@ e2e_smoke:
 #
 # Every trust needs enriching, not just one: each trust's XNAT holds only its own studies, so a
 # trust left without labels takes the whole run down at that guard. SPLEEN_XNAT_URLS is the roster
-# the uploader visits in a single invocation — it defaults to the two dev trusts (GSTT :8104,
-# KCH :8106; IPv4 literals because "localhost" can resolve to ::1, which the swarm-published
+# the uploader visits in a single invocation — it defaults to the two dev trusts (GSTT :8105,
+# KCH :8107 — the XNAT_WEB_PORT of each, not XNAT_PORT, which is the DICOM SCP receiver since the
+# FLIP#993 port split; IPv4 literals because "localhost" can resolve to ::1, which the swarm-published
 # XNAT ports do not answer on). Override it for any other roster, or blank it to fall back to a
 # single XNAT_HOST.
 #
@@ -177,7 +179,7 @@ e2e_smoke:
 # dir, two levels below the repo root), so relative paths written from flip-api/ would not
 # resolve there.
 SPLEEN_ENRICHMENT_CWD := ../fl-tutorials/datasets/spleen
-SPLEEN_XNAT_URLS ?= http://127.0.0.1:8104 http://127.0.0.1:8106
+SPLEEN_XNAT_URLS ?= http://127.0.0.1:8105 http://127.0.0.1:8107
 # The MSD build by default even though the uploaded app is Flower's: enrichment is
 # backend-agnostic, and only the MSD download can reach all 41 mapped cases.
 SPLEEN_LABELS_DIR ?= $(abspath ../fl-tutorials/data/spleen/images)
@@ -199,6 +201,18 @@ e2e_smoke_spleen_evaluation: MODEL_FILES_DIR := ../fl-tutorials/flower/3d_spleen
 e2e_smoke_spleen_evaluation: QUERY_FILE := ../fl-tutorials/flower/3d_spleen_segmentation/query.sql
 e2e_smoke_spleen_evaluation: ENRICHMENT_ARGS := $(SPLEEN_ENRICHMENT_ARGS)
 e2e_smoke_spleen_evaluation: e2e_smoke
+
+# EHR risk-prediction (tabular-only) variant of e2e_smoke: the tutorial matching FL_BACKEND,
+# created with has_imaging=false so the hub skips the imaging stage and the smoke skips the
+# image-pull wait (FLIP#1071). TARGET_ARGS rather than EXTRA_ARGS so a command-line EXTRA_ARGS
+# (e.g. --project-id) cannot clobber the flag. Prereq: `make -C trust load-synthea-ehr` on every trust and,
+# if the EHR query was already submitted before that load, a data-access-api restart (results are cached by query text).
+EHR_FLOWER_DIR := ../fl-tutorials/flower/ehr_risk_prediction
+EHR_NVFLARE_DIR := ../fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction
+e2e_smoke_ehr: MODEL_FILES_DIR := $(if $(filter flower,$(FL_BACKEND)),$(EHR_FLOWER_DIR)/app,$(EHR_NVFLARE_DIR)/app_files)
+e2e_smoke_ehr: QUERY_FILE := $(if $(filter flower,$(FL_BACKEND)),$(EHR_FLOWER_DIR)/query.sql,$(EHR_NVFLARE_DIR)/query.sql)
+e2e_smoke_ehr: TARGET_ARGS := --no-imaging
+e2e_smoke_ehr: e2e_smoke
 
 # Prostate variant: the PI-CAI cohort (prostate_project, seeded into the trusts by
 # `make -C trust seed PROJECTS=prostate_project`), with both picai_labels masks uploaded into

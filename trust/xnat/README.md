@@ -104,6 +104,13 @@ a stale 2021 build that silently dropped slices from valid series).
 sync — it runs as a pre-commit hook and as the `dcm2niix-pin-sync` CI job — because a half-bumped set
 is otherwise silent: the old immutable tag simply keeps being pulled.
 
+That check compares files in this repository and never calls a running XNAT, so it cannot see the
+*live* registration. An XNAT provisioned before a bump keeps its old command in the XNAT database and
+goes on converting with the superseded image while looking perfectly healthy — both staging trusts sat
+in that state. Confirm a deployment with `GET /xapi/commands` (the `name -> image` pairs it returns are
+what imaging-api reports when nothing matches) and re-register with `configure-dcm2niix.sh`, or the
+`xnat-init` job on Kubernetes, if the image named there is not the current pin.
+
 #### Operator action: the GHCR package must be public
 
 **After the first publish, and again after any delete-and-recreate of the package, set

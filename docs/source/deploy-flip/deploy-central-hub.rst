@@ -25,7 +25,7 @@ The Central Hub stack runs in a custom VPC with public and private subnets acros
 - **fl-api** and **fl-server** — the federated learning control plane. The FL server accepts outbound gRPC connections from trust-side FL clients via a Network Load Balancer (NLB).
 - **PostgreSQL (RDS)** — managed database, private subnet.
 - **Cognito** — user authentication (TOTP MFA enforced).
-- **SES** — transactional email (invites, password reset, access requests).
+- **SES** — transactional email sent by the application: access-request notifications and XNAT credential emails. Cognito invites and password-reset codes do **not** go through SES (see below).
 - **Secrets Manager** — AES key, database password, internal service key hash.
 
 Operator access is via AWS Systems Manager (SSM) Session Manager — port 22 is
@@ -177,6 +177,30 @@ for full details):
 exist; ``make register-trusts`` writes the per-trust keys into the kit files.
 
 ***********************
+Upgrading across the payload-encryption change (FLIP#1179)
+***********************************************************
+
+Task payloads between the hub and its trusts are AES-256-GCM envelopes, with no
+compatibility for the earlier AES-CBC format. A hub and every trust registered to it
+therefore cross that release together, as a flag day:
+
+1. Enable Deployment Mode (Admin → Deployments) and wait for ``GET /fl/quiesce`` to
+   report ``deployment_mode: true`` and ``fl_quiesced: true``.
+2. Redeploy the hub (``make deploy-centralhub``) and every trust (``make deploy-trust``,
+   the on-prem playbook, or the Kubernetes chart) in one window.
+3. Disable Deployment Mode.
+
+Anything still encrypted under the old format at the moment of upgrade fails
+afterwards: a task collected under CBC by a trust that has since upgraded stays
+``IN_PROGRESS`` (reset it to ``PENDING``), and a running FL job carrying a CBC project
+id fails at imaging-api once that trust upgrades — which is what step 1 prevents.
+
+The same page's ``AES_KEY_BASE64`` must be byte-identical on the hub and on every
+trust container that decrypts. On staging and production the hub's copy is whatever
+the CI Terraform apply wrote into Secrets Manager from the GitHub environment; recover
+the deployed value with ``deploy/providers/AWS/scripts/reconcile_ci_env.py`` rather than
+trusting a checked-out ``.env.<env>``.
+
 Applying schema changes
 ***********************
 
@@ -244,6 +268,20 @@ the first deploy you must:
 
 If SES is still in the sandbox, request production access from the SES console
 or only send to verified destination addresses for testing.
+
+.. note::
+
+   SES carries only the emails the application sends itself: access-request
+   notifications and XNAT credential emails. **Cognito sends its own invites
+   and password-reset codes** from the user pool's default sender — the pool
+   declares no ``email_configuration``, so it uses ``COGNITO_DEFAULT`` rather
+   than SES. A broken or sandboxed SES identity therefore does not stop
+   invites or password resets, and conversely verifying the SES identity does
+   not fix them; those have their own delivery limits (see FLIP#592).
+
+   In development neither is needed: flip-api defaults to
+   ``EMAIL_BACKEND=console``, which logs the would-be email instead of calling
+   SES.
 
 ************
 Status check

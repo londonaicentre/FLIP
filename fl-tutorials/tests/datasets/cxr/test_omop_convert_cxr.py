@@ -133,15 +133,28 @@ def test_no_finding_maps_to_normal_lungs(converter: ModuleType) -> None:
     assert entry["concept"] == MAPPING_FINDING["normal lungs"]
 
 
-def test_an_unmapped_pathology_yields_an_empty_entry(converter: ModuleType, capsys) -> None:
-    """Documented as-is: the upstream `except` swallows the KeyError and appends `{}`.
+def test_an_unmapped_pathology_raises_where_it_is_unmapped(converter: ModuleType) -> None:
+    """The failure names the offending values at the point they fail to map (FLIP#1097 review).
 
-    The caller then reads entry["concept"] and dies with a KeyError naming the wrong thing, so an
-    unmapped finding surfaces far from its cause. Pinned rather than fixed — changing it is a
-    behaviour change to vendored code, and no published row exercises it.
+    Upstream this swallowed the KeyError and appended `{}`, which nothing downstream guarded: the
+    empty dict reached entry["concept"] ~190 lines later and the run died with KeyError: 'concept',
+    with the real cause on stdout only. No published row exercises this — the gate still passes for
+    both projects — but the next dataset added to this tree is exactly what would hit it.
     """
-    assert converter.get_concepts_from_pathologies("pneumothorax", "Pneumothorax.") == [{}]
-    assert "pneumothorax" in capsys.readouterr().out
+    with pytest.raises(KeyError) as excinfo:
+        converter.get_concepts_from_pathologies("pneumothorax", "Pneumothorax.")
+
+    message = str(excinfo.value)
+    assert "pneumothorax" in message
+    assert "both lungs" in message, "the location that did map should still be reported"
+    assert "omop_mappings" in message, "the message should say where to add it"
+
+
+def test_data_that_maps_cleanly_is_unaffected_by_the_raise(converter: ModuleType) -> None:
+    """Both mappings resolving means no exception path is taken — byte-faithfulness preserved."""
+    entries = converter.get_concepts_from_pathologies("pleural_effusion,edema", "Right-sided edema.")
+    assert len(entries) == 2
+    assert all(set(entry) == {"concept", "location", "negative"} for entry in entries)
 
 
 def test_transform_produces_the_expected_tables(converter: ModuleType, tmp_path: Path) -> None:

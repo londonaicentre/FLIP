@@ -4,7 +4,7 @@ Create a FLIP app from a Flower app
 
 .. warning::
 
-   This page assumes you are familiar with the :ref:`flip-fl-nodes` component page and with the project / model lifecycle described in :doc:`/user-guides/user-common`. Before starting, you must already have: a FLIP account with the ``researcher`` role, an approved project with a saved cohort query, and a model created under that project (so you have a ``flip-model-id``).
+   This page assumes you are familiar with the :ref:`flip-fl-nets` component page and with the project / model lifecycle described in :doc:`/user-guides/user-common`. Before starting, you must already have: a FLIP account with the ``researcher`` role, an approved project with a saved cohort query, and a model created under that project (so you have a ``flip-model-id``).
 
 This page walks through the code changes required to adapt a stock Flower app (for example, one copied from the official `Flower quickstart examples <https://flower.ai/docs/examples.html>`_ or pulled from the internal FLIP app hub) so that it can run on FLIP. The walkthrough covers the four first-class SDK calls a FLIP-compatible app needs:
 
@@ -59,7 +59,7 @@ ServerApp: reporting model lifecycle status
 On the server side, the FLIP integration is a single object (``FLIP``) injected into the ``@app.main()`` function plus four status transitions around ``strategy.start(...)``.
 
 Imports
-=======
+========
 
 .. code-block:: python
 
@@ -341,9 +341,9 @@ Per-round, per-client metrics are pushed to the central hub with ``flip.send_met
 Wiring it up via ``pyproject.toml``
 ************************************
 
-The ``pyproject.toml`` of a FLIP-compatible Flower app needs three things beyond a normal Flower project:
+The ``pyproject.toml`` of a FLIP-compatible Flower app needs two additions beyond a normal Flower project, and one deliberate omission:
 
-1. ``flip-utils`` declared as a dependency.
+1. **Do not declare** ``flip-utils`` as a dependency. Flower runtime-installs an app's declared dependencies into a per-run environment that it *prepends* to ``sys.path``, so declaring the package resolves it from PyPI and shadows the copy baked into the FL images at ``/opt/flip-utils`` (FLIP#767). The PyPI release lags the in-repo one and has no ``flip/flower/strategy.py``, so a declared dependency breaks ``from flip.flower.strategy import FlipFedAvg`` outright. Left undeclared, ``import flip`` falls through to the image's copy, which is what the platform actually runs. Pick up ``flip-utils`` changes with ``make build-fl FL_BACKEND=flower``.
 2. A ``[tool.flwr.app.config]`` block declaring the FLIP run-config keys, even if the values are placeholders.
 3. Training hyperparameters (``num-server-rounds``, ``local-epochs``, etc.) declared in the same block so you can override them via ``flwr run . --run-config "key=value"`` locally.
 
@@ -352,11 +352,11 @@ Abridged from ``fl-tutorials/flower/3d_spleen_segmentation/pyproject.toml``:
 .. code-block:: toml
 
    [project]
-   name = "quickstart-monai"
+   name = "standard-app"
    version = "1.0.0"
    dependencies = [
-       "flip-utils>=0.1.8",
-       "flwr[simulation]>=1.26.1",
+       # flip-utils is deliberately absent — see point 1 above.
+       "flwr[simulation]>=1.32.0",
        # ... your model-framework deps (monai, torch, nibabel, ...)
    ]
 
