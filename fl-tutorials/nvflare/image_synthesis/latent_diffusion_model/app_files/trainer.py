@@ -29,6 +29,7 @@ validation maths are unchanged; only the NVFLARE plumbing moved to the Client AP
 import argparse
 import json
 import logging
+import shutil
 from pathlib import Path
 
 import einops
@@ -61,6 +62,38 @@ STAGE_MODULES = {
     TRAIN_AE_TASK: [["autoencoder", "discriminator"]],
     TRAIN_DM_TASK: [["diffusion_model"]],
 }
+
+# The perceptual loss's backbone. lpips resolves it through torch.hub, which downloads the
+# torchvision checkpoint on first use unless it is already in the hub dir — and an FL app
+# never downloads at run time (FLIP#1206): the FL server on a platform-managed estate and a
+# trust host behind an NHS firewall have no internet route, and a run-time fetch bypasses the
+# scanned upload path. So the checkpoint is shipped beside this file (`make weights` in the
+# tutorial dir, then uploaded with the app) and staged into a hub `checkpoints/` layout here.
+# SqueezeNet rather than the AlexNet used before: 5 MB per job to every trust instead of 233.
+PERCEPTUAL_BACKBONE = "squeeze"
+HUB_CHECKPOINT = "squeezenet1_1-b8a52dc0.pth"
+
+
+def stage_perceptual_backbone(working_dir: Path) -> Path:
+    """Point torch.hub at ``working_dir/torch_hub`` and put the shipped backbone where it looks.
+
+    Uploads and the bundler are flat, so the checkpoint arrives as ``<app dir>/HUB_CHECKPOINT``;
+    torchvision wants ``<hub dir>/checkpoints/HUB_CHECKPOINT``. Copy once, verify never online.
+    """
+    shipped = working_dir / HUB_CHECKPOINT
+    if not shipped.is_file():
+        raise FileNotFoundError(
+            f"{HUB_CHECKPOINT} is missing from {working_dir}. FL apps do not download weights at run time "
+            "(FLIP#1206): run `make weights` in the tutorial directory to stage it, and upload it together "
+            "with the other app files."
+        )
+    hub_dir = working_dir / "torch_hub"
+    torch.hub.set_dir(str(hub_dir))
+    target = hub_dir / "checkpoints" / HUB_CHECKPOINT
+    if not target.is_file():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(shipped, target)
+    return target
 
 
 class KLDivergenceLoss:
@@ -145,12 +178,12 @@ class DiffusionTrainer:
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
         # Losses, optimizers etc.
-        torch.hub.set_dir(f"{working_dir}/torch_hub")
+        stage_perceptual_backbone(working_dir)
         self.losses_ae = {
             "reconstruction_loss": torch.nn.L1Loss(),
             "kld_loss": KLDivergenceLoss(),
             "gan_loss": PatchAdversarialLoss(criterion="least_squares"),
-            "perceptual_loss": PerceptualLoss(2, network_type="alex"),
+            "perceptual_loss": PerceptualLoss(2, network_type=PERCEPTUAL_BACKBONE),
         }
         self.perceptual_slices = 12
         self.losses_dm = {"loss": torch.nn.functional.mse_loss}
@@ -258,7 +291,9 @@ class DiffusionTrainer:
     def reset_perceptual_to_anisotropic(self):
         """If we spot axial anisotropy, we reset the perceptual loss to 2D if it was 3D to have better results."""
         if self.axial_anisotropy and self.losses_ae["perceptual_loss"].spatial_dims == 3:
-            self.losses_ae["perceptual_loss"] = PerceptualLoss(spatial_dims=2, network_type="radimagenet_resnet50")
+            # Same shipped backbone as the 2-D loss above: radimagenet_resnet50 would be
+            # fetched through torch.hub at first use, which an FL app must never do (FLIP#1206).
+            self.losses_ae["perceptual_loss"] = PerceptualLoss(spatial_dims=2, network_type=PERCEPTUAL_BACKBONE)
             if self.weights_ae["w_perceptual_loss"] <= 1.0:
                 self.weights_ae["w_perceptual_loss"] = 10
                 # This perceptual loss tends to have very low values.

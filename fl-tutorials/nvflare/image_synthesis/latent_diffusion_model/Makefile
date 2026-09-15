@@ -35,7 +35,26 @@ NUM_ROUNDS_AE ?= 1
 NUM_ROUNDS_DM ?= 1
 N_CLIENTS ?= 2
 
-.PHONY: run export sim clean
+# --- Shipped weights (FLIP#1206) ---
+# The perceptual loss's SqueezeNet backbone, which lpips would otherwise fetch through
+# torch.hub on first use. FL apps never download at run time, so the tutorial ships it: the
+# download is shared (`make -C fl-tutorials download-ldm-weights`) and this target copies the
+# checkpoint flat into app_files/ — what the simulator runs and what gets uploaded alongside
+# the code; trainer.py stages it into its torch.hub dir. Gitignored.
+FL_TUTORIALS := $(abspath $(APP_DIR)/../../..)
+HUB_CHECKPOINT := squeezenet1_1-b8a52dc0.pth
+SHARED_CHECKPOINT := $(FL_TUTORIALS)/data/weights/torch_hub/checkpoints/$(HUB_CHECKPOINT)
+
+.PHONY: run export sim clean weights
+
+weights: app_files/$(HUB_CHECKPOINT)
+
+app_files/$(HUB_CHECKPOINT):
+	@[ -f "$(SHARED_CHECKPOINT)" ] || $(MAKE) --no-print-directory -C $(FL_TUTORIALS)/datasets download-ldm-weights
+	cp "$(SHARED_CHECKPOINT)" "$@"
+
+# The simulator runs app_files/ in place, so it needs the file too.
+sim: weights
 
 # --- Tutorial-harness entrypoint ---
 # The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app
