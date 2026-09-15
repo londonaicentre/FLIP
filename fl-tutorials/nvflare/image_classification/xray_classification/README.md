@@ -28,12 +28,20 @@ DenseNet-121 implemented with MONAI, trained **from scratch** (`pretrained=False
 
 It used to request torchvision's ImageNet checkpoint at construction time, which downloaded it on
 the FL server and on every client. An FL app must never fetch anything at run time (FLIP#1206):
-the FL server on a platform-managed estate and a trust host behind an NHS firewall have no
-internet route, and a run-time download bypasses the scanned upload path a reviewer approved.
-The switch costs nothing here — with this 1-channel, 128-feature stem only ~30% of the tensors
-matched the ImageNet shapes, and on the reference dataset the model reaches the same validation
-F1 in the same number of epochs either way. An app that does need pretrained weights ships them
-as an uploaded file; the latent-diffusion tutorial shows the pattern (`make weights`).
+on a platform-managed estate the FL server has no internet route, nor does a trust host behind an
+NHS firewall, and a run-time download bypasses the scanned upload path — the file a Trust can
+inspect before training would not be the file that runs. The user guide's *Model Files* section
+is the canonical statement of the rule.
+
+The switch cost nothing measurable here, so the weights were dropped rather than shipped. MONAI
+merges a torchvision checkpoint through a shape filter, and with this 1-channel, 128-feature
+DenseNet only 290 of the model's 727 tensors — about 30 % of its *parameters*, all of them the
+dense layers' bottleneck `norm2`/`conv2` — matched the ImageNet shapes; the first convolution and
+every growth layer were random either way. On the reference mini dataset (2 clients, 3 rounds ×
+3 local epochs, two runs per setting) the final global-model test F1 was 0.976/0.965 with the
+partial ImageNet init and 0.962/0.966 without, both converging by epoch 5–6. An app that does
+need pretrained weights ships them as an uploaded file; the latent-diffusion tutorial shows the
+pattern (`make weights`).
 
 ## The training logic
 

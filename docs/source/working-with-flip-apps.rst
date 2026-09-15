@@ -11,11 +11,12 @@ One rule applies to every app before anything framework-specific: **an app is of
 Whatever it needs at run time — pretrained weights, checkpoints, an auxiliary network for a
 loss — must be one of the files uploaded with it, never something the code fetches when the
 model is built (``pretrained=True``, ``torch.hub.load``, ``from_pretrained("org/model")``,
-``load_state_dict_from_url``). The FL server and the Trusts' training hosts have no route to the
-internet, so such a call hangs the job; and a file fetched after review is not the file the
-reviewer saw. The *Model Files* section of the :doc:`user guide <user-guides/user-common>`
-spells out the failure modes; the latent-diffusion tutorial shows how to ship a network a
-library would otherwise download.
+``load_state_dict_from_url``). On a platform-managed estate the FL server has no route to the
+internet, and neither does a Trust's training host behind an NHS firewall, so an app cannot
+assume one anywhere: such a call hangs the job there; and a file fetched after the upload was
+inspected is not the file that was inspected. The *Model Files* section of the
+:doc:`user guide <user-guides/user-common>` spells out the failure modes; the latent-diffusion
+tutorial shows how to ship a network a library would otherwise download.
 
 .. toctree::
    :maxdepth: 2

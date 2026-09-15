@@ -753,9 +753,10 @@ def wait_for_model_advanced(
     raise SmokeFailure(
         f"Model did not advance past INITIATED within {timeout_s}s (last status: {last_status or 'unknown'}). "
         "Check that fl-server + fl-clients are running and that the FL scheduler picked up the job. "
-        "If the job WAS submitted and the client log says 'cannot sync with server Runner', the ServerApp "
-        "hung at start-up — the usual cause is an app that downloads weights at run time (pretrained=True, "
-        "torch.hub, from_pretrained), which the FL server cannot do (FLIP#1206); the net stays BUSY until "
+        "If the job WAS submitted and the server-side job process hung at start-up (on NVFLARE the client log "
+        "says 'cannot sync with server Runner'; on Flower the run never issues a round), the usual cause is an "
+        "app that downloads weights at run time (pretrained=True, torch.hub, from_pretrained) — which an FL app "
+        "must not do, and on a platform-managed estate cannot (FLIP#1206); the net stays BUSY until "
         "POST /fl/stop/{model_id}."
     )
 

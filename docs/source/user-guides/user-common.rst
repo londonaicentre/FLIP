@@ -395,14 +395,16 @@ see the `FLIP tutorials <https://github.com/londonaicentre/FLIP/tree/develop/fl-
    fetch from the internet when the model is built, and that fails twice over:
 
    - **It does not work where the app runs.** The FL server on a platform-managed estate and a
-     Trust's training host behind an NHS firewall have no internet route. The download hangs, the
-     Trust reports ``cannot sync with server Runner``, and the training run dies.
-   - **It bypasses the review.** The files you upload are checked once and then shipped exactly as
-     approved. A URL fetched later can serve different bytes — and loading a swapped ``.pt``
-     checkpoint executes whatever it contains, on the FL server and next to a Trust's data.
+     Trust's training host behind an NHS firewall have no internet route. The download hangs and
+     the training run dies — on NVFLARE the Trust reports ``cannot sync with server Runner``; on
+     Flower the run never issues a round.
+   - **It bypasses the checks.** The files you upload are scanned once and then shipped exactly as
+     uploaded, so what a Trust can inspect before training is what runs. A URL fetched later can
+     serve different bytes — and loading a swapped ``.pt`` checkpoint executes whatever it
+     contains, on the FL server and next to a Trust's data.
 
    Ship weights as an uploaded file instead — ``.safetensors`` where you can (it carries tensors
-   only, nothing to deserialise), or ``.pt``/``.pth``, which the platform scans as described below
+   only, no pickle to execute), or ``.pt``/``.pth``, which the platform scans as described below
    — and build the model with ``pretrained=False``, loading the file from beside your code. The
    `latent-diffusion tutorial <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_synthesis/latent_diffusion_model>`_
    shows the pattern for a network a library would otherwise fetch through ``torch.hub``.
