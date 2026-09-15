@@ -150,6 +150,12 @@
                                             </p>
                                             <p data-test="container-meta" class="font-mono text-[11px] text-gray-500 dark:text-gray-300 mt-1.5">
                                                 <span>{{ svc.version ?? "—" }}</span>
+                                                <span
+                                                    v-if="driftsFromHub(svc)"
+                                                    data-test="version-drift"
+                                                    class="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                                                    :title="`This container runs ${svc.version}; the hub runs ${hubVersion}. Move the site with: make upgrade-onprem-trust KIT=<slot>`"
+                                                >≠ hub {{ hubVersion }}</span>
                                                 <span class="mx-2 text-gray-300 dark:text-gray-600">·</span>
                                                 <span
                                                     class="font-semibold"
@@ -173,8 +179,9 @@ import { Dialog, DialogTitle, TransitionChild, TransitionRoot } from "@headlessu
 import { computed, type FunctionalComponent, ref, watch } from "vue";
 
 import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
-import { ServiceStatus } from "@/services/trust-service";
+import { isImageTag, ServiceStatus } from "@/services/trust-service";
 import { heartbeatText,
+    IDerivedService,
     IDerivedTrust,
     isFailing,
     PILL_CLASSES,
@@ -197,9 +204,19 @@ import IconServerNetwork from "~icons/mdi/server-network-outline";
 const props = defineProps<{
     trust: IDerivedTrust | null;
     show: boolean;
+    // The release the hub runs (FLIP#1204), from the page's hub-health poll; null until known
+    // or on a hub built before it reported one. Only FLIP-built containers are compared
+    // against it, and only when both sides carry an image tag — see driftsFromHub.
+    hubVersion?: string | null;
 }>();
 
 const emit = defineEmits<{ close: [] }>();
+
+// A FLIP-built container on a different build than the hub. XNAT versions its own way
+// (upstream 1.10.0), OMOP/DICOM carry none, and a pyproject number (0.3.0) is shared by
+// different builds — none of those can say "behind", so none is ever flagged.
+const driftsFromHub = (svc: IDerivedService): boolean =>
+    isImageTag(props.hubVersion) && isImageTag(svc.version) && svc.version !== props.hubVersion;
 
 const CHIP_LABELS: Record<ServiceStatus, string> = {
     healthy: "Healthy",
