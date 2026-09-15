@@ -633,12 +633,14 @@ resource "aws_wafv2_web_acl_logging_configuration" "flip_ui_cloudfront" {
 # one-way door across every subdomain of the apex and belongs in its own
 # coordinated PR, not here.
 #
-# CSP ships in report-only initially so legitimate violations surface in
-# browser console + `Content-Security-Policy-Report-Only` response headers
-# without blocking traffic. After one release cycle with no real-user
-# violations, move the policy body from `content_security_policy_report_only`
-# to `content_security_policy` (enforcing). Tracked in
-# https://github.com/londonaicentre/FLIP/issues/417.
+# CSP is ENFORCING (FLIP#417 stage 2). It shipped report-only from the
+# original pen-test remediation (§4.7) so violations could surface first; no
+# `report-uri` was ever configured, so there was never a violation corpus to
+# wait for, and the promotion was de-risked instead by auditing the built
+# bundle for inline-style sinks (see style-src below). Pinned by
+# tests/test_csp_enforcing.py. Verify after deploy:
+#   curl -sI https://<domain>/ | grep -i content-security-policy
+# (the `-Report-Only` suffix must be absent)
 resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
   # checkov:skip=CKV_AWS_259:HSTS is sent (1y max-age, includeSubDomains); preload deliberately withheld until the domain is submitted to the browser preload list
   name    = "flip-ui-spa-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
@@ -665,20 +667,8 @@ resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
       frame_option = "DENY"
       override     = true
     }
-    # `security_headers_config.content_security_policy` is enforce-only; we
-    # ship CSP as `Content-Security-Policy-Report-Only` below in
-    # custom_headers_config until a release cycle confirms no false
-    # positives, then move the body here and delete the custom header.
-    #
-    # Stage 1 of GHSA-vp94-g35p-29w8: unsafe-inline removed from style-src
-    # while staying in report-only. Stage 2 (enforcing) tracked in
-    # https://github.com/londonaicentre/FLIP/issues/417.
-  }
-
-  custom_headers_config {
-    items {
-      header = "Content-Security-Policy-Report-Only"
-      value = join(" ", [
+    content_security_policy {
+      content_security_policy = join(" ", [
         "default-src 'self';",
         # CSP source expressions only allow wildcards in the leftmost
         # position (`*.amazonaws.com` OK, `cognito-idp.*.amazonaws.com`
@@ -687,15 +677,26 @@ resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
         # the pool is moved to a different region.
         "connect-src 'self' https://cognito-idp.eu-west-2.amazonaws.com https://cognito-identity.eu-west-2.amazonaws.com;",
         "img-src 'self' data:;",
-        # unsafe-inline removed from style-src per GHSA-vp94-g35p-29w8:
-        # Vue+TailwindCSS generated CSS is bundled as static files, not
-        # inline styles. Dynamic style bindings were found to be replaceable
-        # with utility classes. If new violations surface during the
-        # report-only cycle, audit and fix at the source rather than relaxing.
-        "style-src 'self';",
+        # 'unsafe-inline' here is a deliberate, scoped regression of
+        # GHSA-vp94-g35p-29w8 stage 1 (which dropped it while nothing was yet
+        # enforced): `codemirror-editor-vue3` runs a styleInject() at module
+        # load that creates a <style> element, so `style-src 'self'` strips the
+        # cohort-query SQL editor. A `vite build` audit found that the ONLY
+        # runtime style injection in the bundle — every other stylesheet is a
+        # static .css file — so this buys back one dependency and nothing else.
+        # Removal at source is FLIP#1200; test_csp_enforcing.py bounds this
+        # directive to {'self', 'unsafe-inline'} so the carve-out cannot spread.
+        "style-src 'self' 'unsafe-inline';",
+        # The substantive XSS control, and the actual §4.7 remediation.
         "script-src 'self';",
         "object-src 'none';",
         "frame-ancestors 'none';",
+        # No <base> tag in the built index.html and no native <form> submission
+        # in the SPA, so neither directive touches a current flow. 'self' rather
+        # than the demo's 'none' so a same-origin POST stays possible; it still
+        # blocks a form retargeted at an external host.
+        "base-uri 'none';",
+        "form-action 'self';",
       ])
       override = true
     }
@@ -742,13 +743,10 @@ resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
 # 'none'` costs no demo functionality — confirmed by the PR's Chrome net-log
 # audit (no egress besides 127.0.0.1) and by the mocks/__tests__ egress spec.
 #
-# Shipped enforcing (not report-only), unlike flip_ui_spa's CSP: every resource
-# the demo loads is 'self' (no third-party CDN that could break
-# unpredictably), and there is no established live-traffic population to observe
-# for false positives the way the real app's CSP rollout needed. Note the demo
-# therefore enforces `style-src 'self'` while the real app still runs that
-# report-only — worth an eyeball on any page that injects a runtime <style>
-# (CodeMirror does, on the cohort-query page) before a public launch.
+# Stricter than flip_ui_spa on purpose (`style-src 'self'`, `connect-src 'none'`,
+# `form-action 'none'`): the demo is a static, self-contained bundle with no
+# CodeMirror dependency, so nothing here needs the app's style-src carve-out.
+# Do not relax it to match; tests/test_csp_enforcing.py pins the difference.
 resource "aws_cloudfront_response_headers_policy" "ark_demo_spa" {
   # checkov:skip=CKV_AWS_259:HSTS is sent (1y max-age, includeSubDomains); preload deliberately withheld until the domain is submitted to the browser preload list
   count   = local.demo_assets_enabled ? 1 : 0
@@ -789,10 +787,8 @@ resource "aws_cloudfront_response_headers_policy" "ark_demo_spa" {
         "script-src 'self';",
         "object-src 'none';",
         "frame-ancestors 'none';",
-        # Extra hardening not yet applied to the real app's (report-only,
-        # in-progress) CSP: safe to ship immediately here since the demo is
-        # a static, self-contained bundle with no legitimate use for a
-        # <base> tag or a form POST target.
+        # 'none' rather than the app's form-action 'self': the demo has no form
+        # POST target at all.
         "base-uri 'none';",
         "form-action 'none';",
       ])

@@ -562,8 +562,11 @@ password) and lacks the database-level `search_path`. The omop-db postStart
 hook's old `IF NOT EXISTS` guard skipped both, so the role's password never
 matched `DATA_ACCESS_POSTGRES_PASSWORD` from the chart Secret.
 
-**Fix:** The chart's `omop-db.yaml` postStart hook now `ALTER ROLE`s the
-password unconditionally and sets the `search_path` on every container start.
+**Fix:** The chart's `omop-db.yaml` postStart hook now provisions the role from
+the image's `/flip/omop/create_readonly_users.sql` (the same file Compose runs
+at first initdb — README, "omop-db roles"), then `ALTER ROLE`s the password
+unconditionally and sets the `search_path`, on every container start. It
+reports into the container log: `kubectl logs <omop-db-pod> | grep postStart`.
 On a live cluster (without restarting omop-db):
 
 ```bash

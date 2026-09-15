@@ -179,7 +179,9 @@ class TestSaveIndividualResult:
             _save_individual_result(mock_db_session, sample_cohort_payload)
 
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "Error saving cohort results" in exc_info.value.detail
+        # The domain message (which query) stays; the exception text does not (#906).
+        assert exc_info.value.detail == f"Error saving cohort results: {sample_cohort_payload.query_id}"
+        assert "Some generic DB error" not in exc_info.value.detail
         mock_db_session.commit.assert_not_called()
         mock_db_session.rollback.assert_called_once()
 
@@ -248,7 +250,8 @@ class TestAggregateAndSaveResults:
             _aggregate_and_save_results(mock_db_session, query_id_for_agg)
 
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "Failed to save aggregated stats" in exc_info.value.detail
+        assert exc_info.value.detail == f"Error during aggregation for query_id {query_id_for_agg}"
+        assert "Failed to save aggregated stats" not in exc_info.value.detail
         mock_db_session.commit.assert_called_once()
         mock_db_session.rollback.assert_called_once()
 
@@ -259,7 +262,8 @@ class TestAggregateAndSaveResults:
             _aggregate_and_save_results(mock_db_session, query_id_for_agg)
 
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "DB error on SELECT" in exc_info.value.detail
+        assert exc_info.value.detail == f"Error during aggregation for query_id {query_id_for_agg}"
+        assert "DB error on SELECT" not in exc_info.value.detail
         mock_db_session.rollback.assert_called_once()
 
     def test_aggregate_includes_per_trust_record_counts(

@@ -26,27 +26,20 @@ on:
     paths:
       - "scripts/**"
       - ".github/workflows/test_trust_kit_scripts.yml"
-      # test_container_identity.py asserts on the compose files, not on scripts/, so it
-      # must be triggered by changes to THEM or the guard silently never runs on the very
-      # edit it exists to catch — the same trap test_trust_xnat.yml documents. FLIP#1171
-      # was reintroduced once in fl-services/nvflare/compose.dev.yml by a change that
-      # touched no file under scripts/.
+      # Some guards here assert on files outside scripts/ — test_container_identity.py
+      # on the compose files, test_workflow_trust_guards.py on the image-build
+      # workflows — so those paths trigger the push run too, or a guard silently
+      # never runs on the very edit it exists to catch (FLIP#1171 was reintroduced
+      # once that way). pull_request below is deliberately unfiltered, like the
+      # other test_* workflows: every develop-targeted PR runs this ~1s job, which
+      # removes the trap entirely where it matters and needs no path list to keep
+      # in step with the guards.
       - "deploy/compose*.yml"
       - "trust/deploy/compose*.yml"
       - "fl-services/nvflare/compose.dev.yml"
+      - ".github/workflows/docker_build_*.yml"
   pull_request:
     branches: [develop]
-    paths:
-      - "scripts/**"
-      - ".github/workflows/test_trust_kit_scripts.yml"
-      # test_container_identity.py asserts on the compose files, not on scripts/, so it
-      # must be triggered by changes to THEM or the guard silently never runs on the very
-      # edit it exists to catch — the same trap test_trust_xnat.yml documents. FLIP#1171
-      # was reintroduced once in fl-services/nvflare/compose.dev.yml by a change that
-      # touched no file under scripts/.
-      - "deploy/compose*.yml"
-      - "trust/deploy/compose*.yml"
-      - "fl-services/nvflare/compose.dev.yml"
 
 permissions:
   contents: read

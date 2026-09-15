@@ -36,32 +36,11 @@ a well-meant "no localhost in Terraform" sweep cannot break local development in
 import re
 from pathlib import Path
 
+from hcl_helpers import hcl_block
+
 AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
 STAG_PROD_SERVICES_TF = AWS_PROVIDER_DIR / "services.tf"
 DEV_VARIABLES_TF = AWS_PROVIDER_DIR / "dev" / "variables.tf"
-
-
-def _block(source: str, header: str) -> str:
-    """Extract a brace-balanced HCL block by its opening header.
-
-    Args:
-        source (str): Full contents of a Terraform file.
-        header (str): The block header to find, e.g. ``module "cognito"``.
-
-    Returns:
-        str: The block body, without the enclosing braces.
-    """
-    start = source.index(header)
-    open_brace = source.index("{", start)
-    depth = 0
-    for index in range(open_brace, len(source)):
-        if source[index] == "{":
-            depth += 1
-        elif source[index] == "}":
-            depth -= 1
-            if depth == 0:
-                return source[open_brace + 1 : index]
-    raise AssertionError(f"unbalanced braces after {header!r}")
 
 
 def _string_list(block: str, argument: str) -> list[str]:
@@ -88,7 +67,7 @@ def _cognito_module_argument(argument: str) -> list[str]:
     Returns:
         list[str]: The argument's entries.
     """
-    block = _block(STAG_PROD_SERVICES_TF.read_text(), 'module "cognito"')
+    block = hcl_block(STAG_PROD_SERVICES_TF.read_text(), 'module "cognito"')
     return _string_list(block, argument)
 
 
@@ -123,6 +102,6 @@ def test_dev_root_keeps_localhost_callback_urls() -> None:
     This is the other half of the asymmetry: local development serves the UI from
     localhost, so stripping it here would break dev sign-in via the same CORS path.
     """
-    block = _block(DEV_VARIABLES_TF.read_text(), 'variable "cognito_callback_urls"')
+    block = hcl_block(DEV_VARIABLES_TF.read_text(), 'variable "cognito_callback_urls"')
     urls = _string_list(block, "default")
     assert any("localhost" in url.lower() for url in urls), f"dev callback_urls lost its localhost origins: {urls}"

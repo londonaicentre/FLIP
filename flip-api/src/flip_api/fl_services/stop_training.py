@@ -21,6 +21,7 @@ from flip_api.db.database import get_session
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.fl_services.services.fl_service import abort_model_training
 from flip_api.model_services.services.model_service import update_model_status
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/fl", tags=["fl_services"])
 
@@ -61,7 +62,8 @@ def stop_training(
         update_model_status(model_id, ModelStatus.STOPPED, db)
 
     except Exception as e:
+        logger.exception("Error while stopping model training")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An error occurred while stopping model training: {str(e)}",
-        )
+            detail="Internal server error",
+        ) from e

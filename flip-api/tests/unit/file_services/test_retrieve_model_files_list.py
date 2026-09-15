@@ -171,4 +171,5 @@ class TestRetrieveModelFilesList:
                 retrieve_model_files_list(model_id=sample_model_id, db=mock_db_session, user_id="test-user-id")
 
             assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-            assert "Internal server error" in exc_info.value.detail
+            assert exc_info.value.detail == "Internal server error"
+            assert "Unexpected error" not in exc_info.value.detail

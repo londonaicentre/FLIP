@@ -49,6 +49,8 @@ by a comment that merely mentions the thing.
 import re
 from pathlib import Path
 
+from hcl_helpers import hcl_block
+
 AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
 SITE_YML = AWS_PROVIDER_DIR / "site.yml"
 MAIN_TF = AWS_PROVIDER_DIR / "main.tf"
@@ -89,29 +91,6 @@ def _task_shell(task_name: str) -> str:
     return script
 
 
-def _hcl_block(source: str, header: str) -> str:
-    """Extract a brace-balanced HCL block by its opening header.
-
-    Args:
-        source (str): Full contents of a Terraform file.
-        header (str): The block header to find, e.g. ``resource "aws_iam_role_policy" "trust_ec2_s3"``.
-
-    Returns:
-        str: The block body, without the enclosing braces.
-    """
-    start = source.index(header)
-    open_brace = source.index("{", start)
-    depth = 0
-    for index in range(open_brace, len(source)):
-        if source[index] == "{":
-            depth += 1
-        elif source[index] == "}":
-            depth -= 1
-            if depth == 0:
-                return source[open_brace + 1 : index]
-    raise AssertionError(f"unbalanced braces after {header!r}")
-
-
 def _trust_ec2_policy_statements() -> list[str]:
     """Return the statements of the ``trust_ec2_s3`` inline role policy, comments stripped.
 
@@ -121,7 +100,7 @@ def _trust_ec2_policy_statements() -> list[str]:
     Returns:
         list[str]: One string per statement in the policy document.
     """
-    policy = _hcl_block(MAIN_TF.read_text(), 'resource "aws_iam_role_policy" "trust_ec2_s3"')
+    policy = hcl_block(MAIN_TF.read_text(), 'resource "aws_iam_role_policy" "trust_ec2_s3"')
     policy = "\n".join(line for line in policy.splitlines() if not line.lstrip().startswith("#"))
     statements = re.findall(r"^      \{$(.*?)^      \},?$", policy, re.MULTILINE | re.DOTALL)
     assert statements, "found no statements in the trust_ec2_s3 policy — this guard has drifted from main.tf"

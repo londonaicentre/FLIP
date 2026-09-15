@@ -122,4 +122,5 @@ def test_get_model_files_list_unexpected_error(mock_session, mock_db_files):
                 get_model_files_list(model_id=model_id, db=mock_session, user_id="test-user-id")
 
             assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-            assert "Internal server error" in exc_info.value.detail
+            assert exc_info.value.detail == "Internal server error"
+            assert "Unexpected database error" not in exc_info.value.detail

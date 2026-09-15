@@ -16,7 +16,7 @@ import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from "axios";
 
 import { useAuthStore } from "@/store/auth";
 import { NO_FORCED_SIGNOUT_PATHS } from "@/utils/auth";
-import { Snackbar } from "@/utils/snackbar";
+import { stashPostSignOutNotice } from "@/utils/session-teardown";
 
 // Debounce the "Not Authorised" snackbar so a burst of parallel 401s
 // (common when multiple SWRV hooks fail at the same token expiry) shows
@@ -124,17 +124,21 @@ class Http {
                         return Promise.reject(error);
                     }
 
-                    authStore.signOut({ viaInterceptor: true });
-
+                    // signOut discards the page (utils/session-teardown.ts), so a
+                    // snackbar shown here would go with it. Stash it first — before the
+                    // sign-out that will unload us — and App.vue replays it on the login
+                    // page. The cooldown still collapses a burst of 401s into one notice.
                     const now = Date.now();
                     if (now - lastNotAuthorisedAt > NOT_AUTHORISED_COOLDOWN_MS) {
                         lastNotAuthorisedAt = now;
-                        Snackbar.show({
+                        stashPostSignOutNotice({
                             type: "info",
                             title: "Not Authorised",
                             text: "You have been signed out. Please log back in."
                         });
                     }
+
+                    authStore.signOut({ viaInterceptor: true });
 
                     return Promise.reject(error);
                 }
