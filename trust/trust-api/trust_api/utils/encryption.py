@@ -41,6 +41,7 @@ payloads with a peer on the other (the roll-out is a flag day; see ``deploy/READ
 
 import base64
 import binascii
+import hashlib
 import json
 import os
 from typing import Any
@@ -81,6 +82,17 @@ def get_aes_key() -> bytes:
 
     _aes_key_cache = _require_aes256(base64.b64decode(get_settings().AES_KEY_BASE64))
     return _aes_key_cache
+
+
+#: Hex chars of the key fingerprint the hub sends in its heartbeat reply (FLIP#1204); this trust
+#: digests its own decoded key the same way to detect a kit whose key was rotated under it.
+#: 48 bits of a SHA-256 over a 256-bit random key discloses nothing usable.
+_KEY_FINGERPRINT_CHARS = 12
+
+
+def aes_key_fingerprint() -> str:
+    """Short SHA-256 fingerprint of the raw shared key — the hub computes the identical digest."""
+    return hashlib.sha256(get_aes_key()).hexdigest()[:_KEY_FINGERPRINT_CHARS]
 
 
 #: Key id of the platform-wide shared key (``AES_KEY_BASE64``).

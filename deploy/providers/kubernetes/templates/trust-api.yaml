@@ -42,6 +42,10 @@ data:
   ENV: {{ .Values.environment | quote }}
   LOG_LEVEL: {{ .Values.logLevel | quote }}
   TRUST_NUMBER: {{ .Values.trustNumber | quote }}
+  # The fl-client has no health endpoint; the health collector reports the image tag this
+  # release pins for it, so the hub's Connection Status names the FL build (FLIP#1204).
+  # Must stay in step with the tag flip-trust.flClientImage renders.
+  FL_CLIENT_IMAGE_TAG: {{ .Values.flClient.image.tag | quote }}
 ---
 apiVersion: apps/v1
 kind: Deployment

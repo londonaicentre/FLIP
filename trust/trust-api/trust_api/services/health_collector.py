@@ -51,6 +51,7 @@ OMOP_DB_HOST = get_settings().OMOP_DB_HOST
 OMOP_DB_PORT = get_settings().OMOP_DB_PORT
 HEALTH_COLLECT_INTERVAL_SECONDS = get_settings().HEALTH_COLLECT_INTERVAL_SECONDS
 HEALTH_PROBE_DEGRADED_MS = get_settings().HEALTH_PROBE_DEGRADED_MS
+FL_CLIENT_IMAGE_TAG = get_settings().FL_CLIENT_IMAGE_TAG
 
 _PROBE_TIMEOUT_SECONDS = 5.0
 _TEARDOWN_TIMEOUT_SECONDS = 1.0
@@ -307,15 +308,20 @@ async def collect_once(client: httpx.AsyncClient) -> dict:
         _entry_or_unknown(result, service)
         for result, service in zip(results, ("imaging-api", "data-access-api", "xnat", "dicom", "omop"), strict=True)
     )
+    services = {
+        "trust-api": _entry("healthy", build_identity()),
+        "imaging-api": imaging,
+        "data-access-api": data_access,
+        "xnat": xnat,
+        "dicom": dicom,
+        "omop": omop,
+    }
+    if FL_CLIENT_IMAGE_TAG:
+        # An identity, not a probe: the fl-client has no health endpoint (its liveness is the
+        # FL server's business), but which build it runs is what a release audit needs (FLIP#1204).
+        services["fl-client"] = _entry("unknown", FL_CLIENT_IMAGE_TAG)
     return {
-        "services": {
-            "trust-api": _entry("healthy", build_identity()),
-            "imaging-api": imaging,
-            "data-access-api": data_access,
-            "xnat": xnat,
-            "dicom": dicom,
-            "omop": omop,
-        },
+        "services": services,
         "collected_at": datetime.now(timezone.utc).isoformat(),
     }
 
