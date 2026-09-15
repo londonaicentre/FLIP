@@ -16,6 +16,7 @@
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock checkov-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
+		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
 		demo-video demo-users seed-demo-projects
 
 ifeq ($(PROD),true)
@@ -218,6 +219,17 @@ up-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
 	@$(MAKE) onboard-onprem-trust KIT=$(KIT)
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) PROD=$(or $(PROD),true)
+
+# Upgrade twin of up-onprem-trust (FLIP#1204): the same readiness-checklist gate, then
+# trust/Makefile's data-safe upgrade-trust — pull the target release, recreate what
+# changed, redeploy XNAT WITHOUT xnat-reset. Never up-trust: that is the first-install
+# verb and wipes the XNAT archive. TAG defaults to the release the hub runs (read from
+# the hub's /health), so a plain `make upgrade-onprem-trust KIT=<slot>` is "catch up
+# with the hub"; FORCE=1 allows a downgrade, YES=1 skips the confirmation.
+upgrade-onprem-trust:
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
+	@$(MAKE) onboard-onprem-trust KIT=$(KIT)
+	$(MAKE) -C trust upgrade-trust KIT=$(KIT) PROD=$(or $(PROD),true) TAG=$(TAG) FORCE=$(FORCE) YES=$(YES)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
 # so an operator doesn't have to remember the -C trust path or PROD value.

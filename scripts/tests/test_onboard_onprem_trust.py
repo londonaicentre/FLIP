@@ -212,6 +212,52 @@ def test_9_site_privacy_rejects_misspelt_variable() -> None:
     _assert("FL_SITE_PRIVACY_PERCENTIL " in result.detail, "detail names the misspelt variable", result.detail)
 
 
+def _hub_shared_current(kit_vars: dict, health):
+    """Run check_hub_shared_current with trust-api's /health answering ``health`` (a dict, or an exception)."""
+    if isinstance(health, BaseException):
+        patched = mock.patch.object(mod, "fetch_local_trust_health", side_effect=health)
+    else:
+        patched = mock.patch.object(mod, "fetch_local_trust_health", return_value=health)
+    with patched:
+        return mod.check_hub_shared_current(kit_vars, True)
+
+
+def test_10_hub_shared_current_flags_a_stale_key() -> None:
+    """trust-api says its key no longer matches the hub's -> FAIL naming the refreshed-kit fix (FLIP#1204)."""
+    print("▶ hub-shared currency: stale AES key -> FAIL")
+    kit = {"TRUST_API_PORT": "8020", "DOCKER_TAG": "v0.6.0"}
+    result = _hub_shared_current(kit, {"version": "v0.6.0", "hub_version": "v0.6.0", "hub_key_match": False})
+    _assert(result.status == mod.Status.FAIL, "status is FAIL")
+    _assert(any("sync-trust-kit" in h for h in result.hints), "hint names the admin-side re-sync")
+
+
+def test_11_hub_shared_current_passes_and_notes_the_release_gap() -> None:
+    """Key matches: PASS. Kit pinned behind the hub: WARN naming upgrade-onprem-trust, never FAIL
+    (the upgrade verb runs this checklist first, so a FAIL here would make it un-runnable)."""
+    print("▶ hub-shared currency: key matches -> PASS; kit behind the hub -> WARN")
+    kit = {"TRUST_API_PORT": "8020", "DOCKER_TAG": "v0.6.0"}
+    ok = _hub_shared_current(kit, {"version": "v0.6.0", "hub_version": "v0.6.0", "hub_key_match": True})
+    _assert(ok.status == mod.Status.PASS, "matching key + same release -> PASS")
+    behind = _hub_shared_current(
+        {"TRUST_API_PORT": "8020", "DOCKER_TAG": "v0.5.0"},
+        {"version": "v0.5.0", "hub_version": "v0.6.0", "hub_key_match": True},
+    )
+    _assert(behind.status == mod.Status.WARN, "kit behind the hub -> WARN (not blocking)")
+    _assert(any("upgrade-onprem-trust" in h for h in behind.hints), "hint names the upgrade verb")
+
+
+def test_12_hub_shared_current_is_pending_until_trust_api_answers() -> None:
+    """First install (trust-api not running) or an older trust-api -> PENDING, never FAIL."""
+    print("▶ hub-shared currency: trust-api unreachable / pre-FLIP#1204 -> PENDING")
+    kit = {"TRUST_API_PORT": "8020", "DOCKER_TAG": "v0.6.0"}
+    down = _hub_shared_current(kit, ConnectionRefusedError("refused"))
+    _assert(down.status == mod.Status.PENDING, "unreachable trust-api -> PENDING")
+    old = _hub_shared_current(kit, {"version": "0.5.0"})
+    _assert(old.status == mod.Status.PENDING, "trust-api without hub_key_match -> PENDING")
+    unknown = _hub_shared_current(kit, {"version": "v0.6.0", "hub_version": None, "hub_key_match": None})
+    _assert(unknown.status == mod.Status.PENDING, "hub_key_match None (no heartbeat reply yet) -> PENDING")
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -225,6 +271,9 @@ def main() -> None:
     test_7_site_privacy_rejects_unsupported_backend()
     test_8_site_privacy_not_configured_reports_cleanly()
     test_9_site_privacy_rejects_misspelt_variable()
+    test_10_hub_shared_current_flags_a_stale_key()
+    test_11_hub_shared_current_passes_and_notes_the_release_gap()
+    test_12_hub_shared_current_is_pending_until_trust_api_answers()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

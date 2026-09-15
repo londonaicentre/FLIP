@@ -71,13 +71,19 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
 
   The base file defines the three services (`xnat-web`, `xnat-db`, `xnat-nginx`). The development overlay adds host bind-mounts for hot-reload and resource limits sized for dev machines. The production overlay mounts persistent data volumes under `/opt/flip/xnat/`.
 - Two XNAT instances are deployed as separate Swarm stacks (`xnat1`, `xnat2`), one per trust
-- **Every redeploy is a fresh install.** `up-xnat` blocks on `down-xnat` and then runs `xnat-reset`,
-  which `rm -rf`s `XNAT_DATA_DIR` and recreates it — in development *and* in staging/production
-  (local Docker context or remote-over-ssh alike). So `configure-xnat.sh` always runs against a
-  brand-new instance and re-applies the full site configuration; its `initialized=true`
-  short-circuit is there for a re-run against a *live* instance, not for an upgrade. If an in-place
-  upgrade of a persistent XNAT is ever supported outside this tooling, that short-circuit would skip
-  re-applying site config (`siteUrl`, DQR access control) and would need revisiting.
+- **`up-xnat` is a fresh install; `upgrade-xnat` is the in-place upgrade (FLIP#1204).** `up-xnat`
+  blocks on `down-xnat` and then runs `xnat-reset`, which `rm -rf`s `XNAT_DATA_DIR` and recreates
+  it — in development *and* in staging/production (local Docker context or remote-over-ssh alike).
+  Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> PROD=<env>` (driven
+  by `make -C trust upgrade-trust`) keeps the data dir: it takes a `pg_dumpall` of `xnat-db` into
+  `$XNAT_DATA_DIR/backups/`, refuses to proceed unless the `xnat-data/` tree is owned by the
+  container uid (1001 — an archive written by a pre-hardening root `xnat-web` needs one
+  `chown -R` first), redeploys the stack onto the kit's `XNAT_TAG` (XNAT migrates its own schema on
+  boot; migrations are forward-only, hence the dump), then re-runs `configure-xnat.sh`, which
+  *converges* an already-initialised instance — re-applying `siteUrl` (a 1.9→1.10 migration
+  empties it and the instance re-reports itself uninitialised until it is set), the DICOM receiver,
+  the DQR lockdown, the PACS registration and the Container Service backend — while skipping the
+  first-boot-only admin password rotation and service-account creation.
 
 ## Setup
 
