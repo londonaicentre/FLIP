@@ -48,7 +48,10 @@ class TestGetAccessionIds:
         assert mock_client.post.call_args.args[0].endswith("/cohort/accession-ids")
         # data-access-api now requires the trust-internal service key on every /cohort
         # route; imaging-api is one of those callers and must forward the plaintext key.
-        assert call_kwargs["headers"][get_settings().TRUST_INTERNAL_SERVICE_KEY_HEADER] == "outbound-test-key"
+        assert (
+            call_kwargs["headers"][get_settings().TRUST_INTERNAL_SERVICE_KEY_HEADER]
+            == "outbound-test-key"  # pragma: allowlist secret
+        )
 
     @pytest.mark.asyncio
     @patch("imaging_api.services_external.data_access.httpx.AsyncClient")
