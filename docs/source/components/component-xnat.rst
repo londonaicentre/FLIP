@@ -16,16 +16,14 @@ XNAT UI
 
 .. _receiving-xnat-credentials:
 
-Receiving XNAT Account Credentials
-==================================
+Receiving XNAT Account Access
+=============================
 
-On approval of a FLIP project, any associated users will be granted access to the respective XNAT project at each trust. New XNAT user accounts will be generated as necessary. The email address associated with the FLIP user account will be sent details of their XNAT account credentials pertaining to each participating trust.
+On approval of a FLIP project, any associated users are granted access to the respective XNAT project at each participating trust, and new XNAT user accounts are created as necessary.
 
-.. figure:: ../assets/xnat/credentials_email.png
-    :width: 500
-    :align: center
+If a new XNAT account is created for you, the email address associated with your FLIP account receives a link to set your own password for that trust's XNAT — no password is ever sent by email. The link is given without a host, as ``<your trust's XNAT address>/app/template/...``: the Central Hub does not know, and never emails, a trust's internal XNAT address, so replace that placeholder with the address you normally use to open XNAT at your trust (its XNAT administrator can tell you it) and keep the rest exactly as shown. Because XNAT is only reachable from inside the trust's secure network (see `Access`_ below), open the link from a machine on that network; it stops working as soon as you have set your password, and expires if left unused.
 
-    Email sent with XNAT account credentials (password masked).
+If you already have an XNAT account at a trust and are later added to a further project there, you instead receive a notification that you have been added to the project — log in with your existing credentials.
 
 Access
 ======
