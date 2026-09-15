@@ -218,7 +218,7 @@ stops the fl-client at startup, by design), and after ``up-onprem-trust`` the
 fl-client log shows a ``[site-privacy] site privacy policy ACTIVE: ...`` line.
 To change or drop the policy later, edit the kit file and restart the
 fl-clients (``make -C trust up-fl-clients-kit KIT=<CODE> PROD=true``). See
-:doc:`../components/component-fl-nodes` ("Site-enforced privacy policy") for
+:doc:`../components/component-fl-nets` ("Site-enforced privacy policy") for
 the parameter reference and enforcement semantics.
 
 **5. Open the AWS firewall (FLIP admin).** Once the operator reports their
@@ -265,8 +265,11 @@ that trust. The trust's env must contain:
 | ``CENTRAL_HUB_API_URL``          | Public hub URL the trust polls (e.g.                   |
 |                                  | ``https://app.flip.aicentre.co.uk``).                  |
 +----------------------------------+--------------------------------------------------------+
-| ``AES_KEY_BASE64``               | Symmetric key shared with the hub for encrypted        |
-|                                  | payloads.                                              |
+| ``AES_KEY_BASE64``               | Symmetric key shared with the hub for the AES-256-GCM  |
+|                                  | payload envelope. Must match the hub's key byte for    |
+|                                  | byte; a mismatch fails every task as ``failed          |
+|                                  | authentication``. Upgrade in step with the hub across  |
+|                                  | FLIP#1179 (no CBC compatibility).                      |
 +----------------------------------+--------------------------------------------------------+
 | ``TRUST_INTERNAL_SERVICE_KEY``   | Per-trust shared secret used inside the trust for      |
 |                                  | calls between trust-api / imaging-api / fl-client and  |

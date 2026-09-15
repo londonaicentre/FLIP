@@ -1,0 +1,51 @@
+schema_type: dataframe
+columns:
+  location_id:
+    dtype: int64
+    unique: true
+  address_1:
+    dtype: string[python]
+    nullable: true
+    required: false
+  address_2:
+    dtype: string[python]
+    nullable: true
+    required: false
+  city:
+    dtype: string[python]
+    nullable: true
+    required: false
+  state:
+    dtype: string[python]
+    nullable: true
+    required: false
+  zip:
+    dtype: string[python]
+    nullable: true
+    required: false
+  county:
+    dtype: string[python]
+    nullable: true
+    required: false
+  location_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  country_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  country_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  latitude:
+    dtype: float64
+    nullable: true
+    required: false
+  longitude:
+    dtype: float64
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

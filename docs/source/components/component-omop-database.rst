@@ -172,11 +172,12 @@ Concept ids are meaningless until they are joined
 Sample cohort queries
 *********************
 
-The tutorials in ``fl-tutorials/`` each ship the cohort query they were written against. Two of them
-bracket the range of what a query has to do. Both are shown below in full, less the licence
+The tutorials in ``fl-tutorials/`` each ship the cohort query they were written against. Three of them
+span the range of what a query has to do. All three are shown below in full, less the licence
 header; the Flower copies
-(``fl-tutorials/flower/xray_classification/query.sql`` and
-``fl-tutorials/flower/3d_spleen_segmentation/query.sql``) are byte-identical, so cohort queries are
+(``fl-tutorials/flower/xray_classification/query.sql``,
+``fl-tutorials/flower/3d_spleen_segmentation/query.sql`` and
+``fl-tutorials/flower/ehr_risk_prediction/query.sql``) are byte-identical, so cohort queries are
 independent of the FL backend.
 
 Chest X-ray classification — labels out of OMOP
@@ -228,6 +229,25 @@ alongside the converted images during :doc:`data enrichment </user-guides/user-d
 This is the practical test for a new app. If the label already exists in OMOP, project it as a column
 and no enrichment is needed. If it does not — anything spatial or image-derived — the query only
 selects the cohort, and the labels are enriched into XNAT.
+
+EHR risk prediction — no imaging at all
+=======================================
+
+.. literalinclude:: ../../../fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql
+   :language: sql
+   :start-after: -- limitations under the License.
+   :caption: ``fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql``
+
+The third case is a cohort with no images in it. This query never touches ``image_occurrence``: it
+builds one row per patient out of ``person``, ``condition_occurrence`` and ``visit_occurrence``,
+deriving both the label — a later type-2-diabetes diagnosis — and the features, which are
+demographics plus the conditions and visits recorded *before* that diagnosis. The FL client reads the
+result with ``flip.get_dataframe`` and calls no imaging helper at all.
+
+Two things follow. Everything the model sees comes out of this one query, so the window that keeps
+post-diagnosis history out of the features lives in the SQL rather than in the training code. And the
+mocked OMOP database ships **no** ``condition_occurrence`` rows, so this query returns nothing on a
+fresh dev Trust until the Synthea cohort is loaded — see :ref:`omop-synthea-ehr`.
 
 .. note::
 
@@ -284,19 +304,42 @@ Getting the data
 
 Dev stacks do not build the database — they download a ready-populated PostgreSQL data volume per
 Trust from the same public dataset, roughly 11 MB each, at
-``https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/trust<N>/trust<N>_pgdata_<version>.tar``
-(gzip-compressed despite the ``.tar`` name). The version is pinned by ``trust/omop-db/.data_version``
-and the download is anonymous — no AWS credentials. Bringing a Trust up syncs it automatically; to do
-it by hand:
+``https://huggingface.co/datasets/aicentreflip/trust-data/resolve/<version>/trust<N>/trust<N>_pgdata.tar``
+(gzip-compressed despite the ``.tar`` name). There is one copy of each archive; a data version is a
+git tag on the dataset, pinned by ``trust/.data_version`` (one pin for OMOP and Orthanc together), and
+the download is anonymous — no AWS credentials. Bringing a Trust up syncs it automatically; to do it
+by hand:
 
 .. code-block:: bash
 
    make -C trust update-omop-data            # both dev Trusts
    make -C trust update-omop-data TRUST=1    # Trust_1 (GSTT) only
 
-The canonical CSVs behind those volumes live under ``omop-csv/<version>/`` in the same dataset. Every
+The canonical CSVs behind those volumes live under ``omop-csv/<project>/`` in the same dataset, at
+the same tag. Every
 row carries a ``source_trust`` column, and standing up N Trusts is a deterministic split of that one
 dataset — see ``trust/omop-db/README.md`` for the partition modes and for rebuilding the volumes.
+
+.. _omop-synthea-ehr:
+
+Condition rows for the EHR tutorial
+===================================
+
+Those volumes carry the imaging cohorts — persons, visits and ``image_occurrence`` rows — but **no**
+``condition_occurrence`` rows at all, so any query filtering on a diagnosis comes back empty on a
+fresh dev Trust. The EHR risk-prediction tutorial needs them, and adds them with a separate seed step
+that downloads the public 1k-person Synthea-in-OMOP dataset from the AWS Open Data Registry
+(anonymous, no credentials) and appends this Trust's slice:
+
+.. code-block:: bash
+
+   make -C trust load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # Trust_1 (GSTT)
+   make -C trust load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # Trust_2 (KCH)
+
+Each Trust receives a disjoint ``person_id``-modulo slice, so the federated run sees genuinely
+partitioned cohorts. The loaded rows are tagged in ``person_source_value``, and the loader is
+idempotent by that tag: a re-run replaces only what it wrote and leaves the imaging cohorts untouched.
+Run it once per Trust, after ``update-omop-data`` and with the stack up.
 
 Seeding the vocabulary
 ======================

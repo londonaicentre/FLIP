@@ -16,12 +16,12 @@ FROM ${BASE_REF} AS base
 
 FROM base AS development
 
-# Build args for the non-root user created in fl-base (GHSA-8465).
-# The compose wires host UID/GID so the container user owns bind-mounted
-# provision directories in dev. Prod defaults: UID 1000 / GID 1000 / flip.
-ARG UID
-ARG GID
-ARG UNAME
+# Names the non-root user created in fl-base (GHSA-8465), used only for the
+# COPY --chown and USER below. Fixed at `flip` and no longer supplied per-build
+# (FLIP#1171) — see fl-base/Dockerfile. UID/GID are not declared here because
+# nothing in this file references them; the runtime uid is re-pointed by `user:`
+# in the composes, which is what has to match the host-owned bind mounts.
+ARG UNAME=flip
 
 # Copy entrypoint script
 COPY --chown=${UNAME}:${UNAME} fl-server/entrypoint.sh /app/entrypoint.sh

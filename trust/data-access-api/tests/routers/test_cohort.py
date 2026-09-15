@@ -20,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from data_access_api.main import app
 from data_access_api.routers.schema import StatisticsResponse
+from data_access_api.utils.encryption import PROJECT_ID_CONTEXT
 from tests.conftest import AUTH_HEADERS
 
 client = TestClient(app)
@@ -207,11 +208,45 @@ def test_get_dataframe_success(mock_validate_query, mock_get_records, mock_decry
 
     assert response.status_code == 200
     assert response.json() == sample_df_dict
-    mock_decrypt.assert_called_once_with("encrypted-id")
+    mock_decrypt.assert_called_once_with("encrypted-id", context=PROJECT_ID_CONTEXT)
     mock_validate_query.assert_called_once_with(sample_dataframe_query["query"])
     # The engine receives what validate_query emitted from the checked AST,
     # never the caller's raw string.
     mock_get_records.assert_called_once_with(mock_validate_query.return_value)
+
+
+@patch("data_access_api.routers.cohort.decrypt")
+def test_get_dataframe_rejects_a_project_id_that_fails_authentication(mock_decrypt):
+    """A tampered or foreign-key project id is the caller's problem: 400 with a reason, not a bare 500."""
+    from cryptography.exceptions import InvalidTag
+
+    mock_decrypt.side_effect = InvalidTag()
+
+    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 400
+    assert "failed authentication" in response.json()["detail"]
+
+
+@patch("data_access_api.routers.cohort.decrypt")
+def test_get_dataframe_rejects_a_malformed_envelope(mock_decrypt):
+    mock_decrypt.side_effect = ValueError("Payload is not a FLIP encryption envelope")
+
+    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 400
+    assert "not a FLIP encryption envelope" in response.json()["detail"]
+
+
+@patch("data_access_api.routers.cohort.decrypt")
+def test_get_dataframe_reports_an_unexpected_decrypt_fault_as_500(mock_decrypt):
+    """Not the caller's payload (key load, cipher fault): a logged 500 naming the type, as imaging-api answers."""
+    mock_decrypt.side_effect = Exception("bad key")
+
+    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Failed to decrypt encrypted_project_id (Exception)"
 
 
 @patch("data_access_api.routers.cohort.decrypt")
@@ -328,6 +363,23 @@ def test_get_dataframe_allows_cohort_at_threshold(mock_get_records, mock_decrypt
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
+def test_get_accession_ids_rejects_a_project_id_that_fails_authentication(
+    mock_get_records, mock_decrypt, mock_get_settings
+):
+    from cryptography.exceptions import InvalidTag
+
+    mock_decrypt.side_effect = InvalidTag()
+
+    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 400
+    assert "failed authentication" in response.json()["detail"]
+    mock_get_records.assert_not_called()
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_records")
 def test_get_accession_ids_success(mock_get_records, mock_decrypt, mock_get_settings):
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 2
     mock_decrypt.return_value = "decrypted-id"
@@ -337,7 +389,7 @@ def test_get_accession_ids_success(mock_get_records, mock_decrypt, mock_get_sett
 
     assert response.status_code == 200
     assert response.json() == {"accession_ids": ["ACC1", "ACC2", "ACC3"]}
-    mock_decrypt.assert_called_once_with("encrypted-id")
+    mock_decrypt.assert_called_once_with("encrypted-id", context=PROJECT_ID_CONTEXT)
     # The caller's query must be wrapped server-side so only accession_id is projected.
     called_query = mock_get_records.call_args[0][0]
     assert called_query.startswith("SELECT accession_id FROM (")

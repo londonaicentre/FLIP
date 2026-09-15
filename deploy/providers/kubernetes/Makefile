@@ -101,6 +101,19 @@ ifneq ($(strip $(OVERRIDES_FILE)),)
 	VALUES_OPTS := $(VALUES_OPTS) -f $(OVERRIDES_FILE)
 endif
 
+# The chart requires flClient.kitHostPath whenever flClient is enabled, so any
+# render (make test, template-all-backends, a plain `make template`) fails the
+# moment values.yaml has no default. CI renders with the path hardcoded (.github/
+# workflows/test_helm_chart.yml); default the same value here so the local
+# targets pass and an operator can override at deploy with
+# --set flClient.kitHostPath=<path> matching where the kit was actually staged.
+# Pass FL_CLIENT_KIT_HOST_PATH= (empty) to render without the default, e.g. to
+# exercise the chart's required() guard.
+FL_CLIENT_KIT_HOST_PATH ?= $(KIT_DEST)
+ifneq ($(strip $(FL_CLIENT_KIT_HOST_PATH)),)
+	VALUES_OPTS := $(VALUES_OPTS) --set flClient.kitHostPath=$(FL_CLIENT_KIT_HOST_PATH)
+endif
+
 .PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps sync-kit patch-kit-secrets xnat-init stage-kit preflight template-egress-variants
 
 help: ## Display this help

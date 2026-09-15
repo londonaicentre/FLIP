@@ -107,6 +107,12 @@ TUTORIALS: dict[str, TutorialCopy] = {
         "Measuring how well the existing Ark+ chest X-ray model recognises chest conditions on each "
         "participating trust's radiographs, without retraining it.",
     ),
+    "ehr_risk_prediction": TutorialCopy(
+        "EHR risk prediction",
+        "Predicting which patients will go on to develop type 2 diabetes from their routine electronic "
+        "health records — demographics plus the conditions and hospital visits recorded before diagnosis — "
+        "with a model trained across the participating trusts.",
+    ),
     "arkplus_multimodel_classification_evaluation": TutorialCopy(
         "Ark+ multi-model classification evaluation",
         "Comparing several existing Ark+ chest X-ray models on each participating trust's radiographs to "

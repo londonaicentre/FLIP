@@ -11,7 +11,7 @@
 #
 
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -23,6 +23,7 @@ from imaging_api.services.retrieval import (
     retrieve_images_for_project,
     retry_retrieve_images_for_project,
 )
+from imaging_api.utils.encryption import PROJECT_ID_CONTEXT
 from imaging_api.utils.exceptions import CohortBelowThresholdError, NotFoundError
 
 
@@ -85,6 +86,7 @@ async def test_retrieve_images_success(
     result = await retrieve_images_for_project("proj1", "SELECT *", headers)
     assert result is True
     mock_queue.assert_called_once()
+    mock_encrypt.assert_called_once_with(ANY, context=PROJECT_ID_CONTEXT)
 
 
 @pytest.mark.asyncio
@@ -181,6 +183,35 @@ async def test_retrieve_images_query_exception_skips_study(
 
     result = await retrieve_images_for_project("proj1", "SELECT *", headers)
     assert result is False
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.queue_image_import_request")
+@patch("imaging_api.services.retrieval.query_by_accession_number")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+@patch("imaging_api.services.retrieval.get_project")
+async def test_retrieve_images_skips_study_with_unsafe_accession_number(
+    mock_get_project, mock_encrypt, mock_get_accession_ids, mock_query, mock_queue, headers,
+):
+    """A PACS-returned accession number that fails the #908 path-segment rule must be
+    skipped like a failed query, not abort the whole batch: the remaining studies queue."""
+    mock_get_project.return_value = MagicMock()
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.return_value = ["ACC1", "ACC 2", "ACC3"]
+    mock_query.side_effect = [
+        [_make_study("ACC1", "1.2.3.1")],
+        [_make_study("ACC 2", "1.2.3.2")],
+        [_make_study("ACC3", "1.2.3.3")],
+    ]
+    mock_queue.return_value = [_make_import_response("ACC1"), _make_import_response("ACC3")]
+
+    result = await retrieve_images_for_project("proj1", "SELECT *", headers)
+
+    assert result is True
+    mock_queue.assert_called_once()
+    queued = [study.accession_number for study in mock_queue.call_args[0][0].studies]
+    assert queued == ["ACC1", "ACC3"]
 
 
 @pytest.mark.asyncio
@@ -593,6 +624,34 @@ async def test_retry_all_queries_fail(mock_get_project, mock_get_status, mock_qu
 
     result = await retry_retrieve_images_for_project("proj1", "SELECT *", headers)
     assert result is False
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.queue_image_import_request")
+@patch("imaging_api.services.retrieval.query_by_accession_number")
+@patch("imaging_api.services.retrieval.get_import_status", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.get_project")
+async def test_retry_skips_study_with_unsafe_accession_number(
+    mock_get_project, mock_get_status, mock_query, mock_queue, headers,
+):
+    """Same guarantee as the first-pass import: one unsafe accession number does not
+    take the rest of the retry batch down with it."""
+    mock_get_project.return_value = MagicMock()
+    mock_get_status.return_value = ImportStatus(
+        successful=[], failed=["ACC_FAIL", "ACC BAD"], queue_failed=[], queued=[], processing=[],
+    )
+    mock_query.side_effect = [
+        [_make_study("ACC_FAIL", "1.2.3.1")],
+        [_make_study("ACC BAD", "1.2.3.2")],
+    ]
+    mock_queue.return_value = [_make_import_response("ACC_FAIL")]
+
+    result = await retry_retrieve_images_for_project("proj1", "SELECT *", headers)
+
+    assert result is True
+    mock_queue.assert_called_once()
+    queued = [study.accession_number for study in mock_queue.call_args[0][0].studies]
+    assert queued == ["ACC_FAIL"]
 
 
 @pytest.mark.asyncio

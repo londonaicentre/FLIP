@@ -49,9 +49,9 @@ def _dataframe_payload(query: str) -> dict:
     the same reason it is in ``test_dataframe_endpoint_returns_seeded_columns``: the conftest
     pins ``AES_KEY_BASE64`` before any ``data_access_api`` module builds its Settings singleton.
     """
-    from data_access_api.utils.encryption import encrypt
+    from data_access_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 
-    return {"encrypted_project_id": encrypt("integration-project-1"), "query": query}
+    return {"encrypted_project_id": encrypt("integration-project-1", context=PROJECT_ID_CONTEXT), "query": query}
 
 
 def test_cohort_endpoint_returns_aggregates_for_image_occurrences(http_client):
@@ -139,10 +139,10 @@ def test_dataframe_endpoint_returns_seeded_columns(http_client):
     encrypts a real project id with the same key the container is configured with. This
     keeps the encryption path real instead of mocking ``decrypt``.
     """
-    from data_access_api.utils.encryption import encrypt
+    from data_access_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 
     payload = {
-        "encrypted_project_id": encrypt("integration-project-1"),
+        "encrypted_project_id": encrypt("integration-project-1", context=PROJECT_ID_CONTEXT),
         "query": (
             "SELECT c.concept_code AS modality, io.accession_id "
             "FROM omop.image_occurrence io "

@@ -20,8 +20,8 @@ the model-file contract, run an application locally, or provide the inputs to th
 
 | Backend | Examples |
 | --- | --- |
-| [`nvflare/`](nvflare/) | Chest X-ray classification, spleen segmentation and evaluation, diffusion, and template tests |
-| [`flower/`](flower/) | Chest X-ray classification, spleen segmentation and evaluation |
+| [`nvflare/`](nvflare/) | Chest X-ray classification, spleen segmentation and evaluation, diffusion, EHR risk prediction (tabular/OMOP-only), and template tests |
+| [`flower/`](flower/) | Chest X-ray classification, spleen segmentation and evaluation, EHR risk prediction (tabular/OMOP-only) |
 
 The root Makefile forwards tutorial commands to `FL_BACKEND=nvflare` by default. Select Flower explicitly with
 `FL_BACKEND=flower`.
@@ -45,7 +45,8 @@ make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
 
 `make build-fl` is a genuine prerequisite for the NVFLARE tutorials, not an optimisation: they run on the locally
 built `flare-fl-base` image and fail without it. The spleen examples take `download-spleen-data` in place of
-`download-xray-data`.
+`download-xray-data`; the EHR risk-prediction example (the tabular/OMOP-only one — no imaging, CPU is enough)
+takes `download-synthea-data`.
 
 The simulator requires Docker, and GPU-backed examples require the NVIDIA Container Toolkit. Dataset tooling is
 shared across backends in [`datasets/`](datasets/) and downloads land in the shared gitignored `data/` root, so
@@ -58,13 +59,15 @@ The tutorial sources also carry a **CPU-only** check that needs none of the abov
 and runs in CI on every PR touching `fl-tutorials/**`:
 
 ```bash
-make -C fl-tutorials test        # ruff over fl-tutorials/ + the transform-chain suite
-make -C fl-tutorials pytest      # the suite only (fl-tutorials/tests/)
-make -C fl-tutorials lint        # ruff only
+make -C fl-tutorials test              # ruff over fl-tutorials/ + both suites below
+make -C fl-tutorials pytest            # tutorial-app suite only (fl-tutorials/tests/, minus tests/datasets/)
+make -C fl-tutorials pytest-datasets   # dataset-tooling suites only (fl-tutorials/tests/datasets/, one env per dataset)
+make -C fl-tutorials lint              # ruff only
 ```
 
 It pins what each app's preprocessing chain actually feeds its model against the raw DICOM `PixelData` — see
-[`tests/README.md`](tests/README.md) for what it does and does not cover.
+[`tests/README.md`](tests/README.md) for what it does and does not cover, and for why the suites run in
+different environments.
 
 For network provisioning and standalone service operation, use the
 [`fl-services/nvflare/`](../fl-services/nvflare/README.md) or

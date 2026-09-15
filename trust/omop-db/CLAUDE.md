@@ -14,7 +14,7 @@ Two halves of one pipeline (merged from the retired private `flip-omop-db` repo,
    services). FK **constraints are deliberately absent from init** — they are applied only AFTER data
    load (loading after constraints fails).
 2. **Consumer harness** for the dev trust stacks: `update_omop_data.sh` downloads ready-populated,
-   **vocab-free** pgdata volumes (~11 MB each, versioned by `.data_version`) from the public HF dataset
+   **vocab-free** pgdata volumes (~11 MB each, fetched at the tag pinned by `trust/.data_version`) from the public HF dataset
    `aicentreflip/trust-data` into `volumes/Trust_<N>/db_data`, which
    `trust/deploy/compose_trust.<env>.yml` mounts.
 
@@ -40,9 +40,14 @@ tolerate the DICOM vocab already present in the tarballs):
 
 ## Load-bearing facts
 
-- **`.data_version` must not move**: its path is hardcoded in `deploy/providers/AWS/Makefile`, which
-  passes the value on to Ansible (`-e omop_data_version=`); the Helm chart consumes it via the
-  `OMOP_DATA_VERSION` env var in `generate_values.py`.
+- **`trust/.data_version` is THE pin and must not move**: one value for the OMOP and Orthanc mock
+  data together, a git tag on `aicentreflip/trust-data` (the dataset holds one copy of every artefact
+  at an unversioned path; consumers fetch `resolve/<tag>/<path>`). Its path is hardcoded in
+  `deploy/providers/AWS/Makefile` (→ Ansible `-e trust_data_version=`), both update scripts, this
+  Makefile, `seed_orthanc.py` and the spleen uploader; the Helm chart carries the same value as
+  `trustData.version` (`TRUST_DATA_VERSION` in `generate_values.py`). Publish with
+  `make -C trust publish-trust-data VERSION=<tag> …`, then bump the pin. Never upload a versioned
+  filename or `omop-csv/<v>/` directory again.
 - **Vocabulary licensing**: the core vocab bundle — an OHDSI Athena export, 59 vocabularies incl.
   SNOMED CT, LOINC, Read, dm+d (roster + versions in README "The core vocabulary bundle") — is licensed
   material: `data/` is gitignored and must never be committed or published. Acquisition: org members via
@@ -58,11 +63,40 @@ tolerate the DICOM vocab already present in the tarballs):
   in the pgdata volume; rotate via `ALTER ROLE` + kit update, or rebuild volumes with a new `.env.build`
   value (see CONTRIBUTING.md).
 - **Canonical dataset + N-trust split** (`src/omop_db_tools/dataset.py`): mock rows are ONE dataset on
-  HF (`omop-csv/<version>/`), each row tagged `source_trust`. Partition modes: `legacy` (default —
-  reproduces the original two-trust membership; REQUIRED for data consistent with the published mock
-  Orthanc PACS volumes, whose studies match each trust's accession IDs) and `modulo`
-  (`person_id % N`, any trust count, needs regenerated imaging data). All tables carry `person_id`, so
-  person-level partitioning preserves referential integrity.
+  HF (`omop-csv/<project>/`, read at the pinned tag), each row carrying `source_trust` — the trust it belongs to, decided by
+  the dataset's generator. Partition modes: `source_trust` (default; `legacy` is an accepted alias —
+  the old name from when the mode existed only to match the two-trust cut frozen in the Orthanc
+  tarballs) and `modulo` (`person_id % N`, only for a dataset with no partition column). The
+  partition is *data*, and the per-project DICOM sets are keyed on the same column, so OMOP and PACS
+  agree by construction (#1100). All tables carry `person_id`, so person-level partitioning preserves
+  referential integrity. `CANONICAL_TABLES` is in FK-safe order — loads as listed, cleans reversed —
+  because the seed path targets a constrained, vocab-loaded running trust.
+- **Seeding a running trust** (#1100): `make -C trust seed KIT=<CODE> PROJECTS="…"` loads the listed
+  projects' rows (`import_tables --clean projects`, by the projects' own `person_id`s — Synthea rows
+  and other projects untouched, one transaction per project) and their DICOMs (`orthanc/seed_orthanc.py`)
+  into that trust, selected by `source_trust == FL_KIT_SLOT_NUMBER`. Same lifecycle as
+  `load-omop-vocab`: one-time post-snapshot, idempotent, persists in the bind-mounted volume. A
+  `.seeded` marker beside `db_data` makes `update_omop_data.sh` refuse to re-snapshot on a bump
+  without `FORCE=1`. `populate` is the same loader with `--clean all`.
+- **Synthea EHR cohort** (`src/omop_db_tools/synthea_ehr.py`, `make load-synthea-ehr`): the populate
+  side of the EHR risk-prediction tutorial. The shipped mock OMOP has NO `condition_occurrence`
+  rows, so that tutorial's `query.sql` returns nothing until this loads the public 1k-person
+  Synthea-in-OMOP set (AWS Open Data Registry, anonymous HTTPS, downloaded at run time, never
+  committed) into a running DB. Synthea ids are shifted by `PERSON_ID_OFFSET` so they never collide
+  with the imaging cohorts' keys at INSERT time (the per-trust split is taken on the raw id before
+  the shift, and the raw id is kept in `person_source_value` — never re-derive a trust from a
+  shifted id) — but that offset is not what makes reloading safe: imaging `person_id` is
+  `nhs_number_to_integer(PatientID)`, the first 9 digits of a real NHS number, so it scatters across
+  the whole 9-digit range rather than staying "small", and a plain id-range delete silently destroys
+  imaging persons (and, via `ON DELETE CASCADE`, their `image_occurrence`/`procedure_occurrence`
+  rows) that happen to land above the threshold — confirmed live at ~10% of one trust's imaging
+  cohort per reload before this was fixed. `clean_reserved_band` therefore deletes by
+  **provenance**: only rows whose `person_source_value` carries this loader's `synthea-` prefix are
+  ever removed, never by `person_id` range. The tutorial's `query.sql` scopes to persons that HAVE a
+  condition — i.e. exactly these rows. FK-safe: `gender_concept_id` keeps Synthea's standard
+  8507/8532 (`query.sql` reads it), every other `*_concept_id` is zeroed to `0` ("No matching
+  concept"), conditions match on the `condition_source_value` SNOMED string. Idempotent; unit-tested
+  in `tests/unit/test_synthea_ehr.py`.
 - The populate scripts run on the **host** against published ports (`OMOP_DB_HOST` defaults to
   localhost) and need postgresql-client (`psql`/`pg_isready`).
 
@@ -71,13 +105,17 @@ tolerate the DICOM vocab already present in the tarballs):
 ```bash
 make update-omop-data [TRUST=1|2]   # consumer path: sync vocab-free pgdata volumes from HF
 make load-omop-vocab [OMOP_DB_PORT=5436]  # seed the licensed vocab + constraints into a running trust DB
+make load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434  # EHR risk-prediction tutorial: load public
+                                    # Synthea-in-OMOP conditions/visits/persons into a running trust DB
+                                    # (once per trust; downloads ~5MB from AWS Open Data at run time)
 cp .env.build.example .env.build    # once, before any build-pipeline target
 make build                          # plain docker build — no data inputs, no credentials
 make up-build / down-build          # the standalone per-trust build DBs
 make populate [NUM_TRUSTS=N PARTITION=modulo]  # core vocab + DICOM vocab + N trust slices (shipped
                                                # stack is two-trust; N>2 needs a compose service + port)
 make populate CORE_VOCAB=0          # vocab-free flavour for publishable tarballs (skip apply-constraints!)
-make export-pgdata                  # tar each volume -> dist/trust<N>_pgdata_<.data_version>.tar
+make seed-omop TRUST_INDEX=2 OMOP_DB_PORT=5436 PROJECTS="…"  # seed a RUNNING trust; normally via `make -C trust seed KIT=…`
+make export-pgdata                  # tar each volume -> dist/trust<N>_pgdata.tar (version = the tag publish-trust-data puts on it)
 make apply-constraints              # AFTER a full populate
 make push [OMOP_DB_TAG=...]         # manual publish escape hatch (CI publishes normally); confirms first
 make local_test                     # ruff + mypy + pytest tests/unit (no DB needed)

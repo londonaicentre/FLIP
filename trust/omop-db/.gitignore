@@ -12,6 +12,10 @@
 
 volumes/*/db_data
 volumes/.local_data_version*
+# The seed marker written beside db_data by `make seed-omop` (FLIP#1100), and a downloaded
+# snapshot left behind when update_omop_data.sh runs without CLEAN_AFTER_UPDATE.
+volumes/*/.seeded
+volumes/*.tar
 
 # Build-pipeline inputs — fetched, never tracked (the vocab bundles contain
 # licensed OMOP vocabularies; the canonical CSVs live on Hugging Face).

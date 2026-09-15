@@ -12,7 +12,7 @@ flow; what changed is the NVFLARE plumbing — noted here for anyone migrating a
 
 - **One client script serves four task names.** The job's two training phases (`train_ae`,
   `train_dm`) and two cross-site validation passes (`validate_ae`, `validate_dm`) all run through a
-  single `InProcessClientAPIExecutor` driving `app_files/trainer.py`. The single-name
+  single `ClientAPIExecutor` driving `app_files/trainer.py`. The single-name
   `flare.is_train()` / `flare.is_evaluate()` predicates cannot distinguish the two train phases, so
   the script dispatches on `nvflare.client.api.get_task_name()`.
 - **`validator.py` is a plain module**, not an Executor: it holds the validation passes and the
