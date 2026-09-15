@@ -52,8 +52,13 @@ Standard OMOP has nowhere to record an imaging study. The
 is the OHDSI extension that adds one — the successor to the earlier R-CDM radiology tables — and
 FLIP implements it with two tables.
 
-``image_occurrence`` holds one row per imaging study or series — FLIP populates one row per
-accession:
+``image_occurrence`` holds one row per imaging study or per series. MI-CDM's reference
+implementation is one row per series — a DICOM study is several series, each its own row, all
+carrying the study's accession number — and FLIP accepts either shape: the shipped spleen and cxr
+sets are single-series, one row per study; the prostate set is three series per study. The imaging
+pull imports each accession once however many rows carry it (imaging-api de-duplicates the list
+before querying the PACS), while the training dataframe keeps every row, so an app can pick the
+series it needs:
 
 .. list-table::
    :widths: 34 22 44
@@ -94,7 +99,9 @@ accession:
      - Study date.
    * - ``accession_id``
      - ``varchar(255)``
-     - **FLIP addition.** The PACS accession number for the study.
+     - **FLIP addition.** The PACS accession number for the study — DICOM Accession Number
+       ``(0008,0050)`` — the same value on every series row of that study. Never empty; see
+       :ref:`omop-accession-id`.
 
 ``image_feature`` holds findings derived from those images — one row per finding, not per study:
 
@@ -165,6 +172,45 @@ Concept ids are meaningless until they are joined
    database still has a non-empty ``omop.concept`` — the DICOM vocabulary ships inside the data
    volume — so counting its rows tells you nothing; a join on a SNOMED CT or LOINC id simply matches
    nothing. See :ref:`omop-dev-instance`.
+
+.. _omop-accession-id:
+
+****************************************************
+The ``accession_id`` contract for a trust's own OMOP
+****************************************************
+
+FLIP's mock databases get ``accession_id`` from the in-tree converters, which read it off the DICOM
+they generate. A trust bringing its own OMOP has to do the same two things itself, because the
+column is not part of MI-CDM and no standard DDL or ETL knows about it:
+
+1. **Add the column.** FLIP's own DDL appends one statement after the stock OHDSI 5.4 schema
+   (``trust/omop-db/files/OMOPCDM_postgresql_5.4_ddl.sql``); a trust database needs the same:
+
+   .. code-block:: sql
+
+      ALTER TABLE omop.image_occurrence ADD COLUMN IF NOT EXISTS accession_id varchar(255);
+
+2. **Populate it from the PACS.** For every imaging row, ``accession_id`` is the DICOM Accession
+   Number ``(0008,0050)`` of that study *as the PACS answers to it*: XNAT resolves the study with a
+   study-level C-FIND on exactly this value (:doc:`component-pacs`), so a value the PACS does not
+   recognise is a study that is never pulled. It is a study-level attribute — with one row per
+   series, every series row of a study carries the same value.
+
+Two rules follow from how the value is used:
+
+- **Never empty.** The accession list a cohort produces goes to the PACS as-is, and in DICOM an
+  empty query key is *universal matching*: it returns every study the PACS holds (up to the query's
+  page limit), not none. A NULL or blank ``accession_id`` is therefore not "a row with no imaging";
+  it must not exist in any row a cohort query can return. Rows without a study belong in the
+  clinical tables, not in ``image_occurrence``.
+- **Pseudonymise both sides or neither.** Where imaging is de-identified on its way into the PACS
+  (a TRE, for instance), the accession number written into OMOP must be the one the de-identified
+  study carries, not the original.
+
+The in-tree converters under ``fl-tutorials/datasets/`` are a working reference for the load — each
+reads ``AccessionNumber`` off the DICOM it wrote and copies it to ``accession_id`` — and
+``trust/orthanc/publish_dicom.py`` is the check they have to pass before a dataset is published: the
+set of accession numbers in the DICOM must equal the set in ``image_occurrence``, both ways.
 
 .. _omop-sample-queries:
 

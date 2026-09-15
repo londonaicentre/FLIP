@@ -77,6 +77,31 @@ laptop):
 - Internet connectivity (to pull Docker images and packages).
 - A writable directory for the FLIP application (default ``/opt/flip``).
 
+**Trust data** — the two systems the FLIP node reads. Both must already exist
+and already agree with each other before the node is deployed:
+
+- An **OMOP database** (PostgreSQL) holding the trust's clinical data in the
+  ``omop`` schema — OMOP CDM 5.4 plus the MI-CDM imaging tables
+  (``image_occurrence``, ``image_feature``). FLIP reads it through a read-only
+  role and writes nothing back.
+- A **PACS** that answers a study-level query by accession number. The
+  checklist to agree with your PACS manager is in
+  :doc:`../components/component-pacs`.
+- **The accession number is the link between the two.** For every imaging row
+  in ``image_occurrence``, the ``accession_id`` column must hold the accession
+  number the PACS answers to for that study — the DICOM Accession Number
+  ``(0008,0050)``. This column is FLIP's own addition to MI-CDM, so a standard
+  OMOP ETL neither creates nor fills it: your data team adds it and populates
+  it as part of the OMOP load (:ref:`omop-accession-id` has the one-line DDL
+  and what to populate it from). A row may exist per study or per series — the
+  same accession repeats on each series row and FLIP imports the study once —
+  but the value must never be empty: to a PACS an empty accession number is not
+  "no study", it is a query that matches every study.
+
+Confirm both with the data and PACS teams before deployment. Neither is checked
+by the deployment itself; a gap surfaces only when the first project's imaging
+pull runs.
+
 **Central Hub deployed in AWS** — required so the trust can resolve the hub
 URL, fetch the FL participant kit from S3, and so the operator can update the
 NLB security group with the trust's public IP. See :doc:`deploy-central-hub`.
