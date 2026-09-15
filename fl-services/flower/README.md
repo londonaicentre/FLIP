@@ -179,3 +179,30 @@ make -C fl-services/flower up \
 The central-hub multi-net Flower topology is the separate
 [`deploy/compose.development.flower.yml`](../../deploy/compose.development.flower.yml), driven by the
 root `make up FL_BACKEND=flower`.
+
+## Diagnosing a run that fails after submission
+
+A Flower run whose ServerApp dies logs almost nothing where you would look for it: the SuperLink
+reports `Started task` and `Finished task` for the run in the same breath and says no more, and no
+container's `docker logs` carries the traceback. The run's own log lives in the SuperLink, reachable
+only through the Control API.
+
+The Central Hub polls for this (FLIP#1001): a job the FL API reports as failed drives the model to
+`ERROR` and the tail of the run log is written to the model's activity feed, so the usual first stop
+is the model page rather than a shell. To read the full stream by hand — or to inspect a run
+submitted outside the hub, e.g. via `make submit` — exec into the net's FL API container:
+
+```bash
+docker exec -it deploy-fl-api-net-1-1 uvx flwr log <run-id> local --show   # hub dev stack (net 1)
+docker compose -f fl-services/flower/compose.dev.yml exec fl-api \
+    uvx flwr log <run-id> local --show                                     # standalone dev stack
+```
+
+(No hub service sets `container_name`, so compose names the hub's FL API `deploy-fl-api-net-<n>-1`
+on the default stack; on ECS there is no docker — use `aws ecs execute-command` against the
+`fl-api-net-<n>` task.) `--show` prints the stored log and exits under the CLI's own 5 s deadline;
+the `flwr log` default (`--stream`) returns only once the run is FINISHED, so on a run that is
+still going it follows the log until then. Run ids come from `uvx flwr list local` in the same
+container, or from the `run-id` the submit returned. A ServerApp that died at import time ends with
+a traceback and `ERROR: Exit Code: 607`. A run the SuperLink has forgotten (it keeps run state in
+memory, so a restart forgets every run) prints `Invalid run_id` and nothing else.

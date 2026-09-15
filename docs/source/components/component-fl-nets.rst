@@ -380,6 +380,65 @@ Note the reported upload sizes measure slightly different things per backend —
 The server will also use the package to update the status, as well as to upload the final results, which will be first saved in the server, to the final S3 buckets users can download from.
 
 
+*********************************
+When a run fails after submission
+*********************************
+
+Almost everything the Central Hub knows about a run in progress is reported *by* the run,
+through the ``flip`` package above. A run that dies before it can report anything — the
+classic case is an exception at import time in ``server_app.py``, which kills the ServerApp
+the instant it starts — would therefore say nothing at all, leaving the model showing
+``INITIATED`` indefinitely.
+
+The hub closes that gap by polling. Once a minute it asks each net's FL API for the status of
+every job it still believes is in flight; a job the backend reports as failed moves the model
+to ``ERROR``, frees the net, and writes the tail of the run's own log to the model's activity
+feed, where the researcher reads it alongside the round events. Two more shapes of "this run
+will never report" get the same treatment: a run the backend reports as *stopped* while FLIP
+never asked it to stop (someone ran ``flwr stop`` or used the FLARE admin console — the
+platform's own Stop dequeues the job first, so it can tell the two apart), and a job the
+backend no longer lists at all once it has gone unlisted for a grace period
+(``FL_JOB_UNLISTED_GRACE_MINUTES``, default 30) — the Flower SuperLink keeps run state in
+memory, so a restart forgets every run. Nothing else is acted on: a run that is pending,
+running or finished is left entirely to its own reporting (a finished run the hub is still
+waiting on past the grace period is logged, not touched). A model that has been re-initiated
+over an older run is left to its newer run; the dead older run only gives its net back.
+
+The feed row leads with the backend's own one-line explanation of the failure, when it has
+one. Flower reports this on every ``flwr ls`` entry, so the hub gets the ServerApp's exception
+message (prefixed ``ServerApp failed with exception:`` — the exception *type* is in the log
+tail, not the headline) from the same call it already makes to read the status — no extra
+request. NVFLARE has no equivalent field, so its rows carry the status alone.
+
+Two things are worth knowing about the captured log. It is a **tail**: a Flower run log opens
+with the per-run dependency install and the cause of a failure is at the far end, so the head
+is dropped (the row says so when it was, and where the rest is). And it is best-effort — if
+the log cannot be retrieved, the feed says so and names the place a platform administrator
+can read it. On a Flower net that is inside the net's FL API container, which on the default
+dev stack is ``deploy-fl-api-net-<n>-1`` (no hub service sets ``container_name``; a second
+``FLIP_INSTANCE`` prefixes it, and on ECS it is the ``fl-api-net-<n>`` task):
+
+.. code-block:: bash
+
+   docker exec -it deploy-fl-api-net-1-1 uvx flwr log <run-id> local --show
+
+On an NVFLARE net the FL API serves no run-log endpoint yet, so its failures surface
+status-only. NVFLARE does keep the server job's log — ``log.txt`` in the run directory, zipped
+into the job store's ``workspace`` once the job finishes, and served by the FLARE admin API's
+``get_job_logs(<job-id>, "server")`` — which is where a future fl-api-base endpoint will read
+from. Until then the quickest read is the fl-server container's own output (the fl-server
+task's CloudWatch log group on ECS):
+
+.. code-block:: bash
+
+   docker logs deploy-fl-server-net-<n>-1
+
+This covers the server side of a run — Flower's ServerApp, NVFLARE's server job. A client-side
+death (a ClientApp or fl-client executor at a trust) writes to that trust's SuperNode or
+fl-client, which the Central Hub cannot read; such failures still surface only through
+whatever the app itself reports before dying.
+
+
 ***************************************
 Privacy filters on shared model updates
 ***************************************

@@ -32,6 +32,7 @@ def test_docs_and_openapi_contract(client):
         "/submit_run/{job_folder}",
         "/submit_tutorial/{tutorial_name}",
         "/abort_run/{run_id}",
+        "/run_logs/{run_id}",
         "/upload_app/{model_id}",
     ):
         assert path in spec["paths"]
@@ -55,7 +56,11 @@ def test_docs_and_openapi_contract(client):
     assert client_status_schema["items"]["$ref"] == "#/components/schemas/ClientInfoModel"
     assert list_schema["items"]["$ref"] == "#/components/schemas/JobMetadata"
     assert submit_schema["type"] == "string"
+    run_logs_schema = spec["paths"]["/run_logs/{run_id}"]["get"]["responses"]["200"]["content"]["application/json"][
+        "schema"
+    ]
     assert abort_schema["$ref"] == "#/components/schemas/JobMetadata"
+    assert run_logs_schema["$ref"] == "#/components/schemas/RunLogs"
 
 
 def test_health_success(client):
