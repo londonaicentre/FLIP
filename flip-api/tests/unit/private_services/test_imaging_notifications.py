@@ -339,7 +339,7 @@ def test_decrypts_setup_paths_for_the_xnat_setup_path_context(mock_send_email, m
 def test_decryption_failure_raises_so_the_task_stays_retryable(mock_send_email, mock_insert_status):
     """An invite link that fails authentication is a key or version mismatch with the trust, not a bad recipient.
 
-    Sending nothing and completing the task would lose the only copy of the single-use link; raising leaves
+    Sending nothing and completing the task would lose the only copy of the set-password link; raising leaves
     the task for post-processing so it is retried once the keys agree.
     """
     from cryptography.exceptions import InvalidTag

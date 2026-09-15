@@ -109,7 +109,7 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
     # per-recipient problem: every setup path in this result was sealed by the same trust under
     # the same key, so it means the hub's and the trust's AES_KEY_BASE64 differ or one side is on
     # the other side of a payload-format change. Completing the task would lose the only copy of
-    # the single-use link, so raise and let the task stay queued for post-processing instead.
+    # the set-password link, so raise and let the task stay queued for post-processing instead.
     try:
         setup_paths = [
             decrypt(user.encrypted_setup_path, context=XNAT_SETUP_PATH_CONTEXT)

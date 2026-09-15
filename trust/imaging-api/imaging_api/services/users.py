@@ -159,14 +159,17 @@ def user_exists(username: str, headers: dict[str, str]) -> bool:
 
 
 def issue_setup_token(username: str, headers: dict[str, str]) -> str:
-    """Mint a single-use XNAT alias token for ``username`` and build the host-less setup path.
+    """Mint a set-password XNAT alias token for ``username`` and build the host-less setup path.
 
     The trust's service account (a site admin) issues the token on the user's behalf via XNAT's
     ``GET /data/services/tokens/issue/user/{username}`` endpoint. Visiting the returned path
-    authenticates the user and presents a "set your own password" form; XNAT invalidates the token
-    once the password is set. The path is host-less on purpose — XNAT is only reachable from inside
-    the trust enclave, so the hub emails the path and tells the recipient to open it against their
-    own XNAT address rather than emailing a password (FLIP-PT-079).
+    authenticates the user and presents a "set your own password" form. The token is not single-visit:
+    it keeps opening that form until the password is set, at which point XNAT invalidates it (verified
+    live: a later visit lands on the login page and the alias/secret pair no longer authenticates), and
+    it expires unused after XNAT's ``aliasTokenTimeout`` (2 days by default). The path is host-less on
+    purpose — XNAT is only reachable from inside the trust enclave, so the hub emails the path and tells
+    the recipient to open it against their own XNAT address rather than emailing a password
+    (FLIP-PT-079).
 
     Args:
         username (str): XNAT username to issue the setup token for.
@@ -196,7 +199,7 @@ def create_user_from_central_hub_user(
     Convert central hub user to XNAT CreateUser request object, and create user on XNAT.
 
     The user is created with a throwaway random password that is never disclosed; instead of
-    emailing a password (FLIP-PT-079) we mint a single-use setup token and return the host-less
+    emailing a password (FLIP-PT-079) we mint a set-password token and return the host-less
     link the user follows to set their own password directly in XNAT. The random password is
     load-bearing: XNAT's password-change path raises on a user that has no existing password, so
     the account must be created *with* a password, not passwordless.
