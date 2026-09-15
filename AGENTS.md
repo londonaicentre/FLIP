@@ -425,6 +425,25 @@ make sync-trust-kits                  # Refresh every locally-present kit file
 make generate-internal-service-key    # Generate fl-server-to-hub key
 ```
 
+### Site release upgrades (FLIP#1204)
+
+```bash
+make upgrade-onprem-trust KIT=<slot> [TAG=vX.Y.Z] [FORCE=1] [YES=1]       # operator: readiness checklist → data-safe upgrade
+make -C trust upgrade-trust KIT=<CODE> PROD=<env> [TAG=…]                # the verb itself (pull, recreate, XNAT in place)
+make -C deploy/providers/kubernetes upgrade-trust-k8s KIT=<CODE> TAG=…   # Helm: global.image.tag
+make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env>      # EC2 twin (no re-seed)
+make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=vX.Y.Z       # hub; the guard takes sha-<short7> or vX.Y.Z
+```
+
+A release (`v*.*.*` git tag from `release.yml`) rebuilds **every** image unfiltered and pushes `:vX.Y.Z`;
+the four API images bake `FLIP_RELEASE` so `/health` names the build. `TAG` defaults to the release the
+hub reports on `/api/health` — never "latest on GitHub" (a v0.6.0 site would pull an nvflare-2.9 client
+against a 2.8 server). `up-trust` / `up-onprem-trust` / `restart-trust` / `deploy-trust` stay the
+**first-install** verbs: they re-fetch fixtures and run `xnat-reset`, so never use them to move a live site.
+The heartbeat reply carries `hub_version` + an AES-key fingerprint; trust-api's `/health` reports
+`hub_version` / `hub_key_match`, and the onboarding checklist's *Hub-shared block current* row reads them.
+Runbook: `docs/source/sys-admin/admin-upgrading-sites.rst`.
+
 ## Workflow Requirements
 
 ### Always Use Make Commands
