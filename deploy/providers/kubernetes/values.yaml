@@ -41,7 +41,7 @@ flBackend: "nvflare"
 # existing values file pinning the old ones keeps installing and silently stops taking effect —
 # see README "Upgrading: trustData.version replaces the two per-store pins".
 trustData:
-  version: "20260901"
+  version: "20260903"
   hfRepo: "aicentreflip/trust-data"
 
 # Global image pull secrets (optional — for private registries)

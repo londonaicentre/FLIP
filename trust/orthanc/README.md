@@ -85,10 +85,12 @@ and tags that commit, and `trust/.data_version` is then bumped to the tag.
 `SeriesNumber` to 1 (the spleen generator's output has both empty on every CT
 instance, which makes MONAI Deploy's loader drop the series — see
 `docs/source/working-with-flip-apps/package-model-as-map.rst`). Absent tags stay
-absent; populated ones are untouched. Published sets (`dicom/`, at every tag
-from `20260729` on): `spleen_project` (41 studies, 3,650 instances, filled) and
-`cxr_project` (8,332 studies). Both are the original generator outputs, verified
-against the published OMOP — not extractions from the storage tarballs.
+absent; populated ones are untouched. Published sets (`dicom/`): `spleen_project`
+(41 studies, 3,650 instances, filled) and `cxr_project` (8,332 studies) at every
+tag from `20260729` on, and `prostate_project` (300 bpMRI studies, three series
+each, 19,768 instances — see `fl-tutorials/datasets/prostate/`) from `20260902`.
+All are the original converter outputs, verified against the OMOP tables they
+pair with — not extractions from the storage tarballs.
 
 To cut a new storage tarball (the snapshot path, for EC2/k8s): seed a fresh
 Orthanc with `seed-orthanc`, then `tar -C <storage dir> -cf trust<N>_orthanc_data.tar .`

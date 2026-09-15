@@ -33,7 +33,37 @@ make -C fl-tutorials download-arkplus-finetuning-data  # large (~6.3 GB)
 make -C fl-tutorials download-arkplus-eval-data        # (~1.6 GB)
 make -C fl-tutorials download-synthea-data             # EHR tabular dataset (~5 MB, backend-agnostic)
 make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrichment
+make -C fl-tutorials download-prostate-data            # PI-CAI (FOLDS="0 1 2 3 4" by default, ~5GB/fold)
+make -C fl-tutorials convert-prostate-to-dicom
+make -C fl-tutorials convert-prostate-to-nifti
+make -C fl-tutorials partition-prostate-data
 ```
+
+The prostate tutorial needs one more step after partitioning: a **dataset fingerprint** (per-case
+voxel spacing, shape after cropping to the non-zero region, foreground intensity statistics) and
+the **nnU-Net experiment plan** derived from it (target spacing, patch and batch size,
+normalization, U-Net topology). That one is not a Makefile target — it runs from the tutorial's
+own uv project, because it reads the partitioned data through `PicaiDataset`:
+
+```bash
+cd fl-tutorials/flower/3d_prostate_segmentation
+uv sync
+
+# one site
+uv run python calculate_dataset_fingerprint_segmentation.py \
+  --site-dir ../../data/prostate/sites/RUMC \
+  --output-dir configs --modality t2w --num-processes 8 --gpu-memory-GB 8
+
+# or pool several — one fingerprint and one plan over all their studies
+uv run python calculate_dataset_fingerprint_segmentation.py \
+  --site-dir ../../data/prostate/sites/{ZGT,RUMC,PCNN} \
+  --output-dir configs --modality t2w --num-processes 8 --gpu-memory-GB 8
+```
+
+Writes `dataset_fingerprint_segmentation.json` + `nnUNetPlans_segmentation.json` into
+`--output-dir`. Planning per site yields *different architectures*, so pass every participating
+site in one run and give all clients the same plan — see
+[`prostate/README.md`](prostate/README.md#nnu-net-plans) for the measured per-center figures.
 
 | Dataset | Source | Output under `fl-tutorials/data/` | Consumed by |
 | --- | --- | --- | --- |
@@ -42,6 +72,7 @@ make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrich
 | spleen checkpoint | HF `aicentreflip/flip-fl-base-test-data` | `model_checkpoints/model.pt` | 3d_spleen_segmentation_evaluation |
 | arkplus | HF `aicentreflip/tutorials-arkplus-cxr-classification` | `arkplus/site{1,2}[,_holdoff]/` | the three Ark+ tutorials (NVFLARE) |
 | synthea | Synthea-in-OMOP, 1k persons (AWS Open Data Registry) | `synthea/{dataframe.csv, site{1,2}/dataframe.csv}` | ehr_risk_prediction (both backends); on the platform the same data goes into each trust's OMOP via `make -C trust load-synthea-ehr` |
+| prostate | Zenodo PI-CAI + `picai_labels` (GitHub) | `prostate/{images/, labels/, zonal_labels/, clinical_information/, dicom/, nifti/, sites/<CENTER>/}` | 3d_prostate_segmentation (Flower) |
 
 One spleen tree serves both backends. `download-spleen-data` refuses to overwrite an
 existing `data/spleen/images` — remove it first to rebuild at a different `NUM_CASES`.
@@ -87,7 +118,7 @@ against `flip-utils` without adopting `spleen/`'s env:
 
 [`synthea/`](synthea/) owns the single EHR script, in the smallest of the dataset uv projects
 (pandas only — the project exists so its tests run in an environment declaring exactly what the
-script imports, like the other two):
+script imports, like the others):
 
 - `build_synthea_dataframe.py` — fetch three OMOP tables (`person`, `condition_occurrence`,
   `visit_occurrence`) of the public Synthea-in-OMOP dataset and derive the EHR risk-prediction
@@ -98,12 +129,30 @@ script imports, like the other two):
   `tests/datasets/synthea/` keeps the two honest: it runs the actual `query.sql` on SQLite over the
   same tiny tables and diffs it against `derive_features` row for row.
 
+[`prostate/`](prostate/) owns the prostate download/preprocessing scripts. The dataset class that
+reads this data lives with the tutorial instead, at
+`../flower/3d_prostate_segmentation/dataset.py`, as does the nnU-Net planning step above:
+
+- `download_data.py` — fetch the PI-CAI bpMRI images + whole-gland/zonal labels + clinical
+  marksheet from Zenodo/GitHub (`FOLDS` narrows which of the 5 ~5GB fold zips to fetch).
+- `convert_mha_to_dicom.py` — convert the downloaded `.mha` scans to a DICOM series per study.
+- `convert_dicom_to_nifti.py` — convert those DICOM series to `.nii.gz` with the platform's own
+  pinned dcm2niix image (read from `trust/xnat/xnat/config/dcm2niix_command.json`), so the
+  simulator trains on the same bytes an fl-client gets from XNAT. Needs Docker.
+- `partition_by_center.py` — split the converted NIfTI scans + labels into one folder per
+  acquiring center (RUMC/PCNN/ZGT), ready for `PicaiDataset` per simulated FL client. Re-running
+  it repairs stale symlinks, so it is safe over an existing `sites/` tree.
+- `create_prostate_metadata_table.py`, `omop_convert_prostate.py` — the `prostate_project` OMOP
+  tables for the trust seed pipeline (see "Prostate" under the OMOP section below), and
+  `upload_prostate_labels_to_xnat.py` — the data-enrichment step that puts both PI-CAI masks
+  beside every pulled image in XNAT.
 ## OMOP mock-data generation (FLIP#1092)
 
 The mock OMOP CDM data that backs the tutorials — and the trust `omop-db` seed data it feeds —
-is generated in-tree, per dataset. Two projects are covered so far: `spleen_project` (the whole
-chain, from the MSD download) and `cxr_project` (the OMOP conversion only; see below for why).
-Both share one contract in [`utils/`](utils/) and one verification gate.
+is generated in-tree, per dataset. Three projects are covered: `spleen_project` (the whole chain,
+from the MSD download), `cxr_project` (the OMOP conversion only; see below for why) and
+`prostate_project` (the whole chain, from the PI-CAI download, published for the seed pipeline
+alone). All share one contract in [`utils/`](utils/) and one verification gate.
 
 ### Spleen: the full chain
 
@@ -203,6 +252,45 @@ Two shape differences from spleen, both inherited from what the dataset is:
   `image_occurrence_id` with a two-digit finding index appended, which puts them around 100,000,000,
   outside every project's reserved block in `utils/omop_ids.py`. Nothing collides today, but do not
   assume that band is reserved. It is annotated at the line that builds it.
+
+### Prostate: a cohort published from the fold download
+
+[`prostate/`](prostate/) is the third converter and the first cohort published for the trust
+**seed pipeline** alone (`make -C trust seed`, FLIP#1100) — there is no pgdata/Orthanc snapshot of
+it, the trusts load it from `omop-csv/prostate_project/` and `dicom/prostate_project.tar.gz` on
+the dataset. The chain starts at a public download (PI-CAI fold 0, 300 bpMRI studies) rather than
+at a private generator, so unlike cxr every stage is in-tree and reproducible:
+
+```bash
+make -C fl-tutorials download-prostate-data FOLDS="0"     # regeneration path, step 1 (5 GB)
+make -C fl-tutorials convert-prostate-to-dicom            # step 2: t2w/adc/hbv -> DICOM series (SeriesNumber set, synthetic identity)
+make -C fl-tutorials create-prostate-metadata-table       # step 3: data/prostate/source/{dicom_metadata,marksheet}.csv
+make -C fl-tutorials fetch-prostate-metadata-table        # reproducible path: the published source/ tables instead
+make -C fl-tutorials build-prostate-omop-tables           # -> data/prostate/omop/{prostate_project,trust_1,trust_2}/
+make -C fl-tutorials verify-prostate-omop-tables          # faithfulness gate
+make -C fl-tutorials reproduce-prostate-omop              # fetch + build + verify
+make -C fl-tutorials build-prostate-canonical             # the source_trust form to publish (+ source/ beside it)
+make -C fl-tutorials package-prostate-dicom               # verified both ways against those tables -> tar.gz
+```
+
+Three shape differences from the other two, each inherited from what the dataset is:
+
+- **`source_trust` is one contributing center per trust** (ZGT → 1, PCNN → 2, RUMC → 3), decided
+  in the metadata table from `ClinicalTrialSiteID`, never by row index and never by merging
+  centers. The two dev trusts take the two centers closest in size (76 and 69 studies); RUMC's
+  155 are published as source 3 and wait for a third trust — the seed loader accepts a dataset
+  with more sources than the stack has trusts. An unknown center is an error.
+- **One `image_occurrence` per series.** A study is three series (t2w, adc, hbv) sharing one
+  accession, visit and procedure; spleen and cxr are single-series studies.
+- **The marksheet is published as clinical rows** — PSA, PSA density, prostate volume as
+  `measurement`; ISUP grade group, csPCa and PI-RADS as `observation` — so a cohort query can
+  narrow on them. The masks are not in OMOP; `upload_prostate_labels_to_xnat.py` is the
+  enrichment step, and the identity of accession and label stem means it fetches nothing.
+
+`person_id` is PI-CAI's numeric `patient_id` (five digits), clear of the nine-digit NHS-number
+prefixes of spleen/cxr and of Synthea's band. PI-CAI is **CC BY-NC 4.0** (images and labels),
+which the dataset card records — the prostate-derived content is the one non-commercial part of
+`aicentreflip/trust-data`.
 
 ### The shared contract
 
