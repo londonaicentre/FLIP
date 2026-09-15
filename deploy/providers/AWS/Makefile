@@ -193,6 +193,9 @@ CENTRALHUB_ECS_SERVICES = flip-api fl-api-net-1 fl-server-net-1
 # recorded commit and rollback-centralhub can repoint at the previous revision. The
 # env-file tags (DOCKER_TAG / DOCKER_FL_TAG) remain the bootstrap-only defaults Terraform
 # bakes into a (re)created task-definition family — day-to-day deploys never touch them.
+# Since FLIP#1204 a release also publishes `:v<X.Y.Z>` on every image (built at the release
+# commit, no path filter), so `make deploy-centralhub PROD=true TAG=v<X.Y.Z>` deploys the
+# same tag the trust sites pin — one release identity across hub and sites.
 DEPLOY_GIT_REF := $(if $(filter true,$(PROD)),origin/main,origin/develop)
 
 TRUST_IMAGES = \
@@ -637,9 +640,9 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  sha=$$(git rev-parse $(DEPLOY_GIT_REF)) || { echo "❌ Cannot resolve $(DEPLOY_GIT_REF)"; exit 1; }; \
 	  TAG="sha-$$(printf '%s' "$$sha" | cut -c1-7)"; \
 	fi; \
-	printf '%s' "$$TAG" | grep -Eq '^sha-[0-9a-f]{7}$$' || { \
-	  echo "❌ TAG '$$TAG' is not an immutable sha-<short7> tag (sha- followed by 7 hex chars)."; \
-	  echo "   deploy-centralhub only deploys CI-published sha tags — a mutable tag here would"; \
+	printf '%s' "$$TAG" | grep -Eq '^(sha-[0-9a-f]{7}|v[0-9]+\.[0-9]+\.[0-9]+)$$' || { \
+	  echo "❌ TAG '$$TAG' is not an immutable tag: sha-<short7> (7 hex chars) or a release v<X.Y.Z>."; \
+	  echo "   deploy-centralhub only deploys CI-published immutable tags — a mutable tag here would"; \
 	  echo "   defeat the revision audit trail. Omit TAG= to deploy the tip of $(DEPLOY_GIT_REF)."; \
 	  exit 1; }; \
 	echo "🚀 Deploying Central Hub ECS services in $(ECS_CLUSTER) at $$TAG..."; \
@@ -993,6 +996,22 @@ deploy-trust: check-trust-ec2-enabled ssh-config update-env seed-trust-data stag
 	@echo "🚀 Deploying Trust services..."
 	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../ up-trust-ec2 KIT=$(KIT) PROD=${PROD}
 	@echo "✅ Trust deployment complete!"
+
+# Move the EC2 trust to a release, data intact (FLIP#1204). deploy-trust above is the
+# FIRST-INSTALL verb: its seed-trust-data prerequisite rm -rf's the OMOP/Orthanc dirs on
+# the host and its up-trust-ec2 runs xnat-reset over ssh. This target has none of that —
+# it drives trust/Makefile's upgrade-trust through the same ssh docker context (pull the
+# target tag, recreate what changed, redeploy XNAT without reset, converge its config).
+# TAG defaults to the release the hub runs; FORCE=1 allows a downgrade; YES=1 skips the
+# confirmation. The kit file read is this workstation's trust/.env.<KIT>.<env>, exactly as
+# deploy-trust evaluates compose here against the remote daemon.
+.PHONY: upgrade-trust-ec2
+upgrade-trust-ec2: check-trust-ec2-enabled ssh-config ## Move the EC2 trust to a release tag without re-seeding data (FLIP#1204)
+	@echo "👷 Create docker context if not exists, pointing to flip-trust to ssh://flip-trust"
+	@docker context create flip-trust --docker "host=ssh://flip-trust" || echo "   Context 'flip-trust' already exists"
+	@echo "⬆️  Upgrading Trust services on EC2 (KIT=$(KIT))..."
+	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../trust upgrade-trust KIT=$(KIT) PROD=${PROD} TAG=$(TAG) FORCE=$(FORCE) YES=$(YES)
+	@echo "✅ Trust upgrade complete!"
 
 .PHONY: provision-local-trust
 provision-local-trust: ## Provision the on-prem (local) trust host: install Docker + deps, stage the FL kit
