@@ -198,14 +198,21 @@ column is not part of MI-CDM and no standard DDL or ETL knows about it:
 
 Two rules follow from how the value is used:
 
-- **Never empty.** In DICOM an empty query key is *universal matching*: it returns every study the
-  PACS holds (up to the query's page limit), not none. The imaging API therefore drops a blank
-  ``accession_id`` from the pull list before anything reaches the PACS, with a warning in the
-  trust's imaging-api log naming how many rows it dropped — nothing is sent, but nothing tells the
-  researcher either: from the project's side a blank row is simply a study that is never pulled.
-  A NULL or blank ``accession_id`` is therefore not "a row with no imaging"; it must not exist in
-  any row a cohort query can return. Rows without a study belong in the clinical tables, not in
+- **Exactly one study's number — never empty, never a pattern.** The value becomes a C-FIND key,
+  and to a PACS an empty key is *universal matching* (every study it holds, up to the query's page
+  limit), ``*`` and ``?`` are wildcards, and ``\`` separates the values of a list. None of those
+  can occur in a real accession number, so the imaging API drops any such ``accession_id`` from
+  the pull list before anything reaches the PACS, with a warning in the trust's imaging-api log
+  naming how many rows it dropped — nothing is sent, but nothing tells the researcher either: from
+  the project's side such a row is simply a study that is never pulled. A NULL, blank or
+  wildcard ``accession_id`` is therefore not "a row with no imaging"; it must not exist in any
+  row a cohort query can return. Rows without a study belong in the clinical tables, not in
   ``image_occurrence``.
+- **Exact, including case.** The PACS's answer is narrowed to the studies whose accession number
+  equals the requested value exactly, and a study is imported only when exactly one remains: a
+  PACS that matches loosely (Orthanc folds case) returns studies the cohort did not name, and a
+  PACS holding two studies under one accession leaves the cohort row ambiguous. Either is skipped
+  with a warning rather than guessed.
 - **Pseudonymise both sides or neither.** Where imaging is de-identified on its way into the PACS
   (a TRE, for instance), the accession number written into OMOP must be the one the de-identified
   study carries, not the original.

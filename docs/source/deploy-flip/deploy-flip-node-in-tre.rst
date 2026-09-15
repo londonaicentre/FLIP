@@ -307,9 +307,10 @@ Data
   ``image_occurrence`` carries, in ``accession_id``, the DICOM Accession Number
   ``(0008,0050)`` of the matching study in the PACS, and pseudonymisation must change both
   or neither. ``accession_id`` is FLIP's addition to MI-CDM, so the ingest step must create
-  and populate it — see :ref:`omop-accession-id` — and must never leave it empty: to a PACS
-  an empty accession number is a query that matches every study, so FLIP drops such rows from
-  the pull (with a warning in the trust's imaging-api log) and the study is never pulled.
+  and populate it — see :ref:`omop-accession-id` — with exactly one study's accession number:
+  never empty and never containing ``*``, ``?`` or ``\``, which to a PACS are queries matching
+  many studies, so FLIP drops such rows from the pull (with a warning in the trust's imaging-api
+  log) and the study is never pulled.
 
 Software
 ---------

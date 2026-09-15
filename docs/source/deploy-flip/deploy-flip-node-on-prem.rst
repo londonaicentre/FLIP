@@ -95,10 +95,11 @@ and already agree with each other before the node is deployed:
   it as part of the OMOP load (:ref:`omop-accession-id` has the one-line DDL
   and what to populate it from). A row may exist per study or per series — the
   same accession repeats on each series row and FLIP imports the study once —
-  but the value must never be empty: to a PACS an empty accession number is not
-  "no study", it is a query that matches every study, so FLIP refuses to send
-  one — a blank row is dropped from the pull with a warning in the trust's
-  imaging-api log, and the study it stood for is silently never pulled.
+  but the value must be exactly one study's accession number — never empty,
+  and never containing ``*``, ``?`` or ``\``: to a PACS those are queries that
+  match many studies, not one, so FLIP refuses to send them — such a row is
+  dropped from the pull with a warning in the trust's imaging-api log, and the
+  study it stood for is silently never pulled.
 
 Confirm both with the data and PACS teams before deployment. Neither is checked
 by the deployment itself; a gap surfaces only when the first project's imaging

@@ -94,7 +94,7 @@ class TestGetAccessionIds:
 
         assert accession_ids == ["ACC1", "ACC2"]
         mock_logger.warning.assert_called_once()
-        assert "3 blank accession id(s)" in mock_logger.warning.call_args.args[0]
+        assert "dropping 3 accession id(s)" in mock_logger.warning.call_args.args[0]
 
     @pytest.mark.asyncio
     @patch("imaging_api.services_external.data_access.logger")
@@ -116,6 +116,30 @@ class TestGetAccessionIds:
 
         assert accession_ids == []
         mock_logger.warning.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services_external.data_access.logger")
+    @patch("imaging_api.services_external.data_access.httpx.AsyncClient")
+    async def test_wildcard_and_multi_value_accession_ids_are_dropped_like_blanks(self, mock_client_cls, mock_logger):
+        """`*` and `?` are C-FIND wildcards and `\\` is DICOM's value delimiter: each is a multi-study query."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "accession_ids": ["ACC1", "ACC*", "*", "AC?1", "ACC1\\ACC2", "ACC2"],
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        with patch.object(get_settings(), "TRUST_INTERNAL_SERVICE_KEY", "outbound-test-key"):
+            accession_ids = await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")
+
+        assert accession_ids == ["ACC1", "ACC2"]
+        mock_logger.warning.assert_called_once()
+        assert "dropping 4 accession id(s)" in mock_logger.warning.call_args.args[0]
 
     @pytest.mark.asyncio
     @patch("imaging_api.services_external.data_access.httpx.AsyncClient")
