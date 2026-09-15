@@ -118,7 +118,12 @@ fills it from the kit's ``DOCKER_TAG``; the upgrade verb sets it explicitly:
 This is a plain ``helm upgrade`` at the new tag: PersistentVolumeClaims survive it, the init
 hooks short-circuit on populated data, and the API deployments roll onto the new images. The
 resolver pins your kit too, so a later ``sync-kit`` regenerates the same tag rather than
-reverting it.
+reverting it. The same registry preflight runs first, and the kit's ``OMOP_DB_TAG`` /
+``ORTHANC_TAG`` / ``XNAT_TAG`` opt-outs reach the chart as ``omopDb.image.pin`` /
+``orthanc.image.pin`` / ``xnat.image.pin``, which beat ``global.image.tag`` for that one
+image — the only way to move a Kubernetes site to a ``sha-`` tag one of them was never built
+at (a StatefulSet rolled onto a tag that does not exist stays down; a release tag never
+needs a pin).
 
 Cloud (EC2) trust
 =================

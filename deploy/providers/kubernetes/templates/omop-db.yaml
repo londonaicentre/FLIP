@@ -125,7 +125,7 @@ spec:
       {{- end }}
       containers:
         - name: postgres
-          image: "{{ .Values.omopDb.image.repository }}:{{ include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.omopDb.image.tag) }}"
+          image: "{{ .Values.omopDb.image.repository }}:{{ include "flip-trust.imageTag" (dict "pin" .Values.omopDb.image.pin "global" .Values.global.image.tag "own" .Values.omopDb.image.tag) }}"
           imagePullPolicy: {{ .Values.omopDb.image.pullPolicy }}
           ports:
             - name: postgres

@@ -133,7 +133,7 @@ spec:
       {{- end }}
       containers:
         - name: orthanc
-          image: "{{ .Values.orthanc.image.repository }}:{{ include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.orthanc.image.tag) }}"
+          image: "{{ .Values.orthanc.image.repository }}:{{ include "flip-trust.imageTag" (dict "pin" .Values.orthanc.image.pin "global" .Values.global.image.tag "own" .Values.orthanc.image.tag) }}"
           imagePullPolicy: {{ .Values.orthanc.image.pullPolicy }}
           ports:
             - name: orthanc-api

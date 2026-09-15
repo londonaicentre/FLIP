@@ -49,6 +49,11 @@ ENV_VAR_MAP = {
     # pin every FLIP-built image follows (templates/_helpers.tpl flip-trust.imageTag).
     # Absent from a dev kit (Hub-shared block commented out) → the chart's own tags apply.
     "DOCKER_TAG": ("global.image.tag", False),
+    # The compose opt-outs (`${OMOP_DB_TAG:-${DOCKER_TAG}}` etc.), so a kit that holds one
+    # image back from the release pin does so on Kubernetes too.
+    "OMOP_DB_TAG": ("omopDb.image.pin", False),
+    "ORTHANC_TAG": ("orthanc.image.pin", False),
+    "XNAT_TAG": ("xnat.image.pin", False),
 }
 
 # Env vars this script used to read, and what replaced them. Dropping one from

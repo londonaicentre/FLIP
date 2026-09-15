@@ -17,10 +17,16 @@ The image tag a FLIP-built service runs (FLIP#1204): the site-wide release pin
 goes through this so `make upgrade-trust-k8s TAG=vX.Y.Z` moves the whole site at once —
 a template reading `.Values.<svc>.image.tag` directly would keep that one service on
 the old release with no error (tests/test_chart_template_invariants.py guards it).
+The optional `pin` is the Kubernetes twin of the compose files' OMOP_DB_TAG / ORTHANC_TAG /
+XNAT_TAG opt-outs (`omopDb.image.pin`, `orthanc.image.pin`, `xnat.image.pin`): those
+images' CI builds are path-filtered, so a sha- tag of a commit that never touched them
+has no such image, and the pin keeps that one image where it is while the rest of the
+site moves. Release tags build every image, so a release upgrade never needs one.
 Usage: {{ include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.trustApi.image.tag) }}
+       {{ include "flip-trust.imageTag" (dict "pin" .Values.omopDb.image.pin "global" .Values.global.image.tag "own" .Values.omopDb.image.tag) }}
 */}}
 {{- define "flip-trust.imageTag" -}}
-{{- .global | default .own }}
+{{- .pin | default .global | default .own }}
 {{- end }}
 
 {{/*

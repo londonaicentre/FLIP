@@ -217,4 +217,39 @@ def test_every_flip_image_tag_follows_the_release_pin(dotted: str) -> None:
     for template in sorted(TEMPLATES_DIR.glob("*.yaml")) + [TEMPLATES_DIR / "_helpers.tpl"]:
         for line in template.read_text().splitlines():
             if direct in line and "flip-trust.imageTag" not in line:
-                raise AssertionError(f"{template.name}: reads {direct} directly, bypassing flip-trust.imageTag: {line.strip()}")
+                raise AssertionError(
+                    f"{template.name}: reads {direct} directly, bypassing flip-trust.imageTag: {line.strip()}"
+                )
+
+
+#: The compose OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG opt-outs, as chart values: the image
+#: value each pin holds back, and the templates that must consult it.
+IMAGE_PINS = (
+    ("omopDb.image.pin", ".Values.omopDb.image.tag", ("omop-db.yaml", "omop-db-vocab-load-job.yaml")),
+    ("orthanc.image.pin", ".Values.orthanc.image.tag", ("orthanc.yaml",)),
+    ("xnat.image.pin", ".Values.xnat.web.image.tag", ("xnat-web.yaml", "xnat-init-job.yaml")),
+    ("xnat.image.pin", ".Values.xnat.db.image.tag", ("xnat-db.yaml",)),
+    ("xnat.image.pin", ".Values.xnat.nginx.image.tag", ("xnat-nginx.yaml",)),
+)
+
+
+@pytest.mark.parametrize(("pin", "own", "templates"), IMAGE_PINS)
+def test_the_path_filtered_images_can_be_held_back_from_the_release_pin(
+    pin: str, own: str, templates: tuple[str, ...]
+) -> None:
+    """omop-db, orthanc and the XNAT trio only rebuild when their own tree changes, so a sha- tag
+    of any other commit has no such image; the kit's OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG hold
+    them back from global.image.tag on compose, and `<svc>.image.pin` is the chart twin. Every
+    image line that reads the service's own tag must also pass its pin, or `helm upgrade` would
+    roll that image to a tag that does not exist and leave the StatefulSet stuck (FLIP#1204)."""
+    assert _values_declares(pin), f"values.yaml does not declare {pin}"
+    for name in templates:
+        lines = [line for line in (TEMPLATES_DIR / name).read_text().splitlines() if own in line]
+        assert lines, f"{name}: no image line reads {own}"
+        for line in lines:
+            assert f'"pin" .Values.{pin}' in line, f"{name}: image line ignores {pin}: {line.strip()}"
+
+
+def test_the_pin_beats_the_release_pin_in_the_helper() -> None:
+    helper = (TEMPLATES_DIR / "_helpers.tpl").read_text()
+    assert "{{- .pin | default .global | default .own }}" in helper

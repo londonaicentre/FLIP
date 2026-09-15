@@ -82,7 +82,7 @@ spec:
       {{- end }}
       containers:
         - name: nginx
-          image: "{{ .Values.xnat.nginx.image.repository }}:{{ include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.xnat.nginx.image.tag) }}"
+          image: "{{ .Values.xnat.nginx.image.repository }}:{{ include "flip-trust.imageTag" (dict "pin" .Values.xnat.image.pin "global" .Values.global.image.tag "own" .Values.xnat.nginx.image.tag) }}"
           imagePullPolicy: {{ .Values.xnat.nginx.image.pullPolicy }}
           ports:
             - name: http

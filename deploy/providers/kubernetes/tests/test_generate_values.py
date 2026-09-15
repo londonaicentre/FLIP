@@ -84,3 +84,17 @@ def test_a_kit_without_docker_tag_leaves_the_release_pin_alone():
     """Dev kits keep the Hub-shared block commented out; the chart's own per-service tags apply."""
     overrides, _secrets = generate_values.build_values(_KIT)
     assert "global" not in overrides
+
+
+def test_the_kits_image_opt_outs_become_chart_pins():
+    """OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG hold one image back from DOCKER_TAG on compose
+    (`${OMOP_DB_TAG:-${DOCKER_TAG}}`); the chart's `<svc>.image.pin` is their twin."""
+    pins = {"OMOP_DB_TAG": "latest", "ORTHANC_TAG": "sha-2bf07b9", "XNAT_TAG": "v0.6.0"}
+    kit = {**_KIT, "DOCKER_TAG": "sha-badcff1", **pins}
+    overrides, _secrets = generate_values.build_values(kit)
+    assert overrides["omopDb"]["image"]["pin"] == "latest"
+    assert overrides["orthanc"]["image"]["pin"] == "sha-2bf07b9"
+    assert overrides["xnat"]["image"]["pin"] == "v0.6.0"
+    unpinned, _secrets = generate_values.build_values({**_KIT, "DOCKER_TAG": "v0.6.0"})
+    assert "pin" not in unpinned.get("omopDb", {}).get("image", {})
+    assert "orthanc" not in unpinned or "image" not in unpinned["orthanc"]

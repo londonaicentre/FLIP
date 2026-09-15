@@ -233,6 +233,12 @@ def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
             f"    tag: {docker_tag}",
             "",
         ]
+    # The compose opt-outs (OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG) hold one image back from
+    # the release pin; the chart's `image.pin` values are their Kubernetes twin.
+    for kit_key, values_key in (("OMOP_DB_TAG", "omopDb"), ("ORTHANC_TAG", "orthanc"), ("XNAT_TAG", "xnat")):
+        pin = kit.get(kit_key, "").strip()
+        if pin:
+            lines += [f"{values_key}:", "  image:", f"    pin: {pin}", ""]
     lines += [
         "trustApi:",
         "  env:",
