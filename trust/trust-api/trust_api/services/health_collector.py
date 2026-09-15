@@ -42,7 +42,7 @@ import httpx
 from trust_api.config import get_settings
 from trust_api.services.task_handlers import trust_internal_headers
 from trust_api.utils.logger import logger
-from trust_api.utils.version import service_version
+from trust_api.utils.version import build_identity
 
 DATA_ACCESS_API_URL = get_settings().DATA_ACCESS_API_URL
 IMAGING_API_URL = get_settings().IMAGING_API_URL
@@ -309,7 +309,7 @@ async def collect_once(client: httpx.AsyncClient) -> dict:
     )
     return {
         "services": {
-            "trust-api": _entry("healthy", service_version()),
+            "trust-api": _entry("healthy", build_identity()),
             "imaging-api": imaging,
             "data-access-api": data_access,
             "xnat": xnat,

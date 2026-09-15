@@ -158,6 +158,8 @@ jobs:
       - name: Build Docker image
         env:
           DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+          # Baked into the image as FLIP_RELEASE so /health names the build (FLIP#1204).
+          FLIP_RELEASE: ${{ steps.tags.outputs.release }}
         run: |
           IFS=',' read -ra TAG_ARRAY <<< "$DOCKER_TAGS"
           TAG_FLAGS=()
@@ -165,7 +167,7 @@ jobs:
             TAG_FLAGS+=("-t" "$tag")
           done
           # shellcheck disable=SC2086
-          docker build $BUILD_ARGS "${TAG_FLAGS[@]}" .
+          docker build --build-arg FLIP_RELEASE="$FLIP_RELEASE" $BUILD_ARGS "${TAG_FLAGS[@]}" .
 
       - name: Push Docker image
         env:

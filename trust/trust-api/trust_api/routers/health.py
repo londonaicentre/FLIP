@@ -13,7 +13,7 @@
 from fastapi import APIRouter
 
 from trust_api.utils.background import dead_background_tasks
-from trust_api.utils.version import service_version
+from trust_api.utils.version import build_identity
 
 router = APIRouter(prefix="/health", tags=["Health"])
 
@@ -36,6 +36,6 @@ async def health_check() -> dict[str, object]:
 
     return {
         "status": "degraded" if dead else "ok",
-        "version": service_version(),
+        "version": build_identity(),
         "dead_tasks": sorted(dead),
     }

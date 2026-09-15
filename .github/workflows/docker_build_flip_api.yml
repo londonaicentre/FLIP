@@ -155,6 +155,8 @@ jobs:
       - name: Build Docker image
         env:
           DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+          # Baked into the image as FLIP_RELEASE so /health names the build (FLIP#1204).
+          FLIP_RELEASE: ${{ steps.tags.outputs.release }}
           # Enable BuildKit so `--build-context` (the fl_apps named context below) is honoured.
           DOCKER_BUILDKIT: "1"
         run: |
@@ -168,7 +170,7 @@ jobs:
           # into the image (FLIP#724). The working directory is ./flip-api, so ../fl-apps resolves
           # to the repo-root fl-apps/.
           # shellcheck disable=SC2086
-          docker build --build-context fl_apps=../fl-apps $BUILD_ARGS "${TAG_FLAGS[@]}" .
+          docker build --build-context fl_apps=../fl-apps --build-arg FLIP_RELEASE="$FLIP_RELEASE" $BUILD_ARGS "${TAG_FLAGS[@]}" .
 
       - name: Push Docker image
         env:
