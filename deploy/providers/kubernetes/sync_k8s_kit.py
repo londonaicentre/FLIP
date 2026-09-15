@@ -219,6 +219,21 @@ def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
         f"awsRegion: {aws_region}",
         f"flBackend: {fl_backend}",
         "",
+    ]
+    # The release this site runs (FLIP#1204): the kit's Hub-shared DOCKER_TAG pins every
+    # FLIP-built image via global.image.tag. A dev kit (Hub-shared block commented out)
+    # carries none, and the chart's per-service tags apply. `make upgrade-trust-k8s TAG=`
+    # overrides this with --set at deploy time and site_upgrade.py rewrites the kit, so
+    # the two stay in step.
+    docker_tag = kit.get("DOCKER_TAG", "").strip()
+    if docker_tag:
+        lines += [
+            "global:",
+            "  image:",
+            f"    tag: {docker_tag}",
+            "",
+        ]
+    lines += [
         "trustApi:",
         "  env:",
         f"    CENTRAL_HUB_API_URL: {hub_url}",

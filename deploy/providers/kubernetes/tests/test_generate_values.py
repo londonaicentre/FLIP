@@ -71,3 +71,16 @@ def test_both_override_generators_share_the_fallback():
     sync_spec.loader.exec_module(sync_k8s_kit)
     out = sync_k8s_kit.render_override({"FL_BACKEND": "nvflare"}, "Trust_K8s", "eu-west-2")
     assert f"\nflClient:\n  kitHostPath: {generate_values.DEFAULT_KIT_HOST_PATH}\n" in out
+
+
+def test_the_kits_docker_tag_becomes_the_charts_release_pin():
+    """The kit's Hub-shared DOCKER_TAG is the release the site runs (FLIP#1204); before this it
+    never reached Helm, and a Kubernetes site stayed on nine hand-edited `image.tag: stag`."""
+    overrides, _secrets = generate_values.build_values({**_KIT, "DOCKER_TAG": "v0.6.0"})
+    assert overrides["global"]["image"]["tag"] == "v0.6.0"
+
+
+def test_a_kit_without_docker_tag_leaves_the_release_pin_alone():
+    """Dev kits keep the Hub-shared block commented out; the chart's own per-service tags apply."""
+    overrides, _secrets = generate_values.build_values(_KIT)
+    assert "global" not in overrides

@@ -91,6 +91,10 @@ ENV := development
 endif
 SECRETS_FILE := $(wildcard $(CHART_DIR)/values-secrets.yaml)
 OVERRIDES_FILE ?=
+# The trust kit this chart deployment was synced from (trust/.env.<CODE>.<env>), for the
+# release-upgrade path; REPO_ROOT is where scripts/site_upgrade.py lives.
+REPO_ROOT := $(abspath $(CHART_DIR)/../../..)
+KIT_FILE := $(REPO_ROOT)/trust/.env.$(KIT).$(ENV)
 
 # Determine which values files to pass
 VALUES_OPTS := -f $(VALUES_FILE)
@@ -114,7 +118,15 @@ ifneq ($(strip $(FL_CLIENT_KIT_HOST_PATH)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set flClient.kitHostPath=$(FL_CLIENT_KIT_HOST_PATH)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps sync-kit patch-kit-secrets xnat-init stage-kit preflight template-egress-variants
+# The release pin (FLIP#1204): TAG=vX.Y.Z sets global.image.tag, which every FLIP-built
+# image follows (templates/_helpers.tpl flip-trust.imageTag). Last so it wins over the
+# override file's value, which sync-kit fills from the kit's DOCKER_TAG.
+TAG ?=
+ifneq ($(strip $(TAG)),)
+	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
+endif
+
+.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit patch-kit-secrets xnat-init stage-kit preflight template-egress-variants
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -206,6 +218,25 @@ endif
 
 undeploy-trust-k8s: undeploy ## Remove trust services from K8s (alias for undeploy)
 	@true
+
+# Move a deployed Kubernetes trust to a release, data intact (FLIP#1204). A plain
+# `helm upgrade` with the pin set: PVCs survive it, the init hooks short-circuit on
+# populated data, and the API deployments roll onto the new images. The kit-side twin
+# of the compose path's `make -C trust upgrade-trust` — the resolver pins the kit too, so
+# the next `sync-kit` regenerates the same tag into the override rather than reverting it.
+#   make upgrade-trust-k8s KIT=<CODE> [TAG=vX.Y.Z] [PROD=<env>] [KUBE_CONTEXT=<ctx>]
+# TAG defaults to the release the hub runs (site_upgrade.py reads it from the kit's hub).
+upgrade-trust-k8s: ## Move a deployed trust to a release tag (data-safe helm upgrade)
+	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> is required"; exit 1; }
+	@[ -f "$(CHART_DIR)/k8s-trust-$(KIT).yaml" ] || { echo "❌ $(CHART_DIR)/k8s-trust-$(KIT).yaml not found — run make sync-kit KIT=$(KIT) first"; exit 1; }
+	uv run --no-config $(REPO_ROOT)/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FORCE),--force) $(if $(YES),--yes)
+	$(MAKE) _upgrade-trust-k8s-apply KIT=$(KIT) PROD=$(PROD)
+
+# Phase 2: re-read the kit the resolver just pinned and deploy at that tag.
+_upgrade-trust-k8s-apply:
+	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1)
+	$(MAKE) patch-kit-secrets KIT=$(KIT)
+	@echo "✅ $(KIT) is on $$(sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1). Verify: kubectl -n $(NAMESPACE) get pods; trust-api /health reports the new version."
 
 status: ## Show the status of the Helm release and run smoke tests
 	@echo "=== Helm Release Status ==="

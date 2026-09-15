@@ -12,6 +12,18 @@ limitations under the License.
 */}}
 
 {{/*
+The image tag a FLIP-built service runs (FLIP#1204): the site-wide release pin
+`global.image.tag` when set, else the service's own `image.tag`. Every FLIP image line
+goes through this so `make upgrade-trust-k8s TAG=vX.Y.Z` moves the whole site at once —
+a template reading `.Values.<svc>.image.tag` directly would keep that one service on
+the old release with no error (tests/test_chart_template_invariants.py guards it).
+Usage: {{ include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.trustApi.image.tag) }}
+*/}}
+{{- define "flip-trust.imageTag" -}}
+{{- .global | default .own }}
+{{- end }}
+
+{{/*
 Expand the name of the chart.
 */}}
 {{- define "flip-trust.name" -}}
@@ -121,7 +133,7 @@ FL client image name based on backend selection
 */}}
 {{- define "flip-trust.flClientImage" -}}
 {{- $registry := .Values.flClient.image.repository }}
-{{- $tag := .Values.flClient.image.tag }}
+{{- $tag := include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.flClient.image.tag) }}
 {{- if eq .Values.flBackend "nvflare" }}
 {{- printf "%s/flare-fl-client:%s" $registry $tag }}
 {{- else }}

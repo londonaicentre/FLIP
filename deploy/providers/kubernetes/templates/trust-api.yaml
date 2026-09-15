@@ -45,7 +45,7 @@ data:
   # The fl-client has no health endpoint; the health collector reports the image tag this
   # release pins for it, so the hub's Connection Status names the FL build (FLIP#1204).
   # Must stay in step with the tag flip-trust.flClientImage renders.
-  FL_CLIENT_IMAGE_TAG: {{ .Values.flClient.image.tag | quote }}
+  FL_CLIENT_IMAGE_TAG: {{ include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.flClient.image.tag) | quote }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -79,7 +79,7 @@ spec:
       {{- end }}
       containers:
         - name: trust-api
-          image: "{{ .Values.trustApi.image.repository }}:{{ .Values.trustApi.image.tag }}"
+          image: "{{ .Values.trustApi.image.repository }}:{{ include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.trustApi.image.tag) }}"
           imagePullPolicy: {{ .Values.trustApi.image.pullPolicy }}
           {{- with .Values.securityContext }}
           securityContext:

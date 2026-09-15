@@ -67,7 +67,7 @@ spec:
       {{- end }}
       initContainers:
         - name: probe-vocab
-          image: "{{ .Values.omopDb.image.repository }}:{{ .Values.omopDb.image.tag }}"
+          image: "{{ .Values.omopDb.image.repository }}:{{ include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.omopDb.image.tag) }}"
           imagePullPolicy: {{ .Values.omopDb.image.pullPolicy }}
           command:
             - /bin/bash
@@ -145,7 +145,7 @@ spec:
             {{- end }}
       containers:
         - name: load-vocab
-          image: "{{ .Values.omopDb.image.repository }}:{{ .Values.omopDb.image.tag }}"
+          image: "{{ .Values.omopDb.image.repository }}:{{ include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.omopDb.image.tag) }}"
           imagePullPolicy: {{ .Values.omopDb.image.pullPolicy }}
           command:
             - /bin/bash

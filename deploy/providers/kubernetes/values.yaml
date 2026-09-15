@@ -12,6 +12,16 @@
 # ---------------------------------------------------------------------------
 # Global trust-wide configuration
 # ---------------------------------------------------------------------------
+global:
+  image:
+    # The release this site runs (FLIP#1204): one pin for every FLIP-built image — trust-api,
+    # imaging-api, data-access-api, the fl-client, omop-db, orthanc and the three XNAT images.
+    # `make upgrade-trust-k8s KIT=<CODE> TAG=vX.Y.Z` sets it; `sync-kit` fills it from the kit's
+    # DOCKER_TAG. Empty = each service's own image.tag below applies (the mutable `stag`, which
+    # moves under a site on every develop merge). Observability images and xnat-dcm2niix carry
+    # upstream versions of their own and never follow it.
+    tag: ""
+
 trustName: "Trust_1"
 trustNumber: 1
 environment: production

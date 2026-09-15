@@ -185,3 +185,36 @@ def test_values_declares_every_omop_db_probe_field(probe: str) -> None:
     for field in PROBE_FIELDS:
         path = f"omopDb.probes.{probe}.{field}"
         assert _values_declares(path), f"values.yaml does not declare {path}; the rendered probe field would be empty"
+
+
+# Every FLIP-built image the chart runs. Observability images and xnat-dcm2niix carry
+# upstream versions of their own and are deliberately absent.
+FLIP_IMAGE_VALUES = (
+    "trustApi.image.tag",
+    "imagingApi.image.tag",
+    "dataAccessApi.image.tag",
+    "flClient.image.tag",
+    "omopDb.image.tag",
+    "orthanc.image.tag",
+    "xnat.web.image.tag",
+    "xnat.db.image.tag",
+    "xnat.nginx.image.tag",
+)
+
+
+def test_values_declares_the_release_pin() -> None:
+    assert _values_declares("global.image.tag"), "values.yaml does not declare global.image.tag (FLIP#1204)"
+
+
+@pytest.mark.parametrize("dotted", FLIP_IMAGE_VALUES)
+def test_every_flip_image_tag_follows_the_release_pin(dotted: str) -> None:
+    """`make upgrade-trust-k8s TAG=vX.Y.Z` sets one value, global.image.tag, and every FLIP-built
+    image must follow it (FLIP#1204). A template that still reads `.Values.<svc>.image.tag`
+    directly renders cleanly and silently keeps that one service on the old release — the
+    mixed-version site the pin exists to prevent."""
+    assert _values_declares(dotted), f"values.yaml no longer declares {dotted}"
+    direct = f".Values.{dotted}"
+    for template in sorted(TEMPLATES_DIR.glob("*.yaml")) + [TEMPLATES_DIR / "_helpers.tpl"]:
+        for line in template.read_text().splitlines():
+            if direct in line and "flip-trust.imageTag" not in line:
+                raise AssertionError(f"{template.name}: reads {direct} directly, bypassing flip-trust.imageTag: {line.strip()}")

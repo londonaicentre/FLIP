@@ -45,6 +45,10 @@ ENV_VAR_MAP = {
     "FL_KIT_DIR": ("flClient.kitHostPath", False),
     "AICENTRE_BUCKET_NAME": ("omopDb.initJob.s3Bucket", False),
     "TRUST_DATA_VERSION": ("trustData.version", False),
+    # The release this site runs (FLIP#1204): the kit's Hub-shared DOCKER_TAG is the one
+    # pin every FLIP-built image follows (templates/_helpers.tpl flip-trust.imageTag).
+    # Absent from a dev kit (Hub-shared block commented out) → the chart's own tags apply.
+    "DOCKER_TAG": ("global.image.tag", False),
 }
 
 # Env vars this script used to read, and what replaced them. Dropping one from

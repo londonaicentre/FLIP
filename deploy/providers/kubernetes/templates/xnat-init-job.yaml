@@ -86,7 +86,7 @@ spec:
           # spell it out. An image rebuilt with a different XNAT_ROOT breaks every one of those with
           # or without this line, so a value here would advertise a configurability the chart does not
           # have. If XNAT_ROOT ever needs to move, it moves in all of those places at once.
-          image: "{{ .Values.xnat.web.image.repository }}:{{ .Values.xnat.web.image.tag }}"
+          image: "{{ .Values.xnat.web.image.repository }}:{{ include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.xnat.web.image.tag) }}"
           imagePullPolicy: {{ .Values.xnat.web.image.pullPolicy }}
           command:
             - /bin/bash
