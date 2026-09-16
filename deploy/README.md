@@ -277,7 +277,10 @@ deployment modes**, both permanently supported: the default **self-contained sin
 (`PROD=lza`, or `PROD=lza-stag` for a staging estate) for an AWS Landing Zone Accelerator estate, where the
 network and edge are owned by the accelerator. The second is an env-gated mode of the same root, not a separate path — see
 [Deploying onto an LZA estate](providers/AWS/README.md#deploying-onto-an-lza-estate-prodlza)
-([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). The ECS FL task definitions serve **both
+([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). What each mode costs to run — hub only,
+trust hosts excluded because their GPU sizing is a per-trust decision — is on the docs site's
+[Deploy the Central Hub → Running costs](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#running-costs)
+section. The ECS FL task definitions serve **both
 FL backends** ([FLIP#566](https://github.com/londonaicentre/FLIP/issues/566)): `FL_BACKEND` in the env file
 switches the same task families between NVFLARE and Flower (SuperLink ports/command/creds — Flower
 additionally needs `FLOWER_KIT_DATE` and provisioned creds uploaded via

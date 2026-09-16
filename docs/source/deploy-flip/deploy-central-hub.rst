@@ -65,6 +65,61 @@ file, the flag's exact gating, the handoff to the networking account) is in the
    deploy-central-hub-aws
    deploy-central-hub-aws-lza
 
+.. _deploy-central-hub-costs:
+
+*************
+Running costs
+*************
+
+The figures below are for the **Central Hub only**: one hub with one FL net, measured
+from the AI Centre's own bills in September 2026, in ``eu-west-2``, in US dollars
+before tax (AWS adds VAT for UK accounts), at on-demand list prices. They are rounded
+on purpose; they are a point-in-time measurement, and the right number for a budget is
+whatever Cost Explorer reports for the account in question.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 44 12 26
+
+   * - Mode
+     - What bills to the workload account
+     - Roughly
+     - Notes
+   * - **Self-contained**
+     - ECS Fargate (three tasks), RDS and RDS Proxy, EFS, the internal ALB and the public
+       FL NLB, a NAT gateway and in-account VPC endpoints, CloudFront and its WAF,
+       CloudWatch, GuardDuty and Security Hub
+     - $500 a month
+     - Fargate is about a third of it; the NAT gateway and endpoints about a fifth.
+       Everything is in the one account, so this is the whole bill.
+   * - **Platform-managed**
+     - The same compute and data services, minus the NAT gateway, endpoints, CloudFront,
+       WAF and ALB, which the estate provides centrally
+     - $400 a month
+     - Plus a share of the **platform layer**: Transit Gateway attachments, the central
+       Network Firewall, central endpoints and NAT, and the shared edge. For the AI
+       Centre's estate that layer is of the order of $800 a month in total. It exists
+       whether or not FLIP is deployed, so attribute all of it to FLIP only when FLIP is
+       the estate's sole workload.
+
+The platform-managed mode is therefore not the cheaper hub; it becomes the cheaper
+mode per workload once the estate hosts several, and its firewall and attachment
+charges land on the platform team's accounts rather than the workload's, so agree
+with them how that layer is recharged. A staging environment costs about the same as
+production in either mode, since nothing in the hub scales with the number of users.
+The AI Centre keeps an itemised estimate of its platform layer alongside its LZA
+configuration.
+
+.. note::
+
+   **Trust hosts are not included.** A trust's running cost is set by the GPU instance
+   it provisions and by how long that instance is busy, which follows from the number
+   and size of the projects the trust takes part in, so it is a per-trust decision
+   rather than a property of the hub. The mock trust EC2 in the self-contained runbook
+   (a ``t3.xlarge`` with no GPU) is a test fixture, not a sizing recommendation. For
+   always-on versus on-demand GPU provisioning at a trust, see the *GPU Resource
+   Management* section of :doc:`deploy-flip-node-in-tre`.
+
 Everything below applies to both modes.
 
 *************

@@ -138,6 +138,10 @@ account, and the estate around it, need:
   alias in ``~/.aws/config`` for the Makefile guard;
 - the estate's central load-balancer access-logs bucket, which the workload stack writes to.
 
+That platform layer (the Transit Gateway, the central firewall, endpoints and NAT, and the edge) is
+a shared estate cost that bills to the platform team's accounts rather than to the workload account;
+:ref:`deploy-central-hub-costs` gives its rough size next to the workload account's own bill.
+
 **********************
 Two-phase edge handoff
 **********************
