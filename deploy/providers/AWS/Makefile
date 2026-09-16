@@ -1002,7 +1002,7 @@ provision-local-trust: ## Provision the on-prem (local) trust host: install Dock
 	## trusts the participant kit is delivered to the operator out-of-band.
 	@echo "🔧 Provisioning the on-premises Trust host (this machine)..."
 	@uv sync
-	@uv run ansible-galaxy install -r ../../../deploy/providers/local/requirements.yml
+	@uv run ansible-galaxy install -r ../../../trust/deploy/ansible/requirements.yml
 	@if [ -z "$$ANSIBLE_BECOME_PASS" ]; then \
 		echo ""; \
 		echo "❌  ANSIBLE_BECOME_PASS is not set. Run this in your fish terminal first:"; \
@@ -1025,7 +1025,7 @@ provision-local-trust: ## Provision the on-prem (local) trust host: install Dock
 			-e ansible_connection=local \
 			-e ansible_python_interpreter=/usr/bin/python3 \
 			-e fl_backend=$(FL_BACKEND) \
-			../../../deploy/providers/local/site_local_trust.yml; \
+			../../../trust/deploy/ansible/onprem.yml; \
 		PLAY_RC=$$?; \
 		exit $$PLAY_RC
 	@echo "📦 Downloading the FL participant kit for the on-prem trust from S3..."
@@ -1092,8 +1092,8 @@ add-k8s-trust: ## Open the FL-server NLB to a K8s trust node's public IP (FL tra
 	##   make new-trust TRUST_CODE=Trust_K8s TRUST_NAME="..."
 	##   make -C deploy/providers/AWS register-trusts KIT=Trust_K8s PROD=$(PROD)
 	##   make sync-trust-kit KIT=Trust_K8s PROD=$(PROD)
-	##   make -C deploy/providers/kubernetes sync-kit KIT=Trust_K8s PROD=$(PROD)
-	##   make -C deploy/providers/kubernetes up OVERRIDES_FILE=k8s-trust-Trust_K8s.yaml
+	##   make -C trust/deploy/helm sync-kit KIT=Trust_K8s PROD=$(PROD)
+	##   make -C trust/deploy/helm up OVERRIDES_FILE=k8s-trust-Trust_K8s.yaml
 	## Polling needs none of the below. This target is the LAST step, needed only for
 	## FL *training*: it opens the FL-server NLB security group to the K8s node's
 	## public/egress IP. Mirrors `allow-local-trust-nlb`: add each node IP to
@@ -1334,14 +1334,14 @@ full-deploy-with-k8s: ## Full AWS deploy + Trust_K8s registration and K8s chart 
 			PROD=$(PROD); } && \
 	$(MAKE) register-trusts KIT=Trust_K8s PROD=$(PROD) && \
 	$(MAKE) -C ../../.. sync-trust-kit KIT=Trust_K8s PROD=$(PROD) && \
-	$(MAKE) -C ../kubernetes sync-kit KIT=Trust_K8s PROD=$(PROD) && \
+	$(MAKE) -C ../../../trust/deploy/helm sync-kit KIT=Trust_K8s PROD=$(PROD) && \
 	$(MAKE) add-k8s-trust K8S_TRUST_IP=$$_K8S_IP PROD=$(PROD) && \
-	$(MAKE) -C ../kubernetes up \
-		OVERRIDES_FILE=$(shell pwd)/../kubernetes/k8s-trust-Trust_K8s.yaml \
+	$(MAKE) -C ../../../trust/deploy/helm up \
+		OVERRIDES_FILE=$(shell pwd)/../../../trust/deploy/helm/k8s-trust-Trust_K8s.yaml \
 		PROD=$(PROD) && \
 	echo "" && \
 	echo "=== K8s Trust Status ===" && \
-	$(MAKE) -C ../kubernetes status PROD=$(PROD) && \
+	$(MAKE) -C ../../../trust/deploy/helm status PROD=$(PROD) && \
 	echo "" && \
 	echo "✅ full-deploy-with-k8s complete (PROD=$(PROD))." && \
 	echo "   EC2 trust status was verified in the full-deploy step above." && \

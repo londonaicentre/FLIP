@@ -158,7 +158,7 @@ export XNAT_DATA_DIR
 # if someone pinned a `user:` on xnat-db. Its dir is included on stag/prod only, so
 # the whole tree carries one owner.
 #
-# deploy/providers/AWS/site.yml and deploy/providers/local/site_local_trust.yml
+# deploy/providers/AWS/site.yml and trust/deploy/ansible/onprem.yml
 # provision XNAT's bind mounts with this same id: the uid is the invariant all three
 # paths share, and the one to keep in step. The directories deliberately are not —
 # both playbooks provision /opt/flip/xnat, while stag/prod resolves XNAT_DATA_DIR to

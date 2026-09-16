@@ -573,10 +573,10 @@ sync-trust-kits:
 # Kubernetes Helm chart targets
 # ---------------------------------------------------------------------------
 deploy-trust-k8s: ## Deploy trust services to Kubernetes via Helm
-	$(MAKE) -C deploy/providers/kubernetes deploy
+	$(MAKE) -C trust/deploy/helm deploy
 
 undeploy-trust-k8s: ## Remove trust services from Kubernetes
-	$(MAKE) -C deploy/providers/kubernetes undeploy
+	$(MAKE) -C trust/deploy/helm undeploy
 
 # Mint the XNAT stack passwords (XNAT_DATASOURCE_PASSWORD,
 # XNAT_DATASOURCE_ADMIN_PASSWORD, XNAT_ACTIVEMQ_PASSWORD) into kit files —

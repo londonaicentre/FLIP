@@ -133,8 +133,8 @@ reload. More detail is in [Running the stack](CONTRIBUTING.md#running-the-stack-
 | Run or adapt a federated-learning example | [FL tutorials](fl-tutorials/README.md) |
 | Build a FLIP application | [Working with FLIP apps](https://londonaicentreflip.readthedocs.io/en/latest/working-with-flip-apps.html) |
 | Deploy the Central Hub on AWS | [Central Hub deployment](docs/source/deploy-flip/deploy-central-hub.rst) |
-| Deploy a Trust on premises | [Local provider](deploy/providers/local/README.md) |
-| Deploy a Trust on Kubernetes | [Kubernetes provider](deploy/providers/kubernetes/README.md) |
+| Deploy a Trust on premises | [On-prem host playbook](trust/deploy/ansible/README.md) |
+| Deploy a Trust on Kubernetes | [Helm chart](trust/deploy/helm/README.md) |
 | Operate Trust-side services | [Trust services](trust/README.md) |
 | Debug a service in VS Code | [DEBUG.md](DEBUG.md) |
 | Debug or test a particular service | That service's README and Makefile |

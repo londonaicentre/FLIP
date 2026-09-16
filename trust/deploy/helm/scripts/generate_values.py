@@ -18,9 +18,9 @@ Reads a .env file and generates:
   - values-secrets.yaml   (sensitive values, never printed to stdout)
 
 Usage (from the repo root):
-  python3 deploy/providers/kubernetes/scripts/generate_values.py \\
+  python3 trust/deploy/helm/scripts/generate_values.py \\
       --env-file trust/.env.<CODE>.<env> \\
-      --output-dir deploy/providers/kubernetes
+      --output-dir trust/deploy/helm
 
 No third-party dependencies (stdlib only).
 """

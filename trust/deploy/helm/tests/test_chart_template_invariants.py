@@ -41,7 +41,7 @@ TEMPLATES_DIR = CHART_DIR / "templates"
 VALUES_FILE = CHART_DIR / "values.yaml"
 XNAT_INIT_JOB = TEMPLATES_DIR / "xnat-init-job.yaml"
 OMOP_DB_TEMPLATE = TEMPLATES_DIR / "omop-db.yaml"
-REPO_ROOT = CHART_DIR.parents[2]  # deploy/providers/kubernetes -> repo root
+REPO_ROOT = CHART_DIR.parents[2]  # trust/deploy/helm -> repo root
 CONFIGURE_XNAT = REPO_ROOT / "trust" / "xnat" / "xnat" / "config" / "configure-xnat.sh"
 
 # The activation POST, and the gate that must not precede it. Matched on the calls

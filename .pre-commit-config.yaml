@@ -39,7 +39,7 @@ repos:
         entry: bash trust/xnat/dcm2niix/check_image_pin_sync.sh
         language: system
         pass_filenames: false
-        files: '^(trust/xnat/dcm2niix/(Dockerfile|check_image_pin_sync\.sh)|trust/xnat/xnat/config/dcm2niix_command\.json|deploy/providers/kubernetes/templates/xnat-init-job\.yaml|trust/imaging-api/imaging_api/config\.py)$'
+        files: '^(trust/xnat/dcm2niix/(Dockerfile|check_image_pin_sync\.sh)|trust/xnat/xnat/config/dcm2niix_command\.json|trust/deploy/helm/templates/xnat-init-job\.yaml|trust/imaging-api/imaging_api/config\.py)$'
         always_run: false
 
   - repo: https://github.com/trufflesecurity/trufflehog
@@ -62,7 +62,7 @@ repos:
         args: ['--maxkb=1000']
       - id: check-merge-conflict
       - id: check-yaml
-        exclude: '^\.github/workflows/|^deploy/providers/kubernetes/templates/'
+        exclude: '^\.github/workflows/|^trust/deploy/helm/templates/'
       - id: end-of-file-fixer
       - id: detect-private-key
 
