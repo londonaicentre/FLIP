@@ -261,6 +261,7 @@ def test_readiness_reaches_the_rotated_password_on_the_first_rejection(tmp_path:
     )
 
     result = _run_readiness(
+        # pragma: allowlist nextline secret
         _readiness_env(tmp_path, curl_body, initial_password="initial", rotated_password="rotated")
     )
 
@@ -286,6 +287,7 @@ def test_readiness_forgives_a_transient_rejection_during_boot(tmp_path: Path) ->
     )
 
     result = _run_readiness(
+        # pragma: allowlist nextline secret
         _readiness_env(tmp_path, curl_body, initial_password="initial", rotated_password="rotated")
     )
 
@@ -310,8 +312,8 @@ def test_readiness_does_not_replay_a_dead_credential_while_plugins_load(tmp_path
             tmp_path,
             f'printf "%s\\n" "$*" >> "{argv_log}"; printf "404"',
             timeout="0",
-            initial_password="initial",
-            rotated_password="rotated",
+            initial_password="initial",  # pragma: allowlist secret
+            rotated_password="rotated",  # pragma: allowlist secret
         )
     )
 
@@ -327,8 +329,8 @@ def test_readiness_stops_well_before_lockout_when_both_credentials_are_rejected(
             tmp_path,
             f'printf "%s\\n" "$*" >> "{argv_log}"; printf "401"',
             timeout="900",
-            initial_password="initial",
-            rotated_password="rotated",
+            initial_password="initial",  # pragma: allowlist secret
+            rotated_password="rotated",  # pragma: allowlist secret
         )
     )
 
@@ -612,7 +614,7 @@ def test_root_smoke_target_resolves_relative_paths_from_repo_root() -> None:
             "make",
             "-n",
             "e2e_smoke",
-            "MODEL_FILES_DIR=fl-tutorials/example/app_files",
+            "MODEL_FILES_DIR=fl-tutorials/example/app_files",  # pragma: allowlist secret
             "QUERY_FILE=fl-tutorials/example/query.sql",
         ],
         cwd=REPO_ROOT,

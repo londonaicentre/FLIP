@@ -47,13 +47,13 @@ def test_register_trust_creates_trust_and_claims_slot(mock_gen_key):
     assert result.trust.name == "GSTT"
     assert result.trust.code == "GSTT"
     assert result.trust.region == "London"
-    assert result.trust.api_key_hash == "hash-api"
+    assert result.trust.api_key_hash == "hash-api"  # pragma: allowlist secret
     # The slot is now bound to the new trust, with an assignment timestamp.
     assert slot.assigned_to_trust_id == result.trust.id
     assert slot.assigned_at is not None
     # Plaintext keys come out exactly once.
-    assert result.trust_api_key == "plain-api"
-    assert result.trust_internal_service_key == "plain-internal"
+    assert result.trust_api_key == "plain-api"  # pragma: allowlist secret
+    assert result.trust_internal_service_key == "plain-internal"  # pragma: allowlist secret
     assert result.fl_kit_slot.slot_name == "Trust_007"
     # Atomic: one commit covering the trust insert + the audit row write.
     # Two flushes: one to populate trust.id before slot binding, one inside
