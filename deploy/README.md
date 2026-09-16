@@ -323,9 +323,9 @@ Each Dockerfile explicitly drops root privileges by running the application as a
 
 **Bind-mount ownership.** Because XNAT (`xnat`, UID 1001) and Orthanc (`orthanc`, UID 999) no
 longer run as root, the host-side bind-mount source directories must be owned by the matching
-UID. The Ansible playbooks `deploy/providers/AWS/site.yml` and
-`trust/deploy/ansible/onprem.yml` provision `/opt/flip/xnat/**` as UID 1001 and
-`/opt/flip/orthanc/**` as UID 999 — including a recursive `chown` after extracting the Orthanc
+UID. The shared Ansible roles (`trust/deploy/ansible/roles/`, composed by both
+`deploy/providers/AWS/site.yml` and `trust/deploy/ansible/onprem.yml`) provision `/opt/flip/xnat/**` as
+UID 1001 and `/opt/flip/orthanc/**` as UID 999 — including a recursive `chown` after extracting the Orthanc
 storage archive (which `tar` writes as root). `make -C trust/xnat xnat-reset` is the third path
 onto the same invariant and provisions the XNAT directories as UID 1001 too, verifying it
 afterwards and failing with the exact `chown` to run rather than leaving a host half-provisioned

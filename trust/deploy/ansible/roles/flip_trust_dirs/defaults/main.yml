@@ -1,0 +1,46 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+---
+# Root of everything the trust stack bind-mounts from the host.
+flip_dir: /opt/flip
+# The account the trust compose stack runs as on the host; also imaging-api's
+# uid inside the container (1000 = ubuntu on a stock Ubuntu image), which is why
+# it owns the images tree.
+flip_owner: ubuntu
+flip_group: ubuntu
+# Which FL backend this trust will run. Only affects the ownership of the
+# per-net images bind sources (the Flower client runs as a different UID from
+# imaging-api). Getting it wrong is not fatal — `make -C trust up-trust` runs
+# $(ensure_net_dirs) and re-applies the right ownership — but it leaves the
+# first bring-up to do the fixing.
+fl_backend: nvflare
+
+# Extra owner-owned directories under flip_dir a deployment needs (the EC2 play
+# adds /opt/flip/trust, where register-trusts scp's the kit file).
+flip_app_dirs: []
+
+# The imaging-api / fl-client images trees. Each entry is one
+# BASE_IMAGES_DOWNLOAD_DIR; the per-net slices (net-N) are created underneath.
+# On-prem there is one tree; the EC2 play passes one per FL kit slot because the
+# production composes default BASE_IMAGES_DOWNLOAD_DIR to /opt/flip/data/trust-<slot>.
+flip_images_base_dirs:
+  - "{{ flip_dir }}/data/images"
+flip_net_ids:
+  - net-1
+  - net-2
+# Every base dir crossed with every net id: the per-net bind sources that must
+# pre-exist writable, or Docker creates them root-owned at first start.
+flip_net_dirs: "{{ flip_images_base_dirs | product(flip_net_ids) | map('join', '/') | list | unique }}"
+
+# Host-side Loki/Grafana data dirs (/opt/flip/volumes/*). Only the EC2 stack bind-mounts
+# them; the on-prem production compose defaults to Docker-managed named volumes.
+flip_observability_volume_dirs: false

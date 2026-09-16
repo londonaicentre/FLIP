@@ -1,0 +1,49 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+---
+# FL_KIT_DIR on the trust host — kit root containing net-1/services/<slot>/
+# for nvflare and net-1/{certificates,keys} for flower. The trust kit file
+# sets FL_KIT_DIR=/opt/flip/fl-kit so the prod compose mounts resolve to the
+# same on-disk paths staged here — keep the two sides in lockstep.
+fl_kit_dir: /opt/flip/fl-kit
+flip_owner: ubuntu
+flip_group: ubuntu
+fl_backend: nvflare
+
+# Where the kit comes from:
+#   s3        — the EC2 path: sync this host's slot out of the hub's participant-kit
+#               bucket with the instance role (needs flip_aicentre_bucket, fl_kit_date,
+#               trust_num). Wipes net-1/ first, asserts the result.
+#   precreate — the on-prem path: lay down the empty directory tree the compose
+#               mounts expect; the operator extracts the kit tarball into it by hand
+#               (package-onprem-trust-kit.sh), and nothing wipes.
+#   none      — only ensure fl_kit_dir exists.
+fl_kit_source: none
+
+# precreate: the slot whose NVFLARE service tree is laid down. On-prem hosts
+# conventionally take Trust_2; a different slot means a different kit file value too.
+fl_kit_precreate_slot: Trust_2
+
+# s3: the slot this host was assigned by the hub at registration. NVFLARE names its
+# participant kits after the slot, and the prod compose mounts
+# net-1/services/${FL_KIT_SLOT}/ — so staging must follow trust_num rather than
+# assume the first slot. A cloud trust can hold any slot: the hub allocates from
+# FL_KIT_SLOT_NAMES, so the second EC2 trust in an environment is Trust_2, the
+# third Trust_3, and a re-registration can move a host to a different one.
+#
+# No `| default('1')`: the slot names a specific host, so an unset trust_num on a
+# `--tags flkit` re-stage would silently fetch Trust_1's kit onto a Trust_2/Trust_3
+# host and report success — the same silent-wrong-result class the s3 tasks'
+# assertions exist to close. Bare, an unset trust_num fails on a Jinja
+# "'trust_num' is undefined" error; the assert in s3.yml fires first and says
+# what to pass instead. Role defaults are lazy, so this is only evaluated on the s3 path.
+fl_kit_slot: "Trust_{{ trust_num }}"

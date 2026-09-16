@@ -1,0 +1,77 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+---
+# Restores a MOCK OMOP cluster (the published pgdata snapshot) into omop_dir/db_data.
+# Dev/stag trusts only — never point this at a host holding a real OMOP.
+- name: ensure trust_data_version is defined
+  assert:
+    that:
+      - trust_data_version is defined
+      - trust_data_version | string | length > 0
+    fail_msg: "trust_data_version must be defined (contents of trust/.data_version, a tag on the trust-data dataset, e.g. 20260729)."
+
+- name: create OMOP directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ omop_dir }}"
+    - "{{ omop_dir }}/db_data"
+
+- name: download OMOP PGDATA archive from Hugging Face
+  ansible.builtin.get_url:
+    url: "{{ hf_base_url }}/{{ pgdata_trust_dir }}/{{ pgdata_archive }}"
+    # Version-stamped destination, matching the source. get_url defaults to
+    # force: false ("downloaded only if the destination does not exist"), so a
+    # fixed name means a bumped omop_data_version silently reuses the PREVIOUS
+    # archive — and the wipe + extract below then restore the old dataset while
+    # reporting success. Nothing downstream can tell; the symptom is cohort
+    # counts that quietly do not match the data version that was asked for.
+    dest: "{{ omop_dir }}/{{ pgdata_archive }}"
+    mode: "0644"
+
+- name: clear existing PGDATA directory
+  shell: rm -rf {{ omop_dir }}/db_data/*
+  changed_when: false
+
+- name: extract OMOP PGDATA
+  command: >
+    tar -xf {{ omop_dir }}/{{ pgdata_archive }}
+    -C {{ omop_dir }}/db_data
+
+# The version-stamped destination above means every omop_data_version bump
+# leaves the previous multi-GB archive behind, and nothing else touches it —
+# omop_dir would grow by one tarball per bump for the life of the host. Drop
+# this trust's other archives now that the current one has extracted cleanly.
+- name: find superseded OMOP PGDATA archives
+  ansible.builtin.find:
+    paths: "{{ omop_dir }}"
+    patterns: "trust{{ omop_trust_num }}_pgdata_*.tar"
+    excludes: "{{ pgdata_archive }}"
+    file_type: file
+    recurse: false
+  register: superseded_pgdata_archives
+
+- name: remove superseded OMOP PGDATA archives
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ superseded_pgdata_archives.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: set Postgres ownership and permissions
+  shell: |
+    chown -R 999:999 {{ omop_dir }}/db_data
+    chmod 700 {{ omop_dir }}/db_data
+  changed_when: false

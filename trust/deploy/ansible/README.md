@@ -134,9 +134,15 @@ make provision-local-trust
 
 ### What `provision-local-trust` does
 
-1. Runs the Ansible playbook (`onprem.yml`) which:
-   - Installs Docker and required system packages
-   - Creates application directories under `/opt/flip/`
+1. Runs the Ansible playbook (`onprem.yml`), a composition of the shared roles in
+   [`roles/`](roles/README.md) (the EC2 play `deploy/providers/AWS/site.yml` composes the same ones):
+   - Installs Docker and the base packages (`flip_base_packages`, `flip_docker` — no docker-group grant)
+   - Creates the application, images (per-net, backend-aware ownership) and XNAT directories under
+     `/opt/flip/` (`flip_trust_dirs`)
+   - Pre-creates the FL kit directory tree for the tarball you extract by hand (`flip_fl_kit` with
+     `fl_kit_source: precreate`)
+   - Copies the Loki/Alloy/Grafana config into `/opt/flip/config/observability`, where the production
+     compose reads it (`flip_observability_config`)
 2. Downloads the FL participant kit from S3 and stages it under `/tmp`, printing the `sudo rsync` commands to deploy it into `${FL_KIT_DIR}/net-1/...` (default `/opt/flip/fl-kit/net-1/...`).
 
 Opening the AWS FL-server NLB to the trust's public IP is a **separate** step — `make allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip>` — run by the FLIP admin once the operator reports their IP.
@@ -178,7 +184,10 @@ The `full-deploy-with-local-trust` / `full-deploy-hybrid` targets handle trust r
 
 ### `onprem.yml`
 
-The main playbook. It can be run standalone or via the `provision-local-trust` Makefile target.
+The main playbook. It can be run standalone or via the `provision-local-trust` Makefile target. It
+composes the roles in [`roles/`](roles/README.md); the play itself only states what an on-prem host does
+differently from the EC2 trust (no docker-group grant, a pre-created kit tree instead of an S3 sync, one
+images tree). Roles are found beside the play, so no `roles_path` configuration is needed.
 
 **Optional variables:**
 
@@ -186,6 +195,20 @@ The main playbook. It can be run standalone or via the `provision-local-trust` M
 | --- | --- | --- |
 | `flip_dir` | `/opt/flip` | Root application directory |
 | `fl_backend` | `nvflare` | FL backend this trust will run. Sets the group/mode of the per-net images bind sources (`<flip_dir>/data/images/net-N`) — the Flower client runs as uid/gid 49999, not imaging-api's 1000, so it needs group 49999 + `0775` to write there. `provision-local-trust` passes the deployment's `FL_BACKEND` automatically. |
+| `fl_kit_precreate_slot` | `Trust_2` | The NVFLARE slot whose `net-1/services/<slot>/{local,startup,transfer}` tree is pre-created; must match the kit file's `FL_KIT_SLOT`. |
+
+**Mock data (dev/stag hosts only).** The second play restores the published mock OMOP and Orthanc
+snapshots, exactly as the EC2 trust gets them, but is tagged `never`: it runs only when asked for, so a
+default provisioning run of a real trust host downloads nothing.
+
+```bash
+uv run ansible-playbook -i <trust-host-ip>, -u ubuntu --private-key ~/.ssh/trust_key \
+  --tags data -e trust_data_version=$(cat ../../../trust/.data_version) -e trust_num=2 \
+  ../../../trust/deploy/ansible/onprem.yml
+```
+
+The licensed core vocabulary is not part of that: its bundle comes from the hub's S3 bucket through an
+instance role, so on-prem it stays `make -C trust load-omop-vocab`.
 
 **Direct usage** (without the Makefile):
 
