@@ -49,13 +49,13 @@ A full, runnable reference is available in-tree:
      - ``MetricRecord`` in the reply, forwarded by the server
      - ``SummaryWriter.add_scalar``, forwarded by ``FlipAnalyticsBridge``
    * - Client identity
-     - ``SUPERNODE_NAME`` env var placed in the reply's ``ConfigRecord``
+     - ``client_identity(context)`` placed in the reply's ``ConfigRecord``
      - NVFLARE site name, resolved from the event origin (nothing to do)
    * - Privacy filter on updates
      - ``flip_local_dp_mod`` registered by the uploaded ``client_app.py``
      - ``PercentilePrivacy`` wired by the template (nothing to do)
    * - Local run
-     - ``fl-services/flower`` compose stack
+     - ``make sim-tutorial`` (simulator) or the ``fl-services/flower`` compose stack
      - ``job.py`` recipe: ``make export`` / ``make sim``
 
 *****************
@@ -291,7 +291,7 @@ Per-epoch, per-site metrics are published through NVFLARE's own tracking API —
 
 .. note::
 
-   The site name shown against each metric in the FLIP UI is resolved automatically from the NVFLARE event origin — the Trust's FL kit slot (``Trust_1``, ``Trust_2``, …), which the hub maps back to the owning Trust. There is no client-name variable to set, unlike Flower's ``SUPERNODE_NAME``.
+   The site name shown against each metric in the FLIP UI is resolved automatically from the NVFLARE event origin — the Trust's FL kit slot (``Trust_1``, ``Trust_2``, …), which the hub maps back to the owning Trust. There is no client identity to resolve in the trainer, unlike Flower's ``client_identity(context)``.
 
 .. note::
 

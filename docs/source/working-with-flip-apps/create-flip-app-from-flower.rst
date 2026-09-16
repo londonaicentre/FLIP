@@ -337,11 +337,10 @@ Per-round, per-client metrics reach the FLIP UI through the reply ``Message``: p
 
 .. code-block:: python
 
-   import os
-
+   from flip.flower.identity import client_identity
    from flwr.app import ArrayRecord, ConfigRecord, Message, MetricRecord, RecordDict
 
-   client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
+   client_name = client_identity(context)  # SUPERNODE_NAME on a SuperNode; partition-id under the simulator
 
    # global_round from server is 1-based; convert to 0-based for local epoch arithmetic
    global_round = int(msg.content["config"]["server-round"]) - 1
@@ -379,7 +378,7 @@ Per-round, per-client metrics reach the FLIP UI through the reply ``Message``: p
 
 .. warning::
 
-   ``SUPERNODE_NAME`` is the trust's **FL kit slot** (e.g. ``Trust_1``, ``Trust_2``) — the same slot name flip-api assigns to that trust in the FLKitSlot table — and **not** the trust's display name. The hub resolves the slot back to the owning trust when saving metrics (see ``resolve_trust_from_fl_client_name`` in ``flip_api.model_services``); a ``site`` value that matches no assignment is recorded against ``unknown_client`` and will not be attributable to the site in the FLIP UI. A reply with no ``site`` at all is dropped by the forwarder. FLIP-provisioned SuperNode compose files set ``SUPERNODE_NAME=${FL_KIT_SLOT}`` for you; if you are running a SuperNode locally you must export the slot yourself.
+   ``SUPERNODE_NAME`` is the trust's **FL kit slot** (e.g. ``Trust_1``, ``Trust_2``) — the same slot name flip-api assigns to that trust in the FLKitSlot table — and **not** the trust's display name. The hub resolves the slot back to the owning trust when saving metrics (see ``resolve_trust_from_fl_client_name`` in ``flip_api.model_services``); a ``site`` value that matches no assignment is recorded against ``unknown_client`` and will not be attributable to the site in the FLIP UI. A reply with no ``site`` at all is dropped by the forwarder. FLIP-provisioned SuperNode compose files set ``SUPERNODE_NAME=${FL_KIT_SLOT}`` for you. Read it through ``client_identity(context)`` (``flip.flower.identity``) rather than from the environment directly: the helper returns ``SUPERNODE_NAME`` when a container sets it and otherwise derives a ``site-<n>`` name from ``context.node_config``'s ``partition-id``, which the simulator populates — so one ``client_app.py`` attributes its metrics correctly in deployment, on the compose stack and under ``flwr run``. This is what both tutorials do.
 
 .. note::
 
@@ -496,11 +495,21 @@ At submit time, the FLIP FL API:
 Local testing before upload
 ************************************
 
-The supported way to run a Flower app locally is the standalone compose stack under ``fl-services/flower`` — a SuperLink, two SuperNodes and an FL API, with the tutorial's dev data bind-mounted. ``LOCAL_DEV`` mode (the ``flip-utils`` default outside the platform) makes ``get_dataframe`` read a CSV and ``get_by_accession_number`` read a directory, named by ``DEV_DATAFRAME`` and ``DEV_IMAGES_DIR``, which the stack bind-mounts into every container at fixed paths so relative paths in tutorial code resolve the same way everywhere.
+Two local paths are supported, and the app code is identical on both because site identity comes from the Flower ``Context`` rather than the environment (see the ``client_identity`` note above). ``LOCAL_DEV`` mode (the ``flip-utils`` default outside the platform) makes ``get_dataframe`` read a CSV and ``get_by_accession_number`` read a directory, named by ``DEV_DATAFRAME`` and ``DEV_IMAGES_DIR``; both paths point them at the tutorial's dataset under ``fl-tutorials/data/``.
+
+**Fast inner loop: the flwr simulator.** ``make sim-tutorial`` runs ``flwr run`` in-process — no SuperLink, no SuperNodes, no FL API, no Docker — so a code change is one re-run away:
 
 .. code-block:: bash
 
    make -C fl-tutorials download-spleen-data FL_BACKEND=flower   # reference dataset into fl-tutorials/data/
+   make -C fl-tutorials sim-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower
+
+The wrapper (``fl-tutorials/flower/sim-tutorial.sh``) sets the dev-data variables per tutorial, derives the simulator's site count from ``flip-min-clients`` and passes it as ``num-partitions``, and supplies the one run-config value the platform's submit step would otherwise inject — ``flip-job-dir``, pointed at the downloaded checkpoint — so the ``evaluation`` tutorial runs unchanged too. Under the simulator every ``ClientApp`` sees the same shared cohort, so the tutorials call ``partition_cohort`` (also in ``flip.flower.identity``) to take their own disjoint slice; on the platform that is a no-op, because each trust's data-access-api already serves only its own rows.
+
+**Full-fidelity check: the compose stack.** ``fl-services/flower`` runs a SuperLink, two SuperNodes and an FL API in containers, with the dev data bind-mounted, and exercises what the simulator cannot: TLS, the FL API submit path and SuperNode registration. Run it once before uploading:
+
+.. code-block:: bash
+
    make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower
 
 The harness brings the stack up, submits the app to the FL API exactly as the platform does, waits for the run and tears the stack down. To iterate by hand instead:
@@ -512,9 +521,9 @@ The harness brings the stack up, submits the app to the FL API exactly as the pl
    make up                                    # fl-api, superlink, supernode-1, supernode-2
    make submit APP=3d_spleen_segmentation     # POSTs to the fl-api inside the container
 
-.. warning::
+.. note::
 
-   Do **not** test with ``flwr run`` / the Simulation Engine. It is technically possible but brittle for reasons specific to this project: the long-lived ``flower-superlink`` caches its environment (so changing ``DEV_DATAFRAME`` between runs has no effect until you kill it), ``flwr run`` executes the ``ClientApp`` from a snapshot under ``~/.flwr/apps/`` so relative data paths break, and FLIP's settings singleton is pinned at import time so mid-run path overrides are ignored. The compose stack has none of these problems. ``fl-tutorials/flower/3d_spleen_segmentation/README.md`` spells out the workarounds if you must experiment with it anyway.
+   Prefer ``make sim-tutorial`` to a bare ``flwr run .``: the wrapper sets the data variables, the partition count and the checkpoint run-config that a bare run needs by hand, and ``flwr run`` executes the ``ClientApp`` from a snapshot under ``~/.flwr/apps/``, so paths set after launch are not seen. ``fl-tutorials/flower/3d_spleen_segmentation/README.md`` covers the remaining caveats.
 
 See the tutorial README for the full local-run instructions, including the data-enrichment (label upload) step needed before the segmentation tutorials can train on a real FLIP project.
 
@@ -524,7 +533,7 @@ Common pitfalls
 
 - **Missing ``RESULTS_UPLOADED``.** Forgetting the final ``flip.update_status(model_id, ModelStatus.RESULTS_UPLOADED)`` call in a local ``ServerApp`` leaves the model stuck on "running" in the UI.
 - **Calling ``flip.send_metrics`` / ``flip.update_status`` from the ``ClientApp``.** SuperNodes hold no Central Hub credentials. Put metrics in the reply ``MetricRecord`` with the site in the ``ConfigRecord``; the server forwards them.
-- **Wrong or missing ``site``.** ``SUPERNODE_NAME`` must be the trust's **FL kit slot** (``Trust_1``, ``Trust_2``, ...), not the trust display name — metrics forwarded with any other value land under ``unknown_client`` and will not appear on the per-site chart; a reply with no ``site`` is dropped.
+- **Wrong or missing ``site``.** ``SUPERNODE_NAME`` must be the trust's **FL kit slot** (``Trust_1``, ``Trust_2``, ...), not the trust display name — metrics forwarded with any other value land under ``unknown_client`` and will not appear on the per-site chart; a reply with no ``site`` is dropped. Resolve the name with ``client_identity(context)``; reading ``SUPERNODE_NAME`` directly records ``unknown_client`` under the simulator, where the variable is absent.
 - **No DP mod.** A ``client_app.py`` without ``@app.train(mods=[flip_local_dp_mod])`` shares raw model updates. The platform does not enforce it.
 - **Run configuration in the wrong file.** ``config.json`` carries only ``job_type`` on Flower; rounds, epochs and hyperparameters for a platform run go in ``config.toml``. An app uploaded without one runs three rounds of one epoch, whatever your own ``pyproject.toml`` says.
 - **Declaring ``flip-utils`` as a dependency.** It resolves from PyPI and shadows the image's copy (FLIP#767). Leave it undeclared; the template pins it to ``/opt/flip-utils`` on-platform.
