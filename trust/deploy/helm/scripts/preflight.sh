@@ -22,7 +22,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-REPO_ROOT="$(cd "$CHART_DIR/../../.." && pwd)"
+REPO_ROOT="$(git -C "$CHART_DIR" rev-parse --show-toplevel)"
 
 # ── Parameters (injected by Makefile) ────────────────────────────────────────
 HELM_BIN="${HELM:-helm}"

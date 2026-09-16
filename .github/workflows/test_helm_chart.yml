@@ -18,11 +18,16 @@ on:
   pull_request:
     paths:
       - "trust/deploy/helm/**"
+      # Read by the chart's pytest suite, so a change there can break it too.
+      - "trust/xnat/xnat/config/configure-xnat.sh"
+      - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
   push:
     branches: [develop, main]
     paths:
       - "trust/deploy/helm/**"
+      - "trust/xnat/xnat/config/configure-xnat.sh"
+      - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
   workflow_dispatch:
 

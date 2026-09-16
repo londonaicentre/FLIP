@@ -37,8 +37,8 @@ XNAT_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = XNAT_DIR.parents[1]
 SCRIPT = XNAT_DIR / "xnat" / "config" / "configure-xnat.sh"
 COMPOSE = XNAT_DIR / "docker-compose-stack.yml"
-INIT_JOB = REPO_ROOT / "trust" / "deploy" / "helm" / "templates" / "xnat-init-job.yaml"
 TRUST_DIR = XNAT_DIR.parent
+INIT_JOB = TRUST_DIR / "deploy" / "helm" / "templates" / "xnat-init-job.yaml"
 # The trust-core compose files: the AE title's consumers outside the XNAT stack.
 TRUST_COMPOSES = [TRUST_DIR / "deploy" / f"compose_trust.{env}.yml" for env in ("development", "production")]
 

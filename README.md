@@ -147,13 +147,13 @@ FLIP is maintained as one monorepo. Each major area owns its detailed setup and 
 | --- | --- |
 | [`flip-api/`](flip-api/) | Central Hub FastAPI service, database, scheduling, and project lifecycle |
 | [`flip-ui/`](flip-ui/) | Vue 3 web application |
-| [`trust/`](trust/) | Trust gateway, data and imaging APIs, and local OMOP/PACS/XNAT services |
+| [`trust/`](trust/) | Trust gateway, data and imaging APIs, local OMOP/PACS/XNAT services, and the trust node's deployment shapes (Compose, Helm chart, on-prem Ansible play) |
 | [`flip-utils/`](flip-utils/) | Shared, pip-installable `flip` Python library |
 | [`fl-services/`](fl-services/) | NVFLARE and Flower network services, images, and provisioning |
 | [`fl-apps/`](fl-apps/) | Backend-specific application templates bundled by the Central Hub |
 | [`fl-tutorials/`](fl-tutorials/) | Worked federated-learning applications and local runners |
 | [`map-apps/`](map-apps/) | MONAI Application Package (MAP) templates for packaging FLIP-trained models for clinical deployment |
-| [`deploy/`](deploy/) | Compose configuration and AWS, on-premises, and Kubernetes providers |
+| [`deploy/`](deploy/) | Central Hub Compose files and the AWS provider (Terraform) |
 | [`docs/`](docs/) | Sphinx source published on ReadTheDocs |
 | [`scripts/`](scripts/) | Repository-wide development and deployment helpers |
 

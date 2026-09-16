@@ -14,8 +14,8 @@
 # FLIP AWS Terraform/OpenTofu and Ansible Infrastructure
 
 > **Deploys: Central Hub + optional cloud trust.** One Terraform root, one state file — the cloud trust runs
-> inside the hub's VPC and is not separable from it. See [`../README.md`](../README.md) for how this provider
-> relates to the other two.
+> inside the hub's VPC and is not separable from it. See [`../README.md`](../README.md) for how a trust node's
+> deployment shape relates to the infrastructure it runs on.
 
 Terraform/OpenTofu and Ansible Infrastructure as Code to deploy the FLIP application stack to AWS.
 

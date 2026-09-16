@@ -231,11 +231,8 @@ def main():
     )
     parser.add_argument(
         "--env-file",
-        default=os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
-            ".env.development",
-        ),
-        help="Path to the .env file (default: ../../.env.development relative to script dir)",
+        default=os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", ".env.development")),
+        help="Path to the .env file (default: .env.development at the repo root)",
     )
     parser.add_argument(
         "--output-dir",

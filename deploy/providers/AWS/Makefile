@@ -18,6 +18,12 @@ PROD=stag
 MAIN_ENV_FILE=../../../.env.stag
 endif
 
+# The trust node's two deployment shapes live beside the trust compose files, not in
+# this provider (#1213). Spelled once; every recipe that reaches them goes through these.
+REPO_ROOT := $(abspath $(dir $(firstword $(MAKEFILE_LIST)))../../..)
+HELM_CHART_DIR := $(REPO_ROOT)/trust/deploy/helm
+ONPREM_ANSIBLE_DIR := $(REPO_ROOT)/trust/deploy/ansible
+
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
@@ -1002,7 +1008,7 @@ provision-local-trust: ## Provision the on-prem (local) trust host: install Dock
 	## trusts the participant kit is delivered to the operator out-of-band.
 	@echo "🔧 Provisioning the on-premises Trust host (this machine)..."
 	@uv sync
-	@uv run ansible-galaxy install -r ../../../trust/deploy/ansible/requirements.yml
+	@uv run ansible-galaxy install -r $(ONPREM_ANSIBLE_DIR)/requirements.yml
 	@if [ -z "$$ANSIBLE_BECOME_PASS" ]; then \
 		echo ""; \
 		echo "❌  ANSIBLE_BECOME_PASS is not set. Run this in your fish terminal first:"; \
@@ -1025,7 +1031,7 @@ provision-local-trust: ## Provision the on-prem (local) trust host: install Dock
 			-e ansible_connection=local \
 			-e ansible_python_interpreter=/usr/bin/python3 \
 			-e fl_backend=$(FL_BACKEND) \
-			../../../trust/deploy/ansible/onprem.yml; \
+			$(ONPREM_ANSIBLE_DIR)/onprem.yml; \
 		PLAY_RC=$$?; \
 		exit $$PLAY_RC
 	@echo "📦 Downloading the FL participant kit for the on-prem trust from S3..."
@@ -1334,14 +1340,14 @@ full-deploy-with-k8s: ## Full AWS deploy + Trust_K8s registration and K8s chart 
 			PROD=$(PROD); } && \
 	$(MAKE) register-trusts KIT=Trust_K8s PROD=$(PROD) && \
 	$(MAKE) -C ../../.. sync-trust-kit KIT=Trust_K8s PROD=$(PROD) && \
-	$(MAKE) -C ../../../trust/deploy/helm sync-kit KIT=Trust_K8s PROD=$(PROD) && \
+	$(MAKE) -C $(HELM_CHART_DIR) sync-kit KIT=Trust_K8s PROD=$(PROD) && \
 	$(MAKE) add-k8s-trust K8S_TRUST_IP=$$_K8S_IP PROD=$(PROD) && \
-	$(MAKE) -C ../../../trust/deploy/helm up \
-		OVERRIDES_FILE=$(shell pwd)/../../../trust/deploy/helm/k8s-trust-Trust_K8s.yaml \
+	$(MAKE) -C $(HELM_CHART_DIR) up \
+		OVERRIDES_FILE=$(HELM_CHART_DIR)/k8s-trust-Trust_K8s.yaml \
 		PROD=$(PROD) && \
 	echo "" && \
 	echo "=== K8s Trust Status ===" && \
-	$(MAKE) -C ../../../trust/deploy/helm status PROD=$(PROD) && \
+	$(MAKE) -C $(HELM_CHART_DIR) status PROD=$(PROD) && \
 	echo "" && \
 	echo "✅ full-deploy-with-k8s complete (PROD=$(PROD))." && \
 	echo "   EC2 trust status was verified in the full-deploy step above." && \

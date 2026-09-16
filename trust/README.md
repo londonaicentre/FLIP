@@ -99,7 +99,7 @@ make -C trust down-trust KIT=GSTT   # if a previous GSTT stack is running
 make -C trust up-trust KIT=GSTT
 ```
 
-On an on-prem host provisioned by the local playbook, prefix these with `sudo -E` — the login
+On an on-prem host provisioned by the on-prem playbook, prefix these with `sudo -E` — the login
 user is deliberately not in the docker group (see
 [trust/deploy/ansible/README.md](deploy/ansible/README.md)). Dev workstations are
 unaffected.

@@ -14,10 +14,9 @@
 # FLIP Trust — Kubernetes Helm Chart
 
 > **Deploys: trust only.** No Central Hub component is defined by this chart. The hub is still involved —
-> the trust must be registered on it (`make register-trust KIT=<CODE>`) to get its kit file. This chart is
-> the Kubernetes rendering of the trust stack whose Compose form is [`../`](../README.md); the cluster it
-> runs on is provisioned outside the repo, or by a [`deploy/providers/`](../../../deploy/providers/README.md)
-> module (that README has the node shape × infrastructure matrix).
+> the trust must be registered on it (`make register-trust KIT=<CODE>`) to get its kit file. The same stack
+> as Docker Compose is [`../`](../README.md); the cluster itself is provisioned outside this repo. See
+> [where things live](../../../deploy/README.md#where-things-live) for the layout rule.
 
 This Helm chart deploys the FLIP trust-side services on Kubernetes. It follows
 the same **zero inbound trust** architecture as the Docker Compose deployment:

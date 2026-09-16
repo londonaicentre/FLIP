@@ -34,13 +34,15 @@ repos:
       # verify them here. Unlike fl-apps-required-files this only reports — the four sites are
       # hand-written, not generated. The dcm2niix-pin-sync job in test_trust_xnat.yml re-runs the
       # same script as the backstop for commits made without pre-commit installed. (#980)
+      # Runs on every commit (four greps over three small files) so the list of pin sites lives
+      # in exactly one place, the script's REFERENCES array — a `files:` regex here would be a
+      # second copy that silently stops the hook firing when the two drift.
       - id: xnat-dcm2niix-pin-sync
         name: Check the dcm2niix image pin is in sync
         entry: bash trust/xnat/dcm2niix/check_image_pin_sync.sh
         language: system
         pass_filenames: false
-        files: '^(trust/xnat/dcm2niix/(Dockerfile|check_image_pin_sync\.sh)|trust/xnat/xnat/config/dcm2niix_command\.json|trust/deploy/helm/templates/xnat-init-job\.yaml|trust/imaging-api/imaging_api/config\.py)$'
-        always_run: false
+        always_run: true
 
   - repo: https://github.com/trufflesecurity/trufflehog
     rev: v3.93.3

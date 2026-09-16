@@ -11,16 +11,13 @@
     limitations under the License.
 -->
 
-# FLIP On-Premises Trust Host Configuration (Ansible)
+# FLIP On-Premises Trust Provisioning (Ansible)
 
-> **Deploys: trust only.** This playbook configures a *host the site already owns* so the trust Compose stack in
-> [`trust/deploy/`](../README.md) can run on it; it provisions no infrastructure, which is why it lives beside
-> the compose files rather than under `deploy/providers/`. The AWS provider must already be deployed — the
-> Make target that drives this play depends on its Terraform outputs, the FL participant kits in S3, and the hub
-> NLB security-group rules. See [`deploy/providers/README.md`](../../../deploy/providers/README.md) for the
-> node shape × infrastructure matrix.
+> **Deploys: trust only.** This playbook prepares a host the site already owns for the trust Compose stack in
+> [`trust/deploy/`](../README.md); see [Prerequisites](#prerequisites) for what must already exist on the AWS
+> side, and [where things live](../../../deploy/README.md#where-things-live) for the layout rule.
 
-Ansible playbook and supporting files to configure an on-premises Ubuntu host as a FLIP Trust node. The provisioned host polls the Central Hub (running in AWS) for tasks — all communication is outbound from the trust.
+Ansible playbook and supporting files to provision an on-premises Ubuntu host as a FLIP Trust node. The provisioned host polls the Central Hub (running in AWS) for tasks — all communication is outbound from the trust.
 
 `onprem.yml` is the on-prem counterpart of the EC2 play [`deploy/providers/AWS/site.yml`](../../../deploy/providers/AWS/site.yml),
 which the [AWS provider](../../../deploy/providers/AWS/README.md) runs against the cloud trust it creates. Together they implement the
@@ -249,6 +246,6 @@ Re-running with an already-listed IP is a no-op (idempotent).
 
 - [AWS Provider README](../../../deploy/providers/AWS/README.md) — Central Hub and cloud Trust deployment
 - [Helm chart README](../helm/README.md) — the same trust stack rendered for Kubernetes
-- [Trust Compose stack README](../README.md) — the compose files this play prepares a host for
+- [Trust Compose stack README](../README.md) — the compose files
 - [Trust README](../../README.md) — Trust service stack details
 - [Deploy README](../../../deploy/README.md) — General deployment prerequisites (AWS CLI, SSH keys, GHCR login)

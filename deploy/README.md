@@ -30,8 +30,8 @@ they are filed by two different rules:
 | Build/populate the mock **OMOP** database | `trust/omop-db/compose.yml` |
 | Run the **FL** services standalone | `fl-services/<backend>/compose*.yml` |
 | Provision **AWS** (hub ECS + optional cloud trust EC2) | [`deploy/providers/AWS/`](providers/AWS/README.md) |
-| Configure an **on-prem** trust host for the compose stack (Ansible) | [`trust/deploy/ansible/`](../trust/deploy/ansible/README.md) |
-| Deploy the trust stack to **Kubernetes** (Helm chart) | [`trust/deploy/helm/`](../trust/deploy/helm/README.md) |
+| Provision an **on-prem** trust host (Ansible) | [`trust/deploy/ansible/`](../trust/deploy/ansible/README.md) |
+| Deploy a trust to **Kubernetes** (Helm) | [`trust/deploy/helm/`](../trust/deploy/helm/README.md) |
 
 Every compose file in **this** directory is Central-Hub-only — `flip-ui`, `flip-api`, `flip-db`, `pgadmin`,
 and the `fl-api-net-*` / `fl-server-net-*` FL server side. No trust service is defined here. The one place
@@ -46,12 +46,11 @@ one hub service meeting one trust service. Everything else hub-side, `flip-api` 
 included, stays on the hub-internal network and reaches the FL server there over its control ports. An
 fl-client holds no Central Hub URL and no Central Hub credential by design, so it is given no route to one.
 
-Only **trusts** have more than one deployment shape. The same trust stack exists as Compose on a host
-(`trust/deploy/compose_trust.*.yml`, with the host configured by `trust/deploy/ansible/`) and as a Helm chart on
-Kubernetes (`trust/deploy/helm/`); both sit beside the compose files because they are two renderings of one
-stack, not two providers. `providers/` holds only the infrastructure those shapes run on — today the `AWS/`
-Terraform root — and the hub, which has exactly one supported production target (AWS ECS Fargate), needs no
-provider of its own. See [`providers/README.md`](providers/README.md) for the shape × infrastructure matrix.
+Only **trusts** have more than one deployment shape — Compose on a host (`trust/deploy/`, the host prepared by
+`trust/deploy/ansible/`) or Helm on Kubernetes (`trust/deploy/helm/`). Both render one stack, so they live with
+it; `providers/` holds only cloud infrastructure (today the `AWS/` Terraform root). The hub has one production
+target, AWS ECS Fargate, and needs no provider. See [`providers/README.md`](providers/README.md) for the
+shape × infrastructure matrix.
 
 ## Supported PostgreSQL Versions
 
