@@ -34,6 +34,11 @@ on:
       - "deploy/compose*.yml"
       - "trust/deploy/compose*.yml"
       - "fl-services/nvflare/compose.dev.yml"
+      # test_secret_scanning_gate.py asserts on the secret-scanning workflow, the
+      # pre-commit pin and the baseline (FLIP#1215) — same trap, same fix.
+      - ".github/workflows/secret-scanning.yml"
+      - ".pre-commit-config.yaml"
+      - ".secrets.baseline"
   pull_request:
     branches: [develop]
     paths:
@@ -47,6 +52,9 @@ on:
       - "deploy/compose*.yml"
       - "trust/deploy/compose*.yml"
       - "fl-services/nvflare/compose.dev.yml"
+      - ".github/workflows/secret-scanning.yml"
+      - ".pre-commit-config.yaml"
+      - ".secrets.baseline"
 
 permissions:
   contents: read
