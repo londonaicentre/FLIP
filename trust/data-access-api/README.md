@@ -55,7 +55,7 @@ It requires the [OMOP database](../omop-db/) to be running and populated with da
 
 ## Configuration
 
-Key environment variables (set in the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>`):
+Key environment variables. Most come from the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>` — but `OMOP_DB_SERVICE_NAME` is an internal-topology constant with a default in `data_access_api/config.py` (`"omop-db"`); it is deliberately absent from the kit template and must not be injected.
 
 | Variable | Description |
 | --- | --- |

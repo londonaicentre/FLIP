@@ -703,7 +703,7 @@ See [`dev/README.md`](./dev/README.md) for the first-time setup workflow (the de
 ```
 deploy/providers/AWS/
 ├── main.tf                     # VPC, IGW, NAT, subnets, RDS, Secrets, ALB, NLB, Route53, Central Hub + Trust EC2
-├── services.tf                 # Cognito + SES (delegated to modules), S3 buckets, IAM bindings
+├── services.tf                 # Cognito (delegated to modules/cognito), S3 buckets, IAM bindings; SES wires to modules/ses from main.tf
 ├── ecs.tf                      # ECS cluster + Fargate capacity providers
 ├── ecs_services.tf             # ECS Fargate services: flip-api, fl-api-net-1, fl-server-net-1
 ├── ecs_tasks.tf                # ECS task definitions for the Central Hub services

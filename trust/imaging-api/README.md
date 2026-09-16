@@ -152,7 +152,7 @@ Create users, update user details, or add a user to an XNAT project.
 
 ## Configuration
 
-Key environment variables (set in the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>`):
+Key environment variables. Most come from the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>` — but `XNAT_URL`, `XNAT_DATABASE_URL` and `DATA_ACCESS_API_URL` are internal-topology constants with defaults in `imaging_api/config.py`; they are deliberately absent from the kit template and must not be injected (`trust/deploy/compose_trust.development.yml` says as much: an empty `${VAR}` from a kit that carried them would override the code default).
 
 | Variable | Description |
 | --- | --- |
