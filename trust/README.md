@@ -125,6 +125,13 @@ trust<N>/trust<N>_pgdata.tar   trust<N>/trust<N>_orthanc_data.tar
 omop-csv/<project>/*.csv       omop-csv/<project>/source/…        dicom/<project>.tar.gz
 ```
 
+Not every project has a `dicom/` set. A project cut from open data — `spleen_project` and
+`brain_mri_project`, both from the Medical Segmentation Decathlon — publishes only its tables and
+the metadata table they were built from; its DICOMs are regenerated locally by a deterministic
+converter (`fl-tutorials/datasets/`, FLIP#1221) and seeded from that tree
+(`make -C fl-tutorials seed-<dataset> KIT=<CODE>`, which drives `seed-omop … CANONICAL_DIR=` and
+`seed-orthanc … DICOM_SOURCE= TABLES_DIR=` here). `cxr_project` and `prostate_project` still ship one.
+
 A **data version is a git tag on that dataset**, and [`.data_version`](.data_version) in this
 directory pins one — a single pin for OMOP and Orthanc together, because a tag describes the
 whole dataset state. Every consumer (the `update-*-data` snapshot scripts, `seed-omop` /
@@ -145,7 +152,11 @@ make publish-trust-data VERSION=20261001 DRY_RUN=1 \
   PGDATA="omop-db/dist/trust1_pgdata.tar omop-db/dist/trust2_pgdata.tar" \
   OMOP_CSV=omop-db/data/canonical DICOM=orthanc/dist/dicom/<project>.tar.gz [ORTHANC=… CARD=…]
 make publish-trust-data VERSION=20261001 …            # for real; then set .data_version to 20261001
+make publish-trust-data VERSION=20261001 OMOP_CSV=… DELETE=dicom/spleen_project.tar.gz   # retire a re-hosted set
 ```
+
+`DELETE=<path in repo>` removes a file from `main` in the same commit (earlier tags keep it) — how
+`dicom/spleen_project.tar.gz` went when spleen moved to local regeneration.
 
 (`hf auth login` with write access to the dataset is needed.) Bumping `.data_version` is what
 moves a checkout: the next `up-trust` re-snapshots — refusing, without `FORCE=1`, to discard a

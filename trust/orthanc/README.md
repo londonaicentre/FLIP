@@ -38,9 +38,10 @@ chosen set of projects' studies into a **running** trust's PACS — the PACS hal
 of `make -C trust seed KIT=<CODE>` — seed it:
 
 ```sh
-make -C trust seed-orthanc KIT=GSTT PROJECTS="spleen_project cxr_project"
-make -C trust seed-orthanc KIT=KCH  PROJECTS="spleen_project" CLEAR=1     # replace existing studies first
+make -C trust seed-orthanc KIT=GSTT PROJECTS="cxr_project"
+make -C trust seed-orthanc KIT=KCH  PROJECTS="cxr_project" CLEAR=1        # replace existing studies first
 make -C trust seed-orthanc KIT=GSTT PROJECTS="cxr_project" DRY_RUN=1      # resolve and count only
+make -C fl-tutorials seed-spleen KIT=GSTT                                 # spleen / brain_mri: from a regenerated local tree (below)
 ```
 
 `seed_orthanc.py` is the DICOM twin of `omop_db_tools.import_tables`: it reads
@@ -82,13 +83,29 @@ carries no version — `publish-trust-data` puts it on the dataset in one commit
 and tags that commit, and `trust/.data_version` is then bumped to the tag.
 
 `--fill-empty-numbers` sets a present-but-empty `AcquisitionNumber` /
-`SeriesNumber` to 1 (the spleen generator's output has both empty on every CT
-instance, which makes MONAI Deploy's loader drop the series — see
-`docs/source/working-with-flip-apps/package-model-as-map.rst`). Absent tags stay
-absent; populated ones are untouched. Published sets (`dicom/`, at every tag
-from `20260729` on): `spleen_project` (41 studies, 3,650 instances, filled) and
-`cxr_project` (8,332 studies). Both are the original generator outputs, verified
-against the published OMOP — not extractions from the storage tarballs.
+`SeriesNumber` to 1 (the plastimatch-era spleen generator's output had both empty
+on every CT instance, which makes MONAI Deploy's loader drop the series — see
+`docs/source/working-with-flip-apps/package-model-as-map.rst`; the shared writer
+that replaced it stamps both). Absent tags stay absent; populated ones are
+untouched. Published sets (`dicom/`): `cxr_project` (8,332 studies, at every tag
+from `20260729` on) and `prostate_project`. `spleen_project`'s set (41 studies,
+3,650 instances, filled) is on the tags up to the FLIP#1221 cut only: from then on
+spleen — like `brain_mri_project` — regenerates its DICOMs locally from the public
+MSD archive and publishes only its tables, so there is nothing to package. All
+published sets are the original generator outputs, verified against the
+published OMOP — not extractions from the storage tarballs.
+
+### Seeding a project whose DICOMs are not on the dataset
+
+`seed_orthanc.py --source <dicom tree> --tables-dir <canonical tables>` (both
+together; `make seed-orthanc … DICOM_SOURCE= TABLES_DIR=`) reads a regenerated tree
+in any layout — instances are grouped by their `AccessionNumber` tag, as
+`publish_dicom.py` reads them — and selects this trust's slice from the local
+`image_occurrence.csv` by the same `source_trust` column, with the same
+zero-mismatch guard. The `.seeded` marker then records `source=<dir>` instead of a
+data version. `make -C fl-tutorials seed-spleen KIT=<CODE>` and `seed-brain-mri`
+wrap this together with the OMOP half (`seed-omop … CANONICAL_DIR=`), so a project
+can be proven on a running trust before its data version is tagged.
 
 To cut a new storage tarball (the snapshot path, for EC2/k8s): seed a fresh
 Orthanc with `seed-orthanc`, then `tar -C <storage dir> -cf trust<N>_orthanc_data.tar .`

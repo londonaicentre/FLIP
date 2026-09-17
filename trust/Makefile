@@ -579,25 +579,38 @@ PROJECTS ?= cxr_project spleen_project
 # and an override rather than living inside `TRUST_INDEX=$(TRUST_NUM)`.
 #   make -C trust seed KIT=GSTT SOURCE_TRUST=2
 SOURCE_TRUST ?= $(TRUST_NUM)
+# CANONICAL_DIR=<dir> loads a project's tables from a local canonical tree
+# (<dir>/<project>/<table>.csv) instead of the published tag — how a project is
+# proven on a running trust BEFORE its data version is tagged (FLIP#1221):
+#   make -C trust seed-omop KIT=GSTT PROJECTS=brain_mri_project CANONICAL_DIR=/abs/path/canonical
+# CLEAN=all wipes every project's rows first (default: only the listed projects',
+# by their own person_ids) — the one-time move off a re-cut project whose ids all
+# changed, e.g. spleen at the FLIP#1221 cut:
+#   make -C trust seed-omop KIT=GSTT PROJECTS="cxr_project spleen_project" CLEAN=all CANONICAL_DIR=…
 seed-omop:
 	$(require_kit)
 	$(OMOP_DB_CMD) seed-omop TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
 	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
 	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB) PROJECTS="$(PROJECTS)" \
+	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR)) $(if $(CLEAN),CLEAN=$(CLEAN)) \
 	  $(if $(and $(TRUST_NUM),$(OMOP_DATA_DIR)),OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_DIR))
 
 # The PACS half: this trust's slice of each project's DICOMs into its running
 # Orthanc, selected by the same source_trust column, so OMOP and PACS agree by
 # construction. CLEAR=1 removes these projects' existing studies first (Orthanc
 # never overwrites an AlreadyStored instance); DRY_RUN=1 resolves and counts.
+# A project whose DICOMs are not on the dataset is seeded from a local tree with
+# DICOM_SOURCE=<dir> TABLES_DIR=<canonical dir>, both or neither (FLIP#1221).
 #   make -C trust seed-orthanc KIT=GSTT PROJECTS="spleen_project cxr_project"
+#   make -C trust seed-orthanc KIT=GSTT PROJECTS=brain_mri_project DICOM_SOURCE=/abs/dicom TABLES_DIR=/abs/canonical
 seed-orthanc:
 	$(require_kit)
 	$(ORTHANC_CMD) seed-orthanc TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  PACS_UI_PORT=$(PACS_UI_PORT) \
 	  ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
 	  ORTHANC_STORAGE_DIR_TRUST_$(TRUST_NUM)=$(ORTHANC_STORAGE_DIR) PROJECTS="$(PROJECTS)" \
+	  $(if $(DICOM_SOURCE),DICOM_SOURCE=$(DICOM_SOURCE)) $(if $(TABLES_DIR),TABLES_DIR=$(TABLES_DIR)) \
 	  $(if $(CLEAR),CLEAR=$(CLEAR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
 
 # Both halves for one trust, then for the shipped dev roster. Run after
@@ -624,7 +637,7 @@ publish-trust-data:
 	uv run publish_trust_data.py --version $(VERSION) \
 	  $(if $(PGDATA),--pgdata $(PGDATA)) $(if $(ORTHANC),--orthanc $(ORTHANC)) \
 	  $(if $(OMOP_CSV),--omop-csv $(OMOP_CSV)) $(if $(DICOM),--dicom $(DICOM)) \
-	  $(if $(CARD),--card $(CARD)) $(if $(filter 1,$(DRY_RUN)),--dry-run)
+	  $(if $(CARD),--card $(CARD)) $(if $(DELETE),--delete $(DELETE)) $(if $(filter 1,$(DRY_RUN)),--dry-run)
 
 # Unit tests + lint for the trust-level data tooling (publish_trust_data.py). The
 # seeders' own suites are `make -C orthanc test` and `make -C omop-db local_test`.

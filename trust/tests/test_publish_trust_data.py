@@ -119,6 +119,21 @@ class TestBuildOperations:
         with pytest.raises(SystemExit, match="nothing to publish"):
             pub.build_operations([], None, [], None)
 
+    def test_a_delete_is_one_more_operation_in_the_same_commit(self, pub, tmp_path):
+        """Retiring a re-hosted DICOM set (spleen, FLIP#1221) rides in the commit that publishes its re-cut tables."""
+        card = touch(tmp_path / "README.md")
+        ops = pub.build_operations([], None, [], card, ["dicom/spleen_project.tar.gz"])
+        assert [op.path_in_repo for op in ops] == ["README.md", "dicom/spleen_project.tar.gz"]
+        assert isinstance(ops[-1], pub.CommitOperationDelete)
+
+    def test_a_delete_alone_is_something_to_publish(self, pub):
+        ops = pub.build_operations([], None, [], None, ["dicom/spleen_project.tar.gz"])
+        assert len(ops) == 1
+
+    def test_deleting_a_versioned_path_is_refused(self, pub):
+        with pytest.raises(SystemExit, match="versioned paths are not on main"):
+            pub.build_operations([], None, [], None, ["dicom/spleen_project_20260729.tar.gz"])
+
 
 class TestVersionFormat:
     """The tag is the half that cannot be corrected later, so it is checked like a filename is."""
