@@ -11,8 +11,9 @@
 # limitations under the License.
 #
 # Verify that tutorial files kept as byte-identical copies of another file have not
-# drifted. What remains here is the Ark+ NVFLARE pair: two evaluation apps that share
-# data_utils.py and arkplus_flat_models.py between themselves.
+# drifted. What remains here is tutorial-to-tutorial: the Ark+ NVFLARE pair (two evaluation
+# apps that share data_utils.py and arkplus_flat_models.py between themselves) and the EHR
+# risk-prediction tutorial's cross-backend files (the Flower copy must match the NVFLARE one).
 #
 # The Flower half used to live here too, as six hand-written pairs. It moved to
 # fl-tutorials/tests/test_flower_platform_parity.py, which derives the same pairs from the
@@ -41,6 +42,16 @@ cd "$(dirname "$0")/.." || exit 1
 
 # "<copy>:<reference file it must match>"
 PAIRS=(
+  # The EHR risk-prediction tutorial exists on both backends and shares its feature engineering,
+  # model factory and cohort query as byte-identical copies (the same preprocessing/architecture
+  # must train on NVFLARE and Flower alike). Like the Ark+ pair below this is tutorial-to-tutorial,
+  # so nothing in the tree can derive it. The NVFLARE copy is the reference; resync by copying it
+  # over the Flower copy. These pairs' reference side lives under
+  # fl-tutorials/nvflare/tabular_classification/, which fl-apps-check-tutorial-sync.yml's path
+  # filters must include (see the NOTE below).
+  "fl-tutorials/flower/ehr_risk_prediction/app/feature_engineering.py:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files/feature_engineering.py"
+  "fl-tutorials/flower/ehr_risk_prediction/app/models.py:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files/models.py"
+  "fl-tutorials/flower/ehr_risk_prediction/query.sql:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql"
   # The two Ark+ evaluation apps differ only in how many checkpoints they score; their data
   # loading and their flattened model definitions are meant to be the same file -- and they have
   # already drifted once (the Client-API port landed in the baseline copy days before the

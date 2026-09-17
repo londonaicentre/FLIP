@@ -297,13 +297,20 @@ Data
 -----
 
 - An **OMOP database** (PostgreSQL) pre-populated with the project's anonymised clinical
-  data.
+  data, in the ``omop`` schema — OMOP CDM 5.4 plus the MI-CDM imaging tables.
 
 - A **PACS instance** (e.g. Orthanc) pre-populated with the project's anonymised DICOM
   imaging data.
 
 - Consistent pseudonymisation between OMOP records and DICOM data so they can be linked
-  within the TRE.
+  within the TRE. Concretely, the link is the accession number: every imaging row in
+  ``image_occurrence`` carries, in ``accession_id``, the DICOM Accession Number
+  ``(0008,0050)`` of the matching study in the PACS, and pseudonymisation must change both
+  or neither. ``accession_id`` is FLIP's addition to MI-CDM, so the ingest step must create
+  and populate it — see :ref:`omop-accession-id` — with exactly one study's accession number:
+  never empty and never containing ``*``, ``?`` or ``\``, which to a PACS are queries matching
+  many studies, so FLIP drops such rows from the pull (with a warning in the trust's imaging-api
+  log) and the study is never pulled.
 
 Software
 ---------

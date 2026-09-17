@@ -31,7 +31,9 @@ make -C fl-tutorials download-spleen-data              # MSD build (NUM_CASES=<1
 make -C fl-tutorials download-spleen-checkpoint        # evaluation-tutorial checkpoint only
 make -C fl-tutorials download-arkplus-finetuning-data  # large (~6.3 GB)
 make -C fl-tutorials download-arkplus-eval-data        # (~1.6 GB)
+make -C fl-tutorials download-synthea-data             # EHR tabular dataset (~5 MB, backend-agnostic)
 make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrichment
+make -C fl-tutorials download-weights ARCH=squeezenet1_1   # a pretrained backbone a tutorial ships beside its app
 ```
 
 | Dataset | Source | Output under `fl-tutorials/data/` | Consumed by |
@@ -40,6 +42,8 @@ make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrich
 | spleen | MSD Task09_Spleen (`NUM_CASES`, default 10) | `spleen/{images/, dataframe.csv}` | 3d_spleen_segmentation + evaluation + latent_diffusion_model (**both backends**); enrichment labels |
 | spleen checkpoint | HF `aicentreflip/flip-fl-base-test-data` | `model_checkpoints/model.pt` | 3d_spleen_segmentation_evaluation |
 | arkplus | HF `aicentreflip/tutorials-arkplus-cxr-classification` | `arkplus/site{1,2}[,_holdoff]/` | the three Ark+ tutorials (NVFLARE) |
+| synthea | Synthea-in-OMOP, 1k persons (AWS Open Data Registry) | `synthea/{dataframe.csv, site{1,2}/dataframe.csv}` | ehr_risk_prediction (both backends); on the platform the same data goes into each trust's OMOP via `make -C trust load-synthea-ehr` |
+| weights | `download.pytorch.org` (torchvision checkpoints, sha256-prefix checked; `weights/fetch_weights.py` lists them) | `weights/<torchvision filename>` (flat, e.g. `squeezenet1_1-b8a52dc0.pth`) | latent_diffusion_model via its own `make weights`, which copies the file into `app_files/` to be uploaded with the app — FL apps never download at run time (FLIP#1206) |
 
 One spleen tree serves both backends. `download-spleen-data` refuses to overwrite an
 existing `data/spleen/images` — remove it first to rebuild at a different `NUM_CASES`.
@@ -82,6 +86,19 @@ against `flip-utils` without adopting `spleen/`'s env:
   Hugging Face and normalise each into `accession-resources/` +
   `sample_get_dataframe_response.csv`. Parameterised by `--sites`, so one script backs both
   `download-arkplus-finetuning-data` and `download-arkplus-eval-data`.
+
+[`synthea/`](synthea/) owns the single EHR script, in the smallest of the dataset uv projects
+(pandas only — the project exists so its tests run in an environment declaring exactly what the
+script imports, like the other two):
+
+- `build_synthea_dataframe.py` — fetch three OMOP tables (`person`, `condition_occurrence`,
+  `visit_occurrence`) of the public Synthea-in-OMOP dataset and derive the EHR risk-prediction
+  tutorial's feature dataframe: one row per person labelled with first type-2-diabetes diagnosis,
+  plus `site1/`/`site2/` `person_id`-modulo splits. Its feature logic mirrors the tutorial's
+  `query.sql` (the OMOP SQL a deployed run sends to each trust) — change one and change the other
+  (see the [EHR tutorial README](../nvflare/tabular_classification/ehr_risk_prediction/README.md)).
+  `tests/datasets/synthea/` keeps the two honest: it runs the actual `query.sql` on SQLite over the
+  same tiny tables and diffs it against `derive_features` row for row.
 
 ## OMOP mock-data generation (FLIP#1092)
 

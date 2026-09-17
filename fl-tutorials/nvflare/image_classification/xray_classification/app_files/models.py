@@ -23,13 +23,16 @@ def get_model():
 
 
 class DenseNet(nn.Module):
-    """
-    Calls the Densenet121 module.
+    """Wraps MONAI's DenseNet121 for 2D chest-X-ray multi-label classification.
+
+    ``pretrained=False``, deliberately: FL apps never download at run time (FLIP#1206 — the user
+    guide's *Model Files* section has the why). The xray tutorial README records why the ImageNet
+    initialisation was dropped rather than shipped, and that it cost nothing measurable here.
     """
 
     def __init__(self):
         super().__init__()
-        self.net = DenseNet121(spatial_dims=2, in_channels=1, out_channels=2, init_features=128, pretrained=True)
+        self.net = DenseNet121(spatial_dims=2, in_channels=1, out_channels=2, init_features=128, pretrained=False)
 
     def forward(self, x):
         return self.net(x)

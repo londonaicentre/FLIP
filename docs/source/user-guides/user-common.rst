@@ -406,6 +406,28 @@ The full per-job-type file lists, and the configuration each backend accepts, ar
 the :ref:`FL nets component page <flip-fl-nets>`. For worked examples of complete, working apps,
 see the `FLIP tutorials <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials>`_.
 
+.. important::
+
+   **Your app must not download anything while it runs.** Every weight, checkpoint or auxiliary
+   network it needs has to be one of the files you upload here. Calls such as ``pretrained=True``,
+   ``torch.hub.load(...)``, ``from_pretrained("org/model")`` or ``load_state_dict_from_url(...)``
+   fetch from the internet when the model is built, and that fails twice over:
+
+   - **It does not work where the app runs.** The FL server on a platform-managed estate and a
+     Trust's training host behind an NHS firewall have no internet route. The download hangs and
+     the training run dies — on NVFLARE the Trust reports ``cannot sync with server Runner``; on
+     Flower the run never issues a round.
+   - **It bypasses the checks.** The files you upload are scanned once and then shipped exactly as
+     uploaded, so what a Trust can inspect before training is what runs. A URL fetched later can
+     serve different bytes — and loading a swapped ``.pt`` checkpoint executes whatever it
+     contains, on the FL server and next to a Trust's data.
+
+   Ship weights as an uploaded file instead — ``.safetensors`` where you can (it carries tensors
+   only, no pickle to execute), or ``.pt``/``.pth``, which the platform scans as described below
+   — and build the model with ``pretrained=False``, loading the file from beside your code. The
+   `latent-diffusion tutorial <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_synthesis/latent_diffusion_model>`_
+   shows the pattern for a network a library would otherwise fetch through ``torch.hub``.
+
 .. warning::
 
    Please ensure that any model files uploaded to FLIP have been tested locally using the FLIP tutorials workflow, and have been validated to ensure they are free of syntax errors.

@@ -29,7 +29,8 @@ on:
     branches: [main, develop]
     paths:
       - "fl-tutorials/**"
-      - "fl-apps/flower/**"
+      # The offline-apps guard (tests/test_offline_apps.py) scans every fl-apps template, both backends.
+      - "fl-apps/**"
       - "flip-utils/flip/**"
       - "flip-utils/pyproject.toml"
       - "flip-utils/uv.lock"
@@ -38,7 +39,8 @@ on:
     branches: [main, develop]
     paths:
       - "fl-tutorials/**"
-      - "fl-apps/flower/**"
+      # The offline-apps guard (tests/test_offline_apps.py) scans every fl-apps template, both backends.
+      - "fl-apps/**"
       - "flip-utils/flip/**"
       - "flip-utils/pyproject.toml"
       - "flip-utils/uv.lock"
