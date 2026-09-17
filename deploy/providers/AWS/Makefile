@@ -981,8 +981,15 @@ ORTHANC_PASSWORD_KIT := $(shell sed -n 's/^ORTHANC_PASSWORD=//p' ../../../trust/
 # which fetch the canonical tables and DICOM sets at that tag.
 TRUST_DATA_VERSION := $(shell cat ../../../trust/.data_version 2>/dev/null | tr -d ' \n\r\t')
 
+# seed-trust-data is NOT a prerequisite: prerequisites run before the recipe, i.e. before
+# the stack below is stopped, and the seed play starts a throwaway omop-db on the same data
+# directory the running omop-db has open — Postgres takes the foreign PID in postmaster.pid
+# for stale and runs crash recovery over a live database (#1190 review). So the seed runs in
+# the recipe, between down-trust-ec2 and up-trust-ec2; the play itself also refuses while any
+# omop-db is up, for the standalone `make seed-trust-data`. SEED_PROJECTS / SEED_ORTHANC /
+# SOURCE_TRUST given on this command line reach the sub-make through MAKEFLAGS.
 .PHONY: deploy-trust
-deploy-trust: check-trust-ec2-enabled ssh-config update-env seed-trust-data stage-fl-kit ## Deploy trust relationships after central hub is deployed
+deploy-trust: check-trust-ec2-enabled ssh-config update-env stage-fl-kit ## Deploy trust relationships after central hub is deployed
 	@echo "🔍 Checking trust images (tag: $(DOCKER_TAG))..."
 	@missing=false; \
 	for image in $(TRUST_IMAGES); do \
@@ -1007,6 +1014,8 @@ deploy-trust: check-trust-ec2-enabled ssh-config update-env seed-trust-data stag
 	@echo "🧹 Stopping existing stack for KIT=$(KIT) and pruning unused images..."
 	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../trust down-trust-ec2 KIT=$(KIT) PROD=${PROD} 2>/dev/null || true
 	@docker --context flip-trust image prune -af 2>/dev/null || true
+	@echo "🗄️  Seeding trust data while the stack is down..."
+	$(MAKE) seed-trust-data KIT=$(KIT) PROD=$(PROD)
 	@echo "🚀 Deploying Trust services..."
 	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../ up-trust-ec2 KIT=$(KIT) PROD=${PROD}
 	@echo "✅ Trust deployment complete!"
@@ -1238,7 +1247,7 @@ full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trus
 	##    for the registered slot via stage-fl-kit once register-trusts has written it)
 	## 6. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
-	## 8. deploy-trust + status: re-stage the FL kit for the registered slot, bring up cloud Trust container stack and verify
+	## 8. deploy-trust + status: re-stage the FL kit for the registered slot, seed the trust data with the stack down, bring up cloud Trust container stack and verify
 	## Prerequisite: create stub kit files first: make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=London PROD=$(PROD)
 full-deploy: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust status
 

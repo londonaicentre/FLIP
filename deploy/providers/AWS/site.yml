@@ -625,7 +625,7 @@
   hosts: trust_ec2
   become: true
   tags: [data, seed]
-  # FLIP#1187: the stores start empty and are seeded, before the stack is deployed, exactly the
+  # FLIP#1187: the stores start empty and are seeded, with the trust stack stopped, exactly the
   # way a dev host (`make -C trust ensure-seeded`) and the Kubernetes chart (the trust-seed hook)
   # seed them — the one procedure in trust/seed_trust.sh, run here in uv's image against two
   # throwaway containers on the host's data directories (the same pattern the vocabulary play
@@ -661,6 +661,32 @@
     omop_postgres_user: "{{ omop_postgres_user | default('postgres', true) }}"
     omop_postgres_db: "{{ omop_postgres_db | default('trustomopdb', true) }}"
   tasks:
+    # The throwaway omop-db below starts a postmaster on {{ omop_dir }}/db_data, and Postgres will
+    # not refuse if the running stack's omop-db already has it open: that postmaster's PID in
+    # postmaster.pid is invisible from the new container's PID namespace, so it is taken as stale
+    # and crash recovery runs over a live database (#1190 review). deploy-trust now stops the
+    # stack before reaching this play; this guard covers the standalone `make seed-trust-data`.
+    # It matches any compose project's omop-db on the host, not just trust<trust_num>'s — the
+    # data directory is host-global, so a stack under another project name holds it just the
+    # same — and the omop-seed container an aborted run may have left behind.
+    - name: check nothing on this host has the OMOP data directory open
+      shell: |
+        docker ps -q -f label=com.docker.compose.service=omop-db
+        docker ps -q -f name='^omop-seed$'
+      register: omop_dir_holders
+      changed_when: false
+
+    - name: refuse to seed while the trust's own cluster has the data directory open
+      assert:
+        that:
+          - omop_dir_holders.stdout | trim | length == 0
+        fail_msg: >-
+          a container on this host has {{ omop_dir }}/db_data open ({{ omop_dir_holders.stdout | trim }}):
+          stop the trust stack first — DOCKER_CONTEXT=flip-trust make -C trust down-trust-ec2
+          KIT=<CODE> PROD=<env>, which is what deploy-trust runs before seeding — or remove a
+          leftover throwaway with `docker rm -f omop-seed`; seeding over a live database would
+          run crash recovery on it from a second postmaster.
+
     - name: assert the kit credentials are set
       assert:
         that:
