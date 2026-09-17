@@ -22,7 +22,7 @@ Set your password to activate your account:
 
 Open the link in a web browser, replacing <your trust's XNAT address> with the address you normally use to open XNAT at {{trust_name}} (your trust's XNAT administrator can tell you it) and keeping the rest of the link exactly as shown. You'll be asked to choose your own password - no password is ever sent by email.
 
-IMPORTANT: XNAT is only reachable from inside {{trust_name}}'s secure network. Open this link from a machine connected to that network (for example, using the connection you normally use to reach XNAT). It cannot be opened over the public internet. The link stops working as soon as you have set your password, and expires if it is left unused.
+IMPORTANT: XNAT is only reachable from inside {{trust_name}}'s secure network. Open this link from a machine connected to that network (for example, using the connection you normally use to reach XNAT). It cannot be opened over the public internet. The link stops working as soon as you have set your password, and expires if it is left unused - by default 48 hours after it was issued (a trust may configure a different limit) - so please set your password promptly.
 
 This is an automated message. Please do not reply to this email. This message may contain confidential information. If you are not the intended recipient, please do not disclose, copy, or distribute it.
 

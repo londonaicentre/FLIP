@@ -163,6 +163,17 @@ In development (when `PROD` is not set), `make up` also mounts the local `xnat/p
 
 If successful, you will be able to log in to XNAT with the service account credentials (specified in the trust's kit file, `trust/.env.<CODE>.<env>`) and see the registered PACS in the DICOM Query-Retrieve plugin.
 
+### Invite links and `aliasTokenTimeout`
+
+FLIP never emails an XNAT password. When a project is approved, imaging-api creates each new user with a random,
+undisclosed password and asks XNAT for an *alias token* on their behalf (`GET /data/services/tokens/issue/user/<name>`,
+which needs the service account's `Administrator` role); the hub emails the resulting host-less set-password path. The
+link's unused lifetime is XNAT's `aliasTokenTimeout` site setting (Site Administration → Security → User Logins /
+Session Controls → Alias Token Timeout; 48 hours by default) — `configure-xnat.sh` leaves it at the site default. Setting
+a password through the link invalidates it. Raising the timeout lengthens every invite link in flight, so treat it as a
+security setting. An account whose link expired unused is re-invited on the next project approval that includes the
+user (imaging-api re-issues a token for any existing account with no successful login), so no manual reset is needed.
+
 ## Plugins
 
 Plugins and the XNAT WAR are stored in S3 as a **version-keyed artifact set**:
