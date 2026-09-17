@@ -42,10 +42,26 @@ server; no inbound ports are exposed from the K8s cluster.
 > [kstatus](https://github.com/kubernetes-sigs/cli-utils/tree/master/pkg/kstatus),
 > which is stricter than Helm 3's readiness check — an install that Helm 3 called
 > ready can now block until the workloads genuinely settle, and time out if they
-> never do. `make deploy` does **not** pass `--wait` (it relies on `--timeout 20m`
-> alone), so this only bites if you add `--wait` to your own `helm upgrade`
-> invocation; if you do, size `--timeout` for the slowest service to become ready
-> rather than for the API call to return.
+> never do. `make deploy` does **not** pass `--wait` (it relies on
+> `--timeout $(HELM_TIMEOUT)` alone), so this only bites if you add `--wait` to your
+> own `helm upgrade` invocation; if you do, size `--timeout` for the slowest service
+> to become ready rather than for the API call to return.
+
+> **`HELM_TIMEOUT` (default `30m`).** The one budget for every wait on the `xnat-init`
+> job — `make deploy` waits on it as a post-upgrade Helm hook, `make xnat-init` waits on
+> it directly with `kubectl wait`, and both read this variable. Raise it per site rather
+> than editing the Makefile:
+>
+> ```bash
+> make deploy-trust-k8s KIT=<KIT> HELM_TIMEOUT=45m
+> ```
+>
+> Set it below the job's real duration and the upgrade reports
+> `resource Job/... not ready` *after* it has already applied the new pod spec, so the
+> failure names Helm and not the wait that expired. That is how a corrected plugin roster
+> sat un-deployed across five consecutive upgrades in FLIP#1228 — see
+> [TROUBLESHOOTING §2.7](TROUBLESHOOTING.md#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog).
+> Time one run (`kubectl get job -n flip-trust -w`) before choosing a value.
 
 ## Quickstart
 
@@ -203,6 +219,26 @@ kubectl logs -n flip-trust -l app.kubernetes.io/component=trust-api
 A `401 "API key is missing"` means the API-key **header** is mismatched — the
 chart default `TRUST_API_KEY_HEADER` is `Authorization` (the platform default);
 override it only if your hub uses a different header.
+
+### 6a. Verify the DICOM ingest path
+
+Polling green does not mean imaging works: the two share no code. Run both checks —
+neither implies the other.
+
+```bash
+make -C trust/deploy/helm status         # includes the plugin-roster comparison below
+make -C trust/deploy/helm smoke-cstore   # a real C-STORE, then reads XNAT's receiver log
+```
+
+`status` lists `/data/xnat/home/plugins` in the running `xnat-web` pod and compares it
+against the release's own `xnat.web.plugins.urls`, failing with both versions named when
+they disagree. They disagree when the **pod spec** is older than the values — the plugins
+live in an emptyDir refilled by an init container on every pod creation, so a mismatch
+means no upgrade has rolled `xnat-web` since the roster changed. A plugin built for a
+different XNAT core aborts every C-STORE in the importer, which is why `smoke-cstore`
+stores a real object through the PACS and then greps the receiver's `dicom.log` rather
+than trusting a C-ECHO: C-ECHO never reaches the importer and passes throughout. See
+[TROUBLESHOOTING §2.7](TROUBLESHOOTING.md#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog).
 
 ### 7. (FL training only) Open the FL-server NLB
 
