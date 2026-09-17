@@ -17,19 +17,24 @@
 #
 # C-ECHO never reaches XNAT's importer: it completes inside the DICOM association
 # layer. A plugin compiled against a different XNAT core than the one running throws
-# AbstractMethodError on the FIRST object the importer hands to it — so a trust can
-# have a green C-ECHO, a Ready xnat-web pod, a deployed Helm release and an HTTP-200
-# site, and still abort every single transfer. That is FLIP#1228 exactly. This script
-# therefore drives a real store and then reads the receiver's own log, because the
-# association status alone reproduces the false confidence the bug was made of.
+# AbstractMethodError on the FIRST object the importer handles — so a trust can have a
+# green C-ECHO, a Ready xnat-web pod, a deployed Helm release and an HTTP-200 site, and
+# still abort every single transfer. That is FLIP#1228 exactly. This script therefore
+# drives a real store and then reads the receiver's own log, because the association
+# status alone reproduces the false confidence the bug was made of.
 #
 # HOW IT SENDS
 #
-# Through the mocked PACS, not a synthetic sender: the chart already registers XNAT
-# as a DICOM modality in Orthanc (templates/orthanc.yaml, ORTHANC__DICOM_MODALITIES),
-# so `POST /modalities/<AE>/store` makes Orthanc open the same association the real
+# Through the mocked PACS, not a synthetic sender: the chart already registers XNAT as
+# a DICOM modality in Orthanc (templates/orthanc.yaml, ORTHANC__DICOM_MODALITIES), so
+# `POST /modalities/<key>/store` makes Orthanc open the same association the real
 # retrieval path opens after a C-MOVE. No extra image, no extra pod, no NetworkPolicy
-# exception, and the bytes are real study data rather than a minimal fabricated object.
+# exception, and the bytes are real study data rather than a fabricated object.
+#
+# The REST calls are issued from the XNAT pod rather than from Orthanc's own: curl is
+# guaranteed there (configure-xnat.sh, which runs from that image, is built on it) while
+# the upstream Orthanc image promises no HTTP client at all. Both pods sit in the
+# namespace the egress policy allows intra-namespace traffic within.
 #
 # Usage:
 #   make -C trust/deploy/helm smoke-cstore
@@ -42,16 +47,19 @@ set -euo pipefail
 
 NAMESPACE="${NAMESPACE:-flip-trust}"
 RELEASE_NAME="${RELEASE_NAME:-trust-release}"
-# The modality key in ORTHANC__DICOM_MODALITIES, not the AE title (they happen to
-# match in the shipped config).
+# The modality KEY in ORTHANC__DICOM_MODALITIES, which is not necessarily the AE title
+# (they happen to match in the shipped config).
 ORTHANC_MODALITY="${ORTHANC_MODALITY:-XNAT}"
+ORTHANC_URL="${ORTHANC_URL:-http://orthanc:8042}"
 # Override to store a known instance rather than whichever one Orthanc lists first.
 INSTANCE_ID="${INSTANCE_ID:-}"
 DICOM_LOG="${DICOM_LOG:-/data/xnat/home/logs/dicom.log}"
+# How long to let the receiver write its side of the story before reading the log.
+SETTLE_SECONDS="${SETTLE_SECONDS:-5}"
 
-# Importer failures, as they appear in dicom.log. The first is the version-mismatch
-# crash itself; the second is how the same association looks from the receiving end
-# once the importer has already thrown.
+# Importer failures, as they appear in dicom.log. The first two are the version-mismatch
+# crash itself; the third is how the same association looks from the receiving end once
+# the importer has already thrown.
 FAILURE_PATTERNS='AbstractMethodError|NoSuchMethodError|unable to read DICOM object null'
 
 red() { printf '\033[0;31m%s\033[0m\n' "$*"; }
@@ -64,8 +72,8 @@ fail() {
 }
 
 pod_for() {
-  # $1 = component label. Prefer the release's own pod, fall back to component-only
-  # for a pod that predates the instance label.
+  # $1 = component label. Prefer the release's own pod, fall back to component-only for
+  # a pod that predates the instance label.
   local component="$1" pod
   pod=$(kubectl get pods -n "$NAMESPACE" \
     -l "app.kubernetes.io/instance=${RELEASE_NAME},app.kubernetes.io/component=${component}" \
@@ -80,15 +88,25 @@ pod_for() {
   printf '%s' "$pod"
 }
 
-# Run a curl against Orthanc's REST API from INSIDE the orthanc pod, so the
-# registered-user credential is read out of the pod's own environment and never
-# reaches this machine, this terminal, or a process list.
+# Resolve the Secret holding Orthanc's registered users from the Deployment that
+# consumes it, rather than reconstructing the chart's naming here: `secrets.create`
+# false points every service at an operator-supplied `secrets.existingName`, and a
+# guessed name would fail as "no credential" on a perfectly healthy trust.
+orthanc_secret_ref() {
+  kubectl get deploy -n "$NAMESPACE" \
+    -l "app.kubernetes.io/component=orthanc" \
+    -o jsonpath='{.items[0].spec.template.spec.containers[0].env[?(@.name=="ORTHANC__REGISTERED_USERS")].valueFrom.secretKeyRef.name}' \
+    2>/dev/null || true
+}
+
+# Run one curl against Orthanc's REST API from inside the XNAT pod. The credential
+# arrives on stdin and is read into a shell variable there: never an argument, so it
+# reaches no process list on the node and no shell history here.
 orthanc_curl() {
-  kubectl exec -n "$NAMESPACE" "$ORTHANC_POD" -- sh -c '
-    creds=$(printf "%s" "$ORTHANC__REGISTERED_USERS" \
-      | sed -n "s/.*\"\([^\"]*\)\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1:\2/p")
-    [ -n "$creds" ] || { echo "could not read ORTHANC__REGISTERED_USERS" >&2; exit 1; }
-    exec curl -sS -u "$creds" "$@"
+  printf '%s' "$ORTHANC_CREDS" | kubectl exec -i -n "$NAMESPACE" "$XNAT_POD" -- sh -c '
+    read -r creds || true
+    [ -n "$creds" ] || { echo "no Orthanc credential on stdin" >&2; exit 1; }
+    exec curl -sS --max-time 300 -u "$creds" "$@"
   ' -- "$@"
 }
 
@@ -100,6 +118,16 @@ XNAT_POD=$(pod_for xnat-web)
 [ -n "$XNAT_POD" ] || fail "no running xnat-web pod in ${NAMESPACE}"
 info "   sender: ${ORTHANC_POD}   receiver: ${XNAT_POD}"
 
+SECRET_NAME=$(orthanc_secret_ref)
+[ -n "$SECRET_NAME" ] || fail "could not find the Secret behind ORTHANC__REGISTERED_USERS on the orthanc Deployment"
+# {"user":"pass"} → user:pass. Orthanc's REST API needs a registered user; the DICOM
+# association it then opens does not, which is why this credential is only about
+# *asking* for the store and says nothing about the transfer's own authentication.
+ORTHANC_CREDS=$(kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" \
+  -o jsonpath='{.data.orthanc-registered-users}' | base64 -d \
+  | sed -n 's/.*"\([^"]*\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1:\2/p')
+[ -n "$ORTHANC_CREDS" ] || fail "could not read a user out of ${SECRET_NAME}/orthanc-registered-users"
+
 # ── 1. Mark the receiver log, so only lines this transfer produces are judged ────────
 # A trust that has been running for weeks has old errors in dicom.log; scanning the
 # whole file would fail on history and hide today's result.
@@ -110,8 +138,7 @@ info "   ${DICOM_LOG} is ${LOG_MARK} lines before the store"
 
 # ── 2. Pick something to send ────────────────────────────────────────────────────────
 if [ -z "$INSTANCE_ID" ]; then
-  INSTANCE_ID=$(orthanc_curl 'http://localhost:8042/instances?limit=1' \
-    | tr -d '[]" \n' | cut -d, -f1)
+  INSTANCE_ID=$(orthanc_curl "${ORTHANC_URL}/instances?limit=1" | tr -d '[]" \n' | cut -d, -f1)
 fi
 [ -n "$INSTANCE_ID" ] || fail "Orthanc holds no instances — seed the PACS first, or pass INSTANCE_ID=<orthanc instance id>"
 info "   storing instance ${INSTANCE_ID} → modality ${ORTHANC_MODALITY}"
@@ -120,7 +147,7 @@ info "   storing instance ${INSTANCE_ID} → modality ${ORTHANC_MODALITY}"
 # Synchronous on purpose: an asynchronous job would let this script exit before the
 # receiver has done anything, which is the failure mode it is meant to detect.
 STORE_OUTPUT=$(orthanc_curl -X POST \
-  "http://localhost:8042/modalities/${ORTHANC_MODALITY}/store" \
+  "${ORTHANC_URL}/modalities/${ORTHANC_MODALITY}/store" \
   -H 'Content-Type: application/json' \
   -d "{\"Resources\":[\"${INSTANCE_ID}\"],\"Synchronous\":true}" 2>&1) || {
   red "$STORE_OUTPUT"
@@ -146,7 +173,7 @@ green "✓ store reported success (${INSTANCE_COUNT:-?} instance(s), 0 failed)"
 # This is the assertion that separates this smoke from a connectivity check. XNAT
 # answers the association at the network layer and only then hands the object to the
 # importer, so a plugin/core mismatch shows up HERE and nowhere else.
-sleep 5
+sleep "$SETTLE_SECONDS"
 NEW_LOG=$(kubectl exec -n "$NAMESPACE" "$XNAT_POD" -- \
   sh -c "tail -n +$((LOG_MARK + 1)) '${DICOM_LOG}' 2>/dev/null || true")
 
