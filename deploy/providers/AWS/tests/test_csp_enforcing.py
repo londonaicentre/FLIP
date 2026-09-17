@@ -129,6 +129,25 @@ def test_form_action_is_not_a_wildcard(hcl: str, resource_name: str) -> None:
     assert value in ("'self'", "'none'"), f"{resource_name}: unexpected form-action {value!r}"
 
 
+def test_app_connect_src_admits_the_model_file_origin(hcl: str) -> None:
+    """Enforcing connect-src must admit the S3 origin the SPA transfers model files to and from.
+
+    The SPA ``fetch()``es presigned URLs directly (upload POST, config/metrics GET). flip-api presigns
+    them against ``AWS_ENDPOINT_URL_S3``, derived from ``local.s3_regional_endpoint_host``, which makes
+    them path-style on exactly that host — so the policy must reference the same local, not a
+    hand-copied host (drift) or a ``*.s3.amazonaws.com`` wildcard (every bucket on the service).
+    Report-only never blocked this; enforcement is what turns the omission into a failed upload.
+    """
+    sources = _directive(_policy_block(hcl, "flip_ui_spa"), "connect-src").split()
+    assert "https://${local.s3_regional_endpoint_host}" in sources, (
+        "flip_ui_spa: connect-src does not admit the regional S3 endpoint flip-api presigns model-file "
+        "URLs against; enforcing this policy blocks model-file upload and download in the SPA."
+    )
+    assert not any(source.startswith("https://*.") for source in sources), (
+        f"flip_ui_spa: connect-src carries a wildcard host: {sources}"
+    )
+
+
 def test_demo_policy_stays_stricter_than_the_app(hcl: str) -> None:
     """The demo has no CodeMirror dependency, so it must not inherit the app's style-src carve-out."""
     demo = _policy_block(hcl, "ark_demo_spa")

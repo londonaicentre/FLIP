@@ -675,7 +675,15 @@ resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
         # is not — the browser silently drops invalid entries). Pin to
         # the deployed region so we keep the allowlist tight; update if
         # the pool is moved to a different region.
-        "connect-src 'self' https://cognito-idp.eu-west-2.amazonaws.com https://cognito-identity.eu-west-2.amazonaws.com;",
+        # The S3 entry is the model-file transfer origin: the SPA fetch()es
+        # presigned URLs directly (model-service.ts upload POST,
+        # file-service.ts config/metrics GET). flip-api presigns against
+        # AWS_ENDPOINT_URL_S3 = https://${local.s3_regional_endpoint_host}
+        # (locals.tf), which makes every presigned URL PATH-STYLE — bucket
+        # in the path, host exactly that — so the one exact origin admits
+        # both buckets and nothing else. Derived from the same local so the
+        # policy cannot drift from what flip-api signs.
+        "connect-src 'self' https://cognito-idp.eu-west-2.amazonaws.com https://cognito-identity.eu-west-2.amazonaws.com https://${local.s3_regional_endpoint_host};",
         "img-src 'self' data:;",
         # 'unsafe-inline' here is a deliberate, scoped regression of
         # GHSA-vp94-g35p-29w8 stage 1 (which dropped it while nothing was yet
