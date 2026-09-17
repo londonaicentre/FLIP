@@ -148,7 +148,11 @@ class TestConfigureFindsItsOwnStack:
 
         assert result.returncode == 0, f"xnat-configure failed:\n{result.stdout}{result.stderr}"
         execs = host.execs()
-        assert len(execs) == 2, f"expected configure-xnat.sh then configure-dcm2niix.sh, got {execs}"
+        # One exec per configuration script, in the order the recipe chains them; setup-datatypes.sh
+        # registers the slide-microscopy data type after the viewer and converter are configured.
+        expected = ["configure-xnat.sh", "configure-dcm2niix.sh", "setup-datatypes.sh"]
+        ran = [script for argv in execs for script in expected if f"bash {script}" in argv[-1]]
+        assert ran == expected, f"expected {expected} in order, got {execs}"
         for argv in execs:
             # `docker exec <container> bash -c …` — one container, then the program.
             assert argv[0] == WANTED_ID, f"exec'd into {argv[0]!r}, not {STACK}_xnat-web ({WANTED_ID})"

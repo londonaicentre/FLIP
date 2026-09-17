@@ -224,7 +224,7 @@ def test_shellcheck_clean_if_available() -> None:
 
 CONFIGURE_XNAT = CONFIG_DIR / "configure-xnat.sh"
 K8S_INIT_JOB = (
-    Path(__file__).resolve().parents[3] / "deploy" / "providers" / "kubernetes" / "templates" / "xnat-init-job.yaml"
+    Path(__file__).resolve().parents[3] / "trust" / "deploy" / "helm" / "templates" / "xnat-init-job.yaml"
 )
 
 
