@@ -55,30 +55,14 @@ variable "ADMIN_USER_PASSWORD" {
 
 variable "cognito_callback_urls" {
   type        = list(string)
-  description = "OAuth callback URLs for the dev Cognito app client. Doubles as the source for flip-api's CORS allowlist (see flip_api/utils/cors.py:get_cors_allowed_origins), so every UI origin that calls the API in dev must be listed here. Cognito only accepts http:// for the localhost host."
-  default     = ["https://localhost:443", "http://localhost:44357"]
+  description = "OAuth callback URLs for the dev Cognito app client, beyond the http://localhost:<port> origins generated from dev_ui_ports. Doubles as the source for flip-api's CORS allowlist (see flip_api/utils/cors.py:get_cors_allowed_origins), so every UI origin that calls the API in dev must be listed here. Cognito only accepts http:// for the localhost host."
+  default     = ["https://localhost:443"]
 }
 
-variable "dev_ui_port_block" {
-  type = object({
-    first = number
-    last  = number
-  })
-  description = "Inclusive block of localhost ports pre-registered as browser origins, so a developer can bring a UI up on any port in it without a Terraform apply (FLIP#1227). Cognito callback URLs are exact-match strings — no wildcard, no port range — so the block is expanded into one http://localhost:<port> entry each and merged into both cognito_callback_urls (hence flip-api's CORS allowlist) and s3_cors_allowed_origins. Which port belongs to whom on a shared host is a convention, not config."
-  default = {
-    first = 44350
-    last  = 44359
-  }
-
-  validation {
-    condition     = var.dev_ui_port_block.first <= var.dev_ui_port_block.last
-    error_message = "dev_ui_port_block.first must not exceed dev_ui_port_block.last."
-  }
-
-  validation {
-    condition     = var.dev_ui_port_block.last - var.dev_ui_port_block.first + 1 + length(var.cognito_callback_urls) <= 100
-    error_message = "A Cognito app client accepts at most 100 callback URLs; shrink dev_ui_port_block or cognito_callback_urls."
-  }
+variable "dev_ui_ports" {
+  type        = list(number)
+  description = "Localhost ports pre-registered as browser origins (Cognito callback list + bucket CORS), so a UI on any of them needs no Terraform apply — see README.md \"Browser-usable UI ports\" (FLIP#1227)."
+  default     = [44350, 44351, 44352, 44353, 44354, 44355, 44356, 44357, 44358, 44359]
 }
 
 variable "cognito_logout_urls" {
@@ -110,6 +94,6 @@ variable "FLIP_APP_BUNDLES_BUCKET_NAME" {
 
 variable "s3_cors_allowed_origins" {
   type        = list(string)
-  description = "Browser origins permitted to CORS-call the dev S3 buckets. Must include every UI origin that calls the API in dev — typically https://localhost:443, the Vite dev-server http://localhost:44357, and the flip-api origin http://localhost:8080 (Swagger UI exercising the presigned flows)."
-  default     = ["https://localhost:443", "http://localhost:44357", "http://localhost:8080"]
+  description = "Browser origins permitted to CORS-call the dev S3 buckets, beyond the http://localhost:<port> origins generated from dev_ui_ports. Must include every other UI origin that calls the API in dev — https://localhost:443 and the flip-api origin http://localhost:8080 (Swagger UI exercising the presigned flows)."
+  default     = ["https://localhost:443", "http://localhost:8080"]
 }
