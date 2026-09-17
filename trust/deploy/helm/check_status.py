@@ -679,7 +679,7 @@ def main(
                         "s3",
                         endpoint_url=f"http://127.0.0.1:{minio_local}",
                         aws_access_key_id="minioadmin",
-                        aws_secret_access_key="minioadmin",
+                        aws_secret_access_key="minioadmin",  # pragma: allowlist secret
                         config=Config(signature_version="s3v4"),
                         region_name="us-east-1",
                     )
