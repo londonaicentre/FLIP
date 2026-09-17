@@ -28,6 +28,13 @@ endif
 # FLIP_INSTANCE comes from.
 include ../deploy/instance.mk
 
+# Sequential by design (db before api); also keeps the ownership guard ahead of the recipe
+# under `make -j` (FLIP#1227).
+.NOTPARALLEL:
+
+_check-compose-project-owner:
+	$(check_compose_project_owner)
+
 service_name = flip-api
 lint_command = uv run ruff check . --fix
 test_args = --tb=short --disable-warnings --cov=src/ --cov-report=term-missing
@@ -42,13 +49,13 @@ docker_command = DEBUG=$(DEBUG) docker compose -p $(COMPOSE_PROJECT) -f ../deplo
 run_clean = run --rm --remove-orphans
 mypy_command = uv run mypy . --ignore-missing-imports
 
-up:
+up: _check-compose-project-owner
 # Note we need to start the db first
 	@echo "🚀 Starting flip-db..."
 	$(docker_command) up --remove-orphans -d flip-db
 	@echo "🚀 Starting $(service_name)..."
 	$(docker_command) up --remove-orphans $(service_name)
-down:
+down: _check-compose-project-owner
 # Also kill the db
 	@echo "🛑 Stopping $(service_name) ..."
 	$(docker_command) down --remove-orphans $(service_name)
@@ -79,7 +86,7 @@ integration_test:
 build:
 	$(docker_command) build $(service_name)
 restart: down up
-debug:
+debug: _check-compose-project-owner
 	@echo "🚨 Starting debug mode..."
 	@echo "🚨 Setting DEBUG=true"
 	$(docker_command) restart --remove-orphans $(service_name)

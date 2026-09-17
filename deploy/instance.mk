@@ -41,6 +41,23 @@ COMPOSE_PROJECT := $(INSTANCE_PREFIX)deploy
 # Inspect first so an existing network is a quiet no-op; inspect again after a failed create
 # so losing the race with a concurrent `create-networks` still counts as success. Called as
 # $(call ensure_bridge_network,<name>) from the create-networks targets in both Makefiles.
+# Repo root, taken from this file's own location so every including Makefile (root, flip-api,
+# flip-ui, trust, trust/xnat) resolves the same deploy/ directory — the working_dir compose
+# labels every hub container with, since the -f files always live there.
+INSTANCE_REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
+
+# Refuse to drive $(COMPOSE_PROJECT) when its containers were created from a checkout the
+# current user does not own (FLIP#1227) — delegated to scripts/check-compose-project-owner.sh
+# (see that script for the rules). Defined here, next to COMPOSE_PROJECT, so every Makefile
+# that builds a `docker compose -p $(COMPOSE_PROJECT)` command gates the same way: put
+# $(check_compose_project_owner) first in the recipe of any target that runs up/down/restart
+# on the project, or make a `_check-compose-project-owner` target of it and list that as the
+# FIRST prerequisite. FORCE=1 overrides.
+define check_compose_project_owner
+	@COMPOSE_PROJECT='$(COMPOSE_PROJECT)' EXPECTED_WORKING_DIR='$(INSTANCE_REPO_ROOT)/deploy' FORCE='$(FORCE)' \
+		$(INSTANCE_REPO_ROOT)/scripts/check-compose-project-owner.sh
+endef
+
 define ensure_bridge_network
 	@{ docker network inspect $(1) >/dev/null 2>&1 || docker network create --driver bridge $(1) >/dev/null || docker network inspect $(1) >/dev/null 2>&1 || { echo "❌ Could not create Docker network $(1) — see the daemon error above."; exit 1; }; }
 endef

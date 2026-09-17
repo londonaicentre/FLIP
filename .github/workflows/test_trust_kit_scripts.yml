@@ -34,6 +34,10 @@ on:
       - "deploy/compose*.yml"
       - "trust/deploy/compose*.yml"
       - "fl-services/nvflare/compose.dev.yml"
+      # test_check_compose_project_owner.py asserts the ownership guard is wired first (FLIP#1227).
+      - "Makefile"
+      - "flip-api/Makefile"
+      - "deploy/instance.mk"
   pull_request:
     branches: [develop]
     paths:
@@ -47,6 +51,10 @@ on:
       - "deploy/compose*.yml"
       - "trust/deploy/compose*.yml"
       - "fl-services/nvflare/compose.dev.yml"
+      # test_check_compose_project_owner.py asserts the ownership guard is wired first (FLIP#1227).
+      - "Makefile"
+      - "flip-api/Makefile"
+      - "deploy/instance.mk"
 
 permissions:
   contents: read

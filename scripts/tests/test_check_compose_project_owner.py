@@ -20,7 +20,12 @@ are pinned exactly:
 - every container from this checkout → allowed (the normal restart path)
 - a container from another directory the current user owns → allowed (same-user worktree hand-over)
 - a container from a directory the user cannot stat, or that no longer exists → refused
+- a container with no working_dir label at all (owner unidentifiable) → refused
 - FORCE=1 → allowed regardless
+
+Also pins the Makefile wiring: every root/flip-api target that drives the project lists the
+guard as its first prerequisite, and both Makefiles declare .NOTPARALLEL so `make -j` cannot
+start other prerequisites before the refusal is known.
 
 Stdlib-only, run as ``python <file>`` by test_trust_kit_scripts.yml.
 """
@@ -28,6 +33,7 @@ Stdlib-only, run as ``python <file>`` by test_trust_kit_scripts.yml.
 from __future__ import annotations
 
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -55,10 +61,14 @@ def _assert(condition: bool, label: str, detail: str = "") -> None:
 
 
 def _run(working_dirs: list[str], expected: Path, force: str = "") -> subprocess.CompletedProcess:
-    """Run the guard with a stub docker that reports ``working_dirs`` for the project."""
+    """Run the guard with a stub docker reporting one container per entry of ``working_dirs``.
+
+    Each entry becomes an ``<id>\t<working_dir>`` line, as the script's --format asks docker for;
+    an empty string models a container with no working_dir label.
+    """
     bindir = Path(tempfile.mkdtemp())
     stub = bindir / "docker"
-    lines = "".join(f"{d}\n" for d in working_dirs)
+    lines = "".join(f"c{i:02d}\t{d}\n" for i, d in enumerate(working_dirs))
     stub.write_text(f"#!/usr/bin/env bash\nprintf '%s' '{lines}'\n")
     stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
     env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "COMPOSE_PROJECT": "deploy",
@@ -128,6 +138,44 @@ def test_mixed_own_and_foreign_is_refused() -> None:
         _assert(r.returncode == 1, "own + foreign containers in one project → exit 1", r.stderr)
 
 
+def test_unlabelled_container_is_refused() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        mine = Path(d) / "deploy"
+        mine.mkdir()
+        r = _run([str(mine), ""], mine)
+        _assert(r.returncode == 1, "a container with no working_dir label → exit 1 (owner unidentifiable)", r.stderr)
+        _assert("no working_dir label" in r.stderr, "message says the owner cannot be identified", r.stderr)
+
+
+def test_foreign_dir_listed_once() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        mine = Path(d) / "deploy"
+        mine.mkdir()
+        other = str(Path(d) / "someone-else" / "deploy")
+        r = _run([other, other, other], mine)
+        _assert(r.returncode == 1, "three containers from one foreign dir → exit 1", r.stderr)
+        _assert(r.stderr.count(other) == 1, "the foreign dir is listed once, not per container", r.stderr)
+
+
+GATED_TARGETS = {
+    "Makefile": ("up", "up-no-trust", "central-hub", "down", "clean", "restart-fl", "restart-no-trust",
+                 "ui", "ui-off", "debug", "debug-off", "debug-all", "debug-off-all", "up-pgadmin"),
+    "flip-api/Makefile": ("up", "down", "debug"),
+}
+
+
+def test_makefiles_gate_every_project_driving_target() -> None:
+    """Every target that runs up/down/restart on $(COMPOSE_PROJECT) must list the guard FIRST."""
+    for rel, targets in GATED_TARGETS.items():
+        text = (SCRIPTS_DIR.parent / rel).read_text()
+        _assert(re.search(r"^\.NOTPARALLEL:", text, re.M) is not None, f"{rel} declares .NOTPARALLEL")
+        for t in targets:
+            m = re.search(rf"^{re.escape(t)}:\s*(\S+)", text, re.M)
+            _assert(m is not None and m.group(1) == "_check-compose-project-owner",
+                    f"{rel}: `{t}` lists _check-compose-project-owner as its first prerequisite",
+                    m.group(0) if m else "(target not found)")
+
+
 def main() -> None:
     if not GUARD.is_file():
         sys.exit(f"❌ {GUARD} not found")
@@ -138,6 +186,9 @@ def main() -> None:
     test_unreadable_or_missing_dir_is_refused()
     test_force_overrides()
     test_mixed_own_and_foreign_is_refused()
+    test_unlabelled_container_is_refused()
+    test_foreign_dir_listed_once()
+    test_makefiles_gate_every_project_driving_target()
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
     sys.exit(0 if FAIL == 0 else 1)

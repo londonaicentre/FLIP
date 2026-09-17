@@ -21,7 +21,8 @@
 #
 # A project passes when it has no containers, or every container's working_dir is either this
 # checkout or another directory owned by the current uid (a same-user worktree may hand the
-# stack over). Anything else — another user's path, or one that no longer exists — is refused.
+# stack over). Anything else — another user's path, one that no longer exists, or a container
+# with no working_dir label at all (older compose; owner unidentifiable) — is refused.
 #
 # Inputs (passed as environment variables by the Makefile):
 #   COMPOSE_PROJECT        the project `up`/`down` is about to drive (deploy/instance.mk)
@@ -38,15 +39,22 @@ FORCE="${FORCE:-}"
 
 # No docker, or a daemon we cannot reach: compose will fail with the better message.
 command -v docker >/dev/null 2>&1 || exit 0
-owners=$(docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT}" \
-    --format '{{.Label "com.docker.compose.project.working_dir"}}' 2>/dev/null | grep -v '^$' | sort -u) || exit 0
-[ -n "${owners}" ] || exit 0
+# One line per container: "<id>\t<working_dir label>". Listing ids too means a container whose
+# label is empty is still counted — dropping it would let an unidentifiable owner through.
+containers=$(docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT}" \
+    --format '{{.ID}}\t{{.Label "com.docker.compose.project.working_dir"}}' 2>/dev/null) || exit 0
+[ -n "${containers}" ] || exit 0
 
 expected=$(realpath -m "${EXPECTED_WORKING_DIR}" 2>/dev/null || printf '%s' "${EXPECTED_WORKING_DIR}")
 me=$(id -u)
 foreign=""
-while IFS= read -r dir; do
-    [ -n "${dir}" ] || continue
+while IFS=$'\t' read -r id dir; do
+    [ -n "${id}" ] || continue
+    if [ -z "${dir}" ]; then
+        foreign="${foreign}
+       container ${id}  (no working_dir label — owner cannot be identified)"
+        continue
+    fi
     resolved=$(realpath -m "${dir}" 2>/dev/null || printf '%s' "${dir}")
     [ "${resolved}" = "${expected}" ] && continue
     owner=$(stat -c '%u' "${resolved}" 2>/dev/null || echo "?")
@@ -59,12 +67,15 @@ while IFS= read -r dir; do
        ${dir}  (owned by $(stat -c '%U' "${resolved}" 2>/dev/null || echo "uid ${owner}"))"
     fi
 done <<EOF
-${owners}
+$(printf '%s\n' "${containers}" | sort -u)
 EOF
 
 [ -n "${foreign}" ] || exit 0
+# One entry per directory, however many containers came from it.
+foreign=$(printf '%s\n' "${foreign}" | grep -v '^$' | sort -u)
 
-echo "❌ Compose project '${COMPOSE_PROJECT}' already has containers from another checkout:${foreign}" >&2
+echo "❌ Compose project '${COMPOSE_PROJECT}' already has containers from another checkout:" >&2
+printf '%s\n' "${foreign}" >&2
 echo "   This checkout is ${expected}. Acting on the project would recreate or tear down" >&2
 echo "   someone else's hub with this env file." >&2
 echo "   On a shared host give your stack its own instance — FLIP_INSTANCE=<name> in" >&2
