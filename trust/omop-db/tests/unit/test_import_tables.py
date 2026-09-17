@@ -14,6 +14,7 @@
 import pandas as pd
 import pytest
 
+import omop_db_tools.import_tables as import_tables_module
 from omop_db_tools.dataset import CANONICAL_TABLES, SOURCE_TRUST_COLUMN
 from omop_db_tools.import_tables import (
     clean_project,
@@ -27,6 +28,9 @@ from omop_db_tools.import_tables import (
 
 class _FakeResult:
     rowcount = 0
+
+    def scalar(self):
+        return 0
 
 
 class _FakeConn:
@@ -227,3 +231,82 @@ class TestLoadProject:
 
         with pytest.raises(FileNotFoundError, match="visit_occurrence"):
             load_project(_FakeEngine(), tmp_path, "cxr_project", 1, 1, "source_trust")
+
+
+class TestMain:
+    """The CLI: which of clean / load / remove-only it dispatches to, without a database."""
+
+    REQUIRED = [table for table in CANONICAL_TABLES if table not in {"measurement", "observation"}]
+
+    @pytest.fixture
+    def fake_engine(self, monkeypatch):
+        engine = _FakeEngine()
+        monkeypatch.setattr(import_tables_module, "create_engine", lambda *a, **k: engine)
+
+        class _Url:
+            @staticmethod
+            def get_secret_value():
+                return "postgresql://unused"
+
+        class _Settings:
+            OMOP_DATABASE_URL = _Url()
+
+        monkeypatch.setattr(import_tables_module, "get_settings", lambda: _Settings())
+        return engine
+
+    def test_remove_only_unseeds_the_listed_projects_and_loads_nothing(self, tmp_path, monkeypatch, fake_engine):
+        """--remove-only (FLIP#1221): remove_projects runs on the given tables; no validation of the full table
+        set, no clean_tables, no load — a cut to be removed only needs its person.csv."""
+        _write_project(tmp_path, "spleen_project", ["person"])
+        removed = []
+        monkeypatch.setattr(import_tables_module, "remove_projects", lambda e, d, p: removed.append((e, d, p)))
+        monkeypatch.setattr(import_tables_module, "load_project", lambda *a, **k: pytest.fail("must not load"))
+        monkeypatch.setattr(import_tables_module, "clean_tables", lambda *a, **k: pytest.fail("must not wipe"))
+
+        import_tables_module.main(
+            ["--trust-index", "1", "--remove-only", "--projects", "spleen_project", "--data-dir", str(tmp_path)]
+        )
+
+        assert removed == [(fake_engine, tmp_path, ["spleen_project"])]
+        assert fake_engine.begun == 0, "the sanity count after a load must not run on an unseed"
+
+    def test_default_run_loads_each_project_with_the_scoped_clean(self, tmp_path, monkeypatch, fake_engine):
+        for project in ("cxr_project", "spleen_project"):
+            _write_project(tmp_path, project, self.REQUIRED)
+        loaded = []
+        monkeypatch.setattr(import_tables_module, "load_project", lambda *a, **k: loaded.append((a, k)))
+        monkeypatch.setattr(
+            import_tables_module, "clean_tables", lambda *a, **k: pytest.fail("projects mode never wipes")
+        )
+
+        import_tables_module.main(
+            ["--trust-index", "2", "--projects", "cxr_project", "spleen_project", "--data-dir", str(tmp_path)]
+        )
+
+        assert [(a[2], a[4], k["clean"]) for a, k in loaded] == [
+            ("cxr_project", 2, "projects"),
+            ("spleen_project", 2, "projects"),
+        ]
+        assert fake_engine.begun == 1, "the sanity count opens one transaction after the loads"
+
+    def test_clean_all_empties_every_table_before_loading(self, tmp_path, monkeypatch, fake_engine):
+        _write_project(tmp_path, "cxr_project", self.REQUIRED)
+        calls = []
+        monkeypatch.setattr(import_tables_module, "clean_tables", lambda e: calls.append("clean_tables"))
+        monkeypatch.setattr(import_tables_module, "load_project", lambda *a, **k: calls.append(("load", k["clean"])))
+
+        import_tables_module.main(
+            ["--trust-index", "1", "--clean", "all", "--projects", "cxr_project", "--data-dir", str(tmp_path)]
+        )
+
+        assert calls == ["clean_tables", ("load", "all")]
+
+    def test_a_missing_required_table_stops_before_any_clean_or_load(self, tmp_path, monkeypatch, fake_engine):
+        _write_project(tmp_path, "cxr_project", ["person"])
+        monkeypatch.setattr(import_tables_module, "clean_tables", lambda *a, **k: pytest.fail("must not wipe"))
+        monkeypatch.setattr(import_tables_module, "load_project", lambda *a, **k: pytest.fail("must not load"))
+
+        with pytest.raises(FileNotFoundError, match="Required table CSV not found"):
+            import_tables_module.main(
+                ["--trust-index", "1", "--clean", "all", "--projects", "cxr_project", "--data-dir", str(tmp_path)]
+            )
