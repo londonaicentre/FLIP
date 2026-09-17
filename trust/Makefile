@@ -679,11 +679,14 @@ publish-trust-data:
 	  $(if $(CARD),--card $(CARD)) $(if $(filter 1,$(DRY_RUN)),--dry-run) \
 	  $(if $(filter 1,$(ALLOW_ANY_TAG)),--allow-any-tag)
 
-# Unit tests + lint for the trust-level data tooling (publish_trust_data.py). The
-# seeders' own suites are `make -C orthanc test` and `make -C omop-db local_test`.
+# Unit tests + lint for the trust-level data tooling: publish_trust_data.py, and the
+# seed-marker contract between ensure-seeded above and the two writers it dispatches to
+# (tests/test_seed_marker_contract.sh — dry-run only, needs no service). The seeders'
+# own suites are `make -C orthanc test` and `make -C omop-db local_test`.
 test-trust-data-tools:
 	uv run --no-project --with pytest --with 'huggingface_hub>=1.6' pytest tests -q
 	uvx ruff@0.14.7 check publish_trust_data.py tests && uvx ruff@0.14.7 format --check publish_trust_data.py tests
+	bash tests/test_seed_marker_contract.sh
 
 tests:
 	cd data-access-api && make test && \
