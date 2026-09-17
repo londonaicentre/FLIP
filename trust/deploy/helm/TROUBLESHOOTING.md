@@ -577,27 +577,34 @@ kubectl rollout restart deployment/trust-release-flip-trust-data-access-api -n f
 
 ### Rebuilding OMOP Data
 
-If the OMOP data is missing (e.g., new deployment), the init job handles
-restoration automatically. Manual trigger:
+The mock OMOP rows (and, with `trustData.seed.orthanc: true`, the DICOM studies) are
+loaded by the `trust-seed` hook — a post-install/post-upgrade Job that fetches the
+canonical per-project tables from Hugging Face anonymously and installs its loaders from
+FLIP at `trustData.seed.sourceRef` (FLIP#1187). No init Job, no S3 snapshot and no AWS
+credentials are involved. A fresh PVC is seeded on install; to re-seed (a data version
+bump, a changed project list) just upgrade, and the hook runs again — it replaces only the
+listed projects' rows and dedupes studies on `SOPInstanceUID`, so the licensed vocabulary
+and any other project's rows survive:
 
 ```bash
-kubectl delete job -n flip-trust trust-release-flip-trust-omop-db-init
 helm upgrade trust-release trust/deploy/helm -n flip-trust \
   -f trust/deploy/helm/values.yaml \
   --set imageTag=stag \
-  --set omopDb.initJob.run=true
+  --set trustData.version=<data-version tag> \
+  --set trustData.seed.projects="cxr_project spleen_project"
 ```
 
-If S3 auth fails (wrong AWS profile):
+If the hook fails, its Job is kept (`hook-delete-policy: before-hook-creation,hook-succeeded`)
+so the logs are readable:
 
 ```bash
-# Check what profile the omop-db pod is using
-kubectl exec -n flip-trust trust-release-flip-trust-omop-db-0 -- \
-  bash -c 'aws sts get-caller-identity --profile flipstag 2>/dev/null || echo "No valid AWS session"
-
-# The init job mounts ~/.aws from the host and uses AWS_PROFILE=flipstag
-# Ensure your k3s host has a valid session: aws sso login --profile flipstag
+kubectl get jobs -n flip-trust | grep trust-seed
+kubectl logs -n flip-trust job/trust-release-flip-trust-trust-seed
 ```
+
+The usual causes are egress (the Job needs `huggingface.co`, `github.com` /
+`raw.githubusercontent.com` and PyPI — see NETWORK-POLICY.md) or a `trustData.seed.sourceRef`
+that names a FLIP ref whose loaders do not match these images.
 
 ---
 
@@ -932,7 +939,7 @@ command: ["/bin/sh", "-c", ". /opt/nvflare/startup/start.sh && wait"]
 ### 7.7 AWS Credentials Expired in K8s Secret
 
 **Symptom:** fl-client pod logs show `AccessDenied` when trying to download
-participant kit from S3. Trust's omop-db-init job also fails with S3 errors.
+participant kit from S3. The omop-db vocab-load Job (the chart's only AWS-bearing Job) also fails with S3 errors.
 
 **Root Cause:** The K8s Secret `aws-credentials` (mounted by init containers)
 contains stale AWS SSO credentials. SSO sessions expire after 12-24 hours.

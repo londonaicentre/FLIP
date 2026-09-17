@@ -221,10 +221,13 @@ need only your trust's kit file (`trust/.env.<CODE>.<env>`).
    - Laptop-against-prod: `make -C trust up-trust KIT=<CODE> PROD=true` (no sudo —
      your workstation isn't provisioned by the on-prem playbook)
 
-   On-prem, `up-trust` seeds the mock projects the same way it does in dev (anonymous
-   Hugging Face download, no hub credentials) — real on-prem operators point
-   `OMOP_DATA_DIR` / `ORTHANC_STORAGE_DIR` at their real data instead, and skip
-   `ensure-seeded`.
+   On-prem, `up-trust` runs `ensure-seeded` unconditionally, the same way it does in
+   dev: a store with no `.seeded` marker beside it is seeded with the listed mock
+   projects (anonymous Hugging Face download, no hub credentials) — OMOP via
+   `--clean projects`, which replaces only those projects' own rows, and Orthanc by
+   posting their studies. A real on-prem operator who points `OMOP_DATA_DIR` /
+   `ORTHANC_STORAGE_DIR` at real data therefore gets the mock projects loaded
+   alongside it on first bring-up; there is no switch to turn the seed off yet.
 
 ### Refreshing shared values (when the hub admin rotates an AES key etc.)
 

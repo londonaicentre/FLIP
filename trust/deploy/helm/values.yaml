@@ -521,11 +521,12 @@ omopDb:
   # a hub-managed key — a kit scaffolded from trust/.env.example ships the dev
   # bucket).
   #
-  # AWS *credentials* are deliberately shared with initJob (initJob.awsProfile /
-  # initJob.hostAwsMount) — one place to configure auth, not two. Note the
-  # AWS_PROFILE/region env vars only reach this Job when initJob.hostAwsMount is
-  # enabled; on EKS it relies on IRSA. The bucket itself is a separate key per
-  # job, and sync-kit sets only this one.
+  # The AWS *credentials* live on this block too (vocabLoad.awsProfile /
+  # vocabLoad.hostAwsMount, below): this is the chart's only AWS-bearing Job now
+  # that the snapshot init Jobs are retired (FLIP#1187) — the trust-seed hook
+  # fetches the mock data anonymously. Note the AWS_PROFILE/region env vars only
+  # reach this Job when vocabLoad.hostAwsMount is enabled; on EKS it relies on
+  # the node role.
   #
   # enabled: false is only for keeping an in-cluster omop-db while loading the
   # vocabulary by hand — an external database (omopDb.enabled: false) already
