@@ -12,7 +12,7 @@
 
 .PHONY: build build-fl clean up down up-no-trust up-trusts central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
-		check-aws-access generate-internal-service-key generate-xnat-credentials \
+		check-aws-access generate-internal-service-key generate-xnat-credentials _check-compose-project-owner \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock checkov-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
@@ -139,7 +139,7 @@ build-fl:
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
 # when DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op otherwise.
-up: check-aws-access generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
+up: _check-compose-project-owner check-aws-access generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -183,8 +183,16 @@ _check-fl-provisioned:
 	@FL_BACKEND='$(FL_BACKEND)' NET_ENDPOINTS='$(NET_ENDPOINTS)' FL_PROVISIONED_DIR='$(FL_PROVISIONED_DIR)' \
 		scripts/check-fl-provisioned.sh
 
+# Refuse to drive a hub compose project whose containers were created from another
+# checkout (FLIP#1227) — delegated to scripts/check-compose-project-owner.sh (see that
+# script for the why/how). First prerequisite of every target that runs `up`/`down` on
+# $(COMPOSE_PROJECT), so nothing else (key generation, networks) runs on a refused project.
+_check-compose-project-owner:
+	@COMPOSE_PROJECT='$(COMPOSE_PROJECT)' EXPECTED_WORKING_DIR='$(CURDIR)/deploy' FORCE='$(FORCE)' \
+		scripts/check-compose-project-owner.sh
+
 # Minimal $(MAKE) up
-up-no-trust: generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
+up-no-trust: _check-compose-project-owner generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
@@ -250,7 +258,7 @@ onboard-onprem-trust:
 	@uv run --no-config scripts/onboard_onprem_trust.py $(KIT)
 
 # Stop all containers
-down:
+down: _check-compose-project-owner
 	@echo "🛑 Stopping all services..."
 	$(MAKE) -C trust down
 
@@ -258,7 +266,7 @@ down:
 	@echo "🛌 All services stopped successfully!"
 
 # Clean Docker resources
-clean:
+clean: _check-compose-project-owner
 	${DOCKER_COMMAND} down --rmi local && \
 	docker system prune -f && \
 	rm -rf ./flip-fl-api/*/transfer/*/
@@ -279,7 +287,7 @@ restart: down up
 #       1000) then cannot mkdir inside it. The failure surfaces four layers away as a 500 on
 #       /upload_app and an opaque model ERROR, with the PermissionError only in the FL API's
 #       own log — so a tree that has never run `make up` fails every FL job until this runs.
-restart-fl: _ensure-fl-jobs-dir
+restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir
 	@echo "🔄 Restarting FL services ($(FL_BACKEND))..."
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
