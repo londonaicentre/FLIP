@@ -60,7 +60,7 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
   `.env.development` before the first `make up` and give the stack its own host ports (see the
   `FLIP_INSTANCE` entry in `CLAUDE.md`). Compose project names are daemon-global, so an unprefixed
   `make up` would recreate whoever else holds project `deploy`; `up`/`down` now refuse when the
-  project's containers came from a checkout you do not own (`FORCE=1` overrides)
+  project's containers came from a checkout you do not own (`ALLOW_FOREIGN_PROJECT=1` skips the check)
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   on GPU hosts
 - GNU Make, `jq`, and `curl`

@@ -27,15 +27,36 @@
 # Inputs (passed as environment variables by the Makefile):
 #   COMPOSE_PROJECT        the project `up`/`down` is about to drive (deploy/instance.mk)
 #   EXPECTED_WORKING_DIR   this checkout's deploy/ directory
-#   FORCE                  1 to override (the same knob generate-*-key and register-trust use)
+#   ALLOW_FOREIGN_PROJECT  literally `1` to skip the check. Deliberately its own knob, not the
+#                          repo's generic FORCE: `up` also passes FORCE to
+#                          generate-internal-service-key, where it rotates the hub's internal
+#                          service key and recreates flip-api and every fl-server — so a
+#                          shared override would turn "let me past the guard" into "kill the
+#                          running FL job". Only `1` counts (stricter than the `$(if $(FORCE))`
+#                          truthiness used elsewhere, on purpose: a bypass should not be
+#                          settable by accident). Skipping the check does NOT make taking over
+#                          or recreating a live stack safe — it only stops this script saying no.
 
 set -euo pipefail
 
 COMPOSE_PROJECT="${COMPOSE_PROJECT:-deploy}"
 EXPECTED_WORKING_DIR="${EXPECTED_WORKING_DIR:-}"
-FORCE="${FORCE:-}"
+ALLOW_FOREIGN_PROJECT="${ALLOW_FOREIGN_PROJECT:-}"
 
-[ "${FORCE}" = "1" ] && exit 0
+[ "${ALLOW_FOREIGN_PROJECT}" = "1" ] && exit 0
+
+# Canonical form of a directory, or the input unchanged when it cannot be entered (missing,
+# or under a peer's 0750 home). `cd -P`/`pwd -P` rather than `realpath -m`: not on macOS.
+canon() {
+    (cd -P -- "$1" 2>/dev/null && pwd -P) || printf '%s' "$1"
+}
+# Numeric owner of a path, GNU `stat -c` first then BSD `stat -f`; "?" when neither works.
+owner_uid() {
+    stat -c '%u' -- "$1" 2>/dev/null || stat -f '%u' -- "$1" 2>/dev/null || echo "?"
+}
+owner_name() {
+    stat -c '%U' -- "$1" 2>/dev/null || stat -f '%Su' -- "$1" 2>/dev/null || echo "uid $2"
+}
 
 # No docker, or a daemon we cannot reach: compose will fail with the better message.
 command -v docker >/dev/null 2>&1 || exit 0
@@ -45,7 +66,7 @@ containers=$(docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_P
     --format '{{.ID}}\t{{.Label "com.docker.compose.project.working_dir"}}' 2>/dev/null) || exit 0
 [ -n "${containers}" ] || exit 0
 
-expected=$(realpath -m "${EXPECTED_WORKING_DIR}" 2>/dev/null || printf '%s' "${EXPECTED_WORKING_DIR}")
+expected=$(canon "${EXPECTED_WORKING_DIR}")
 me=$(id -u)
 foreign=""
 while IFS=$'\t' read -r id dir; do
@@ -55,16 +76,16 @@ while IFS=$'\t' read -r id dir; do
        container ${id}  (no working_dir label — owner cannot be identified)"
         continue
     fi
-    resolved=$(realpath -m "${dir}" 2>/dev/null || printf '%s' "${dir}")
+    resolved=$(canon "${dir}")
     [ "${resolved}" = "${expected}" ] && continue
-    owner=$(stat -c '%u' "${resolved}" 2>/dev/null || echo "?")
+    owner=$(owner_uid "${resolved}")
     [ "${owner}" = "${me}" ] && continue
     if [ "${owner}" = "?" ]; then
         foreign="${foreign}
        ${dir}  (not readable by you, or no longer exists)"
     else
         foreign="${foreign}
-       ${dir}  (owned by $(stat -c '%U' "${resolved}" 2>/dev/null || echo "uid ${owner}"))"
+       ${dir}  (owned by $(owner_name "${resolved}" "${owner}"))"
     fi
 done <<EOF
 $(printf '%s\n' "${containers}" | sort -u)
@@ -82,6 +103,7 @@ echo "   On a shared host give your stack its own instance — FLIP_INSTANCE=<na
 echo "   $(basename "${MAIN_ENV_FILE:-.env.development}") — and its own host ports (CLAUDE.md, FLIP_INSTANCE)." >&2
 echo "   List the containers with:" >&2
 echo "       docker ps -a --filter label=com.docker.compose.project=${COMPOSE_PROJECT}" >&2
-echo "   If they are yours and stale, remove them from the checkout that created them, or" >&2
-echo "   re-run with FORCE=1 to override." >&2
+echo "   If they are yours and stale, remove them from the checkout that created them. To skip" >&2
+echo "   this check anyway, re-run with ALLOW_FOREIGN_PROJECT=1 — that only silences the guard;" >&2
+echo "   recreating a stack someone else is using is still exactly as disruptive." >&2
 exit 1

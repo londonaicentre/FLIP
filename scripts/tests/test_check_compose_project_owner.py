@@ -21,7 +21,9 @@ are pinned exactly:
 - a container from another directory the current user owns → allowed (same-user worktree hand-over)
 - a container from a directory the user cannot stat, or that no longer exists → refused
 - a container with no working_dir label at all (owner unidentifiable) → refused
-- FORCE=1 → allowed regardless
+- ALLOW_FOREIGN_PROJECT=1 (literally) → allowed regardless; anything else, and the repo's
+  generic FORCE, does not bypass — FORCE also rotates the internal service key via `up`
+- ownership lookup works with GNU `stat -c` or BSD `stat -f`; with neither, a foreign path is refused
 
 Also pins the Makefile wiring: every root/flip-api target that drives the project lists the
 guard as its first prerequisite, and both Makefiles declare .NOTPARALLEL so `make -j` cannot
@@ -34,6 +36,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -60,19 +63,46 @@ def _assert(condition: bool, label: str, detail: str = "") -> None:
         FAIL += 1
 
 
-def _run(working_dirs: list[str], expected: Path, force: str = "") -> subprocess.CompletedProcess:
+def _run(
+    working_dirs: list[str],
+    expected: Path,
+    allow: str = "",
+    force: str = "",
+    stat_mode: str | None = None,
+) -> subprocess.CompletedProcess:
     """Run the guard with a stub docker reporting one container per entry of ``working_dirs``.
 
     Each entry becomes an ``<id>\t<working_dir>`` line, as the script's --format asks docker for;
-    an empty string models a container with no working_dir label.
+    an empty string models a container with no working_dir label. Both override knobs are set
+    explicitly (empty unless given) so a value inherited from the caller's shell cannot leak in.
+    ``stat_mode`` optionally stubs ``stat``: "bsd" fails on ``-c`` and answers ``-f`` like BSD stat,
+    "none" fails on both.
     """
     bindir = Path(tempfile.mkdtemp())
     stub = bindir / "docker"
     lines = "".join(f"c{i:02d}\t{d}\n" for i, d in enumerate(working_dirs))
     stub.write_text(f"#!/usr/bin/env bash\nprintf '%s' '{lines}'\n")
     stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    if stat_mode is not None:
+        real_stat = shutil.which("stat")
+        st = bindir / "stat"
+        if stat_mode == "bsd":
+            # `-f` is BSD's format flag; translate %u/%Su to the GNU equivalents and delegate.
+            st.write_text(
+                "#!/usr/bin/env bash\n"
+                'case "$1" in\n'
+                "  -c) exit 1;;\n"
+                '  -f) fmt="$2"; shift 2; [ "$1" = "--" ] && shift;\n'
+                '      case "$fmt" in %u) g=%u;; %Su) g=%U;; *) exit 1;; esac;\n'
+                f'      exec {real_stat} -c "$g" -- "$@";;\n'
+                "  *) exit 1;;\n"
+                "esac\n"
+            )
+        else:
+            st.write_text("#!/usr/bin/env bash\nexit 1\n")
+        st.chmod(st.stat().st_mode | stat.S_IEXEC)
     env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "COMPOSE_PROJECT": "deploy",
-           "EXPECTED_WORKING_DIR": str(expected), "FORCE": force}
+           "EXPECTED_WORKING_DIR": str(expected), "ALLOW_FOREIGN_PROJECT": allow, "FORCE": force}
     return subprocess.run(["bash", str(GUARD)], env=env, capture_output=True, text=True)
 
 
@@ -122,12 +152,79 @@ def test_unreadable_or_missing_dir_is_refused() -> None:
         _assert("label=com.docker.compose.project=deploy" in r.stderr, "message gives the docker ps listing", r.stderr)
 
 
-def test_force_overrides() -> None:
+def test_allow_foreign_project_overrides() -> None:
     with tempfile.TemporaryDirectory() as d:
         mine = Path(d) / "deploy"
         mine.mkdir()
-        r = _run([str(Path(d) / "someone-else" / "deploy")], mine, force="1")
-        _assert(r.returncode == 0, "FORCE=1 → exit 0 even when foreign", r.stderr)
+        foreign = [str(Path(d) / "someone-else" / "deploy")]
+        r = _run(foreign, mine, allow="1")
+        _assert(r.returncode == 0, "ALLOW_FOREIGN_PROJECT=1 → exit 0 even when foreign", r.stderr)
+        for v in ("", "0", "true", "yes"):
+            r = _run(foreign, mine, allow=v)
+            _assert(r.returncode == 1, f"ALLOW_FOREIGN_PROJECT={v!r} does not bypass (only literal 1)", r.stderr)
+
+
+def test_generic_force_does_not_bypass() -> None:
+    """FORCE is the credential-rotation knob (`generate-internal-service-key --force`); it must not open the guard."""
+    with tempfile.TemporaryDirectory() as d:
+        mine = Path(d) / "deploy"
+        mine.mkdir()
+        foreign = [str(Path(d) / "someone-else" / "deploy")]
+        for v in ("1", "true"):
+            r = _run(foreign, mine, force=v)
+            _assert(r.returncode == 1, f"FORCE={v} → still refused", r.stderr)
+            _assert("FORCE=1" not in r.stderr and "ALLOW_FOREIGN_PROJECT=1" in r.stderr,
+                    f"FORCE={v}: refusal names only ALLOW_FOREIGN_PROJECT as the override", r.stderr)
+
+
+def test_make_up_passes_allow_but_not_force_to_key_generation() -> None:
+    """`make up ALLOW_FOREIGN_PROJECT=1` must reach the guard and must NOT turn on key rotation.
+
+    Dry run only (-n): prints the recipe lines without running anything. MAIN_ENV_FILE points at
+    an empty file so the result does not depend on a developer's .env.development being present.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        empty_env = Path(d) / "empty.env"
+        empty_env.write_text("")
+        for target in ("up", "up-no-trust", "central-hub"):
+            r = subprocess.run(
+                ["make", "-n", target, "ALLOW_FOREIGN_PROJECT=1", f"MAIN_ENV_FILE={empty_env}"],
+                cwd=SCRIPTS_DIR.parent, capture_output=True, text=True,
+            )
+            lines = r.stdout.splitlines()
+            guard = [line for line in lines if "check-compose-project-owner.sh" in line]
+            keygen = [line for line in lines if "generate_internal_service_key" in line
+                      or "generate-internal-service-key" in line]
+            _assert(bool(guard) and "ALLOW_FOREIGN_PROJECT='1'" in guard[0],
+                    f"make -n {target}: guard receives ALLOW_FOREIGN_PROJECT=1", "\n".join(lines[:5]))
+            _assert(all("--force" not in line and "FORCE=1" not in line for line in keygen),
+                    f"make -n {target}: key generation is NOT forced by the ownership override", "\n".join(keygen))
+
+
+def test_bsd_stat_fallback() -> None:
+    """With GNU `stat -c` unavailable, BSD `stat -f` still identifies the owner."""
+    with tempfile.TemporaryDirectory() as d:
+        mine = Path(d) / "deploy"
+        mine.mkdir()
+        worktree = Path(d) / "worktree" / "deploy"
+        worktree.mkdir(parents=True)
+        r = _run([str(worktree)], mine, stat_mode="bsd")
+        _assert(r.returncode == 0, "BSD stat: own worktree → exit 0", r.stderr)
+        r = _run([str(Path(d) / "someone-else" / "deploy")], mine, stat_mode="bsd")
+        _assert(r.returncode == 1, "BSD stat: foreign/missing dir → exit 1", r.stderr)
+
+
+def test_no_working_stat_refuses_foreign() -> None:
+    """With neither stat variant, ownership is unknowable: own checkout still passes, anything else is refused."""
+    with tempfile.TemporaryDirectory() as d:
+        mine = Path(d) / "deploy"
+        mine.mkdir()
+        r = _run([str(mine)], mine, stat_mode="none")
+        _assert(r.returncode == 0, "no stat: this checkout → exit 0 (path equality needs no stat)", r.stderr)
+        worktree = Path(d) / "worktree" / "deploy"
+        worktree.mkdir(parents=True)
+        r = _run([str(worktree)], mine, stat_mode="none")
+        _assert(r.returncode == 1, "no stat: another dir → refused (owner cannot be determined)", r.stderr)
 
 
 def test_mixed_own_and_foreign_is_refused() -> None:
@@ -195,7 +292,11 @@ def main() -> None:
     test_same_checkout_via_symlink_is_allowed()
     test_other_dir_owned_by_me_is_allowed()
     test_unreadable_or_missing_dir_is_refused()
-    test_force_overrides()
+    test_allow_foreign_project_overrides()
+    test_generic_force_does_not_bypass()
+    test_make_up_passes_allow_but_not_force_to_key_generation()
+    test_bsd_stat_fallback()
+    test_no_working_stat_refuses_foreign()
     test_mixed_own_and_foreign_is_refused()
     test_unlabelled_container_is_refused()
     test_foreign_dir_listed_once()

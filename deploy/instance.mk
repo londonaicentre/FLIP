@@ -52,9 +52,10 @@ INSTANCE_REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 # that builds a `docker compose -p $(COMPOSE_PROJECT)` command gates the same way: put
 # $(check_compose_project_owner) first in the recipe of any target that runs up/down/restart
 # on the project, or make a `_check-compose-project-owner` target of it and list that as the
-# FIRST prerequisite. FORCE=1 overrides.
+# FIRST prerequisite. ALLOW_FOREIGN_PROJECT=1 skips the check (its own knob — FORCE would
+# also rotate the internal service key via generate-internal-service-key).
 define check_compose_project_owner
-	@COMPOSE_PROJECT='$(COMPOSE_PROJECT)' EXPECTED_WORKING_DIR='$(INSTANCE_REPO_ROOT)/deploy' FORCE='$(FORCE)' \
+	@COMPOSE_PROJECT='$(COMPOSE_PROJECT)' EXPECTED_WORKING_DIR='$(INSTANCE_REPO_ROOT)/deploy' ALLOW_FOREIGN_PROJECT='$(ALLOW_FOREIGN_PROJECT)' \
 		$(INSTANCE_REPO_ROOT)/scripts/check-compose-project-owner.sh
 endef
 
