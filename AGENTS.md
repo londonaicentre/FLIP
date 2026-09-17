@@ -16,7 +16,7 @@ FLIP/
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
 ├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (all Client-API), fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
-├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*,tabular_classification}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,ehr_risk_prediction} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion, EHR risk prediction (tabular/OMOP-only, Synthea open data → `make -C trust load-synthea-ehr`). Shared dataset tooling in fl-tutorials/datasets/ (download/derive/enrich, single copy for both backends — the download-*-data + upload-spleen-labels targets), outputs in the shared gitignored fl-tutorials/data/. fl-tutorials/datasets/utils/ holds the OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, the per-project surrogate-key blocks (omop_ids.py) and the one verification gate (verify_omop_tables.py --project <name>). spleen carries the full chain (`convert-spleen-to-dicom`, `create-spleen-metadata-table`, `build-spleen-omop-tables`, plus the reproducible-path/verification targets); cxr carries the OMOP conversion only (`reproduce-cxr-omop`) because image generation lives in the private londonaicentre/xraycat. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
+├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*,tabular_classification}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,ehr_risk_prediction} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion, EHR risk prediction (tabular/OMOP-only, Synthea open data → `make -C trust load-synthea-ehr`). Shared dataset tooling in fl-tutorials/datasets/ (download/derive/enrich, single copy for both backends — the download-*-data + upload-spleen-labels targets), outputs in the shared gitignored fl-tutorials/data/. fl-tutorials/datasets/utils/ holds the OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, the per-project surrogate-key blocks (omop_ids.py), the one verification gate (verify_omop_tables.py --project <name>) and, since #1221, the deterministic NIfTI→DICOM writer + synthetic identities (dicom_writer.py, synthetic_identity.py) the converters share. spleen and brain_mri carry the full chain from a public MSD download (`convert-<dataset>-to-dicom`, `create-<dataset>-metadata-table`, `build-<dataset>-omop-tables`, `build-<dataset>-canonical`, `verify-<dataset>-dicom`, `seed-<dataset> KIT=`, plus the reproducible-path/verification targets); their DICOM sets are regenerated locally and never published (only the OMOP tables + metadata table go to HF). cxr carries the OMOP conversion only (`reproduce-cxr-omop`) because image generation lives in the private londonaicentre/xraycat. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
 ├── map-apps/           # MONAI Application Package (MAP) templates for packaging FLIP-trained models for clinical deployment
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
@@ -296,24 +296,33 @@ verified against the published export by one shared gate
 
 ```bash
 make -C fl-tutorials reproduce-spleen-omop          # fetch -> build -> verify, chained
+make -C fl-tutorials reproduce-brain-mri-omop       # same three for brain_mri_project
 make -C fl-tutorials reproduce-cxr-omop             # same three for cxr_project
 make -C fl-tutorials fetch-spleen-metadata-table    # or step by step: pinned metadata table
 make -C fl-tutorials build-spleen-omop-tables       # -> omop/<trust>/spleen_project/*.csv
 make -C fl-tutorials verify-spleen-omop-tables      # diff against the published export
-make -C fl-tutorials convert-spleen-to-dicom        # spleen-only full regeneration (workstation/root)
-make -C fl-tutorials create-spleen-metadata-table   # spleen-only full regeneration
+make -C fl-tutorials convert-spleen-to-dicom        # full regeneration: NIfTI -> DICOM (deterministic, no root)
+make -C fl-tutorials create-spleen-metadata-table   # full regeneration: DICOM -> metadata table
+make -C fl-tutorials build-spleen-canonical         # the source_trust form that gets published/seeded
+make -C fl-tutorials verify-spleen-dicom            # regenerated DICOMs <-> canonical tables, both ways
+make -C fl-tutorials seed-spleen KIT=GSTT           # both halves of a RUNNING dev trust from the local tree
+make -C fl-tutorials download-brain-mri-msd-raw     # brain_mri: the same chain, targets convert-brain-mri-to-dicom
+                                                    # ... build-brain-mri-canonical verify-brain-mri-dicom seed-brain-mri KIT=
 ```
 
-**Scope differs per dataset, and it is not an oversight.** Spleen carries the whole chain from the
-public MSD download. **cxr carries only the OMOP conversion** — the synthetic chest X-rays, their
-DICOM write and their metadata extraction live in the private `londonaicentre/xraycat` repo, so the
-in-tree provenance chain starts at the published metadata table. Neither regeneration path
-reproduces the published export byte-for-byte anyway (spleen re-synthesises patient identities on
-every run), which is why the gate's fixed input is the published metadata table rather than the
-images.
+**Scope differs per dataset, and it is not an oversight.** Spleen and brain_mri carry the whole
+chain from a public MSD download; since #1221 their DICOM sets are **regenerated locally and never
+published** (MSD is open data) — the converters are deterministic (`datasets/utils/dicom_writer.py`,
+every UID and identity a function of the case id), so the regenerated tree reproduces byte-for-byte
+and only the OMOP tables + `source/dicom_metadata.csv` go to `aicentreflip/trust-data`; a trust is
+seeded from the local tree (`seed-<dataset> KIT=`, both halves local, which also lets a pull be proven
+before a data version is tagged). **cxr carries only the OMOP conversion** — the synthetic chest X-rays,
+their DICOM write and their metadata extraction live in the private `londonaicentre/xraycat` repo, so
+the in-tree provenance chain starts at the published metadata table and its DICOM set is still
+re-hosted (`dicom/cxr_project.tar.gz`).
 
-See `fl-tutorials/datasets/README.md` ("OMOP mock-data generation") for both chains, the shared
-contract in `datasets/utils/`, and the `download-spleen-msd-raw` regeneration-path first step.
+See `fl-tutorials/datasets/README.md` ("OMOP mock-data generation") for all three chains, the shared
+contract in `datasets/utils/`, and the `download-<dataset>-msd-raw` regeneration-path first step.
 
 ### Linting & Type Checking
 
@@ -342,8 +351,10 @@ make -C flip-api create_testing_projects   # Create test projects
 make -C flip-api delete_testing_projects   # Clean up test data
 make seed-demo-projects                    # Curated radiology catalogue in honest lifecycle states
                                            # (EXTRA_ARGS="--cleanup" removes it again)
-make -C trust seed-trusts PROJECTS="spleen_project cxr_project"   # Seed the RUNNING dev trusts with datasets (#1100)
+make -C trust seed-trusts PROJECTS="cxr_project"   # Seed the RUNNING dev trusts with a published DICOM set (#1100)
 make -C trust seed KIT=GSTT PROJECTS="…"   # one trust; seed-omop / seed-orthanc for one half
+make -C fl-tutorials seed-spleen KIT=GSTT      # spleen / brain_mri: DICOMs regenerate locally (#1221), so their
+make -C fl-tutorials seed-brain-mri KIT=GSTT   # seeding runs from fl-tutorials (CANONICAL_DIR / DICOM_SOURCE / TABLES_DIR)
 ```
 
 **Trust data has two paths.** `make up` mounts pre-built snapshots (`update-omop-data` /
