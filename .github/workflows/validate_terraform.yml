@@ -17,6 +17,8 @@ on:
     branches: [main, develop]
     paths:
       - "deploy/providers/AWS/**"
+      # test_trust_kit_staging.py reads the shared kit-staging role site.yml composes.
+      - "trust/deploy/ansible/roles/flip_fl_kit/**"
       - ".github/workflows/validate_terraform.yml"
       - ".github/workflows/terraform_plan.yml"
       - ".github/workflows/terraform_apply.yml"
@@ -25,6 +27,8 @@ on:
     branches: [main, develop]
     paths:
       - "deploy/providers/AWS/**"
+      # test_trust_kit_staging.py reads the shared kit-staging role site.yml composes.
+      - "trust/deploy/ansible/roles/flip_fl_kit/**"
       - ".github/workflows/validate_terraform.yml"
       - ".github/workflows/terraform_plan.yml"
       - ".github/workflows/terraform_apply.yml"
