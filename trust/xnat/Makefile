@@ -403,10 +403,36 @@ down-xnat:
 	$(require_kit)
 	$(MAKE) xnat-stack-down STACK=$(XNAT_STACK)
 
+# The running xnat-web container of ONE stack, found by the labels swarm stamps on every task
+# container — never by `docker ps --filter name=`. That filter is a regular-expression *search*,
+# so on a host that also runs a FLIP_INSTANCE-prefixed stack (`lzastag-xnat1` beside `xnat1`)
+# the unprefixed lookup matched both, and `docker exec $$CONTAINER …` became
+# `docker exec <id1> <id2> …`, failing with `exec: "<id2>": executable file not found` after
+# the stack had deployed — so it was never configured (FLIP#1210). The unprefixed stack is the
+# one that loses: its name is a suffix of the prefixed one. `xnat-stack-down` already matched
+# on the namespace label; these two complete the set.
+# $(1) is the stack name. Prints the container id(s), one per line, like `docker ps -q`.
+define xnat_web_container_ids
+docker ps -q --filter "label=com.docker.stack.namespace=$(1)" --filter "label=com.docker.swarm.service.name=$(1)_xnat-web"
+endef
+
+# Refuse to `docker exec` into more than one container. Two ids can only be two tasks of the
+# same service — a rolling update still tearing the old one down — and no `docker ps` ordering
+# picks between them safely, so name both and stop rather than guess. Reads $$CONTAINER;
+# $(1) is the stack name, for the message.
+define require_one_xnat_web_container
+	case "$$CONTAINER" in *[[:space:]]*) \
+		echo "❌ ERROR: more than one $(1)_xnat-web container is running:" $$CONTAINER; \
+		echo "   A rolling update may still be tearing the old task down — retry once it has gone."; \
+		exit 1;; \
+	esac
+endef
+
 # Get a shell in the running xnat-web container for the selected trust.
 xnat-shell:
 	$(require_kit)
-	CONTAINER=$$(docker ps --filter "name=$(XNAT_STACK)_xnat-web" -q); \
+	CONTAINER=$$($(call xnat_web_container_ids,$(XNAT_STACK))); \
+	$(call require_one_xnat_web_container,$(XNAT_STACK)); \
 	docker exec -it $$CONTAINER bash
 
 # Remove a single XNAT Swarm stack and BLOCK until all its containers have
@@ -543,12 +569,13 @@ xnat-reset:
 xnat-configure:
 	@[ -n "$(XNAT_PROJECT)" ] || (echo "❌ XNAT_PROJECT is required"; exit 1)
 	@echo "⏳ Waiting for $(XNAT_PROJECT)_xnat-web container to be ready..."
-	@elapsed=0; while [ "$$(docker ps --filter "name=$(XNAT_PROJECT)_xnat-web" -q)" = "" ]; do \
+	@elapsed=0; while [ "$$($(call xnat_web_container_ids,$(XNAT_PROJECT)))" = "" ]; do \
 		if [ $$elapsed -ge 120 ]; then echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container never started"; exit 1; fi; \
 		echo "  Waiting for container..."; sleep 5; elapsed=$$((elapsed + 5)); \
 	done
-	CONTAINER=$$(docker ps --filter "name=$(XNAT_PROJECT)_xnat-web" -q); \
+	CONTAINER=$$($(call xnat_web_container_ids,$(XNAT_PROJECT))); \
 	[ -n "$$CONTAINER" ] || { echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container not found at configure time"; exit 1; }; \
+	$(call require_one_xnat_web_container,$(XNAT_PROJECT)); \
 	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"' && \
 	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
 
