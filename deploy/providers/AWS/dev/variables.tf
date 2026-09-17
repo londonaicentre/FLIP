@@ -59,6 +59,28 @@ variable "cognito_callback_urls" {
   default     = ["https://localhost:443", "http://localhost:44357"]
 }
 
+variable "dev_ui_port_block" {
+  type = object({
+    first = number
+    last  = number
+  })
+  description = "Inclusive block of localhost ports pre-registered as browser origins, so a developer can bring a UI up on any port in it without a Terraform apply (FLIP#1227). Cognito callback URLs are exact-match strings — no wildcard, no port range — so the block is expanded into one http://localhost:<port> entry each and merged into both cognito_callback_urls (hence flip-api's CORS allowlist) and s3_cors_allowed_origins. Which port belongs to whom on a shared host is a convention, not config."
+  default = {
+    first = 44350
+    last  = 44359
+  }
+
+  validation {
+    condition     = var.dev_ui_port_block.first <= var.dev_ui_port_block.last
+    error_message = "dev_ui_port_block.first must not exceed dev_ui_port_block.last."
+  }
+
+  validation {
+    condition     = var.dev_ui_port_block.last - var.dev_ui_port_block.first + 1 + length(var.cognito_callback_urls) <= 100
+    error_message = "A Cognito app client accepts at most 100 callback URLs; shrink dev_ui_port_block or cognito_callback_urls."
+  }
+}
+
 variable "cognito_logout_urls" {
   type        = list(string)
   description = "OAuth logout URLs for the dev Cognito app client."

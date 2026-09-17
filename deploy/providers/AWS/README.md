@@ -536,6 +536,14 @@ not empty the list** — `modules/cognito` defaults it to `["https://localhost:4
 puts a localhost origin into the production allowlist. `tests/test_cognito_callback_urls.py` guards
 both directions, and runs in CI as the `AWS deploy tests` job of `validate_terraform.yml`.
 
+**Dev pre-registers a block of localhost UI ports (FLIP#1227).** Cognito has no wildcard or port
+range — every callback URL is an exact-match string — so `dev/main.tf` expands
+`var.dev_ui_port_block` (default 44350–44359) into one `http://localhost:<port>` entry each and
+merges them into both the callback list and `s3_cors_allowed_origins`. A UI on any port in the
+block therefore needs no apply: on a shared dev host each developer takes one by convention
+(44357 yl, 44356 at24, 44355 next) and sets it as `UI_PORT`. A port outside the block, or a host
+other than `localhost`, still needs the procedure below.
+
 To change it:
 
 ```bash
