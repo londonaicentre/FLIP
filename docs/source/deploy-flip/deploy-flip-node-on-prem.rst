@@ -172,12 +172,35 @@ hub-managed blocks.
 
    make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=true
 
-This registers the trust on the prod hub and fills **both** managed blocks in
-one step: the Kit credentials (``TRUST_API_KEY``,
-``TRUST_INTERNAL_SERVICE_KEY``, ``FL_KIT_SLOT``, ``FL_KIT_SLOT_NUMBER``,
-``EXPECTED_TRUST_ID``) and the Hub-shared block (12 keys). The hub stores only
-SHA-256 hashes of the credentials and cannot re-emit them, so this is a
-write-once operation — re-register to rotate.
+This registers the trust on the prod hub and fills the Kit credentials
+(``TRUST_API_KEY``, ``TRUST_INTERNAL_SERVICE_KEY``, ``FL_KIT_SLOT``,
+``FL_KIT_SLOT_NUMBER``, ``EXPECTED_TRUST_ID``) plus as much of the Hub-shared
+block as the hub task's environment carries. The block is built from the
+environment of the one-off ``flip-api`` Fargate task
+(``flip_api/scripts/register_trust.py``, ``HUB_SHARED_ENV_KEYS`` — a filtered
+comprehension that silently skips absent keys), and that task definition
+(``deploy/providers/AWS/locals.tf``) carries only ``TRUST_API_KEY_HEADER`` and
+``FL_BACKEND`` of the twelve: ``AES_KEY_BASE64`` is read from Secrets Manager at
+use time and never placed in the environment, and ``CENTRAL_HUB_API_URL``, the
+image registries/tags, the two kit dates, ``NLB_SUBDOMAIN`` and
+``FL_SERVER_PORT`` are not in the task definition at all. Those ten stay at their
+placeholder until the next step. The hub stores only SHA-256 hashes of the
+credentials and cannot re-emit them, so the credentials half is write-once —
+re-register to rotate.
+
+**2b. Fill the rest of the Hub-shared block (FLIP admin, required).** From the
+repo root, with the admin's local ``.env.production`` present:
+
+.. code-block:: shell
+
+   make sync-trust-kit KIT=<CODE> PROD=true
+
+This upserts the Hub-shared block from the local env file and preserves the
+credentials written in step 2. Skip it and the operator receives a kit whose
+``AES_KEY_BASE64`` and ``CENTRAL_HUB_API_URL`` are still placeholders — a trust
+that cannot decrypt a task or reach the hub. The same behaviour is described
+from the hub side in ``deploy/providers/AWS/README.md`` ("Registering trusts
+against the ECS hub").
 
 **3. Package the kit (FLIP admin).** Tarball the populated kit file + the
 operator's slice of the FL participant kit:
@@ -266,9 +289,10 @@ Then verify the trust is polling: ``sudo docker logs -f trust<N>-trust-api-1`` s
 show successful task polls against the Central Hub (``<N>`` is the assigned FL kit
 slot number, as above).
 
-**Rotation (later, no re-mint).** When the admin rotates a Hub-shared value
-(``AES_KEY_BASE64``, image tags, ``FL_BACKEND``), refresh only the Hub-shared
-block from the admin's local env file — credentials are preserved:
+**Rotation (later, no re-mint).** ``sync-trust-kit`` is the same command that
+completed the kit in step 2b, so when the admin later rotates a Hub-shared value
+(``AES_KEY_BASE64``, image tags, ``FL_BACKEND``), re-run it to refresh only the
+Hub-shared block from the admin's local env file — credentials are preserved:
 
 .. code-block:: shell
 

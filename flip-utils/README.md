@@ -125,7 +125,7 @@ directly.
 | `trainer.py` | Training logic — a plain `nvflare.client` script (`flare.init`/`receive`/`send`) |
 | `validator.py` | Extra validation module where the job type requires one (`diffusion_model`) |
 | `models.py` | Model definitions — must export `get_model()` function |
-| `config.json` | Hyperparameters — must include `LOCAL_ROUNDS` and `LEARNING_RATE`; optional `BEST_MODEL_METRIC` / `BEST_MODEL_METRIC_MINIMIZE` enable best-model selection (see below) |
+| `config.json` | Job configuration — only `job_type` is required; platform keys such as `LOCAL_ROUNDS` are defaulted when absent, and app settings such as `LEARNING_RATE` are passed through untouched; optional `BEST_MODEL_METRIC` / `BEST_MODEL_METRIC_MINIMIZE` enable best-model selection (see below) |
 | `transforms.py` | Data transforms (optional) |
 
 ### Best-Model Selection (optional)
