@@ -18,6 +18,9 @@ assertion here pins one way that regression could come back quietly:
 
 - the scan step must run ``detect-secrets-hook`` *against the baseline* — the bare
   ``scan`` subcommand cannot fail;
+- the scan step must refuse an empty file list before calling the hook — given no
+  filenames the hook exits 0 without reading anything, so a broken file-list
+  derivation would pass the job having scanned nothing;
 - the pre-commit job's detect-secrets line must not swallow its exit code;
 - the pinned ``detect-secrets`` version must equal the pre-commit hook's ``rev``, or CI
   and a developer's commit can disagree about what is a finding;
@@ -55,22 +58,42 @@ def _pre_commit_rev() -> str:
     return match.group(1)
 
 
+def _workflow_code_lines() -> list[str]:
+    """The workflow's lines with comment lines dropped, so a comment naming a command cannot satisfy a check."""
+    return [line for line in WORKFLOW.read_text().splitlines() if not line.strip().startswith("#")]
+
+
 def check_scan_job_runs_the_hook_against_the_baseline(failures: list[str]) -> None:
-    text = WORKFLOW.read_text()
-    if not re.search(r"detect-secrets-hook\s+--baseline\s+\.secrets\.baseline\b", text):
+    code = "\n".join(_workflow_code_lines())
+    if not re.search(r"detect-secrets-hook\s+--baseline\s+\.secrets\.baseline\b", code):
         failures.append(
             f"{WORKFLOW.name}: the Detect Secrets Scan job must run "
             "`detect-secrets-hook --baseline .secrets.baseline` — a bare `detect-secrets scan` "
             "prints a report and exits 0, so it cannot fail (FLIP#1215)."
         )
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            continue
-        if re.match(r"detect-secrets scan\b", stripped):
+    for line in code.splitlines():
+        if re.match(r"detect-secrets scan\b", line.strip()):
             failures.append(
                 f"{WORKFLOW.name}: `detect-secrets scan` is not a gate; use `detect-secrets-hook --baseline`."
             )
+
+
+def check_scan_step_refuses_an_empty_file_list(failures: list[str]) -> None:
+    """The hook exits 0 when given no filenames, so the step must fail on an empty list *before* calling it."""
+    code = "\n".join(_workflow_code_lines())
+    hook_call = re.search(r"detect-secrets-hook\s+--baseline\s+\.secrets\.baseline", code)
+    guard = re.search(r'if \[ "\$\{#files\[@\]\}" -eq 0 \]; then\n(.*?)\n\s*fi\s*\n', code, re.DOTALL)
+    if not guard:
+        failures.append(
+            f"{WORKFLOW.name}: the scan step must refuse an empty file list "
+            '(`if [ "${#files[@]}" -eq 0 ]; then … exit 1; fi`) — `detect-secrets-hook` with no filenames '
+            "exits 0 without reading anything, so the job would pass having scanned nothing."
+        )
+        return
+    if not re.search(r"\bexit 1\b", guard.group(1)):
+        failures.append(f"{WORKFLOW.name}: the empty-file-list guard must `exit 1`, not fall through to the hook.")
+    if hook_call and guard.start() > hook_call.start():
+        failures.append(f"{WORKFLOW.name}: the empty-file-list guard must precede the `detect-secrets-hook` call.")
 
 
 def check_pre_commit_job_does_not_swallow_the_hook(failures: list[str]) -> None:
@@ -144,6 +167,7 @@ def main() -> int:
     failures: list[str] = []
     try:
         check_scan_job_runs_the_hook_against_the_baseline(failures)
+        check_scan_step_refuses_an_empty_file_list(failures)
         check_pre_commit_job_does_not_swallow_the_hook(failures)
         check_ci_pin_matches_pre_commit_rev(failures)
         check_stale_baseline_fails_the_job(failures)
