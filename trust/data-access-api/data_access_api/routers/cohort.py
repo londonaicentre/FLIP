@@ -82,12 +82,11 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     including a genuine zero — comes back as a normal ``StatisticsResponse`` with
     ``record_count=0``, empty ``data`` and ``suppressed=True``, *not* an HTTP error.
     The threshold counts distinct subjects, and a cohort whose subjects cannot be established
-    is suppressed the same way.
-    Returning an error here caused trust-api to skip reporting back to the hub, which left
-    the per-trust UI status stuck on "running". A true zero and a small below-threshold
-    count are deliberately indistinguishable so the response can't reveal that >=1 patient
-    matched; the ``suppressed`` flag only tells the hub/UI to show a "below-threshold" chip
-    rather than a bare 0 (issue #519).
+    is suppressed the same way, so the response shape never varies with the cause of a
+    shortfall (FLIP#1219 tracks giving the researcher that diagnosis another way). A true
+    zero and a small below-threshold count are deliberately indistinguishable so the response
+    can't reveal that >=1 patient matched; the ``suppressed`` flag only tells the hub/UI to
+    show a "below-threshold" chip rather than a bare 0 (issue #519).
 
     Args:
         query_input (data_access_api.routers.schema.CohortQueryInput): The input data for the cohort query.
@@ -112,7 +111,12 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
         logger.info("Executing cohort query")
 
         df = get_records(safe_query)
-        df = df.dropna(axis=1, how="all")  # Ignore entirely empty columns
+        if not df.empty:
+            # Ignore entirely empty columns. Skipped for a zero-row frame: every column of one is
+            # vacuously all-null, so the drop would empty the column list and a cohort that
+            # projected person_id would be misdiagnosed as exposing no subject column (FLIP#967
+            # produces exactly that frame on a vocabulary-less trust).
+            df = df.dropna(axis=1, how="all")
         # drop duplicate columns
         df = df.loc[:, ~df.columns.duplicated()]
     except Exception as e:
@@ -195,8 +199,21 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
         logger.exception("DataFrame query failed unexpectedly")
         raise HTTPException(status_code=500, detail="Query execution failed.")
 
+    # Drop duplicate columns as /cohort does: a join that keeps both sides' person_id would
+    # otherwise reach the count as a DataFrame rather than a Series and fail as an opaque 500 at
+    # training start — the least legible place, since query approval and the imaging pull both
+    # ran the de-duplicated route first.
+    df = df.loc[:, ~df.columns.duplicated()]
+
     minimum_cohort_size = get_settings().COHORT_QUERY_THRESHOLD
-    subject_count = count_distinct_subjects(df)
+    # Only the count is guarded, not get_records above: its categorised 400s echo identifiers the
+    # operator typed and are a useful diagnostic. A count that cannot be taken is refused exactly
+    # as a small cohort is, so the refusal never says why.
+    try:
+        subject_count = count_distinct_subjects(df)
+    except Exception:
+        logger.exception(f"Subject count unavailable for project {project_id}; refusing as below threshold")
+        subject_count = 0
     if subject_count is None:
         logger.warning(
             f"Withholding row-level data for project {project_id}: cohort exposes neither "
@@ -289,8 +306,16 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
     # The wrapper above projects accession_id and nothing else, so the count always resolves
     # through omop.image_occurrence. An accession number that belongs to no imaging study
     # contributes no subject, so a cohort aliasing some unrelated column to that name is refused
-    # rather than passed on its row count.
-    subject_count = count_distinct_subjects(df)
+    # rather than passed on its row count. The count sits outside the try above on purpose:
+    # get_records' 400s keep their diagnostic shape, while a failure of the count itself must be
+    # indistinguishable from a small cohort — an empty cohort never reaches the database here and
+    # a non-empty one does, so an unguarded lookup error would separate the two exactly when the
+    # lookup is unhealthy.
+    try:
+        subject_count = count_distinct_subjects(df)
+    except Exception:
+        logger.exception(f"Subject count unavailable for project {project_id}; refusing as below threshold")
+        subject_count = 0
     if subject_count is None or subject_count < minimum_cohort_size:
         logger.warning(
             f"Withholding accession IDs for project {project_id}: "

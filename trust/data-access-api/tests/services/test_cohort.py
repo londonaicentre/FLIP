@@ -1430,12 +1430,40 @@ def test_make_other_category_defaults_to_configured_threshold(mock_get_settings)
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 20
     results = [
         {"value": "A", "count": 25},
-        {"value": "B", "count": 15},  # Below the configured 20, so grouped
+        {"value": "B", "count": 15},  # Below the configured 20, so folded — and dropped, see below
     ]
 
-    assert make_other_category(results) == [
-        {"value": "A", "count": 25},
-        {"value": "Other", "count": 15},
+    # "Other" would be 15 here, a count below the configured floor published under another
+    # label, so it is dropped rather than emitted. The assertion pins that the *configured*
+    # threshold (20, not the shipped 10) is what decided it.
+    assert make_other_category(results) == [{"value": "A", "count": 25}]
+
+
+def test_make_other_category_drops_other_when_a_single_bucket_would_be_relabelled():
+    """One sub-threshold bucket folded alone is that bucket's exact count under a new name.
+
+    ``[CT: 300, Plain radiography: 4]`` at a floor of 10 used to become ``[CT: 300, Other: 4]``,
+    telling a reader that exactly four studies carry the one other modality.
+    """
+    results = [{"value": "CT", "count": 300}, {"value": "Plain radiography", "count": 4}]
+
+    assert make_other_category(results, min_count=10) == [{"value": "CT", "count": 300}]
+
+
+def test_make_other_category_drops_other_when_the_folded_total_is_below_the_threshold():
+    """Two small buckets summing below the floor are still a sub-threshold count."""
+    results = [{"value": "A", "count": 30}, {"value": "B", "count": 4}, {"value": "C", "count": 3}]
+
+    assert make_other_category(results, min_count=10) == [{"value": "A", "count": 30}]
+
+
+def test_make_other_category_emits_other_once_the_folded_total_clears_the_threshold():
+    """Buckets whose total reaches the floor are published as one "Other" bucket."""
+    results = [{"value": "A", "count": 30}, {"value": "B", "count": 6}, {"value": "C", "count": 4}]
+
+    assert make_other_category(results, min_count=10) == [
+        {"value": "A", "count": 30},
+        {"value": "Other", "count": 10},
     ]
 
 
@@ -1489,11 +1517,11 @@ def test_get_statistics_no_person_id_column(mock_read_sql):
 
     modality_data = next((item for item in result.data if item["name"] == "Modality Distribution"), None)
     assert modality_data is not None
-    # The 5-study XR bucket is below the threshold of 10 and groups into "Other".
+    # The 5-study XR bucket is below the threshold of 10. Folded alone it would be published
+    # verbatim as "Other: 5", so it is dropped rather than relabelled.
     assert modality_data["results"] == [
         {"value": "CT", "count": 15},
         {"value": "MR", "count": 10},
-        {"value": "Other", "count": 5},
     ]
 
 
@@ -1643,13 +1671,13 @@ def test_get_statistics_with_person_id_and_low_count_categories(mock_read_sql):
     # Check sex distribution has 'Other' category
     sex_data = next((item for item in result.data if item["name"] == "Sex Distribution"), None)
     assert sex_data is not None
-    # With COHORT_QUERY_THRESHOLD=10: M (20), F (12) are kept separate; U (8) grouped into Other
-    assert len(sex_data["results"]) == 3
+    # With COHORT_QUERY_THRESHOLD=10: M (20), F (12) are kept separate; U (8) is folded into
+    # "Other", which at 8 is itself below the floor and therefore dropped — publishing it would
+    # give the single sub-threshold sex bucket's exact count under another label.
+    assert len(sex_data["results"]) == 2
     assert {"value": "M", "count": 20} in sex_data["results"]
     assert {"value": "F", "count": 12} in sex_data["results"]
-    other_sex = next((item for item in sex_data["results"] if item["value"] == "Other"), None)
-    assert other_sex is not None
-    assert other_sex["count"] == 8
+    assert not any(item["value"] == "Other" for item in sex_data["results"])
 
 
 # ---------------------------------------------------------------------------
@@ -1718,13 +1746,15 @@ def test_count_distinct_subjects_is_cached_per_cohort_not_per_query_text(mock_re
     """Every accession lookup is the same SQL text with a different bound list, and the result goes
     through the query cache. The cache must key on the bound list too, or the second cohort to be
     counted is gated on the first cohort's subjects. A repeat of the same list is a cache hit."""
-    counts = {("ACC1", "ACC2"): 2, ("ACC3", "ACC4", "ACC5"): 7}
+    # Distinct per-cohort answers, both within their cohort's row count so the row-count bound
+    # in count_distinct_subjects cannot mask a cache hit returning the wrong cohort's figure.
+    counts = {("ACC1", "ACC2"): 2, ("ACC3", "ACC4", "ACC5"): 1}
     mock_read_sql.side_effect = lambda query, engine, params: pd.DataFrame(
         {"subject_count": [counts[tuple(params["accession_ids"])]]}
     )
 
     assert count_distinct_subjects(pd.DataFrame({"accession_id": ["ACC1", "ACC2"]})) == 2
-    assert count_distinct_subjects(pd.DataFrame({"accession_id": ["ACC3", "ACC4", "ACC5"]})) == 7
+    assert count_distinct_subjects(pd.DataFrame({"accession_id": ["ACC3", "ACC4", "ACC5"]})) == 1
     assert mock_read_sql.call_count == 2
 
     # Same cohort again: served from the cache, still its own count.
@@ -1768,6 +1798,80 @@ def test_get_statistics_suppresses_a_cohort_whose_subjects_cannot_be_counted(moc
 
     assert stats.suppressed is True
     assert stats.record_count == 0
+
+
+@patch("pandas.read_sql")
+def test_count_distinct_subjects_never_exceeds_the_row_count(mock_read_sql):
+    """Three accession numbers resolving to twelve people count as three.
+
+    ``image_occurrence.accession_id`` is ``varchar NULL`` with no unique constraint, so the schema
+    does not make it functional on ``person_id``; the row count is kept as the upper bound the
+    old row check provided rather than letting the lookup clear a floor the cohort cannot.
+    """
+    mock_read_sql.return_value = pd.DataFrame({"subject_count": [12]})
+
+    assert count_distinct_subjects(pd.DataFrame({"accession_id": ["ACC1", "ACC2", "ACC3"]})) == 3
+
+
+def test_count_distinct_subjects_tolerates_a_duplicated_person_id_column():
+    """A projection carrying person_id twice is counted from the first copy, not raised on."""
+    df = pd.DataFrame([[1, 25, 1], [2, 30, 2], [2, 35, 2]], columns=["person_id", "age", "person_id"])
+
+    assert count_distinct_subjects(df) == 2
+
+
+@patch("data_access_api.services.cohort.count_distinct_subjects", side_effect=RuntimeError("connection reset"))
+def test_get_statistics_suppresses_when_the_subject_count_cannot_be_taken(mock_count):
+    """A failed count is suppressed like an unestablished one, never a 500.
+
+    /cohort undertakes to answer every cohort with a normal response; the route's catch-all
+    turned a lookup error inside the count into ``500 Statistics aggregation failed.``.
+    """
+    query_input = CohortQueryInput(
+        encrypted_project_id="my_project",
+        query_id="1",
+        query_name="query_1",
+        query="SELECT accession_id FROM omop.image_occurrence",
+        trust_id="mock_trust",
+    )
+
+    result = get_statistics(pd.DataFrame({"accession_id": [f"ACC{i}" for i in range(30)]}), query_input, threshold=10)
+
+    assert result.suppressed is True
+    assert result.record_count == 0
+    assert result.data == []
+
+
+@patch("pandas.read_sql")
+@patch("data_access_api.services.cohort.get_modality_distribution", side_effect=RuntimeError("connection reset"))
+def test_get_statistics_reports_no_modalities_when_the_lookup_fails(mock_modality, mock_read_sql):
+    """A failed modality lookup empties the chart instead of failing a cohort already answered."""
+    mock_read_sql.return_value = pd.DataFrame({"subject_count": [30]})
+    query_input = CohortQueryInput(
+        encrypted_project_id="my_project",
+        query_id="1",
+        query_name="query_1",
+        query="SELECT accession_id FROM omop.image_occurrence",
+        trust_id="mock_trust",
+    )
+
+    result = get_statistics(pd.DataFrame({"accession_id": [f"ACC{i}" for i in range(30)]}), query_input, threshold=10)
+
+    assert result.suppressed is False
+    modality = next(item for item in result.data if item["name"] == "Modality Distribution")
+    assert modality["results"] == []
+
+
+@patch("pandas.read_sql")
+def test_get_modality_distribution_logs_an_unexpected_result_shape(mock_read_sql, caplog):
+    """An unlabelled result is reported as no modalities *and* leaves an operator a trail."""
+    mock_read_sql.return_value = pd.DataFrame({"unexpected": [1]})
+
+    with caplog.at_level("ERROR"):
+        result = get_modality_distribution(pd.DataFrame({"accession_id": ["ACC1"]}))
+
+    assert result == {"name": "Modality Distribution", "results": []}
+    assert "unexpected shape" in caplog.text
 
 
 # ---------------------------------------------------------------------------
