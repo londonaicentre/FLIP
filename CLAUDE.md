@@ -24,7 +24,7 @@ FLIP/
 │   ├── imaging-api/    # DICOM image retrieval (Python/FastAPI)
 │   ├── omop-db/        # Mocked OMOP database (PostgreSQL) + omop-db image build source & populate tooling (#834)
 │   ├── orthanc/        # Mocked PACS server
-│   ├── xnat/           # Mocked XNAT neuroimaging service
+│   ├── xnat/           # Mocked XNAT medical-imaging archive
 │   ├── observability/  # Grafana + Loki monitoring stack (alloy/grafana/loki)
 │   └── deploy/         # The trust node in its shapes (#1213): compose_trust.*.yml (Compose on a host) plus the two below
 │       ├── helm/       # The same stack as Helm chart `flip-trust` for Kubernetes. Holds no AWS credentials and never fetches the FL participant kit: stage it onto the node first with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then deploy with `flClient.kitHostPath` pointing at it (required whenever flClient.enabled). On the AWS side the EC2 equivalent is `make stage-fl-kit KIT=<CODE>`, which re-stages for the trust's REGISTERED slot after `register-trusts`
@@ -717,7 +717,7 @@ TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict marker
 
 The senders construct the header inline at call sites:
 
-- `trust-api/trust_api/services/task_handlers.py::_trust_internal_headers()` — used on outbound imaging-api and data-access-api calls.
+- `trust-api/trust_api/services/task_handlers.py::trust_internal_headers()` — used on outbound imaging-api and data-access-api calls.
 - `imaging-api/imaging_api/services_external/data_access.py` — used on the outbound `/cohort/accession-ids` call.
 - The `flip` Python package — lives at [`flip-utils/flip/`](flip-utils/flip/) in this mono-repo, consumed by both the NVFLARE and Flower fl-client / fl-server images built from `fl-services/`. Wraps every fl-client call to imaging-api (`flip.get_by_accession_number`, etc.) and data-access-api (`flip.get_dataframe`). The package reads `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and forwards it on every request. **User-uploaded training code (`client_app.py`, `server_app.py`, anything under `tutorials/`) does not deal with the header directly** — it calls `flip.*` and the package handles transport-level auth.
 

@@ -27,7 +27,7 @@ Central Hub REST API. FastAPI + psycopg2 + SQLModel (sync sessions). Handles use
 | `user_services/` | Register, authenticate, update/delete users, roles, permissions |
 | `project_services/` | Project CRUD, approval workflows |
 | `model_services/` | ML model management, metrics, logs, approvals |
-| `fl_services/` | FL training initiation, status, stop, file pull |
+| `fl_services/` | FL training initiation, status, stop, per-net/quiesce status, job scheduling |
 | `trusts_services/` | Trust registration, health checks, imaging creation |
 | `cohort_services/` | Cohort query submission, results retrieval |
 | `step_functions_services/` | Step function orchestration (register user, approve, cohort) |
@@ -36,7 +36,6 @@ Central Hub REST API. FastAPI + psycopg2 + SQLModel (sync sessions). Handles use
 | `site_services/` | Site configuration, details |
 | `role_services/` | Role CRUD |
 | `scheduler/` | APScheduler background jobs (FL scheduling, trust polling, malware-scan reconcile sweep) |
-| `shared/` | Shared utilities, middleware |
 | `utils/` | Cross-cutting helpers: `s3_client.py` (presigned POST/GET, `MAX_PRESIGNED_URL_TTL_SECONDS` clamp), `email_sender.py::send_templated_email` (SES/console dispatch, secret redaction), `encryption.py` (AES via `AES_KEY_BASE64`), `user_roles.py` (role/permission lookups + validation) |
 
 ## Commands (from `flip-api/`)
