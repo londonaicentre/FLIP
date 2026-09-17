@@ -1,0 +1,59 @@
+schema_type: dataframe
+columns:
+  procedure_occurrence_id:
+    dtype: int64
+    unique: true
+  person_id:
+    dtype: int64
+  procedure_concept_id:
+    dtype: int64
+  procedure_date:
+    dtype: datetime64[ns]
+  procedure_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  procedure_end_date:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  procedure_end_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  procedure_type_concept_id:
+    dtype: int64
+  modifier_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  quantity:
+    dtype: int64
+    nullable: true
+    required: false
+  provider_id:
+    dtype: int64
+    nullable: true
+    required: false
+  visit_occurrence_id:
+    dtype: int64
+    nullable: true
+    required: false
+  visit_detail_id:
+    dtype: int64
+    nullable: true
+    required: false
+  procedure_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  procedure_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  modifier_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

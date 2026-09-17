@@ -162,9 +162,10 @@ for full details):
 - **Trust API keys** — minted by the ``register_trust`` service when a trust is
   registered. The hub stores only the SHA-256 hash in the ``api_key_hash``
   column of the ``trust`` table; the plaintext is written once into that
-  trust's kit file (``trust/.env.<CODE>.<env>``). Trusts are registered with
-  ``make register-trust KIT=<CODE>`` (or ``make register-trusts`` for the
-  shipped dev roster).
+  trust's kit file (``trust/.env.<CODE>.<env>``). Trusts are registered from
+  ``deploy/providers/AWS`` with ``make register-trusts KIT=<CODE>`` for a single
+  kit, or ``make register-trusts`` with no ``KIT`` for every
+  ``trust/.env.*.<env>`` kit present.
 - **Internal service key** — single hub-internal key for fl-server → flip-api
   calls. Generated with ``make generate-internal-service-key``.
 - **Trust-internal service keys** — per-trust shared secret used inside each
@@ -176,7 +177,31 @@ for full details):
 (``.env.stag`` or ``.env.production``) and preserves any keys that already
 exist; ``make register-trusts`` writes the per-trust keys into the kit files.
 
-***********************
+***********************************************************
+Upgrading across the payload-encryption change (FLIP#1179)
+***********************************************************
+
+Task payloads between the hub and its trusts are AES-256-GCM envelopes, with no
+compatibility for the earlier AES-CBC format. A hub and every trust registered to it
+therefore cross that release together, as a flag day:
+
+1. Enable Deployment Mode (Admin → Deployments) and wait for ``GET /fl/quiesce`` to
+   report ``deployment_mode: true`` and ``fl_quiesced: true``.
+2. Redeploy the hub (``make deploy-centralhub``) and every trust (``make deploy-trust``,
+   the on-prem playbook, or the Kubernetes chart) in one window.
+3. Disable Deployment Mode.
+
+Anything still encrypted under the old format at the moment of upgrade fails
+afterwards: a task collected under CBC by a trust that has since upgraded stays
+``IN_PROGRESS`` (reset it to ``PENDING``), and a running FL job carrying a CBC project
+id fails at imaging-api once that trust upgrades — which is what step 1 prevents.
+
+The same page's ``AES_KEY_BASE64`` must be byte-identical on the hub and on every
+trust container that decrypts. On staging and production the hub's copy is whatever
+the CI Terraform apply wrote into Secrets Manager from the GitHub environment; recover
+the deployed value with ``deploy/providers/AWS/scripts/reconcile_ci_env.py`` rather than
+trusting a checked-out ``.env.<env>``.
+
 Applying schema changes
 ***********************
 

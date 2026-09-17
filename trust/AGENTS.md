@@ -10,7 +10,7 @@ Trust services run at each healthcare institution (cloud EC2 or on-prem). All tr
 | imaging-api | 8001 | DICOM image retrieval from PACS |
 | data-access-api | 8010 | OMOP database queries for cohort analysis |
 | fl-client | — | FL participant (connects outbound to FL server via NLB) |
-| omop-db | 5432 | Mocked OMOP patient database (PostgreSQL); dir also holds the image build source + populate tooling (#834, see `omop-db/AGENTS.md`) |
+| omop-db | 5432 | Mocked OMOP patient database (PostgreSQL); dir also holds the image build source + populate tooling (#834, see `omop-db/AGENTS.md`) and the `seed-omop` loader (#1100) |
 | orthanc | 8042 | Mocked DICOM PACS server (UI/REST behind HTTP basic auth — kit file's `ORTHANC_USERNAME`/`ORTHANC_PASSWORD`; DICOM port 4242 is internal to the trust network and not bound to the host) |
 | xnat | 8104/8105 | Mocked neuroimaging platform. `XNAT_PORT` (8104) is the **DICOM SCP receiver** port; `XNAT_WEB_PORT` (8105) is the web UI. Both are host-published — the receiver so a real PACS can C-STORE back in, dev included so it runs the same wiring — so the two must differ; the deploy refuses a collision (FLIP#993) |
 | observability | 3000/3100 | Grafana + Loki monitoring stack |
@@ -96,6 +96,8 @@ GHCR login from `~/.docker/config.json`.
 |------|---------|
 | `Makefile` | Trust stack orchestration (parameterized `up-trust KIT=<name>`) |
 | `deploy/README.md` | Compose file matrix, the `--project-directory` rule these files depend on, and the external networks they join |
+| `deploy/helm/` | The same trust stack as Helm chart `flip-trust` for Kubernetes (chart, Makefile, `sync_k8s_kit.py`, tests) |
+| `deploy/ansible/onprem.yml` | Ansible play that provisions a site-owned Ubuntu host (Docker, `/opt/flip` dirs, uid rules) for the compose stack; on-prem twin of `deploy/providers/AWS/site.yml`. Driven by `make -C deploy/providers/AWS provision-local-trust`, which needs the hub env file the AWS Makefile parses at load — the known exception to "providers = Terraform only" |
 | `deploy/compose_trust.development.yml` | Dev Docker Compose (pulls repo-built services from GHCR by default via `pull_policy: always`; `BUILD=true` rebuilds from the `build:` block instead) |
 | `deploy/compose_trust.production.yml` | Prod Docker Compose (GHCR images; declares the `trust-local-{loki,grafana}-data` named volumes as defaults) |
 | `deploy/compose_trust.{env}.{flower\|nvflare}.yml` | FL backend variants |
@@ -125,6 +127,11 @@ make update-omop-data          # Download/extract mock OMOP data (both trusts)
 make update-omop-data TRUST=1  # Trust_1 only
 make update-orthanc-data       # Download/extract mock DICOM data (both trusts)
 make update-orthanc-data TRUST=1  # Trust_1 only
+make seed KIT=GSTT PROJECTS="spleen_project cxr_project"  # Seed a RUNNING trust: OMOP rows + DICOMs by source_trust (#1100)
+make seed-trusts PROJECTS="…"  # Both dev trusts; seed-omop / seed-orthanc for one half; CLEAR=1, DRY_RUN=1 on the PACS half
+make seed KIT=GSTT SOURCE_TRUST=1  # Override the OMOP partition; defaults to the FL kit slot, which is a convention, not an invariant (see README "Which partition a trust is seeded with")
+make publish-trust-data VERSION=<tag> [PGDATA=… ORTHANC=… OMOP_CSV=… DICOM=…]  # ONE commit on aicentreflip/trust-data + ONE tag; then bump trust/.data_version (the single pin, OMOP + Orthanc)
+make test-trust-data-tools  # Publisher pytest + ruff, then tests/test_seed_guard.sh — the .seeded guard driven end-to-end (make target writes the marker, update script reads it) in a sandbox with curl/tar/sudo stubbed
 ```
 
 ## Environment

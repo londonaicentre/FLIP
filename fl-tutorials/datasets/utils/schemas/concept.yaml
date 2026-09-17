@@ -1,0 +1,29 @@
+schema_type: dataframe
+columns:
+  concept_id:
+    dtype: int64
+    unique: true
+  concept_name:
+    dtype: string[python]
+  domain_id:
+    dtype: string[python]
+  vocabulary_id:
+    dtype: string[python]
+  concept_class_id:
+    dtype: string[python]
+  standard_concept:
+    dtype: string[python]
+    nullable: true
+    required: false
+  concept_code:
+    dtype: string[python]
+  valid_start_date:
+    dtype: datetime64[ns]
+  valid_end_date:
+    dtype: datetime64[ns]
+  invalid_reason:
+    dtype: string[python]
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

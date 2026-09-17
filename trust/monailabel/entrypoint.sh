@@ -83,7 +83,7 @@ server_pid=$!
 # --max-time, the loop would run to the deadline, and this script would exit 1 on a server that
 # is up and working, without ever reaching the XNAT registration below. /openapi.json answers
 # in milliseconds and proves the HTTP server is serving, which is all this gate needs to
-# assert. Mirrors the k8s probes in deploy/providers/kubernetes/templates/monailabel.yaml.
+# assert. Mirrors the k8s probes in trust/deploy/helm/templates/monailabel.yaml.
 echo "Waiting for MONAI Label to finish loading models..."
 deadline=$((SECONDS + 1800))
 until curl --output /dev/null --silent --fail \

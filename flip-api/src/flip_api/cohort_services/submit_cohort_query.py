@@ -30,7 +30,7 @@ from flip_api.domain.schemas.cohort import (
     TrustDetails,
 )
 from flip_api.domain.schemas.status import ProjectStatus, TaskType
-from flip_api.utils.encryption import encrypt
+from flip_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 from flip_api.utils.logger import logger
 from flip_api.utils.project_manager import get_project_by_id, has_project_status
 
@@ -214,8 +214,10 @@ def submit_cohort_query(
         SubmitCohortQueryOutput: The result of the submission to each trust
 
     Raises:
-        HTTPException: If the query contains forbidden commands, if the SQL syntax is invalid, if no trusts are found,
-        or if there is an error communicating with the trusts.
+        HTTPException: If the query is over length, unparseable, not exactly one statement, or not
+        SELECT-shaped (see `validate_query`); if an imaging project's explicit SELECT list names no
+        `accession_id` column (see `projection_lacks_accession_id`); if no trusts are found; or if
+        there is an error communicating with the trusts.
     """
     try:
         if not can_modify_project(user_id, cohort_query.project_id, db):
@@ -294,7 +296,7 @@ def submit_cohort_query(
         queried_trust_ids: list[UUID] = []
 
         # Encrypt project_id before sending to trusts
-        encrypted_project_id = encrypt(str(cohort_query.project_id))
+        encrypted_project_id = encrypt(str(cohort_query.project_id), context=PROJECT_ID_CONTEXT)
         logger.debug("Checking if project_id is encrypted: %s", encrypted_project_id)
 
         # Queue a task for each trust (instead of direct HTTP calls)

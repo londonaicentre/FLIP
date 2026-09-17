@@ -1,0 +1,22 @@
+{
+  "job_type": "standard",
+  "LOCAL_ROUNDS": 8,
+  "LR_START": 0.02,
+  "LR_END": 0.001,
+  "VAL_SPLIT": 0.2,
+  "TEST_SPLIT": 0.2,
+  "BATCH_SIZE": 32,
+  "SEED": 42,
+  "FEATURES": [
+    "age",
+    "is_female",
+    "has_prediabetes",
+    "has_obesity",
+    "has_severe_obesity",
+    "has_hypertension",
+    "has_hyperlipidemia",
+    "n_prior_conditions",
+    "n_prior_visits"
+  ],
+  "LABEL_COLUMN": "label_t2dm"
+}

@@ -20,7 +20,14 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from omop_db_tools.dataset import SOURCE_TRUST_COLUMN, build_canonical, fetch_canonical, split_for_trust
+from omop_db_tools.dataset import (
+    CANONICAL_TABLES,
+    SOURCE_TRUST_COLUMN,
+    build_canonical,
+    canonical_table_url,
+    fetch_canonical,
+    split_for_trust,
+)
 
 
 def _canonical_frame() -> pd.DataFrame:
@@ -33,7 +40,53 @@ def _canonical_frame() -> pd.DataFrame:
     )
 
 
+class TestCanonicalTablesOrder:
+    """The list is FK-safe for inserts as written and for deletes reversed (FLIP#1100).
+
+    Pins what a spike against a constrained, vocab-loaded trust database showed: with
+    procedure_occurrence listed before visit_occurrence, the first DELETE of a clean fails with
+    fpk_procedure_occurrence_visit_occurrence_id. The edges asserted here are the ones in the CDM
+    5.4 constraints among the mock-data tables.
+    """
+
+    @pytest.mark.parametrize(
+        ("referencing", "referenced"),
+        [
+            ("visit_occurrence", "person"),
+            ("procedure_occurrence", "person"),
+            ("procedure_occurrence", "visit_occurrence"),
+            ("image_occurrence", "person"),
+            ("image_occurrence", "visit_occurrence"),
+            ("image_occurrence", "procedure_occurrence"),
+            ("image_feature", "person"),
+            ("image_feature", "image_occurrence"),
+            ("measurement", "person"),
+            ("measurement", "visit_occurrence"),
+            ("observation", "person"),
+            ("observation", "visit_occurrence"),
+        ],
+    )
+    def test_referenced_table_is_inserted_first(self, referencing, referenced):
+        assert CANONICAL_TABLES.index(referenced) < CANONICAL_TABLES.index(referencing)
+
+
 class TestSplitForTrust:
+    def test_legacy_is_an_alias_for_source_trust(self):
+        df = _canonical_frame()
+
+        for index in (1, 2):
+            via_alias = split_for_trust(df, num_trusts=2, trust_index=index, mode="legacy")
+            via_name = split_for_trust(df, num_trusts=2, trust_index=index, mode="source_trust")
+            pd.testing.assert_frame_equal(via_alias, via_name)
+
+    def test_default_mode_is_source_trust(self):
+        df = _canonical_frame()
+
+        pd.testing.assert_frame_equal(
+            split_for_trust(df, num_trusts=2, trust_index=1),
+            split_for_trust(df, num_trusts=2, trust_index=1, mode="source_trust"),
+        )
+
     def test_legacy_reproduces_source_membership(self):
         df = _canonical_frame()
         trust_1 = split_for_trust(df, num_trusts=2, trust_index=1, mode="legacy")
@@ -106,8 +159,26 @@ class TestSplitForTrust:
     def test_legacy_with_gapped_source_values_rejected(self):
         df = _canonical_frame()
         df[SOURCE_TRUST_COLUMN] = [1, 1, 1, 3, 3, 3]
-        with pytest.raises(ValueError, match=r"exactly 1\.\.2"):
+        with pytest.raises(ValueError, match="contiguous"):
             split_for_trust(df, num_trusts=2, trust_index=1, mode="legacy")
+
+    def test_surplus_sources_wait_for_a_future_trust(self, capsys):
+        """One center per trust: a third center is written as source 3 and loaded by nobody on a two-trust stack."""
+        df = _canonical_frame()
+        df[SOURCE_TRUST_COLUMN] = [1, 1, 2, 2, 3, 3]
+        first = split_for_trust(df, num_trusts=2, trust_index=1)
+        second = split_for_trust(df, num_trusts=2, trust_index=2)
+        assert list(first["person_id"]) == [1, 2]
+        assert list(second["person_id"]) == [3, 4]
+        assert "sources 3..3 wait for a future trust" in capsys.readouterr().out
+        # And a third trust, once it exists, gets exactly the surplus.
+        assert list(split_for_trust(df, num_trusts=3, trust_index=3)["person_id"]) == [5, 6]
+
+    def test_a_trust_with_no_rows_is_still_rejected(self):
+        df = _canonical_frame()
+        df[SOURCE_TRUST_COLUMN] = [1, 1, 1, 1, 1, 1]
+        with pytest.raises(ValueError, match="every trust must have rows"):
+            split_for_trust(df, num_trusts=2, trust_index=2)
 
     def test_nan_person_id_rejected(self):
         df = _canonical_frame()
@@ -216,6 +287,28 @@ def _fake_urlopen(responses: dict[str, bytes]):
 class TestFetchCanonical:
     CSV = b"person_id,source_trust\n1,1\n"
 
+    def test_url_is_revision_then_unversioned_path(self):
+        """The version is the revision the URL resolves at, never a directory in the path."""
+        assert canonical_table_url("20260729", "cxr_project", "person") == (
+            "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/20260729/omop-csv/cxr_project/person.csv"
+        )
+        assert canonical_table_url("main", "spleen_project", "measurement", repo="org/other").startswith(
+            "https://huggingface.co/datasets/org/other/resolve/main/omop-csv/spleen_project/"
+        )
+
+    def test_fetches_every_table_at_the_given_revision(self, tmp_path, monkeypatch):
+        seen: list[str] = []
+
+        def opener(url, timeout=0):
+            seen.append(url)
+            return _fake_response(self.CSV)
+
+        monkeypatch.setattr(urllib.request, "urlopen", opener)
+
+        fetch_canonical("20260901", tmp_path, projects=["spleen_project"])
+
+        assert seen == [canonical_table_url("20260901", "spleen_project", t) for t in CANONICAL_TABLES]
+
     def test_optional_404_skipped_required_fetched(self, tmp_path, monkeypatch):
         required = ["person", "procedure_occurrence", "visit_occurrence", "image_occurrence", "image_feature"]
         served = {f"/{table}.csv": self.CSV for table in required}
@@ -227,10 +320,10 @@ class TestFetchCanonical:
         assert not (tmp_path / "cxr_project" / "measurement.csv").exists()
         assert not (tmp_path / "cxr_project" / "observation.csv").exists()
 
-    def test_required_404_raises_with_version_hint(self, tmp_path, monkeypatch):
+    def test_required_404_raises_with_revision_hint(self, tmp_path, monkeypatch):
         monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen({}))
 
-        with pytest.raises(RuntimeError, match="version 'v9'"):
+        with pytest.raises(RuntimeError, match="revision 'v9'"):
             fetch_canonical("v9", tmp_path, projects=["cxr_project"])
 
     def test_non_404_error_on_optional_table_raises(self, tmp_path, monkeypatch):

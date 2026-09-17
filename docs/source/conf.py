@@ -24,6 +24,13 @@
 #
 import os
 import sys
+import tomllib
+from pathlib import Path
+
+from sphinx.errors import SphinxError
+from sphinx.util import logging as sphinx_logging
+
+logger = sphinx_logging.getLogger(__name__)
 
 # Treat each API directory as an independent package
 sys.path.insert(0, os.path.abspath("../../flip-api/src"))
@@ -41,16 +48,33 @@ project = "FLIP"
 copyright = "2026, The London AI Centre for Value-Based Healthcare"
 author = "The London AI Centre for Value-Based Healthcare"
 
-# The full version of the documentation, including alpha/beta/rc tags
-release = ""
+# The FLIP platform version, read from the repository's root pyproject.toml so the docs
+# never carry a hand-maintained copy of it. It reaches the HTML title and the search index,
+# so an unreadable file fails the build rather than quietly producing an unversioned site —
+# the same stance the diagram hook below takes.
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# The full version of the FLIP platform, including alpha/beta/rc tags
-# The rst_epilog list makes items within it globally-available to compiled .rst files.
-# rst_epilog = """
-# .. |flip_version| replace:: {flip_version}
-# """.format(
-#     flip_version="1.0",
-# )
+
+def _platform_version() -> str:
+    """Read ``project.version`` from the repository root ``pyproject.toml``.
+
+    Returns:
+        str: The declared platform version.
+
+    Raises:
+        SphinxError: If the file is missing, unparseable, or carries no ``project.version``.
+    """
+    pyproject = REPO_ROOT / "pyproject.toml"
+    try:
+        with pyproject.open("rb") as fh:
+            return str(tomllib.load(fh)["project"]["version"])
+    except (OSError, KeyError, tomllib.TOMLDecodeError) as exc:
+        raise SphinxError(f"Could not read project.version from {pyproject} ({exc!r}).") from exc
+
+
+# Both Sphinx version strings carry the full platform version (no separate X.Y short form).
+release = _platform_version()
+version = release
 
 # -- General configuration ---------------------------------------------------
 
@@ -65,7 +89,14 @@ extensions = [
     "sphinx.ext.coverage",
     "sphinx.ext.ifconfig",
     "sphinxcontrib.bibtex",
+    "sphinx_reredirects",
 ]
+
+# Pages renamed in FLIP#364 keep their old URLs as HTML redirect stubs (target is relative to the old page).
+redirects = {
+    "components/architecture-overview": "overview.html",
+    "components/component-fl-nodes": "component-fl-nets.html",
+}
 
 autoapi_type = "python"
 
@@ -141,3 +172,47 @@ html_logo = 'assets/flip-logo.png'
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ["_static"]
+
+
+# -- Generated figures -------------------------------------------------------
+# The Central Hub AWS diagram is diagram-as-code kept beside the Terraform it depicts
+# (deploy/providers/AWS/architecture/central_hub.py, drift-guarded by that tree's tests). It is rendered here at
+# build time into assets/generated/ (gitignored), so the published page always shows the picture for the commit
+# it documents and no PNG has to be kept in sync by hand. Needs graphviz `dot`: ReadTheDocs installs it via
+# build.apt_packages, the docs CI job via apt-get.
+
+AWS_PROVIDER_DIR = REPO_ROOT / "deploy" / "providers" / "AWS"
+GENERATED_ASSETS_DIR = Path(__file__).resolve().parent / "assets" / "generated"
+SKIP_DIAGRAMS_ENV = "FLIP_DOCS_SKIP_DIAGRAMS"
+
+
+def _render_generated_figures(app):
+    """Render the Central Hub AWS diagrams before Sphinx reads the sources.
+
+    Fails the build when graphviz is missing rather than publishing a page with an empty figure. A developer
+    without graphviz can opt out with ``FLIP_DOCS_SKIP_DIAGRAMS=1`` for a text-only local build; that prints a
+    warning here and Sphinx's own "image file not readable" warning on the Central Hub page, never silently.
+    """
+    if os.environ.get(SKIP_DIAGRAMS_ENV) == "1":
+        logger.warning(
+            "%s=1: not rendering the Central Hub AWS diagrams; the Central Hub page will report missing images",
+            SKIP_DIAGRAMS_ENV,
+        )
+        return
+    sys.path.insert(0, str(AWS_PROVIDER_DIR))
+    from architecture.central_hub import render  # noqa: PLC0415  (import deferred so `diagrams` is only needed here)
+
+    try:
+        outputs = render(GENERATED_ASSETS_DIR)
+    except RuntimeError as exc:
+        raise SphinxError(
+            f"{exc} On ReadTheDocs graphviz comes from build.apt_packages in .readthedocs.yaml; locally, "
+            f"`apt-get install graphviz`, or set {SKIP_DIAGRAMS_ENV}=1 for a text-only build."
+        ) from exc
+    for path in outputs:
+        logger.info("rendered %s", path.relative_to(REPO_ROOT))
+
+
+def setup(app):
+    app.connect("builder-inited", _render_generated_figures)
+    return {"parallel_read_safe": True, "parallel_write_safe": True}

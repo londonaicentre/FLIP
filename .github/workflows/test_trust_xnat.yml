@@ -40,7 +40,7 @@ on:
       - "trust/xnat/docker-compose-stack.yml"
       - "trust/deploy/compose_trust.development.yml"
       - "trust/deploy/compose_trust.production.yml"
-      - "deploy/providers/kubernetes/templates/xnat-init-job.yaml"
+      - "trust/deploy/helm/templates/xnat-init-job.yaml"
       - "trust/Makefile"
       - "Makefile"
       - "flip-api/Makefile"
@@ -54,7 +54,7 @@ on:
       - "trust/xnat/xnat/config/dcm2niix_command.json"
       - "trust/xnat/xnat/Dockerfile"
       - "deploy/providers/AWS/site.yml"
-      - "deploy/providers/local/site_local_trust.yml"
+      - "trust/deploy/ansible/onprem.yml"
       - ".github/workflows/test_trust_xnat.yml"
   pull_request:
     branches: [main, develop]
@@ -68,7 +68,7 @@ on:
       - "trust/xnat/docker-compose-stack.yml"
       - "trust/deploy/compose_trust.development.yml"
       - "trust/deploy/compose_trust.production.yml"
-      - "deploy/providers/kubernetes/templates/xnat-init-job.yaml"
+      - "trust/deploy/helm/templates/xnat-init-job.yaml"
       - "trust/Makefile"
       - "Makefile"
       - "flip-api/Makefile"
@@ -82,7 +82,7 @@ on:
       - "trust/xnat/xnat/config/dcm2niix_command.json"
       - "trust/xnat/xnat/Dockerfile"
       - "deploy/providers/AWS/site.yml"
-      - "deploy/providers/local/site_local_trust.yml"
+      - "trust/deploy/ansible/onprem.yml"
       - ".github/workflows/test_trust_xnat.yml"
 
 permissions:

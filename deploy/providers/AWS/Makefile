@@ -18,6 +18,12 @@ PROD=stag
 MAIN_ENV_FILE=../../../.env.stag
 endif
 
+# The trust node's two deployment shapes live beside the trust compose files, not in
+# this provider (#1213). Spelled once; every recipe that reaches them goes through these.
+REPO_ROOT := $(abspath $(dir $(firstword $(MAKEFILE_LIST)))../../..)
+HELM_CHART_DIR := $(REPO_ROOT)/trust/deploy/helm
+ONPREM_ANSIBLE_DIR := $(REPO_ROOT)/trust/deploy/ansible
+
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
@@ -508,8 +514,7 @@ update-env: ## Update environment file with Terraform outputs
 .PHONY: ansible-init
 ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed try again for 3 times)
 	@echo "☁️🔗 Configure the Central Hub bastion and provision the Trust EC2"
-	@[ -n "$(OMOP_DATA_VERSION)" ] || (echo "❌  trust/omop-db/.data_version not found"; exit 1)
-	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
+	@[ -n "$(TRUST_DATA_VERSION)" ] || (echo "❌  trust/.data_version not found"; exit 1)
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
 	@# --skip-tags omop-vocab: the vocabulary load needs the trust's OMOP cluster
@@ -523,8 +528,7 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 		-e fl_backend=$(FL_BACKEND) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
 		-e trust_num=$(or $(FL_KIT_SLOT_NUMBER),1) \
-		-e omop_data_version=$(OMOP_DATA_VERSION) \
-		-e orthanc_data_version=$(ORTHANC_DATA_VERSION)
+		-e trust_data_version=$(TRUST_DATA_VERSION)
 
 .PHONY: provision-bastion
 provision-bastion: ssh-config ## Install the minimal operator tooling on the Central Hub SSM bastion only
@@ -537,8 +541,7 @@ provision-bastion: ssh-config ## Install the minimal operator tooling on the Cen
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e fl_backend=$(FL_BACKEND) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
-		-e omop_data_version=$(OMOP_DATA_VERSION) \
-		-e orthanc_data_version=$(ORTHANC_DATA_VERSION)
+		-e trust_data_version=$(TRUST_DATA_VERSION)
 	@echo "✅ Central Hub SSM bastion provisioned."
 
 # Cloud-trust targets are meaningless on a hub-only deployment — fail fast with
@@ -551,17 +554,15 @@ check-trust-ec2-enabled:
 seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP + Orthanc mock data onto the Trust EC2 (re-run after data version bump; requires KIT=)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make seed-trust-data KIT=Trust_2 PROD=stag"; exit 1)
 	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo "❌  FL_KIT_SLOT_NUMBER not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — run register-trusts first"; exit 1)
-	@[ -n "$(OMOP_DATA_VERSION)" ] || (echo "❌  trust/omop-db/.data_version not found"; exit 1)
-	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
+	@[ -n "$(TRUST_DATA_VERSION)" ] || (echo "❌  trust/.data_version not found"; exit 1)
 	@[ -n "$(OMOP_POSTGRES_PASSWORD_KIT)" ] || (echo "❌  OMOP_POSTGRES_PASSWORD not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — the vocab-load play needs the cluster credentials"; exit 1)
-	@echo "🗄️  Seeding Trust EC2 with trust$(FL_KIT_SLOT_NUMBER) data (OMOP v$(OMOP_DATA_VERSION), Orthanc v$(ORTHANC_DATA_VERSION))..."
+	@echo "🗄️  Seeding Trust EC2 with trust$(FL_KIT_SLOT_NUMBER) data (trust-data $(TRUST_DATA_VERSION))..."
 	@uv run ansible-playbook site.yml \
 		--tags data \
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
 		-e trust_num=$(FL_KIT_SLOT_NUMBER) \
-		-e omop_data_version=$(OMOP_DATA_VERSION) \
-		-e orthanc_data_version=$(ORTHANC_DATA_VERSION) \
+		-e trust_data_version=$(TRUST_DATA_VERSION) \
 		-e omop_postgres_user=$(OMOP_POSTGRES_USER_KIT) \
 		-e omop_postgres_password=$(OMOP_POSTGRES_PASSWORD_KIT) \
 		-e omop_postgres_db=$(OMOP_POSTGRES_DB_KIT) \
@@ -963,10 +964,11 @@ OMOP_POSTGRES_USER_KIT := $(shell sed -n 's/^OMOP_POSTGRES_USER=//p' ../../../tr
 OMOP_POSTGRES_PASSWORD_KIT := $(shell sed -n 's/^OMOP_POSTGRES_PASSWORD=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 OMOP_POSTGRES_DB_KIT := $(shell sed -n 's/^OMOP_POSTGRES_DB=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 
-# Data versions read from the canonical .data_version files — these govern both
-# the local update-omop-data / update-orthanc-data scripts and the Ansible plays.
-OMOP_DATA_VERSION := $(shell cat ../../../trust/omop-db/.data_version 2>/dev/null | tr -d ' \n\r\t')
-ORTHANC_DATA_VERSION := $(shell cat ../../../trust/orthanc/.data_version 2>/dev/null | tr -d ' \n\r\t')
+# The data version read from the canonical trust/.data_version — a git tag on the
+# aicentreflip/trust-data dataset that pins OMOP and Orthanc mock data together. It
+# governs both the local update-omop-data / update-orthanc-data scripts and the
+# Ansible plays, which fetch every archive at that tag.
+TRUST_DATA_VERSION := $(shell cat ../../../trust/.data_version 2>/dev/null | tr -d ' \n\r\t')
 
 .PHONY: deploy-trust
 deploy-trust: check-trust-ec2-enabled ssh-config update-env seed-trust-data stage-fl-kit ## Deploy trust relationships after central hub is deployed
@@ -1006,7 +1008,7 @@ provision-local-trust: ## Provision the on-prem (local) trust host: install Dock
 	## trusts the participant kit is delivered to the operator out-of-band.
 	@echo "🔧 Provisioning the on-premises Trust host (this machine)..."
 	@uv sync
-	@uv run ansible-galaxy install -r ../../../deploy/providers/local/requirements.yml
+	@uv run ansible-galaxy install -r $(ONPREM_ANSIBLE_DIR)/requirements.yml
 	@if [ -z "$$ANSIBLE_BECOME_PASS" ]; then \
 		echo ""; \
 		echo "❌  ANSIBLE_BECOME_PASS is not set. Run this in your fish terminal first:"; \
@@ -1029,7 +1031,7 @@ provision-local-trust: ## Provision the on-prem (local) trust host: install Dock
 			-e ansible_connection=local \
 			-e ansible_python_interpreter=/usr/bin/python3 \
 			-e fl_backend=$(FL_BACKEND) \
-			../../../deploy/providers/local/site_local_trust.yml; \
+			$(ONPREM_ANSIBLE_DIR)/onprem.yml; \
 		PLAY_RC=$$?; \
 		exit $$PLAY_RC
 	@echo "📦 Downloading the FL participant kit for the on-prem trust from S3..."
@@ -1042,12 +1044,13 @@ ifeq ($(FL_BACKEND),nvflare)
 	    $$TRUST_KIT_DIR && \
 	  echo "" && \
 	  echo "  # Deploy the $(FL_KIT_SLOT) NVFLARE participant kit (staged at $$TRUST_KIT_DIR):" && \
-	  echo "  sudo mkdir -p /opt/flip/services/$(FL_KIT_SLOT)/startup /opt/flip/services/$(FL_KIT_SLOT)/local /opt/flip/services/$(FL_KIT_SLOT)/transfer" && \
-	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/startup/ /opt/flip/services/$(FL_KIT_SLOT)/startup/" && \
-	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/local/ /opt/flip/services/$(FL_KIT_SLOT)/local/" && \
+	  echo "  # \$$FL_KIT_DIR is the kit root from trust/.env.$(KIT).$(KIT_ENV_SUFFIX) (default /opt/flip/fl-kit):" && \
+	  echo "  sudo mkdir -p /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/startup /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/local /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/transfer" && \
+	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/startup/ /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/startup/" && \
+	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/local/ /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/local/" && \
 	  echo "  # fl-client now runs as a non-root uid (GHSA-8465) — hand the rsync'd kit back to" && \
 	  echo "  # this shell's own user so the container can read/write it:" && \
-	  echo "  sudo chown -R \$$(id -u):\$$(id -g) /opt/flip/services/$(FL_KIT_SLOT)" && \
+	  echo "  sudo chown -R \$$(id -u):\$$(id -g) /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)" && \
 	  echo "✅ $(FL_KIT_SLOT) NVFLARE kit staged"
 else
 	@TRUST_KIT_DIR=/tmp/$(KIT)_kit && \
@@ -1057,8 +1060,10 @@ else
 	    $$TRUST_KIT_DIR/net-1/ && \
 	  echo "" && \
 	  echo "  # Deploy the Flower participant kit (staged at $$TRUST_KIT_DIR):" && \
-	  echo "  sudo mkdir -p /opt/flip/services/net-1" && \
-	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/net-1/ /opt/flip/services/net-1/" && \
+	  echo "  # \$$FL_KIT_DIR is the kit root from trust/.env.$(KIT).$(KIT_ENV_SUFFIX) (default /opt/flip/fl-kit);" && \
+	  echo "  # the compose mounts \$$FL_KIT_DIR/net-1/{certificates,keys}:" && \
+	  echo "  sudo mkdir -p /opt/flip/fl-kit/net-1" && \
+	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/net-1/ /opt/flip/fl-kit/net-1/" && \
 	  echo "✅ Flower kit staged"
 endif
 	@echo ""
@@ -1096,8 +1101,8 @@ add-k8s-trust: ## Open the FL-server NLB to a K8s trust node's public IP (FL tra
 	##   make new-trust TRUST_CODE=Trust_K8s TRUST_NAME="..."
 	##   make -C deploy/providers/AWS register-trusts KIT=Trust_K8s PROD=$(PROD)
 	##   make sync-trust-kit KIT=Trust_K8s PROD=$(PROD)
-	##   make -C deploy/providers/kubernetes sync-kit KIT=Trust_K8s PROD=$(PROD)
-	##   make -C deploy/providers/kubernetes up OVERRIDES_FILE=k8s-trust-Trust_K8s.yaml
+	##   make -C trust/deploy/helm sync-kit KIT=Trust_K8s PROD=$(PROD)
+	##   make -C trust/deploy/helm up OVERRIDES_FILE=k8s-trust-Trust_K8s.yaml
 	## Polling needs none of the below. This target is the LAST step, needed only for
 	## FL *training*: it opens the FL-server NLB security group to the K8s node's
 	## public/egress IP. Mirrors `allow-local-trust-nlb`: add each node IP to
@@ -1338,14 +1343,14 @@ full-deploy-with-k8s: ## Full AWS deploy + Trust_K8s registration and K8s chart 
 			PROD=$(PROD); } && \
 	$(MAKE) register-trusts KIT=Trust_K8s PROD=$(PROD) && \
 	$(MAKE) -C ../../.. sync-trust-kit KIT=Trust_K8s PROD=$(PROD) && \
-	$(MAKE) -C ../kubernetes sync-kit KIT=Trust_K8s PROD=$(PROD) && \
+	$(MAKE) -C $(HELM_CHART_DIR) sync-kit KIT=Trust_K8s PROD=$(PROD) && \
 	$(MAKE) add-k8s-trust K8S_TRUST_IP=$$_K8S_IP PROD=$(PROD) && \
-	$(MAKE) -C ../kubernetes up \
-		OVERRIDES_FILE=$(shell pwd)/../kubernetes/k8s-trust-Trust_K8s.yaml \
+	$(MAKE) -C $(HELM_CHART_DIR) up \
+		OVERRIDES_FILE=$(HELM_CHART_DIR)/k8s-trust-Trust_K8s.yaml \
 		PROD=$(PROD) && \
 	echo "" && \
 	echo "=== K8s Trust Status ===" && \
-	$(MAKE) -C ../kubernetes status PROD=$(PROD) && \
+	$(MAKE) -C $(HELM_CHART_DIR) status PROD=$(PROD) && \
 	echo "" && \
 	echo "✅ full-deploy-with-k8s complete (PROD=$(PROD))." && \
 	echo "   EC2 trust status was verified in the full-deploy step above." && \

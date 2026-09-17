@@ -5,6 +5,14 @@
 | File | Resources |
 |------|-----------|
 | `main.tf` | Provider config, VPC, subnets, IGW, NAT, route tables, RDS instance, Secrets Manager, SES |
+| `data.tf` | Shared data sources referenced across multiple files (currently the account's canonical user ID, used for S3 log-bucket ACL grants) |
+| `dhcp.tf` | Custom VPC DHCP options — adds `flip.local` as a search domain so EC2/Fargate resolve bare hostnames |
+| `kms.tf` | FLIP application KMS CMK, used for S3 SSE-KMS and Secrets Manager encryption |
+| `locals.tf` | Centralised locals consumed by ECS task definitions (the env-var maps mirroring the production composes) |
+| `security.tf` | SG drift detection: CloudTrail → EventBridge → Lambda (tag filter) → SNS → email alert on FlipSG-tagged security-group changes |
+| `service_discovery.tf` | AWS Cloud Map private DNS namespace + service registrations (`flip-api`, `fl-api-net-*`, `fl-server-net-*`) |
+| `s3_logging.tf` | Single S3 server-access-log destination bucket shared by every FLIP application bucket |
+| `vpc_endpoints.tf` | VPC interface/gateway endpoints (SSM, Secrets Manager, logs, S3) so Fargate tasks avoid the NAT gateway; interface endpoints gated behind `enable_ecs_endpoints` |
 | `services.tf` | S3 buckets, Cognito |
 | `rds_proxy.tf` | RDS Proxy + IAM DB auth (proxy, IAM role/policy, SG, `rds-db:connect`) — see FLIP#556 |
 | `ecs.tf` | ECS cluster, capacity providers, ECS CloudWatch log groups (ALB / NLB / target groups / listener rules live in `main.tf`) |
@@ -20,6 +28,7 @@
 | `parameter_store.tf` | SSM Parameter Store entries |
 | `backend.tf` | S3 backend with S3 native locking (`use_lockfile`) |
 | `variables.tf` | All Terraform variables with defaults |
+| `modules/` | Reusable child modules: `cognito` (user pool + client + domain + seed users), `flip_s3_bucket` (one bucket per tenant with per-caller CORS methods), `secgroup` (security group with egress managed entirely inline), `ses` (sender identity + transactional email templates), `trust_ec2` (the Trust EC2 host) |
 | `ci/` | Separate root (`flip/ci/terraform.tfstate`): the GitHub Actions OIDC plan/apply roles. Applied from a laptop only — see `ci/README.md` |
 
 ## AWS Profiles
@@ -41,6 +50,7 @@ make init/plan/apply                          # Terraform workflow
 make deploy-centralhub                        # ECS deploy at env branch tip via sha-<short7> task-def revisions + CloudFront UI (FLIP#751; TAG= to pin). Prints an FL quiesce reminder (FLIP#770): enable Deployment Mode (pauses FL job pickup) + wait for the running job before deploying; GET /fl/quiesce reports deployment_mode + fl_quiesced. PROD=true additionally asks "Are you sure you want to continue?" (stag stays non-interactive)
 make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision + deregister the rolled-away one
 make deploy-trust                             # Deploy trust stack to EC2
+make register-trusts KIT=<CODE> PROD=<stag|true>  # Register CODE-named trust kit(s) on the hub + write trust/.env.<CODE>.<env> — runs `scripts/register-trusts.sh` (a one-off ECS task + SSM SecureString handoff, mirroring the dev `make register-trusts` contract)
 make stage-fl-kit KIT=<CODE>                  # Re-stage the trust's FL participant kit for its REGISTERED slot (runs inside deploy-trust, after register-trusts). ansible-init stages Trust_1 pre-registration because no slot exists yet; this replaces it once one does. The wipe is net-1-wide, so the host ends up holding exactly one slot's kit, and the play asserts the staged fed_client.json names that slot
 make deploy-ui                                # Build + sync UI to S3 + invalidate CloudFront (excludes ark_demo/*)
 make deploy-ark-demo                          # Build the public Ark+ demo SPA + sync to S3 under ark_demo/ + invalidate /ark_demo/*
@@ -58,8 +68,8 @@ make aws-login                                # AWS SSO login
 make print-tf-env                             # Print resolved TF_VAR_* as KEY=value (consumed by the CI workflows)
 make seed-ci-keypair-param                    # Publish the aws_key_pair public key from state to SSM, for CI plans
 make -C ci init/plan/apply                    # GitHub Actions OIDC roles (laptop only — see ci/README.md)
-make checkov-lint                             # Static checkov security lint (IAM policy content + promoted posture checks) — CI counterpart is the Checkov Security Lint job in validate_terraform.yml (FLIP#1052, FLIP#1058); suppress deliberate breadth/posture in-code with `# checkov:skip=<ID>:<rationale>`. NB this Makefile's parse-time env guard needs the deploy env file — the REPO-ROOT `make checkov-lint` (or `bash scripts/checkov_lint.sh`) runs env-free
-uv run --no-project --with pytest --with jinja2 --with click pytest tests/   # Credential-free static checks over the stack's artefacts (rendered templates, deploy scripts, and Terraform source itself — incl. the Cognito `callback_urls` = browser CORS allowlist invariants). CI counterpart: the AWS deploy tests job in validate_terraform.yml. Deps named explicitly rather than `uv sync`d: the dev group pulls ansible-core + pyqt5, the tests need three packages
+make checkov-lint                             # Static checkov security lint (IAM policy content + promoted posture checks) — CI counterpart is the Checkov Security Lint job in validate_terraform.yml (FLIP#1052, FLIP#1058); suppress deliberate breadth/posture in-code with `# checkov:skip=<ID>:<rationale>`. NB this Makefile's parse-time env guard needs the deploy env file — the REPO-ROOT `make checkov-lint` (or `bash deploy/providers/AWS/scripts/checkov_lint.sh`) runs env-free
+uv run --no-project --with pytest --with jinja2 --with click --with diagrams pytest tests/   # Credential-free static checks over the stack's artefacts (rendered templates, deploy scripts, and Terraform source itself — incl. the Cognito `callback_urls` = browser CORS allowlist invariants). CI counterpart: the AWS deploy tests job in validate_terraform.yml (which also installs graphviz first, so the render smoke test in test_architecture_diagram.py runs instead of skipping). Deps named explicitly rather than `uv sync`d: the dev group pulls ansible-core + pyqt5, the tests need four packages (`diagrams` is imported at module level by architecture/central_hub.py, so it's required for collection even without graphviz installed)
 ```
 
 ## Terraform CI (FLIP#962)
@@ -119,7 +129,7 @@ Things worth knowing before touching any of it:
   and `make -C deploy/providers/AWS test` cannot be used (parse-time env guard), so
   run it locally with the `uv run --no-project --with …` line above, from this
   directory — that is what CI runs, and `--frozen` would pull the dev group's
-  ansible-core and pyqt5 for a suite that needs three packages.
+  ansible-core and pyqt5 for a suite that needs four packages.
 
 - **Seed the GitHub environments with `scripts/setup-github-environments.sh`** (repo
   admin, `--dry-run` first). It derives the secret-vs-variable split from
@@ -148,6 +158,7 @@ Full flow, one-time setup and break-glass: [README.md](README.md#terraform-ci-pl
 - **CloudFront + S3**: flip-ui static hosting
 - **Secrets Manager**: `FLIP_API` secret (AES key, DB password, key hashes)
 - **Cognito**: `flip-user-pool` with email auth
+- **Architecture diagrams**: `architecture/central_hub.py` renders the two Central Hub pictures (request/FL paths; data/platform services) with the `diagrams` library — the ReadTheDocs Central Hub page renders it at docs build time, `make aws-diagram` (repo root) refreshes the committed `docs/central-hub-aws-{network,data}.png` the README embeds (runs in docker when `dot` is absent). `tests/test_architecture_diagram.py` pins the script's `TERRAFORM_ADDRESSES` map to the root-module `.tf` files both ways: a drawn address that no longer exists fails, and so does any resource of a type in `DRAWN_RESOURCE_TYPES` (ECS services, LBs' target groups, CloudFront, RDS Proxy, EFS, buckets, endpoints, …) or any root `module` that is neither drawn nor listed in `UNDRAWN_MODULES`. **A `.tf` change touching those updates the map in the same PR**; the package is deliberately not called `diagrams/` because `tests/conftest.py` puts this directory on `sys.path`.
 - **Container registry**: **GHCR** (`ghcr.io/londonaicentre/`) for every FLIP image (flip-api, flare-fl-api, flare-fl-server, flower-superlink, trust-api, imaging-api, data-access-api, orthanc, omop-db, XNAT). ECS Fargate task definitions pull directly from GHCR — `var.docker_registry` in `variables.tf` defaults to it; trust EC2 / on-prem hosts do too. **There is no ECR mirror.** A surgical centralhub redeploy is now one command: GH workflow `workflow_dispatch` to build the branch image to GHCR (publishes `sha-<short7>`) → `make deploy-centralhub TAG=sha-<short7>`, which registers new task-definition revisions and repoints the services (FLIP#751 — the previously manual register-task-definition + update-service runbook). The flip-ui bundle ships separately via `make deploy-ui` (it's static assets in S3, not a container image).
 
 ## Verifying a Central-Hub FL redeploy

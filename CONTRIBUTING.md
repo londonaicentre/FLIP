@@ -150,8 +150,10 @@ The policy is enforced through native package-manager configuration:
 - **npm (JavaScript)** — `flip-ui/.npmrc` sets `min-release-age=3`, so `npm install` refuses to resolve a release
   younger than 72 hours. This key was introduced in npm 11.10, so `flip-ui/Dockerfile` and the `test_flip_ui.yml`
   workflow use Node 24 LTS (which ships npm >= 11.10); Node 22 LTS bundles npm 10.x and silently ignores the key.
-  CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only enforces
-  `min-release-age` at lockfile-write time (`npm install <pkg>`), not when installing from a pinned
+  `flip-ui/package.json`'s `engines` field still permits older Node (`^20.19.0 || >=22.12.0`) for compatibility, but
+  installing on one of those silently drops the cooldown rather than failing — so develop against Node 24 locally
+  to match CI. CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only
+  enforces `min-release-age` at lockfile-write time (`npm install <pkg>`), not when installing from a pinned
   `package-lock.json`, so the npm cooldown rests on `.npmrc` rather than a CI gate.
 
 There is no automated dependency-update bot wired into the repo today. Dependency bumps are hand-rolled PRs; the
@@ -203,7 +205,7 @@ Three changes affect checkouts created before them. None is picked up automatica
 | --- | --- |
 | `NLB_SUBDOMAIN` is now a live assignment in `.env.development.example` | Add `NLB_SUBDOMAIN=<your-nlb-subdomain>` to your `.env.development`. `scripts/check_env_vars.py` is a pre-commit hook requiring every variable in the example file to be present in yours, and its regex matches real `^KEY=` assignments only — so a still-commented `# NLB_SUBDOMAIN=` fails your next commit, naming the variable. Nothing in a purely local stack resolves the value; it is required because `scripts/trust_kit_lib.py` lists it among the Hub-shared keys. |
 | uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the NVFLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
-| `NUM_AVAILABLE_GPUS` now defaults to `0` in the dev trust kit examples | Only newly scaffolded kits are affected; existing `trust/.env.<CODE>.<env>` files keep their value. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
+| `NUM_AVAILABLE_GPUS` defaults to `0` in the two shipped dev kit examples (`trust/.env.GSTT.development.example`, `trust/.env.KCH.development.example`) | Only those two pre-populated example kits were changed; the base template (`trust/.env.example`) that `make new-trust` scaffolds from still defaults to `1`, and an existing `trust/.env.<CODE>.<env>` keeps its own value regardless. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
 
 For the full local stack, replace every placeholder in these minimum groups before running `make up`:
 
@@ -337,7 +339,7 @@ put `# checkov:skip=<CHECK_ID>:<why this is deliberate>` inside the flagged reso
 list — including the classes triaged in FLIP#1058 and deliberately *not* promoted — lives in
 `deploy/providers/AWS/scripts/checkov_lint.sh`, which self-tests against a canary fixture before scanning so a
 broken checkov install can never produce a vacuous green. The script's own guards (version pin, unknown check
-IDs, skip rationale, canary) are regression-tested by `scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
+IDs, skip rationale, canary) are regression-tested by `deploy/providers/AWS/scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
 run by the same workflow's `Deploy script tests` job.
 
 ### Running the stack (pull vs. build)
@@ -462,20 +464,20 @@ make -C flip-utils unit-test   # ruff --fix + pytest with coverage
 See [`flip-utils/README.md`](flip-utils/README.md) for the FL package's tests, and
 [`fl-services/nvflare/README.md`](fl-services/nvflare/README.md) for provisioning FL networks.
 
-**Kubernetes chart testing**: The K8s Helm chart at `deploy/providers/kubernetes/` can be tested with:
+**Kubernetes chart testing**: The K8s Helm chart at `trust/deploy/helm/` can be tested with:
 
 ```bash
 # Lint + render + schema validation
-make -C deploy/providers/kubernetes test
+make -C trust/deploy/helm test
 
 # Render all FL backend variants
-make -C deploy/providers/kubernetes template-all-backends
+make -C trust/deploy/helm template-all-backends
 
 # Validate rendered templates against K8s schema (requires kubeconform)
-make -C deploy/providers/kubernetes validate
+make -C trust/deploy/helm validate
 
 # Place this trust's FL participant kit onto the node, BEFORE deploying
-make -C deploy/providers/kubernetes stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
+make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 ```
 
 `stage-kit` is a prerequisite of deploying with `flClient.enabled`: the chart never fetches
@@ -485,7 +487,10 @@ The previous `make patch-aws-creds` target is gone along with the chart's in-clu
 see "Upgrading an install that fetched its kit from S3" in the K8s README for the full list of
 removed values.
 
-The chart has a `check_status.py` smoke test script and a `register_k8s_trust.py` registration script. See the [K8s README](deploy/providers/kubernetes/README.md) for details.
+The chart has a `check_status.py` smoke test script and a `sync_k8s_kit.py` script that syncs a
+registered trust's kit file (hub registration itself still goes through `register_trust` /
+`make register-trusts`) into the chart's Kubernetes Secret and a Helm values override. See the
+[K8s README](trust/deploy/helm/README.md) for details.
 
 **Testing fixtures**: For testing APIs and integration tests, we use [pytest fixtures](https://docs.pytest.org/en/latest/how-to/fixtures.html). Shared fixtures are defined in `conftest.py` files. In some cases, [`factory_boy`](https://factoryboy.readthedocs.io/) is used to create test data following production data structures.
 
@@ -521,10 +526,11 @@ This rule applies across all services: `flip-api/tests/`, `trust/trust-api/tests
 
 ##### Tests for FL tutorials and app templates
 
-Two trees sit outside any service and have their own home:
+Two trees sit outside any service and have their own home. `fl-tutorials/tests/` carries **two** suites, split at `tests/datasets/` because the two halves need different dependencies — `make -C fl-tutorials test` runs ruff plus both, and `.github/workflows/fl-tutorials-tests.yml` runs the same on every PR touching `fl-tutorials/**`:
 
-- **`fl-tutorials/tests/`** — the CPU-only suite over the tutorial apps' transform chains (`make -C fl-tutorials test`, and `.github/workflows/fl-tutorials-tests.yml` on every PR touching `fl-tutorials/**`). A test belongs here if it can assert on tutorial code with **no GPU, no dataset download, no FL image and no network** — transform composition, import-time correctness, and what the preprocessing chain actually feeds the model. Fixtures are synthesised in-process (see `fl-tutorials/tests/dicom_phantom.py`), never committed as data. Anything that needs real training to observe — convergence, metric values, multi-round behaviour — belongs instead with the GPU simulator harness (`make -C fl-tutorials run-tutorial`), which is not run in CI.
+- **`fl-tutorials/tests/`, minus `tests/datasets/`** — the CPU-only suite over the tutorial apps' transform chains (`make -C fl-tutorials pytest`). A test belongs here if it can assert on tutorial code with **no GPU, no dataset download, no FL image and no network** — transform composition, import-time correctness, and what the preprocessing chain actually feeds the model. Fixtures are synthesised in-process (see `fl-tutorials/tests/dicom_phantom.py`), never committed as data. Anything that needs real training to observe — convergence, metric values, multi-round behaviour — belongs instead with the GPU simulator harness (`make -C fl-tutorials run-tutorial`), which is not run in CI.
   The suite runs in **flip-utils' environment** (`flip-utils[full]`), which is what the FL images give these apps at runtime; it deliberately has no `pyproject.toml` of its own, and the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tuning/pyproject.toml` does not declare `monai`, so that environment cannot import its own `data_utils.py`).
+- **`fl-tutorials/tests/datasets/`** — the CPU-only suite over `fl-tutorials/datasets/**`, the mock-OMOP generation tooling (`make -C fl-tutorials pytest-datasets`). Same no-GPU/no-download/**no-network** rule, with fixtures built in-process. It runs against **each dataset's own uv project**, one pytest invocation per entry in `DATASET_TEST_PROJECTS`, rather than in flip-utils' environment: this is workstation tooling that never runs on an FL image and has no business pulling `pandera`/`sqlglot` into the FL runtime environment. The per-project split is also the only thing in CI that checks a dataset's `pyproject.toml` declares what its code actually imports. `tests/datasets/` anchors its own pytest rootdir (`tests/datasets/pytest.ini`) so the tutorial-app `conftest.py`, which imports monai and pydicom at module scope, is not loaded into these runs. Anything needing the published export — the end-to-end verification gate — is a Make target (`make -C fl-tutorials reproduce-<project>-omop`), not a test: it reaches the network. See `fl-tutorials/tests/README.md` for the full rationale and `fl-tutorials/datasets/README.md` for the generation and verification targets.
 - **`fl-apps/`** — has no pytest suite; its invariant is the required-files manifest, checked by `fl-apps/check_required_files.sh` (pre-commit + `.github/workflows/fl-apps-check-required-files.yml`). Files that must stay byte-identical to another file — the Flower tutorial copies of the `fl-apps/flower/` templates, and the shared Ark+ evaluation sources — are pinned in `scripts/check_tutorial_sync.sh`.
 
 ##### flip-api: real-Postgres integration tests via Testcontainers
@@ -617,7 +623,7 @@ Before opening the release PR from `develop` to `main`:
 - `develop` is green in [CI](https://github.com/londonaicentre/FLIP/actions).
 - All PRs intended for this release are merged into `develop` and carry an appropriate label. The release-notes categories come from [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`. PRs labelled `ignore-for-release` are excluded.
 - Bump the `version` in the root `pyproject.toml` to the new release version. Additionally bump the `version` in any service file (`flip-api/pyproject.toml`, `flip-ui/package.json`, `trust/*/pyproject.toml`) whose code changed in this release, per the independent-SemVer rule above. Leave unchanged services alone.
-- If `flip-utils/**` changed in this release, bump `__version__` in [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) — [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) fails the `develop` → `main` PR unless it is valid semver and strictly higher than the latest `v*.*.*` tag. It need not match — or differ from — the root version; the two trains tag in separate namespaces (see [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path)).
+- If `flip-utils/**` changed in this release, bump `__version__` in [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) — [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) fails the `develop` → `main` PR unless it is valid semver and strictly higher than the latest `flip-utils-v*.*.*` tag. It need not match — or differ from — the root version; the two trains tag in separate namespaces (see [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path)).
 - Curate the release-notes header in [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) — Highlights, Breaking Changes, New Features, Bug Fixes. Editing the file is the only way to change those sections; the preview comment on the PR is regenerated from it on every push.
 - Run `make unit_test` and `make integration_test` locally.
 
@@ -625,12 +631,13 @@ Before opening the release PR from `develop` to `main`:
 
 1. From a branch off `develop`, commit the version bumps above and open a PR targeting `develop` with title `Release v<X.Y.Z>`.
 1. Once that merges and CI is green, open a PR from `develop` to `main`. [`validate_branch_origin.yml`](.github/workflows/validate_branch_origin.yml) rejects any PR to `main` that does not come from `develop`.
+   **Merge it with a merge commit — never squash or rebase.** A squash leaves `main` with `develop`'s content but none of its history, so the *next* release PR conflicts on every file touched since the previous real merge (v0.5.0 was squashed and v0.6.0 hit 168 spurious conflicts). If that has already happened, reconcile once with `git merge -s ours --no-ff origin/main` on `develop` — it records `main` as an ancestor without changing a file — through a PR into `develop`.
 1. On that PR, check the automated gates before merging:
    - [`pr-release-notes-preview.yml`](.github/workflows/pr-release-notes-preview.yml) posts a **release-notes preview** comment — the rendered template header plus the generated changelog — and updates it in place on every push. Read it as the last check that the notes are right.
    - [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) and [`check-package-metadata.yml`](.github/workflows/check-package-metadata.yml) run when `flip-utils/**` changed.
 1. On merge to `main`:
    - [`release.yml`](.github/workflows/release.yml) reads the root `pyproject.toml`, creates the `v<X.Y.Z>` git tag, and publishes the GitHub Release named `Release v<X.Y.Z>` with auto-generated notes.
-   - [`release-pypi.yml`](.github/workflows/release-pypi.yml) reads `flip-utils/flip/__init__.py` and, if that version is not yet tagged, lints + tests + builds the package, publishes it to PyPI via OIDC trusted publishing, tags it, and publishes a GitHub Release named `flip v<X.Y.Z>` with the template header, the generated changelog, and the build artifacts attached.
+   - [`release-pypi.yml`](.github/workflows/release-pypi.yml) reads `flip-utils/flip/__init__.py` and, if that version is not yet tagged, lints + tests + builds the package, publishes it to PyPI via OIDC trusted publishing, tags it, and publishes a GitHub Release named `flip-utils v<X.Y.Z>` with the template header, the generated changelog, and the build artifacts attached.
    - Every `docker_build_*.yml` workflow under [`.github/workflows/`](.github/workflows/) rebuilds its service and pushes the `:prod` and `:<sha>` tags to GHCR.
 1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that the `:prod` tags on `flip-api`, `trust-api`, `imaging-api`, and `data-access-api` were updated by the latest build. If the package was released, verify it on [PyPI](https://pypi.org/project/flip-utils/).
 
@@ -739,6 +746,21 @@ make -C flip-api delete_testing_projects
 
 These are also available as VS Code tasks via **Terminal > Run Task** — look for `Create testing projects` and
 `Delete testing projects`.
+
+## Building the documentation
+
+The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs docs` (see
+[`docs/README.md`](docs/README.md)). Two things about that build are easy to trip over:
+
+- It needs **graphviz** (`dot` on PATH). `docs/source/conf.py` renders the Central Hub AWS diagrams from
+  `deploy/providers/AWS/architecture/central_hub.py` at build time — no PNG is committed for the site — and
+  fails loudly without it. `FLIP_DOCS_SKIP_DIAGRAMS=1 make -C docs docs` gives a text-only build on a host
+  without graphviz. ReadTheDocs and the docs CI job install graphviz themselves.
+- Those diagrams are **drift-guarded against the Terraform**: `deploy/providers/AWS/tests/test_architecture_diagram.py`
+  fails when a drawn resource disappears from the `.tf` files or a load-bearing one (an ECS service, bucket,
+  load balancer, …) is added without being drawn. A Terraform change of that kind updates
+  `TERRAFORM_ADDRESSES` in the script in the same PR, then `make aws-diagram` refreshes the two committed
+  copies the AWS README embeds.
 
 ## Documentation GIFs
 

@@ -402,9 +402,10 @@ runs — not on the EC2.
 ```bash
 ssh flip-trust
 DIR=$(docker inspect trust1-orthanc-1 --format '{{range .Mounts}}{{if eq .Destination "/var/lib/orthanc/db"}}{{.Source}}{{end}}{{end}}')
-# Version from trust/orthanc/.data_version (e.g. 20260821); trust slot from the kit (trust1/trust2)
+# Data version from trust/.data_version — a tag on the dataset (e.g. 20260729) that the URL resolves
+# at; the archive name itself carries no version. Trust slot from the kit (trust1/trust2).
 curl -fSL -o /tmp/orthanc-data.tar \
-  "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/trust1/trust1_orthanc_data_20260821.tar"
+  "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/20260729/trust1/trust1_orthanc_data.tar"
 docker stop trust1-orthanc-1
 sudo rm -rf "$DIR"/*          # wipe the stale empty index
 sudo tar xf /tmp/orthanc-data.tar -C "$DIR"
@@ -514,7 +515,7 @@ Related states with different causes:
   (imaging-api classifies any accession with an executed row as Processing,
   regardless of row status); the rows must be deleted before re-import works —
   see §2.4 "Forcing a Re-pull" in
-  `deploy/providers/kubernetes/TROUBLESHOOTING.md` (same procedure on EC2 via
+  `trust/deploy/helm/TROUBLESHOOTING.md` (same procedure on EC2 via
   `docker exec` into the xnat-db container).
 
 ---
@@ -760,7 +761,7 @@ print(r.status_code, r.text.strip()[:40])
    ssh flip-trust 'docker stack rm xnat1'
    sleep 15
    ssh flip-trust 'sudo bash -c "find /opt/flip/xnat/xnat-db-data -mindepth 1 -delete"'
-   make -C trust/xnat up-xnat-1 PROD=stag
+   make -C trust/xnat up-xnat KIT=<CODE> PROD=stag
    ```
 3. Verify:
    ```bash
