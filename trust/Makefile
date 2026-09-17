@@ -148,7 +148,7 @@ IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(PROD),/opt/flip/data/trust
 # (flip.add_resource stages under net-N/upload/, NVFLARE CleanupImages deletes net-N's
 # children) and on Flower it does not share imaging-api's UID: the Flower client is built
 # on the upstream flwr/base image, which runs as `app` (uid/gid 49999). Mirrors the K8s
-# chart's images-init (deploy/providers/kubernetes/templates/fl-client.yaml):
+# chart's images-init (trust/deploy/helm/templates/fl-client.yaml):
 #   * NVFLARE, any env      — the base dir's own owner:group, 0755. Its client shares
 #     imaging-api's UID, so owner write covers both writers.
 #   * Flower, prod/stag     — <base-uid>:49999, 0775. The production compose adds no

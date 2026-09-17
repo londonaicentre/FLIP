@@ -92,7 +92,7 @@ networkPolicies:
 
 ## CI coverage
 
-`make -C deploy/providers/kubernetes template-egress-variants` renders the
+`make -C trust/deploy/helm template-egress-variants` renders the
 egress policy in three shapes (default, hardened-CIDRs, policies-disabled) so a
 change that breaks non-default egress configs is caught in review. Wire it into
 `test_helm_chart.yml` alongside `template-all-backends`.

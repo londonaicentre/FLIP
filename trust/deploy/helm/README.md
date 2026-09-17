@@ -14,8 +14,9 @@
 # FLIP Trust — Kubernetes Helm Chart
 
 > **Deploys: trust only.** No Central Hub component is defined by this chart. The hub is still involved —
-> the trust must be registered on it (`make register-trust KIT=<CODE>`) to get its kit file. See
-> [`../README.md`](../README.md) for how this provider relates to the other two.
+> the trust must be registered on it (`make register-trust KIT=<CODE>`) to get its kit file. The same stack
+> as Docker Compose is [`../`](../README.md); the cluster itself is provisioned outside this repo. See
+> [where things live](../../../deploy/README.md#where-things-live) for the layout rule.
 
 This Helm chart deploys the FLIP trust-side services on Kubernetes. It follows
 the same **zero inbound trust** architecture as the Docker Compose deployment:
@@ -89,9 +90,9 @@ the Secret externally.
 Generate it from the repo root:
 
 ```bash
-python3 deploy/providers/kubernetes/scripts/generate_values.py \
+python3 trust/deploy/helm/scripts/generate_values.py \
   --env-file trust/.env.<CODE>.<env> \
-  --output-dir deploy/providers/kubernetes
+  --output-dir trust/deploy/helm
 ```
 
 That writes `values-secrets.yaml` with mode `0600` (and `values-override.yaml`
@@ -109,7 +110,7 @@ without touching the infra keys.
 ### 3. Sync the kit into the cluster
 
 ```bash
-make -C deploy/providers/kubernetes sync-kit KIT=<CODE> PROD=stag
+make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=stag
 ```
 
 This reads `trust/.env.<CODE>.stag`, patches the per-trust keys
@@ -123,13 +124,13 @@ channel — never to disk.
 ### 4. Stage the FL participant kit onto the node
 
 ```bash
-make -C deploy/providers/kubernetes stage-kit \
+make -C trust/deploy/helm stage-kit \
   KIT_SRC=<dir holding this trust's kit> KUBE_CONTEXT=<kube context>
 ```
 
 **The chart never fetches the kit.** A trust holds no FLIP AWS credentials — FL
 clients have none by design — and the kit reaches the operator out-of-band (see
-[`trust/README.md`](../../../trust/README.md)). It is placed on the node *before*
+[`trust/README.md`](../../README.md)). It is placed on the node *before*
 the workload starts, which is also what a real trust does, so what is deployed
 here is what is deployed in production.
 
@@ -171,7 +172,7 @@ reached the node leaves the pod `Pending` on the `hostPath type check failed` ev
 ### 5. Install / upgrade the chart
 
 ```bash
-make -C deploy/providers/kubernetes deploy-trust-k8s KIT=<CODE> PROD=stag
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=stag
 ```
 
 This runs `helm upgrade --install` with the generated override and then
@@ -179,11 +180,11 @@ This runs `helm upgrade --install` with the generated override and then
 restarts the API deployments). Equivalent raw Helm for the install step:
 
 ```bash
-helm upgrade --install trust-release ./deploy/providers/kubernetes/ \
+helm upgrade --install trust-release ./trust/deploy/helm/ \
   --namespace flip-trust --create-namespace \
-  -f deploy/providers/kubernetes/values.yaml \
-  -f deploy/providers/kubernetes/values-secrets.yaml \
-  -f deploy/providers/kubernetes/k8s-trust-<CODE>.yaml
+  -f trust/deploy/helm/values.yaml \
+  -f trust/deploy/helm/values-secrets.yaml \
+  -f trust/deploy/helm/k8s-trust-<CODE>.yaml
 ```
 
 `sync-kit` stamps a newly created Secret with Helm ownership metadata so the
@@ -345,10 +346,10 @@ Two ways to load it:
 
 | You have… | Do this |
 | --- | --- |
-| Org S3 access | `make -C deploy/providers/kubernetes sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C deploy/providers/kubernetes deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships the dev one, and trust roles have no cross-account read. |
+| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships the dev one, and trust roles have no cross-account read. |
 | Your own licences | Build an equivalent bundle from [OHDSI Athena](https://athena.ohdsi.org/) / [NHS TRUD](https://isd.digital.nhs.uk/) (see `trust/omop-db/README.md`), put it in a bucket you control, and set `omopDb.vocabLoad.s3Bucket` / `bundleName`. Or run `trust/omop-db/files/load_core_vocab.sh` against the database directly. |
 
-Run both targets with `-C deploy/providers/kubernetes` (or from that directory):
+Run both targets with `-C trust/deploy/helm` (or from that directory):
 the repo-root `make sync-kit` does not exist, and the root `deploy-trust-k8s`
 forwards to the chart's plain `deploy` target, so `KIT=` never reaches the
 per-trust override file.
@@ -738,16 +739,16 @@ full migration (export the XNAT database, re-initialise the PVC, re-import).
 
 ```bash
 # Lint the chart
-make -C deploy/providers/kubernetes lint
+make -C trust/deploy/helm lint
 
 # Render templates
-make -C deploy/providers/kubernetes template
+make -C trust/deploy/helm template
 
 # Test all FL backends
-make -C deploy/providers/kubernetes template-all-backends
+make -C trust/deploy/helm template-all-backends
 
 # Full validation
-make -C deploy/providers/kubernetes test
+make -C trust/deploy/helm test
 ```
 
 ### CI Validation

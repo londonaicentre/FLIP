@@ -348,7 +348,7 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 #      Trust host at all.
 #
 #   2. Out-of-band kit delivery. The on-prem (hybrid) trust playbook
-#      (deploy/providers/local/site_local_trust.yml) already works this way:
+#      (trust/deploy/ansible/onprem.yml) already works this way:
 #      the operator stages the kit on their workstation via
 #      `make add-local-trust` and rsyncs it onto the host. Applying the same
 #      pattern to AWS-hosted trusts would remove S3 entirely from the Trust

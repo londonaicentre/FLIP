@@ -14,8 +14,8 @@
 # FLIP AWS Terraform/OpenTofu and Ansible Infrastructure
 
 > **Deploys: Central Hub + optional cloud trust.** One Terraform root, one state file — the cloud trust runs
-> inside the hub's VPC and is not separable from it. See [`../README.md`](../README.md) for how this provider
-> relates to the other two.
+> inside the hub's VPC and is not separable from it. See [`../README.md`](../README.md) for how a trust node's
+> deployment shape relates to the infrastructure it runs on.
 
 Terraform/OpenTofu and Ansible Infrastructure as Code to deploy the FLIP application stack to AWS.
 
@@ -24,8 +24,8 @@ This provider manages the **Central Hub** (always in AWS) and, optionally, one o
 | Deployment Model | Trust Location | Managed By |
 | --- | --- | --- |
 | **Cloud** | AWS EC2 (same account as Central Hub) | This provider (`deploy/providers/AWS/`) |
-| **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server, etc.) | [`deploy/providers/local/`](../local/README.md) + selected targets in this Makefile |
-| **Kubernetes** | Any Kubernetes cluster 1.28+ (EKS, AKS, on-prem) | [`deploy/providers/kubernetes/`](../kubernetes/README.md) Helm chart |
+| **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server, etc.) | [`trust/deploy/ansible/`](../../../trust/deploy/ansible/README.md) + selected targets in this Makefile |
+| **Kubernetes** | Any Kubernetes cluster 1.28+ (EKS, AKS, on-prem) | [`trust/deploy/helm/`](../../../trust/deploy/helm/README.md) Helm chart |
 
 In both models, trusts poll the Central Hub for tasks over HTTPS — all communication is **outbound from the trust** to the hub. The hub never makes inbound requests to trusts.
 
@@ -151,7 +151,7 @@ Each on-prem trust then joins exactly as in the hybrid flow:
    host, or point `FL_KIT_DIR` in the kit at a locally-provisioned workspace) and start
    the stack: `sudo -E env PROD=<env> make -C trust up-trust KIT=<CODE>` (sudo required —
    the provisioned login user is deliberately not in the docker group, see the
-   [local provider README](../local/README.md)).
+   [on-prem playbook README](../../../trust/deploy/ansible/README.md)).
 
 Multiple on-prem trusts can share one host — give each kit non-colliding ports and data
 directories (see the shipped `trust/.env.*.development.example` kits for a working
@@ -1173,7 +1173,7 @@ make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
 This wrapper target runs the full AWS deployment, provisions the on-prem trust host, and redeploys the Central Hub so the new secret values are loaded. `PROD` is inherited from the environment — omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP via `curl ipify.org`.
 You still need to:
 
-1. Start the trust stack on the host: `cd ../../.. && sudo -E env PROD=<stag|true> make -C trust up-trust KIT=<CODE>` (the trust code you registered). sudo is required — the provisioned login user is deliberately not in the docker group (docker group membership is root-equivalent, see the [local provider README](../local/README.md)).
+1. Start the trust stack on the host: `cd ../../.. && sudo -E env PROD=<stag|true> make -C trust up-trust KIT=<CODE>` (the trust code you registered). sudo is required — the provisioned login user is deliberately not in the docker group (docker group membership is root-equivalent, see the [on-prem playbook README](../../../trust/deploy/ansible/README.md)).
 2. Verify the trust can poll the hub (check trust-api logs for successful task polling)
 
 Or onboard the trust step by step — the trust operator provisions their own host,
@@ -1198,7 +1198,7 @@ make allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip>
 
 Verify the trust can poll the hub (check trust-api logs for successful task polling).
 
-Full details are in the [local provider README](../local/README.md).
+Full details are in the [on-prem playbook README](../../../trust/deploy/ansible/README.md).
 
 ## Terraform CI: plan on PR, apply on merge
 
@@ -1578,7 +1578,7 @@ The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybri
    - OMOP database
 
 5. **On-Premises Trust** (hybrid model, optional): Same trust services running on a local host
-   - Provisioned via [`deploy/providers/local/`](../local/README.md)
+   - Provisioned via [`trust/deploy/ansible/`](../../../trust/deploy/ansible/README.md)
    - Polls the Central Hub over the internet via HTTPS (outbound only)
 
 | Application Component | Runtime |
@@ -1718,7 +1718,7 @@ Trust services can run on AWS EC2 or on-premises. Both models use the same Docke
 - Automatic Docker network creation for inter-service communication
 - Runs in a private subnet with no inbound ports — XNAT and Orthanc accessible only via SSM port forwarding for debugging
 
-**On-Premises Trust** — provisioned via `make provision-local-trust` and the Ansible playbook in [`deploy/providers/local/`](../local/README.md):
+**On-Premises Trust** — provisioned via `make provision-local-trust` and the Ansible playbook in [`trust/deploy/ansible/`](../../../trust/deploy/ansible/README.md):
 
 - Same Docker Compose stack, running on a local Ubuntu host
 - No inbound port forwarding or firewall rules needed — all trust communication is outbound

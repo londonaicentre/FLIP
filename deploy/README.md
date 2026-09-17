@@ -30,8 +30,8 @@ they are filed by two different rules:
 | Build/populate the mock **OMOP** database | `trust/omop-db/compose.yml` |
 | Run the **FL** services standalone | `fl-services/<backend>/compose*.yml` |
 | Provision **AWS** (hub ECS + optional cloud trust EC2) | [`deploy/providers/AWS/`](providers/AWS/README.md) |
-| Provision an **on-prem** trust host | [`deploy/providers/local/`](providers/local/README.md) |
-| Deploy a trust to **Kubernetes** | [`deploy/providers/kubernetes/`](providers/kubernetes/README.md) |
+| Provision an **on-prem** trust host (Ansible) | [`trust/deploy/ansible/`](../trust/deploy/ansible/README.md) |
+| Deploy a trust to **Kubernetes** (Helm) | [`trust/deploy/helm/`](../trust/deploy/helm/README.md) |
 
 Every compose file in **this** directory is Central-Hub-only — `flip-ui`, `flip-api`, `flip-db`, `pgadmin`,
 and the `fl-api-net-*` / `fl-server-net-*` FL server side. No trust service is defined here. The one place
@@ -46,10 +46,11 @@ one hub service meeting one trust service. Everything else hub-side, `flip-api` 
 included, stays on the hub-internal network and reaches the FL server there over its control ports. An
 fl-client holds no Central Hub URL and no Central Hub credential by design, so it is given no route to one.
 
-Only **trusts** have more than one deployment target (AWS EC2, on-prem Ubuntu, Kubernetes), which is why
-`providers/` looks trust-heavy: the abstraction exists because trusts vary. The hub has exactly one
-supported production target — AWS ECS Fargate — so it needs no provider of its own. See
-[`providers/README.md`](providers/README.md) for the per-provider scope.
+Only **trusts** have more than one deployment shape — Compose on a host (`trust/deploy/`, the host prepared by
+`trust/deploy/ansible/`) or Helm on Kubernetes (`trust/deploy/helm/`). Both render one stack, so they live with
+it; `providers/` holds only cloud infrastructure (today the `AWS/` Terraform root). The hub has one production
+target, AWS ECS Fargate, and needs no provider. See [`providers/README.md`](providers/README.md) for the
+shape × infrastructure matrix.
 
 ## Supported PostgreSQL Versions
 
@@ -303,8 +304,8 @@ FLIP supports three trust deployment models:
 | Model | Location | Documentation |
 | ------- | ---------- | --------------- |
 | **Cloud (EC2)** | AWS EC2 (same account as Central Hub) | [`deploy/providers/AWS/README.md`](providers/AWS/README.md) |
-| **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server) | [`deploy/providers/local/README.md`](providers/local/README.md) |
-| **Kubernetes** | Any K8s cluster 1.28+ (EKS, AKS, on-prem) | [`deploy/providers/kubernetes/README.md`](providers/kubernetes/README.md) |
+| **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server) | [`trust/deploy/ansible/README.md`](../trust/deploy/ansible/README.md) |
+| **Kubernetes** | Any K8s cluster 1.28+ (EKS, AKS, on-prem) | [`trust/deploy/helm/README.md`](../trust/deploy/helm/README.md) |
 
 In all models, trusts poll the Central Hub for tasks over HTTPS — all communication is **outbound** from the trust. The hub never makes inbound requests to trusts.
 
@@ -331,7 +332,7 @@ Each Dockerfile explicitly drops root privileges by running the application as a
 **Bind-mount ownership.** Because XNAT (`xnat`, UID 1001) and Orthanc (`orthanc`, UID 999) no
 longer run as root, the host-side bind-mount source directories must be owned by the matching
 UID. The Ansible playbooks `deploy/providers/AWS/site.yml` and
-`deploy/providers/local/site_local_trust.yml` provision `/opt/flip/xnat/**` as UID 1001 and
+`trust/deploy/ansible/onprem.yml` provision `/opt/flip/xnat/**` as UID 1001 and
 `/opt/flip/orthanc/**` as UID 999 — including a recursive `chown` after extracting the Orthanc
 storage archive (which `tar` writes as root). `make -C trust/xnat xnat-reset` is the third path
 onto the same invariant and provisions the XNAT directories as UID 1001 too, verifying it
@@ -375,7 +376,7 @@ below. The per-service grants in the compose files are:
 |------------|----------------------|--------|
 | flip-api, fl-api (Flower), trust-api, imaging-api, data-access-api, xnat-web, loki, alloy, grafana | `CHOWN` | In-container init/entrypoint fixes ownership on volume paths it owns. |
 | fl-client-net-* (Flower — production and development; NVFLARE development) | *(none)* | Runs non-root (GHSA-8465), and Docker grants effective capabilities only to root — a `cap_add` here would land in the bounding set with `CapEff` still `0`, so it would buy nothing. Flower's `flower-supernode` entrypoint does no chmod/chown at all and its dev mounts are `:ro`. NVFLARE's dev kit (`provision/workspace-dev/`) is written by `make provision` as the host user. Since FLIP#1171 the image identity is fixed at `flip`/1000/1000 rather than baked from whoever built the image, and the dev composes pass `user: "${UID:-1000}:1000"` — so the container runs as the host user that already owns the kit, and no `chown` (and no capability) is needed. |
-| fl-client-net-* (NVFLARE, production) | `DAC_OVERRIDE`, `FOWNER` (production) | Inert for the current image, which runs non-root from PID 1 — the Ansible-provisioned `FL_KIT_DIR` is pre-chowned to the container's UID by `site.yml` / `site_local_trust.yml`. Kept for legacy root-image compat: trusts pin `DOCKER_FL_TAG` (an immutable `sha` tag is the documented norm), so `--pull always` cannot move a trust off a pre-GHSA-8465 **root** image, and under `cap_drop: ALL` such an image loses root's implicit DAC bypass on the `envsubst` write into the bind-mounted `local/` and `FOWNER` on the `chmod +x` of `startup/*.sh`. Its writes predate the `\|\| exit 1` guard, so it degrades to running NVFLARE against a stale/absent `resources.json` rather than crash-looping — a worse failure to diagnose. Same rationale as the orthanc row below. |
+| fl-client-net-* (NVFLARE, production) | `DAC_OVERRIDE`, `FOWNER` (production) | Inert for the current image, which runs non-root from PID 1 — the Ansible-provisioned `FL_KIT_DIR` is pre-chowned to the container's UID by `site.yml` / `onprem.yml`. Kept for legacy root-image compat: trusts pin `DOCKER_FL_TAG` (an immutable `sha` tag is the documented norm), so `--pull always` cannot move a trust off a pre-GHSA-8465 **root** image, and under `cap_drop: ALL` such an image loses root's implicit DAC bypass on the `envsubst` write into the bind-mounted `local/` and `FOWNER` on the `chmod +x` of `startup/*.sh`. Its writes predate the `\|\| exit 1` guard, so it degrades to running NVFLARE against a stale/absent `resources.json` rather than crash-looping — a worse failure to diagnose. Same rationale as the orthanc row below. |
 | fl-api (NVFLARE) | `CHOWN` | The `flare-fl-api` image runs as user `flip` (UID 1000, non-root — fixed by FLIP#1171; it previously varied with whoever built the image), so only the `CHOWN` baseline is needed; `DAC_OVERRIDE` and `FOWNER` are inert for non-root processes. |
 | fl-server (NVFLARE) | *(none)* | Runs non-root, so capabilities are inert here as they are for fl-client above — `CapEff` stays `0` and a `cap_add` sits unused in the bounding set. The grants that used to be here (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`) were removed by FLIP#1171 once measurement confirmed they had never taken effect; the comment claiming they were what made the host-owned mounts readable was wrong. What actually reads the provisioned kit's 0600 keys and the operator's 0600 AWS SSO token cache is the matching **uid**: the dev compose runs the container as the host user via `user: "${UID:-1000}:1000"`. |
 | fl-server (Flower, development only) | `CHOWN`, `DAC_OVERRIDE` | The dev compose runs the SuperLink as root (see the `user: "0:0"` comment in `compose.development.flower.yml`) to read the host-provisioned 0640 TLS keys and the operator's 0600 SSO token cache; `cap_drop: ALL` strips root's implicit DAC bypass, so `DAC_OVERRIDE` is granted back. Production runs the image's non-root user with instance-role AWS credentials and keeps the `CHOWN` baseline. |

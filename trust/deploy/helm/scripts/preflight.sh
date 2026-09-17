@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Preflight checks for 'make -C deploy/providers/kubernetes up'.
+# Preflight checks for 'make -C trust/deploy/helm up'.
 # Called automatically by the 'deploy' / 'up' Makefile targets.
 # All parameters are injected as environment variables by the Makefile.
 #
@@ -22,7 +22,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-REPO_ROOT="$(cd "$CHART_DIR/../../.." && pwd)"
+REPO_ROOT="$(git -C "$CHART_DIR" rev-parse --show-toplevel)"
 
 # ── Parameters (injected by Makefile) ────────────────────────────────────────
 HELM_BIN="${HELM:-helm}"
@@ -269,7 +269,7 @@ if [ -n "$OVERRIDES_FILE" ]; then
         pass "OVERRIDES_FILE: ${OVERRIDES_FILE}"
     else
         fail "OVERRIDES_FILE not found: ${OVERRIDES_FILE}"
-        hint "Generate with: make -C deploy/providers/kubernetes sync-kit KIT=<KIT> PROD=${PROD:-(env)}"
+        hint "Generate with: make -C trust/deploy/helm sync-kit KIT=<KIT> PROD=${PROD:-(env)}"
     fi
 fi
 
@@ -312,7 +312,7 @@ if [ -n "$KIT" ]; then
     if [ ! -f "$K8S_OVERRIDE" ]; then
         warn "Per-trust override not yet generated: k8s-trust-${KIT}.yaml"
         hint "Generate it (and patch cluster secrets) with:"
-        hint "  make -C deploy/providers/kubernetes sync-kit KIT=${KIT} PROD=${PROD:-(env)}"
+        hint "  make -C trust/deploy/helm sync-kit KIT=${KIT} PROD=${PROD:-(env)}"
         hint "Then deploy with OVERRIDES_FILE=k8s-trust-${KIT}.yaml"
     else
         pass "Per-trust override: k8s-trust-${KIT}.yaml"

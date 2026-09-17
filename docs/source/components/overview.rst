@@ -117,5 +117,5 @@ The Central Hub is provisioned on AWS with Terraform/OpenTofu, self-contained in
 Zone Accelerator estate — :ref:`deploy-central-hub`. A Trust node runs
 as a Docker Compose stack on a host inside the Trust (:doc:`/deploy-flip/deploy-flip-node-on-prem`), inside a
 Trusted Research Environment (:doc:`/deploy-flip/deploy-flip-node-in-tre`), or on Kubernetes via the Helm chart
-at `deploy/providers/kubernetes/ <https://github.com/londonaicentre/FLIP/blob/develop/deploy/providers/kubernetes/README.md>`_.
+at `trust/deploy/helm/ <https://github.com/londonaicentre/FLIP/blob/develop/trust/deploy/helm/README.md>`_.
 The AWS-hosted mock Trusts used for staging are the same Compose stack on an EC2 instance.
