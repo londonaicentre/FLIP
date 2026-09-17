@@ -51,7 +51,7 @@ operator. The TRE operator is responsible for:
   least one NVIDIA GPU accessible via the NVIDIA Container Toolkit.
 - Creating the writable host paths the FLIP stack expects under ``/opt/flip/`` (for certs,
   FL data, OMOP DB volumes, and observability storage -- see the Ansible playbook at
-  ``deploy/providers/local/site_local_trust.yml``).
+  ``trust/deploy/ansible/onprem.yml``).
 
 **Container image ingestion**
 
