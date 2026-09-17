@@ -84,6 +84,7 @@ class EmailTemplateTester:
         ses_dir = aws_dir / "templates" / "ses"
         self.ACCESS_REQUEST_TEMPLATE_HTML = (ses_dir / "flip-access-request.html").read_text()
         self.XNAT_CREDENTIALS_TEMPLATE_HTML = (ses_dir / "flip-xnat-credentials.html").read_text()
+        self.XNAT_ADDED_TO_PROJECT_TEMPLATE_HTML = (ses_dir / "flip-xnat-added-to-project.html").read_text()
 
     def substitute_placeholders(self, template: str) -> tuple[str, dict[str, str]]:
         """
@@ -193,6 +194,7 @@ class EmailTemplateTester:
             ("password_reset_link", self.PASSWORD_RESET_LINK_TEMPLATE_HTML),
             ("access_request", self.ACCESS_REQUEST_TEMPLATE_HTML),
             ("xnat_credentials", self.XNAT_CREDENTIALS_TEMPLATE_HTML),
+            ("xnat_added_to_project", self.XNAT_ADDED_TO_PROJECT_TEMPLATE_HTML),
         ]
 
         for name, template in templates:
@@ -262,6 +264,7 @@ class EmailTemplateTester:
             ("Password Reset (Link)", self.PASSWORD_RESET_LINK_TEMPLATE_HTML),
             ("Access Request", self.ACCESS_REQUEST_TEMPLATE_HTML),
             ("XNAT Credentials", self.XNAT_CREDENTIALS_TEMPLATE_HTML),
+            ("XNAT Added To Project", self.XNAT_ADDED_TO_PROJECT_TEMPLATE_HTML),
         ]
 
         results = []
@@ -353,7 +356,10 @@ def main():
     if args.serve:
         print(f"\n📧 Starting local HTTP server at http://localhost:{args.port}")
         print("Open the following URLs in your browser:")
-        for name in ["invite", "password_reset_code", "password_reset_link", "access_request", "xnat_credentials"]:
+        for name in [
+            "invite", "password_reset_code", "password_reset_link",
+            "access_request", "xnat_credentials", "xnat_added_to_project",
+        ]:
             print(f"  • http://localhost:{args.port}/flip_email_{name}.html")
         print("\nPress Ctrl+C to stop the server.\n")
 

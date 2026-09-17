@@ -138,6 +138,10 @@ FLOWER_EXTRA_SERVER_SANS="fl-server-net-1.flip.local,fl.stag.flip.aicentre.co.uk
   make -C fl-services/flower provision NET_NUMBER=1 PROD=stag
 ```
 
+`make generate-tls-certificates-net-1` / `-net-2` are direct shortcuts for `provision
+NET_NUMBER=1` / `=2` — same script, same `NUM_SUPERNODES` derivation, just without having to pass
+`NET_NUMBER` — handy when a Makefile or script targets one net by name.
+
 `creds/` is the gitignored `FL_PROVISIONED_DIR` for Flower (see
 [`deploy/fl_backend.mk`](../../deploy/fl_backend.mk)); the dev compose overlays and the standalone
 [`compose.secure.yml`](compose.secure.yml) mount `certificates/` into `/certs` and `keys/` into

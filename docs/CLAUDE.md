@@ -14,6 +14,8 @@
 | `source/flip-workflow.rst` | End-to-end FLIP workflow |
 | `source/faqs.rst` | Frequently asked questions |
 | `source/glossary.rst` | Terminology definitions |
+| `source/security.rst` | How FLIP addresses security at each layer (network, cloud estate, identity, clinical-data boundary, the FL process itself, storage/transport, supply chain) — written for partner trusts and information governance leads |
+| `source/governance-and-compliance.rst` | Who decides what in FLIP and how the platform maps onto NHS assurance frameworks — written for information governance/Caldicott functions and research ethics committees; companion to `security.rst` |
 
 ## Sub-docs
 
