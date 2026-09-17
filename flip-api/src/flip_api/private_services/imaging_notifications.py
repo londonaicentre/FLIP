@@ -35,8 +35,10 @@ from flip_api.utils.logger import logger
 def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
     """Post-process a successful CREATE_IMAGING task: persist status and send email notifications.
 
-    Sends invite emails to newly created users, and project access notifications
-    to existing users who were added to the project.
+    Sends invite emails to the users the trust flagged for invitation (accounts
+    created this run, and existing accounts that have never logged in and were
+    re-invited), and project access notifications to existing users who were
+    added to the project.
 
     Called after the task result has been committed to the database.
     Any exceptions are expected to be caught by the caller.

@@ -16,13 +16,14 @@ from uuid import uuid4
 
 import pytest
 
-from imaging_api.routers.schemas import CentralHubUser, CreateUser, User
+from imaging_api.routers.schemas import CentralHubUser, CreatedUser, CreateUser, User
 from imaging_api.services.users import (
     add_user_to_project,
     create_user,
     create_user_from_central_hub_user,
     get_user_profile_by,
     get_xnat_users,
+    issue_invite,
     issue_setup_token,
     to_create_imaging_user,
     user_exists,
@@ -325,6 +326,21 @@ def test_issue_setup_token_raises_on_error(mock_get, headers):
     mock_get.return_value = MagicMock(status_code=500, text="boom")
     with pytest.raises(Exception, match="setup-token issuance failed"):
         issue_setup_token("alice", headers)
+
+
+# ---------------------------------------------------------------------------
+# issue_invite
+# ---------------------------------------------------------------------------
+@patch("imaging_api.services.users.encrypt", return_value="encrypted_setup")
+@patch("imaging_api.services.users.issue_setup_token", return_value="/app/template/XDATScreen_UpdateUser.vm?a=al&s=se")
+def test_issue_invite_seals_the_setup_path_for_the_profile(mock_issue, mock_encrypt, headers):
+    created = issue_invite(User(**_SAMPLE_USER_DICT), headers)
+
+    assert created == CreatedUser(username="alice", encrypted_setup_path="encrypted_setup", email="alice@test.com")
+    mock_issue.assert_called_once_with("alice", headers)
+    mock_encrypt.assert_called_once_with(
+        "/app/template/XDATScreen_UpdateUser.vm?a=al&s=se", context=XNAT_SETUP_PATH_CONTEXT
+    )
 
 
 # ---------------------------------------------------------------------------

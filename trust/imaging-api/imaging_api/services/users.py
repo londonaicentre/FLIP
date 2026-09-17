@@ -192,6 +192,34 @@ def issue_setup_token(username: str, headers: dict[str, str]) -> str:
     return XNAT_SETUP_PATH_TEMPLATE.format(alias=alias, secret=secret)
 
 
+def issue_invite(user_profile: User, headers: dict[str, str]) -> CreatedUser:
+    """Mint a set-password invite for an existing XNAT account and seal it for the hub.
+
+    Shared by the create path and the re-invite path: an account that exists but has never
+    authenticated (``lastSuccessfulLogin`` is ``None``) is in the same position as a freshly created
+    one — its random password was never disclosed — so a lost or expired first invite, or a token
+    issuance that failed after ``create_user`` succeeded, is recovered by minting a fresh token on the
+    next run instead of telling the user to log in with credentials they never set.
+
+    Args:
+        user_profile (imaging_api.routers.schemas.User): The XNAT user profile to invite.
+        headers (dict[str, str]): XNAT authentication headers (service-account session).
+
+    Returns:
+        imaging_api.routers.schemas.CreatedUser: The invite payload: username, email and the setup path
+        encrypted under :data:`imaging_api.utils.encryption.XNAT_SETUP_PATH_CONTEXT`.
+
+    Raises:
+        Exception: If XNAT does not issue the token.
+    """
+    setup_path = issue_setup_token(user_profile.username, headers)
+    return CreatedUser(
+        username=user_profile.username,
+        encrypted_setup_path=encrypt(setup_path, context=XNAT_SETUP_PATH_CONTEXT),
+        email=user_profile.email,
+    )
+
+
 def create_user_from_central_hub_user(
     central_hub_user: CentralHubUser, headers: dict[str, str]
 ) -> tuple[CreatedUser, User]:
@@ -215,13 +243,7 @@ def create_user_from_central_hub_user(
     create_user_request = to_create_imaging_user(central_hub_user, headers)
     # Actually create
     user_profile = create_user(create_user_request, headers)
-    setup_path = issue_setup_token(user_profile.username, headers)
-    created_user = CreatedUser(
-        username=user_profile.username,
-        encrypted_setup_path=encrypt(setup_path, context=XNAT_SETUP_PATH_CONTEXT),
-        email=create_user_request.email,
-    )
-    return created_user, user_profile
+    return issue_invite(user_profile, headers), user_profile
 
 
 def create_user(user: CreateUser, headers: dict[str, str]) -> User:

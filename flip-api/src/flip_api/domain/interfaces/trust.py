@@ -134,7 +134,13 @@ class IAddedImagingUser(BaseModel):
 
 
 class ICreatedImagingProject(BaseModel):
-    """Represents a project created on XNAT. Used to be called IImageId in the old repo."""
+    """Represents a project created on XNAT. Used to be called IImageId in the old repo.
+
+    ``created_users`` are the users to invite: accounts the trust created this run, plus existing
+    accounts that have never logged in (a lost or expired first invite), which the trust re-invites
+    with a fresh set-password path. ``added_users`` are existing accounts that have logged in
+    before and only need the added-to-project notice. A user is in exactly one of the two.
+    """
 
     imaging_project_id: UUID
     name: str
