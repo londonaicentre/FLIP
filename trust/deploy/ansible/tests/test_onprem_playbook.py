@@ -29,7 +29,7 @@ import pytest
 import yaml
 from jinja2 import Template
 
-PLAYBOOK_PATH = Path(__file__).parent.parent / "site_local_trust.yml"
+PLAYBOOK_PATH = Path(__file__).parent.parent / "onprem.yml"
 
 # The per-net images bind sources, which imaging-api AND the fl-client both write into.
 NET_DIR_PATHS = {"{{ flip_dir }}/data/images/net-1", "{{ flip_dir }}/data/images/net-2"}
@@ -162,7 +162,7 @@ def _net_dir_tasks(playbook: list[dict]) -> list[tuple[dict, dict]]:
 
 
 def test_fl_backend_has_a_playbook_default(playbook: list[dict]) -> None:
-    """A bare ``ansible-playbook site_local_trust.yml`` must not fail on an undefined ``fl_backend``.
+    """A bare ``ansible-playbook onprem.yml`` must not fail on an undefined ``fl_backend``.
 
     The net-dir task below templates on it, so without a play-level default every direct
     (non-Makefile) run of the playbook would abort with an undefined-variable error.

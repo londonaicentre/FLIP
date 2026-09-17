@@ -469,7 +469,7 @@ omopDb:
   # (chart README → "OMOP core vocabulary").
   #
   # Use YOUR environment's own bucket — trust roles have no cross-account read
-  # on another environment's bucket. `make -C deploy/providers/kubernetes
+  # on another environment's bucket. `make -C trust/deploy/helm
   # sync-kit KIT=<CODE> PROD=<env>` writes this from the kit's
   # AICENTRE_BUCKET_NAME, so check that the kit carries the right one (it is not
   # a hub-managed key — a kit scaffolded from trust/.env.example ships the dev

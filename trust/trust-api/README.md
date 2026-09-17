@@ -88,7 +88,7 @@ override the code default. `XNAT_URL` and `OMOP_DB_HOST` appear in no kit file a
 every kit file (`trust/.env.example`, the GSTT/KCH examples) and in the fl-client's compose block,
 because the fl-client reads them from env too and its own code defaults are `localhost` URLs, not
 the trust-network names; the Helm chart also injects them into trust-api itself
-(`deploy/providers/kubernetes/templates/trust-api.yaml`). Override them through the environment
+(`trust/deploy/helm/templates/trust-api.yaml`). Override them through the environment
 only for a non-standard deployment. Note the kit's own `OMOP_DB_PORT` is a different variable: it
 is the *host*-published port for the omop-db container, while trust-api probes the container port
 over the trust network.

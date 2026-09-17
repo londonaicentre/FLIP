@@ -11,17 +11,16 @@
     limitations under the License.
 -->
 
-# FLIP Local (On-Premises) Trust Deployment
+# FLIP On-Premises Trust Provisioning (Ansible)
 
-> **Deploys: trust only.** This playbook provisions the *host*; the trust container stack itself comes from
-> [`trust/deploy/`](../../../trust/deploy/README.md). The AWS provider must already be deployed — this
-> playbook depends on its Terraform outputs, the FL participant kits in S3, and the hub NLB security-group
-> rules. See [`../README.md`](../README.md) for how this provider relates to the other two.
+> **Deploys: trust only.** This playbook prepares a host the site already owns for the trust Compose stack in
+> [`trust/deploy/`](../README.md); see [Prerequisites](#prerequisites) for what must already exist on the AWS
+> side, and [where things live](../../../deploy/README.md#where-things-live) for the layout rule.
 
 Ansible playbook and supporting files to provision an on-premises Ubuntu host as a FLIP Trust node. The provisioned host polls the Central Hub (running in AWS) for tasks — all communication is outbound from the trust.
 
-This is the **local provider** counterpart to the [AWS provider](../AWS/README.md), which manages the Central Hub and
-(optionally) cloud-hosted Trust instances. Together they implement the
+`onprem.yml` is the on-prem counterpart of the EC2 play [`deploy/providers/AWS/site.yml`](../../../deploy/providers/AWS/site.yml),
+which the [AWS provider](../../../deploy/providers/AWS/README.md) runs against the cloud trust it creates. Together they implement the
 [hybrid deployment model](../../../docs/source/deploy-flip.rst).
 
 ## Architecture
@@ -70,7 +69,7 @@ The on-prem trust kit (`trust/.env.<CODE>.production`) can default `IMAGING_API_
    - SSH access from the operator workstation (if remote), or local access
    - Internet connectivity (to pull Docker images and packages)
 
-3. **AWS Central Hub deployed** — The Central Hub must be running in AWS (required for Terraform outputs, FL participant kits in S3, and NLB security group configuration). See [`deploy/providers/AWS/`](../AWS/README.md).
+3. **AWS Central Hub deployed** — The Central Hub must be running in AWS (required for Terraform outputs, FL participant kits in S3, and NLB security group configuration). See [`deploy/providers/AWS/`](../../../deploy/providers/AWS/README.md).
 
 ## Quick Start
 
@@ -135,7 +134,7 @@ make provision-local-trust
 
 ### What `provision-local-trust` does
 
-1. Runs the Ansible playbook (`site_local_trust.yml`) which:
+1. Runs the Ansible playbook (`onprem.yml`) which:
    - Installs Docker and required system packages
    - Creates `/opt/flip/` and `/opt/flip/data/images/`, owned by `ubuntu`
    - Creates the **per-net images bind sources** `/opt/flip/data/images/net-1`
@@ -230,7 +229,7 @@ The `full-deploy-with-local-trust` / `full-deploy-hybrid` targets handle trust r
 
 ## Ansible Playbook Details
 
-### `site_local_trust.yml`
+### `onprem.yml`
 
 The main playbook. It can be run standalone or via the `provision-local-trust` Makefile target.
 
@@ -245,13 +244,13 @@ The main playbook. It can be run standalone or via the `provision-local-trust` M
 
 ```bash
 cd deploy/providers/AWS
-uv run ansible-galaxy install -r ../../../deploy/providers/local/requirements.yml
+uv run ansible-galaxy install -r ../../../trust/deploy/ansible/requirements.yml
 
 uv run ansible-playbook \
   -i <trust-host-ip>, \
   -u ubuntu \
   --private-key ~/.ssh/trust_key \
-  ../../../deploy/providers/local/site_local_trust.yml
+  ../../../trust/deploy/ansible/onprem.yml
 ```
 
 ### `requirements.yml`
@@ -263,7 +262,7 @@ Ansible Galaxy dependencies:
 Install with:
 
 ```bash
-uv run ansible-galaxy install -r deploy/providers/local/requirements.yml
+uv run ansible-galaxy install -r trust/deploy/ansible/requirements.yml
 ```
 
 ## Home Network Firewall Configuration
@@ -298,7 +297,8 @@ Re-running with an already-listed IP is a no-op (idempotent).
 
 ## Related Documentation
 
-- [AWS Provider README](../AWS/README.md) — Central Hub and cloud Trust deployment
-- [Kubernetes Provider README](../kubernetes/README.md) — K8s-based trust deployment via Helm
-- [Trust README](../../../trust/README.md) — Trust service stack details
-- [Deploy README](../../README.md) — General deployment prerequisites (AWS CLI, SSH keys, GHCR login)
+- [AWS Provider README](../../../deploy/providers/AWS/README.md) — Central Hub and cloud Trust deployment
+- [Helm chart README](../helm/README.md) — the same trust stack rendered for Kubernetes
+- [Trust Compose stack README](../README.md) — the compose files
+- [Trust README](../../README.md) — Trust service stack details
+- [Deploy README](../../../deploy/README.md) — General deployment prerequisites (AWS CLI, SSH keys, GHCR login)

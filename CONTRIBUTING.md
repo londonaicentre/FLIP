@@ -464,20 +464,20 @@ make -C flip-utils unit-test   # ruff --fix + pytest with coverage
 See [`flip-utils/README.md`](flip-utils/README.md) for the FL package's tests, and
 [`fl-services/nvflare/README.md`](fl-services/nvflare/README.md) for provisioning FL networks.
 
-**Kubernetes chart testing**: The K8s Helm chart at `deploy/providers/kubernetes/` can be tested with:
+**Kubernetes chart testing**: The K8s Helm chart at `trust/deploy/helm/` can be tested with:
 
 ```bash
 # Lint + render + schema validation
-make -C deploy/providers/kubernetes test
+make -C trust/deploy/helm test
 
 # Render all FL backend variants
-make -C deploy/providers/kubernetes template-all-backends
+make -C trust/deploy/helm template-all-backends
 
 # Validate rendered templates against K8s schema (requires kubeconform)
-make -C deploy/providers/kubernetes validate
+make -C trust/deploy/helm validate
 
 # Place this trust's FL participant kit onto the node, BEFORE deploying
-make -C deploy/providers/kubernetes stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
+make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 ```
 
 `stage-kit` is a prerequisite of deploying with `flClient.enabled`: the chart never fetches
@@ -490,7 +490,7 @@ removed values.
 The chart has a `check_status.py` smoke test script and a `sync_k8s_kit.py` script that syncs a
 registered trust's kit file (hub registration itself still goes through `register_trust` /
 `make register-trusts`) into the chart's Kubernetes Secret and a Helm values override. See the
-[K8s README](deploy/providers/kubernetes/README.md) for details.
+[K8s README](trust/deploy/helm/README.md) for details.
 
 **Testing fixtures**: For testing APIs and integration tests, we use [pytest fixtures](https://docs.pytest.org/en/latest/how-to/fixtures.html). Shared fixtures are defined in `conftest.py` files. In some cases, [`factory_boy`](https://factoryboy.readthedocs.io/) is used to create test data following production data structures.
 
