@@ -180,9 +180,11 @@ upload-spleen-labels:
 #                                   that actually produced the published OMOP export. No root, no
 #                                   1.5GB download. This is what the verification gate uses.
 #   download-spleen-msd-raw -> convert-spleen-to-dicom -> create-spleen-metadata-table
-#                                 — the full regeneration path. Needs root and re-synthesises
-#                                   patient identities, so its output will NOT match the published
-#                                   export (see the README). Use it to exercise the DICOM stage.
+#                                 — the full regeneration path. Deterministic since FLIP#1221 (no
+#                                   root, same bytes on every run), but the published export was
+#                                   produced by the earlier plastimatch converter, so this output
+#                                   does NOT match it (see the README). Use it to exercise the DICOM
+#                                   stage.
 SPLEEN_OMOP_UV := uv run --project datasets/spleen
 # The published tables are read at omop-csv/<project>/ on a data-version TAG on aicentreflip/trust-data
 # — the FLIP#1101 layout, one copy of every table with the version as a git tag. The pre-#1101 copies
@@ -210,14 +212,11 @@ download-spleen-msd-raw:
 		filepath='data/Task09_Spleen.tar', output_dir='data')"
 	@echo "✅ raw MSD extract at fl-tutorials/data/Task09_Spleen/imagesTr (41 cases)"
 
-# Regeneration path, step 1: NIfTI -> DICOM with synthesised patient identities.
-# WORKSTATION ONLY: pyplastimatch's install_precompiled_binaries() copies to /usr/local/bin, so this
-# needs root and is never run in CI. Run as:
-#   sudo $(shell which uv) run --project datasets/spleen python datasets/spleen/convert_spleen_dataset.py
-# from fl-tutorials/. Create the venv as your normal user first (any other target does it) — a sudo
-# run can leave a root-owned .venv that breaks every later non-sudo invocation.
+# Regeneration path, step 1: NIfTI -> DICOM with synthesised patient identities, on the shared
+# pydicom writer (utils/dicom_writer.py — no plastimatch, no root, deterministic; FLIP#1221).
+# PYTHONPATH=datasets because the converter imports utils.*, like the OMOP converters below.
 convert-spleen-to-dicom:
-	@cd .. && $(SPLEEN_OMOP_UV) python datasets/spleen/convert_spleen_dataset.py
+	@cd .. && PYTHONPATH=datasets $(SPLEEN_OMOP_UV) python datasets/spleen/convert_spleen_dataset.py
 
 # Regeneration path, step 2: DICOM -> tables/dicom_metadata.csv, then bridge it to where the OMOP
 # converter expects its input. The copy stands in for a step that was manual upstream:
