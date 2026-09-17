@@ -47,6 +47,16 @@ API are deliberately not on it, and an FL client carries no hub URL and no hub c
 **outbound** to the server, with mutual TLS on both backends using the per-participant certificates from the
 provisioned kits.
 
+Neither end of that plane can be assumed to have a route to the public internet. On a platform-managed
+estate the FL server runs in an account with no internet gateway or NAT of its own — its egress leaves through
+a central inspection firewall that permits only the platform's own endpoints — and a Trust's training host
+sits behind the Trust's firewall. An app is therefore **offline by construction**: everything it needs —
+weights, checkpoints, auxiliary networks — must arrive through the model-file upload, never a run-time
+download (see the note under *Model Files* in the :doc:`user guide <../user-guides/user-common>`). A
+``pretrained=True`` or ``torch.hub`` call in an app hangs the server-side job process; on NVFLARE the Trust
+then reports ``cannot sync with server Runner``, on Flower the run simply never issues a round, and either
+way the model is left at ``INITIATED`` and the net ``BUSY``.
+
 Kit slots and client names
 ==========================
 
@@ -128,13 +138,18 @@ The NVFLARE tutorials (all Client-API apps):
 - `3d_spleen_segmentation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation>`_ (job type `standard`)
 - `3d_spleen_segmentation_evaluation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation>`_ (job type `evaluation`)
 - `latent_diffusion_model <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_synthesis/latent_diffusion_model>`_ (job type `diffusion_model`)
+- `ehr_risk_prediction <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction>`_ (job type `standard`)
 
-The two `standard` examples show how the same job type runs different user-uploaded
-applications: both perform a supervised federated averaging training, but the data, architecture
-and training configuration are different.
+The three `standard` examples show how one job type runs quite different user-uploaded
+applications: each performs a supervised federated averaging training, but the data, architecture
+and training configuration differ. The third goes furthest — its cohort is tabular OMOP data with no
+imaging in it at all, which is possible because a job type describes the NVFLARE job FLIP assembles
+around your files, never the modality. What to fetch is the uploaded script's decision: an imaging
+app calls ``flip.get_by_accession_number``, the EHR one calls only ``flip.get_dataframe``.
 
 These tutorials run on the local NVFLARE simulator from the repo root — e.g.
-``make -C fl-tutorials run-tutorial TUTORIAL=xray_classification`` (requires a GPU; see the
+``make -C fl-tutorials run-tutorial TUTORIAL=xray_classification`` (the imaging ones require a GPU;
+the tabular EHR example runs on CPU — see the
 `fl-tutorials/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare>`_ README).
 
 

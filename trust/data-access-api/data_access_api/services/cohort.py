@@ -183,7 +183,7 @@ def validate_query(query: str) -> str:
 
     **Read scope is NOT guaranteed by the database role, and differs by deployment.**
     The Kubernetes trust chart grants the role ``pg_read_all_data``
-    (``deploy/providers/kubernetes/templates/omop-db.yaml``) — SELECT on every table
+    (``trust/deploy/helm/templates/omop-db.yaml``) — SELECT on every table
     in every schema — while the Compose path grants only ``USAGE`` on ``omop`` plus
     ``SELECT`` on its tables. So rule 5 below is the *only* thing keeping a caller
     inside ``omop`` on a Kubernetes trust, not a redundant second layer over a narrow

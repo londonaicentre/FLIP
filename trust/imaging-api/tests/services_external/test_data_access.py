@@ -48,7 +48,98 @@ class TestGetAccessionIds:
         assert mock_client.post.call_args.args[0].endswith("/cohort/accession-ids")
         # data-access-api now requires the trust-internal service key on every /cohort
         # route; imaging-api is one of those callers and must forward the plaintext key.
-        assert call_kwargs["headers"][get_settings().TRUST_INTERNAL_SERVICE_KEY_HEADER] == "outbound-test-key"
+        assert (
+            call_kwargs["headers"][get_settings().TRUST_INTERNAL_SERVICE_KEY_HEADER]
+            == "outbound-test-key"  # pragma: allowlist secret
+        )
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services_external.data_access.httpx.AsyncClient")
+    async def test_rows_of_the_same_study_collapse_to_one_accession_in_query_order(self, mock_client_cls):
+        """One image_occurrence per series gives the same accession several times; a study imports once."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"accession_ids": ["ACC2", "ACC2", "ACC1", "ACC2", "ACC3", "ACC1"]}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        with patch.object(get_settings(), "TRUST_INTERNAL_SERVICE_KEY", "outbound-test-key"):
+            accession_ids = await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")
+
+        assert accession_ids == ["ACC2", "ACC1", "ACC3"]
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services_external.data_access.logger")
+    @patch("imaging_api.services_external.data_access.httpx.AsyncClient")
+    async def test_blank_accession_ids_are_dropped_and_warned_about_not_sent_to_the_pacs(
+        self, mock_client_cls, mock_logger
+    ):
+        """A blank accession number is universal matching to a PACS (every study), so it never leaves here."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"accession_ids": ["ACC1", "", "   ", "ACC2", None, "ACC1"]}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        with patch.object(get_settings(), "TRUST_INTERNAL_SERVICE_KEY", "outbound-test-key"):
+            accession_ids = await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")
+
+        assert accession_ids == ["ACC1", "ACC2"]
+        mock_logger.warning.assert_called_once()
+        assert "dropping 3 accession id(s)" in mock_logger.warning.call_args.args[0]
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services_external.data_access.logger")
+    @patch("imaging_api.services_external.data_access.httpx.AsyncClient")
+    async def test_a_cohort_of_only_blank_accession_ids_pulls_nothing(self, mock_client_cls, mock_logger):
+        """All-blank is an empty pull list — the same outcome as a cohort with no imaging rows — not an error."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"accession_ids": ["", " "]}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        with patch.object(get_settings(), "TRUST_INTERNAL_SERVICE_KEY", "outbound-test-key"):
+            accession_ids = await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")
+
+        assert accession_ids == []
+        mock_logger.warning.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services_external.data_access.logger")
+    @patch("imaging_api.services_external.data_access.httpx.AsyncClient")
+    async def test_wildcard_and_multi_value_accession_ids_are_dropped_like_blanks(self, mock_client_cls, mock_logger):
+        """`*` and `?` are C-FIND wildcards and `\\` is DICOM's value delimiter: each is a multi-study query."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "accession_ids": ["ACC1", "ACC*", "*", "AC?1", "ACC1\\ACC2", "ACC2"],
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        with patch.object(get_settings(), "TRUST_INTERNAL_SERVICE_KEY", "outbound-test-key"):
+            accession_ids = await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")
+
+        assert accession_ids == ["ACC1", "ACC2"]
+        mock_logger.warning.assert_called_once()
+        assert "dropping 4 accession id(s)" in mock_logger.warning.call_args.args[0]
 
     @pytest.mark.asyncio
     @patch("imaging_api.services_external.data_access.httpx.AsyncClient")

@@ -156,6 +156,16 @@ describe("ProjectStatus", () => {
 
             expect(skeletons.length).toBeGreaterThan(0);
         });
+
+        it("keeps the approval-required alert under the title instead of vertically centring it", () => {
+            const wrapper = mountProjectStatus(false);
+
+            const alert = wrapper.find("[data-test=approval-required-alert]");
+            expect(alert.exists()).toBe(true);
+            // m-auto would centre the alert in the now fill-height flex-column card.
+            expect(alert.classes()).not.toContain("m-auto");
+            expect(alert.classes()).toContain("shrink-0");
+        });
     });
 
     describe("loading state", () => {
@@ -312,6 +322,27 @@ describe("ProjectStatus", () => {
             expect(wrapper.find("[data-test=trust-name-trust-2]").exists()).toBe(true);
             expect(wrapper.find("[data-test=trust-name-trust-3]").exists()).toBe(true);
         });
+
+        it("scrolls the trust grid on its own while the header and overview row stay pinned", () => {
+            const wrapper = mountProjectStatus(true);
+
+            const grid = wrapper.find("ul[role=list]");
+            expect(grid.classes()).toContain("overflow-y-auto");
+            expect(grid.classes()).toContain("flex-1");
+            expect(grid.classes()).toContain("min-h-0");
+            // Without auto-rows-max / content-start the definite-height grid
+            // stretches its auto rows into the free space, so a short roster gets
+            // every trust card stretched to fill the scroller instead of sized to
+            // its content (the <li> is not a scroll container, so it never collapses).
+            expect(grid.classes()).toContain("auto-rows-max");
+            expect(grid.classes()).toContain("content-start");
+
+            // The five-stat overview is a sibling of the scroller, not inside it.
+            const overview = wrapper.find("[data-test=overview-project-creation]")
+                .element.closest("div.grid-cols-5");
+            expect(overview?.className).toContain("shrink-0");
+            expect(grid.element.contains(overview)).toBe(false);
+        });
     });
 
     describe("conditional display logic", () => {
@@ -417,6 +448,18 @@ describe("ProjectStatus", () => {
             const wrapper = mountProjectStatus(true);
 
             expect(wrapper.find(ProjectStatusComponent.noProjectStatusMessage).exists()).toBe(true);
+        });
+
+        it("lets the awaiting message own the fill-height area instead of sharing it with an empty grid", () => {
+            mockSwrvData.value = [];
+            const wrapper = mountProjectStatus(true);
+
+            // The grid and the message are both flex-1. Rendered as siblings they
+            // split the card's height ~50/50 around an empty scroller, so the
+            // grid must not render at all when there is nothing to list.
+            expect(wrapper.find("ul[role=list]").exists()).toBe(false);
+            const message = wrapper.find(ProjectStatusComponent.noProjectStatusMessage);
+            expect(message.element.parentElement?.className).toContain("flex-1");
         });
 
         it("displays correct overview counts with empty data", () => {

@@ -33,6 +33,7 @@ Usage (preferred):
     make demo-video                                   # from the repo root
     make demo-video DEMO_ARGS="--skip-xnat"
     make demo-video DEMO_ARGS="--project-id <uuid> --from-segment 4"
+    make demo-video DEMO_ARGS="--app ehr --project-id <uuid> --from-segment 4"   # resume = same --app
 
 Direct invocation:
     cd flip-api && env DB_HOST=localhost uv run python -m tests.demo_video
@@ -100,9 +101,6 @@ APPS: dict[str, dict[str, Any]] = {
     },
     "digipath": {
         "project_name": "Federated Nuclei Detection on Digital Pathology",
-        "project_description": (
-            "Multi-trust federated evaluation: nuclei detection on DICOM whole-slide images."
-        ),
         "model_name": "Nuclei Detector",
         "model_description": (
             "Haematoxylin-peak nuclei detector, evaluated against each trust's own reference "
@@ -141,6 +139,32 @@ APPS: dict[str, dict[str, Any]] = {
             "make_target": "upload-idc-pathology-annotations",
         },
     },
+    "ehr": {
+        "project_name": "Federated Type-2 Diabetes Risk Prediction",
+        "model_name": "T2DM Risk MLP",
+        "model_description": (
+            "Multi-layer perceptron trained with federated averaging on each trust's own OMOP "
+            "records — tabular only, no imaging leaves any hospital."
+        ),
+        # FLIP's tabular/EHR path: the cohort arrives through flip.get_dataframe as arbitrary SQL
+        # over each trust's OMOP CDM, and no DICOM is touched at all. The project must therefore be
+        # created with "Includes imaging data" off (FLIP#1071's has_imaging). Left on -- which is the
+        # form's default -- the hub dispatches CREATE_IMAGING, each trust queues pulls that can never
+        # succeed, and the run dies at the image-pull wait or the XNAT segment.
+        "has_imaging": False,
+        "backends": {
+            "nvflare": {
+                "app_dir": "fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files",
+                "query_file": "fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql",
+                "label": "NVFLARE",
+            },
+            "flower": {
+                "app_dir": "fl-tutorials/flower/ehr_risk_prediction/app",
+                "query_file": "fl-tutorials/flower/ehr_risk_prediction/query.sql",
+                "label": "Flower",
+            },
+        },
+    },
     "spleen": {
         "project_name": "Federated 3D Spleen Segmentation",
         "model_name": "Spleen 3D U-Net",
@@ -171,7 +195,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--trusts", default=None, help="Comma-separated trust codes/names (default: all registered)")
     parser.add_argument("--project-name", default=None, help="Override the app profile's project name")
-    parser.add_argument("--project-description", default=None, help="Override the app profile's project description")
+    parser.add_argument(
+        "--project-description", default=None, help="Override the tutorial's task description (e2e_smoke's TUTORIALS)"
+    )
     parser.add_argument("--model-name", default=None, help="Override the app profile's model name")
     parser.add_argument("--model-description", default=None, help="Override the app profile's model description")
     parser.add_argument(
@@ -339,17 +365,34 @@ def run_segment(name: str, env: dict[str, str], video_scale: int = 1) -> Path:
 
     child_env = os.environ.copy()
     cmd = [
-        "docker", "run", "--rm", "--network", "host", "--shm-size=2g",
-        "--user", f"{os.getuid()}:{os.getgid()}",
-        "-v", f"{REPO_ROOT}:/e2e", "-w", "/e2e/flip-ui",
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "host",
+        "--shm-size=2g",
+        "--user",
+        f"{os.getuid()}:{os.getgid()}",
+        "-v",
+        f"{REPO_ROOT}:/e2e",
+        "-w",
+        "/e2e/flip-ui",
     ]
     # Cypress + Chrome need a writable HOME when running as the host user.
     for key, value in {"HOME": "/tmp/cypress-home", "DEMO_VIDEO_SCALE": str(video_scale), **env}.items():
         child_env[key] = value
         cmd += ["-e", key]
     cmd += [
-        "--entrypoint", "cypress", CYPRESS_IMAGE,
-        "run", "--browser", "chrome", "--config-file", "cypress.demo.config.ts", "--spec", spec_rel,
+        "--entrypoint",
+        "cypress",
+        CYPRESS_IMAGE,
+        "run",
+        "--browser",
+        "chrome",
+        "--config-file",
+        "cypress.demo.config.ts",
+        "--spec",
+        spec_rel,
     ]
 
     _log(f"🎬 Recording segment {name} …")
@@ -365,9 +408,7 @@ def run_segment(name: str, env: dict[str, str], video_scale: int = 1) -> Path:
     return video
 
 
-def _pick_experiment(
-    xnat: requests.Session, xnat_url: str, experiments: list[dict[str, Any]]
-) -> dict[str, Any]:
+def _pick_experiment(xnat: requests.Session, xnat_url: str, experiments: list[dict[str, Any]]) -> dict[str, Any]:
     """Choose the session to open in OHIF, preferring one with a segmentation to show.
 
     Data enrichment only reaches the sessions it has labels for, so the first session of
@@ -472,9 +513,7 @@ def resolve_xnat_ids(
     )
 
 
-def wait_for_first_metrics(
-    client: requests.Session, headers: dict[str, str], model_id: str, timeout_s: int
-) -> None:
+def wait_for_first_metrics(client: requests.Session, headers: dict[str, str], model_id: str, timeout_s: int) -> None:
     """Block until the model has at least one training metric point.
 
     Segment 5's charts are only worth recording once real data exists. Not
@@ -542,9 +581,48 @@ def _resolve_enrichment(args: argparse.Namespace, profile: dict[str, Any]) -> tu
     return cwd, cmd
 
 
+def check_reused_project_matches_profile(
+    client: requests.Session, headers: dict[str, str], project_id: str, app: str, profile: dict[str, Any]
+) -> None:
+    """Refuse to resume a project whose creation-time ``has_imaging`` contradicts the recorded app.
+
+    Everything after segment 1 — the image-pull wait, the XNAT segment, which app and query are
+    uploaded — is decided by the ``--app`` profile, and ``--app`` defaults to ``xray``. A fresh run
+    creates the project from the same profile, so the two cannot disagree; on reuse (``--project-id``,
+    or ``--from-segment`` over a ``state.json`` project) they can, and the failure is late and opaque:
+    an EHR project resumed without ``--app ehr`` waits on
+    an imaging import that never starts, and the inverse skips imaging and uploads the wrong app. The
+    project's own flag is authoritative (``e2e_smoke.project_has_imaging`` — the smoke reads it back
+    for the same reason), so fail here, naming the profile to pass, rather than derive only the
+    imaging decisions from it and still ship the other profile's app.
+
+    Args:
+        client (requests.Session): HTTP session for hub calls.
+        headers (dict[str, str]): Auth headers.
+        project_id (str): The reused project.
+        app (str): The ``--app`` value in force.
+        profile (dict[str, Any]): Its ``APPS`` profile.
+
+    Raises:
+        SmokeFailure: When the project's ``has_imaging`` differs from the profile's.
+    """
+    project_imaging = e2e_smoke.project_has_imaging(client, headers, project_id)
+    profile_imaging = bool(profile.get("has_imaging", True))
+    if project_imaging != profile_imaging:
+        matching = sorted(name for name, p in APPS.items() if bool(p.get("has_imaging", True)) == project_imaging)
+        raise SmokeFailure(
+            f"project {project_id} was created with has_imaging={str(project_imaging).lower()}, but --app {app} "
+            f"records a {'imaging' if profile_imaging else 'tabular-only'} study — pass --app "
+            f"{' / '.join(matching)} (the app that created it) to resume it"
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     profile = APPS[args.app]
+    # Imaging unless the app says otherwise: only the tabular tutorials opt out, and a
+    # missing value must not silently mean "imaging" (see 01-create-project.spec.ts).
+    has_imaging_env = "true" if profile.get("has_imaging", True) else "false"
     tutorial = profile["backends"][args.fl_backend]
     if bool(args.data_enrichment_cwd) != bool(args.data_enrichment_cmd):
         raise SmokeFailure("--data-enrichment-cwd and --data-enrichment-cmd must be provided together")
@@ -627,6 +705,8 @@ def main(argv: list[str] | None = None) -> int:
     if not project_id:
         raise SmokeFailure("Segment 1 did not record a projectId in state.json")
     _log(f"🆔 project_id={project_id}")
+    if args.project_id or args.from_segment > 1:  # a project this run did not create from the profile
+        check_reused_project_matches_profile(client, headers, project_id, args.app, profile)
 
     required_trust_ids = {str(t["id"]) for t in trusts}
     required_trust_names = {t["name"] for t in trusts}
@@ -649,14 +729,21 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     # ── Off-camera: the imaging import (the ~6 min wait) ──────────────────
-    e2e_smoke.wait_for_image_pull(
-        client,
-        headers,
-        project_id,
-        threshold=args.image_pull_threshold,
-        timeout_s=args.image_pull_timeout,
-        required_trust_names=required_trust_names,
-    )
+    # A non-imaging study dispatches no CREATE_IMAGING, so no import tasks are ever created and the
+    # wait has nothing to converge on: it sees total == 0 and loops to its timeout rather than
+    # returning. Skip it outright rather than leaning on --image-pull-threshold 0, which only masks
+    # the same absence.
+    if profile.get("has_imaging", True):
+        e2e_smoke.wait_for_image_pull(
+            client,
+            headers,
+            project_id,
+            threshold=args.image_pull_threshold,
+            timeout_s=args.image_pull_timeout,
+            required_trust_names=required_trust_names,
+        )
+    else:
+        _log("⏭️  No imaging for this study — skipping the image-pull wait")
 
     # ── Off-camera: optional data enrichment (e.g. spleen labels) ────────
     if enrichment_cwd and enrichment_cmd:
@@ -672,16 +759,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.publish_segmentations:
         if xnat_seg_upload.main(
             [
-                "--flip-project-id", project_id,
-                "--segment-label", args.seg_segment_label,
-                "--collection-name", args.seg_collection_name,
-                "--limit", str(args.seg_limit),
+                "--flip-project-id",
+                project_id,
+                "--segment-label",
+                args.seg_segment_label,
+                "--collection-name",
+                args.seg_collection_name,
+                "--limit",
+                str(args.seg_limit),
             ]
         ):
             raise SmokeFailure("publishing DICOM-SEG collections failed — see the log above")
 
     # ── Segment 3: XNAT + OHIF at one trust ───────────────────────────────
-    if not args.skip_xnat and args.from_segment <= 3:
+    # A non-imaging study has no XNAT project and never will, so the segment cannot pass:
+    # derive the skip from the app rather than making the operator remember --skip-xnat.
+    records_xnat = not args.skip_xnat and profile.get("has_imaging", True)
+    if records_xnat and args.from_segment <= 3:
         xnat_ids = resolve_xnat_ids(args.xnat_url, args.xnat_username, args.xnat_password, project_id)
         run_segment(
             "03-xnat-ohif",

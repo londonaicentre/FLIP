@@ -102,7 +102,21 @@ describe("FLIP demo — create project", () => {
             // image-pull wait or at the XNAT segment. The app profile decides.
             if (hasImaging === "false") {
                 cy.demoCaption("This study is EHR-only — no imaging leaves the trust", 600);
+                // Pace the switch-off so the viewer actually sees it: clicking the toggle and
+                // then Create back-to-back left "Enabled" on screen for the whole dwell and the
+                // off state for a few frames, which read as an imaging project being created.
+                // Wait for the switch to render its off state (the NIfTI option is only shown
+                // while imaging is on, so its disappearance is the visible proof), then hold.
+                cy.getBySel("has-imaging-toggle").demoHover();
+                cy.demoPause(700);
                 cy.getBySel("has-imaging-toggle").demoClick();
+                // Assert on what is drawn — the label and the option that only exists while
+                // imaging is on — rather than on aria-checked, so the recording checks what the
+                // viewer sees. (aria-checked now follows the value too; it used to report the
+                // inverse when AiSwitch left the Headless UI Switch uncontrolled.)
+                cy.contains("Includes imaging data").parent().contains("Disabled").should("be.visible");
+                cy.contains("Convert DICOMs to NIfTI").should("not.exist");
+                cy.demoCaption("Imaging turned off — the hub creates no XNAT project and pulls nothing from PACS", 1800);
             }
             cy.getBySel("create-project-btn").demoClick();
         });

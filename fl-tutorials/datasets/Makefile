@@ -16,6 +16,7 @@
 # the documented entrypoints keep working:
 #
 #   make -C fl-tutorials download-xray-data
+#   make -C fl-tutorials download-weights ARCH=squeezenet1_1   # a pretrained backbone a tutorial ships (LDM)
 #   make -C fl-tutorials download-spleen-data [NUM_CASES=<1-41>]
 #   make -C fl-tutorials download-spleen-checkpoint   # evaluation-tutorial checkpoint only
 #   make -C fl-tutorials download-arkplus-finetuning-data
@@ -35,14 +36,27 @@ ARKPLUS_DATA_REPO := aicentreflip/tutorials-arkplus-cxr-classification
 # Number of MSD spleen cases to download for the spleen tutorials (1-41).
 NUM_CASES ?= 10
 # The MSD download/derive scripts run in spleen/'s own uv project (MONAI, pandas, natsort) —
-# --project keeps the cwd here while resolving that env.
+# --project keeps the cwd here while resolving that env. Same shape for the Synthea build.
 SPLEEN_UV := uv run --project spleen
+SYNTHEA_UV := uv run --project synthea
+# The in-tree flip-utils, not the PyPI release, so the tooling always matches this checkout
+# (upload-spleen-labels and upload-idc-pathology-annotations: flip.xnat may be newer here;
+# download-weights: the `full` env is the one every tutorial already runs in, so pretrained-weight
+# staging needs no extra project).
+FLIP_UTILS_DIR ?= $(abspath ../../flip-utils)
+# Pretrained weights land flat under data/weights/ and are then copied into the tutorial's app
+# dir by that tutorial's own `make weights` (FLIP#1206) — the download is shared tooling, the
+# consumption belongs to the app that ships the file.
+WEIGHTS_UV := uv run --project $(FLIP_UTILS_DIR) --extra full
+WEIGHTS_DIR := $(DATA_DIR)/weights
 
-.PHONY: download-xray-data download-spleen-data download-spleen-msd-data \
+.PHONY: download-xray-data download-weights \
+	download-spleen-data download-spleen-msd-data \
 	download-spleen-checkpoint download-arkplus-finetuning-data \
-	download-arkplus-eval-data upload-spleen-labels download-idc-pathology-data \
-	fetch-idc-pathology-manifest build-idc-pathology-omop verify-idc-pathology-omop-tables \
-	reproduce-idc-pathology-omop seed-idc-pathology upload-idc-pathology-annotations \
+	download-arkplus-eval-data download-synthea-data upload-spleen-labels \
+	download-idc-pathology-data fetch-idc-pathology-manifest build-idc-pathology-omop \
+	verify-idc-pathology-omop-tables reproduce-idc-pathology-omop \
+	seed-idc-pathology upload-idc-pathology-annotations \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
 	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
 	reproduce-spleen-omop \
@@ -57,6 +71,14 @@ download-xray-data:
 		--cache-dir $(HF_CACHE) \
 		--output-dir $(DATA_DIR)/xrays_mini_300 \
 		--repo-id $(HF_TEST_DATA_REPO)
+
+# A pretrained network a tutorial ships beside its code (FLIP#1206): downloaded ONCE here, with
+# torch.hub's own sha256-prefix check, into data/weights/<torchvision filename>. Keyed by
+# architecture, not tutorial — a backbone is shared by construction (`weights/fetch_weights.py`
+# lists the known ones). Today: `ARCH=squeezenet1_1`, the latent-diffusion perceptual loss.
+download-weights:
+	@[ -n "$(ARCH)" ] || (echo "❌  ARCH is required. Usage: make download-weights ARCH=squeezenet1_1"; exit 1)
+	@$(WEIGHTS_UV) python weights/fetch_weights.py $(ARCH) --out $(WEIGHTS_DIR)
 
 # One spleen dataset for both backends: the MSD build, honouring NUM_CASES, plus the
 # checkpoint only the evaluation tutorial needs. The checkpoint comes FIRST because
@@ -197,6 +219,18 @@ seed-idc-pathology: fetch-idc-pathology-manifest
 		$(foreach t,$(IDC_TRUSTS),--trust "$(t)") \
 		$(if $(DRY_RUN),--dry-run)
 
+# Derive the EHR risk-prediction tutorial's tabular dataset (data/synthea/, gitignored) from three
+# OMOP tables of the public 1k-person Synthea dataset (AWS Open Data Registry, anonymous HTTPS,
+# ~5 MB): one feature row per person plus site1/site2 person_id-modulo splits. Backend-agnostic,
+# no FL_BACKEND variant — the NVFLARE .env.app reads the site splits, the Flower stack mounts
+# dataframe.csv. Idempotent; the raw tables are cached under data/synthea/.synthea-raw/. Needs
+# only pandas, so it runs outside any project venv. On the platform the same data is loaded into
+# each trust's OMOP with `make -C trust load-synthea-ehr` (see the tutorial README).
+download-synthea-data:
+	@echo "⬇️  Downloading Synthea-in-OMOP tabular dataset (AWS Open Data Registry)..."
+	@$(SYNTHEA_UV) python synthea/build_synthea_dataframe.py --output-dir $(DATA_DIR)/synthea
+	@echo "✅ Synthea data ready at $(abspath $(DATA_DIR))/synthea/ — make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction"
+
 # Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT, so the spleen
 # apps find a label_*.nii.gz beside each pulled input_*.nii.gz. Needs NUM_CASES=41 on the MSD
 # download above to cover every mapped accession.
@@ -213,10 +247,6 @@ seed-idc-pathology: fetch-idc-pathology-manifest
 # backends read, and can be overridden. It runs via `uv run --no-project --with <flip-utils>`
 # rather than spleen/'s env, so uploading labels never drags in the simulator's MONAI/torch stack.
 SPLEEN_LABELS_DIR ?= $(abspath $(DATA_DIR)/spleen/images)
-# The enrichment uploaders run against the in-tree flip-utils, not the PyPI release, so the
-# enrichment CLI always matches this checkout (flip.xnat may be newer here than the last
-# published version). Shared by upload-spleen-labels and upload-idc-pathology-annotations.
-FLIP_UTILS_DIR ?= $(abspath ../../flip-utils)
 
 upload-spleen-labels:
 	@[ -n "$(FLIP_PROJECT_ID)" ] || (echo "❌  FLIP_PROJECT_ID is required. Usage: make upload-spleen-labels FLIP_PROJECT_ID=<uuid> [XNAT_URLS=\"http://host1 http://host2\"] [DRY_RUN=1]"; exit 1)
