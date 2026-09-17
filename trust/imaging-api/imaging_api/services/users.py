@@ -186,9 +186,18 @@ def issue_setup_token(username: str, headers: dict[str, str]) -> str:
     if response.status_code != 200:
         raise Exception(f"Error: XNAT setup-token issuance failed: {response.status_code} - {response.text}")
 
-    token = response.json()
-    alias = urllib.parse.quote(token["alias"], safe="")
-    secret = urllib.parse.quote(token["secret"], safe="")
+    # The body is read defensively: by this point the XNAT account already exists, so a 200 carrying
+    # an error document, or a token shape from another XNAT version, must fail with the response text
+    # in hand rather than as a bare KeyError with no diagnostic (the state that strands the account).
+    try:
+        token = response.json()
+        alias = urllib.parse.quote(token["alias"], safe="")
+        secret = urllib.parse.quote(token["secret"], safe="")
+    except (ValueError, KeyError, TypeError) as e:
+        raise Exception(
+            f"Error: XNAT setup-token issuance failed: {response.status_code} - unexpected response body "
+            f"({type(e).__name__}: {e}) - {response.text}"
+        )
     return XNAT_SETUP_PATH_TEMPLATE.format(alias=alias, secret=secret)
 
 

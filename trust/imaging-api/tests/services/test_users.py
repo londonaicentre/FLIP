@@ -328,6 +328,32 @@ def test_issue_setup_token_raises_on_error(mock_get, headers):
         issue_setup_token("alice", headers)
 
 
+@pytest.mark.parametrize(
+    ("body", "text"),
+    [
+        ({}, "{}"),
+        ({"alias": "al-123"}, '{"alias": "al-123"}'),
+        ({"status": "error", "message": "not an admin"}, '{"status": "error", "message": "not an admin"}'),
+        (ValueError("No JSON object could be decoded"), "<html>login</html>"),
+    ],
+    ids=["empty-object", "missing-secret", "error-document", "not-json"],
+)
+@patch("imaging_api.services.users.requests.get")
+def test_issue_setup_token_raises_on_unexpected_200_body(mock_get, body, text, headers):
+    """A 200 whose body is not an alias/secret token fails with the response text, not a bare KeyError:
+    the account already exists at this point, so the error has to say what XNAT answered."""
+    response = MagicMock(status_code=200, text=text)
+    if isinstance(body, Exception):
+        response.json.side_effect = body
+    else:
+        response.json.return_value = body
+    mock_get.return_value = response
+
+    expected = r"setup-token issuance failed: 200 - unexpected response body .*" + re.escape(text)
+    with pytest.raises(Exception, match=expected):
+        issue_setup_token("alice", headers)
+
+
 # ---------------------------------------------------------------------------
 # issue_invite
 # ---------------------------------------------------------------------------
