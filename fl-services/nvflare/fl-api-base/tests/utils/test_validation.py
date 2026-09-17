@@ -169,6 +169,10 @@ def _resolver(monkeypatch, *answers, error=None):
         "::1",  # IPv6 loopback
         "fd00::1",  # IPv6 unique-local
         "::ffff:127.0.0.1",  # IPv4-mapped loopback
+        "100.64.0.1",  # carrier-grade NAT: no ipaddress flag, routable inside a carrier/cloud network
+        "100.127.255.254",  # last address of the CGNAT block
+        "fec0::1",  # IPv6 site-local: deprecated, no ipaddress flag, still resolvable where configured
+        "::ffff:100.64.0.1",  # IPv4-mapped CGNAT, judged by the wrapped address
     ],
 )
 def test_validate_bundle_url_rejects_name_resolving_to_non_public_address(monkeypatch, resolved):

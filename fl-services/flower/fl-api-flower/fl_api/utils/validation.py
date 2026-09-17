@@ -144,11 +144,19 @@ def _is_disallowed_address(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) ->
         ip (ipaddress.IPv4Address | ipaddress.IPv6Address): A parsed address.
 
     Returns:
-        bool: True if the address is private, loopback, link-local, reserved, multicast or unspecified.
+        bool: True if the address is private, loopback, link-local, reserved, multicast, unspecified, or in a
+            range ``ipaddress`` exposes no flag for but that is not publicly routable: carrier-grade NAT
+            (``100.64.0.0/10``, routable inside a carrier or cloud network) and the deprecated IPv6
+            site-local block (``fec0::/10``, still resolvable on hosts that configure it).
     """
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
         ip = ip.ipv4_mapped
-    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+        return True
+    # Kept inside the function body on purpose: scripts/check_fl_api_validation_sync.sh compares function
+    # bodies between the two fl-api copies, so a range added here is guaranteed to reach the other copy.
+    unflagged_non_public = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fec0::/10"))
+    return any(ip in network for network in unflagged_non_public)
 
 
 def resolve_bundle_host(hostname: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
