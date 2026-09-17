@@ -63,6 +63,7 @@ User Management
 
 The User Management area facilitates:
 
+- Review of access requests submitted from the login page
 - Registration of new users
 - Assignment of a user's role
 - Disabling and re-enabling of user accounts
@@ -70,7 +71,18 @@ The User Management area facilitates:
 
 .. note::
 
-   Roles are **exclusive** — each user holds exactly one role at a time. See :ref:`rbac-roles` for the available roles and the permissions each grants.
+   The Admin Area assigns **one role per user**: selecting a role replaces the one currently held. See :ref:`rbac-roles` for the available roles and the permissions each grants.
+
+Access Requests
+^^^^^^^^^^^^^^^
+
+Prospective users can ask for an account from the login page without holding one (see :ref:`request-access`). Each request records the requester's email address, full name and stated reason, and FLIP emails the platform's administrator address to announce it. The request is stored before that email is attempted, so it survives a mail backend that is unavailable or throttled — the 'Access Requests' queue, not the inbox, is the record to work from.
+
+1. Click 'Access Requests' in the Admin Area's side navigation
+2. Filter by status — 'Pending' (the default), 'Enrolled' or 'Dismissed'
+3. On a pending request, click 'Enroll' to open the registration form pre-filled with the requester's name and email address (you choose the role), or 'Dismiss' to decline it
+
+Enrolling or dismissing a request records which administrator handled it, and the request is retained under its new status rather than deleted.
 
 Register User
 ^^^^^^^^^^^^^
@@ -108,7 +120,7 @@ Manage Role
 
 .. note::
 
-   A user's role may be re-assigned at any time. Each user holds exactly one role.
+   A user's role may be re-assigned at any time. The radio list assigns a single role, replacing the one currently held.
 
 1. Select the user from the user list
 2. Choose the new role from the radio list (``admin``, ``researcher`` or ``viewer``)
