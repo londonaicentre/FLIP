@@ -21,11 +21,14 @@ This module provides:
 from enum import StrEnum
 
 from pydantic import HttpUrl, PositiveInt, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class _Common(BaseSettings):
     """Base settings shared by both development and production environments."""
+
+    # Compose renders an unset ${VAR} as "": treat empty as unset (FLIP#1230).
+    model_config = SettingsConfigDict(env_ignore_empty=True)
 
     LOCAL_DEV: bool = True  # Defaults to dev mode
     MIN_CLIENTS: PositiveInt = 1

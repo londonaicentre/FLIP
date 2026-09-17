@@ -155,6 +155,12 @@ class TestCommonSettings:
             settings = _Common()
             assert settings.MIN_CLIENTS == 1
 
+    def test_common_min_clients_empty_string_falls_back_to_default(self):
+        """An empty MIN_CLIENTS (what compose renders for an unset variable) means unset, not 0 or an error."""
+        with patch.dict(os.environ, {"LOCAL_DEV": "true", "MIN_CLIENTS": ""}, clear=True):
+            settings = _Common()
+            assert settings.MIN_CLIENTS == 1
+
     def test_common_min_clients_must_be_positive(self):
         """_Common should reject non-positive MIN_CLIENTS."""
         with patch.dict(os.environ, {"LOCAL_DEV": "true", "MIN_CLIENTS": "0"}, clear=True):
