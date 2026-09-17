@@ -90,9 +90,10 @@ make -C trust seed KIT=GSTT PROJECTS="spleen_project cxr_project"        # + thi
 make -C trust seed-trusts PROJECTS="spleen_project cxr_project"          # both dev trusts
 ```
 
-What it does: fetches the canonical CSVs at the pinned data version
-(`omop-csv/<project>/` at the tag in `trust/.data_version`; `HF_TRUST_DATA_REVISION`
-overrides), selects this trust's rows by their
+What it does: fetches the canonical CSVs for the listed `PROJECTS` at the pinned data
+version (`omop-csv/<project>/` at the tag in `trust/.data_version`; `HF_TRUST_DATA_REVISION`
+overrides — `image_feature`, `measurement` and `observation` are optional, since a project
+whose labels live in XNAT publishes none of the first), selects this trust's rows by their
 `source_trust` column, deletes the listed projects' existing rows (by their own
 `person_id`s — Synthea EHR rows and other projects are untouched) and loads the
 slice, one transaction per project, into the constrained, vocab-loaded database

@@ -577,7 +577,8 @@ xnat-configure:
 	[ -n "$$CONTAINER" ] || { echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container not found at configure time"; exit 1; }; \
 	$(call require_one_xnat_web_container,$(XNAT_PROJECT)); \
 	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"' && \
-	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
+	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"' && \
+	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="setup-datatypes-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash setup-datatypes.sh 2>&1 | tee "$$LOG_FILE"'
 
 # Guard: XNAT and the trust core services must share one network. up-trust brings the trust
 # compose up before invoking us, so the trust's real attachment is observable — compare it
