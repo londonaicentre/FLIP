@@ -43,6 +43,8 @@ data:
   XNAT_MAX_HEAP: {{ .Values.xnat.web.env.XNAT_MAX_HEAP | quote }}
   CATALINA_OPTS: "-Xms{{ .Values.xnat.web.env.XNAT_MIN_HEAP }} -Xmx{{ .Values.xnat.web.env.XNAT_MAX_HEAP }} -Dxnat.home=/data/xnat/home -XX:+UseG1GC -Djava.awt.headless=true"
 ---
+# Tomcat / web console only. Deliberately never carries the DICOM port (see xnat-web-dicom below)
+# so that exposing DICOM externally (NodePort/LoadBalancer) can never expose the web UI with it.
 apiVersion: v1
 kind: Service
 metadata:
@@ -53,25 +55,45 @@ metadata:
     app.kubernetes.io/component: xnat-web
 spec:
   type: {{ .Values.xnat.web.service.type }}
-  {{- if and (eq .Values.xnat.web.service.type "NodePort") .Values.xnat.web.dicomNodePort }}
-  # Preserve the PACS's source IP. Under the default `Cluster` policy kube-proxy SNATs NodePort
-  # traffic to the node address before it reaches the pod, so the ingress NetworkPolicy's PACS CIDR
-  # would never match and the C-STORE return leg would be dropped by default-deny — queries
-  # succeeding while retrievals silently time out, which is the bug this exists to prevent
-  # (FLIP#993). `Local` also means only nodes running the pod answer, which suits the single-node
-  # trust deployment this targets.
-  externalTrafficPolicy: Local
-  {{- end }}
   ports:
     - port: {{ .Values.xnat.web.service.port }}
       targetPort: tomcat
       protocol: TCP
       name: tomcat
+  selector:
+    {{- include "flip-trust.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-web
+---
+# The DICOM SCP, on its own Service so its exposure (dicomService.type) is independent of the web
+# console's. Same pod selector as xnat-web above — this is a second Service in front of the same
+# Deployment, not a second pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: xnat-web-dicom
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-web
+spec:
+  type: {{ .Values.xnat.web.dicomService.type }}
+  {{- if ne .Values.xnat.web.dicomService.type "ClusterIP" }}
+  # Preserve the PACS's source IP. Under the default `Cluster` policy kube-proxy SNATs NodePort/LB
+  # traffic to the node address before it reaches the pod, so the ingress NetworkPolicy's PACS CIDR
+  # would never match and the C-STORE return leg would be dropped by default-deny — queries
+  # succeeding while retrievals silently time out, which is the bug this exists to prevent
+  # (FLIP#993). `Local` also means only nodes running the pod answer, which suits the single-node
+  # trust deployment this targets. Applies to LoadBalancer exactly as it does to NodePort — an
+  # external LB service is just as subject to the SNAT rewrite once its NetworkPolicy CIDR is
+  # scoped to the PACS instead of left wide open.
+  externalTrafficPolicy: Local
+  {{- end }}
+  ports:
     - port: {{ .Values.xnat.web.dicomPort | default 8104 }}
       targetPort: {{ .Values.xnat.web.dicomPort | default 8104 }}
       protocol: TCP
       name: dicom-scp
-      {{- if and .Values.xnat.web.dicomNodePort (eq .Values.xnat.web.service.type "NodePort") }}
+      {{- if and .Values.xnat.web.dicomNodePort (eq .Values.xnat.web.dicomService.type "NodePort") }}
       # Pinned so the PACS has a stable destination port. Without this Kubernetes allocates one at
       # random, and the C-MOVE destination XNAT advertises would not match what the PACS can reach.
       nodePort: {{ .Values.xnat.web.dicomNodePort }}

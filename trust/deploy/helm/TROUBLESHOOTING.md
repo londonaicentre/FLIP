@@ -18,6 +18,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
    - [2.5 C-MOVE Testing from the DCMTK Pod](#25-c-move-testing-from-the-dcmtk-pod)
    - [2.6 Checking DICOM Connectivity](#26-checking-dicom-connectivity)
+   - [2.6a Exposing the DICOM Receiver to an External PACS (dicomService)](#26a-exposing-the-dicom-receiver-to-an-external-pacs-dicomservice)
 3. [OMOP Data Issues](#3-omop-data-issues)
 4. [Trust Registration and Heartbeat](#4-trust-registration-and-heartbeat)
 5. [XNAT HTTPS Issues](#5-xnat-https-issues)
@@ -524,6 +525,37 @@ rest are fixed by `configure-xnat.sh`):
 If missing or wrong, recreate it via the REST API (see §2.2 — prefer the API
 over direct DB inserts: XNAT binds the SCP listener and caches receiver config
 at the service layer, so DB-only changes need a restart to take effect).
+
+### 2.6a Exposing the DICOM Receiver to an External PACS (`dicomService`)
+
+A real PACS is outside the cluster, so the DICOM SCP needs its own externally-reachable Service —
+`xnat-web-dicom`, controlled by `xnat.web.dicomService.type`, entirely separate from the web
+console's `xnat-web` Service (`xnat.web.service.type`, always `ClusterIP`). This split exists so
+exposing DICOM externally never also exposes the web console: an earlier trust install worked
+around the lack of it with a hand-created `kubectl apply`'d Service outside Helm, which then had
+no record anywhere in the chart and could have been silently deleted by an unrelated cleanup.
+
+**Choosing `dicomService.type`:**
+
+| Type | When | Requires |
+|---|---|---|
+| `ClusterIP` (default) | Mocked Orthanc PACS only, reachable over the cluster network | Nothing — `validatePacsReachable` fails the render if a real `pacs.host` is combined with this |
+| `NodePort` | A real PACS, and 8104 (or your chosen port) falls inside the API server's `--service-node-port-range` (default 30000-32767) | `xnat.web.dicomNodePort` set (equal to `xnat.web.dicomPort` so one number is true end to end); the PACS dials the node's address on that port |
+| `LoadBalancer` | A real PACS, and you cannot change the API server's NodePort range (e.g. no access to restart it) — this was exactly the case that produced the ad hoc Service above | A cluster LoadBalancer implementation (e.g. k3s's built-in ServiceLB) |
+
+Both external types render `externalTrafficPolicy: Local` automatically — do not be tempted to
+drop this to get past a `pending` LoadBalancer or an unreachable NodePort during setup. Under the
+default `Cluster` policy, kube-proxy SNATs the PACS's connection to the node's own address before
+it reaches the pod, which breaks the ingress NetworkPolicy CIDR match below and reproduces exactly
+the "queries succeed, retrievals silently time out" bug this chart's checks exist to catch
+(FLIP#993).
+
+**Never scope the ingress NetworkPolicy to `0.0.0.0/0`.** `networkPolicies.allowedIngressCIDRsWithPorts`
+must name the PACS's own address, not the whole internet — `validatePacsReachable` fails the render
+if it finds `0.0.0.0/0` there. If you do not yet know the PACS's real source IP, leave DICOM on
+`ClusterIP` (which correctly fails the render with a clear message) rather than opening the port
+wide as a stopgap; a real PACS destination should not be told to send DICOM to a port before its
+NetworkPolicy is scoped to it specifically.
 
 ---
 

@@ -159,11 +159,22 @@ combination the other refusals leave open.
 */}}
 {{- define "flip-trust.validatePacsReachable" -}}
 {{- if and .Values.xnat.enabled .Values.xnat.web.enabled (ne .Values.pacs.host "orthanc") }}
-{{- if eq .Values.xnat.web.service.type "ClusterIP" }}
-{{- fail (printf "pacs.host is %s but xnat.web.service.type is ClusterIP, so the DICOM receiver is unreachable from outside the cluster and the C-STORE return leg the PACS opens after C-MOVE can never arrive. Set xnat.web.service.type: NodePort plus xnat.web.dicomNodePort (equal to xnat.web.dicomPort), or expose the receiver through a LoadBalancer service." .Values.pacs.host) }}
+{{- if eq .Values.xnat.web.dicomService.type "ClusterIP" }}
+{{- fail (printf "pacs.host is %s but xnat.web.dicomService.type is ClusterIP, so the DICOM receiver is unreachable from outside the cluster and the C-STORE return leg the PACS opens after C-MOVE can never arrive. Set xnat.web.dicomService.type: NodePort plus xnat.web.dicomNodePort (equal to xnat.web.dicomPort), or set it to LoadBalancer." .Values.pacs.host) }}
 {{- end }}
-{{- if and (eq .Values.xnat.web.service.type "NodePort") (not .Values.xnat.web.dicomNodePort) }}
-{{- fail (printf "pacs.host is %s and xnat.web.service.type is NodePort, but xnat.web.dicomNodePort is unset, so the receiver's node port is allocated at random and externalTrafficPolicy stays Cluster. The PACS cannot be given a stable destination port, and kube-proxy rewrites its source address so the ingress NetworkPolicy CIDR never matches — queries succeed and retrievals silently time out. Set xnat.web.dicomNodePort (equal to xnat.web.dicomPort, %v), widening the API server's --service-node-port-range if needed." .Values.pacs.host (.Values.xnat.web.dicomPort | default 8104)) }}
+{{- if and (eq .Values.xnat.web.dicomService.type "NodePort") (not .Values.xnat.web.dicomNodePort) }}
+{{- fail (printf "pacs.host is %s and xnat.web.dicomService.type is NodePort, but xnat.web.dicomNodePort is unset, so the receiver's node port is allocated at random and externalTrafficPolicy stays Cluster. The PACS cannot be given a stable destination port, and kube-proxy rewrites its source address so the ingress NetworkPolicy CIDR never matches — queries succeed and retrievals silently time out. Set xnat.web.dicomNodePort (equal to xnat.web.dicomPort, %v), widening the API server's --service-node-port-range if needed." .Values.pacs.host (.Values.xnat.web.dicomPort | default 8104)) }}
+{{- end }}
+{{- if and (ne .Values.xnat.web.dicomService.type "ClusterIP") .Values.networkPolicies.enabled }}
+{{- $wideOpen := false }}
+{{- range .Values.networkPolicies.allowedIngressCIDRsWithPorts }}
+{{- if has "0.0.0.0/0" (.cidrs | default list) }}
+{{- $wideOpen = true }}
+{{- end }}
+{{- end }}
+{{- if $wideOpen }}
+{{- fail (printf "pacs.host is %s and networkPolicies.allowedIngressCIDRsWithPorts contains 0.0.0.0/0 — that opens the DICOM port to the entire internet rather than the PACS itself, which NETWORK-POLICY.md explicitly says never to do. Scope the CIDR to the PACS's actual source address." .Values.pacs.host) }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

@@ -83,7 +83,7 @@ hardest to diagnose — queries succeed, retrievals silently time out with nothi
 side. Both directions now fail equally loudly, at render, naming the values to set.
 */ -}}
 {{- if not $ingressOk }}
-{{- fail (printf "pacs.host is %s but networkPolicies.allowedIngressCIDRsWithPorts has no entry on port %v. After XNAT issues C-MOVE the PACS opens a new association back to XNAT to C-STORE the studies; without that allowance it is dropped, so queries succeed and retrievals silently time out. Add the PACS CIDRs on port %v, and make the receiver reachable from outside the cluster with xnat.web.service.type: NodePort plus xnat.web.dicomNodePort. Note the port here is the pod's containerPort (xnat.web.dicomPort, default 8104) and not dicomNodePort: a NetworkPolicy matches the port the pod listens on, after the node has undone the NodePort translation." .Values.pacs.host $dicomPort $dicomPort) }}
+{{- fail (printf "pacs.host is %s but networkPolicies.allowedIngressCIDRsWithPorts has no entry on port %v. After XNAT issues C-MOVE the PACS opens a new association back to XNAT to C-STORE the studies; without that allowance it is dropped, so queries succeed and retrievals silently time out. Add the PACS CIDRs on port %v, and make the receiver reachable from outside the cluster with xnat.web.dicomService.type: NodePort plus xnat.web.dicomNodePort, or LoadBalancer. Note the port here is the pod's containerPort (xnat.web.dicomPort, default 8104) and not dicomNodePort: a NetworkPolicy matches the port the pod listens on, after the node has undone the NodePort/LB translation." .Values.pacs.host $dicomPort $dicomPort) }}
 {{- end }}
 {{- /*
 The NetworkPolicy admits the C-STORE leg only as far as the pod; the packet still needs a route from
