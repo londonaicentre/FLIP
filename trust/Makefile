@@ -665,17 +665,19 @@ seed-trusts:
 # Publish a new data version to aicentreflip/trust-data (FLIP#1100): ONE commit on
 # main that replaces exactly the artefacts passed, then ONE tag = VERSION. The
 # dataset holds one copy of everything at unversioned paths — the version is the
-# tag, which trust/.data_version pins (bump it afterwards). Needs `hf auth login`
-# with write access. DRY_RUN=1 lists the operations and stops.
+# tag, which trust/.data_version pins (bump it afterwards). The artefacts are the
+# canonical per-project tables and DICOM sets only: the volume snapshots the
+# script used to take (--pgdata / --orthanc) are retired (FLIP#1187). Needs
+# `hf auth login` with write access. DRY_RUN=1 lists the operations and stops;
+# ALLOW_ANY_TAG=1 lets VERSION be something other than a YYYYMMDD date.
 #   make publish-trust-data VERSION=20261001 \
-#     PGDATA="omop-db/dist/trust1_pgdata.tar omop-db/dist/trust2_pgdata.tar" \
 #     OMOP_CSV=omop-db/data/canonical DICOM=orthanc/dist/dicom/prostate_project.tar.gz
 publish-trust-data:
 	@[ -n "$(VERSION)" ] || (echo "❌ VERSION=<new data-version tag> is required"; exit 1)
 	uv run publish_trust_data.py --version $(VERSION) \
-	  $(if $(PGDATA),--pgdata $(PGDATA)) $(if $(ORTHANC),--orthanc $(ORTHANC)) \
 	  $(if $(OMOP_CSV),--omop-csv $(OMOP_CSV)) $(if $(DICOM),--dicom $(DICOM)) \
-	  $(if $(CARD),--card $(CARD)) $(if $(filter 1,$(DRY_RUN)),--dry-run)
+	  $(if $(CARD),--card $(CARD)) $(if $(filter 1,$(DRY_RUN)),--dry-run) \
+	  $(if $(filter 1,$(ALLOW_ANY_TAG)),--allow-any-tag)
 
 # Unit tests + lint for the trust-level data tooling (publish_trust_data.py). The
 # seeders' own suites are `make -C orthanc test` and `make -C omop-db local_test`.
