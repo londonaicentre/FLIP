@@ -52,8 +52,13 @@ Standard OMOP has nowhere to record an imaging study. The
 is the OHDSI extension that adds one — the successor to the earlier R-CDM radiology tables — and
 FLIP implements it with two tables.
 
-``image_occurrence`` holds one row per imaging study or series — FLIP populates one row per
-accession:
+``image_occurrence`` holds one row per imaging study or per series. MI-CDM's reference
+implementation is one row per series — a DICOM study is several series, each its own row, all
+carrying the study's accession number — and FLIP accepts either shape: the shipped spleen and cxr
+sets are single-series, one row per study; the prostate set is three series per study. The imaging
+pull imports each accession once however many rows carry it (imaging-api de-duplicates the list
+before querying the PACS), while the training dataframe keeps every row, so an app can pick the
+series it needs:
 
 .. list-table::
    :widths: 34 22 44
@@ -94,7 +99,9 @@ accession:
      - Study date.
    * - ``accession_id``
      - ``varchar(255)``
-     - **FLIP addition.** The PACS accession number for the study.
+     - **FLIP addition.** The PACS accession number for the study — DICOM Accession Number
+       ``(0008,0050)`` — the same value on every series row of that study. Never empty; see
+       :ref:`omop-accession-id`.
 
 ``image_feature`` holds findings derived from those images — one row per finding, not per study:
 
@@ -166,17 +173,67 @@ Concept ids are meaningless until they are joined
    volume — so counting its rows tells you nothing; a join on a SNOMED CT or LOINC id simply matches
    nothing. See :ref:`omop-dev-instance`.
 
+.. _omop-accession-id:
+
+****************************************************
+The ``accession_id`` contract for a trust's own OMOP
+****************************************************
+
+FLIP's mock databases get ``accession_id`` from the in-tree converters, which read it off the DICOM
+they generate. A trust bringing its own OMOP has to do the same two things itself, because the
+column is not part of MI-CDM and no standard DDL or ETL knows about it:
+
+1. **Add the column.** FLIP's own DDL appends one statement after the stock OHDSI 5.4 schema
+   (``trust/omop-db/files/OMOPCDM_postgresql_5.4_ddl.sql``); a trust database needs the same:
+
+   .. code-block:: sql
+
+      ALTER TABLE omop.image_occurrence ADD COLUMN IF NOT EXISTS accession_id varchar(255);
+
+2. **Populate it from the PACS.** For every imaging row, ``accession_id`` is the DICOM Accession
+   Number ``(0008,0050)`` of that study *as the PACS answers to it*: XNAT resolves the study with a
+   study-level C-FIND on exactly this value (:doc:`component-pacs`), so a value the PACS does not
+   recognise is a study that is never pulled. It is a study-level attribute — with one row per
+   series, every series row of a study carries the same value.
+
+Two rules follow from how the value is used:
+
+- **Exactly one study's number — never empty, never a pattern.** The value becomes a C-FIND key,
+  and to a PACS an empty key is *universal matching* (every study it holds, up to the query's page
+  limit), ``*`` and ``?`` are wildcards, and ``\`` separates the values of a list. None of those
+  can occur in a real accession number, so the imaging API drops any such ``accession_id`` from
+  the pull list before anything reaches the PACS, with a warning in the trust's imaging-api log
+  naming how many rows it dropped — nothing is sent, but nothing tells the researcher either: from
+  the project's side such a row is simply a study that is never pulled. A NULL, blank or
+  wildcard ``accession_id`` is therefore not "a row with no imaging"; it must not exist in any
+  row a cohort query can return. Rows without a study belong in the clinical tables, not in
+  ``image_occurrence``.
+- **Exact, including case.** The PACS's answer is narrowed to the studies whose accession number
+  equals the requested value exactly, and a study is imported only when exactly one remains: a
+  PACS that matches loosely (Orthanc folds case) returns studies the cohort did not name, and a
+  PACS holding two studies under one accession leaves the cohort row ambiguous. Either is skipped
+  with a warning rather than guessed.
+- **Pseudonymise both sides or neither.** Where imaging is de-identified on its way into the PACS
+  (a TRE, for instance), the accession number written into OMOP must be the one the de-identified
+  study carries, not the original.
+
+The in-tree converters under ``fl-tutorials/datasets/`` are a working reference for the load — each
+reads ``AccessionNumber`` off the DICOM it wrote and copies it to ``accession_id`` — and
+``trust/orthanc/publish_dicom.py`` is the check they have to pass before a dataset is published: the
+set of accession numbers in the DICOM must equal the set in ``image_occurrence``, both ways.
+
 .. _omop-sample-queries:
 
 *********************
 Sample cohort queries
 *********************
 
-The tutorials in ``fl-tutorials/`` each ship the cohort query they were written against. Two of them
-bracket the range of what a query has to do. Both are shown below in full, less the licence
+The tutorials in ``fl-tutorials/`` each ship the cohort query they were written against. Three of them
+span the range of what a query has to do. All three are shown below in full, less the licence
 header; the Flower copies
-(``fl-tutorials/flower/xray_classification/query.sql`` and
-``fl-tutorials/flower/3d_spleen_segmentation/query.sql``) are byte-identical, so cohort queries are
+(``fl-tutorials/flower/xray_classification/query.sql``,
+``fl-tutorials/flower/3d_spleen_segmentation/query.sql`` and
+``fl-tutorials/flower/ehr_risk_prediction/query.sql``) are byte-identical, so cohort queries are
 independent of the FL backend.
 
 Chest X-ray classification — labels out of OMOP
@@ -228,6 +285,25 @@ alongside the converted images during :doc:`data enrichment </user-guides/user-d
 This is the practical test for a new app. If the label already exists in OMOP, project it as a column
 and no enrichment is needed. If it does not — anything spatial or image-derived — the query only
 selects the cohort, and the labels are enriched into XNAT.
+
+EHR risk prediction — no imaging at all
+=======================================
+
+.. literalinclude:: ../../../fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql
+   :language: sql
+   :start-after: -- limitations under the License.
+   :caption: ``fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql``
+
+The third case is a cohort with no images in it. This query never touches ``image_occurrence``: it
+builds one row per patient out of ``person``, ``condition_occurrence`` and ``visit_occurrence``,
+deriving both the label — a later type-2-diabetes diagnosis — and the features, which are
+demographics plus the conditions and visits recorded *before* that diagnosis. The FL client reads the
+result with ``flip.get_dataframe`` and calls no imaging helper at all.
+
+Two things follow. Everything the model sees comes out of this one query, so the window that keeps
+post-diagnosis history out of the features lives in the SQL rather than in the training code. And the
+mocked OMOP database ships **no** ``condition_occurrence`` rows, so this query returns nothing on a
+fresh dev Trust until the Synthea cohort is loaded — see :ref:`omop-synthea-ehr`.
 
 .. note::
 
@@ -300,6 +376,27 @@ The canonical CSVs behind those volumes live under ``omop-csv/<project>/`` in th
 the same tag. Every
 row carries a ``source_trust`` column, and standing up N Trusts is a deterministic split of that one
 dataset — see ``trust/omop-db/README.md`` for the partition modes and for rebuilding the volumes.
+
+.. _omop-synthea-ehr:
+
+Condition rows for the EHR tutorial
+===================================
+
+Those volumes carry the imaging cohorts — persons, visits and ``image_occurrence`` rows — but **no**
+``condition_occurrence`` rows at all, so any query filtering on a diagnosis comes back empty on a
+fresh dev Trust. The EHR risk-prediction tutorial needs them, and adds them with a separate seed step
+that downloads the public 1k-person Synthea-in-OMOP dataset from the AWS Open Data Registry
+(anonymous, no credentials) and appends this Trust's slice:
+
+.. code-block:: bash
+
+   make -C trust load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # Trust_1 (GSTT)
+   make -C trust load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # Trust_2 (KCH)
+
+Each Trust receives a disjoint ``person_id``-modulo slice, so the federated run sees genuinely
+partitioned cohorts. The loaded rows are tagged in ``person_source_value``, and the loader is
+idempotent by that tag: a re-run replaces only what it wrote and leaves the imaging cohorts untouched.
+Run it once per Trust, after ``update-omop-data`` and with the stack up.
 
 Seeding the vocabulary
 ======================

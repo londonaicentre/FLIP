@@ -24,7 +24,7 @@ reachable again**.
 Nothing else in CI reads this material. ``validate_terraform`` runs ``fmt``/``validate``,
 which cannot see policy content; no job runs the Ansible playbook. So the properties the
 fix rests on are asserted here, over the source, the way the Kubernetes half of the same
-change is covered by ``deploy/providers/kubernetes/tests/``.
+change is covered by ``trust/deploy/helm/tests/``.
 
 The properties, all of them regressions that would otherwise leave CI green:
 

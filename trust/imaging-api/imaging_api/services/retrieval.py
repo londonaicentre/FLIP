@@ -26,6 +26,7 @@ from imaging_api.routers.schemas import (
     ImportStatus,
     ImportStudy,
     ImportStudyRequest,
+    Study,
 )
 from imaging_api.services.imaging import query_by_accession_number, queue_image_import_request
 from imaging_api.services.projects import get_experiments, get_project
@@ -51,6 +52,42 @@ XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 # deletes its row, so "successful" is never read from these tables — only from the experiment listing.
 _PACS_REQUEST_FAILED_STATUS = "FAILED"
 _DIRECT_ARCHIVE_FAILED_STATUS = "ERROR"
+
+
+def select_study_for_accession(accession_number: str, studies_found: list[Study], position: str) -> Study | None:
+    """The one study a PACS answer names for the cohort's accession number, or ``None`` to skip it.
+
+    A C-FIND answer is not taken as the study the cohort asked for. The PACS matched the key by its
+    own rules — Orthanc, for one, matches Accession Number case-insensitively — and a real PACS can
+    hold two studies under one accession number, so the answer is narrowed to the studies whose
+    accession number is exactly the one requested, and anything other than exactly one of those is
+    skipped with a warning. Importing "the first" would attach a study the cohort never named to
+    the project.
+
+    Args:
+        accession_number (str): The accession number the cohort row carries.
+        studies_found (list[Study]): The PACS's answer to the C-FIND for it.
+        position (str): ``"<idx>/<total>"`` for the log line, so no accession number is logged.
+
+    Returns:
+        Study | None: The study to import, or ``None`` when there is not exactly one.
+    """
+    exact = [study for study in studies_found if study.accession_number == accession_number]
+    if len(exact) == 1:
+        return exact[0]
+    if not studies_found:
+        logger.warning(f"No study found for accession number {position}")
+    elif not exact:
+        logger.warning(
+            f"Skipping accession number {position}: the PACS answered with {len(studies_found)} study(ies) whose "
+            "accession number is not exactly the one requested; none of them is the cohort's"
+        )
+    else:
+        logger.warning(
+            f"Skipping accession number {position}: the PACS holds {len(exact)} studies under it, and the cohort "
+            "row does not say which — importing one of them would be a guess"
+        )
+    return None
 
 
 async def retrieve_images_for_project(project_id: str, query: str, headers: XNATAuthHeaders) -> bool:
@@ -118,19 +155,9 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
             logger.error(f"Unexpected error querying PACS for accession number {idx}/{total_accessions}: {e}")
             continue
 
-        # TODO What if multiple studies are found here for a given accession number?
-        # We should probably introduce a way to handle this by e.g. filtering data
-        # For now, we will just take the first one
-        if not studies_found:
-            logger.warning(f"No study found for accession number {idx}/{total_accessions}")
+        study = select_study_for_accession(accession_number, studies_found, f"{idx}/{total_accessions}")
+        if study is None:
             continue
-        else:
-            study = studies_found[0]
-            # If multiple studies are found, log a warning and use the first one, for now.
-            if len(studies_found) > 1:
-                logger.warning(
-                    f"Multiple studies found for accession number {idx}/{total_accessions}. Using the first one."
-                )
 
         # The accession number is validated as a URL path segment here (#908). PACS
         # accession numbers are DICOM SH values and may carry characters outside
@@ -366,19 +393,9 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
             logger.error(f"Unexpected error querying PACS for accession number {idx}/{total_retries}: {e}")
             continue
 
-        # TODO What if multiple studies are found here for a given accession number?
-        # We should probably introduce a way to handle this by e.g. filtering data
-        # For now, we will just take the first one
-        if not studies_found:
-            logger.warning(f"No study found for accession number {idx}/{total_retries}")
+        study = select_study_for_accession(accession_number, studies_found, f"{idx}/{total_retries}")
+        if study is None:
             continue
-        else:
-            study = studies_found[0]
-            # If multiple studies are found, log a warning and use the first one, for now.
-            if len(studies_found) > 1:
-                logger.warning(
-                    f"Multiple studies found for accession number {idx}/{total_retries}. Using the first one."
-                )
 
         logger.info(f"Study found for accession number {idx}/{total_retries}")
 

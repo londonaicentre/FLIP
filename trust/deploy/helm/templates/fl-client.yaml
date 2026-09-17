@@ -1,0 +1,335 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- if .Values.flClient.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-fl-client
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+  {{- with .Values.flClient.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-fl-client
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+data:
+  NET_ID: {{ .Values.flClient.netId | quote }}
+  NUM_AVAILABLE_GPUS: {{ .Values.flClient.gpu.count | quote }}
+  MEMORY_PER_GPU_IN_GIB: "7"
+  LOCAL_DEV: "false"
+  MIN_CLIENTS: "1"
+  IMAGES_DIR: {{ .Values.flClient.imagesDir | quote }}
+  DATA_ACCESS_API_URL: "http://data-access-api:8000"
+  IMAGING_API_URL: "http://imaging-api:8000"
+{{- if eq .Values.flBackend "flower" }}
+  SUPERNODE_NAME: {{ .Values.trustName | quote }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-fl-client-{{ .Values.flClient.netId }}
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+    flip/network: {{ .Values.flClient.netId }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: fl-client
+      flip/network: {{ .Values.flClient.netId }}
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: fl-client
+        flip/network: {{ .Values.flClient.netId }}
+      {{- if .Values.flClient.gpu.enabled }}
+      annotations:
+        nvidia.com/gpu: {{ .Values.flClient.gpu.count | quote }}
+      {{- end }}
+    spec:
+      enableServiceLinks: false
+      hostAliases:
+      {{- range .Values.flClient.hostAliases }}
+        - ip: {{ .ip | quote }}
+          hostnames:
+          {{- range .hostnames }}
+            - {{ . | quote }}
+          {{- end }}
+      {{- end }}
+      serviceAccountName: {{ include "flip-trust.fullname" . }}-fl-client
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.flClient.gpu.enabled }}
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      {{- end }}
+      {{- with .Values.flClient.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        # Pre-create this net's slice of the shared images volume: the fl-client
+        # container below mounts only <imagesDir>/<netId> via subPath — least
+        # privilege, so training code cannot read another net's cached studies —
+        # and kubelet creates a missing subPath dir as root, which the writers
+        # could then never use. Owner is the uid imaging-api writes as (1000,
+        # the image-baked `flip` user — GHSA-8465); on Flower the group is the
+        # SuperNode's `app` uid (49999)
+        # with group-write, because the client itself must also write inside the
+        # net dir (`flip.add_resource` stages files under <netId>/upload/;
+        # NVFLARE's CleanupImages deletes the dir's children — both need write,
+        # read-only is NOT sufficient for the client). Without this, every
+        # imaging-api download would 500 with EACCES and training would die
+        # later with a misleading num_samples=0.
+        # This is the pod's only init container: the kit is staged onto the node
+        # out-of-band (`make stage-kit`), never fetched here. Reuses the fl-client's
+        # own image (already required by this pod — no extra registry
+        # dependency) with an explicit root securityContext: chown/chmod need
+        # root, but privilege is scoped to exactly the three file capabilities.
+        - name: images-init
+          image: {{ include "flip-trust.flClientImage" . }}
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - DAC_OVERRIDE
+                - FOWNER
+            seccompProfile:
+              type: RuntimeDefault
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              NET_DIR="{{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}"
+              echo "Pre-creating ${NET_DIR} for imaging-api (uid 1000) — a root-owned dir here breaks every image download."
+              mkdir -p "${NET_DIR}"
+              {{- if eq .Values.flBackend "flower" }}
+              chown 1000:49999 "${NET_DIR}"
+              chmod 0775 "${NET_DIR}"
+              {{- else }}
+              chown 1000:1000 "${NET_DIR}"
+              chmod 0755 "${NET_DIR}"
+              {{- end }}
+              echo "Images net dir ready: $(ls -ld "${NET_DIR}")"
+          volumeMounts:
+            - name: images
+              mountPath: {{ .Values.flClient.imagesDir }}
+      containers:
+        - name: fl-client
+          image: {{ include "flip-trust.flClientImage" . }}
+          imagePullPolicy: {{ .Values.flClient.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if eq .Values.flBackend "flower" }}
+          # args, NOT command: the flags append to the image's flower-supernode
+          # ENTRYPOINT (mirroring the compose overlay's `command:` semantics).
+          # A `command:` here overrides the entrypoint and runc tries to exec
+          # "--root-certificates" itself (StartError, exit 128). The auth key
+          # is the per-SLOT SuperNode credential — trustNumber tracks the
+          # assigned FL kit slot number (sync-kit pins it from the kit).
+          args:
+            - "--root-certificates"
+            - "/certs/ca.crt"
+            - "--superlink"
+            - {{ .Values.flClient.flower.superlink | quote }}
+            - "--auth-supernode-private-key"
+            - "/keys/supernode_credentials_{{ .Values.trustNumber }}"
+            # flwr>=1.36 replaced --clientappio-api-address with --host/--port.
+            # --host is rendered explicitly (not left at flower-supernode's own
+            # 127.0.0.1 default) because the probes below are dialled by kubelet
+            # against the pod IP — see the values.yaml comment and FLIP#1017.
+            - "--host"
+            - {{ .Values.flClient.flower.supernodeClientAppIoHost | quote }}
+            - "--port"
+            - {{ .Values.flClient.flower.supernodeClientAppIoPort | quote }}
+            # ClientApp-side per-run dependency install (uv sync with the
+            # image's pinned flip-utils — FLIP#767); required for every
+            # Flower app run, mirroring compose_trust.production.flower.yml.
+            - "--allow-runtime-dependency-installation"
+          {{- else if eq .Values.flBackend "nvflare" }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              chmod u+x /app/startup/sub_start.sh /app/startup/stop_fl.sh 2>/dev/null || true
+              export NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS:-0}
+              export MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB:-16}
+              export LOG_LEVEL=${LOG_LEVEL:-INFO}
+              # Copy .default configs shipped in the kit to the expected runtime paths.
+              # The image bakes resources.template.json/log_config.template.json into
+              # /app/local/, but the kit volume-mount replaces that directory, hiding the
+              # templates. The kit ships *.default equivalents — copy them as-is (no
+              # envsubst needed: the values are already correct for this deployment).
+              cp /app/local/resources.json.default /app/local/resources.json 2>/dev/null || true
+              cp /app/local/log_config.json.default /app/local/log_config.json 2>/dev/null || true
+              # Site privacy policy (FLIP#851): render or remove /app/local/privacy.json from
+              # FL_SITE_PRIVACY_*. `set -euo pipefail` above makes an invalid configuration
+              # fail the pod (fail closed) rather than run an unfiltered client.
+              python -m flip.nvflare.site_policy /app/local/privacy.json
+              pkill -f nvflare 2>/dev/null || true
+              rm -f /app/pid.fl /app/daemon_pid.fl
+              cd /app/startup
+              exec ./sub_start.sh
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "flip-trust.fullname" . }}-fl-client
+          env:
+            - name: UPLOADED_FEDERATED_DATA_BUCKET
+              value: {{ .Values.uploadedFederatedDataBucket | default "" | quote }}
+            {{- if eq .Values.flBackend "nvflare" }}
+            # Keep policy values in the pod template, rather than only the ConfigMap,
+            # so a Helm value change triggers a Deployment rollout.
+            - name: FL_SITE_PRIVACY_POLICY
+              value: {{ .Values.flClient.nvflare.sitePrivacy.policy | quote }}
+            - name: FL_SITE_PRIVACY_PERCENTILE
+              value: {{ .Values.flClient.nvflare.sitePrivacy.percentile | quote }}
+            - name: FL_SITE_PRIVACY_GAMMA
+              value: {{ .Values.flClient.nvflare.sitePrivacy.gamma | quote }}
+            {{- end }}
+            {{- if .Values.flClient.gpu.enabled }}
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0"
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "0"
+            {{- end }}
+            - name: TRUST_INTERNAL_SERVICE_KEY_HEADER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: trust-internal-service-key-header
+            - name: TRUST_INTERNAL_SERVICE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: trust-internal-service-key
+          volumeMounts:
+            # Only this net's slice of the shared images volume, at the
+            # unchanged container path so imaging-api's returned paths still
+            # resolve (see images-init above).
+            - name: images
+              mountPath: {{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}
+              subPath: {{ .Values.flClient.netId }}
+            - name: dshm
+              mountPath: /dev/shm
+          {{- if eq .Values.flBackend "nvflare" }}
+            - name: fl-client-kit
+              mountPath: /app/local
+              subPath: local
+            - name: fl-client-kit
+              mountPath: /app/startup
+              subPath: startup
+            - name: fl-client-kit
+              mountPath: /app/transfer
+              subPath: transfer
+          {{- else }}
+            - name: fl-client-kit
+              mountPath: /certs
+              subPath: certificates
+            - name: fl-client-kit
+              mountPath: /keys
+              subPath: keys
+          {{- end }}
+          resources:
+            {{- toYaml .Values.flClient.resources | nindent 12 }}
+          livenessProbe:
+{{- if .Values.flClient.probes.liveness.exec }}
+            exec:
+              command:
+{{ toYaml .Values.flClient.probes.liveness.exec.command | indent 16 }}
+{{- else if eq .Values.flBackend "nvflare" }}
+            # NVFLARE clients make outbound-only connections (no listening port),
+            # so probe the client_train process instead of a TCP socket.
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - pgrep -f nvflare.private.fed.app.client.client_train > /dev/null
+{{- else }}
+            tcpSocket:
+              port: {{ .Values.flClient.probes.liveness.port }}
+{{- end }}
+            initialDelaySeconds: {{ .Values.flClient.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.flClient.probes.liveness.periodSeconds }}
+{{- if .Values.flClient.probes.liveness.failureThreshold }}
+            failureThreshold: {{ .Values.flClient.probes.liveness.failureThreshold }}
+{{- end }}
+          readinessProbe:
+{{- if .Values.flClient.probes.readiness.exec }}
+            exec:
+              command:
+{{ toYaml .Values.flClient.probes.readiness.exec.command | indent 16 }}
+{{- else if eq .Values.flBackend "nvflare" }}
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - pgrep -f nvflare.private.fed.app.client.client_train > /dev/null
+{{- else }}
+            tcpSocket:
+              port: {{ .Values.flClient.probes.readiness.port }}
+{{- end }}
+            initialDelaySeconds: {{ .Values.flClient.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.flClient.probes.readiness.periodSeconds }}
+{{- if .Values.flClient.probes.readiness.failureThreshold }}
+            failureThreshold: {{ .Values.flClient.probes.readiness.failureThreshold }}
+{{- end }}
+      volumes:
+        - name: images
+{{- if .Values.sharedImagesPvc.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "flip-trust.fullname" . }}-shared-images
+{{- else }}
+          emptyDir: {}
+{{- end }}
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.flClient.shmSize }}
+        - name: fl-client-kit
+          # Pre-provisioned on the node. The chart cannot fetch it: a trust holds no
+          # FLIP credentials, and the kit arrives out-of-band (see values.yaml).
+          # `type: Directory` makes a missing path a scheduling failure that names the
+          # path, rather than an empty dir the client fails against much later.
+          hostPath:
+            path: {{ required "flClient.kitHostPath is required when flClient.enabled — the absolute path ON THE NODE holding this trust's provisioned FL participant kit. Stage it with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then --set flClient.kitHostPath=/opt/flip/fl-kit (stage-kit's default KIT_DEST, and the kit file's FL_KIT_DIR)" .Values.flClient.kitHostPath | quote }}
+            type: Directory
+{{- end }}
