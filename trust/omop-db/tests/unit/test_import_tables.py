@@ -19,6 +19,7 @@ from omop_db_tools.import_tables import (
     clean_project,
     load_project,
     project_person_ids,
+    remove_projects,
     validate_data_dir,
     validate_identifier,
 )
@@ -167,6 +168,29 @@ class TestLoadProject:
         assert len(deletes) == len(CANONICAL_TABLES)
         assert all(params == {"ids": [1, 2, 3]} for _, params in deletes)
         assert all("WHERE person_id = ANY(:ids)" in sql for sql, _ in deletes)
+
+    def test_remove_only_deletes_by_the_given_cuts_persons_and_loads_nothing(self, tmp_path, monkeypatch):
+        """Unseeding a re-cut project: the OLD tables' person ids scope the delete; no insert follows (FLIP#1221)."""
+        _write_project(tmp_path, "spleen_project", ["person"], rows=3)
+        loaded = []
+        monkeypatch.setattr(pd.DataFrame, "to_sql", lambda self, *a, **k: loaded.append(a))
+        engine = _FakeEngine()
+
+        remove_projects(engine, tmp_path, ["spleen_project"])
+
+        deletes = [(sql, params) for sql, params in engine.conn.executed if sql.startswith("DELETE")]
+        assert len(deletes) == len(CANONICAL_TABLES)
+        assert all(params == {"ids": [1, 2, 3]} for _, params in deletes)
+        assert engine.begun == 1
+        assert loaded == []
+
+    def test_remove_only_refuses_before_deleting_when_a_person_table_is_missing(self, tmp_path):
+        _write_project(tmp_path, "spleen_project", ["person"])
+        engine = _FakeEngine()
+
+        with pytest.raises(FileNotFoundError, match="Cannot unseed cxr_project"):
+            remove_projects(engine, tmp_path, ["spleen_project", "cxr_project"])
+        assert engine.begun == 0, "the check runs before the transaction opens"
 
     def test_clean_all_skips_the_scoped_delete(self, tmp_path, monkeypatch):
         """``--clean all`` empties the tables up front via clean_tables; load_project must not delete again."""

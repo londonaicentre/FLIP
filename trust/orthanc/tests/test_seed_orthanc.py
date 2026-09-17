@@ -340,6 +340,37 @@ class TestLocalSource:
             )
 
 
+class TestRemoveOnly:
+    """Unseeding: the studies the tables at a revision name for this trust are deleted, nothing is resolved."""
+
+    def test_deletes_this_trusts_studies_and_touches_no_dicom(self, seed, tmp_path, monkeypatch):
+        rows = [{"accession_id": "FAK1", "source_trust": "1"}, {"accession_id": "FAK2", "source_trust": "2"}]
+        monkeypatch.setattr(seed, "fetch_image_occurrence", lambda *a, **k: rows)
+        monkeypatch.setattr(seed, "ensure_dicoms", lambda *a, **k: pytest.fail("an unseed must not fetch DICOMs"))
+        session = _Session([_Response(200, ["study-a"])])
+
+        outcome = seed.seed_project(
+            session, "http://pacs", "20260911", "spleen_project", 1, tmp_path, False, False, remove_only=True
+        )
+
+        assert outcome == {"removed": 1}
+        assert session.posts[0][1]["json"]["Query"] == {"AccessionNumber": "FAK1"}
+        assert session.deletes == ["http://pacs/studies/study-a"]
+
+    def test_dry_run_counts_and_deletes_nothing(self, seed, tmp_path, monkeypatch):
+        rows = [{"accession_id": "FAK1", "source_trust": "1"}]
+        monkeypatch.setattr(seed, "fetch_image_occurrence", lambda *a, **k: rows)
+        session = _Session([])
+
+        outcome = seed.seed_project(
+            session, "http://pacs", "20260911", "spleen_project", 1, tmp_path, False, True, remove_only=True
+        )
+
+        assert outcome == {"dry-run-remove": 1}
+        assert session.posts == []
+        assert session.deletes == []
+
+
 class TestSeedProjectGuard:
     def test_refuses_to_upload_anything_when_an_accession_has_no_dicoms(self, seed, tmp_path, monkeypatch):
         """The zero-mismatch guard: OMOP says trust 1 owns FAK2, the archive has no FAK2 — stop."""

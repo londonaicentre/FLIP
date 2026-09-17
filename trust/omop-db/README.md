@@ -264,7 +264,10 @@ published tables at the pinned tag (`fetch-dataset --projects $(PROJECTS)`);
 `CANONICAL_DIR=<dir>` loads a local canonical tree (`<dir>/<project>/<table>.csv`,
 what `omop_db_tools.dataset build` writes) instead, which is how a project is
 proven on a running trust before its data version is tagged
-(`make -C fl-tutorials seed-brain-mri KIT=<CODE>`, FLIP#1221).
+(`make -C fl-tutorials seed-brain-mri KIT=<CODE>`, FLIP#1221). `unseed-omop`
+(`import_tables --remove-only`) is the surgical reverse: it deletes the listed
+projects' rows by the person ids in the given tables — point it at the cut the
+trust actually holds, e.g. `HF_TRUST_DATA_REVISION=20260911` — and loads nothing.
 
 ### Publishing new pgdata tarballs
 

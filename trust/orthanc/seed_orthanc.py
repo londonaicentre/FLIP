@@ -250,10 +250,12 @@ def seed_project(
     dry_run: bool,
     source: Path | None = None,
     tables_dir: Path | None = None,
+    remove_only: bool = False,
 ) -> Counter:
     """Seed one project. Published (``revision``) by default; with ``source`` + ``tables_dir`` a project whose
-    DICOMs are NOT on the dataset is seeded from a local tree of ``<accession>/*.dcm`` and local canonical tables
-    (brain_mri, FLIP#1221) — same selection by ``source_trust``, same zero-mismatch guard."""
+    DICOMs are NOT on the dataset is seeded from a local tree (any layout) and local canonical tables
+    (spleen, brain_mri — FLIP#1221) — same selection by ``source_trust``, same zero-mismatch guard.
+    ``remove_only`` deletes this trust's studies for the project instead of uploading anything."""
     local = source is not None or tables_dir is not None
     if local and (source is None or tables_dir is None):
         raise SystemExit(
@@ -261,13 +263,21 @@ def seed_project(
         )
     if local:
         rows = read_local_image_occurrence(tables_dir, project)  # type: ignore[arg-type]
-        accessions = select_accessions(rows, trust_index)
+    else:
+        rows = fetch_image_occurrence(revision, project, cache_dir)
+    accessions = select_accessions(rows, trust_index)
+    if remove_only:
+        # Unseed: this trust's studies for the project, as the tables at this revision (or these local
+        # tables) name them — how a re-cut project's previous studies leave a PACS. No DICOM is resolved.
+        print(f"🧹 {project}: trust {trust_index} owns {len(accessions)} studies to remove", flush=True)
+        if dry_run:
+            return Counter({"dry-run-remove": len(accessions)})
+        return Counter({"removed": delete_studies(session, orthanc_url, accessions)})
+    if local:
         tree = scan_local_tree(Path(source))  # type: ignore[arg-type]
         missing = [a for a in accessions if a not in tree]
         where = f"the local tree {source}"
     else:
-        rows = fetch_image_occurrence(revision, project, cache_dir)
-        accessions = select_accessions(rows, trust_index)
         project_dir = ensure_dicoms(revision, project, cache_dir)
         missing = missing_accessions(project_dir, accessions)
         tree = {a: sorted((project_dir / a).glob("*.dcm")) for a in accessions if a not in missing}
@@ -307,6 +317,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--orthanc-url", default=None, help="default: http://127.0.0.1:$PACS_UI_PORT")
     parser.add_argument("--cache-dir", type=Path, default=Path(__file__).resolve().parent / "volumes" / "dicom")
     parser.add_argument("--clear-projects", action="store_true", help="delete these projects' studies first")
+    parser.add_argument(
+        "--remove-only",
+        action="store_true",
+        help="unseed: delete this trust's studies for these projects, as the tables at --revision (or --tables-dir) "
+        "name them, and upload nothing — how a re-cut project's previous studies leave a PACS",
+    )
     parser.add_argument("--dry-run", action="store_true", help="resolve and count; upload nothing")
     parser.add_argument(
         "--source",
@@ -348,6 +364,7 @@ def main(argv: list[str] | None = None) -> int:
             args.dry_run,
             source=args.source,
             tables_dir=args.tables_dir,
+            remove_only=args.remove_only,
         )
     provenance = f"local tree {args.source}" if args.source else f"revision {revision}"
     print(f"\n✅ trust {args.trust_index} @ {orthanc_url}: {dict(total)} across {args.projects} ({provenance})")

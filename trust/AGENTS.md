@@ -131,6 +131,7 @@ make seed-trusts PROJECTS="…"  # Both dev trusts; seed-omop / seed-orthanc for
 make seed-omop KIT=GSTT PROJECTS=brain_mri_project CANONICAL_DIR=/abs/canonical   # local tables instead of the tag (#1221); CLEAN=all = wipe every project first
 make seed-orthanc KIT=GSTT PROJECTS=brain_mri_project DICOM_SOURCE=/abs/dicom TABLES_DIR=/abs/canonical  # a regenerated DICOM tree (spleen, brain_mri: never published)
                                # …both wrapped by `make -C fl-tutorials seed-spleen|seed-brain-mri KIT=<CODE>`
+make unseed KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911  # take a project OUT (rows by its person ids, studies by its accessions, as those tables name them) — the move off a re-cut project; other projects untouched
 make seed KIT=GSTT SOURCE_TRUST=1  # Override the OMOP partition; defaults to the FL kit slot, which is a convention, not an invariant (see README "Which partition a trust is seeded with")
 make publish-trust-data VERSION=<tag> [PGDATA=… ORTHANC=… OMOP_CSV=… DICOM=… DELETE=…]  # ONE commit on aicentreflip/trust-data + ONE tag; then bump trust/.data_version (the single pin, OMOP + Orthanc). DELETE= retires a file from main (earlier tags keep it)
 make test-trust-data-tools  # Publisher pytest + ruff, then tests/test_seed_guard.sh — the .seeded guard driven end-to-end (make target writes the marker, update script reads it) in a sandbox with curl/tar/sudo stubbed

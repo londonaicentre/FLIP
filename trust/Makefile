@@ -624,6 +624,32 @@ seed-trusts:
 	$(MAKE) seed KIT=GSTT PROJECTS="$(PROJECTS)"
 	$(MAKE) seed KIT=KCH PROJECTS="$(PROJECTS)"
 
+# Unseed: take the listed projects OUT of a running trust — OMOP rows by the
+# person ids and PACS studies by the accessions the tables at
+# HF_TRUST_DATA_REVISION (or CANONICAL_DIR= / TABLES_DIR=) name — loading
+# nothing. The move off a re-cut project whose ids all changed (spleen at the
+# FLIP#1221 cut), leaving every other project in place:
+#   make -C trust unseed KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911
+#   make -C fl-tutorials seed-spleen KIT=GSTT
+unseed-omop:
+	$(require_kit)
+	$(OMOP_DB_CMD) unseed-omop TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
+	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
+	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
+	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB) PROJECTS="$(PROJECTS)" \
+	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR)) \
+	  $(if $(and $(TRUST_NUM),$(OMOP_DATA_DIR)),OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_DIR))
+
+unseed-orthanc:
+	$(require_kit)
+	$(ORTHANC_CMD) unseed-orthanc TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
+	  PACS_UI_PORT=$(PACS_UI_PORT) \
+	  ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
+	  ORTHANC_STORAGE_DIR_TRUST_$(TRUST_NUM)=$(ORTHANC_STORAGE_DIR) PROJECTS="$(PROJECTS)" \
+	  $(if $(TABLES_DIR),TABLES_DIR=$(TABLES_DIR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
+
+unseed: unseed-orthanc unseed-omop
+
 # Publish a new data version to aicentreflip/trust-data (FLIP#1100): ONE commit on
 # main that replaces exactly the artefacts passed, then ONE tag = VERSION. The
 # dataset holds one copy of everything at unversioned paths — the version is the

@@ -182,6 +182,23 @@ make -C trust seed KIT=<CODE> SOURCE_TRUST=1        # slot stays as assigned; lo
 keyed to its kit slot, which is why it exists as its own variable rather than an override of
 `TRUST_NUM`.
 
+### Unseeding, and moving off a re-cut project
+
+`make -C trust unseed KIT=<CODE> PROJECTS="…"` takes the listed projects *out* of a running trust —
+OMOP rows by the person ids and PACS studies by the accessions the tables at
+`HF_TRUST_DATA_REVISION` (or `CANONICAL_DIR=` / `TABLES_DIR=`) name — and loads nothing; every other
+project stays. It exists for a project whose identities were re-cut (spleen at the FLIP#1221 tag:
+every person id, accession and UID changed), where `seed-omop`'s default `--clean projects` would
+delete by the *new* ids and leave the old rows beside them:
+
+```sh
+make -C trust unseed KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911   # the cut the trust holds
+make -C fl-tutorials seed-spleen KIT=GSTT                                              # the new cut, from the local tree
+```
+
+`seed-omop CLEAN=all` is the blunt alternative (every project's rows go first); `populate` on the
+build stack is the same loader with that mode.
+
 ## OMOP Database
 
 See dedicated README under [omop-db/README.md](omop-db/README.md) for instructions to populate the database.

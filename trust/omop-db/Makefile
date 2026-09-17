@@ -147,6 +147,16 @@ seed-omop: $(if $(CANONICAL_DIR),,fetch-dataset)
 	@mkdir -p $(dir $(SEED_MARKER)) && printf 'projects=%s\nsource_trust=%s\n%s\n' "$(PROJECTS)" "$(SOURCE_TRUST)" "$(SEED_PROVENANCE)" > $(SEED_MARKER)
 	@echo "✅ Seeded trust $(TRUST_INDEX) on port $(OMOP_DB_PORT) with: $(PROJECTS) (source_trust $(SOURCE_TRUST); marker: $(SEED_MARKER))"
 
+# Unseed: take the listed projects' rows OUT of a running trust, as the tables at
+# HF_TRUST_DATA_REVISION describe them (or CANONICAL_DIR=), and load nothing. The move off a
+# re-cut project whose person ids all changed — e.g. `make unseed-omop PROJECTS=spleen_project
+# HF_TRUST_DATA_REVISION=20260911` removes the pre-FLIP#1221 spleen cut, then `seed-omop` loads
+# the new one — without `CLEAN=all`'s wipe of every other project. Marker left as is.
+unseed-omop: $(if $(CANONICAL_DIR),,fetch-dataset)
+	OMOP_DB_PORT=$(OMOP_DB_PORT) uv run python -m omop_db_tools.import_tables \
+		--trust-index $(SOURCE_TRUST) --remove-only --projects $(PROJECTS) --data-dir $(SEED_DATA_SOURCE)
+	@echo "✅ Unseeded $(PROJECTS) from trust $(TRUST_INDEX) on port $(OMOP_DB_PORT) ($(SEED_PROVENANCE))"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Image build + populate pipeline (standalone; see README "Building the image")
 # ─────────────────────────────────────────────────────────────────────────────

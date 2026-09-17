@@ -107,6 +107,11 @@ data version. `make -C fl-tutorials seed-spleen KIT=<CODE>` and `seed-brain-mri`
 wrap this together with the OMOP half (`seed-omop … CANONICAL_DIR=`), so a project
 can be proven on a running trust before its data version is tagged.
 
+`make -C trust unseed-orthanc KIT=<CODE> PROJECTS="…"` (`seed_orthanc.py --remove-only`)
+is the reverse: it deletes this trust's studies for the projects as the tables at
+`HF_TRUST_DATA_REVISION` (or `TABLES_DIR=`) name them and uploads nothing — the PACS
+half of moving off a re-cut project (see `trust/README.md`, "Unseeding").
+
 To cut a new storage tarball (the snapshot path, for EC2/k8s): seed a fresh
 Orthanc with `seed-orthanc`, then `tar -C <storage dir> -cf trust<N>_orthanc_data.tar .`
 and publish it with `make -C trust publish-trust-data VERSION=… ORTHANC=…` — the
