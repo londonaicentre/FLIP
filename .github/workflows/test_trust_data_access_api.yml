@@ -29,7 +29,27 @@ permissions:
   contents: read
 
 jobs:
+  # Gate for pull requests into develop: run the suite only when the PR touches this
+  # service (pr_paths_changed.yml; PRs into main always run everything). The list is
+  # the push `paths:` filter above, verbatim — scripts/tests/test_pr_paths_changed.py
+  # fails when the two drift.
+  changes:
+    uses: ./.github/workflows/pr_paths_changed.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      paths: |
+        trust/data-access-api/**
+        trust/deploy/compose.test.yml
+        trust/trust-api/tests/integration/fixtures/**
+        trust/observability/**
+        .github/workflows/test_trust_data_access_api.yml
+        .github/actions/setup-trust-test-env/**
+
   data-access-api:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     environment: flip
     defaults:
@@ -65,6 +85,8 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   data-access-api-integration:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     # Drives the data-access-api ``/cohort`` endpoints against a real seeded Postgres
     # via the shared trust/deploy/compose.test.yml stack. Catches SQL-template / OMOP-schema
     # / auth regressions that the mocked unit suite cannot. See issue #369 (B3).

@@ -17,6 +17,8 @@ on:
     branches: [main, develop]
     paths:
       - "flip-api/**"
+      # The unmocked manifest tests in tests/unit/fl_services/ read the real fl-apps/ tree.
+      - "fl-apps/**"
       - ".github/workflows/test_flip_api.yml"
   pull_request:
     branches: [main, develop]
@@ -25,7 +27,24 @@ permissions:
   contents: read
 
 jobs:
+  # Gate for pull requests into develop: run the suite only when the PR touches this
+  # service (pr_paths_changed.yml; PRs into main always run everything). The list is
+  # the push `paths:` filter above, verbatim — scripts/tests/test_pr_paths_changed.py
+  # fails when the two drift.
+  changes:
+    uses: ./.github/workflows/pr_paths_changed.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      paths: |
+        flip-api/**
+        fl-apps/**
+        .github/workflows/test_flip_api.yml
+
   flip-api:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     environment: flip
     # Postgres for integration tests is managed by Testcontainers (see

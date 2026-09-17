@@ -26,6 +26,10 @@ on:
     paths:
       - "scripts/**"
       - ".github/workflows/test_trust_kit_scripts.yml"
+      # test_pr_paths_changed.py asserts on the gated service workflows and the gate
+      # itself, so those edits must run it too — same trap as the compose files below.
+      - ".github/workflows/test_*.yml"
+      - ".github/workflows/pr_paths_changed.yml"
       # test_container_identity.py asserts on the compose files, not on scripts/, so it
       # must be triggered by changes to THEM or the guard silently never runs on the very
       # edit it exists to catch — the same trap test_trust_xnat.yml documents. FLIP#1171
@@ -39,6 +43,10 @@ on:
     paths:
       - "scripts/**"
       - ".github/workflows/test_trust_kit_scripts.yml"
+      # test_pr_paths_changed.py asserts on the gated service workflows and the gate
+      # itself, so those edits must run it too — same trap as the compose files below.
+      - ".github/workflows/test_*.yml"
+      - ".github/workflows/pr_paths_changed.yml"
       # test_container_identity.py asserts on the compose files, not on scripts/, so it
       # must be triggered by changes to THEM or the guard silently never runs on the very
       # edit it exists to catch — the same trap test_trust_xnat.yml documents. FLIP#1171

@@ -1,0 +1,71 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Reusable gate for the service test workflows: should this event run the suite?
+#
+# A `paths:` filter on `pull_request` applies to every target branch alike, so it cannot
+# express "filter PRs into develop, but run everything on a PR into main". The service
+# workflows therefore always fire on PRs, call this workflow as their first job, and gate
+# every test job on its `run` output. A skipped job reports as skipped, never as a missing
+# check. The policy itself lives in scripts/pr_paths_changed.py (unit-tested under
+# scripts/tests/): non-PR events run, PRs into main run, PRs into anything else run only
+# when a changed file matches the caller's list or touches this gate.
+#
+# The caller passes the SAME list as its push `paths:` filter, in GitHub's filter syntax;
+# scripts/tests/test_pr_paths_changed.py fails if the two ever drift.
+
+name: PR paths changed
+
+on:
+  workflow_call:
+    inputs:
+      paths:
+        description: >-
+          Newline-separated path patterns (GitHub filter syntax) — the caller's push
+          `paths:` list verbatim.
+        required: true
+        type: string
+    outputs:
+      run:
+        description: "'true' when the calling workflow's test jobs should run"
+        value: ${{ jobs.decide.outputs.run }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  decide:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      # Only the script is needed; a cone-less sparse checkout fetches that one file
+      # instead of the tree.
+      - name: Checkout the gate script
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts/pr_paths_changed.py
+          sparse-checkout-cone-mode: false
+
+      - name: Decide
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CALLER_PATHS: ${{ inputs.paths }}
+        run: |
+          printf '%s\n' "$CALLER_PATHS" > "$RUNNER_TEMP/paths.txt"
+          python3 scripts/pr_paths_changed.py \
+            --event "${{ github.event_name }}" \
+            --base-ref "${{ github.base_ref }}" \
+            --repo "${{ github.repository }}" \
+            --pr-number "${{ github.event.pull_request.number }}" \
+            --paths-file "$RUNNER_TEMP/paths.txt"
