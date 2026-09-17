@@ -35,6 +35,10 @@ Each assertion pins one way that guard has been, or could be, lost:
   checkout at all. ``docker_build_orthanc.yml`` did — dead on the push/pull_request events it
   actually receives, but the exact fork-controlled checkout, waiting for someone to add the
   trigger and re-open the hole with no guard in front of it.
+- The guard is checked on EVERY job that performs the fork-controlled checkout, not on the
+  first job in the file: a guarded first job followed by an unguarded second one is the same
+  hole, and an earlier version of this parser stopped at the first ``steps:`` it met. A two-job
+  fixture pins the per-job split.
 - At least one such workflow must exist, so a rename or a parser miss fails loudly instead of
   passing an empty set.
 
@@ -64,6 +68,9 @@ FORK_CONTROLLED_CHECKOUT = re.compile(
 
 TRIGGER_WORKFLOW_RUN = re.compile(r"^\s+workflow_run:\s*$")
 FIRST_STEPS = re.compile(r"^\s+steps:\s*$")
+# A job key: the first indented mapping key under `jobs:`. Everything at deeper indentation
+# down to the next key at the same indentation belongs to that job.
+JOB_KEY = re.compile(r"^(\s+)([A-Za-z_][A-Za-z0-9_-]*):\s*$")
 
 
 def _stripped_lines(path: Path) -> list[str]:
@@ -85,22 +92,61 @@ def _checks_out_triggering_run(lines: list[str]) -> bool:
     return any(FORK_CONTROLLED_CHECKOUT.match(line) for line in lines)
 
 
-def _has_job_level_same_repo_guard(lines: list[str]) -> bool:
-    """The guard must sit between ``jobs:`` and the first ``steps:`` — i.e. on the job, not a step.
+def _jobs(lines: list[str]) -> dict[str, list[str]]:
+    """Split the ``jobs:`` block into one line list per job, keyed by job id.
 
-    A guard on the push step alone would still let the checkout and the build run the fork's
-    code in the trusted context; only a job-level ``if:`` keeps it out entirely.
+    The job indentation is taken from the first key after ``jobs:``; every deeper line belongs to
+    the current job, and the next key at that indentation starts the next one. Splitting per job is
+    what makes the guard check cover a *second* job: a guarded job followed by an unguarded one
+    that checks out the fork is exactly as exposed as a single unguarded job.
     """
+    jobs: dict[str, list[str]] = {}
+    job_indent: str | None = None
+    current: list[str] | None = None
     in_jobs = False
     for line in lines:
         if line.startswith("jobs:"):
             in_jobs = True
             continue
-        if in_jobs and FIRST_STEPS.match(line):
+        if not in_jobs:
+            continue
+        if line.strip() and not line[0].isspace():
+            break  # a new top-level key ends the jobs block
+        key = JOB_KEY.match(line)
+        if key and (job_indent is None or key.group(1) == job_indent):
+            job_indent = key.group(1)
+            current = jobs.setdefault(key.group(2), [])
+            continue
+        if current is not None:
+            current.append(line)
+    return jobs
+
+
+def _job_checks_out_triggering_run(job_lines: list[str]) -> bool:
+    return any(FORK_CONTROLLED_CHECKOUT.match(line) for line in job_lines)
+
+
+def _job_has_job_level_same_repo_guard(job_lines: list[str]) -> bool:
+    """The guard must sit between the job key and the job's ``steps:`` — i.e. on the job, not a step.
+
+    A guard on the push step alone would still let the checkout and the build run the fork's
+    code in the trusted context; only a job-level ``if:`` keeps it out entirely.
+    """
+    for line in job_lines:
+        if FIRST_STEPS.match(line):
             return False
-        if in_jobs and SAME_REPO_GUARD in line:
+        if SAME_REPO_GUARD in line:
             return True
     return False
+
+
+def _unguarded_fork_checkout_jobs(lines: list[str]) -> list[str]:
+    """Ids of every job that checks out the triggering run without the job-level same-repo guard."""
+    return [
+        job_id
+        for job_id, job_lines in _jobs(lines).items()
+        if _job_checks_out_triggering_run(job_lines) and not _job_has_job_level_same_repo_guard(job_lines)
+    ]
 
 
 def check_workflow_run_builds_are_guarded(failures: list[str]) -> None:
@@ -112,12 +158,13 @@ def check_workflow_run_builds_are_guarded(failures: list[str]) -> None:
         checks_out = _checks_out_triggering_run(lines)
 
         if triggers and checks_out:
-            if _has_job_level_same_repo_guard(lines):
+            unguarded = _unguarded_fork_checkout_jobs(lines)
+            if not unguarded:
                 guarded_count += 1
             else:
                 failures.append(
-                    f"{rel}: workflow_run build checks out the triggering run but its job-level `if:` "
-                    f"lacks `{SAME_REPO_GUARD}` — a fork PR reaches it with packages: write (FLIP#882; "
+                    f"{rel}: job(s) {', '.join(unguarded)} check out the triggering run but their job-level "
+                    f"`if:` lacks `{SAME_REPO_GUARD}` — a fork PR reaches them with packages: write (FLIP#882; "
                     f"copy the block from any docker_build_* sibling)."
                 )
         elif checks_out and not triggers:
@@ -134,8 +181,49 @@ def check_workflow_run_builds_are_guarded(failures: list[str]) -> None:
         )
 
 
+# A workflow whose first job is guarded and whose second job checks out the fork unguarded.
+# The parser must flag the second job: an earlier version stopped at the first `steps:` it met
+# and so passed this shape with a green tick.
+_TWO_JOB_FIXTURE = """\
+name: fixture
+on:
+  workflow_run:
+    workflows: [x]
+jobs:
+  guarded:
+    if: >-
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
+          ref: ${{ github.event.workflow_run.head_sha }}
+  unguarded:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
+          ref: ${{ github.event.workflow_run.head_sha }}
+"""
+
+
+def check_parser_flags_a_second_unguarded_job(failures: list[str]) -> None:
+    """The per-job split is the property under test; pin it against the shape that defeated the old parser."""
+    lines = [line for line in _TWO_JOB_FIXTURE.splitlines() if not line.lstrip().startswith("#")]
+    found = _unguarded_fork_checkout_jobs(lines)
+    if found != ["unguarded"]:
+        failures.append(
+            f"parser self-test: expected the two-job fixture to flag exactly ['unguarded'], got {found} — "
+            f"the per-job guard check has regressed to inspecting one job."
+        )
+
+
 def main() -> int:
     failures: list[str] = []
+    check_parser_flags_a_second_unguarded_job(failures)
     check_workflow_run_builds_are_guarded(failures)
 
     if failures:
