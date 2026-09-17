@@ -32,9 +32,6 @@ include ../deploy/instance.mk
 # under `make -j` (FLIP#1227).
 .NOTPARALLEL:
 
-_check-compose-project-owner:
-	$(check_compose_project_owner)
-
 service_name = flip-api
 lint_command = uv run ruff check . --fix
 test_args = --tb=short --disable-warnings --cov=src/ --cov-report=term-missing
@@ -61,6 +58,9 @@ down: _check-compose-project-owner
 	$(docker_command) down --remove-orphans $(service_name)
 	@echo "🛑 Stopping flip-db ..."
 	$(docker_command) down --remove-orphans flip-db
+# Ownership guard (FLIP#1227) — defined AFTER `up` so `up` stays this Makefile's default goal.
+_check-compose-project-owner:
+	$(check_compose_project_owner)
 shell:
 	$(docker_command) $(run_clean) $(service_name) /bin/bash
 lint:

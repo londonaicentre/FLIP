@@ -164,6 +164,17 @@ GATED_TARGETS = {
 }
 
 
+def test_flip_api_default_goal_is_still_up() -> None:
+    """GNU Make's default goal is the first target in the file — adding the guard target above `up`
+    once turned a bare `make -C flip-api` into a no-op that only ran the guard. Ask make itself, so
+    included files count too (the root Makefile's default depends on the env file and is not pinned).
+    """
+    r = subprocess.run(["make", "-C", str(SCRIPTS_DIR.parent / "flip-api"), "-pn"], capture_output=True, text=True)
+    goal = next((line.split(":=", 1)[1].strip() for line in r.stdout.splitlines()
+                 if line.startswith(".DEFAULT_GOAL")), "(none)")
+    _assert(goal == "up", "flip-api/Makefile: default goal is still `up`", f"got {goal}")
+
+
 def test_makefiles_gate_every_project_driving_target() -> None:
     """Every target that runs up/down/restart on $(COMPOSE_PROJECT) must list the guard FIRST."""
     for rel, targets in GATED_TARGETS.items():
@@ -188,6 +199,7 @@ def main() -> None:
     test_mixed_own_and_foreign_is_refused()
     test_unlabelled_container_is_refused()
     test_foreign_dir_listed_once()
+    test_flip_api_default_goal_is_still_up()
     test_makefiles_gate_every_project_driving_target()
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
