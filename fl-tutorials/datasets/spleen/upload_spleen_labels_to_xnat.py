@@ -185,16 +185,9 @@ def fetch_accession_map(url: str | None = None, cache_dir: Path | None = None) -
     return mapping
 
 
-INCOMPLETE_DOWNLOAD_HELP = """   The two spleen downloads differ, so check the one --labels-dir points at:
-     MSD build   (data/spleen/images)              make -C fl-tutorials download-spleen-data NUM_CASES=41
-     FLIP-format (data/spleen/accession-resources) the HF snapshot ships a fixed 6-case subset, and
-                                                   ignores NUM_CASES — point --labels-dir at the
-                                                   MSD download for full coverage."""
-"""Remediation text naming both download variants.
-
-Printed unconditionally rather than inferred from ``--labels-dir``: guessing wrong sends the reader
-to a command that cannot help, and ``NUM_CASES`` genuinely does nothing on the FLIP-format path.
-"""
+INCOMPLETE_DOWNLOAD_HELP = """   --labels-dir should point at the spleen build both backends read:
+       data/spleen/images    make -C fl-tutorials download-spleen-data NUM_CASES=41
+                             (the default of 10 covers only part of the cohort)"""
 
 
 def build_manifest(labels_dir: Path, trust: str | None = None) -> list[EnrichmentItem]:
