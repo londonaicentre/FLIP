@@ -509,7 +509,7 @@ Related states with different causes:
   (imaging-api classifies any accession with an executed row as Processing,
   regardless of row status); the rows must be deleted before re-import works —
   see §2.4 "Forcing a Re-pull" in
-  `deploy/providers/kubernetes/TROUBLESHOOTING.md` (same procedure on EC2 via
+  `trust/deploy/helm/TROUBLESHOOTING.md` (same procedure on EC2 via
   `docker exec` into the xnat-db container).
 
 ---

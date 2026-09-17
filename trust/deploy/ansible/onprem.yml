@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# site_local_trust.yml
+# onprem.yml
 #
 # Provisions an on-premises Ubuntu host to run the FLIP Trust-API stack.
 # Trusts poll the Central Hub for tasks — all communication is outbound.
@@ -20,7 +20,7 @@
 # Usage:
 #   ansible-playbook -i <trust-host-ip>, \
 #     -u ubuntu --private-key ~/.ssh/trust_key \
-#     deploy/providers/local/site_local_trust.yml
+#     trust/deploy/ansible/onprem.yml
 
 ---
 - name: Configure on-premises Trust host

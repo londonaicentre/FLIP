@@ -22,6 +22,7 @@ from imaging_api.services.retrieval import (
     get_import_status,
     retrieve_images_for_project,
     retry_retrieve_images_for_project,
+    select_study_for_accession,
 )
 from imaging_api.utils.encryption import PROJECT_ID_CONTEXT
 from imaging_api.utils.exceptions import CohortBelowThresholdError, NotFoundError
@@ -240,23 +241,80 @@ async def test_retrieve_images_partial_queue_failure(
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
 @patch("imaging_api.services.retrieval.encrypt")
 @patch("imaging_api.services.retrieval.get_project")
-async def test_retrieve_images_multiple_studies_for_accession(
+async def test_retrieve_images_two_studies_under_one_accession_are_skipped_not_guessed(
     mock_get_project, mock_encrypt, mock_get_accession_ids,
     mock_query, mock_queue, headers,
 ):
-    """When multiple studies match an accession number, only the first is used."""
+    """A PACS holding two studies under the cohort's accession is ambiguous: neither is imported."""
     mock_get_project.return_value = MagicMock()
     mock_encrypt.return_value = "encrypted_id"
     mock_get_accession_ids.return_value = ["ACC1"]
     mock_query.return_value = [_make_study("ACC1", "1.2.3.1"), _make_study("ACC1", "1.2.3.2")]
+
+    result = await retrieve_images_for_project("proj1", "SELECT *", headers)
+    assert result is False
+    mock_queue.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.queue_image_import_request")
+@patch("imaging_api.services.retrieval.query_by_accession_number")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+@patch("imaging_api.services.retrieval.get_project")
+async def test_retrieve_images_takes_the_exact_accession_not_the_first_answer(
+    mock_get_project, mock_encrypt, mock_get_accession_ids,
+    mock_query, mock_queue, headers,
+):
+    """A PACS may match loosely (Orthanc folds case); only the study with the exact accession is the cohort's."""
+    mock_get_project.return_value = MagicMock()
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.return_value = ["ACC1"]
+    mock_query.return_value = [_make_study("acc1", "1.2.3.1"), _make_study("ACC1", "1.2.3.2")]
     mock_queue.return_value = [_make_import_response("ACC1")]
 
     result = await retrieve_images_for_project("proj1", "SELECT *", headers)
     assert result is True
-    # Only the first study UID should have been queued
     call_args = mock_queue.call_args[0][0]
-    assert len(call_args.studies) == 1
-    assert call_args.studies[0].study_instance_uid == "1.2.3.1"
+    assert [s.study_instance_uid for s in call_args.studies] == ["1.2.3.2"]
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.queue_image_import_request")
+@patch("imaging_api.services.retrieval.query_by_accession_number")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+@patch("imaging_api.services.retrieval.get_project")
+async def test_retrieve_images_skips_an_answer_with_no_exact_accession(
+    mock_get_project, mock_encrypt, mock_get_accession_ids,
+    mock_query, mock_queue, headers,
+):
+    """Studies the PACS returned for a loose match are not the cohort's: nothing is imported."""
+    mock_get_project.return_value = MagicMock()
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.return_value = ["ACC1"]
+    mock_query.return_value = [_make_study("acc1", "1.2.3.1"), _make_study("ACC10", "1.2.3.2")]
+
+    result = await retrieve_images_for_project("proj1", "SELECT *", headers)
+    assert result is False
+    mock_queue.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected_uid"),
+    [
+        ([], None),
+        ([("ACC1", "1.2.3.1")], "1.2.3.1"),
+        ([("acc1", "1.2.3.1"), ("ACC1", "1.2.3.2")], "1.2.3.2"),
+        ([("acc1", "1.2.3.1")], None),
+        ([("ACC1", "1.2.3.1"), ("ACC1", "1.2.3.2")], None),
+    ],
+    ids=["empty", "exact", "exact-among-loose", "loose-only", "duplicate-accession"],
+)
+def test_select_study_for_accession(answer, expected_uid):
+    studies = [_make_study(acc, uid) for acc, uid in answer]
+    selected = select_study_for_accession("ACC1", studies, "1/1")
+    assert (selected.study_instance_uid if selected else None) == expected_uid
 
 
 # ===========================================================================
@@ -693,20 +751,19 @@ async def test_retry_no_study_found_for_accession(mock_get_project, mock_get_sta
 @patch("imaging_api.services.retrieval.query_by_accession_number")
 @patch("imaging_api.services.retrieval.get_import_status", new_callable=AsyncMock)
 @patch("imaging_api.services.retrieval.get_project")
-async def test_retry_multiple_studies_uses_first(
+async def test_retry_two_studies_under_one_accession_are_skipped_not_guessed(
     mock_get_project, mock_get_status, mock_query, mock_queue, headers,
 ):
+    """The retry path narrows the PACS answer the same way the first import does."""
     mock_get_project.return_value = MagicMock()
     mock_get_status.return_value = ImportStatus(
         successful=[], failed=["ACC1"], queue_failed=[], queued=[], processing=[],
     )
     mock_query.return_value = [_make_study("ACC1", "1.2.3.1"), _make_study("ACC1", "1.2.3.2")]
-    mock_queue.return_value = [_make_import_response("ACC1")]
 
     result = await retry_retrieve_images_for_project("proj1", "SELECT *", headers)
-    assert result is True
-    call_args = mock_queue.call_args[0][0]
-    assert call_args.studies[0].study_instance_uid == "1.2.3.1"
+    assert result is False
+    mock_queue.assert_not_called()
 
 
 @pytest.mark.asyncio

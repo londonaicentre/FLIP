@@ -39,11 +39,15 @@ CHART_DIR = Path(__file__).resolve().parents[1]
 TEMPLATES_DIR = CHART_DIR / "templates"
 SECRETS_TEMPLATE = TEMPLATES_DIR / "secrets.yaml"
 XNAT_DB_TEMPLATE = TEMPLATES_DIR / "xnat-db.yaml"
-REPO_ROOT = CHART_DIR.parents[2]
+# Asked of git rather than counted in parents[N]: a depth count survives a move only by
+# coincidence, and a wrong one here would keep passing (git resolves the toplevel from
+# any subdirectory, so `check-ignore` would just be asked about a wrong relative path).
+REPO_ROOT = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], cwd=CHART_DIR, text=True).strip())
 
 # Repo-relative, because that is what git wants and what the ignore rule sees.
-GENERATED_VALUES_FILE = "deploy/providers/kubernetes/values-secrets.yaml"
-EXAMPLE_VALUES_FILE = "deploy/providers/kubernetes/values-secrets.yaml.example"
+_CHART_REL = CHART_DIR.relative_to(REPO_ROOT).as_posix()
+GENERATED_VALUES_FILE = f"{_CHART_REL}/values-secrets.yaml"
+EXAMPLE_VALUES_FILE = f"{_CHART_REL}/values-secrets.yaml.example"
 
 _SCRIPT = CHART_DIR / "scripts" / "generate_values.py"
 _spec = importlib.util.spec_from_file_location("generate_values", _SCRIPT)
@@ -279,7 +283,7 @@ def test_the_generated_secrets_filename_is_ignored_from_any_directory():
 
     ``generate_values.py`` defaults ``--output-dir`` to the current directory,
     so the file lands wherever the operator happened to run it. A rule anchored
-    to ``deploy/providers/kubernetes/`` leaves every other cwd — the repo root
+    to ``trust/deploy/helm/`` leaves every other cwd — the repo root
     included — writing an un-ignored file full of live trust credentials.
     """
     for path in (GENERATED_VALUES_FILE, "values-secrets.yaml", "some/other/dir/values-secrets.yaml"):

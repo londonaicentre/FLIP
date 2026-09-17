@@ -99,9 +99,9 @@ make -C trust down-trust KIT=GSTT   # if a previous GSTT stack is running
 make -C trust up-trust KIT=GSTT
 ```
 
-On an on-prem host provisioned by the local playbook, prefix these with `sudo -E` — the login
+On an on-prem host provisioned by the on-prem playbook, prefix these with `sudo -E` — the login
 user is deliberately not in the docker group (see
-[deploy/providers/local/README.md](../deploy/providers/local/README.md)). Dev workstations are
+[trust/deploy/ansible/README.md](deploy/ansible/README.md)). Dev workstations are
 unaffected.
 
 The trust-api container authenticates with its `TRUST_API_KEY` and posts a heartbeat to `POST /trust/heartbeat` (no name segment — the hub resolves the trust's identity from the API key). The Connection status page flips the row online within ~30s.

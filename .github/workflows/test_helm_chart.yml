@@ -17,12 +17,17 @@ permissions:
 on:
   pull_request:
     paths:
-      - "deploy/providers/kubernetes/**"
+      - "trust/deploy/helm/**"
+      # Read by the chart's pytest suite, so a change there can break it too.
+      - "trust/xnat/xnat/config/configure-xnat.sh"
+      - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
   push:
     branches: [develop, main]
     paths:
-      - "deploy/providers/kubernetes/**"
+      - "trust/deploy/helm/**"
+      - "trust/xnat/xnat/config/configure-xnat.sh"
+      - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
   workflow_dispatch:
 
@@ -43,7 +48,7 @@ jobs:
         run: pip install uv
 
       - name: Run sync-kit unit tests
-        working-directory: deploy/providers/kubernetes
+        working-directory: trust/deploy/helm
         run: uv run --no-project --with pytest --with "pyyaml==6.0.3" pytest tests/ -v
 
   helm-lint:
@@ -59,7 +64,7 @@ jobs:
           version: "v4.2.3"
 
       - name: Lint chart
-        run: helm lint deploy/providers/kubernetes/
+        run: helm lint trust/deploy/helm/
 
   helm-template:
     name: Helm Template
@@ -79,7 +84,7 @@ jobs:
         run: pip install uv
 
       - name: Render template (default/nvflare)
-        run: helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit > /dev/null
+        run: helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit > /dev/null
 
       # flClient.kitHostPath is required whenever the FL client is enabled: the chart
       # cannot fetch the kit (a trust holds no FLIP AWS credentials — it is provisioned
@@ -90,7 +95,7 @@ jobs:
       - name: Render without a kit path is refused
         run: |
           set +e
-          out=$(helm template trust-release deploy/providers/kubernetes/ 2>&1)
+          out=$(helm template trust-release trust/deploy/helm/ 2>&1)
           rc=$?
           set -e
           if [ "$rc" -eq 0 ]; then
@@ -104,7 +109,7 @@ jobs:
           fi
 
       - name: Render template (flower backend)
-        run: helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit --set flBackend=flower > /dev/null
+        run: helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit --set flBackend=flower > /dev/null
 
       # The kind E2E installs with flClient.enabled=false (no GPU/S3 in CI), so
       # nothing at runtime exercises the fl-client's per-net images slice — these
@@ -113,16 +118,16 @@ jobs:
       # download). Assert the load-bearing lines render per backend.
       - name: Assert fl-client per-net images mount renders (both backends)
         run: |
-          render_nvflare=$(helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit)
+          render_nvflare=$(helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit)
           echo "$render_nvflare" | grep -qF 'subPath: net-1' || { echo "nvflare render lost the per-net subPath images mount"; exit 1; }
           echo "$render_nvflare" | grep -qF 'chown 1000:1000 "${NET_DIR}"' || { echo "nvflare render lost images-init's uid-1000 ownership handoff"; exit 1; }
-          render_flower=$(helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit --set flBackend=flower)
+          render_flower=$(helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit --set flBackend=flower)
           echo "$render_flower" | grep -qF 'subPath: net-1' || { echo "flower render lost the per-net subPath images mount"; exit 1; }
           echo "$render_flower" | grep -qF 'chown 1000:49999 "${NET_DIR}"' || { echo "flower render lost images-init's 1000:49999 (imaging-api:supernode) ownership handoff"; exit 1; }
 
       - name: Render template (all services disabled)
         run: |
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set trustApi.enabled=false \
             --set imagingApi.enabled=false \
             --set dataAccessApi.enabled=false \
@@ -137,7 +142,7 @@ jobs:
 
       - name: Render template (external service override)
         run: |
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set omopDb.enabled=false \
             --set omopDb.external.host=test.example.com \
             > /dev/null
@@ -149,7 +154,7 @@ jobs:
       # that connects a real PACS (FLIP#993).
       - name: Render template (real PACS)
         run: |
-          helm template trust-release deploy/providers/kubernetes/ \
+          helm template trust-release trust/deploy/helm/ \
             --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set xnat.web.service.type=NodePort \
             --set xnat.web.dicomNodePort=8104 \
@@ -191,7 +196,7 @@ jobs:
       # rendered and asserted as correct (FLIP#993).
       - name: Render template (real PACS without egress is refused)
         run: |
-          if helm template trust-release deploy/providers/kubernetes/ \
+          if helm template trust-release trust/deploy/helm/ \
             --set flClient.kitHostPath=/opt/flip/fl-kit \
                --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 > /dev/null 2>&1; then
             echo "::error::a PACS with no egress rule rendered successfully"
@@ -208,7 +213,7 @@ jobs:
         run: |
           for port_args in "" "--set networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32 --set networkPolicies.allowedIngressCIDRsWithPorts[0].port=31104"; do
             # shellcheck disable=SC2086 # deliberate word splitting: $port_args carries several flags
-            if helm template trust-release deploy/providers/kubernetes/ \
+            if helm template trust-release trust/deploy/helm/ \
               --set flClient.kitHostPath=/opt/flip/fl-kit \
                  --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
                  --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
@@ -226,7 +231,7 @@ jobs:
       # specifically (not "anything but NodePort") so a LoadBalancer receiver stays valid.
       - name: Render template (real PACS on a ClusterIP service is refused)
         run: |
-          if helm template trust-release deploy/providers/kubernetes/ \
+          if helm template trust-release trust/deploy/helm/ \
             --set flClient.kitHostPath=/opt/flip/fl-kit \
                --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
                --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
@@ -246,7 +251,7 @@ jobs:
           # exposure guard stands on its own.
           # Assert on the refusal *message*, not just a non-zero exit: any unrelated render error
           # would otherwise make this pass while proving nothing.
-          if helm template trust-release deploy/providers/kubernetes/ \
+          if helm template trust-release trust/deploy/helm/ \
             --set flClient.kitHostPath=/opt/flip/fl-kit \
                --set networkPolicies.enabled=false \
                --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 > /dev/null 2> /tmp/nopolicy.err; then
@@ -259,7 +264,7 @@ jobs:
             exit 1
           fi
           # And the LoadBalancer allowance must keep rendering, or on-prem MetalLB trusts break.
-          helm template trust-release deploy/providers/kubernetes/ \
+          helm template trust-release trust/deploy/helm/ \
             --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set xnat.web.service.type=LoadBalancer \
             --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
@@ -276,7 +281,7 @@ jobs:
       # other refusals leave open (FLIP#993).
       - name: Render template (real PACS on NodePort without dicomNodePort is refused)
         run: |
-          if helm template trust-release deploy/providers/kubernetes/ \
+          if helm template trust-release trust/deploy/helm/ \
             --set flClient.kitHostPath=/opt/flip/fl-kit \
                --set xnat.web.service.type=NodePort \
                --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
@@ -299,7 +304,7 @@ jobs:
       # chart that opened it without being asked would silently widen every existing deployment.
       - name: Render template (default keeps ingress denied)
         run: |
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit > /tmp/default.yaml
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit > /tmp/default.yaml
           if grep -q "allow-pacs-ingress" /tmp/default.yaml; then
             echo "::error::the PACS ingress NetworkPolicy rendered without being configured"
             exit 1
@@ -312,7 +317,7 @@ jobs:
       # WHOLE Helm release of the first operator who configures a bucket.
       - name: Render template (vocab-load enabled)
         run: |
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set omopDb.vocabLoad.s3Bucket=test-bucket > /tmp/vocab.yaml
           if ! grep -q "omop-vocab-load" /tmp/vocab.yaml; then
             echo "::error::the vocab-load Job did not render with s3Bucket set — its body is now untested in CI"
@@ -324,7 +329,7 @@ jobs:
       # and the Orthanc half off; nothing may untar a trust<N>_*.tar snapshot any more.
       - name: Trust-seed hook renders, snapshots do not
         run: |
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit > /tmp/seed-default.yaml
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit > /tmp/seed-default.yaml
           for want in 'name: trust-release-flip-trust-trust-seed' '/trust/seed_trust.sh' 'exec bash /work/seed_trust.sh'; do
             if ! grep -qF -e "${want}" /tmp/seed-default.yaml; then
               echo "::error::the trust-seed hook did not render (missing: ${want})"
@@ -337,7 +342,7 @@ jobs:
               exit 1
             fi
           done
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
             --show-only templates/trust-seed-job.yaml > /tmp/seedjob.yaml
           if ! grep -A1 'name: SEED_ORTHANC' /tmp/seedjob.yaml | grep -q '"false"'; then
             echo "::error::the Orthanc half must default OFF (2 GB of DICOM per trust)"
@@ -348,10 +353,10 @@ jobs:
             echo "::error::the Orthanc credentials must not be mounted when the Orthanc half is off"
             exit 1
           fi
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set trustData.seed.orthanc=true --show-only templates/trust-seed-job.yaml | grep -q -- '- name: ORTHANC_REGISTERED_USERS' \
             || { echo "::error::with trustData.seed.orthanc=true the Job must carry the Orthanc credentials"; exit 1; }
-          if helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+          if helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set trustData.seed.enabled=false | grep -q 'trust-release-flip-trust-trust-seed'; then
             echo "::error::trustData.seed.enabled=false must render no seed Job"
             exit 1
@@ -364,7 +369,7 @@ jobs:
       # in THIS Job and not merely somewhere in the release.
       - name: Vocab-load probes before it fetches
         run: |
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set omopDb.vocabLoad.s3Bucket=test-bucket \
             --show-only templates/omop-db-vocab-load-job.yaml > /tmp/vocabjob.yaml
           # Every pattern is passed with -e: three of these begin with "-" and
@@ -410,7 +415,7 @@ jobs:
           # The other half of that contract — that the image really does ship
           # unzip — is asserted in test_trust_omop_db.yml, which is where it can
           # actually fire: THIS workflow's pull_request trigger is path-filtered
-          # to deploy/providers/kubernetes/**, so it does not run for a change to
+          # to trust/deploy/helm/**, so it does not run for a change to
           # the Dockerfile it would be guarding.
           if grep -qE 'microdnf|dnf |yum |apt-get |apt |apk add|pip install' /tmp/vocabjob.yaml; then
             echo "::error::vocab-load Job installs packages at run time again — that needs egress to a package mirror"
@@ -439,7 +444,7 @@ jobs:
       # would be indistinguishable.
       - name: Render template (vocab-load skipped without a bucket)
         run: |
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit > /tmp/novocab.yaml
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit > /tmp/novocab.yaml
           if ! grep -q "omop-db" /tmp/novocab.yaml; then
             echo "::error::the default render produced no omop-db resources — the absence check below would pass vacuously"
             exit 1
@@ -454,7 +459,7 @@ jobs:
       # with no registered users instead of failing the pod.
       - name: Orthanc registered-users secret ref stays required (FLIP-PT-091)
         run: |
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
             --show-only templates/orthanc.yaml > orthanc.rendered.yaml
           if ! grep -q 'key: orthanc-registered-users' orthanc.rendered.yaml; then
             echo "::error::orthanc-registered-users secretKeyRef missing from the rendered manifest"
@@ -478,7 +483,7 @@ jobs:
       # and in scrub_args' own sed, so keying on the literal would be noise.
       - name: Chart templates do not log credentials
         run: |
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set xnat.enabled=true > chart.rendered.yaml
           if grep -nE 'echo[^|]*\$\{?[A-Za-z_]*(JSESSION|PASSWORD|SECRET|TOKEN|_KEY)' chart.rendered.yaml; then
             echo "::error::a chart template echoes a credential into the pod log"
@@ -509,7 +514,7 @@ jobs:
           # that string also names every volumeMount that reads the kit, so a context-window
           # grep tests whichever node happens to sit near a match rather than the volume itself.
           for backend in nvflare flower; do
-            helm template trust-release deploy/providers/kubernetes/ \
+            helm template trust-release trust/deploy/helm/ \
               --set flBackend="${backend}" \
               --set flClient.kitHostPath=/opt/flip/fl-kit \
               --show-only templates/fl-client.yaml > /tmp/kit-"${backend}".yaml
@@ -589,7 +594,7 @@ jobs:
             meta.helm.sh/release-name=trust-release \
             meta.helm.sh/release-namespace=flip-trust \
             --overwrite
-          kubectl apply -f deploy/providers/kubernetes/ci/test-secret.yaml
+          kubectl apply -f trust/deploy/helm/ci/test-secret.yaml
 
       # The trust-seed hook installs its loaders from FLIP at trustData.seed.sourceRef (a GitHub
       # source archive), so the install must point it at the commit under test — the chart
@@ -600,9 +605,9 @@ jobs:
           SEED_REF: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'develop' || (github.event.pull_request.head.sha || github.sha) }}
         run: |
           echo "trust-seed loaders from FLIP@${SEED_REF}"
-          helm install trust-release deploy/providers/kubernetes/ \
+          helm install trust-release trust/deploy/helm/ \
             --namespace flip-trust \
-            -f deploy/providers/kubernetes/ci/test-values.yaml \
+            -f trust/deploy/helm/ci/test-values.yaml \
             --set secrets.existingName=flip-trust-secrets \
             --set trustApi.env.CENTRAL_HUB_API_URL=http://test-hub.example.com/api \
             --set trustData.seed.sourceRef="${SEED_REF}"

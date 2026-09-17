@@ -47,6 +47,16 @@ API are deliberately not on it, and an FL client carries no hub URL and no hub c
 **outbound** to the server, with mutual TLS on both backends using the per-participant certificates from the
 provisioned kits.
 
+Neither end of that plane can be assumed to have a route to the public internet. On a platform-managed
+estate the FL server runs in an account with no internet gateway or NAT of its own — its egress leaves through
+a central inspection firewall that permits only the platform's own endpoints — and a Trust's training host
+sits behind the Trust's firewall. An app is therefore **offline by construction**: everything it needs —
+weights, checkpoints, auxiliary networks — must arrive through the model-file upload, never a run-time
+download (see the note under *Model Files* in the :doc:`user guide <../user-guides/user-common>`). A
+``pretrained=True`` or ``torch.hub`` call in an app hangs the server-side job process; on NVFLARE the Trust
+then reports ``cannot sync with server Runner``, on Flower the run simply never issues a round, and either
+way the model is left at ``INITIATED`` and the net ``BUSY``.
+
 Kit slots and client names
 ==========================
 
