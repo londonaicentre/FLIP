@@ -115,6 +115,14 @@ class TestProdSettings:
             with pytest.raises(ValidationError, match="Invalid S3 URL"):
                 ProdSettings()
 
+    def test_prod_settings_rejects_empty_s3_bucket(self):
+        """An empty (compose-rendered unset) required prod setting must still fail, not fall back to its default."""
+        env = self.get_valid_prod_env()
+        env["UPLOADED_FEDERATED_DATA_BUCKET"] = ""
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(ValidationError, match="Invalid S3 URL"):
+                ProdSettings()
+
     def test_prod_settings_accepts_valid_s3_bucket(self):
         """ProdSettings should accept valid S3 bucket URL."""
         env = self.get_valid_prod_env()

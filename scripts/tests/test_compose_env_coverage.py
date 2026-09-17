@@ -43,6 +43,7 @@ DEV_COMPOSE_FILES = (
     "deploy/compose.development.yml",
     "deploy/compose.development.nvflare.yml",
     "deploy/compose.development.flower.yml",
+    "deploy/compose.development.debug.override.yml",
 )
 
 # Interpolated by the composes but supplied by make, not the env file:
