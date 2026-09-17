@@ -351,6 +351,10 @@ Before that the job ran a bare `detect-secrets scan`, which prints a report and 
 pre-commit CI job ran the hook with `|| true` — so nothing ever failed and ~110 unbaselined test literals had
 accumulated. A stale baseline (an entry whose line moved or whose literal disappeared — hook exit 3) also fails
 the job, with the rewritten baseline in the log: commit the rewrite deliberately rather than let coverage rot.
+The hook re-serialises the whole file when it rewrites it, so `.secrets.baseline` is committed in the hook's own
+key order (`version`, `plugins_used`, `filters_used`, `results`, `generated_at`, `indent=2`); a rewrite then
+diffs only the moved `line_number`s and `generated_at`, and that is the expected shape when an unrelated edit to
+a baselined file (a Cypress fixture, say) shifts its lines.
 
 Locally the pre-commit hook scans only the files in the commit being made, so it will flag a dummy value the
 first time you touch a file that already contains one. To allowlist a false positive:
@@ -362,7 +366,7 @@ first time you touch a file that already contains one. To allowlist a false posi
    entry.
 2. **Baseline entry** — only for files that cannot carry a comment (JSON fixtures). Run
    `uvx --from detect-secrets==1.5.0 detect-secrets scan <file>` and copy that file's `results` entries into
-   `.secrets.baseline` with `"is_secret": false`; keep the committed key order and `indent=2`. Never run a bare
+   `.secrets.baseline` with `"is_secret": false`, keeping the hook's key order above. Never run a bare
    `detect-secrets scan --baseline .secrets.baseline` and commit the result — it re-derives every repo-wide finding
    and buries the real change — and never add entries for gitignored files.
 3. **Filter** — for a whole class of false positives (Alembic revision ids, Excalidraw element ids) add a
