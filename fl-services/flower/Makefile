@@ -64,7 +64,7 @@ build:
 # out: a trust staged into slot N fetches keys/supernode_credentials_N, and the
 # NVFLARE-side staging guard now fails loudly when its slot's material is missing.
 # Getting it wrong is expensive rather than fiddly — there is no add-a-node path
-# (unlike nvflare's `provision --add_user`), because a re-run regenerates the CA and
+# (unlike nvflare's `provision --add_client`), because a re-run regenerates the CA and
 # invalidates every node already holding credentials. FL_KIT_SLOT_NAMES is a JSON
 # list, so count its entries by turning the separators into word breaks; a dev env
 # that names no pool falls back to generate_creds.py's own default of 2. Override

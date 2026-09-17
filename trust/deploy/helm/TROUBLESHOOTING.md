@@ -945,8 +945,9 @@ signature = base64.b64encode(
 ).decode()
 ```
 
-A Python helper script is available at:
-`trust/deploy/helm/scripts/resign_signatures.py`
+There is no bundled helper script for this — re-sign each file listed in
+`signature.json` by hand with the snippet above (or your own script built on
+it) and rewrite `signature.json` with the resulting base64 signatures.
 
 ### 7.5 EFS File Permission Lost (sub_start.sh)
 
