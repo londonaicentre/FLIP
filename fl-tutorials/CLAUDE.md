@@ -6,8 +6,10 @@ built on the templates in `fl-apps/`; the images they run on are built from
 
 | Path | Purpose |
 |------|---------|
-| `nvflare/image_*` | NVFLARE tutorials — all Client-API apps |
-| `flower/{xray_classification,3d_spleen_segmentation*}` | Flower tutorials |
+| `nvflare/image_*` | NVFLARE imaging tutorials — all Client-API apps |
+| `nvflare/tabular_classification` | NVFLARE tabular (OMOP-only) EHR risk-prediction tutorial |
+| `flower/{xray_classification,3d_spleen_segmentation*}` | Flower imaging tutorials |
+| `flower/ehr_risk_prediction` | Flower tabular (OMOP-only) EHR risk-prediction tutorial |
 | `datasets/` | Shared dataset tooling (download/derive/enrich), one copy for both backends |
 | `datasets/utils/` | The OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, per-project surrogate-key blocks (`omop_ids.py`), and the one verification gate (`verify_omop_tables.py --project <name>`) |
 | `data/` | Gitignored output of the dataset targets |
