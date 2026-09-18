@@ -245,8 +245,15 @@ def checkout_tags(repo_root: Path = _REPO_ROOT) -> list[str] | None:
 
 
 def describe_checkout(repo_root: Path = _REPO_ROOT) -> str:
-    """``git describe --tags --always`` for the message — a tag, ``v0.6.0-12-gabc1234``, or a bare sha."""
-    return (_git(repo_root, "describe", "--tags", "--always") or "").strip() or "<unknown>"
+    """Where the checkout sits, for the message — a tag, ``v0.6.0-12-gabc1234``, or a bare sha.
+
+    Matched against ``v[0-9]*`` so only PLATFORM releases are named. The repo also carries
+    component tags (``flip-utils-v0.5.0``) and one-off ones, and an unmatched ``git describe``
+    picks whichever is nearest — telling an operator their tree is at "flip-utils-v0.5.0"
+    when the release it is being compared against is a platform v0.6.0.
+    """
+    described = (_git(repo_root, "describe", "--tags", "--always", "--match", "v[0-9]*") or "").strip()
+    return described or "<unknown>"
 
 
 def write_tags(kit_file: Path, tag: str, fl_tag: str | None = None) -> None:

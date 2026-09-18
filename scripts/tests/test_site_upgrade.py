@@ -228,7 +228,8 @@ class CheckoutTags(unittest.TestCase):
     """The checkout probe: the tags on HEAD, or None when there is no git checkout to ask."""
 
     def test_lists_every_tag_on_head(self):
-        with mock.patch.object(su.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="v0.7.0\nrelease-2026\n")) as run:
+        out = mock.Mock(returncode=0, stdout="v0.7.0\nrelease-2026\n")
+        with mock.patch.object(su.subprocess, "run", return_value=out) as run:
             assert su.checkout_tags(Path("/repo")) == ["v0.7.0", "release-2026"]
         assert run.call_args.args[0] == ["git", "-C", "/repo", "tag", "--points-at", "HEAD"]
 
@@ -242,8 +243,18 @@ class CheckoutTags(unittest.TestCase):
         with mock.patch.object(su.subprocess, "run", return_value=mock.Mock(returncode=128, stdout="")):
             assert su.checkout_tags(Path("/repo")) is None
 
+    def test_describe_names_only_platform_releases(self):
+        """The repo carries component tags (flip-utils-v0.5.0) and one-offs; an unmatched describe
+        picks the nearest of ANY of them, so the refusal would name a version that is not the
+        platform's. --match keeps both sides of "checkout X, target Y" on one scale."""
+        out = mock.Mock(returncode=0, stdout="v0.6.0-12-g1234abc\n")
+        with mock.patch.object(su.subprocess, "run", return_value=out) as run:
+            assert su.describe_checkout(Path("/repo")) == "v0.6.0-12-g1234abc"
+        assert run.call_args.args[0][-2:] == ["--match", "v[0-9]*"]
+
     def test_describe_falls_back_to_unknown(self):
-        with mock.patch.object(su.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="v0.6.0-12-gabc1234\n")):
+        out = mock.Mock(returncode=0, stdout="v0.6.0-12-gabc1234\n")
+        with mock.patch.object(su.subprocess, "run", return_value=out):
             assert su.describe_checkout(Path("/repo")) == "v0.6.0-12-gabc1234"
         with mock.patch.object(su.subprocess, "run", side_effect=OSError("no git")):
             assert su.describe_checkout(Path("/repo")) == "<unknown>"
@@ -377,7 +388,9 @@ class Plan(unittest.TestCase):
                 code, out = self._run(kit, "--tag", "v0.7.0", "--yes")
             assert code == su.EXIT_CHECKOUT_MISMATCH, out
             assert "checkout is v0.6.0, but the target is v0.7.0" in out
-            assert "git -C" in out and "checkout v0.7.0" in out and "fetch --tags" in out
+            assert "git -C" in out
+            assert "checkout v0.7.0" in out
+            assert "fetch --tags" in out
             assert "DOCKER_TAG=v0.6.0" in kit.read_text()
         # Refused before the registry is asked: the stale tree is the cheaper fix.
         self.missing_images.assert_not_called()
