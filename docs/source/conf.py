@@ -175,11 +175,11 @@ html_static_path = ["_static"]
 
 
 # -- Generated figures -------------------------------------------------------
-# The Central Hub AWS diagrams (one pair per deployment mode) are diagram-as-code kept beside the Terraform they depict
-# (deploy/providers/AWS/architecture/central_hub.py, drift-guarded by that tree's tests). It is rendered here at
-# build time into assets/generated/ (gitignored), so the published deployment pages always show the pictures for the commit
-# it documents and no PNG has to be kept in sync by hand. Needs graphviz `dot`: ReadTheDocs installs it via
-# build.apt_packages, the docs CI job via apt-get.
+# The Central Hub AWS diagrams (one pair per deployment mode) are diagram-as-code kept beside the Terraform they
+# depict (deploy/providers/AWS/architecture/central_hub.py, drift-guarded by that tree's tests). They are rendered
+# here at build time into assets/generated/ (gitignored), so the published deployment pages always show the
+# pictures for the commit they document and no PNG has to be kept in sync by hand. Needs graphviz `dot`:
+# ReadTheDocs installs it via build.apt_packages, the docs CI job via apt-get.
 
 AWS_PROVIDER_DIR = REPO_ROOT / "deploy" / "providers" / "AWS"
 GENERATED_ASSETS_DIR = Path(__file__).resolve().parent / "assets" / "generated"
@@ -195,7 +195,8 @@ def _render_generated_figures(app):
     """
     if os.environ.get(SKIP_DIAGRAMS_ENV) == "1":
         logger.warning(
-            "%s=1: not rendering the Central Hub AWS diagrams; the Central Hub deployment pages will report missing images",
+            "%s=1: not rendering the Central Hub AWS diagrams; the Central Hub deployment pages will report missing "
+            "images",
             SKIP_DIAGRAMS_ENV,
         )
         return
