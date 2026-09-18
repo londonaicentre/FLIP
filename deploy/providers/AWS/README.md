@@ -621,6 +621,10 @@ not empty the list** — `modules/cognito` defaults it to `["https://localhost:4
 puts a localhost origin into the production allowlist. `tests/test_cognito_callback_urls.py` guards
 both directions, and runs in CI as the `AWS deploy tests` job of `validate_terraform.yml`.
 
+The dev root also pre-registers a list of localhost UI ports (`var.dev_ui_ports`, FLIP#1227), so a
+UI on one of them needs no apply — see "Browser-usable UI ports" in
+[`dev/README.md`](dev/README.md). The procedure below is for everything else.
+
 To change it:
 
 ```bash

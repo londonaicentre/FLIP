@@ -58,6 +58,25 @@ make status          # terraform state list
 make destroy         # refused while prevent_destroy is set
 ```
 
+### Browser-usable UI ports
+
+flip-api derives its CORS allowlist from the app client's callback URLs, and Cognito matches those
+exactly (no wildcard, no range), so a UI port is usable in a browser only if it is registered here.
+Rather than an apply per port, `var.dev_ui_ports` (default 44350–44359) is expanded into one
+`http://localhost:<port>` origin each and added to both the callback list and the buckets' CORS
+origins — the same list for both, rather than an S3 wildcard, so a bucket is never reachable from an
+origin the API would refuse (FLIP#1227). Pick a port from the list as `UI_PORT` and nothing here
+needs to change. On the shared dev host the ports are taken by convention, one per developer:
+
+| Port | Developer |
+| --- | --- |
+| 44357 | yl |
+| 44356 | at24 |
+| 44355 | next |
+
+A port outside the list, or a host other than `localhost`, needs an apply — see "Changing the
+browser CORS allowlist" in [`../README.md`](../README.md).
+
 ## First-time setup
 
 The dev resources are Terraform-managed from day one. There is no import workflow — the stack creates every resource it needs.
