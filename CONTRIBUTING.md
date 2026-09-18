@@ -478,7 +478,18 @@ make -C trust/deploy/helm validate
 
 # Place this trust's FL participant kit onto the node, BEFORE deploying
 make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
+
+# Against a live cluster: drive a real C-STORE through the PACS and read XNAT's
+# receiver log (a C-ECHO cannot see an importer crash — FLIP#1228)
+make -C trust/deploy/helm smoke-cstore
 ```
+
+`make -C trust/deploy/helm deploy` (and `deploy-trust-k8s`) take `HELM_TIMEOUT` (default
+`30m`), the single budget for every wait on the `xnat-init` job — the Helm hook wait in
+`deploy` and the `kubectl wait` in `xnat-init` alike. Raise it per site
+(`HELM_TIMEOUT=45m`) rather than editing the Makefile; set below the job's real duration
+it reports a Helm timeout *after* the new pod spec has been applied, which reads as a hook
+failure rather than an un-deployed chart.
 
 `stage-kit` is a prerequisite of deploying with `flClient.enabled`: the chart never fetches
 the kit (a trust holds no FLIP AWS credentials), so `flClient.kitHostPath` must already exist
@@ -487,10 +498,11 @@ The previous `make patch-aws-creds` target is gone along with the chart's in-clu
 see "Upgrading an install that fetched its kit from S3" in the K8s README for the full list of
 removed values.
 
-The chart has a `check_status.py` smoke test script and a `sync_k8s_kit.py` script that syncs a
-registered trust's kit file (hub registration itself still goes through `register_trust` /
-`make register-trusts`) into the chart's Kubernetes Secret and a Helm values override. See the
-[K8s README](trust/deploy/helm/README.md) for details.
+The chart has a `check_status.py` smoke test script (which also compares the running xnat-web
+pod's plugin jars against `xnat.web.plugins.urls`), a `scripts/smoke-cstore.sh` DICOM ingest
+smoke, and a `sync_k8s_kit.py` script that syncs a registered trust's kit file (hub registration
+itself still goes through `register_trust` / `make register-trusts`) into the chart's Kubernetes
+Secret and a Helm values override. See the [K8s README](trust/deploy/helm/README.md) for details.
 
 **Testing fixtures**: For testing APIs and integration tests, we use [pytest fixtures](https://docs.pytest.org/en/latest/how-to/fixtures.html). Shared fixtures are defined in `conftest.py` files. In some cases, [`factory_boy`](https://factoryboy.readthedocs.io/) is used to create test data following production data structures.
 
