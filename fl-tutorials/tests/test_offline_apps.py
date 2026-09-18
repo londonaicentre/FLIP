@@ -34,6 +34,12 @@ any ``weights=`` that names a torchvision weights enum or weight name downloads,
 model builder; and constructing MONAI's ``PerceptualLoss`` (or lpips' ``LPIPS``) fetches its
 backbone through torch.hub *whatever* ``network_type`` says — ``squeeze`` included — unless the
 module first stages a hub dir (``torch.hub.set_dir``), which is what the LDM tutorial does.
+
+The same walk holds shipped app code to weights-only checkpoint loading (FLIP#1245, #1249):
+every ``torch.load`` passes ``weights_only=True`` explicitly. A load that unpickles arbitrary
+objects is code execution beside patient data, and leaving the keyword off is only safe while
+torch's default says so. Raw upstream checkpoints that need full unpickling are converted host-side
+(the tutorials' ``process_tools/``), outside the app dirs this guard walks.
 """
 
 from __future__ import annotations
@@ -186,6 +192,26 @@ def offences_in(source: str) -> list[tuple[int, str]]:
     return sorted(found)
 
 
+UNPICKLING_LOADER = "torch.load"
+
+
+def unpickling_loads_in(source: str) -> list[tuple[int, str]]:
+    """Every ``torch.load`` in ``source`` that does not pass ``weights_only=True``, as (line, label)."""
+    tree = ast.parse(source)
+    aliases = _import_aliases(tree)
+    constants = _module_constants(tree)
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or _canonical(node.func, aliases) != UNPICKLING_LOADER:
+            continue
+        keywords = {k.arg: k.value for k in node.keywords if k.arg}
+        if "weights_only" not in keywords:
+            found.append((node.lineno, "torch.load( without weights_only"))
+        elif _value(keywords["weights_only"], constants) is not True:
+            found.append((node.lineno, "torch.load( with weights_only other than True"))
+    return sorted(found)
+
+
 def _app_dir_of(path: Path) -> Path | None:
     """The shipped-app directory a tracked file belongs to, or None if it is not app code."""
     parts = path.relative_to(REPO_ROOT).parts
@@ -261,6 +287,20 @@ def test_app_fetches_nothing_at_run_time(app_dir: Path):
     )
 
 
+@pytest.mark.parametrize("app_dir", APP_DIRS, ids=_relative)
+def test_app_loads_checkpoints_weights_only(app_dir: Path):
+    offences = [
+        f"{_relative(py)}:{lineno}: {label}"
+        for py in APP_FILES[app_dir]
+        for lineno, label in unpickling_loads_in(py.read_text(encoding="utf-8"))
+    ]
+    assert not offences, (
+        "checkpoint load that can unpickle arbitrary objects in a shipped app (FLIP#1245/#1249) — pass "
+        "weights_only=True, and convert raw upstream checkpoints host-side (process_tools/):\n  "
+        + "\n  ".join(offences)
+    )
+
+
 WEIGHTS = "weights=<torchvision weights> (downloads)"
 HUB_LOSS = "PerceptualLoss( fetches its backbone through torch.hub unless the app stages it"
 CAUGHT = [
@@ -317,3 +357,33 @@ def test_guard_catches_the_call_shapes_it_claims_to(snippet: str, label: str):
 @pytest.mark.parametrize("snippet", ACCEPTED, ids=[s.splitlines()[-1][:60] for s in ACCEPTED])
 def test_guard_accepts_the_offline_shapes(snippet: str):
     assert offences_in(snippet) == [], snippet
+
+
+UNPICKLING = [
+    ("ckpt = torch.load(path, map_location='cpu')", "torch.load( without weights_only"),
+    ("import torch as T\nckpt = T.load(path)", "torch.load( without weights_only"),
+    ("from torch import load as tload\nckpt = tload(path)", "torch.load( without weights_only"),
+    ("ckpt = torch.load(path, weights_only=False)", "torch.load( with weights_only other than True"),
+    ("SAFE = False\nckpt = torch.load(path, weights_only=SAFE)", "torch.load( with weights_only other than True"),
+    ("ckpt = torch.load(path, weights_only=trusted)", "torch.load( with weights_only other than True"),
+]
+
+WEIGHTS_ONLY = [
+    "state = torch.load('shipped.pt', weights_only=True)",
+    "SAFE = True\nstate = torch.load(p, map_location='cpu', weights_only=SAFE)",
+    "from torch import load\nstate = load(p, weights_only=True)",
+    "state = safetensors.torch.load_file(p)",
+    "cfg = yaml.load(f, Loader=yaml.SafeLoader)",
+    "arr = np.load(p)",
+]
+
+
+@pytest.mark.parametrize(("snippet", "label"), UNPICKLING, ids=[c[0].splitlines()[-1][:60] for c in UNPICKLING])
+def test_guard_catches_the_unpickling_load_shapes(snippet: str, label: str):
+    labels = [found for _, found in unpickling_loads_in(snippet)]
+    assert labels == [label], f"{snippet!r} → {labels}"
+
+
+@pytest.mark.parametrize("snippet", WEIGHTS_ONLY, ids=[s.splitlines()[-1][:60] for s in WEIGHTS_ONLY])
+def test_guard_accepts_weights_only_loads(snippet: str):
+    assert unpickling_loads_in(snippet) == [], snippet
