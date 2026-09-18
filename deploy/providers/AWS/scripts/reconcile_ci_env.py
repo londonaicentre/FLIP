@@ -220,7 +220,7 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
     api = st.container("flip_api", "flip-api")
     fl_api = st.container("fl_api_net_1", "fl-api-net-1")
     fl_server = st.container("fl_server_net_1", "fl-server-net-1")
-    api_env, fl_api_env, fl_server_env = env_of(api), env_of(fl_api), env_of(fl_server)
+    api_env, fl_api_env = env_of(api), env_of(fl_api)
     registry = split_image(api.get("image", ""))[0]
 
     # The EFS provisioning task syncs the participant kit from a dated S3 prefix;
@@ -279,7 +279,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "TRUST_API_KEY_HEADER": api_env.get("TRUST_API_KEY_HEADER", ""),
         "FL_BACKEND": api_env.get("FL_BACKEND", ""),
         "FL_ADMIN_DIRECTORY": fl_api_env.get("FL_ADMIN_DIRECTORY", ""),
-        "MIN_CLIENTS": fl_server_env.get("MIN_CLIENTS", ""),
         "FLARE_KIT_DATE": kit_date("flare"),
         "FLOWER_KIT_DATE": kit_date("flower"),
         "DOCKER_REGISTRY": registry,
