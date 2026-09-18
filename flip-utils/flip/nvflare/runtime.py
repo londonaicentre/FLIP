@@ -28,6 +28,7 @@ Resolution order, given a component that also accepts a legacy ``model_id`` cons
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from nvflare.apis.fl_constant import FLContextKey
@@ -66,7 +67,10 @@ def _load_meta_from_workspace(fl_ctx: FLContext) -> dict[str, Any] | None:
         job_id = fl_ctx.get_job_id()
         if not workspace or not job_id:
             return None
-        meta_path = workspace.get_job_meta_path(job_id)
+        # open() takes any __index__-able object as a file descriptor, so normalise this duck-typed
+        # engine's answer first: whatever reaches open() is a path, never something it would take for
+        # fd 1 and close on exit.
+        meta_path = os.fspath(workspace.get_job_meta_path(job_id))
         with open(meta_path) as f:
             data = json.load(f)
             return data if isinstance(data, dict) else None
