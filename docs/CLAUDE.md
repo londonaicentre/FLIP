@@ -40,6 +40,7 @@ When implementing a feature that touches documentation, read the relevant `.rst`
 ```bash
 cd docs && make clean    # Clean built docs (also drops source/assets/generated/)
 cd docs && make docs     # Build Sphinx HTML documentation
+cd docs && make test     # pytest over tests/ + ruff over scripts/, tests/, conf.py
 ```
 
 The build needs graphviz (`dot`) on PATH: `conf.py`'s `builder-inited` hook renders the Central Hub AWS
@@ -48,3 +49,15 @@ diagrams from `deploy/providers/AWS/architecture/central_hub.py` into the gitign
 the docs CI job via `apt-get`). `FLIP_DOCS_SKIP_DIAGRAMS=1 make docs` builds text-only on a host without
 graphviz — with a warning, and missing-image warnings on the Central Hub page. Pages renamed in FLIP#364
 keep their old URLs through `sphinx-reredirects` (`redirects` in `conf.py`).
+
+The user-guide GIFs are **not tracked in git** (FLIP#1236). A second `builder-inited` hook in `conf.py` fetches
+the version pinned in `docs/.gifs_version` from the public HF dataset `aicentreflip/docs-gifs`
+(`scripts/fetch_docs_gifs.py`: anonymous `resolve/<tag>/…` URLs, sha256 + size verified against the published
+`manifest.json`, zero requests on a repeat build at a tag) into `source/assets/generated/gifs/<cat>/<name>.gif`,
+which is where the rst figures point and where `flip-ui/scripts/videos-to-gifs.sh` writes a local recording.
+A fetch failure is a `SphinxError` naming the URL; `FLIP_DOCS_SKIP_GIF_FETCH=1` builds text-only (and is how a
+local recording is previewed — without it the pin wins per file). `FLIP_DOCS_GIFS_REPO` / `FLIP_DOCS_GIFS_REVISION`
+override the dataset / the pin. New versions are published by `.github/workflows/regenerate_docs_gifs.yml`
+(`scripts/publish_docs_gifs.py`, one commit + one immutable tag `YYYYMMDDTHHMMSSZ-<sha7>`, then a one-line pin
+PR reviewed through its RTD preview); the card is `scripts/docs_gifs_card.md`. Adding a GIF is a spec + an rst
+figure in one PR, then the bot's pin PR — `tests/test_docs_gifs_wiring.py` keeps figures and specs in step.
