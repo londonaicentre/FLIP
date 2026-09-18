@@ -29,6 +29,7 @@ jobs:
         runs-on: ubuntu-latest
         permissions: # override top-level read-only default to allow tag/release creation
             contents: write
+            actions: write # dispatch the image builds at the release tag (see the step below)
 
         steps:
             - name: Checkout repository
@@ -59,6 +60,38 @@ jobs:
                   git config user.email "github-actions[bot]@users.noreply.github.com"
                   git tag "${{ steps.version.outputs.tag }}"
                   git push origin "${{ steps.version.outputs.tag }}"
+
+            # The image workflows listen for a push of refs/tags/v*.*.* (FLIP#1204) — but
+            # GitHub starts no workflow for an event created with the repository's own
+            # GITHUB_TOKEN, which is what the tag push above is (the anti-recursion rule; only
+            # workflow_dispatch and repository_dispatch are exempt). So the twelve builds are
+            # dispatched here explicitly, at the tag, one run each: inside them github.ref is
+            # refs/tags/v<X.Y.Z> and github.sha the tagged commit, exactly as a hand-pushed
+            # tag would present. The roster is every publishing image workflow;
+            # scripts/tests/test_release_image_tags.py holds it to the set that carries the
+            # tag trigger, so a workflow added without being listed here fails CI.
+            - name: Build every image at the release tag
+              if: steps.tag_check.outputs.exists == 'false'
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  TAG: ${{ steps.version.outputs.tag }}
+              run: |
+                  for wf in \
+                      docker_build_flip_api.yml \
+                      docker_build_omop_db.yml \
+                      docker_build_orthanc.yml \
+                      docker_build_trust_data_access_api.yml \
+                      docker_build_trust_imaging_api.yml \
+                      docker_build_trust_trust_api.yml \
+                      docker_build_xnat_db.yml \
+                      docker_build_xnat_dcm2niix.yml \
+                      docker_build_xnat_nginx.yml \
+                      docker_build_xnat_web.yml \
+                      fl-docker-build-flower.yml \
+                      fl-docker-build-nvflare.yml; do
+                    gh workflow run "$wf" --ref "$TAG"
+                    echo "dispatched $wf at $TAG"
+                  done
 
             # generate_release_notes lets GitHub choose the previous release itself, which is
             # whatever was published most recently — including a flip-utils release cut seconds

@@ -101,12 +101,14 @@ jobs:
           # Length 7 must match the tag resolution in deploy/providers/AWS/Makefile.
           TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${SHA:0:7}"
 
-          # Release tag (FLIP#1204): a push of refs/tags/v<X.Y.Z> also publishes :v<X.Y.Z>,
+          # Release tag (FLIP#1204): a run on refs/tags/v<X.Y.Z> also publishes :v<X.Y.Z> —
+          # whether the tag was pushed by hand (a release candidate) or, for a real release,
+          # dispatched by release.yml at the tag it just created (see there for why),
           # and skips the branch-name tag (it would sanitise to v0-6-0). RELEASE is what the
           # image bakes as FLIP_RELEASE so /health names the build: the release tag when
           # there is one, else the sha tag.
           RELEASE="sha-${SHA:0:7}"
-          if [[ "$GH_EVENT_NAME" == "push" && "$GH_REF" == refs/tags/v* ]]; then
+          if [[ "$GH_REF" == refs/tags/v* ]]; then
             RELEASE="$GH_REF_NAME"
             TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${GH_REF_NAME}"
           else

@@ -122,5 +122,44 @@ class ReleaseTagGuard(unittest.TestCase):
                 assert guard_at < first_build.start(), f"{wf.name}: the guard must run before any docker build/push"
 
 
+RELEASE_WORKFLOW = WORKFLOWS / "release.yml"
+
+
+class ReleaseDispatchesTheBuilds(unittest.TestCase):
+    """release.yml must dispatch every image workflow at the tag it creates.
+
+    The tag is pushed with the workflow's own GITHUB_TOKEN, and GitHub starts no workflow for an
+    event created that way (only workflow_dispatch / repository_dispatch are exempt) — so the
+    `push.tags` trigger the image workflows carry never fires on a real release. A hand-pushed
+    tag (a release candidate) does fire it, which is exactly why a manual proof would not catch
+    a workflow missing from the roster below.
+    """
+
+    def test_release_dispatches_exactly_the_publishing_image_workflows(self) -> None:
+        text = RELEASE_WORKFLOW.read_text()
+        step = text[text.index("Build every image at the release tag") :]
+        step = step[: step.index("- name:", 10)] if "- name:" in step[10:] else step
+        roster = re.compile(r"^\s+((?:docker_build_|fl-docker-build-)[A-Za-z0-9_-]+\.yml)", re.MULTILINE)
+        dispatched = set(roster.findall(step))
+        expected = {wf.name for wf in IMAGE_WORKFLOWS}
+        assert dispatched == expected, f"missing={sorted(expected - dispatched)} extra={sorted(dispatched - expected)}"
+        assert 'gh workflow run "$wf" --ref "$TAG"' in step
+
+    def test_release_job_may_dispatch_workflows(self) -> None:
+        text = RELEASE_WORKFLOW.read_text()
+        assert re.search(r"^\s+actions: write", text, re.MULTILINE), "release.yml needs actions: write to dispatch"
+
+    def test_image_workflows_publish_the_tag_for_a_dispatched_run_too(self) -> None:
+        """The :v<X.Y.Z> branch must key on the ref alone — a dispatched run's event is not `push`."""
+        for wf in IMAGE_WORKFLOWS:
+            text = wf.read_text()
+            with self.subTest(workflow=wf.name):
+                assert 'GH_EVENT_NAME" == "push" && "$GH_REF" == refs/tags/v' not in text, (
+                    f"{wf.name}: the release-tag branch is gated on event_name == push, so release.yml's dispatch would"
+                    " publish a sanitised branch-name tag instead of :v<X.Y.Z>"
+                )
+                assert "workflow_dispatch" in text, f"{wf.name}: release.yml cannot dispatch it without the trigger"
+
+
 if __name__ == "__main__":
     unittest.main()
