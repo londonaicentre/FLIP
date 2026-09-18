@@ -219,11 +219,14 @@ up-onprem-trust:
 # verb and wipes the XNAT archive. TAG defaults to the release the hub runs (read from
 # the hub's /health), so a plain `make upgrade-onprem-trust KIT=<slot>` is "catch up
 # with the hub"; FL_TAG= pins the FL client apart (sha- moves only — a release builds every
-# image at one tag); FORCE=1 allows a downgrade, YES=1 skips the confirmation.
+# image at one tag); FORCE=1 allows a downgrade, YES=1 skips the confirmation. A release
+# TAG is refused unless this checkout is at that tag — the compose files and this very verb
+# come from the checkout, so `git fetch --tags origin && git checkout vX.Y.Z` comes first;
+# ALLOW_CHECKOUT_DRIFT=1 overrides for a deliberate mismatch (testing a branch).
 upgrade-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
 	@$(MAKE) onboard-onprem-trust KIT=$(KIT)
-	$(MAKE) -C trust upgrade-trust KIT=$(KIT) PROD=$(or $(PROD),true) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES)
+	$(MAKE) -C trust upgrade-trust KIT=$(KIT) PROD=$(or $(PROD),true) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
 # so an operator doesn't have to remember the -C trust path or PROD value.

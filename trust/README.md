@@ -259,12 +259,15 @@ need only your trust's kit file (`trust/.env.<CODE>.<env>`).
 ### Upgrading to a release (FLIP#1204)
 
 ```bash
+git fetch --tags origin && git checkout v0.7.0              # the checkout first: compose files + this verb come from it
 sudo -E make upgrade-onprem-trust KIT=<slot>              # → the release the hub runs
 sudo -E make upgrade-onprem-trust KIT=<slot> TAG=v0.7.0   # → a named release
 ```
 
 Runs the readiness checklist, resolves the target (the hub's `/api/health`
-`version`, or `TAG=`), asks you to confirm `site <current> → target <release>`,
+`version`, or `TAG=`), refuses a release tag unless this checkout is at it
+(`ALLOW_CHECKOUT_DRIFT=1` overrides — testing a branch), asks you to confirm
+`site <current> → target <release>`,
 writes the tag into your kit's Hub-shared block, pulls, recreates what changed,
 and upgrades XNAT in place (database dump first, no reset). Before the kit is touched
 it asks the registry for every image at the target and refuses a tag any of them was

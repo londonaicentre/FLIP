@@ -31,8 +31,13 @@ Everything that decides *what* to move to happens here, before any container is 
    (``docker manifest inspect``, so a tag that was only ever built for *some* images — every
    ``sha-`` tag, since each image's CI build is path-filtered — is refused before the kit is
    rewritten, rather than failing half-way through ``compose pull`` or, worse, letting
-   ``docker stack deploy`` stop a running XNAT task for an image that cannot be pulled); and
-   the operator confirms the printed ``site vA → target vB`` unless ``--yes``.
+   ``docker stack deploy`` stop a running XNAT task for an image that cannot be pulled); for a
+   release target the **checkout must be at that tag** — the compose files, Makefiles and XNAT
+   stack that run the images come from this git checkout, not from the images, so a site on the
+   v0.6.0 tree pulling v1.0.0 images is an untested pairing (and the verb itself may differ);
+   ``--allow-checkout-drift`` overrides for a deliberate mismatch such as testing a branch, and
+   ``sha-`` targets are never checked (there is no tag to check out for one); and the operator
+   confirms the printed ``site vA → target vB`` unless ``--yes``.
 3. **Pin.** ``DOCKER_TAG`` and ``DOCKER_FL_TAG`` in the kit's Hub-shared block are rewritten
    in place, so the kit always records what is installed. The Makefile then re-includes the
    kit in a sub-make and does the pull / recreate. ``--fl-tag`` pins ``DOCKER_FL_TAG`` apart
@@ -41,11 +46,13 @@ Everything that decides *what* to move to happens here, before any container is 
 
 Usage:
     uv run --no-config scripts/site_upgrade.py plan --kit-file trust/.env.<CODE>.<env> \\
-        [--tag vX.Y.Z] [--fl-tag vX.Y.Z] [--force] [--yes] [--hub-url URL] [--dry-run]
+        [--tag vX.Y.Z] [--fl-tag vX.Y.Z] [--force] [--yes] [--hub-url URL] [--dry-run] \\
+        [--allow-checkout-drift]
 
 Exit codes (the Makefile's contract): 0 pinned; 2 needs ``--tag``; 3 refused downgrade
 (pass ``--force``); 4 not confirmed (pass ``--yes`` for a scripted run); 5 an image is
-missing at the target tag.
+missing at the target tag; 6 the checkout is not at the target release
+(``git fetch --tags origin && git checkout <tag>``, then re-run from the new checkout).
 """
 
 from __future__ import annotations
@@ -74,6 +81,12 @@ EXIT_NEEDS_TAG = 2
 EXIT_DOWNGRADE = 3
 EXIT_NOT_CONFIRMED = 4
 EXIT_MISSING_IMAGES = 5
+EXIT_CHECKOUT_MISMATCH = 6
+
+#: The FLIP checkout this script runs from — what the compose files, Makefiles and XNAT stack
+#: come from. Not configurable: the verb is `make …` in that checkout.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_GIT_TIMEOUT_SECONDS = 10.0
 
 _HUB_TIMEOUT_SECONDS = 10.0
 _MANIFEST_TIMEOUT_SECONDS = 60.0
@@ -203,6 +216,39 @@ def missing_images(kit: dict[str, str], tag: str, fl_tag: str | None = None) -> 
     return [ref for ref in site_images(kit, tag, fl_tag) if not manifest_exists(ref)]
 
 
+def _git(repo_root: Path, *args: str) -> str | None:
+    """stdout of ``git -C repo_root <args>``, or None when git is missing, it is not a checkout, or the call fails."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), *args],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def checkout_tags(repo_root: Path = _REPO_ROOT) -> list[str] | None:
+    """Every git tag on the checkout's HEAD (``[]`` when untagged), or None outside a git checkout.
+
+    Reads the tags the checkout has *fetched*: a release that was cut after the last
+    ``git fetch --tags`` is not on HEAD however the tree got there, which is the right answer —
+    the fix the caller prints starts with the fetch.
+    """
+    out = _git(repo_root, "tag", "--points-at", "HEAD")
+    if out is None:
+        return None
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def describe_checkout(repo_root: Path = _REPO_ROOT) -> str:
+    """``git describe --tags --always`` for the message — a tag, ``v0.6.0-12-gabc1234``, or a bare sha."""
+    return (_git(repo_root, "describe", "--tags", "--always") or "").strip() or "<unknown>"
+
+
 def write_tags(kit_file: Path, tag: str, fl_tag: str | None = None) -> None:
     """Pin ``DOCKER_TAG`` (and ``DOCKER_FL_TAG``, to ``fl_tag`` or the same) in the kit, kit kept 0600."""
     lines = kit_file.read_text().split("\n")
@@ -255,6 +301,26 @@ def plan(args: argparse.Namespace) -> int:
             return EXIT_DOWNGRADE
         print("   ⚠️  downgrade forced (FORCE=1) — XNAT database migrations are forward-only; restore from a dump")
 
+    # The compose files, Makefiles and XNAT stack that run the target's images come from this
+    # checkout, so a release target must be run from the tree tagged with it. Checked before the
+    # registry: a stale tree is the cheaper thing to fix, and the verb itself may differ there.
+    if _RELEASE_TAG.match(target):
+        tags = checkout_tags()
+        if tags is None:
+            print(f"   ⚠️  {_REPO_ROOT} is not a git checkout — cannot confirm its files match {target}; continuing")
+        elif target in tags:
+            print(f"   ✓ checkout is at {target}")
+        elif args.allow_checkout_drift:
+            print(f"   ⚠️  checkout is {describe_checkout()}, not {target} — drift allowed (ALLOW_CHECKOUT_DRIFT=1)")
+        else:
+            print(f"❌ This checkout is {describe_checkout()}, but the target is {target}.")
+            print("   The compose files, Makefiles and XNAT stack that run the images come from the checkout,")
+            print("   not from the images — move it to the release first, then re-run from the new checkout:")
+            print(f"     git -C {_REPO_ROOT} fetch --tags origin && git -C {_REPO_ROOT} checkout {target}")
+            print("   (your kit, FL kit and data directories are untracked and stay in place). Nothing changed.")
+            print("   ALLOW_CHECKOUT_DRIFT=1 overrides, for a deliberate mismatch such as testing a branch.")
+            return EXIT_CHECKOUT_MISMATCH
+
     if shutil.which("docker") is None:
         print("   ⚠️  docker CLI not found — skipping the registry check; the pull will report a missing image")
     else:
@@ -295,6 +361,11 @@ def main() -> None:
     p.add_argument("--force", action="store_true", help="allow a release downgrade")
     p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     p.add_argument("--dry-run", action="store_true", help="resolve and report only; never write the kit")
+    p.add_argument(
+        "--allow-checkout-drift",
+        action="store_true",
+        help="proceed when this checkout is not at the target release tag (testing a branch)",
+    )
     args = parser.parse_args()
     sys.exit(plan(args))
 

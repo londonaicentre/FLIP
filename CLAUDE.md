@@ -464,7 +464,7 @@ make -C trust debug-<SVC>-off      # Stop it
 ### Site release upgrades (FLIP#1204)
 
 ```bash
-make upgrade-onprem-trust KIT=<slot> [TAG=vX.Y.Z] [FL_TAG=…] [FORCE=1] [YES=1]  # operator: readiness checklist → data-safe upgrade
+make upgrade-onprem-trust KIT=<slot> [TAG=vX.Y.Z] [FL_TAG=…] [FORCE=1] [YES=1] [ALLOW_CHECKOUT_DRIFT=1]  # operator: readiness checklist → data-safe upgrade; a release TAG is refused unless the checkout is at that tag (exit 6) — `git fetch --tags origin && git checkout vX.Y.Z` first
 make -C trust upgrade-trust KIT=<CODE> PROD=<env> [TAG=…]                # the verb itself (pull, recreate, XNAT in place)
 make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> TAG=… [KUBE_CONTEXT=…]  # Helm: sync-kit → global.image.tag
 make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env>      # EC2 twin (no re-seed)

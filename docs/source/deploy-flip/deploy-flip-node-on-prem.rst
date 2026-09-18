@@ -223,8 +223,11 @@ encrypted channel — it contains a plaintext API key, AES encryption key, and
 an FL TLS private key.
 
 **4. Extract, configure, and start (trust operator).** Extract the tarball,
-copy the kit into the checkout, edit **only** the Host-local profile, then
-bring the stack up:
+copy the kit into the checkout — a checkout at the **release the hub runs**
+(``git fetch --tags origin && git checkout v<X.Y.Z>``; the admin tells you which,
+and the hub's ``/api/health`` reports it), never a branch tip, because the
+compose files and Makefiles that run the images come from it — edit **only**
+the Host-local profile, then bring the stack up:
 
 .. code-block:: shell
 

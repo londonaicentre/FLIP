@@ -54,7 +54,31 @@ follow.
    ``FL_KIT_DIR``) and Trust-local credentials stay as they are — do not copy the whole file
    over yours.
 
-3. **Run the upgrade.** From your FLIP checkout:
+3. **Move your FLIP checkout to the release.** The images are only half of a release: the
+   compose files, the Makefiles, the XNAT stack files and the upgrade command itself all come
+   from the git checkout on your host, not from the images, and they change between releases.
+   So the checkout has to be at the same tag as the images you are about to run:
+
+   .. code-block:: bash
+
+      cd <your FLIP checkout>
+      git fetch --tags origin
+      git checkout v0.7.0          # the release named in the Site upgrade section
+
+   Your kit (``trust/.env.<CODE>.production``), the FL kit and the data directories are
+   untracked, so checking out a tag never touches them. The upgrade verb refuses a release
+   target from a checkout that is not at that tag (exit code 6, naming the fix) — the one
+   reason to override it, ``ALLOW_CHECKOUT_DRIFT=1``, is testing a branch that is not a
+   release.
+
+   .. note::
+
+      On the first upgrade from a site installed before this runbook existed (v0.6.0 or
+      earlier) the ``upgrade-onprem-trust`` command is not in your checkout yet — it arrived
+      with the release you are moving to. The checkout step above is what makes it appear;
+      run it first, then continue.
+
+4. **Run the upgrade.** From that checkout:
 
    .. code-block:: bash
 
@@ -70,6 +94,8 @@ follow.
    - resolves the target: ``TAG=`` if given, else the hub's ``/api/health`` ``version``. It
      prints ``site <current> → target <release>`` and asks you to confirm (``YES=1`` skips the
      prompt for a scripted run). A move to an older release is refused unless ``FORCE=1``;
+   - confirms this checkout is at the target release (step 3) before anything else is
+     touched — a ``sha-`` target is never checked, since a CI build has no git tag to be at;
    - checks the registry (``docker manifest inspect``) for every image the site pulls — the
      three APIs, Orthanc, ``omop-db``, the three XNAT images and the FL client — at that tag,
      or at the kit's own pin for the ones that have one (``OMOP_DB_TAG``, ``ORTHANC_TAG``,
@@ -93,7 +119,7 @@ follow.
    re-fetch the mock data and wipe the XNAT archive. Do not use them, or ``restart-trust``, to
    move a live site.
 
-4. **Verify.** The checklist re-runs at the end of the upgrade. On your host:
+5. **Verify.** The checklist re-runs at the end of the upgrade. On your host:
 
    .. code-block:: bash
 
@@ -110,7 +136,9 @@ Kubernetes
 
 The chart pins the release with one value, ``global.image.tag``, which every FLIP-built image
 follows (observability images and ``xnat-dcm2niix`` keep their upstream versions). ``sync-kit``
-fills it from the kit's ``DOCKER_TAG``; the upgrade verb sets it explicitly:
+fills it from the kit's ``DOCKER_TAG``; the upgrade verb sets it explicitly. The chart templates
+come from the checkout you run it from, so the same rule applies: ``git fetch --tags origin &&
+git checkout vX.Y.Z`` first (the verb refuses a release tag from any other checkout).
 
 .. code-block:: bash
 
@@ -133,7 +161,8 @@ a release tag never needs one.
 Cloud (EC2) trust
 =================
 
-From the admin workstation, over the same SSH docker context ``make deploy-trust`` uses:
+From the admin workstation — at the release's tag, as for a site — over the same SSH docker
+context ``make deploy-trust`` uses:
 
 .. code-block:: bash
 
@@ -145,8 +174,8 @@ OMOP and Orthanc on the host and its XNAT step resets the archive.
 Rolling back
 ============
 
-Run the same verb with the previous release and ``FORCE=1`` (a release→release move backwards
-is otherwise refused):
+Check out the previous release's tag, then run the same verb with it and ``FORCE=1`` (a
+release→release move backwards is otherwise refused):
 
 .. code-block:: bash
 

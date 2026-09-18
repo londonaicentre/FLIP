@@ -461,14 +461,16 @@ restart-trust: down-trust up-trust
 #
 # Two phases, because the kit is -include'd at parse time: phase 1 lets the resolver
 # (scripts/site_upgrade.py) pick the target — TAG=, else the release the hub runs —
-# confirm it, and rewrite DOCKER_TAG/DOCKER_FL_TAG in the kit; phase 2 is a sub-make
+# confirm it — refusing a release target unless THIS checkout is at that tag, since the
+# compose files below come from the checkout, not the images (ALLOW_CHECKOUT_DRIFT=1
+# overrides) — and rewrite DOCKER_TAG/DOCKER_FL_TAG in the kit; phase 2 is a sub-make
 # that re-reads the kit so every $(DOCKER_TAG) below is the new one. `docker compose`
 # itself reads the kit through --env-file, so the images it pulls are the new ones too.
 #   make -C trust upgrade-trust KIT=<CODE> PROD=<env> [TAG=vX.Y.Z] [FL_TAG=vX.Y.Z] [FORCE=1] [YES=1]
 upgrade-trust: require-xnat-aetitle
 	$(require_kit_file)
 	$(check_slot_not_taken)
-	uv run --no-config ../scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes)
+	uv run --no-config ../scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
 	$(MAKE) _upgrade-trust-apply KIT=$(KIT) PROD=$(PROD) DEBUG=$(DEBUG)
 
 # Phase 2 of upgrade-trust — never call directly (the tag it applies is whatever the

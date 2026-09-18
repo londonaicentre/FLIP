@@ -224,6 +224,31 @@ class SiteImages(unittest.TestCase):
             assert not su.manifest_exists("ghcr.io/x/y:v1")
 
 
+class CheckoutTags(unittest.TestCase):
+    """The checkout probe: the tags on HEAD, or None when there is no git checkout to ask."""
+
+    def test_lists_every_tag_on_head(self):
+        with mock.patch.object(su.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="v0.7.0\nrelease-2026\n")) as run:
+            assert su.checkout_tags(Path("/repo")) == ["v0.7.0", "release-2026"]
+        assert run.call_args.args[0] == ["git", "-C", "/repo", "tag", "--points-at", "HEAD"]
+
+    def test_an_untagged_head_is_an_empty_list_not_none(self):
+        with mock.patch.object(su.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="")):
+            assert su.checkout_tags(Path("/repo")) == []
+
+    def test_no_git_or_no_checkout_is_none(self):
+        with mock.patch.object(su.subprocess, "run", side_effect=OSError("no git")):
+            assert su.checkout_tags(Path("/repo")) is None
+        with mock.patch.object(su.subprocess, "run", return_value=mock.Mock(returncode=128, stdout="")):
+            assert su.checkout_tags(Path("/repo")) is None
+
+    def test_describe_falls_back_to_unknown(self):
+        with mock.patch.object(su.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="v0.6.0-12-gabc1234\n")):
+            assert su.describe_checkout(Path("/repo")) == "v0.6.0-12-gabc1234"
+        with mock.patch.object(su.subprocess, "run", side_effect=OSError("no git")):
+            assert su.describe_checkout(Path("/repo")) == "<unknown>"
+
+
 class Plan(unittest.TestCase):
     """End-to-end through main(): exit codes are the Makefile's contract."""
 
@@ -232,6 +257,11 @@ class Plan(unittest.TestCase):
         patcher = mock.patch.object(su, "missing_images", return_value=[])
         self.missing_images = patcher.start()
         self.addCleanup(patcher.stop)
+        # And the checkout is unknowable (not a git tree) unless a test says otherwise — the
+        # warn-only path — so no test here depends on which commit the test runner sits on.
+        checkout = mock.patch.object(su, "checkout_tags", return_value=None)
+        self.checkout_tags = checkout.start()
+        self.addCleanup(checkout.stop)
 
     def _run(self, kit: Path, *argv: str, stdin: str = "") -> tuple[int, str]:
         out = io.StringIO()
@@ -337,6 +367,57 @@ class Plan(unittest.TestCase):
             assert code == 2, out
             assert "FL_TAG=" in out
             assert "DOCKER_TAG=sha-badcff1" in kit.read_text()
+
+    def test_plan_refuses_a_release_target_from_a_checkout_at_another_tag(self):
+        """The verb runs from the tree that carries the compose files; a v0.6.0 tree must not pin v0.7.0."""
+        self.checkout_tags.return_value = ["v0.6.0"]
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.6.0", fl_tag="v0.6.0")
+            with mock.patch.object(su, "describe_checkout", return_value="v0.6.0"):
+                code, out = self._run(kit, "--tag", "v0.7.0", "--yes")
+            assert code == su.EXIT_CHECKOUT_MISMATCH, out
+            assert "checkout is v0.6.0, but the target is v0.7.0" in out
+            assert "git -C" in out and "checkout v0.7.0" in out and "fetch --tags" in out
+            assert "DOCKER_TAG=v0.6.0" in kit.read_text()
+        # Refused before the registry is asked: the stale tree is the cheaper fix.
+        self.missing_images.assert_not_called()
+
+    def test_plan_accepts_a_release_target_from_the_tagged_checkout(self):
+        self.checkout_tags.return_value = ["v0.7.0", "some-other-tag"]
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.6.0", fl_tag="v0.6.0")
+            code, out = self._run(kit, "--tag", "v0.7.0", "--yes")
+            assert code == 0, out
+            assert "checkout is at v0.7.0" in out
+            assert "DOCKER_TAG=v0.7.0" in kit.read_text()
+
+    def test_plan_allows_checkout_drift_only_when_told(self):
+        self.checkout_tags.return_value = []
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.6.0", fl_tag="v0.6.0")
+            with mock.patch.object(su, "describe_checkout", return_value="v0.6.0-12-gabc1234"):
+                code, out = self._run(kit, "--tag", "v0.7.0", "--yes", "--allow-checkout-drift")
+            assert code == 0, out
+            assert "drift allowed" in out
+            assert "DOCKER_TAG=v0.7.0" in kit.read_text()
+
+    def test_plan_never_checks_the_checkout_for_a_sha_target(self):
+        """A sha- tag names a CI build, not a git tag — there is nothing to check out for it."""
+        self.checkout_tags.return_value = ["v0.6.0"]
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp))
+            code, out = self._run(kit, "--tag", "sha-abcdef0", "--yes")  # pragma: allowlist secret
+            assert code == 0, out
+            assert "checkout" not in out
+        self.checkout_tags.assert_not_called()
+
+    def test_plan_outside_a_git_checkout_warns_and_continues(self):
+        self.checkout_tags.return_value = None
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.6.0", fl_tag="v0.6.0")
+            code, out = self._run(kit, "--tag", "v0.7.0", "--yes")
+            assert code == 0, out
+            assert "not a git checkout" in out
 
     def test_plan_without_a_docker_cli_warns_and_leaves_it_to_the_pull(self):
         with tempfile.TemporaryDirectory() as tmp:

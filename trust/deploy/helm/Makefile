@@ -230,12 +230,14 @@ undeploy-trust-k8s: undeploy ## Remove trust services from K8s (alias for undepl
 # of the compose path's `make -C trust upgrade-trust` — the resolver pins the kit too, so
 # the next `sync-kit` regenerates the same tag into the override rather than reverting it.
 #   make upgrade-trust-k8s KIT=<CODE> [TAG=vX.Y.Z] [FL_TAG=vX.Y.Z] [PROD=<env>] [KUBE_CONTEXT=<ctx>]
+# The chart templates come from this checkout, so a release TAG is refused unless the
+# checkout is at that tag (ALLOW_CHECKOUT_DRIFT=1 overrides — testing a branch).
 # TAG defaults to the release the hub runs (site_upgrade.py reads it from the kit's hub);
 # FL_TAG pins the FL client apart from the rest (sha- moves only).
 upgrade-trust-k8s: ## Move a deployed trust to a release tag (data-safe helm upgrade)
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> is required"; exit 1; }
 	@[ -f "$(CHART_DIR)/k8s-trust-$(KIT).yaml" ] || { echo "❌ $(CHART_DIR)/k8s-trust-$(KIT).yaml not found — run make sync-kit KIT=$(KIT) first"; exit 1; }
-	uv run --no-config $(REPO_ROOT)/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes)
+	uv run --no-config $(REPO_ROOT)/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
 	$(MAKE) _upgrade-trust-k8s-apply KIT=$(KIT) PROD=$(PROD)
 
 # Phase 2: regenerate the override from the kit the resolver just pinned — that is how
