@@ -125,7 +125,9 @@ environment, the ClientApp's working directory is a snapshot under `~/.flwr/apps
 `WORKING_DIR` defaults to a container path — which is why the path is a make target rather than
 a command: `sim-tutorial.sh` handles all three, and stops only its *own* stale simulator
 processes (a blanket `pkill -f flower-superlink` would also kill the FLIP dev stack's fl-server,
-whose processes are visible in the host PID namespace). See the
+whose processes are visible in the host PID namespace). It also refuses to hand the run to a
+local SuperLink another checkout left listening, and its exit status is the run's own terminal
+status as the SuperLink reports it, not `flwr run`'s. See the
 [3D spleen segmentation README](../3d_spleen_segmentation/README.md) for the details.
 
 ## Data Location

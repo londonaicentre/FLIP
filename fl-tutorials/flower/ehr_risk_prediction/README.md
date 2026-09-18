@@ -130,6 +130,13 @@ make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction FL_BACKEND=flower
 Both SuperNodes read the same mounted CSV; each `ClientApp` slices out its own `person_id`-modulo
 partition, so the run is genuinely federated off one file.
 
+For the fast inner loop, the same app runs on the in-process `flwr` simulator — no SuperLink, no
+SuperNodes, no fl-api, no Docker — with the same partitioning:
+
+```bash
+make -C fl-tutorials sim-tutorial TUTORIAL=ehr_risk_prediction FL_BACKEND=flower
+```
+
 ### On the platform (or `make e2e_smoke`)
 
 Upload [`app/`](app) as the model files of a **`standard`**-job-type model and submit

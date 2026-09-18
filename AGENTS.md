@@ -305,7 +305,15 @@ checkpoint: `sim-tutorial.sh` passes `--run-config` pointing `flip-job-dir` at
 `fl-tutorials/data/model_checkpoints` (fetched by `download-spleen-checkpoint`, part of
 `download-spleen-data`) and `checkpoint` at `model.pt`, so
 `make -C fl-tutorials sim-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower`
-runs unchanged app code too.
+runs unchanged app code too. The wrapper's exit status is the **run's** — it reads the run id off
+the stream and asks the SuperLink (`flwr ls`) for the terminal status, because `flwr run --stream`
+returns 0 whatever became of the run — and it refuses to start while a local SuperLink it did not
+start still listens on `127.0.0.1:${FLWR_LOCAL_CONTROL_API_PORT:-39093}` (#1249): `flwr run . local`
+reuses whatever is there, so a SuperLink another worktree left behind would run the app in *that*
+checkout's environment with nothing in the output saying so. The stale-process cleanup deliberately
+spares other checkouts, so the fix is to stop the named pid (or run from that checkout). The
+tabular EHR tutorial maps `DEV_DATAFRAME` only (`fl-tutorials/data/synthea/dataframe.csv`, from
+`download-synthea-data`).
 
 To iterate on the FL images, `make build-fl` builds them locally as `:dev` (see `fl-services/nvflare/README.md`);
 run the stack on them with `make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`.

@@ -90,8 +90,8 @@ registration).
 `--node-config`; `flip.flower.identity.client_identity` reads that, or `SUPERNODE_NAME` when a
 container sets it. Nothing in `app/` knows which runtime it is in.
 
-`flwr run` has three sharp edges, which is why this path is a make target rather than a raw
-command — `sim-tutorial.sh` handles all three:
+`flwr run` has five sharp edges, which is why this path is a make target rather than a raw
+command — `sim-tutorial.sh` handles all five:
 
 1. **A long-lived SuperLink caches its environment.** Ray workers inherit the SuperLink's env,
    not what you exported on the command line, so a SuperLink left over from an earlier run
@@ -106,6 +106,17 @@ command — `sim-tutorial.sh` handles all three:
    script exports absolute `DEV_IMAGES_DIR` / `DEV_DATAFRAME`.
 3. **`WORKING_DIR` defaults to `/app/runs`** — a path inside a SuperNode container that does not
    exist on the host. The script points it at the same host directory the compose path uses.
+4. **`flwr run . local` connects to whatever already listens on the local Control API port**
+   (`127.0.0.1:${FLWR_LOCAL_CONTROL_API_PORT:-39093}`) and never checks who started it. A
+   SuperLink another checkout left running captures the run, and the app then executes in *that*
+   checkout's environment — its `flip` package, its Python, its numpy — with nothing in the output
+   saying so but the venv paths in a traceback. Because the stale-process cleanup above
+   deliberately spares other checkouts' processes, the script refuses to start when the port is
+   still taken after its own cleanup, naming the pid and command line to stop.
+5. **`flwr run --stream` returns 0 once the log stream closes, whatever became of the run.** A
+   simulation that dies mid-round still hands back success. The script reads the run id off the
+   stream, asks the SuperLink for the run's terminal status (`flwr ls`) and exits non-zero unless
+   it is `finished:completed` — so a loop over tutorials really does stop at the first failure.
 
 FLIP's `DevSettings` singleton is pinned at import time, so all of the above must be set *before*
 the process starts; the script does that, but it does mean you cannot change them mid-run.

@@ -46,7 +46,7 @@ covers `datasets/cxr/omop_convert_cxr.py`, and
 Cross-cutting guards that assert a property across several source files
 (`test_dicom_orientation.py`, `test_flower_min_clients_wiring.py`,
 `test_spleen_inference_config_parity.py`, `test_fl_tutorials_make_targets.py`,
-`test_sim_tutorial_stale_guard.py`) stay at the root of `tests/`, because
+`test_sim_tutorial_stale_guard.py`, `test_sim_tutorial_exit_status.py`) stay at the root of `tests/`, because
 no single source path describes what they cover.
 
 **Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
@@ -125,6 +125,10 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_documented_root_target_resolves` | Every `make -C fl-tutorials <target>` the docs quote resolves at the fl-tutorials root, whose Makefile only forwards a fixed name list — a dataset target documented in the root form but left off that list fails here, not with "No rule to make target" on a reader's machine. |
 | `test_kills_only_this_checkouts_processes_in_this_pid_namespace` | `sim-tutorial.sh`'s stale-SuperLink guard, lifted out of the script and run against decoys: it stops the one from this checkout, spares one from another checkout, and spares one in another PID namespace (a container's, under any runtime — the dev stack's fl-server matches the same `pgrep` pattern). Skips the namespace case where unprivileged `unshare` is unavailable. |
 | `test_guard_decides_containment_by_pid_namespace_not_cgroup_string` | The guard compares `/proc/<pid>/ns/pid`, not a runtime-specific `/proc/<pid>/cgroup` string, which only docker's systemd driver produces. |
+| `test_a_failed_run_fails_the_script` / `test_the_verdict_waits_for_a_terminal_status` / `test_a_run_that_never_ends_is_a_failure_not_a_hang` / `test_an_unknown_run_is_a_failure` | `sim-tutorial.sh`'s exit status is the run's: its functions are sourced and run against a fake `uv` whose `flwr ls` answers with scripted statuses — only `finished:completed` passes, a run that never turns terminal fails after a bounded number of polls, and one the SuperLink does not know fails too. `flwr run --stream` alone returns 0 whatever became of the run. |
+| `test_a_listener_this_checkout_did_not_start_is_refused` / `test_a_free_control_port_passes_the_check` | The script refuses to hand the run to a local SuperLink it did not start: a real listener on a throwaway port set as `FLWR_LOCAL_CONTROL_API_PORT` is refused with its pid and command line, a free port passes silently. |
+| `test_every_flower_tutorial_has_a_simulator_data_mapping` | Every `fl-tutorials/flower/<tutorial>/app` is named in the script's data-mapping `case` — the EHR tutorial was not, and failed with `No data mapping` on the simulator. |
+| `test_app_loads_checkpoints_weights_only` (in `test_offline_apps.py`) | Every `torch.load` in a shipped app dir passes `weights_only=True` explicitly — an implicit default or `weights_only=False` unpickles arbitrary objects from the checkpoint. Host-side `process_tools/` conversions are outside the walked app dirs and stay exempt. |
 
 Three design points are load-bearing, and each is itself asserted rather than assumed:
 
