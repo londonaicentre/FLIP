@@ -19,9 +19,9 @@ import torch.nn as nn
 def _load_pretrained_weights(model, pretrained_weights):
     """Load the backbone-only state dict `make prepare-checkpoint` derived from the raw Ark6 file.
 
-    Prefix stripping, the timm downsample-key remap and the head filtering (LOAD_BACKBONE_ONLY)
-    all happen there, host-side (process_tools/checkpoint_utils.py); the file the app ships is
-    plain tensors, so it loads weights-only with no reshaping.
+    Prefix stripping and the timm downsample-key remap happen there, host-side
+    (process_tools/checkpoint_utils.py), and preprocess_checkpoints.py strips `omni_heads.*` before
+    saving; the file the app ships is plain tensors, so it loads weights-only with no reshaping.
     """
     if not pretrained_weights:
         return model

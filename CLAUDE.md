@@ -293,9 +293,9 @@ make -C fl-tutorials sim-tutorial TUTORIAL=xray_classification FL_BACKEND=flower
 ```
 
 `sim-tutorial` means "no containers" on both backends. On NVFLARE it is an alias for
-`run-tutorial`, which already runs the simulator; on Flower it runs `flwr run` in-process
-(no SuperLink, no SuperNodes, no fl-api, no Docker) where `run-tutorial` brings up the
-standalone compose stack. The app code is identical either way — site identity comes from
+`run-tutorial`, which already runs the simulator; on Flower it runs `flwr run` against a local
+SuperLink flwr starts itself (no SuperLink container, no SuperNodes, no fl-api, no Docker) where
+`run-tutorial` brings up the standalone compose stack. The app code is identical either way — site identity comes from
 `context.node_config`'s `partition-id`, falling back to the `SUPERNODE_NAME` a container sets
 (`flip.flower.identity`). Under `LOCAL_DEV` both paths hand every client the same
 `DEV_DATAFRAME`, so `partition_cohort` slices it per site; deployed, each trust's
@@ -311,9 +311,10 @@ returns 0 whatever became of the run — and it refuses to start while a local S
 start still listens on `127.0.0.1:${FLWR_LOCAL_CONTROL_API_PORT:-39093}` (#1249): `flwr run . local`
 reuses whatever is there, so a SuperLink another worktree left behind would run the app in *that*
 checkout's environment with nothing in the output saying so. The stale-process cleanup deliberately
-spares other checkouts, so the fix is to stop the named pid (or run from that checkout). The
-tabular EHR tutorial maps `DEV_DATAFRAME` only (`fl-tutorials/data/synthea/dataframe.csv`, from
-`download-synthea-data`).
+spares other checkouts (it matches this checkout's `flip-utils/` venv path, so the main checkout never
+matches a worktree nested under it), so the fix is to stop the named pid (or run from that checkout);
+an `ss` that cannot probe the port counts as taken, never as free. The tabular EHR tutorial maps
+`DEV_DATAFRAME` only (`fl-tutorials/data/synthea/dataframe.csv`, from `download-synthea-data`).
 
 To iterate on the FL images, `make build-fl` builds them locally as `:dev` (see `fl-services/nvflare/README.md`);
 run the stack on them with `make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`.

@@ -112,14 +112,16 @@ command — `sim-tutorial.sh` handles all five:
    checkout's environment — its `flip` package, its Python, its numpy — with nothing in the output
    saying so but the venv paths in a traceback. Because the stale-process cleanup above
    deliberately spares other checkouts' processes, the script refuses to start when the port is
-   still taken after its own cleanup, naming the pid and command line to stop.
+   still taken after its own cleanup, naming the pid and command line where `ss` can see them.
 5. **`flwr run --stream` returns 0 once the log stream closes, whatever became of the run.** A
    simulation that dies mid-round still hands back success. The script reads the run id off the
    stream, asks the SuperLink for the run's terminal status (`flwr ls`) and exits non-zero unless
-   it is `finished:completed` — so a loop over tutorials really does stop at the first failure.
+   it is `finished:completed` — so a shell loop over `make sim-tutorial` really does stop at the
+   first failure.
 
-FLIP's `DevSettings` singleton is pinned at import time, so all of the above must be set *before*
-the process starts; the script does that, but it does mean you cannot change them mid-run.
+FLIP's `DevSettings` singleton is pinned at import time, so the data and `WORKING_DIR` settings
+above must be set *before* the process starts; the script does that, but it does mean you cannot
+change them mid-run.
 
 **Each site gets a disjoint slice.** `flip.flower.identity.partition_cohort` splits the fetched
 dataframe by this client's `partition-id`, so the split is the same under the simulator and under

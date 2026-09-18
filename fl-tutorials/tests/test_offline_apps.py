@@ -118,13 +118,35 @@ def _import_aliases(tree: ast.Module) -> dict[str, str]:
     return aliases
 
 
+def _bound_names(node: ast.AST) -> list[str]:
+    """Names a statement binds: assignment targets (through tuples) and `global` declarations."""
+    if isinstance(node, ast.Assign):
+        targets = node.targets
+    elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        targets = [node.target]
+    elif isinstance(node, ast.Global):
+        return list(node.names)
+    else:
+        return []
+    return [n.id for t in targets for n in ast.walk(t) if isinstance(n, ast.Name)]
+
+
 def _module_constants(tree: ast.Module) -> dict[str, object]:
-    """Module-level `NAME = <literal>` bindings, so `network_type=BACKBONE` can be checked."""
+    """Module-level `NAME = <literal>` bindings, so `network_type=BACKBONE` can be checked.
+
+    Only names bound exactly once anywhere in the module count: a later rebinding — in a branch,
+    from the environment, or through `global` inside a function — would otherwise leave the first
+    literal standing for a value the guard cannot see.
+    """
+    bindings: dict[str, int] = defaultdict(int)
+    for node in ast.walk(tree):
+        for name in _bound_names(node):
+            bindings[name] += 1
     constants: dict[str, object] = {}
     for node in tree.body:
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
             for target in node.targets:
-                if isinstance(target, ast.Name):
+                if isinstance(target, ast.Name) and bindings[target.id] == 1:
                     constants[target.id] = node.value.value
     return constants
 
@@ -192,7 +214,8 @@ def offences_in(source: str) -> list[tuple[int, str]]:
     return sorted(found)
 
 
-UNPICKLING_LOADER = "torch.load"
+# `torch.load` under both names it is reachable by; a module-level `NAME = torch.load` counts too.
+UNPICKLING_LOADERS = {"torch.load", "torch.serialization.load"}
 
 
 def unpickling_loads_in(source: str) -> list[tuple[int, str]]:
@@ -200,15 +223,26 @@ def unpickling_loads_in(source: str) -> list[tuple[int, str]]:
     tree = ast.parse(source)
     aliases = _import_aliases(tree)
     constants = _module_constants(tree)
+    loader_names = {
+        target.id
+        for node in tree.body
+        if isinstance(node, ast.Assign) and _canonical(node.value, aliases) in UNPICKLING_LOADERS
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
     found: list[tuple[int, str]] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or _canonical(node.func, aliases) != UNPICKLING_LOADER:
+        if not isinstance(node, ast.Call):
             continue
+        canonical = _canonical(node.func, aliases)
+        if canonical not in UNPICKLING_LOADERS and canonical not in loader_names:
+            continue
+        loader = canonical if canonical in UNPICKLING_LOADERS else "torch.load"
         keywords = {k.arg: k.value for k in node.keywords if k.arg}
         if "weights_only" not in keywords:
-            found.append((node.lineno, "torch.load( without weights_only"))
+            found.append((node.lineno, f"{loader}( without weights_only"))
         elif _value(keywords["weights_only"], constants) is not True:
-            found.append((node.lineno, "torch.load( with weights_only other than True"))
+            found.append((node.lineno, f"{loader}( with weights_only not provably True"))
     return sorted(found)
 
 
@@ -359,13 +393,25 @@ def test_guard_accepts_the_offline_shapes(snippet: str):
     assert offences_in(snippet) == [], snippet
 
 
+NOT_TRUE = "torch.load( with weights_only not provably True"
 UNPICKLING = [
     ("ckpt = torch.load(path, map_location='cpu')", "torch.load( without weights_only"),
     ("import torch as T\nckpt = T.load(path)", "torch.load( without weights_only"),
     ("from torch import load as tload\nckpt = tload(path)", "torch.load( without weights_only"),
-    ("ckpt = torch.load(path, weights_only=False)", "torch.load( with weights_only other than True"),
-    ("SAFE = False\nckpt = torch.load(path, weights_only=SAFE)", "torch.load( with weights_only other than True"),
-    ("ckpt = torch.load(path, weights_only=trusted)", "torch.load( with weights_only other than True"),
+    ("ckpt = torch.load(path, **opts)", "torch.load( without weights_only"),
+    (
+        "import torch.serialization\nckpt = torch.serialization.load(path)",
+        "torch.serialization.load( without weights_only",
+    ),
+    ("from torch.serialization import load\nckpt = load(path)", "torch.serialization.load( without weights_only"),
+    ("loader = torch.load\nckpt = loader(path)", "torch.load( without weights_only"),
+    ("ckpt = torch.load(path, weights_only=False)", NOT_TRUE),
+    ("SAFE = False\nckpt = torch.load(path, weights_only=SAFE)", NOT_TRUE),
+    ("ckpt = torch.load(path, weights_only=trusted)", NOT_TRUE),
+    # A literal True the module later rebinds is not provably True either.
+    ("SAFE = True\nSAFE = os.environ.get('X') is None\nckpt = torch.load(path, weights_only=SAFE)", NOT_TRUE),
+    ("SAFE = True\nif os.environ.get('X'):\n    SAFE = False\nckpt = torch.load(path, weights_only=SAFE)", NOT_TRUE),
+    ("SAFE = True\ndef relax():\n    global SAFE\n    SAFE = False\nckpt = torch.load(p, weights_only=SAFE)", NOT_TRUE),
 ]
 
 WEIGHTS_ONLY = [
