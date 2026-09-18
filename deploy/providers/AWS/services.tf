@@ -52,8 +52,10 @@ module "flip_model_files_uploads_bucket" {
   # GET is for model-file downloads: `download_file.py` hands the browser a
   # presigned GET URL (FLIP#784) instead of proxying bytes through flip-api,
   # so the bucket needs to accept a direct browser GET.
-  cors_methods          = ["POST", "GET"]
-  cors_allowed_origins  = ["https://${var.flip_alb_subdomain}"]
+  cors_methods = ["POST", "GET"]
+  # local.ui_origin (cloudfront.tf) — the canonical subdomain, or the default
+  # CloudFront domain on a zone-less bring-up (FLIP#749).
+  cors_allowed_origins  = [local.ui_origin]
   kms_key_arn           = aws_kms_key.flip_app_key.arn
   logging_target_bucket = local.access_logs_bucket_name
   mfa_delete_protection = true
@@ -74,7 +76,7 @@ module "flip_fl_results_bucket" {
   source                = "./modules/flip_s3_bucket"
   bucket_name           = var.FLIP_FL_RESULTS_BUCKET_NAME
   cors_methods          = ["GET"]
-  cors_allowed_origins  = ["https://${var.flip_alb_subdomain}"]
+  cors_allowed_origins  = [local.ui_origin]
   kms_key_arn           = aws_kms_key.flip_app_key.arn
   logging_target_bucket = local.access_logs_bucket_name
   mfa_delete_protection = true
@@ -135,7 +137,7 @@ resource "aws_s3_bucket_cors_configuration" "aicentre_bucket_cors" {
   cors_rule {
     allowed_headers = ["*"]
     allowed_methods = ["PUT", "GET"]
-    allowed_origins = ["https://${var.flip_alb_subdomain}"]
+    allowed_origins = [local.ui_origin]
     expose_headers  = []
   }
 }
@@ -191,13 +193,24 @@ resource "aws_s3_bucket_logging" "aicentre_bucket" {
 module "cognito" {
   source = "./modules/cognito"
 
-  user_pool_name     = var.flip_user_pool_name
-  client_name        = var.flip_cognito_client
-  sign_in_hostname   = var.flip_alb_subdomain
-  admin_email        = var.flip_cognito_admin_email
-  researcher_email   = var.flip_cognito_researcher_email
-  seed_user_password = var.ADMIN_USER_PASSWORD
-  templates_dir      = "${path.module}/templates/cognito"
+  user_pool_name = var.flip_user_pool_name
+  client_name    = var.flip_cognito_client
+  # Hostname stamped into invite emails; derived from local.ui_origin
+  # (cloudfront.tf) so a zone-less bring-up (FLIP#749) sends the reachable
+  # CloudFront default domain rather than a dead subdomain. Identical to
+  # var.flip_alb_subdomain whenever DNS is managed (all legacy envs).
+  sign_in_hostname = trimprefix(local.ui_origin, "https://")
+  # Managed Login (v2) blocks PrivateLink access to cognito-idp, and the LZA
+  # account's ONLY path to Cognito is the central interface endpoint -- flip-api
+  # cannot boot against a v2 pool there (FLIP#749). Cosmetic either way: the
+  # FLIP UI signs in via the SDK, not the hosted UI.
+  managed_login_version   = var.lza_managed_network ? 1 : 2
+  user_pool_tier          = var.lza_managed_network ? "LITE" : null
+  create_hosted_ui_domain = !var.lza_managed_network
+  admin_email             = var.flip_cognito_admin_email
+  researcher_email        = var.flip_cognito_researcher_email
+  seed_user_password      = var.ADMIN_USER_PASSWORD
+  templates_dir           = "${path.module}/templates/cognito"
   # callback_urls is NOT cosmetic — it is this environment's live browser CORS
   # allowlist. Do not trim it without reading the following.
   #
@@ -222,7 +235,14 @@ module "cognito" {
   # localhost is deliberately absent: this root stack is stag/prod only. Local
   # development uses the separate ./dev root, whose var.cognito_callback_urls
   # carries the localhost origins.
-  callback_urls = ["https://${var.flip_alb_subdomain}"]
+  #
+  # The one origin is local.ui_origin (cloudfront.tf) rather than a literal
+  # "https://${var.flip_alb_subdomain}": the two are the same string wherever DNS
+  # is managed — every legacy environment — and on a zone-less LZA bring-up
+  # (FLIP#749) the local resolves to the reachable edge/CloudFront domain, which
+  # is the browser origin there. It is the same value fed to the S3 bucket CORS
+  # rules above, so the two allowlists cannot drift apart.
+  callback_urls = [local.ui_origin]
 
   # Not read by flip-api; only Cognito's hosted UI would honour these as
   # post-logout redirect targets, and allowed_oauth_flows_user_pool_client is
@@ -231,7 +251,7 @@ module "cognito" {
   # no redirect target that isn't a real FLIP origin. logout_urls is Optional in
   # the provider schema and need not mirror callback_urls — the ./dev root
   # already passes lists of differing length.
-  logout_urls = ["https://${var.flip_alb_subdomain}"]
+  logout_urls = [local.ui_origin]
 }
 
 # State migration: Cognito resources used to live at the root of this stack and
@@ -253,6 +273,11 @@ moved {
 moved {
   from = aws_cognito_user_pool_domain.main
   to   = module.cognito.aws_cognito_user_pool_domain.main
+}
+
+moved {
+  from = module.cognito.aws_cognito_user_pool_domain.main
+  to   = module.cognito.aws_cognito_user_pool_domain.main[0]
 }
 
 moved {

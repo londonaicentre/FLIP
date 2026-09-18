@@ -177,7 +177,17 @@ make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=stag
 
 This runs `helm upgrade --install` with the generated override and then
 `patch-kit-secrets` (injects the per-trust keys into the Helm-owned Secret and
-restarts the API deployments). Equivalent raw Helm for the install step:
+restarts the API deployments). `deploy` depends on `preflight`, so every install
+first runs `scripts/preflight.sh` — five sections covering required tools and
+versions, cluster reachability, the chart files, the trust kit (only when `KIT=`
+is given) and a `helm lint` — and aborts the install if a required check fails.
+Run it on its own to check a host before deploying:
+
+```bash
+make -C trust/deploy/helm preflight KIT=<CODE> PROD=stag
+```
+
+Equivalent raw Helm for the install step:
 
 ```bash
 helm upgrade --install trust-release ./trust/deploy/helm/ \
@@ -217,6 +227,32 @@ make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-public-ip> PROD=st
 
 This is a normal `terraform apply` (no `-target`), so re-running with an
 already-listed IP is a no-op (idempotent — #596).
+
+### Inspecting and tearing down the release
+
+```bash
+make -C trust/deploy/helm list       # helm list in the namespace
+make -C trust/deploy/helm status     # helm status + check_status.py smoke tests
+make -C trust/deploy/helm undeploy   # helm uninstall the release
+```
+
+`undeploy` is `helm uninstall $(RELEASE_NAME) --namespace $(NAMESPACE)`; `down`
+and `undeploy-trust-k8s` are aliases for it, and the repo root forwards
+`make undeploy-trust-k8s` here. It removes the Helm release and **everything the
+release owns — including the standalone PVCs and their data**: Orthanc's PACS store
+(`templates/orthanc.yaml`), XNAT's archive, prearchive, build and cache
+(`templates/xnat-web.yaml`), Grafana's state (`templates/grafana.yaml`) and the
+shared images cache (`templates/shared-images-pvc.yaml`) are plain
+`kind: PersistentVolumeClaim` release resources with no
+`helm.sh/resource-policy: keep`, so `helm uninstall` deletes them, and the bound
+volumes go with them under the cluster default storage class's usual `Delete`
+reclaim policy. Only the PVCs created from StatefulSet `volumeClaimTemplates`
+— `omop-db`, `xnat-db`, `loki` — survive, as do the namespace itself and the FL kit
+staged on the node by `stage-kit`. A re-`deploy` therefore comes back with the OMOP
+and XNAT databases but an empty PACS and an empty XNAT archive — and an `xnat-db`
+whose sessions point at archive files that no longer exist. Snapshot or back up
+those PVs before uninstalling if the data matters; delete the surviving StatefulSet
+PVCs explicitly if you want a clean slate.
 
 ## Configuration Reference
 
@@ -771,9 +807,34 @@ make -C trust/deploy/helm template
 # Test all FL backends
 make -C trust/deploy/helm template-all-backends
 
-# Full validation
+# Render the egress NetworkPolicy in its three shapes: default, CIDR-scoped
+# (networkPolicies.allowedEgressCIDRs*), and networkPolicies.enabled=false (#516)
+make -C trust/deploy/helm template-egress-variants
+
+# Render with --debug — the dry-run equivalent, prints the computed values too
+make -C trust/deploy/helm dry-run
+
+# helm dependency update (refresh the chart's subchart lock)
+make -C trust/deploy/helm update-deps
+
+# Full validation: lint + template + kubeconform schema validation
 make -C trust/deploy/helm test
 ```
+
+### Running the XNAT init job by hand
+
+XNAT's post-install init job normally runs as part of the chart. When it is
+disabled (`xnat.initJob.enabled=false`, e.g. because XNAT web was not ready in
+time — #565), run it once XNAT is up:
+
+```bash
+make -C trust/deploy/helm xnat-init
+```
+
+It re-renders only the `xnat-init` job from the chart (`--set
+xnat.initJob.enabled=true`, applied with the
+`app.kubernetes.io/component=xnat-init` selector), waits up to 15 minutes for it
+to complete, and on failure tails the job's logs before exiting non-zero.
 
 ### CI Validation
 

@@ -246,8 +246,8 @@ make populate                        # core vocab + DICOM vocab + each trust's d
 make apply-constraints               # FK constraints go on AFTER the load
 ```
 
-`up-build` creates the bind-mount sources (`volumes/Trust_<N>/db_data`) as you before starting
-anything: left to Docker, a missing source is created by the daemon as root, and
+`up-build` creates the bind-mount sources (`volumes/Trust_<N>/db_data`) as the invoking user
+before starting anything: left to Docker, a missing source is created by the daemon as root, and
 `update_omop_data.sh` — which downloads into `volumes/` — then fails with "Permission denied" on a
 checkout where the build stack ran first. A `volumes/` you cannot write to fails that target loudly,
 with the `chown` to run. `export-pgdata` likewise hands each archive back to you; the `tar` itself
@@ -294,6 +294,16 @@ unqualified push repoints the "newest release" pointer at a local build).
 
 The canonical dataset is regenerated from per-trust CSV exports with
 `uv run python -m omop_db_tools.dataset build --trust-dirs <dir1> <dir2> --dest <out>`.
+
+## Other Make targets
+
+| Target | What it does |
+| --- | --- |
+| `make fetch-dataset` | Download the canonical OMOP tables (`omop_db_tools.dataset fetch`) at `HF_TRUST_DATA_REVISION` into `data/canonical/`. A prerequisite of both `populate` and `seed-omop`; run it alone to prime the cache or to inspect the tables. |
+| `make down-build` | `docker compose down --remove-orphans` on the two build databases started by `up-build`. Leaves `volumes/Trust_<N>/db_data` in place. |
+| `make shell` | `docker exec -it` a `/bin/bash` in the running `omop-db` container, found by `docker ps -qf "name=omop-db"`. That filter is a substring match with no project scoping, so it only works while exactly one container matches: with two dev trusts up it substitutes both IDs and `docker exec` fails. Use `docker exec -it trust<N>-omop-db-1 /bin/bash` (the compose-project name) on a multi-trust host. |
+| `make lint` / `make mypy` | Ruff and mypy over the populate tooling (aliases for `local_lint` / `local_mypy`). |
+| `make test` / `make unit_test` / `make local_test` | All three are the same target: ruff + mypy + the pytest suite with coverage + `tests/test_load_core_vocab.sh` (bash, driving `files/load_core_vocab.sh` against a stubbed `psql`). No Postgres, no Docker. |
 
 ## Further Reading
 

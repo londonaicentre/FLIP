@@ -78,7 +78,6 @@ BASE_ENV=(
     FL_API_PORT=8080
     FL_SERVER_PORT=8002
     INTERNAL_SERVICE_KEY_HEADER=X-Internal-Service-Key
-    MIN_CLIENTS=1
     SES_VERIFIED_EMAIL=noreply@example.invalid
     TRUST_API_KEY_HEADER=X-Trust-API-Key
     UI_PORT=80
@@ -174,9 +173,10 @@ echo "==== compose-ci-env.sh ===="
 #    (FLIP_TFSTATE_BUCKET_NAME feeds `init -backend-config`).
 echo ""
 echo "-- manifest covers every TF_VAR input in the Makefile"
-# Derived inside deploy/fl_backend.mk from FL_BACKEND, never stored.
+# Derived inside deploy/fl_backend.mk from FL_BACKEND (the DOCKER_FL_* names) and
+# inside deploy/env_mode.mk from PROD (ENV_CLASS, IS_LZA), never stored.
 # HOME and PROD are supplied by the runner and by make itself.
-NOT_STORED='^(DOCKER_FL_API_NAME|DOCKER_FL_SERVER_NAME|DOCKER_FL_CLIENT_NAME|HOME|PROD)$'
+NOT_STORED='^(DOCKER_FL_API_NAME|DOCKER_FL_SERVER_NAME|DOCKER_FL_CLIENT_NAME|ENV_CLASS|IS_LZA|HOME|PROD)$'
 # The manifest is the two array literals plus the per-backend `REQUIRED_KEYS+=(…)`
 # / `OPTIONAL_KEYS+=(…)` additions made once FL_BACKEND is known.
 manifest="$( {

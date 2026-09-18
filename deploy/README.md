@@ -37,8 +37,12 @@ Every compose file in **this** directory is Central-Hub-only — `flip-ui`, `fli
 and the `fl-api-net-*` / `fl-server-net-*` FL server side. No trust service is defined here. The one place
 hub compose touches "trust" is **networking**: `compose.development.yml` joins
 `central-hub-trust-apis-network`, `trust-network-1/2` and `fl-net-1/2` as `external: true` — exactly as
-the trust composes do. Neither side *creates* them; `make create-networks` does (the root target forwards
-to `trust/Makefile`, which owns all five).
+the trust composes do. Neither side *creates* them; `make create-networks` does. There are **six**
+hub-shared networks, split across two Makefiles: the root `create-networks-centralhub` creates
+`deploy_central-hub-network` (the hub-internal network), then forwards to `trust/Makefile`, which owns the
+other five — `deploy_central-hub-trust-apis-network`, `deploy_fl-net-1/2` (bridge) and
+`deploy_trust-network-1/2` (overlay, because XNAT attaches from a swarm stack). Teardown mirrors that
+split: root `remove-networks` removes the hub-internal one and delegates the rest.
 
 `fl-net-<N>` is the FL data plane, and carries exactly two services: the hub's `fl-server-net-<N>` and each
 trust's `fl-client-net-<N>`. It is the FL twin of `central-hub-trust-apis-network` (flip-api ↔ trust-api) —
@@ -65,7 +69,7 @@ FLIP uses AWS RDS PostgreSQL with the following version support policy:
 | Version | EOL | Status |
 | ------- | --- | ------ |
 | PostgreSQL 13 | November 2025 | ❌ EXPIRED — do not use |
-| PostgreSQL 14 | October 2026 | ❌ EXPIRED — do not use |
+| PostgreSQL 14 | 12 November 2026 | ⚠️ Below the minimum, do not use |
 | PostgreSQL 15 | October 2027 | ⚠️ Deprecating soon |
 | PostgreSQL 16 | October 2028 | ✓ Supported |
 | PostgreSQL 17 | November 2029 | ✓ Current (Terraform default) |
@@ -272,9 +276,16 @@ This runbook is for the case where **you** have lost access to your TOTP device 
 
 The Central Hub has **one supported production deployment**: ECS Fargate via the Terraform root in
 [`deploy/providers/AWS/`](providers/AWS/README.md). The task definitions in `ecs_tasks.tf` (env maps in
-`locals.tf`) are the **canonical definition of production container config**. Deploying into an AWS
-LZA-governed account is an env-gated **mode** of that same root, not a separate path
-([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). The ECS FL task definitions serve **both
+`locals.tf`) are the **canonical definition of production container config**. That root offers **two
+deployment modes**, both permanently supported: the default **self-contained single-account** shape
+(`PROD=stag`/`PROD=true`), where FLIP creates its own VPC and edge; and the **platform-managed** shape
+(`PROD=lza`, or `PROD=lza-stag` for a staging estate) for an AWS Landing Zone Accelerator estate, where the
+network and edge are owned by the accelerator. The second is an env-gated mode of the same root, not a separate path — see
+[Deploying onto an LZA estate](providers/AWS/README.md#deploying-onto-an-lza-estate-prodlza)
+([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). What each mode costs to run — hub only,
+trust hosts excluded because their GPU sizing is a per-trust decision — is on the docs site's
+[Deploy the Central Hub → Running costs](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#running-costs)
+section. The ECS FL task definitions serve **both
 FL backends** ([FLIP#566](https://github.com/londonaicentre/FLIP/issues/566)): `FL_BACKEND` in the env file
 switches the same task families between NVFLARE and Flower (SuperLink ports/command/creds — Flower
 additionally needs `FLOWER_KIT_DATE` and provisioned creds uploaded via
@@ -287,7 +298,8 @@ Cloud Map + public FL hostnames).
 > `compose.production*.yml` files remain maintained **only** as the local prod-image harness
 > (`make up PROD=stag|true` — the baked images, no dev mounts). When changing production config, change
 > Terraform first and update the compose files only as far as the local harness needs. Remaining hub-EC2
-> material is removed once the LZA migration's legacy decommission lands (FLIP#749 WP6).
+> material is removed once the AI Centre's own legacy account is decommissioned (FLIP#749 WP6) — that
+> retires one *account*, not the self-contained deployment mode, which stays supported.
 
 ### Trusts
 
