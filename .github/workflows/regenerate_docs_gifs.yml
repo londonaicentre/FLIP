@@ -16,8 +16,12 @@
 # the pinned tag (docs/scripts/fetch_docs_gifs.py, called from docs/source/conf.py).
 #
 # Two jobs on purpose. `record` runs Cypress + ffmpeg with no secrets and a read-only
-# token; `publish` runs in the `flip` environment, where HF_TOKEN lives, and the
-# token reaches exactly one step. A fresh bot branch per run (branch-suffix) is what
+# token, and mints the version tag before recording so the tag's timestamp is the
+# recording instant the manifest's `recorded_at` claims; `publish` reads HF_TOKEN
+# from the `flip` environment in exactly one step, and only on develop — the
+# environment is the shared CI one (no deployment-branch policy), so the ref gate,
+# not the environment, is what keeps a branch dispatch from publishing a tag and
+# opening a pin PR. A fresh bot branch per run (branch-suffix) is what
 # stops two develop pushes a minute apart failing on branch reuse, and what keeps a
 # workflow-file commit on develop out of the bot's push (the old single-branch flow
 # was rejected with "refusing to allow a GitHub App to create or update workflow").
@@ -52,8 +56,7 @@ env:
 
 jobs:
   record:
-    # Skip on forks: they hold no HF_TOKEN and their token cannot open pull requests,
-    # so the run would only produce a spurious failure.
+    # Skip on forks: they hold no HF_TOKEN, so the run would only produce a spurious failure.
     if: github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -63,6 +66,8 @@ jobs:
     concurrency:
       group: docs-gifs-record
       cancel-in-progress: true
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     env:
       VITE_LOCAL: "false"
       VITE_E2E: "true"
@@ -74,6 +79,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+
+      - name: Mint the version tag
+        id: tag
+        # YYYYMMDDTHHMMSSZ-<sha7>: the instant this recording starts and the commit it
+        # records, unique per second and source commit, sortable, git-ref safe. Minted
+        # here rather than in `publish` so it is the recording time, not the publish time.
+        run: echo "tag=$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Set Node.js version
         uses: actions/setup-node@v5
@@ -123,10 +135,15 @@ jobs:
 
   publish:
     needs: record
+    # Only develop publishes: a workflow_dispatch from a branch still records (useful
+    # for previewing a recording), but must not mint a tag on the public dataset or
+    # open a pin PR that claims to come from develop.
+    if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # The `flip` environment is where the CI secrets live; HF_TOKEN is read from it
-    # by the publish step alone.
+    # by the publish step alone. It is the shared CI environment, so it adds no
+    # isolation of its own — the ref gate above is the control.
     environment: flip
     permissions:
       contents: write # create-pull-request pushes the pin branch; closing a superseded PR deletes its branch
@@ -154,15 +171,10 @@ jobs:
           name: docs-gifs
           path: ${{ env.GIFS_DIR }}
 
-      - name: Mint the version tag
-        id: tag
-        # YYYYMMDDTHHMMSSZ-<sha7>: unique per second and source commit, sortable, git-ref safe.
-        run: echo "tag=$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-
       - name: Publish to the dataset
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          TAG: ${{ steps.tag.outputs.tag }}
+          TAG: ${{ needs.record.outputs.tag }}
         run: |
           uv run docs/scripts/publish_docs_gifs.py \
             --repo "$DATASET" \
@@ -176,12 +188,12 @@ jobs:
         # No token in this step's environment (and the fetcher reads none): this is
         # exactly what a ReadTheDocs or contributor build will do with the new pin.
         env:
-          TAG: ${{ steps.tag.outputs.tag }}
+          TAG: ${{ needs.record.outputs.tag }}
         run: uv run docs/scripts/fetch_docs_gifs.py --repo "$DATASET" --revision "$TAG" --dest "$RUNNER_TEMP/verify"
 
       - name: Pin the version
         env:
-          TAG: ${{ steps.tag.outputs.tag }}
+          TAG: ${{ needs.record.outputs.tag }}
         run: printf '%s\n' "$TAG" > docs/.gifs_version
 
       - name: Open the pin PR
@@ -193,18 +205,18 @@ jobs:
           base: develop
           add-paths: docs/.gifs_version
           commit-message: |
-            docs: pin documentation GIFs ${{ steps.tag.outputs.tag }}
+            docs: pin documentation GIFs ${{ needs.record.outputs.tag }}
 
             Recorded from develop @ ${{ github.sha }} by
             .github/workflows/regenerate_docs_gifs.yml and published as
-            https://huggingface.co/datasets/${{ env.DATASET }}/tree/${{ steps.tag.outputs.tag }}
-          title: "docs: pin documentation GIFs ${{ steps.tag.outputs.tag }}"
+            https://huggingface.co/datasets/${{ env.DATASET }}/tree/${{ needs.record.outputs.tag }}
+          title: "docs: pin documentation GIFs ${{ needs.record.outputs.tag }}"
           body: |
             Re-recorded from `develop` @ ${{ github.sha }} by [run ${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-            and published as **[`${{ steps.tag.outputs.tag }}`](https://huggingface.co/datasets/${{ env.DATASET }}/tree/${{ steps.tag.outputs.tag }})**
+            and published as **[`${{ needs.record.outputs.tag }}`](https://huggingface.co/datasets/${{ env.DATASET }}/tree/${{ needs.record.outputs.tag }})**
             on `${{ env.DATASET }}`. The only change here is the pin, `docs/.gifs_version`.
 
-            **Review in the ReadTheDocs preview** (the `docs/readthedocs.org:flip` check below): it builds
+            **Review in the ReadTheDocs preview** (the `docs/readthedocs.org:londonaicentreflip` check below): it builds
             this PR with the new pin, so the user-guide pages show the fresh recordings in context.
             Re-recording is nondeterministic (frame timing plus the animated demo cursor), so every GIF is
             new bytes even where the UI didn't change — merge if the genuinely-changed clips look right,
@@ -217,6 +229,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NEW_PR: ${{ steps.pr.outputs.pull-request-number }}
+        # Explicit bash = `-eo pipefail`: a failing `gh pr list` fails the step instead
+        # of feeding the loop nothing and leaving the superseded PRs open, green.
+        shell: bash
         run: |
           gh pr list --state open --base develop --json number,headRefName \
             --jq '.[] | select(.headRefName | startswith("bot/docs-gifs-")) | .number' |

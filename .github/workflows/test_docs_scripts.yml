@@ -13,8 +13,9 @@ name: Docs scripts CI
 
 # The build-time scripts under docs/scripts/ — the docs GIFs fetcher that
 # docs/source/conf.py calls and the publisher the regeneration workflow calls
-# (FLIP#1236) — plus the static guard keeping the rst figures, the demo specs, the
-# recorder and the pin in step. PEP 723 scripts with their own pytest suite; nothing
+# (FLIP#1236) — the conf.py hook itself, and the static guards keeping the rst
+# figures, the demo specs, the recorder, the pin, the dataset card and the regenerate
+# workflow's token scope in step. PEP 723 scripts with their own pytest suite; nothing
 # here needs network, graphviz or Hugging Face credentials, so it is its own small job
 # rather than a step on "FLIP Documentation CI", which builds the whole site.
 on:
@@ -25,10 +26,12 @@ on:
       - "docs/tests/**"
       - "docs/Makefile"
       - "docs/.gifs_version"
+      - "docs/source/conf.py"
       - "docs/source/**/*.rst"
       - "flip-ui/test/cypress/docs/**"
       - "flip-ui/scripts/videos-to-gifs.sh"
       - ".github/workflows/test_docs_scripts.yml"
+      - ".github/workflows/regenerate_docs_gifs.yml"
   pull_request:
     branches: [main, develop]
 
