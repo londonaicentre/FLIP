@@ -59,6 +59,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      # A stable v<X.Y.Z> tag must point at a commit on main — releases are cut there by
+      # release.yml; pre-release (-rc.N) tags are the release-candidate path and pass.
+      - name: Release tag guard
+        uses: ./.github/actions/release-tag-guard
+
       - name: Determine tags
         id: tags
         env:

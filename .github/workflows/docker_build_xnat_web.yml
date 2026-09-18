@@ -63,6 +63,11 @@ jobs:
           repository: ${{ github.event.workflow_run.head_repository.full_name }}
           ref: ${{ github.event.workflow_run.head_sha }}
 
+      # A stable v<X.Y.Z> tag must point at a commit on main — releases are cut there by
+      # release.yml; pre-release (-rc.N) tags are the release-candidate path and pass.
+      - name: Release tag guard
+        uses: ./.github/actions/release-tag-guard
+
       # Single source for the XNAT version: trust/xnat/.env — the same pin the
       # Makefile build reads — so a version bump there flows through the WAR and
       # plugin downloads and the image build without editing this workflow.

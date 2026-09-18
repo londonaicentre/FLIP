@@ -637,7 +637,7 @@ Before opening the release PR from `develop` to `main`:
    - [`pr-release-notes-preview.yml`](.github/workflows/pr-release-notes-preview.yml) posts a **release-notes preview** comment — the rendered template header plus the generated changelog — and updates it in place on every push. Read it as the last check that the notes are right.
    - [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) and [`check-package-metadata.yml`](.github/workflows/check-package-metadata.yml) run when `flip-utils/**` changed.
 1. On merge to `main`:
-   - [`release.yml`](.github/workflows/release.yml) reads the root `pyproject.toml`, creates the `v<X.Y.Z>` git tag, and publishes the GitHub Release named `Release v<X.Y.Z>` with auto-generated notes.
+   - [`release.yml`](.github/workflows/release.yml) reads the root `pyproject.toml`, creates the `v<X.Y.Z>` git tag (it is the one non-admin actor the `v*` tag ruleset lets do so, and the tag it pushes is on `main` by construction, which is what the image workflows' release-tag guard checks), and publishes the GitHub Release named `Release v<X.Y.Z>` with auto-generated notes.
    - [`release-pypi.yml`](.github/workflows/release-pypi.yml) reads `flip-utils/flip/__init__.py` and, if that version is not yet tagged, lints + tests + builds the package, publishes it to PyPI via OIDC trusted publishing, tags it, and publishes a GitHub Release named `flip-utils v<X.Y.Z>` with the template header, the generated changelog, and the build artifacts attached.
    - Every `docker_build_*.yml` workflow under [`.github/workflows/`](.github/workflows/) rebuilds its service and pushes the `:prod` and `:<sha>` tags to GHCR.
    - The `v<X.Y.Z>` tag push then fires every image workflow **again, unfiltered** — `docker_build_*.yml` and both `fl-docker-build-*.yml` — building every image at the release commit and pushing `:v<X.Y.Z>` (FLIP#1204). This is the tag hub and sites deploy: a release is one identity across the whole stack, not a different `sha-` per service.
@@ -681,7 +681,9 @@ For an urgent fix on `main` without pulling in unrelated `develop` work:
 
 ### Testing a release candidate before merge to main
 
-Branch builds **do not** auto-publish to GHCR. To deploy a release-candidate branch for testing, manually trigger the relevant build workflows first:
+Two ways, depending on how much of the stack you need.
+
+**One or two services** — branch builds **do not** auto-publish to GHCR, so trigger the relevant build workflows by hand:
 
 ```bash
 gh workflow run docker_build_flip_api.yml --ref <branch-name>
@@ -690,6 +692,13 @@ gh workflow run docker_build_trust_trust_api.yml --ref <branch-name>
 ```
 
 Wait for green completion, then point your `.env` file's `DOCKER_TAG` at the sanitized branch name (the per-service workflows publish a `:<branch>` tag on every push).
+
+**The whole stack at one tag — a release candidate** (FLIP#1204). Push a *pre-release* tag at the release PR's head, `v<X.Y.Z>-rc.<N>`; every image workflow builds and pushes `:v<X.Y.Z>-rc.<N>`, exactly as the stable tag will, and a staging site can pin it with `make upgrade-onprem-trust … TAG=v<X.Y.Z>-rc.<N>`. Delete the git tag once the candidate is judged (`git push origin --delete v<X.Y.Z>-rc.<N>`): `release.yml` and the release-notes preview find the previous release with `git tag --list 'v*.*.*'`, and a leftover candidate would become the next release's `PREV_TAG`, shrinking its changelog to the span since the rc. The images can stay — they are plainly pre-release and nothing points sites at them.
+
+Two guards frame this, and both exist because a tag push is not gated by branch protection:
+
+- **Who may create a `v*` tag** is a repository *tag ruleset* (Settings → Rules): creation, update and deletion of `refs/tags/v*` are restricted, with bypass for repository admins and the GitHub Actions app (so `release.yml` can push the stable tag). Anyone with only write access cannot tag a release — deliberately or by a stray `git push --tags`.
+- **What a stable tag may point at** is checked by every image workflow itself (`.github/actions/release-tag-guard`): a `v<X.Y.Z>` whose commit is not on `main` fails the build rather than publishing release-looking images from unreleased code. Pre-release tags pass — that is the candidate path above. `scripts/tests/test_release_image_tags.py` holds every image workflow to it.
 
 ## Adding a new service
 
