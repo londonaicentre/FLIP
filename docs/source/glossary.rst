@@ -12,6 +12,14 @@ Glossary
     **Federated learning**
       Federated learning is a machine learning (ML) technique that trains an algorithm across multiple decentralized edge devices or servers holding local data samples, without exchanging them.
 
+    **FL kit slot**
+      The name an FL client is known by inside a federation (``Trust_1``, ``Trust_2``, …), taken from
+      the certificate in its provisioned participant kit (NVFLARE) or the SuperNode key pair labelled
+      for that slot (Flower). Slots are a fixed pool provisioned once per
+      :term:`FL net`; a Trust claims one when it registers with the Central Hub, and that name — not
+      the Trust's hub-side name — is what appears in FL logs and in an app's ``AGGREGATION_WEIGHTS``
+      keys. See :ref:`flip-fl-nets`.
+
     **FL net**
       One federation unit in FLIP: an FL API and an FL server on the Central Hub plus one FL client at each
       participating Trust. The hub's scheduler assigns each queued training job to a free net. See
@@ -19,6 +27,12 @@ Glossary
 
     **Flower Framework**
       Flower is an open-source framework for building federated learning systems. It provides tools and libraries to facilitate the development and deployment of federated learning applications. For more information, please see its `official documentation <https://flower.ai/docs/framework/>`_.
+
+    **MAP**
+      MONAI Application Package. An OCI container that wraps a trained model as a DICOM-in,
+      DICOM-out inference pipeline, built with the MONAI Deploy App SDK. It is the packaging format
+      FLIP uses to take a model from a completed federated run to something deployable in a clinical
+      imaging workflow. See :doc:`working-with-flip-apps/package-model-as-map`.
 
     **MI-CDM**
       Medical Imaging Common Data Model. The OHDSI extension that adds imaging to the OMOP CDM,
@@ -53,6 +67,18 @@ Glossary
 
     **RBAC**
       Role Based Access Control (RBAC) defines what users are able to access within the FLIP platform.
+
+    **Secure enclave**
+      The FLIP node at a partner Trust: dedicated storage and compute inside the Trust's firewall,
+      holding that Trust's imaging and OMOP data and running the FL client that trains on it. Patient
+      data stays within the enclave; only model updates and aggregate cohort statistics leave. See
+      :doc:`overview`.
+
+    **TRE**
+      Trusted Research Environment. A governed, access-controlled analysis environment holding an
+      approved subset of a Trust's data. FLIP can be deployed inside one as an alternative to the
+      on-premise model, in which case cohort queries operate on the pre-loaded subset rather than the
+      full Trust population. See :ref:`tre-deployment`.
 
     **XNAT**
       XNAT is an open-source imaging informatics platform used in FLIP to store, manage and access imaging data for research workflows. For more information on XNAT, please see the `documentation <https://wiki.xnat.org/documentation>`_.

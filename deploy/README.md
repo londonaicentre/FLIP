@@ -37,8 +37,12 @@ Every compose file in **this** directory is Central-Hub-only — `flip-ui`, `fli
 and the `fl-api-net-*` / `fl-server-net-*` FL server side. No trust service is defined here. The one place
 hub compose touches "trust" is **networking**: `compose.development.yml` joins
 `central-hub-trust-apis-network`, `trust-network-1/2` and `fl-net-1/2` as `external: true` — exactly as
-the trust composes do. Neither side *creates* them; `make create-networks` does (the root target forwards
-to `trust/Makefile`, which owns all five).
+the trust composes do. Neither side *creates* them; `make create-networks` does. There are **six**
+hub-shared networks, split across two Makefiles: the root `create-networks-centralhub` creates
+`deploy_central-hub-network` (the hub-internal network), then forwards to `trust/Makefile`, which owns the
+other five — `deploy_central-hub-trust-apis-network`, `deploy_fl-net-1/2` (bridge) and
+`deploy_trust-network-1/2` (overlay, because XNAT attaches from a swarm stack). Teardown mirrors that
+split: root `remove-networks` removes the hub-internal one and delegates the rest.
 
 `fl-net-<N>` is the FL data plane, and carries exactly two services: the hub's `fl-server-net-<N>` and each
 trust's `fl-client-net-<N>`. It is the FL twin of `central-hub-trust-apis-network` (flip-api ↔ trust-api) —
@@ -65,7 +69,7 @@ FLIP uses AWS RDS PostgreSQL with the following version support policy:
 | Version | EOL | Status |
 | ------- | --- | ------ |
 | PostgreSQL 13 | November 2025 | ❌ EXPIRED — do not use |
-| PostgreSQL 14 | October 2026 | ❌ EXPIRED — do not use |
+| PostgreSQL 14 | 12 November 2026 | ⚠️ Below the minimum, do not use |
 | PostgreSQL 15 | October 2027 | ⚠️ Deprecating soon |
 | PostgreSQL 16 | October 2028 | ✓ Supported |
 | PostgreSQL 17 | November 2029 | ✓ Current (Terraform default) |
