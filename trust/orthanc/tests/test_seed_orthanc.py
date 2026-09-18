@@ -194,6 +194,183 @@ class TestDeleteStudies:
         assert session.deletes == ["http://pacs/studies/study-a", "http://pacs/studies/study-b"]
 
 
+def _dcm(path: Path, accession: str) -> Path:
+    """A minimal real DICOM instance carrying an AccessionNumber, for the local-tree scan."""
+    import pydicom
+    from pydicom.dataset import Dataset, FileMetaDataset
+    from pydicom.uid import CTImageStorage, ExplicitVRLittleEndian, generate_uid
+
+    ds = Dataset()
+    ds.file_meta = FileMetaDataset()
+    ds.file_meta.MediaStorageSOPClassUID = CTImageStorage
+    ds.file_meta.MediaStorageSOPInstanceUID = generate_uid()
+    ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    ds.SOPClassUID = CTImageStorage
+    ds.SOPInstanceUID = ds.file_meta.MediaStorageSOPInstanceUID
+    ds.AccessionNumber = accession
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ds.save_as(str(path), enforce_file_format=True)
+    assert pydicom.dcmread(str(path), stop_before_pixels=True).AccessionNumber == accession
+    return path
+
+
+class TestLocalSource:
+    """A project whose DICOMs are not on the dataset (spleen, brain_mri — FLIP#1221): seeded from a local
+    tree in ANY layout (grouped by the AccessionNumber tag) and local canonical tables, with the same
+    source_trust selection and the same zero-mismatch guard."""
+
+    @staticmethod
+    def _tables(root: Path, rows: list[dict[str, str]]) -> Path:
+        import csv
+
+        tables = root / "canonical"
+        (tables / "brain_mri_project").mkdir(parents=True)
+        with (tables / "brain_mri_project" / "image_occurrence.csv").open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["accession_id", "source_trust"])
+            writer.writeheader()
+            writer.writerows(rows)
+        return tables
+
+    def test_uploads_this_trusts_slice_from_a_subject_named_tree(self, seed, tmp_path, monkeypatch):
+        """spleen's layout: dicom_output/<subject>/*.dcm — the accession is in the header, not the path."""
+        source = tmp_path / "dicom_output"
+        _dcm(source / "spleen_2" / "a.dcm", "FAK1")
+        _dcm(source / "spleen_3" / "a.dcm", "FAK2")
+        _dcm(source / "spleen_3" / "b.dcm", "FAK2")
+        tables = self._tables(
+            tmp_path, [{"accession_id": "FAK1", "source_trust": "2"}, {"accession_id": "FAK2", "source_trust": "1"}]
+        )
+        monkeypatch.setattr(seed, "fetch_image_occurrence", lambda *a, **k: pytest.fail("must not fetch from HF"))
+        monkeypatch.setattr(seed, "ensure_dicoms", lambda *a, **k: pytest.fail("must not fetch from HF"))
+        session = _Session([_Response(200, {"Status": "Success"}), _Response(200, {"Status": "AlreadyStored"})])
+
+        outcome = seed.seed_project(
+            session,
+            "http://pacs",
+            "20260901",
+            "brain_mri_project",
+            1,
+            tmp_path,
+            False,
+            False,
+            source=source,
+            tables_dir=tables,
+        )
+
+        assert outcome == {"Success": 1, "AlreadyStored": 1}
+        assert [url for url, _ in session.posts] == ["http://pacs/instances"] * 2
+        posted = {kw["data"] for _, kw in session.posts}
+        assert posted == {p.read_bytes() for p in (source / "spleen_3").glob("*.dcm")}, "only FAK2, trust 1's"
+
+    def test_scan_groups_by_accession_across_layouts(self, seed, tmp_path):
+        _dcm(tmp_path / "FAK1" / "x.dcm", "FAK1")
+        _dcm(tmp_path / "deep" / "er" / "y.dcm", "FAK1")
+        _dcm(tmp_path / "FAK2" / "z.dcm", "FAK2")
+
+        tree = seed.scan_local_tree(tmp_path)
+
+        assert {a: len(files) for a, files in tree.items()} == {"FAK1": 2, "FAK2": 1}
+
+    def test_an_empty_tree_is_loud(self, seed, tmp_path):
+        with pytest.raises(SystemExit, match="no \\*.dcm"):
+            seed.scan_local_tree(tmp_path)
+
+    def test_the_zero_mismatch_guard_still_holds(self, seed, tmp_path):
+        source = tmp_path / "dicom"
+        _dcm(source / "FAK1" / "a.dcm", "FAK1")
+        tables = self._tables(
+            tmp_path, [{"accession_id": "FAK1", "source_trust": "1"}, {"accession_id": "FAK2", "source_trust": "1"}]
+        )
+        session = _Session([])
+
+        with pytest.raises(SystemExit, match="1 of trust 1's 2 accessions have no DICOM in the local tree"):
+            seed.seed_project(
+                session,
+                "http://pacs",
+                "20260901",
+                "brain_mri_project",
+                1,
+                tmp_path,
+                False,
+                False,
+                source=source,
+                tables_dir=tables,
+            )
+        assert session.posts == []
+
+    def test_a_missing_local_table_is_named(self, seed, tmp_path):
+        source = tmp_path / "dicom"
+        _dcm(source / "FAK1" / "a.dcm", "FAK1")
+        with pytest.raises(SystemExit, match="image_occurrence.csv"):
+            seed.seed_project(
+                _Session([]), "http://pacs", "20260901", "brain_mri_project", 1, tmp_path, False, False,
+                source=source, tables_dir=tmp_path / "nowhere",
+            )  # fmt: skip
+
+    def test_cli_requires_both_local_flags_together(self, seed, tmp_path, monkeypatch):
+        monkeypatch.setenv("ORTHANC_USERNAME", "u")
+        monkeypatch.setenv("ORTHANC_PASSWORD", "p")
+        with pytest.raises(SystemExit, match="--source and --tables-dir"):
+            seed.main(
+                [
+                    "--trust-index",
+                    "1",
+                    "--projects",
+                    "brain_mri_project",
+                    "--orthanc-url",
+                    "http://pacs",
+                    "--source",
+                    str(tmp_path),
+                    "--dry-run",
+                ]
+            )
+        with pytest.raises(SystemExit, match="--source and --tables-dir"):
+            seed.main(
+                [
+                    "--trust-index",
+                    "1",
+                    "--projects",
+                    "brain_mri_project",
+                    "--orthanc-url",
+                    "http://pacs",
+                    "--tables-dir",
+                    str(tmp_path),
+                    "--dry-run",
+                ]
+            )
+
+
+class TestRemoveOnly:
+    """Unseeding: the studies the tables at a revision name for this trust are deleted, nothing is resolved."""
+
+    def test_deletes_this_trusts_studies_and_touches_no_dicom(self, seed, tmp_path, monkeypatch):
+        rows = [{"accession_id": "FAK1", "source_trust": "1"}, {"accession_id": "FAK2", "source_trust": "2"}]
+        monkeypatch.setattr(seed, "fetch_image_occurrence", lambda *a, **k: rows)
+        monkeypatch.setattr(seed, "ensure_dicoms", lambda *a, **k: pytest.fail("an unseed must not fetch DICOMs"))
+        session = _Session([_Response(200, ["study-a"])])
+
+        outcome = seed.seed_project(
+            session, "http://pacs", "20260911", "spleen_project", 1, tmp_path, False, False, remove_only=True
+        )
+
+        assert outcome == {"removed": 1}
+        assert session.posts[0][1]["json"]["Query"] == {"AccessionNumber": "FAK1"}
+        assert session.deletes == ["http://pacs/studies/study-a"]
+
+    def test_dry_run_counts_and_deletes_nothing(self, seed, tmp_path, monkeypatch):
+        rows = [{"accession_id": "FAK1", "source_trust": "1"}]
+        monkeypatch.setattr(seed, "fetch_image_occurrence", lambda *a, **k: rows)
+        session = _Session([])
+
+        outcome = seed.seed_project(
+            session, "http://pacs", "20260911", "spleen_project", 1, tmp_path, False, True, remove_only=True
+        )
+
+        assert outcome == {"dry-run-remove": 1}
+        assert session.posts == []
+        assert session.deletes == []
+
+
 class TestSeedProjectGuard:
     def test_refuses_to_upload_anything_when_an_accession_has_no_dicoms(self, seed, tmp_path, monkeypatch):
         """The zero-mismatch guard: OMOP says trust 1 owns FAK2, the archive has no FAK2 — stop."""

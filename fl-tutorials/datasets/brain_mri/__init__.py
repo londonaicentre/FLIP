@@ -9,10 +9,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared contract for the dataset converters.
+"""The brain MRI dataset tooling (MSD Task01_BrainTumour → mock MR studies → OMOP; FLIP#1221).
 
-The OMOP side — table schemas, concept mappings, the per-project surrogate-key blocks and the
-verification gate — and, since FLIP#1221, the DICOM side: the deterministic NIfTI → DICOM writer
-(``dicom_writer``) and the synthetic patient identities (``synthetic_identity``) every converted
-study carries.
+Run with ``PYTHONPATH=datasets`` from ``fl-tutorials/`` (the Makefile does), so both this package and
+the shared ``utils`` contract resolve.
 """

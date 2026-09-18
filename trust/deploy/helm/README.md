@@ -269,7 +269,7 @@ PVCs explicitly if you want a clean slate.
 | `imagePullSecrets` | `[]` | Registry credentials for private images |
 | `namespace.create` | `true` | Whether to create the namespace |
 | `namespace.name` | `""` | Namespace name (defaults to release namespace) |
-| `trustData.version` | `20260901` | Mock trust-data version — a git tag on the Hugging Face dataset, fetched by the OMOP and Orthanc init jobs. One value for both stores |
+| `trustData.version` | `20260917` | Mock trust-data version — a git tag on the Hugging Face dataset, fetched by the OMOP and Orthanc init jobs. One value for both stores |
 | `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the init jobs fetch from |
 
 #### Upgrading: `trustData.version` replaces the two per-store pins (FLIP#1100)

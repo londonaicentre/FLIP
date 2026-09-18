@@ -11,122 +11,114 @@
 
 """Convert the MSD spleen NIfTI volumes to DICOM, mocking the tags a PACS expects.
 
-Imported from ``londonaicentre/flip_project_spleen_segmentation`` (FLIP#1092). Behaviour is
-unchanged from that repo.
+Imported from ``londonaicentre/flip_project_spleen_segmentation`` (FLIP#1092) and rewritten on the
+shared writer in FLIP#1221. The original called ``plastimatch convert`` for the slicing and then a
+second pydicom pass to stamp the tags plastimatch's wrapper cannot set; plastimatch needed root to
+install its binary (so this step was never in CI) and minted fresh UIDs on every run. It now runs
+anywhere, needs nothing but this project's venv, and re-running it writes the same bytes: every UID
+and identity is a function of the subject id (``utils.dicom_writer``, ``utils.synthetic_identity``).
 
-Workstation-only: ``pyplastimatch.install_precompiled_binaries()`` installs to ``/usr/local/bin``,
-so this often needs root and is deliberately excluded from CI. See the datasets README.
+Same contract as before for the rest of the chain: reads ``data/Task09_Spleen/imagesTr`` and writes
+``dicom_output/<subject>/*.dcm``, one CT series per subject, run from ``fl-tutorials/``
+(``make -C fl-tutorials convert-spleen-to-dicom``). The published spleen DICOM set was produced by the
+plastimatch version, so this output still differs from it — the verification gate never compared
+regenerated DICOMs, only OMOP tables built from the *published* metadata table.
 """
 
-import os
-import random
-import shutil
+from __future__ import annotations
 
-import dicom_utils as dicom
-import pydicom
-import pyplastimatch as pypla
-from pyplastimatch.utils.install import install_precompiled_binaries
+import shutil
+import sys
+from pathlib import Path
+
+import nibabel as nib
+import numpy as np
+from utils import synthetic_identity
+from utils.dicom_writer import SeriesTags, StudyTags, write_series
+
+INPUT_DIR = Path("data/Task09_Spleen/imagesTr")
+OUTPUT_DIR = Path("dicom_output")
+PROJECT = "spleen_project"
+# StudyDescription is what omop_convert_spleen.py looks up (lower-cased) in MAPPING_PROCEDURE_TYPE, and
+# SeriesDescription doubles as ProtocolName, which dcm2niix puts in the NIfTI filename after a pull
+# (input_CT_Spleen_<datetime>_<series>.nii.gz — the name the spleen apps' label upload derives from).
+STUDY_DESCRIPTION = "Spleen CT"
+SERIES_DESCRIPTION = "CT Spleen"
+MODALITY = "CT"
+BODY_PART_EXAMINED = "ABDOMEN"
+KVP = 120.0
+
+
+def subject_of(nifti: Path) -> str:
+    """``spleen_10`` from ``spleen_10.nii.gz``."""
+    return nifti.name.removesuffix(".nii.gz")
+
+
+def convert_subject(nifti: Path, output_dir: Path) -> list[Path]:
+    """One MSD volume → ``<output_dir>/<subject>/*.dcm``, a single CT series with a synthetic patient.
+
+    Args:
+        nifti: The ``imagesTr/<subject>.nii.gz`` volume.
+        output_dir: Root of the DICOM tree; the subject's directory under it is replaced.
+
+    Returns:
+        list[Path]: The written instances, slice order.
+    """
+    subject = subject_of(nifti)
+    image = nib.load(str(nifti))
+    volume = image.get_fdata(dtype=np.float32)  # HU, as MSD stores them
+
+    who = synthetic_identity.identity(subject)
+    scanner = synthetic_identity.scanner(subject, MODALITY)
+    study = StudyTags(
+        patient_id=who.patient_id,
+        patient_name=who.patient_name,
+        patient_sex=who.sex,
+        patient_birth_date=who.birth_date.strftime("%Y%m%d"),
+        accession_number=who.accession_number,
+        study_date=who.study_datetime.strftime("%Y%m%d"),
+        study_time=who.study_datetime.strftime("%H%M%S"),
+        study_description=STUDY_DESCRIPTION,
+        referring_physician_name=who.referring_physician,
+        institution_name=who.institution,
+        department_name=who.department,
+        extra={"ClinicalTrialSubjectID": subject},
+    )
+    series = SeriesTags(
+        modality=MODALITY,
+        series_number=1,
+        series_description=SERIES_DESCRIPTION,
+        protocol_name=SERIES_DESCRIPTION,
+        body_part_examined=BODY_PART_EXAMINED,
+        manufacturer=scanner.manufacturer,
+        manufacturer_model_name=scanner.model,
+        extra={"KVP": KVP},
+    )
+
+    subject_dir = output_dir / subject
+    shutil.rmtree(subject_dir, ignore_errors=True)
+    return write_series(volume, image.affine, subject_dir, study=study, series=series, uid_entropy=[PROJECT, subject])
+
+
+def convert_dataset(input_dir: Path, output_dir: Path) -> dict[str, list[Path]]:
+    """Every ``*.nii.gz`` under ``input_dir`` (macOS ``._`` resource forks skipped), in name order.
+
+    Raises:
+        SystemExit: If ``input_dir`` holds no volumes — a missing download must not look like a run.
+    """
+    volumes = sorted(p for p in Path(input_dir).glob("*.nii.gz") if not p.name.startswith("._"))
+    if not volumes:
+        raise SystemExit(
+            f"❌ no .nii.gz volumes under {input_dir} — run `make -C fl-tutorials download-spleen-msd-raw` first"
+        )
+    written: dict[str, list[Path]] = {}
+    for nifti in volumes:
+        print(f"Converting {nifti.name} …", flush=True)
+        written[subject_of(nifti)] = convert_subject(nifti, Path(output_dir))
+    print(f"✅ {len(written)} subject(s) → {output_dir}")
+    return written
+
 
 if __name__ == "__main__":
-    random.seed(42)
-
-    # Install precompiled binaries
-    install_precompiled_binaries()
-
-    # Define input and output directories
-    input_dir = "data/Task09_Spleen/imagesTr"
-    output_dir = "dicom_output"
-
-    # Define metadata
-    study_description = "Spleen CT"
-    series_description = "CT Spleen"
-    modality = "CT"
-
-    # Ensure output directory exists
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Loop through all files in input directory
-    for filename in sorted(os.listdir(input_dir)):
-        if filename.endswith(".nii.gz") and not filename.startswith("._"):  # Process only NIFTI files
-            # e.g. spleen_10
-            subject = os.path.splitext(os.path.splitext(filename)[0])[0]  # Extract patient ID
-
-            # Skip hidden files
-            if subject.startswith("._"):
-                continue
-            print(f"Processing: {subject}")
-
-            input_path = os.path.join(input_dir, filename)
-
-            # Metadata
-            patient_id = dicom.random_patient_id()
-            gender = dicom.random_gender()
-            patient_name = dicom.random_patient_name(gender=gender)
-            patient_birth_date = dicom.random_date_of_birth()
-            patient_sex = dicom.get_sex(gender=gender)
-
-            accession_number = dicom.random_accession_number()
-            study_date = dicom.random_study_date()
-            series_date = dicom.random_series_date(study_date=study_date)
-            manufacturer = dicom.random_manufacturer()
-            manufacturer_model = dicom.random_manufacturer_model_name()
-            institution_name = dicom.random_institution()
-            referring_physician_name = dicom.random_referring_physician_name()
-            department_name = dicom.random_department()
-
-            convert_args_ct = {
-                "input": input_path,
-                "modality": modality,
-                "patient-id": patient_id,
-                "patient-name": patient_name,
-                "output-dicom": os.path.join(output_dir, subject),
-                # "series-description": series_description,
-                # "study-description": study_description,
-                # "metadata": metadata
-            }
-
-            shutil.rmtree(convert_args_ct["output-dicom"], ignore_errors=True)
-
-            # Ensure patient-specific output directory exists
-            print(f"Creating folder for {convert_args_ct['output-dicom']}")
-            os.makedirs(convert_args_ct["output-dicom"])
-
-            print(f"Converting {filename} to DICOM for patient: {subject}")
-            pypla.convert(verbose=True, **convert_args_ct)
-
-            # Now load the converted DICOM files set remaining metadata
-            dicom_files = os.listdir(convert_args_ct["output-dicom"])
-            for dicom_file in dicom_files:
-                dicom_path = os.path.join(convert_args_ct["output-dicom"], dicom_file)
-                # use pydicom to load the file
-                ds = pydicom.dcmread(dicom_path)
-                # set the remaining metadata
-                ds.StudyDate = study_date.strftime("%Y%m%d")
-                ds.SeriesDate = series_date.strftime("%Y%m%d")
-                ds.StudyTime = study_date.strftime("%H%M%S")
-                ds.SeriesTime = series_date.strftime("%H%M%S")
-                ds.AccessionNumber = accession_number
-                ds.Manufacturer = manufacturer
-                ds.ManufacturerModelName = manufacturer_model
-                ds.InstitutionName = institution_name
-                ds.StudyDescription = study_description
-                ds.SeriesDescription = series_description
-                ds.ProtocolName = series_description
-                ds.ReferringPhysicianName = referring_physician_name
-                ds.DepartmentName = department_name
-                ds.PatientBirthDate = patient_birth_date
-                ds.PatientSex = patient_sex
-                # save the file
-                ds.save_as(dicom_path)
-
-            # Zip the output directory for each patient
-            # shutil.make_archive(os.path.join(output_dir, patient_id), 'zip', convert_args_ct["output-dicom"])
-            # break
-
-    # Read first file under the output directory to check metadata is set
-    # dicom_files = os.listdir(convert_args_ct["output-dicom"])
-    # file_path = os.path.join(convert_args_ct["output-dicom"], dicom_files[0])
-    # ds = pydicom.dcmread(file_path)
-    # print(ds)
-
-    print("Conversion complete.")
+    convert_dataset(INPUT_DIR, OUTPUT_DIR)
+    sys.exit(0)

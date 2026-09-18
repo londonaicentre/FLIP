@@ -141,6 +141,32 @@ def clean_project(conn: Connection, person_ids: list[int]) -> None:
         print(f"🧹 omop.{table_name}: removed {result.rowcount} existing row(s) for these persons")
 
 
+def remove_projects(engine: Engine, data_dir: Path, projects: list[str]) -> None:
+    """Delete the listed projects' rows, keyed by the ``person.csv`` in ``data_dir``, and load nothing.
+
+    The unseed twin of ``load_project``'s scoped clean: point ``data_dir`` at the tables of the cut
+    that IS in the database (the previous data-version tag) to take exactly those rows out — the
+    move off a re-cut project whose person ids all changed, leaving every other project in place.
+    One transaction for all listed projects.
+
+    Args:
+        engine (Engine): Target database.
+        data_dir (Path): Directory holding the canonical <project>/person.csv files of the cut to remove.
+        projects (list[str]): Project names.
+
+    Raises:
+        FileNotFoundError: If a project's ``person.csv`` is absent — checked before anything is deleted.
+    """
+    for project in projects:
+        if not (data_dir / project / "person.csv").is_file():
+            raise FileNotFoundError(f"Cannot unseed {project}: {data_dir / project / 'person.csv'} not found")
+    with engine.begin() as conn:
+        for project in projects:
+            print(f"🧹 Removing {project} as {data_dir} describes it")
+            clean_project(conn, project_person_ids(data_dir, project))
+    print("✅ Unseeded: " + ", ".join(projects))
+
+
 def load_project(
     engine: Engine,
     data_dir: Path,
@@ -219,11 +245,22 @@ def main(argv: list[str] | None = None) -> None:
         default=DEFAULT_PROJECTS,
         help="Project names to load (default: %(default)s).",
     )
+    parser.add_argument(
+        "--remove-only",
+        action="store_true",
+        help="Unseed: delete the listed projects' rows (by the person_ids in --data-dir's person.csv, i.e. the "
+        "cut those tables describe) and load nothing — how a re-cut project's previous rows leave a running "
+        "trust without touching any other project.",
+    )
     args = parser.parse_args(argv)
 
-    validate_data_dir(args.data_dir, args.projects)
     engine = create_engine(get_settings().OMOP_DATABASE_URL.get_secret_value(), echo=False)
 
+    if args.remove_only:
+        remove_projects(engine, args.data_dir, args.projects)
+        return
+
+    validate_data_dir(args.data_dir, args.projects)
     if args.clean == "all":
         clean_tables(engine)
     for project in args.projects:
