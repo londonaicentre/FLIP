@@ -623,10 +623,12 @@ release notes on a PR to `main`), `regenerate_docs_gifs.yml` (re-records the doc
 Cypress on push to `develop` touching `flip-ui/src/**` or the Cypress docs harness —
 `flip-ui/test/cypress/docs/**`, `cypress.docs.config.ts`, `scripts/videos-to-gifs.sh` — or
 manual dispatch; since FLIP#1236 the GIFs are not in git: a secret-free `record` job hands them to
-a `publish` job in the `flip` environment that publishes one immutable tag on the HF dataset
+a `publish` job in the `flip` environment, gated to `develop` (the environment is the shared CI one
+and adds no isolation — the ref gate is the control), that publishes one immutable tag on the HF dataset
 `aicentreflip/docs-gifs` and opens a one-line `docs/.gifs_version` pin PR, reviewed through its RTD
 preview), `test_docs_scripts.yml` (`make -C docs test`: the fetcher/publisher suites under
-`docs/tests/` and the rst-figure ↔ demo-spec wiring guard).
+`docs/tests/`, the rst-figure ↔ demo-spec wiring guard, and a static guard over the regenerate
+workflow's token scope, `develop` gate and tag minting).
 
 ### Terraform runs in CI (FLIP#962)
 

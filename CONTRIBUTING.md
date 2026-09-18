@@ -776,10 +776,12 @@ The animated walkthroughs in the user guides (`docs/source/user-guides/user-comm
 fully mocked backend. **They are not tracked in git** (FLIP#1236 — 65 MB that re-recording rewrote on every
 run was 95% of a clone). Instead:
 
-- `.github/workflows/regenerate_docs_gifs.yml` runs on every push to `develop` that touches `flip-ui/`
-  (or by hand via *Run workflow*): its `record` job records the demo specs under
-  `flip-ui/test/cypress/docs/<category>/<name>.spec.ts` and converts each video to
-  `docs/source/assets/generated/gifs/<category>/<name>.gif` with `ffmpeg`; its `publish` job publishes that
+- `.github/workflows/regenerate_docs_gifs.yml` runs on every push to `develop` that touches `flip-ui/src/**`,
+  the Cypress docs harness (`flip-ui/test/cypress/docs/**`, `cypress.docs.config.ts`,
+  `scripts/videos-to-gifs.sh`) or the workflow itself, or by hand via *Run workflow*: its `record` job mints
+  the version tag, records the demo specs under `flip-ui/test/cypress/docs/<category>/<name>.spec.ts` and
+  converts each video to `docs/source/assets/generated/gifs/<category>/<name>.gif` with `ffmpeg`; its
+  `publish` job — **`develop` only**; a dispatch from a branch records without publishing — publishes that
   directory to the public Hugging Face dataset
   [`aicentreflip/docs-gifs`](https://huggingface.co/datasets/aicentreflip/docs-gifs) as **one commit and one
   tag** `YYYYMMDDTHHMMSSZ-<sha7>` (`docs/scripts/publish_docs_gifs.py`), verifies the tag resolves
@@ -787,8 +789,8 @@ run was 95% of a clone). Instead:
   and closes the superseded one.
 - The docs build (`make -C docs docs`, the docs CI job, ReadTheDocs) fetches the pinned tag at build time
   (`docs/scripts/fetch_docs_gifs.py`, called from `docs/source/conf.py`) — see "Building the documentation".
-- **Review the pin PR in its ReadTheDocs preview** (the `docs/readthedocs.org:flip` check): RTD builds the PR
-  with the new pin, so the pages show the recordings in context. Re-recording is nondeterministic (frame
+- **Review the pin PR in its ReadTheDocs preview** (the `docs/readthedocs.org:londonaicentreflip` check):
+  RTD builds the PR with the new pin, so the pages show the recordings in context. Re-recording is nondeterministic (frame
   timing plus the animated demo cursor), so every GIF is new bytes even where the UI didn't change — merge if
   the genuinely-changed clips look right, otherwise close.
 - **Dataset tags are never moved or deleted**, so `stable` and every historical docs version keep resolving the

@@ -25,14 +25,16 @@ The dataset holds one copy of every documentation GIF, at an unversioned path::
     manifest.json       version, source_commit, recorded_at, workflow_run, per-file sha256 + bytes
     README.md           the dataset card (docs/scripts/docs_gifs_card.md)
 
-A version is a git *tag* on the dataset — ``YYYYMMDDTHHMMSSZ-<sha7>``, the UTC instant of the publish and the
-develop commit the GIFs were recorded from — which is what ``docs/.gifs_version`` pins and what
-``fetch_docs_gifs.py`` resolves at build time. Publishing is: add the GIF of every demo spec, delete the
+A version is a git *tag* on the dataset — ``YYYYMMDDTHHMMSSZ-<sha7>``, the UTC instant the recording started
+and the develop commit the GIFs were recorded from (the CI workflow mints it in the recording job, before
+Cypress runs, and the manifest's ``recorded_at`` is read back from it) — which is what ``docs/.gifs_version``
+pins and what ``fetch_docs_gifs.py`` resolves at build time. Publishing is: add the GIF of every demo spec, delete the
 dataset GIFs whose spec is gone, add the manifest and the card, in one commit; then tag that commit. An
 existing tag is never moved. The commit and the tag are separate Hub calls, so a failure between them leaves
 the bytes on ``main`` with nothing pinning them — re-run the same command to finish the job.
 
-Usage (needs ``hf auth login`` with write access, or ``HF_TOKEN``; the CI publish job passes every flag)::
+Usage (needs ``hf auth login`` with write access, or ``HF_TOKEN``; the CI publish job passes ``--version``,
+``--source-commit`` and ``--workflow-run`` explicitly)::
 
     uv run docs/scripts/publish_docs_gifs.py --source-commit "$(git rev-parse HEAD)" --dry-run
     uv run docs/scripts/publish_docs_gifs.py --source-commit <sha> --version 20260907T122006Z-5945242 \\
@@ -94,7 +96,7 @@ def expected_gifs(specs_dir: Path) -> list[str]:
 
 
 def make_tag(source_commit: str, now: datetime) -> str:
-    """``YYYYMMDDTHHMMSSZ-<sha7>`` for a publish at ``now`` of GIFs recorded from ``source_commit``."""
+    """``YYYYMMDDTHHMMSSZ-<sha7>`` for GIFs recorded from ``source_commit`` starting at ``now``."""
     return f"{now.astimezone(UTC).strftime(TAG_TIME_FORMAT)}-{source_commit[:7]}"
 
 
