@@ -33,7 +33,8 @@
 # task-definition change is needed.
 #
 # Invoked by `make -C deploy/providers/AWS add-fl-kits N=<n> PROD=<env> [YES=1]`
-# (PROD=stag|true, or lza|lza-stag for the LZA estate — FLIP#749),
+# (PROD=stag|true, or lza|lza-stag for the LZA estate — FLIP#749; the Makefile
+# hands this script the environment CLASS as ENV_NAME=prod|stag),
 # which exports the env-file vars this script reads (AICENTRE_BUCKET_NAME,
 # FLARE_KIT_DATE, AWS_PROFILE, FL_BACKEND, PROD) plus N / YES / MAIN_ENV_FILE.
 #
@@ -53,7 +54,6 @@
 set -euo pipefail
 
 N="${N:?N is required (number of kit slots to add, e.g. N=2)}"
-PROD="${PROD:?PROD is required (stag|true|lza|lza-stag)}"
 AICENTRE_BUCKET_NAME="${AICENTRE_BUCKET_NAME:?AICENTRE_BUCKET_NAME must be set (run via make with PROD=<env>)}"
 FLARE_KIT_DATE="${FLARE_KIT_DATE:?FLARE_KIT_DATE must be set (run via make with PROD=<env>)}"
 MAIN_ENV_FILE="${MAIN_ENV_FILE:?MAIN_ENV_FILE must be set (the env file to append FL_KIT_SLOT_NAMES to)}"
@@ -70,16 +70,19 @@ if ! [[ "${N}" =~ ^[0-9]+$ ]] || [[ "${N}" -lt 1 ]]; then
     exit 1
 fi
 
-# ENV_NAME selects the CA workspace and project YAML (provision/workspace-<env>,
-# net-N_project_<env>.yml). The LZA environments deliberately reuse the legacy
-# ones: their kits carry the same server FQDN and root CA, so trusts keep their
-# client kits across the DNS cutover (FLIP#749). A staging estate provisioned
-# with a fresh CA instead trips the fingerprint guard below, never a silent mint.
-case "${PROD}" in
-true | lza) ENV_NAME="prod" ;;
-stag | lza-stag) ENV_NAME="stag" ;;
+# ENV_NAME (prod|stag) selects the CA workspace and project YAML
+# (provision/workspace-<env>, net-N_project_<env>.yml). It is the environment
+# CLASS the Makefile derives from PROD (deploy/env_mode.mk's ENV_CLASS, the
+# same value fl-services/nvflare/Makefile keys FL_KIT_WORKSPACE on), handed in
+# rather than re-derived here. The LZA environments deliberately map onto the
+# legacy classes: their kits carry the same server FQDN and root CA, so trusts
+# keep their client kits across the DNS cutover (FLIP#749). A staging estate
+# provisioned with a fresh CA instead trips the fingerprint guard below, never
+# a silent mint.
+case "${ENV_NAME:-}" in
+prod | stag) ;;
 *)
-    echo "❌ PROD must be one of 'stag', 'true', 'lza', 'lza-stag' — got '${PROD}'." >&2
+    echo "❌ ENV_NAME must be 'prod' or 'stag' (the Makefile passes it from PROD; run via \`make add-fl-kits\`) — got '${ENV_NAME:-}'." >&2
     exit 1
     ;;
 esac
@@ -108,7 +111,7 @@ on_error() {
         echo "   Kits already uploaded this run: ${UPLOADED[*]}" >&2
         echo "   Do NOT re-run add-fl-kits to recover — it would mint HIGHER numbers and orphan the" >&2
         echo "   names above. Instead: append the uploaded names to FL_KIT_SLOT_NAMES in" >&2
-        echo "   ${MAIN_ENV_FILE} and run 'make apply-fl-kit-slots PROD=${PROD}' (a name uploaded to" >&2
+        echo "   ${MAIN_ENV_FILE} and run 'make apply-fl-kit-slots PROD=${PROD:-<env>}' (a name uploaded to" >&2
         echo "   only SOME nets must first be minted on the missing nets — see the nvflare README)." >&2
     else
         echo "   Nothing was minted or uploaded. If this failed during the env-file edit (step 5)," >&2

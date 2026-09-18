@@ -208,10 +208,11 @@ moved {
 ############################
 
 resource "aws_s3_bucket" "cloudfront_logs" {
-  count = var.lza_managed_network ? 0 : 1
-  # Derived-name-with-override, same rationale as access_logs_bucket_name in
-  # s3_logging.tf (global bucket names vs the shared subdomain, FLIP#749).
-  bucket = var.CF_LOGS_BUCKET_NAME != "" ? var.CF_LOGS_BUCKET_NAME : "flip-cf-logs-${var.flip_alb_subdomain}"
+  # Legacy only: the LZA edge distribution lives in the networking account and
+  # logs there (aicentre-lza-iac), so no name override is needed here — the
+  # derived name is never contested on the accounts that create this bucket.
+  count  = var.lza_managed_network ? 0 : 1
+  bucket = "flip-cf-logs-${var.flip_alb_subdomain}"
 
   tags = {
     Name = "flip-cloudfront-logs"
@@ -954,11 +955,12 @@ resource "aws_cloudfront_response_headers_policy" "flip_api" {
 
 resource "aws_cloudfront_distribution" "flip_ui" {
   # checkov:skip=CKV2_AWS_47:the attached ACL carries AWSManagedRulesKnownBadInputsRuleSet (Log4j AMR); count-mode rollout is deliberate — see the web ACL above
-  # Gated off on LZA with the VPC origin above: the networking account's edge
-  # distribution serves the UI (cross-account OAC on aws_s3_bucket.flip_ui)
-  # and relays /api/* -- see aicentre-lza-iac. The WAF/OAC/function/response
-  # policies below stay standing unused on LZA to keep this diff and the
-  # legacy state churn minimal; the edge carries its own WAF.
+  # Gated off on LZA with the VPC origin above and the WAF: the networking
+  # account's edge distribution serves the UI (cross-account OAC on
+  # aws_s3_bucket.flip_ui), relays /api/* and carries its own WAF -- see
+  # aicentre-lza-iac. The OAC, function and response-headers policies below
+  # stay standing unused on LZA to keep this diff and the legacy state churn
+  # minimal.
   count = var.lza_managed_network ? 0 : 1
 
   enabled             = true

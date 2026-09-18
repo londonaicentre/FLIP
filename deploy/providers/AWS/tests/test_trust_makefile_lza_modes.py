@@ -22,68 +22,45 @@ own kit suffix — ``trust/.env.<CODE>.lza-prod`` / ``.lza-stag``, the files the
 through to the DEVELOPMENT compose and the bare legacy ``.env.X`` — on a hub-admin
 box that is a different trust's kit, silently started under the staging project name.
 
-These probes run ``make`` for real against the two Makefiles and read the derived
-variables back, with a KIT that has no kit file so the ``-include`` is inert.
+The table now lives once in ``deploy/env_mode.mk`` (pinned by ``test_env_mode.py``);
+these probes run ``make`` for real against the two Makefiles to check they are wired
+to it, with a KIT that has no kit file so the ``-include`` is inert.
 """
 
 import subprocess
 from pathlib import Path
 
 import pytest
+from make_probe import probe_make
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 TRUST_DIR = REPO_ROOT / "trust"
 XNAT_DIR = TRUST_DIR / "xnat"
 
-TRUST_PROBE = """\
-.DEFAULT_GOAL := __probe
-include Makefile
-.PHONY: __probe
-__probe:
-\t@printf '%s|%s|%s' "$(ENV)" "$(__DCKR_SUFFIX)" "$(KIT_FILE)"
-"""
-
-XNAT_PROBE = """\
-.DEFAULT_GOAL := __probe
-include Makefile
-.PHONY: __probe
-__probe:
-\t@printf '%s|%s|%s|%s' "$(ENV)" "$(KIT_FILE)" "$(XNAT_DATA_DIR)" "$(STACK_FILES)"
-"""
+TRUST_ITEMS = ["$(ENV)", "$(__DCKR_SUFFIX)", "$(KIT_FILE)"]
+XNAT_ITEMS = ["$(ENV)", "$(KIT_FILE)", "$(XNAT_DATA_DIR)", "$(STACK_FILES)"]
+#: Every deployed PROD value and the kit suffix (ENV) it must map to — the table deploy/env_mode.mk owns.
+DEPLOYED_PROD_VALUES = [("true", "production"), ("stag", "stag"), ("lza", "lza-prod"), ("lza-stag", "lza-stag")]
 
 
-def _probe(cwd: Path, probe: str, prod: str) -> list[str]:
+def _probe(cwd: Path, items: list[str], prod: str) -> list[str]:
     # FL_BACKEND is normally read from the kit; with no kit the trust Makefile's
     # fl_backend.mk include refuses an empty value, so supply one for the probe.
-    result = subprocess.run(
-        ["make", "-s", "-f", "-", "__probe", f"PROD={prod}", "KIT=ZZPROBE", "TRUST_NUM=1", "FL_BACKEND=nvflare"],
-        input=probe,
-        text=True,
-        capture_output=True,
-        cwd=cwd,
-        check=True,
-    )
-    return result.stdout.strip().split("|")
+    return probe_make(cwd, items, {"PROD": prod, "KIT": "ZZPROBE", "TRUST_NUM": "1", "FL_BACKEND": "nvflare"})
 
 
-@pytest.mark.parametrize(
-    ("prod", "env_suffix"),
-    [("true", "production"), ("stag", "stag"), ("lza", "lza-prod"), ("lza-stag", "lza-stag")],
-)
+@pytest.mark.parametrize(("prod", "env_suffix"), DEPLOYED_PROD_VALUES)
 def test_trust_makefile_maps_every_deployed_prod_value(prod: str, env_suffix: str) -> None:
-    env, compose_suffix, kit_file = _probe(TRUST_DIR, TRUST_PROBE, prod)
+    env, compose_suffix, kit_file = _probe(TRUST_DIR, TRUST_ITEMS, prod)
     assert env == env_suffix, f"PROD={prod} must read kit .env.<CODE>.{env_suffix}, got .{env}"
     assert compose_suffix == "production", f"PROD={prod} must run the production compose, got {compose_suffix}"
     # No kit exists for ZZPROBE, so the legacy fallback wins — the suffix it TRIED first is ENV.
     assert kit_file == ".env.ZZPROBE"
 
 
-@pytest.mark.parametrize(
-    ("prod", "env_suffix"),
-    [("true", "production"), ("stag", "stag"), ("lza", "lza-prod"), ("lza-stag", "lza-stag")],
-)
+@pytest.mark.parametrize(("prod", "env_suffix"), DEPLOYED_PROD_VALUES)
 def test_xnat_makefile_maps_every_deployed_prod_value(prod: str, env_suffix: str) -> None:
-    env, kit_file, data_dir, stack_files = _probe(XNAT_DIR, XNAT_PROBE, prod)
+    env, kit_file, data_dir, stack_files = _probe(XNAT_DIR, XNAT_ITEMS, prod)
     assert env == env_suffix
     assert kit_file == "../.env.ZZPROBE"
     assert data_dir == "/opt/flip/xnat-trust1", f"PROD={prod} must use the deployed-environment XNAT data path"
@@ -96,7 +73,8 @@ def test_xnat_makefile_maps_every_deployed_prod_value(prod: str, env_suffix: str
     [("lza-stag", 'if [ -n "lza-stag" ]'), ("lza", 'if [ -n "lza" ]'), ("", 'if [ -n "" ]')],
 )
 def test_xnat_reset_recipe_branches_on_deployed_envs(prod: str, expected: str) -> None:
-    """The recipe-level branch in ``xnat-reset`` follows DEPLOYED_ENVS too (it was a fourth ``true||stag``)."""
+    """The recipe-level branch in ``xnat-reset`` follows env_mode.mk's IS_DEPLOYED too (it was a fourth
+    ``true||stag``)."""
     result = subprocess.run(
         ["make", "-n", "xnat-reset", f"PROD={prod}", "KIT=ZZPROBE", "TRUST_NUM=1", "FL_BACKEND=nvflare"],
         text=True,
@@ -108,9 +86,9 @@ def test_xnat_reset_recipe_branches_on_deployed_envs(prod: str, expected: str) -
 
 
 def test_development_paths_are_unchanged() -> None:
-    env, compose_suffix, _ = _probe(TRUST_DIR, TRUST_PROBE, "")
+    env, compose_suffix, _ = _probe(TRUST_DIR, TRUST_ITEMS, "")
     assert (env, compose_suffix) == ("development", "development")
-    env, _, data_dir, stack_files = _probe(XNAT_DIR, XNAT_PROBE, "")
+    env, _, data_dir, stack_files = _probe(XNAT_DIR, XNAT_ITEMS, "")
     assert env == "development"
     assert data_dir.endswith("/trust/xnat/xnat-data-trust1")
     assert "docker-compose-stack.development.yml" in stack_files

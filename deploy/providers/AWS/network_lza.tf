@@ -89,4 +89,10 @@ locals {
   # Legacy envs have no app/data split — both roles map onto the private subnets.
   app_subnet_ids  = var.lza_managed_network ? sort(data.aws_subnets.lza_app[0].ids) : module.flip_vpc.private_subnets
   data_subnet_ids = var.lza_managed_network ? sort(data.aws_subnets.lza_data[0].ids) : module.flip_vpc.private_subnets
+
+  # The in-account interface endpoints (vpc_endpoints.tf) and the SG rule that
+  # admits them (main.tf) exist only where this stack owns the network: the
+  # platform-managed VPC reaches AWS services through the accelerator's central
+  # endpoints. One predicate for every gate.
+  create_vpc_endpoints = var.enable_ecs_endpoints && !var.lza_managed_network
 }

@@ -18,31 +18,12 @@
 		deploy-trust-k8s undeploy-trust-k8s \
 		demo-video demo-users seed-demo-projects
 
-ifeq ($(PROD),true)
-MAIN_ENV_FILE=.env.production
-__DCKR_SUFFIX=production
-ENV=production
-else ifeq ($(PROD),stag)
-MAIN_ENV_FILE=.env.stag
-__DCKR_SUFFIX=production
-ENV=stag
-# LZA estate (FLIP#749): the hub itself deploys via deploy/providers/AWS, but the
-# kit-file targets here (new-trust, sync-trust-kit[s]) must name
-# trust/.env.<CODE>.$(ENV) the way that Makefile's KIT_ENV_SUFFIX and
-# register-trusts.sh read it back — .lza-prod / .lza-stag, never .stag.
-else ifeq ($(PROD),lza)
-MAIN_ENV_FILE=.env.lza-prod
-__DCKR_SUFFIX=production
-ENV=lza-prod
-else ifeq ($(PROD),lza-stag)
-MAIN_ENV_FILE=.env.lza-stag
-__DCKR_SUFFIX=production
-ENV=lza-stag
-else
-MAIN_ENV_FILE=.env.development
-__DCKR_SUFFIX=development
-ENV=development
-endif
+# What PROD means — ENV, __DCKR_SUFFIX and the env-file name — is derived once in
+# deploy/env_mode.mk, shared with every other Makefile that reads PROD. The kit-file
+# targets here (new-trust, sync-trust-kit[s]) name trust/.env.<CODE>.$(ENV), the same
+# token the AWS Makefile's KIT_ENV_SUFFIX and register-trusts.sh use.
+include deploy/env_mode.mk
+MAIN_ENV_FILE=$(ENV_FILE_NAME)
 
 # Print which environment files are being used
 # Exported so `make -C flip-api` / `-C trust` resolve the SAME env file rather than

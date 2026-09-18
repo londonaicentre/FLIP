@@ -90,7 +90,7 @@ resource "aws_ecs_service" "flip_api" {
   # NLB's TCP TG on LZA (fl_ingress_lza.tf, FLIP#749). Without this block the
   # service stays invisible to the load balancer.
   load_balancer {
-    target_group_arn = var.lza_managed_network ? aws_lb_target_group.ecs_flip_api_lza[0].arn : aws_lb_target_group.ecs_flip_api[0].arn
+    target_group_arn = aws_lb_target_group.ecs_flip_api.arn
     container_name   = "flip-api"
     container_port   = local.api_container_port
   }
@@ -184,7 +184,7 @@ resource "aws_ecs_service" "fl_server_net_1" {
   # internal NLB's TG (fl_ingress_lza.tf), reached via the networking
   # account's edge NLB over the TGW.
   load_balancer {
-    target_group_arn = var.lza_managed_network ? aws_lb_target_group.ecs_fl_server_tcp_lza[0].arn : aws_lb_target_group.ecs_fl_server_tcp[0].arn
+    target_group_arn = aws_lb_target_group.ecs_fl_server_tcp.arn
     container_name   = "fl-server-net-1"
     # Backend-dependent container port (Flower: SuperLink Fleet 9092); the
     # NLB listener port trusts connect to stays var.FL_SERVER_PORT.

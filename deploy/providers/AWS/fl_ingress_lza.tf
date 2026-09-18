@@ -72,19 +72,23 @@ locals {
   # The FL NLB's private IPs are ASSIGNED via subnet_mapping rather than
   # discovered from its ENIs afterwards: known at plan time, stable by
   # construction, and publishable to the networking account before apply.
-  lza_fl_nlb_private_ips = var.lza_managed_network ? [
-    for id in local.app_subnet_ids : cidrhost(data.aws_subnet.lza_app[id].cidr_block, var.lza_fl_nlb_host_num)
-  ] : []
+  # One map is the static-IP contract with the networking account; the
+  # subnet_mapping and both published lists derive from it, so the address a
+  # subnet gets is written in exactly one place.
+  lza_fl_nlb_ip_by_subnet = var.lza_managed_network ? {
+    for id in local.app_subnet_ids : id => cidrhost(data.aws_subnet.lza_app[id].cidr_block, var.lza_fl_nlb_host_num)
+  } : {}
+
+  lza_fl_nlb_private_ips = values(local.lza_fl_nlb_ip_by_subnet)
 
   lza_tgw_attachment_azs = var.lza_managed_network ? distinct([
     for s in values(data.aws_subnet.lza_tgw_attachment) : s.availability_zone
   ]) : []
 
-  lza_fl_nlb_published_ips = var.lza_managed_network ? [
-    for id in local.app_subnet_ids :
-    cidrhost(data.aws_subnet.lza_app[id].cidr_block, var.lza_fl_nlb_host_num)
+  lza_fl_nlb_published_ips = [
+    for id, ip in local.lza_fl_nlb_ip_by_subnet : ip
     if contains(local.lza_tgw_attachment_azs, data.aws_subnet.lza_app[id].availability_zone)
-  ] : []
+  ]
 }
 
 module "fl_internal_nlb_security_group" {
@@ -131,26 +135,27 @@ module "fl_server_internal_nlb" {
   vpc_id             = local.vpc_id
   internal           = true
 
-  # Static private IP per subnet (see local.lza_fl_nlb_private_ips above).
-  subnet_mapping = var.lza_managed_network ? [
-    for id in local.app_subnet_ids : {
+  # Static private IP per subnet (see local.lza_fl_nlb_ip_by_subnet above).
+  subnet_mapping = [
+    for id, ip in local.lza_fl_nlb_ip_by_subnet : {
       subnet_id            = id
-      private_ipv4_address = cidrhost(data.aws_subnet.lza_app[id].cidr_block, var.lza_fl_nlb_host_num)
+      private_ipv4_address = ip
     }
-  ] : []
+  ]
 
   create_security_group      = false
   security_groups            = var.lza_managed_network ? [module.fl_internal_nlb_security_group[0].security_group.id] : []
   enable_deletion_protection = false
 
-  # Standalone Fargate TG below, not the module's target_groups map — same
-  # rationale as aws_lb_target_group.ecs_fl_server_tcp in main.tf.
+  # Forwards to the standalone Fargate TGs in main.tf (shared with the legacy
+  # front doors), not the module's target_groups map — same rationale as
+  # aws_lb_target_group.ecs_fl_server_tcp there.
   listeners = {
     "fl-server-tcp-listener" = {
       port     = var.FL_SERVER_PORT
       protocol = "TCP"
       forward = {
-        target_group_arn = var.lza_managed_network ? aws_lb_target_group.ecs_fl_server_tcp_lza[0].arn : null
+        target_group_arn = aws_lb_target_group.ecs_fl_server_tcp.arn
       }
     }
 
@@ -168,73 +173,12 @@ module "fl_server_internal_nlb" {
       certificate_arn = var.manage_dns ? aws_acm_certificate.flip[0].arn : null
       ssl_policy      = var.manage_dns ? "ELBSecurityPolicy-TLS13-1-3-2021-06" : null
       forward = {
-        target_group_arn = var.lza_managed_network ? aws_lb_target_group.ecs_flip_api_lza[0].arn : null
+        target_group_arn = aws_lb_target_group.ecs_flip_api.arn
       }
     }
   }
 
   target_groups = {}
-}
-
-# LZA counterpart of aws_lb_target_group.ecs_fl_server_tcp (main.tf) —
-# identical semantics: backend-keyed name (port is ForceNew, see the comment
-# there), container port per backend, registered by the ECS service's
-# load_balancer block in ecs_services.tf, never by Terraform.
-resource "aws_lb_target_group" "ecs_fl_server_tcp_lza" {
-  count       = var.lza_managed_network ? 1 : 0
-  name        = var.fl_backend == "flower" ? "ecs-fl-server-flwr-lza" : "ecs-fl-server-lza"
-  port        = local.fl_server_container_port
-  protocol    = "TCP"
-  target_type = "ip"
-  vpc_id      = local.vpc_id
-
-  lifecycle {
-    create_before_destroy = true
-  }
-
-  health_check {
-    enabled             = true
-    protocol            = "TCP"
-    port                = "traffic-port"
-    healthy_threshold   = 3
-    unhealthy_threshold = 3
-    interval            = 30
-  }
-
-  deregistration_delay = 30
-}
-
-# LZA web leg counterpart of aws_lb_target_group.ecs_flip_api (main.tf): the
-# internal NLB forwards its web listener here. NLB target groups are TCP, but
-# the health check is HTTP on the API's own liveness route so an unhealthy
-# task is pulled exactly as the ALB did. Registered by the ECS service's
-# load_balancer block (ecs_services.tf), never by Terraform.
-resource "aws_lb_target_group" "ecs_flip_api_lza" {
-  count       = var.lza_managed_network ? 1 : 0
-  name        = "ecs-flip-api-lza"
-  port        = local.api_container_port
-  protocol    = "TCP"
-  target_type = "ip"
-  vpc_id      = local.vpc_id
-
-  lifecycle {
-    create_before_destroy = true
-  }
-
-  health_check {
-    enabled             = true
-    protocol            = "HTTP"
-    path                = "/api/health"
-    port                = "traffic-port"
-    matcher             = "200"
-    healthy_threshold   = 3
-    unhealthy_threshold = 3
-    interval            = 30
-  }
-
-  # Same drain as the ALB TG: long enough for in-flight requests, short
-  # enough not to stretch every ECS rollout.
-  deregistration_delay = 30
 }
 
 # SSM handoff parameters — the contract with the networking account's edge

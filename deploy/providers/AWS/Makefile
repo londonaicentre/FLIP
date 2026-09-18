@@ -10,25 +10,24 @@
 # limitations under the License.
 #
 
-ifeq ($(PROD),true)
-MAIN_ENV_FILE=../../../.env.production
-else ifeq ($(PROD),lza)
-# LZA estate (FLIP#749): a prod-grade environment on a platform-managed (AWS
-# Landing Zone Accelerator) network, the second of the two supported deployment
-# modes. Gitignored like the other env files — see the "Deploying onto an LZA
-# estate" section in README.md for the required values.
-MAIN_ENV_FILE=../../../.env.lza-prod
-else ifeq ($(PROD),lza-stag)
-# Staging on an LZA estate: same platform-managed mode as PROD=lza, but in the
-# staging workload account with staging semantics (TF_VAR_environment=stag, so
-# the prod-only RDS hardening stays off, and deploys track origin/develop like
-# legacy stag). Requires LZA_VPC_NAME in the env file — see the guard below.
-MAIN_ENV_FILE=../../../.env.lza-stag
-else
 # Sometimes PROD may not be set, default to staging environment in that case
+ifeq ($(strip $(PROD)),)
 PROD=stag
-MAIN_ENV_FILE=../../../.env.stag
 endif
+# What PROD means (ENV, the env-file name, ENV_CLASS, IS_LZA, …) is derived once in
+# ../../env_mode.mk, shared with every Makefile that reads PROD. PROD=lza is the LZA
+# estate (FLIP#749): a prod-grade environment on a platform-managed (AWS Landing Zone
+# Accelerator) network, the second of the two supported deployment modes; PROD=lza-stag
+# is its staging counterpart — the same platform-managed mode with staging semantics
+# (ENV_CLASS=stag: the prod-only RDS hardening stays off and deploys track
+# origin/develop like legacy stag). Both env files are gitignored like the others —
+# see "Deploying onto an LZA estate" in README.md for the required values. The
+# include reads ENV_MODE_PROD rather than PROD so a PROD given as empty on the
+# command line (`make plan PROD=`, which make will not let the default above
+# overwrite) still maps to staging here.
+ENV_MODE_PROD := $(or $(strip $(PROD)),stag)
+include ../../env_mode.mk
+MAIN_ENV_FILE=../../../$(ENV_FILE_NAME)
 
 # The trust node's two deployment shapes live beside the trust compose files, not in
 # this provider (#1213). Spelled once; every recipe that reaches them goes through these.
@@ -80,43 +79,37 @@ LZA_STAG_AWS_PROFILE ?= lza-stag
 
 # Refuse to operate against an unintended AWS account. Profile name is the safety
 # guard because Make has no easy way to read the account ID without an `aws` call.
-ifeq ($(PROD),true)
-ifneq ($(AWS_PROFILE),$(PROD_AWS_PROFILE))
-$(error "For production deployments, AWS_PROFILE must be set to '$(PROD_AWS_PROFILE)' (override via PROD_AWS_PROFILE)")
-endif
-else ifeq ($(PROD),lza)
-ifneq ($(AWS_PROFILE),$(LZA_AWS_PROFILE))
-$(error "For LZA deployments, AWS_PROFILE must be set to '$(LZA_AWS_PROFILE)' (override via LZA_AWS_PROFILE)")
-endif
-else ifeq ($(PROD),lza-stag)
-ifneq ($(AWS_PROFILE),$(LZA_STAG_AWS_PROFILE))
-$(error "For LZA staging deployments, AWS_PROFILE must be set to '$(LZA_STAG_AWS_PROFILE)' (override via LZA_STAG_AWS_PROFILE)")
+# One knob per environment, looked up by ENV.
+_AWS_PROFILE_KNOB_production := PROD_AWS_PROFILE
+_AWS_PROFILE_KNOB_stag       := STAG_AWS_PROFILE
+_AWS_PROFILE_KNOB_lza-prod   := LZA_AWS_PROFILE
+_AWS_PROFILE_KNOB_lza-stag   := LZA_STAG_AWS_PROFILE
+EXPECTED_AWS_PROFILE := $($(_AWS_PROFILE_KNOB_$(ENV)))
+ifneq ($(AWS_PROFILE),$(EXPECTED_AWS_PROFILE))
+$(error "For $(ENV) deployments, AWS_PROFILE must be set to '$(EXPECTED_AWS_PROFILE)' (override via $(_AWS_PROFILE_KNOB_$(ENV)))")
 endif
 # The variables.tf default VPC name is the PROD template (AWSAccelerator-eu-west-2-prod);
 # there is no defaultable name for the staging VPC, so require it explicitly rather
 # than letting the data lookup fail with an opaque "no results" in the wrong account.
+ifeq ($(ENV),lza-stag)
 ifeq ($(LZA_VPC_NAME),)
 $(error "For LZA staging deployments, LZA_VPC_NAME must be set in .env.lza-stag (the Name tag of the staging platform VPC)")
-endif
-else
-ifneq ($(AWS_PROFILE),$(STAG_AWS_PROFILE))
-$(error "For staging deployments, AWS_PROFILE must be set to '$(STAG_AWS_PROFILE)' (override via STAG_AWS_PROFILE)")
 endif
 endif
 
 ## SETTING VARIABLES FOR TERRAFORM
-# Map the Make-level PROD flag (true|lza|lza-stag|stag) onto a Terraform-friendly
-# environment name. Used in main.tf to gate prod-only RDS hardening (deletion
-# protection, final snapshot). PROD=lza is a production estate, so it keeps the prod
-# hardening; PROD=lza-stag is staging semantics on the platform-managed network —
-# the two axes are orthogonal, toggled by the flag below (FLIP#749).
-export TF_VAR_environment=$(if $(filter true lza,$(PROD)),prod,stag)
+# The environment class (prod|stag, from env_mode.mk). Used in main.tf to gate
+# prod-only RDS hardening (deletion protection, final snapshot). PROD=lza is a
+# production estate, so it keeps the prod hardening; PROD=lza-stag is staging
+# semantics on the platform-managed network — the two axes are orthogonal,
+# toggled by the flag below (FLIP#749).
+export TF_VAR_environment=$(ENV_CLASS)
 
 # Platform-managed network toggle (FLIP#749): on an LZA workload account the VPC
 # layer is provisioned by the AWS Accelerator pipeline and SCP-denied to this
 # stack, so Terraform switches from creating the network to data lookups
 # (see network_lza.tf). Off for every legacy environment.
-export TF_VAR_lza_managed_network=$(if $(filter lza lza-stag,$(PROD)),true,false)
+export TF_VAR_lza_managed_network=$(if $(IS_LZA),true,false)
 # Name tag of the platform-managed VPC; only consulted on the LZA modes. Set
 # LZA_VPC_NAME in the env file to override the variables.tf default
 # (AWSAccelerator-eu-west-2-prod) — optional on PROD=lza if the platform template
@@ -134,15 +127,14 @@ endif
 # otherwise — variables.tf documents "" as the correct value for an account where
 # ci/ has never been applied. Re-attach (drop this default) the day LZA applies
 # move to CI and ci/ is applied there first.
-ifneq ($(filter lza lza-stag,$(PROD)),)
+ifneq ($(IS_LZA),)
 export TF_VAR_iam_permissions_boundary_name ?=
 endif
 
-# Kit-file env suffix: PROD=true → .production kits, PROD=lza → .lza-prod kits (a
-# separate namespace so the parallel-running legacy prod kits are never touched
-# during the FLIP#749 migration), PROD=lza-stag → .lza-stag kits, otherwise → .stag.
-# Selects the trust kit file trust/.env.<KIT>.<suffix> for the trust-deploy targets.
-KIT_ENV_SUFFIX := $(if $(filter true,$(PROD)),production,$(if $(filter lza,$(PROD)),lza-prod,$(if $(filter lza-stag,$(PROD)),lza-stag,stag)))
+# Kit-file env suffix — the ENV token from env_mode.mk (.production / .stag /
+# .lza-prod / .lza-stag): selects the trust kit file trust/.env.<KIT>.<suffix> for
+# the trust-deploy targets, and is handed to register-trusts.sh, which writes it.
+KIT_ENV_SUFFIX := $(ENV)
 export TF_VAR_max_azs=2
 export TF_VAR_vpc_cidr=10.0.0.0/16
 export TF_VAR_public_subnets=["10.0.1.0/24", "10.0.2.0/24"]
@@ -155,9 +147,8 @@ export TF_VAR_FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME=${FLIP_MODEL_FILES_UPLOADS_BU
 export TF_VAR_FLIP_FL_RESULTS_BUCKET_NAME=${FLIP_FL_RESULTS_BUCKET_NAME}
 export TF_VAR_FLIP_APP_BUNDLES_BUCKET_NAME=${FLIP_APP_BUNDLES_BUCKET_NAME}
 export TF_VAR_AICENTRE_BUCKET_NAME=${AICENTRE_BUCKET_NAME}
-# Optional log-bucket name overrides (empty = derived from flip_alb_subdomain; see variables.tf)
+# Optional access-log bucket name override (empty = derived from flip_alb_subdomain; see variables.tf)
 export TF_VAR_ACCESS_LOGS_BUCKET_NAME=${ACCESS_LOGS_BUCKET_NAME}
-export TF_VAR_CF_LOGS_BUCKET_NAME=${CF_LOGS_BUCKET_NAME}
 # A copied-but-unedited .env leaves `<your-...>` placeholders in place. Those are non-empty, so an
 # emptiness check passes them straight through to Terraform, which fails much later with an opaque
 # AWS bucket-name error. Treat a placeholder as unset — same idea as XNAT_CREDENTIAL_PLACEHOLDER in
@@ -279,9 +270,9 @@ CENTRALHUB_ECS_SERVICES = flip-api fl-api-net-1 fl-server-net-1
 # recorded commit and rollback-centralhub can repoint at the previous revision. The
 # env-file tags (DOCKER_TAG / DOCKER_FL_TAG) remain the bootstrap-only defaults Terraform
 # bakes into a (re)created task-definition family — day-to-day deploys never touch them.
-# PROD=lza tracks origin/main like legacy prod (both are production estates, FLIP#749);
-# PROD=lza-stag falls through to origin/develop like legacy stag.
-DEPLOY_GIT_REF := $(if $(filter true lza,$(PROD)),origin/main,origin/develop)
+# Production-grade estates (legacy prod and PROD=lza, FLIP#749) track origin/main;
+# the staging ones (stag and PROD=lza-stag) origin/develop.
+DEPLOY_GIT_REF := $(if $(filter prod,$(ENV_CLASS)),origin/main,origin/develop)
 
 TRUST_IMAGES = \
 	$(DOCKER_REGISTRY)trust-api:$(DOCKER_TAG) \
@@ -532,7 +523,7 @@ add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (NVFLARE;
 	## stranded and, when spares cover N, nothing is minted at all.
 	@[ -n "$(N)" ] || { echo "❌ N is required, e.g. make add-fl-kits N=2 PROD=true"; exit 1; }
 	@$(_AWS_ENV) MAIN_ENV_FILE=$(MAIN_ENV_FILE) N=$(N) YES=$(YES) \
-		FL_BACKEND=$(FL_BACKEND) ./scripts/add_fl_kits.sh
+		FL_BACKEND=$(FL_BACKEND) ENV_NAME=$(ENV_CLASS) ./scripts/add_fl_kits.sh
 	@$(MAKE) apply-fl-kit-slots PROD=$(PROD) YES=$(YES) || { \
 	  echo "❌ Parameter apply failed AFTER the new slot names were appended to the env file"; \
 	  echo "   (and any shortfall minted + uploaded)."; \
@@ -933,7 +924,7 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 	@# cross-account invalidation permission -- BY DESIGN (FLIP#749): the hashed
 	@# bundles are immutable and index.html/window.js carry no-cache metadata, so a
 	@# deploy is visible on the next index.html fetch with no invalidation at all.
-ifneq ($(filter lza lza-stag,$(PROD)),)
+ifneq ($(IS_LZA),)
 	@echo "🧹 Skipping CloudFront invalidation on LZA (edge distribution honours the Cache-Control metadata)."
 else
 	@echo "🧹 Invalidating CloudFront..."
@@ -1278,7 +1269,7 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 	## (deploy-trust pushes to the EC2 host; package-onprem-trust-kit tarballs for on-prem).
 	##   KIT=<CODE> → register that one kit (trust/.env.<CODE>.<env>)
 	##   (no KIT)   → register every live trust/.env.*.<env> kit
-	@KIT=$(KIT) bash scripts/register-trusts.sh
+	@KIT=$(KIT) KIT_ENV_SUFFIX=$(KIT_ENV_SUFFIX) bash scripts/register-trusts.sh
 
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT> + FL kit slice for an on-prem operator

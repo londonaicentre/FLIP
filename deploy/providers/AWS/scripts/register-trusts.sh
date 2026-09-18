@@ -51,16 +51,11 @@ ECS_SERVICE="${ECS_SERVICE:-flip-api}"
 TASK_FAMILY="${TASK_FAMILY:-flip-api}"
 LOG_GROUP="${LOG_GROUP:-/ecs/flip-api}"
 
-# Kit-file env suffix: PROD=true → .production kits, PROD=lza → .lza-prod kits,
-# PROD=lza-stag → .lza-stag kits, otherwise → .stag. Must match KIT_ENV_SUFFIX in
-# the deploy Makefile (which reads the kit this script writes back) and the env
-# file it included (.env.production / .env.lza-prod / .env.lza-stag / .env.stag).
-case "${PROD:-stag}" in
-    true) ENV_SUFFIX="production" ;;
-    lza) ENV_SUFFIX="lza-prod" ;;
-    lza-stag) ENV_SUFFIX="lza-stag" ;;
-    *) ENV_SUFFIX="stag" ;;
-esac
+# Kit-file env suffix (.production / .stag / .lza-prod / .lza-stag): handed in by
+# the deploy Makefile's register-trusts target as its KIT_ENV_SUFFIX — the same
+# token it reads the written kit back with — rather than re-derived from PROD here,
+# so there is exactly one PROD table (deploy/env_mode.mk).
+ENV_SUFFIX="${KIT_ENV_SUFFIX:?KIT_ENV_SUFFIX is required — run via \`make register-trusts\` / \`make register-trust KIT=<CODE>\`}"
 
 log_info "Discovering live $ECS_SERVICE service network config..."
 SVC_JSON="$(aws_cmd ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0]')"
@@ -124,17 +119,12 @@ register_one_kit() {
     # and jq scans the whole argv for options regardless of `--args`. The `--` end-of-options
     # marker is what makes jq treat the rest as positional. Holds on jq 1.6 and 1.7+.
     #
-    # The two environment entries re-create what /app/entrypoint.sh exports before it
-    # execs the API: the image declares no ENTRYPOINT (only `CMD ["/app/entrypoint.sh"]`),
-    # so this command override REPLACES the entrypoint and inherits none of its exports.
-    # Without them `uv run` re-resolves the project on start and fetches the setuptools
-    # build backend from PyPI — a wasted round-trip on a NAT'd legacy account, a hard
-    # failure on an egress-less LZA one (FLIP#749: "Failed to fetch
-    # https://pypi.org/simple/setuptools/ ... operation timed out", no kit ever reaches
-    # SSM). UV_NO_SYNC makes the build-time venv authoritative; PYTHONPATH is what makes
-    # `flip_api` importable from that venv, since the boot-time sync was also what used to
-    # install the package.
-    overrides="$(jq -n '{containerOverrides:[{name:"flip-api",command:$ARGS.positional,environment:[{name:"UV_NO_SYNC",value:"1"},{name:"PYTHONPATH",value:"/app/src"}]}]}' --args -- "${cmd_args[@]}")"
+    # No environment entries: this command override REPLACES the image's entrypoint
+    # and inherits only image ENV, which is why UV_NO_SYNC / PYTHONPATH live in the
+    # flip-api Dockerfile rather than in entrypoint.sh (FLIP#749: without them `uv run`
+    # re-resolved the project on start and fetched setuptools from PyPI, which the
+    # egress-less LZA account cannot reach — no kit ever reached SSM).
+    overrides="$(jq -n '{containerOverrides:[{name:"flip-api",command:$ARGS.positional}]}' --args -- "${cmd_args[@]}")"
 
     local net_cfg
     net_cfg="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SGS}]"

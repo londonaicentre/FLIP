@@ -28,24 +28,12 @@ local ``.env.lza-*`` file, and read back what Terraform would see.
 """
 
 import os
-import subprocess
 from pathlib import Path
 
 import pytest
+from make_probe import probe_make
 
 AWS_DIR = Path(__file__).resolve().parents[1]
-
-# A throwaway wrapper Makefile: include the real one, then report the variable
-# exactly as a child process (terraform) would receive it. ``${V-UNSET}`` prints
-# UNSET only when the variable is absent from the environment (an empty export
-# prints ""); ``${V+exported}`` prints "exported" whenever it is present at all.
-PROBE = """\
-.DEFAULT_GOAL := __probe
-include Makefile
-.PHONY: __probe
-__probe:
-\t@printf '%s|%s' "$${TF_VAR_iam_permissions_boundary_name-UNSET}" "$${TF_VAR_iam_permissions_boundary_name+exported}"
-"""
 
 
 # The smallest env file the Makefile's parse-time guards accept (kit date,
@@ -71,19 +59,21 @@ STUB_ENV = {
 
 
 def _probe(tmp_path: Path, prod: str, extra_env: dict[str, str] | None = None) -> str:
+    """Return ``<value>|<exported>`` for the boundary variable as terraform would see it.
+
+    ``${V-UNSET}`` prints UNSET only when the variable is absent from the environment (an
+    empty export prints ""); ``${V+exported}`` prints "exported" whenever it is present.
+    """
     env_file = tmp_path / f".env.probe-{prod}"
     env_file.write_text("".join(f"{k}={v}\n" for k, v in {**STUB_ENV, **(extra_env or {})}.items()))
     env = {k: v for k, v in os.environ.items() if not k.startswith("TF_VAR_")}
-    result = subprocess.run(
-        ["make", "-s", "-f", "-", "__probe", f"PROD={prod}", f"MAIN_ENV_FILE={env_file}"],
-        input=PROBE,
-        text=True,
-        capture_output=True,
-        cwd=AWS_DIR,
+    values = probe_make(
+        AWS_DIR,
+        ["$${TF_VAR_iam_permissions_boundary_name-UNSET}", "$${TF_VAR_iam_permissions_boundary_name+exported}"],
+        {"PROD": prod, "MAIN_ENV_FILE": str(env_file)},
         env=env,
-        check=True,
     )
-    return result.stdout
+    return "|".join(values)
 
 
 @pytest.mark.parametrize("prod", ["lza", "lza-stag"])

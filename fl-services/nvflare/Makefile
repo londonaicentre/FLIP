@@ -24,17 +24,8 @@ REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 # LOG_LEVEL, NET_ENDPOINTS, FL_PORT, …) and, with PROD=stag|true (or lza|lza-stag
 # for the LZA estate, FLIP#749), the upload vars (AICENTRE_BUCKET_NAME,
 # FLARE_KIT_DATE) used by upload-kits-to-s3.
-ifeq ($(PROD),true)
-MAIN_ENV_FILE := $(REPO_ROOT)/.env.production
-else ifeq ($(PROD),stag)
-MAIN_ENV_FILE := $(REPO_ROOT)/.env.stag
-else ifeq ($(PROD),lza)
-MAIN_ENV_FILE := $(REPO_ROOT)/.env.lza-prod
-else ifeq ($(PROD),lza-stag)
-MAIN_ENV_FILE := $(REPO_ROOT)/.env.lza-stag
-else
-MAIN_ENV_FILE := $(REPO_ROOT)/.env.development
-endif
+include $(REPO_ROOT)/deploy/env_mode.mk
+MAIN_ENV_FILE := $(REPO_ROOT)/$(ENV_FILE_NAME)
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
@@ -118,7 +109,7 @@ provision-add-client-prod:
 # net-N/services/<slot>/). Run with PROD=stag|true (or lza|lza-stag) so AICENTRE_BUCKET_NAME +
 # FLARE_KIT_DATE load from the matching .env. Defaults to a dry run — pass DRYRUN= to upload
 # for real. The LZA pair maps onto the legacy workspaces (same FQDN + CA by design, FLIP#749).
-FL_KIT_WORKSPACE := $(if $(filter true lza,$(PROD)),$(PROD_WORKSPACE_DIR),$(STAG_WORKSPACE_DIR))
+FL_KIT_WORKSPACE := $(if $(filter prod,$(ENV_CLASS)),$(PROD_WORKSPACE_DIR),$(STAG_WORKSPACE_DIR))
 DRYRUN ?= --dryrun
 upload-kits-to-s3:
 	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true|lza|lza-stag"; exit 1; }

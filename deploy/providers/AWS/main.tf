@@ -192,7 +192,7 @@ locals {
     # collide with the floor on the same tuple. Same on LZA (the gate mirrors the SG's own count in
     # vpc_endpoints.tf): endpoints are centralised in the Network account there, so no local
     # endpoint SG exists to reference.
-    var.enable_ecs_endpoints && !var.lza_managed_network ? [
+    local.create_vpc_endpoints ? [
       merge(local.trust_egress_rule_defaults, {
         port                     = 443
         source_security_group_id = aws_security_group.vpc_endpoints[0].id
@@ -633,10 +633,10 @@ module "fl_server_nlb" {
   source  = "terraform-aws-modules/alb/aws"
   version = "~> 10.0"
   # Not created on the LZA account (FLIP#749): no IGW + VPC Block Public Access
-  # make an internet-facing NLB impossible in-account, and the FL inbound
-  # architecture there (NLB in the central Ingress VPC vs FL-over-443 via the
-  # VPN) is an open WP2 decision — gate off rather than half-provision. Using
-  # the module's create flag keeps its state address stable for legacy envs.
+  # make an internet-facing NLB impossible in-account. The LZA FL front door is
+  # the INTERNAL NLB in fl_ingress_lza.tf, reached through the networking
+  # account's edge NLB over the TGW. Using the module's create flag keeps its
+  # state address stable for legacy envs.
   create                     = !var.lza_managed_network
   name                       = "flip-fl-server-nlb"
   load_balancer_type         = "network"
@@ -682,7 +682,7 @@ module "fl_server_nlb" {
       protocol = "TCP"
       forward = {
         # Guarded like the ingress rule above: the TG is count-gated on LZA.
-        target_group_arn = var.lza_managed_network ? null : aws_lb_target_group.ecs_fl_server_tcp[0].arn
+        target_group_arn = aws_lb_target_group.ecs_fl_server_tcp.arn
       }
     }
   }
@@ -730,16 +730,19 @@ moved {
 # attach instance/IP targets here. target_type=ip is required for awsvpc
 # Fargate tasks. NLB protocol must be TCP - HTTP/2 gRPC framing is opaque
 # to the NLB and forwarded as-is.
-# Gated off with the NLB on LZA (FLIP#749): a TG with no LB is dead config.
+# One TG serves both front doors: the legacy public NLB (module.fl_server_nlb
+# below) and the LZA internal NLB (fl_ingress_lza.tf) forward their FL
+# listener here, and exactly one of those modules is created per environment.
+# Only the name differs by mode, so each live state keeps the TG it already
+# holds (a name change is ForceNew).
 resource "aws_lb_target_group" "ecs_fl_server_tcp" {
-  count = var.lza_managed_network ? 0 : 1
   # Container port per backend (NVFLARE: FL_SERVER_PORT; Flower: SuperLink
   # Fleet 9092 — see local.fl_server_container_port in ecs_tasks.tf). The
   # NLB LISTENER stays on var.FL_SERVER_PORT for both. Port is ForceNew, so
   # switching backend replaces this TG; the name is keyed by backend and
   # create_before_destroy set so the replacement can stand up while the old
   # TG is still attached to the listener (a same-name replace deadlocks).
-  name        = var.fl_backend == "flower" ? "ecs-fl-server-flwr-tcp" : "ecs-fl-server-tcp"
+  name        = "ecs-fl-server${var.fl_backend == "flower" ? "-flwr" : ""}${var.lza_managed_network ? "-lza" : "-tcp"}"
   port        = local.fl_server_container_port
   protocol    = "TCP"
   target_type = "ip"
@@ -777,12 +780,19 @@ resource "aws_route53_record" "fl_server_nlb" {
   }
 }
 
-# State migration for the counts added to the NLB stack (FLIP#749): keeps
-# existing legacy states aligned without a manual `terraform state mv`. Safe to
-# remove once every live state file has been migrated.
+# State migrations (FLIP#749): the LZA states were first applied with their own
+# `_lza` copies of the two target groups, folded into the shared resources above
+# and below; the DNS record gained a count. Both keep existing states aligned
+# without a manual `terraform state mv`. Safe to remove once every live state
+# file has been migrated.
 moved {
-  from = aws_lb_target_group.ecs_fl_server_tcp
-  to   = aws_lb_target_group.ecs_fl_server_tcp[0]
+  from = aws_lb_target_group.ecs_fl_server_tcp_lza[0]
+  to   = aws_lb_target_group.ecs_fl_server_tcp
+}
+
+moved {
+  from = aws_lb_target_group.ecs_flip_api_lza[0]
+  to   = aws_lb_target_group.ecs_flip_api
 }
 
 moved {
@@ -795,29 +805,32 @@ moved {
 # attach instance/IP targets here from terraform. target_type=ip is required
 # for awsvpc Fargate tasks (each task gets an ENI; the IP is what ECS
 # registers, not an instance id).
-# State migration for the count added below (FLIP#749): keeps existing legacy
-# states aligned without a manual `terraform state mv`.
-moved {
-  from = aws_lb_target_group.ecs_flip_api
-  to   = aws_lb_target_group.ecs_flip_api[0]
-}
-
+# One TG for both front doors (FLIP#749): the legacy ALB's listener rule below
+# forwards here over HTTP; on LZA the internal NLB's web listener
+# (fl_ingress_lza.tf) forwards here over TCP — NLB target groups are TCP, but
+# the health check stays HTTP on the API's own liveness route so an unhealthy
+# task is pulled exactly as the ALB did. Protocol is ForceNew but constant per
+# environment, so no live state sees a replacement.
 resource "aws_lb_target_group" "ecs_flip_api" {
-  # Legacy only: on LZA the ECS service registers with the NLB's TCP target
-  # group aws_lb_target_group.ecs_flip_api_lza (fl_ingress_lza.tf).
-  count       = var.lza_managed_network ? 0 : 1
-  name        = "ecs-flip-api"
+  name        = var.lza_managed_network ? "ecs-flip-api-lza" : "ecs-flip-api"
   port        = local.api_container_port
-  protocol    = "HTTP"
+  protocol    = var.lza_managed_network ? "TCP" : "HTTP"
   target_type = "ip"
   vpc_id      = local.vpc_id
 
+  lifecycle {
+    create_before_destroy = true
+  }
+
   health_check {
-    enabled  = true
-    protocol = "HTTP"
-    path     = "/api/health"
-    port     = "traffic-port"
-    matcher  = "200"
+    enabled             = true
+    protocol            = "HTTP"
+    path                = "/api/health"
+    port                = "traffic-port"
+    matcher             = "200"
+    healthy_threshold   = 3
+    unhealthy_threshold = 3
+    interval            = 30
   }
 
   # ECS rolling deploys briefly need both old + new tasks present; a long
@@ -842,7 +855,7 @@ resource "aws_lb_listener_rule" "api_routing" {
 
   action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.ecs_flip_api[0].arn
+    target_group_arn = aws_lb_target_group.ecs_flip_api.arn
   }
 
   condition {
@@ -953,7 +966,7 @@ output "CognitoAppClientId" {
 }
 
 output "FlServerEndpoint" {
-  description = "FL server DNS endpoint (NLB pass-through; on LZA there is no NLB yet — FL inbound is a FLIP#749 WP2 decision)"
+  description = "FL server DNS endpoint (NLB pass-through; on LZA the name resolves to the networking account's edge NLB, which relays to the internal NLB in fl_ingress_lza.tf)"
   value       = var.flip_nlb_subdomain
 }
 

@@ -191,7 +191,6 @@ jobs:
           # laptop, and unset is the legacy value for all five. Passed through so
           # compose-ci-env.sh's manifest stays the one place the mapping lives.
           ACCESS_LOGS_BUCKET_NAME: ${{ vars.ACCESS_LOGS_BUCKET_NAME }}
-          CF_LOGS_BUCKET_NAME: ${{ vars.CF_LOGS_BUCKET_NAME }}
           EFS_PROVISION_IMAGE: ${{ vars.EFS_PROVISION_IMAGE }}
           LZA_VPC_NAME: ${{ vars.LZA_VPC_NAME }}
           MANAGE_DNS: ${{ vars.MANAGE_DNS }}

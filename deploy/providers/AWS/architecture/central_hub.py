@@ -129,11 +129,9 @@ TERRAFORM_ADDRESSES: dict[str, tuple[str, ...]] = {
     "Workload account VPC (accelerator-provisioned)": ("data.aws_vpc.lza",),
     "App subnets": ("data.aws_subnets.lza_app", "data.aws_subnet.lza_app"),
     "Data subnets": ("data.aws_subnets.lza_data",),
-    "Internal NLB": (
-        "module.fl_server_internal_nlb",
-        "aws_lb_target_group.ecs_flip_api_lza",
-        "aws_lb_target_group.ecs_fl_server_tcp_lza",
-    ),
+    # Forwards to the same two target groups the legacy front doors use (declared under "FL NLB" and
+    # "Internal ALB" above); only the load balancer differs per mode.
+    "Internal NLB": ("module.fl_server_internal_nlb",),
     "Private zone fl-server-net-1": (
         "aws_route53_zone.fl_server_bare_name",
         "aws_route53_record.fl_server_bare_name_apex",

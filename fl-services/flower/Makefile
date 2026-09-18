@@ -22,17 +22,8 @@ REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 # fl-services/nvflare/Makefile does — with PROD=stag|true (or lza|lza-stag for
 # the LZA estate, FLIP#749) this brings in the upload vars (AICENTRE_BUCKET_NAME,
 # FLOWER_KIT_DATE) used by upload-creds-to-s3.
-ifeq ($(PROD),true)
-MAIN_ENV_FILE := $(REPO_ROOT)/.env.production
-else ifeq ($(PROD),stag)
-MAIN_ENV_FILE := $(REPO_ROOT)/.env.stag
-else ifeq ($(PROD),lza)
-MAIN_ENV_FILE := $(REPO_ROOT)/.env.lza-prod
-else ifeq ($(PROD),lza-stag)
-MAIN_ENV_FILE := $(REPO_ROOT)/.env.lza-stag
-else
-MAIN_ENV_FILE := $(REPO_ROOT)/.env.development
-endif
+include $(REPO_ROOT)/deploy/env_mode.mk
+MAIN_ENV_FILE := $(REPO_ROOT)/$(ENV_FILE_NAME)
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))

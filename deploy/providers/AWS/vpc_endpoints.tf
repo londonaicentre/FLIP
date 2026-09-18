@@ -31,7 +31,7 @@
 ############################
 
 resource "aws_security_group" "vpc_endpoints" {
-  count       = var.enable_ecs_endpoints && !var.lza_managed_network ? 1 : 0
+  count       = local.create_vpc_endpoints ? 1 : 0
   name        = "vpc-endpoints"
   description = "TLS 443 to AWS interface endpoints from VPC tasks"
   vpc_id      = local.vpc_id
@@ -42,7 +42,7 @@ resource "aws_security_group" "vpc_endpoints" {
 }
 
 resource "aws_security_group_rule" "vpc_endpoints_ingress_from_vpc" {
-  count             = var.enable_ecs_endpoints && !var.lza_managed_network ? 1 : 0
+  count             = local.create_vpc_endpoints ? 1 : 0
   type              = "ingress"
   description       = "HTTPS from anywhere in the VPC (ECS tasks)"
   from_port         = 443
@@ -53,7 +53,7 @@ resource "aws_security_group_rule" "vpc_endpoints_ingress_from_vpc" {
 }
 
 resource "aws_security_group_rule" "vpc_endpoints_egress_all" {
-  count             = var.enable_ecs_endpoints && !var.lza_managed_network ? 1 : 0
+  count             = local.create_vpc_endpoints ? 1 : 0
   type              = "egress"
   description       = "Default egress for endpoint ENIs"
   from_port         = 0
@@ -104,7 +104,7 @@ locals {
 }
 
 resource "aws_vpc_endpoint" "interface" {
-  for_each            = var.enable_ecs_endpoints && !var.lza_managed_network ? local.interface_endpoint_services : toset([])
+  for_each            = local.create_vpc_endpoints ? local.interface_endpoint_services : toset([])
   vpc_id              = local.vpc_id
   service_name        = "com.amazonaws.${var.AWS_REGION}.${each.value}"
   vpc_endpoint_type   = "Interface"

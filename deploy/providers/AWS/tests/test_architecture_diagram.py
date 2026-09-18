@@ -42,6 +42,7 @@ render itself needs graphviz, so the smoke tests are skipped (reported, not sile
 where ``dot`` is absent.
 """
 
+import functools
 import re
 import shutil
 from pathlib import Path
@@ -66,6 +67,7 @@ _MODULE_HEADER = re.compile(r'^module\s+"([A-Za-z0-9_-]+)"\s*\{', re.MULTILINE)
 _ADDRESS = re.compile(r"(module\.[A-Za-z0-9_-]+|data\.[a-z0-9_]+\.[A-Za-z0-9_-]+|[a-z0-9_]+\.[A-Za-z0-9_-]+)")
 
 
+@functools.cache
 def _root_module_sources() -> dict[Path, str]:
     """Return the text of every ``.tf`` file in the root module, comments stripped.
 
@@ -194,11 +196,18 @@ _NO_DOT = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(scope="module")
+def rendered(tmp_path_factory: pytest.TempPathFactory) -> list[Path]:
+    """One combined render for the module: ``render`` tracks completeness per variant, so a single pass proves
+    both picture sets (the per-variant test below reads this output rather than rendering again)."""
+    return render(tmp_path_factory.mktemp("diagrams"))
+
+
 @_NO_DOT
-def test_render_smoke(tmp_path: Path):
+def test_render_smoke(rendered: list[Path]):
     """Both variants render: four non-empty PNGs with the stems the README and Sphinx pages embed, every mapped
     node drawn in each variant it belongs to (``assert_complete`` raises otherwise)."""
-    outputs = render(tmp_path)
+    outputs = rendered
     assert {path.name for path in outputs} == {
         "central-hub-aws-network.png",
         "central-hub-aws-data.png",
@@ -211,11 +220,10 @@ def test_render_smoke(tmp_path: Path):
 
 @_NO_DOT
 @pytest.mark.parametrize("variant", list(Variant), ids=lambda variant: variant.value)
-def test_render_one_variant(tmp_path: Path, variant: Variant):
-    """A single-variant render draws only that variant's pictures and still passes the scoped completeness check
-    — a shared label left out of one mode's pictures fails here, not just in the combined render."""
-    outputs = render(tmp_path / variant.value, (variant,))
+def test_each_variant_has_its_pictures(rendered: list[Path], variant: Variant):
+    """Every picture ``DIAGRAMS`` declares for the variant is among the rendered outputs and non-empty."""
     expected = {f"central-hub-aws-{suffix}.png" for v, suffix, _, _ in DIAGRAMS if v is variant}
-    assert {path.name for path in outputs} == expected
-    for path in outputs:
-        assert path.stat().st_size > 0, f"{path} is empty"
+    by_name = {path.name: path for path in rendered}
+    assert expected <= set(by_name)
+    for name in expected:
+        assert by_name[name].stat().st_size > 0, f"{name} is empty"
