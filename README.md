@@ -71,7 +71,8 @@ docker swarm init
 make -C fl-services/nvflare provision-2-nets
 
 # Pull the published service images, start the hub, register GSTT and KCH,
-# then start both Trust and XNAT stacks.
+# then start both Trust and XNAT stacks. On a host shared with other developers,
+# set FLIP_INSTANCE=<name> in .env.development first — see CONTRIBUTING.md.
 make up
 ```
 
