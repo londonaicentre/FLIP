@@ -1,0 +1,963 @@
+<!--
+    Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+        http://www.apache.org/licenses/LICENSE-2.0
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+
+# FLIP Trust — Kubernetes Helm Chart
+
+> **Deploys: trust only.** No Central Hub component is defined by this chart. The hub is still involved —
+> the trust must be registered on it (`make register-trust KIT=<CODE>`) to get its kit file. The same stack
+> as Docker Compose is [`../`](../README.md); the cluster itself is provisioned outside this repo. See
+> [where things live](../../../deploy/README.md#where-things-live) for the layout rule.
+
+This Helm chart deploys the FLIP trust-side services on Kubernetes. It follows
+the same **zero inbound trust** architecture as the Docker Compose deployment:
+trust services only make outbound connections to the Central Hub and the FL
+server; no inbound ports are exposed from the K8s cluster.
+
+> **Deployment status.** The chart is validated on single-node k3s and includes
+> kit staging, default-deny ingress, audited egress rules, least-privilege
+> service accounts, and stateless-workload hardening. Review the
+> [known limitations](#known-limitations), particularly storage and Pod Security
+> constraints, before selecting it for a production Trust.
+
+## Prerequisites
+
+- **Kubernetes cluster** 1.28+ (EKS, AKS, or on-prem)
+- **Helm** 4.x (the CI-tested version; 3.16+ also works)
+- **kubectl** configured with cluster access
+- **NVIDIA GPU Operator** (if GPU workloads are enabled)
+- **External Secrets Operator** or **Secrets Store CSI Driver** (recommended for
+  production secrets management)
+
+> **Helm 4 readiness semantics.** Helm 4 reimplemented `--wait` on top of
+> [kstatus](https://github.com/kubernetes-sigs/cli-utils/tree/master/pkg/kstatus),
+> which is stricter than Helm 3's readiness check — an install that Helm 3 called
+> ready can now block until the workloads genuinely settle, and time out if they
+> never do. `make deploy` does **not** pass `--wait` (it relies on `--timeout 20m`
+> alone), so this only bites if you add `--wait` to your own `helm upgrade`
+> invocation; if you do, size `--timeout` for the slowest service to become ready
+> rather than for the API call to return.
+
+## Quickstart
+
+A K8s trust is registered with the hub **exactly like any other trust** — by a
+CODE-named *kit*. Registration is done once, centrally, by the DB-backed
+`register_trust` CLI (it mints the per-trust credentials and claims an FL kit
+slot); the chart never registers anything itself. The flow is:
+
+```
+ hub side (once)            cluster side (this chart)
+ ─────────────────          ─────────────────────────
+ new-trust ─► register ─► sync-trust-kit ─► sync-kit ─► up ─► (add-k8s-trust)
+            writes trust/.env.<CODE>.<env>   patches Secret + writes override
+```
+
+### 1. Register the trust on the hub (produces the kit)
+
+```bash
+# From the repo root. <CODE> is this trust's name, e.g. Trust_K8s.
+make new-trust TRUST_CODE=<CODE> TRUST_NAME="<Human Name>"
+make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=stag   # mints creds + claims FL slot
+make sync-trust-kit KIT=<CODE> PROD=stag                            # fills the Hub-shared block
+```
+
+This writes `trust/.env.<CODE>.stag` containing the per-trust keys
+(`TRUST_API_KEY`, `TRUST_INTERNAL_SERVICE_KEY`) and the Hub-shared block
+(`AES_KEY_BASE64`, `CENTRAL_HUB_API_URL`, FL settings). The hub stores only the
+SHA-256 hash of the API key — re-running registration is idempotent.
+
+### 2. Provide the infrastructure secrets
+
+The kit owns only the per-trust keys. The chart's *other* secrets (XNAT, OMOP,
+Orthanc, Grafana) are deployment-specific — supply them
+via the chart's built-in Secret template (`secrets.create=true` + a
+`values-secrets.yaml`, see the [Secrets Reference](#secrets-reference)) or create
+the Secret externally.
+
+> **`values-secrets.yaml` is generated, gitignored, and must never be committed.**
+> It carries live trust credentials. The tracked `values-secrets.yaml.example` is a
+> field reference with every slot empty — not a working file.
+
+Generate it from the repo root:
+
+```bash
+python3 trust/deploy/helm/scripts/generate_values.py \
+  --env-file trust/.env.<CODE>.<env> \
+  --output-dir trust/deploy/helm
+```
+
+That writes `values-secrets.yaml` with mode `0600` (and `values-override.yaml`
+beside it). One slot it **cannot** fill, because no trust kit carries the source
+env var: `orthanc-registered-users`. Hand-fill it before deploying Orthanc. There
+are no AWS slots — the fl-client never fetches its own kit (see step 4). An empty slot
+is omitted from the Secret by `templates/secrets.yaml` and the pod that mounts it
+then fails with `CreateContainerConfigError` — deliberate (it is why copying the
+example into place does not deploy), and also why Orthanc will not start until
+`orthanc-registered-users` is filled.
+
+`make sync-kit` (next step) patches the per-trust keys *on top* of this Secret
+without touching the infra keys.
+
+### 3. Sync the kit into the cluster
+
+```bash
+make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=stag
+```
+
+This reads `trust/.env.<CODE>.stag`, patches the per-trust keys
+(`trust-api-key`, `trust-internal-service-key[-header]`, `aes-key-base64`) into
+the chart's Kubernetes Secret (`trust-release-flip-trust-secrets`), and writes a
+secret-free Helm override `k8s-trust-<CODE>.yaml` carrying the hub URL, FL
+backend, AWS region, and `flClient.kitHostPath` (taken from the kit's
+`FL_KIT_DIR`). Plaintext keys go straight into the Secret over kubectl's TLS
+channel — never to disk.
+
+### 4. Stage the FL participant kit onto the node
+
+```bash
+make -C trust/deploy/helm stage-kit \
+  KIT_SRC=<dir holding this trust's kit> KUBE_CONTEXT=<kube context>
+```
+
+**The chart never fetches the kit.** A trust holds no FLIP AWS credentials — FL
+clients have none by design — and the kit reaches the operator out-of-band (see
+[`trust/README.md`](../../README.md)). It is placed on the node *before*
+the workload starts, which is also what a real trust does, so what is deployed
+here is what is deployed in production.
+
+`KIT_SRC` is the slot's own kit directory: for NVFLARE `local/`, `startup/`,
+`transfer/`; for Flower `certificates/` and `keys/` holding **only this slot's**
+credential. That shape is also how the target picks the uid the staged kit is
+chowned to — 1000 for an NVFLARE kit, 49999 (the SuperNode's `app` user) for a
+Flower one — so the command above is complete for either backend with no
+`FL_BACKEND` to remember. A directory with neither shape, or both, is refused
+before anything is copied; `FL_BACKEND=nvflare|flower` overrides the detection.
+`KUBE_CONTEXT` is required — this writes to a node's filesystem, and on a host
+running several clusters, defaulting to the current context stages into
+whichever one `kubectl` happens to point at.
+
+The target implements the kind case (`docker cp` into the node). On a managed
+cluster, place the kit by whatever means the site allows and pass the resulting
+path as `flClient.kitHostPath`; nothing else changes.
+
+Skipping this step leaves the fl-client pod `Pending` with a `hostPath type check
+failed` event naming the missing path.
+
+**Upgrading an install that fetched its kit from S3:** the chart no longer holds AWS
+credentials or fetches the kit itself, so a values file written for the previous version
+will fail to render. The kit is staged onto the node out-of-band instead, by step 4 above.
+Removed values — delete them from your overrides, they no longer exist:
+
+| Removed | Replacement |
+| ------- | ----------- |
+| `flClient.kitFromS3`, `flClient.nvflare.kitFromS3.*`, `flClient.flower.kitFromS3.*` | `flClient.kitHostPath` (now **required** when `flClient.enabled`) |
+| `flClient.hostAwsMount.enabled` / `.readOnly` | none — the fl-client mounts no AWS credentials |
+| `flClient.s3EndpointOverride` | none |
+| the `s3-access-key-id` / `s3-secret-access-key` / `aws-session-token` secret keys | none — drop them from your generated `values-secrets.yaml` and from any existing Secret |
+| `make patch-aws-creds` | `make stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>` |
+
+The failure mode if you miss one is loud rather than silent: an unknown value is ignored by
+Helm, but a missing `flClient.kitHostPath` fails the render by name, and a kit that never
+reached the node leaves the pod `Pending` on the `hostPath type check failed` event above.
+
+### 5. Install / upgrade the chart
+
+```bash
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=stag
+```
+
+This runs `helm upgrade --install` with the generated override and then
+`patch-kit-secrets` (injects the per-trust keys into the Helm-owned Secret and
+restarts the API deployments). `deploy` depends on `preflight`, so every install
+first runs `scripts/preflight.sh` — five sections covering required tools and
+versions, cluster reachability, the chart files, the trust kit (only when `KIT=`
+is given) and a `helm lint` — and aborts the install if a required check fails.
+Run it on its own to check a host before deploying:
+
+```bash
+make -C trust/deploy/helm preflight KIT=<CODE> PROD=stag
+```
+
+Equivalent raw Helm for the install step:
+
+```bash
+helm upgrade --install trust-release ./trust/deploy/helm/ \
+  --namespace flip-trust --create-namespace \
+  -f trust/deploy/helm/values.yaml \
+  -f trust/deploy/helm/values-secrets.yaml \
+  -f trust/deploy/helm/k8s-trust-<CODE>.yaml
+```
+
+`sync-kit` stamps a newly created Secret with Helm ownership metadata so the
+first install can adopt it. It also regenerates the FL-server egress port from
+the kit on every run, so upgrades do not lose the fl-client gRPC allowance.
+
+### 6. Verify the trust is polling
+
+```bash
+kubectl get pods -n flip-trust
+kubectl logs -n flip-trust -l app.kubernetes.io/component=trust-api
+# Expect: POST .../api/trust/heartbeat "HTTP/1.1 200 OK"
+#         GET  .../api/tasks/pending   "HTTP/1.1 200 OK"
+```
+
+A `401 "API key is missing"` means the API-key **header** is mismatched — the
+chart default `TRUST_API_KEY_HEADER` is `Authorization` (the platform default);
+override it only if your hub uses a different header.
+
+### 7. (FL training only) Open the FL-server NLB
+
+Polling needs nothing more. For FL *training*, the K8s node's FL client must
+reach the hub's FL server. Add the node's public/egress IP to
+`K8S_TRUST_PUBLIC_IPS` in the hub env file (an HCL list, e.g.
+`K8S_TRUST_PUBLIC_IPS=["1.2.3.4"]`), then reconcile the NLB:
+
+```bash
+make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-public-ip> PROD=stag
+```
+
+This is a normal `terraform apply` (no `-target`), so re-running with an
+already-listed IP is a no-op (idempotent — #596).
+
+### Inspecting and tearing down the release
+
+```bash
+make -C trust/deploy/helm list       # helm list in the namespace
+make -C trust/deploy/helm status     # helm status + check_status.py smoke tests
+make -C trust/deploy/helm undeploy   # helm uninstall the release
+```
+
+`undeploy` is `helm uninstall $(RELEASE_NAME) --namespace $(NAMESPACE)`; `down`
+and `undeploy-trust-k8s` are aliases for it, and the repo root forwards
+`make undeploy-trust-k8s` here. It removes the Helm release and **everything the
+release owns — including the standalone PVCs and their data**: Orthanc's PACS store
+(`templates/orthanc.yaml`), XNAT's archive, prearchive, build and cache
+(`templates/xnat-web.yaml`), Grafana's state (`templates/grafana.yaml`) and the
+shared images cache (`templates/shared-images-pvc.yaml`) are plain
+`kind: PersistentVolumeClaim` release resources with no
+`helm.sh/resource-policy: keep`, so `helm uninstall` deletes them, and the bound
+volumes go with them under the cluster default storage class's usual `Delete`
+reclaim policy. Only the PVCs created from StatefulSet `volumeClaimTemplates`
+— `omop-db`, `xnat-db`, `loki` — survive, as do the namespace itself and the FL kit
+staged on the node by `stage-kit`. A re-`deploy` therefore comes back with the OMOP
+and XNAT databases but an empty PACS and an empty XNAT archive — and an `xnat-db`
+whose sessions point at archive files that no longer exist. Snapshot or back up
+those PVs before uninstalling if the data matters; delete the surviving StatefulSet
+PVCs explicitly if you want a clean slate.
+
+## Configuration Reference
+
+### Global Settings
+
+| Parameter | Default | Description |
+| ----------- | --------- | ------------- |
+| `trustName` | `Trust_1` | Name of this trust institution |
+| `trustNumber` | `1` | Numeric identifier for this trust |
+| `environment` | `production` | Deployment environment (production, stag, dev) |
+| `logLevel` | `INFO` | Log level for all services |
+| `flBackend` | `nvflare` | FL backend: `nvflare` or `flower` |
+| `awsRegion` | `eu-west-2` | AWS region for S3 access |
+| `imagePullSecrets` | `[]` | Registry credentials for private images |
+| `namespace.create` | `true` | Whether to create the namespace |
+| `namespace.name` | `""` | Namespace name (defaults to release namespace) |
+| `trustData.version` | `20260901` | Mock trust-data version — a git tag on the Hugging Face dataset, fetched by the OMOP and Orthanc init jobs. One value for both stores |
+| `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the init jobs fetch from |
+
+#### Upgrading: `trustData.version` replaces the two per-store pins (FLIP#1100)
+
+**This is a breaking change to the chart's values interface.** `omopDb.initJob.dataVersion` and
+`orthanc.initJob.dataVersion` are gone, replaced by the single `trustData.version` — the data
+version is now one git tag covering OMOP *and* Orthanc, so two independently pinned values could
+no longer describe a coherent state. (They had already drifted: `20260729` against `20260106`.)
+
+Helm ignores unknown keys silently, so a values file still pinning the old keys keeps installing —
+it simply stops taking effect, and the deployment follows the new default for both stores. That is
+a silent change of the deployed data version, not an error, so **check your values file before
+upgrading**:
+
+| Before | After |
+| ------ | ----- |
+| `omopDb.initJob.dataVersion: "<v>"` | `trustData.version: "<v>"` |
+| `orthanc.initJob.dataVersion: "<v>"` | `trustData.version: "<v>"` (same value — one pin covers both) |
+| `OMOP_DATA_VERSION=<v>` (env, via `generate_values.py`) | `TRUST_DATA_VERSION=<v>` |
+
+Pinning a version that predates the single-copy dataset layout is not supported: from `20260729`
+onwards every artefact is fetched at an unversioned path resolved at the tag. `archiveName` is
+unaffected — it names an **S3** object, and S3 has no revisions, so a version still lives in that
+filename.
+
+The templates read the pin through Helm's `required`, so an empty `trustData.version` fails at
+template time instead of 404-ing inside the init job.
+
+### Secrets
+
+| Parameter | Default | Description |
+| ----------- | --------- | ------------- |
+| `secrets.create` | `false` | Whether the chart creates a Secret resource |
+| `secrets.existingName` | `flip-trust-secrets` | Name of existing Secret |
+| `secrets.data.*` | `""` | Secret key-value pairs (base64 encoded) |
+
+### Service-Specific Settings
+
+Each service has a configuration block with the following common structure:
+
+```yaml
+serviceName:
+  enabled: true               # Deploy this service
+  image:
+    repository: ghcr.io/...   # Container image repository
+    tag: stag                 # Image tag
+    pullPolicy: Always        # Image pull policy
+  replicas: 1                 # Number of pod replicas
+  service:
+    port: 8000                # Service port
+    type: ClusterIP           # Service type (ClusterIP, NodePort, LoadBalancer)
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+```
+
+Available services:
+
+| Service Block | Description | Stateful? |
+| --------------- | ------------- | ----------- |
+| `trustApi` | API gateway, polls Central Hub | No |
+| `imagingApi` | DICOM image retrieval | No |
+| `dataAccessApi` | OMOP database queries | No |
+| `flClient` | FL participant | No |
+| `omopDb` | OMOP PostgreSQL database | Yes |
+| `orthanc` | DICOM PACS server | Yes |
+| `xnat.web` | XNAT Tomcat web application | Yes |
+| `xnat.db` | XNAT PostgreSQL database | Yes |
+| `xnat.nginx` | XNAT reverse proxy | No |
+| `observability.loki` | Log aggregation | Yes |
+| `observability.alloy` | Log collection agent | No (DaemonSet) |
+| `observability.grafana` | Metrics dashboard | Yes |
+
+### External Service Override
+
+Stateful services (`omopDb`, `orthanc`, `xnat`) support external overrides:
+
+```yaml
+omopDb:
+  enabled: false
+  external:
+    host: "my-rds-instance.cluster-xxx.eu-west-2.rds.amazonaws.com"
+    port: 5432
+```
+
+When `enabled: false`, the chart creates an `ExternalName` Service pointing to
+the external host instead of deploying the service itself.
+
+### OMOP core vocabulary
+
+The `omop-db` image and the pgdata archive restored by `omopDb.initJob` are both
+**vocab-free** (FLIP#842/843). The licensed core vocabulary — SNOMED CT, LOINC,
+Read v2, dm+d — is streamed in afterwards by the `omop-vocab-load`
+post-install/post-upgrade hook.
+
+That bundle cannot be publicly mirrored, so unlike `initJob` there is **no
+anonymous fallback**. The hook runs only when `omopDb.vocabLoad.s3Bucket` names
+a bucket the cluster can read; the chart default is empty, so a default install
+succeeds with **no vocabulary loaded** (`helm install` prints a warning).
+
+> **Cohort queries that join `omop.concept` return nothing until the vocabulary
+> is loaded.** The stack passes every health check in this state — the only
+> symptom is empty cohorts.
+
+Two ways to load it:
+
+| You have… | Do this |
+| --- | --- |
+| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships the dev one, and trust roles have no cross-account read. |
+| Your own licences | Build an equivalent bundle from [OHDSI Athena](https://athena.ohdsi.org/) / [NHS TRUD](https://isd.digital.nhs.uk/) (see `trust/omop-db/README.md`), put it in a bucket you control, and set `omopDb.vocabLoad.s3Bucket` / `bundleName`. Or run `trust/omop-db/files/load_core_vocab.sh` against the database directly. |
+
+Run both targets with `-C trust/deploy/helm` (or from that directory):
+the repo-root `make sync-kit` does not exist, and the root `deploy-trust-k8s`
+forwards to the chart's plain `deploy` target, so `KIT=` never reaches the
+per-trust override file.
+
+AWS credentials for the fetch are shared with the init job:
+`omopDb.initJob.awsProfile` and `omopDb.initJob.hostAwsMount` (a host `~/.aws`
+mount for clusters whose node *is* the machine holding your SSO session — k3s,
+minikube's `none` driver; IRSA on EKS). Note `awsProfile` only reaches this Job
+when `hostAwsMount` is enabled.
+
+#### Local clusters (kind): the mount is resolved on the node, not your workstation
+
+`hostAwsMount.hostPath` renders as a `hostPath` volume, which Kubernetes resolves
+**on the node**. On `kind` the node is itself a container and your `~/.aws` is
+not inside it: the path does not exist there, the volume's `type: Directory`
+check fails, and the Job pod never starts (`MountVolume.SetUp failed … is not a
+directory` in its events) while the release waits on the hook until
+`--timeout`. The chart cannot see this at render time, which is why
+`values.yaml` ships no `hostPath` default. Two ways through, neither of which
+puts long-lived keys in the cluster:
+
+**Map `~/.aws` into the node when you create the cluster.** kind's
+`extraMounts` bind-mounts a host directory into the node container; point
+`hostAwsMount.hostPath` at the *node-side* path. The host path must be absolute:
+kind does not expand `~` or `$HOME` — `hostPath: ~/.aws` is taken as a
+*relative* path, resolved against the directory you ran `kind create` from, and
+Docker then creates that `./~/.aws` (root-owned, empty) rather than failing. An
+absolute path is also why this is a snippet and not a checked-in file — a
+committed one is a single developer's home directory, silently wrong on every
+other machine.
+
+```yaml
+# kind-config.yaml (per machine — do not commit)
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraMounts:
+      - hostPath: /home/<you>/.aws   # absolute path on the workstation
+        containerPath: /host-aws
+        readOnly: true
+```
+
+```sh
+kind create cluster --name <name> --config kind-config.yaml
+helm upgrade --install <release> . -n <ns> ... \
+  --set omopDb.initJob.hostAwsMount.enabled=true \
+  --set omopDb.initJob.hostAwsMount.hostPath=/host-aws
+```
+
+The Job sees the mount as `/root/.aws` with `AWS_PROFILE=<omopDb.initJob.awsProfile>`,
+so that profile must exist in your `~/.aws/config` and its SSO session must be
+live on the host (`aws sso login`) before any install or upgrade that has to
+fetch — the mount is read-only, so the CLI inside the Job cannot refresh a
+token itself. One mapping serves `orthanc.initJob.hostAwsMount` too.
+
+**Or pre-seed the database from the host and leave the hook off.** Keep
+`omopDb.vocabLoad.s3Bucket` empty (the Job is then not rendered at all), fetch
+the bundle on the workstation, and run the loader the hook would have run over
+a port-forward. Needs `psql` on the host and either org S3 access
+(`make fetch-vocab-core`) or a self-built bundle — see `trust/omop-db/README.md`,
+"The core vocabulary bundle".
+
+```sh
+kubectl -n <ns> port-forward svc/omop-db 5999:5432 &
+PW=$(kubectl -n <ns> get secret <secret> \
+       -o jsonpath='{.data.omop-postgres-password}' | base64 -d)
+cd trust/omop-db && make fetch-vocab-core
+OMOP_DB_HOST=127.0.0.1 OMOP_DB_PORT=5999 OMOP_POSTGRES_USER=postgres \
+  OMOP_POSTGRES_PASSWORD="$PW" OMOP_POSTGRES_DB=trustomopdb \
+  ./files/load_core_vocab.sh data/vocab_aicentre_core_20240916 \
+    files/OMOPCDM_postgresql_5.4_constraints.sql
+```
+
+`<secret>` is `secrets.existingName`, or `<release>-flip-trust-secrets` when the
+chart creates it; the database is `dataAccessApi.env.OMOP_POSTGRES_DB` (default
+`trustomopdb`) and the user `omopDb.credentials.user` (`postgres`). The load is
+idempotent and takes ~25 min for the full bundle; afterwards
+`./files/load_core_vocab.sh --check` with the same environment exits 0. Restart
+`data-access-api` if any cohort query ran before the load — it caches results,
+so the empty answer would otherwise be replayed. Later `helm upgrade`s neither
+re-fetch nor undo the seeded vocabulary.
+
+The hook probes before it fetches: `probe-vocab` asks the database what is
+missing, and only if something is does `fetch-bundle` download the bundle. This
+matters because the hook is on the critical path of *every* `helm upgrade` and a
+failed hook fails the whole release — so an upgrade that changes an unrelated
+image tag costs two queries per vocabulary table (the probe's guards, then the
+loader's) plus a pass over the constraint catalogue, not a multi-GB download. The
+download lands in an `emptyDir` sized by `omopDb.vocabLoad.workDirSize` (10Gi,
+enough for the zip and its unpacked contents together); lower it, and the
+matching `fetchResources` / `loadResources` requests, for a cluster with small
+nodes. Keep the container `ephemeral-storage` limits above `workDirSize` too:
+emptyDir usage is charged to the pod, whose ceiling is the regular containers'
+limits summed with each init container's taken as a max against that total — so
+here it is 12Gi, not 3 × 12Gi. Limits below the work dir size would evict the pod
+before it had finished filling it.
+
+An external OMOP database (`omopDb.enabled: false`) already skips this Job. Set
+`omopDb.vocabLoad.enabled: false` only to keep an in-cluster `omop-db` while
+loading the vocabulary by hand.
+
+### FL Backend Configuration
+
+Switch between NVFLARE and Flower:
+
+```bash
+# NVFLARE (default)
+helm install trust-release ./ --set flBackend=nvflare
+
+# Flower
+helm install trust-release ./ --set flBackend=flower
+```
+
+### GPU Configuration
+
+```yaml
+flClient:
+  gpu:
+    enabled: true
+    count: 1
+```
+
+Requires the [NVIDIA GPU Operator](https://github.com/NVIDIA/gpu-operator) to be
+installed in the cluster.
+
+### Autoscaling
+
+```yaml
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+```
+
+### Pod Disruption Budget
+
+```yaml
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+```
+
+### Network Policies
+
+Network policies are enabled by default and implement the zero-inbound-trust
+model:
+
+- Deny all ingress from outside the namespace
+- Allow all intra-namespace communication
+- Allow egress to DNS (port 53), HTTPS (port 443), AWS IMDS (169.254.169.254)
+- Allow custom egress CIDRs via `networkPolicies.allowedEgressCIDRs`
+
+```yaml
+networkPolicies:
+  enabled: true
+  allowedEgressCIDRs:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+```
+
+For the full audit of what egress is allowed and why, the residual risk (notably
+443-to-anywhere), and a hardening guide, see
+[NETWORK-POLICY.md](NETWORK-POLICY.md).
+
+## Secrets Reference
+
+The following keys must be present in the Secret (either created by the chart
+with `secrets.create=true` or pre-created externally):
+
+| Secret Key | Used By | Description |
+| ----------- | --------- | ------------- |
+| `aes-key-base64` | trust-api, imaging-api, data-access-api | AES-256 encryption key (base64) |
+| `trust-api-key` | trust-api | API key for hub authentication |
+| `trust-internal-service-key-header` | trust-api, imaging-api, data-access-api | Header name for trust-internal auth |
+| `trust-internal-service-key` | trust-api, imaging-api, data-access-api | Secret key for trust-internal auth |
+| `omop-postgres-password` | omop-db | PostgreSQL password |
+| `data-access-postgres-password` | data-access-api | Data reader DB password |
+| `orthanc-registered-users` | orthanc | Orthanc registered users, JSON user map e.g. `{"admin": "<password>"}`. Required when `orthanc.enabled` — the env ref is non-optional (asserted on every chart render by the `Helm Template` CI job) and the image refuses to start without users (FLIP-PT-091). Populated from the `ORTHANC_REGISTERED_USERS` env var by `scripts/generate_values.py` |
+| `xnat-admin-password` | xnat-web | XNAT admin password |
+| `xnat-service-user` | xnat-web, imaging-api | XNAT service account username |
+| `xnat-service-password` | xnat-web, imaging-api | XNAT service account password |
+| `xnat-datasource-password` | xnat-web, xnat-db, imaging-api | Password of the `xnat` **application role** — mint via `make generate-xnat-credentials KIT=<CODE>` and fill from the kit with `scripts/generate_values.py`; xnat-web and xnat-db refuse to start on the shipped placeholder or weak values, and imaging-api splices it into its `XNAT_DATABASE_URL` (FLIP-PT-056) |
+| `xnat-datasource-admin-password` | xnat-db | Password of the Postgres **superuser** (`POSTGRES_PASSWORD`). Minted by the same command, from the kit's `XNAT_DATASOURCE_ADMIN_PASSWORD`. Must differ from `xnat-datasource-password` — xnat-db's entrypoint refuses to start when the two match (FLIP-PT-056) |
+| `grafana-admin-password` | grafana | Grafana admin password |
+
+For production, use [External Secrets Operator](https://external-secrets.io/) to
+sync secrets from AWS Secrets Manager or HashiCorp Vault.
+
+### xnat-db roles and credential rotation
+
+xnat-db runs two Postgres roles, mirroring the swarm deployment: the `postgres`
+superuser (`xnat-datasource-admin-password`) and the non-superuser `xnat`
+application role (`xnat-datasource-password`) that xnat-web, imaging-api and the
+imaging-import worker authenticate with. The `xnat` role is created by the
+image's baked `XNAT.sql`, which runs from `/docker-entrypoint-initdb.d`.
+
+> **Do not mount a ConfigMap over `/docker-entrypoint-initdb.d`.** A directory
+> mount replaces the directory, hiding `XNAT.sql`, and the two roles silently
+> collapse into one. Per-file mounts need an explicit `subPath`.
+
+**Both passwords apply only at the first initdb of an empty PVC** — the
+superuser's via initdb's own `--pwfile`, the `xnat` role's via the image's
+baked `XNAT.sql` — and a StatefulSet PVC survives `helm upgrade` and `helm
+uninstall`, so a rotated secret would otherwise leave the database on the old
+credential while the pods start using the new one, and authentication fails.
+(A PVC snapshot or `pg_dumpall` restore has the same effect: it brings back
+the old hash.) The two roles are handled differently from here:
+
+| Role | Secret key | Rotation |
+| ---- | ---------- | -------- |
+| `xnat` application role | `xnat-datasource-password` | **Automatic.** A `postStart` hook on the xnat-db container re-applies it to the live role on every pod start, so rotating the secret and restarting the pod is enough. |
+| `postgres` superuser | `xnat-datasource-admin-password` | **Manual.** Still first-initdb only — rotate it by hand as below. |
+
+Rotating the `xnat` role needs the secret updated and **all three**
+consumers restarted, in that order — `xnat-web` and `imaging-api` also hold
+`xnat-datasource-password` as a plain `secretKeyRef` env var, which resolves
+once at pod start with no `checksum/secret` annotation to force a restart, so
+stopping after `xnat-db` leaves them authenticating with the old password:
+
+```bash
+kubectl rollout restart statefulset/<release>-flip-trust-xnat-db
+kubectl rollout status statefulset/<release>-flip-trust-xnat-db
+kubectl rollout restart deployment/<release>-flip-trust-xnat-web
+kubectl rollout restart deployment/<release>-flip-trust-imaging-api
+```
+
+`make patch-kit-secrets` restarts `imaging-api` (along with `trust-api` and
+`data-access-api`) but neither `xnat-db` nor `xnat-web`, so running it alone
+during a rotation still leaves those two on the old password — restart
+`xnat-db` and `xnat-web` yourself, in that order, around it.
+
+The hook connects as `postgres` over the local socket rather than as `xnat`
+itself — PG12 does not redact `ALTER ROLE ... PASSWORD` on a server-side
+error, so authenticating as `xnat` would let a holder of the *current*
+credential force an error (no `CREATEROLE` needed) that logs the *new*
+password on the next rotation; connecting as the superuser instead, with
+statement logging suppressed for the `ALTER`, closes that. It reports its
+outcome through the Postgres server log — the container's own log stream —
+because `postStart` stdout is not surfaced anywhere on success:
+
+```bash
+kubectl logs <xnat-db-pod> | grep 'postStart'
+# WARNING:  xnat-db postStart: xnat role password synced
+```
+
+If the `xnat` role does not exist (a PVC restored without globals, since the
+entrypoint skips `/docker-entrypoint-initdb.d` on an already-populated volume),
+the hook fails loudly and the kubelet reports a `FailedPostStartHook` event
+rather than letting the pod go Ready on a stale credential. Note that
+`pg_isready` does not authenticate, so a readiness probe alone would not catch
+this.
+
+The superuser still needs the manual runbook:
+
+```bash
+kubectl exec -it <xnat-db-pod> -- \
+  psql -U postgres -c "ALTER ROLE postgres WITH PASSWORD '<xnat-datasource-admin-password>'"
+```
+
+**Upgrading an install created before the roles were split (pre-`985563d8`):**
+those deployments set `POSTGRES_USER=xnat`, so their single role is a superuser
+named `xnat` and there is no `postgres` role to authenticate as. Applying this
+chart over such a PVC fails the hook on every start (`FATAL: role "postgres"
+does not exist`), the kubelet kills the container, and the `xnat-db` Service
+loses its endpoint — XNAT is down, not merely mis-authenticating. Because the
+container lives only ~2 s per restart cycle, `kubectl exec` is not a reliable
+entry point.
+
+The reason is easy to miss: the `FailedPostStartHook` event carries only the
+fixed text `PostStartHook failed`, `kubectl describe` shows `CrashLoopBackOff`
+except for the instant the hook error itself is being reported, and the hook's
+own stderr reaches only the kubelet journal. What is always there is Postgres's
+side of the refused connection, in the container log:
+
+```bash
+kubectl logs <release>-flip-trust-xnat-db-0 --previous | grep FATAL
+# FATAL:  role "postgres" does not exist
+```
+
+Recovery (the names are the ones the chart renders, the same as in the
+rotation commands above — the StatefulSet is `<release>-flip-trust-xnat-db`
+and its volume `data-<release>-flip-trust-xnat-db-0`):
+
+1. Scale the StatefulSet to 0:
+   `kubectl scale statefulset/<release>-flip-trust-xnat-db --replicas=0`
+2. Start a debug Pod (or single-replica StatefulSet) on the same PVC with **no
+   `lifecycle` block**: copy the xnat-db container spec — same image *and* the
+   same two password env vars, because the image's entrypoint guard refuses to
+   start without them — and mount `data-<release>-flip-trust-xnat-db-0` as a
+   plain `persistentVolumeClaim` volume at `/var/lib/postgresql/data`. A stock
+   `postgres:12-alpine` with no env at all works on the volume too.
+3. Inside the debug pod, create the superuser role:
+   `psql -U xnat -d postgres -c "CREATE ROLE postgres WITH SUPERUSER LOGIN;"`
+   (on a pre-split volume `xnat` is the superuser, so this works without a
+   password under the trusted local socket).
+4. Delete the debug pod, then scale `xnat-db` back to 1. The `postStart` hook
+   can now connect as `postgres` and will sync the password normally.
+
+If a scale-to-0 is not possible (e.g. no scheduling room), the fallback is to
+temporarily strip the `lifecycle.postStart` block from the StatefulSet pod
+template (`kubectl edit statefulset/<release>-flip-trust-xnat-db`) **and then
+delete the pod by hand**:
+
+```bash
+kubectl delete pod <release>-flip-trust-xnat-db-0
+```
+
+The edit alone changes nothing: with the default `OrderedReady` policy the
+StatefulSet controller will not roll a pod that is not Running and Ready, so
+the crash-looping pod stays on the old template indefinitely and only picks up
+the new one once it is deleted. Let the container start unguarded, run the
+`CREATE ROLE` fix from inside it, then re-add the block (or re-run `helm
+upgrade`) — with the pod now healthy, that update rolls on its own.
+
+Alternatively, keep the old install on the previous chart version and plan a
+full migration (export the XNAT database, re-initialise the PVC, re-import).
+
+## Architecture
+
+### Service Dependencies
+
+```
+                    ┌─────────────┐
+                    │   Hub API   │
+                    │  (external) │
+                    └──────┬──────┘
+                           │ polls
+                    ┌──────▼──────┐
+                    │  trust-api  │
+                    └──┬───┬───┬──┘
+                       │   │   │
+              ┌────────┘   │   └────────┐
+              ▼            ▼            ▼
+      ┌────────────┐ ┌─────────┐ ┌──────────────┐
+      │imaging-api │ │data-    │ │ fl-client     │
+      │            │ │access-  │ │(connects to   │
+      │            │ │api      │ │ FL server     │
+      └──┬───┬─────┘ └──┬──────┘ │ externally)   │
+         │   │          │        └──────────────┘
+    ┌────┘   └───┐      │
+    ▼            ▼      ▼
+┌────────┐ ┌────────┐ ┌────────┐
+│orthanc │ │xnat-web│ │omop-db │
+│(PACS)  │ │(XNAT)  │ │(OMOP)  │
+└────────┘ └───┬────┘ └────────┘
+               │
+          ┌────┴────┐
+          │xnat-db  │
+          │(PG)     │
+          └─────────┘
+```
+
+### Security Model
+
+- **NetworkPolicies**: Default-deny-ingress, allow-intra-namespace, allow-egress
+  to Central Hub and FL server only (audit and threat model: [NETWORK-POLICY.md](NETWORK-POLICY.md))
+- **No LoadBalancer or NodePort** for application services (all ClusterIP), with one opt-in
+  exception: `xnat.web.dicomNodePort` with `service.type: NodePort` exposes XNAT's DICOM SCP
+  receiver so a trust PACS can complete the C-STORE leg of a retrieval. Off by default.
+- **Secrets**: Separate from ConfigMaps; recommend External Secrets Operator
+- **FL clients**: No Central Hub credentials; connect outbound to FL server only
+- **ServiceAccounts**: each stateless service runs under its own ServiceAccount
+  with no RBAC role bindings (none of the pods call the Kubernetes API — least
+  privilege by default).
+- **Pod Security & container hardening**: the chart-created namespace
+  carries Pod Security Standards labels (`enforce=baseline`, `warn`/`audit=restricted`
+  by default — tune via `podSecurity.*`), and the stateless services
+  (trust-api, imaging-api, data-access-api, fl-client)
+  apply a container `securityContext` (`allowPrivilegeEscalation: false`, drop
+  `ALL` capabilities, `seccompProfile: RuntimeDefault`) from `.Values.securityContext`.
+  `runAsNonRoot` / `readOnlyRootFilesystem` are left opt-in (image-dependent).
+  **Remaining for full `restricted` enforcement:** the stateful images
+  (`xnat-web`, `xnat-db`, `omop-db`, `orthanc`) need `fsGroup`/chown init
+  containers before they can run non-root, and the fl-client pod's
+  `images-init` init container (pre-creates the pod's per-net slice of the shared
+  images volume with the ownership imaging-api and the client need) runs as root
+  by design: it declares an explicit `securityContext` scoped to
+  `CHOWN`/`DAC_OVERRIDE`/`FOWNER` with everything else dropped, but root init
+  containers are still rejected under `enforce=restricted`.
+
+## Development
+
+### Chart Testing
+
+```bash
+# Lint the chart
+make -C trust/deploy/helm lint
+
+# Render templates
+make -C trust/deploy/helm template
+
+# Test all FL backends
+make -C trust/deploy/helm template-all-backends
+
+# Render the egress NetworkPolicy in its three shapes: default, CIDR-scoped
+# (networkPolicies.allowedEgressCIDRs*), and networkPolicies.enabled=false (#516)
+make -C trust/deploy/helm template-egress-variants
+
+# Render with --debug — the dry-run equivalent, prints the computed values too
+make -C trust/deploy/helm dry-run
+
+# helm dependency update (refresh the chart's subchart lock)
+make -C trust/deploy/helm update-deps
+
+# Full validation: lint + template + kubeconform schema validation
+make -C trust/deploy/helm test
+```
+
+### Running the XNAT init job by hand
+
+XNAT's post-install init job normally runs as part of the chart. When it is
+disabled (`xnat.initJob.enabled=false`, e.g. because XNAT web was not ready in
+time — #565), run it once XNAT is up:
+
+```bash
+make -C trust/deploy/helm xnat-init
+```
+
+It re-renders only the `xnat-init` job from the chart (`--set
+xnat.initJob.enabled=true`, applied with the
+`app.kubernetes.io/component=xnat-init` selector), waits up to 15 minutes for it
+to complete, and on failure tails the job's logs before exiting non-zero.
+
+### CI Validation
+
+The chart is validated in CI via:
+
+1. `helm lint` — static chart validation
+2. `helm template` — template rendering for all backends
+3. `helm template` with all services disabled — verifies empty rendering
+4. `kubeconform` — schema validation against Kubernetes 1.28+
+5. kind-based e2e — deploys the chart to a kind cluster and verifies pods start
+
+## Troubleshooting
+
+### Pods stuck in Pending
+
+| Cause | Check | Fix |
+| ------- | ------- | ----- |
+| **PVC binding** | `kubectl describe pod <name> -n <ns>` — look for `FailedBinding` events | Ensure a default StorageClass exists or set `persistence.storageClassName` per service. For ReadWriteMany volumes (shared-images), verify the cluster has a RWX-capable provisioner (e.g., EFS, Longhorn, NFS). |
+| **Resource limits** | Pod requests may exceed node capacity | Check node resources: `kubectl describe nodes`. Reduce `resources.requests` or add worker nodes. |
+| **GPU unschedulable** | `kubectl describe pod <fl-client>` shows `nvidia.com/gpu` in `Status` | Verify NVIDIA GPU Operator is installed. Check node labels: `kubectl get nodes -o json \| jq '.items[].metadata.labels' \| grep nvidia` |
+| **Image pull** | Pod event shows `ErrImagePull` or `ImagePullBackOff` | Verify GHCR credentials. Check `imagePullSecrets` config. For private repos ensure `image.tag` exists. |
+
+### Pods in CrashLoopBackOff
+
+| Cause | Check | Fix |
+| ------- | ------- | ----- |
+| **Missing secrets** | `kubectl logs <pod> -n <ns>` shows auth/connection errors | Verify the Secret exists: `kubectl get secret -n <ns>`. Compare keys against the [Secrets Reference](#secrets-reference). |
+| **Bad env vars** | `kubectl exec <pod> -n <ns> -- env` shows empty/wrong URLs | Check ConfigMap values. For trust-api, verify `CENTRAL_HUB_API_URL` is reachable. |
+| **DB unreachable** | trust-api / imaging-api logs show DB connection errors | If using external DB: verify `external.host:port` is correct and firewall allows. For in-cluster DB: check the StatefulSet pod is running. |
+| **Init container failed** | `kubectl logs <pod> -c <init-container> -n <ns>` | For fl-client (`images-init`): the shared images volume must be writable by the init's root user — check the PVC is bound. For omop-db-init: verify PVC is bound. |
+
+### FL client won't connect
+
+1. **Kit not on the node**: The pod stays `Pending` with a `hostPath type check failed` event naming `flClient.kitHostPath`. Stage the kit first — `make stage-kit KIT_SRC=<local kit dir> KUBE_CONTEXT=<context>` — then re-deploy. The chart holds no AWS credentials and cannot fetch it.
+   A kit that IS on the node but was staged with the wrong owner (a Flower SuperNode logging `Permission denied` on `/certs` or `/keys`) means `stage-kit` chowned it for the other backend — it reads the backend off the kit's shape, so re-stage from the slot's own kit directory (or pass `FL_BACKEND=flower` explicitly).
+2. **Kit path mismatch**: Verify `flClient.kitHostPath` points at the directory ON THE NODE holding this trust's provisioned kit, and that it contains the slot's contents (NVFLARE: `local/`, `startup/`, `transfer/`; Flower: `certificates/` and `keys/` with this slot's credential). The chart never fetches the kit — it is delivered out-of-band and placed on the node before the workload starts. A missing path fails scheduling with the path named.
+3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
+4. **GPU not visible**: Verify `nvidia.com/gpu` annotation on the fl-client pod. Check CUDA env vars (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`) are set via `flClient.gpu.enabled: true`.
+5. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
+6. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (NVFLARE 1000, Flower 49999).
+
+### Network policy blocking intra-service traffic
+
+Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeout).
+
+1. Check namespace labels: the `allow-intra-namespace` policy uses `namespaceSelector` matching `kubernetes.io/metadata.name: <namespace>`. Verify the label exists.
+2. Check if `allowKubeSystemIngress` needs to be enabled for your CNI (e.g., Cilium, Calico with strict policies).
+3. Temporarily disable network policies to isolate: `helm upgrade trust-release . --set networkPolicies.enabled=false`
+4. Re-enable with `networkPolicies.enabled=true` and add specific `allowedEgressCIDRs` for the Central Hub and FL server.
+
+### XNAT takes very long to start
+
+| Cause | Check | Fix |
+| ------- | ------- | ----- |
+| **Heap too small** | `kubectl logs <xnat-web-pod> -n <ns>` shows GC/OutOfMemoryError | Increase `xnat.web.env.XNAT_MAX_HEAP` (default `3072m`). For large datasets, set to `4096m` or higher. |
+| **DB init** | Postgres init on first deploy loads schema | First start can take 2-5 minutes. Check `xnat-db` pod for `pg_isready` success. |
+| **Plugin loading** | XNAT loads plugins at startup | No workaround — plugins are image-baked. Each plugin adds ~30s startup time. |
+| **PVC speed** | Slow storage class delays archive/DB I/O | Use SSD-backed storage classes (e.g., `gp3` on EKS, `Premium` on AKS). |
+
+### Orthanc / OMOP init job fails
+
+**Orthanc**:
+
+- Check `orthanc-registered-users` secret — must be valid JSON. Test with `echo '<value>' | python3 -m json.tool`.
+- Orthanc uses SQLite embedded DB — `replicas` must stay at 1. The PVC is `ReadWriteOnce`.
+
+**OMOP init job** (`omop-db-init-job`):
+
+- The init Job is a Helm `post-install,post-upgrade` hook that downloads and restores OMOP data from S3.
+- If the Job fails: check `s3-bucket` and `s3-path` values, and that `omopDb.initJob.hostAwsMount` points at a readable AWS config dir ON THE NODE (this Job authenticates via that mount, not via cluster-stored credentials).
+- PVC name must match the StatefulSet's `volumeClaimTemplates` — the Job expects a PVC named `<release-name>-omop-db-data`.
+- To re-run: `helm upgrade trust-release . --set omopDb.initJob.enabled=true` or delete the Job and let Helm re-create it.
+
+**OMOP vocabulary load** (`omop-vocab-load`):
+
+- Cohorts come back empty but every pod is healthy → the vocabulary was never loaded.
+  Check with `kubectl get job -n <ns> -l app.kubernetes.io/component=omop-vocab-load`.
+  **No Job at all** means `omopDb.vocabLoad.s3Bucket` is empty and the hook was skipped
+  by design — see "OMOP core vocabulary" above.
+- `aws s3 cp` denied in the `fetch-bundle` initContainer → wrong bucket for this
+  environment (each env reads its own; no cross-account read), or no credentials
+  (`omopDb.initJob.hostAwsMount` for local clusters, IRSA on EKS).
+- Job pod stuck in `ContainerCreating` with `MountVolume.SetUp failed … is not a
+  directory` → `hostAwsMount.hostPath` names a workstation path the node cannot
+  see (the `kind` case). Map it in with `extraMounts` or pre-seed instead — see
+  "Local clusters (kind)" above.
+- `/flip/omop/load_core_vocab.sh: No such file or directory` → the `omopDb.image.tag`
+  in use predates FLIP#842; repull a CI-published tag.
+- Re-running `helm upgrade` is safe *and* cheap. The Job runs three stages —
+  `probe-vocab` asks the database what is missing, `fetch-bundle` downloads the
+  bundle only if something is, then `load-vocab` loads it. On an upgrade where the
+  vocabulary is already loaded the probe logs `Core vocabulary already present in
+  every table`, the fetch logs `skipping bundle fetch`, and no multi-GB download
+  happens. The loader still runs (it re-applies the FK constraints, so a previous
+  run that died between the load and the constraints heals here).
+- `probe-vocab` fails with `omop-db not reachable after 60 attempts` → the database
+  never became ready within five minutes. This is a hard failure: the Pod fails,
+  and after `backoffLimit` so does the release. Check the `omop-db` pod and the
+  init Job that restores its PVC. (`load-vocab` waits the same way and fails the
+  same way, which is what stops a database restart during a long download from
+  discarding the bundle that was just fetched.)
+- A database that *is* reachable but cannot answer the probe — wrong password,
+  `omop` schema absent — is treated differently: the probe leaves its marker
+  unwritten and the Job falls through to a full fetch-and-load rather than
+  failing, because a needless download is recoverable and a wrongly-skipped load
+  is silent. The loader then reports the real error.
+- The Job reaches no host but S3. `fetch-bundle` only downloads the zip; the
+  loader unpacks it with the `unzip` baked into the `omop-db` image, so nothing
+  is installed at run time and no package mirror has to be on the egress
+  allowlist. `unzip: not found` in `load-vocab` means the `omopDb.image.tag` in
+  use predates this — repull a CI-published tag.
+
+### Getting help
+
+If the above doesn't resolve your issue, please open a GitHub issue at:
+<https://github.com/londonaicentre/FLIP/issues/new>
+
+Include:
+
+- `helm version` and `kubectl version` output
+- `kubectl describe pod -n <ns>` for the affected pod(s)
+- `kubectl logs -n <ns> <pod-name>` output (redact secrets)
+- Your `values.yaml` overrides (redact sensitive keys)
+
+## Known Limitations
+
+1. **Pod Security for stateful services**: the namespace enforces the Baseline
+   profile and audits/warns against Restricted. The stateless APIs are hardened,
+   but `xnat-web`, `xnat-db`, `omop-db`, and `orthanc` still need image and
+   volume-permission work before the namespace can enforce Restricted.
+
+2. **XNAT Container Service — single-node by default**: DICOM-to-NIfTI
+   conversion runs end-to-end on Kubernetes (FLIP#565). The Container Service
+   spawns each `dcm2niix` Job with the `xnat-web` data PVC mounted, configured by
+   `combined-pvc-name` + `combined-path-translation` in the Kubernetes backend
+   entry of the `xnat-cs-config` ConfigMap. Because the Job mounts the *same* PVC
+   as `xnat-web`, the chart default `ReadWriteOnce` only works when the Job is
+   scheduled onto the node running `xnat-web` — true for a single-node cluster.
+   For multi-node, give the XNAT data volume a `ReadWriteMany` storage class
+   (`xnat.web.persistence.accessMode: ReadWriteMany`, e.g. NFS/EFS). See
+   [TROUBLESHOOTING.md §2.3b](TROUBLESHOOTING.md) for the failure modes,
+   including the trailing slash that `combined-path-translation` must keep.
+
+3. **Orthanc SQLite**: Orthanc uses an embedded SQLite database that cannot be
+   shared across multiple pod replicas. The chart configures Orthanc with
+   `replicas: 1` and a `ReadWriteOnce` PVC.
+
+4. **Alloy log collection**: In the K8s deployment, Alloy runs as a DaemonSet
+   reading pod log files from the host filesystem, replacing the Docker socket
+   approach used in the compose deployment.

@@ -19,17 +19,36 @@
 
 HTTP basic auth is always enforced: the image sets `ORTHANC__AUTHENTICATION_ENABLED=true`, and its `flip-entrypoint.sh` refuses to start unless `ORTHANC__REGISTERED_USERS` holds at least one non-empty username/password pair with no blank username or password anywhere in the map (missing/empty values, a userless `{}`, and empty- or whitespace-only credentials are all rejected) — so the container can never boot as an unauthenticated PACS (Orthanc would otherwise fall back to the well-known `orthanc`/`orthanc` default user). The entrypoint also refuses to start if `ORTHANC__AUTHENTICATION_ENABLED` is overridden to anything other than `true`, so auth cannot be switched off from the outside either.
 
-Orthanc username and password are set by `ORTHANC_USERNAME` and `ORTHANC_PASSWORD` in the per-trust kit file `trust/.env.<CODE>.<env>` — see the **Trust-local credentials** section of [.env.GSTT.development.example](../.env.GSTT.development.example). These are trust-local secrets; the hub never sees them. The dev templates default to `admin`/`admin` — acceptable for this mock PACS serving public test data, but change them in the kit for any shared deployment. On Kubernetes the user map comes from the `orthanc-registered-users` secret key instead (see `deploy/providers/kubernetes/README.md`).
+Orthanc username and password are set by `ORTHANC_USERNAME` and `ORTHANC_PASSWORD` in the per-trust kit file `trust/.env.<CODE>.<env>` — see the **Trust-local credentials** section of [.env.GSTT.development.example](../.env.GSTT.development.example). These are trust-local secrets; the hub never sees them. The dev templates default to `admin`/`admin` — acceptable for this mock PACS serving public test data, but change them in the kit for any shared deployment. On Kubernetes the user map comes from the `orthanc-registered-users` secret key instead (see `trust/deploy/helm/README.md`).
 
 Only humans consume these credentials (the Orthanc Explorer UI on the published `PACS_UI_PORT`, or via the XNAT nginx `/orthanc/` reverse proxy, which passes the browser's `Authorization` header through). The platform's data path is plain DICOM (DIMSE) on port 4242 — XNAT's DQR plugin does C-FIND/C-MOVE by AE title, which involves no HTTP credentials. The DICOM-Web plugin is not enabled: nothing in FLIP issues QIDO/WADO/STOW requests.
 
-You'll need to populate Orthanc with DICOM files in order to test FLIP locally. We have prepared mock DICOM data for each of the 2 dev trusts (GSTT and KCH) as Orthanc storage volumes, published to the public Hugging Face dataset [`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data). In order to set up the storage locally, these data volumes need to be downloaded/extracted. They are fetched anonymously over HTTPS — no AWS CLI or credentials required. This is handled automatically when bringing up the trust containers via `make up` / `make up-trusts` (from the repository root) or `make -C trust up-trust KIT=GSTT` / `make -C trust up-trust KIT=KCH` for a single trust, and similarly they will be updated locally when the desired version changes (note for devs: this is controlled by the `.data_version` file in this directory).
+You'll need to populate Orthanc with DICOM files in order to test FLIP locally. We have prepared mock DICOM data for each of the 2 dev trusts (GSTT and KCH) as Orthanc storage volumes, published to the public Hugging Face dataset [`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data). In order to set up the storage locally, these data volumes need to be downloaded/extracted. They are fetched anonymously over HTTPS — no AWS CLI or credentials required. This is handled automatically when bringing up the trust containers via `make up` / `make up-trusts` (from the repository root) or `make -C trust up-trust KIT=GSTT` / `make -C trust up-trust KIT=KCH` for a single trust, and similarly they will be updated locally when the desired version changes (note for devs: this is controlled by [`trust/.data_version`](../.data_version) — the one pin for
+OMOP and Orthanc together, which `update_orthanc_data.sh` reads as `../.data_version`, not a file in
+this directory).
 
 ```sh
 make update-orthanc-data           # both trusts (default)
 make update-orthanc-data TRUST=1   # Trust_1 only
 make update-orthanc-data TRUST=2   # Trust_2 only
 ```
+
+The target is a thin wrapper around [`update_orthanc_data.sh`](update_orthanc_data.sh), which
+compares `trust/.data_version` against each trust's `volumes/.local_data_version_trust<N>` marker
+and re-downloads and extracts only what has drifted.
+
+### Other Make targets
+
+| Target | What it does |
+| --- | --- |
+| `make build` | Build the `orthanc` image from this directory's Dockerfile. |
+| `make up-trust-1` | Run Trust_1's Orthanc in the foreground on `deploy_trust-network-1`, using the ports and credentials from `../.env.GSTT.development.example`. |
+| `make down` | Stop and remove that container (`--remove-orphans`). |
+| `make shell` | Throwaway `/bin/bash` in the Orthanc image (`run --rm`) — for poking at the image, not at a running server. |
+| `make test` | Pytest for `seed_orthanc.py` and `publish_dicom.py` plus `ruff check`/`format --check`. Pure Python, no Orthanc needed. |
+
+These read defaults from the tracked kit example `../.env.GSTT.development.example`, so they always
+address the **Trust_1** slot; drive any other trust through `make -C trust up-trust KIT=<CODE>`.
 
 ## Seeding a running Orthanc with datasets (FLIP#1100)
 

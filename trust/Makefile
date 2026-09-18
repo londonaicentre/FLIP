@@ -10,24 +10,19 @@
 # limitations under the License.
 #
 
-.PHONY: build dev prod clean stop up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
+.PHONY: build up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
 	create-networks remove-networks recreate-networks tests \
 	update-omop-data update-orthanc-data seed-omop seed-orthanc seed seed-trusts load-synthea-ehr \
 	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle
-# PROD selects the compose-file suffix (__DCKR_SUFFIX: stag collapses to the
-# production compose) and the kit-file env token (ENV: stag stays distinct, so
-# a stag kit is .env.<CODE>.stag, never confused with .env.<CODE>.production).
-ifeq ($(PROD),true)
-__DCKR_SUFFIX=production
-ENV=production
-else ifeq ($(PROD),stag)
-__DCKR_SUFFIX=production
-ENV=stag
-else
-__DCKR_SUFFIX=development
-ENV=development
-endif
+# PROD selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
+# runs the production compose) and the kit-file env token (ENV: stag stays distinct,
+# so a stag kit is .env.<CODE>.stag, never confused with .env.<CODE>.production; the
+# LZA pair reads .lza-prod / .lza-stag, the files the AWS-side register-trusts
+# writes). Both come from the shared table in ../deploy/env_mode.mk — the one place
+# a new PROD value is added, so this Makefile can no longer be the copy that missed
+# it (PROD=lza-stag once fell through to the DEVELOPMENT compose here).
+include ../deploy/env_mode.mk
 
 # The trust stack runs against the per-trust kit file (trust/.env.<KIT>) as the
 # single source of truth — no hub `.env.*` include. A remote trust operator
@@ -138,7 +133,7 @@ IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(PROD),/opt/flip/data/trust
 # (flip.add_resource stages under net-N/upload/, NVFLARE CleanupImages deletes net-N's
 # children) and on Flower it does not share imaging-api's UID: the Flower client is built
 # on the upstream flwr/base image, which runs as `app` (uid/gid 49999). Mirrors the K8s
-# chart's images-init (deploy/providers/kubernetes/templates/fl-client.yaml):
+# chart's images-init (trust/deploy/helm/templates/fl-client.yaml):
 #   * NVFLARE, any env      — the base dir's own owner:group, 0755. Its client shares
 #     imaging-api's UID, so owner write covers both writers.
 #   * Flower, prod/stag     — <base-uid>:49999, 0775. The production compose adds no
