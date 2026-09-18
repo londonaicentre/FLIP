@@ -27,6 +27,7 @@ Standalone FastAPI service for Flower deployment runtime.
 - `POST /submit_run/{job_folder}` — submit a previously uploaded application; `job_folder` is the Central Hub `model_id` (UUID). flip-api's production path (also exposed as the hidden `/submit_job` alias)
 - `POST /submit_tutorial/{tutorial_name}` — submit a pre-baked tutorial folder by name (e.g. `xray_classification`); the local tutorial harness targets this
 - `DELETE /abort_run/{run_id}`
+- `GET /run_logs/{run_id}` — a bounded, secret-masked tail of a run's ServerApp log; the Central Hub reads it when it finds a run in a failed state (FLIP#1001)
 
 ## API docs
 
@@ -63,6 +64,35 @@ uvx flwr stop <run_id> local --format json
 
 It returns the full JSON payload from Flower.
 
+The run-logs endpoint runs:
+
+```bash
+uvx flwr log <run_id> local --show
+```
+
+`--show` prints what the SuperLink has stored for the run and exits under the CLI's own 5 s deadline;
+the `flwr log` default `--stream` returns only once the run is FINISHED, so it would hang the request
+on a run that is still going. The response is
+`{"run_id": ..., "log": ..., "truncated": ...}`, where `log` is the **last** `FLOWER_RUN_LOG_MAX_CHARS`
+characters (default 8000) of the output: a Flower run log opens with the per-run dependency install and
+the cause of a failure is at the other end, so the head is the half worth dropping. Credential-shaped
+substrings are masked first — a run log is whatever researcher-supplied ServerApp code printed, in a
+container that holds a hub service key, so it is not trusted to be secret-free.
+
+`flwr log` exits zero for its two realistic failures — an unknown or forgotten run id (gRPC
+`NOT_FOUND`, logged as `Invalid run_id` on stderr) and a SuperLink that did not answer within the
+5 s deadline (`DEADLINE_EXCEEDED`, swallowed) — leaving stdout empty. The endpoint does not pass that
+through as a 200 with an empty log: an unknown run is a **404**, an empty stream is a **502**, so the
+hub records "could not be retrieved" only when that is actually what happened.
+
+To read the full stream by hand instead, exec into this container and run the same command without
+the truncation (`deploy-fl-api-net-<n>-1` is the container's name on the default dev stack; nothing
+sets `container_name`, so a second `FLIP_INSTANCE` prefixes it):
+
+```bash
+docker exec -it deploy-fl-api-net-1-1 flwr log <run_id> local --show
+```
+
 The server status endpoint checks the Flower SuperLink health service configured by
 `SUPERLINK_HEALTH_ADDRESS` and returns:
 
@@ -87,6 +117,11 @@ If `targets` are omitted, all registered trust names are returned.
 Set these environment variables in the FL API container:
 
 - `SUPERLINK_HEALTH_ADDRESS` (example: `superlink:9097`) — for server status checks
+- `FLOWER_RUN_LOG_MAX_CHARS` (optional, default `8000`) — cap on the run-log tail returned by
+  `/run_logs/{run_id}`. An unset, empty or unparseable value falls back to the default. Like
+  `SUPERLINK_HEALTH_ADDRESS` this is read from the container's own environment: no compose file or
+  ECS task definition passes it through from a hub env file, so set it on the `fl-api-net-<n>`
+  service (or task) directly if you need to change it.
 
 ## Development startup with Docker Compose
 

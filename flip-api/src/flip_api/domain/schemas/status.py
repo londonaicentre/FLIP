@@ -244,3 +244,11 @@ class FLJobStatus(StrEnum):
     FINISHED = "FINISHED"
     FAILED = "FAILED"
     STOPPED = "STOPPED"
+    # A native status the adapter's map does not recognise (i.e. a framework upgrade added
+    # one). Deliberately distinct from FAILED: consumers that act on FAILED are destructive
+    # (the failed-job reconcile errors the model and frees the net), so a guess must never
+    # act — UNKNOWN is a no-op everywhere, surfaced in the adapter's and the hub's warning
+    # logs. Deploy order: a hub predating this value rejects it, so the hub ships before the
+    # FL API images (the hub only validates the entry it asked about, so one foreign UNKNOWN
+    # run does not break lookups of others).
+    UNKNOWN = "UNKNOWN"
