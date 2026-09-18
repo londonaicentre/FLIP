@@ -27,7 +27,7 @@ Central Hub REST API. FastAPI + psycopg2 + SQLModel (sync sessions). Handles use
 | `user_services/` | Register, authenticate, update/delete users, roles, permissions |
 | `project_services/` | Project CRUD, approval workflows |
 | `model_services/` | ML model management, metrics, logs, approvals |
-| `fl_services/` | FL training initiation, status, stop, file pull |
+| `fl_services/` | FL training initiation, status, stop, per-net/quiesce status, job scheduling |
 | `trusts_services/` | Trust registration, health checks, imaging creation |
 | `cohort_services/` | Cohort query submission, results retrieval |
 | `step_functions_services/` | Step function orchestration (register user, approve, cohort) |
@@ -36,7 +36,7 @@ Central Hub REST API. FastAPI + psycopg2 + SQLModel (sync sessions). Handles use
 | `site_services/` | Site configuration, details |
 | `role_services/` | Role CRUD |
 | `scheduler/` | APScheduler background jobs (FL scheduling, trust polling, malware-scan reconcile sweep) |
-| `shared/` | Shared utilities, middleware |
+| `utils/` | Cross-cutting helpers: `s3_client.py` (presigned POST/GET, `MAX_PRESIGNED_URL_TTL_SECONDS` clamp), `email_sender.py::send_templated_email` (SES/console dispatch, secret redaction), `encryption.py` (AES via `AES_KEY_BASE64`), `user_roles.py` (role/permission lookups + validation) |
 
 ## Commands (from `flip-api/`)
 
@@ -67,5 +67,5 @@ make seed_demo_projects        # seed the curated radiology catalogue (EXTRA_ARG
 - Sync SQLModel `Session` via `get_session()` dependency (`db/database.py`); the `with Session(...)` context is load-bearing on FastAPI error paths — a bare `yield` + `session.close()` strands the connection `idle in transaction` (FLIP#773).
 - DB schema is owned by **Alembic** (`db/migrations/`), not `SQLModel.metadata.create_all`. The entrypoint runs `alembic upgrade head` before seeding at boot (fail-fast). Every schema-affecting change to `db/models/*.py` must ship a revision — the integration drift guard (`tests/integration/test_migrations.py`) enforces it. Native-PG-enum gotcha: `ALTER TYPE … ADD VALUE` needs `op.get_context().autocommit_block()`, and downgrades dropping an enum-typed table must `DROP TYPE`.
 - pytest + factory_boy for test data. Fixtures in `conftest.py`.
-- Ruff config: line-length 120, select I/F/E/W/PT + UP006/UP007/UP035/UP042/UP045 (`UP042` enforces `StrEnum` over the legacy `(str, Enum)` pattern).
+- Ruff config (`[tool.ruff.lint]`, `preview = true`): line-length 120, select I/F/E/W/PT + UP006/UP007/UP035/UP042/UP045 (`UP042` enforces `StrEnum` over the legacy `(str, Enum)` pattern).
 - All tests in `tests/unit/` and `tests/integration/`.

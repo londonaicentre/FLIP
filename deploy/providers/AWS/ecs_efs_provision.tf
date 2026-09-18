@@ -59,7 +59,7 @@ resource "null_resource" "provision_efs_certs" {
         --cluster ${aws_ecs_cluster.flip.name} \
         --task-definition ${aws_ecs_task_definition.efs_provision[0].arn} \
         --launch-type FARGATE \
-        --network-configuration "awsvpcConfiguration={subnets=[${join(",", module.flip_vpc.private_subnets)}],securityGroups=[${aws_security_group.ecs_fl_server.id}],assignPublicIp=DISABLED}" \
+        --network-configuration "awsvpcConfiguration={subnets=[${join(",", local.app_subnet_ids)}],securityGroups=[${aws_security_group.ecs_fl_server.id}],assignPublicIp=DISABLED}" \
         --count 1 \
         --region ${var.AWS_REGION} \
         --no-cli-pager \
@@ -103,8 +103,11 @@ resource "aws_ecs_task_definition" "efs_provision" {
 
   container_definitions = jsonencode([
     {
-      name  = "provision-efs-certs"
-      image = "amazon/aws-cli:2.22.35"
+      name = "provision-efs-certs"
+      # Default amazon/aws-cli:2.22.35 from Docker Hub; the egress-less LZA
+      # account overrides this to its ECR Public pull-through cache mirror via
+      # EFS_PROVISION_IMAGE in the env file (FLIP#749).
+      image = var.efs_provision_image
       # The amazon/aws-cli image's ENTRYPOINT is `aws`, so a command like
       # ["/bin/sh", "-c", ...] would get appended as args to aws and fail
       # with "Found invalid choice '/bin/sh'". Override entryPoint so the

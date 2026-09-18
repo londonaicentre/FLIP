@@ -41,7 +41,7 @@ import re
 from pathlib import Path
 
 import pytest
-from hcl_helpers import hcl_block
+from tf_source import hcl_block
 
 AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
 CLOUDFRONT_TF = AWS_PROVIDER_DIR / "cloudfront.tf"

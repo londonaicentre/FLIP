@@ -49,7 +49,7 @@ by a comment that merely mentions the thing.
 import re
 from pathlib import Path
 
-from hcl_helpers import hcl_block
+from tf_source import hcl_block
 
 AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
 SITE_YML = AWS_PROVIDER_DIR / "site.yml"

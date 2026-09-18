@@ -37,6 +37,9 @@ on:
       - "deploy/compose*.yml"
       - "trust/deploy/compose*.yml"
       - "fl-services/nvflare/compose.dev.yml"
+      # test_compose_env_coverage.py asserts the dev composes against the env example (FLIP#1230).
+      - ".env.development.example"
+      - "deploy/fl_backend.mk"
       - ".github/workflows/docker_build_*.yml"
   pull_request:
     branches: [develop]
