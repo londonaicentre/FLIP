@@ -102,15 +102,15 @@ This command executes the following steps in order:
 2. **`aws-login`**: Authenticate with AWS SSO
 3. **`init`**: Initialize Terraform with environment-specific S3 backend
 4. **`import-persistent`**: Import existing persistent AWS resources to prevent replacement
-5. **`generate-internal-service-key`**: Mint the fl-server → hub `INTERNAL_SERVICE_KEY` (idempotent — skipped if already set)
+5. **`generate-internal-service-key`**: Check the fl-server → hub `INTERNAL_SERVICE_KEY` and its hash are in sync (re-syncing a stale hash). It cannot mint a first key from this directory — the Makefile refuses to parse at all while `INTERNAL_SERVICE_KEY` is unset in the env file — so mint it beforehand from the repo root: `make generate-internal-service-key ENV_FILE=$(pwd)/.env.<env>`
 6. **`plan`**: Generate and review the initial Terraform execution plan
 7. **`apply`**: Apply infrastructure changes
 8. **`update-env`**: Refresh the root environment file with Terraform outputs
 9. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
 10. **`ansible-init`**: Patch both hosts, install `psql` on the Central Hub bastion, and provision Docker, AWS CLI, CloudWatch, and FL assets on the Trust EC2 (the FL kit is staged as `Trust_1` at this point — no slot has been assigned yet)
 11. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3 + invalidate CloudFront
-12. **`register-trusts`**: Register every locally-present trust kit file (`trust/.env.<CODE>.<env>`) on the running hub and fill each kit with hub-shared values
-13. **`deploy-trust`**: Re-stage the FL participant kit for the slot the hub assigned at registration (`stage-fl-kit`, reading `FL_KIT_SLOT_NUMBER` from the kit file — idempotent when the host really is `Trust_1`), then deploy Trust services via Docker Compose to the Trust EC2
+12. **`register-trusts`**: Register every locally-present trust kit file (`trust/.env.<CODE>.<env>`) on the running hub and write its credentials back. Only the two hub-shared values the ECS task env carries (`TRUST_API_KEY_HEADER`, `FL_BACKEND`) come back with it — the rest of the block needs `make sync-trust-kit KIT=<CODE> PROD=<env>` from the repo root afterwards (see [Registering trusts against the ECS hub](#registering-trusts-against-the-ecs-hub))
+13. **`deploy-trust`**: Seed the Trust EC2 with that trust's OMOP + Orthanc mock data (`seed-trust-data`, a ~1 GB HuggingFace fetch at the `trust/.data_version` tag plus the OMOP vocabulary load — re-run it standalone after a data-version bump), re-stage the FL participant kit for the slot the hub assigned at registration (`stage-fl-kit`, reading `FL_KIT_SLOT_NUMBER` from the kit file — idempotent when the host really is `Trust_1`), then deploy Trust services via Docker Compose to the Trust EC2
 14. **`status`**: Run comprehensive health checks
 
 To provision only the minimal Central Hub bastion after a targeted Terraform
@@ -143,10 +143,11 @@ Each on-prem trust then joins exactly as in the hybrid flow:
 
 1. Add the trust host's public IP to `LOCAL_TRUST_PUBLIC_IPS` in the env file, then
    `make allow-local-trust-nlb PROD=<env>` (one NLB ingress rule per IP).
-2. Scaffold + register the kit: `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=... PROD=<env>`
-   then register it — **see "Registering trusts against the ECS hub" below**: the root
-   `make register-trust` execs into a *local* flip-api container (an EC2-hub-era
-   assumption, FLIP#936) and cannot reach the ECS task on its own.
+2. Scaffold the kit from the repo root (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=... PROD=<env>`),
+   then register it from **this** directory: `make register-trusts KIT=<CODE> PROD=<env>`
+   — **see "Registering trusts against the ECS hub" below**. Do not use the root
+   `make register-trust`: it execs into a *local* flip-api container (an EC2-hub-era
+   assumption, FLIP#936) and cannot reach the ECS task.
 3. On the trust host: stage the FL kit (`make provision-local-trust KIT=<CODE>` on the
    host, or point `FL_KIT_DIR` in the kit at a locally-provisioned workspace) and start
    the stack: `sudo -E env PROD=<env> make -C trust up-trust KIT=<CODE>` (sudo required —
@@ -159,33 +160,99 @@ two-trust port allocation).
 
 ### Registering trusts against the ECS hub
 
-`register_trust` must run **inside the hub's flip-api task** (it mints credentials
-against the hub DB and stages an ephemeral SSM handoff). With the hub on ECS there is
-no local container to exec into, so the flow is ECS Exec (until the make target grows
-an ECS-aware path — FLIP#938):
+`register_trust` must run **inside the hub's flip-api task** — it mints credentials
+against the hub DB and claims an FL kit slot, using the task role's DB and SSM
+permissions. With the hub on ECS there is no local container to `docker compose exec`
+into, so this directory's `make register-trusts` uses a different **transport** from the
+root-level dev target of the same name: a one-off ECS Fargate task plus an ephemeral SSM
+SecureString handoff (`scripts/register-trusts.sh`). The CLI it runs and the kit writer
+it feeds are identical to the dev path.
 
 ```bash
-export AWS_PROFILE=<env> AWS_REGION=eu-west-2
-# One-time per debugging session: ECS Exec is off by default (var.ecs_exec_enabled)
-aws ecs update-service --cluster flip-cluster --service flip-api \
-  --enable-execute-command --force-new-deployment
-aws ecs wait services-stable --cluster flip-cluster --services flip-api
+cd deploy/providers/AWS
+make register-trusts PROD=stag              # every live trust/.env.*.<env> kit
+make register-trusts KIT=<CODE> PROD=stag   # only trust/.env.<CODE>.<env>
+```
 
-TASK=$(aws ecs list-tasks --cluster flip-cluster --service-name flip-api \
-  --query 'taskArns[0]' --output text)
-OUT=$(aws ecs execute-command --cluster flip-cluster --task "$TASK" \
-  --container flip-api --interactive \
-  --command "uv run python -m flip_api.scripts.register_trust --name \"<Trust Name>\" --code <CODE>")
-# The last JSON line of the session output is the kit payload — feed it to the
-# same distribution script the make target uses:
-printf '%s\n' "$OUT" | grep -E '^\{.*\}\s*$' | tail -1 \
-  | uv run --no-config scripts/distribute_trust_kits.py --target trust/.env.<CODE>.<env>
-make generate-xnat-credentials KIT=<CODE> PROD=<env>
+Once per invocation it reads the live `flip-api` service's subnets and security groups,
+and waits (advisorily) for the service to be stable: its entrypoint seeds the DB, including
+the FL kit-slot pool `register_trust` claims from. A waiter timeout warns and proceeds.
+Then, per kit, it:
+
+1. Reads `TRUST_NAME` / `TRUST_CODE` / `TRUST_REGION` out of `trust/.env.<CODE>.<env>`
+   (`PROD=true` selects `.production` kits, anything else `.stag`). Scaffold the kit
+   first — `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." PROD=<env>` from the repo
+   root — the trust's identity comes from the kit, never from env vars.
+2. Runs `flip_api.scripts.register_trust` as a one-off Fargate task on the `flip-api`
+   task definition, passing `--out-ssm-parameter /flip/trust-kits/ephemeral/<uuid>` so
+   the kit body is PUT as a SecureString and never reaches CloudWatch — only the
+   parameter *name* transits stdout. The script then GETs the parameter with decryption,
+   deletes it, and deletes the task's log stream.
+3. Writes the kit into `trust/.env.<CODE>.<env>` through
+   `scripts/distribute_trust_kits.py`, the same in-place upsert writer the dev path and
+   `sync-trust-kit` use: credentials on first registration only, operator host-local
+   edits preserved, and the hub-shared block upserted with whatever the task's
+   environment carried — which on ECS is only `TRUST_API_KEY_HEADER` and `FL_BACKEND`
+   (`AES_KEY_BASE64` is a Secrets Manager value, never in the task env, and the other
+   hub-shared keys are not in the task definition at all).
+4. **Required follow-up:** fill the rest of the hub-shared block from the admin's local
+   `.env.<env>` — from the repo root, `make sync-trust-kit KIT=<CODE> PROD=<env>` (or
+   `make sync-trust-kits` for every local kit). Without it the kit's `AES_KEY_BASE64`,
+   `CENTRAL_HUB_API_URL`, kit dates and image tags stay unfilled.
+
+Registration is **idempotent** — an already-registered trust returns a metadata-only kit
+(the hub keeps only the SHA-256 hash of the API key), logged as *already registered —
+refreshing hub-shared block*. Delivery to a host is deliberately separate and
+command-driven, and nothing copies the kit file anywhere: `make deploy-trust KIT=<CODE>`
+reads `trust/.env.<CODE>.<env>` locally and drives the Trust EC2's Docker daemon over the
+`flip-trust` SSH context (`up-trust-ec2`), so the values reach the host only as container
+environment. For an on-prem operator, `make package-onprem-trust-kit KIT=<slot>` tarballs a
+kit plus its FL-kit slice — but it reads the legacy slot-named `trust/.env.<slot>` (no env
+suffix) and requires its `FL_KIT_SLOT` to equal `KIT`, so it does not consume the
+`trust/.env.<CODE>.<env>` file `register-trusts` writes; populate `trust/.env.<slot>` as its
+own instructions describe (UI *Add Trust* lines + `make sync-trust-kit`) first.
+
+Then mint the XNAT stack passwords, which are runtime-only trust-side secrets and are
+**not** part of the hub kit:
+
+```bash
+make -C ../../.. generate-xnat-credentials KIT=<CODE> PROD=<env>
 ```
 
 Registration is backend-agnostic — the kit inherits `FL_BACKEND` (e.g. `flower`) from
 the hub's env, and the claimed FL kit slot maps onto the matching SuperNode key
 (Flower) or participant kit (NVFLARE) provisioned for that slot name.
+
+#### Troubleshooting
+
+- **The task's exit code is not the signal.** Fargate misreports exit codes for one-off
+  tasks, so the script treats an absent or empty kit in SSM as the failure. On failure it
+  prints the `ERROR`/`WARNING` lines it salvaged from the task's log stream before
+  deleting it (falling back to the log tail for an unhandled traceback) — that is where
+  the remediation lives, e.g. an exhausted slot pool naming `make add-fl-kits` /
+  `make apply-fl-kit-slots`.
+- **A batch run attempts every kit** and exits non-zero if any failed, so one bad kit
+  never strands the rest and a partial failure can't read as success.
+- **`No trust/.env.*.<suffix> kits found`** means no live kit exists for this
+  environment (`.example` templates are not matched) — run `make new-trust` first. It
+  is a warning, not a failure: the script exits 0, so a `full-deploy` chain carries on
+  past it.
+- **Interactive debugging inside the running service** is still possible with ECS Exec,
+  which is off by default (`var.ecs_exec_enabled`):
+
+  ```bash
+  export AWS_PROFILE=<env> AWS_REGION=eu-west-2
+  aws ecs update-service --cluster flip-cluster --service flip-api \
+    --enable-execute-command --force-new-deployment
+  aws ecs wait services-stable --cluster flip-cluster --services flip-api
+  TASK=$(aws ecs list-tasks --cluster flip-cluster --service-name flip-api \
+    --query 'taskArns[0]' --output text)
+  aws ecs execute-command --cluster flip-cluster --task "$TASK" \
+    --container flip-api --interactive --command /bin/bash
+  ```
+
+  Prefer `make register-trusts` for the real thing: an interactive session leaves the
+  kit payload in the session output rather than in an encrypted SSM parameter.
 
 ### flip-ui on S3 + CloudFront
 
@@ -425,30 +492,48 @@ make init
 # 4. Import existing persistent resources (prevents replacement errors)
 make import-persistent
 
-# 5. Plan changes
+# 5. Check the fl-server -> hub INTERNAL_SERVICE_KEY + hash are in sync (the key must already be
+#    set in the env file or the Makefile will not parse; mint it first from the repo root with
+#    `make generate-internal-service-key ENV_FILE=$(pwd)/.env.<env>`)
+make generate-internal-service-key
+
+# 6. Plan changes
 make plan
 
-# 6. Apply infrastructure
+# 7. Apply infrastructure
 make apply
 
-# 7. Configure SSH access
+# 8. Refresh the root env file with Terraform outputs (DB_HOST, POSTGRES_SECRET_ARN, the two Cognito IDs)
+make update-env
+
+# 9. Configure SSH access
 make ssh-config
 
-# 8. Setup EC2 instances with Ansible
+# 10. Setup EC2 instances with Ansible
 make ansible-init
 
-# 9. Deploy the Central Hub
+# 11. Deploy the Central Hub
 make deploy-centralhub
 
-# 10. Register every locally-present trust kit file on the hub and fill each kit with hub-shared values
+# 12. Register every locally-present trust kit file on the hub and write its credentials back
 make register-trusts
+#     ...then fill the rest of each kit's hub-shared block from the local env file (repo root):
+#     make sync-trust-kit KIT=<CODE> PROD=<env>
 
-# 11. Deploy trust services
-make deploy-trust
+# 13. Deploy trust services (depends on seed-trust-data + stage-fl-kit; needs KIT=<CODE>)
+make deploy-trust KIT=<CODE>
 
-# 12. Check status
+# 14. Check status
 make status
 ```
+
+Step 13 is not a single action: `deploy-trust` depends on `seed-trust-data` (and
+`stage-fl-kit`), so it first loads that trust's OMOP + Orthanc mock data onto the Trust
+EC2 — a ~1 GB HuggingFace fetch of the archives pinned by `trust/.data_version`, plus the
+OMOP vocabulary load. Both need `KIT=<CODE>` and read `FL_KIT_SLOT_NUMBER` and the
+`OMOP_POSTGRES_*` values out of `trust/.env.<CODE>.<env>`, which is why they must run
+**after** `register-trusts`. Re-run `make seed-trust-data KIT=<CODE>` on its own after a
+`trust/.data_version` bump.
 
 ### Central Hub deploys and rollback (immutable SHA tags)
 
@@ -615,7 +700,7 @@ kit-slot list is plain configuration, so the plan diff is human-readable — the
 pauses for a confirmation after the plan prints (`YES=1` skips it), so read it before
 answering. flip-api re-reads the parameter when its slot pool runs dry
 (reconcile-on-miss), so the new slots are claimable by the next
-`make register-trust KIT=<CODE>` with **no restart and no task-definition change**.
+`make register-trusts KIT=<CODE>` with **no restart and no task-definition change**.
 
 > **The targeted apply is not literally one resource.** `-target` applies the target's
 > whole dependency closure, and the flip-api task-role policy references the bucket
@@ -966,7 +1051,7 @@ concrete cutover runbook stays in the private platform repos.
 ```
 deploy/providers/AWS/
 ├── main.tf                     # VPC, IGW, NAT, subnets, RDS, Secrets, ALB, NLB, Route53, Central Hub + Trust EC2
-├── services.tf                 # Cognito + SES (delegated to modules), S3 buckets, IAM bindings
+├── services.tf                 # Cognito (delegated to modules/cognito), S3 buckets, IAM bindings; SES wires to modules/ses from main.tf
 ├── ecs.tf                      # ECS cluster + Fargate capacity providers
 ├── ecs_services.tf             # ECS Fargate services: flip-api, fl-api-net-1, fl-server-net-1
 ├── ecs_tasks.tf                # ECS task definitions for the Central Hub services
@@ -1912,27 +1997,32 @@ deploy/providers/AWS/
 │   └── ses/
 │       ├── flip-access-request.html         # Access request notification
 │       ├── flip-access-request.txt          # Plain-text fallback
+│       ├── flip-xnat-added-to-project.html  # Added-to-XNAT-project notification
+│       ├── flip-xnat-added-to-project.txt   # Plain-text fallback
 │       ├── flip-xnat-credentials.html       # XNAT credential notification
 │       └── flip-xnat-credentials.txt        # Plain-text fallback
-├── services.tf                              # Cognito config - loads cognito/ templates via file()
-├── main.tf                                  # SES config - loads ses/ templates via file()
+├── services.tf                              # Instantiates module "cognito" (which loads cognito/ templates via file())
+├── main.tf                                  # Instantiates module "ses" (which loads ses/ templates via file())
+├── modules/
+│   ├── cognito/main.tf                      # Cognito config - loads cognito/ templates via file() (uses var.templates_dir)
+│   └── ses/main.tf                          # SES config - loads ses/ templates via file() (uses var.templates_dir)
 └── tests/
     └── test_email_templates.py              # Test utility for all templates
 ```
 
 ### How Templates Are Loaded
 
-**Cognito templates** (services.tf):
+**Cognito templates** (`modules/cognito/main.tf`; `services.tf` only wires the module):
 
 ```hcl
-email_message = file("${path.module}/templates/cognito/invite.html")
+email_message = file("${var.templates_dir}/invite.html")
 ```
 
-**SES templates** (main.tf):
+**SES templates** (`modules/ses/main.tf`; `main.tf` only wires the module):
 
 ```hcl
-html = file("${path.module}/templates/ses/flip-access-request.html")
-text = file("${path.module}/templates/ses/flip-access-request.txt")
+html = file("${var.templates_dir}/flip-access-request.html")
+text = file("${var.templates_dir}/flip-access-request.txt")
 ```
 
 Changes to template files are automatically picked up on next `terraform apply` or test run.
@@ -1946,7 +2036,7 @@ Changes to template files are automatically picked up on next `terraform apply` 
 | `{username}` | Cognito username (email) | <john.smith@example.com> |
 | `{####}` | 6-digit temporary password or verification code | 123456 |
 | `{flip_alb_subdomain}` | ALB domain from Terraform var | flip-app.example.com |
-| `{reset_link}` | Password reset link with token | <https://flip.../reset?token=xyz> |
+| `{## Reset Password ##}` | Cognito-substituted reset link (link text between `{##` and `##}`) | \<a>Reset Password\</a> |
 
 **SES templates** use double-brace (Mustache) placeholders substituted at send time:
 
@@ -1955,11 +2045,15 @@ Changes to template files are automatically picked up on next `terraform apply` 
 | `{{name}}` | Requestor's name | access-request |
 | `{{email}}` | Requestor's email | access-request |
 | `{{purpose}}` | Access request purpose | access-request |
-| `{{trust_name}}` | Trust name | xnat-credentials |
-| `{{project_name}}` | XNAT project name | xnat-credentials |
-| `{{project_id}}` | XNAT project ID | xnat-credentials |
-| `{{username}}` | XNAT username | xnat-credentials |
+| `{{trust_name}}` | Trust name | xnat-credentials, xnat-added-to-project |
+| `{{project_name}}` | XNAT project name | xnat-credentials, xnat-added-to-project |
+| `{{project_id}}` | XNAT project ID | xnat-credentials, xnat-added-to-project |
+| `{{username}}` | XNAT username | xnat-credentials, xnat-added-to-project |
 | `{{password}}` | XNAT password | xnat-credentials |
+
+`xnat-added-to-project` is the "you already have an account, you have now been given
+access to another project" variant — same four placeholders as `xnat-credentials` minus
+`{{password}}`, since no new credential is minted.
 
 ### Quick Local Testing
 
@@ -2026,6 +2120,6 @@ Before testing emails:
 ### Making Template Changes
 
 1. **Edit template file** in `templates/cognito/` or `templates/ses/`
-2. **Test locally**: `python3 tests/test_email_templates.py` (verify all 5 pass)
+2. **Test locally**: `python3 tests/test_email_templates.py` (verify all 6 pass)
 3. **Review**: Check generated `email_previews/*.html` files in browser
 4. **Deploy**: Changes are picked up on next `terraform apply`

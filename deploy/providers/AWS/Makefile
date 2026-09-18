@@ -1126,12 +1126,13 @@ ifeq ($(FL_BACKEND),nvflare)
 	    $$TRUST_KIT_DIR && \
 	  echo "" && \
 	  echo "  # Deploy the $(FL_KIT_SLOT) NVFLARE participant kit (staged at $$TRUST_KIT_DIR):" && \
-	  echo "  sudo mkdir -p /opt/flip/services/$(FL_KIT_SLOT)/startup /opt/flip/services/$(FL_KIT_SLOT)/local /opt/flip/services/$(FL_KIT_SLOT)/transfer" && \
-	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/startup/ /opt/flip/services/$(FL_KIT_SLOT)/startup/" && \
-	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/local/ /opt/flip/services/$(FL_KIT_SLOT)/local/" && \
+	  echo "  # \$$FL_KIT_DIR is the kit root from trust/.env.$(KIT).$(KIT_ENV_SUFFIX) (default /opt/flip/fl-kit):" && \
+	  echo "  sudo mkdir -p /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/startup /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/local /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/transfer" && \
+	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/startup/ /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/startup/" && \
+	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/local/ /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/local/" && \
 	  echo "  # fl-client now runs as a non-root uid (GHSA-8465) — hand the rsync'd kit back to" && \
 	  echo "  # this shell's own user so the container can read/write it:" && \
-	  echo "  sudo chown -R \$$(id -u):\$$(id -g) /opt/flip/services/$(FL_KIT_SLOT)" && \
+	  echo "  sudo chown -R \$$(id -u):\$$(id -g) /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)" && \
 	  echo "✅ $(FL_KIT_SLOT) NVFLARE kit staged"
 else
 	@TRUST_KIT_DIR=/tmp/$(KIT)_kit && \
@@ -1141,8 +1142,10 @@ else
 	    $$TRUST_KIT_DIR/net-1/ && \
 	  echo "" && \
 	  echo "  # Deploy the Flower participant kit (staged at $$TRUST_KIT_DIR):" && \
-	  echo "  sudo mkdir -p /opt/flip/services/net-1" && \
-	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/net-1/ /opt/flip/services/net-1/" && \
+	  echo "  # \$$FL_KIT_DIR is the kit root from trust/.env.$(KIT).$(KIT_ENV_SUFFIX) (default /opt/flip/fl-kit);" && \
+	  echo "  # the compose mounts \$$FL_KIT_DIR/net-1/{certificates,keys}:" && \
+	  echo "  sudo mkdir -p /opt/flip/fl-kit/net-1" && \
+	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/net-1/ /opt/flip/fl-kit/net-1/" && \
 	  echo "✅ Flower kit staged"
 endif
 	@echo ""

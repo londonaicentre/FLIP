@@ -52,6 +52,10 @@ A FastAPI application serving everything under ``/api``. Its routers map onto th
      - Users, access requests, MFA status and roles; site banner and details.
    * - ``/trust``, ``/admin/trusts``
      - Trust roster, connection health and registration.
+   * - ``/step``
+     - Multi-step orchestrations the UI drives in place of the original AWS Step Functions: approve a
+       project and fan imaging creation out to its Trusts, submit a cohort query to them, register a
+       user, and retrieve a model.
    * - *(unprefixed)*
      - The endpoints Trusts and FL servers call back on — see `Talking to the Trusts`_ and
        `Callbacks from the FL server`_.
