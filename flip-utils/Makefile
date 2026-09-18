@@ -10,11 +10,18 @@
 # limitations under the License.
 #
 
-# Test commands for flip-utils library
+# Test commands for flip-utils library — the same ruff → mypy → pytest sequence the other
+# services' Makefiles run (flip-api, trust/*), so a type error fails `make unit-test` the way
+# it fails CI's flip-tests job.
 lint_command = uv run ruff check . --fix
+mypy_command = uv run mypy . --ignore-missing-imports
 test_coverage_command = uv run pytest -s -vv --cov=flip/ --cov-report=term-missing tests/
 
+lint:
+	$(lint_command)
+mypy:
+	$(mypy_command)
 unit-test:
-	$(lint_command) && $(test_coverage_command)
+	$(lint_command) && $(mypy_command) && $(test_coverage_command)
 
-.PHONY: unit-test
+.PHONY: lint mypy unit-test

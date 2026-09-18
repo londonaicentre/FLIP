@@ -454,12 +454,14 @@ make unit_test
 test suite (ruff, mypy, and pytest).
 
 For the FL base library in `flip-utils/`, unit tests can be run either directly with pytest or via the shipped
-Makefile target:
+Makefile target, which runs the same ruff → mypy → pytest sequence as the other services (and as the
+`flip-tests` job in `unit-tests.yml`):
 
 ```bash
 cd flip-utils && uv run pytest tests/unit -s -vv
 # or:
-make -C flip-utils unit-test   # ruff --fix + pytest with coverage
+make -C flip-utils unit-test   # ruff --fix + mypy + pytest with coverage
+make -C flip-utils mypy        # type check only
 ```
 
 See [`flip-utils/README.md`](flip-utils/README.md) for the FL package's tests, and
