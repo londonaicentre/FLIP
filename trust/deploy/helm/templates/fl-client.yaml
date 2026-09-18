@@ -37,7 +37,6 @@ data:
   NUM_AVAILABLE_GPUS: {{ .Values.flClient.gpu.count | quote }}
   MEMORY_PER_GPU_IN_GIB: "7"
   LOCAL_DEV: "false"
-  MIN_CLIENTS: "1"
   IMAGES_DIR: {{ .Values.flClient.imagesDir | quote }}
   DATA_ACCESS_API_URL: "http://data-access-api:8000"
   IMAGING_API_URL: "http://imaging-api:8000"
@@ -330,6 +329,6 @@ spec:
           # `type: Directory` makes a missing path a scheduling failure that names the
           # path, rather than an empty dir the client fails against much later.
           hostPath:
-            path: {{ required "flClient.kitHostPath is required when flClient.enabled — the absolute path ON THE NODE holding this trust's provisioned FL participant kit. Stage it with `make -C deploy/providers/kubernetes stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then --set flClient.kitHostPath=/opt/flip/fl-kit (stage-kit's default KIT_DEST, and the kit file's FL_KIT_DIR)" .Values.flClient.kitHostPath | quote }}
+            path: {{ required "flClient.kitHostPath is required when flClient.enabled — the absolute path ON THE NODE holding this trust's provisioned FL participant kit. Stage it with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then --set flClient.kitHostPath=/opt/flip/fl-kit (stage-kit's default KIT_DEST, and the kit file's FL_KIT_DIR)" .Values.flClient.kitHostPath | quote }}
             type: Directory
 {{- end }}

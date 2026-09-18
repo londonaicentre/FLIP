@@ -261,8 +261,9 @@ def test_readiness_reaches_the_rotated_password_on_the_first_rejection(tmp_path:
     )
 
     result = _run_readiness(
-        # pragma: allowlist nextline secret
-        _readiness_env(tmp_path, curl_body, initial_password="initial", rotated_password="rotated")
+        _readiness_env(
+            tmp_path, curl_body, initial_password="initial", rotated_password="rotated"  # pragma: allowlist secret
+        )
     )
 
     assert result.returncode == 0, result.stderr
@@ -287,8 +288,9 @@ def test_readiness_forgives_a_transient_rejection_during_boot(tmp_path: Path) ->
     )
 
     result = _run_readiness(
-        # pragma: allowlist nextline secret
-        _readiness_env(tmp_path, curl_body, initial_password="initial", rotated_password="rotated")
+        _readiness_env(
+            tmp_path, curl_body, initial_password="initial", rotated_password="rotated"  # pragma: allowlist secret
+        )
     )
 
     assert result.returncode == 0, result.stderr
@@ -637,7 +639,7 @@ def _kit_tree(tmp_path: Path) -> Path:
     here aborts the parse and reads as a loop that never ran.
     """
     (tmp_path / "deploy").mkdir()
-    for fragment in ("fl_backend.mk", "instance.mk"):
+    for fragment in ("env_mode.mk", "fl_backend.mk", "instance.mk"):
         shutil.copy(REPO_ROOT / "deploy" / fragment, tmp_path / "deploy" / fragment)
     trust_dir = tmp_path / "trust"
     (trust_dir / "xnat").mkdir(parents=True)

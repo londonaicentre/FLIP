@@ -205,7 +205,7 @@ def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
         f"# Per-deployment override for trust '{code}' (kit: trust/.env.{code}.<env>).",
         "# Contains no secrets — the per-trust keys live in the Kubernetes Secret,",
         "# patched into the cluster by the same sync-kit run. Regenerate by re-running",
-        "#   make -C deploy/providers/kubernetes sync-kit KIT=" + code + " PROD=<env>",
+        "#   make -C trust/deploy/helm sync-kit KIT=" + code + " PROD=<env>",
         "#",
         "# TRUST_API_KEY_HEADER is intentionally NOT set here: the chart default",
         "# (values.yaml) is 'Authorization', which is the platform default the hub",
@@ -352,7 +352,7 @@ def main(code: str, env: str, namespace: str, secret_name: str,
 
     print("─" * 64)
     print("📦 Deploy the chart with the generated override:")
-    print(f"     make -C deploy/providers/kubernetes up OVERRIDES_FILE={rel_override}")
+    print(f"     make -C trust/deploy/helm up OVERRIDES_FILE={rel_override}")
     print()
     print("   For FL training, also open the FL-server NLB to this node's public IP:")
     print(f"     make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-public-ip> PROD={env}")

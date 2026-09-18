@@ -14,8 +14,9 @@
 # FLIP Trust — Kubernetes Helm Chart
 
 > **Deploys: trust only.** No Central Hub component is defined by this chart. The hub is still involved —
-> the trust must be registered on it (`make register-trust KIT=<CODE>`) to get its kit file. See
-> [`../README.md`](../README.md) for how this provider relates to the other two.
+> the trust must be registered on it (`make register-trust KIT=<CODE>`) to get its kit file. The same stack
+> as Docker Compose is [`../`](../README.md); the cluster itself is provisioned outside this repo. See
+> [where things live](../../../deploy/README.md#where-things-live) for the layout rule.
 
 This Helm chart deploys the FLIP trust-side services on Kubernetes. It follows
 the same **zero inbound trust** architecture as the Docker Compose deployment:
@@ -89,9 +90,9 @@ the Secret externally.
 Generate it from the repo root:
 
 ```bash
-python3 deploy/providers/kubernetes/scripts/generate_values.py \
+python3 trust/deploy/helm/scripts/generate_values.py \
   --env-file trust/.env.<CODE>.<env> \
-  --output-dir deploy/providers/kubernetes
+  --output-dir trust/deploy/helm
 ```
 
 That writes `values-secrets.yaml` with mode `0600` (and `values-override.yaml`
@@ -109,7 +110,7 @@ without touching the infra keys.
 ### 3. Sync the kit into the cluster
 
 ```bash
-make -C deploy/providers/kubernetes sync-kit KIT=<CODE> PROD=stag
+make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=stag
 ```
 
 This reads `trust/.env.<CODE>.stag`, patches the per-trust keys
@@ -123,13 +124,13 @@ channel — never to disk.
 ### 4. Stage the FL participant kit onto the node
 
 ```bash
-make -C deploy/providers/kubernetes stage-kit \
+make -C trust/deploy/helm stage-kit \
   KIT_SRC=<dir holding this trust's kit> KUBE_CONTEXT=<kube context>
 ```
 
 **The chart never fetches the kit.** A trust holds no FLIP AWS credentials — FL
 clients have none by design — and the kit reaches the operator out-of-band (see
-[`trust/README.md`](../../../trust/README.md)). It is placed on the node *before*
+[`trust/README.md`](../../README.md)). It is placed on the node *before*
 the workload starts, which is also what a real trust does, so what is deployed
 here is what is deployed in production.
 
@@ -171,19 +172,29 @@ reached the node leaves the pod `Pending` on the `hostPath type check failed` ev
 ### 5. Install / upgrade the chart
 
 ```bash
-make -C deploy/providers/kubernetes deploy-trust-k8s KIT=<CODE> PROD=stag
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=stag
 ```
 
 This runs `helm upgrade --install` with the generated override and then
 `patch-kit-secrets` (injects the per-trust keys into the Helm-owned Secret and
-restarts the API deployments). Equivalent raw Helm for the install step:
+restarts the API deployments). `deploy` depends on `preflight`, so every install
+first runs `scripts/preflight.sh` — five sections covering required tools and
+versions, cluster reachability, the chart files, the trust kit (only when `KIT=`
+is given) and a `helm lint` — and aborts the install if a required check fails.
+Run it on its own to check a host before deploying:
 
 ```bash
-helm upgrade --install trust-release ./deploy/providers/kubernetes/ \
+make -C trust/deploy/helm preflight KIT=<CODE> PROD=stag
+```
+
+Equivalent raw Helm for the install step:
+
+```bash
+helm upgrade --install trust-release ./trust/deploy/helm/ \
   --namespace flip-trust --create-namespace \
-  -f deploy/providers/kubernetes/values.yaml \
-  -f deploy/providers/kubernetes/values-secrets.yaml \
-  -f deploy/providers/kubernetes/k8s-trust-<CODE>.yaml
+  -f trust/deploy/helm/values.yaml \
+  -f trust/deploy/helm/values-secrets.yaml \
+  -f trust/deploy/helm/k8s-trust-<CODE>.yaml
 ```
 
 `sync-kit` stamps a newly created Secret with Helm ownership metadata so the
@@ -216,6 +227,32 @@ make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-public-ip> PROD=st
 
 This is a normal `terraform apply` (no `-target`), so re-running with an
 already-listed IP is a no-op (idempotent — #596).
+
+### Inspecting and tearing down the release
+
+```bash
+make -C trust/deploy/helm list       # helm list in the namespace
+make -C trust/deploy/helm status     # helm status + check_status.py smoke tests
+make -C trust/deploy/helm undeploy   # helm uninstall the release
+```
+
+`undeploy` is `helm uninstall $(RELEASE_NAME) --namespace $(NAMESPACE)`; `down`
+and `undeploy-trust-k8s` are aliases for it, and the repo root forwards
+`make undeploy-trust-k8s` here. It removes the Helm release and **everything the
+release owns — including the standalone PVCs and their data**: Orthanc's PACS store
+(`templates/orthanc.yaml`), XNAT's archive, prearchive, build and cache
+(`templates/xnat-web.yaml`), Grafana's state (`templates/grafana.yaml`) and the
+shared images cache (`templates/shared-images-pvc.yaml`) are plain
+`kind: PersistentVolumeClaim` release resources with no
+`helm.sh/resource-policy: keep`, so `helm uninstall` deletes them, and the bound
+volumes go with them under the cluster default storage class's usual `Delete`
+reclaim policy. Only the PVCs created from StatefulSet `volumeClaimTemplates`
+— `omop-db`, `xnat-db`, `loki` — survive, as do the namespace itself and the FL kit
+staged on the node by `stage-kit`. A re-`deploy` therefore comes back with the OMOP
+and XNAT databases but an empty PACS and an empty XNAT archive — and an `xnat-db`
+whose sessions point at archive files that no longer exist. Snapshot or back up
+those PVs before uninstalling if the data matters; delete the surviving StatefulSet
+PVCs explicitly if you want a clean slate.
 
 ## Configuration Reference
 
@@ -345,10 +382,10 @@ Two ways to load it:
 
 | You have… | Do this |
 | --- | --- |
-| Org S3 access | `make -C deploy/providers/kubernetes sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C deploy/providers/kubernetes deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships the dev one, and trust roles have no cross-account read. |
+| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships the dev one, and trust roles have no cross-account read. |
 | Your own licences | Build an equivalent bundle from [OHDSI Athena](https://athena.ohdsi.org/) / [NHS TRUD](https://isd.digital.nhs.uk/) (see `trust/omop-db/README.md`), put it in a bucket you control, and set `omopDb.vocabLoad.s3Bucket` / `bundleName`. Or run `trust/omop-db/files/load_core_vocab.sh` against the database directly. |
 
-Run both targets with `-C deploy/providers/kubernetes` (or from that directory):
+Run both targets with `-C trust/deploy/helm` (or from that directory):
 the repo-root `make sync-kit` does not exist, and the root `deploy-trust-k8s`
 forwards to the chart's plain `deploy` target, so `KIT=` never reaches the
 per-trust override file.
@@ -738,17 +775,42 @@ full migration (export the XNAT database, re-initialise the PVC, re-import).
 
 ```bash
 # Lint the chart
-make -C deploy/providers/kubernetes lint
+make -C trust/deploy/helm lint
 
 # Render templates
-make -C deploy/providers/kubernetes template
+make -C trust/deploy/helm template
 
 # Test all FL backends
-make -C deploy/providers/kubernetes template-all-backends
+make -C trust/deploy/helm template-all-backends
 
-# Full validation
-make -C deploy/providers/kubernetes test
+# Render the egress NetworkPolicy in its three shapes: default, CIDR-scoped
+# (networkPolicies.allowedEgressCIDRs*), and networkPolicies.enabled=false (#516)
+make -C trust/deploy/helm template-egress-variants
+
+# Render with --debug — the dry-run equivalent, prints the computed values too
+make -C trust/deploy/helm dry-run
+
+# helm dependency update (refresh the chart's subchart lock)
+make -C trust/deploy/helm update-deps
+
+# Full validation: lint + template + kubeconform schema validation
+make -C trust/deploy/helm test
 ```
+
+### Running the XNAT init job by hand
+
+XNAT's post-install init job normally runs as part of the chart. When it is
+disabled (`xnat.initJob.enabled=false`, e.g. because XNAT web was not ready in
+time — #565), run it once XNAT is up:
+
+```bash
+make -C trust/deploy/helm xnat-init
+```
+
+It re-renders only the `xnat-init` job from the chart (`--set
+xnat.initJob.enabled=true`, applied with the
+`app.kubernetes.io/component=xnat-init` selector), waits up to 15 minutes for it
+to complete, and on failure tails the job's logs before exiting non-zero.
 
 ### CI Validation
 

@@ -39,6 +39,9 @@ on:
       - ".github/workflows/secret-scanning.yml"
       - ".pre-commit-config.yaml"
       - ".secrets.baseline"
+      # test_compose_env_coverage.py asserts the dev composes against the env example (FLIP#1230).
+      - ".env.development.example"
+      - "deploy/fl_backend.mk"
   pull_request:
     branches: [develop]
     paths:
@@ -55,6 +58,9 @@ on:
       - ".github/workflows/secret-scanning.yml"
       - ".pre-commit-config.yaml"
       - ".secrets.baseline"
+      # test_compose_env_coverage.py asserts the dev composes against the env example (FLIP#1230).
+      - ".env.development.example"
+      - "deploy/fl_backend.mk"
 
 permissions:
   contents: read

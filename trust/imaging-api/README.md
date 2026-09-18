@@ -152,16 +152,22 @@ Create users, update user details, or add a user to an XNAT project.
 
 ## Configuration
 
-Key environment variables (set in [`.env.development.example`](../../.env.development.example)):
+Key environment variables. Most come from the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>` — but `XNAT_URL`, `XNAT_DATABASE_URL` and `DATA_ACCESS_API_URL` are internal-topology constants with defaults in `imaging_api/config.py`, and the composes do not inject them into this service (`trust/deploy/compose_trust.development.yml` says as much: an empty `${VAR}` from a kit that carried them would override the code default). The two XNAT URLs are deliberately absent from the kit template; `DATA_ACCESS_API_URL` is in it only because the fl-client reads it from env.
 
 | Variable | Description |
 | --- | --- |
-| `XNAT_URL` | URL of the XNAT instance |
+| `XNAT_URL` | URL of the XNAT instance (default `http://xnat-web:8080` — a compose-topology constant, not a kit field) |
+| `XNAT_PORT` | **Required.** XNAT's DICOM SCP receiver port. Paired with `XNAT_AETITLE` as the C-MOVE destination handed to the PACS, so it must be the receiver port, not the web-UI `XNAT_WEB_PORT` |
+| `XNAT_AETITLE` | XNAT's own AE title (default `XNAT`). Must match `XNAT_AETITLE` in `configure-xnat.sh`: DQR matches the C-MOVE destination against a registered SCP receiver by exact AE title **and** port |
+| `PACS_ID` | Fallback PACS id (default `1`). A trust XNAT retrieves from exactly one PACS and `configure-xnat.sh` enforces that, so the id is normally resolved from XNAT at runtime; this value is used only as a fallback, when XNAT cannot be reached or reports no registered PACS (both logged at error) |
 | `XNAT_SERVICE_USER` | XNAT service account username |
 | `XNAT_SERVICE_PASSWORD` | XNAT service account password |
 | `XNAT_DATABASE_URL` | PostgreSQL connection string for the XNAT database (non-secret topology constant; defaults in `config.py`, and the default carries **no** password) |
 | `XNAT_DATASOURCE_PASSWORD` | Minted per-trust XNAT DB password from the kit file (FLIP-PT-056). When set, it replaces the password embedded in `XNAT_DATABASE_URL`; empty or the kit-template placeholder leaves the URL untouched, so a pre-mint deployment fails on its first query instead of falling back to a weak credential |
-| `DATA_ACCESS_API_URL` | Internal URL of the data-access-api |
+| `DATA_ACCESS_API_URL` | Internal URL of the data-access-api (default `http://data-access-api:8000`) |
+| `DCM2NIIX_IMAGE` | Container Service image used for automatic DICOM→NIfTI conversion. The default is `ghcr.io/londonaicentre/xnat-dcm2niix:<version>` at the tag `ARG DCM2NIIX_VERSION` in `trust/xnat/dcm2niix/Dockerfile` names — the one source of truth, which `trust/xnat/dcm2niix/check_image_pin_sync.sh` (pre-commit + CI, FLIP#980) checks `imaging_api/config.py` against. The per-project event subscription looks the XNAT command up by this **exact** image string, so it must match what `trust/xnat/xnat/config/dcm2niix_command.json` (and the K8s init job's inline copy) registers — pinned by version tag, never `latest` |
+| `BASE_IMAGES_DOWNLOAD_DIR` | **Required.** Root of the downloaded-images tree as seen **inside the container** — the composes and the Helm chart inject the literal `/app/data/images`. The kit file's same-named `BASE_IMAGES_DOWNLOAD_DIR` is a different value: the *host* directory the composes bind-mount onto that path (the same host-vs-container dual meaning the trust-api README notes for the kit's `OMOP_DB_PORT`). imaging-api mounts the whole tree; each fl-client mounts only its own `net-N` slice |
+| `REIMPORT_STUDIES_ENABLED` | Whether the retry-failed-imports route is available (default `true`). When `false`, `PUT` to the reimport endpoint returns `418` with "Reimport studies feature is not enabled" |
 | `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Validated as inbound auth on every router except `/health`, and forwarded outbound on calls to data-access-api `/cohort/accession-ids`. |

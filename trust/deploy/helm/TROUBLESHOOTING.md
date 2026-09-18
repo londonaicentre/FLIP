@@ -74,9 +74,9 @@ xnat:
 
 Apply with:
 ```bash
-helm upgrade trust-release deploy/providers/kubernetes -n flip-trust \
-  -f deploy/providers/kubernetes/values.yaml \
-  -f deploy/providers/kubernetes/k8s-trust-k3s-overrides.yaml \
+helm upgrade trust-release trust/deploy/helm -n flip-trust \
+  -f trust/deploy/helm/values.yaml \
+  -f trust/deploy/helm/k8s-trust-k3s-overrides.yaml \
   --set imageTag=stag
 ```
 
@@ -582,8 +582,8 @@ restoration automatically. Manual trigger:
 
 ```bash
 kubectl delete job -n flip-trust trust-release-flip-trust-omop-db-init
-helm upgrade trust-release deploy/providers/kubernetes -n flip-trust \
-  -f deploy/providers/kubernetes/values.yaml \
+helm upgrade trust-release trust/deploy/helm -n flip-trust \
+  -f trust/deploy/helm/values.yaml \
   --set imageTag=stag \
   --set omopDb.initJob.run=true
 ```
@@ -628,8 +628,8 @@ make sync-trust-kit KIT=Trust_MyNew PROD=stag                           # fills 
 Then translate the kit into the cluster and deploy:
 
 ```bash
-make -C deploy/providers/kubernetes sync-kit KIT=Trust_MyNew PROD=stag  # patches Secret + writes override
-make -C deploy/providers/kubernetes up OVERRIDES_FILE=k8s-trust-Trust_MyNew.yaml
+make -C trust/deploy/helm sync-kit KIT=Trust_MyNew PROD=stag  # patches Secret + writes override
+make -C trust/deploy/helm up OVERRIDES_FILE=k8s-trust-Trust_MyNew.yaml
 ```
 
 `sync-kit` patches the per-trust keys into the Kubernetes Secret and writes the
@@ -646,7 +646,7 @@ If trust-api logs show no heartbeats or `401`:
    401 is the header *name*, not the key value. Re-run `sync-kit` or check the
    `TRUST_API_KEY_HEADER` in your override / ConfigMap.
 2. **`401 invalid`** → the key value is wrong. Confirm the Secret holds the
-   registered key: re-run `make -C deploy/providers/kubernetes sync-kit KIT=<CODE>`.
+   registered key: re-run `make -C trust/deploy/helm sync-kit KIT=<CODE>`.
    The hub stores only the SHA-256 hash, so re-registration is idempotent.
 3. Verify `CENTRAL_HUB_API_URL` is correct and reachable.
 4. Check NetworkPolicies aren't blocking egress.
@@ -692,7 +692,7 @@ The nginx proxy (port 443) is for external access only.
 ## 6. Debug Scripts
 
 A collection of diagnostic scripts is available in `/tmp/` on the development
-machine and in `deploy/providers/kubernetes/scripts/`. Key scripts:
+machine and in `trust/deploy/helm/scripts/`. Key scripts:
 
 | Script | Purpose |
 |--------|---------|
@@ -871,8 +871,9 @@ signature = base64.b64encode(
 ).decode()
 ```
 
-A Python helper script is available at:
-`deploy/providers/kubernetes/scripts/resign_signatures.py`
+There is no bundled helper script for this — re-sign each file listed in
+`signature.json` by hand with the snippet above (or your own script built on
+it) and rewrite `signature.json` with the resulting base64 signatures.
 
 ### 7.5 EFS File Permission Lost (sub_start.sh)
 
