@@ -12,6 +12,7 @@
 
 import json
 import os
+from typing import Any
 
 import torch
 from nvflare.apis.fl_context import FLContext
@@ -48,7 +49,21 @@ class InitialCheckpointPTModelPersistor(PTFileModelPersistor):
     object), so it is a safe drop-in for the shared standard base app.
     """
 
-    def __init__(self, model: torch.nn.Module | None = None, model_id: str = "", **kwargs) -> None:
+    def __init__(
+        self,
+        model: torch.nn.Module | str | dict[str, Any] | None = None,
+        model_id: str = "",
+        **kwargs,
+    ) -> None:
+        """
+        Args:
+            model: As for the stock persistor — a model object, a component id, or the
+                ``{"path": ..., "args": ...}`` component config a recipe passes (NVFLARE's
+                ComponentBuilder instantiates it before this persistor is built at run time).
+            model_id: FLIP model ID (legacy path); when empty it is resolved lazily from the job's
+                meta.json custom_props via ``get_flip_model_id``.
+            **kwargs: Passed through to ``PTFileModelPersistor``.
+        """
         super().__init__(model=model, **kwargs)
         self._model_id_arg = model_id
 
