@@ -119,6 +119,30 @@ def test_render_override_omits_vocab_load_without_bucket():
     assert "s3Bucket" not in out
 
 
+def test_render_override_holds_pinned_images_back_from_the_release():
+    """The kit's OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG opt-outs reach the chart as `image.pin`,
+    beside the global.image.tag the kit's DOCKER_TAG sets; a kit without them emits none."""
+    kit = {**_FL_KIT, "DOCKER_TAG": "sha-badcff1", "OMOP_DB_TAG": "latest", "XNAT_TAG": "v0.6.0"}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
+    assert "\nglobal:\n  image:\n    tag: sha-badcff1\n" in out
+    assert "\nomopDb:\n  image:\n    pin: latest\n" in out
+    assert "\nxnat:\n  image:\n    pin: v0.6.0\n" in out
+    assert "orthanc:" not in out
+    plain = sync_k8s_kit.render_override({**_FL_KIT, "DOCKER_TAG": "v0.6.0"}, "Trust_K8s", "eu-west-2")
+    assert "pin:" not in plain
+
+
+def test_render_override_pins_the_fl_client_to_an_immutable_docker_fl_tag():
+    """One flClient block (a second top-level key would be a YAML duplicate): kitHostPath and,
+    when the kit's DOCKER_FL_TAG is a release or sha- tag, image.pin. `dev` / `stag` emit none."""
+    out = sync_k8s_kit.render_override({**_FL_KIT, "DOCKER_FL_TAG": "sha-03fdb61"}, "Trust_K8s", "eu-west-2")
+    assert out.count("\nflClient:\n") == 1
+    assert "\nflClient:\n  kitHostPath: /opt/flip/fl-kit\n  image:\n    pin: sha-03fdb61\n" in out
+    for tag in ("dev", "stag"):
+        out = sync_k8s_kit.render_override({**_FL_KIT, "DOCKER_FL_TAG": tag}, "Trust_K8s", "eu-west-2")
+        assert "pin:" not in out, tag
+
+
 def test_render_override_sets_kit_host_path_from_kit():
     """flClient.kitHostPath comes from the kit's FL_KIT_DIR. It is `required` in the
     chart, so an override that omits it (or nests it wrong) fails the render — and one

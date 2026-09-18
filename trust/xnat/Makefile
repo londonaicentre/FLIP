@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build up down up-xnat down-xnat xnat-shell xnat-stack-down clean \
+.PHONY: build up down up-xnat down-xnat upgrade-xnat xnat-backup xnat-shell xnat-stack-down clean \
 	xnat-war-download xnat-plugins-download xnat-reset xnat-configure \
 	create-xnat-network test unit_test local_test
 
@@ -171,6 +171,10 @@ XNAT_DIR_OWNER := $(XNAT_CONTAINER_UID):$(XNAT_CONTAINER_GID)
 # the development stack gives xnat-db no persistent bind mount.
 XNAT_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive build cache) \
                   $(if $(IS_DEPLOYED),$(XNAT_DATA_DIR)/xnat-db-data)
+# The subset xnat-web itself writes — what upgrade-xnat checks on a LIVE site. xnat-db-data
+# is excluded there: Postgres's entrypoint re-owns it to its own uid on first boot, so on
+# a running site it is legitimately not 1001 and the reset-time check does not apply.
+XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive build cache)
 
 # Verify every bind-mount source is owned by the container uid, and fail naming
 # the exact remedy when it is not. Fatal rather than a warning because the
@@ -201,7 +205,7 @@ XNAT_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive bu
 # and still fires the guard, now with stat naming the path it could not read.
 define check_xnat_dir_owner
 	owned="$$($(1) | grep -cx '$(XNAT_DIR_OWNER)' || true)"; \
-	if [ "$$owned" != "$(words $(XNAT_DATA_DIRS))" ]; then \
+	if [ "$$owned" != "$(or $(3),$(words $(XNAT_DATA_DIRS)))" ]; then \
 		echo "❌  XNAT bind-mount sources under $(XNAT_DATA_DIR) are not all owned by $(XNAT_DIR_OWNER)."; \
 		echo "    xnat-web runs as uid $(XNAT_CONTAINER_UID) and cannot write them, so DICOM"; \
 		echo "    retrieval fails with the PACS reporting 'Peer aborted Association' and XNAT"; \
@@ -421,6 +425,51 @@ define require_one_xnat_web_container
 		exit 1;; \
 	esac
 endef
+
+# ── Release upgrade (FLIP#1204) ───────────────────────────────────────────
+# Move a LIVE XNAT to the kit's XNAT_TAG with its data in place: back up the database,
+# redeploy the stack (Swarm rolls each service onto the new image; the bind-mounted
+# archive and xnat-db-data stay put; XNAT migrates its schema on boot), then re-run the
+# configure pass, which converges an already-initialised instance (receiver, DQR, PACS,
+# Container Service, dcm2niix). Everything up-xnat does EXCEPT xnat-reset — that rm -rf
+# is why up-xnat can never be the upgrade verb.
+#
+# The ownership check is what turns a pre-1.10 site's upgrade into a loud, one-line fix
+# rather than a boot loop: xnat-web is non-root (uid 1001) since the hardening, and an
+# archive written by an older root-running xnat-web is unreadable to it.
+# XNAT_TAG ?= DOCKER_TAG, so the tag comes from the kit that upgrade-trust just rewrote.
+upgrade-xnat: create-xnat-network
+	$(require_kit)
+	$(require_xnat_passwords)
+	@echo "⬆️  Upgrading XNAT stack $(XNAT_STACK) to $(XNAT_TAG) (data dir $(XNAT_DATA_DIR) kept)..."
+	@$(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS)))
+	$(MAKE) xnat-backup KIT=$(KIT)
+	XNAT_PATH=${XNAT_PATH} \
+	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
+	XNAT_WEB_PORT=$(XNAT_WEB_PORT_EFFECTIVE) \
+	XNAT_AETITLE=$(XNAT_AETITLE_EFFECTIVE) \
+	PACS_UI_PORT=$(PACS_UI_PORT_EFFECTIVE) \
+	DOCKER_NETWORK_NAME=$(XNAT_NETWORK) \
+	docker stack deploy --with-registry-auth --resolve-image "$(XNAT_RESOLVE_IMAGE)" --detach=false ${STACK_FILES} $(XNAT_STACK)
+	$(MAKE) xnat-configure XNAT_PROJECT=$(XNAT_STACK)
+
+# pg_dumpall of the running xnat-db into $(XNAT_DATA_DIR)/backups/ — the rollback path for
+# an XNAT upgrade, since XNAT's schema migrations are forward-only. Both ends go through
+# docker: the dump runs inside the db container, and the file lands in the (root- or
+# 1001-owned) data dir via a throwaway container rather than needing sudo. Skipped with a
+# note when no xnat-db is running (a first install has nothing to back up). The container
+# is found by the swarm labels, like xnat_web_container_ids above — `--filter name=` is a
+# substring match that also catches a FLIP_INSTANCE-prefixed stack's db (FLIP#1210).
+xnat-backup:
+	$(require_kit)
+	@db=$$(docker ps -q --filter "label=com.docker.stack.namespace=$(XNAT_STACK)" --filter "label=com.docker.swarm.service.name=$(XNAT_STACK)_xnat-db" | head -1); \
+	if [ -z "$$db" ]; then echo "ℹ️  No running $(XNAT_STACK)_xnat-db — nothing to back up."; exit 0; fi; \
+	stamp=$$(date +%Y%m%d-%H%M%S); \
+	echo "💾 Backing up the XNAT database to $(XNAT_DATA_DIR)/backups/xnat-db-$$stamp.sql.gz ..."; \
+	docker run --rm -v "$(XNAT_DATA_DIR):/x" alpine:3.20 mkdir -p /x/backups && \
+	docker exec "$$db" sh -c 'pg_dumpall -U postgres | gzip -c' \
+	  | docker run --rm -i -v "$(XNAT_DATA_DIR)/backups:/b" alpine:3.20 sh -c "cat > /b/xnat-db-$$stamp.sql.gz" && \
+	docker run --rm -v "$(XNAT_DATA_DIR)/backups:/b" alpine:3.20 sh -c "gzip -t /b/xnat-db-$$stamp.sql.gz && ls -l /b/xnat-db-$$stamp.sql.gz"
 
 # Get a shell in the running xnat-web container for the selected trust.
 xnat-shell:

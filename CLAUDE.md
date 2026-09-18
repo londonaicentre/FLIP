@@ -461,6 +461,28 @@ make -C trust debug-<SVC>          # Debug mode for one trust-internal service d
 make -C trust debug-<SVC>-off      # Stop it
 ```
 
+### Site release upgrades (FLIP#1204)
+
+```bash
+make upgrade-onprem-trust KIT=<slot> [TAG=vX.Y.Z] [FL_TAG=…] [FORCE=1] [YES=1] [ALLOW_CHECKOUT_DRIFT=1]  # operator: readiness checklist → data-safe upgrade; a release TAG is refused unless the checkout is at that tag (exit 6) — `git fetch --tags origin && git checkout vX.Y.Z` first
+make -C trust upgrade-trust KIT=<CODE> PROD=<env> [TAG=…]                # the verb itself (pull, recreate, XNAT in place)
+make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> TAG=… [KUBE_CONTEXT=…]  # Helm: sync-kit → global.image.tag
+make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env>      # EC2 twin (no re-seed)
+make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=vX.Y.Z       # hub; the guard takes sha-<short7> or vX.Y.Z
+```
+
+A release (`v*.*.*` git tag from `release.yml`) rebuilds **every** image unfiltered and pushes `:vX.Y.Z`;
+the four API images bake `FLIP_RELEASE` so `/health` names the build. `TAG` defaults to the release the
+hub reports on `/api/health` — never "latest on GitHub" (a v0.6.0 site would pull an nvflare-2.9 client
+against a 2.8 server). The resolver refuses (exit 5) a tag any site image was never built at — every
+`sha-` build is path-filtered, so most `sha-` tags lack orthanc / omop-db / xnat-* / the FL client; the
+opt-outs are `FL_TAG=` and the kit's `OMOP_DB_TAG` / `ORTHANC_TAG` / `XNAT_TAG` (on Helm:
+`flClient|omopDb|orthanc|xnat.image.pin`, which beat `global.image.tag`). `up-trust` / `up-onprem-trust` / `restart-trust` / `deploy-trust` stay the
+**first-install** verbs: they re-fetch fixtures and run `xnat-reset`, so never use them to move a live site.
+The heartbeat reply carries `hub_version` + an AES-key fingerprint; trust-api's `/health` reports
+`hub_version` / `hub_key_match`, and the onboarding checklist's *Hub-shared block current* row reads them.
+Runbook: `docs/source/sys-admin/admin-upgrading-sites.rst`.
+
 ## Workflow Requirements
 
 ### Always Use Make Commands
@@ -674,7 +696,7 @@ setup and break-glass: [`deploy/providers/AWS/README.md`](deploy/providers/AWS/R
 
 **The application `docker_build_*.yml` workflows (`flip_api`, `trust_trust_api`, `trust_imaging_api`, `trust_data_access_api`, `omop_db`) auto-publish to GHCR only after their service's test workflow passes on `develop` or `main`.** They trigger via `workflow_run` on the matching test workflow (`FLIP API CI`, `Trust - Trust API CI`, etc.) and a job-level `if` gates on `workflow_run.conclusion == 'success'` — a red test suite never publishes. Path filtering is inherited from the test workflow, so a build still only fires when that service changed. (`orthanc`, `xnat_*` keep their direct push trigger — they have no separate test workflow to gate on; `orthanc` instead runs an in-job auth smoke test between build and push, and also on PRs touching `trust/orthanc/**`, so a red smoke never publishes — FLIP-PT-091; `flip-ui` is a CI smoke test that never publishes.)
 
-Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of the built commit) alongside the mutable `:stag`/`:prod` tags. Hub ECS deploys pin these sha tags via task-definition revisions — `make deploy-centralhub` resolves the env branch tip's tag, `make rollback-centralhub` repoints at the previous revision (FLIP#751; see `deploy/providers/AWS/README.md` "Central Hub deploys and rollback"). `deploy-centralhub` also prints an **FL quiesce reminder** (FLIP#770; on `PROD=true` it adds an interactive are-you-sure confirmation, stag stays non-interactive): replacing `fl-server-net-1` kills any in-flight training run, so enable deployment mode first — it pauses FL job pickup (queued jobs hold; the running job finishes and frees its net) — and wait until the hub's `GET /fl/quiesce` reports deployment mode ON and no BUSY net, making "enable mode → wait → deploy → disable" the standard redeploy workflow.
+A run of an image workflow on a `v*.*.*` tag ref builds **every** image at that commit and pushes `:v<X.Y.Z>` (FLIP#1204) — release identity for the sites. For a real release `release.yml` **dispatches** the twelve builds at the tag it created (`gh workflow run … --ref v<X.Y.Z>`): the tag is pushed with `GITHUB_TOKEN`, and GitHub starts no workflow for an event created that way, so the workflows' own `push.tags` trigger only ever fires for a hand-pushed tag (a release candidate). `scripts/tests/test_release_image_tags.py` pins the dispatch roster to the publishing workflows. Every image workflow runs `.github/actions/release-tag-guard` first: a **stable** `v<X.Y.Z>` whose commit is not on `main` fails the build, pre-release `v<X.Y.Z>-rc.N` tags pass (the release-candidate path, CONTRIBUTING "Testing a release candidate"). Who may create `v*` tags is left to write access by decision (no tag ruleset — GitHub cannot exempt the built-in Actions app from one). Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of the built commit) alongside the mutable `:stag`/`:prod` tags. Hub ECS deploys pin these sha tags via task-definition revisions — `make deploy-centralhub` resolves the env branch tip's tag, `make rollback-centralhub` repoints at the previous revision (FLIP#751; see `deploy/providers/AWS/README.md` "Central Hub deploys and rollback"). `deploy-centralhub` also prints an **FL quiesce reminder** (FLIP#770; on `PROD=true` it adds an interactive are-you-sure confirmation, stag stays non-interactive): replacing `fl-server-net-1` kills any in-flight training run, so enable deployment mode first — it pauses FL job pickup (queued jobs hold; the running job finishes and frees its net) — and wait until the hub's `GET /fl/quiesce` reports deployment mode ON and no BUSY net, making "enable mode → wait → deploy → disable" the standard redeploy workflow.
 
 > **Note:** `workflow_run` triggers only take effect once these workflow files are on the repo's **default branch**. The first merge that introduces them won't retroactively publish; subsequent qualifying pushes will.
 

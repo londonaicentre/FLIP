@@ -615,7 +615,7 @@ Each service has its own version string:
 - [`trust/imaging-api/pyproject.toml`](trust/imaging-api/pyproject.toml)
 - [`trust/data-access-api/pyproject.toml`](trust/data-access-api/pyproject.toml)
 
-These are **independent**. Bump a service's version only when *that service* has user-visible changes, applying SemVer to the service alone. Services are not aligned with the root version on every release — a release where only `flip-ui` changed bumps the root and `flip-ui/package.json`, and nothing else. Per-service versions are informational today (deployments select images by branch via `:prod` / `:stag` tags, not by version string), but keeping them honest makes them useful for audit and changelog scope.
+These are **independent**. Bump a service's version only when *that service* has user-visible changes, applying SemVer to the service alone. Services are not aligned with the root version on every release — a release where only `flip-ui` changed bumps the root and `flip-ui/package.json`, and nothing else. Per-service versions are informational (deployments select images by tag, not by version string), but keeping them honest makes them useful for audit and changelog scope. What a running container *reports* as its version is different: every CI-published image bakes `FLIP_RELEASE` — the `v<X.Y.Z>` release tag, or the `sha-<short7>` tag of a branch build — and `/health` returns that, so the Connection Status page names the build a site runs rather than a pyproject number two builds can share (FLIP#1204). A local build carries no `FLIP_RELEASE` and falls back to the pyproject version.
 
 ### Pre-release checklist
 
@@ -625,7 +625,7 @@ Before opening the release PR from `develop` to `main`:
 - All PRs intended for this release are merged into `develop` and carry an appropriate label. The release-notes categories come from [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`. PRs labelled `ignore-for-release` are excluded.
 - Bump the `version` in the root `pyproject.toml` to the new release version. Additionally bump the `version` in any service file (`flip-api/pyproject.toml`, `flip-ui/package.json`, `trust/*/pyproject.toml`) whose code changed in this release, per the independent-SemVer rule above. Leave unchanged services alone.
 - If `flip-utils/**` changed in this release, bump `__version__` in [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) — [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) fails the `develop` → `main` PR unless it is valid semver and strictly higher than the latest `flip-utils-v*.*.*` tag. It need not match — or differ from — the root version; the two trains tag in separate namespaces (see [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path)).
-- Curate the release-notes header in [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) — Highlights, Breaking Changes, New Features, Bug Fixes. Editing the file is the only way to change those sections; the preview comment on the PR is regenerated from it on every push.
+- Curate the release-notes header in [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) — Highlights, Breaking Changes, **Site upgrade**, New Features, Bug Fixes. Editing the file is the only way to change those sections; the preview comment on the PR is regenerated from it on every push. The *Site upgrade* section is the prompt trust operators act on (FLIP#1204): say whether the upgrade is required, the ordering (hub first / sites first / one Deployment-Mode window — a flag-day such as FLIP#1179's cipher change or an FL-framework bump is the latter), and whether a **refreshed kit** is needed because the Hub-shared block changed.
 - Run `make unit_test` and `make integration_test` locally.
 
 ### Cutting the release
@@ -637,10 +637,18 @@ Before opening the release PR from `develop` to `main`:
    - [`pr-release-notes-preview.yml`](.github/workflows/pr-release-notes-preview.yml) posts a **release-notes preview** comment — the rendered template header plus the generated changelog — and updates it in place on every push. Read it as the last check that the notes are right.
    - [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) and [`check-package-metadata.yml`](.github/workflows/check-package-metadata.yml) run when `flip-utils/**` changed.
 1. On merge to `main`:
-   - [`release.yml`](.github/workflows/release.yml) reads the root `pyproject.toml`, creates the `v<X.Y.Z>` git tag, and publishes the GitHub Release named `Release v<X.Y.Z>` with auto-generated notes.
+   - [`release.yml`](.github/workflows/release.yml) reads the root `pyproject.toml`, creates the `v<X.Y.Z>` git tag (the tag it pushes is on `main` by construction, which is what the image workflows' release-tag guard checks), and publishes the GitHub Release named `Release v<X.Y.Z>` with auto-generated notes.
    - [`release-pypi.yml`](.github/workflows/release-pypi.yml) reads `flip-utils/flip/__init__.py` and, if that version is not yet tagged, lints + tests + builds the package, publishes it to PyPI via OIDC trusted publishing, tags it, and publishes a GitHub Release named `flip-utils v<X.Y.Z>` with the template header, the generated changelog, and the build artifacts attached.
    - Every `docker_build_*.yml` workflow under [`.github/workflows/`](.github/workflows/) rebuilds its service and pushes the `:prod` and `:<sha>` tags to GHCR.
-1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that the `:prod` tags on `flip-api`, `trust-api`, `imaging-api`, and `data-access-api` were updated by the latest build. If the package was released, verify it on [PyPI](https://pypi.org/project/flip-utils/).
+   - `release.yml` then **dispatches** every image workflow — `docker_build_*.yml` and both `fl-docker-build-*.yml` — at the new tag (`gh workflow run <wf> --ref v<X.Y.Z>`), building every image at the release commit, unfiltered, and pushing `:v<X.Y.Z>` (FLIP#1204). This is the tag hub and sites deploy: a release is one identity across the whole stack, not a different `sha-` per service. The image workflows also carry a `push.tags: ['v*.*.*']` trigger, but it cannot serve the real release: the tag is pushed with the workflow's own `GITHUB_TOKEN`, and GitHub starts no workflow for an event created that way (only `workflow_dispatch` / `repository_dispatch` are exempt) — the push trigger is what a **hand-pushed** tag uses, i.e. a release candidate. `scripts/tests/test_release_image_tags.py` holds the dispatch roster to the exact set of publishing workflows, so one added without being listed fails CI.
+1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right — the curated header (including *Site upgrade*) now sits above the generated changelog. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that every image carries `:v<X.Y.Z>` (twelve workflows; `scripts/tests/test_release_image_tags.py` guards the triggers) and that the `:prod` tags were updated. If the package was released, verify it on [PyPI](https://pypi.org/project/flip-utils/).
+
+### Rolling the release out
+
+The release is not deployed by merging. Two steps, in this order:
+
+1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI is still `make deploy-ui PROD=true` (FLIP#1186). If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `scripts/reconcile_ci_env.py --env prod --compare .env.production` → `make sync-trust-kits PROD=true` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>`.
+1. **Sites, operator-triggered.** Each site's operator moves their FLIP checkout to the tag (`git fetch --tags origin && git checkout v<X.Y.Z>` — the compose files, Makefiles and the verb itself come from the checkout, and the verb refuses a release tag from any other checkout) and runs `make upgrade-onprem-trust KIT=<slot>` (Kubernetes: `upgrade-trust-k8s`; EC2: `upgrade-trust-ec2`, both from a checkout at the tag), which defaults to the release the hub now reports. Nothing pushes upgrades to sites; the release notes' *Site upgrade* section is the prompt, and the Connection Status drawer shows which containers are still on another build. The full operator runbook is `docs/source/sys-admin/admin-upgrading-sites.rst`.
 
 ### Release notes
 
@@ -649,7 +657,7 @@ There is no `CHANGELOG.md` — the GitHub Releases page is the changelog. Releas
 - **The generated changelog** — GitHub's release-notes API lists every PR merged since the previous `v*.*.*` tag, plus a contributors section, categorised by PR label according to [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`, then Other Changes. PRs labelled `ignore-for-release` are excluded. Curating this means labelling each PR correctly **before** it merges into `develop` — it cannot be fixed at release time.
 - **The hand-written header** — [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md), with `{{VERSION}}`, `{{TAG}}`, and `{{PREV_TAG}}` substituted. Edit this file on the release branch to fill in Highlights and the Breaking Changes / New Features / Bug Fixes summaries.
 
-Both are rendered into the preview comment on the `develop` → `main` PR, and both go into the release published by `release-pypi.yml`. The release published by `release.yml` carries the generated changelog only, without the template header.
+Both are rendered into the preview comment on the `develop` → `main` PR, and both go into the releases published by `release.yml` and `release-pypi.yml` — the template header above the generated changelog. (Until FLIP#1204 the platform release carried the generated changelog only, so the curated sections never reached the page trust operators read.)
 
 ### flip-utils and the PyPI release path
 
@@ -661,14 +669,7 @@ Full detail — the per-PR gates, the trusted-publishing setup, and the `release
 
 ### Deploying the release
 
-Once the `:prod` images are in GHCR, deploy with:
-
-```bash
-cd deploy/providers/AWS
-make full-deploy PROD=true
-```
-
-See [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md) for full deployment instructions. For staging, no release tag is required: merging to `develop` publishes `:stag` images automatically, and `make full-deploy PROD=stag` rolls them out.
+Hub infrastructure is applied by CI on the merge to `main` (`terraform_apply.yml`, FLIP#962); the hub's ECS services move to the release with `make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=v<X.Y.Z>` and the sites follow on their operators' command — see [Rolling the release out](#rolling-the-release-out) above and [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md) for the hub-side detail (Deployment Mode, rollback). For staging, no release tag is required: merging to `develop` publishes `:stag` images and applies stag automatically; a stag site can be moved to a specific build with `TAG=sha-<short7>`.
 
 ### Hotfixes
 
@@ -680,7 +681,9 @@ For an urgent fix on `main` without pulling in unrelated `develop` work:
 
 ### Testing a release candidate before merge to main
 
-Branch builds **do not** auto-publish to GHCR. To deploy a release-candidate branch for testing, manually trigger the relevant build workflows first:
+Two ways, depending on how much of the stack you need.
+
+**One or two services** — branch builds **do not** auto-publish to GHCR, so trigger the relevant build workflows by hand:
 
 ```bash
 gh workflow run docker_build_flip_api.yml --ref <branch-name>
@@ -689,6 +692,12 @@ gh workflow run docker_build_trust_trust_api.yml --ref <branch-name>
 ```
 
 Wait for green completion, then point your `.env` file's `DOCKER_TAG` at the sanitized branch name (the per-service workflows publish a `:<branch>` tag on every push).
+
+**The whole stack at one tag — a release candidate** (FLIP#1204). Push a *pre-release* tag at the release PR's head, `v<X.Y.Z>-rc.<N>`; every image workflow builds and pushes `:v<X.Y.Z>-rc.<N>`, exactly as the stable tag will, and a staging site can pin it with `make upgrade-onprem-trust … TAG=v<X.Y.Z>-rc.<N>`. Delete the git tag once the candidate is judged (`git push origin --delete v<X.Y.Z>-rc.<N>`): `release.yml` and the release-notes preview find the previous release with `git tag --list 'v*.*.*'`, and a leftover candidate would become the next release's `PREV_TAG`, shrinking its changelog to the span since the rc. The images can stay — they are plainly pre-release and nothing points sites at them.
+
+A tag push is not gated by branch protection — anyone with write access can push a `v*` tag at any commit — so every image workflow checks **what a stable tag may point at** itself (`.github/actions/release-tag-guard`): a `v<X.Y.Z>` whose commit is not on `main` fails the build rather than publishing release-looking images from unreleased code. Pre-release tags pass — that is the candidate path above. `scripts/tests/test_release_image_tags.py` holds every image workflow to it. *Who* may create a `v*` tag is deliberately left to write access (a repository tag ruleset could restrict it to admins, but GitHub does not let the built-in Actions app bypass one, so `release.yml` would need its own GitHub App token first — not worth it for the current roster).
+
+A candidate proves the **push** path. The real release goes through the **dispatch** path in `release.yml`, whose image runs arrive as `workflow_dispatch` on the tag ref rather than as a tag push — so when proving a change to the image workflows, dispatch one at the candidate tag as well: `gh workflow run docker_build_flip_api.yml --ref v<X.Y.Z>-rc.<N>` must produce the same `:v<X.Y.Z>-rc.<N>` image.
 
 ## Adding a new service
 

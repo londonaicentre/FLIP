@@ -14,8 +14,13 @@ name: Build and Push Docker Image for XNAT dcm2niix
 
 on:
   workflow_dispatch:
+  # Release builds (FLIP#1204): the v<X.Y.Z> tag that release.yml creates on main rebuilds
+  # this image at the release commit and pushes :v<X.Y.Z>. Deliberately unfiltered — a
+  # release tags every image, changed or not, so a site can pin ONE release across its
+  # whole stack instead of a different sha per service.
   push:
     branches: [main, develop]
+    tags: ['v*.*.*']
     # Narrower than the other xnat workflows' trust/xnat/** filter: this image
     # shares nothing with the xnat-web/db/nginx build contexts, so only its own
     # directory should trigger a republish.
@@ -54,6 +59,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      # A stable v<X.Y.Z> tag must point at a commit on main — releases are cut there by
+      # release.yml; pre-release (-rc.N) tags are the release-candidate path and pass.
+      - name: Release tag guard
+        uses: ./.github/actions/release-tag-guard
+
       - name: Determine tags
         id: tags
         env:
@@ -79,9 +89,22 @@ jobs:
           [[ -n "$DCM2NIIX_VERSION" ]] || { echo "::error::could not read ARG DCM2NIIX_VERSION from Dockerfile"; exit 1; }
           TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${DCM2NIIX_VERSION}"
 
-          # Branch name sanitization
-          SAFE_REF_NAME=$(echo "$GH_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
-          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"
+          # Release tag (FLIP#1204): a run on refs/tags/v<X.Y.Z> also publishes :v<X.Y.Z> —
+          # whether the tag was pushed by hand (a release candidate) or, for a real release,
+          # dispatched by release.yml at the tag it just created (see there for why),
+          # and skips the branch-name tag (it would sanitise to v0-6-0). RELEASE is what the
+          # image bakes as FLIP_RELEASE so /health names the build: the release tag when
+          # there is one, else the sha tag.
+          RELEASE="sha-${GH_SHA:0:7}"
+          if [[ "$GH_REF" == refs/tags/v* ]]; then
+            RELEASE="$GH_REF_NAME"
+            TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${GH_REF_NAME}"
+          else
+            # Branch name sanitization
+            SAFE_REF_NAME=$(echo "$GH_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
+            TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"
+          fi
+          echo "release=${RELEASE}" >> $GITHUB_OUTPUT
 
           # Branch number (if starts with number)
           if [[ "$GH_REF_NAME" =~ ^[0-9]+ ]]; then

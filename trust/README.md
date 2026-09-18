@@ -248,10 +248,35 @@ need only your trust's kit file (`trust/.env.<CODE>.<env>`).
    All four run the production compose and stack files; only `PROD` unset is
    the development stack.
 
-   The on-prem path skips the dev-only `update-omop-data` / `update-orthanc-data`
-   steps (which pull test fixtures from S3 and need hub AWS credentials) —
-   real on-prem operators populate `./omop-db/volumes/<CODE>/db_data` and
-   `./orthanc/orthanc-storage-<…>` themselves.
+   `up-trust` is the **first-install** verb on every path, on-prem included: it
+   runs `update-omop-data` / `update-orthanc-data` (which pull the mock fixtures
+   and, on a directory without the version marker, `rm -rf` it first) and its
+   XNAT step runs `xnat-reset`, which wipes the XNAT archive and database. A real
+   on-prem operator points `OMOP_DATA_DIR` / `ORTHANC_STORAGE_DIR` at their own
+   data and runs `up-trust` **once**; every later move to a release goes through
+   `upgrade-trust` (below), never `up-trust` or `restart-trust`.
+
+### Upgrading to a release (FLIP#1204)
+
+```bash
+git fetch --tags origin && git checkout v0.7.0              # the checkout first: compose files + this verb come from it
+sudo -E make upgrade-onprem-trust KIT=<slot>              # → the release the hub runs
+sudo -E make upgrade-onprem-trust KIT=<slot> TAG=v0.7.0   # → a named release
+```
+
+Runs the readiness checklist, resolves the target (the hub's `/api/health`
+`version`, or `TAG=`), refuses a release tag unless this checkout is at it
+(`ALLOW_CHECKOUT_DRIFT=1` overrides — testing a branch), asks you to confirm
+`site <current> → target <release>`,
+writes the tag into your kit's Hub-shared block, pulls, recreates what changed,
+and upgrades XNAT in place (database dump first, no reset). Before the kit is touched
+it asks the registry for every image at the target and refuses a tag any of them was
+never built at (each `sha-` build is path-filtered; a release tag builds them all —
+for a `sha-` move, `FL_TAG=` holds the FL client at its own build and `OMOP_DB_TAG` /
+`ORTHANC_TAG` / `XNAT_TAG` in the kit do the same for the data services).
+`FORCE=1` allows a downgrade, `YES=1` skips the prompt. The full runbook — ordering, refreshed kits,
+Kubernetes and EC2 variants, rollback — is
+`docs/source/sys-admin/admin-upgrading-sites.rst`.
 
 ### Refreshing shared values (when the hub admin rotates an AES key etc.)
 
@@ -259,11 +284,19 @@ When the hub admin rotates a shared value (AES key, FL backend, image tag),
 they will run `make sync-trust-kit KIT=<CODE> PROD=true` on their side. That
 produces an updated kit file with the new Hub-shared block; credentials are
 preserved. The updated file is transmitted to you using the same out-of-band
-channel. Replace your local copy and restart the stack:
+channel. Replace **only the Hub-shared block** in your local copy (your
+Host-local profile and Trust-local credentials stay yours), then re-apply:
 
 ```bash
-make -C trust restart-trust KIT=<CODE> PROD=true
+sudo -E make upgrade-onprem-trust KIT=<slot> YES=1
 ```
+
+That recreates only the containers whose configuration changed and leaves the
+data alone. `restart-trust` would also work for the API containers but re-runs
+`up-trust`'s XNAT reset — don't. A stale block is what the checklist's
+*Hub-shared block current* row detects: trust-api compares its AES key with the
+hub's on every heartbeat and reports the mismatch on its `/health`, so a rotated
+key shows up there before it shows up as every task failing to decrypt.
 
 ## Integration tests (cohort-query end-to-end)
 

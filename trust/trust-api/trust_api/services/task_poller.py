@@ -33,6 +33,7 @@ import httpx
 from cryptography.exceptions import InvalidTag
 
 from trust_api.config import get_settings
+from trust_api.services import hub_status
 from trust_api.services.health_collector import current_snapshot
 from trust_api.services.task_handlers import TASK_HANDLERS
 from trust_api.utils.encryption import decrypt, task_context
@@ -152,9 +153,15 @@ async def _send_heartbeat(client: httpx.AsyncClient) -> None:
         if response.is_success:
             logger.debug("Heartbeat sent successfully")
             try:
-                _maybe_announce_identity(response.json())
+                body = response.json()
             except ValueError:
-                pass  # body wasn't JSON; not fatal
+                body = None  # body wasn't JSON; not fatal
+            if isinstance(body, dict):
+                _maybe_announce_identity(body)
+                # The reply also says which build the hub runs and fingerprints its key
+                # (FLIP#1204); /health reports both so an operator sees a stale kit before
+                # a task fails to decrypt.
+                hub_status.record(body)
         else:
             logger.error(
                 f"Heartbeat rejected by hub: HTTP {response.status_code} — "

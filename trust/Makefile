@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
+.PHONY: build up down up-trust down-trust restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
 	create-networks remove-networks recreate-networks tests \
 	update-omop-data update-orthanc-data seed-omop seed-orthanc seed seed-trusts load-synthea-ehr \
@@ -423,6 +423,10 @@ build:
 # DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op
 # otherwise. require-xnat-aetitle goes first so a bad kit is refused before the data
 # fixtures are fetched, not just before compose runs.
+#
+# FIRST-INSTALL VERB. It re-fetches the data fixtures and its up-xnat step runs
+# xnat-reset, which wipes the XNAT archive and database — never run it, or
+# restart-trust, to move a live site to a release; that is upgrade-trust (FLIP#1204).
 up-trust: require-xnat-aetitle update-omop-data update-orthanc-data create-networks
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
@@ -445,6 +449,44 @@ down-trust:
 	$(MAKE) -C xnat down-xnat KIT=$(KIT) PROD=$(PROD)
 
 restart-trust: down-trust up-trust
+
+# ── Release upgrade (FLIP#1204) ───────────────────────────────────────────
+# Move a LIVE trust to a release, data intact: "pull the target tag, recreate what
+# changed, touch no data". Deliberately not a prerequisite chain through up-trust —
+# that is the first-install verb, and both of its data steps destroy a live site:
+# update-omop-data / update-orthanc-data re-fetch the mock fixtures (rm -rf on an
+# unmarked dir), and up-xnat runs xnat-reset (`sudo rm -rf $XNAT_DATA_DIR`, archive
+# AND database). restart-trust inherits all of that. Use this for every redeploy of
+# an existing site; use up-trust only to install one.
+#
+# Two phases, because the kit is -include'd at parse time: phase 1 lets the resolver
+# (scripts/site_upgrade.py) pick the target — TAG=, else the release the hub runs —
+# confirm it — refusing a release target unless THIS checkout is at that tag, since the
+# compose files below come from the checkout, not the images (ALLOW_CHECKOUT_DRIFT=1
+# overrides) — and rewrite DOCKER_TAG/DOCKER_FL_TAG in the kit; phase 2 is a sub-make
+# that re-reads the kit so every $(DOCKER_TAG) below is the new one. `docker compose`
+# itself reads the kit through --env-file, so the images it pulls are the new ones too.
+#   make -C trust upgrade-trust KIT=<CODE> PROD=<env> [TAG=vX.Y.Z] [FL_TAG=vX.Y.Z] [FORCE=1] [YES=1]
+upgrade-trust: require-xnat-aetitle
+	$(require_kit_file)
+	$(check_slot_not_taken)
+	uv run --no-config ../scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
+	$(MAKE) _upgrade-trust-apply KIT=$(KIT) PROD=$(PROD) DEBUG=$(DEBUG)
+
+# Phase 2 of upgrade-trust — never call directly (the tag it applies is whatever the
+# kit says, which is only right after phase 1 wrote it). No ensure_net_dirs: the net
+# dirs of a running site already exist with the ownership its first install gave them,
+# and creating net-2 under /opt/flip needs root the operator's upgrade session may not have.
+_upgrade-trust-apply:
+	$(require_kit_file)
+	$(check_slot_not_taken)
+	@echo "⬆️  Upgrading trust services (KIT=$(KIT)) to $(DOCKER_TAG) (FL client $(DOCKER_FL_TAG))..."
+	@echo "$(GPU_STATUS_MSG)"
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) pull
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d
+	@echo "🩻 Upgrading XNAT for $(KIT) in place (no reset)..."
+	$(MAKE) -C xnat upgrade-xnat KIT=$(KIT) PROD=$(PROD)
+	@echo "✅ $(KIT) is on $(DOCKER_TAG). Verify: trust-api /health reports the new version and hub_key_match=true."
 
 # EC2 variant — no host-port override, --pull always. Networks and OMOP data
 # are provisioned on the instance by deploy/providers/AWS/site.yml, so the

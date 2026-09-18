@@ -34,6 +34,25 @@
 - **NVFLARE 2.9.0** (#1174) carries upstream breaking changes for custom jobs; see the tutorial and template updates in that PR.
 - **Database migration** (#1129): flip-api adds the `has_imaging` column via Alembic; it runs at boot.
 
+## :arrows_counterclockwise: Site upgrade
+
+<!-- The prompt to trust operators (FLIP#1204). Sites upgrade on their own schedule and to the
+     release their hub runs; this section is how they learn what this release asks of them. -->
+
+<!-- Fill the first three lines in for EVERY release; they are not boilerplate. "Ordering" is where a
+     flag-day is announced: a payload-cipher change or an FL-framework bump means hub AND sites in one
+     Deployment-Mode window, and a site left behind fails every task until it moves. -->
+
+- **Required:** <yes | no> — <what in this release changes the hub↔site contract, or "nothing; upgrade at your convenience">.
+- **Ordering:** <hub first, sites at their own pace | sites first | hub and sites together in one maintenance window (flag-day: <why>)>.
+- **Refreshed kit needed:** <no — the Hub-shared block is unchanged | yes — <which value changed>>. (If the hub's AES key or FL kit date changed with your hub deploy, re-sync: `make sync-trust-kit KIT=<CODE> PROD=<env>` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>`.)
+- **Operator command**, on the trust host, from your FLIP checkout:
+  ```bash
+  git fetch --tags origin && git checkout {{TAG}}        # the compose files and the verb come from the checkout, not the images
+  sudo -E make upgrade-onprem-trust KIT=<slot>           # defaults to the release the hub runs; TAG={{TAG}} pins it before the hub moves
+  ```
+  Kubernetes: `make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> TAG={{TAG}}`; EC2: `make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env> TAG={{TAG}}` — both from a checkout at {{TAG}}. Runbook: *docs → System administrators → Upgrading a site*. Sites installed before v0.7.0 do not have the command until they check out the tag.
+
 ## :seedling: New Features
 
 - Real Trust PACS configuration and DQR (#994); tabular-only projects (#1129); per-trust FL privacy policy (#853).

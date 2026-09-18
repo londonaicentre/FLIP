@@ -47,6 +47,16 @@ def test_stamp_helm_ownership_issues_label_and_annotate(monkeypatch):
     assert ["-n", "flip-trust"] == label[4:6]  # namespaced
 
 
+def test_kube_context_reaches_every_kubectl_call(monkeypatch):
+    """`make … KUBE_CONTEXT=<ctx>` must act on that cluster, not whichever one kubectl points at."""
+    calls = []
+    monkeypatch.setattr(sync_k8s_kit.subprocess, "run", lambda args, **kw: calls.append(args) or None)
+    monkeypatch.setattr(sync_k8s_kit, "KUBECTL", ["kubectl", "--context", "kind-flip-kch"])
+    sync_k8s_kit.stamp_helm_ownership("trust-release-flip-trust-secrets", "flip-trust", "trust-release")
+    assert calls
+    assert all(c[:3] == ["kubectl", "--context", "kind-flip-kch"] for c in calls)
+
+
 def test_patch_k8s_secret_stamps_ownership_on_create(monkeypatch):
     """A freshly-created Secret must be stamped Helm-owned (the #595 fix)."""
     calls = []
