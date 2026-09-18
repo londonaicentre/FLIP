@@ -12,7 +12,6 @@
 
 from unittest.mock import MagicMock, Mock, patch
 
-import pytest
 from nvflare.apis.event_type import EventType
 from nvflare.app_common.app_event_type import AppEventType
 
@@ -453,9 +452,13 @@ class TestServerEventHandler:
         # Return None
         engine.get_component.return_value = None
 
-        # This should raise AttributeError since validation_json_generator is None
-        with pytest.raises(AttributeError, match="'NoneType' object has no attribute"):
-            handler.handle_event(FlipEvents.TRAINING_INITIATED, fl_ctx)
+        handler.handle_event(FlipEvents.TRAINING_INITIATED, fl_ctx)
+
+        # The missing component is reported once, and the event is not relayed to the hub
+        # on top of it: the panic already means the run is going down.
+        handler.system_panic.assert_called_once()
+        assert "must have 'handle_evaluation_events' method" in str(handler.system_panic.call_args)
+        flip.update_status.assert_not_called()
 
     def test_handle_event_invalid_persist_cleanup_component(self):
         """Test handle_event when persist_and_cleanup is not correct type"""

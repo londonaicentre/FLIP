@@ -11,14 +11,17 @@
 #
 
 import os
+from typing import get_type_hints
 from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
 
 # Import from the new flip package
+from flip.constants import flip_constants
 from flip.constants.flip_constants import (
     DevSettings,
+    FlipConstants,
     FlipEvents,
     FlipMetricsLabel,
     FlipTasks,
@@ -26,6 +29,7 @@ from flip.constants.flip_constants import (
     ProdSettings,
     ResourceType,
     _Common,
+    _FlipConstantsProxy,
 )
 
 
@@ -158,6 +162,35 @@ class TestCommonSettings:
         with patch.dict(os.environ, {"LOCAL_DEV": "true", "MIN_CLIENTS": ""}, clear=True):
             settings = _Common()
             assert not hasattr(settings, "MIN_CLIENTS")
+
+
+class TestFlipConstantsProxy:
+    """Test the lazily-forwarding FlipConstants proxy."""
+
+    def test_annotations_mirror_the_settings_fields(self):
+        """The proxy declares exactly the union of the settings fields, each with the field's own type.
+
+        The annotations are what mypy sees for ``FlipConstants.<NAME>``; this pins them to the
+        settings classes so adding or retyping a field cannot leave the proxy stale.
+        """
+        expected = {
+            name: field.annotation
+            for settings_cls in (DevSettings, ProdSettings)
+            for name, field in settings_cls.model_fields.items()
+        }
+        assert get_type_hints(_FlipConstantsProxy) == expected
+
+    def test_forwards_the_active_settings_only(self):
+        """Reads resolve on the active settings instance; the other environment's fields are absent."""
+        env = {"LOCAL_DEV": "true", "DEV_DATAFRAME": "/data/df.csv", "DEV_IMAGES_DIR": "/data/images"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.object(flip_constants, "_flip_constants_instance", DevSettings()),
+        ):
+            assert FlipConstants.LOCAL_DEV is True
+            assert FlipConstants.DEV_DATAFRAME == "/data/df.csv"
+            with pytest.raises(AttributeError):
+                _ = FlipConstants.NET_ID
 
 
 class TestResourceType:
