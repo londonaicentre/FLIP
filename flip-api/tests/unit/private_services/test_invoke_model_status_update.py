@@ -196,10 +196,10 @@ class TestInvokeModelStatusUpdateEndpoint:
         assert "Database error" in response.json()["detail"]
 
     @patch(MOCKED_UPDATE_STATUS_PATH)
-    @patch("flip_api.private_services.invoke_model_status_update.logger.error")
+    @patch("flip_api.private_services.invoke_model_status_update.logger.exception")
     def test_invoke_update_unexpected_error(
         self,
-        mock_logger_error: MagicMock,
+        mock_logger_exception: MagicMock,
         mock_update: MagicMock,
         client: TestClient,
         model_id: UUID,
@@ -210,7 +210,9 @@ class TestInvokeModelStatusUpdateEndpoint:
         response = client.put(f"/api/model/{model_id}/status/{ModelStatus.INITIATED.value}")
 
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "Unexpected error" in response.json()["detail"]
+        assert response.json()["detail"] == "Internal server error"
+        assert "Something went wrong" not in response.json()["detail"]
+        mock_logger_exception.assert_called_once_with("Unexpected error while updating model status")
 
     def test_invoke_update_unauthorized(self, model_id: UUID, mock_db_session: MagicMock):
         def mock_auth():

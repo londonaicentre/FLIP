@@ -11,10 +11,12 @@
 #
 
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
+from flip_api.auth.dependencies import verify_token
 from flip_api.config import get_settings
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust
@@ -28,6 +30,7 @@ router = APIRouter(prefix="/trust", tags=["trusts_services"])
 @router.get("/health", status_code=status.HTTP_200_OK, response_model=list[ITrustHealth])
 async def check_trusts_health(
     db: Session = Depends(get_session),
+    user_id: UUID = Depends(verify_token),
 ) -> list[ITrustHealth]:
     """
     Retrieves health status of all trusts based on their last heartbeat timestamp.
@@ -35,8 +38,15 @@ async def check_trusts_health(
     Instead of making outbound HTTP calls to each trust's /health endpoint, this checks
     the last_heartbeat field updated by the trust's polling service.
 
+    Authenticated like its sibling ``GET /trust``, and for the same reason: the roster of
+    participating trusts — names, ids and whether each is currently online — is platform
+    metadata for signed-in users, not a public status page. It shipped without a dependency
+    (the only project route to do so) and answered any anonymous caller behind CloudFront.
+    Any authenticated role may read it; the Connection Status page shows it to everyone.
+
     Args:
         db (Session): Database session for querying trusts.
+        user_id (UUID): The caller, as established by ``verify_token``; unused beyond the gate.
 
     Returns:
         list[ITrustHealth]: A list of ITrustHealth objects representing the health status of each trust.

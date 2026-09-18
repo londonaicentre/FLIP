@@ -78,5 +78,5 @@ def retrieve_model_step_function_endpoint(
         # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        logger.exception(f"Unhandled error in retrieve_model_endpoint: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve model: {str(e)}")
+        logger.exception("Unhandled error in retrieve_model_endpoint")
+        raise HTTPException(status_code=500, detail="Internal server error") from e

@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -159,4 +160,22 @@ def test_get_metrics_unexpected_error(
     with patch("flip_api.model_services.get_metrics.get_metrics", side_effect=RuntimeError("Boom")):
         response = client.get(f"/api/model/{test_model_id}/metrics")
         assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
-        assert "Boom" in response.json()["detail"]
+        assert response.json()["detail"] == "Internal server error"
+        assert "Boom" not in response.json()["detail"]
+
+
+def test_get_metrics_http_exception_passes_through(
+    mock_can_access_true,
+    mock_model_status_exists,
+):
+    # A domain HTTPException raised inside the try must reach the caller with its own status and
+    # detail, not be re-wrapped by the generic handler into an opaque 500.
+    detail = f"Model ID: {test_model_id} does not exist"
+    with patch(
+        "flip_api.model_services.get_metrics.get_metrics",
+        side_effect=HTTPException(status_code=HTTPStatus.NOT_FOUND, detail=detail),
+    ):
+        response = client.get(f"/api/model/{test_model_id}/metrics")
+        assert response.status_code == HTTPStatus.NOT_FOUND
+        assert response.json()["detail"] == detail
+        assert response.json()["detail"] != "Internal server error"

@@ -146,6 +146,22 @@ def test_approve_project_with_failure_in_trust(
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+def test_approve_project_unexpected_exception_returns_generic_detail(
+    mock_approve_project,
+    project_id,
+    request_body,
+):
+    """The catch-all 500 must not echo the underlying exception text into the response body (#906)."""
+    mock_approve_project.side_effect = Exception("connection to db-host:5432 refused")
+
+    response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Internal server error"
+    assert "db-host" not in response.json()["detail"]
+
+
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 def test_approve_project_with_empty_trusts(
     mock_approve_project,
     project_id,

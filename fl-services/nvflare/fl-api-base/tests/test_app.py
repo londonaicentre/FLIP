@@ -10,9 +10,10 @@
 # limitations under the License.
 #
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 
 from fl_api.app import app
 from fl_api.core.dependencies import get_session
@@ -52,3 +53,13 @@ def test_unknown_route_returns_404(client):
     """Sanity check for missing routes."""
     res = client.get("/nonexistent")
     assert res.status_code == 404
+
+
+def test_startup_reports_empty_bundle_allow_list():
+    """Startup calls the once-per-process allow-list check, so the boot log carries the warning (FLIP#905)."""
+    with (
+        patch("fl_api.app.warn_if_bundle_url_allow_list_empty") as warn,
+        patch("fl_api.app.create_fl_session", return_value=MagicMock()),
+        TestClient(app),
+    ):
+        warn.assert_called_once_with()
