@@ -109,7 +109,6 @@ services:
     environment:
       - NET_ID=net-1
       - LOCAL_DEV=false
-      - MIN_CLIENTS=${MIN_CLIENTS}
       - IMAGES_DIR=/app/data/images
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
@@ -177,7 +176,6 @@ services:
     environment:
       - NET_ID=net-2
       - LOCAL_DEV=false
-      - MIN_CLIENTS=${MIN_CLIENTS}
       - IMAGES_DIR=/app/data/images
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}

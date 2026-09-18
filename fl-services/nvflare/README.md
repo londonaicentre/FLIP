@@ -91,7 +91,7 @@ Anywhere one of these containers bind-mounts a host path, that path must still b
 container runs as, or the entrypoint fails (loudly, since the entrypoint scripts exit non-zero when they
 can't write their generated config). Letting Docker auto-create the bind source leaves it root-owned and
 silently breaks the container. See `deploy/providers/AWS/TROUBLESHOOTING.md` for the failure mode and
-`deploy/providers/AWS/site.yml` / `deploy/providers/local/site_local_trust.yml` for how the provisioning
+`deploy/providers/AWS/site.yml` / `trust/deploy/ansible/onprem.yml` for how the provisioning
 Ansible pre-creates these paths with the right owner.
 
 **Upgrading an existing environment:** hosts that already ran the previous (root) images may have

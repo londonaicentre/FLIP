@@ -90,7 +90,7 @@ the truncation (`deploy-fl-api-net-<n>-1` is the container's name on the default
 sets `container_name`, so a second `FLIP_INSTANCE` prefixes it):
 
 ```bash
-docker exec -it deploy-fl-api-net-1-1 uvx flwr log <run_id> local --show
+docker exec -it deploy-fl-api-net-1-1 flwr log <run_id> local --show
 ```
 
 The server status endpoint checks the Flower SuperLink health service configured by

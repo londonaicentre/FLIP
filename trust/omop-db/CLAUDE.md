@@ -6,7 +6,7 @@ Two halves of one pipeline (merged from the retired private `flip-omop-db` repo,
 
 1. **Image build source** for `ghcr.io/londonaicentre/omop-db`: `Dockerfile` on `postgres:17` bakes the
    `files/` init chain (create `omop` schema → OMOP CDM 5.4 DDL → primary keys → indices → read-only
-   roles) plus the seed-time helpers (`load_core_vocab.sh`, `constraints.sql`, and `unzip` — the
+   roles) plus the seed-time helpers (`load_core_vocab.sh`, `OMOPCDM_postgresql_5.4_constraints.sql`, and `unzip` — the
    k8s vocab-load Job unpacks the bundle with the image's own copy so it installs nothing at
    run time, keeping S3 the only host it must reach). The image is
    **vocab-free** (FLIP#842) — nothing licensed in any layer — so it is published by CI
@@ -78,6 +78,25 @@ tolerate the DICOM vocab already present in the tarballs):
   `load-omop-vocab`: one-time post-snapshot, idempotent, persists in the bind-mounted volume. A
   `.seeded` marker beside `db_data` makes `update_omop_data.sh` refuse to re-snapshot on a bump
   without `FORCE=1`. `populate` is the same loader with `--clean all`.
+- **Synthea EHR cohort** (`src/omop_db_tools/synthea_ehr.py`, `make load-synthea-ehr`): the populate
+  side of the EHR risk-prediction tutorial. The shipped mock OMOP has NO `condition_occurrence`
+  rows, so that tutorial's `query.sql` returns nothing until this loads the public 1k-person
+  Synthea-in-OMOP set (AWS Open Data Registry, anonymous HTTPS, downloaded at run time, never
+  committed) into a running DB. Synthea ids are shifted by `PERSON_ID_OFFSET` so they never collide
+  with the imaging cohorts' keys at INSERT time (the per-trust split is taken on the raw id before
+  the shift, and the raw id is kept in `person_source_value` — never re-derive a trust from a
+  shifted id) — but that offset is not what makes reloading safe: imaging `person_id` is
+  `nhs_number_to_integer(PatientID)`, the first 9 digits of a real NHS number, so it scatters across
+  the whole 9-digit range rather than staying "small", and a plain id-range delete silently destroys
+  imaging persons (and, via `ON DELETE CASCADE`, their `image_occurrence`/`procedure_occurrence`
+  rows) that happen to land above the threshold — confirmed live at ~10% of one trust's imaging
+  cohort per reload before this was fixed. `clean_reserved_band` therefore deletes by
+  **provenance**: only rows whose `person_source_value` carries this loader's `synthea-` prefix are
+  ever removed, never by `person_id` range. The tutorial's `query.sql` scopes to persons that HAVE a
+  condition — i.e. exactly these rows. FK-safe: `gender_concept_id` keeps Synthea's standard
+  8507/8532 (`query.sql` reads it), every other `*_concept_id` is zeroed to `0` ("No matching
+  concept"), conditions match on the `condition_source_value` SNOMED string. Idempotent; unit-tested
+  in `tests/unit/test_synthea_ehr.py`.
 - The populate scripts run on the **host** against published ports (`OMOP_DB_HOST` defaults to
   localhost) and need postgresql-client (`psql`/`pg_isready`).
 
@@ -86,6 +105,9 @@ tolerate the DICOM vocab already present in the tarballs):
 ```bash
 make update-omop-data [TRUST=1|2]   # consumer path: sync vocab-free pgdata volumes from HF
 make load-omop-vocab [OMOP_DB_PORT=5436]  # seed the licensed vocab + constraints into a running trust DB
+make load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434  # EHR risk-prediction tutorial: load public
+                                    # Synthea-in-OMOP conditions/visits/persons into a running trust DB
+                                    # (once per trust; downloads ~5MB from AWS Open Data at run time)
 cp .env.build.example .env.build    # once, before any build-pipeline target
 make build                          # plain docker build — no data inputs, no credentials
 make up-build / down-build          # the standalone per-trust build DBs

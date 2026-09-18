@@ -47,7 +47,7 @@ def test_run_logs_uses_show_not_stream(client, src_root, mock_flwr_run):
 
     client.get("/run_logs/9478652229627629048")
 
-    assert commands == [["uvx", "flwr", "log", "9478652229627629048", "local", "--show"]]
+    assert commands == [["flwr", "log", "9478652229627629048", "local", "--show"]]
 
 
 def test_run_logs_keeps_the_tail_and_flags_truncation(client, src_root, mock_flwr_run, monkeypatch):

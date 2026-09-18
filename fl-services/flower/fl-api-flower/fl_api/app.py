@@ -64,7 +64,7 @@ _node_trust_mapping: dict[str, str] = {}  # Flower node_id → trust name
 
 # `flwr log --show` asks the SuperLink for the run's stored log and returns; its own gRPC
 # deadline is 5s, so anything past this means the CLI itself is wedged (unreachable
-# SuperLink, uvx resolving the package) rather than a slow run.
+# SuperLink) rather than a slow run.
 _RUN_LOG_COMMAND_TIMEOUT_SECONDS = 60
 # What `flwr log` writes to stderr on gRPC NOT_FOUND (flwr/cli/log.py::print_logs) before
 # exiting zero with nothing on stdout.
@@ -167,6 +167,9 @@ def _extract_json_from_stdout(stdout: str) -> dict[str, Any]:
 def _run_flwr_command(
     command: list[str], cwd: Path, action_name: str, timeout: float | None = None
 ) -> subprocess.CompletedProcess[str]:
+    # The flwr CLI is this service's own baked venv binary (flwr is a direct dependency),
+    # deliberately NOT `uvx flwr`: uvx resolves its tool environment from PyPI at call
+    # time, which the egress-less LZA account cannot reach (FLIP#749).
     try:
         return subprocess.run(
             command,
@@ -231,7 +234,7 @@ def _validate_tutorial_folder(tutorial_name: str) -> Path:
 
 def _get_federation_nodes(src_root: Path) -> list[dict[str, Any]]:
     """Query the SuperLink Control API for connected SuperNode statuses."""
-    command = ["uvx", "flwr", "federation", "list", "--federation", "@none/default", "local", "--format", "json"]
+    command = ["flwr", "federation", "list", "--federation", "@none/default", "local", "--format", "json"]
     result = _run_flwr_command(command, src_root, "federation list")
     payload = _parse_flwr_payload(result, "federation list")
 
@@ -384,7 +387,7 @@ def check_client_status(
 @app.get("/list_jobs", include_in_schema=False)  # alias, hide from docs
 def list_runs() -> list[JobMetadata]:
     src_root = _get_src_root()
-    command = ["uvx", "flwr", "list", "local", "--format", "json"]
+    command = ["flwr", "list", "local", "--format", "json"]
 
     result = _run_flwr_command(command, src_root, "list")
     payload = _parse_flwr_payload(result, "list")
@@ -442,7 +445,7 @@ def run_logs(run_id: FlowerRunId) -> RunLogs:
     # --show prints what the SuperLink has stored and exits under the CLI's own 5s
     # deadline whatever the run's state. --stream returns only once the run is FINISHED,
     # so it would hang this request on a run that is still going.
-    command = ["uvx", "flwr", "log", run_id_str, "local", "--show"]
+    command = ["flwr", "log", run_id_str, "local", "--show"]
     result = _run_flwr_command(command, _get_src_root(), "log", timeout=_RUN_LOG_COMMAND_TIMEOUT_SECONDS)
     stderr = result.stderr.strip()
 
@@ -499,7 +502,7 @@ def _submit_from_job_dir(job_dir: Path, label: str) -> str:
 
     run_config_path: str | None = None
     try:
-        command = ["uvx", "flwr", "run", ".", "local", "--format", "json"]
+        command = ["flwr", "run", ".", "local", "--format", "json"]
         if config_toml_path.is_file():
             logger.info("Using config.toml overrides from %s for job submission.", job_dir)
             # flip-job-dir points the evaluation ServerApp at the app directory,
@@ -581,7 +584,7 @@ def _find_terminal_run(src_root: Path, run_id: str) -> JobMetadata | None:
     Used to make ``DELETE /abort_run`` idempotent: a failed ``flwr stop`` followed by a
     ``flwr list`` showing the run in a terminal state is treated as a successful no-op.
     """
-    list_command = ["uvx", "flwr", "list", "local", "--format", "json"]
+    list_command = ["flwr", "list", "local", "--format", "json"]
     list_result = _run_flwr_command(list_command, src_root, "list")
     if list_result.returncode != 0:
         return None
@@ -612,7 +615,7 @@ def abort_run(run_id: FlowerRunId) -> JobMetadata:
     # using the string form.
     src_root = _get_src_root()
     run_id_str = str(run_id)
-    command = ["uvx", "flwr", "stop", run_id_str, "local", "--format", "json"]
+    command = ["flwr", "stop", run_id_str, "local", "--format", "json"]
     result = _run_flwr_command(command, src_root, "stop")
 
     if result.returncode == 0:

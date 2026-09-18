@@ -47,6 +47,16 @@ API are deliberately not on it, and an FL client carries no hub URL and no hub c
 **outbound** to the server, with mutual TLS on both backends using the per-participant certificates from the
 provisioned kits.
 
+Neither end of that plane can be assumed to have a route to the public internet. On a platform-managed
+estate the FL server runs in an account with no internet gateway or NAT of its own — its egress leaves through
+a central inspection firewall that permits only the platform's own endpoints — and a Trust's training host
+sits behind the Trust's firewall. An app is therefore **offline by construction**: everything it needs —
+weights, checkpoints, auxiliary networks — must arrive through the model-file upload, never a run-time
+download (see the note under *Model Files* in the :doc:`user guide <../user-guides/user-common>`). A
+``pretrained=True`` or ``torch.hub`` call in an app hangs the server-side job process; on NVFLARE the Trust
+then reports ``cannot sync with server Runner``, on Flower the run simply never issues a round, and either
+way the model is left at ``INITIATED`` and the net ``BUSY``.
+
 Kit slots and client names
 ==========================
 
@@ -116,6 +126,7 @@ that omits it is rejected before bundling rather than defaulted.
 Once uploaded, the UI will indicate which files are required for the specific job.
 
 Then, the Central Hub API will take care of bundling together:
+
 - The files the user has uploaded
 - The static (non-modifiable) files that are required for the specific job type.
 
@@ -128,13 +139,18 @@ The NVFLARE tutorials (all Client-API apps):
 - `3d_spleen_segmentation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation>`_ (job type `standard`)
 - `3d_spleen_segmentation_evaluation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation>`_ (job type `evaluation`)
 - `latent_diffusion_model <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_synthesis/latent_diffusion_model>`_ (job type `diffusion_model`)
+- `ehr_risk_prediction <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction>`_ (job type `standard`)
 
-The two `standard` examples show how the same job type runs different user-uploaded
-applications: both perform a supervised federated averaging training, but the data, architecture
-and training configuration are different.
+The three `standard` examples show how one job type runs quite different user-uploaded
+applications: each performs a supervised federated averaging training, but the data, architecture
+and training configuration differ. The third goes furthest — its cohort is tabular OMOP data with no
+imaging in it at all, which is possible because a job type describes the NVFLARE job FLIP assembles
+around your files, never the modality. What to fetch is the uploaded script's decision: an imaging
+app calls ``flip.get_by_accession_number``, the EHR one calls only ``flip.get_dataframe``.
 
 These tutorials run on the local NVFLARE simulator from the repo root — e.g.
-``make -C fl-tutorials run-tutorial TUTORIAL=xray_classification`` (requires a GPU; see the
+``make -C fl-tutorials run-tutorial TUTORIAL=xray_classification`` (the imaging ones require a GPU;
+the tabular EHR example runs on CPU — see the
 `fl-tutorials/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare>`_ README).
 
 
@@ -337,12 +353,17 @@ Data access and communication with external services
 ****************************************************
 
 Though the user is allowed to upload the training script that will run on the client side, the access to data will have
-to be via the FLIP package (see `https://github.com/londonaicentre/FLIP/tree/develop/flip-utils/flip`).
+to be via the FLIP package (see `flip-utils/flip/
+<https://github.com/londonaicentre/FLIP/tree/develop/flip-utils/flip>`_).
 This package, installed by default in client and server nodes, will make a series of functions available to the user.
 
 For data access:
-- `flip.get_dataframe(project_id, query)`: retrieves the dataframe linked to the project ID and query that have been used on the project.
-- `flip.get_by_accession_number(project_id, accession_id, resource_type)`: retrieves data of a certain type (e.g. NIFTI) associated with an accession ID. ``resource_type`` defaults to ``ResourceType.NIFTI`` and can be a single type or a list.
+
+- ``flip.get_dataframe(project_id, query)``: retrieves the dataframe linked to the project ID and query that have been
+  used on the project.
+- ``flip.get_by_accession_number(project_id, accession_id, resource_type)``: retrieves data of a certain type
+  (e.g. NIFTI) associated with an accession ID. ``resource_type`` defaults to ``ResourceType.NIFTI`` and can be a
+  single type or a list.
 
 These calls - among others - communicate with the Imaging API and retrieve the data from the project's XNAT.
 
@@ -354,9 +375,20 @@ content changed in XNAT, the Imaging API's download route accepts ``force_refres
 ``flip.add_resource`` invalidate the cache automatically).
 
 For communication with the Central Hub:
-- `flip.update_status(model_id, new_model_status)`: these calls will update the Central Hub about status on the specific model that is running (example: when it started training, or if there's an error).
-- `flip.send_metrics(client_name, model_id, label, value, global_round, x_value=None, x_label=None)`: sends a metric to the central hub so that it can plot the training results. ``global_round`` is provenance — always the FL global round the metric is reported in. Where the point is *plotted* is the optional coordinate pair: ``x_value`` is the x-coordinate (any float, e.g. an epoch counter) and ``x_label`` names the x-axis (e.g. ``"epoch"``); both default to the global round on the "Global Rounds" axis. A plot is identified by the ``(label, x_label)`` pair, so the same metric logged against different x-labels is shown as separate plots.
-- `flip.send_event(model_id, event_type, global_round, ...)`: sends a typed round-progress **fact** to the Central Hub — one of ``ROUND_STARTED``, ``CLIENT_RESULT_RECEIVED`` (with the serialized update size in ``details.size_bytes``) or ``ROUND_AGGREGATED`` (with ``returned``/``expected`` counts). The hub composes the display text shown in the model page's Live activity feed at serve time, so wording changes ship with a flip-api redeploy and never require rebuilding FL images. Rounds are 1-based on both backends.
+
+- ``flip.update_status(model_id, new_model_status)``: these calls will update the Central Hub about status on the
+  specific model that is running (example: when it started training, or if there's an error).
+- ``flip.send_metrics(client_name, model_id, label, value, global_round, x_value=None, x_label=None)``: sends a metric
+  to the central hub so that it can plot the training results. ``global_round`` is provenance — always the FL global
+  round the metric is reported in. Where the point is *plotted* is the optional coordinate pair: ``x_value`` is the
+  x-coordinate (any float, e.g. an epoch counter) and ``x_label`` names the x-axis (e.g. ``"epoch"``); both default to
+  the global round on the "Global Rounds" axis. A plot is identified by the ``(label, x_label)`` pair, so the same
+  metric logged against different x-labels is shown as separate plots.
+- ``flip.send_event(model_id, event_type, global_round, ...)``: sends a typed round-progress **fact** to the Central
+  Hub — one of ``ROUND_STARTED``, ``CLIENT_RESULT_RECEIVED`` (with the serialized update size in
+  ``details.size_bytes``) or ``ROUND_AGGREGATED`` (with ``returned``/``expected`` counts). The hub composes the display
+  text shown in the model page's Live activity feed at serve time, so wording changes ship with a flip-api redeploy and
+  never require rebuilding FL images. Rounds are 1-based on both backends.
 
 The fl-server emits these events automatically — NVFLARE via the FLIP ``ScatterAndGather``/``ServerEventHandler`` components (wired by path in each template's server config, so no app-template changes were required), Flower via the ``flip.flower.strategy.FlipFedAvg`` base strategy the app templates subclass. User training code never calls ``send_event`` directly. Pre-existing **Flower** apps (whose uploaded strategy subclasses stock ``FedAvg``) keep working and simply emit no round telemetry; pre-existing **NVFLARE** apps reference the FLIP components by path from the baked ``flip`` package, so they start emitting as soon as the fl-server image carries this version — with no app change.
 
