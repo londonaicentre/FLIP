@@ -25,9 +25,6 @@
 -- Synthea EHR cohort loaded by `make -C trust load-synthea-ehr`. build_synthea_dataframe.py
 -- applies the same has-a-condition filter, so the local-sim CSV and the deployed query agree.
 --
--- accession_id is the person_id cast to text. Nothing reads it any more for a project created
--- with "Includes imaging data" off (the hub dispatches no imaging stage and the dev client no
--- longer requires the column); it is kept only until #1130 removes it. The app itself ignores it.
 -- Ages are computed against 2023, the Synthea dataset's export year, so results are
 -- deterministic (see utils/build_synthea_dataframe.py, which mirrors this feature logic).
 WITH first_dx AS (
@@ -75,7 +72,6 @@ prior_visits AS (
 )
 SELECT
     p.person_id,
-    CAST(p.person_id AS VARCHAR) AS accession_id,
     2023 - p.year_of_birth AS age,
     CASE WHEN p.gender_concept_id = 8532 THEN 1 ELSE 0 END AS is_female,
     COALESCE(pc.has_prediabetes, 0) AS has_prediabetes,
