@@ -32,6 +32,19 @@ for one) starts Orthanc on an empty, 999-owned storage dir and then seeds this t
 default projects into it (below); the storage persists, so a later `up` uploads nothing. The version
 is `trust/.data_version`, a git tag on that dataset.
 
+### Other Make targets
+
+| Target | What it does |
+| --- | --- |
+| `make build` | Build the `orthanc` image from this directory's Dockerfile. |
+| `make up-trust-1` | Run Trust_1's Orthanc in the foreground on `deploy_trust-network-1`, using the ports and credentials from `../.env.GSTT.development.example`. |
+| `make down` | Stop and remove that container (`--remove-orphans`). |
+| `make shell` | Throwaway `/bin/bash` in the Orthanc image (`run --rm`) — for poking at the image, not at a running server. |
+| `make test` | Pytest for `seed_orthanc.py` and `publish_dicom.py` plus `ruff check`/`format --check`. Pure Python, no Orthanc needed. |
+
+These read defaults from the tracked kit example `../.env.GSTT.development.example`, so they always
+address the **Trust_1** slot; drive any other trust through `make -C trust up-trust KIT=<CODE>`.
+
 ## Seeding a running Orthanc with datasets (FLIP#1100)
 
 Seeding is how Orthanc gets its studies — at bring-up, and to put a

@@ -6,7 +6,7 @@ Two halves of one pipeline (merged from the retired private `flip-omop-db` repo,
 
 1. **Image build source** for `ghcr.io/londonaicentre/omop-db`: `Dockerfile` on `postgres:17` bakes the
    `files/` init chain (create `omop` schema → OMOP CDM 5.4 DDL → primary keys → indices → read-only
-   roles) plus the seed-time helpers (`load_core_vocab.sh`, `constraints.sql`, and `unzip` — the
+   roles) plus the seed-time helpers (`load_core_vocab.sh`, `OMOPCDM_postgresql_5.4_constraints.sql`, and `unzip` — the
    k8s vocab-load Job unpacks the bundle with the image's own copy so it installs nothing at
    run time, keeping S3 the only host it must reach). The image is
    **vocab-free** (FLIP#842) — nothing licensed in any layer — so it is published by CI

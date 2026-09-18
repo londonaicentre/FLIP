@@ -16,7 +16,7 @@ FLIP produces two on-disk checkpoint shapes, and both are handled here:
 
 * **NVFLARE persistence format** — a dict with a ``model`` key holding the state dict, alongside
   optional ``train_conf`` and ``meta_props``. This is what ``PTFileModelPersistor`` writes, so it
-  is the shape of the aggregated ``FL_global_model.pt`` and the per-client ``local_model.pt``.
+  is the shape of the aggregated ``FL_global_model.pt`` and ``best_FL_global_model.pt``.
 * **Bare state dict** — parameter names at the top level, as carried by user-uploaded evaluation
   checkpoints.
 

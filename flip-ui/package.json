@@ -114,7 +114,7 @@
         "vite-plugin-vue-inspector": "^5.4.0",
         "vite-plugin-vue-layouts-next": "^2.1.0",
         "vite-svg-loader": "^5.1.0",
-        "vitest": "^4.1.2",
+        "vitest": "^4.1.11",
         "vue-click": "^2.1.7",
         "vue-eslint-parser": "^10.0.0",
         "vue-router-mock": "1.0.0",
@@ -134,9 +134,11 @@
         "@babel/plugin-transform-modules-systemjs": ">=7.29.4",
         "tmp": ">=0.2.6 <0.3.0",
         "form-data": ">=4.0.6",
-        "js-yaml": ">=3.15.1 <4.0.0",
+        "js-yaml": ">=3.15.2 <4.0.0",
         "nanoid": ">=3.3.18 <4.0.0",
-        "@babel/core": ">=7.29.6 <8.0.0"
+        "@babel/core": ">=7.29.6 <8.0.0",
+        "svgo": ">=3.3.5 <4.0.0",
+        "joi": ">=17.13.6 <18.0.0"
     },
     "babel": {
         "presets": [

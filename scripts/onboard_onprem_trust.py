@@ -424,9 +424,24 @@ def check_gpu_capacity(kit_vars: dict[str, str], kit_present: bool, kit: str) ->
         return Check("fl-client GPU capacity", Status.PENDING, "pending — needs kit file")
     raw = (kit_vars.get("NUM_AVAILABLE_GPUS") or "").strip()
     if not raw:
+        if kit_vars.get("FL_BACKEND", "").strip().lower() != "nvflare":
+            return Check(
+                "fl-client GPU capacity", Status.PASS,
+                "NUM_AVAILABLE_GPUS unset in kit (CPU-only; only the NVFLARE client reads it)",
+            )
+        # `make up-trust` applies the GPU passthrough overlay only when the kit sets
+        # NUM_AVAILABLE_GPUS > 0 (trust/Makefile GPU_OVERRIDE), so an unset value gets no
+        # device — yet fl-client's entrypoint.sh resolves that same unset value to 1
+        # (`${NUM_AVAILABLE_GPUS:-1}`) and NVFLARE then demands a GPU it was never given.
+        # That crash-loops whatever the host carries, so there is no host count worth probing.
         return Check(
-            "fl-client GPU capacity", Status.PASS,
-            "NUM_AVAILABLE_GPUS unset in kit (template treats as 0 → CPU-only)",
+            "fl-client GPU capacity", Status.WARN,
+            "NUM_AVAILABLE_GPUS unset in kit: the GPU overlay is skipped but fl-client defaults to 1 GPU",
+            hints=[
+                "fl-client will crash-loop on `num_of_gpus specified (1) exceeds available GPUs: 0`.",
+                f"Edit trust/.env.{kit} → set NUM_AVAILABLE_GPUS explicitly: 0 (with MEMORY_PER_GPU_IN_GIB=0)",
+                "  for CPU-only, or N on a host exposing N NVIDIA GPU(s) to enable passthrough.",
+            ],
         )
     try:
         kit_gpus = int(raw)
