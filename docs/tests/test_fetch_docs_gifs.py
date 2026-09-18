@@ -145,6 +145,15 @@ class TestColdFetch:
             run_fetch(fetcher, dest, FakeSession(routes))
         assert not (dest / "flip/create-model.gif").exists()
 
+    def test_a_size_mismatch_with_the_right_sha_is_still_refused(self, fetcher, dest):
+        routes = routes_for(FILES)
+        manifest = manifest_for(FILES)
+        manifest["files"]["flip/create-model.gif"]["bytes"] += 1
+        routes[f"{BASE}/{TAG}/manifest.json"] = [FakeResponse(body=json.dumps(manifest).encode())]
+        with pytest.raises(fetcher.FetchError, match="create-model.gif.*bytes"):
+            run_fetch(fetcher, dest, FakeSession(routes))
+        assert not (dest / "flip/create-model.gif").exists()
+
     def test_404_fails_without_retry(self, fetcher, dest):
         url = f"{BASE}/{TAG}/manifest.json"
         session = FakeSession({url: [FakeResponse(status_code=404)]})
@@ -169,6 +178,15 @@ class TestFastPath:
         assert session.calls == [url]
         assert report.fetched == ["admin/create-user.gif"]
         assert (dest / "admin/create-user.gif").read_bytes() == FILES["admin/create-user.gif"]
+
+    def test_a_same_length_local_file_with_different_bytes_is_refetched(self, fetcher, dest):
+        run_fetch(fetcher, dest, FakeSession(routes_for(FILES)))
+        original = FILES["flip/create-model.gif"]
+        (dest / "flip/create-model.gif").write_bytes(bytes(reversed(original)))
+        url = f"{BASE}/{TAG}/flip/create-model.gif"
+        report, _ = run_fetch(fetcher, dest, FakeSession({url: [FakeResponse(body=original)]}))
+        assert report.fetched == ["flip/create-model.gif"]
+        assert (dest / "flip/create-model.gif").read_bytes() == original
 
     def test_a_non_tag_revision_always_rereads_the_manifest(self, fetcher, dest):
         run_fetch(fetcher, dest, FakeSession(routes_for(FILES)))
@@ -255,6 +273,26 @@ class TestManifestContract:
     def test_malformed_manifests_are_refused(self, fetcher, raw, message):
         with pytest.raises(fetcher.FetchError, match=message):
             fetcher.parse_manifest(raw, "https://example/manifest.json")
+
+    @pytest.mark.parametrize(
+        "path",
+        ["../flip/x.gif", "/etc/flip/x.gif", "flip/x.gif/../../../evil.gif", "flip/x.gif\n", "flip/a/x.gif", ".gif"],
+    )
+    def test_a_path_that_merely_contains_a_valid_shape_is_refused(self, fetcher, path):
+        with pytest.raises(fetcher.FetchError, match="not <category>/<name>.gif"):
+            fetcher.parse_manifest(manifest_with(path, GOOD_SHA, 1), "https://example/manifest.json")
+
+    def test_a_manifest_can_never_direct_a_write_outside_the_destination(self, fetcher, dest, tmp_path):
+        escaped = "../escaped/flip/x.gif"
+        data = b"GIF89a"
+        routes = {
+            f"{BASE}/{TAG}/manifest.json": [FakeResponse(body=manifest_with(escaped, sha(data), len(data)))],
+            f"{BASE}/{TAG}/{escaped}": [FakeResponse(body=data)],
+        }
+        with pytest.raises(fetcher.FetchError):
+            run_fetch(fetcher, dest, FakeSession(routes))
+        assert [p.name for p in tmp_path.iterdir() if p.name != dest.name] == []
+        assert not dest.exists() or not list(dest.rglob("*"))
 
     def test_a_valid_manifest_round_trips(self, fetcher):
         manifest = manifest_for(FILES)
