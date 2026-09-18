@@ -57,13 +57,10 @@ export XNAT_TAG
 # file. The XNAT swarm stack name and overlay network are derived from the
 # assigned slot NUMBER (not the CODE), so XNAT co-resides on the same
 # deploy_trust-network-<N> as the slot-numbered trust core services.
-ifeq ($(PROD),true)
-ENV := production
-else ifeq ($(PROD),stag)
-ENV := stag
-else
-ENV := development
-endif
+# ENV (the kit suffix) and IS_DEPLOYED (non-empty for every PROD value except
+# unset — the LZA pair takes the stag/prod paths and stack files below, with its
+# own kit suffix) come from the shared table in ../../deploy/env_mode.mk.
+include ../../deploy/env_mode.mk
 KIT_FILE := $(if $(wildcard ../.env.$(KIT).$(ENV)),../.env.$(KIT).$(ENV),../.env.$(KIT))
 -include $(KIT_FILE)
 # Kit-file values must reach the shell env, not just Make vars. docker stack
@@ -134,7 +131,7 @@ PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 # bind-mount it directly without a separate `${XNAT_PATH}/` prefix. Both
 # this recipe and the compose stacks read the same exported var so the
 # dirs Make creates and the dirs compose mounts stay in lockstep.
-XNAT_DATA_DIR ?= $(if $(filter true stag,$(PROD)),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM))
+XNAT_DATA_DIR ?= $(if $(IS_DEPLOYED),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM))
 XNAT_DATA_DIR := $(abspath $(XNAT_DATA_DIR))
 export XNAT_DATA_DIR
 
@@ -158,7 +155,7 @@ export XNAT_DATA_DIR
 # if someone pinned a `user:` on xnat-db. Its dir is included on stag/prod only, so
 # the whole tree carries one owner.
 #
-# deploy/providers/AWS/site.yml and deploy/providers/local/site_local_trust.yml
+# deploy/providers/AWS/site.yml and trust/deploy/ansible/onprem.yml
 # provision XNAT's bind mounts with this same id: the uid is the invariant all three
 # paths share, and the one to keep in step. The directories deliberately are not —
 # both playbooks provision /opt/flip/xnat, while stag/prod resolves XNAT_DATA_DIR to
@@ -173,7 +170,7 @@ XNAT_DIR_OWNER := $(XNAT_CONTAINER_UID):$(XNAT_CONTAINER_GID)
 # The bind-mount sources xnat-reset provisions. xnat-db-data is stag/prod-only:
 # the development stack gives xnat-db no persistent bind mount.
 XNAT_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive build cache) \
-                  $(if $(filter true stag,$(PROD)),$(XNAT_DATA_DIR)/xnat-db-data)
+                  $(if $(IS_DEPLOYED),$(XNAT_DATA_DIR)/xnat-db-data)
 # The subset xnat-web itself writes — what upgrade-xnat checks on a LIVE site. xnat-db-data
 # is excluded there: Postgres's entrypoint re-owns it to its own uid on first boot, so on
 # a running site it is legitimately not 1001 and the reset-time check does not apply.
@@ -225,10 +222,7 @@ export XNAT_PATH=$(realpath .)
 # xnat/plugins over the image, so only development needs the host-side plugin cache (and the S3
 # bucket and AWS credentials that populate it). Production bakes plugins into the image, and a
 # trust host has neither FLIP_ARTIFACTS_BUCKET_NAME nor a reason to reach S3 for them.
-ifeq ($(PROD),true)
-STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.production.yml
-XNAT_PLUGINS_FROM_HOST =
-else ifeq ($(PROD),stag)
+ifneq ($(IS_DEPLOYED),)
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.production.yml
 XNAT_PLUGINS_FROM_HOST =
 else
@@ -407,6 +401,31 @@ down-xnat:
 	$(require_kit)
 	$(MAKE) xnat-stack-down STACK=$(XNAT_STACK)
 
+# The running xnat-web container of ONE stack, found by the labels swarm stamps on every task
+# container — never by `docker ps --filter name=`. That filter is a regular-expression *search*,
+# so on a host that also runs a FLIP_INSTANCE-prefixed stack (`lzastag-xnat1` beside `xnat1`)
+# the unprefixed lookup matched both, and `docker exec $$CONTAINER …` became
+# `docker exec <id1> <id2> …`, failing with `exec: "<id2>": executable file not found` after
+# the stack had deployed — so it was never configured (FLIP#1210). The unprefixed stack is the
+# one that loses: its name is a suffix of the prefixed one. `xnat-stack-down` already matched
+# on the namespace label; these two complete the set.
+# $(1) is the stack name. Prints the container id(s), one per line, like `docker ps -q`.
+define xnat_web_container_ids
+docker ps -q --filter "label=com.docker.stack.namespace=$(1)" --filter "label=com.docker.swarm.service.name=$(1)_xnat-web"
+endef
+
+# Refuse to `docker exec` into more than one container. Two ids can only be two tasks of the
+# same service — a rolling update still tearing the old one down — and no `docker ps` ordering
+# picks between them safely, so name both and stop rather than guess. Reads $$CONTAINER;
+# $(1) is the stack name, for the message.
+define require_one_xnat_web_container
+	case "$$CONTAINER" in *[[:space:]]*) \
+		echo "❌ ERROR: more than one $(1)_xnat-web container is running:" $$CONTAINER; \
+		echo "   A rolling update may still be tearing the old task down — retry once it has gone."; \
+		exit 1;; \
+	esac
+endef
+
 # ── Release upgrade (FLIP#1204) ───────────────────────────────────────────
 # Move a LIVE XNAT to the kit's XNAT_TAG with its data in place: back up the database,
 # redeploy the stack (Swarm rolls each service onto the new image; the bind-mounted
@@ -438,10 +457,12 @@ upgrade-xnat: create-xnat-network
 # an XNAT upgrade, since XNAT's schema migrations are forward-only. Both ends go through
 # docker: the dump runs inside the db container, and the file lands in the (root- or
 # 1001-owned) data dir via a throwaway container rather than needing sudo. Skipped with a
-# note when no xnat-db is running (a first install has nothing to back up).
+# note when no xnat-db is running (a first install has nothing to back up). The container
+# is found by the swarm labels, like xnat_web_container_ids above — `--filter name=` is a
+# substring match that also catches a FLIP_INSTANCE-prefixed stack's db (FLIP#1210).
 xnat-backup:
 	$(require_kit)
-	@db=$$(docker ps -q --filter "name=$(XNAT_STACK)_xnat-db" | head -1); \
+	@db=$$(docker ps -q --filter "label=com.docker.stack.namespace=$(XNAT_STACK)" --filter "label=com.docker.swarm.service.name=$(XNAT_STACK)_xnat-db" | head -1); \
 	if [ -z "$$db" ]; then echo "ℹ️  No running $(XNAT_STACK)_xnat-db — nothing to back up."; exit 0; fi; \
 	stamp=$$(date +%Y%m%d-%H%M%S); \
 	echo "💾 Backing up the XNAT database to $(XNAT_DATA_DIR)/backups/xnat-db-$$stamp.sql.gz ..."; \
@@ -453,7 +474,8 @@ xnat-backup:
 # Get a shell in the running xnat-web container for the selected trust.
 xnat-shell:
 	$(require_kit)
-	CONTAINER=$$(docker ps --filter "name=$(XNAT_STACK)_xnat-web" -q); \
+	CONTAINER=$$($(call xnat_web_container_ids,$(XNAT_STACK))); \
+	$(call require_one_xnat_web_container,$(XNAT_STACK)); \
 	docker exec -it $$CONTAINER bash
 
 # Remove a single XNAT Swarm stack and BLOCK until all its containers have
@@ -554,7 +576,7 @@ xnat-reset:
 	fi
 	@set -e; \
 	echo "Deleting previous XNAT data and creating new directories for $(KIT) ..."; \
-	if [ "$(PROD)" = "true" ] || [ "$(PROD)" = "stag" ]; then \
+	if [ -n "$(IS_DEPLOYED)" ]; then \
 		echo "  📍 Using prod data dir: $(XNAT_DATA_DIR)/"; \
 		xnat_ctx="$$(docker context show)"; \
 		xnat_endpoint="$$(docker context inspect "$$xnat_ctx" --format '{{.Endpoints.docker.Host}}' 2>/dev/null)"; \
@@ -590,12 +612,13 @@ xnat-reset:
 xnat-configure:
 	@[ -n "$(XNAT_PROJECT)" ] || (echo "❌ XNAT_PROJECT is required"; exit 1)
 	@echo "⏳ Waiting for $(XNAT_PROJECT)_xnat-web container to be ready..."
-	@elapsed=0; while [ "$$(docker ps --filter "name=$(XNAT_PROJECT)_xnat-web" -q)" = "" ]; do \
+	@elapsed=0; while [ "$$($(call xnat_web_container_ids,$(XNAT_PROJECT)))" = "" ]; do \
 		if [ $$elapsed -ge 120 ]; then echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container never started"; exit 1; fi; \
 		echo "  Waiting for container..."; sleep 5; elapsed=$$((elapsed + 5)); \
 	done
-	CONTAINER=$$(docker ps --filter "name=$(XNAT_PROJECT)_xnat-web" -q); \
+	CONTAINER=$$($(call xnat_web_container_ids,$(XNAT_PROJECT))); \
 	[ -n "$$CONTAINER" ] || { echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container not found at configure time"; exit 1; }; \
+	$(call require_one_xnat_web_container,$(XNAT_PROJECT)); \
 	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"' && \
 	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
 

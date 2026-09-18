@@ -222,8 +222,8 @@
     #     compose. Without group 49999 + 0775 it is only "other" on the net dir and
     #     add_resource fails with EACCES.
     # Keep in sync with the K8s chart's images-init
-    # (deploy/providers/kubernetes/templates/fl-client.yaml), the on-prem
-    # site_local_trust.yml, and trust/Makefile's $(ensure_net_dirs).
+    # (trust/deploy/helm/templates/fl-client.yaml), the on-prem
+    # onprem.yml, and trust/Makefile's $(ensure_net_dirs).
     - name: create per-net images bind-mount directories
       file:
         path: "{{ item }}"
@@ -358,7 +358,7 @@
       #
       # Nor is there any point pre-creating the leaf dirs from an Ansible `file:` task
       # ahead of this one: the net-1 wipe below deletes whatever such a task created.
-      # deploy/providers/local/site_local_trust.yml does pre-create them, and is right
+      # trust/deploy/ansible/onprem.yml does pre-create them, and is right
       # to — there the operator extracts a kit tarball by hand and nothing wipes.
       #
       # local/ and transfer/ are re-created after the sync: the `find -delete` above clears

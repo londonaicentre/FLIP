@@ -42,7 +42,7 @@
 - **Required:** yes — this release changes the hub↔site contract (`FLIP_RELEASE` build identity in every image; hub-version and key-fingerprint fields in the heartbeat reply). Sites on v0.6.0 keep working against a {{TAG}} hub, but their Connection Status versions read as "informational" numbers until they move.
 - **Ordering:** hub first, then sites at their own pace. No flag-day: an older site's heartbeat is still accepted.
 - **Refreshed kit needed:** no — the Hub-shared block is unchanged by this release. (If the hub's AES key or FL kit date changed with your hub deploy, re-sync: `make sync-trust-kit KIT=<CODE> PROD=<env>` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>`.)
-- **Operator command:** `make upgrade-onprem-trust KIT=<slot>` — defaults to the release the hub runs once the hub is on {{TAG}}; pass `TAG={{TAG}}` explicitly before that. Kubernetes: `make -C deploy/providers/kubernetes upgrade-trust-k8s KIT=<CODE> TAG={{TAG}}`; EC2: `make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env> TAG={{TAG}}`. Runbook: *docs → System administrators → Upgrading a site*.
+- **Operator command:** `make upgrade-onprem-trust KIT=<slot>` — defaults to the release the hub runs once the hub is on {{TAG}}; pass `TAG={{TAG}}` explicitly before that. Kubernetes: `make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> TAG={{TAG}}`; EC2: `make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env> TAG={{TAG}}`. Runbook: *docs → System administrators → Upgrading a site*.
 
 ## :seedling: New Features
 

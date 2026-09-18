@@ -96,6 +96,8 @@ GHCR login from `~/.docker/config.json`.
 |------|---------|
 | `Makefile` | Trust stack orchestration (parameterized `up-trust KIT=<name>`) |
 | `deploy/README.md` | Compose file matrix, the `--project-directory` rule these files depend on, and the external networks they join |
+| `deploy/helm/` | The same trust stack as Helm chart `flip-trust` for Kubernetes (chart, Makefile, `sync_k8s_kit.py`, tests) |
+| `deploy/ansible/onprem.yml` | Ansible play that provisions a site-owned Ubuntu host (Docker, `/opt/flip` dirs, uid rules) for the compose stack; on-prem twin of `deploy/providers/AWS/site.yml`. Driven by `make -C deploy/providers/AWS provision-local-trust`, which needs the hub env file the AWS Makefile parses at load — the known exception to "providers = Terraform only" |
 | `deploy/compose_trust.development.yml` | Dev Docker Compose (pulls repo-built services from GHCR by default via `pull_policy: always`; `BUILD=true` rebuilds from the `build:` block instead) |
 | `deploy/compose_trust.production.yml` | Prod Docker Compose (GHCR images; declares the `trust-local-{loki,grafana}-data` named volumes as defaults) |
 | `deploy/compose_trust.{env}.{flower\|nvflare}.yml` | FL backend variants |

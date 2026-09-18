@@ -77,9 +77,41 @@ laptop):
 - Internet connectivity (to pull Docker images and packages).
 - A writable directory for the FLIP application (default ``/opt/flip``).
 
+**Trust data** — the two systems the FLIP node reads. Both must already exist
+and already agree with each other before the node is deployed:
+
+- An **OMOP database** (PostgreSQL) holding the trust's clinical data in the
+  ``omop`` schema — OMOP CDM 5.4 plus the MI-CDM imaging tables
+  (``image_occurrence``, ``image_feature``). FLIP reads it through a read-only
+  role and writes nothing back.
+- A **PACS** that answers a study-level query by accession number. The
+  checklist to agree with your PACS manager is in
+  :doc:`../components/component-pacs`.
+- **The accession number is the link between the two.** For every imaging row
+  in ``image_occurrence``, the ``accession_id`` column must hold the accession
+  number the PACS answers to for that study — the DICOM Accession Number
+  ``(0008,0050)``. This column is FLIP's own addition to MI-CDM, so a standard
+  OMOP ETL neither creates nor fills it: your data team adds it and populates
+  it as part of the OMOP load (:ref:`omop-accession-id` has the one-line DDL
+  and what to populate it from). A row may exist per study or per series — the
+  same accession repeats on each series row and FLIP imports the study once —
+  but the value must be exactly one study's accession number — never empty,
+  and never containing ``*``, ``?`` or ``\``: to a PACS those are queries that
+  match many studies, not one, so FLIP refuses to send them — such a row is
+  dropped from the pull with a warning in the trust's imaging-api log, and the
+  study it stood for is silently never pulled.
+
+Confirm both with the data and PACS teams before deployment. Neither is checked
+by the deployment itself; a gap surfaces only when the first project's imaging
+pull runs.
+
 **Central Hub deployed in AWS** — required so the trust can resolve the hub
 URL, fetch the FL participant kit from S3, and so the operator can update the
-NLB security group with the trust's public IP. See :doc:`deploy-central-hub`.
+FL load balancer's security group with the trust's public IP
+(:doc:`deploy-central-hub-aws`; on a Landing Zone Accelerator estate the FL
+entry point is the networking account's edge instead, see
+:doc:`deploy-central-hub-aws-lza`). See :doc:`deploy-central-hub` for the
+shared prerequisites.
 
 ************************************
 Recommended end-to-end (hybrid) flow
@@ -110,8 +142,11 @@ so all docker-touching commands on the trust host run via ``sudo``:
    cd ../../..
    sudo -E env PROD=<stag|true> make -C trust up-trust KIT=<CODE>   # the trust code you scaffolded
 
-Then verify the trust is polling: ``sudo docker logs -f trust-api`` should
-show successful task polls against the Central Hub.
+Then verify the trust is polling: ``sudo docker logs -f trust<N>-trust-api-1`` should
+show successful task polls against the Central Hub. No trust service sets
+``container_name``, so compose names the container from the trust's project —
+``trust<N>``, where ``<N>`` is the FL kit slot number the hub assigned
+(``FL_KIT_SLOT_NUMBER`` in the kit file).
 
 ******************************************
 Onboarding an on-prem trust (step by step)
@@ -139,14 +174,37 @@ hub-managed blocks.
 
 .. code-block:: shell
 
-   make register-trust KIT=<CODE> PROD=true
+   make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=true
 
-This registers the trust on the prod hub and fills **both** managed blocks in
-one step: the Kit credentials (``TRUST_API_KEY``,
-``TRUST_INTERNAL_SERVICE_KEY``, ``FL_KIT_SLOT``, ``FL_KIT_SLOT_NUMBER``,
-``EXPECTED_TRUST_ID``) and the Hub-shared block (12 keys). The hub stores only
-SHA-256 hashes of the credentials and cannot re-emit them, so this is a
-write-once operation — re-register to rotate.
+This registers the trust on the prod hub and fills the Kit credentials
+(``TRUST_API_KEY``, ``TRUST_INTERNAL_SERVICE_KEY``, ``FL_KIT_SLOT``,
+``FL_KIT_SLOT_NUMBER``, ``EXPECTED_TRUST_ID``) plus as much of the Hub-shared
+block as the hub task's environment carries. The block is built from the
+environment of the one-off ``flip-api`` Fargate task
+(``flip_api/scripts/register_trust.py``, ``HUB_SHARED_ENV_KEYS`` — a filtered
+comprehension that silently skips absent keys), and that task definition
+(``deploy/providers/AWS/locals.tf``) carries only ``TRUST_API_KEY_HEADER`` and
+``FL_BACKEND`` of the twelve: ``AES_KEY_BASE64`` is read from Secrets Manager at
+use time and never placed in the environment, and ``CENTRAL_HUB_API_URL``, the
+image registries/tags, the two kit dates, ``NLB_SUBDOMAIN`` and
+``FL_SERVER_PORT`` are not in the task definition at all. Those ten stay at their
+placeholder until the next step. The hub stores only SHA-256 hashes of the
+credentials and cannot re-emit them, so the credentials half is write-once —
+re-register to rotate.
+
+**2b. Fill the rest of the Hub-shared block (FLIP admin, required).** From the
+repo root, with the admin's local ``.env.production`` present:
+
+.. code-block:: shell
+
+   make sync-trust-kit KIT=<CODE> PROD=true
+
+This upserts the Hub-shared block from the local env file and preserves the
+credentials written in step 2. Skip it and the operator receives a kit whose
+``AES_KEY_BASE64`` and ``CENTRAL_HUB_API_URL`` are still placeholders — a trust
+that cannot decrypt a task or reach the hub. The same behaviour is described
+from the hub side in ``deploy/providers/AWS/README.md`` ("Registering trusts
+against the ECS hub").
 
 **3. Package the kit (FLIP admin).** Tarball the populated kit file + the
 operator's slice of the FL participant kit:
@@ -231,12 +289,14 @@ host's public IP, open the FL-server NLB to it:
 ``allow-local-trust-nlb`` runs a normal ``terraform plan``/``apply`` — the IPs
 are real config, so later full applies stay idempotent (no drift).
 
-Then verify the trust is polling: ``sudo docker logs -f trust-api`` should
-show successful task polls against the Central Hub.
+Then verify the trust is polling: ``sudo docker logs -f trust<N>-trust-api-1`` should
+show successful task polls against the Central Hub (``<N>`` is the assigned FL kit
+slot number, as above).
 
-**Rotation (later, no re-mint).** When the admin rotates a Hub-shared value
-(``AES_KEY_BASE64``, image tags, ``FL_BACKEND``), refresh only the Hub-shared
-block from the admin's local env file — credentials are preserved:
+**Rotation (later, no re-mint).** ``sync-trust-kit`` is the same command that
+completed the kit in step 2b, so when the admin later rotates a Hub-shared value
+(``AES_KEY_BASE64``, image tags, ``FL_BACKEND``), re-run it to refresh only the
+Hub-shared block from the admin's local env file — credentials are preserved:
 
 .. code-block:: shell
 
@@ -288,11 +348,11 @@ that trust. The trust's env must contain:
 connect):
 
 1. The trust must be registered on the hub — a row in the ``trust`` table with
-   its ``api_key_hash`` — via ``make register-trust KIT=<CODE>`` or the
-   Add-Trust admin flow (``POST /admin/trusts``).
-2. ``make register-trust KIT=<CODE>`` mints the trust's API key and internal
-   service key into the kit file (``trust/.env.<CODE>.production`` for the
-   on-prem trust) as part of registration.
+   its ``api_key_hash`` — via ``make -C deploy/providers/AWS register-trusts
+   KIT=<CODE>`` or the Add-Trust admin flow (``POST /admin/trusts``).
+2. That same target mints the trust's API key and internal service key into the
+   kit file (``trust/.env.<CODE>.production`` for the on-prem trust) as part of
+   registration.
 3. No hub redeploy is needed — the trust registry is the live database, read
    on every request.
 

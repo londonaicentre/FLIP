@@ -14,7 +14,9 @@ APP_DIR := $(CURDIR)
 # Run job.py in the flip-utils environment with the `full` ML extra — the same package set the
 # flare-fl-base FL image installs (`uv sync --extra full`), so a local SimEnv run matches the deployed
 # image. A bare `uv run` would resolve to the repo-root venv, which has no torch/nvflare/monai.
-FLIP_UTILS := $(abspath $(APP_DIR)/../../../../flip-utils)
+REPO_ROOT := $(abspath $(APP_DIR)/../../../..)
+FLIP_UTILS := $(REPO_ROOT)/flip-utils
+FL_TUTORIALS := $(REPO_ROOT)/fl-tutorials
 UV_RUN := uv run --project $(FLIP_UTILS) --extra full
 
 # --- Load app-specific env ---
@@ -35,7 +37,26 @@ NUM_ROUNDS_AE ?= 1
 NUM_ROUNDS_DM ?= 1
 N_CLIENTS ?= 2
 
-.PHONY: run export sim clean
+# --- Shipped weights (FLIP#1206) ---
+# The perceptual loss's SqueezeNet backbone, which lpips would otherwise fetch through
+# torch.hub on first use. FL apps never download at run time, so the tutorial ships it: the
+# download is shared (`make -C fl-tutorials download-weights ARCH=squeezenet1_1`, hash-checked)
+# and `weights` copies the checkpoint flat into app_files/, which is what gets uploaded with
+# the code and what job.py bundles into every site's custom/ for the simulator and `export`.
+# trainer.py stages it into its torch.hub dir at start-up. Gitignored. The filename must be
+# the one torchvision asks for (trainer.py checks that at run time, and the tests pin it).
+HUB_CHECKPOINT := squeezenet1_1-b8a52dc0.pth
+SHARED_CHECKPOINT := $(FL_TUTORIALS)/data/weights/$(HUB_CHECKPOINT)
+
+.PHONY: run export sim clean weights
+
+weights: app_files/$(HUB_CHECKPOINT)
+
+app_files/$(HUB_CHECKPOINT): $(SHARED_CHECKPOINT)
+	cp "$<" "$@"
+
+$(SHARED_CHECKPOINT):
+	$(MAKE) --no-print-directory -C $(FL_TUTORIALS)/datasets download-weights ARCH=squeezenet1_1
 
 # --- Tutorial-harness entrypoint ---
 # The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app
@@ -45,8 +66,9 @@ run: sim
 # --- Export job config (no GPU needed) ---
 # Builds a complete NVFLARE job under ./fl_job/flip_diffusion/ including meta.json,
 # app/config/, and app/custom/ (bundled flip/ package + staged app_files/).
-# FLIP-specific values (project_id, query) are injected via environment variables.
-export:
+# FLIP-specific values (project_id, query) are injected via environment variables. Both bundling
+# paths (this and sim) need the shipped backbone in app_files/ first — hence `weights`.
+export: weights
 	$(UV_RUN) python job.py \
 		--export \
 		--export-dir ./fl_job \
@@ -60,7 +82,7 @@ export:
 # FLIP-specific values are read from FLIP_PROJECT_ID and FLIP_QUERY env vars.
 # DEV_IMAGES_DIR/DEV_DATAFRAME are resolved to absolute paths so the simulator's client workers
 # (which run from the workspace dir, not here) find the LOCAL_DEV dataset.
-sim:
+sim: weights
 	@echo "Running tutorial with: n_clients=$(N_CLIENTS), num_rounds_ae=$(NUM_ROUNDS_AE), num_rounds_dm=$(NUM_ROUNDS_DM)"
 	DEV_IMAGES_DIR="$(abspath $(DEV_IMAGES_DIR))" \
 	DEV_DATAFRAME="$(abspath $(DEV_DATAFRAME))" \

@@ -63,6 +63,18 @@ RUN uv sync --locked
 
 # Add fastapi executable to path
 ENV PATH="/app/.venv/bin:$PATH"
+# The venv is baked above (uv sync --locked) and must never be re-resolved at run
+# time: `uv run` would otherwise try to rebuild the project's editable install,
+# fetching its build backend (setuptools) from PyPI -- on the egress-less LZA
+# account (FLIP#749) that hangs every start, and on legacy it silently
+# re-downloads setuptools each time. UV_NO_SYNC makes the build-time venv
+# authoritative; with the sync gone nothing installs the flip_api package, so
+# PYTHONPATH puts the src layout on the import path directly. Image ENV is the
+# one mechanism that covers every way the image runs: the entrypoint, the dev
+# bind-mount of src/, `docker exec`, and ECS run-task command overrides (an
+# override replaces the entrypoint and inherits only what the image declares).
+# Dependency changes ship by rebuilding the image (BUILD=true in dev), never at boot.
+ENV UV_NO_SYNC=1 PYTHONPATH=/app/src
 
 # Expose the application port
 EXPOSE 8000

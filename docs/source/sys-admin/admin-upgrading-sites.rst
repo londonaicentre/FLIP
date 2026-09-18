@@ -114,7 +114,7 @@ fills it from the kit's ``DOCKER_TAG``; the upgrade verb sets it explicitly:
 
 .. code-block:: bash
 
-   make -C deploy/providers/kubernetes upgrade-trust-k8s KIT=<CODE> PROD=<env> [TAG=vX.Y.Z] [KUBE_CONTEXT=<ctx>]
+   make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> PROD=<env> [TAG=vX.Y.Z] [KUBE_CONTEXT=<ctx>]
 
 The resolver pins your kit exactly as on Compose; ``sync-kit`` then regenerates the override
 from it (``global.image.tag``, and the per-image pins below) and re-patches the Secret; then a

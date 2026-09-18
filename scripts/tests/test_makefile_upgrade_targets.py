@@ -94,7 +94,14 @@ def _dry_run(target: str, *extra: str, subdir: str = "trust") -> str:
     """
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        for rel in ("Makefile", "deploy/fl_backend.mk", "deploy/instance.mk", "trust/Makefile", "trust/xnat/Makefile"):
+        for rel in (
+            "Makefile",
+            "deploy/env_mode.mk",
+            "deploy/fl_backend.mk",
+            "deploy/instance.mk",
+            "trust/Makefile",
+            "trust/xnat/Makefile",
+        ):
             dst = root / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(REPO / rel, dst)

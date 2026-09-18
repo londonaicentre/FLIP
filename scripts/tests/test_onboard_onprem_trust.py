@@ -212,6 +212,60 @@ def test_9_site_privacy_rejects_misspelt_variable() -> None:
     _assert("FL_SITE_PRIVACY_PERCENTIL " in result.detail, "detail names the misspelt variable", result.detail)
 
 
+def _gpu_check(kit_vars: dict[str, str], host_gpus: int | None):
+    """Run check_gpu_capacity with the host GPU probe stubbed (kit present)."""
+    with mock.patch.object(mod, "detect_host_gpu_count", return_value=host_gpus) as probe:
+        result = mod.check_gpu_capacity(kit_vars, True, "TEST")
+    return result, probe
+
+
+def test_10_gpu_unset_on_nvflare_warns_without_probing() -> None:
+    """An unset NUM_AVAILABLE_GPUS is not CPU-only: the GPU overlay is skipped but fl-client defaults to 1.
+
+    The Makefile and the entrypoint disagree on the default, so the container crash-loops whatever
+    the host carries — the check must WARN outright rather than consult the host GPU count.
+    """
+    print("▶ NUM_AVAILABLE_GPUS unset (nvflare) -> WARN, host not probed")
+    result, probe = _gpu_check({"FL_BACKEND": "nvflare"}, host_gpus=1)
+    _assert(result.status == mod.Status.WARN, "status is WARN, not a false CPU-only PASS", result.detail)
+    _assert(not probe.called, "host GPU count is irrelevant and was not consulted")
+    _assert(
+        "unset" in result.detail and "defaults to 1" in result.detail,
+        "detail explains the mismatch",
+        result.detail,
+    )
+    _assert(any("explicitly" in h for h in result.hints), "hint tells the operator to set it explicitly")
+
+
+def test_11_gpu_unset_on_flower_is_cpu_only() -> None:
+    """The Flower client never reads NUM_AVAILABLE_GPUS, so an unset value is a plain CPU-only PASS there."""
+    print("▶ NUM_AVAILABLE_GPUS unset (flower) -> CPU-only PASS")
+    result, probe = _gpu_check({"FL_BACKEND": "flower"}, host_gpus=0)
+    _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
+    _assert("CPU-only" in result.detail, "detail says CPU-only", result.detail)
+    _assert(not probe.called, "host GPU count not consulted")
+
+
+def test_12_gpu_explicit_zero_is_cpu_only_pass() -> None:
+    """An explicit 0 is CPU-only and must not probe the host."""
+    print("▶ NUM_AVAILABLE_GPUS=0 -> CPU-only PASS without probing the host")
+    result, probe = _gpu_check({"FL_BACKEND": "nvflare", "NUM_AVAILABLE_GPUS": "0"}, host_gpus=0)
+    _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
+    _assert("CPU-only" in result.detail, "detail says CPU-only", result.detail)
+    _assert(not probe.called, "host GPU count not consulted for an explicit 0")
+
+
+def test_13_gpu_explicit_one_unchanged() -> None:
+    """An explicit 1 behaves as before: WARN on a GPU-less host, PASS when the host exposes one."""
+    print("▶ NUM_AVAILABLE_GPUS=1 -> WARN on 0 host GPUs, PASS on 1")
+    warn, probe = _gpu_check({"FL_BACKEND": "nvflare", "NUM_AVAILABLE_GPUS": "1"}, host_gpus=0)
+    _assert(warn.status == mod.Status.WARN, "0 host GPUs -> WARN", warn.detail)
+    _assert(probe.called, "host GPU count was consulted for an explicit value")
+    _assert("NUM_AVAILABLE_GPUS=1" in warn.detail, "detail names the explicit value", warn.detail)
+    ok, _ = _gpu_check({"FL_BACKEND": "nvflare", "NUM_AVAILABLE_GPUS": "1"}, host_gpus=1)
+    _assert(ok.status == mod.Status.PASS, "1 host GPU -> PASS", ok.detail)
+
+
 def _hub_shared_current(kit_vars: dict, health):
     """Run check_hub_shared_current with trust-api's /health answering ``health`` (a dict, or an exception)."""
     if isinstance(health, BaseException):
@@ -222,7 +276,7 @@ def _hub_shared_current(kit_vars: dict, health):
         return mod.check_hub_shared_current(kit_vars, True)
 
 
-def test_10_hub_shared_current_flags_a_stale_key() -> None:
+def test_14_hub_shared_current_flags_a_stale_key() -> None:
     """trust-api says its key no longer matches the hub's -> FAIL naming the refreshed-kit fix (FLIP#1204)."""
     print("▶ hub-shared currency: stale AES key -> FAIL")
     kit = {"TRUST_API_PORT": "8020", "DOCKER_TAG": "v0.6.0"}
@@ -231,7 +285,7 @@ def test_10_hub_shared_current_flags_a_stale_key() -> None:
     _assert(any("sync-trust-kit" in h for h in result.hints), "hint names the admin-side re-sync")
 
 
-def test_11_hub_shared_current_passes_and_notes_the_release_gap() -> None:
+def test_15_hub_shared_current_passes_and_notes_the_release_gap() -> None:
     """Key matches: PASS. Kit pinned behind the hub: WARN naming upgrade-onprem-trust, never FAIL
     (the upgrade verb runs this checklist first, so a FAIL here would make it un-runnable)."""
     print("▶ hub-shared currency: key matches -> PASS; kit behind the hub -> WARN")
@@ -246,7 +300,7 @@ def test_11_hub_shared_current_passes_and_notes_the_release_gap() -> None:
     _assert(any("upgrade-onprem-trust" in h for h in behind.hints), "hint names the upgrade verb")
 
 
-def test_12_hub_shared_current_warns_until_trust_api_can_answer() -> None:
+def test_16_hub_shared_current_warns_until_trust_api_can_answer() -> None:
     """First install (trust-api not running) or a pre-FLIP#1204 trust-api -> WARN, never FAIL or PENDING:
     the upgrade verb runs this checklist as its gate, and is exactly what gives the site a trust-api that
     can answer — a PENDING here would make an old site un-upgradeable."""
@@ -273,9 +327,13 @@ def main() -> None:
     test_7_site_privacy_rejects_unsupported_backend()
     test_8_site_privacy_not_configured_reports_cleanly()
     test_9_site_privacy_rejects_misspelt_variable()
-    test_10_hub_shared_current_flags_a_stale_key()
-    test_11_hub_shared_current_passes_and_notes_the_release_gap()
-    test_12_hub_shared_current_warns_until_trust_api_can_answer()
+    test_10_gpu_unset_on_nvflare_warns_without_probing()
+    test_11_gpu_unset_on_flower_is_cpu_only()
+    test_12_gpu_explicit_zero_is_cpu_only_pass()
+    test_13_gpu_explicit_one_unchanged()
+    test_14_hub_shared_current_flags_a_stale_key()
+    test_15_hub_shared_current_passes_and_notes_the_release_gap()
+    test_16_hub_shared_current_warns_until_trust_api_can_answer()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
