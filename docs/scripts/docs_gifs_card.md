@@ -32,4 +32,3 @@ FLIP UI against a mocked backend (`flip-ui/test/cypress/docs/`), converted with 
 ## Layout
 
 One copy of every file, at an unversioned path:
-

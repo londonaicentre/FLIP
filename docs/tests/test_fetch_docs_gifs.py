@@ -79,7 +79,7 @@ def sha(data: bytes) -> str:
 def manifest_for(files: dict[str, bytes], version: str = TAG) -> dict:
     return {
         "version": version,
-        "source_commit": "594524287f1826969c1a3cb250dd4fbeb2ac5fa3",
+        "source_commit": "594524287f1826969c1a3cb250dd4fbeb2ac5fa3",  # pragma: allowlist secret (a git sha)
         "recorded_at": "2026-09-07T12:20:06Z",
         "workflow_run": None,
         "files": {path: {"sha256": sha(data), "bytes": len(data)} for path, data in files.items()},

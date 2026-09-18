@@ -22,7 +22,7 @@ from types import SimpleNamespace
 import pytest
 from huggingface_hub import CommitOperationAdd, CommitOperationDelete
 
-SOURCE_COMMIT = "594524287f1826969c1a3cb250dd4fbeb2ac5fa3"
+SOURCE_COMMIT = "594524287f1826969c1a3cb250dd4fbeb2ac5fa3"  # pragma: allowlist secret (a git sha)
 TAG = "20260907T122006Z-5945242"
 
 
