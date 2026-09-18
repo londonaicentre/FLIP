@@ -78,7 +78,6 @@ BASE_ENV=(
     FL_API_PORT=8080
     FL_SERVER_PORT=8002
     INTERNAL_SERVICE_KEY_HEADER=X-Internal-Service-Key
-    MIN_CLIENTS=1
     SES_VERIFIED_EMAIL=noreply@example.invalid
     TRUST_API_KEY_HEADER=X-Trust-API-Key
     UI_PORT=80

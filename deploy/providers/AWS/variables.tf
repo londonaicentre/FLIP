@@ -253,12 +253,6 @@ variable "flower_kit_date" {
   default     = ""
 }
 
-variable "MIN_CLIENTS" {
-  description = "Minimum number of FL clients required before the server starts training"
-  type        = number
-  default     = 1
-}
-
 # Per-job GPU resource spec requested by the fl-api when it builds an NVFLARE
 # job's meta (mirrors JOB_RESOURCE_SPEC_* in compose.production.nvflare.yml).
 # This drives client-side GPU allocation — the hub's Fargate tasks are CPU-only;

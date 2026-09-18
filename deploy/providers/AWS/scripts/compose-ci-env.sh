@@ -96,7 +96,6 @@ REQUIRED_KEYS=(
     FL_API_PORT
     FL_SERVER_PORT
     INTERNAL_SERVICE_KEY_HEADER
-    MIN_CLIENTS
     SES_VERIFIED_EMAIL
     TRUST_API_KEY_HEADER
     # UI_PORT is referenced by no resource in this root (the UI is served from S3
