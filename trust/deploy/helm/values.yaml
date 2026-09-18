@@ -648,17 +648,26 @@ xnat:
     # that leg (FLIP#993).
     dicomAet: XNAT
     dicomPort: 8104
-    # Fixed NodePort for the DICOM receiver, used with service.type: NodePort. Required when the
-    # PACS is outside the cluster: after XNAT issues C-MOVE the PACS opens a *new* association back
-    # to XNAT to C-STORE the studies, so that port must be reachable. Leave empty for the mocked
-    # Orthanc, which reaches the receiver over the cluster network.
+    # Fixed NodePort for the DICOM receiver, used with dicomService.type: NodePort. Required when
+    # the PACS is outside the cluster: after XNAT issues C-MOVE the PACS opens a *new* association
+    # back to XNAT to C-STORE the studies, so that port must be reachable. Leave empty for the
+    # mocked Orthanc, which reaches the receiver over the cluster network.
     # Must be inside the API server's --service-node-port-range (default 30000-32767), or the range
     # widened to admit the DICOM port. Set it equal to dicomPort so one number is true end to end.
     dicomNodePort: ""
+    # The DICOM SCP gets its own Service, separate from the web-UI `service` below — so exposing it
+    # externally (NodePort or LoadBalancer) never also exposes the Tomcat/web console. ClusterIP
+    # (default) is only valid for the mocked Orthanc PACS (see validatePacsReachable); a real PACS
+    # needs NodePort (with dicomNodePort set, subject to the node-port-range constraint above) or
+    # LoadBalancer — the only two options that reach a PACS outside the cluster.
+    dicomService:
+      type: ClusterIP
     image:
       repository: ghcr.io/londonaicentre/xnat-web
       tag: stag
       pullPolicy: Always
+    # Tomcat/web-console only — the DICOM SCP is dicomService above, deliberately never on this
+    # Service, so a NodePort/LoadBalancer exposure for DICOM can never expose the web UI with it.
     service:
       port: 8080
       type: ClusterIP
