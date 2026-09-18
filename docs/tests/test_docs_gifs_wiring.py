@@ -58,3 +58,25 @@ def test_the_recorder_and_the_fetcher_share_one_destination(fetcher):
 
 def test_the_pin_is_one_well_formed_tag(fetcher, publisher):
     assert publisher.TAG_RE.fullmatch(fetcher.pinned_revision())
+
+
+def test_the_card_documents_the_published_contract(publisher, tmp_path):
+    """The card is published as the dataset README, so it must describe what the publisher actually writes."""
+    (tmp_path / "flip").mkdir()
+    (tmp_path / "flip" / "x.gif").write_bytes(b"GIF89a")
+    manifest = publisher.build_manifest(
+        tmp_path, ["flip/x.gif"], version="v", source_commit="0" * 40, recorded_at="t", workflow_run=None
+    )
+    card = publisher.DEFAULT_CARD.read_text()
+    documented = [
+        *manifest,
+        *manifest["files"]["flip/x.gif"],
+        publisher.MANIFEST_NAME,
+        "admin/<name>.gif",
+        "flip/<name>.gif",
+        "YYYYMMDDTHHMMSSZ-<sha7>",
+        "never moved",
+        "never deleted",
+    ]
+    missing = [term for term in documented if term not in card]
+    assert missing == [], f"the dataset card does not mention: {missing}"
