@@ -28,6 +28,7 @@ REQUIRED_PLUGIN_NAMES = (
     "batch-launch-test.jar",
     "container-service-test.jar",
     "dicom-query-retrieve-test.jar",
+    "ohif-viewer-test.jar",
 )
 
 
@@ -113,6 +114,38 @@ def test_plugin_check_rejects_incomplete_download(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "dicom-query-retrieve-" in result.stdout
+
+
+def test_plugin_check_rejects_a_download_without_the_ohif_viewer(tmp_path: Path) -> None:
+    """The viewer is a required family like the other three, not an optional extra."""
+    plugin_dir = tmp_path / "plugins"
+    template = _write_jar(tmp_path / "template.jar")
+    without_viewer = tuple(name for name in REQUIRED_PLUGIN_NAMES if not name.startswith("ohif-viewer-"))
+    env = _plugin_env(tmp_path, _aws_stub_writing_jars(template, without_viewer))
+
+    result = _run_plugin_check(plugin_dir, env)
+
+    assert result.returncode != 0
+    assert "ohif-viewer-" in result.stdout
+
+
+def test_plugin_sync_asks_s3_for_every_jar_in_the_prefix(tmp_path: Path) -> None:
+    """No family is filtered out of the sync: whatever the versioned prefix holds is the roster."""
+    plugin_dir = tmp_path / "plugins"
+    template = _write_jar(tmp_path / "template.jar")
+    argv_log = tmp_path / "aws-argv"
+    record_then_sync = f'printf "%s\\n" "$@" > "{argv_log}"; ' + _aws_stub_writing_jars(
+        template, REQUIRED_PLUGIN_NAMES
+    )
+
+    result = _run_plugin_check(plugin_dir, _plugin_env(tmp_path, record_then_sync))
+
+    assert result.returncode == 0, result.stderr
+    argv = argv_log.read_text().splitlines()
+    assert argv[:2] == ["s3", "sync"]
+    assert "--include" in argv
+    assert argv[argv.index("--include") + 1] == "*.jar"
+    assert not any("ohif" in arg for arg in argv), f"the sync filters the viewer out: {argv}"
 
 
 def test_plugin_check_resyncs_a_cache_holding_a_truncated_jar(tmp_path: Path) -> None:
