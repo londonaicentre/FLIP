@@ -25,7 +25,23 @@ permissions:
   contents: read
 
 jobs:
+  # Gate for pull requests into develop: run the suite only when the PR touches this
+  # service (pr_paths_changed.yml; PRs into main always run everything). The list is
+  # the push `paths:` filter above, verbatim — scripts/tests/test_pr_paths_changed.py
+  # fails when the two drift.
+  changes:
+    uses: ./.github/workflows/pr_paths_changed.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      paths: |
+        trust/omop-db/**
+        .github/workflows/test_trust_omop_db.yml
+
   omop-db:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     # Lint + type-check + unit tests for the omop-db populate tooling. No
     # backing services needed — the DB-touching pipeline is manual by design
     # (the licensed core vocabulary cannot be fetched in CI; see

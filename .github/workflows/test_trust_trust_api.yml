@@ -29,7 +29,27 @@ permissions:
   contents: read
 
 jobs:
+  # Gate for pull requests into develop: run the suite only when the PR touches this
+  # service (pr_paths_changed.yml; PRs into main always run everything). The list is
+  # the push `paths:` filter above, verbatim — scripts/tests/test_pr_paths_changed.py
+  # fails when the two drift.
+  changes:
+    uses: ./.github/workflows/pr_paths_changed.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      paths: |
+        trust/trust-api/**
+        trust/deploy/compose.test.yml
+        trust/data-access-api/**
+        trust/observability/**
+        .github/workflows/test_trust_trust_api.yml
+        .github/actions/setup-trust-test-env/**
+
   trust-api:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     environment: flip
     defaults:
@@ -66,6 +86,8 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   trust-api-integration:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     # Brings up the omop-db + data-access-api Compose stack and exercises
     # ``handle_cohort_query`` end-to-end (issue #369, B3). Runs alongside the
     # unit job rather than on its `needs:` so a unit-suite regression doesn't
