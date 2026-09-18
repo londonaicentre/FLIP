@@ -20,7 +20,7 @@ This module provides:
 
 from enum import StrEnum
 
-from pydantic import HttpUrl, PositiveInt, field_validator
+from pydantic import HttpUrl, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -28,15 +28,6 @@ class _Common(BaseSettings):
     """Base settings shared by both development and production environments."""
 
     LOCAL_DEV: bool = True  # Defaults to dev mode
-    MIN_CLIENTS: PositiveInt = 1
-
-    # Compose renders an unset ${MIN_CLIENTS} as "": treat that as unset (FLIP#1230). Scoped to
-    # this field — a model-wide env_ignore_empty would also let an empty required prod setting
-    # (e.g. UPLOADED_FEDERATED_DATA_BUCKET) fall back to its default instead of failing.
-    @field_validator("MIN_CLIENTS", mode="before")
-    @classmethod
-    def _empty_min_clients_is_unset(cls, v: object) -> object:
-        return 1 if v == "" else v
 
 
 class DevSettings(_Common):

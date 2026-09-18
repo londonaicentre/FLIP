@@ -14,9 +14,9 @@
 
 Compose renders an unset ``${VAR}`` as an empty string, not an absent one, so a variable that
 drops out of ``.env.development.example`` keeps "working" for every existing checkout (their
-``.env.development`` still carries it) and breaks only fresh clones — as ``MIN_CLIENTS`` did:
-removed from the example, still passed verbatim to the FL server, parsed as ``""`` inside the
-job process, never reported to the hub.
+``.env.development`` still carries it) and breaks only fresh clones — as ``MIN_CLIENTS`` did
+(since removed outright): dropped from the example, still passed verbatim to the FL server,
+parsed as ``""`` inside the job process, never reported to the hub.
 
 ``scripts/check_env_vars.py`` guards the other direction (example → developer's file). This
 guard closes the loop: compose → example. A variable is exempt when the compose gives it a

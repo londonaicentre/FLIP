@@ -77,7 +77,6 @@ services:
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
       - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
       - LOCAL_DEV=false
-      - MIN_CLIENTS=${MIN_CLIENTS:-1}
       - IMAGES_DIR=/app/data/images
       # FL clients intentionally do not have access to Central Hub API credentials.
       # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.
@@ -138,7 +137,6 @@ services:
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
       - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
       - LOCAL_DEV=false
-      - MIN_CLIENTS=${MIN_CLIENTS:-1}
       - IMAGES_DIR=/app/data/images
       # FL clients intentionally do not have access to Central Hub API credentials.
       # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.

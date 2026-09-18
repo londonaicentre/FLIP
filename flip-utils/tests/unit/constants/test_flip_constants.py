@@ -37,7 +37,6 @@ class TestDevSettings:
         with patch.dict(os.environ, {"DEV_DATAFRAME": "/test/df.csv", "DEV_IMAGES_DIR": "/test/images"}):
             settings = DevSettings()
             assert settings.LOCAL_DEV is True
-            assert settings.MIN_CLIENTS == 1
 
     def test_dev_settings_uses_default_dataframe_path(self):
         """DevSettings should use empty string default for DEV_DATAFRAME if not provided."""
@@ -59,13 +58,11 @@ class TestDevSettings:
         env = {
             "DEV_DATAFRAME": "/custom/dataframe.csv",
             "DEV_IMAGES_DIR": "/custom/images",
-            "MIN_CLIENTS": "3",
         }
         with patch.dict(os.environ, env, clear=True):
             settings = DevSettings()
             assert settings.DEV_DATAFRAME == "/custom/dataframe.csv"
             assert settings.DEV_IMAGES_DIR == "/custom/images"
-            assert settings.MIN_CLIENTS == 3
 
 
 class TestProdSettings:
@@ -152,32 +149,15 @@ class TestCommonSettings:
     def test_common_uses_default_local_dev(self):
         """_Common should default LOCAL_DEV to True if not set (dev mode by default)."""
         # Explicitly test with minimal environment
-        env = {"MIN_CLIENTS": "1"}  # Don't include LOCAL_DEV to test default
-        with patch.dict(os.environ, env, clear=True):
+        with patch.dict(os.environ, {}, clear=True):  # Don't include LOCAL_DEV to test default
             settings = _Common()
             assert settings.LOCAL_DEV is True
 
-    def test_common_min_clients_default(self):
-        """_Common should default MIN_CLIENTS to 1."""
-        with patch.dict(os.environ, {"LOCAL_DEV": "true"}, clear=True):
-            settings = _Common()
-            assert settings.MIN_CLIENTS == 1
-
-    def test_common_min_clients_empty_string_falls_back_to_default(self):
-        """An empty MIN_CLIENTS (what compose renders for an unset variable) means unset, not 0 or an error."""
+    def test_common_ignores_legacy_min_clients_env(self):
+        """A stale MIN_CLIENTS in the environment is ignored: the per-job quorum comes from fl-api (FLIP#1230)."""
         with patch.dict(os.environ, {"LOCAL_DEV": "true", "MIN_CLIENTS": ""}, clear=True):
             settings = _Common()
-            assert settings.MIN_CLIENTS == 1
-
-    def test_common_min_clients_must_be_positive(self):
-        """_Common should reject non-positive MIN_CLIENTS."""
-        with patch.dict(os.environ, {"LOCAL_DEV": "true", "MIN_CLIENTS": "0"}, clear=True):
-            with pytest.raises(ValidationError):
-                _Common()
-
-        with patch.dict(os.environ, {"LOCAL_DEV": "true", "MIN_CLIENTS": "-1"}, clear=True):
-            with pytest.raises(ValidationError):
-                _Common()
+            assert not hasattr(settings, "MIN_CLIENTS")
 
 
 class TestResourceType:
