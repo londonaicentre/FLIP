@@ -517,7 +517,7 @@ jobs:
               if any(m.get("name") == KIT for m in init.get("volumeMounts", [])):
                   die(f"initContainer {init['name']!r} mounts {KIT} — it would write over the staged kit")
 
-          # And the pod holds no FLIP AWS credentials: a trust never does (CLAUDE.md, "FL
+          # And the pod holds no FLIP AWS credentials: a trust never does (AGENTS.md, "FL
           # clients intentionally have no Central Hub credentials"), which is why the chart
           # cannot fetch the kit in the first place. This is the pod that runs
           # researcher-submitted training code.

@@ -3,7 +3,7 @@ description: Add the Apache 2.0 copyright header to new/changed source files tha
 allowed-tools: Bash(git:*), Read, Edit, Grep
 ---
 
-CLAUDE.md requires every source file to carry the Apache 2.0 copyright header, but **nothing
+AGENTS.md requires every source file to carry the Apache 2.0 copyright header, but **nothing
 in CI or pre-commit enforces it**. This command finds source files missing the header and adds it.
 
 The canonical header for FLIP-authored files uses this exact owner string. **Match the
