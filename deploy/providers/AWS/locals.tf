@@ -102,7 +102,7 @@ locals {
   # operator (see `var.ENFORCE_MFA` description). Unset → omitted entirely so
   # flip-api's Pydantic Settings default (`ENFORCE_MFA = True`, see
   # `flip-api/src/flip_api/config.py:91`) anchors the secure value. This
-  # matches the design recorded in CLAUDE.md: "the Settings default (`true`)
+  # matches the design recorded in AGENTS.md: "the Settings default (`true`)
   # is the canonical secure anchor". Set ENFORCE_MFA=false in `.env.stag` to
   # disable MFA for stag-only testing (per TROUBLESHOOTING.md §4.3).
   enforce_mfa_env = var.ENFORCE_MFA == "" ? {} : { ENFORCE_MFA = var.ENFORCE_MFA }
