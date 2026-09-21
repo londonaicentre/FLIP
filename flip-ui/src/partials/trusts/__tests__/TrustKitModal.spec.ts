@@ -29,8 +29,8 @@ const trust = {
     code: "DEMO",
     region: "London",
     created_at: null,
-    trust_api_key: "api-key-abc",
-    trust_internal_service_key: "internal-key-def",
+    trust_api_key: "api-key-abc",  // pragma: allowlist secret
+    trust_internal_service_key: "internal-key-def",  // pragma: allowlist secret
     fl_kit_slot: "Trust_1",
     fl_kit_slot_number: 1
 };
@@ -68,7 +68,7 @@ describe("TrustKitModal — copy all credentials", () => {
         expect(block.exists()).toBe(true);
         const text = block.text();
         expect(text).toContain("TRUST_API_KEY=api-key-abc");
-        expect(text).toContain("TRUST_INTERNAL_SERVICE_KEY=internal-key-def");
+        expect(text).toContain("TRUST_INTERNAL_SERVICE_KEY=internal-key-def");  // pragma: allowlist secret
         expect(text).toContain("FL_KIT_SLOT=Trust_1");
         expect(text).toContain("FL_KIT_SLOT_NUMBER=1");
         expect(text).toContain("EXPECTED_TRUST_ID=trust-uuid-123");
@@ -96,7 +96,7 @@ describe("TrustKitModal — copy all credentials", () => {
         expect(writeText).toHaveBeenCalledTimes(1);
         const copied = writeText.mock.calls[0][0] as string;
         expect(copied).toContain("TRUST_API_KEY=api-key-abc");
-        expect(copied).toContain("TRUST_INTERNAL_SERVICE_KEY=internal-key-def");
+        expect(copied).toContain("TRUST_INTERNAL_SERVICE_KEY=internal-key-def");  // pragma: allowlist secret
         expect(copied).toContain("FL_KIT_SLOT=Trust_1");
         expect(copied).toContain("FL_KIT_SLOT_NUMBER=1");
         expect(copied).toContain("EXPECTED_TRUST_ID=trust-uuid-123");
