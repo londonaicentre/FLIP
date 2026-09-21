@@ -365,7 +365,7 @@ The development overlay (`docker-compose-stack.development.yml`) sets these cons
 
 - **Missing plugins or an S3/AWS error before startup** — confirm `FLIP_ARTIFACTS_BUCKET_NAME`, renew the selected AWS
   SSO session, then run `make -C trust/xnat xnat-plugins-download` from the repository root. The command must find the
-  batch-launch, container-service, and DICOM Query-Retrieve plugin families before startup can continue.
+  batch-launch, container-service, DICOM Query-Retrieve and OHIF viewer plugin families before startup can continue.
 
 - **XNAT serves its login page but configuration reports plugin-route 404s** — inspect
   `configure-xnat-<stack>.log` in the container. Once the plugin cache is repaired, rerun the individual Trust with
