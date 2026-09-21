@@ -170,6 +170,24 @@ def test_output_is_independent_of_storage_order(dataset_module: ModuleType, tmp_
     assert np.array_equal(samples[0]["mask"].numpy(), samples[1]["mask"].numpy())
 
 
+def test_target_spacing_resamples_image_and_mask_together(dataset_module: ModuleType, site_dir: Path) -> None:
+    """target_spacing has to resample before PicaiDataset.__getitem__ strips the image's affine via
+    .as_tensor() — pins that build_loader does it there, and that the mask follows the image onto the
+    resampled grid (ResampleToMatchd runs after the Spacingd step, not before)."""
+    target_spacing = (1.0, 1.0, SPACING[2])
+    native = dataset_module.PicaiDataset(site_dir, modality=MODALITY)[0]
+    resampled = dataset_module.PicaiDataset(site_dir, modality=MODALITY, target_spacing=target_spacing)[0]
+
+    assert resampled["image"].shape != native["image"].shape, "resample must actually change the grid"
+    assert resampled["image"].shape[1:] == resampled["mask"].shape[1:], "mask must follow the image's new grid"
+
+    # fingerprint=True skips .as_tensor(), so the resampled spacing can be read straight off the header.
+    pair = dataset_module.PicaiDataset(
+        site_dir, modality=MODALITY, fingerprint=True, target_spacing=target_spacing
+    )[0]
+    assert pair["image"].header.get_zooms() == pytest.approx((1.0, *target_spacing))
+
+
 def test_fingerprint_pair_shares_one_affine_and_channel_first_zooms(dataset_module: ModuleType, site_dir: Path) -> None:
     """The nnU-Net fingerprint reads spacing from the image header; both NIfTIs must describe one grid."""
     pair = dataset_module.PicaiDataset(site_dir, modality=MODALITY, fingerprint=True)[0]

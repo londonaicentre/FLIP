@@ -9,9 +9,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Copied verbatim from
+# Copied from
 # https://github.com/yoviny/MambaX-Net/blob/main/mambax_net/network/nnunet_arch.py,
-# flattened into this tutorial's directory. That file is itself derived from nnU-Net
+# The code is derived from nnU-Net
 # v2 (DKFZ); its original Apache 2.0 notice is retained below.
 
 #    Copyright 2020 Division of Medical Image Computing, German Cancer Research Center (DKFZ), Heidelberg, Germany
@@ -86,7 +86,7 @@ def set_deep_supervision_enabled(enabled: bool, is_ddp=False, network=None):
     else:
         mod = network
     if isinstance(mod, OptimizedModule):
-        mod = mod._orig_mod
+        mod = getattr(mod, "_orig_mod")
 
     mod.decoder.deep_supervision = enabled
     return network

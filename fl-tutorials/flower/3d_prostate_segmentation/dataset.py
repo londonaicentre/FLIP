@@ -31,7 +31,9 @@ PZ_TZ_KEY = "pz_tz"
 AXCODES = "RAS"
 
 
-def build_loader() -> mt.Compose:
+def build_loader(
+    target_spacing: tuple[float, float, float] | None = None,
+) -> mt.Compose:
     """The transform chain that reads one study's image and two masks onto one grid.
 
     Image and masks are paired by affine, never by array index. On the platform the image an
@@ -49,22 +51,58 @@ def build_loader() -> mt.Compose:
     (nearest, zero-padded — a label must not bleed past its own extent). When a mask already sits
     on that grid the resample is the identity.
 
+    Args:
+        target_spacing: If given, resample the image to this (x, y, z) voxel spacing in mm before
+            the masks are matched to it, so both land on the resampled grid together. Must happen
+            here, not in a later ``PicaiDataset(transform=...)`` step: ``PicaiDataset.__getitem__``
+            converts the image to a plain tensor before calling ``transform``, which drops the
+            affine a spacing-aware resample needs. Defaults to None (no resample, the image's own
+            native spacing is kept) — the prior behaviour.
+
     Returns:
         mt.Compose: ``{IMAGE_KEY, WHOLE_GLAND_KEY, PZ_TZ_KEY}`` paths in; channel-first ``AXCODES``
         MetaTensors on the image grid out.
     """
     keys = [IMAGE_KEY, WHOLE_GLAND_KEY, PZ_TZ_KEY]
-    return mt.Compose(
-        [
-            mt.LoadImaged(keys=keys, ensure_channel_first=True, image_only=True),
-            # labels=None is MONAI's announced default (axis labels from the tensor's own space); passing
-            # it now opts in rather than tripping the FutureWarning the test suite escalates.
-            mt.Orientationd(keys=keys, axcodes=AXCODES, labels=None),
-            mt.ResampleToMatchd(
-                keys=[WHOLE_GLAND_KEY, PZ_TZ_KEY], key_dst=IMAGE_KEY, mode="nearest", padding_mode="zeros"
-            ),
-        ]
+    steps = [
+        mt.LoadImaged(keys=keys, ensure_channel_first=True, image_only=True),
+        mt.Orientationd(keys=keys, axcodes=AXCODES, labels=None),
+    ]
+    if target_spacing is not None:
+        steps.append(
+            mt.Spacingd(keys=[IMAGE_KEY], pixdim=target_spacing, mode="nearest")
+        )
+    steps.append(
+        mt.ResampleToMatchd(
+            keys=[WHOLE_GLAND_KEY, PZ_TZ_KEY],
+            key_dst=IMAGE_KEY,
+            mode="nearest",
+            padding_mode="zeros",
+        )
     )
+    return mt.Compose(steps)
+
+
+def load_case(
+    paths: dict[str, Path], loader: mt.Compose
+) -> tuple[MetaTensor, torch.Tensor]:
+    """Load+orient+resample one case's image and two masks, and combine the masks into one tensor.
+
+    Split out of ``PicaiDataset.__getitem__`` so a FLIP-pulled (per-accession, not per-site-folder)
+    caller can share the same load/orient/resample/combine logic instead of duplicating it.
+
+    Args:
+        paths: `{IMAGE_KEY, WHOLE_GLAND_KEY, PZ_TZ_KEY}` file paths for one case.
+        loader: A Compose from `build_loader` (fixes the `target_spacing`, if any).
+
+    Returns:
+        (image, mask): `image` is the loaded MetaTensor (still carries its affine — fingerprint mode
+        needs it); `mask` is the combined `(3, H, W, D)` tensor from `PicaiDataset.combine_masks`.
+    """
+    loaded = loader(paths)
+    image = loaded[IMAGE_KEY]
+    mask = PicaiDataset.combine_masks(loaded[WHOLE_GLAND_KEY], loaded[PZ_TZ_KEY])
+    return image, mask
 
 
 class PicaiDataset(monai.data.Dataset):
@@ -82,15 +120,27 @@ class PicaiDataset(monai.data.Dataset):
         modality: str = "t2w",
         transform: Callable | None = None,
         fingerprint: bool = False,
+        target_spacing: tuple[float, float, float] | None = None,
+        patch_iter: Callable | None = None,
     ) -> None:
-        """Args:
-        site_dir: Path to a `data/sites/<CENTER>` folder (holds `manifest.csv`,
-            `nifti/`, `labels/`, `zonal_labels/`).
-        modality: Which PI-CAI scan modality to load as the image (`t2w`, `adc`, or `hbv`).
-        transform: Optional MONAI transform applied to the `{"image", "mask"}` dict.
-        fingerprint: Yield NIfTI images instead of tensors, for
-            `calculate_dataset_fingerprint_segmentation.py`. `transform` is
-            ignored in this mode — the fingerprint has to describe the raw data.
+        """Store the site's paths and loading options; nothing is read from disk until __getitem__.
+
+        Args:
+            site_dir: Path to a `data/sites/<CENTER>` folder (holds `manifest.csv`,
+                `nifti/`, `labels/`, `zonal_labels/`).
+            modality: Which PI-CAI scan modality to load as the image (`t2w`, `adc`, or `hbv`).
+            transform: Optional MONAI transform applied to the `{"image", "mask"}` dict. This runs on
+                the WHOLE volume, before `patch_iter` — the order MambaX-Net's PicSegDataset used, so
+                augmentation sees the full field of view rather than one patch of it.
+            fingerprint: Yield NIfTI images instead of tensors, for
+                `calculate_dataset_fingerprint_segmentation.py`. `transform` is
+                ignored in this mode — the fingerprint has to describe the raw data.
+            target_spacing: If given, resample image and masks to this (x, y, z) voxel spacing (mm)
+                while loading — see `build_loader`. Defaults to None (native spacing, prior behaviour).
+            patch_iter: Optional `monai.data.PatchIterd`. When given, `__getitem__` returns a LIST of
+                patch dicts tiling the volume instead of a single dict, which is how MambaX-Net fed
+                its DataLoader. `monai.data.list_data_collate` flattens those lists into one batch,
+                so a `batch_size` of 1 volume yields one batch per patch grid.
         """
         self.site_dir = Path(site_dir)
         self.nifti_dir = self.site_dir / "nifti"
@@ -99,7 +149,8 @@ class PicaiDataset(monai.data.Dataset):
         self.modality = modality
         self.transform = transform
         self.fingerprint = fingerprint
-        self.loader = build_loader()
+        self.patch_iter = patch_iter
+        self.loader = build_loader(target_spacing)
         self.df = pd.read_csv(self.site_dir / "manifest.csv", dtype=str)
 
     def __len__(self) -> int:
@@ -128,7 +179,9 @@ class PicaiDataset(monai.data.Dataset):
         return mask
 
     @staticmethod
-    def as_fingerprint_pair(image: MetaTensor, mask: torch.Tensor) -> dict[str, nib.Nifti1Image]:
+    def as_fingerprint_pair(
+        image: MetaTensor, mask: torch.Tensor
+    ) -> dict[str, nib.Nifti1Image]:
         """Wrap a loaded scan and its combined mask as the NIfTI pair the fingerprint wants.
 
         Both arrays carry a leading channel axis, so the header gets a matching
@@ -148,7 +201,10 @@ class PicaiDataset(monai.data.Dataset):
         affine = np.asarray(image.affine, dtype=np.float64)
         zooms = (1.0, *(float(z) for z in nib.affines.voxel_sizes(affine)))
         pair = {}
-        for name, array in (("image", image.cpu().numpy()), ("mask", mask.cpu().numpy())):
+        for name, array in (
+            ("image", image.cpu().numpy()),
+            ("mask", mask.cpu().numpy()),
+        ):
             nii = nib.Nifti1Image(array, affine)
             nii.header.set_zooms(zooms)
             pair[name] = nii
@@ -159,15 +215,14 @@ class PicaiDataset(monai.data.Dataset):
         patient_id, study_id = row["patient_id"], row["study_id"]
         accession_id = f"{patient_id}_{study_id}"
 
-        loaded = self.loader(
+        image, mask = load_case(
             {
                 IMAGE_KEY: self.nifti_dir / f"{accession_id}_{self.modality}.nii.gz",
                 WHOLE_GLAND_KEY: self.wp_mask_dir / f"{accession_id}.nii.gz",
                 PZ_TZ_KEY: self.pz_tz_mask_dir / f"{accession_id}.nii.gz",
-            }
+            },
+            self.loader,
         )
-        image = loaded[IMAGE_KEY]
-        mask = self.combine_masks(loaded[WHOLE_GLAND_KEY], loaded[PZ_TZ_KEY])
 
         if self.fingerprint:
             return self.as_fingerprint_pair(image, mask)
@@ -180,5 +235,23 @@ class PicaiDataset(monai.data.Dataset):
 
         if self.transform is not None:
             data = self.transform(data)
+
+        if self.patch_iter is not None:
+            # The patch grid is lossy on its own: inference_func has to put the patches back
+            # together before scoring, or every metric is per-patch instead of per-volume.
+            img_shape, mask_shape = tuple(data[IMAGE_KEY].shape), tuple(
+                data["mask"].shape
+            )
+            return [
+                {
+                    IMAGE_KEY: patch[IMAGE_KEY],
+                    "mask": patch["mask"],
+                    "accession_id": accession_id,
+                    "coord": coord,
+                    "img_shape": img_shape,
+                    "mask_shape": mask_shape,
+                }
+                for patch, coord in self.patch_iter(data)
+            ]
 
         return data

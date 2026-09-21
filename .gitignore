@@ -456,6 +456,9 @@ flip-utils/dist/
 # version control (covered by .claude/* above, listed explicitly for clarity).
 .claude/worktrees/
 
+# Serena MCP: local project index/cache, not shared team config.
+.serena/
+
 # fl-tutorials generated / uncommitted artifacts, scoped (not a bare `data/`, which would
 # over-match other data/ dirs in the monorepo):
 # - the shared tutorial-dataset root both backends' harnesses read (fl-tutorials/datasets/
