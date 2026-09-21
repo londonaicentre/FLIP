@@ -399,7 +399,7 @@ idempotent by that tag: a re-run replaces only what it wrote and leaves the imag
 Run it once per Trust, after ``update-omop-data`` and with the stack up. A Trust on Kubernetes
 publishes no host port: port-forward ``svc/omop-db`` and pass the connection as ``make`` variables
 instead, then restart its data-access-api — the recipe is in the chart README
-(``deploy/providers/kubernetes/README.md``, "Local clusters (kind)").
+(``trust/deploy/helm/README.md``, "Local clusters (kind)").
 
 Seeding the vocabulary
 ======================

@@ -193,7 +193,7 @@ with the flag off and skips the image-pull wait (the smoke reads `has_imaging` b
 rides in `TARGET_ARGS`, a third recipe slot placed between `ENRICHMENT_ARGS` and `EXTRA_ARGS`, for the same reason
 enrichment does not use `EXTRA_ARGS`. Prereq on the dev stack: `make -C trust load-synthea-ehr` on every trust
 (TRUST_INDEX=1 OMOP_DB_PORT=5434, TRUST_INDEX=2 OMOP_DB_PORT=5436; a kind/Helm trust has no host port — port-forward
-form in `deploy/providers/kubernetes/README.md`, "Local clusters (kind)"), then restart both data-access-apis if the
+form in `trust/deploy/helm/README.md`, "Local clusters (kind)"), then restart both data-access-apis if the
 EHR query was ever submitted before the load (results are cached by query text). Imaging projects
 get fast feedback instead: submitting a cohort whose explicit SELECT list
 has no `accession_id` column is a 400 at submission (hub pre-check, not a security control — `SELECT *` passes

@@ -74,7 +74,7 @@ make -C trust load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
 
 (See [`trust/omop-db/README.md`](../../../../trust/omop-db/README.md) → "The Synthea EHR cohort".
 A trust on Kubernetes publishes no host port — use the port-forward form in
-[`deploy/providers/kubernetes/README.md`](../../../../deploy/providers/kubernetes/README.md),
+[`trust/deploy/helm/README.md`](../../../../trust/deploy/helm/README.md),
 "Local clusters (kind)", then restart its data-access-api.)
 On a **real** trust this step is unnecessary — real condition data is already there and `query.sql`
 runs against it unchanged.
