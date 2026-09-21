@@ -28,12 +28,17 @@ on:
       - ".github/workflows/test_trust_kit_scripts.yml"
       # Some guards here assert on files outside scripts/ — test_container_identity.py
       # on the compose files, test_workflow_trust_guards.py on the image-build
-      # workflows — so those paths trigger the push run too, or a guard silently
-      # never runs on the very edit it exists to catch (FLIP#1171 was reintroduced
-      # once that way). pull_request below is deliberately unfiltered, like the
-      # other test_* workflows: every develop-targeted PR runs this ~1s job, which
-      # removes the trap entirely where it matters and needs no path list to keep
-      # in step with the guards.
+      # workflows, test_pr_paths_changed.py on the gated service workflows and the
+      # path gate itself — so those paths trigger the push run too, or a guard
+      # silently never runs on the very edit it exists to catch (FLIP#1171 was
+      # reintroduced once that way). pull_request below is deliberately unfiltered:
+      # every develop-targeted PR runs this ~1s job, which removes the trap entirely
+      # where it matters and needs no path list to keep in step with the guards. That
+      # stays true now the service suites are themselves path-gated on PRs into
+      # develop (FLIP#1223) — this workflow is not gated, and must not be, because it
+      # is where those gates are checked.
+      - ".github/workflows/test_*.yml"
+      - ".github/workflows/pr_paths_changed.yml"
       - "deploy/compose*.yml"
       - "trust/deploy/compose*.yml"
       - "fl-services/nvflare/compose.dev.yml"
