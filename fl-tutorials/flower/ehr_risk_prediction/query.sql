@@ -26,7 +26,7 @@
 -- applies the same has-a-condition filter, so the local-sim CSV and the deployed query agree.
 --
 -- Ages are computed against 2023, the Synthea dataset's export year, so results are
--- deterministic (see utils/build_synthea_dataframe.py, which mirrors this feature logic).
+-- deterministic (see datasets/synthea/build_synthea_dataframe.py, which mirrors this feature logic).
 WITH first_dx AS (
     SELECT
         co.person_id,
