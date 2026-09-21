@@ -52,6 +52,10 @@ REPO_ROOT = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"]
 CONFIGURE_XNAT = REPO_ROOT / "trust" / "xnat" / "xnat" / "config" / "configure-xnat.sh"
 OMOP_DB_DOCKERFILE = REPO_ROOT / "trust" / "omop-db" / "Dockerfile"
 
+# The hook opens its SQL with the dash form so the shell strips the body's indentation.
+HEREDOC_OPEN = "<<-'EOSQL'"
+HEREDOC_END = "EOSQL"
+
 # Where the omop-db image ships the one definition of the data_analyst_reader grants
 # (trust/omop-db/files/create_readonly_users.sql). The Compose trust runs it from
 # /docker-entrypoint-initdb.d at first initdb; the chart's postStart hook runs this
@@ -289,3 +293,38 @@ def test_the_omop_db_hook_gates_on_tcp_and_fails_on_a_sql_error() -> None:
         "the password is shell-interpolated into the SQL again — pass it as a psql variable (\\set) so it stays "
         "off argv and cannot break the statement's quoting"
     )
+
+
+def test_the_omop_db_hook_heredoc_is_indented_with_tabs() -> None:
+    """``<<-`` strips leading TABS only, so spaces here hide the terminator until a live pod start.
+
+    The SQL sits inside a YAML block scalar, so the body cannot go to column 0 —
+    that would end the scalar. It is indented with a literal tab instead, and the
+    heredoc opened ``<<-'EOSQL'`` so the shell strips exactly that. Convert those
+    tabs to spaces and the manifest stays valid YAML, every other assertion in
+    this file stays green, and the shell simply never matches the terminator: it
+    reads the rest of the script looking for one. Nothing in CI executes the hook
+    — the kind E2E installs with ``omopDb.enabled=false`` — so the first sign
+    would be a trust's first pod start.
+    """
+    lines = _omop_db_post_start_script().splitlines()
+
+    opens = [i for i, line in enumerate(lines) if HEREDOC_OPEN in line]
+    assert len(opens) == 1, (
+        f"expected exactly one {HEREDOC_OPEN!r} in the omop-db postStart hook, found {len(opens)} — "
+        "the plain `<<'EOSQL'` form strips nothing, so the tab-indented body would reach psql with "
+        "its indentation and the terminator would never match"
+    )
+    start = opens[0]
+
+    ends = [i for i in range(start + 1, len(lines)) if lines[i].strip() == HEREDOC_END]
+    assert ends, f"the omop-db heredoc opened at line {start + 1} has no {HEREDOC_END} terminator"
+    end = ends[0]
+
+    for offset, line in enumerate(lines[start + 1 : end + 1], start=start + 2):
+        assert line.lstrip(" ").startswith("\t"), (
+            f"omop-db postStart heredoc line {offset} is not tab-indented: {line!r}. "
+            f"{HEREDOC_OPEN} strips leading tabs and nothing else, so a space-indented line — the "
+            "terminator above all — leaves the heredoc unterminated at runtime while this chart "
+            "still renders as valid YAML"
+        )
