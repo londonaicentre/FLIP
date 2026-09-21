@@ -31,6 +31,7 @@ on:
       - "trust/orthanc/Makefile"
       - "trust/omop-db/Makefile"
       - "trust/publish_trust_data.py"
+      - "trust/seed_trust.sh"
       - "trust/tests/**"
       - "trust/Makefile"
       - ".github/workflows/test_trust_data_tools.yml"
@@ -68,6 +69,7 @@ jobs:
         trust/orthanc/Makefile
         trust/omop-db/Makefile
         trust/publish_trust_data.py
+        trust/seed_trust.sh
         trust/tests/**
         trust/Makefile
         .github/workflows/test_trust_data_tools.yml
@@ -98,5 +100,5 @@ jobs:
 
       # trust/Makefile includes deploy/fl_backend.mk at parse time, which refuses an unset
       # FL_BACKEND; a dev checkout gets it from .env.development, CI has no such file.
-      - name: Dataset publisher + seed-marker contract — unit tests + lint
+      - name: Dataset publisher + seed procedure + seed-marker contract — unit tests + lint
         run: make -C trust test-trust-data-tools FL_BACKEND=nvflare

@@ -20,6 +20,9 @@ on:
       - "trust/deploy/helm/**"
       # Read by the chart's pytest suite, so a change there can break it too.
       - "trust/xnat/xnat/config/configure-xnat.sh"
+      # The procedure the trust-seed hook fetches and runs; tests/test_trust_seed_job.py
+      # asserts the Job's env against it.
+      - "trust/seed_trust.sh"
       - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
   push:
@@ -27,6 +30,7 @@ on:
     paths:
       - "trust/deploy/helm/**"
       - "trust/xnat/xnat/config/configure-xnat.sh"
+      - "trust/seed_trust.sh"
       - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
   workflow_dispatch:

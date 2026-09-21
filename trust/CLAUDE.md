@@ -127,7 +127,7 @@ make seed KIT=GSTT PROJECTS="spleen_project cxr_project"  # Seed a RUNNING trust
 make seed-trusts PROJECTS="…"  # Both dev trusts; seed-omop / seed-orthanc for one half; CLEAR=1, DRY_RUN=1 on the PACS half
 make seed KIT=GSTT SOURCE_TRUST=1  # Override the OMOP partition; defaults to the FL kit slot, which is a convention, not an invariant (see README "Which partition a trust is seeded with")
 make publish-trust-data VERSION=<tag> [OMOP_CSV=… DICOM=… CARD=…]  # ONE commit on aicentreflip/trust-data + ONE tag; then bump trust/.data_version (the single pin, OMOP + Orthanc)
-make test-trust-data-tools  # Publisher pytest + ruff
+make test-trust-data-tools  # Three things: publisher pytest + ruff, shellcheck over seed_trust.sh, and the seed-marker contract harness (tests/test_seed_marker_contract.sh)
 ```
 
 ## Environment
