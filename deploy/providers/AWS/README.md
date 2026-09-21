@@ -1999,8 +1999,8 @@ deploy/providers/AWS/
 │       ├── flip-access-request.txt          # Plain-text fallback
 │       ├── flip-xnat-added-to-project.html  # Added-to-XNAT-project notification
 │       ├── flip-xnat-added-to-project.txt   # Plain-text fallback
-│       ├── flip-xnat-credentials.html       # XNAT credential notification
-│       └── flip-xnat-credentials.txt        # Plain-text fallback
+│       ├── flip-xnat-invite.html            # XNAT set-your-own-password invite link (FLIP-PT-079)
+│       └── flip-xnat-invite.txt             # Plain-text fallback
 ├── services.tf                              # Instantiates module "cognito" (which loads cognito/ templates via file())
 ├── main.tf                                  # Instantiates module "ses" (which loads ses/ templates via file())
 ├── modules/
