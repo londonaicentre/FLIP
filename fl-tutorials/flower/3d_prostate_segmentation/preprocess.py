@@ -28,14 +28,8 @@ def build_case_transform(crop_size: tuple[int, int], image_mean: float, image_st
         Compose: Applies to a `{"image": tensor, "mask": tensor}` dict (channel-first, any spatial
         shape) and returns that same dict shape.
     """
-    return Compose(
-        [
-            SpatialPadd(keys=KEYS, spatial_size=[*crop_size, -1]),
-            CenterSpatialCropd(keys=KEYS, roi_size=[*crop_size, -1]),
-            NormalizeIntensityd(keys="image", subtrahend=image_mean, divisor=image_std),
-        ]
-    )
-
-
-if __name__ == "__main__":
-    demo()
+    return Compose([
+        SpatialPadd(keys=KEYS, spatial_size=[*crop_size, -1]),
+        CenterSpatialCropd(keys=KEYS, roi_size=[*crop_size, -1]),
+        NormalizeIntensityd(keys="image", subtrahend=image_mean, divisor=image_std),
+    ])
