@@ -52,11 +52,10 @@ jobs:
         --build-arg XNAT_ROOT=/data/xnat
         --build-arg XNAT_HOME=/data/xnat/home
     steps:
+      # Default checkout on purpose: no workflow_run trigger here (FLIP#882,
+      # scripts/tests/test_workflow_trust_guards.py).
       - name: Checkout code
         uses: actions/checkout@v5
-        with:
-          repository: ${{ github.event.workflow_run.head_repository.full_name }}
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       # Single source for the XNAT version: trust/xnat/.env — the same pin the
       # Makefile build reads — so a version bump there flows through the WAR and

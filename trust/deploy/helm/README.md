@@ -706,6 +706,75 @@ upgrade`) — with the pod now healthy, that update rolls on its own.
 Alternatively, keep the old install on the previous chart version and plan a
 full migration (export the XNAT database, re-initialise the PVC, re-import).
 
+### omop-db roles: the same grants as Compose
+
+data-access-api connects to omop-db as `data_analyst_reader`
+(`data-access-postgres-password`). On **both** deployment paths that role is
+provisioned by one file, `trust/omop-db/files/create_readonly_users.sql`, which
+the `omop-db` image ships at `/flip/omop/create_readonly_users.sql`: membership
+of `omop_readonly_base` — `CONNECT`, `USAGE` on the `omop` schema, `SELECT` on
+its tables and sequences (present and future), `INSERT`/`UPDATE`/`DELETE`/
+`TRUNCATE`/`CREATE` explicitly revoked — plus a five-connection limit and a
+300-second `statement_timeout`. Nothing wider: everything the trust reads lives
+in `omop`, and the schema pin inside data-access-api's `validate_query` is a
+second layer over that grant, not the only one.
+
+The two paths differ only in *when* the file runs. Compose runs it once, from
+`/docker-entrypoint-initdb.d` at first initdb. The chart runs it from a
+`postStart` hook on the omop-db container on **every** pod start, because the
+PVC is normally restored by the `seed-data` initContainer from a pgdata
+snapshot, which already carries `PG_VERSION` — so the entrypoint skips
+`initdb.d` and the roles are whatever the snapshot held. The file is
+idempotent and converges an existing role on the same membership and limits.
+The hook then adds only what the file cannot know: it re-applies the password
+from the Secret unconditionally (a snapshot carries the hash it was initialised
+with, and a rotated secret would otherwise never reach the live role), and sets
+the database `search_path` so unqualified table references resolve to `omop`.
+Rotation is therefore the same as for the `xnat` role above — update the secret,
+restart `omop-db`, then restart `data-access-api`.
+
+**Upgrading over a PVC provisioned by a chart older than FLIP#904:** those
+releases carried an inline copy of the role instead, granting
+`pg_read_all_data` — `SELECT` on every table in every schema — with no base-role
+membership, connection limit or timeout. The shared file `REVOKE`s that
+membership and grants the `omop`-scoped one in the same run, so the first pod
+start on the new chart narrows the live role; nothing has to be done by hand.
+The hook reports through the Postgres log (postStart stdout is surfaced nowhere
+on success), and the revoke, when it happens, appears as a `NOTICE` just above:
+
+```bash
+kubectl logs <release>-flip-trust-omop-db-0 | grep -E 'postStart|pg_read_all_data'
+# NOTICE:  Revoked pg_read_all_data from data_analyst_reader        (first start after the upgrade only)
+# WARNING:  omop-db postStart: data_analyst_reader provisioned from /flip/omop/create_readonly_users.sql, password synced
+```
+
+To confirm the scope directly:
+
+```bash
+kubectl exec <release>-flip-trust-omop-db-0 -- psql -U postgres -d trustomopdb -c \
+  "SELECT r.rolname, r.rolconnlimit, array_agg(g.rolname) AS member_of
+   FROM pg_roles r LEFT JOIN pg_auth_members m ON m.member = r.oid LEFT JOIN pg_roles g ON g.oid = m.roleid
+   WHERE r.rolname = 'data_analyst_reader' GROUP BY 1, 2;"
+#      rolname         | rolconnlimit |      member_of
+# data_analyst_reader  |            5 | {omop_readonly_base}
+```
+
+The grants themselves come from the *image's* copy of the file, so an
+`omopDb.image.tag` built before FLIP#904 runs the hook cleanly and leaves the
+role as wide as it was. The hook checks for that and says so in the same log
+line — `data_analyst_reader STILL holds pg_read_all_data ... point
+omopDb.image.tag at an omop-db image built from a newer trust/omop-db` — as a
+warning rather than a failure, since the schema pin in data-access-api's
+`validate_query` still holds and failing the hook would take the trust down.
+`:stag`/`:prod` are rebuilt on merge and pulled with `pullPolicy: Always`, so a
+pod restart after the publish is enough.
+
+If the hook fails — `FailedPostStartHook`, the container killed and restarted —
+the same rule as for xnat-db applies: the reason is in the container log
+(`kubectl logs ... --previous`), and `/flip/omop/create_readonly_users.sql: No
+such file` means the image predates FLIP#834, which first shipped the file
+there; the omop-db image CI asserts every published image carries it.
+
 ## Architecture
 
 ### Service Dependencies

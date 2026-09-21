@@ -163,3 +163,5 @@ def test_get_net_status_unexpected_error(fake_request, mock_db, mock_get_net_by_
     with pytest.raises(HTTPException) as exc:
         get_net_status("net-name", fake_request, mock_db)
     assert exc.value.status_code == 500
+    assert exc.value.detail == "Internal server error"
+    assert "boom" not in exc.value.detail

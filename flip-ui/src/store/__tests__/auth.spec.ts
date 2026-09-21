@@ -24,9 +24,9 @@ import { confirmResetPassword,
     verifyTOTPSetup } from "aws-amplify/auth";
 import { createPinia, setActivePinia } from "pinia";
 
-import { routeChange } from "@/router";
 import { getMfaStatus, getUserPermissions } from "@/services/user-service";
 import { useAuthStore } from "@/store/auth";
+import { leaveToLogin, stashPostSignOutNotice } from "@/utils/session-teardown";
 import { Snackbar } from "@/utils/snackbar";
 
 // Amplify auth functions are all called via named imports; mock every
@@ -51,12 +51,21 @@ vi.mock("@/services/user-service", () => ({
     getUserPermissions: vi.fn()
 }));
 
-// The store imports @/router only to call routeChange.gotoLogin from
-// signOut — stub the module so importing it does not instantiate a real
+// Stub the router so nothing imported transitively instantiates a real
 // router with generated pages.
 vi.mock("@/router", () => ({
     default: { push: vi.fn() },
     routeChange: { gotoLogin: vi.fn() }
+}));
+
+// signOut ends the session by discarding the document (see
+// utils/session-teardown.ts). jsdom cannot navigate, so the helper is
+// stubbed and the tests assert that it — not a router push — is what
+// signOut calls, and that notices are queued for the reload rather than
+// shown into a page that is about to be unloaded.
+vi.mock("@/utils/session-teardown", () => ({
+    leaveToLogin: vi.fn(),
+    stashPostSignOutNotice: vi.fn()
 }));
 
 vi.mock("@/utils/snackbar", () => ({
@@ -86,7 +95,8 @@ describe("authStore", () => {
         vi.mocked(confirmResetPassword).mockReset();
         vi.mocked(getMfaStatus).mockReset();
         vi.mocked(getUserPermissions).mockReset();
-        vi.mocked(routeChange.gotoLogin).mockReset();
+        vi.mocked(leaveToLogin).mockReset();
+        vi.mocked(stashPostSignOutNotice).mockReset();
         vi.mocked(fetchAuthSession).mockReset();
         vi.mocked(Snackbar.error).mockReset();
         vi.mocked(Snackbar.show).mockReset();
@@ -1062,7 +1072,7 @@ describe("authStore", () => {
     });
 
     describe("signOut", () => {
-        it("calls Amplify global sign-out, resets store, and routes to login", async () => {
+        it("calls Amplify global sign-out, resets store, and tears the page down", async () => {
             vi.mocked(signOut).mockResolvedValue(undefined as never);
             store.user = {
                 username: "u",
@@ -1080,7 +1090,13 @@ describe("authStore", () => {
             expect(signOut).toHaveBeenCalledWith({ global: true });
             expect(store.user).toBeNull();
             expect(store.signInStep).toBeNull();
-            expect(routeChange.gotoLogin).toHaveBeenCalledTimes(1);
+            // A hard navigation, never a router push: a push would leave swrv's
+            // module-level cache and every other store in memory for the next
+            // account in this tab (FLIP#995).
+            expect(leaveToLogin).toHaveBeenCalledTimes(1);
+            expect(stashPostSignOutNotice).not.toHaveBeenCalled();
+            expect(Snackbar.show).not.toHaveBeenCalled();
+            expect(Snackbar.error).not.toHaveBeenCalled();
         });
 
         it("warns the user when GlobalSignOut fails on a real error", async () => {
@@ -1106,8 +1122,15 @@ describe("authStore", () => {
                 expect.any(Error)
             );
             expect(store.user).toBeNull();
-            expect(routeChange.gotoLogin).toHaveBeenCalledTimes(1);
-            expect(Snackbar.error).toHaveBeenCalledWith(expect.objectContaining({ title: "Sign-out incomplete" }));
+            expect(leaveToLogin).toHaveBeenCalledTimes(1);
+            // Queued for the login page, not shown into the page being discarded.
+            expect(stashPostSignOutNotice).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    type: "error",
+                    title: "Sign-out incomplete"
+                })
+            );
+            expect(Snackbar.error).not.toHaveBeenCalled();
             consoleSpy.mockRestore();
         });
 
@@ -1133,7 +1156,8 @@ describe("authStore", () => {
             await store.signOut({ viaInterceptor: true });
 
             expect(store.user).toBeNull();
-            expect(routeChange.gotoLogin).toHaveBeenCalledTimes(1);
+            expect(leaveToLogin).toHaveBeenCalledTimes(1);
+            expect(stashPostSignOutNotice).not.toHaveBeenCalled();
             expect(Snackbar.error).not.toHaveBeenCalled();
             expect(Snackbar.show).not.toHaveBeenCalled();
             consoleSpy.mockRestore();
@@ -1161,13 +1185,18 @@ describe("authStore", () => {
             await store.signOut();
 
             expect(store.user).toBeNull();
-            expect(routeChange.gotoLogin).toHaveBeenCalledTimes(1);
+            expect(leaveToLogin).toHaveBeenCalledTimes(1);
             // Not an "incomplete" error — the session was already gone — but
-            // the user should know that's what happened.
-            expect(Snackbar.error).not.toHaveBeenCalled();
-            expect(Snackbar.show).toHaveBeenCalledWith(
-                expect.objectContaining({ type: "info" })
+            // the user should know that's what happened, so an info notice is
+            // queued for the login page.
+            expect(stashPostSignOutNotice).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    type: "info",
+                    title: "Session already ended"
+                })
             );
+            expect(Snackbar.error).not.toHaveBeenCalled();
+            expect(Snackbar.show).not.toHaveBeenCalled();
             consoleSpy.mockRestore();
         });
     });
