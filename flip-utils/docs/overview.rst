@@ -77,11 +77,16 @@ The ``flip`` package is organized into logical modules:
    - ``recipes/`` — High-level NVFLARE job recipes
    - ``runtime.py`` — Runtime helpers for NVFLARE apps
    - ``metrics.py`` — Metrics collection and reporting
+   - ``site_policy.py`` — Renders the trust's site privacy policy at fl-client start
+     (``python -m flip.nvflare.site_policy``)
 
 ``flip.flower``
    Flower-specific helpers:
 
-   - ``strategy.py`` — Flower ``Strategy`` implementations (e.g. ``FedAvgWithClientMetrics``)
+   - ``strategy.py`` — ``FlipFedAvg`` (FedAvg with FLIP hub telemetry and optional best-model
+     selection) and ``min_clients_from_run_config``
+   - ``privacy.py`` — ``flip_local_dp_mod``, the client-side local differential-privacy mod
+   - ``selection.py`` — ``BestModelSelector``, best-model tracking across rounds
    - ``metrics.py`` — Server-side metrics collection and reporting for Flower runs
    - ``progress.py`` — Progress/status reporting helpers for Flower runs
 
@@ -205,8 +210,11 @@ File                  Description
 ====================  ================================================================
 ``trainer.py``        Training logic — a plain ``nvflare.client`` script
 ``validator.py``      Extra validation module where the job type requires one
+``evaluator.py``      Evaluation logic — required by the ``evaluation`` job type
 ``models.py``         Model definitions — must export ``get_model()`` function
-``config.json``       Hyperparameters — must include ``LOCAL_ROUNDS`` and ``LEARNING_RATE``
+``config.json``       Job configuration — only ``job_type`` is required; platform keys
+                      such as ``LOCAL_ROUNDS`` are defaulted when absent, and app
+                      settings such as ``LEARNING_RATE`` are passed through untouched
 ``transforms.py``     Data transforms *(optional)*
 ====================  ================================================================
 

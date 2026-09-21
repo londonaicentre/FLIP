@@ -17,7 +17,7 @@ import pytest
 from fastapi import HTTPException
 
 from flip_api.domain.interfaces.fl import IJobResponse
-from flip_api.fl_services.run_jobs import _recover_stale_busy_schedulers, run_jobs_core
+from flip_api.fl_services.run_jobs import _recover_stale_busy_schedulers, run_jobs_core, run_jobs_scheduled_task
 
 
 @pytest.fixture
@@ -109,7 +109,21 @@ def test_run_jobs_failure(mock_db, mock_check_for_available_net, mock_check_for_
         with pytest.raises(HTTPException) as exc_info:
             run_jobs_core(mock_db)
         assert exc_info.value.status_code == 500
-        assert "start error" in exc_info.value.detail
+        assert exc_info.value.detail == "Internal server error"
+        assert "start error" not in exc_info.value.detail
+
+
+def test_run_jobs_scheduled_task_failure_returns_generic_detail():
+    with (
+        patch("flip_api.fl_services.run_jobs.get_engine"),
+        patch("flip_api.fl_services.run_jobs.Session"),
+        patch("flip_api.fl_services.run_jobs.run_jobs_core", side_effect=Exception("connection to db-host refused")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            run_jobs_scheduled_task()
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "Internal server error"
+    assert "db-host" not in exc_info.value.detail
 
 
 # ── deployment-mode gate tests ──────────────────────────────────────────────

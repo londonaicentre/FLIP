@@ -761,7 +761,7 @@ print(r.status_code, r.text.strip()[:40])
    ssh flip-trust 'docker stack rm xnat1'
    sleep 15
    ssh flip-trust 'sudo bash -c "find /opt/flip/xnat/xnat-db-data -mindepth 1 -delete"'
-   make -C trust/xnat up-xnat-1 PROD=stag
+   make -C trust/xnat up-xnat KIT=<CODE> PROD=stag
    ```
 3. Verify:
    ```bash

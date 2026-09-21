@@ -10,27 +10,20 @@
 # limitations under the License.
 #
 
-.PHONY: build build-fl dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
-		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
+.PHONY: build build-fl clean up down up-no-trust up-trusts central-hub \
+		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
 		check-aws-access generate-internal-service-key generate-xnat-credentials \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock checkov-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		demo-video demo-users seed-demo-projects
 
-ifeq ($(PROD),true)
-MAIN_ENV_FILE=.env.production
-__DCKR_SUFFIX=production
-ENV=production
-else ifeq ($(PROD),stag)
-MAIN_ENV_FILE=.env.stag
-__DCKR_SUFFIX=production
-ENV=stag
-else
-MAIN_ENV_FILE=.env.development
-__DCKR_SUFFIX=development
-ENV=development
-endif
+# What PROD means — ENV, __DCKR_SUFFIX and the env-file name — is derived once in
+# deploy/env_mode.mk, shared with every other Makefile that reads PROD. The kit-file
+# targets here (new-trust, sync-trust-kit[s]) name trust/.env.<CODE>.$(ENV), the same
+# token the AWS Makefile's KIT_ENV_SUFFIX and register-trusts.sh use.
+include deploy/env_mode.mk
+MAIN_ENV_FILE=$(ENV_FILE_NAME)
 
 # Print which environment files are being used
 # Exported so `make -C flip-api` / `-C trust` resolve the SAME env file rather than
@@ -307,8 +300,9 @@ ci:
 # gitignored deploy env files, which contributors don't have.
 checkov-lint:
 	bash deploy/providers/AWS/scripts/checkov_lint.sh
-# Re-render the two committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ from
-# deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copy is rendered at docs
+# Re-render the four committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ — the
+# self-contained pair (central-hub-aws-{network,data}.png) and the LZA pair (-lza-{network,data}) —
+# from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
 # build time instead). Uses the local graphviz when `dot` is installed; the dev hosts have none,
 # so it otherwise runs the identical render in a throwaway python:3.12-slim container. The two
 # paths are not byte-identical: the committed copies are the container render (byte-stable across

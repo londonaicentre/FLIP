@@ -17,6 +17,7 @@ import { createPinia, setActivePinia } from "pinia";
 import router, { routeChange } from "@/router";
 import { type SignInStep, useAuthStore } from "@/store/auth";
 import { authCheck, isUserUnconfirmedCheck, NO_FORCED_SIGNOUT_PATHS } from "@/utils/auth";
+import { leaveToLogin, stashPostSignOutNotice } from "@/utils/session-teardown";
 import { Snackbar } from "@/utils/snackbar";
 
 vi.mock("aws-amplify/auth", () => ({ fetchAuthSession: vi.fn() }));
@@ -62,6 +63,15 @@ vi.mock("@/utils/snackbar", () => ({
     }
 }));
 
+// Both forced sign-out paths here (the guard's catch and the tokenRefresh_failure
+// listener) end the session by discarding the page (utils/session-teardown.ts). jsdom
+// cannot navigate, so the helper is stubbed; the tests assert it is called instead of
+// a router push, and that the notice is queued for the reload rather than shown.
+vi.mock("@/utils/session-teardown", () => ({
+    leaveToLogin: vi.fn(),
+    stashPostSignOutNotice: vi.fn()
+}));
+
 type Next = (path?: string) => void;
 
 function makeNext(): { next: Next; calls: (string | undefined)[] } {
@@ -87,6 +97,8 @@ describe("authCheck", () => {
         vi.mocked(fetchAuthSession).mockReset();
         vi.mocked(routeChange.gotoLogin).mockReset();
         vi.mocked(Snackbar.error).mockReset();
+        vi.mocked(leaveToLogin).mockReset();
+        vi.mocked(stashPostSignOutNotice).mockReset();
         // Reset env each time — some tests touch VITE_LOCAL.
         vi.unstubAllEnvs();
     });
@@ -289,7 +301,7 @@ describe("authCheck", () => {
         expect(calls).toEqual([undefined]);
     });
 
-    it("recovers from unexpected errors by resetting state and showing snackbar", async () => {
+    it("recovers from unexpected errors by resetting state, queuing a notice and tearing the page down", async () => {
         vi.mocked(fetchAuthSession).mockResolvedValue({} as never);
         const { next } = makeNext();
         const auth = useAuthStore();
@@ -302,11 +314,15 @@ describe("authCheck", () => {
         await authCheck(route("/projects") as never, route("/") as never, next as never);
 
         expect(localStorageClear).toHaveBeenCalled();
-        expect(routeChange.gotoLogin).toHaveBeenCalledTimes(1);
-        expect(Snackbar.error).toHaveBeenCalledWith({
+        // Hard navigation, not a push: nothing of the ended session may stay in memory.
+        expect(leaveToLogin).toHaveBeenCalledTimes(1);
+        expect(routeChange.gotoLogin).not.toHaveBeenCalled();
+        expect(stashPostSignOutNotice).toHaveBeenCalledWith({
+            type: "error",
             title: "You've been signed out",
             text: "Please log in again to confirm your identity."
         });
+        expect(Snackbar.error).not.toHaveBeenCalled();
         localStorageClear.mockRestore();
     });
 });
@@ -581,6 +597,8 @@ describe("Hub listener (tokenRefresh_failure)", () => {
         setActivePinia(createPinia());
         vi.mocked(routeChange.gotoLogin).mockReset();
         vi.mocked(Snackbar.error).mockReset();
+        vi.mocked(leaveToLogin).mockReset();
+        vi.mocked(stashPostSignOutNotice).mockReset();
         vi.useFakeTimers();
         router.currentRoute.value.path = "/projects";
     });
@@ -604,11 +622,11 @@ describe("Hub listener (tokenRefresh_failure)", () => {
         listener({ payload: { event: "tokenRefresh_failure" } });
         vi.advanceTimersByTime(200);
 
-        expect(routeChange.gotoLogin).not.toHaveBeenCalled();
-        expect(Snackbar.error).not.toHaveBeenCalled();
+        expect(leaveToLogin).not.toHaveBeenCalled();
+        expect(stashPostSignOutNotice).not.toHaveBeenCalled();
     });
 
-    it("schedules redirect + snackbar on authenticated pages", () => {
+    it("schedules a teardown with a queued notice on authenticated pages", () => {
         const listener = getListener();
         const auth = useAuthStore();
         auth.user = {
@@ -624,11 +642,13 @@ describe("Hub listener (tokenRefresh_failure)", () => {
         listener({ payload: { event: "tokenRefresh_failure" } });
         vi.advanceTimersByTime(200);
 
-        expect(Snackbar.error).toHaveBeenCalledWith({
+        expect(stashPostSignOutNotice).toHaveBeenCalledWith({
+            type: "error",
             title: "You've been signed out",
             text: "Your session has expired. Please log in again."
-        }, 60_000);
-        expect(routeChange.gotoLogin).toHaveBeenCalledTimes(1);
+        });
+        expect(leaveToLogin).toHaveBeenCalledTimes(1);
+        expect(routeChange.gotoLogin).not.toHaveBeenCalled();
         expect(auth.user).toBeNull();
     });
 
@@ -641,7 +661,7 @@ describe("Hub listener (tokenRefresh_failure)", () => {
         vi.advanceTimersByTime(200);
 
         // Only the most recent scheduled timeout fires its callback.
-        expect(routeChange.gotoLogin).toHaveBeenCalledTimes(1);
+        expect(leaveToLogin).toHaveBeenCalledTimes(1);
     });
 });
 

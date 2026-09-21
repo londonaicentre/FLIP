@@ -77,8 +77,8 @@ METADATA_KEYS: tuple[str, ...] = ("EXPECTED_TRUST_ID", "FL_KIT_SLOT", "FL_KIT_SL
 
 # Maps each managed env key to the field name in the kit dict it is sourced from.
 _FIELD_BY_ENV_KEY: dict[str, str] = {
-    "TRUST_API_KEY": "trust_api_key",
-    "TRUST_INTERNAL_SERVICE_KEY": "trust_internal_service_key",
+    "TRUST_API_KEY": "trust_api_key",  # pragma: allowlist secret
+    "TRUST_INTERNAL_SERVICE_KEY": "trust_internal_service_key",  # pragma: allowlist secret
     "EXPECTED_TRUST_ID": "trust_id",
     "FL_KIT_SLOT": "fl_kit_slot",
     "FL_KIT_SLOT_NUMBER": "fl_kit_slot_number",
