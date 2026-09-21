@@ -712,10 +712,12 @@ def test_add_central_hub_users_no_users(mock_get_profile, mock_add, headers):
     assert added == []
 
 
+@patch("imaging_api.services.projects.issue_invite")
 @patch("imaging_api.services.projects.add_user_to_project")
 @patch("imaging_api.services.projects.get_user_profile_by")
-def test_add_central_hub_users_existing_user(mock_get_profile, mock_add, headers):
-    user_profile = User(**_USER_DICT)
+def test_add_central_hub_users_existing_user(mock_get_profile, mock_add, mock_invite, headers):
+    """An existing account that has logged in before gets the added-to-project notice, not an invite."""
+    user_profile = User(**_USER_DICT, lastSuccessfulLogin=1780012450777)
     mock_get_profile.return_value = user_profile
     mock_add.return_value = user_profile
 
@@ -729,8 +731,60 @@ def test_add_central_hub_users_existing_user(mock_get_profile, mock_add, headers
     )
 
     created, added = add_central_hub_users_to_project(hub_project, "TEST", headers)
-    assert len(created) == 0
-    assert len(added) == 1
+    assert created == []
+    assert added == [user_profile]
+    mock_invite.assert_not_called()
+
+
+@patch("imaging_api.services.users.encrypt", return_value="enc")
+@patch("imaging_api.services.users.issue_setup_token", return_value="/app/template/XDATScreen_UpdateUser.vm?a=al&s=se")
+@patch("imaging_api.services.projects.add_user_to_project")
+@patch("imaging_api.services.projects.get_user_profile_by")
+def test_add_central_hub_users_existing_user_never_logged_in_is_reinvited(
+    mock_get_profile, mock_add, mock_issue, mock_encrypt, headers
+):
+    """An account that exists but has never authenticated is re-invited: a lost/expired first invite, or a
+    token issuance that failed after the account was created, must not dead-end on "log in with your
+    existing credentials"."""
+    user_profile = User(**_USER_DICT)  # lastSuccessfulLogin omitted -> None, as XNAT reports it
+    mock_get_profile.return_value = user_profile
+    mock_add.return_value = user_profile
+
+    hub_user = CentralHubUser(id=uuid4(), email="alice@test.com")
+    hub_project = CentralHubProject(
+        project_id=uuid4(),
+        trust_id=uuid4(),
+        project_name="Proj",
+        query="SELECT *",
+        users=[hub_user],
+    )
+
+    created, added = add_central_hub_users_to_project(hub_project, "TEST", headers)
+
+    assert created == [CreatedUser(username="alice", encrypted_setup_path="enc", email="alice@test.com")]
+    assert added == []  # the invite names the project; no contradictory second email
+    mock_issue.assert_called_once_with("alice", headers)
+    mock_add.assert_called_once_with(user_profile, "TEST", headers)  # still added to the project
+
+
+@patch("imaging_api.services.users.issue_setup_token", side_effect=Exception("Error: XNAT setup-token issuance failed"))
+@patch("imaging_api.services.projects.add_user_to_project")
+@patch("imaging_api.services.projects.get_user_profile_by")
+def test_add_central_hub_users_reinvite_token_failure_raises(mock_get_profile, mock_add, mock_issue, headers):
+    """A failed re-issue surfaces like a failed first issue (the task fails and is retried), not silently."""
+    mock_get_profile.return_value = User(**_USER_DICT)
+
+    hub_project = CentralHubProject(
+        project_id=uuid4(),
+        trust_id=uuid4(),
+        project_name="Proj",
+        query="SELECT *",
+        users=[CentralHubUser(id=uuid4(), email="alice@test.com")],
+    )
+
+    with pytest.raises(Exception, match="setup-token issuance failed"):
+        add_central_hub_users_to_project(hub_project, "TEST", headers)
+    mock_add.assert_not_called()
 
 
 @patch("imaging_api.services.projects.add_user_to_project")
@@ -739,7 +793,7 @@ def test_add_central_hub_users_existing_user(mock_get_profile, mock_add, headers
 def test_add_central_hub_users_new_user(mock_get_profile, mock_create, mock_add, headers):
     mock_get_profile.side_effect = NotFoundError("not found")
     user_profile = User(**_USER_DICT)
-    created_user = CreatedUser(username="alice", encrypted_password="enc", email="alice@test.com")
+    created_user = CreatedUser(username="alice", encrypted_setup_path="enc", email="alice@test.com")
     mock_create.return_value = (created_user, user_profile)
     mock_add.return_value = user_profile
 
@@ -753,8 +807,9 @@ def test_add_central_hub_users_new_user(mock_get_profile, mock_create, mock_add,
     )
 
     created, added = add_central_hub_users_to_project(hub_project, "TEST", headers)
-    assert len(created) == 1
-    assert len(added) == 1
+    assert created == [created_user]
+    assert added == []  # invited this run -> no added-to-project notice on top of the invite
+    mock_add.assert_called_once_with(user_profile, "TEST", headers)
 
 
 @patch("imaging_api.services.projects.add_user_to_project")

@@ -919,14 +919,14 @@ describe("authStore", () => {
             store.pendingUsername = "u@e.com";
             store.captureTotpSetupDetails({
                 totpSetupDetails: {
-                    sharedSecret: "SEC", // pragma: allowlist secret
+                    sharedSecret: "SEC",  // pragma: allowlist secret
                     getSetupUri
                 }
             });
 
             expect(getSetupUri).toHaveBeenCalledWith("FLIP", "u@e.com");
             expect(store.totpSetup).toEqual({
-                sharedSecret: "SEC", // pragma: allowlist secret
+                sharedSecret: "SEC",  // pragma: allowlist secret
                 setupUri: url.toString()
             });
         });
@@ -937,7 +937,7 @@ describe("authStore", () => {
             store.pendingUsername = null;
             store.captureTotpSetupDetails({
                 totpSetupDetails: {
-                    sharedSecret: "SEC", // pragma: allowlist secret
+                    sharedSecret: "SEC",  // pragma: allowlist secret
                     getSetupUri
                 }
             });
@@ -959,7 +959,7 @@ describe("authStore", () => {
             const url = new URL("otpauth://totp/FLIP:u?secret=SEC");
             const getSetupUri = vi.fn(() => url);
             vi.mocked(setUpTOTP).mockResolvedValue({
-                sharedSecret: "SEC", // pragma: allowlist secret
+                sharedSecret: "SEC",  // pragma: allowlist secret
                 getSetupUri
             } as never);
             store.user = {
@@ -976,7 +976,7 @@ describe("authStore", () => {
 
             expect(getSetupUri).toHaveBeenCalledWith("FLIP", "e@f.com");
             expect(store.totpSetup).toEqual({
-                sharedSecret: "SEC", // pragma: allowlist secret
+                sharedSecret: "SEC",  // pragma: allowlist secret
                 setupUri: url.toString()
             });
         });
@@ -1224,13 +1224,13 @@ describe("authStore", () => {
             const result = await store.updateForgottenPassword({
                 email: "u@e.com",
                 code: "123456",
-                newPassword: "new-pw!" // pragma: allowlist secret
+                newPassword: "new-pw!"  // pragma: allowlist secret
             });
 
             expect(confirmResetPassword).toHaveBeenCalledWith({
                 username: "u@e.com",
                 confirmationCode: "123456",
-                newPassword: "new-pw!", // pragma: allowlist secret
+                newPassword: "new-pw!",  // pragma: allowlist secret
                 options: { clientMetadata: { source: "web-app" } }
             });
             expect(result).toBe(amplifyResponse);
