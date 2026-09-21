@@ -776,10 +776,24 @@ resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
         "script-src 'self';",
         "object-src 'none';",
         "frame-ancestors 'none';",
-        # No <base> tag in the built index.html and no native <form> submission
-        # in the SPA, so neither directive touches a current flow. 'self' rather
-        # than the demo's 'none' so a same-origin POST stays possible; it still
-        # blocks a form retargeted at an external host.
+        # Neither directive touches a current flow, and the audit behind that —
+        # repeat it before trusting the claim again, the way the style-src
+        # carve-out above rests on a `vite build` audit:
+        #
+        #   * base-uri: flip-ui/index.html carries no <base> tag.
+        #   * form-action governs where a form SUBMISSION may navigate, and the
+        #     SPA never navigates one. `grep -rn "<form[ >]" flip-ui/src` finds
+        #     no raw <form> outside tests; the elements that do render come from
+        #     vee-validate's <Form> (18 components), which preventDefault()s the
+        #     submit event and hands the values to a JS handler, and none of them
+        #     sets an action attribute. The one multipart POST — model-service.ts
+        #     building FormData for a presigned S3 upload — goes out through
+        #     fetch(), so connect-src governs it, not form-action.
+        #
+        # 'self' rather than the demo's 'none' so a same-origin POST stays
+        # possible; it still blocks a form retargeted at an external host.
+        # test_csp_enforcing.py bounds form-action to {'self', 'none'}, so this
+        # cannot widen without the audit above being redone.
         "base-uri 'none';",
         "form-action 'self';",
       ])
