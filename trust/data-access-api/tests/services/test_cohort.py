@@ -405,9 +405,11 @@ def test_get_records_pandas_error_without_dbapi_cause(mock_read_sql):
 # a Postgres role that is never granted INSERT/UPDATE/DELETE/TRUNCATE/CREATE and has
 # them explicitly REVOKEd. Writes are rejected at the database layer; validate_query
 # only enforces structural rules that the DB role cannot enforce on its own. Note the
-# role bounds writes, not reads — its read scope is deployment dependent (the
-# Kubernetes chart grants pg_read_all_data), which is why the schema pinning in rule 5
-# is the only barrier and is asserted thoroughly below.
+# role bounds writes, and reads only within the omop schema — a grant applied by the
+# omop-db IMAGE's copy of that file on both deployment paths (FLIP#904), which an
+# older image tag would not carry, and which withholds nothing in pg_catalog. That is
+# why the schema pinning in rule 5 is a barrier in its own right and is asserted
+# thoroughly below.
 
 
 @pytest.mark.parametrize(

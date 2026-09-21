@@ -50,8 +50,9 @@ row are treated as negative. Labels come from the per-site dataframe (see Datase
 
 NVFLARE's persistor loads `models.get_model` from [`app_files/models.py`](app_files/models.py).
 `get_model()` builds an `ArkSwinTransformer` (in [`app_files/arkplus_flat_models.py`](app_files/arkplus_flat_models.py))
-sized from the `ARKPLUS` block, loads the backbone from the checkpoint with `LOAD_BACKBONE_ONLY=true`
-(the heads start fresh), and wraps it in `ArkPlusNVFlareWrapper` (which adapts Ark+'s
+sized from the `ARKPLUS` block, loads the backbone-only checkpoint that `make prepare-checkpoint` derives
+from the raw Ark6 file (`preprocess_checkpoints.py` strips `omni_heads.*` unconditionally, so the heads
+start fresh), and wraps it in `ArkPlusNVFlareWrapper` (which adapts Ark+'s
 `model(images, head_id) -> (features, logits)` to the `model(images) -> logits` interface, and exposes
 `forward_with_features` for the teacher/student loop). The trainer freezes every parameter that is not
 under `ark_model.omni_heads`, so only the classifier head trains.

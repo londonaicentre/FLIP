@@ -17,6 +17,7 @@ import { createPinia, setActivePinia } from "pinia";
 
 import { _http } from "@/services/api";
 import { useAuthStore } from "@/store/auth";
+import { stashPostSignOutNotice } from "@/utils/session-teardown";
 import { Snackbar } from "@/utils/snackbar";
 
 vi.mock("aws-amplify/auth", () => ({ fetchAuthSession: vi.fn() }));
@@ -41,6 +42,14 @@ vi.mock("@/utils/snackbar", () => ({
         success: vi.fn(),
         warning: vi.fn()
     }
+}));
+
+// The 401 path ends the session by discarding the page (utils/session-teardown.ts),
+// so its "Not Authorised" notice is queued for the reload, not shown into a page
+// that is about to be unloaded. Stub the queue and assert on it.
+vi.mock("@/utils/session-teardown", () => ({
+    stashPostSignOutNotice: vi.fn(),
+    leaveToLogin: vi.fn()
 }));
 
 // The store is too heavy to drive through its real actions here; we only
@@ -94,6 +103,7 @@ describe("api.ts Http client", () => {
         setActivePinia(createPinia());
         vi.mocked(fetchAuthSession).mockReset();
         vi.mocked(Snackbar.show).mockReset();
+        vi.mocked(stashPostSignOutNotice).mockReset();
         mockStoreSignOut.mockReset();
         fakeAxiosInstance.get.mockReset();
         fakeAxiosInstance.post.mockReset();
@@ -199,7 +209,7 @@ describe("api.ts Http client", () => {
 
             await expect(interceptors.responseOnRejected!(err)).rejects.toBe(err);
             expect(mockStoreSignOut).not.toHaveBeenCalled();
-            expect(Snackbar.show).not.toHaveBeenCalled();
+            expect(stashPostSignOutNotice).not.toHaveBeenCalled();
         });
 
         it("rejects 401s on NO_FORCED_SIGNOUT paths without signing out", async () => {
@@ -212,10 +222,10 @@ describe("api.ts Http client", () => {
 
             await expect(interceptors.responseOnRejected!(err)).rejects.toBe(err);
             expect(mockStoreSignOut).not.toHaveBeenCalled();
-            expect(Snackbar.show).not.toHaveBeenCalled();
+            expect(stashPostSignOutNotice).not.toHaveBeenCalled();
         });
 
-        it("signs out and shows a snackbar on 401s from protected routes", async () => {
+        it("signs out and queues a 'Not Authorised' notice for the login page on 401s from protected routes", async () => {
             primeHttp();
             Object.defineProperty(window, "location", {
                 configurable: true,
@@ -226,14 +236,19 @@ describe("api.ts Http client", () => {
             await expect(interceptors.responseOnRejected!(err)).rejects.toBe(err);
 
             expect(mockStoreSignOut).toHaveBeenCalledTimes(1);
-            expect(Snackbar.show).toHaveBeenCalledWith({
+            expect(stashPostSignOutNotice).toHaveBeenCalledWith({
                 type: "info",
                 title: "Not Authorised",
                 text: "You have been signed out. Please log back in."
             });
+            // Nothing is shown into the page: it is about to be discarded.
+            expect(Snackbar.show).not.toHaveBeenCalled();
+            // Queued BEFORE the sign-out that unloads us, so it cannot be lost to ordering.
+            expect(vi.mocked(stashPostSignOutNotice).mock.invocationCallOrder[0])
+                .toBeLessThan(mockStoreSignOut.mock.invocationCallOrder[0]);
         });
 
-        it("debounces 'Not Authorised' snackbars when 401s arrive in a burst", async () => {
+        it("debounces 'Not Authorised' notices when 401s arrive in a burst", async () => {
             primeHttp();
             Object.defineProperty(window, "location", {
                 configurable: true,
@@ -251,7 +266,7 @@ describe("api.ts Http client", () => {
                 await expect(interceptors.responseOnRejected!(err)).rejects.toBe(err);
                 await expect(interceptors.responseOnRejected!(err)).rejects.toBe(err);
 
-                expect(Snackbar.show).toHaveBeenCalledTimes(1);
+                expect(stashPostSignOutNotice).toHaveBeenCalledTimes(1);
                 expect(mockStoreSignOut).toHaveBeenCalledTimes(3);
             } finally {
                 spy.mockRestore();

@@ -61,7 +61,7 @@ def _temp_repo() -> Path:
     (root / "trust" / ".env.example").write_text(
         "# Host-local profile\n"
         "OMOP_DB_PORT=5436\n"
-        "ORTHANC_PASSWORD=mock-orthanc-pw\n"
+        "ORTHANC_PASSWORD=mock-orthanc-pw\n"  # pragma: allowlist secret
         "TRUST_API_KEY=<run-make-register-trust>\n"
     )
     return root
@@ -92,6 +92,7 @@ def test_scaffolds_kit_with_identity_and_defaults() -> None:
         _assert("TRUST_REGION=London" in content, "TRUST_REGION injected")
         _assert("TRUST_HOST=" not in content, "TRUST_HOST not written to kit (delivery is command-driven)")
         _assert("OMOP_DB_PORT=5436" in content, "host-local default from template carried over")
+        # pragma: allowlist nextline secret
         _assert("ORTHANC_PASSWORD=mock-orthanc-pw" in content, "mock-stack cred from template carried over")
         _assert("TRUST_API_KEY=<run-make-register-trust>" in content, "managed placeholder preserved")
         _assert((target.stat().st_mode & 0o777) == 0o600, "kit file chmod 600")

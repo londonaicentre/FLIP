@@ -188,6 +188,21 @@ export default defineConfig(({ mode, command, isPreview }) => {
                 }
             }
         },
+        // Every dependency the dev server must pre-bundle at startup rather than
+        // discover on first navigation. Vite's scanner crawls static imports from
+        // index.html, so it never sees a component registered by
+        // unplugin-vue-components, nor anything reachable only through
+        // vite-plugin-pages' async route chunks. Those deps are optimized on the
+        // request that first pulls them in, and when that invalidates a bundle the
+        // browser already loaded, Vite full-reloads the page — aborting whatever
+        // dynamic import is in flight. Under Cypress the aborted route chunk
+        // surfaces as an unhandled rejection from the app ("Failed to fetch
+        // dynamically imported module: .../src/pages/admin/users.vue"), which fails
+        // the spec; the docs-GIF run records with retries: 0, so it fails the
+        // workflow outright. A cold CI cache discovered five batches late
+        // (date-fns, underscore, the codemirror pair, jszip + mime, the highlight.js
+        // pair) and two of them reloaded. Anything imported below a page or an
+        // auto-registered component belongs here.
         optimizeDeps: {
             include: [
                 "echarts/charts",
@@ -201,7 +216,15 @@ export default defineConfig(({ mode, command, isPreview }) => {
                 "@headlessui/vue",
                 "vee-validate",
                 "yup",
-                "uuid"
+                "uuid",
+                "codemirror-editor-vue3",
+                "codemirror/mode/sql/sql.js",
+                "date-fns",
+                "highlight.js/lib/core",
+                "highlight.js/lib/languages/json",
+                "jszip",
+                "mime",
+                "underscore"
             ]
         },
         test: {

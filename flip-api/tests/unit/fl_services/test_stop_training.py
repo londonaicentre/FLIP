@@ -94,4 +94,5 @@ def test_stop_training_failure(
         stop_training(model_id, fake_request, mock_db, user_id)
 
     assert exc_info.value.status_code == 500
-    assert "An error occurred while stopping model training" in exc_info.value.detail
+    assert exc_info.value.detail == "Internal server error"
+    assert "oops" not in exc_info.value.detail

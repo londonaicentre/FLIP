@@ -187,14 +187,16 @@ def validate_query(query: str) -> str:
     fails in-hand with a clear 400 instead of as an opaque permission error from the
     engine.
 
-    **Read scope is NOT guaranteed by the database role, and differs by deployment.**
-    The Kubernetes trust chart grants the role ``pg_read_all_data``
-    (``trust/deploy/helm/templates/omop-db.yaml``) — SELECT on every table
-    in every schema — while the Compose path grants only ``USAGE`` on ``omop`` plus
-    ``SELECT`` on its tables. So rule 5 below is the *only* thing keeping a caller
-    inside ``omop`` on a Kubernetes trust, not a redundant second layer over a narrow
-    grant. Do not weaken it on the assumption the role is scoped. Narrowing that grant
-    to match Compose is tracked separately in FLIP#904; until it lands, this is the barrier.
+    **Read scope: the ``omop`` schema, on both deployment paths — but do not lean on it.**
+    Compose and the Kubernetes chart provision the role from the same
+    ``create_readonly_users.sql`` (the chart runs the image's copy from its omop-db
+    ``postStart`` hook, since a restored PVC skips initdb — FLIP#904; before that the
+    chart granted ``pg_read_all_data``, SELECT on every table in every schema). Rule 5
+    below is still kept as a full barrier in its own right: the grant comes from the
+    *image's* copy of that file, so an image tag built before FLIP#904 leaves a
+    Kubernetes role exactly as wide as it was (the hook logs a warning naming it), and
+    an unqualified ``pg_catalog`` name resolves regardless of any schema grant. Do not
+    weaken it on the assumption the role is scoped.
 
     What this function enforces
     ---------------------------
@@ -216,8 +218,8 @@ def validate_query(query: str) -> str:
        ``omop.<table>`` in the AST before emission. Rewriting rather than
        trusting ``search_path`` is the load-bearing part: Postgres searches
        ``pg_catalog`` implicitly and first, whatever ``search_path`` says, so an
-       unqualified ``pg_class`` would otherwise read the catalog — and on a
-       Kubernetes trust the role can read every schema (see above). Names bound
+       unqualified ``pg_class`` would otherwise read the catalog, which no schema
+       grant withholds (see above). Names bound
        by a ``WITH`` clause are exempt because they are not schema-qualified and
        never can be. The exemption is determined from each lexical SQL scope, so
        a CTE in a nested query cannot exempt a table reference in its parent, and

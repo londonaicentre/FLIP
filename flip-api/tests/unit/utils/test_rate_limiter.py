@@ -23,7 +23,7 @@ from flip_api.utils.rate_limiter import _trust_name_key
 class TestTrustNameKey:
     def test_hashes_trust_api_key_when_header_present(self):
         """Primary path: rate-limit per-trust by hashing the trust API key header."""
-        api_key = "trust-1-secret"
+        api_key = "trust-1-secret"  # pragma: allowlist secret
         request = MagicMock()
         request.headers = {get_settings().TRUST_API_KEY_HEADER: api_key}
 

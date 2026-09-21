@@ -116,12 +116,16 @@ accepts via `--node-config`. Use it while iterating on app code; use the compose
 before merging, since only that path exercises the deployment wiring (TLS, fl-api submit,
 SuperNode registration).
 
-A raw `flwr run` has three sharp edges in this project — a long-lived SuperLink caches its
+A raw `flwr run` has five sharp edges in this project — a long-lived SuperLink caches its
 environment, the ClientApp's working directory is a snapshot under `~/.flwr/apps/`, and
 `WORKING_DIR` defaults to a container path — which is why the path is a make target rather than
-a command: `sim-tutorial.sh` handles all three, and stops only its *own* stale simulator
-processes (a blanket `pkill -f flower-superlink` would also kill the FLIP dev stack's fl-server,
-whose processes are visible in the host PID namespace). See the
+a command: `sim-tutorial.sh` handles them, and stops only its *own* stale simulator processes
+(a blanket `pkill -f flower-superlink` would also kill the FLIP dev stack's fl-server, whose
+processes are visible in the host PID namespace). Two more edges make it five: `flwr run . local`
+adopts whatever already listens on the local Control API port, so the script refuses to hand the
+run to a SuperLink another checkout left behind; and `flwr run --stream` returns 0 whatever became
+of the run, so the script's exit status is the run's own terminal status as the SuperLink reports
+it. See the
 [3D spleen segmentation README](../3d_spleen_segmentation/README.md) for the details.
 
 ## Hyperparameters
