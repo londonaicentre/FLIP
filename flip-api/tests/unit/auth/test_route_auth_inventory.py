@@ -56,8 +56,11 @@ PUBLIC_ROUTES = {
     "tracks bounding and throttling it; making it authenticated would defeat its purpose)",
 }
 
-# Below this the introspection has stopped seeing the app's routers; do not lower it to pass.
-MIN_API_ROUTES = 60
+# The app's full APIRoute count, not a round number below it. The largest single router carries
+# 14 routes, so any slack here lets a whole router drop out of introspection while the surviving
+# unauthenticated set still matches the allowlist exactly — the _IncludedRouter failure mode the
+# floor exists to catch. Adding routes raises it; lowering it to pass is how the guard stops working.
+MIN_API_ROUTES = 74
 
 
 def _reaches_auth(route: APIRoute) -> bool:
@@ -77,8 +80,10 @@ def _route_key(route: APIRoute) -> str:
 def test_only_allowlisted_routes_are_unauthenticated() -> None:
     api_routes = [route for route in app.routes if isinstance(route, APIRoute)]
     assert len(api_routes) >= MIN_API_ROUTES, (
-        f"only {len(api_routes)} APIRoutes found — route introspection is not seeing the app's routers, "
-        f"so an empty unauthenticated set would be a false pass, not a clean one"
+        f"only {len(api_routes)} APIRoutes found, expected at least {MIN_API_ROUTES} — either route "
+        f"introspection has stopped seeing the app's routers, in which case an empty unauthenticated set "
+        f"would be a false pass rather than a clean one, or routes were deliberately removed, in which "
+        f"case lower MIN_API_ROUTES to the new count in the same commit"
     )
 
     unauthenticated = {_route_key(route) for route in api_routes if not _reaches_auth(route)}
