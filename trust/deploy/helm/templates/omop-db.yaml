@@ -119,18 +119,19 @@ spec:
                     # grant exactly one thing: membership of omop_readonly_base (CONNECT,
                     # USAGE on omop, SELECT on its tables and sequences, DML/DDL revoked,
                     # connection limit, statement_timeout). It has to run here as well as
-                    # from /docker-entrypoint-initdb.d because a PVC restored by the
-                    # seed-data initContainer already carries PG_VERSION, so the
-                    # entrypoint skips initdb.d and the roles are whatever the snapshot
-                    # held. The file is idempotent and converges an existing role: a
+                    # from /docker-entrypoint-initdb.d because any PVC that already
+                    # carries PG_VERSION — every upgrade over an existing release —
+                    # makes the entrypoint skip initdb.d, leaving the roles as that
+                    # release created them. The file is idempotent and converges an
+                    # existing role: a
                     # release before FLIP#904 granted pg_read_all_data here instead —
                     # SELECT on every schema — and the file REVOKEs that, so upgrading
                     # over such a PVC narrows the live role rather than merely not
                     # widening it again.
                     #
                     # Only what the file cannot know is added after it: the password is
-                    # re-applied unconditionally so a snapshot (which carries the hash it
-                    # was initialised with) and a rotated Secret both end up on
+                    # re-applied unconditionally so a role left holding the hash it was
+                    # initialised with and a rotated Secret both end up on
                     # DATA_ACCESS_POSTGRES_PASSWORD, and the database search_path so
                     # unqualified table refs resolve to omop.
                     #

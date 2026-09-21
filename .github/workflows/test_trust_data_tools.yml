@@ -40,9 +40,8 @@ on:
       - "deploy/env_mode.mk"
       - "deploy/fl_backend.mk"
       - "deploy/instance.mk"
-      # Two consumers: trust/orthanc/Makefile includes+exports the GSTT kit example at parse
-      # time, and trust/tests/test_seed_guard.sh copies it into its sandbox as a fixture — so
-      # a content-only edit can fail this suite, not just an unparseable one. The KCH twin
+      # trust/orthanc/Makefile includes+exports the GSTT kit example at parse time, so a
+      # content-only edit can fail this suite, not just an unparseable one. The KCH twin
       # exists but no Makefile reads it.
       - "trust/.env.GSTT.development.example"
   pull_request:
@@ -67,9 +66,7 @@ jobs:
         trust/orthanc/publish_dicom.py
         trust/orthanc/tests/**
         trust/orthanc/Makefile
-        trust/orthanc/update_orthanc_data.sh
         trust/omop-db/Makefile
-        trust/omop-db/update_omop_data.sh
         trust/publish_trust_data.py
         trust/tests/**
         trust/Makefile
