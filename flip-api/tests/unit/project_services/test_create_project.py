@@ -163,5 +163,6 @@ def test_create_project_endpoint_db_commit_fails(
     mock_has_permissions.assert_called_once_with(TEST_USER_ID, [PermissionRef.CAN_CREATE_PROJECTS], mock_db_session)
     mock_db_session.commit.assert_called_once()
     mock_db_session.rollback.assert_called_once()
-    mock_logger.error.assert_called_once_with(f"Error creating project: 500: Failed to create project: {commit_error}")
+    # The router logs str() of the service's HTTPException, whose detail is now generic (#906).
+    mock_logger.error.assert_called_once_with("Error creating project: 500: Internal server error")
     mock_db_session.refresh.assert_not_called()

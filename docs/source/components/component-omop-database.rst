@@ -317,23 +317,24 @@ fresh dev Trust until the Synthea cohort is loaded — see :ref:`omop-synthea-eh
 Access control
 **************
 
-On Compose deployments, cohort queries issued by the Data Access API connect as
-``DATA_ACCESS_POSTGRES_USER`` — ``data_analyst_reader`` by default — a member of
-``omop_readonly_base``. The grants are created at first initialisation by
-``trust/omop-db/files/create_readonly_users.sql``: ``CONNECT`` on the database, ``USAGE`` on the
-``omop`` schema and ``SELECT`` on its tables and sequences, with ``INSERT``, ``UPDATE``, ``DELETE``,
-``TRUNCATE`` and ``CREATE`` explicitly revoked, a five-connection limit and a 300-second
-``statement_timeout``. This is the database half of the Data Access API's SQL validation
-defence-in-depth.
+Cohort queries issued by the Data Access API connect as ``DATA_ACCESS_POSTGRES_USER`` —
+``data_analyst_reader`` by default — a member of ``omop_readonly_base``. On both deployment paths
+the grants come from one file, ``trust/omop-db/files/create_readonly_users.sql``: ``CONNECT`` on the
+database, ``USAGE`` on the ``omop`` schema and ``SELECT`` on its tables and sequences, with
+``INSERT``, ``UPDATE``, ``DELETE``, ``TRUNCATE`` and ``CREATE`` explicitly revoked, a
+five-connection limit and a 300-second ``statement_timeout``. This is the database half of the Data
+Access API's SQL validation defence-in-depth.
 
-.. note::
-
-   None of that applies on Kubernetes. The Trust chart creates the role directly with ``CONNECT``
-   and ``pg_read_all_data`` — no base-role membership, no connection limit, no statement timeout and
-   no revokes — so a Kubernetes Trust has neither the 300-second cap nor a schema-scoped grant, and
-   the schema pin inside ``validate_query`` is what keeps a query inside ``omop``. Narrowing the
-   grant to match Compose is tracked in
-   `FLIP#904 <https://github.com/londonaicentre/FLIP/issues/904>`_.
+The paths differ only in when the file runs. Compose runs it once, at first initialisation. The
+Kubernetes Trust chart runs the copy the ``omop-db`` image ships (``/flip/omop/``) from a
+``postStart`` hook on every pod start, because a volume restored from a pgdata snapshot skips
+initialisation altogether; the file is idempotent and converges an existing role on the same
+grants. Before `FLIP#904 <https://github.com/londonaicentre/FLIP/issues/904>`_ the chart carried
+an inline copy that granted ``pg_read_all_data`` — ``SELECT`` on every table in every schema — with
+no limit or timeout; the shared file now revokes that membership, so upgrading over such a volume
+narrows the live role. The revoke is applied by the *image's* copy of the file, so an image tag
+built before the fix leaves the role as it was — the hook logs a warning naming that case. The
+schema pin inside ``validate_query`` is kept as a barrier in its own right either way.
 
 Row-level results are additionally gated on the Trust's ``COHORT_QUERY_THRESHOLD`` (default 10): a
 cohort smaller than the threshold is refused with a fixed message, identical to the one a cohort of

@@ -57,8 +57,8 @@ def _full_kit(**overrides: object) -> dict:
     kit = {
         "trust_id": "11111111-1111-1111-1111-111111111111",
         "trust_name": "GSTT Hospital",
-        "trust_api_key": "plain-api-key",
-        "trust_internal_service_key": "plain-internal-key",
+        "trust_api_key": "plain-api-key",  # pragma: allowlist secret
+        "trust_internal_service_key": "plain-internal-key",  # pragma: allowlist secret
         "fl_kit_slot": "Trust_1",
         "fl_kit_slot_number": 1,
         "hub_shared": {"AES_KEY_BASE64": "v1==", "FL_BACKEND": "flower"},
@@ -80,6 +80,7 @@ def test_new_kit_writes_creds_meta_and_hub_shared() -> None:
         content = target.read_text()
         _assert("OMOP_DB_PORT=5436" in content, "host-local profile seeded from example")
         _assert("TRUST_API_KEY=plain-api-key" in content, "TRUST_API_KEY written")
+        # pragma: allowlist nextline secret
         _assert("TRUST_INTERNAL_SERVICE_KEY=plain-internal-key" in content, "internal key written")
         _assert("EXPECTED_TRUST_ID=11111111-1111-1111-1111-111111111111" in content, "EXPECTED_TRUST_ID written")
         _assert("FL_KIT_SLOT=Trust_1" in content, "FL_KIT_SLOT written")
@@ -127,7 +128,7 @@ def test_skip_path_preserves_existing_creds() -> None:
         target = Path(td) / ".env.GSTT.development"
         target.write_text(
             "TRUST_API_KEY=preserved-key\n"
-            "TRUST_INTERNAL_SERVICE_KEY=preserved-internal\n"
+            "TRUST_INTERNAL_SERVICE_KEY=preserved-internal\n"  # pragma: allowlist secret
             "FL_KIT_SLOT=Trust_1\n"
             "FL_KIT_SLOT_NUMBER=1\n"
         )
@@ -142,6 +143,7 @@ def test_skip_path_preserves_existing_creds() -> None:
 
         content = target.read_text()
         _assert("TRUST_API_KEY=preserved-key" in content, "TRUST_API_KEY preserved on skip path")
+        # pragma: allowlist nextline secret
         _assert("TRUST_INTERNAL_SERVICE_KEY=preserved-internal" in content, "internal key preserved on skip path")
         _assert("AES_KEY_BASE64=rotated==" in content, "hub-shared refreshed on skip path")
 
@@ -181,7 +183,7 @@ def test_ec2_rerun_preserves_host_local_profile() -> None:
             "# Host-local profile\n"
             "LOKI_PORT=3201\n"
             "GRAFANA_PORT=3301\n"
-            "TRUST_API_KEY=existing-prod-key\n"
+            "TRUST_API_KEY=existing-prod-key\n"  # pragma: allowlist secret
             "FL_KIT_SLOT=Trust_2\n"
             "FL_KIT_SLOT_NUMBER=2\n"
             f"{tkl.SENTINEL}\n"
@@ -199,6 +201,7 @@ def test_ec2_rerun_preserves_host_local_profile() -> None:
         content = target.read_text()
         _assert("LOKI_PORT=3201" in content, "host-local LOKI_PORT preserved")
         _assert("GRAFANA_PORT=3301" in content, "host-local GRAFANA_PORT preserved")
+        # pragma: allowlist nextline secret
         _assert("TRUST_API_KEY=existing-prod-key" in content, "existing prod creds preserved")
         _assert("AES_KEY_BASE64=new==" in content, "hub-shared rotated")
         _assert(content.count("AES_KEY_BASE64=") == 1, "no duplicate AES_KEY_BASE64 after re-run")

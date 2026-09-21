@@ -696,11 +696,13 @@ xnat:
       # XNAT 1.10.0 requires DQR 3.0.0 and Container Service 3.8.x:
       #   https://wiki.xnat.org/xnat-tools/dqr-plugin-compatibility-matrix
       #   https://wiki.xnat.org/container-service/container-service-compatibility-matrix
+      # and OHIF viewer 3.8.0 is the plugin's XNAT 1.10 release:
+      #   https://wiki.xnat.org/xnat-ohif-viewer
       urls:
         container-service: "https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar"
         dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar"
         batch-launch: "https://api.bitbucket.org/2.0/repositories/xnatx/xnatx-batch-launch-plugin/downloads/batch-launch-0.9.0-xpl.jar"
-        ohif-viewer: "https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.7.2.jar"
+        ohif-viewer: "https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.8.0-fat.jar"
     env:
       XNAT_EMAIL: ""
       XNAT_MIN_HEAP: "1024m"

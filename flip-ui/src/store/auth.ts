@@ -25,8 +25,8 @@ import { confirmResetPassword,
 import { defineStore } from "pinia";
 
 import { IChangePassword } from "@/interfaces/auth/interfaces";
-import { routeChange } from "@/router";
 import { getMfaStatus, getUserPermissions } from "@/services/user-service";
+import { leaveToLogin, stashPostSignOutNotice } from "@/utils/session-teardown";
 import { Snackbar } from "@/utils/snackbar";
 
 /**
@@ -532,20 +532,26 @@ export const useAuthStore = defineStore("auth", {
             }
 
             this.$reset();
-            routeChange.gotoLogin();
 
+            // The notices below used to be shown after a soft route push. The
+            // page is now discarded (see utils/session-teardown.ts for why a
+            // push is not a sign-out), so they are handed across the reload
+            // and replayed by App.vue on the login page instead.
             if (serverSideSignOutFailed) {
-                Snackbar.error({
+                stashPostSignOutNotice({
+                    type: "error",
                     title: "Sign-out incomplete",
                     text: "We couldn't fully end your session on the server. Please close all browser windows for this site."
                 });
             } else if (sessionAlreadyEnded && !viaInterceptor) {
-                Snackbar.show({
+                stashPostSignOutNotice({
                     type: "info",
                     title: "Session already ended",
                     text: "Your session had already ended (it may have been revoked elsewhere). You've been signed out."
                 });
             }
+
+            leaveToLogin();
         },
 
         async resetPassword(email: string) {
