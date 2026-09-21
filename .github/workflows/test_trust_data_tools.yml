@@ -40,10 +40,10 @@ on:
       # to either can break this suite before a single test runs.
       - "deploy/fl_backend.mk"
       - "deploy/instance.mk"
-      # trust/orthanc/Makefile:15 includes and exports this kit example (the path is
-      # hardcoded to GSTT), so make parses it before `make -C trust/orthanc test` runs a
-      # single test — a line it cannot read stops the target outright. The KCH twin is
-      # deliberately absent: no Makefile points at it.
+      # Two consumers: trust/orthanc/Makefile includes+exports the GSTT kit example at parse
+      # time, and trust/tests/test_seed_guard.sh copies it into its sandbox as a fixture — so
+      # a content-only edit can fail this suite, not just an unparseable one. The KCH twin
+      # exists but no Makefile reads it.
       - "trust/.env.GSTT.development.example"
   pull_request:
     branches: [main, develop]
