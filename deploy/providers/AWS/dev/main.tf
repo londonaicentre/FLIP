@@ -50,9 +50,11 @@ locals {
   # Both browser-origin lists take the same generated localhost origins rather
   # than the buckets getting an S3 wildcard, so a bucket is never reachable from
   # an origin the API's CORS allowlist (derived from callback_urls) would refuse.
+  # distinct() is a no-op against the defaults below, which name no port from the
+  # block; it keeps the two lists duplicate-free for an override that does.
   dev_ui_port_origins = [for port in var.dev_ui_ports : "http://localhost:${port}"]
-  callback_urls       = concat(var.cognito_callback_urls, local.dev_ui_port_origins)
-  bucket_cors_origins = concat(var.s3_cors_allowed_origins, local.dev_ui_port_origins)
+  callback_urls       = distinct(concat(var.cognito_callback_urls, local.dev_ui_port_origins))
+  bucket_cors_origins = distinct(concat(var.s3_cors_allowed_origins, local.dev_ui_port_origins))
 }
 
 module "cognito" {
