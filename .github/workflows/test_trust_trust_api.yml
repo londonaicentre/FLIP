@@ -22,6 +22,10 @@ on:
       - "trust/observability/**"
       - ".github/workflows/test_trust_trust_api.yml"
       - ".github/actions/setup-trust-test-env/**"
+      # The shared bootstrap action copies the root env template to .env.development,
+      # which trust_api/config.py reads as its env_file and trust-api/Makefile
+      # includes+exports.
+      - ".env.development.example"
   pull_request:
     branches: [main, develop]
 
@@ -46,6 +50,7 @@ jobs:
         trust/observability/**
         .github/workflows/test_trust_trust_api.yml
         .github/actions/setup-trust-test-env/**
+        .env.development.example
 
   trust-api:
     needs: changes

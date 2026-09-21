@@ -22,6 +22,9 @@ on:
       - "trust/observability/**"
       - ".github/workflows/test_trust_data_access_api.yml"
       - ".github/actions/setup-trust-test-env/**"
+      # The shared bootstrap action copies the root env template to .env.development,
+      # which data_access_api/config.py reads as its env_file.
+      - ".env.development.example"
   pull_request:
     branches: [main, develop]
 
@@ -46,6 +49,7 @@ jobs:
         trust/observability/**
         .github/workflows/test_trust_data_access_api.yml
         .github/actions/setup-trust-test-env/**
+        .env.development.example
 
   data-access-api:
     needs: changes

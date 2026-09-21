@@ -317,10 +317,26 @@ pushes. These are:
   and `trust-*` GHCR build-and-push workflows.
 - **Releases** — `release.yml` and `release-pypi.yml` (git tags, GitHub releases, PyPI publishing).
 
-Everything that **validates** your change still runs on your fork, and a red result there is a real failure to fix:
-lint, type-checking, unit and integration tests, docs, Terraform validation, Helm tests, and secret scanning.
+Everything that **validates** your change still runs, and a red result is a real failure to fix: lint,
+type-checking, unit and integration tests, docs, Terraform validation, Helm tests, and secret scanning.
 Coverage upload to Codecov is non-blocking (`fail_ci_if_error: false`), so a missing `CODECOV_TOKEN` on your fork
 never fails an otherwise-green job.
+
+### Why a test suite shows as skipped
+
+Skipped is also the normal result for a service test suite your change does not touch. On a PR into `develop` the
+seven service workflows (`test_flip_ui.yml`, `test_flip_api.yml`, the three `test_trust_*_api.yml`,
+`test_trust_omop_db.yml` and `test_trust_data_tools.yml`) still start, but each gates its jobs on
+[`pr_paths_changed.yml`](.github/workflows/pr_paths_changed.yml), which runs the suite only when a changed file
+matches the paths that workflow covers — the same list as its push `paths:` filter, plus the gate itself. A PR into
+`main` always runs everything. So a `flip-ui`-only change legitimately shows the six trust and flip-api suites as
+skipped, and that is not a fork restriction, a missing check, or something to re-run: check the `changes / decide`
+job, which prints the file that matched or the number of files that did not.
+
+Two consequences worth knowing. A suite skips only if **none** of its paths matched, so if you believe your change
+affects a suite that skipped, the fix is to add the path it consumes to that workflow's list — in **both** copies,
+or `scripts/tests/test_pr_paths_changed.py` fails. And because the gate reads the PR's own file list, editing the
+gate re-runs every suite.
 
 ### Checkov security lint (Terraform)
 

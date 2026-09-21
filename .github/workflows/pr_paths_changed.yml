@@ -21,6 +21,13 @@
 #
 # The caller passes the SAME list as its push `paths:` filter, in GitHub's filter syntax;
 # scripts/tests/test_pr_paths_changed.py fails if the two ever drift.
+#
+# Load-bearing assumption: no branch-protection required status check names a gated job.
+# Verified on both branches — `required_status_checks.checks` and `.contexts` are empty on
+# `develop` and `main`, and neither carries a ruleset. If an admin ever adds one, a PR that
+# legitimately skips that suite would report the check as skipped and block the merge, so
+# the check must be added to the caller's path list (both copies) at the same time, or the
+# gate lifted from that workflow.
 
 name: PR paths changed
 

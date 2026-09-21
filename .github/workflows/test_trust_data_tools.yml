@@ -36,6 +36,10 @@ on:
       - "trust/tests/**"
       - "trust/Makefile"
       - ".github/workflows/test_trust_data_tools.yml"
+      # `make -C trust test-trust-data-tools` parse-time-includes both, so a change
+      # to either can break this suite before a single test runs.
+      - "deploy/fl_backend.mk"
+      - "deploy/instance.mk"
   pull_request:
     branches: [main, develop]
 
@@ -65,6 +69,8 @@ jobs:
         trust/tests/**
         trust/Makefile
         .github/workflows/test_trust_data_tools.yml
+        deploy/fl_backend.mk
+        deploy/instance.mk
 
   trust-data-tools:
     needs: changes

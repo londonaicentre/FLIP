@@ -20,6 +20,12 @@ on:
       # The unmocked manifest tests in tests/unit/fl_services/ read the real fl-apps/ tree.
       - "fl-apps/**"
       - ".github/workflows/test_flip_api.yml"
+      # Shared inputs consumed from outside flip-api/. The job copies the root env
+      # template to .env.development, which flip_api/config.py reads as its env_file
+      # and flip-api/Makefile includes+exports; that Makefile also parse-time-includes
+      # deploy/instance.mk, so `make unit_test` cannot even start without it.
+      - ".env.development.example"
+      - "deploy/instance.mk"
   pull_request:
     branches: [main, develop]
 
@@ -41,6 +47,8 @@ jobs:
         flip-api/**
         fl-apps/**
         .github/workflows/test_flip_api.yml
+        .env.development.example
+        deploy/instance.mk
 
   flip-api:
     needs: changes
