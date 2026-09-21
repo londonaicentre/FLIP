@@ -127,6 +127,8 @@ Navigate to a CT session by selecting it from a subject's list of experiments.
 
 A CT session is derived from an imported PACS DICOM Study. The CT session page contains a list of scans in which imaging study data is contained. This includes imported DICOM images and the respective NIFTI files which have also been made available.
 
+Every FLIP XNAT ships the `OHIF viewer <https://wiki.xnat.org/xnat-ohif-viewer>`_: **View Images** in the session's *Actions* menu opens the study in the browser, to check an import or to draw and save a segmentation or ROI annotation against it as part of :ref:`data enrichment <data-enrichment>`.
+
 Downloading and Uploading Imaging Data
 =======================================
 
