@@ -17,7 +17,18 @@ on:
     branches: [main, develop]
     paths:
       - "trust/imaging-api/**"
+      # imaging_api/main.py imports log_config at module import time, resolved via
+      # pyproject.toml's pythonpath = [..., "../observability"], so a break there fails
+      # this suite. Both sibling trust suites already list it.
+      - "trust/observability/**"
       - ".github/workflows/test_trust_imaging_api.yml"
+      # This service's Makefile includes+exports the GSTT kit example at parse time, so a
+      # line make cannot read stops the suite before a test runs, and its values land in the
+      # environment Settings reads. The KCH twin exists but no Makefile reads it.
+      # The root .env.development.example is deliberately NOT listed here, unlike the two
+      # sibling trust suites: imaging_api/config.py declares no env_file and this Makefile
+      # includes no root env, so the job's copy of that template reaches nothing.
+      - "trust/.env.GSTT.development.example"
   pull_request:
     branches: [main, develop]
 
@@ -37,7 +48,9 @@ jobs:
     with:
       paths: |
         trust/imaging-api/**
+        trust/observability/**
         .github/workflows/test_trust_imaging_api.yml
+        trust/.env.GSTT.development.example
 
   imaging-api:
     needs: changes

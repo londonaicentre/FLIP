@@ -25,6 +25,10 @@ on:
       # The shared bootstrap action copies the root env template to .env.development,
       # which data_access_api/config.py reads as its env_file.
       - ".env.development.example"
+      # This service's Makefile includes+exports the GSTT kit example at parse time, so a
+      # line make cannot read stops the suite before a test runs, and its values land in the
+      # environment Settings reads. The KCH twin exists but no Makefile reads it.
+      - "trust/.env.GSTT.development.example"
   pull_request:
     branches: [main, develop]
 
@@ -50,6 +54,7 @@ jobs:
         .github/workflows/test_trust_data_access_api.yml
         .github/actions/setup-trust-test-env/**
         .env.development.example
+        trust/.env.GSTT.development.example
 
   data-access-api:
     needs: changes
