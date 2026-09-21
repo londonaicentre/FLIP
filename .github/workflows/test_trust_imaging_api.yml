@@ -17,6 +17,10 @@ on:
     branches: [main, develop]
     paths:
       - "trust/imaging-api/**"
+      # imaging_api/main.py imports log_config at module import time, resolved via
+      # pyproject.toml's pythonpath = [..., "../observability"], so a break there fails
+      # this suite. Both sibling trust suites already list it.
+      - "trust/observability/**"
       - ".github/workflows/test_trust_imaging_api.yml"
       # This service's Makefile includes+exports the GSTT kit example at parse time, so a
       # line make cannot read stops the suite before a test runs, and its values land in the
@@ -44,6 +48,7 @@ jobs:
     with:
       paths: |
         trust/imaging-api/**
+        trust/observability/**
         .github/workflows/test_trust_imaging_api.yml
         trust/.env.GSTT.development.example
 
