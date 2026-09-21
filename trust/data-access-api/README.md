@@ -55,7 +55,7 @@ It requires the [OMOP database](../omop-db/) to be running and populated with da
 
 ## Configuration
 
-Key environment variables (set in [`.env.development.example`](../../.env.development.example)):
+Key environment variables. Most come from the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>` — but `OMOP_DB_SERVICE_NAME` is an internal-topology constant with a default in `data_access_api/config.py` (`"omop-db"`); it is deliberately absent from the kit template and must not be injected.
 
 | Variable | Description |
 | --- | --- |
@@ -67,6 +67,20 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 | `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Required on every `/cohort` request. |
+| `CACHE_TTL_DAYS` | Age (days, default `60`) at which a cached result is treated as expired and dropped on the next lookup |
+| `CACHE_MAX_RESULT_ROWS` | Largest result (rows, default `50000`) that is cached at all — anything bigger is returned but not stored, keeping memory bounded |
+| `CACHE_MAX_ENTRIES` | Maximum number of cached results (default `64`); inserting past the limit evicts the oldest entry |
+
+### Query cache
+
+Executed cohort SQL is memoised in an **in-process, per-container** dictionary
+(`services/query_cache.py`), keyed by a SHA-256 of the whitespace-normalised, lower-cased query plus
+its bound parameters. FLIP stores a cohort only as SQL and re-runs it at every stage — statistics,
+dataframe, accession ids — so the same query arrives repeatedly; the cache spares OMOP the repeat
+scan. It holds DataFrames in memory and is copied in and out, is not shared between replicas, and is
+lost on restart, which is why all three bounds above exist. Note it is a *result* cache with no
+invalidation hook: within `CACHE_TTL_DAYS`, a query re-run after the underlying OMOP rows change can
+return the earlier result.
 
 ## Authentication
 
@@ -149,11 +163,14 @@ tree. Underneath all of this the service connects as `data_analyst_reader`, a ro
 only and `INSERT`/`UPDATE`/`DELETE`/`TRUNCATE`/`CREATE` never granted, so DDL and DML are refused by
 Postgres itself. That is why `validate_query` does not keyword-filter for `DROP` and friends.
 
-The role bounds *writes*, not *reads*, and its read scope differs by deployment: the Kubernetes
-chart grants it `pg_read_all_data` (every table in every schema), while the Compose path grants
-only `omop`. Rule 5 is therefore the sole barrier keeping a caller inside `omop` on a Kubernetes
-trust — it is not a redundant layer over a narrow grant, and must not be weakened as though it were.
-Narrowing the chart's grant to match Compose is tracked in [FLIP#904](https://github.com/londonaicentre/FLIP/issues/904).
+The role's read scope is the `omop` schema alone, on both deployment paths: Compose and the
+Kubernetes chart provision it from the same `trust/omop-db/files/create_readonly_users.sql`
+(the chart runs the image's copy from its omop-db `postStart` hook, since a restored PVC skips
+initdb — FLIP#904; the chart used to grant `pg_read_all_data`, every table in every schema). Rule 5
+is nonetheless kept as a full barrier in its own right, not a redundant layer: the grant is applied
+by the *image's* copy of that file, so an image tag built before FLIP#904 leaves a Kubernetes role
+as wide as before (the hook logs a warning naming it), and unqualified `pg_catalog` names resolve
+regardless of any schema grant. Do not weaken it on the assumption the role is scoped.
 
 Emitting from `validate_query` rather than from a second helper is deliberate: it keeps one parse
 and one policy, so there is no second copy of the single-statement and SELECT-shape rules to drift

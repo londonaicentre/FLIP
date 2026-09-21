@@ -33,6 +33,13 @@ services:
       - /opt/flip/services/net-1/certificates:/certs:ro
       - ${FL_JOBS_DIR}/net-1:/app/src
     environment:
+      # Host allow-list for the server-side bundle fetch (FLIP#905): the only host the FL API
+      # may download an app bundle from. flip-api pins AWS_ENDPOINT_URL_S3 to the regional
+      # endpoint (see its service block), which makes boto3 presign PATH-STYLE URLs — host
+      # exactly s3.<region>.amazonaws.com, bucket in the path — so the same AWS_REGION derives
+      # the one host to admit. The two lines must move together, or every bundle download 400s.
+      # `:?` mirrors flip-api's guard so a missing region fails at `up`, not at the first run.
+      - BUNDLE_URL_ALLOWED_HOSTS=s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       # Use the internal hostnames and ports for the server since the API is within the same Docker network
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
@@ -68,7 +75,6 @@ services:
     environment:
       - NET_ID=net-1
       - LOCAL_DEV=false
-      - MIN_CLIENTS=${MIN_CLIENTS}
       - IMAGES_DIR=/app/data/images
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}

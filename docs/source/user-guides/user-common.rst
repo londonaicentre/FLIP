@@ -2,15 +2,29 @@
 Common user functions
 ######################
 
-.. warning:: Must have a valid FLIP account. If you do not have one, please liaise with your local FLIP system administrator and/or information asset owner (IAO), and provide your email address and confirmation of which role you require.
+.. warning:: Must have a valid FLIP account. If you do not have one, click 'Request access' on the login page and submit your details (see :ref:`request-access`), or liaise with your local FLIP system administrator and/or information asset owner (IAO), providing your email address and confirmation of which role you require.
 
 Although this page covers functions common to all FLIP users regardless of :ref:`rbac-roles` throughout the various stages involved in preparing an AI model for federated learning, actions related to project process flow are described from the perspective of users with the ``researcher`` role. Users with the ``viewer`` role have read-only access to projects they are assigned to; actions such as creating projects, running queries and uploading files are not available to viewers.
 
-Users with the ``admin`` role may perform all the functions of those with the ``researcher`` role, and are additionally solely responsible for approving and un-staging a project. Each user holds exactly one role (see :ref:`rbac-roles`). For more information, please refer to the :ref:`admin-project-and-user-management` subsection or the broader :ref:`sys-admin` section.
+Users with the ``admin`` role may perform all the functions of those with the ``researcher`` role, and are additionally solely responsible for approving and un-staging a project. The Admin Area assigns each user a single role (see :ref:`rbac-roles`). For more information, please refer to the :ref:`admin-project-and-user-management` subsection or the broader :ref:`sys-admin` section.
 
 FLIP uses the concept of a *project*, in which multiple AI models can be managed. Projects can have multiple users associated with them, allowing individuals to view and contribute to the project. The typical project flow involves the creation of a project, running a cohort query, staging the project for approval, uploading the model plus any associated files and initiating the training. Once training is complete, the results of training can be downloaded.
 
 To facilitate federated learning and concurrent training of multiple models on the platform, FLIP supports both :term:`NVIDIA FLARE` and the :term:`Flower Framework` as federated learning backends. This page covers concepts such as FL *nets* and job scheduling. For details on framework-specific file requirements and job types, see :ref:`the FL nets component page <flip-fl-nets>`.
+
+.. _request-access:
+
+**************
+Request Access
+**************
+
+If you do not yet have a FLIP account you can ask for one from the login page itself — no account is needed to submit the request.
+
+1. Click the 'Request access' link beneath the 'Log In' button
+2. Enter your email address, full name and your reason for needing access
+3. Click the 'Submit your request' button
+
+The request is recorded on the Central Hub first and an email notifying the platform's administrator mailbox is sent afterwards, so a request is never lost if the mail backend is unavailable. An administrator then reviews the queue in the Admin Area and either enrols you — registering your account and assigning your role — or dismisses the request (see :ref:`admin-project-and-user-management`). Enrolment emails you the one-time password you use on your :ref:`initial-login`.
 
 .. _initial-login:
 
@@ -21,10 +35,15 @@ Initial Login
 1. Enter your email address and one-time password
 2. Click the 'Login' button
 3. Reset password
+4. Set up multi-factor authentication (MFA): scan the QR code shown with an authenticator app (Google Authenticator, Authy, 1Password, etc.) and enter the 6-digit code it generates
 
 .. note::
 
    The password must meet minimum complexity requirements, consisting of at least 8 characters which include upper and lowercase letters, at least one numeric character and at least one special character e.g., ``@``, ``#``, ``&``, ``!``, ``?``, etc.
+
+.. note::
+
+   MFA enrolment is **mandatory** and cannot be deferred: until it is complete, every page of the application redirects you to the enrolment page — only the sign-in and password pages, the access-request form and the privacy policy and terms of service remain reachable. Keep the authenticator entry — you need a fresh code from it at every subsequent sign-in. If you lose the device, an administrator can reset your MFA so you can enrol again (see :ref:`admin-project-and-user-management`). Local development deployments run with ``ENFORCE_MFA=false``, which skips enrolment and the code prompt; staging and production enforce them by default (``ENFORCE_MFA`` defaults to ``true`` there and is only ever set to ``false`` deliberately, for testing).
 
 .. figure:: ../assets/flip/flip-first-login.gif
    :width: 600
@@ -34,7 +53,7 @@ Initial Login
 
 .. _flip-login:
 
-On subsequent visits, sign in with your email address and password to reach the Projects page.
+On subsequent visits, sign in with your email address and password, then enter the current 6-digit code from your authenticator app, to reach the Projects page.
 
 .. figure:: ../assets/flip/flip-login.gif
    :width: 600
@@ -451,6 +470,12 @@ Upload Files
    Only recognised file types may be uploaded (by default ``.py``, ``.json``, ``.toml``, ``.pt``,
    ``.pth``, ``.pkl``, ``.txt``, ``.yaml``, ``.yml`` and ``.safetensors``). Anything else — including
    archives such as ``.zip`` — is refused at upload time with a message listing the accepted types.
+
+   A single file may be at most **5 GiB** (the deployment's ``MAX_MODEL_FILE_BYTES`` setting). The
+   limit is written into the upload authorisation itself, so an oversized file is rejected by
+   storage rather than accepted and discarded afterwards; the page checks the size before the
+   transfer starts as well. That authorisation is valid for 30 minutes, which also bounds how long
+   a single large upload has to complete.
 
    Training cannot start until every file has been released.
 

@@ -212,13 +212,22 @@ def test_every_other_job_is_gated() -> None:
 
 def test_scripts_test_workflow_triggers_on_gated_workflow_edits() -> None:
     """This guard asserts on workflow files, so edits to them must run it — the trap
-    test_trust_kit_scripts.yml already documents for the compose files."""
+    test_trust_kit_scripts.yml already documents for the compose files.
+
+    A trigger satisfies that either by listing the paths or by carrying no ``paths:``
+    filter at all, which is strictly broader. ``pull_request`` is unfiltered today
+    (FLIP#1230) so every develop-targeted PR runs this ~1s job; the push trigger is
+    filtered and must therefore name them.
+    """
     text = (WORKFLOWS / "test_trust_kit_scripts.yml").read_text()
     for trigger in ("push", "pull_request"):
         m = re.search(rf"^  {trigger}:\n((?:    .*\n)+)", text, re.M)
         assert m, trigger
-        assert '".github/workflows/test_*.yml"' in m.group(1), trigger
-        assert f'".github/workflows/{GATE_WORKFLOW}"' in m.group(1), trigger
+        block = m.group(1)
+        if "    paths:\n" not in block:
+            continue
+        assert '".github/workflows/test_*.yml"' in block, trigger
+        assert f'".github/workflows/{GATE_WORKFLOW}"' in block, trigger
 
 
 TESTS = [obj for name, obj in sorted(globals().items()) if name.startswith("test_") and callable(obj)]

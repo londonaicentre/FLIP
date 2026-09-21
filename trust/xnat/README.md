@@ -159,9 +159,75 @@ tolerated — the existing service account, PACS registration, and availability 
 In development (when `PROD` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
 
 > **Important — XNAT data volumes must be bind-mounted.**
-> XNAT's container service plugin executes Docker commands on the host (via the mounted Docker socket). Those host-spawned containers need access to XNAT data through host paths, so the data directories (`archive`, `build`, `cache`, `tomcat_logs`) must be bind-mounted rather than using named volumes. The `/${XNAT_PORT}` prefix isolates data directories per XNAT instance. See `docker-compose-stack.development.yml` for the full volume configuration.
+> XNAT's container service plugin executes Docker commands on the host. `xnat-web` does **not** mount
+> the Docker socket: it reaches Docker over `tcp://xnat-socket-proxy:2375` (set in
+> `xnat/config/container-service-backend-configuration.json`), and only the `xnat-socket-proxy`
+> sidecar mounts `/var/run/docker.sock:ro`, on a stack-scoped internal network no other trust service
+> can reach. Either way the containers it spawns run on the *host*, so they need XNAT's data through
+> host paths — the data directories (`archive`, `build`, `cache`, `tomcat_logs`) must therefore be
+> bind-mounted rather than using named volumes. Per-instance isolation comes from `XNAT_DATA_DIR`,
+> which the kit file's Host-local profile sets and every shipped kit carries (`./xnat-data` in
+> `trust/.env.example`, hence in anything `make new-trust` scaffolds; `./xnat-data-GSTT` /
+> `./xnat-data-KCH` in the dev examples) — a relative value resolves against `trust/xnat/`. Only
+> when the kit omits the key does `Makefile` fall back to a per-slot default derived from
+> `TRUST_NUM` (= `FL_KIT_SLOT_NUMBER`): `/opt/flip/xnat-trust<N>` under `PROD=stag|true`,
+> `./xnat-data-trust<N>` in development. See `docker-compose-stack.development.yml` for the full
+> volume configuration.
 
 If successful, you will be able to log in to XNAT with the service account credentials (specified in the trust's kit file, `trust/.env.<CODE>.<env>`) and see the registered PACS in the DICOM Query-Retrieve plugin.
+
+### Invite links and `aliasTokenTimeout`
+
+FLIP never emails an XNAT password. When a project is approved, imaging-api creates each new user with a random,
+undisclosed password and asks XNAT for an *alias token* on their behalf (`GET /data/services/tokens/issue/user/<name>`,
+which needs the service account's `Administrator` role); the hub emails the resulting host-less set-password path. The
+link's unused lifetime is XNAT's `aliasTokenTimeout` site setting (Site Administration → Security → User Logins /
+Session Controls → Alias Token Timeout; 48 hours by default) — `configure-xnat.sh` leaves it at the site default. Setting
+a password through the link invalidates it. Raising the timeout lengthens every invite link in flight, so treat it as a
+security setting. An account whose link expired unused is re-invited on the next project approval that includes the
+user (imaging-api re-issues a token for any existing account with no successful login), so no manual reset is needed.
+
+## PACS configuration
+
+`configure-xnat.sh` (run by `make up` / `up-xnat`, via `xnat-configure`) registers XNAT's DICOM SCP
+receiver and the upstream PACS from the trust kit file (`trust/.env.<CODE>.<env>` — see the
+`── Upstream PACS ──` block in `trust/.env.example`). Every variable below has a default describing
+the mocked Orthanc that ships for development; a real trust agrees them with its PACS manager. The
+script requires each to be non-empty once defaulted, so a kit line like `PACS_HOST=` fails loudly
+rather than silently falling back.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `XNAT_AETITLE` | `XNAT` | XNAT's **own** AE title. Applied in three places that must agree: the SCP receiver, the DQR calling AE, and the C-MOVE destination handed to the PACS. DQR matches that destination against a registered receiver by exact `AE:port`, so no translation is possible on that leg. |
+| `XNAT_PORT` | `8104` | XNAT's **DICOM SCP receiver** port. Defaults to the Trust_1 allocation so a single-trust host need not set it. |
+| `XNAT_WEB_PORT` | — (required) | The host-published **web-UI** port. No default of its own: it falls back to `XNAT_PORT`, which collides, so every kit must set it. |
+| `PACS_HOST` | `orthanc` | Upstream PACS hostname — the compose/k8s service name, or a real PACS host. |
+| `PACS_AETITLE` | `ORTHANC` | The PACS's AE title. |
+| `PACS_QR_PORT` | `4242` | The PACS query/retrieve port XNAT dials. Must be reachable **from the XNAT container** — not a host-published port. |
+| `PACS_LABEL` | `Test PACS instance` | Display label for the registration in the DQR UI. |
+| `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` | `true` | Whether the PACS supports relational queries / extended negotiation. A capability of the PACS, not a preference — one that does not support it rejects the association outright. Validated as literally `true` or `false` before it reaches `jq`. |
+| `PACS_AVAILABILITY_DAYS` | all seven days | Retrieval window: which days retrieval may run. |
+| `PACS_AVAILABILITY_START` / `_END` | `00:00` / `24:00` | Retrieval window start/end. |
+| `PACS_THREADS` | `1` | Concurrent retrieval threads. |
+| `PACS_UTILIZATION_PERCENT` | `100` | Share of the window/threads DQR may use. |
+| `DQR_MAX_PACS_REQUEST_ATTEMPTS` | `100` | Retries before DQR gives up on a request. |
+| `DQR_RETRY_WAIT_SECONDS` | `300` | Wait between those retries. |
+
+The throttle group exists because a production PACS may refuse further associations after a certain
+volume, and a trust may want retrieval confined to out-of-hours.
+
+**`XNAT_PORT` and `XNAT_WEB_PORT` are two different things** (they were one variable until FLIP#993,
+which is why host 8104 once served Tomcat while the receiver's 8104 was an unpublished container
+port). Both are host-published — the receiver so a real PACS can complete the C-STORE return leg of
+a retrieval, and dev keeps the same wiring — so they must differ; `xnat-reset` refuses to deploy if
+they collide or are non-numeric. The dev allocation is 8104/8105 (GSTT) and 8106/8107 (KCH).
+
+`configure-xnat.sh` updates an existing PACS registration in place when any of its kit-managed
+fields drift (host, query/retrieve port, label, extended-negotiation flag), and deletes every
+registration other than the configured one so exactly one survives — which is why imaging-api can
+read the PACS id back from XNAT at runtime rather than assuming `1`. The delete is conditional: if
+foreign registrations exist while `PACS_AETITLE`/`PACS_HOST` are still the mocked-Orthanc defaults,
+the script refuses and exits 1 rather than remove a real PACS the operator never declared (FLIP#993).
 
 ## Plugins
 
@@ -186,6 +252,26 @@ inspect the jars, or to build offline later — populates it explicitly with
 
 > The pre-1.10 flat layout (`xnat/xnat-web-1.9.3.war` + `xnat/plugins/`) is kept as-is while `main`
 > still builds 1.9.3; delete it once this upgrade reaches `main`.
+
+`xnat-plugins-download` delegates the presence check and the sync to
+[`scripts/ensure_plugins.sh`](scripts/ensure_plugins.sh), which matches plugin *families* by filename
+prefix (versions are whatever the S3 prefix holds) and records the prefix it synced from in a
+`.s3-prefix` stamp beside the jars — a mismatched or absent stamp forces a `--delete` re-sync, so an
+XNAT-version change can never bake a developer's stale jars into the new image.
+`make -C trust/xnat xnat-war-download` is the WAR half of the same idea: it fetches
+`xnat-<version>/xnat-web-<version>.war` into `xnat/build-artifacts/`, skipping S3 when the file is
+already there.
+
+### Other Make targets
+
+| Target | What it does |
+| --- | --- |
+| `xnat-shell KIT=<CODE>` | `docker exec -it` a bash shell in that trust's running `xnat-web` container. |
+| `xnat-configure XNAT_PROJECT=xnat<N>` | Re-run `configure-xnat.sh` + `configure-dcm2niix.sh` against a **live** instance, without resetting its data. |
+| `create-xnat-network KIT=<CODE>` | Ensure this trust's attachable overlay network exists (run for you by `up-xnat`). |
+| `xnat-stack-down STACK=<stack>` | `docker stack rm` one stack and **block** until its containers have stopped — `docker stack rm` is asynchronous, and `xnat-reset` must not delete bind-mount sources still held by a running container. Times out at 120s. |
+| `xnat-war-download` / `xnat-plugins-download` | Fill the local build-artifact / plugin caches from S3 (see above). |
+| `test` / `unit_test` / `local_test` | The anonymization-script test pack in [`tests/`](./tests/) — pure Python, no XNAT or Docker. |
 
 ### Plugin compatibility
 

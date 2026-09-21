@@ -27,8 +27,8 @@
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 
-# Tutorials = immediate subdirs carrying an app/ (xray_classification,
-# 3d_spleen_segmentation, 3d_spleen_segmentation_evaluation).
+# Tutorials = immediate subdirs carrying an app/ (xray_classification, 3d_spleen_segmentation,
+# 3d_spleen_segmentation_evaluation, ehr_risk_prediction).
 TUTORIAL_DIRS := $(sort $(patsubst %/app/,%,$(dir $(wildcard */app/.))))
 
 .PHONY: list-tutorials run-tutorial run-all-tutorials sim-tutorial
