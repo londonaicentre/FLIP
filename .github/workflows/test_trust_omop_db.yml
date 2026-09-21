@@ -18,6 +18,11 @@ on:
     paths:
       - "trust/omop-db/**"
       - ".github/workflows/test_trust_omop_db.yml"
+      # trust/omop-db/Makefile:15 includes and exports this kit example (the path is
+      # hardcoded to GSTT), so make parses it before `make local_test` runs a single test — a
+      # line it cannot read stops the target outright. The KCH twin is deliberately absent:
+      # no Makefile points at it.
+      - "trust/.env.GSTT.development.example"
   pull_request:
     branches: [main, develop]
 
@@ -38,6 +43,7 @@ jobs:
       paths: |
         trust/omop-db/**
         .github/workflows/test_trust_omop_db.yml
+        trust/.env.GSTT.development.example
 
   omop-db:
     needs: changes

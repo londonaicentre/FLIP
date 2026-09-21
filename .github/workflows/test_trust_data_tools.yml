@@ -40,6 +40,11 @@ on:
       # to either can break this suite before a single test runs.
       - "deploy/fl_backend.mk"
       - "deploy/instance.mk"
+      # trust/orthanc/Makefile:15 includes and exports this kit example (the path is
+      # hardcoded to GSTT), so make parses it before `make -C trust/orthanc test` runs a
+      # single test — a line it cannot read stops the target outright. The KCH twin is
+      # deliberately absent: no Makefile points at it.
+      - "trust/.env.GSTT.development.example"
   pull_request:
     branches: [main, develop]
 
@@ -71,6 +76,7 @@ jobs:
         .github/workflows/test_trust_data_tools.yml
         deploy/fl_backend.mk
         deploy/instance.mk
+        trust/.env.GSTT.development.example
 
   trust-data-tools:
     needs: changes

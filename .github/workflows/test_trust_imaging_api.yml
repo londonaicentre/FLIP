@@ -18,6 +18,12 @@ on:
     paths:
       - "trust/imaging-api/**"
       - ".github/workflows/test_trust_imaging_api.yml"
+      # trust/imaging-api/Makefile:15 includes and exports this kit example (the path is
+      # hardcoded to GSTT), so make parses it before `make local_test` runs a single test — a
+      # line it cannot read stops the target outright — and its values reach the environment
+      # Settings reads; tests/conftest.py:33 exists to neutralise its <placeholder> values.
+      # The KCH twin is deliberately absent: no Makefile points at it.
+      - "trust/.env.GSTT.development.example"
   pull_request:
     branches: [main, develop]
 
@@ -38,6 +44,7 @@ jobs:
       paths: |
         trust/imaging-api/**
         .github/workflows/test_trust_imaging_api.yml
+        trust/.env.GSTT.development.example
 
   imaging-api:
     needs: changes
