@@ -626,6 +626,8 @@ check-trust-ec2-enabled:
 seed-trust-data: check-trust-ec2-enabled ssh-config ## Seed the Trust EC2's OMOP + Orthanc from the canonical dataset, then load the vocabulary (re-run after a data version bump; requires KIT=)
 	@# SEED_PROJECTS / SEED_ORTHANC / SOURCE_TRUST thread through to the seed play (FLIP#1187):
 	@#   make seed-trust-data KIT=GSTT PROD=stag SEED_PROJECTS="spleen_project prostate_project" SEED_ORTHANC=false
+	@# FORCE_DICOM_VOCAB=1 reloads the DICOM vocabulary over a half-loaded one that reports
+	@# itself present (the same escape trust/omop-db/Makefile has); off unless asked for.
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make seed-trust-data KIT=Trust_2 PROD=stag"; exit 1)
 	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo "❌  FL_KIT_SLOT_NUMBER not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — run register-trusts first"; exit 1)
 	@[ -n "$(TRUST_DATA_VERSION)" ] || (echo "❌  trust/.data_version not found"; exit 1)
@@ -647,6 +649,7 @@ seed-trust-data: check-trust-ec2-enabled ssh-config ## Seed the Trust EC2's OMOP
 		$(if $(SEED_PROJECTS),-e seed_projects="$(SEED_PROJECTS)") \
 		$(if $(SEED_ORTHANC),-e seed_orthanc=$(SEED_ORTHANC)) \
 		$(if $(SOURCE_TRUST),-e source_trust=$(SOURCE_TRUST)) \
+		$(if $(filter 1,$(FORCE_DICOM_VOCAB)),-e force_dicom_vocab=true) \
 		-e vocab_s3_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e omop_db_tag=$(DOCKER_TAG)
 	@echo "✅ Trust data seeding complete."

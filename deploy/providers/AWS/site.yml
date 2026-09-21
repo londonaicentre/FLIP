@@ -280,7 +280,7 @@
   become: true
   # `flkit` so this kit-staging play can be run on its own (e.g. re-staging a
   # kit after re-registration) via `--tags flkit`, without the host reboot /
-  # OMOP+Orthanc data restore the full playbook performs.
+  # OMOP+Orthanc seeding the full playbook performs.
   tags: flkit
   vars:
     # FL_KIT_DIR on the trust host — kit root containing net-1/services/<slot>/
@@ -650,6 +650,8 @@
     seed_num_trusts: "{{ num_trusts | default('2') }}"
     seed_project_list: "{{ seed_projects | default('cxr_project spleen_project', true) }}"
     seed_orthanc_enabled: "{{ seed_orthanc | default(true) }}"
+    # Recovery only — see the seed task below.
+    seed_force_dicom_vocab: "{{ force_dicom_vocab | default(false) }}"
     hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
     hf_trust_data_revision: "{{ trust_data_hf_revision | default(trust_data_version) }}"
     omop_db_image: "ghcr.io/londonaicentre/omop-db:{{ omop_db_tag | default('stag', true) }}"
@@ -789,6 +791,11 @@
           no_log: true
           when: seed_orthanc_enabled | bool
 
+        # FORCE_DICOM_VOCAB=1 (make seed-trust-data FORCE_DICOM_VOCAB=1) reloads the DICOM
+        # vocabulary over one that reports itself present: its "already loaded" signal is a
+        # single concept committed before the bulk load, so a run killed in between leaves a
+        # database that skips the load forever. Without it, recovery here means a hand-run
+        # psql against the trust's cluster.
         - name: run the seed procedure against both (uv image, host network, loaders from this checkout)
           command: >
             docker run --rm --network host
@@ -803,6 +810,7 @@
             -e NUM_TRUSTS={{ seed_num_trusts }}
             -e SEED_OMOP=true
             -e SEED_ORTHANC={{ 'true' if seed_orthanc_enabled | bool else 'false' }}
+            -e FORCE_DICOM_VOCAB={{ '1' if seed_force_dicom_vocab | bool else '' }}
             -e OMOP_DB_HOST=127.0.0.1
             -e OMOP_DB_PORT={{ seed_omop_port }}
             -e OMOP_POSTGRES_USER={{ omop_postgres_user }}
@@ -843,9 +851,9 @@
             state: absent
 
 - name: load OMOP core vocabulary on Trust EC2
-  # The published pgdata tarballs are vocab-free (FLIP#842/#843): the licensed
-  # core vocabulary is streamed into the restored cluster here, via a throwaway
-  # container on a loopback-only port. The loader skips tables that already
+  # The canonical dataset carries no core vocabulary (FLIP#842/#843): it is licensed, so
+  # it is loaded separately here, into the cluster the seed play above filled, via a
+  # throwaway container on a loopback-only port. The loader skips tables that already
   # hold the core vocabulary, so re-runs are safe. Bundle comes from the org S3
   # bucket via the instance role.
   hosts: trust_ec2
@@ -859,11 +867,11 @@
     vocab_core_bundle: "vocab_aicentre_core_20240916"
     # Supplied by `make seed-trust-data` as the env's own DOCKER_TAG. The fallback
     # only applies to a hand-run playbook: the container is a throwaway Postgres
-    # server over an already-restored volume, so the tag matters little here —
+    # server over an already-seeded volume, so the tag matters little here —
     # 'stag' is simply the safer accident than the production image.
     omop_db_image: "ghcr.io/londonaicentre/omop-db:{{ omop_db_tag | default('stag', true) }}"
     vocab_load_port: "15499"
-    # Superuser credentials of the restored cluster — the kit's OMOP_POSTGRES_*
+    # Superuser credentials of the seeded cluster — the kit's OMOP_POSTGRES_*
     # values, passed as extra-vars by the Makefile seed-trust-data target.
     omop_postgres_user: "{{ omop_postgres_user | default('postgres', true) }}"
     omop_postgres_db: "{{ omop_postgres_db | default('trustomopdb', true) }}"
@@ -921,7 +929,7 @@
             - load_core_vocab.sh
             - OMOPCDM_postgresql_5.4_constraints.sql
 
-        - name: start throwaway database container on the restored volume
+        - name: start throwaway database container on the seeded volume
           command: >
             docker run -d --name omop-vocab-load
             -v {{ omop_dir }}/db_data:/var/lib/postgresql/data

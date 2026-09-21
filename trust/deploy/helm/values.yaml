@@ -77,6 +77,13 @@ trustData:
     # The Apache-licensed DICOM vocabulary bundle on the dataset (omop-vocab/<name>.zip), loaded
     # before the rows so their imaging concepts resolve even without the core vocabulary.
     dicomVocabBundle: "vocab_dicom_paulnagy_20260109"
+    # Recovery only. The vocabulary load skips itself when its scaffolding concept is present,
+    # and that concept is committed before the concepts and relationships it precedes — so a Job
+    # killed between them leaves a database that reports itself loaded while holding an
+    # incomplete vocabulary, which every later upgrade then skips. Set true for one upgrade to
+    # reload over it (it duplicates concept_relationship rows, which has no unique key), then
+    # put it back.
+    forceDicomVocab: false
     # Scratch for the fetched tables, the vocabulary zip and — with `orthanc` on — the DICOM
     # sets and their extraction (~2 GB + ~2 GB for the two default projects).
     workDirSize: 8Gi

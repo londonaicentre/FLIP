@@ -110,7 +110,7 @@ This command executes the following steps in order:
 10. **`ansible-init`**: Patch both hosts, install `psql` on the Central Hub bastion, and provision Docker, AWS CLI, CloudWatch, and FL assets on the Trust EC2 (the FL kit is staged as `Trust_1` at this point — no slot has been assigned yet)
 11. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3 + invalidate CloudFront
 12. **`register-trusts`**: Register every locally-present trust kit file (`trust/.env.<CODE>.<env>`) on the running hub and write its credentials back. Only the two hub-shared values the ECS task env carries (`TRUST_API_KEY_HEADER`, `FL_BACKEND`) come back with it — the rest of the block needs `make sync-trust-kit KIT=<CODE> PROD=<env>` from the repo root afterwards (see [Registering trusts against the ECS hub](#registering-trusts-against-the-ecs-hub))
-13. **`deploy-trust`**: Seed the Trust EC2 with that trust's OMOP + Orthanc mock data (`seed-trust-data`, a ~1 GB HuggingFace fetch at the `trust/.data_version` tag plus the OMOP vocabulary load — re-run it standalone after a data-version bump), re-stage the FL participant kit for the slot the hub assigned at registration (`stage-fl-kit`, reading `FL_KIT_SLOT_NUMBER` from the kit file — idempotent when the host really is `Trust_1`), then deploy Trust services via Docker Compose to the Trust EC2
+13. **`deploy-trust`**: Re-stage the FL participant kit for the slot the hub assigned at registration (`stage-fl-kit`, reading `FL_KIT_SLOT_NUMBER` from the kit file — idempotent when the host really is `Trust_1`), then stop the stack, seed the Trust EC2 with that trust's OMOP + Orthanc mock data (`seed-trust-data`, a ~1 GB HuggingFace fetch at the `trust/.data_version` tag plus the OMOP vocabulary load), and bring Trust services back up via Docker Compose
 14. **`status`**: Run comprehensive health checks
 
 To provision only the minimal Central Hub bastion after a targeted Terraform
@@ -520,20 +520,31 @@ make register-trusts
 #     ...then fill the rest of each kit's hub-shared block from the local env file (repo root):
 #     make sync-trust-kit KIT=<CODE> PROD=<env>
 
-# 13. Deploy trust services (depends on seed-trust-data + stage-fl-kit; needs KIT=<CODE>)
+# 13. Deploy trust services (runs stage-fl-kit + seed-trust-data; needs KIT=<CODE>)
 make deploy-trust KIT=<CODE>
 
 # 14. Check status
 make status
 ```
 
-Step 13 is not a single action: `deploy-trust` depends on `seed-trust-data` (and
-`stage-fl-kit`), so it first loads that trust's OMOP + Orthanc mock data onto the Trust
-EC2 — a ~1 GB HuggingFace fetch of the archives pinned by `trust/.data_version`, plus the
-OMOP vocabulary load. Both need `KIT=<CODE>` and read `FL_KIT_SLOT_NUMBER` and the
-`OMOP_POSTGRES_*` values out of `trust/.env.<CODE>.<env>`, which is why they must run
-**after** `register-trusts`. Re-run `make seed-trust-data KIT=<CODE>` on its own after a
-`trust/.data_version` bump.
+Step 13 is not a single action. `deploy-trust` runs `stage-fl-kit` as a prerequisite and
+`seed-trust-data` inside its recipe, between stopping and restarting the stack — the seed
+starts a throwaway postmaster on the trust's data directory, so the trust's own omop-db
+must not hold it open (the play refuses if it does). Seeding loads that trust's OMOP +
+Orthanc mock data onto the Trust EC2: a ~1 GB HuggingFace fetch of the archives pinned by
+`trust/.data_version`, plus the OMOP vocabulary load. Both need `KIT=<CODE>` and read
+`FL_KIT_SLOT_NUMBER` and the `OMOP_POSTGRES_*` values out of `trust/.env.<CODE>.<env>`,
+which is why they must run **after** `register-trusts`.
+
+**The seed runs on every `deploy-trust`, by design** — unlike the dev path, where
+`ensure-seeded` is marker-gated and a second `up-trust` is a no-op, the play writes no
+marker and has no skip condition. A routine re-deploy therefore re-fetches and re-posts
+the mock data, costing minutes rather than correctness: the OMOP half replaces only the
+listed projects' rows (`--clean projects`) and Orthanc dedupes on SOPInstanceUID. Run
+`make seed-trust-data KIT=<CODE>` on its own to re-seed after a `trust/.data_version`
+bump without a full re-deploy, and add `FORCE_DICOM_VOCAB=1` to reload a DICOM vocabulary
+left half-loaded by an interrupted run (it reports itself present, so the load is
+otherwise skipped for good).
 
 ### Central Hub deploys and rollback (immutable SHA tags)
 

@@ -76,12 +76,23 @@ def test_seed_job_runs_the_shared_script_at_a_pinned_ref():
         assert f"- name: {env}\n" in text, env
 
 
+def test_the_half_loaded_vocabulary_can_be_reloaded_from_the_chart():
+    """The vocab load skips on one concept committed before the bulk load, so a Job killed between
+    them leaves a database that reports itself loaded. Without a way to reach --force from the
+    chart, recovery is a hand-run psql against the trust's cluster."""
+    assert "- name: FORCE_DICOM_VOCAB\n" in SEED_JOB.read_text()
+    assert VALUES["trustData"]["seed"]["forceDicomVocab"] is False
+    script = (CHART_DIR.parents[2] / "trust" / "seed_trust.sh").read_text()
+    assert 'if [ "${FORCE_DICOM_VOCAB:-}" = "1" ]; then VOCAB_MODE=--force; else VOCAB_MODE=--skip-if-loaded; fi' in script
+
+
 def test_the_shared_script_installs_the_repository_loaders_without_git():
     """trust/seed_trust.sh: omop_db_tools from a source archive (no git in the image), seed_orthanc.py by URL."""
     script = (CHART_DIR.parents[2] / "trust" / "seed_trust.sh").read_text()
     assert "https://github.com/londonaicentre/FLIP/archive/${FLIP_REF}.tar.gz#subdirectory=trust/omop-db" in script
     assert "raw.githubusercontent.com/londonaicentre/FLIP/${FLIP_REF}/trust/orthanc/seed_orthanc.py" in script
     assert "omop_db_tools.load_dicom_vocab --vocab-dir" in script and "--skip-if-loaded" in script
+    assert "--force" in script  # the escape hatch; see test_the_half_loaded_vocabulary_can_be_reloaded_from_the_chart
     assert "--clean projects" in script and "--clean all" not in script
     assert "git+" not in script
 

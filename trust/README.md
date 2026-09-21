@@ -193,6 +193,21 @@ make -C trust ensure-seeded KIT=GSTT PROJECTS="spleen_project cxr_project"   # w
 make -C trust seed KIT=GSTT PROJECTS="prostate_project"                       # add a project, unconditionally
 ```
 
+**A host seeded before FLIP#1187 re-seeds once.** The PACS marker used to live *inside* the
+storage directory (`<storage dir>/.seeded`) and now sits beside it, because the directory
+itself is owned by Orthanc's uid. The new reader does not look at the old path, so the first
+`up-trust` after this change finds no marker and re-seeds: the DICOM cache under
+`trust/orthanc/volumes/dicom/` is keyed by data version and survives, so nothing is
+re-downloaded, but every instance is re-posted (Orthanc answers `AlreadyStored`) — a few
+minutes, once. The stale `.seeded` inside the storage directory can be deleted.
+
+Recovering a half-loaded DICOM vocabulary: the loader skips itself when its scaffolding
+concept is present, and that concept is committed before the bulk load, so a run killed in
+between leaves a database that reports itself loaded and is skipped for good.
+`make -C trust/omop-db load-dicom-vocab FORCE_DICOM_VOCAB=1` reloads over it. The same
+variable reaches the Kubernetes hook (`trustData.seed.forceDicomVocab`) and the EC2 play
+(`make -C deploy/providers/AWS seed-trust-data KIT=<CODE> FORCE_DICOM_VOCAB=1`).
+
 ### Which partition a trust is seeded with
 
 `make -C trust seed KIT=<CODE>` loads the OMOP `source_trust` partition matching the trust's **FL

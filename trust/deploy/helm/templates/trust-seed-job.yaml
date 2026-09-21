@@ -91,6 +91,8 @@ spec:
               value: {{ .Values.trustData.seed.numTrusts | quote }}
             - name: VOCAB_DICOM_BUNDLE
               value: {{ .Values.trustData.seed.dicomVocabBundle | quote }}
+            - name: FORCE_DICOM_VOCAB
+              value: {{ ternary "1" "" .Values.trustData.seed.forceDicomVocab | quote }}
             - name: WORK_DIR
               value: /work
             - name: SEED_OMOP

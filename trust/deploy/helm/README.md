@@ -276,6 +276,8 @@ PVCs explicitly if you want a clean slate.
 | `trustData.seed.projects` | `cxr_project spleen_project` | Published projects to load (`omop-csv/<project>/` + `dicom/<project>.tar.gz`) |
 | `trustData.seed.sourceTrust` | `""` (= `trustNumber`) | The dataset partition (`source_trust`) this trust receives |
 | `trustData.seed.sourceRef` | `develop` | FLIP git ref the seed tools are installed from at run time — match the ref your images were built from (`main` for `:prod`) |
+| `trustData.seed.dicomVocabBundle` | `vocab_dicom_paulnagy_20260109` | The Apache-licensed DICOM vocabulary bundle loaded before the rows |
+| `trustData.seed.forceDicomVocab` | `false` | Recovery only: reload the DICOM vocabulary over one that reports itself present. The load skips on a single concept committed before the bulk load, so a Job killed between them leaves a half-loaded vocabulary every later upgrade skips. Set for one upgrade, then put it back |
 | `trustData.seed.image.*` | `ghcr.io/astral-sh/uv@sha256:…` | The uv image the hook runs in (pinned by digest) |
 | `trustData.seed.workDirSize` | `8Gi` | Scratch emptyDir for the fetched tables, vocabulary zip and DICOM sets |
 

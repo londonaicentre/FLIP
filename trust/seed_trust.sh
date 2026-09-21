@@ -28,6 +28,7 @@
 #   JSON user map Orthanc itself reads; its first entry is used)
 #   TRUST_DATA_VERSION (the dataset tag) HF_TRUST_DATA_REPO PROJECTS SOURCE_TRUST NUM_TRUSTS
 #   SEED_OMOP / SEED_ORTHANC ("true" to run that half) VOCAB_DICOM_BUNDLE WORK_DIR (scratch)
+#   FORCE_DICOM_VOCAB ("1" to reload the DICOM vocabulary over one that reports itself present)
 set -euo pipefail
 
 WORK_DIR="${WORK_DIR:-/work}"
@@ -60,7 +61,25 @@ PY
 }
 
 fetch() {  # $1 url $2 dest
-  python3 -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])' "$1" "$2"
+  python3 - "$1" "$2" <<'PY'
+import os, sys, time, urllib.request
+
+url, dest = sys.argv[1], sys.argv[2]
+# Staged through .part and renamed only on success: the caller gates the fetch on the
+# destination existing, so a stream cut short would otherwise be taken for a complete bundle
+# by every later run — and only the Kubernetes Job gets a fresh scratch dir to escape that.
+tmp = f"{dest}.part"
+for attempt in range(1, 4):
+    try:
+        urllib.request.urlretrieve(url, tmp)
+        os.replace(tmp, dest)
+        break
+    except Exception as error:  # a fetch over the public internet: transient until it is not
+        if attempt == 3:
+            raise
+        print(f"   retry {attempt}/3 after {type(error).__name__}: {error}", flush=True)
+        time.sleep(attempt * 5)
+PY
 }
 
 echo "seed_trust: source_trust ${SOURCE_TRUST} of ${NUM_TRUSTS}; projects [${PROJECTS}]; data version ${TRUST_DATA_VERSION}; tools ${TOOLS_SPEC}"
@@ -71,7 +90,14 @@ if [ "${SEED_OMOP:-true}" = "true" ]; then
   tools python -m omop_db_tools.dataset fetch --revision "${TRUST_DATA_VERSION}" --dest "${WORK_DIR}/canonical" --projects ${PROJECTS}
   VOCAB="${WORK_DIR}/${VOCAB_DICOM_BUNDLE}"
   [ -f "${VOCAB}.zip" ] || [ -d "${VOCAB}" ] || fetch "https://huggingface.co/datasets/${HF_TRUST_DATA_REPO}/resolve/${TRUST_DATA_VERSION}/omop-vocab/${VOCAB_DICOM_BUNDLE}.zip" "${VOCAB}.zip"
-  tools python -m omop_db_tools.load_dicom_vocab --vocab-dir "${VOCAB}" --skip-if-loaded
+  # The loader's "already loaded" signal is a single scaffolding concept, committed before the
+  # concepts and relationships it precedes — so a crash, an OOM or an evicted pod between those
+  # loads leaves a database that reports itself loaded while holding an incomplete vocabulary,
+  # and every later run skips straight past it. FORCE_DICOM_VOCAB=1 is the way back, the same
+  # escape `make -C trust/omop-db load-dicom-vocab` has; it reloads, duplicating
+  # concept_relationship rows (no unique key there), which is the lesser of the two states.
+  if [ "${FORCE_DICOM_VOCAB:-}" = "1" ]; then VOCAB_MODE=--force; else VOCAB_MODE=--skip-if-loaded; fi
+  tools python -m omop_db_tools.load_dicom_vocab --vocab-dir "${VOCAB}" "${VOCAB_MODE}"
   # shellcheck disable=SC2086
   tools python -m omop_db_tools.import_tables --trust-index "${SOURCE_TRUST}" --num-trusts "${NUM_TRUSTS}" \
     --partition source_trust --clean projects --projects ${PROJECTS} --data-dir "${WORK_DIR}/canonical"

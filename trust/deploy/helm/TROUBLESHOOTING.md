@@ -609,6 +609,22 @@ The usual causes are egress (the Job needs `huggingface.co`, `github.com` /
 `raw.githubusercontent.com` and PyPI — see NETWORK-POLICY.md) or a `trustData.seed.sourceRef`
 that names a FLIP ref whose loaders do not match these images.
 
+**Cohorts come back empty and the vocabulary looks loaded.** A Job killed partway through the
+DICOM vocabulary load — OOM, an evicted pod, a cancelled upgrade — can leave the database
+holding an incomplete vocabulary that still reports itself loaded: the loader's "already
+loaded" signal is one scaffolding concept, committed before the concepts and relationships it
+precedes. Every later upgrade then skips the load, including the Job's own `backoffLimit`
+retries. Reload over it for one upgrade:
+
+```bash
+helm upgrade trust-release trust/deploy/helm -n flip-trust \
+  -f trust/deploy/helm/values.yaml \
+  --set trustData.seed.forceDicomVocab=true
+```
+
+Then put it back — it reloads unconditionally, and `concept_relationship` carries no unique
+key, so leaving it on duplicates those rows on every upgrade.
+
 ---
 
 ## 4. Trust Registration and Heartbeat
