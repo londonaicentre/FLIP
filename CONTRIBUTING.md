@@ -317,10 +317,26 @@ pushes. These are:
   and `trust-*` GHCR build-and-push workflows.
 - **Releases** — `release.yml` and `release-pypi.yml` (git tags, GitHub releases, PyPI publishing).
 
-Everything that **validates** your change still runs on your fork, and a red result there is a real failure to fix:
-lint, type-checking, unit and integration tests, docs, Terraform validation, Helm tests, and secret scanning.
+Everything that **validates** your change still runs, and a red result is a real failure to fix: lint,
+type-checking, unit and integration tests, docs, Terraform validation, Helm tests, and secret scanning.
 Coverage upload to Codecov is non-blocking (`fail_ci_if_error: false`), so a missing `CODECOV_TOKEN` on your fork
 never fails an otherwise-green job.
+
+### Why a test suite shows as skipped
+
+Skipped is also the normal result for a service test suite your change does not touch. On a PR into `develop` the
+seven service workflows (`test_flip_ui.yml`, `test_flip_api.yml`, the three `test_trust_*_api.yml`,
+`test_trust_omop_db.yml` and `test_trust_data_tools.yml`) still start, but each gates its jobs on
+[`pr_paths_changed.yml`](.github/workflows/pr_paths_changed.yml), which runs the suite only when a changed file
+matches the paths that workflow covers — the same list as its push `paths:` filter, plus the gate itself. A PR into
+`main` always runs everything. So a `flip-ui`-only change legitimately shows the six trust and flip-api suites as
+skipped, and that is not a fork restriction, a missing check, or something to re-run: check the `changes / decide`
+job, which prints the file that matched or the number of files that did not.
+
+Two consequences worth knowing. A suite skips only if **none** of its paths matched, so if you believe your change
+affects a suite that skipped, the fix is to add the path it consumes to that workflow's list — in **both** copies,
+or `scripts/tests/test_pr_paths_changed.py` fails. And because the gate reads the PR's own file list, editing the
+gate re-runs every suite.
 
 ### Checkov security lint (Terraform)
 
@@ -342,6 +358,44 @@ list — including the classes triaged in FLIP#1058 and deliberately *not* promo
 broken checkov install can never produce a vacuous green. The script's own guards (version pin, unknown check
 IDs, skip rationale, canary) are regression-tested by `deploy/providers/AWS/scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
 run by the same workflow's `Deploy script tests` job.
+
+### Secret scanning (detect-secrets)
+
+Two scanners run on every PR. TruffleHog (`--only-verified`) fails only on a credential it can confirm is live.
+detect-secrets is the structural one — it flags anything *shaped* like a secret (keyword assignments, high-entropy
+strings, JWTs, basic-auth URLs) — and since FLIP#1215 **CI enforces it**: the `Detect Secrets Scan` job runs
+`detect-secrets-hook --baseline .secrets.baseline` over every tracked file (lockfiles excluded), the same entry
+point and version (`1.5.0`) as the pre-commit hook, and fails on any finding the baseline does not already carry.
+Before that the job ran a bare `detect-secrets scan`, which prints a report and cannot exit non-zero, and the
+pre-commit CI job ran the hook with `|| true` — so nothing ever failed and ~110 unbaselined test literals had
+accumulated. A stale baseline (an entry whose line moved or whose literal disappeared — hook exit 3) also fails
+the job, with the rewritten baseline in the log: commit the rewrite deliberately rather than let coverage rot.
+The hook re-serialises the whole file when it rewrites it, so `.secrets.baseline` is committed in the hook's own
+key order (`version`, `plugins_used`, `filters_used`, `results`, `generated_at`, `indent=2`); a rewrite then
+diffs only the moved `line_number`s and `generated_at`, and that is the expected shape when an unrelated edit to
+a baselined file (a Cypress fixture, say) shifts its lines.
+
+Locally the pre-commit hook scans only the files in the commit being made, so it will flag a dummy value the
+first time you touch a file that already contains one. To allowlist a false positive:
+
+1. **Inline pragma, preferred** — append `# pragma: allowlist secret` (YAML, Python, shell, Make) or
+   `// pragma: allowlist secret` (TypeScript) to the line. Where that would push a Python line past 120 columns,
+   put `# pragma: allowlist nextline secret` on its own line directly above instead (nothing else may precede
+   it on that line). The comment documents the decision next to the value, survives edits, and needs no baseline
+   entry.
+2. **Baseline entry** — only for files that cannot carry a comment (JSON fixtures). Run
+   `uvx --from detect-secrets==1.5.0 detect-secrets scan <file>` and copy that file's `results` entries into
+   `.secrets.baseline` with `"is_secret": false`, keeping the hook's key order above. Never run a bare
+   `detect-secrets scan --baseline .secrets.baseline` and commit the result — it re-derives every repo-wide finding
+   and buries the real change — and never add entries for gitignored files.
+3. **Filter** — for a whole class of false positives (Alembic revision ids, Excalidraw element ids) add a
+   `should_exclude_line` / `should_exclude_file` pattern under `filters_used` in the baseline, as the existing ones do.
+
+Whatever you allowlist must be a value that is safe in a public repository: a documented mock credential
+(`minioadmin`, `test-*`, `plain-api`), a synthetic token, or a recorded response whose issuer and accounts are
+confirmed gone (the 2022 Cognito fixtures under `flip-ui/test/cypress/fixtures/auth/` are baselined on that
+basis — say so in the PR). Prefer a synthetic fixture for anything new; a recording of a live system is not a
+false positive.
 
 ### Running the stack (pull vs. build)
 

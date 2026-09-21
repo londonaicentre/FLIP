@@ -176,10 +176,11 @@ accepted only if it:
 6. gives every ``LIMIT`` and ``OFFSET`` as a literal integer, which closes the blind-extraction route.
 
 No layer uses a keyword denylist: the connection runs as the read-only ``data_analyst_reader`` role, so a
-statement the parser let through still cannot write. On Kubernetes that role currently carries
-``pg_read_all_data`` (wider than the Compose grant of ``SELECT`` on ``omop`` alone), so rule 5 is the only
-schema barrier there; narrowing it is tracked in
-`FLIP#904 <https://github.com/londonaicentre/FLIP/issues/904>`__. The full rationale is in the
+statement the parser let through still cannot write. That role's read scope is the ``omop`` schema alone on
+both deployment paths — Compose and the Kubernetes chart provision it from the same SQL file
+(`FLIP#904 <https://github.com/londonaicentre/FLIP/issues/904>`__ removed the chart's wider
+``pg_read_all_data`` grant) — and rule 5 is kept as a barrier in its own right on top of it, since the grant
+is applied by the ``omop-db`` image and withholds nothing in ``pg_catalog``. The full rationale is in the
 `data-access-api README <https://github.com/londonaicentre/FLIP/blob/develop/trust/data-access-api/README.md#cohort-query-validation>`_
 and on :ref:`security`.
 

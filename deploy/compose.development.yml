@@ -167,6 +167,8 @@ services:
       # that surfaced this. Regional endpoints never have this lag and are
       # AWS's recommended path for non-us-east-1 buckets anyway.
       # See compose.production.yml for the `:?` rationale (load-bearing guard).
+      # Also the reason the fl-api's BUNDLE_URL_ALLOWED_HOSTS (compose.development.<backend>.yml)
+      # is exactly s3.<region>.amazonaws.com: this endpoint makes the presigned URLs path-style.
       - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
       - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
