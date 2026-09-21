@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import zipfile
@@ -23,6 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 XNAT_DIR = REPO_ROOT / "trust" / "xnat"
 ENSURE_PLUGINS = REPO_ROOT / "trust" / "xnat" / "scripts" / "ensure_plugins.sh"
 WAIT_FOR_PLUGINS = REPO_ROOT / "trust" / "xnat" / "xnat" / "config" / "wait-for-xnat-plugins.sh"
+HELM_VALUES = REPO_ROOT / "trust" / "deploy" / "helm" / "values.yaml"
 PLUGIN_PREFIX = "xnat-1.10.0/plugins"
 REQUIRED_PLUGIN_NAMES = (
     "batch-launch-test.jar",
@@ -146,6 +148,68 @@ def test_plugin_sync_asks_s3_for_every_jar_in_the_prefix(tmp_path: Path) -> None
     assert "--include" in argv
     assert argv[argv.index("--include") + 1] == "*.jar"
     assert not any("ohif" in arg for arg in argv), f"the sync filters the viewer out: {argv}"
+
+
+def _script_plugin_families() -> list[str]:
+    """Read the plugin families ``ensure_plugins.sh`` requires of the dev cache.
+
+    Returns:
+        Family names, each a ``required_prefixes`` entry with its trailing hyphen removed so it
+        is directly comparable with a chart key.
+    """
+    block = re.search(
+        r"^required_prefixes=\(\n(.*?)^\)", ENSURE_PLUGINS.read_text(), re.DOTALL | re.MULTILINE
+    )
+    assert block is not None, f"no required_prefixes=( ... ) array in {ENSURE_PLUGINS}"
+    return [prefix.rstrip("-") for prefix in re.findall(r'"([^"]+)"', block.group(1))]
+
+
+def _chart_plugin_families() -> list[str]:
+    """Read the plugin families the Helm chart's init container downloads.
+
+    Returns:
+        The ``xnat.web.plugins.urls`` keys. Parsed by indentation rather than with a YAML
+        loader so this suite keeps its single ``pydicom`` dependency.
+    """
+    lines = HELM_VALUES.read_text().splitlines()
+    starts = [i for i, line in enumerate(lines) if re.match(r"^\s*urls:\s*$", line)]
+    assert len(starts) == 1, f"expected one urls: block in {HELM_VALUES}, found {len(starts)}"
+    start = starts[0]
+    indent = len(lines[start]) - len(lines[start].lstrip())
+
+    families: list[str] = []
+    for line in lines[start + 1 :]:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        entry = re.match(r"^(\s+)([A-Za-z0-9_-]+):\s*\S", line)
+        if entry is None or len(entry.group(1)) <= indent:
+            break
+        families.append(entry.group(2))
+    return families
+
+
+def test_the_plugin_roster_is_the_same_in_the_script_and_the_helm_chart() -> None:
+    """The dev cache and the K8s init container must require the same plugin families.
+
+    ``ensure_plugins.sh`` guards only the Swarm and dev paths; the chart downloads its own
+    roster into an emptyDir that masks the image's plugins entirely. So a family wired into one
+    and not the other leaves K8s silently short of a plugin — nothing fails until XNAT is
+    serving, and then only on the route that plugin owns. The comment above
+    ``required_prefixes`` asks for the two to be kept in step; this pins it.
+
+    Order is not part of the contract, only membership: the chart lists the same four families
+    in a different order.
+    """
+    script = _script_plugin_families()
+    chart = _chart_plugin_families()
+
+    assert "ohif-viewer" in script, f"parsed no viewer out of {ENSURE_PLUGINS}: {script}"
+    assert "ohif-viewer" in chart, f"parsed no viewer out of {HELM_VALUES}: {chart}"
+    assert sorted(script) == sorted(chart), (
+        "the dev-cache roster and the chart roster disagree — "
+        f"only in ensure_plugins.sh: {sorted(set(script) - set(chart))}, "
+        f"only in values.yaml: {sorted(set(chart) - set(script))}"
+    )
 
 
 def test_plugin_check_resyncs_a_cache_holding_a_truncated_jar(tmp_path: Path) -> None:
