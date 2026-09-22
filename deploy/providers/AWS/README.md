@@ -628,6 +628,10 @@ domain. `cloudfront.tf` resolves it once, and the same local feeds the S3 bucket
 two allowlists cannot drift apart. Adding a *second* origin means adding a literal entry alongside it;
 the guard follows the reference into `cloudfront.tf`, so a localhost origin is caught either way.
 
+The dev root also pre-registers a list of localhost UI ports (`var.dev_ui_ports`, FLIP#1227), so a
+UI on one of them needs no apply — see "Browser-usable UI ports" in
+[`dev/README.md`](dev/README.md). The procedure below is for everything else.
+
 To change it:
 
 ```bash
