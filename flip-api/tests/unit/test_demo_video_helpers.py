@@ -12,15 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the demo-video recorder's credential fallback and app-file listing."""
+"""Unit tests for the demo-video recorder's credential fallback, app-file listing and tutorial copy."""
 
 from pathlib import Path
 
 import pytest
+import requests
 
+from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.utils import constants
-from tests.demo_video import app_files_for, resolve_ui_credentials
-from tests.e2e_smoke import SmokeFailure
+from tests import demo_video
+from tests.demo_video import (
+    APPS,
+    REPO_ROOT,
+    app_files_for,
+    check_reused_project_matches_profile,
+    resolve_ui_credentials,
+)
+from tests.e2e_smoke import TUTORIALS, SmokeFailure, describe_tutorial
 
 CREDENTIAL_VARS = [
     "DEMO_RESEARCHER_EMAIL",
@@ -92,9 +101,7 @@ def test_no_usable_credentials_raises() -> None:
         resolve_ui_credentials()
 
 
-def test_app_files_filters_hidden_pyc_and_blacklisted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_app_files_filters_hidden_pyc_and_blacklisted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BLACKLISTED_MODEL_FILES", "server_app.py, strategy.py")
     for name in ("client_app.py", "config.json", "server_app.py", ".hidden", "cached.pyc"):
         (tmp_path / name).write_text("content")
@@ -107,3 +114,57 @@ def test_app_files_empty_dir_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("BLACKLISTED_MODEL_FILES", "")
     with pytest.raises(SmokeFailure, match="No uploadable app files"):
         app_files_for(tmp_path)
+
+
+APP_BACKENDS = [(app, backend) for app, profile in sorted(APPS.items()) for backend in sorted(profile["backends"])]
+
+
+@pytest.mark.parametrize(("app", "backend"), APP_BACKENDS)
+def test_every_recorded_app_resolves_to_a_known_tutorial(app: str, backend: str) -> None:
+    """The recorder takes its project description from e2e_smoke's TUTORIALS, keyed off the app path.
+
+    That key is a directory name in another tree (``fl-tutorials/``), so moving or renaming a tutorial
+    would silently drop the recording to ``describe_tutorial``'s generic fallback — a demo video whose
+    projects list reads "Training the ... application across the participating trusts' data." Pin the
+    resolution instead of trusting it, and pin the description against the cap it is posted through.
+    """
+    app_dir = REPO_ROOT / APPS[app]["backends"][backend]["app_dir"]
+    tutorial_dir = app_dir.parent.name
+
+    assert tutorial_dir in TUTORIALS, (
+        f"{app}/{backend} points at {tutorial_dir!r}, which TUTORIALS does not describe: the recording "
+        "would fall back to generic copy"
+    )
+    copy = describe_tutorial(app_dir)
+    assert copy is TUTORIALS[tutorial_dir]
+    ProjectDetails(name=APPS[app]["project_name"], description=copy.task)
+
+
+# ---------------------------------------------------------------------------------------------
+# check_reused_project_matches_profile: a resumed project's has_imaging must agree with --app.
+# ---------------------------------------------------------------------------------------------
+
+
+def _stub_project_has_imaging(monkeypatch: pytest.MonkeyPatch, value: bool) -> None:
+    monkeypatch.setattr(demo_video.e2e_smoke, "project_has_imaging", lambda client, headers, project_id: value)
+
+
+@pytest.mark.parametrize(("app", "project_imaging"), [("xray", True), ("spleen", True), ("ehr", False)])
+def test_reused_project_matching_its_profile_passes(monkeypatch: pytest.MonkeyPatch, app: str, project_imaging: bool):
+    _stub_project_has_imaging(monkeypatch, project_imaging)
+    check_reused_project_matches_profile(requests.Session(), {}, "proj-1", app, APPS[app])  # no raise
+
+
+def test_resuming_an_ehr_project_under_the_default_xray_profile_is_refused(monkeypatch: pytest.MonkeyPatch):
+    """The trap the guard exists for: --app defaults to xray, so a bare --project-id resume of an EHR
+    project would wait on an imaging import that never starts. Fail up front, naming the fix."""
+    _stub_project_has_imaging(monkeypatch, False)
+    with pytest.raises(SmokeFailure, match=r"has_imaging=false.*--app xray records a imaging study.*pass --app ehr"):
+        check_reused_project_matches_profile(requests.Session(), {}, "proj-1", "xray", APPS["xray"])
+
+
+def test_resuming_an_imaging_project_under_the_ehr_profile_is_refused(monkeypatch: pytest.MonkeyPatch):
+    """The inverse would skip the imaging wait and upload the EHR app onto an imaging project."""
+    _stub_project_has_imaging(monkeypatch, True)
+    with pytest.raises(SmokeFailure, match=r"has_imaging=true.*tabular-only study.*pass --app spleen / xray"):
+        check_reused_project_matches_profile(requests.Session(), {}, "proj-1", "ehr", APPS["ehr"])

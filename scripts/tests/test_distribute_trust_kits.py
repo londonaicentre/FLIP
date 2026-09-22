@@ -78,8 +78,8 @@ def _full_kit() -> dict:
     return {
         "trust_id": "abc",
         "trust_name": "GSTT",
-        "trust_api_key": "plain-api-1",
-        "trust_internal_service_key": "plain-int-1",
+        "trust_api_key": "plain-api-1",  # pragma: allowlist secret
+        "trust_internal_service_key": "plain-int-1",  # pragma: allowlist secret
         "fl_kit_slot": "Trust_1",
         "fl_kit_slot_number": 1,
         "hub_shared": {"AES_KEY_BASE64": "Zm9vYmFy", "FL_BACKEND": "flower"},

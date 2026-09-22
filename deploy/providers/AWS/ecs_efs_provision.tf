@@ -31,9 +31,9 @@ locals {
   # Flower creds are produced by `make -C fl-services/flower provision` (with
   # FLOWER_EXTRA_SERVER_SANS covering the Cloud Map + public FL hostnames)
   # and uploaded by its `upload-creds-to-s3` target. The prefix matches the
-  # convention the K8s trust chart already consumes for its SuperNode kit
-  # (values.yaml flClient.flower.kitFromS3.pathTemplate) — one tree serves
-  # both sides. Layout:
+  # convention the K8s trust operator stages their SuperNode kit from — the
+  # chart itself no longer fetches from S3 (a trust holds no FLIP credentials),
+  # but the on-disk layout is the same one tree. Layout:
   #   fl-flower-participant-kits/{date}/net-1/{certificates,keys}/...
   flower_creds_base_s3 = "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flower-participant-kits/${var.flower_kit_date}/net-1"
 }
@@ -59,7 +59,7 @@ resource "null_resource" "provision_efs_certs" {
         --cluster ${aws_ecs_cluster.flip.name} \
         --task-definition ${aws_ecs_task_definition.efs_provision[0].arn} \
         --launch-type FARGATE \
-        --network-configuration "awsvpcConfiguration={subnets=[${join(",", module.flip_vpc.private_subnets)}],securityGroups=[${aws_security_group.ecs_fl_server.id}],assignPublicIp=DISABLED}" \
+        --network-configuration "awsvpcConfiguration={subnets=[${join(",", local.app_subnet_ids)}],securityGroups=[${aws_security_group.ecs_fl_server.id}],assignPublicIp=DISABLED}" \
         --count 1 \
         --region ${var.AWS_REGION} \
         --no-cli-pager \
@@ -103,8 +103,11 @@ resource "aws_ecs_task_definition" "efs_provision" {
 
   container_definitions = jsonencode([
     {
-      name  = "provision-efs-certs"
-      image = "amazon/aws-cli:2.22.35"
+      name = "provision-efs-certs"
+      # Default amazon/aws-cli:2.22.35 from Docker Hub; the egress-less LZA
+      # account overrides this to its ECR Public pull-through cache mirror via
+      # EFS_PROVISION_IMAGE in the env file (FLIP#749).
+      image = var.efs_provision_image
       # The amazon/aws-cli image's ENTRYPOINT is `aws`, so a command like
       # ["/bin/sh", "-c", ...] would get appended as args to aws and fail
       # with "Found invalid choice '/bin/sh'". Override entryPoint so the

@@ -20,7 +20,7 @@ This module provides:
 
 from enum import StrEnum
 
-from pydantic import HttpUrl, PositiveInt, field_validator
+from pydantic import HttpUrl, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -28,7 +28,6 @@ class _Common(BaseSettings):
     """Base settings shared by both development and production environments."""
 
     LOCAL_DEV: bool = True  # Defaults to dev mode
-    MIN_CLIENTS: PositiveInt = 1
 
 
 class DevSettings(_Common):

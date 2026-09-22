@@ -69,7 +69,11 @@ const stubs = {
     AiGuard: { template: "<div><slot /></div>" },
     QueryDetails: { template: "<div data-test=\"stub-query-details\" />" },
     LatestModels: { template: "<div data-test=\"stub-latest-models\" />" },
-    EditProjectDrawer: { template: "<div />" },
+    EditProjectDrawer: {
+        // Expose the creation-time flags so tests can assert the page's pass-through (FLIP#1071).
+        template: "<div data-test=\"stub-edit-drawer\" :data-has-imaging=\"hasImaging\" :data-dicom-to-nifti=\"dicomToNifti\" />",
+        props: ["hasImaging", "dicomToNifti"]
+    },
     LifecycleTrack: {
         template: "<ol data-test=\"stub-lifecycle\"><li v-for=\"s in steps\" :key=\"s.id\" :data-test=\"`step-${s.id}`\" :data-completed=\"s.completed\" :data-date=\"s.date\">{{ s.name }}</li></ol>",
         props: ["steps"]
@@ -152,18 +156,52 @@ describe("Project page (/project/[id]/index.vue)", () => {
         expect(wrapper.text()).toContain("Projects");
     });
 
-    test("pins the Latest Models card to the row height the imaging-status card defines", () => {
+    test("stretches all three cards to a shared bottom baseline at lg, each scrolling internally", () => {
         const wrapper = mountProjectPage();
 
-        // The card is absolutely positioned inside a stretched grid cell at lg, so
-        // its model list can't inflate the row past the imaging project status card.
-        const card = wrapper.find("[data-test=stub-latest-models]");
-        expect(card.classes()).toContain("lg:absolute");
-        expect(card.classes()).toContain("lg:inset-0");
-        const cell = card.element.parentElement;
-        expect(cell?.className).toContain("relative");
-        expect(cell?.className).toContain("lg:self-stretch");
-        expect(cell?.className).not.toContain("sticky");
+        // Every cell is min-h-0 so a long card can shrink below its content and
+        // scroll inside itself rather than inflating the row.
+        const statusCell = wrapper.find("[data-test=stub-project-status]").element.parentElement;
+        const modelsCell = wrapper.find("[data-test=stub-latest-models]").element.parentElement;
+        expect(statusCell?.className).toContain("lg:min-h-0");
+        expect(modelsCell?.className).toContain("lg:min-h-0");
+
+        // The grid is the single fill-height row of the page column.
+        const grid = statusCell?.parentElement;
+        expect(grid?.className).toContain("lg:flex-1");
+        expect(grid?.className).toContain("lg:min-h-0");
+        expect(grid?.className).toContain("lg:items-stretch");
+        expect(grid?.className).not.toContain("items-start");
+
+        // The old absolute-position and sticky hacks are gone — nothing scrolls
+        // past the side cards any more, so nothing needs pinning to the viewport.
+        expect(wrapper.find("[data-test=stub-latest-models]").classes()).not.toContain("lg:absolute");
+        expect(modelsCell?.className).not.toContain("lg:self-stretch");
+        expect(wrapper.html()).not.toContain("lg:sticky");
+
+        // The page column stops scrolling at lg; the cards own the scrollbars.
+        const pageColumn = grid?.parentElement;
+        expect(pageColumn?.className).toContain("min-h-0");
+        expect(pageColumn?.className).toContain("lg:overflow-hidden");
+    });
+
+    test("gives the staged/approval card the remaining height of the left column", () => {
+        const wrapper = mountProjectPage();
+
+        // QueryDetails keeps its content height; the card below it takes the rest.
+        expect(wrapper.find("[data-test=stub-query-details]").element.parentElement?.className)
+            .toContain("shrink-0");
+        expect(wrapper.find("[data-test=stub-project-staging]").element.parentElement?.className)
+            .toContain("lg:flex-1");
+
+        const approved = mountProjectPage({
+            project: {
+                ...baseProject(),
+                status: "STAGED"
+            }
+        });
+        expect(approved.find("[data-test=stub-project-approval]").element.parentElement?.className)
+            .toContain("lg:flex-1");
     });
 
     test("renders 4 lifecycle steps and marks only step 01 complete on a fresh UNSTAGED project", () => {
@@ -414,5 +452,43 @@ describe("Project page (/project/[id]/index.vue)", () => {
         const editBtn = wrapper.find("[data-test=edit-project-btn]");
         expect(editBtn.text()).toContain("View Project");
         expect(editBtn.text()).not.toContain("Edit Project");
+    });
+
+    test("keeps the three-column layout with the imaging status card by default", () => {
+        const wrapper = mountProjectPage();
+        expect(wrapper.find("[data-test=stub-project-status]").exists()).toBe(true);
+        expect(wrapper.find("[data-test=project-workspace]").classes()).toContain(
+            "lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,1.5fr)_minmax(17rem,0.75fr)]"
+        );
+    });
+
+    test("removes the imaging status card and widens Models into the workspace for a project without imaging", () => {
+        const project = baseProject();
+        project.has_imaging = false;
+        const wrapper = mountProjectPage({ project });
+
+        // Nothing replaces the card: two columns, Models takes the whole main workspace.
+        expect(wrapper.find("[data-test=stub-project-status]").exists()).toBe(false);
+        const workspace = wrapper.find("[data-test=project-workspace]");
+        expect(workspace.classes()).toContain("lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,2.25fr)]");
+        expect(workspace.classes()).not.toContain(
+            "lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,1.5fr)_minmax(17rem,0.75fr)]"
+        );
+        // The lifecycle no longer spans the grid — it sits above it, outside the workspace entirely.
+        expect(wrapper.find("[data-test=stub-lifecycle]").element.closest("[data-test=project-workspace]")).toBeNull();
+        // The cell still stretches to the fill-height row: no sibling card defines the height here,
+        // but the grid itself does, so the list scrolls internally rather than being pinned.
+        const card = wrapper.find("[data-test=stub-latest-models]");
+        expect(card.classes()).not.toContain("lg:absolute");
+        expect(card.element.parentElement?.className).toContain("lg:min-h-0");
+    });
+
+    test("passes the imaging flag to the edit drawer, defaulting to imaging when the hub omits it", () => {
+        const withoutImaging = baseProject();
+        withoutImaging.has_imaging = false;
+        expect(mountProjectPage({ project: withoutImaging }).find("[data-test=stub-edit-drawer]").attributes("data-has-imaging"))
+            .toBe("false");
+        // baseProject() carries no has_imaging at all — a hub predating the flag.
+        expect(mountProjectPage().find("[data-test=stub-edit-drawer]").attributes("data-has-imaging")).toBe("true");
     });
 });

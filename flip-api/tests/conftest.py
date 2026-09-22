@@ -19,7 +19,7 @@ import os
 # leaks the literal placeholder string into encryption helpers and base64
 # decode fails with "Incorrect padding" mid-test (see test_trust_tasks).
 _TEST_ENV_DEFAULTS = {
-    "AES_KEY_BASE64": "QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA=",  # 32-byte key, base64
+    "AES_KEY_BASE64": "QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA=",  # 32-byte key, base64  # pragma: allowlist secret
 }
 
 for _key, _value in _TEST_ENV_DEFAULTS.items():

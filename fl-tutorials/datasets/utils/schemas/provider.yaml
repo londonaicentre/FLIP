@@ -1,0 +1,55 @@
+schema_type: dataframe
+columns:
+  provider_id:
+    dtype: int64
+    unique: true
+  provider_name:
+    dtype: string[python]
+    nullable: true
+    required: false
+  npi:
+    dtype: string[python]
+    nullable: true
+    required: false
+  dea:
+    dtype: string[python]
+    nullable: true
+    required: false
+  specialty_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  care_site_id:
+    dtype: int64
+    nullable: true
+    required: false
+  year_of_birth:
+    dtype: int64
+    nullable: true
+    required: false
+  gender_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  provider_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  specialty_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  specialty_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  gender_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  gender_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

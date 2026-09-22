@@ -128,7 +128,7 @@ describe("mfa-setup page", () => {
             const wrapper = mountMfaSetup({
                 signInStep: SIGN_IN_CHAIN_STEP,
                 totpSetup: {
-                    sharedSecret: "ABCD1234",
+                    sharedSecret: "ABCD1234",  // pragma: allowlist secret
                     setupUri: "otpauth://totp/FLIP"
                 }
             });
@@ -159,7 +159,7 @@ describe("mfa-setup page", () => {
             const wrapper = mountMfaSetup({
                 signInStep: SIGN_IN_CHAIN_STEP,
                 totpSetup: {
-                    sharedSecret: "ABCD1234",
+                    sharedSecret: "ABCD1234",  // pragma: allowlist secret
                     setupUri: "otpauth://totp/FLIP"
                 }
             });
@@ -231,7 +231,7 @@ describe("mfa-setup page", () => {
                 user: signedInUser,
                 mfaEnabled: false,
                 totpSetup: {
-                    sharedSecret: "ABCD1234",
+                    sharedSecret: "ABCD1234",  // pragma: allowlist secret
                     setupUri: "otpauth://totp/FLIP"
                 }
             });
@@ -365,7 +365,7 @@ describe("mfa-setup page", () => {
         const buildSigninChainState = (): Partial<AuthStoreState> => ({
             signInStep: SIGN_IN_CHAIN_STEP,
             totpSetup: {
-                sharedSecret: "ABCD1234",
+                sharedSecret: "ABCD1234",  // pragma: allowlist secret
                 setupUri: "otpauth://totp/FLIP"
             }
         });
@@ -468,7 +468,7 @@ describe("mfa-setup page", () => {
                 },
                 mfaEnabled: false,
                 totpSetup: {
-                    sharedSecret: "ABCD1234",
+                    sharedSecret: "ABCD1234",  // pragma: allowlist secret
                     setupUri: "otpauth://totp/FLIP"
                 }
             });
@@ -497,7 +497,7 @@ describe("mfa-setup page", () => {
             const wrapper = mountMfaSetup({
                 signInStep: SIGN_IN_CHAIN_STEP,
                 totpSetup: {
-                    sharedSecret: "ABCD1234",
+                    sharedSecret: "ABCD1234",  // pragma: allowlist secret
                     setupUri: "not-a-valid-uri"
                 }
             });
@@ -511,11 +511,11 @@ describe("mfa-setup page", () => {
 
     describe("QR rendering", () => {
         test("passes the setupUri and a grey light-mode colour to toDataURL", async () => {
-            const setupUri = "otpauth://totp/FLIP:user?secret=ABCD1234";
+            const setupUri = "otpauth://totp/FLIP:user?secret=ABCD1234";  // pragma: allowlist secret
             mountMfaSetup({
                 signInStep: SIGN_IN_CHAIN_STEP,
                 totpSetup: {
-                    sharedSecret: "ABCD1234",
+                    sharedSecret: "ABCD1234",  // pragma: allowlist secret
                     setupUri
                 }
             });

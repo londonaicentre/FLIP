@@ -31,11 +31,16 @@ jobs:
   build-and-push:
     # Only publish when the upstream test run passed. workflow_dispatch (manual)
     # has no workflow_run context, so allow it through unconditionally.
-    # The repository guard skips publishing on forks, which cannot push to
-    # ghcr.io/londonaicentre and would otherwise show a spurious CI failure.
+    # The head_repository clause is the trust boundary (FLIP#882): a fork PR's
+    # test run satisfies every other gate, and the checkout below fetches the
+    # triggering run's code. `github.repository == …` only stops a fork's own
+    # copy of this file running in the fork. Rationale + regression guard:
+    # scripts/tests/test_workflow_trust_guards.py; the same clause guards
+    # terraform_plan.yml. One shared workflow for these copies: FLIP#1201.
     if: >-
       (github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success') &&
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)) &&
       github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
     permissions: # override top-level read-only default to allow GHCR push
@@ -47,10 +52,12 @@ jobs:
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: londonaicentre/flip-api
-      BUILD_ARGS: |
-        --build-arg UID=1000
-        --build-arg GID=1000
-        --build-arg UNAME=flip
+      # Empty since FLIP#1171: flip-api/Dockerfile fixes the image identity at
+      # flip/1000/1000, so CI and a local BUILD=true image are identical. Passing
+      # UID/GID/UNAME here as well would be a second source of truth that can drift
+      # from the Dockerfile defaults. Kept as a variable so the build line below and
+      # the sibling workflows keep the same shape.
+      BUILD_ARGS: ""
     steps:
       - name: Checkout code
         uses: actions/checkout@v5

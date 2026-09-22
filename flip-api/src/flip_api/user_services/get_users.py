@@ -69,8 +69,8 @@ def get_users(
         try:
             user_pool_id = get_pool_id(request)
         except Exception as e:
-            logger.error(f"Failed to get user pool ID: {str(e)}")
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+            logger.exception("Failed to get user pool ID")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to get user pool ID") from e
 
         # Create paging info
         paging_info = get_paging_details(dict(request.query_params))
@@ -106,5 +106,5 @@ def get_users(
         raise
 
     except Exception as e:
-        logger.error(f"Unhandled error in get_users: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        logger.exception("Unhandled error in get_users")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

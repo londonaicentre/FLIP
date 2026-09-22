@@ -25,7 +25,23 @@ permissions:
   contents: read
 
 jobs:
+  # Gate for pull requests into develop: run the suite only when the PR touches this
+  # service (pr_paths_changed.yml; PRs into main always run everything). The list is
+  # the push `paths:` filter above, verbatim — scripts/tests/test_pr_paths_changed.py
+  # fails when the two drift.
+  changes:
+    uses: ./.github/workflows/pr_paths_changed.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      paths: |
+        flip-ui/**
+        .github/workflows/test_flip_ui.yml
+
   flip-ui:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     environment: flip
     defaults:
@@ -76,6 +92,8 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   cypress-e2e:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     # Runs the Cypress E2E suite against a stubbed API (network-level
     # intercepts in test/cypress/support/globalIntercepts.ts). No real
     # backend or Cognito user pool is needed — the fixture-driven flow

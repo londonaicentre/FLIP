@@ -12,6 +12,7 @@
 
 from typing import Any
 
+from cryptography.exceptions import InvalidTag
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -22,8 +23,8 @@ from data_access_api.routers.schema import (
     DataframeQuery,
     StatisticsResponse,
 )
-from data_access_api.services.cohort import get_records, get_statistics, validate_query
-from data_access_api.utils.encryption import decrypt
+from data_access_api.services.cohort import count_distinct_subjects, get_records, get_statistics, validate_query
+from data_access_api.utils.encryption import PROJECT_ID_CONTEXT, decrypt
 from data_access_api.utils.internal_auth import authenticate_internal_service
 from data_access_api.utils.logger import logger
 
@@ -34,8 +35,41 @@ from data_access_api.utils.logger import logger
 # becomes a one-row oracle for probing the database.
 _BELOW_THRESHOLD_DETAIL = "Cohort is too small for row-level data to be released."
 
+# Returned when a cohort's subject count cannot be established from its own projection. This
+# reports the SHAPE of the query and never anything about the data behind it, so unlike
+# _BELOW_THRESHOLD_DETAIL it is safe to be specific: it cannot be used as a membership oracle,
+# and a researcher needs to know exactly which column to add.
+_UNCOUNTABLE_SUBJECTS_DETAIL = (
+    "Cohort query must expose the subjects it covers so the disclosure threshold can be applied "
+    "per subject: add a person_id column to the SELECT list, or an accession_id column for an "
+    "imaging cohort."
+)
+
 
 # Create Router
+def _open_project_id(encrypted_project_id: str) -> str:
+    """Open the hub-sealed project id the FL client forwards, or answer 400 with the reason.
+
+    The id is authenticated under the ``project_id`` context. A failure is the caller's payload
+    (tampered, sealed for another purpose, or the hub's ``AES_KEY_BASE64`` is not this trust's),
+    so it is a 400 that names the cause rather than a bare 500. Anything else is a fault on this
+    side (the key cannot be loaded, the cipher itself) and is a logged 500 that names the type —
+    the same taxonomy as imaging-api's routers, which open the same envelope.
+    """
+    try:
+        return decrypt(encrypted_project_id, context=PROJECT_ID_CONTEXT)
+    except InvalidTag:
+        logger.error("encrypted_project_id failed authentication")
+        raise HTTPException(status_code=400, detail="encrypted_project_id failed authentication")
+    except (ValueError, KeyError) as e:
+        logger.error(f"encrypted_project_id is not a valid envelope: {e}")
+        raise HTTPException(status_code=400, detail=f"encrypted_project_id is not a valid envelope: {e}")
+    except Exception as e:
+        # Not the caller's payload. Name the type so an empty exception message never yields a blank reason.
+        logger.exception(f"Failed to decrypt encrypted_project_id ({type(e).__name__}): {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to decrypt encrypted_project_id ({type(e).__name__})")
+
+
 router = APIRouter(prefix="/cohort", tags=["Cohort"], dependencies=[Depends(authenticate_internal_service)])
 
 
@@ -47,11 +81,12 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     Below-threshold results are privacy-suppressed: any count below the threshold —
     including a genuine zero — comes back as a normal ``StatisticsResponse`` with
     ``record_count=0``, empty ``data`` and ``suppressed=True``, *not* an HTTP error.
-    Returning an error here caused trust-api to skip reporting back to the hub, which left
-    the per-trust UI status stuck on "running". A true zero and a small below-threshold
-    count are deliberately indistinguishable so the response can't reveal that >=1 patient
-    matched; the ``suppressed`` flag only tells the hub/UI to show a "below-threshold" chip
-    rather than a bare 0 (issue #519).
+    The threshold counts distinct subjects, and a cohort whose subjects cannot be established
+    is suppressed the same way, so the response shape never varies with the cause of a
+    shortfall (FLIP#1219 tracks giving the researcher that diagnosis another way). A true
+    zero and a small below-threshold count are deliberately indistinguishable so the response
+    can't reveal that >=1 patient matched; the ``suppressed`` flag only tells the hub/UI to
+    show a "below-threshold" chip rather than a bare 0 (issue #519).
 
     Args:
         query_input (data_access_api.routers.schema.CohortQueryInput): The input data for the cohort query.
@@ -76,7 +111,12 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
         logger.info("Executing cohort query")
 
         df = get_records(safe_query)
-        df = df.dropna(axis=1, how="all")  # Ignore entirely empty columns
+        if not df.empty:
+            # Ignore entirely empty columns. Skipped for a zero-row frame: every column of one is
+            # vacuously all-null, so the drop would empty the column list and a cohort that
+            # projected person_id would be misdiagnosed as exposing no subject column (FLIP#967
+            # produces exactly that frame on a vocabulary-less trust).
+            df = df.dropna(axis=1, how="all")
         # drop duplicate columns
         df = df.loc[:, ~df.columns.duplicated()]
     except Exception as e:
@@ -112,6 +152,12 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
     and releasing a handful of identifiable rows is exactly the disclosure the
     threshold exists to prevent.
 
+    The threshold is applied to **distinct subjects**, not rows: the floor exists to stop a
+    response revealing that ">=1 patient matched", and rows stopped standing in for patients
+    once a cohort could be one row per imaging study. A cohort whose subjects cannot be
+    established at all is a 400 rather than the 403 — that reports the query's shape, not its
+    contents, so being specific about it leaks nothing.
+
     Note there is deliberately no column allowlist here. ``accession_id`` is
     load-bearing — it is how the returned rows join to the imaging studies
     pulled into XNAT — and shipped tutorials legitimately select ``*``, so a
@@ -126,10 +172,11 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
         dict[str, list[Any]]: The query results in a DataFrame-like structure.
 
     Raises:
-        HTTPException: 400 if the query is invalid, 403 if the cohort is below
-            the disclosure threshold, 500 if the query fails to execute.
+        HTTPException: 400 if the query is invalid or exposes neither ``person_id`` nor
+            ``accession_id``, 403 if the cohort covers fewer subjects than the disclosure
+            threshold, 500 if the query fails to execute.
     """
-    project_id = decrypt(query_input.encrypted_project_id)
+    project_id = _open_project_id(query_input.encrypted_project_id)
 
     logger.info(f"Received DataFrame query for project {project_id}")
 
@@ -152,11 +199,31 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
         logger.exception("DataFrame query failed unexpectedly")
         raise HTTPException(status_code=500, detail="Query execution failed.")
 
+    # Drop duplicate columns as /cohort does: a join that keeps both sides' person_id would
+    # otherwise reach the count as a DataFrame rather than a Series and fail as an opaque 500 at
+    # training start — the least legible place, since query approval and the imaging pull both
+    # ran the de-duplicated route first.
+    df = df.loc[:, ~df.columns.duplicated()]
+
     minimum_cohort_size = get_settings().COHORT_QUERY_THRESHOLD
-    if len(df) < minimum_cohort_size:
+    # Only the count is guarded, not get_records above: its categorised 400s echo identifiers the
+    # operator typed and are a useful diagnostic. A count that cannot be taken is refused exactly
+    # as a small cohort is, so the refusal never says why.
+    try:
+        subject_count = count_distinct_subjects(df)
+    except Exception:
+        logger.exception(f"Subject count unavailable for project {project_id}; refusing as below threshold")
+        subject_count = 0
+    if subject_count is None:
+        logger.warning(
+            f"Withholding row-level data for project {project_id}: cohort exposes neither "
+            "person_id nor accession_id, so its subject count cannot be established"
+        )
+        raise HTTPException(status_code=400, detail=_UNCOUNTABLE_SUBJECTS_DETAIL)
+    if subject_count < minimum_cohort_size:
         logger.warning(
             f"Withholding row-level data for project {project_id}: "
-            f"cohort below the minimum size of {minimum_cohort_size}"
+            f"cohort covers fewer than the minimum {minimum_cohort_size} subjects"
         )
         raise HTTPException(status_code=403, detail=_BELOW_THRESHOLD_DETAIL)
 
@@ -179,6 +246,11 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
     as it must on ``/cohort/dataframe``, and the refusal reuses that route's fixed
     text so a zero-row cohort and a below-threshold one are indistinguishable.
 
+    The threshold counts **distinct subjects** rather than accession numbers, resolved through
+    ``omop.image_occurrence``: ten studies belonging to one patient are one subject, and used to
+    clear a floor of ten. Unlike ``/cohort/dataframe`` an unestablished count cannot be reported
+    separately here, because the refusal must stay byte-identical to the below-threshold one.
+
     The trust applies this itself rather than relying on the hub's staging guard
     (``flip_api.project_services.stage_project``, which refuses to stage a trust whose
     cohort came back empty or suppressed). The hub is a separate administrative domain;
@@ -200,10 +272,10 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
 
     Raises:
         HTTPException: 400 if the query is invalid or does not select an
-            ``accession_id`` column, 403 if the cohort is below the disclosure
-            threshold, 500 if the query fails to execute.
+            ``accession_id`` column, 403 if the cohort covers fewer subjects than the
+            disclosure threshold, 500 if the query fails to execute.
     """
-    project_id = decrypt(query_input.encrypted_project_id)
+    project_id = _open_project_id(query_input.encrypted_project_id)
 
     logger.info(f"Received accession-ids query for project {project_id}")
 
@@ -231,10 +303,23 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
         raise HTTPException(status_code=500, detail="Query execution failed.")
 
     minimum_cohort_size = get_settings().COHORT_QUERY_THRESHOLD
-    if len(df) < minimum_cohort_size:
+    # The wrapper above projects accession_id and nothing else, so the count always resolves
+    # through omop.image_occurrence. An accession number that belongs to no imaging study
+    # contributes no subject, so a cohort aliasing some unrelated column to that name is refused
+    # rather than passed on its row count. The count sits outside the try above on purpose:
+    # get_records' 400s keep their diagnostic shape, while a failure of the count itself must be
+    # indistinguishable from a small cohort — an empty cohort never reaches the database here and
+    # a non-empty one does, so an unguarded lookup error would separate the two exactly when the
+    # lookup is unhealthy.
+    try:
+        subject_count = count_distinct_subjects(df)
+    except Exception:
+        logger.exception(f"Subject count unavailable for project {project_id}; refusing as below threshold")
+        subject_count = 0
+    if subject_count is None or subject_count < minimum_cohort_size:
         logger.warning(
             f"Withholding accession IDs for project {project_id}: "
-            f"cohort below the minimum size of {minimum_cohort_size}"
+            f"cohort covers fewer than the minimum {minimum_cohort_size} subjects"
         )
         raise HTTPException(status_code=403, detail=_BELOW_THRESHOLD_DETAIL)
 

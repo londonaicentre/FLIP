@@ -1,0 +1,11 @@
+schema_type: dataframe
+columns:
+  domain_id:
+    dtype: string[python]
+    unique: true
+  domain_name:
+    dtype: string[python]
+  domain_concept_id:
+    dtype: int64
+strict: true
+drop_invalid_rows: false
