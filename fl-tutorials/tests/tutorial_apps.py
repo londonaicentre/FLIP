@@ -36,6 +36,37 @@ import monai.transforms as mt
 
 TUTORIALS_ROOT = Path(__file__).resolve().parents[1]
 
+
+def load_module(module_name: str, path: Path) -> ModuleType:
+    """Import a loose tutorial script from its file path under ``module_name``.
+
+    The apps are not packages, so this is the one way to reach them; the unique dotted name keeps
+    same-named modules (three ``data_utils``, several ``models``) from colliding in ``sys.modules``.
+
+    Returns:
+        ModuleType: The imported (or already cached) module.
+
+    Raises:
+        ImportError: If the module cannot be loaded from its path.
+    """
+    if module_name in sys.modules:
+        return sys.modules[module_name]
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    # Register before executing so a module that imports itself indirectly still resolves.
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        # Never leave a half-initialised module reachable from the cache: the first caller
+        # fails loudly, but a later caller would silently get whatever fraction executed.
+        del sys.modules[module_name]
+        raise
+    return module
+
+
 # Transforms that only rearrange axes/containers without resampling. The loader prefix is every
 # leading transform of this kind; the first transform outside the set ends it. See
 # get_loader_prefix for why the boundary is drawn here.
@@ -69,24 +100,7 @@ class TutorialApp:
         Raises:
             ImportError: If the module cannot be loaded from its path.
         """
-        module_name = f"fl_tutorials_under_test.{self.app_id}"
-        if module_name in sys.modules:
-            return sys.modules[module_name]
-
-        spec = importlib.util.spec_from_file_location(module_name, self.path)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"cannot load {self.path}")
-        module = importlib.util.module_from_spec(spec)
-        # Register before executing so a module that imports itself indirectly still resolves.
-        sys.modules[module_name] = module
-        try:
-            spec.loader.exec_module(module)
-        except BaseException:
-            # Never leave a half-initialised module reachable from the cache: the first caller
-            # fails loudly, but a later caller would silently get whatever fraction executed.
-            del sys.modules[module_name]
-            raise
-        return module
+        return load_module(f"fl_tutorials_under_test.{self.app_id}", self.path)
 
     @property
     def has_training_chain(self) -> bool:

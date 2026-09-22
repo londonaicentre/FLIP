@@ -14,7 +14,9 @@ APP_DIR := $(CURDIR)
 # Run job.py in the flip-utils environment with the `full` ML extra — the same package set the
 # flare-fl-base FL image installs (`uv sync --extra full`), so a local SimEnv run matches the deployed
 # image. A bare `uv run` would resolve to the repo-root venv, which has no torch/nvflare/monai.
-FLIP_UTILS := $(abspath $(APP_DIR)/../../../../flip-utils)
+REPO_ROOT := $(abspath $(APP_DIR)/../../../..)
+FLIP_UTILS := $(REPO_ROOT)/flip-utils
+FL_TUTORIALS := $(REPO_ROOT)/fl-tutorials
 UV_RUN := uv run --project $(FLIP_UTILS) --extra full
 
 # --- Load app-specific env ---

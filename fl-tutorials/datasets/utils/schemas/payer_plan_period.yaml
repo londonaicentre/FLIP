@@ -1,0 +1,65 @@
+schema_type: dataframe
+columns:
+  payer_plan_period_id:
+    dtype: int64
+    unique: true
+  person_id:
+    dtype: int64
+  payer_plan_period_start_date:
+    dtype: datetime64[ns]
+  payer_plan_period_end_date:
+    dtype: datetime64[ns]
+  payer_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  payer_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  payer_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  plan_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  plan_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  plan_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  sponsor_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  sponsor_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  sponsor_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  family_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  stop_reason_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  stop_reason_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  stop_reason_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

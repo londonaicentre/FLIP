@@ -39,10 +39,10 @@ jobs:
       SERVER_IMAGE: flare-fl-server
       CLIENT_IMAGE: flare-fl-client
       API_IMAGE: flare-fl-api
+      # No UID/GID/UNAME: the Dockerfiles fix the image identity at flip/1000/1000
+      # (FLIP#1171), so this workflow and a local `make build-fl` produce byte-identical
+      # identity. Passing them here too would be a second source of truth that can drift.
       BUILD_ARGS: |
-        --build-arg UID=1000
-        --build-arg GID=1000
-        --build-arg UNAME=flip
         --build-arg LOCAL_DEV=false
 
     steps:

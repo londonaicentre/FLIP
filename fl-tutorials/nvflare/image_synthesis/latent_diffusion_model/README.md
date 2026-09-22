@@ -177,6 +177,30 @@ per round). These names are load-bearing: with a single local-rounds key, the FL
 called exactly `LOCAL_ROUNDS` and rejects the job otherwise. (The old two-stage job's
 `GLOBAL_ROUNDS_AE`/`GLOBAL_ROUNDS_DM` pairs no longer apply.)
 
+## Shipped weights: the perceptual-loss backbone (`make weights`)
+
+The perceptual loss needs a pretrained backbone, and `lpips` fetches it through `torch.hub` on
+first use. **An FL app must never download at run time** (FLIP#1206): on a platform-managed estate
+the FL server has no internet route, nor does a trust host behind an NHS firewall, so the job
+would hang; and a run-time fetch bypasses the scanned upload path — the file a Trust can inspect
+before training would not be the file that runs. So the backbone travels *with* the app:
+
+```bash
+make weights            # → app_files/squeezenet1_1-b8a52dc0.pth  (gitignored; `make sim` and `make export` run this for you)
+```
+
+That copies torchvision's SqueezeNet checkpoint from the shared download
+(`make -C fl-tutorials download-weights ARCH=squeezenet1_1`, fetched once with torch.hub's own
+sha256-prefix check) into `app_files/`. **Upload it with the other app files** — it is a `.pth`, so
+the platform's picklescan gates it like any checkpoint. At start-up `trainer.py` checks the file is
+the one torchvision will ask for (`SqueezeNet1_1_Weights.IMAGENET1K_V1`) and that its sha256 starts
+with the prefix in its name — torch.hub reuses a file already in its `checkpoints/` dir without
+re-checking it — then copies it into a `torch.hub` dir beside itself and points torch there, so
+`PerceptualLoss(network_type="squeeze")` finds it offline. A missing, renamed or corrupt file
+raises at construction, naming this target, rather than reaching for the network. SqueezeNet
+replaces the AlexNet this tutorial used before: 5 MB per job to every trust instead of 233, same
+LPIPS family.
+
 ## FLIP-specific values
 
 `FLIP_PROJECT_ID` and `FLIP_QUERY` are read from environment variables (set stubs in `.env.app`).

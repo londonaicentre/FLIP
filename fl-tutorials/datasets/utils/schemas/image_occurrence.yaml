@@ -1,0 +1,37 @@
+schema_type: dataframe
+columns:
+  image_occurrence_id:
+    dtype: int64
+    unique: true
+  person_id:
+    dtype: int64
+  procedure_occurrence_id:
+    dtype: int64
+  visit_occurrence_id:
+    dtype: int64
+    nullable: true
+    required: false
+  anatomic_site_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  wadors_uri:
+    dtype: string[python]
+    nullable: true
+    required: false
+  local_path:
+    dtype: string[python]
+    nullable: true
+    required: false
+  image_occurrence_date:
+    dtype: datetime64[ns]
+  image_study_uid:
+    dtype: string[python]
+  image_series_uid:
+    dtype: string[python]
+  modality_concept_id:
+    dtype: int64
+  accession_id:
+    dtype: string[python]
+strict: true
+drop_invalid_rows: false

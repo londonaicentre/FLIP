@@ -254,11 +254,11 @@ def create_project(
 
     except DatabaseError as e:
         session.rollback()
-        logger.error(f"Error creating project: {e}")
+        logger.exception("Error creating project")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to create project: {e}",
-        )
+            detail="Internal server error",
+        ) from e
 
 
 def delete_project(project_id: UUID, current_user_id: UUID, session: Session) -> None:
@@ -322,11 +322,11 @@ def delete_project(project_id: UUID, current_user_id: UUID, session: Session) ->
 
     except Exception as e:
         session.rollback()
-        logger.error(f"Error deleting project {project_id}: {e}")
+        logger.exception(f"Error deleting project {project_id}")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to delete project: {e}",
-        )
+            detail="Internal server error",
+        ) from e
 
 
 def edit_project_service(
@@ -387,12 +387,12 @@ def edit_project_service(
         return
 
     except Exception as e:
-        logger.error(f"Error editing project {project_id}: {e}")
+        logger.exception(f"Error editing project {project_id}")
         session.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to edit project: {e}",
-        )
+            detail="Internal server error",
+        ) from e
 
 
 def get_project_query(project_from_db: IProjectResponse) -> IProjectQuery | None:
@@ -612,11 +612,11 @@ def update_project_status(
         session.flush()
         logger.info(f"Project {project_id} status updated to {new_status.value}.")
     except Exception as e:
-        logger.error(f"Error updating status of project {project_id}: {e}")
+        logger.exception(f"Error updating status of project {project_id}")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to update status of project {project_id}: {e}",
-        )
+            detail="Internal server error",
+        ) from e
 
 
 def approve_project(

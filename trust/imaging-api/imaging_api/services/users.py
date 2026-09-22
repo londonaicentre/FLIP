@@ -11,17 +11,24 @@
 #
 
 import re
+import urllib.parse
 
 import requests
 
 from imaging_api.config import get_settings
 from imaging_api.routers.schemas import CentralHubUser, CreatedUser, CreateUser, User
-from imaging_api.utils.encryption import encrypt
+from imaging_api.utils.encryption import XNAT_SETUP_PATH_CONTEXT, encrypt
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
 from imaging_api.utils.logger import logger
 from imaging_api.utils.passwords import generate_complex_password
 
 XNAT_URL = get_settings().XNAT_URL
+
+# Host-less "set your own password" path a newly created XNAT user follows. It is deliberately
+# host-less: XNAT is only reachable from inside the trust enclave, so the hub emails this path and
+# tells the recipient to open it against their own XNAT address (FLIP-PT-079). `a`/`s` are the XNAT
+# alias-token alias + secret; visiting the link authenticates the user and shows a password form.
+XNAT_SETUP_PATH_TEMPLATE = "/app/template/XDATScreen_UpdateUser.vm?a={alias}&s={secret}"
 
 
 def get_xnat_users(headers: dict[str, str]) -> list[User]:
@@ -151,11 +158,88 @@ def user_exists(username: str, headers: dict[str, str]) -> bool:
         return False
 
 
+def issue_setup_token(username: str, headers: dict[str, str]) -> str:
+    """Mint a set-password XNAT alias token for ``username`` and build the host-less setup path.
+
+    The trust's service account (a site admin) issues the token on the user's behalf via XNAT's
+    ``GET /data/services/tokens/issue/user/{username}`` endpoint. Visiting the returned path
+    authenticates the user and presents a "set your own password" form. The token is not single-visit:
+    it keeps opening that form until the password is set, at which point XNAT invalidates it (verified
+    live: a later visit lands on the login page and the alias/secret pair no longer authenticates), and
+    it expires unused after XNAT's ``aliasTokenTimeout`` (2 days by default). The path is host-less on
+    purpose — XNAT is only reachable from inside the trust enclave, so the hub emails the path and tells
+    the recipient to open it against their own XNAT address rather than emailing a password
+    (FLIP-PT-079).
+
+    Args:
+        username (str): XNAT username to issue the setup token for.
+        headers (dict[str, str]): XNAT authentication headers (service-account session).
+
+    Returns:
+        str: The host-less setup path, e.g. ``/app/template/XDATScreen_UpdateUser.vm?a=…&s=…``.
+
+    Raises:
+        Exception: If XNAT returns a non-200 response when issuing the token.
+    """
+    quoted_username = urllib.parse.quote(username, safe="")
+    response = requests.get(f"{XNAT_URL}/data/services/tokens/issue/user/{quoted_username}", headers=headers)
+    if response.status_code != 200:
+        raise Exception(f"Error: XNAT setup-token issuance failed: {response.status_code} - {response.text}")
+
+    # The body is read defensively: by this point the XNAT account already exists, so a 200 carrying
+    # an error document, or a token shape from another XNAT version, must fail with the response text
+    # in hand rather than as a bare KeyError with no diagnostic (the state that strands the account).
+    try:
+        token = response.json()
+        alias = urllib.parse.quote(token["alias"], safe="")
+        secret = urllib.parse.quote(token["secret"], safe="")
+    except (ValueError, KeyError, TypeError) as e:
+        raise Exception(
+            f"Error: XNAT setup-token issuance failed: {response.status_code} - unexpected response body "
+            f"({type(e).__name__}: {e}) - {response.text}"
+        )
+    return XNAT_SETUP_PATH_TEMPLATE.format(alias=alias, secret=secret)
+
+
+def issue_invite(user_profile: User, headers: dict[str, str]) -> CreatedUser:
+    """Mint a set-password invite for an existing XNAT account and seal it for the hub.
+
+    Shared by the create path and the re-invite path: an account that exists but has never
+    authenticated (``lastSuccessfulLogin`` is ``None``) is in the same position as a freshly created
+    one — its random password was never disclosed — so a lost or expired first invite, or a token
+    issuance that failed after ``create_user`` succeeded, is recovered by minting a fresh token on the
+    next run instead of telling the user to log in with credentials they never set.
+
+    Args:
+        user_profile (imaging_api.routers.schemas.User): The XNAT user profile to invite.
+        headers (dict[str, str]): XNAT authentication headers (service-account session).
+
+    Returns:
+        imaging_api.routers.schemas.CreatedUser: The invite payload: username, email and the setup path
+        encrypted under :data:`imaging_api.utils.encryption.XNAT_SETUP_PATH_CONTEXT`.
+
+    Raises:
+        Exception: If XNAT does not issue the token.
+    """
+    setup_path = issue_setup_token(user_profile.username, headers)
+    return CreatedUser(
+        username=user_profile.username,
+        encrypted_setup_path=encrypt(setup_path, context=XNAT_SETUP_PATH_CONTEXT),
+        email=user_profile.email,
+    )
+
+
 def create_user_from_central_hub_user(
     central_hub_user: CentralHubUser, headers: dict[str, str]
 ) -> tuple[CreatedUser, User]:
     """
     Convert central hub user to XNAT CreateUser request object, and create user on XNAT.
+
+    The user is created with a throwaway random password that is never disclosed; instead of
+    emailing a password (FLIP-PT-079) we mint a set-password token and return the host-less
+    link the user follows to set their own password directly in XNAT. The random password is
+    load-bearing: XNAT's password-change path raises on a user that has no existing password, so
+    the account must be created *with* a password, not passwordless.
 
     Args:
         central_hub_user (imaging_api.routers.schemas.CentralHubUser): The user's details on the Central Hub.
@@ -168,12 +252,7 @@ def create_user_from_central_hub_user(
     create_user_request = to_create_imaging_user(central_hub_user, headers)
     # Actually create
     user_profile = create_user(create_user_request, headers)
-    created_user = CreatedUser(
-        username=user_profile.username,
-        encrypted_password=encrypt(create_user_request.password),
-        email=create_user_request.email,
-    )
-    return created_user, user_profile
+    return issue_invite(user_profile, headers), user_profile
 
 
 def create_user(user: CreateUser, headers: dict[str, str]) -> User:

@@ -16,11 +16,16 @@ FROM python:3.12-slim-bookworm AS development
 RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client
 
-ARG UID
-ARG GID
-ARG UNAME
+# Fixed image identity, defaulted here rather than taken from the building
+# developer's environment (FLIP#1171), so a BUILD=true image and the pulled GHCR
+# image agree on where /home lives — the compose names /home/flip literally. The
+# `user:` override in compose.development.yml is what re-points the runtime uid to
+# the host user, which is what actually needs to match the bind mounts.
+ARG UID=1000
+ARG GID=1000
+ARG UNAME=flip
 RUN groupadd -g ${GID} ${UNAME}
-# Create a user with the same UID and GID as the host user with home directory at /home/${UNAME}
+# Create the non-root user, with home directory at /home/${UNAME}
 RUN useradd -u ${UID} -g ${GID} -m -d /home/${UNAME} -s /bin/bash ${UNAME}
 WORKDIR /app
 RUN chown -R ${UNAME}:${UNAME} /app
@@ -51,6 +56,18 @@ RUN uv sync --locked
 
 # Add fastapi executable to path
 ENV PATH="/app/.venv/bin:$PATH"
+# The venv is baked above (uv sync --locked) and must never be re-resolved at run
+# time: `uv run` would otherwise try to rebuild the project's editable install,
+# fetching its build backend (setuptools) from PyPI -- on the egress-less LZA
+# account (FLIP#749) that hangs every start, and on legacy it silently
+# re-downloads setuptools each time. UV_NO_SYNC makes the build-time venv
+# authoritative; with the sync gone nothing installs the flip_api package, so
+# PYTHONPATH puts the src layout on the import path directly. Image ENV is the
+# one mechanism that covers every way the image runs: the entrypoint, the dev
+# bind-mount of src/, `docker exec`, and ECS run-task command overrides (an
+# override replaces the entrypoint and inherits only what the image declares).
+# Dependency changes ship by rebuilding the image (BUILD=true in dev), never at boot.
+ENV UV_NO_SYNC=1 PYTHONPATH=/app/src
 
 # Expose the application port
 EXPOSE 8000

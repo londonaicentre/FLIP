@@ -1,0 +1,30 @@
+[project]
+name = "brain-mri-dataset-tools"
+version = "0.1.0"
+description = "Local uv environment for the shared brain MRI dataset tooling (MSD Task01 download, DICOM synthesis, OMOP tables)."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "names>=0.3.0",
+    "natsort>=8.4.0",
+    "nibabel>=5.3.2",
+    "numpy>=2.2.0",
+    "pandas>=2.3.2",
+    "pandera[pandas,io]>=0.28.1",
+    "pydicom>=3.0.1",
+    "requests>=2.32.5",
+    # Every consumer of the shared contract needs sqlglot and requests: utils/omop_schemas.py imports both at
+    # module scope (the DDL parser the cached schemas were generated with), whether or not the cache is regenerated.
+    "sqlglot>=28.6.0",
+    "tqdm>=4.67.3",
+]
+
+[dependency-groups]
+# Test-only: fl-tutorials/tests/datasets/brain_mri runs in this project's environment (see
+# fl-tutorials/tests/README.md) rather than flip-utils', because pandera/sqlglot are needed
+# only to test this workstation tooling, not to run FL jobs.
+dev = [
+    "pytest>=8.4.2",
+]
+
+[tool.uv]
+package = false

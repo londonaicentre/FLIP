@@ -393,23 +393,18 @@ machine driving the deploy**. If the deploy was driven from an admin
 workstation, the workstation's local path (e.g.
 `/home/<user>/.../trust/orthanc/orthanc-storage-trust1`) gets baked into the
 remote compose stack; Docker auto-creates that directory **empty** on the EC2
-host, and Orthanc starts with zero studies. The `up-trust` target's
-`update-orthanc-data` prereq only populates the dir on the machine where it
+host, and Orthanc starts with zero studies. The seed that populates it
+(`ensure-seeded`) runs against the Orthanc on the machine where `up-trust`
 runs — not on the EC2.
 
-**Fix (stopgap — seed the live bind dir on the EC2):**
+**Fix (stopgap — re-seed the EC2's data directories from the laptop):**
 
 ```bash
-ssh flip-trust
-DIR=$(docker inspect trust1-orthanc-1 --format '{{range .Mounts}}{{if eq .Destination "/var/lib/orthanc/db"}}{{.Source}}{{end}}{{end}}')
-# Version from trust/orthanc/.data_version (e.g. 20260821); trust slot from the kit (trust1/trust2)
-curl -fSL -o /tmp/orthanc-data.tar \
-  "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/trust1/trust1_orthanc_data_20260821.tar"
-docker stop trust1-orthanc-1
-sudo rm -rf "$DIR"/*          # wipe the stale empty index
-sudo tar xf /tmp/orthanc-data.tar -C "$DIR"
-docker start trust1-orthanc-1
-rm /tmp/orthanc-data.tar
+# The seed play starts throwaway containers on the host's data directories, so the
+# stack must be down while it runs (deploy-trust already sequences it that way).
+DOCKER_CONTEXT=flip-trust make -C trust down-trust-ec2 KIT=<CODE> PROD=true   # what deploy-trust does before seeding
+make -C deploy/providers/AWS seed-trust-data KIT=<CODE> PROD=true               # OMOP rows + Orthanc studies + vocabulary
+DOCKER_CONTEXT=flip-trust make up-trust-ec2 KIT=<CODE> PROD=true
 ```
 
 Verify a cohort accession is findable, then re-trigger the pull from the UI
@@ -425,7 +420,7 @@ print('found:', len(r.json()) > 0)"
 
 **Fix (proper)**: Set host-appropriate data dirs in the kit file's Host-local
 profile section and run the data seeding **on the trust host** (the
-`update-orthanc-data` flow), so deploys never inherit the admin workstation's
+`ensure-seeded` step of `up-trust`), so deploys never inherit the admin workstation's
 paths. Audit the other bind mounts on the host for the same leak —
 `docker inspect <container> --format '{{json .Mounts}}'` per container.
 
@@ -514,7 +509,7 @@ Related states with different causes:
   (imaging-api classifies any accession with an executed row as Processing,
   regardless of row status); the rows must be deleted before re-import works —
   see §2.4 "Forcing a Re-pull" in
-  `deploy/providers/kubernetes/TROUBLESHOOTING.md` (same procedure on EC2 via
+  `trust/deploy/helm/TROUBLESHOOTING.md` (same procedure on EC2 via
   `docker exec` into the xnat-db container).
 
 ---
@@ -760,7 +755,7 @@ print(r.status_code, r.text.strip()[:40])
    ssh flip-trust 'docker stack rm xnat1'
    sleep 15
    ssh flip-trust 'sudo bash -c "find /opt/flip/xnat/xnat-db-data -mindepth 1 -delete"'
-   make -C trust/xnat up-xnat-1 PROD=stag
+   make -C trust/xnat up-xnat KIT=<CODE> PROD=stag
    ```
 3. Verify:
    ```bash

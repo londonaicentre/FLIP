@@ -27,8 +27,11 @@ diffusion tutorial consumes as its frozen encoder — see that tutorial's
 """
 
 import argparse
+import hashlib
 import json
 import logging
+import os
+import shutil
 from pathlib import Path
 
 import einops
@@ -46,9 +49,73 @@ from monai.losses import PatchAdversarialLoss, PerceptualLoss
 from monai.metrics import compute_ssim_and_cs
 from nvflare.client.tracking import SummaryWriter
 from torch.amp import GradScaler, autocast
+from torchvision.models import SqueezeNet1_1_Weights
 from transforms import get_xray_transforms
 
 logger = logging.getLogger(__name__)
+
+
+# The perceptual loss's backbone. lpips resolves it through torch.hub, which downloads the
+# torchvision checkpoint on first use unless it is already in the hub dir — and an FL app never
+# downloads at run time (FLIP#1206; the user guide's *Model Files* section has the why). So the
+# checkpoint is shipped beside this file (`make weights` in the tutorial dir, then uploaded with
+# the app) and staged into a hub `checkpoints/` layout here. SqueezeNet rather than the AlexNet
+# used before: 5 MB per job to every trust instead of 233. MONAI's own `PerceptualLoss(cache_dir=)`
+# would also call `torch.hub.set_dir`, but not copy the file into the layout torchvision reads,
+# so the staging stays explicit.
+PERCEPTUAL_BACKBONE = "squeeze"
+HUB_CHECKPOINT = "squeezenet1_1-b8a52dc0.pth"
+
+
+def stage_perceptual_backbone(working_dir: Path) -> Path:
+    """Point torch.hub at ``working_dir/torch_hub`` and put the shipped backbone where it looks.
+
+    Uploads and the bundler are flat, so the checkpoint arrives as ``<app dir>/HUB_CHECKPOINT``;
+    torchvision wants ``<hub dir>/checkpoints/<basename of the weights URL>``. torch.hub reuses a
+    file already there without going online — and without re-checking its hash — so the check
+    happens here instead: the shipped file must be the one torchvision will ask for, and its
+    sha256 must start with the prefix in its name. Anything else raises rather than reaching
+    for the network.
+    """
+    expected = Path(SqueezeNet1_1_Weights.IMAGENET1K_V1.url).name
+    if expected != HUB_CHECKPOINT:
+        raise RuntimeError(
+            f"torchvision now loads SqueezeNet from {expected}, but this app ships {HUB_CHECKPOINT}: update "
+            "HUB_CHECKPOINT and the tutorial Makefile, re-run `make weights` and re-upload (FLIP#1206)."
+        )
+    shipped = working_dir / HUB_CHECKPOINT
+    if not shipped.is_file():
+        raise FileNotFoundError(
+            f"{HUB_CHECKPOINT} is missing from {working_dir}. FL apps do not download weights at run time "
+            "(FLIP#1206): run `make weights` in the tutorial directory to stage it, and upload it together "
+            "with the other app files."
+        )
+    _verify_hash_prefix(shipped)
+    hub_dir = working_dir / "torch_hub"
+    torch.hub.set_dir(str(hub_dir))
+    target = hub_dir / "checkpoints" / HUB_CHECKPOINT
+    if not target.is_file():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Copy beside and rename into place: an interrupted copy must not leave a partial file
+        # under the name torch.hub trusts.
+        partial = target.with_name(target.name + ".part")
+        shutil.copyfile(shipped, partial)
+        os.replace(partial, target)
+    return target
+
+
+def _verify_hash_prefix(path: Path) -> None:
+    """Refuse a shipped checkpoint whose sha256 does not start with the prefix in its filename."""
+    match = torch.hub.HASH_REGEX.search(path.name)
+    if match is None:
+        raise RuntimeError(f"{path.name} carries no sha256 prefix; the shipped backbone must keep torchvision's name")
+    prefix = match.group(1)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if not digest.startswith(prefix):
+        raise RuntimeError(
+            f"{path} has sha256 {digest[: len(prefix)]}…, expected {prefix}…: not torchvision's checkpoint. Re-run "
+            "`make weights` and re-upload it (FLIP#1206)."
+        )
 
 
 class KLDivergenceLoss:
@@ -184,12 +251,12 @@ class AutoencoderTrainer:
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
         # Losses, optimizers etc.
-        torch.hub.set_dir(f"{working_dir}/torch_hub")
+        stage_perceptual_backbone(working_dir)
         self.losses_ae = {
             "reconstruction_loss": torch.nn.L1Loss(),
             "kld_loss": KLDivergenceLoss(),
             "gan_loss": PatchAdversarialLoss(criterion="least_squares"),
-            "perceptual_loss": PerceptualLoss(2, network_type="alex"),
+            "perceptual_loss": PerceptualLoss(2, network_type=PERCEPTUAL_BACKBONE),
         }
 
         # 3-D only tu suppport 2D adversarial / perceptual losses.
@@ -282,7 +349,10 @@ class AutoencoderTrainer:
         weight is raised alongside the swap because this network reports much smaller values.
         """
         if self.axial_anisotropy and self.losses_ae["perceptual_loss"].spatial_dims == 3:
-            self.losses_ae["perceptual_loss"] = PerceptualLoss(spatial_dims=2, network_type="radimagenet_resnet50")
+            # Unreachable while the loss above is built 2-D; kept for a 3-D configuration. Same
+            # shipped backbone as above: radimagenet_resnet50 would be fetched through torch.hub
+            # at first use, which an FL app must never do (FLIP#1206).
+            self.losses_ae["perceptual_loss"] = PerceptualLoss(spatial_dims=2, network_type=PERCEPTUAL_BACKBONE)
             if self.weights_ae["w_perceptual_loss"] <= 1.0:
                 self.weights_ae["w_perceptual_loss"] = 10
                 # This perceptual loss tends to have very low values.

@@ -29,5 +29,5 @@ output "app_client_id" {
 
 output "domain" {
   description = "Cognito hosted-UI subdomain (the random 8-char prefix, not the full URL)"
-  value       = aws_cognito_user_pool_domain.main.domain
+  value       = one(aws_cognito_user_pool_domain.main[*].domain)
 }
