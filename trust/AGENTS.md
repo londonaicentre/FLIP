@@ -195,7 +195,9 @@ The senders construct the header inline at call sites:
 
 **Trust data has one path: seeding (FLIP#1101/#1187).** `make up` starts each trust's omop-db and
 Orthanc on empty, pre-created volumes and then runs `make -C trust ensure-seeded`, which loads
-`PROJECTS` (default `cxr_project spleen_project`) from the published canonical tables at the pinned
+`PROJECTS` (default `cxr_project`: one list drives both halves, so it holds only projects the
+dataset publishes a DICOM set for as well as tables — spleen regenerates its own since #1261) from
+the published canonical tables at the pinned
 `trust/.data_version`: OMOP rows via `omop_db_tools.import_tables` (the DICOM vocabulary first,
 skipped if present) and DICOMs via `trust/orthanc/seed_orthanc.py`, both selected by the same
 `source_trust` column, so a trust's OMOP rows and the studies in its PACS agree by construction. Each

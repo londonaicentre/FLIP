@@ -64,7 +64,9 @@ shell:
 # see the omop-db Makefile's seed-omop for why they are two axes.
 TRUST_INDEX ?= 1
 SOURCE_TRUST ?= $(TRUST_INDEX)
-PROJECTS ?= cxr_project spleen_project
+# Only projects whose DICOM set is published can be seeded from the pinned tag; spleen
+# regenerates its locally since FLIP#1261 and arrives via DICOM_SOURCE below.
+PROJECTS ?= cxr_project
 # ORTHANC_STORAGE_DIR_TRUST_<N> arrives absolute from trust/Makefile; the default is the
 # trust/-relative path the kit example uses, hence the ../ for this directory. Keyed by
 # TRUST_INDEX, never the unsuffixed ORTHANC_STORAGE_DIR, which the kit-example include

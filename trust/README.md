@@ -155,7 +155,8 @@ Medical Segmentation Decathlon — publishes only its tables and the metadata ta
 from; its DICOMs are regenerated locally by a deterministic converter (`fl-tutorials/datasets/`,
 FLIP#1261) and seeded from that tree (`make -C fl-tutorials seed-spleen KIT=<CODE>`, which drives
 `seed-omop … CANONICAL_DIR=` and `seed-orthanc … DICOM_SOURCE= TABLES_DIR=` here). `cxr_project`
-and `prostate_project` still ship one.
+and `prostate_project` still ship one, which is why the default `PROJECTS` a bring-up seeds is
+`cxr_project` alone.
 
 A trust is stood up by **seeding** those into its running omop-db and Orthanc (`up-trust` does it,
 see below); there are no volume snapshots to download. A **data version is a git tag on that

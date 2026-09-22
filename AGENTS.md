@@ -213,7 +213,7 @@ make -C flip-api create_testing_projects   # Create test projects
 make -C flip-api delete_testing_projects   # Clean up test data
 make seed-demo-projects                    # Curated radiology catalogue in honest lifecycle states
                                            # (EXTRA_ARGS="--cleanup" removes it again)
-make -C trust seed-trusts PROJECTS="spleen_project cxr_project"   # Seed the RUNNING dev trusts with datasets (#1100)
+make -C trust seed-trusts PROJECTS="cxr_project"   # Seed the RUNNING dev trusts with a published DICOM set (#1100)
 make -C trust seed KIT=GSTT PROJECTS="…"   # one trust; seed-omop / seed-orthanc for one half
 make -C fl-tutorials seed-spleen KIT=GSTT  # spleen: its DICOMs regenerate locally (#1261), so seeding runs
                                            # from fl-tutorials (CANONICAL_DIR / DICOM_SOURCE / TABLES_DIR)

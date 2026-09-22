@@ -648,7 +648,7 @@
     # ("Recursive loop detected in template").
     seed_source_trust: "{{ source_trust | default(trust_num) }}"
     seed_num_trusts: "{{ num_trusts | default('2') }}"
-    seed_project_list: "{{ seed_projects | default('cxr_project spleen_project', true) }}"
+    seed_project_list: "{{ seed_projects | default('cxr_project', true) }}"
     seed_orthanc_enabled: "{{ seed_orthanc | default(true) }}"
     # Recovery only — see the seed task below.
     seed_force_dicom_vocab: "{{ force_dicom_vocab | default(false) }}"

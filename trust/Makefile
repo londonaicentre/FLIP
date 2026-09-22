@@ -615,8 +615,13 @@ load-synthea-ehr:
 # (`load-omop-vocab`, a separate credentialed step) has been loaded yet.
 # Persists in the bind-mounted volume; ensure-seeded re-runs it on a
 # .data_version bump.
+# The default is every project whose OMOP tables AND DICOM set are both published, because
+# ensure-seeded loads both halves from the pinned tag and a project missing either one fails
+# the bring-up. Since FLIP#1261 that is cxr_project alone: spleen publishes its tables but
+# regenerates its DICOMs locally (MSD is open data), so it is seeded from the local tree with
+# `make -C fl-tutorials seed-spleen KIT=<CODE>` after `convert-spleen-to-dicom`, not from here.
 #   make -C trust seed-omop KIT=GSTT PROJECTS="spleen_project cxr_project"
-PROJECTS ?= cxr_project spleen_project
+PROJECTS ?= cxr_project
 # Which OMOP partition this trust gets. The FL kit slot is the default and is
 # right for the shipped GSTT/KCH roster, but the two are different axes: slots
 # are claimed from a pool in registration order, so a re-registered or third
