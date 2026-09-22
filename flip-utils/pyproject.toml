@@ -116,6 +116,7 @@ constraint-dependencies = [
     "pyjwt>=2.12.0",             # CVE-2026-32597
     "python-dotenv>=1.2.2",      # CVE-2026-28684
     "requests>=2.33.0",          # CVE-2026-25645
+    "soupsieve>=2.9.0",          # CVE-2026-85999, CVE-2026-86000
     # setuptools>=83.0.0 (CVE-2026-59890) omitted: torch 2.11.0 declares setuptools<82, and the
     # torch pin is itself fixed by the cu128 index above, so the floor is unreachable until the
     # cu130 migration in #826 (torch 2.13.0 drops the ceiling). Dependabot #475 stays open with
