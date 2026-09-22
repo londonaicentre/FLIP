@@ -34,6 +34,12 @@ any ``weights=`` that names a torchvision weights enum or weight name downloads,
 model builder; and constructing MONAI's ``PerceptualLoss`` (or lpips' ``LPIPS``) fetches its
 backbone through torch.hub *whatever* ``network_type`` says — ``squeeze`` included — unless the
 module first stages a hub dir (``torch.hub.set_dir``), which is what the LDM tutorial does.
+
+The same walk holds shipped app code to weights-only checkpoint loading (FLIP#1245, #1249):
+every ``torch.load`` passes ``weights_only=True`` explicitly. A load that unpickles arbitrary
+objects is code execution beside patient data, and leaving the keyword off is only safe while
+torch's default says so. Raw upstream checkpoints that need full unpickling are converted host-side
+(the tutorials' ``process_tools/``), outside the app dirs this guard walks.
 """
 
 from __future__ import annotations
@@ -112,13 +118,35 @@ def _import_aliases(tree: ast.Module) -> dict[str, str]:
     return aliases
 
 
+def _bound_names(node: ast.AST) -> list[str]:
+    """Names a statement binds: assignment targets (through tuples) and `global` declarations."""
+    if isinstance(node, ast.Assign):
+        targets = node.targets
+    elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        targets = [node.target]
+    elif isinstance(node, ast.Global):
+        return list(node.names)
+    else:
+        return []
+    return [n.id for t in targets for n in ast.walk(t) if isinstance(n, ast.Name)]
+
+
 def _module_constants(tree: ast.Module) -> dict[str, object]:
-    """Module-level `NAME = <literal>` bindings, so `network_type=BACKBONE` can be checked."""
+    """Module-level `NAME = <literal>` bindings, so `network_type=BACKBONE` can be checked.
+
+    Only names bound exactly once anywhere in the module count: a later rebinding — in a branch,
+    from the environment, or through `global` inside a function — would otherwise leave the first
+    literal standing for a value the guard cannot see.
+    """
+    bindings: dict[str, int] = defaultdict(int)
+    for node in ast.walk(tree):
+        for name in _bound_names(node):
+            bindings[name] += 1
     constants: dict[str, object] = {}
     for node in tree.body:
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
             for target in node.targets:
-                if isinstance(target, ast.Name):
+                if isinstance(target, ast.Name) and bindings[target.id] == 1:
                     constants[target.id] = node.value.value
     return constants
 
@@ -183,6 +211,38 @@ def offences_in(source: str) -> list[tuple[int, str]]:
                 found.append((node.lineno, "from_pretrained(<hub id>)"))
         if final in HUB_BACKED_LOSSES and not stages_hub_dir:
             found.append((node.lineno, f"{final}( fetches its backbone through torch.hub unless the app stages it"))
+    return sorted(found)
+
+
+# `torch.load` under both names it is reachable by; a module-level `NAME = torch.load` counts too.
+UNPICKLING_LOADERS = {"torch.load", "torch.serialization.load"}
+
+
+def unpickling_loads_in(source: str) -> list[tuple[int, str]]:
+    """Every ``torch.load`` in ``source`` that does not pass ``weights_only=True``, as (line, label)."""
+    tree = ast.parse(source)
+    aliases = _import_aliases(tree)
+    constants = _module_constants(tree)
+    loader_names = {
+        target.id
+        for node in tree.body
+        if isinstance(node, ast.Assign) and _canonical(node.value, aliases) in UNPICKLING_LOADERS
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        canonical = _canonical(node.func, aliases)
+        if canonical not in UNPICKLING_LOADERS and canonical not in loader_names:
+            continue
+        loader = canonical if canonical in UNPICKLING_LOADERS else "torch.load"
+        keywords = {k.arg: k.value for k in node.keywords if k.arg}
+        if "weights_only" not in keywords:
+            found.append((node.lineno, f"{loader}( without weights_only"))
+        elif _value(keywords["weights_only"], constants) is not True:
+            found.append((node.lineno, f"{loader}( with weights_only not provably True"))
     return sorted(found)
 
 
@@ -261,6 +321,20 @@ def test_app_fetches_nothing_at_run_time(app_dir: Path):
     )
 
 
+@pytest.mark.parametrize("app_dir", APP_DIRS, ids=_relative)
+def test_app_loads_checkpoints_weights_only(app_dir: Path):
+    offences = [
+        f"{_relative(py)}:{lineno}: {label}"
+        for py in APP_FILES[app_dir]
+        for lineno, label in unpickling_loads_in(py.read_text(encoding="utf-8"))
+    ]
+    assert not offences, (
+        "checkpoint load that can unpickle arbitrary objects in a shipped app (FLIP#1245/#1249) — pass "
+        "weights_only=True, and convert raw upstream checkpoints host-side (process_tools/):\n  "
+        + "\n  ".join(offences)
+    )
+
+
 WEIGHTS = "weights=<torchvision weights> (downloads)"
 HUB_LOSS = "PerceptualLoss( fetches its backbone through torch.hub unless the app stages it"
 CAUGHT = [
@@ -317,3 +391,45 @@ def test_guard_catches_the_call_shapes_it_claims_to(snippet: str, label: str):
 @pytest.mark.parametrize("snippet", ACCEPTED, ids=[s.splitlines()[-1][:60] for s in ACCEPTED])
 def test_guard_accepts_the_offline_shapes(snippet: str):
     assert offences_in(snippet) == [], snippet
+
+
+NOT_TRUE = "torch.load( with weights_only not provably True"
+UNPICKLING = [
+    ("ckpt = torch.load(path, map_location='cpu')", "torch.load( without weights_only"),
+    ("import torch as T\nckpt = T.load(path)", "torch.load( without weights_only"),
+    ("from torch import load as tload\nckpt = tload(path)", "torch.load( without weights_only"),
+    ("ckpt = torch.load(path, **opts)", "torch.load( without weights_only"),
+    (
+        "import torch.serialization\nckpt = torch.serialization.load(path)",
+        "torch.serialization.load( without weights_only",
+    ),
+    ("from torch.serialization import load\nckpt = load(path)", "torch.serialization.load( without weights_only"),
+    ("loader = torch.load\nckpt = loader(path)", "torch.load( without weights_only"),
+    ("ckpt = torch.load(path, weights_only=False)", NOT_TRUE),
+    ("SAFE = False\nckpt = torch.load(path, weights_only=SAFE)", NOT_TRUE),
+    ("ckpt = torch.load(path, weights_only=trusted)", NOT_TRUE),
+    # A literal True the module later rebinds is not provably True either.
+    ("SAFE = True\nSAFE = os.environ.get('X') is None\nckpt = torch.load(path, weights_only=SAFE)", NOT_TRUE),
+    ("SAFE = True\nif os.environ.get('X'):\n    SAFE = False\nckpt = torch.load(path, weights_only=SAFE)", NOT_TRUE),
+    ("SAFE = True\ndef relax():\n    global SAFE\n    SAFE = False\nckpt = torch.load(p, weights_only=SAFE)", NOT_TRUE),
+]
+
+WEIGHTS_ONLY = [
+    "state = torch.load('shipped.pt', weights_only=True)",
+    "SAFE = True\nstate = torch.load(p, map_location='cpu', weights_only=SAFE)",
+    "from torch import load\nstate = load(p, weights_only=True)",
+    "state = safetensors.torch.load_file(p)",
+    "cfg = yaml.load(f, Loader=yaml.SafeLoader)",
+    "arr = np.load(p)",
+]
+
+
+@pytest.mark.parametrize(("snippet", "label"), UNPICKLING, ids=[c[0].splitlines()[-1][:60] for c in UNPICKLING])
+def test_guard_catches_the_unpickling_load_shapes(snippet: str, label: str):
+    labels = [found for _, found in unpickling_loads_in(snippet)]
+    assert labels == [label], f"{snippet!r} → {labels}"
+
+
+@pytest.mark.parametrize("snippet", WEIGHTS_ONLY, ids=[s.splitlines()[-1][:60] for s in WEIGHTS_ONLY])
+def test_guard_accepts_weights_only_loads(snippet: str):
+    assert unpickling_loads_in(snippet) == [], snippet

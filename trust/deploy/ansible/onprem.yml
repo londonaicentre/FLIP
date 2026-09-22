@@ -25,8 +25,9 @@
 #     -u ubuntu --private-key ~/.ssh/trust_key \
 #     trust/deploy/ansible/onprem.yml
 #
-#   Add `--tags data -e trust_data_version=<tag>` to ALSO restore the published
-#   mock OMOP + Orthanc snapshots (dev/stag hosts only — see the second play).
+#   There is no data play: the OMOP and Orthanc stores start empty and
+#   `make -C trust up-trust` seeds them from the canonical dataset at bring-up
+#   (FLIP#1187, `ensure-seeded`) — there is no snapshot to restore any more.
 
 ---
 - name: Provision on-premises Trust host
@@ -56,15 +57,3 @@
     # The production compose reads Loki/Alloy/Grafana config from
     # /opt/flip/config/observability by default (OBSERVABILITY_CONFIG_DIR).
     - flip_observability_config
-
-# Opt-in: `never` means this play runs only when `--tags data` is asked for, so a
-# default provisioning run of a real trust host never downloads mock data. The
-# vocabulary role is not included — its bundle comes from the hub's S3 bucket via
-# an instance role an on-prem host does not have (`make -C trust load-omop-vocab`).
-- name: Restore the published mock OMOP + Orthanc snapshots (dev/stag hosts only)
-  hosts: all
-  become: true
-  tags: [never, data]
-  roles:
-    - flip_omop_restore
-    - flip_orthanc_restore

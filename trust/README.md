@@ -21,6 +21,9 @@ Deploy components at the trust level:
 * Trust API ([trust-api](trust-api))
 * OMOP Database ([omop-db](omop-db))
 * XNAT ([xnat](xnat))
+* Observability ([observability](observability)) — Grafana (host `GRAFANA_PORT`, container 3000),
+  Loki (host `LOKI_PORT`, container 3100) and an Alloy log collector (internal only, no published
+  port). Each trust runs its own; logs never leave the trust.
 
 See also the dedicated README files under each folder.
 
@@ -72,6 +75,27 @@ EXPECTED_TRUST_ID=<from kit>
 
 plus the trust's identity (`TRUST_NAME` / `TRUST_CODE` / `TRUST_REGION`, read by `register-trust`) and its host-local ports and data directories. The optional `EXPECTED_TRUST_ID` lets trust-api self-check the hub-resolved id at startup.
 
+The kit also carries **XNAT's own AE title** and the **upstream PACS** block (see the commented
+`── Upstream PACS ──` section of `trust/.env.example`, and
+[`xnat/README.md`](xnat/README.md#pacs-configuration) for what each one does):
+
+```sh
+XNAT_AETITLE=XNAT
+PACS_HOST=orthanc
+PACS_AETITLE=ORTHANC
+PACS_QR_PORT=4242
+```
+
+`XNAT_AETITLE` is applied to XNAT's SCP receiver, its DQR calling AE and the C-MOVE destination it
+hands the PACS, so all three agree and the PACS's return-leg association is addressed correctly.
+`up-trust` / `up-trust-ec2` run a `require-xnat-aetitle` guard first: the variable may be absent
+(the default `XNAT` applies) but **must not be present-and-empty** — that fails the bring-up naming
+the kit file, before any data fixture is fetched. The remaining `PACS_*` and `DQR_*` variables
+(`PACS_LABEL`, `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS`, `PACS_AVAILABILITY_DAYS`/`_START`/`_END`,
+`PACS_THREADS`, `PACS_UTILIZATION_PERCENT`, `DQR_MAX_PACS_REQUEST_ATTEMPTS`,
+`DQR_RETRY_WAIT_SECONDS`) default to the mocked Orthanc plus an unthrottled retrieval window; a
+real trust agrees them with its PACS manager.
+
 The kit also carries the trust's **disclosure floor**:
 
 ```sh
@@ -88,7 +112,9 @@ renders these into the client's NVFLARE `local/privacy.json` at container start,
 update-privacy filter is applied to every outgoing model update regardless of the researcher's app config
 (site filters run before app filters and jobs cannot opt out). Unset = no site policy (app-level filters
 only, the previous behavior). Invalid values stop the fl-client at startup — fail closed. Apply changes with
-`make -C trust up-fl-clients-kit KIT=<CODE>`; the fl-client log then shows
+`make -C trust up-fl-clients-kit KIT=<CODE>` (`down-fl-clients-kit KIT=<CODE>` stops and removes
+just that trust's clients; `up-fl-clients` / `down-fl-clients` do the same across every kit for
+this env, leaving the rest of each trust stack up); the fl-client log then shows
 `[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-nets.rst`
 ("Site-enforced privacy policy").
 
@@ -115,19 +141,27 @@ The plaintext keys aren't recoverable — only the hash is on disk. If you didn'
 
 ## Data versions
 
-All mock trust data — the pgdata and Orthanc storage snapshots, the canonical OMOP tables and
-the per-project DICOM sets — comes from one public Hugging Face dataset,
+All mock trust data — the canonical OMOP tables and the per-project DICOM sets — comes from one
+public Hugging Face dataset,
 [`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data), which
-holds **exactly one copy of every artefact at an unversioned path**:
+holds **exactly one copy of every artefact at an unversioned path**, one pair per project:
 
 ```
-trust<N>/trust<N>_pgdata.tar   trust<N>/trust<N>_orthanc_data.tar
 omop-csv/<project>/*.csv       omop-csv/<project>/source/…        dicom/<project>.tar.gz
 ```
 
-A **data version is a git tag on that dataset**, and [`.data_version`](.data_version) in this
-directory pins one — a single pin for OMOP and Orthanc together, because a tag describes the
-whole dataset state. Every consumer (the `update-*-data` snapshot scripts, `seed-omop` /
+Not every project has a `dicom/` set. A project cut from open data — `spleen_project` and
+`brain_mri_project`, both from the Medical Segmentation Decathlon — publishes only its tables and
+the metadata table they were built from; its DICOMs are regenerated locally by a deterministic
+converter (`fl-tutorials/datasets/`, FLIP#1221) and seeded from that tree
+(`make -C fl-tutorials seed-<dataset> KIT=<CODE>`, which drives `seed-omop … CANONICAL_DIR=` and
+`seed-orthanc … DICOM_SOURCE= TABLES_DIR=` here). `cxr_project` and `prostate_project` still ship
+one, which is why the default `PROJECTS` a bring-up seeds is `cxr_project` alone.
+
+A trust is stood up by **seeding** those into its running omop-db and Orthanc (`up-trust` does it,
+see below); there are no volume snapshots to download. A **data version is a git tag on that
+dataset**, and [`.data_version`](.data_version) in this directory pins one — a single pin for OMOP
+and Orthanc together, because a tag describes the whole dataset state. Every consumer (`seed-omop` /
 `seed-orthanc`, the spleen label uploader, the Ansible plays, the Helm chart) fetches
 `resolve/<tag>/<path>`, so an old version stays reachable at its tag forever and is never
 duplicated as a second directory or a suffixed filename. `HF_TRUST_DATA_REVISION` overrides the
@@ -139,17 +173,53 @@ commit and the tag are separate calls to the Hub: if the second fails, the bytes
 nothing pinning them and no consumer resolving them — re-run the same command to finish it.
 
 ```sh
-make -C omop-db export-pgdata                         # dist/trust<N>_pgdata.tar
 uv run orthanc/publish_dicom.py --project … --revision main --out orthanc/dist/dicom/<project>.tar.gz
 make publish-trust-data VERSION=20261001 DRY_RUN=1 \
-  PGDATA="omop-db/dist/trust1_pgdata.tar omop-db/dist/trust2_pgdata.tar" \
-  OMOP_CSV=omop-db/data/canonical DICOM=orthanc/dist/dicom/<project>.tar.gz [ORTHANC=… CARD=…]
+  OMOP_CSV=omop-db/data/canonical DICOM=orthanc/dist/dicom/<project>.tar.gz [CARD=…]
 make publish-trust-data VERSION=20261001 …            # for real; then set .data_version to 20261001
+make publish-trust-data VERSION=20261001 OMOP_CSV=… DELETE=dicom/spleen_project.tar.gz   # retire a re-hosted set
 ```
 
+`DELETE=<path in repo>` removes a file from `main` in the same commit (earlier tags keep it) — how
+`dicom/spleen_project.tar.gz` went when spleen moved to local regeneration.
+
 (`hf auth login` with write access to the dataset is needed.) Bumping `.data_version` is what
-moves a checkout: the next `up-trust` re-snapshots — refusing, without `FORCE=1`, to discard a
-volume that was seeded — and every seed/enrichment run reads at the new tag.
+moves a checkout: the next `up-trust` (its `ensure-seeded` step) re-seeds the trust's projects at
+the new tag — OMOP rows replaced project by project, PACS studies cleared and re-uploaded — and
+every seed/enrichment run reads at the new tag.
+
+### Seeding at bring-up
+
+`up-trust` starts omop-db and Orthanc on empty, pre-created volumes and then runs
+`ensure-seeded`, which loads `PROJECTS` (default `cxr_project` — the projects that publish a DICOM
+set, see above) from the dataset at
+the pinned version. Each half leaves a marker beside its store — `<omop dir>/../.seeded` and
+`<orthanc parent>/.<storage dir>.seeded` — recording projects, partition and version; a marker
+that matches means nothing to do, so a second `up` fetches and uploads nothing and the seeded
+volumes simply persist on the host. A first bring-up on a fresh host is the one slow step:
+roughly 2 GB of DICOM per trust posted through Orthanc's REST API (a few minutes); the OMOP half
+takes seconds. The DICOM vocabulary is loaded with the rows; the licensed core vocabulary is still
+the separate credentialed `make -C trust/omop-db load-omop-vocab` step.
+
+```sh
+make -C trust ensure-seeded KIT=GSTT PROJECTS="cxr_project"                   # what up-trust runs; safe to repeat
+make -C trust seed KIT=GSTT PROJECTS="prostate_project"                       # add a project, unconditionally
+```
+
+**A host seeded before FLIP#1187 re-seeds once.** The PACS marker used to live *inside* the
+storage directory (`<storage dir>/.seeded`) and now sits beside it, because the directory
+itself is owned by Orthanc's uid. The new reader does not look at the old path, so the first
+`up-trust` after this change finds no marker and re-seeds: the DICOM cache under
+`trust/orthanc/volumes/dicom/` is keyed by data version and survives, so nothing is
+re-downloaded, but every instance is re-posted (Orthanc answers `AlreadyStored`) — a few
+minutes, once. The stale `.seeded` inside the storage directory can be deleted.
+
+Recovering a half-loaded DICOM vocabulary: the loader skips itself when its scaffolding
+concept is present, and that concept is committed before the bulk load, so a run killed in
+between leaves a database that reports itself loaded and is skipped for good.
+`make -C trust/omop-db load-dicom-vocab FORCE_DICOM_VOCAB=1` reloads over it. The same
+variable reaches the Kubernetes hook (`trustData.seed.forceDicomVocab`) and the EC2 play
+(`make -C deploy/providers/AWS seed-trust-data KIT=<CODE> FORCE_DICOM_VOCAB=1`).
 
 ### Which partition a trust is seeded with
 
@@ -167,9 +237,36 @@ Override with `SOURCE_TRUST` when the two differ:
 make -C trust seed KIT=<CODE> SOURCE_TRUST=1        # slot stays as assigned; load partition 1
 ```
 
+To seed the whole shipped dev roster in one go — `seed KIT=GSTT` then `seed KIT=KCH`, same
+projects, same partition-by-slot default:
+
+```sh
+make -C trust seed-trusts PROJECTS="cxr_project"
+```
+
+`seed` itself is just `seed-omop` + `seed-orthanc`; run either half alone with
+`make -C trust seed-omop KIT=<CODE> PROJECTS=…` / `seed-orthanc KIT=<CODE> PROJECTS=…`.
+
 `SOURCE_TRUST` moves only the partition. The trust's volumes, ports and the `.seeded` marker stay
 keyed to its kit slot, which is why it exists as its own variable rather than an override of
 `TRUST_NUM`.
+
+### Unseeding, and moving off a re-cut project
+
+`make -C trust unseed KIT=<CODE> PROJECTS="…"` takes the listed projects *out* of a running trust —
+OMOP rows by the person ids and PACS studies by the accessions the tables at
+`HF_TRUST_DATA_REVISION` (or `CANONICAL_DIR=` / `TABLES_DIR=`) name — and loads nothing; every other
+project stays. It exists for a project whose identities were re-cut (spleen at the FLIP#1221 tag:
+every person id, accession and UID changed), where `seed-omop`'s default `--clean projects` would
+delete by the *new* ids and leave the old rows beside them:
+
+```sh
+make -C trust unseed KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911   # the cut the trust holds
+make -C fl-tutorials seed-spleen KIT=GSTT                                              # the new cut, from the local tree
+```
+
+`seed-omop CLEAN=all` is the blunt alternative (every project's rows go first); `populate` on the
+build stack is the same loader with that mode.
 
 ## OMOP Database
 
@@ -198,17 +295,27 @@ need only your trust's kit file (`trust/.env.<CODE>.<env>`).
 4. Fill in the **Trust-local credentials** block (Orthanc / OMOP / XNAT /
    Grafana passwords) — these are your secrets, the hub never sees them.
 5. Start the stack:
-   - EC2 trust: `make -C trust up-trust-ec2 KIT=<CODE> PROD=true`
+   - EC2 trust: `make -C trust up-trust-ec2 KIT=<CODE> PROD=true` (stop it with
+     `make -C trust down-trust-ec2 KIT=<CODE> PROD=true`)
    - On-prem trust: `sudo -E env PROD=true make -C trust up-trust KIT=<CODE>`
      (sudo: the provisioned login user is deliberately not in the docker group;
      `-E` keeps `$HOME` so root's docker reuses your GHCR login)
    - Laptop-against-prod: `make -C trust up-trust KIT=<CODE> PROD=true` (no sudo —
      your workstation isn't provisioned by the on-prem playbook)
 
-   The on-prem path skips the dev-only `update-omop-data` / `update-orthanc-data`
-   steps (which pull test fixtures from S3 and need hub AWS credentials) —
-   real on-prem operators populate `./omop-db/volumes/<CODE>/db_data` and
-   `./orthanc/orthanc-storage-<…>` themselves.
+   `PROD` names the hub you are joining, and with it the kit-file suffix the
+   trust Makefiles read: `true` → `.env.<CODE>.production`, `stag` → `.stag`,
+   and on an LZA estate (FLIP#749) `lza` → `.lza-prod`, `lza-stag` → `.lza-stag`.
+   All four run the production compose and stack files; only `PROD` unset is
+   the development stack.
+
+   On-prem, `up-trust` runs `ensure-seeded` unconditionally, the same way it does in
+   dev: a store with no `.seeded` marker beside it is seeded with the listed mock
+   projects (anonymous Hugging Face download, no hub credentials) — OMOP via
+   `--clean projects`, which replaces only those projects' own rows, and Orthanc by
+   posting their studies. A real on-prem operator who points `OMOP_DATA_DIR` /
+   `ORTHANC_STORAGE_DIR` at real data therefore gets the mock projects loaded
+   alongside it on first bring-up; there is no switch to turn the seed off yet.
 
 ### Refreshing shared values (when the hub admin rotates an AES key etc.)
 

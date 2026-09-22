@@ -80,7 +80,7 @@ from flip_api.utils.logger import logger
 # WARNING — exfil whitelist. Every key listed here is:
 #   1. Forwarded to every trust host (written into trust/.env.<slot>).
 #   2. Captured by the awslogs driver into CloudWatch /ecs/flip-api when
-#      this CLI runs as a one-off ECS task (see S-1 in CLAUDE.md; the
+#      this CLI runs as a one-off ECS task (see S-1 in AGENTS.md; the
 #      `--out-ssm-parameter` flag closes that path but stderr / stdout
 #      logger output can still leak if a value lands there by mistake).
 # NEVER add a secret here without first proving the trust needs it AND

@@ -137,13 +137,64 @@ make provision-local-trust
 1. Runs the Ansible playbook (`onprem.yml`), a composition of the shared roles in
    [`roles/`](roles/README.md) (the EC2 play `deploy/providers/AWS/site.yml` composes the same ones):
    - Installs Docker and the base packages (`flip_base_packages`, `flip_docker` — no docker-group grant)
-   - Creates the application, images (per-net, backend-aware ownership) and XNAT directories under
-     `/opt/flip/` (`flip_trust_dirs`)
-   - Pre-creates the FL kit directory tree for the tarball you extract by hand (`flip_fl_kit` with
-     `fl_kit_source: precreate`)
+   - Creates the application, images and XNAT directories under `/opt/flip/` (`flip_trust_dirs`):
+     - `/opt/flip/` and `/opt/flip/data/images/`, owned by `ubuntu`
+     - the **per-net images bind sources** `/opt/flip/data/images/net-1`
+       and `net-2`. Each fl-client mounts only its own net's slice, and both
+       imaging-api and the fl-client *write* there, so these must exist and be
+       writable before the first `up-trust`. `make up-trust` repairs their ownership
+       itself (`ensure_net_dirs` in `trust/Makefile`, which runs under `sudo` on-prem
+       and fails loudly if it cannot), so the trap is a `net-N` created root-owned by
+       a path that bypasses make: then every image download 500s and training later
+       fails with a misleading `num_samples=0`. Ownership is **backend-aware**, driven by
+       the `fl_backend` extra-var the make target passes: NVFLARE's client shares
+       imaging-api's uid, so `ubuntu:ubuntu` + `0755`; Flower's runs as `app`
+       (uid/gid 49999) on upstream `flwr/base`, so group `49999` + `0775`. Re-run
+       the playbook (or fix by hand) if you switch `FL_BACKEND`.
+     - the **XNAT bind mounts** `/opt/flip/xnat`,
+       `/opt/flip/xnat/xnat-data/{tomcat_logs,archive,build,cache}` and
+       `/opt/flip/xnat/xnat-db-data`, owned by **UID/GID 1001** — the in-image
+       `xnat` user (`trust/xnat/xnat/Dockerfile`), not the login user. See the
+       XNAT-directory warning below.
+   - Pre-creates the **FL participant kit tree** for the tarball you extract by hand (`flip_fl_kit` with
+     `fl_kit_source: precreate`) under `/opt/flip/fl-kit` — the
+     default `FL_KIT_DIR`, matching what the prod trust compose mounts:
+     `${FL_KIT_DIR}/net-1/services/<slot>/{local,startup,transfer}` for NVFLARE
+     and `${FL_KIT_DIR}/net-1/{certificates,keys}` for Flower. The slot
+     sub-tree defaults to **`Trust_2`** (`fl_kit_precreate_slot` in the role's defaults).
+     If the hub assigned this trust a different slot (check `FL_KIT_SLOT` in
+     `trust/.env.<CODE>.<env>`), either pass `-e fl_kit_precreate_slot=<slot>` to the
+     playbook, or just create the tree yourself afterwards:
+
+     ```bash
+     sudo install -d -o ubuntu -g ubuntu -m 0755 \
+       /opt/flip/fl-kit/net-1/services/<slot>/{local,startup,transfer}
+     ```
+
+     An operator who overrides `FL_KIT_DIR` in their kit file owns the whole
+     directory tree themselves — the playbook only ever provisions the default.
    - Copies the Loki/Alloy/Grafana config into `/opt/flip/config/observability`, where the production
      compose reads it (`flip_observability_config`)
 2. Downloads the FL participant kit from S3 and stages it under `/tmp`, printing the `sudo rsync` commands to deploy it into `${FL_KIT_DIR}/net-1/...` (default `/opt/flip/fl-kit/net-1/...`).
+
+> **Warning — the playbook's XNAT directory is not the one XNAT uses.** Both this
+> playbook and `deploy/providers/AWS/site.yml` provision `/opt/flip/xnat/...`, but
+> the tree XNAT actually writes to is whatever `XNAT_DATA_DIR` resolves to in
+> `trust/xnat/Makefile`, and the kit file's value wins. Every scaffolded kit sets one
+> — `trust/.env.example`, which `make new-trust` copies, carries
+> `XNAT_DATA_DIR=./xnat-data`, resolved against `trust/xnat/` (so
+> `<checkout>/trust/xnat/xnat-data`). Only when the kit omits the key does the
+> Makefile fall back to the **per-slot** `/opt/flip/xnat-trust$(TRUST_NUM)` under
+> `PROD=stag|true` (`TRUST_NUM` is the kit's `FL_KIT_SLOT_NUMBER`; `./xnat-data-trust<N>`
+> in dev) — a deliberate split so two trusts sharing a host stay isolated. Compose,
+> `xnat-reset` and the ownership check all read that same variable, so the live tree
+> is `<XNAT_DATA_DIR>/xnat-data/{tomcat_logs,archive,build,cache}` plus
+> `<XNAT_DATA_DIR>/xnat-db-data`, and chowning `/opt/flip/xnat` looks right but changes
+> nothing. Check the kit's `XNAT_DATA_DIR` (set it explicitly there if you want one
+> fixed path) and chown **that** to `1001:1001`. `up-xnat` runs `xnat-reset`, which
+> **deletes and recreates** `XNAT_DATA_DIR` with the right owner for the value actually
+> in effect, then verifies it and fails naming the exact `chown` when it is wrong — so
+> treat it as destructive, not as a repair tool for a populated archive.
 
 Opening the AWS FL-server NLB to the trust's public IP is a **separate** step — `make allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip>` — run by the FLIP admin once the operator reports their IP.
 
@@ -197,18 +248,11 @@ images tree). Roles are found beside the play, so no `roles_path` configuration 
 | `fl_backend` | `nvflare` | FL backend this trust will run. Sets the group/mode of the per-net images bind sources (`<flip_dir>/data/images/net-N`) — the Flower client runs as uid/gid 49999, not imaging-api's 1000, so it needs group 49999 + `0775` to write there. `provision-local-trust` passes the deployment's `FL_BACKEND` automatically. |
 | `fl_kit_precreate_slot` | `Trust_2` | The NVFLARE slot whose `net-1/services/<slot>/{local,startup,transfer}` tree is pre-created; must match the kit file's `FL_KIT_SLOT`. |
 
-**Mock data (dev/stag hosts only).** The second play restores the published mock OMOP and Orthanc
-snapshots, exactly as the EC2 trust gets them, but is tagged `never`: it runs only when asked for, so a
-default provisioning run of a real trust host downloads nothing.
-
-```bash
-uv run ansible-playbook -i <trust-host-ip>, -u ubuntu --private-key ~/.ssh/trust_key \
-  --tags data -e trust_data_version=$(cat ../../../trust/.data_version) -e trust_num=2 \
-  ../../../trust/deploy/ansible/onprem.yml
-```
-
-The licensed core vocabulary is not part of that: its bundle comes from the hub's S3 bucket through an
-instance role, so on-prem it stays `make -C trust load-omop-vocab`.
+**Data.** The playbook puts no data on the host. The OMOP and Orthanc stores start empty and
+`make -C trust up-trust` seeds them from the canonical dataset at bring-up (FLIP#1187,
+`ensure-seeded`) — there is no snapshot to restore any more. The licensed core vocabulary is not part
+of that either: its bundle comes from the hub's S3 bucket through an instance role, so on-prem it stays
+`make -C trust load-omop-vocab`.
 
 **Direct usage** (without the Makefile):
 

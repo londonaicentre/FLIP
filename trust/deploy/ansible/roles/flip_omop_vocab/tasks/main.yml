@@ -10,9 +10,9 @@
 # limitations under the License.
 #
 ---
-# The published pgdata tarballs are vocab-free (FLIP#842/#843): the licensed
-# core vocabulary is streamed into the restored cluster here, via a throwaway
-# container on a loopback-only port. The loader skips tables that already
+# The canonical dataset carries no core vocabulary (FLIP#842/#843): it is
+# licensed, so it is loaded separately here, into the cluster the seed filled,
+# via a throwaway container on a loopback-only port. The loader skips tables that already
 # hold the core vocabulary, so re-runs are safe. Bundle comes from the org S3
 # bucket via the instance role — so this role needs the AWS CLI and a role or
 # credentials that can read that bucket; it is the one data role an on-prem
@@ -70,7 +70,7 @@
         - load_core_vocab.sh
         - OMOPCDM_postgresql_5.4_constraints.sql
 
-    - name: start throwaway database container on the restored volume
+    - name: start throwaway database container on the seeded volume
       command: >
         docker run -d --name omop-vocab-load
         -v {{ omop_dir }}/db_data:/var/lib/postgresql/data

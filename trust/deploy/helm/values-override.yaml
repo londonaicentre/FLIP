@@ -14,11 +14,10 @@ awsRegion: eu-west-2
 flBackend: nvflare
 uploadedFederatedDataBucket: "s3://${FLIP_BUCKET_NAME}/uploaded_federated_data"
 omopDb:
-  initJob:
-    s3Bucket: flipstag-aicentre
-  # The licensed core vocabulary bundle — same bucket, same credentials as
-  # initJob. Chart default is empty; without this the release still installs,
-  # but with NO vocabulary (cohort queries joining omop.concept return nothing).
+  # The licensed core vocabulary bundle. Chart default is empty; without this the
+  # release still installs, but with NO vocabulary (cohort queries joining
+  # omop.concept return nothing). The mock data itself needs no bucket: the
+  # trust-seed hook fetches it anonymously from Hugging Face (FLIP#1187).
   vocabLoad:
     s3Bucket: flipstag-aicentre
 flClient:

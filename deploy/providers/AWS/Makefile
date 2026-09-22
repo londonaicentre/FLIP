@@ -10,13 +10,24 @@
 # limitations under the License.
 #
 
-ifeq ($(PROD),true)
-MAIN_ENV_FILE=../../../.env.production
-else
 # Sometimes PROD may not be set, default to staging environment in that case
+ifeq ($(strip $(PROD)),)
 PROD=stag
-MAIN_ENV_FILE=../../../.env.stag
 endif
+# What PROD means (ENV, the env-file name, ENV_CLASS, IS_LZA, …) is derived once in
+# ../../env_mode.mk, shared with every Makefile that reads PROD. PROD=lza is the LZA
+# estate (FLIP#749): a prod-grade environment on a platform-managed (AWS Landing Zone
+# Accelerator) network, the second of the two supported deployment modes; PROD=lza-stag
+# is its staging counterpart — the same platform-managed mode with staging semantics
+# (ENV_CLASS=stag: the prod-only RDS hardening stays off and deploys track
+# origin/develop like legacy stag). Both env files are gitignored like the others —
+# see "Deploying onto an LZA estate" in README.md for the required values. The
+# include reads ENV_MODE_PROD rather than PROD so a PROD given as empty on the
+# command line (`make plan PROD=`, which make will not let the default above
+# overwrite) still maps to staging here.
+ENV_MODE_PROD := $(or $(strip $(PROD)),stag)
+include ../../env_mode.mk
+MAIN_ENV_FILE=../../../$(ENV_FILE_NAME)
 
 # The trust node's two deployment shapes live beside the trust compose files, not in
 # this provider (#1213). Spelled once; every recipe that reaches them goes through these.
@@ -60,27 +71,70 @@ $(if $(FL_KIT_DATE),,$(error 🧠 $(if $(filter nvflare,$(FL_BACKEND)),FLARE_KIT
 # the env file or on the command line if your local profile names differ.
 PROD_AWS_PROFILE ?= prod
 STAG_AWS_PROFILE ?= stag
+# The LZA workload accounts are reached via the Identity Center
+# `FLIPAdminAccess` permission set; like prod/stag above, the defaults are
+# short local aliases for it in ~/.aws/config (FLIP#749).
+LZA_AWS_PROFILE ?= lza-prod
+LZA_STAG_AWS_PROFILE ?= lza-stag
 
 # Refuse to operate against an unintended AWS account. Profile name is the safety
 # guard because Make has no easy way to read the account ID without an `aws` call.
-ifeq ($(PROD),true)
-ifneq ($(AWS_PROFILE),$(PROD_AWS_PROFILE))
-$(error "For production deployments, AWS_PROFILE must be set to '$(PROD_AWS_PROFILE)' (override via PROD_AWS_PROFILE)")
+# One knob per environment, looked up by ENV.
+_AWS_PROFILE_KNOB_production := PROD_AWS_PROFILE
+_AWS_PROFILE_KNOB_stag       := STAG_AWS_PROFILE
+_AWS_PROFILE_KNOB_lza-prod   := LZA_AWS_PROFILE
+_AWS_PROFILE_KNOB_lza-stag   := LZA_STAG_AWS_PROFILE
+EXPECTED_AWS_PROFILE := $($(_AWS_PROFILE_KNOB_$(ENV)))
+ifneq ($(AWS_PROFILE),$(EXPECTED_AWS_PROFILE))
+$(error "For $(ENV) deployments, AWS_PROFILE must be set to '$(EXPECTED_AWS_PROFILE)' (override via $(_AWS_PROFILE_KNOB_$(ENV)))")
 endif
-else
-ifneq ($(AWS_PROFILE),$(STAG_AWS_PROFILE))
-$(error "For staging deployments, AWS_PROFILE must be set to '$(STAG_AWS_PROFILE)' (override via STAG_AWS_PROFILE)")
+# The variables.tf default VPC name is the PROD template (AWSAccelerator-eu-west-2-prod);
+# there is no defaultable name for the staging VPC, so require it explicitly rather
+# than letting the data lookup fail with an opaque "no results" in the wrong account.
+ifeq ($(ENV),lza-stag)
+ifeq ($(LZA_VPC_NAME),)
+$(error "For LZA staging deployments, LZA_VPC_NAME must be set in .env.lza-stag (the Name tag of the staging platform VPC)")
 endif
 endif
 
 ## SETTING VARIABLES FOR TERRAFORM
-# Map the Make-level PROD flag (true|stag) onto a Terraform-friendly environment name.
-# Used in main.tf to gate prod-only RDS hardening (deletion protection, final snapshot).
-export TF_VAR_environment=$(if $(filter true,$(PROD)),prod,stag)
+# The environment class (prod|stag, from env_mode.mk). Used in main.tf to gate
+# prod-only RDS hardening (deletion protection, final snapshot). PROD=lza is a
+# production estate, so it keeps the prod hardening; PROD=lza-stag is staging
+# semantics on the platform-managed network — the two axes are orthogonal,
+# toggled by the flag below (FLIP#749).
+export TF_VAR_environment=$(ENV_CLASS)
 
-# Kit-file env suffix: PROD=true → .production kits, otherwise → .stag. Selects
-# the trust kit file trust/.env.<KIT>.<suffix> for the trust-deploy targets.
-KIT_ENV_SUFFIX := $(if $(filter true,$(PROD)),production,stag)
+# Platform-managed network toggle (FLIP#749): on an LZA workload account the VPC
+# layer is provisioned by the AWS Accelerator pipeline and SCP-denied to this
+# stack, so Terraform switches from creating the network to data lookups
+# (see network_lza.tf). Off for every legacy environment.
+export TF_VAR_lza_managed_network=$(if $(IS_LZA),true,false)
+# Name tag of the platform-managed VPC; only consulted on the LZA modes. Set
+# LZA_VPC_NAME in the env file to override the variables.tf default
+# (AWSAccelerator-eu-west-2-prod) — optional on PROD=lza if the platform template
+# keeps that name, mandatory on PROD=lza-stag (guard above).
+ifneq ($(LZA_VPC_NAME),)
+export TF_VAR_lza_vpc_name=$(LZA_VPC_NAME)
+endif
+
+# IAM permissions boundary (FLIP#1082): the boundary policy is owned by the ci/
+# root, which exists to fence the GitHub OIDC apply role and is applied only in
+# the accounts whose applies run through that pipeline. The LZA workload accounts
+# are applied by hand under the platform's admin permission set and never receive
+# ci/, so the policy does not exist there and attaching it fails every role
+# update with NoSuchEntity. Detach it on the LZA modes unless the env file says
+# otherwise — variables.tf documents "" as the correct value for an account where
+# ci/ has never been applied. Re-attach (drop this default) the day LZA applies
+# move to CI and ci/ is applied there first.
+ifneq ($(IS_LZA),)
+export TF_VAR_iam_permissions_boundary_name ?=
+endif
+
+# Kit-file env suffix — the ENV token from env_mode.mk (.production / .stag /
+# .lza-prod / .lza-stag): selects the trust kit file trust/.env.<KIT>.<suffix> for
+# the trust-deploy targets, and is handed to register-trusts.sh, which writes it.
+KIT_ENV_SUFFIX := $(ENV)
 export TF_VAR_max_azs=2
 export TF_VAR_vpc_cidr=10.0.0.0/16
 export TF_VAR_public_subnets=["10.0.1.0/24", "10.0.2.0/24"]
@@ -93,6 +147,8 @@ export TF_VAR_FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME=${FLIP_MODEL_FILES_UPLOADS_BU
 export TF_VAR_FLIP_FL_RESULTS_BUCKET_NAME=${FLIP_FL_RESULTS_BUCKET_NAME}
 export TF_VAR_FLIP_APP_BUNDLES_BUCKET_NAME=${FLIP_APP_BUNDLES_BUCKET_NAME}
 export TF_VAR_AICENTRE_BUCKET_NAME=${AICENTRE_BUCKET_NAME}
+# Optional access-log bucket name override (empty = derived from flip_alb_subdomain; see variables.tf)
+export TF_VAR_ACCESS_LOGS_BUCKET_NAME=${ACCESS_LOGS_BUCKET_NAME}
 # A copied-but-unedited .env leaves `<your-...>` placeholders in place. Those are non-empty, so an
 # emptiness check passes them straight through to Terraform, which fails much later with an opaque
 # AWS bucket-name error. Treat a placeholder as unset — same idea as XNAT_CREDENTIAL_PLACEHOLDER in
@@ -123,7 +179,6 @@ export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 $(if $(INTERNAL_SERVICE_KEY),,$(error 🔑 INTERNAL_SERVICE_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-internal-service-key`))
 $(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must be set in $(MAIN_ENV_FILE) — must be sha256 of INTERNAL_SERVICE_KEY))
 $(if $(INTERNAL_SERVICE_KEY_HEADER),,$(error 📨 INTERNAL_SERVICE_KEY_HEADER must be set in $(MAIN_ENV_FILE)))
-export TF_VAR_MIN_CLIENTS=${MIN_CLIENTS}
 # Per-job GPU resource spec forwarded to fl-api on ECS (mirrors compose). Default
 # 0 in variables.tf; set JOB_RESOURCE_SPEC_NUM_GPUS/…_MEM_PER_GPU_IN_GIB in the
 # env file for GPU jobs (e.g. Ark+ eval: NUM_GPUS=1, MEM_PER_GPU_IN_GIB=7).
@@ -142,6 +197,14 @@ endif
 export TF_VAR_docker_image_tag=${DOCKER_TAG}
 export TF_VAR_flip_fl_image_tag=${DOCKER_FL_TAG}
 export TF_VAR_docker_registry=${DOCKER_REGISTRY}
+# One-shot EFS-provision utility image (default amazon/aws-cli from Docker Hub
+# in variables.tf). The LZA account has no internet egress, so .env.lza-prod
+# points this at the in-account ECR Public pull-through cache mirror
+# (…/ecr-public/aws-cli/aws-cli:<tag>, FLIP#749). Export only when set so
+# legacy envs keep the variables.tf default rather than an empty string.
+ifneq ($(EFS_PROVISION_IMAGE),)
+export TF_VAR_efs_provision_image=${EFS_PROVISION_IMAGE}
+endif
 export TF_VAR_fl_api_name=${DOCKER_FL_API_NAME}
 export TF_VAR_fl_server_name=${DOCKER_FL_SERVER_NAME}
 export TF_VAR_fl_client_name=${DOCKER_FL_CLIENT_NAME}
@@ -171,6 +234,13 @@ DEPLOY_TRUST_EC2 ?= true
 export TF_VAR_deploy_trust_ec2=$(DEPLOY_TRUST_EC2)
 export TF_VAR_AWS_REGION=${AWS_REGION}
 export TF_VAR_VPC_NAME=${VPC_NAME}
+# DNS availability (FLIP#749): the LZA account has no Route53 hosted zone until
+# the platform-side DNS migration lands, so .env.lza-prod sets MANAGE_DNS=false
+# for the first bring-up (default CloudFront domain, no custom certs/records) and
+# flips it to true once the zone exists there. Unset (legacy prod/stag) ⇒ true —
+# behaviour unchanged.
+MANAGE_DNS ?= true
+export TF_VAR_manage_dns=$(MANAGE_DNS)
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
@@ -199,7 +269,9 @@ CENTRALHUB_ECS_SERVICES = flip-api fl-api-net-1 fl-server-net-1
 # recorded commit and rollback-centralhub can repoint at the previous revision. The
 # env-file tags (DOCKER_TAG / DOCKER_FL_TAG) remain the bootstrap-only defaults Terraform
 # bakes into a (re)created task-definition family — day-to-day deploys never touch them.
-DEPLOY_GIT_REF := $(if $(filter true,$(PROD)),origin/main,origin/develop)
+# Production-grade estates (legacy prod and PROD=lza, FLIP#749) track origin/main;
+# the staging ones (stag and PROD=lza-stag) origin/develop.
+DEPLOY_GIT_REF := $(if $(filter prod,$(ENV_CLASS)),origin/main,origin/develop)
 
 TRUST_IMAGES = \
 	$(DOCKER_REGISTRY)trust-api:$(DOCKER_TAG) \
@@ -450,7 +522,7 @@ add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (NVFLARE;
 	## stranded and, when spares cover N, nothing is minted at all.
 	@[ -n "$(N)" ] || { echo "❌ N is required, e.g. make add-fl-kits N=2 PROD=true"; exit 1; }
 	@$(_AWS_ENV) MAIN_ENV_FILE=$(MAIN_ENV_FILE) N=$(N) YES=$(YES) \
-		FL_BACKEND=$(FL_BACKEND) ./scripts/add_fl_kits.sh
+		FL_BACKEND=$(FL_BACKEND) ENV_NAME=$(ENV_CLASS) ./scripts/add_fl_kits.sh
 	@$(MAKE) apply-fl-kit-slots PROD=$(PROD) YES=$(YES) || { \
 	  echo "❌ Parameter apply failed AFTER the new slot names were appended to the env file"; \
 	  echo "   (and any shortfall minted + uploaded)."; \
@@ -517,13 +589,13 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 	@[ -n "$(TRUST_DATA_VERSION)" ] || (echo "❌  trust/.data_version not found"; exit 1)
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
-	@# --skip-tags omop-vocab: the vocabulary load needs the trust's OMOP cluster
-	@# credentials, which live in the kit file. This target runs BEFORE
-	@# register-trusts in every deploy chain, so it has no KIT in scope (hence
-	@# trust_num falling back to 1 above) and cannot supply them. The vocabulary
-	@# is seeded later by `make seed-trust-data KIT=<CODE>`, which does have them.
+	@# --skip-tags omop-vocab,seed: the vocabulary load and the data seed need the
+	@# trust's OMOP cluster credentials, which live in the kit file. This target
+	@# runs BEFORE register-trusts in every deploy chain, so it has no KIT in scope
+	@# (hence trust_num falling back to 1 above) and cannot supply them. Both run
+	@# later from `make seed-trust-data KIT=<CODE>`, which does have them.
 	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; uv run ansible-playbook site.yml \
-		--skip-tags omop-vocab \
+		--skip-tags omop-vocab,seed \
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e fl_backend=$(FL_BACKEND) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
@@ -551,12 +623,17 @@ check-trust-ec2-enabled:
 	@[ "$(DEPLOY_TRUST_EC2)" != "false" ] || (echo "❌  DEPLOY_TRUST_EC2=false (hub-only deployment) — there is no cloud Trust EC2. On-prem trusts join via register-trusts + allow-local-trust-nlb and run 'sudo -E make -C trust up-trust' on their own host."; exit 1)
 
 .PHONY: seed-trust-data
-seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP + Orthanc mock data onto the Trust EC2 (re-run after data version bump; requires KIT=)
+seed-trust-data: check-trust-ec2-enabled ssh-config ## Seed the Trust EC2's OMOP + Orthanc from the canonical dataset, then load the vocabulary (re-run after a data version bump; requires KIT=)
+	@# SEED_PROJECTS / SEED_ORTHANC / SOURCE_TRUST thread through to the seed play (FLIP#1187):
+	@#   make seed-trust-data KIT=GSTT PROD=stag SEED_PROJECTS="spleen_project prostate_project" SEED_ORTHANC=false
+	@# FORCE_DICOM_VOCAB=1 reloads the DICOM vocabulary over a half-loaded one that reports
+	@# itself present (the same escape trust/omop-db/Makefile has); off unless asked for.
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make seed-trust-data KIT=Trust_2 PROD=stag"; exit 1)
 	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo "❌  FL_KIT_SLOT_NUMBER not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — run register-trusts first"; exit 1)
 	@[ -n "$(TRUST_DATA_VERSION)" ] || (echo "❌  trust/.data_version not found"; exit 1)
-	@[ -n "$(OMOP_POSTGRES_PASSWORD_KIT)" ] || (echo "❌  OMOP_POSTGRES_PASSWORD not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — the vocab-load play needs the cluster credentials"; exit 1)
-	@echo "🗄️  Seeding Trust EC2 with trust$(FL_KIT_SLOT_NUMBER) data (trust-data $(TRUST_DATA_VERSION))..."
+	@[ -n "$(OMOP_POSTGRES_PASSWORD_KIT)" ] || (echo "❌  OMOP_POSTGRES_PASSWORD not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — the seed and vocab-load plays need the cluster credentials"; exit 1)
+	@[ -n "$(DATA_ACCESS_POSTGRES_PASSWORD_KIT)" ] || (echo "❌  DATA_ACCESS_POSTGRES_PASSWORD not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — omop-db's first start needs it to create the read-only role"; exit 1)
+	@echo "🗄️  Seeding Trust EC2 (slot $(FL_KIT_SLOT_NUMBER)) from trust-data $(TRUST_DATA_VERSION)..."
 	@uv run ansible-playbook site.yml \
 		--tags data \
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
@@ -566,6 +643,13 @@ seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP 
 		-e omop_postgres_user=$(OMOP_POSTGRES_USER_KIT) \
 		-e omop_postgres_password=$(OMOP_POSTGRES_PASSWORD_KIT) \
 		-e omop_postgres_db=$(OMOP_POSTGRES_DB_KIT) \
+		-e data_access_postgres_password=$(DATA_ACCESS_POSTGRES_PASSWORD_KIT) \
+		-e orthanc_username=$(ORTHANC_USERNAME_KIT) \
+		-e orthanc_password=$(ORTHANC_PASSWORD_KIT) \
+		$(if $(SEED_PROJECTS),-e seed_projects="$(SEED_PROJECTS)") \
+		$(if $(SEED_ORTHANC),-e seed_orthanc=$(SEED_ORTHANC)) \
+		$(if $(SOURCE_TRUST),-e source_trust=$(SOURCE_TRUST)) \
+		$(if $(filter 1,$(FORCE_DICOM_VOCAB)),-e force_dicom_vocab=true) \
 		-e vocab_s3_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e omop_db_tag=$(DOCKER_TAG)
 	@echo "✅ Trust data seeding complete."
@@ -581,12 +665,11 @@ stage-fl-kit: check-trust-ec2-enabled ssh-config ## Stage the FL participant kit
 	@# Trust_2+ (re-registration, slot churn, second EC2 trust) would silently run
 	@# with Trust_1's FL identity. Idempotent: the plays wipe-then-sync, so a
 	@# re-run on a genuine Trust_1 host is a cheap no-op.
-	@# omop/orthanc_data_version are not used by the flkit plays but are asserted
-	@# by the always-tagged inventory play, same as every site.yml invocation.
+	@# trust_data_version is not used by the flkit plays but is asserted by the
+	@# always-tagged inventory play, same as every site.yml invocation.
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make stage-fl-kit KIT=Trust_2 PROD=stag"; exit 1)
 	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo "❌  FL_KIT_SLOT_NUMBER not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — run register-trusts first"; exit 1)
-	@[ -n "$(OMOP_DATA_VERSION)" ] || (echo "❌  trust/omop-db/.data_version not found"; exit 1)
-	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
+	@[ -n "$(TRUST_DATA_VERSION)" ] || (echo "❌  trust/.data_version not found"; exit 1)
 	@echo "🎫 Staging the $(FL_BACKEND) participant kit for slot Trust_$(FL_KIT_SLOT_NUMBER) onto the Trust EC2..."
 	@uv run ansible-playbook site.yml \
 		--tags flkit \
@@ -594,8 +677,7 @@ stage-fl-kit: check-trust-ec2-enabled ssh-config ## Stage the FL participant kit
 		-e fl_backend=$(FL_BACKEND) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
 		-e trust_num=$(FL_KIT_SLOT_NUMBER) \
-		-e omop_data_version=$(OMOP_DATA_VERSION) \
-		-e orthanc_data_version=$(ORTHANC_DATA_VERSION)
+		-e trust_data_version=$(TRUST_DATA_VERSION)
 	@echo "✅ FL participant kit staged for slot Trust_$(FL_KIT_SLOT_NUMBER)."
 
 .PHONY: deploy-centralhub
@@ -614,7 +696,7 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	## registering the new revision. Task-def tags are carried over only when non-empty
 	## (register-task-definition rejects an empty tags array). Pass TAG=sha-<short7> to
 	## deploy a hotfix / feature-branch image (build it first via workflow_dispatch — see
-	## CLAUDE.md); revert with `make rollback-centralhub`.
+	## AGENTS.md); revert with `make rollback-centralhub`.
 	## FL quiesce warning (FLIP#770): an ECS replacement kills any in-flight training run
 	## (fl-server run state is ephemeral) and strands its model/net BUSY. For now this is a
 	## printed reminder only, not an enforced gate — enable Deployment Mode first (it pauses
@@ -846,12 +928,21 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/js/window.js \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "application/javascript; charset=utf-8"
+	@# On LZA there is no workload distribution to invalidate (cloudfront.tf gates
+	@# it off; the networking account's edge distribution serves the bucket) and no
+	@# cross-account invalidation permission -- BY DESIGN (FLIP#749): the hashed
+	@# bundles are immutable and index.html/window.js carry no-cache metadata, so a
+	@# deploy is visible on the next index.html fetch with no invalidation at all.
+ifneq ($(IS_LZA),)
+	@echo "🧹 Skipping CloudFront invalidation on LZA (edge distribution honours the Cache-Control metadata)."
+else
 	@echo "🧹 Invalidating CloudFront..."
 	@DIST_ID=$$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId); \
 	[ -n "$$DIST_ID" ] || { echo "❌ Terraform output CloudfrontDistributionId is empty"; exit 1; }; \
 	$(_AWS_ENV) aws cloudfront create-invalidation \
 		--distribution-id "$$DIST_ID" \
 		--paths "/*" >/dev/null
+endif
 	@echo "✅ deploy-ui complete."
 
 .PHONY: deploy-ark-demo
@@ -958,20 +1049,31 @@ deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and dep
 FL_KIT_SLOT = $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 FL_KIT_SLOT_NUMBER = $(shell sed -n 's/^FL_KIT_SLOT_NUMBER=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 
-# Trust-local OMOP DB credentials from the kit — passed to the vocab-load play
-# (they must match the values the restored pgdata cluster was built with).
+# Trust-local OMOP DB / Orthanc credentials from the kit — passed to the seed and
+# vocab-load plays (the throwaway containers they start on the data directories
+# must be initialised with the same credentials the deployed stack will use).
 OMOP_POSTGRES_USER_KIT := $(shell sed -n 's/^OMOP_POSTGRES_USER=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 OMOP_POSTGRES_PASSWORD_KIT := $(shell sed -n 's/^OMOP_POSTGRES_PASSWORD=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 OMOP_POSTGRES_DB_KIT := $(shell sed -n 's/^OMOP_POSTGRES_DB=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+DATA_ACCESS_POSTGRES_PASSWORD_KIT := $(shell sed -n 's/^DATA_ACCESS_POSTGRES_PASSWORD=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+ORTHANC_USERNAME_KIT := $(shell sed -n 's/^ORTHANC_USERNAME=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+ORTHANC_PASSWORD_KIT := $(shell sed -n 's/^ORTHANC_PASSWORD=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 
 # The data version read from the canonical trust/.data_version — a git tag on the
 # aicentreflip/trust-data dataset that pins OMOP and Orthanc mock data together. It
-# governs both the local update-omop-data / update-orthanc-data scripts and the
-# Ansible plays, which fetch every archive at that tag.
+# governs both the local seed (`make -C trust ensure-seeded`) and the Ansible plays,
+# which fetch the canonical tables and DICOM sets at that tag.
 TRUST_DATA_VERSION := $(shell cat ../../../trust/.data_version 2>/dev/null | tr -d ' \n\r\t')
 
+# seed-trust-data is NOT a prerequisite: prerequisites run before the recipe, i.e. before
+# the stack below is stopped, and the seed play starts a throwaway omop-db on the same data
+# directory the running omop-db has open — Postgres takes the foreign PID in postmaster.pid
+# for stale and runs crash recovery over a live database (#1190 review). So the seed runs in
+# the recipe, between down-trust-ec2 and up-trust-ec2; the play itself also refuses while any
+# omop-db is up, for the standalone `make seed-trust-data`. SEED_PROJECTS / SEED_ORTHANC /
+# SOURCE_TRUST given on this command line reach the sub-make through MAKEFLAGS.
 .PHONY: deploy-trust
-deploy-trust: check-trust-ec2-enabled ssh-config update-env seed-trust-data stage-fl-kit ## Deploy trust relationships after central hub is deployed
+deploy-trust: check-trust-ec2-enabled ssh-config update-env stage-fl-kit ## Deploy trust relationships after central hub is deployed
 	@echo "🔍 Checking trust images (tag: $(DOCKER_TAG))..."
 	@missing=false; \
 	for image in $(TRUST_IMAGES); do \
@@ -996,6 +1098,8 @@ deploy-trust: check-trust-ec2-enabled ssh-config update-env seed-trust-data stag
 	@echo "🧹 Stopping existing stack for KIT=$(KIT) and pruning unused images..."
 	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../trust down-trust-ec2 KIT=$(KIT) PROD=${PROD} 2>/dev/null || true
 	@docker --context flip-trust image prune -af 2>/dev/null || true
+	@echo "🗄️  Seeding trust data while the stack is down..."
+	$(MAKE) seed-trust-data KIT=$(KIT) PROD=$(PROD)
 	@echo "🚀 Deploying Trust services..."
 	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../ up-trust-ec2 KIT=$(KIT) PROD=${PROD}
 	@echo "✅ Trust deployment complete!"
@@ -1044,12 +1148,13 @@ ifeq ($(FL_BACKEND),nvflare)
 	    $$TRUST_KIT_DIR && \
 	  echo "" && \
 	  echo "  # Deploy the $(FL_KIT_SLOT) NVFLARE participant kit (staged at $$TRUST_KIT_DIR):" && \
-	  echo "  sudo mkdir -p /opt/flip/services/$(FL_KIT_SLOT)/startup /opt/flip/services/$(FL_KIT_SLOT)/local /opt/flip/services/$(FL_KIT_SLOT)/transfer" && \
-	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/startup/ /opt/flip/services/$(FL_KIT_SLOT)/startup/" && \
-	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/local/ /opt/flip/services/$(FL_KIT_SLOT)/local/" && \
+	  echo "  # \$$FL_KIT_DIR is the kit root from trust/.env.$(KIT).$(KIT_ENV_SUFFIX) (default /opt/flip/fl-kit):" && \
+	  echo "  sudo mkdir -p /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/startup /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/local /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/transfer" && \
+	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/startup/ /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/startup/" && \
+	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/local/ /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/local/" && \
 	  echo "  # fl-client now runs as a non-root uid (GHSA-8465) — hand the rsync'd kit back to" && \
 	  echo "  # this shell's own user so the container can read/write it:" && \
-	  echo "  sudo chown -R \$$(id -u):\$$(id -g) /opt/flip/services/$(FL_KIT_SLOT)" && \
+	  echo "  sudo chown -R \$$(id -u):\$$(id -g) /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)" && \
 	  echo "✅ $(FL_KIT_SLOT) NVFLARE kit staged"
 else
 	@TRUST_KIT_DIR=/tmp/$(KIT)_kit && \
@@ -1059,8 +1164,10 @@ else
 	    $$TRUST_KIT_DIR/net-1/ && \
 	  echo "" && \
 	  echo "  # Deploy the Flower participant kit (staged at $$TRUST_KIT_DIR):" && \
-	  echo "  sudo mkdir -p /opt/flip/services/net-1" && \
-	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/net-1/ /opt/flip/services/net-1/" && \
+	  echo "  # \$$FL_KIT_DIR is the kit root from trust/.env.$(KIT).$(KIT_ENV_SUFFIX) (default /opt/flip/fl-kit);" && \
+	  echo "  # the compose mounts \$$FL_KIT_DIR/net-1/{certificates,keys}:" && \
+	  echo "  sudo mkdir -p /opt/flip/fl-kit/net-1" && \
+	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/net-1/ /opt/flip/fl-kit/net-1/" && \
 	  echo "✅ Flower kit staged"
 endif
 	@echo ""
@@ -1187,7 +1294,7 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 	## (deploy-trust pushes to the EC2 host; package-onprem-trust-kit tarballs for on-prem).
 	##   KIT=<CODE> → register that one kit (trust/.env.<CODE>.<env>)
 	##   (no KIT)   → register every live trust/.env.*.<env> kit
-	@KIT=$(KIT) bash scripts/register-trusts.sh
+	@KIT=$(KIT) KIT_ENV_SUFFIX=$(KIT_ENV_SUFFIX) bash scripts/register-trusts.sh
 
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT> + FL kit slice for an on-prem operator
@@ -1227,7 +1334,7 @@ full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trus
 	##    for the registered slot via stage-fl-kit once register-trusts has written it)
 	## 6. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
-	## 8. deploy-trust + status: re-stage the FL kit for the registered slot, bring up cloud Trust container stack and verify
+	## 8. deploy-trust + status: re-stage the FL kit for the registered slot, seed the trust data with the stack down, bring up cloud Trust container stack and verify
 	## Prerequisite: create stub kit files first: make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=London PROD=$(PROD)
 full-deploy: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust status
 

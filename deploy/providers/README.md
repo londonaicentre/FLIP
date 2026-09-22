@@ -63,7 +63,9 @@ S3 — and its Makefile carries the targets that hand them over:
 - `allow-local-trust-nlb` / `add-k8s-trust` open the FL-server NLB to a trust's public IP
 
 So neither node shape is hub-independent: the trust is still registered on the hub
-(`make register-trust KIT=<CODE>`) and still receives its kit file from the hub admin.
+(`make -C deploy/providers/AWS register-trusts KIT=<CODE>` — the AWS provider's
+ECS-aware target; the root `make register-trust` is the dev-only, local-container form) and
+still receives its kit file from the hub admin.
 
 ## Note on the AWS Terraform root
 

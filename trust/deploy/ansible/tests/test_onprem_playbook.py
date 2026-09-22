@@ -278,11 +278,14 @@ def test_net_dirs_are_writable_by_the_fl_client(playbook: list[dict]) -> None:
         assert mode == expected_mode, f"fl_backend={backend} must give the net dirs mode {expected_mode}"
 
 
-def test_mock_data_restore_is_opt_in(playbook: list[dict]) -> None:
-    """A default run must never restore mock data onto a real trust host: the play is ``never``-tagged."""
-    for play in playbook:
-        roles = {_role_name(entry) for entry in play.get("roles", []) or []}
-        if roles & {"flip_omop_restore", "flip_orthanc_restore"}:
-            tags = play.get("tags") or []
-            tags = [tags] if isinstance(tags, str) else tags
-            assert "never" in tags, f"play '{play.get('name')}' restores mock data without the never tag"
+def test_onprem_play_loads_no_mock_data(playbook: list[dict]) -> None:
+    """Provisioning never puts data on a trust host: the stores start empty and ``make -C trust
+    up-trust`` seeds them from the canonical dataset at bring-up (FLIP#1187). The snapshot
+    restore roles are retired, and the vocabulary role needs the hub's S3 bucket via an instance
+    role an on-prem host does not have."""
+    names = [_role_name(entry) for play in playbook for entry in (play.get("roles", []) or [])]
+    assert names, "no roles found in the on-prem play — this guard has drifted"
+    for data_role in ("flip_omop_restore", "flip_orthanc_restore", "flip_omop_vocab"):
+        assert data_role not in names, f"the on-prem play composes {data_role}"
+    assert not (ROLES_DIR / "flip_omop_restore").exists()
+    assert not (ROLES_DIR / "flip_orthanc_restore").exists()
