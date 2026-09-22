@@ -58,14 +58,15 @@ STAG_PROD_SERVICES_TF = AWS_PROVIDER_DIR / "services.tf"
 DEV_VARIABLES_TF = AWS_PROVIDER_DIR / "dev" / "variables.tf"
 DEV_MAIN_TF = AWS_PROVIDER_DIR / "dev" / "main.tf"
 
-# Every file that writes the dev UI port bounds out in prose. CLAUDE.md is AGENTS.md's
-# mandated mirror, so it is checked when present rather than required to exist.
+# Every file that writes the dev UI port bounds out in prose. The multi-instance knobs live in
+# deploy/AGENTS.md, not the root instruction file, so that is where FLIP_INSTANCE names the block.
+# CLAUDE.md is AGENTS.md's mandated mirror, so it is checked when present rather than required.
 DEV_PORT_DOCS = (
     AWS_PROVIDER_DIR / "dev" / "README.md",
     REPO_ROOT / ".env.development.example",
-    REPO_ROOT / "AGENTS.md",
+    REPO_ROOT / "deploy" / "AGENTS.md",
 )
-DEV_PORT_DOC_MIRROR = REPO_ROOT / "CLAUDE.md"
+DEV_PORT_DOC_MIRROR = REPO_ROOT / "deploy" / "CLAUDE.md"
 
 # Where a `local.<name>` entry in the list may be defined.
 LOCALS_SOURCES = (AWS_PROVIDER_DIR / "locals.tf", AWS_PROVIDER_DIR / "cloudfront.tf")

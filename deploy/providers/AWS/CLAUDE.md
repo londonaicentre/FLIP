@@ -156,6 +156,10 @@ Things worth knowing before touching any of it:
 
 Full flow, one-time setup and break-glass: [README.md](README.md#terraform-ci-plan-on-pr-apply-on-merge).
 
+## Image tags, deploys and the FL quiesce
+
+Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of the built commit) alongside the mutable `:stag`/`:prod` tags. Hub ECS deploys pin these sha tags via task-definition revisions — `make deploy-centralhub` resolves the env branch tip's tag, `make rollback-centralhub` repoints at the previous revision (FLIP#751; see `deploy/providers/AWS/README.md` "Central Hub deploys and rollback"). `deploy-centralhub` also prints an **FL quiesce reminder** (FLIP#770; on `PROD=true` it adds an interactive are-you-sure confirmation, stag stays non-interactive): replacing `fl-server-net-1` kills any in-flight training run, so enable deployment mode first — it pauses FL job pickup (queued jobs hold; the running job finishes and frees its net) — and wait until the hub's `GET /fl/quiesce` reports deployment mode ON and no BUSY net, making "enable mode → wait → deploy → disable" the standard redeploy workflow.
+
 ## Infrastructure
 
 - **VPC**: 10.0.0.0/16, 2 AZs, public + private subnets

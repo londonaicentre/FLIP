@@ -394,7 +394,10 @@ that downloads the public 1k-person Synthea-in-OMOP dataset from the AWS Open Da
 Each Trust receives a disjoint ``person_id``-modulo slice, so the federated run sees genuinely
 partitioned cohorts. The loaded rows are tagged in ``person_source_value``, and the loader is
 idempotent by that tag: a re-run replaces only what it wrote and leaves the imaging cohorts untouched.
-Run it once per Trust, with the stack up (``up-trust`` has already seeded the imaging cohorts).
+Run it once per Trust, with the stack up (``up-trust`` has already seeded the imaging cohorts). A
+Trust on Kubernetes publishes no host port: port-forward ``svc/omop-db`` and pass the connection as
+``make`` variables instead, then restart its data-access-api — the recipe is in the chart README
+(``trust/deploy/helm/README.md``, "Local clusters (kind)").
 
 Seeding the vocabulary
 ======================

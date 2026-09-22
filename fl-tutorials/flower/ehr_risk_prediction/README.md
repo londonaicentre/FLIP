@@ -114,6 +114,9 @@ fetched at run time, never committed).
   make -C trust load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT
   make -C trust load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
   ```
+  A trust on Kubernetes publishes no host port — use the port-forward form in
+  [`trust/deploy/helm/README.md`](../../../trust/deploy/helm/README.md)
+  ("Local clusters (kind)"), then restart its data-access-api.
 
 ## How to run
 
@@ -144,9 +147,10 @@ Upload [`app/`](app) as the model files of a **`standard`**-job-type model and s
 [`query.sql`](query.sql) as the project's cohort query. The cohort fetches no imaging, so create the
 project with **"Includes imaging data" turned off** (`has_imaging=false`): the hub then skips the
 imaging stage entirely — no XNAT project at the trusts, no PACS pull — and the project page shows no
-imaging status. (The `accession_id` column in `query.sql` is kept only until #1130 removes it; the platform no
-longer reads it for a project created with imaging off.) As an end-to-end smoke against a running
-stack — the `e2e_smoke_ehr` target passes `--no-imaging` for you, **no enrichment flags**:
+imaging status. Turning it **on** would reject this cohort at submission: an imaging project's
+cohort query must return an `accession_id` column, and this one has none. As an end-to-end smoke
+against a running stack — the `e2e_smoke_ehr` target passes `--no-imaging` for you, **no enrichment
+flags**:
 
 ```bash
 make e2e_smoke_ehr FL_BACKEND=flower
