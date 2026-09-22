@@ -119,11 +119,11 @@ def save_model(
         return IId(id=model.id)
 
     except SQLAlchemyError as e:
-        error_message = f"Database error occurred while saving model: {str(e)}"
-        logger.error(error_message)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
+        logger.exception("Database error occurred while saving model")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error occurred while saving model."
+        ) from e
 
     except Exception as e:
-        error_message = f"Unexpected error occurred while saving model: {str(e)}"
-        logger.error(error_message)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
+        logger.exception("Unexpected error occurred while saving model")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

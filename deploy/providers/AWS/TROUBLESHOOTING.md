@@ -515,7 +515,7 @@ Related states with different causes:
   (imaging-api classifies any accession with an executed row as Processing,
   regardless of row status); the rows must be deleted before re-import works —
   see §2.4 "Forcing a Re-pull" in
-  `deploy/providers/kubernetes/TROUBLESHOOTING.md` (same procedure on EC2 via
+  `trust/deploy/helm/TROUBLESHOOTING.md` (same procedure on EC2 via
   `docker exec` into the xnat-db container).
 
 ---
@@ -761,7 +761,7 @@ print(r.status_code, r.text.strip()[:40])
    ssh flip-trust 'docker stack rm xnat1'
    sleep 15
    ssh flip-trust 'sudo bash -c "find /opt/flip/xnat/xnat-db-data -mindepth 1 -delete"'
-   make -C trust/xnat up-xnat-1 PROD=stag
+   make -C trust/xnat up-xnat KIT=<CODE> PROD=stag
    ```
 3. Verify:
    ```bash

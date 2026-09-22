@@ -150,8 +150,10 @@ The policy is enforced through native package-manager configuration:
 - **npm (JavaScript)** — `flip-ui/.npmrc` sets `min-release-age=3`, so `npm install` refuses to resolve a release
   younger than 72 hours. This key was introduced in npm 11.10, so `flip-ui/Dockerfile` and the `test_flip_ui.yml`
   workflow use Node 24 LTS (which ships npm >= 11.10); Node 22 LTS bundles npm 10.x and silently ignores the key.
-  CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only enforces
-  `min-release-age` at lockfile-write time (`npm install <pkg>`), not when installing from a pinned
+  `flip-ui/package.json`'s `engines` field still permits older Node (`^20.19.0 || >=22.12.0`) for compatibility, but
+  installing on one of those silently drops the cooldown rather than failing — so develop against Node 24 locally
+  to match CI. CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only
+  enforces `min-release-age` at lockfile-write time (`npm install <pkg>`), not when installing from a pinned
   `package-lock.json`, so the npm cooldown rests on `.npmrc` rather than a CI gate.
 
 There is no automated dependency-update bot wired into the repo today. Dependency bumps are hand-rolled PRs; the
@@ -203,7 +205,8 @@ Three changes affect checkouts created before them. None is picked up automatica
 | --- | --- |
 | `NLB_SUBDOMAIN` is now a live assignment in `.env.development.example` | Add `NLB_SUBDOMAIN=<your-nlb-subdomain>` to your `.env.development`. `scripts/check_env_vars.py` is a pre-commit hook requiring every variable in the example file to be present in yours, and its regex matches real `^KEY=` assignments only — so a still-commented `# NLB_SUBDOMAIN=` fails your next commit, naming the variable. Nothing in a purely local stack resolves the value; it is required because `scripts/trust_kit_lib.py` lists it among the Hub-shared keys. |
 | uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the NVFLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
-| `NUM_AVAILABLE_GPUS` now defaults to `0` in the dev trust kit examples | Only newly scaffolded kits are affected; existing `trust/.env.<CODE>.<env>` files keep their value. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
+| `NUM_AVAILABLE_GPUS` defaults to `0` in the two shipped dev kit examples (`trust/.env.GSTT.development.example`, `trust/.env.KCH.development.example`) | Only those two pre-populated example kits were changed; the base template (`trust/.env.example`) that `make new-trust` scaffolds from still defaults to `1`, and an existing `trust/.env.<CODE>.<env>` keeps its own value regardless. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
+| `MIN_CLIENTS` is removed everywhere (FLIP#1230) | Nothing to add. Delete the `MIN_CLIENTS=` line from your `.env.development` and from any `trust/.env.<CODE>.<env>` kit if you like — a leftover is ignored. The FL images no longer read it: the per-job quorum is the participating-trust count, which fl-api writes into every job (`min_clients = len(trusts)` on NVFLARE, `flip-min-clients` on Flower), so a hub-wide value could only ever veto a legitimate project (set to 3, a 2-trust project never starts) and never lowered anything. On stag/prod the `MIN_CLIENTS` GitHub environment variable is now unread and can be deleted. |
 
 For the full local stack, replace every placeholder in these minimum groups before running `make up`:
 
@@ -314,10 +317,26 @@ pushes. These are:
   and `trust-*` GHCR build-and-push workflows.
 - **Releases** — `release.yml` and `release-pypi.yml` (git tags, GitHub releases, PyPI publishing).
 
-Everything that **validates** your change still runs on your fork, and a red result there is a real failure to fix:
-lint, type-checking, unit and integration tests, docs, Terraform validation, Helm tests, and secret scanning.
+Everything that **validates** your change still runs, and a red result is a real failure to fix: lint,
+type-checking, unit and integration tests, docs, Terraform validation, Helm tests, and secret scanning.
 Coverage upload to Codecov is non-blocking (`fail_ci_if_error: false`), so a missing `CODECOV_TOKEN` on your fork
 never fails an otherwise-green job.
+
+### Why a test suite shows as skipped
+
+Skipped is also the normal result for a service test suite your change does not touch. On a PR into `develop` the
+seven service workflows (`test_flip_ui.yml`, `test_flip_api.yml`, the three `test_trust_*_api.yml`,
+`test_trust_omop_db.yml` and `test_trust_data_tools.yml`) still start, but each gates its jobs on
+[`pr_paths_changed.yml`](.github/workflows/pr_paths_changed.yml), which runs the suite only when a changed file
+matches the paths that workflow covers — the same list as its push `paths:` filter, plus the gate itself. A PR into
+`main` always runs everything. So a `flip-ui`-only change legitimately shows the six trust and flip-api suites as
+skipped, and that is not a fork restriction, a missing check, or something to re-run: check the `changes / decide`
+job, which prints the file that matched or the number of files that did not.
+
+Two consequences worth knowing. A suite skips only if **none** of its paths matched, so if you believe your change
+affects a suite that skipped, the fix is to add the path it consumes to that workflow's list — in **both** copies,
+or `scripts/tests/test_pr_paths_changed.py` fails. And because the gate reads the PR's own file list, editing the
+gate re-runs every suite.
 
 ### Checkov security lint (Terraform)
 
@@ -337,8 +356,46 @@ put `# checkov:skip=<CHECK_ID>:<why this is deliberate>` inside the flagged reso
 list — including the classes triaged in FLIP#1058 and deliberately *not* promoted — lives in
 `deploy/providers/AWS/scripts/checkov_lint.sh`, which self-tests against a canary fixture before scanning so a
 broken checkov install can never produce a vacuous green. The script's own guards (version pin, unknown check
-IDs, skip rationale, canary) are regression-tested by `scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
+IDs, skip rationale, canary) are regression-tested by `deploy/providers/AWS/scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
 run by the same workflow's `Deploy script tests` job.
+
+### Secret scanning (detect-secrets)
+
+Two scanners run on every PR. TruffleHog (`--only-verified`) fails only on a credential it can confirm is live.
+detect-secrets is the structural one — it flags anything *shaped* like a secret (keyword assignments, high-entropy
+strings, JWTs, basic-auth URLs) — and since FLIP#1215 **CI enforces it**: the `Detect Secrets Scan` job runs
+`detect-secrets-hook --baseline .secrets.baseline` over every tracked file (lockfiles excluded), the same entry
+point and version (`1.5.0`) as the pre-commit hook, and fails on any finding the baseline does not already carry.
+Before that the job ran a bare `detect-secrets scan`, which prints a report and cannot exit non-zero, and the
+pre-commit CI job ran the hook with `|| true` — so nothing ever failed and ~110 unbaselined test literals had
+accumulated. A stale baseline (an entry whose line moved or whose literal disappeared — hook exit 3) also fails
+the job, with the rewritten baseline in the log: commit the rewrite deliberately rather than let coverage rot.
+The hook re-serialises the whole file when it rewrites it, so `.secrets.baseline` is committed in the hook's own
+key order (`version`, `plugins_used`, `filters_used`, `results`, `generated_at`, `indent=2`); a rewrite then
+diffs only the moved `line_number`s and `generated_at`, and that is the expected shape when an unrelated edit to
+a baselined file (a Cypress fixture, say) shifts its lines.
+
+Locally the pre-commit hook scans only the files in the commit being made, so it will flag a dummy value the
+first time you touch a file that already contains one. To allowlist a false positive:
+
+1. **Inline pragma, preferred** — append `# pragma: allowlist secret` (YAML, Python, shell, Make) or
+   `// pragma: allowlist secret` (TypeScript) to the line. Where that would push a Python line past 120 columns,
+   put `# pragma: allowlist nextline secret` on its own line directly above instead (nothing else may precede
+   it on that line). The comment documents the decision next to the value, survives edits, and needs no baseline
+   entry.
+2. **Baseline entry** — only for files that cannot carry a comment (JSON fixtures). Run
+   `uvx --from detect-secrets==1.5.0 detect-secrets scan <file>` and copy that file's `results` entries into
+   `.secrets.baseline` with `"is_secret": false`, keeping the hook's key order above. Never run a bare
+   `detect-secrets scan --baseline .secrets.baseline` and commit the result — it re-derives every repo-wide finding
+   and buries the real change — and never add entries for gitignored files.
+3. **Filter** — for a whole class of false positives (Alembic revision ids, Excalidraw element ids) add a
+   `should_exclude_line` / `should_exclude_file` pattern under `filters_used` in the baseline, as the existing ones do.
+
+Whatever you allowlist must be a value that is safe in a public repository: a documented mock credential
+(`minioadmin`, `test-*`, `plain-api`), a synthetic token, or a recorded response whose issuer and accounts are
+confirmed gone (the 2022 Cognito fixtures under `flip-ui/test/cypress/fixtures/auth/` are baselined on that
+basis — say so in the PR). Prefer a synthetic fixture for anything new; a recording of a live system is not a
+false positive.
 
 ### Running the stack (pull vs. build)
 
@@ -462,20 +519,20 @@ make -C flip-utils unit-test   # ruff --fix + pytest with coverage
 See [`flip-utils/README.md`](flip-utils/README.md) for the FL package's tests, and
 [`fl-services/nvflare/README.md`](fl-services/nvflare/README.md) for provisioning FL networks.
 
-**Kubernetes chart testing**: The K8s Helm chart at `deploy/providers/kubernetes/` can be tested with:
+**Kubernetes chart testing**: The K8s Helm chart at `trust/deploy/helm/` can be tested with:
 
 ```bash
 # Lint + render + schema validation
-make -C deploy/providers/kubernetes test
+make -C trust/deploy/helm test
 
 # Render all FL backend variants
-make -C deploy/providers/kubernetes template-all-backends
+make -C trust/deploy/helm template-all-backends
 
 # Validate rendered templates against K8s schema (requires kubeconform)
-make -C deploy/providers/kubernetes validate
+make -C trust/deploy/helm validate
 
 # Place this trust's FL participant kit onto the node, BEFORE deploying
-make -C deploy/providers/kubernetes stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
+make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 ```
 
 `stage-kit` is a prerequisite of deploying with `flClient.enabled`: the chart never fetches
@@ -485,7 +542,10 @@ The previous `make patch-aws-creds` target is gone along with the chart's in-clu
 see "Upgrading an install that fetched its kit from S3" in the K8s README for the full list of
 removed values.
 
-The chart has a `check_status.py` smoke test script and a `register_k8s_trust.py` registration script. See the [K8s README](deploy/providers/kubernetes/README.md) for details.
+The chart has a `check_status.py` smoke test script and a `sync_k8s_kit.py` script that syncs a
+registered trust's kit file (hub registration itself still goes through `register_trust` /
+`make register-trusts`) into the chart's Kubernetes Secret and a Helm values override. See the
+[K8s README](trust/deploy/helm/README.md) for details.
 
 **Testing fixtures**: For testing APIs and integration tests, we use [pytest fixtures](https://docs.pytest.org/en/latest/how-to/fixtures.html). Shared fixtures are defined in `conftest.py` files. In some cases, [`factory_boy`](https://factoryboy.readthedocs.io/) is used to create test data following production data structures.
 
@@ -618,7 +678,7 @@ Before opening the release PR from `develop` to `main`:
 - `develop` is green in [CI](https://github.com/londonaicentre/FLIP/actions).
 - All PRs intended for this release are merged into `develop` and carry an appropriate label. The release-notes categories come from [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`. PRs labelled `ignore-for-release` are excluded.
 - Bump the `version` in the root `pyproject.toml` to the new release version. Additionally bump the `version` in any service file (`flip-api/pyproject.toml`, `flip-ui/package.json`, `trust/*/pyproject.toml`) whose code changed in this release, per the independent-SemVer rule above. Leave unchanged services alone.
-- If `flip-utils/**` changed in this release, bump `__version__` in [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) — [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) fails the `develop` → `main` PR unless it is valid semver and strictly higher than the latest `v*.*.*` tag. It need not match — or differ from — the root version; the two trains tag in separate namespaces (see [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path)).
+- If `flip-utils/**` changed in this release, bump `__version__` in [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) — [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) fails the `develop` → `main` PR unless it is valid semver and strictly higher than the latest `flip-utils-v*.*.*` tag. It need not match — or differ from — the root version; the two trains tag in separate namespaces (see [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path)).
 - Curate the release-notes header in [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) — Highlights, Breaking Changes, New Features, Bug Fixes. Editing the file is the only way to change those sections; the preview comment on the PR is regenerated from it on every push.
 - Run `make unit_test` and `make integration_test` locally.
 
@@ -632,7 +692,7 @@ Before opening the release PR from `develop` to `main`:
    - [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) and [`check-package-metadata.yml`](.github/workflows/check-package-metadata.yml) run when `flip-utils/**` changed.
 1. On merge to `main`:
    - [`release.yml`](.github/workflows/release.yml) reads the root `pyproject.toml`, creates the `v<X.Y.Z>` git tag, and publishes the GitHub Release named `Release v<X.Y.Z>` with auto-generated notes.
-   - [`release-pypi.yml`](.github/workflows/release-pypi.yml) reads `flip-utils/flip/__init__.py` and, if that version is not yet tagged, lints + tests + builds the package, publishes it to PyPI via OIDC trusted publishing, tags it, and publishes a GitHub Release named `flip v<X.Y.Z>` with the template header, the generated changelog, and the build artifacts attached.
+   - [`release-pypi.yml`](.github/workflows/release-pypi.yml) reads `flip-utils/flip/__init__.py` and, if that version is not yet tagged, lints + tests + builds the package, publishes it to PyPI via OIDC trusted publishing, tags it, and publishes a GitHub Release named `flip-utils v<X.Y.Z>` with the template header, the generated changelog, and the build artifacts attached.
    - Every `docker_build_*.yml` workflow under [`.github/workflows/`](.github/workflows/) rebuilds its service and pushes the `:prod` and `:<sha>` tags to GHCR.
 1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that the `:prod` tags on `flip-api`, `trust-api`, `imaging-api`, and `data-access-api` were updated by the latest build. If the package was released, verify it on [PyPI](https://pypi.org/project/flip-utils/).
 
@@ -741,6 +801,21 @@ make -C flip-api delete_testing_projects
 
 These are also available as VS Code tasks via **Terminal > Run Task** — look for `Create testing projects` and
 `Delete testing projects`.
+
+## Building the documentation
+
+The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs docs` (see
+[`docs/README.md`](docs/README.md)). Two things about that build are easy to trip over:
+
+- It needs **graphviz** (`dot` on PATH). `docs/source/conf.py` renders the Central Hub AWS diagrams from
+  `deploy/providers/AWS/architecture/central_hub.py` at build time — no PNG is committed for the site — and
+  fails loudly without it. `FLIP_DOCS_SKIP_DIAGRAMS=1 make -C docs docs` gives a text-only build on a host
+  without graphviz. ReadTheDocs and the docs CI job install graphviz themselves.
+- Those diagrams are **drift-guarded against the Terraform**: `deploy/providers/AWS/tests/test_architecture_diagram.py`
+  fails when a drawn resource disappears from the `.tf` files or a load-bearing one (an ECS service, bucket,
+  load balancer, …) is added without being drawn. A Terraform change of that kind updates
+  `TERRAFORM_ADDRESSES` in the script in the same PR, then `make aws-diagram` refreshes the two committed
+  copies the AWS README embeds.
 
 ## Documentation GIFs
 

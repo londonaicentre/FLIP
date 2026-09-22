@@ -21,6 +21,9 @@ Deploy components at the trust level:
 * Trust API ([trust-api](trust-api))
 * OMOP Database ([omop-db](omop-db))
 * XNAT ([xnat](xnat))
+* Observability ([observability](observability)) — Grafana (host `GRAFANA_PORT`, container 3000),
+  Loki (host `LOKI_PORT`, container 3100) and an Alloy log collector (internal only, no published
+  port). Each trust runs its own; logs never leave the trust.
 
 See also the dedicated README files under each folder.
 
@@ -72,6 +75,27 @@ EXPECTED_TRUST_ID=<from kit>
 
 plus the trust's identity (`TRUST_NAME` / `TRUST_CODE` / `TRUST_REGION`, read by `register-trust`) and its host-local ports and data directories. The optional `EXPECTED_TRUST_ID` lets trust-api self-check the hub-resolved id at startup.
 
+The kit also carries **XNAT's own AE title** and the **upstream PACS** block (see the commented
+`── Upstream PACS ──` section of `trust/.env.example`, and
+[`xnat/README.md`](xnat/README.md#pacs-configuration) for what each one does):
+
+```sh
+XNAT_AETITLE=XNAT
+PACS_HOST=orthanc
+PACS_AETITLE=ORTHANC
+PACS_QR_PORT=4242
+```
+
+`XNAT_AETITLE` is applied to XNAT's SCP receiver, its DQR calling AE and the C-MOVE destination it
+hands the PACS, so all three agree and the PACS's return-leg association is addressed correctly.
+`up-trust` / `up-trust-ec2` run a `require-xnat-aetitle` guard first: the variable may be absent
+(the default `XNAT` applies) but **must not be present-and-empty** — that fails the bring-up naming
+the kit file, before any data fixture is fetched. The remaining `PACS_*` and `DQR_*` variables
+(`PACS_LABEL`, `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS`, `PACS_AVAILABILITY_DAYS`/`_START`/`_END`,
+`PACS_THREADS`, `PACS_UTILIZATION_PERCENT`, `DQR_MAX_PACS_REQUEST_ATTEMPTS`,
+`DQR_RETRY_WAIT_SECONDS`) default to the mocked Orthanc plus an unthrottled retrieval window; a
+real trust agrees them with its PACS manager.
+
 The kit also carries the trust's **disclosure floor**:
 
 ```sh
@@ -88,8 +112,10 @@ renders these into the client's NVFLARE `local/privacy.json` at container start,
 update-privacy filter is applied to every outgoing model update regardless of the researcher's app config
 (site filters run before app filters and jobs cannot opt out). Unset = no site policy (app-level filters
 only, the previous behavior). Invalid values stop the fl-client at startup — fail closed. Apply changes with
-`make -C trust up-fl-clients-kit KIT=<CODE>`; the fl-client log then shows
-`[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-nodes.rst`
+`make -C trust up-fl-clients-kit KIT=<CODE>` (`down-fl-clients-kit KIT=<CODE>` stops and removes
+just that trust's clients; `up-fl-clients` / `down-fl-clients` do the same across every kit for
+this env, leaving the rest of each trust stack up); the fl-client log then shows
+`[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-nets.rst`
 ("Site-enforced privacy policy").
 
 ### 3. Start the trust against the hub
@@ -99,9 +125,9 @@ make -C trust down-trust KIT=GSTT   # if a previous GSTT stack is running
 make -C trust up-trust KIT=GSTT
 ```
 
-On an on-prem host provisioned by the local playbook, prefix these with `sudo -E` — the login
+On an on-prem host provisioned by the on-prem playbook, prefix these with `sudo -E` — the login
 user is deliberately not in the docker group (see
-[deploy/providers/local/README.md](../deploy/providers/local/README.md)). Dev workstations are
+[trust/deploy/ansible/README.md](deploy/ansible/README.md)). Dev workstations are
 unaffected.
 
 The trust-api container authenticates with its `TRUST_API_KEY` and posts a heartbeat to `POST /trust/heartbeat` (no name segment — the hub resolves the trust's identity from the API key). The Connection status page flips the row online within ~30s.
@@ -167,6 +193,16 @@ Override with `SOURCE_TRUST` when the two differ:
 make -C trust seed KIT=<CODE> SOURCE_TRUST=1        # slot stays as assigned; load partition 1
 ```
 
+To seed the whole shipped dev roster in one go — `seed KIT=GSTT` then `seed KIT=KCH`, same
+projects, same partition-by-slot default:
+
+```sh
+make -C trust seed-trusts PROJECTS="spleen_project cxr_project"
+```
+
+`seed` itself is just `seed-omop` + `seed-orthanc`; run either half alone with
+`make -C trust seed-omop KIT=<CODE> PROJECTS=…` / `seed-orthanc KIT=<CODE> PROJECTS=…`.
+
 `SOURCE_TRUST` moves only the partition. The trust's volumes, ports and the `.seeded` marker stay
 keyed to its kit slot, which is why it exists as its own variable rather than an override of
 `TRUST_NUM`.
@@ -198,12 +234,19 @@ need only your trust's kit file (`trust/.env.<CODE>.<env>`).
 4. Fill in the **Trust-local credentials** block (Orthanc / OMOP / XNAT /
    Grafana passwords) — these are your secrets, the hub never sees them.
 5. Start the stack:
-   - EC2 trust: `make -C trust up-trust-ec2 KIT=<CODE> PROD=true`
+   - EC2 trust: `make -C trust up-trust-ec2 KIT=<CODE> PROD=true` (stop it with
+     `make -C trust down-trust-ec2 KIT=<CODE> PROD=true`)
    - On-prem trust: `sudo -E env PROD=true make -C trust up-trust KIT=<CODE>`
      (sudo: the provisioned login user is deliberately not in the docker group;
      `-E` keeps `$HOME` so root's docker reuses your GHCR login)
    - Laptop-against-prod: `make -C trust up-trust KIT=<CODE> PROD=true` (no sudo —
      your workstation isn't provisioned by the on-prem playbook)
+
+   `PROD` names the hub you are joining, and with it the kit-file suffix the
+   trust Makefiles read: `true` → `.env.<CODE>.production`, `stag` → `.stag`,
+   and on an LZA estate (FLIP#749) `lza` → `.lza-prod`, `lza-stag` → `.lza-stag`.
+   All four run the production compose and stack files; only `PROD` unset is
+   the development stack.
 
    The on-prem path skips the dev-only `update-omop-data` / `update-orthanc-data`
    steps (which pull test fixtures from S3 and need hub AWS credentials) —

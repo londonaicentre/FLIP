@@ -1,0 +1,910 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# ---------------------------------------------------------------------------
+# Global trust-wide configuration
+# ---------------------------------------------------------------------------
+trustName: "Trust_1"
+trustNumber: 1
+environment: production
+logLevel: INFO
+
+# AWS region for the OMOP and Orthanc data Jobs — the seed restores and the OMOP
+# vocabulary load — which read from S3 with the operator credentials mounted at
+# omopDb.initJob.hostAwsMount / orthanc.initJob.hostAwsMount. Not used by the FL client:
+# it holds no AWS credentials and its kit is staged onto the node out-of-band.
+awsRegion: "eu-west-2"
+
+# S3 bucket for uploaded federated data (mounted by FL client)
+uploadedFederatedDataBucket: ""
+
+# FL backend selection — switches image, command, volumes, env for the FL client
+# Supported values: "nvflare" | "flower"
+flBackend: "nvflare"
+
+# Mock trust data (the public aicentreflip/trust-data dataset on Hugging Face), restored by the
+# OMOP and Orthanc init jobs when no S3 bucket is configured. One value covers both: a data
+# version is a git TAG on that dataset (FLIP pins it in trust/.data_version) and every archive is
+# fetched at that tag from an unversioned path. Also the version suffix of the default S3 archive
+# names below, which is where a version still has to live in a filename.
+#
+# BREAKING (FLIP#1100): replaces omopDb.initJob.dataVersion and orthanc.initJob.dataVersion, and
+# OMOP_DATA_VERSION becomes TRUST_DATA_VERSION on the env side. Helm ignores unknown keys, so an
+# existing values file pinning the old ones keeps installing and silently stops taking effect —
+# see README "Upgrading: trustData.version replaces the two per-store pins".
+trustData:
+  version: "20260901"
+  hfRepo: "aicentreflip/trust-data"
+
+# Global image pull secrets (optional — for private registries)
+imagePullSecrets: []
+#   - name: my-registry-credentials
+
+# Whether to create the namespace as part of the chart install
+namespace:
+  create: false
+  name: ""
+
+# ---------------------------------------------------------------------------
+# Pod Security & container hardening (FLIP#530)
+# ---------------------------------------------------------------------------
+# Pod Security Standards labels applied to the chart-created namespace. Defaults
+# are non-breaking: enforce `baseline` (which the stateful images satisfy) while
+# `restricted` is surfaced via warn/audit so violations show up without blocking.
+# Tighten `enforce` to `restricted` once the stateful services (xnat/orthanc/
+# postgres) gain fsGroup/chown init containers — see README "Known Limitations".
+podSecurity:
+  enabled: true
+  enforce: baseline
+  warn: restricted
+  audit: restricted
+
+# Container-level securityContext applied to the stateless services (the API
+# pods + fl-client). The defaults are safe for any
+# image — they do NOT require a non-root image. runAsNonRoot and
+# readOnlyRootFilesystem are intentionally left unset because they depend on the
+# image; enable them per-deployment once validated against the image.
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+# ---------------------------------------------------------------------------
+# Secrets management
+# ---------------------------------------------------------------------------
+# When secrets.create is true, the chart creates a Secret with the keys listed
+# in the template. The operator must provide the values (e.g. via --set or a
+# separate secrets file). When false, the operator must create the Secret
+# externally before installing the chart.
+secrets:
+  create: false
+  # Name of the existing Secret (when secrets.create=false)
+  existingName: "flip-trust-secrets"
+  # Key-value pairs for the Secret (when secrets.create=true)
+  # These should be provided via --set or a separate values file, not checked in.
+  data:
+    aes-key-base64: ""
+    trust-api-key: ""
+    trust-internal-service-key-header: ""
+    trust-internal-service-key: ""
+    omop-postgres-password: ""
+    data-access-postgres-password: ""
+    # REQUIRED when orthanc.enabled — JSON user map, e.g. {"admin": "<password>"}.
+    # Left empty, templates/secrets.yaml omits the key and the orthanc pod fails
+    # with CreateContainerConfigError (fail-loud by design, FLIP-PT-091) — never
+    # weaken this with a dummy default. Populated from the ORTHANC_REGISTERED_USERS
+    # env var by scripts/generate_values.py.
+    orthanc-registered-users: ""
+    xnat-admin-user: ""
+    xnat-admin-password: ""
+    xnat-service-user: ""
+    xnat-service-password: ""
+    xnat-datasource-password: ""
+    xnat-datasource-admin-password: ""
+    grafana-admin-password: ""
+
+# ---------------------------------------------------------------------------
+# trust-api — API gateway, polls Central Hub for tasks, orchestrates trust
+# ---------------------------------------------------------------------------
+trustApi:
+  enabled: true
+  image:
+    repository: ghcr.io/londonaicentre/trust-api
+    tag: stag
+    pullPolicy: Always
+  replicas: 1
+  service:
+    port: 8000
+    type: ClusterIP
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - trust-api
+            topologyKey: kubernetes.io/hostname
+  env:
+    CENTRAL_HUB_API_URL: ""
+    # HTTP header the hub reads the per-trust API key from. Must match the hub's
+    # TRUST_API_KEY_HEADER; the platform default (.env.development.example, the
+    # prod/dev compose, and register_trust's Hub-shared block) is "Authorization".
+    # A mismatch makes the hub answer 401 "API key is missing".
+    TRUST_API_KEY_HEADER: "Authorization"  # pragma: allowlist secret
+    POLL_INTERVAL_SECONDS: "5"
+    # Internal service URLs (short names resolve via K8s DNS in same namespace)
+
+# ---------------------------------------------------------------------------
+# imaging-api — DICOM image retrieval from PACS / XNAT
+# ---------------------------------------------------------------------------
+imagingApi:
+  enabled: true
+  image:
+    repository: ghcr.io/londonaicentre/imaging-api
+    tag: stag
+    pullPolicy: Always
+  replicas: 1
+  command:
+    - "uv"
+    - "run"
+    - "python"
+    - "-m"
+    - "uvicorn"
+    - "imaging_api.main:app"
+    - "--host"
+    - "0.0.0.0"
+    - "--port"
+    - "8000"
+  service:
+    port: 8000
+    type: ClusterIP
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - imaging-api
+            topologyKey: kubernetes.io/hostname
+  env:
+    XNAT_URL: "http://xnat-web:8080"
+    # XNAT_PORT and XNAT_AETITLE are deliberately absent here. They describe XNAT's DICOM SCP
+    # receiver, so they come from xnat.web.dicomPort / xnat.web.dicomAet — the same values the init
+    # job registers the receiver with. Restating them here made two sources for one number, which is
+    # the defect FLIP#993 set out to remove.
+    PACS_ID: "1"
+    # Topology only — no password here (FLIP-PT-056): imaging-api splices in the
+    # xnat-datasource-password secret at startup (see templates/imaging-api.yaml).
+    XNAT_DATABASE_URL: "postgresql+asyncpg://xnat@xnat-db:5432/xnat"
+    DATA_ACCESS_API_URL: "http://data-access-api:8000"
+    BASE_IMAGES_DOWNLOAD_DIR: "/app/data/images"
+
+# ---------------------------------------------------------------------------
+# data-access-api — OMOP database queries for cohort analysis
+# ---------------------------------------------------------------------------
+dataAccessApi:
+  enabled: true
+  image:
+    repository: ghcr.io/londonaicentre/data-access-api
+    tag: stag
+    pullPolicy: Always
+  replicas: 1
+  service:
+    port: 8000
+    type: ClusterIP
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - data-access-api
+            topologyKey: kubernetes.io/hostname
+  env:
+    OMOP_DB_SERVICE_NAME: "omop-db"
+    OMOP_POSTGRES_DB: "trustomopdb"
+    DATA_ACCESS_POSTGRES_USER: "data_analyst_reader"
+
+# ---------------------------------------------------------------------------
+# Shared images PVC — used by imaging-api and fl-client to share downloaded
+# DICOM images
+# ---------------------------------------------------------------------------
+# The handoff between imaging-api (which downloads a project's images from XNAT) and the
+# fl-client (which trains on them): both mount this volume at their images path. Enabled
+# by default because the alternative is a deployment that cannot train — with it off,
+# each pod gets its own emptyDir, imaging-api's downloads land in one and the fl-client
+# reads the other, and every run dies with num_samples=0 while all 300 downloads report
+# success. Disable only for a trust that will never run FL training.
+#
+# accessMode is ReadWriteOnce, which is what the storage classes this chart is validated on
+# (kind's local-path, EBS gp3) actually provide — ReadWriteMany needs an RWX-capable class
+# such as EFS or NFS, and asking for it by default would leave the claim Pending on a
+# single-node cluster. Because RWO binds the volume to one node while two pods mount it,
+# imaging-api and fl-client must land on the same node: flClient.affinity below carries a
+# required podAffinity that pins the fl-client to imaging-api's node, so a multi-node cluster
+# schedules them together instead of leaving one pod Pending forever. Switch accessMode to
+# ReadWriteMany on an RWX class and that affinity can be relaxed to a preferred rule.
+sharedImagesPvc:
+  enabled: true
+  storageClassName: ""
+  size: 100Gi
+  accessMode: ReadWriteOnce
+
+# ---------------------------------------------------------------------------
+# FL client — federated learning participant
+# ---------------------------------------------------------------------------
+flClient:
+  enabled: true
+  netId: "net-1"
+  imagesDir: /app/data/images
+  # Co-schedule with imaging-api. The two share sharedImagesPvc, which ships ReadWriteOnce
+  # (see the comment on that block), and an RWO volume can only be mounted from one node —
+  # so on a multi-node cluster without this the scheduler is free to place them apart and one
+  # pod sits Pending indefinitely with no indication that the volume is the reason. `required`
+  # rather than `preferred` deliberately: a preferred rule degrades to exactly that silent
+  # Pending. Harmless on the single-node kind and k3s targets, where it is always satisfied.
+  # Set to {} if you move sharedImagesPvc to an RWX class and want free placement.
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                  - imaging-api
+          topologyKey: kubernetes.io/hostname
+  # Absolute path ON THE NODE holding this trust's already-provisioned FL participant
+  # kit — the contents of the slot's kit directory (for NVFLARE: local/, startup/,
+  # transfer/; for Flower: certificates/ and keys/ with this slot's credential).
+  #
+  # Required whenever flClient.enabled. The chart deliberately offers no way to fetch
+  # the kit itself: a trust never holds FLIP's AWS credentials (see the trust boundary
+  # in CLAUDE.md — "FL clients intentionally have no Central Hub credentials"), and the
+  # kit reaches an operator out-of-band, as trust/README.md describes. The kit is placed
+  # on the node before the workload starts, which is also what a real trust does — so
+  # what is deployed here is what is deployed in production.
+  #
+  # On kind, either map it in with an extraMount at cluster-create time, or copy it into
+  # the node: `docker cp <kit>/. <cluster>-control-plane:/opt/flip/fl-kit/` (which is
+  # what `make stage-kit` does). /opt/flip/fl-kit is the kit file's FL_KIT_DIR — the same
+  # path the Compose and Ansible trust deployments use — so keep any override in step
+  # with the path the kit was actually staged to, or the pod stays Pending.
+  kitHostPath: ""
+  hostAliases:
+    - ip: "13.43.162.56"
+      hostnames:
+        - "fl-server-net-1"
+  image:
+    repository: ghcr.io/londonaicentre
+    tag: stag
+    pullPolicy: Always
+  nvflare:
+    # Site-enforced privacy policy (FLIP#851): rendered into /app/local/privacy.json
+    # at container start by `python -m flip.nvflare.site_policy`. Empty string = unset
+    # = no site policy (previous behavior). policy: "percentile"; the params
+    # mirror the FL_SITE_PRIVACY_* env vars documented in trust/README.md. An invalid
+    # combination fails the pod (fail closed) rather than running unfiltered.
+    sitePrivacy:
+      policy: ""
+      percentile: ""
+      gamma: ""
+  flower:
+    superlink: ""
+    # flwr>=1.36 split --clientappio-api-address into separate --host/--port
+    # flags. Both get a chart value: under Kubernetes the bind host is not a
+    # detail an operator can leave alone, because the tcpSocket probes below
+    # are dialled by kubelet against the POD IP, not loopback. flower-supernode's
+    # own --host default (127.0.0.1) therefore renders a SuperNode that no probe
+    # can ever reach (FLIP#1017) — deliberately NOT the compose default, where
+    # the container is the network namespace and loopback does answer. Set
+    # 0.0.0.0 here to bind the Runtime API on all pod interfaces; keep 127.0.0.1
+    # only alongside an `exec` probe override under flClient.probes.
+    supernodeClientAppIoHost: "0.0.0.0"
+    supernodeClientAppIoPort: "9094"
+  resources:
+    requests:
+      memory: "8Gi"
+      cpu: "4"
+    limits:
+      memory: "32Gi"
+      cpu: "16"
+  shmSize: 8Gi
+  gpu:
+    enabled: false
+    count: 0
+    operator:
+      # Set to true to enable GPU operator validation resources
+      enabled: false
+  probes:
+    liveness:
+      port: 9094
+      initialDelaySeconds: 60
+      periodSeconds: 30
+    readiness:
+      port: 9094
+      initialDelaySeconds: 30
+      periodSeconds: 15
+  serviceAccount:
+    # Deliberately empty, and no IRSA example: the fl-client holds no AWS credentials.
+    # Its participant kit is staged onto the node out-of-band (kitHostPath above) and
+    # it reaches no other AWS service, so annotating this account with a role would
+    # hand FLIP credentials to the host that runs researcher-submitted FL code.
+    annotations: {}
+  sidecar:
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# omop-db — Mocked OMOP patient database (PostgreSQL)
+# ---------------------------------------------------------------------------
+omopDb:
+  enabled: true
+  external:
+    host: ""
+    port: 5432
+  image:
+    repository: ghcr.io/londonaicentre/omop-db
+    # Tracks the develop build like every other service in this file. The tag is
+    # load-bearing here, not cosmetic: the vocab-load Job below runs the image's
+    # own /flip/omop/load_core_vocab.sh, which only exists in CI-published
+    # (vocab-free, FLIP#842) images.
+    tag: stag
+    pullPolicy: Always
+  persistence:
+    enabled: true
+    storageClassName: ""
+    size: 10Gi
+    accessMode: ReadWriteOnce
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  credentials:
+    user: postgres
+    # password is supplied via secrets.data.omop-postgres-password
+  # pg_isready can take many seconds while the vocabulary COPY is running. The
+  # Kubernetes defaults (timeoutSeconds 1, failureThreshold 3) restart Postgres
+  # mid-load and abort the omop-vocab-load hook, so they are set explicitly here.
+  # initialDelaySeconds/periodSeconds carry the values that used to be hardcoded in
+  # templates/omop-db.yaml, so the default render is unchanged; they are here so this
+  # block honours the same four keys as every other service's probes block rather
+  # than silently ignoring two of them.
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 15
+      failureThreshold: 10
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 15
+      failureThreshold: 10
+  # Streams the licensed core vocabulary into the running database after
+  # install/upgrade (the published image and pgdata tarballs are vocab-free —
+  # FLIP#842/843).
+  #
+  # The bundle CANNOT be publicly mirrored (SNOMED CT / LOINC / Read v2 / dm+d
+  # licences — see trust/omop-db/README.md), so unlike initJob there is no
+  # credential-free fallback. The Job therefore runs only when s3Bucket names a
+  # bucket this cluster can read; left empty, the release installs cleanly with
+  # NO vocabulary loaded.
+  #
+  # ⚠️  With no vocabulary the stack looks healthy but cohort queries that join
+  # omop.concept return nothing. Either set s3Bucket, or load the bundle by hand
+  # (chart README → "OMOP core vocabulary").
+  #
+  # Use YOUR environment's own bucket — trust roles have no cross-account read
+  # on another environment's bucket. `make -C trust/deploy/helm
+  # sync-kit KIT=<CODE> PROD=<env>` writes this from the kit's
+  # AICENTRE_BUCKET_NAME, so check that the kit carries the right one (it is not
+  # a hub-managed key — a kit scaffolded from trust/.env.example ships the dev
+  # bucket).
+  #
+  # AWS *credentials* are deliberately shared with initJob (initJob.awsProfile /
+  # initJob.hostAwsMount) — one place to configure auth, not two. Note the
+  # AWS_PROFILE/region env vars only reach this Job when initJob.hostAwsMount is
+  # enabled; on EKS it relies on IRSA. The bucket itself is a separate key per
+  # job, and sync-kit sets only this one.
+  #
+  # enabled: false is only for keeping an in-cluster omop-db while loading the
+  # vocabulary by hand — an external database (omopDb.enabled: false) already
+  # skips this Job.
+  vocabLoad:
+    enabled: true
+    s3Bucket: ""
+    bundleName: "vocab_aicentre_core_20240916"
+    # Scratch space for the downloaded bundle. Must hold the zip and its unpacked
+    # contents at the same time — for the 20240916 bundle that is ~3.6 GiB
+    # unpacked plus a ~600 MiB zip, so a peak near 4.2 GiB (both figures are in
+    # trust/omop-db/README.md, "The core vocabulary bundle"). The kubelet
+    # enforces this on the emptyDir directly; keep the pod's ephemeral-storage
+    # ceiling (below) above it, so that this limit is what bounds the work dir
+    # rather than the pod being evicted before it has finished filling it.
+    workDirSize: 10Gi
+    # The fetch initContainer downloads the zip and stops there — unpacking is
+    # the loader's, because unzip is in the omop-db image and not in the aws-cli
+    # one. Its request is small for that reason, though the pod's request is set
+    # by loadResources either way (see the max rule below); the zip itself lands
+    # in the emptyDir, which is charged to the pod and never to this container —
+    # a container's own ephemeral-storage accounting covers only its writable
+    # layer and logs.
+    fetchResources:
+      requests:
+        cpu: "250m"
+        memory: 512Mi
+        ephemeral-storage: 2Gi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+        ephemeral-storage: 12Gi
+    # Shared by the probe and the loader. The work dir itself is bounded by
+    # workDirSize above, which the kubelet enforces on the emptyDir directly and
+    # independently of anything here. What the ephemeral-storage REQUEST buys is
+    # scheduling and eviction ranking: emptyDir usage counts against the pod, and
+    # the kubelet ranks eviction on usage OVER request, so a pod that requested
+    # nothing is picked first under node disk pressure — and an evicted run
+    # restarts from zero. Sized for the loader, which briefly holds the zip and
+    # its unpacked contents at once. The probe over-requests harmlessly: an
+    # ordinary init container's resources are taken as a max against the regular
+    # containers' total, never added to it (a restartable init container — a
+    # sidecar — WOULD be added, so do not convert the probe into one without
+    # revisiting these numbers).
+    #
+    # Limits follow that same max rule, not a sum: the pod's ceiling here is
+    # max(12Gi regular, 12Gi per init) = 12Gi, above workDirSize. Do not read it
+    # as 3 x 12Gi — setting all three to 4Gi on a sum reading would give a real
+    # ceiling of 4Gi and evict the pod less than halfway through the work dir.
+    loadResources:
+      requests:
+        cpu: "100m"
+        memory: 256Mi
+        ephemeral-storage: 6Gi
+      limits:
+        cpu: "500m"
+        memory: 512Mi
+        ephemeral-storage: 12Gi
+  initJob:
+    enabled: true
+    s3Bucket: ""
+    # S3 archive file name. When empty, derived from trust name + trustData.version:
+    #   {trustName}_pgdata_{trustData.version}.tar.gz
+    # Override to point at a different archive (e.g. reuse Trust_2's data):
+    #   archiveName: "trust2_pgdata_20260729.tar.gz"
+    # (Only the S3 path uses it; the Hugging Face fallback fetches trust<N>_pgdata.tar
+    # at the trustData.version tag.)
+    archiveName: ""
+    # AWS profile to use for S3 authentication (uses SSO cached credentials)
+    awsProfile: "default"
+    # Mount host's ~/.aws directory for SSO-based S3 authentication.
+    # Enabled for local K8s clusters; disable for EKS (use IRSA instead).
+    # hostPath has NO default: it is the ~/.aws of whoever runs the *node*, so any
+    # shipped value is one developer's home directory and silently wrong on every
+    # other machine. Set it explicitly when enabling, e.g.
+    #   --set omopDb.initJob.hostAwsMount.hostPath=$HOME/.aws
+    # Left empty while enabled, rendering fails with a named error rather than
+    # mounting a path that does not exist on this node.
+    # On kind the node is a container and your ~/.aws is not in it: add an
+    # extraMounts entry to the kind config and point hostPath at the node-side
+    # path (README, "Local clusters (kind)"), or pre-seed and leave this off.
+    hostAwsMount:
+      enabled: false
+      hostPath: ""
+      readOnly: true
+
+# ---------------------------------------------------------------------------
+# orthanc — Mocked DICOM PACS server
+# ---------------------------------------------------------------------------
+orthanc:
+  enabled: true
+  host: orthanc
+  external:
+    host: ""
+    port: 8042
+  image:
+    repository: ghcr.io/londonaicentre/orthanc
+    tag: stag
+    pullPolicy: Always
+  replicas: 1
+  service:
+    port: 8042
+    type: ClusterIP
+  persistence:
+    enabled: true
+    storageClassName: ""
+    size: 50Gi
+    accessMode: ReadWriteOnce
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  initJob:
+    enabled: false
+    s3Bucket: ""
+    # S3 archive file name. When empty, derived from trust name + trustData.version:
+    #   {trustName}_orthanc_data_{trustData.version}.tar.gz
+    # Override to point at a different archive (e.g. reuse Trust_2's data):
+    #   archiveName: "trust2_orthanc_data_20260729.tar.gz"
+    # (Only the S3 path uses it; the Hugging Face fallback fetches trust<N>_orthanc_data.tar
+    # at the trustData.version tag.)
+    archiveName: ""
+    # AWS profile to use for S3 authentication (uses SSO cached credentials)
+    awsProfile: "default"
+    # Mount host's ~/.aws directory for SSO-based S3 authentication.
+    # Enabled for local K8s clusters; disable for EKS (use IRSA instead).
+    # hostPath has NO default: it is the ~/.aws of whoever runs the *node*, so any
+    # shipped value is one developer's home directory and silently wrong on every
+    # other machine. Set it explicitly when enabling, e.g.
+    #   --set orthanc.initJob.hostAwsMount.hostPath=$HOME/.aws
+    # Left empty while enabled, rendering fails with a named error rather than
+    # mounting a path that does not exist on this node.
+    # On kind the node is a container and your ~/.aws is not in it: add an
+    # extraMounts entry to the kind config and point hostPath at the node-side
+    # path (README, "Local clusters (kind)"), or pre-seed and leave this off.
+    hostAwsMount:
+      enabled: false
+      hostPath: ""
+
+# ---------------------------------------------------------------------------
+# XNAT — Neuroimaging platform (multi-component)
+# ---------------------------------------------------------------------------
+xnat:
+  enabled: true
+  initJob:
+    enabled: true
+  web:
+    enabled: true
+    adminUser: "admin"
+    # DICOM SCP (Service Class Provider) configuration.
+    # XNAT binds this port, registers it on its dicomscp receiver, and advertises it as the C-MOVE
+    # destination. DQR matches that destination against a registered receiver by exact AE title and
+    # port, so these must equal what the PACS has registered for us — no translation is possible on
+    # that leg (FLIP#993).
+    dicomAet: XNAT
+    dicomPort: 8104
+    # Fixed NodePort for the DICOM receiver, used with service.type: NodePort. Required when the
+    # PACS is outside the cluster: after XNAT issues C-MOVE the PACS opens a *new* association back
+    # to XNAT to C-STORE the studies, so that port must be reachable. Leave empty for the mocked
+    # Orthanc, which reaches the receiver over the cluster network.
+    # Must be inside the API server's --service-node-port-range (default 30000-32767), or the range
+    # widened to admit the DICOM port. Set it equal to dicomPort so one number is true end to end.
+    dicomNodePort: ""
+    image:
+      repository: ghcr.io/londonaicentre/xnat-web
+      tag: stag
+      pullPolicy: Always
+    service:
+      port: 8080
+      type: ClusterIP
+    persistence:
+      enabled: true
+      storageClassName: ""
+      size: 100Gi
+      accessMode: ReadWriteOnce
+    resources:
+      requests:
+        memory: "2Gi"
+        cpu: "1"
+      limits:
+        memory: "4Gi"
+        cpu: "2"
+    probes:
+      liveness:
+        initialDelaySeconds: 120
+        periodSeconds: 20
+        timeoutSeconds: 10
+      readiness:
+        initialDelaySeconds: 30
+        periodSeconds: 15
+        timeoutSeconds: 5
+    plugins:
+      enabled: true
+      image: python:3.12-slim
+      # These URLs are the single source of the plugin roster: the download
+      # init-container derives each jar's filename from the URL, so a version
+      # bump is a one-line change here. Keep them in step with the Swarm roster
+      # baked by trust/xnat/xnat/Dockerfile — the chart mounts an emptyDir over
+      # ${XNAT_HOME}/plugins, so these downloads REPLACE the image's plugins
+      # rather than adding to them, and the XNAT_VERSION compatibility matrices
+      # apply to whatever is listed here.
+      # XNAT 1.10.0 requires DQR 3.0.0 and Container Service 3.8.x:
+      #   https://wiki.xnat.org/xnat-tools/dqr-plugin-compatibility-matrix
+      #   https://wiki.xnat.org/container-service/container-service-compatibility-matrix
+      # and OHIF viewer 3.8.0 is the plugin's XNAT 1.10 release:
+      #   https://wiki.xnat.org/xnat-ohif-viewer
+      urls:
+        container-service: "https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar"
+        dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar"
+        batch-launch: "https://api.bitbucket.org/2.0/repositories/xnatx/xnatx-batch-launch-plugin/downloads/batch-launch-0.9.0-xpl.jar"
+        ohif-viewer: "https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.8.0-fat.jar"
+    env:
+      XNAT_EMAIL: ""
+      XNAT_MIN_HEAP: "1024m"
+      XNAT_MAX_HEAP: "3072m"
+  db:
+    enabled: true
+    datasourceUsername: "xnat"
+    image:
+      repository: ghcr.io/londonaicentre/xnat-db
+      tag: stag
+      pullPolicy: Always
+    service:
+      port: 5432
+      type: ClusterIP
+    persistence:
+      enabled: true
+      storageClassName: ""
+      size: 20Gi
+      accessMode: ReadWriteOnce
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+  nginx:
+    enabled: true
+    image:
+      repository: ghcr.io/londonaicentre/xnat-nginx
+      tag: stag
+      pullPolicy: Always
+    service:
+      port: 80
+      type: ClusterIP
+    probes:
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 10
+        timeoutSeconds: 5
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 5
+        timeoutSeconds: 3
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+
+# ---------------------------------------------------------------------------
+# Observability Stack — Loki, Alloy, Grafana
+# ---------------------------------------------------------------------------
+observability:
+  enabled: true   # single gate: set false to skip all observability components
+  loki:
+    enabled: true
+    image:
+      repository: grafana/loki
+      tag: "3.4.0"
+      pullPolicy: IfNotPresent
+    service:
+      port: 3100
+      type: ClusterIP
+    persistence:
+      enabled: true
+      storageClassName: ""
+      size: 10Gi
+      accessMode: ReadWriteOnce
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "200m"
+  alloy:
+    enabled: true
+    image:
+      repository: grafana/alloy
+      tag: "v1.9.0"
+      pullPolicy: IfNotPresent
+    service:
+      port: 12345
+      type: ClusterIP
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+  grafana:
+    enabled: true
+    image:
+      repository: grafana/grafana
+      tag: "11.5.0"
+      pullPolicy: IfNotPresent
+    service:
+      port: 3000
+      type: ClusterIP
+    persistence:
+      enabled: true
+      storageClassName: ""
+      size: 1Gi
+      accessMode: ReadWriteOnce
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "200m"
+    # adminPassword is supplied via secrets.data.grafana-admin-password
+
+# ---------------------------------------------------------------------------
+# Horizontal Pod Autoscaler configuration
+# ---------------------------------------------------------------------------
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# ---------------------------------------------------------------------------
+# Pod Disruption Budget
+# ---------------------------------------------------------------------------
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# ---------------------------------------------------------------------------
+# Network policies — zero inbound trust model
+# ---------------------------------------------------------------------------
+# Upstream PACS that XNAT retrieves imaging from, via the DQR plugin.
+#
+# Defaults describe the mocked Orthanc deployed by this chart. A trust points these at its own PACS;
+# see docs/source/components/component-pacs.rst. These replace the
+# former orthanc.dicomHost / dicomPort / dicomAet values, which no template ever read — which is why
+# setting orthanc.enabled: false with an external.host never actually redirected DQR.
+pacs:
+  host: orthanc
+  aeTitle: ORTHANC
+  qrPort: 4242
+  label: Test PACS instance
+  # Relational queries / extended negotiation. A per-PACS capability, not a preference: a PACS that
+  # does not support it rejects the association unless this is false. Ask the PACS team.
+  supportsExtendedNegotiations: true
+  # Throttle. A production PACS may refuse further associations after a certain volume, and a trust
+  # may want retrieval confined to out-of-hours. Agree the window with the PACS manager.
+  availability:
+    days: MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY
+    start: "00:00"
+    end: "24:00"
+    threads: 1
+    utilizationPercent: 100
+  dqr:
+    maxRequestAttempts: 100
+    retryWaitSeconds: 300
+
+networkPolicies:
+  enabled: true
+  # When true, allows ingress from kube-system namespace (kubelet health checks,
+  # metrics scraping). Set to true if your CNI requires explicit carve-outs for
+  # kubelet probes or cluster-internal monitoring.
+  allowKubeSystemIngress: false
+  # CIDRs allowed inbound on a specific port, in addition to the default-deny above.
+  # The only intended use is the DICOM C-STORE return leg: FLIP retrieves by pull, so after XNAT
+  # issues C-MOVE the PACS opens a new association back to XNAT. That is inbound, and without an
+  # allowance here it is dropped — queries succeed and retrievals silently time out (FLIP#993).
+  # Scope this to the PACS itself, not the whole trust network.
+  # Each entry: cidrs (list of CIDR strings) + port (int) + optional protocol (default TCP).
+  allowedIngressCIDRsWithPorts: []
+  # - cidrs:
+  #     - 10.0.0.10/32
+  #   port: 8104
+  # CIDRs allowed for all-ports egress (in addition to intra-namespace).
+  #
+  # Setting this to anything non-empty also satisfies the real-PACS egress guard in
+  # templates/network-policy.yaml. Helm cannot test CIDR containment, so the chart cannot check that
+  # one of these entries actually reaches the PACS — it assumes an all-ports rule does. If you rely
+  # on that, the PACS route is yours to verify; the port-scoped
+  # allowedEgressCIDRsWithPorts is what makes the chart check it for you.
+  allowedEgressCIDRs: []
+  #   - 10.0.0.0/8
+  # CIDRs allowed for egress on a specific port, e.g. fl-server gRPC (port 8002)
+  # Each entry: cidrs (list of CIDR strings) + port (int) + optional protocol (default TCP)
+  allowedEgressCIDRsWithPorts: []
+  # - cidrs:
+  #     - 13.43.208.193/32
+  #     - 13.43.162.56/32
+  #   port: 8002
+  # Egress rules to allow (defaults include DNS/HTTP/HTTPS)
+  allowedEgressPorts:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+    - port: 80
+      protocol: TCP
+    - port: 443
+      protocol: TCP

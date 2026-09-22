@@ -105,5 +105,5 @@ def get_net_status(
     except HTTPException:
         raise
     except Exception as error:
-        logger.error(f"Error retrieving net status: {str(error)}")
-        raise HTTPException(status_code=500, detail=str(error))
+        logger.exception("Error retrieving net status")
+        raise HTTPException(status_code=500, detail="Internal server error") from error

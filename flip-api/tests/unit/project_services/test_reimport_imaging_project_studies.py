@@ -15,7 +15,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from flip_api.project_services.reimport_imaging_project_studies import reimport_imaging_project_studies
+from flip_api.project_services.reimport_imaging_project_studies import (
+    reimport_imaging_project_studies,
+    reimport_imaging_project_studies_scheduled_task,
+)
 
 
 @pytest.fixture
@@ -58,3 +61,20 @@ def test_failed_study_reimport_raises_500(mock_reimport, mock_queries_service, m
 
     assert exc_info.value.status_code == 500
     assert "error occurred while reimporting" in exc_info.value.detail
+
+
+def test_scheduled_task_failure_returns_generic_detail():
+    with (
+        patch("flip_api.project_services.reimport_imaging_project_studies.get_engine"),
+        patch("flip_api.project_services.reimport_imaging_project_studies.Session"),
+        patch(
+            "flip_api.project_services.reimport_imaging_project_studies.reimport_imaging_project_studies",
+            side_effect=Exception("connection to db-host refused"),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            reimport_imaging_project_studies_scheduled_task()
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "Internal server error"
+    assert "db-host" not in exc_info.value.detail

@@ -36,6 +36,17 @@ on:
       - "trust/tests/**"
       - "trust/Makefile"
       - ".github/workflows/test_trust_data_tools.yml"
+      # `make -C trust test-trust-data-tools` parse-time-includes all three (trust/Makefile
+      # lines 25, 94, 98 — make's own MAKEFILE_LIST names them), so a change to any can
+      # break this suite before a single test runs.
+      - "deploy/env_mode.mk"
+      - "deploy/fl_backend.mk"
+      - "deploy/instance.mk"
+      # Two consumers: trust/orthanc/Makefile includes+exports the GSTT kit example at parse
+      # time, and trust/tests/test_seed_guard.sh copies it into its sandbox as a fixture — so
+      # a content-only edit can fail this suite, not just an unparseable one. The KCH twin
+      # exists but no Makefile reads it.
+      - "trust/.env.GSTT.development.example"
   pull_request:
     branches: [main, develop]
 
@@ -43,7 +54,36 @@ permissions:
   contents: read
 
 jobs:
+  # Gate for pull requests into develop: run the suite only when the PR touches this
+  # service (pr_paths_changed.yml; PRs into main always run everything). The list is
+  # the push `paths:` filter above, verbatim — scripts/tests/test_pr_paths_changed.py
+  # fails when the two drift.
+  changes:
+    uses: ./.github/workflows/pr_paths_changed.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      paths: |
+        trust/orthanc/seed_orthanc.py
+        trust/orthanc/publish_dicom.py
+        trust/orthanc/tests/**
+        trust/orthanc/Makefile
+        trust/orthanc/update_orthanc_data.sh
+        trust/omop-db/Makefile
+        trust/omop-db/update_omop_data.sh
+        trust/publish_trust_data.py
+        trust/tests/**
+        trust/Makefile
+        .github/workflows/test_trust_data_tools.yml
+        deploy/env_mode.mk
+        deploy/fl_backend.mk
+        deploy/instance.mk
+        trust/.env.GSTT.development.example
+
   trust-data-tools:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
 
     steps:

@@ -66,7 +66,7 @@ REPO_ROOT = XNAT_DIR.parents[1]
 MAKEFILE = XNAT_DIR / "Makefile"
 DOCKERFILE = XNAT_DIR / "xnat" / "Dockerfile"
 AWS_PLAYBOOK = REPO_ROOT / "deploy" / "providers" / "AWS" / "site.yml"
-LOCAL_PLAYBOOK = REPO_ROOT / "deploy" / "providers" / "local" / "site_local_trust.yml"
+LOCAL_PLAYBOOK = XNAT_DIR.parent / "deploy" / "ansible" / "onprem.yml"
 
 # Long enough for a `make -n` parse; short enough that a hang fails the suite
 # rather than wedging CI.

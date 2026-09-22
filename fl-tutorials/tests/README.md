@@ -15,10 +15,12 @@ limitations under the License.
 
 CPU-only pytest suites over `fl-tutorials/`: the tutorial apps' transform chains plus a static
 drift guard on the Flower apps' `min_clients` wiring (which also covers `fl-apps/flower/`, the
-templates that actually deploy), and a second, dataset-tooling suite over `datasets/**`. No GPU,
+templates that actually deploy), the EHR risk-prediction tutorial's shared feature engineering +
+model contract (`test_ehr_feature_engineering.py` — that app reads no DICOM, so it is deliberately
+absent from `DICOM_APPS`), and a second, dataset-tooling suite over `datasets/**`. No GPU,
 no dataset download, no FL image, no network — fixtures are synthesised in-process (synthetic
-DICOMs, or for the dataset-tooling tests, small in-memory DICOM/CSV fixtures), and each suite
-runs in well under a second.
+DICOMs and dataframes, or for the dataset-tooling tests, small in-memory DICOM/CSV fixtures), and
+each suite runs in well under a second.
 
 ```bash
 make -C fl-tutorials test              # ruff over fl-tutorials/ + both suites below
@@ -35,13 +37,16 @@ or the flip-utils source/environment, and on pushes to main/develop
 
 Tests mirror the source tree and are named for the file they cover —
 `tests/datasets/spleen/test_download_spleen_dataset.py` covers
-`datasets/spleen/download_spleen_dataset.py`, and `tests/datasets/cxr/test_omop_convert_cxr.py`
-covers `datasets/cxr/omop_convert_cxr.py` — the same convention as
+`datasets/spleen/download_spleen_dataset.py`, `tests/datasets/cxr/test_omop_convert_cxr.py`
+covers `datasets/cxr/omop_convert_cxr.py`, and
+`tests/datasets/synthea/test_build_synthea_dataframe.py` covers
+`datasets/synthea/build_synthea_dataframe.py` — the same convention as
 `trust/imaging-api/tests/routers/test_imaging.py`.
 
 Cross-cutting guards that assert a property across several source files
 (`test_dicom_orientation.py`, `test_flower_min_clients_wiring.py`,
-`test_spleen_inference_config_parity.py`) stay at the root of `tests/`, because
+`test_spleen_inference_config_parity.py`, `test_fl_tutorials_make_targets.py`,
+`test_sim_tutorial_stale_guard.py`, `test_sim_tutorial_exit_status.py`) stay at the root of `tests/`, because
 no single source path describes what they cover.
 
 **Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
@@ -53,8 +58,8 @@ never runs on an FL image — it has no business pulling `pandera`/`sqlglot` (ne
 the OMOP tables that tooling generates) into flip-utils' runtime environment.
 
 Those tests run against **each dataset's own uv project**, one pytest invocation per project
-(`DATASET_TEST_PROJECTS` in `fl-tutorials/Makefile`, currently `spleen cxr`), each declaring what
-that dataset's tooling actually needs. `make -C fl-tutorials pytest-datasets` runs them all.
+(`DATASET_TEST_PROJECTS` in `fl-tutorials/Makefile`, currently `spleen cxr synthea`), each declaring
+what that dataset's tooling actually needs. `make -C fl-tutorials pytest-datasets` runs them all.
 
 The split is not just tidiness: it is the only thing in CI that checks a dataset's
 `pyproject.toml` declares what its code actually imports. A dataset's tests import its converter,
@@ -106,6 +111,9 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_fl_api_writes_the_key_the_apps_read` | fl-api-flower writes the same `flip-min-clients` key the apps read — the two live in different packages. |
 | `test_strategy_gets_min_clients_from_the_injected_trust_count` | Every FLIP Flower app passes `min_clients` sourced from `min_clients_from_run_config(run_config)`, not a constant. |
 | `test_app_config_declares_flip_min_clients` | Each app declares the key in `[tool.flwr.app.config]` (flwr rejects undeclared overrides) at flwr's default of 2 or more. |
+| `test_tutorial_declares_a_job_type_backed_by_a_template` | Each Flower tutorial's `config.json` names a job type that has an `fl-apps/flower/<job_type>/` template and a `required_files.json` entry — otherwise the researcher's first upload dies inside the bundler. |
+| `test_tutorial_ships_every_file_its_job_type_requires` | The manifest's required files are all present, so the gap fails here rather than mid-e2e after a trust has already pulled imaging. |
+| `test_platform_owned_files_are_identical_in_the_tutorial` | Every file the fl-apps template ships is present and equivalent in the tutorial's `app/`. flip-api **reserves** those names and discards the researcher's copy, so a drifted tutorial runs one thing on the simulator and deploys another. Files with no executable code in either tree may differ, which is what lets each tutorial keep its own `__init__.py` docstring. |
 | `test_phantom_has_no_dihedral_symmetry` | The fixture is non-square **and** distinguishable from all eight of its dihedral variants. |
 | `test_phantom_dicom_round_trips` | Each synthetic encoding decodes back to the phantom. |
 | `test_loader_prefix_matches_pixel_data` | The chain up to the first resampling transform is `np.array_equal` to `pydicom`'s `PixelData`. |
@@ -114,6 +122,16 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_monai_deprecations_escalate_to_errors` | `pytest.ini`'s blanket `ignore::` lines still leave MONAI's own deprecations escalated to errors — the notice that a pinned reader convention is about to change must not rejoin the ignored torch/numpy noise. |
 | `test_loader_pins_its_reader` | The chain names `PydicomReader(swap_ij=False)` instead of inheriting a reader. |
 | `test_chain_composes` / `test_validation_chain_is_deterministic` | Both chains import, compose, run, and the validation chain is reproducible. |
+| `test_documented_root_target_resolves` | Every `make -C fl-tutorials <target>` the docs quote resolves at the fl-tutorials root, whose Makefile only forwards a fixed name list — a dataset target documented in the root form but left off that list fails here, not with "No rule to make target" on a reader's machine. |
+| `test_kills_only_this_checkouts_processes_in_this_pid_namespace` | `sim-tutorial.sh`'s stale-SuperLink guard, lifted out of the script and run against decoys: it stops the one from this checkout's flip-utils venv, spares one from another checkout, spares one from a worktree nested under this checkout (whose path shares the prefix), and spares one in another PID namespace (a container's, under any runtime — the dev stack's fl-server matches the same `pgrep` pattern). Skips the namespace case where unprivileged `unshare` is unavailable. |
+| `test_guard_decides_containment_by_pid_namespace_not_cgroup_string` | The guard compares `/proc/<pid>/ns/pid`, not a runtime-specific `/proc/<pid>/cgroup` string, which only docker's systemd driver produces. |
+| `test_a_failed_run_fails_the_script` / `test_the_verdict_waits_for_a_terminal_status` / `test_a_run_that_never_ends_is_a_failure_not_a_hang` / `test_an_unknown_run_is_a_failure` / `test_a_failed_query_stops_polling_and_shows_the_reason` / `test_the_status_survives_forced_colour` / `test_a_dead_superlink_fails_the_verdict_without_querying` | `sim-tutorial.sh`'s exit status is the run's: its functions are sourced and run against a fake `uv` whose `flwr ls` answers scripted statuses in flwr's real reply shapes — only `finished:completed` passes; a run that never turns terminal fails after a bounded number of polls; an unknown run fails; any other failed query (flwr reports every one as `success: false` with exit 0) stops the polling and surfaces the message; a rich-coloured reply under `FORCE_COLOR` still parses; and a SuperLink that has gone is reported as such without querying, because `flwr ls` would quietly start a fresh one. `flwr run --stream` alone returns 0 whatever became of the run. |
+| `test_a_listener_this_checkout_did_not_start_is_refused` / `test_a_free_control_port_passes_the_check` / `test_a_port_probe_that_cannot_tell_counts_as_taken` | The script refuses to hand the run to a local SuperLink it did not start: a real listener on a throwaway port set as `FLWR_LOCAL_CONTROL_API_PORT` is refused with its pid and command line (where `ss` can see them), a free port passes silently, and an `ss` that errors counts as taken rather than free. |
+| `test_the_port_release_wait_returns_once_the_port_frees` / `test_the_port_release_wait_gives_up_loudly` | After stopping its own leftover SuperLink the script waits for the ports to free, and gives up with a message rather than racing flwr's replacement. |
+| `test_the_library_flag_only_works_when_sourced` | `SIM_TUTORIAL_LIB=1` exported into a real run is refused, not a silent successful no-op. |
+| `test_every_flower_tutorial_has_a_simulator_data_mapping` | Every `fl-tutorials/flower/<tutorial>/app` is named in the script's data-mapping `case`. |
+| `test_main_flow_*` | The script end to end against the fakes (`flwr run` faked too, `pgrep` shimmed away from real processes, a synthetic `SIM_DATA_ROOT`): a completed run passes and the EHR mapping exports exactly `DEV_DATAFRAME` (no images dir); a failed run, a failed submission (`flwr run` non-zero) and a missing run id each fail with the right status. |
+| `test_app_loads_checkpoints_weights_only` (in `test_offline_apps.py`) | Every `torch.load` in a shipped app dir passes `weights_only=True` explicitly — an implicit default or `weights_only=False` unpickles arbitrary objects from the checkpoint. Host-side `process_tools/` conversions are outside the walked app dirs and stay exempt. |
 
 Three design points are load-bearing, and each is itself asserted rather than assumed:
 

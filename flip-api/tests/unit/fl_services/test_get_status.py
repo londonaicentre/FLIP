@@ -189,6 +189,8 @@ def test_get_status_endpoint_error(fake_request, mock_db):
         with pytest.raises(HTTPException) as exc:
             get_status_endpoint(fake_request, mock_db, user_id="user-1")
         assert exc.value.status_code == 500
+        assert exc.value.detail == "Internal server error"
+        assert "boom" not in exc.value.detail
 
 
 def test_get_status_endpoint_server_status_none(

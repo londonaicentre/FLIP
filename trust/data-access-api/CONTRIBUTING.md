@@ -22,14 +22,11 @@ For general contribution guidelines (coding style, testing, pull requests), see 
 
 Ensure the OMOP database is running and populated first (see [../omop-db/README.md](../omop-db/README.md)).
 
-```bash
-uv sync
-make dev   # starts the API with live-reload using local uv installation
-```
-
-To run in Docker:
+The containerised `make up` is the local dev flow (there is no separate
+`make dev` target):
 
 ```bash
+uv sync   # populate the local venv for IDE type-checks / running tests
 make up
 ```
 
