@@ -14,7 +14,9 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import sys
+import tarfile
 from pathlib import Path
 from types import ModuleType
 
@@ -141,6 +143,86 @@ class _Session:
     def delete(self, url, **kwargs):
         self.deletes.append(url)
         return _Response(200)
+
+
+class TestEnsureDicoms:
+    """The ~2 GB stream: only the Kubernetes hook has a Job backoffLimit behind it, so a single
+    transient fault would otherwise fail a dev or EC2 bring-up and cost the whole stream again."""
+
+    @staticmethod
+    def _tar_bytes(name="a.dcm", payload=b"DICM"):
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            tar.addfile(info, io.BytesIO(payload))
+        return buffer.getvalue()
+
+    def _install(self, seed, monkeypatch, outcomes):
+        """Make requests.get return each outcome in turn; an Exception instance is raised."""
+        calls = []
+
+        class _Stream:
+            def __init__(self, body):
+                self.raw = io.BytesIO(body)
+
+            def raise_for_status(self):
+                return None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def fake_get(url, **kwargs):
+            calls.append(url)
+            outcome = outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return _Stream(outcome)
+
+        monkeypatch.setattr(seed.requests, "get", fake_get)
+        monkeypatch.setattr(seed.time, "sleep", lambda _: None)
+        return calls
+
+    def test_a_cut_short_stream_is_retried_and_the_marker_written_once_whole(self, seed, tmp_path, monkeypatch):
+        calls = self._install(seed, monkeypatch, [requests.ConnectionError("IncompleteRead"), self._tar_bytes()])
+
+        project_dir = seed.ensure_dicoms("v1", "cxr_project", tmp_path)
+
+        assert len(calls) == 2
+        assert (project_dir / "a.dcm").read_bytes() == b"DICM"
+        assert (project_dir / seed.COMPLETE_MARKER).is_file()
+
+    def test_a_failed_attempt_leaves_nothing_behind_for_the_next_one(self, seed, tmp_path, monkeypatch):
+        """A half-extracted tree must not be mixed into the retry, nor mistaken for a complete one."""
+        self._install(seed, monkeypatch, [self._tar_bytes("fresh.dcm")])
+        project_dir = tmp_path / "v1" / "cxr_project"
+        project_dir.mkdir(parents=True)
+        (project_dir / "stale.dcm").write_bytes(b"OLD")  # no marker: a previous run died mid-extract
+
+        seed.ensure_dicoms("v1", "cxr_project", tmp_path)
+
+        assert not (project_dir / "stale.dcm").exists()
+        assert (project_dir / "fresh.dcm").read_bytes() == b"DICM"
+
+    def test_gives_up_after_the_last_attempt(self, seed, tmp_path, monkeypatch):
+        calls = self._install(seed, monkeypatch, [requests.ConnectionError("reset")] * 3)
+
+        with pytest.raises(requests.ConnectionError):
+            seed.ensure_dicoms("v1", "cxr_project", tmp_path, attempts=3)
+        assert len(calls) == 3
+        assert not (tmp_path / "v1" / "cxr_project" / seed.COMPLETE_MARKER).exists()
+
+    def test_a_complete_cache_is_not_re_streamed(self, seed, tmp_path, monkeypatch):
+        calls = self._install(seed, monkeypatch, [])
+        project_dir = tmp_path / "v1" / "cxr_project"
+        project_dir.mkdir(parents=True)
+        (project_dir / seed.COMPLETE_MARKER).write_text("done\n")
+
+        assert seed.ensure_dicoms("v1", "cxr_project", tmp_path) == project_dir
+        assert calls == []
 
 
 class TestUploadInstance:

@@ -55,8 +55,14 @@ variable "ADMIN_USER_PASSWORD" {
 
 variable "cognito_callback_urls" {
   type        = list(string)
-  description = "OAuth callback URLs for the dev Cognito app client. Doubles as the source for flip-api's CORS allowlist (see flip_api/utils/cors.py:get_cors_allowed_origins), so every UI origin that calls the API in dev must be listed here. Cognito only accepts http:// for the localhost host."
-  default     = ["https://localhost:443", "http://localhost:44357"]
+  description = "OAuth callback URLs for the dev Cognito app client, beyond the http://localhost:<port> origins generated from dev_ui_ports. Doubles as the source for flip-api's CORS allowlist (see flip_api/utils/cors.py:get_cors_allowed_origins), so every UI origin that calls the API in dev must be listed here. Cognito only accepts http:// for the localhost host."
+  default     = ["https://localhost:443"]
+}
+
+variable "dev_ui_ports" {
+  type        = list(number)
+  description = "Localhost ports pre-registered as browser origins (Cognito callback list + bucket CORS), so a UI on any of them needs no Terraform apply — see README.md \"Browser-usable UI ports\" (FLIP#1227)."
+  default     = [44350, 44351, 44352, 44353, 44354, 44355, 44356, 44357, 44358, 44359]
 }
 
 variable "cognito_logout_urls" {
@@ -88,6 +94,6 @@ variable "FLIP_APP_BUNDLES_BUCKET_NAME" {
 
 variable "s3_cors_allowed_origins" {
   type        = list(string)
-  description = "Browser origins permitted to CORS-call the dev S3 buckets. Must include every UI origin that calls the API in dev — typically https://localhost:443, the Vite dev-server http://localhost:44357, and the flip-api origin http://localhost:8080 (Swagger UI exercising the presigned flows)."
-  default     = ["https://localhost:443", "http://localhost:44357", "http://localhost:8080"]
+  description = "Browser origins permitted to CORS-call the dev S3 buckets, beyond the http://localhost:<port> origins generated from dev_ui_ports. Must include every other UI origin that calls the API in dev — https://localhost:443 and the flip-api origin http://localhost:8080 (Swagger UI exercising the presigned flows)."
+  default     = ["https://localhost:443", "http://localhost:8080"]
 }

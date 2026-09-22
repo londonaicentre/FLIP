@@ -18,6 +18,10 @@ on:
     paths:
       - "trust/omop-db/**"
       - ".github/workflows/test_trust_omop_db.yml"
+      # This service's Makefile includes+exports the GSTT kit example at parse time, so a
+      # line make cannot read stops the suite before a test runs, and its values land in the
+      # environment Settings reads. The KCH twin exists but no Makefile reads it.
+      - "trust/.env.GSTT.development.example"
   pull_request:
     branches: [main, develop]
 
@@ -38,6 +42,7 @@ jobs:
       paths: |
         trust/omop-db/**
         .github/workflows/test_trust_omop_db.yml
+        trust/.env.GSTT.development.example
 
   omop-db:
     needs: changes
