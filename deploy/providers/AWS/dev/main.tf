@@ -46,6 +46,17 @@ provider "aws" {
   region = var.AWS_REGION
 }
 
+locals {
+  # Both browser-origin lists take the same generated localhost origins rather
+  # than the buckets getting an S3 wildcard, so a bucket is never reachable from
+  # an origin the API's CORS allowlist (derived from callback_urls) would refuse.
+  # distinct() is a no-op against the defaults below, which name no port from the
+  # block; it keeps the two lists duplicate-free for an override that does.
+  dev_ui_port_origins = [for port in var.dev_ui_ports : "http://localhost:${port}"]
+  callback_urls       = distinct(concat(var.cognito_callback_urls, local.dev_ui_port_origins))
+  bucket_cors_origins = distinct(concat(var.s3_cors_allowed_origins, local.dev_ui_port_origins))
+}
+
 module "cognito" {
   source = "../modules/cognito"
 
@@ -56,7 +67,7 @@ module "cognito" {
   researcher_email   = var.flip_cognito_researcher_email
   seed_user_password = var.ADMIN_USER_PASSWORD
   templates_dir      = "${path.module}/../templates/cognito"
-  callback_urls      = var.cognito_callback_urls
+  callback_urls      = local.callback_urls
   logout_urls        = var.cognito_logout_urls
   mfa_configuration  = var.cognito_mfa_configuration
 }
@@ -69,7 +80,7 @@ module "flip_model_files_uploads_bucket" {
   # presigned_url_for_upload.py), GET for the presigned-URL model-file
   # download (FLIP#784) — the browser fetches bytes directly from the bucket.
   cors_methods         = ["POST", "GET"]
-  cors_allowed_origins = var.s3_cors_allowed_origins
+  cors_allowed_origins = local.bucket_cors_origins
   # Mirrors the stag/prod root: the scan pipeline (#52) deletes and moves
   # objects across the `uploaded/` and `scanned/` prefixes, and every such
   # delete leaves a noncurrent version on this versioned bucket.
@@ -80,7 +91,7 @@ module "flip_fl_results_bucket" {
   source               = "../modules/flip_s3_bucket"
   bucket_name          = var.FLIP_FL_RESULTS_BUCKET_NAME
   cors_methods         = ["GET"]
-  cors_allowed_origins = var.s3_cors_allowed_origins
+  cors_allowed_origins = local.bucket_cors_origins
 }
 
 module "flip_app_bundles_bucket" {
