@@ -185,8 +185,11 @@ class ServerEventHandler(FLComponent):
         validation_json_generator = self.validation_json_generator
         persist_and_cleanup = self.persist_and_cleanup
         if validation_json_generator is None or persist_and_cleanup is None:
-            # __set_dependencies has already raised the system panic for the missing component;
-            # there is nothing left to relay for a run that is going down.
+            # __set_dependencies has already raised the system panic for the missing component.
+            # END_RUN must still make the failed terminal state visible to the hub.
+            if event_type == EventType.END_RUN:
+                self.final_status = ModelStatus.ERROR
+                self._update_status(fl_ctx, self.final_status)
             return
 
         validation_json_generator.handle_evaluation_events(event_type, fl_ctx)

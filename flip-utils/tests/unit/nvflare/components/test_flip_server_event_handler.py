@@ -482,8 +482,29 @@ class TestServerEventHandler:
 
         handler.system_panic.assert_called_once()
         assert "must be PersistToS3AndCleanup" in str(handler.system_panic.call_args)
+
+    def test_end_run_missing_persist_cleanup_reports_error(self):
+        """A missing persist-and-cleanup component must still terminate the hub-side model status."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+        handler.system_panic = MagicMock()
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+
+        json_generator = Mock(spec=ValidationJsonGenerator)
+        engine.get_component.side_effect = lambda component_id: (
+            json_generator if component_id == "json_generator" else None
+        )
+
+        handler.handle_event(EventType.END_RUN, fl_ctx)
+
         handler.system_panic.assert_called_once()
-        assert "must be PersistToS3AndCleanup" in str(handler.system_panic.call_args)
+        assert handler.final_status == ModelStatus.ERROR
+        flip.update_status.assert_called_once_with(model_id, ModelStatus.ERROR)
 
     # --- FLIP#754: an evaluation whose every validate task failed must not report success ---
 
