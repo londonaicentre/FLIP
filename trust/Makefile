@@ -581,7 +581,7 @@ wait-pacs:
 # (CLEAR=1) and re-uploads. This is what a .data_version bump does to a seeded trust now;
 # there is no FORCE, because nothing here can clobber data a seed did not put there.
 # Run by up-trust; safe to call on its own after changing PROJECTS or the pin:
-#   make -C trust ensure-seeded KIT=GSTT PROJECTS="spleen_project cxr_project"
+#   make -C trust ensure-seeded KIT=GSTT PROJECTS="cxr_project prostate_project"
 ensure-seeded: wait-omop-db wait-pacs
 	$(require_kit)
 	@want=$$(printf 'projects=%s\nsource_trust=%s\nversion=%s\n' "$(PROJECTS)" "$(SOURCE_TRUST)" "$(TRUST_DATA_REVISION)"); \
@@ -615,8 +615,14 @@ load-synthea-ehr:
 # (`load-omop-vocab`, a separate credentialed step) has been loaded yet.
 # Persists in the bind-mounted volume; ensure-seeded re-runs it on a
 # .data_version bump.
+# The default is every project whose OMOP tables AND DICOM set are both published, because
+# ensure-seeded loads both halves from the pinned tag and a project missing either one fails
+# the bring-up. Since FLIP#1221 that is cxr_project alone: spleen and brain_mri publish their
+# tables but regenerate their DICOMs locally (MSD is open data), so they are seeded from the
+# local tree with `make -C fl-tutorials seed-spleen|seed-brain-mri KIT=<CODE>` after
+# `convert-<dataset>-to-dicom`, not from here.
 #   make -C trust seed-omop KIT=GSTT PROJECTS="spleen_project cxr_project"
-PROJECTS ?= cxr_project spleen_project
+PROJECTS ?= cxr_project
 # Which OMOP partition this trust gets. The FL kit slot is the default and is
 # right for the shipped GSTT/KCH roster, but the two are different axes: slots
 # are claimed from a pool in registration order, so a re-registered or third
@@ -626,36 +632,75 @@ PROJECTS ?= cxr_project spleen_project
 # and an override rather than living inside `TRUST_INDEX=$(TRUST_NUM)`.
 #   make -C trust seed KIT=GSTT SOURCE_TRUST=2
 SOURCE_TRUST ?= $(TRUST_NUM)
+# CANONICAL_DIR=<dir> loads a project's tables from a local canonical tree
+# (<dir>/<project>/<table>.csv) instead of the published tag — how a project is
+# proven on a running trust BEFORE its data version is tagged (FLIP#1221):
+#   make -C trust seed-omop KIT=GSTT PROJECTS=brain_mri_project CANONICAL_DIR=/abs/path/canonical
+# CLEAN=all wipes every project's rows first (default: only the listed projects',
+# by their own person_ids) — the one-time move off a re-cut project whose ids all
+# changed, e.g. spleen at the FLIP#1221 cut:
+#   make -C trust seed-omop KIT=GSTT PROJECTS="cxr_project spleen_project" CLEAN=all CANONICAL_DIR=…
 seed-omop:
 	$(require_kit)
 	$(OMOP_DB_CMD) seed-omop TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
 	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
 	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB) PROJECTS="$(PROJECTS)" \
+	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR)) $(if $(CLEAN),CLEAN=$(CLEAN)) \
 	  OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_ABS)
 
 # The PACS half: this trust's slice of each project's DICOMs into its running
 # Orthanc, selected by the same source_trust column, so OMOP and PACS agree by
 # construction. CLEAR=1 removes these projects' existing studies first (Orthanc
 # never overwrites an AlreadyStored instance); DRY_RUN=1 resolves and counts.
-#   make -C trust seed-orthanc KIT=GSTT PROJECTS="spleen_project cxr_project"
+# A project whose DICOMs are not on the dataset is seeded from a local tree with
+# DICOM_SOURCE=<dir> TABLES_DIR=<canonical dir>, both or neither (FLIP#1221).
+#   make -C trust seed-orthanc KIT=GSTT PROJECTS="cxr_project prostate_project"
+#   make -C trust seed-orthanc KIT=GSTT PROJECTS=brain_mri_project DICOM_SOURCE=/abs/dicom TABLES_DIR=/abs/canonical
 seed-orthanc:
 	$(require_kit)
 	$(ORTHANC_CMD) seed-orthanc TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  PACS_UI_PORT=$(PACS_UI_PORT) \
 	  ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
 	  ORTHANC_STORAGE_DIR_TRUST_$(TRUST_NUM)=$(ORTHANC_STORAGE_ABS) PROJECTS="$(PROJECTS)" \
+	  $(if $(DICOM_SOURCE),DICOM_SOURCE=$(DICOM_SOURCE)) $(if $(TABLES_DIR),TABLES_DIR=$(TABLES_DIR)) \
 	  $(if $(CLEAR),CLEAR=$(CLEAR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
 
 # Both halves for one trust, then for the shipped dev roster — unconditionally, unlike
 # ensure-seeded (use these to add projects to a running trust, or to force a re-seed).
-#   make -C trust seed KIT=GSTT PROJECTS="spleen_project cxr_project"
-#   make -C trust seed-trusts PROJECTS="spleen_project cxr_project"
+#   make -C trust seed KIT=GSTT PROJECTS="cxr_project prostate_project"
+#   make -C trust seed-trusts PROJECTS="cxr_project prostate_project"
 seed: seed-omop seed-orthanc
 
 seed-trusts:
 	$(MAKE) seed KIT=GSTT PROJECTS="$(PROJECTS)"
 	$(MAKE) seed KIT=KCH PROJECTS="$(PROJECTS)"
+
+# Unseed: take the listed projects OUT of a running trust — OMOP rows by the
+# person ids and PACS studies by the accessions the tables at
+# HF_TRUST_DATA_REVISION (or CANONICAL_DIR= / TABLES_DIR=) name — loading
+# nothing. The move off a re-cut project whose ids all changed (spleen at the
+# FLIP#1221 cut), leaving every other project in place:
+#   make -C trust unseed KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911
+#   make -C fl-tutorials seed-spleen KIT=GSTT
+unseed-omop:
+	$(require_kit)
+	$(OMOP_DB_CMD) unseed-omop TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
+	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
+	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
+	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB) PROJECTS="$(PROJECTS)" \
+	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR)) \
+	  $(if $(and $(TRUST_NUM),$(OMOP_DATA_DIR)),OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_DIR))
+
+unseed-orthanc:
+	$(require_kit)
+	$(ORTHANC_CMD) unseed-orthanc TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
+	  PACS_UI_PORT=$(PACS_UI_PORT) \
+	  ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
+	  ORTHANC_STORAGE_DIR_TRUST_$(TRUST_NUM)=$(ORTHANC_STORAGE_DIR) PROJECTS="$(PROJECTS)" \
+	  $(if $(TABLES_DIR),TABLES_DIR=$(TABLES_DIR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
+
+unseed: unseed-orthanc unseed-omop
 
 # Publish a new data version to aicentreflip/trust-data (FLIP#1100): ONE commit on
 # main that replaces exactly the artefacts passed, then ONE tag = VERSION. The
@@ -671,8 +716,8 @@ publish-trust-data:
 	@[ -n "$(VERSION)" ] || (echo "❌ VERSION=<new data-version tag> is required"; exit 1)
 	uv run publish_trust_data.py --version $(VERSION) \
 	  $(if $(OMOP_CSV),--omop-csv $(OMOP_CSV)) $(if $(DICOM),--dicom $(DICOM)) \
-	  $(if $(CARD),--card $(CARD)) $(if $(filter 1,$(DRY_RUN)),--dry-run) \
-	  $(if $(filter 1,$(ALLOW_ANY_TAG)),--allow-any-tag)
+	  $(if $(CARD),--card $(CARD)) $(if $(DELETE),--delete $(DELETE)) \
+	  $(if $(filter 1,$(DRY_RUN)),--dry-run) $(if $(filter 1,$(ALLOW_ANY_TAG)),--allow-any-tag)
 
 # Unit tests + lint for the trust-level data tooling: publish_trust_data.py, seed_trust.sh
 # (the one seeding procedure the Kubernetes hook and the EC2 play both execute, so it runs
