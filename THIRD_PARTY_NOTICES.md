@@ -21,6 +21,57 @@ Copyright (c) Observational Health Data Sciences and Informatics (OHDSI)
 
 Licensed under the Apache License, Version 2.0.
 
+## Flower Labs supernode-authentication template
+
+The credential-generation script for the Flower backend's mTLS provisioning
+(`fl-services/flower/provision/scripts/generate_creds.py`) is vendored from the
+`flwrlabs` `supernode-authentication` flwr template's `generate_creds.py`, kept
+in-tree so Flower provisioning is self-contained and reproducible.
+
+Copyright (c) 2026 Flower Labs GmbH
+
+Licensed under the Apache License, Version 2.0.
+
+## MONAI tutorials (spleen segmentation)
+
+The training code in the 3D spleen segmentation FL tutorial
+(`fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation`) is adapted
+from the MONAI spleen segmentation example
+(https://github.com/Project-MONAI/tutorials/blob/main/3d_segmentation/spleen_segmentation_3d.ipynb).
+
+Copyright (c) MONAI Consortium
+
+Licensed under the Apache License, Version 2.0.
+
+## MONAI Deploy App SDK (segmentation MAP template)
+
+The segmentation MAP template (`map-apps/segmentation`) is adapted from
+`ai_spleen_seg_app` in the MONAI Deploy App SDK examples.
+
+Copyright (c) MONAI Consortium
+
+Licensed under the Apache License, Version 2.0.
+
+## NVIDIA NVFlare (FedOpt job type)
+
+The FedOpt NVFLARE app template (`fl-apps/nvflare/fed_opt`) is based on the paper "Adaptive
+Federated Optimization" by Reddi S. et al. (2020) and on NVFlare's own implementation in its
+CIFAR10 tutorial
+(https://github.com/NVIDIA/NVFlare/tree/2.4/examples/advanced/cifar10/cifar10-sim/jobs/cifar10_fedopt/cifar10_fedopt).
+
+Copyright (c) NVIDIA Corporation
+
+Licensed under the Apache License, Version 2.0.
+
+## Spleen OMOP mock-data generation chain
+
+The spleen OMOP mock-data generation chain under `fl-tutorials/datasets/spleen/` and
+`fl-tutorials/datasets/utils/` (`convert_spleen_dataset.py`, `create_metadata_table.py`,
+`omop_convert_spleen.py`, `omop_mappings.py`, `omop_schemas.py`) is imported from
+`londonaicentre/flip_project_spleen_segmentation` and `londonaicentre/flip-omop-mock-data`
+(FLIP#1092), kept as its own repos alongside the platform for provenance. Both are
+London AI Centre repositories, not third-party code — noted here for provenance only.
+
 ## DICOM2OMOP
 
 The DICOM vocabulary loader (trust/omop-db/src/omop_db_tools/load_dicom_vocab.py)

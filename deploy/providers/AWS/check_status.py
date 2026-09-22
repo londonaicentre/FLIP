@@ -1363,7 +1363,7 @@ def main(
             # Grafana is part of the optional observability stack — treat its
             # absence as WARN, not FAIL.
             trust_endpoints = [
-                ("XNAT", "http://127.0.0.1:8104/", ["200", "302"], "FAIL"),
+                ("XNAT", "http://127.0.0.1:8105/", ["200", "302"], "FAIL"),
                 # Auth is always enforced (FLIP-PT-091): a 200 without
                 # credentials means an unauthenticated PACS — fail.
                 ("Orthanc", "http://127.0.0.1:8042/", ["401"], "FAIL"),

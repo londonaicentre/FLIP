@@ -26,11 +26,33 @@ on:
     paths:
       - "scripts/**"
       - ".github/workflows/test_trust_kit_scripts.yml"
+      # Some guards here assert on files outside scripts/ — test_container_identity.py
+      # on the compose files, test_workflow_trust_guards.py on the image-build
+      # workflows, test_pr_paths_changed.py on the gated service workflows and the
+      # path gate itself — so those paths trigger the push run too, or a guard
+      # silently never runs on the very edit it exists to catch (FLIP#1171 was
+      # reintroduced once that way). pull_request below is deliberately unfiltered:
+      # every develop-targeted PR runs this ~1s job, which removes the trap entirely
+      # where it matters and needs no path list to keep in step with the guards. That
+      # stays true now the service suites are themselves path-gated on PRs into
+      # develop (FLIP#1223) — this workflow is not gated, and must not be, because it
+      # is where those gates are checked.
+      - ".github/workflows/test_*.yml"
+      - ".github/workflows/pr_paths_changed.yml"
+      - "deploy/compose*.yml"
+      - "trust/deploy/compose*.yml"
+      - "fl-services/nvflare/compose.dev.yml"
+      # test_secret_scanning_gate.py asserts on the secret-scanning workflow, the
+      # pre-commit pin and the baseline (FLIP#1215) — same trap, same fix.
+      - ".github/workflows/secret-scanning.yml"
+      - ".pre-commit-config.yaml"
+      - ".secrets.baseline"
+      # test_compose_env_coverage.py asserts the dev composes against the env example (FLIP#1230).
+      - ".env.development.example"
+      - "deploy/fl_backend.mk"
+      - ".github/workflows/docker_build_*.yml"
   pull_request:
     branches: [develop]
-    paths:
-      - "scripts/**"
-      - ".github/workflows/test_trust_kit_scripts.yml"
 
 permissions:
   contents: read

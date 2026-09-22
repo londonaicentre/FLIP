@@ -14,11 +14,11 @@ Where a governance guarantee rests on a technical control, this page states the
 guarantee and links there for the mechanism.
 
 FLIP is designed so that **each participating organisation keeps control of its own
-data**. Patient data never leaves the trust that holds it. No project can use a trust's
-data until that trust has explicitly approved that project. A trust can decline any
-individual project without leaving the federation and without affecting any other
-participant. Nothing in the platform can override that decision, because the data and
-the approval both live on the trust's own infrastructure.
+data**. Patient data never leaves the trust that holds it. No project uses a trust's data
+until that trust has agreed to take part in it. A trust can decline any individual project
+without leaving the federation and without affecting any other participant. The controls
+that decide what may leave a trust run on the trust's own infrastructure, alongside the
+data they protect.
 
 *****************************************
 Each site can veto any individual project
@@ -27,19 +27,29 @@ Each site can veto any individual project
 Approval in FLIP is **per project, per trust** — not a blanket agreement to
 participate.
 
-When a research project is created, it must be approved separately by an administrator
-at each trust whose data it proposes to use. Approval is recorded against that specific
-project–trust pairing, timestamped and attributed. A trust that declines is simply not
-included: the project proceeds with the trusts that approved it, and the declining
-trust's data is never queried, never imported, and never contributes to the model.
+When a research project is staged, each trust whose data it proposes to use decides
+whether to take part. That decision is taken **offline**, between the project and the
+trust's information governance function; its outcome is then recorded in FLIP by a Central
+Hub administrator against that specific project–trust pairing, timestamped, with the
+approving administrator recorded in the project's audit trail (see
+:ref:`admin-project-and-user-management`). A trust that declines is simply not included:
+the project proceeds with the trusts that approved it. The declining trust will already
+have answered the project's cohort query — that runs at every registered trust when the
+query is submitted, before staging, and returns only the aggregate statistics described
+below — but its data is never pulled at row level, never imported, and never trained on.
 
 Three consequences matter for information governance:
 
 - **Participation is not all-or-nothing.** A trust can support one research question and
   decline another — on clinical, ethical, or capacity grounds — without renegotiating
   its involvement in the platform.
-- **The decision sits with the data holder.** The approval gate runs on the trust's own
-  deployment, so it cannot be bypassed by the Central Hub or by another participant.
+- **The decision sits with the data holder.** The agreement itself is made by the trust;
+  the platform records the outcome rather than making the decision. What the platform
+  enforces *on the trust's own deployment*, independently of that record, is narrower and
+  more concrete: every cohort query is validated and executed by the trust's own
+  ``data-access-api`` against a read-only database role, row-level results are withheld
+  below the trust's own minimum group size, and the trust reaches the Central Hub by
+  outbound polling only — nothing is pushed into a trust from outside. See :ref:`security`.
 - **The decision is auditable.** Who approved what, and when, is recorded and can be
   produced for an audit or an ethics review.
 
@@ -89,11 +99,13 @@ Network architecture as a governance guarantee
 **********************************************
 
 The network design is why the guarantees above are structural rather than procedural.
-Trust systems accept no inbound connections: each trust polls the Central Hub outbound,
-there are no inbound firewall rules to open, and there is no route from the internet — or
+Each trust polls the Central Hub outbound, and there is no route from the internet — or
 from the hub — into a trust's network. For a trust's own network team, onboarding FLIP
-requires no inbound exposure at all. A site-to-site VPN can be provisioned on request
-where a trust's policy calls for network-layer separation as well.
+requires no inbound exposure to the outside world. Where FLIP is connected to the trust's
+own PACS, one inbound rule is needed *inside* the trust: FLIP asks the PACS for a study,
+and the PACS opens a connection back to XNAT to deliver it, on the DICOM port alone.
+A site-to-site VPN can be provisioned on request where a trust's policy calls for
+network-layer separation as well.
 
 The practical governance point: a trust does not have to rely on the Central Hub's access
 controls to be confident its systems are unreachable. There is no path.
@@ -145,9 +157,9 @@ by the organisations involved — and for a Caldicott or IG function these are t
 questions, so this page names them explicitly rather than leaving them implied.
 
 The architecture gives those determinations a clean starting point: patient data
-remains in the custody and on the infrastructure of the trust that holds it, each
-trust's approval gate runs locally, and what crosses the boundary is enumerated above.
-For each deployment the items to record are:
+remains in the custody and on the infrastructure of the trust that holds it, the
+disclosure controls over that data run locally on the trust's own deployment, and what
+crosses the boundary is enumerated above. For each deployment the items to record are:
 
 - **Controllership**, per flow: the imaging held in the trust's own XNAT, the cohort
   statistics that leave, and the model updates and trained model.
@@ -221,6 +233,32 @@ applications sent to trusts, and training outputs — including the trained mode
 in versioned cloud storage and are retained until an operator removes them. There is
 no automated end-of-project purge today. A deployment that requires one should record
 the manual deletion step in its project-closure procedure, naming who deletes what.
+
+**Logs are retained per class, and the classes are not alike.** No UK health policy
+sets a retention period for system logs; the CAF-aligned DSPT asks for coverage
+sufficient to investigate an incident (C1.a, C1.d) and UK GDPR's storage limitation
+principle asks that whatever period is chosen be defined and justified rather than
+open-ended. FLIP's positions:
+
+- **Hub infrastructure logs** — the ECS, trust EC2 and WAF log groups — are retained
+  for **365 days in production**, matching the retention baseline the organisation's
+  Landing Zone Accelerator already applies to every log group it creates in the same
+  accounts. Staging deliberately deviates to **90 days**: its trust data is mock, but
+  its authentication and IAM events are real and a staging compromise is a genuine
+  incident, so the window stays long enough to investigate one.
+- **Trust-side application logs** are held for **30 days** in each trust's own Loki
+  instance, sized for operational debugging rather than incident forensics.
+- **Object-storage access logs** are held for **90 days**.
+- **Edge access logs are deliberately the shortest.** CloudFront logs record request
+  URIs, query strings and client IP addresses, so their window is a disclosure
+  decision before it is a cost or forensics one, and it is kept short on purpose
+  rather than raised to match the infrastructure baseline.
+- **Audit records are not logs and are not on this clock.** The project, model, trust
+  and user audit tables record who approved what and which data trained which model.
+  That is provenance: it supports reproducibility, research-integrity expectations and
+  — where a trained model is later taken forward as a medical device by its
+  manufacturer — traceability obligations measured in years, not months. It is
+  retained accordingly, and deliberately, rather than aged out with the telemetry.
 
 **********************************
 Assurance and independent scrutiny
@@ -405,11 +443,14 @@ Objective A — Managing risk
        Caldicott and IG structures sit above this.
      - —
    * - **A1.c** Decision making
-     - Node
+     - Shared
      - The per-project, per-trust approval gate places the decision with the
-       organisation that carries the risk, timestamped and attributed, on the trust's
-       own deployment.
-     - —
+       organisation that carries the risk; the Central Hub records the outcome per
+       project–trust pairing, timestamped, with the approver in the project's audit
+       trail.
+     - The gate is a hub-side record of the trust's decision, not a control on the
+       trust's own deployment; what the trust enforces locally is the query
+       validation and row-level suppression under E3.b.
    * - **A2.a** Risk management process
      - Shared
      - Platform findings are held in a live register carrying an owner and a status
@@ -504,7 +545,8 @@ Objective B — Protecting against cyber attacks and data breaches
      - —
    * - **B3.b** Data in transit
      - Hub + Node
-     - Encrypted transport throughout, with an additional payload-encryption layer;
+     - Encrypted transport throughout, with an additional authenticated
+       (AES-256-GCM) payload-encryption layer;
        mutually authenticated TLS between federated learning participants.
      - —
    * - **B3.c** Stored data
@@ -524,8 +566,9 @@ Objective B — Protecting against cyber attacks and data breaches
    * - **B4.a** Secure by design
      - Hub + Node
      - Outbound-only trust boundary; private-by-default networking; a quarantine
-       boundary between uploaded and scanned model files; approval and suppression
-       gates that run on the trust's own deployment, next to the data.
+       boundary between uploaded and scanned model files; a per-project, per-trust
+       approval recorded on the hub, and suppression gates that run on the trust's own
+       deployment, next to the data.
      - Arbitrary Python in uploaded training code is not sandboxed at runtime — the
        accepted control is uploader self-review plus RBAC (see Appendix A, theme 5).
    * - **B4.b** Secure configuration
@@ -692,7 +735,9 @@ FLIP's strongest governance material.
      - Organisational
      - The lawful basis and consent position are determined per project by the
        organisations involved (see *Data protection roles* above); the per-project
-       approval gate is where a trust enforces its position.
+       approval gate, recorded on the Central Hub, is where a trust's position takes
+       effect — a trust that has not approved a project is never pulled from at row
+       level, imported from, or trained on for it.
      - —
    * - **E2.c** National data opt-out policy
      - Node

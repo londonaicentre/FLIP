@@ -1,0 +1,606 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- if and .Values.xnat.enabled .Values.xnat.initJob.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-xnat-init
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-init
+    app.kubernetes.io/part-of: init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: xnat-init
+    spec:
+      enableServiceLinks: false
+      restartPolicy: OnFailure
+      # The service account used to be created here by a sibling postgres:17-alpine
+      # container that INSERTed straight into xdat_user with a fixed bcrypt hash.
+      # That is removed: the row it wrote has no xhbm_xdat_user_auth record, which
+      # XNAT 1.9.3 back-filled on the later password PUT but 1.10.0 does not, so the
+      # account could never authenticate. configure-xnat-web now creates it through
+      # POST /xapi/users instead — see the comment at that call.
+      # configure-xnat-web runs as an INIT container, not a sibling.
+      #
+      # Both used to run concurrently in containers[], with configure-dcm2niix
+      # polling /xapi/siteConfig for up to 300s waiting for the activation that
+      # configure-xnat-web performs. On a slow host that budget expires first and
+      # configure-dcm2niix exits 1. Under restartPolicy: OnFailure the kubelet
+      # restarts only the FAILED container, so configure-xnat-web keeps running
+      # (verified: it held restartCount=0 and its original startedAt across a
+      # configure-dcm2niix restart) — but the retry re-enters the same race, and
+      # a waiter that outlives the activation it is waiting for is a timing
+      # accident rather than a guarantee.
+      #
+      # An initContainer runs to completion before containers[] start, which
+      # removes the race by construction rather than by widening the timeout.
+      #
+      # It does make the waits strictly serial rather than overlapping, so the
+      # theoretical ceiling rises: this container's readiness wait (600-1200s) plus
+      # the plugin gate (600-1200s), then configure-dcm2niix's own readiness wait
+      # (600-1200s), site-activation wait (300-900s) and ContainerManager wait
+      # (300-900s) — 40 to 90 minutes, against roughly 50 at the old max() of the
+      # two chains. Neither figure is reachable: `make deploy` passes
+      # `--timeout 20m`, which bounds the hook below both, and did so before this
+      # change too. Observed installs complete in 37-69s. If a budget here is ever
+      # raised past 20m, raise the helm timeout with it or the Job will be killed
+      # mid-wait and the hook failure will name helm rather than the wait.
+      initContainers:
+        - name: configure-xnat-web
+          # Runs the same configure-xnat.sh the Compose deployment runs, from the same image that
+          # ships it (trust/xnat/xnat/Dockerfile ADDs config/ to ${XNAT_ROOT}/config). This used to
+          # be ~380 lines of shell inlined here plus a third copy in a ConfigMap, and the three had
+          # drifted: the inlined copy hardcoded the mocked Orthanc and ignored the chart's own
+          # orthanc.dicomHost / dicomPort / dicomAet values, which is why the external-PACS override
+          # never actually redirected DQR (FLIP#993). One script, one place, covered by
+          # trust/xnat/tests/.
+          #
+          # configure-xnat.sh is self-contained: it waits for XNAT, waits for the DQR plugin routes
+          # via wait-for-xnat-plugins.sh, then applies site, user, DQR, SCP receiver and PACS
+          # configuration. It short-circuits when the site is already initialised, so re-running on
+          # helm upgrade is safe.
+          #
+          # The `cd /data/xnat/config` below is a literal on purpose. XNAT_ROOT is a build ARG only —
+          # the image never exports it (the Dockerfile exports XNAT_HOME, not XNAT_ROOT), so there is
+          # no image-provided variable to read it back from at runtime. And /data/xnat is pinned
+          # chart-wide, not just here: xnat-web's six persistent-volume mountPaths, its XNAT_HOME, its
+          # -Dxnat.home, and the Container Service ConfigMap's "combined-path-translation" below all
+          # spell it out. An image rebuilt with a different XNAT_ROOT breaks every one of those with
+          # or without this line, so a value here would advertise a configurability the chart does not
+          # have. If XNAT_ROOT ever needs to move, it moves in all of those places at once.
+          image: "{{ .Values.xnat.web.image.repository }}:{{ .Values.xnat.web.image.tag }}"
+          imagePullPolicy: {{ .Values.xnat.web.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              cd /data/xnat/config
+              bash configure-xnat.sh
+          env:
+            - name: XNAT_URL
+              value: "http://xnat-web:8080"
+            - name: XNAT_ADMIN_USER
+              value: {{ .Values.xnat.web.adminUser | quote }}
+            # Both map to the same secret key, matching the xnat-web deployment: on a fresh install
+            # XNAT is seeded with this password, and configure-xnat.sh rotates from it to itself.
+            - name: XNAT_ADMIN_INITIAL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-admin-password
+            - name: XNAT_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-admin-password
+            - name: XNAT_SERVICE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-service-user
+            - name: XNAT_SERVICE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-service-password
+            # DICOM SCP receiver: the port XNAT binds and registers, and the AE title the PACS
+            # addresses its C-STORE association to. Must match what the PACS has registered.
+            # No `| default` here: Helm substitutes a default for an empty string too, which would
+            # hand the script a value it considers configured and cancel its fail-loud guard. The
+            # chart's own defaults live in values.yaml; an operator who blanks one gets an error.
+            - name: XNAT_PORT
+              value: {{ .Values.xnat.web.dicomPort | quote }}
+            - name: XNAT_AETITLE
+              value: {{ .Values.xnat.web.dicomAet | quote }}
+            # Upstream PACS. Defaults are the mocked Orthanc; a real trust overrides them.
+            - name: PACS_HOST
+              value: {{ .Values.pacs.host | quote }}
+            - name: PACS_AETITLE
+              value: {{ .Values.pacs.aeTitle | quote }}
+            - name: PACS_QR_PORT
+              value: {{ .Values.pacs.qrPort | quote }}
+            - name: PACS_LABEL
+              value: {{ .Values.pacs.label | quote }}
+            - name: PACS_SUPPORTS_EXTENDED_NEGOTIATIONS
+              value: {{ .Values.pacs.supportsExtendedNegotiations | quote }}
+            # Throttle: a production PACS may refuse further associations after a certain volume.
+            - name: PACS_AVAILABILITY_DAYS
+              value: {{ .Values.pacs.availability.days | quote }}
+            - name: PACS_AVAILABILITY_START
+              value: {{ .Values.pacs.availability.start | quote }}
+            - name: PACS_AVAILABILITY_END
+              value: {{ .Values.pacs.availability.end | quote }}
+            - name: PACS_THREADS
+              value: {{ .Values.pacs.availability.threads | quote }}
+            - name: PACS_UTILIZATION_PERCENT
+              value: {{ .Values.pacs.availability.utilizationPercent | quote }}
+            - name: DQR_MAX_PACS_REQUEST_ATTEMPTS
+              value: {{ .Values.pacs.dqr.maxRequestAttempts | quote }}
+            - name: DQR_RETRY_WAIT_SECONDS
+              value: {{ .Values.pacs.dqr.retryWaitSeconds | quote }}
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+      containers:
+        # Configures the XNAT Container Service plugin to use the native
+        # Kubernetes compute backend (available since container-service 3.2.0),
+        # registers the dcm2niix command, and enables the Event Service so
+        # imaging-api can create per-project event subscriptions. Mirrors what
+        # configure-dcm2niix.sh does in the Compose deployment, but speaks to
+        # the K8s backend instead of the Docker socket.
+        - name: configure-dcm2niix
+          image: alpine:3.20
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              apk add --no-cache curl jq >/dev/null
+              XNAT_URL="http://xnat-web:8080"
+              CREDS="${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASS}"
+              DCM2NIIX_NAME="dcm2niix"
+
+              # Same fail-loud helper as the configure-xnat-web container (each
+              # container runs its own script, so it is defined twice). Mirrors
+              # xnat_curl in trust/xnat/xnat/config/configure-dcm2niix.sh, which
+              # is already fail-loud on the Compose side — this brings K8s to
+              # parity (FLIP#862).
+              scrub_args() {
+                local redact_next=""
+                local arg
+                local out=""
+                for arg in "$@"; do
+                  if [ -n "$redact_next" ]; then
+                    out="$out <redacted>"
+                    redact_next=""
+                  elif [ "$arg" = "-u" ] || [ "$arg" = "-d" ] || [ "$arg" = "--data-binary" ]; then
+                    out="$out $arg"
+                    redact_next=1
+                  else
+                    out="$out $arg"
+                  fi
+                done
+                printf '%s' "${out# }" | sed 's/JSESSIONID=[^ ]*/JSESSIONID=<redacted>/g'
+              }
+
+              xnat_curl() {
+                local response
+                local status
+                local body
+                local curl_exit=0
+                response=$(curl -sS --connect-timeout 10 --max-time 120 -w '\n%{http_code}' "$@") || curl_exit=$?
+                if [ "$curl_exit" -ne 0 ]; then
+                  echo "ERROR: curl transport failure (exit $curl_exit)" >&2
+                  echo "  args: $(scrub_args "$@")" >&2
+                  return 1
+                fi
+                status=$(printf '%s' "$response" | tail -n1 | tr -d '\r')
+                body=$(printf '%s' "$response" | sed '$d' | tr -d '\r')
+                case "$status" in
+                  2[0-9][0-9]) ;;
+                  *)
+                    echo "ERROR: XNAT request failed with HTTP $status" >&2
+                    echo "  args: $(scrub_args "$@")" >&2
+                    echo "  body: $body" >&2
+                    return 1
+                    ;;
+                esac
+                if [ -n "$body" ]; then
+                  printf '%s\n' "$body"
+                fi
+              }
+
+              echo "Waiting for XNAT to be ready..."
+              XNAT_READY=false
+              HTTP_CODE=000
+              for i in $(seq 1 60); do
+                # `|| HTTP_CODE=000` is load-bearing: `set -e` aborts on a
+                # failing command substitution, so without it the first probe
+                # against a still-booting Tomcat (curl exit 7) kills this
+                # container and the loop can never wait.
+                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+                  --connect-timeout 5 --max-time 10 "${XNAT_URL}/xapi/siteConfig" 2>/dev/null) || HTTP_CODE=000
+                if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ]; then
+                  echo "XNAT is ready (HTTP ${HTTP_CODE})!"
+                  XNAT_READY=true
+                  break
+                fi
+                sleep 10
+              done
+              if [ "$XNAT_READY" != "true" ]; then
+                echo "ERROR: XNAT did not become ready within 600s (last HTTP ${HTTP_CODE})" >&2
+                exit 1
+              fi
+
+              # The configure-xnat-web INIT container activates the site
+              # ({"initialized": true} on /xapi/siteConfig). It is no longer a sibling:
+              # initContainers run to completion before this one starts, so this wait can
+              # no longer expire for the reason it was written to catch. If the
+              # initContainer completed, activation has already happened; if it did not,
+              # this container never started — its activation POST goes through xnat_curl
+              # under `set -e`, which aborts the initContainer on any non-2xx.
+              #
+              # Kept as a residual guard, not as sequencing: it still catches a site that
+              # reports activated and then does not (an XNAT-side rollback, or a different
+              # backend answering), and it fails with a named cause rather than letting the
+              # Container Service calls below 404 into `|| true`.
+              echo "Waiting for XNAT site activation..."
+              SITE_ACTIVATED=false
+              for i in $(seq 1 60); do
+                INIT=$(curl -sf -u "${CREDS}" --connect-timeout 5 --max-time 10 \
+                  "${XNAT_URL}/xapi/siteConfig" 2>/dev/null \
+                  | jq -r '.initialized // false') || INIT=false
+                if [ "${INIT}" = "true" ]; then
+                  echo "XNAT site is activated."
+                  SITE_ACTIVATED=true
+                  break
+                fi
+                sleep 5
+              done
+              if [ "$SITE_ACTIVATED" != "true" ]; then
+                echo "ERROR: XNAT site was not activated within 300s — check the configure-xnat-web INIT container's log" >&2
+                exit 1
+              fi
+
+              # The configure-xnat-web INIT container grants ${XNAT_ADMIN_USER}
+              # the ContainerManager role, which every Container Service call
+              # below requires (CS >= 3.7.0). Residual guard for the same reason
+              # as the activation wait above — an unauthorised call here used to
+              # be swallowed by `|| true` and left dcm2niix unregistered on a
+              # "successful" Job, so it fails with a named cause instead.
+              echo "Waiting for the ContainerManager role on ${XNAT_ADMIN_USER}..."
+              HAS_CM=false
+              for i in $(seq 1 60); do
+                ROLES=$(curl -sf -u "${CREDS}" --connect-timeout 5 --max-time 10 \
+                  "${XNAT_URL}/xapi/users/${XNAT_ADMIN_USER}/roles/" 2>/dev/null) || ROLES=""
+                if printf '%s' "$ROLES" | jq -e 'index("ContainerManager")' >/dev/null 2>&1; then
+                  echo "${XNAT_ADMIN_USER} holds ContainerManager."
+                  HAS_CM=true
+                  break
+                fi
+                sleep 5
+              done
+              if [ "$HAS_CM" != "true" ]; then
+                echo "ERROR: ${XNAT_ADMIN_USER} never gained the ContainerManager role within 300s — Container Service calls would fail 401/403" >&2
+                exit 1
+              fi
+
+              # No image-host (registry) registration here, unlike configure-dcm2niix.sh: the
+              # Kubernetes compute backend pulls images via kubelet (public ghcr.io images need no
+              # pull secret), not via the Container Service's docker client, so the swarm-only
+              # null-AuthConfig NPE that registration works around cannot occur on this path.
+              echo "Registering Kubernetes backend with the Container Service plugin..."
+              CS_HTTP=$(curl -s -o /tmp/cs_resp.txt -w "%{http_code}" \
+                --connect-timeout 10 --max-time 120 \
+                -X POST "${XNAT_URL}/xapi/docker/server" \
+                -u "${CREDS}" \
+                -H "Content-Type: application/json" \
+                -d @/cs-config/container-service-backend-configuration.kubernetes.json) || CS_HTTP="000"
+              if [ "${CS_HTTP}" = "200" ] || [ "${CS_HTTP}" = "201" ]; then
+                echo "Container Service backend registered (HTTP ${CS_HTTP})."
+              else
+                echo "ERROR: Container Service backend registration failed (HTTP ${CS_HTTP})" >&2
+                cat /tmp/cs_resp.txt >&2 || true
+                exit 1
+              fi
+
+              echo "Checking for an existing ${DCM2NIIX_NAME} command..."
+              EXISTING=$(xnat_curl -u "${CREDS}" "${XNAT_URL}/xapi/commands?name=${DCM2NIIX_NAME}")
+              EXISTING_ID=$(printf '%s' "$EXISTING" | jq -r '.[0].id // empty')
+              if [ -n "${EXISTING_ID}" ]; then
+                echo "Deleting existing command id=${EXISTING_ID}..."
+                xnat_curl -X DELETE "${XNAT_URL}/xapi/commands/${EXISTING_ID}" -u "${CREDS}" >/dev/null
+              fi
+
+              echo "Registering ${DCM2NIIX_NAME} command..."
+              xnat_curl -X POST "${XNAT_URL}/xapi/commands" \
+                -u "${CREDS}" \
+                -H "Content-Type: application/json" \
+                -d @/cs-config/dcm2niix_command.json >/dev/null
+
+              echo "Looking up registered command id and wrapper name..."
+              RESPONSE=$(xnat_curl -u "${CREDS}" "${XNAT_URL}/xapi/commands?name=${DCM2NIIX_NAME}")
+              CMD_ID=$(printf '%s' "${RESPONSE}" | jq -r '.[0].id // empty')
+              WRAPPER_NAME=$(printf '%s' "${RESPONSE}" | jq -r '.[0].xnat[0].name // empty')
+              if [ -z "${CMD_ID}" ] || [ -z "${WRAPPER_NAME}" ]; then
+                echo "ERROR: ${DCM2NIIX_NAME} command not found after registration (id='${CMD_ID}' wrapper='${WRAPPER_NAME}')" >&2
+                exit 1
+              fi
+              echo "Command id=${CMD_ID}, wrapper=${WRAPPER_NAME}"
+              echo "Enabling ${DCM2NIIX_NAME} command site-wide..."
+              xnat_curl -X PUT "${XNAT_URL}/xapi/commands/${CMD_ID}/wrappers/${WRAPPER_NAME}/enabled" \
+                -u "${CREDS}" >/dev/null
+
+              echo "Enabling the Event Service..."
+              xnat_curl -X PUT "${XNAT_URL}/xapi/events/prefs" \
+                -u "${CREDS}" \
+                -H "Content-Type: application/json" \
+                -d '{"enabled": true}' >/dev/null
+
+              echo "Container Service + dcm2niix configuration complete."
+          env:
+            - name: XNAT_ADMIN_USER
+              value: {{ .Values.xnat.web.adminUser | quote }}
+            - name: XNAT_ADMIN_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-admin-password
+          volumeMounts:
+            - name: cs-config
+              mountPath: /cs-config
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+      volumes:
+        - name: cs-config
+          configMap:
+            name: {{ include "flip-trust.fullname" . }}-xnat-cs-config
+---
+# Container Service plugin configuration (K8s backend) + dcm2niix command JSON
+# + site-wide DICOM anonymization script.
+#
+# The Kubernetes backend entry carries the PVC mount settings (FLIP#565). Without
+# them the Container Service falls back to "no PVC mount" and bind-mounts the scan
+# path as a node hostPath — a path that only exists inside the xnat-web pod, so
+# kubelet creates it empty and dcm2niix exits with "Unable to find any DICOM images
+# in /input". `combined-pvc-name` is the single xnat-web data PVC (its root holds
+# both `archive/` and `build/`, which xnat-web mounts by subPath).
+#
+# `combined-path-translation` MUST keep its trailing slash. It is the prefix the
+# plugin strips from XNAT's own paths to build the volume's `subPath`; without the
+# slash the result keeps a leading `/` and the Kubernetes API rejects the whole Job
+# with `spec.template.spec.containers[0].volumeMounts.subPath: Invalid value ...
+# must be a relative path` (HTTP 422) — the launch then fails before any pod exists.
+#
+# The `data:` entries are sourced verbatim from:
+#   trust/xnat/xnat/config/container-service-backend-configuration.kubernetes.json
+#   trust/xnat/xnat/config/dcm2niix_command.json
+#   trust/xnat/xnat/config/anon_script.das
+# Keep them in sync with those source files until the chart can read them via
+# Helm `.Files.Get` (blocked by the source files living outside the chart dir).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-xnat-cs-config
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-init
+data:
+  anon_script.das: |
+    version "6.3"
+    // FLIP Site-Wide DICOM Anonymization Script
+    // Compatible with XNAT 1.10.0 (DicomEdit 6.9.x)
+    //
+    // This script is applied to all incoming DICOM data when anonymizationEnabled
+    // is set to true on the SCP receiver. It removes Protected Health Information
+    // (PHI) from DICOM headers to ensure patient privacy.
+
+    // Store XNAT labels into DICOM headers
+    (0010,4000) := project
+    (0010,0010) := subject
+    (0010,0020) := subject
+    (0008,1030) := session
+
+    // Remove direct patient identifiers
+    - (0010,0030)    // Patient Birth Date
+    - (0010,1000)    // Other Patient IDs
+    - (0010,1001)    // Other Patient Names
+    - (0010,1002)    // Other Patient IDs Sequence
+    - (0010,1005)    // Patient Birth Name
+    - (0010,1040)    // Patient Address
+    - (0010,2154)    // Patient Telephone Numbers
+    - (0010,0032)    // Patient Birth Time
+
+    // Remove institutional identifiers
+    - (0008,0080)    // Institution Name
+    - (0008,0081)    // Institution Address
+    - (0008,1040)    // Institutional Department Name
+
+    // Remove physician/operator identifiers
+    - (0008,0090)    // Referring Physician Name
+    - (0008,0092)    // Referring Physician Address
+    - (0008,0094)    // Referring Physician Telephone Numbers
+    - (0008,1048)    // Physician(s) of Record
+    - (0008,1050)    // Performing Physician Name
+    - (0008,1070)    // Operators Name
+
+    // Remove other potentially identifying tags
+    - (0008,0050)    // Accession Number (we use relabelMap for session)
+    - (0010,1090)    // Medical Record Locator
+    - (0010,2160)    // Ethnic Group
+    - (0010,2180)    // Occupation
+    - (0010,21B0)    // Additional Patient History
+    - (0010,4000)    // Patient Comments (after project label stored above)
+    - (0032,1032)    // Requesting Physician
+    - (0040,0006)    // Scheduled Performing Physician Name
+    - (0040,2016)    // Placer Order Number
+    - (0040,2017)    // Filler Order Number
+    - (0040,A123)    // Person Name (in structured reports)
+
+    // Hash UIDs for pseudonymization (repeatable hashing)
+    (0020,000D) := hashUID[(0020,000D)]    // Study Instance UID
+    (0020,000E) := hashUID[(0020,000E)]    // Series Instance UID
+    (0008,0018) := hashUID[(0008,0018)]    // SOP Instance UID
+
+    // Record de-identification method
+    (0012,0062) := "YES"                                    // Patient Identity Removed
+    (0012,0063) := "FLIP Site-Wide Anonymization v1"         // De-identification Method
+  container-service-backend-configuration.kubernetes.json: |
+    {
+        "name": "Kubernetes",
+        "backend": "kubernetes",
+        "host": "",
+        "cert-path": "",
+        "swarm-mode": false,
+        "combined-pvc-name": "{{ include "flip-trust.fullname" . }}-xnat-web",
+        "combined-path-translation": "/data/xnat/",
+        "pull-images-on-xnat-init": true,
+        "container-user": "",
+        "auto-cleanup": true
+    }
+  dcm2niix_command.json: |
+    {
+        "name": "dcm2niix",
+        "label": "dcm2niix",
+        "description": "Runs dcm2niix",
+        "version": "1.7",
+        "schema-version": "1.0",
+        "info-url": "https://github.com/rordenlab/dcm2niix",
+        "image": "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724",
+        "type": "docker",
+        "command-line": "dcm2niix [BIDS] [GZIP] [OTHER_OPTIONS] -o /output /input",
+        "mounts": [
+          {
+            "name": "dicom-in",
+            "writable": false,
+            "path": "/input"
+          },
+          {
+            "name": "nifti-out",
+            "writable": true,
+            "path": "/output"
+          }
+        ],
+        "environment-variables": {},
+        "ports": {},
+        "inputs": [
+          {
+            "name": "bids",
+            "description": "Create BIDS metadata file",
+            "type": "boolean",
+            "default-value": "false",
+            "required": false,
+            "replacement-key": "[BIDS]",
+            "command-line-flag": "-b",
+            "true-value": "y",
+            "false-value": "n",
+            "select-values": []
+          },
+          {
+            "name": "gzip",
+            "description": "Compress output files with gzip",
+            "type": "boolean",
+            "default-value": "true",
+            "required": false,
+            "replacement-key": "[GZIP]",
+            "command-line-flag": "-z",
+            "true-value": "y",
+            "false-value": "n",
+            "select-values": []
+          },
+          {
+            "name": "other-options",
+            "description": "Other command-line flags to pass to dcm2niix",
+            "type": "string",
+            "required": false,
+            "replacement-key": "[OTHER_OPTIONS]",
+            "select-values": []
+          }
+        ],
+        "outputs": [
+          {
+            "name": "nifti",
+            "description": "The nifti files",
+            "required": true,
+            "mount": "nifti-out"
+          }
+        ],
+        "xnat": [
+          {
+            "name": "dcm2niix-scan",
+            "label": "dcm2niix",
+            "description": "Run dcm2niix on a Scan",
+            "contexts": [
+              "xnat:imageScanData"
+            ],
+            "external-inputs": [
+              {
+                "name": "scan",
+                "description": "Input scan",
+                "type": "Scan",
+                "matcher": "'DICOM' in @.resources[*].label",
+                "required": true,
+                "load-children": true
+              }
+            ],
+            "derived-inputs": [
+              {
+                "name": "scan-dicoms",
+                "description": "The dicom resource on the scan",
+                "type": "Resource",
+                "matcher": "@.label == 'DICOM'",
+                "required": true,
+                "provides-files-for-command-mount": "dicom-in",
+                "load-children": true,
+                "derived-from-wrapper-input": "scan",
+                "multiple": false
+              }
+            ],
+            "output-handlers": [
+              {
+                "name": "nifti-resource",
+                "accepts-command-output": "nifti",
+                "as-a-child-of": "scan",
+                "type": "Resource",
+                "label": "NIFTI",
+                "tags": []
+              }
+            ]
+          }
+        ],
+        "reserve-memory": 1000,
+        "limit-cpu": 1,
+        "container-labels": {},
+        "generic-resources": {},
+        "ulimits": {}
+    }
+{{- end }}

@@ -12,8 +12,33 @@ Glossary
     **Federated learning**
       Federated learning is a machine learning (ML) technique that trains an algorithm across multiple decentralized edge devices or servers holding local data samples, without exchanging them.
 
+    **FL kit slot**
+      The name an FL client is known by inside a federation (``Trust_1``, ``Trust_2``, …), taken from
+      the certificate in its provisioned participant kit (NVFLARE) or the SuperNode key pair labelled
+      for that slot (Flower). Slots are a fixed pool provisioned once per
+      :term:`FL net`; a Trust claims one when it registers with the Central Hub, and that name — not
+      the Trust's hub-side name — is what appears in FL logs and in an app's ``AGGREGATION_WEIGHTS``
+      keys. See :ref:`flip-fl-nets`.
+
+    **FL net**
+      One federation unit in FLIP: an FL API and an FL server on the Central Hub plus one FL client at each
+      participating Trust. The hub's scheduler assigns each queued training job to a free net. See
+      :ref:`flip-fl-nets`.
+
     **Flower Framework**
       Flower is an open-source framework for building federated learning systems. It provides tools and libraries to facilitate the development and deployment of federated learning applications. For more information, please see its `official documentation <https://flower.ai/docs/framework/>`_.
+
+    **Landing Zone Accelerator (LZA)**
+      AWS's reference implementation of a multi-account estate with centrally managed network,
+      guardrails and logging. FLIP's Central Hub can be deployed onto such an estate as its
+      platform-managed mode (``PROD=lza``), where the workload account discovers the network it is
+      given and ingress arrives through the estate's edge. See :ref:`deploy-central-hub-aws-lza`.
+
+    **MAP**
+      MONAI Application Package. An OCI container that wraps a trained model as a DICOM-in,
+      DICOM-out inference pipeline, built with the MONAI Deploy App SDK. It is the packaging format
+      FLIP uses to take a model from a completed federated run to something deployable in a clinical
+      imaging workflow. See :doc:`working-with-flip-apps/package-model-as-map`.
 
     **MI-CDM**
       Medical Imaging Common Data Model. The OHDSI extension that adds imaging to the OMOP CDM,
@@ -31,8 +56,35 @@ Glossary
     **PACS**
       Picture Archiving and Communication System (PACS), the clinical system used to store and retrieve medical imaging studies (such as DICOM series).
 
+    **AE Title**
+      Application Entity Title. A DICOM system's name on the network, at most 16 characters. When one system connects to another it announces which AE title it is calling and which it is calling from, and the receiver accepts the connection only if the called title is its own. AE titles are names rather than addresses: the IP and port are configured alongside them. See :doc:`components/component-pacs`.
+
+    **SCU / SCP**
+      Service Class User and Service Class Provider — DICOM's terms for the two sides of a service. The SCU requests it; the SCP provides it. The roles are per operation, not per system, and can swap mid-exchange: a PACS is the SCP for C-MOVE, then becomes the SCU of the C-STORE it opens back to the destination. XNAT is likewise an SCU when it queries a PACS and an SCP when it receives the images.
+
+    **DIMSE**
+      DICOM Message Service Element, the classic DICOM network protocol (as opposed to the newer HTTP-based DICOMweb). FLIP retrieves imaging over DIMSE.
+
+    **C-ECHO / C-FIND / C-MOVE / C-STORE**
+      The DIMSE operations FLIP uses. ``C-ECHO`` is a connectivity check. ``C-FIND`` searches a PACS, in FLIP's case by accession number. ``C-MOVE`` asks the PACS to send a study to a named destination. ``C-STORE`` is the image transfer itself — and because C-MOVE names a destination rather than returning data inline, the C-STORE arrives on a *new* connection opened by the PACS back to that destination.
+
+    **DQR**
+      DICOM Query-Retrieve, the XNAT plugin that performs the C-FIND and C-MOVE operations against a trust PACS on FLIP's behalf.
+
     **RBAC**
       Role Based Access Control (RBAC) defines what users are able to access within the FLIP platform.
+
+    **Secure enclave**
+      The FLIP node at a partner Trust: dedicated storage and compute inside the Trust's firewall,
+      holding that Trust's imaging and OMOP data and running the FL client that trains on it. Patient
+      data stays within the enclave; only model updates and aggregate cohort statistics leave. See
+      :doc:`overview`.
+
+    **TRE**
+      Trusted Research Environment. A governed, access-controlled analysis environment holding an
+      approved subset of a Trust's data. FLIP can be deployed inside one as an alternative to the
+      on-premise model, in which case cohort queries operate on the pre-loaded subset rather than the
+      full Trust population. See :ref:`tre-deployment`.
 
     **XNAT**
       XNAT is an open-source imaging informatics platform used in FLIP to store, manage and access imaging data for research workflows. For more information on XNAT, please see the `documentation <https://wiki.xnat.org/documentation>`_.

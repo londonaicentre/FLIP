@@ -117,18 +117,12 @@ def _save_individual_result(db: Session, cohort_results: OmopCohortResults) -> N
 
     except Exception as e:
         db.rollback()
-        logger.error(
-            f"""
-            Exception saving cohort results for query_id {cohort_results.query_id},
-            trust_id {cohort_results.trust_id}: {e}
-            """,
-            exc_info=True,
+        logger.exception(
+            f"Error saving cohort results for query_id {cohort_results.query_id}, trust_id {cohort_results.trust_id}"
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-            if isinstance(e, HTTPException)
-            else f"Error saving cohort results: {cohort_results.query_id}",
+            detail=f"Error saving cohort results: {cohort_results.query_id}",
         ) from e
 
 
@@ -300,12 +294,11 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
 
     except Exception as e:
         db.rollback()
-        error_message = f"Error during aggregation for query_id {query_id}: {e}"
-        logger.error(error_message)
+        logger.exception(f"Error during aggregation for query_id {query_id}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=error_message,
-        )
+            detail=f"Error during aggregation for query_id {query_id}",
+        ) from e
 
 
 # [#114] ✅

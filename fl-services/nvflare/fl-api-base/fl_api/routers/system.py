@@ -98,7 +98,7 @@ def restart(
     target_type: TargetType,
     client_names: list[str] | None = Query(None),
     session: FLIP_Session = Depends(get_session),
-):
+) -> dict:
     """
     Restart specified system target(s).
 

@@ -16,11 +16,11 @@ import { Hub } from "aws-amplify/utils";
 import { StoreGeneric } from "pinia";
 import { NavigationGuardNext, RouteLocationNormalized } from "vue-router";
 
-import router, { routeChange } from "@/router";
+import router from "@/router";
 import { useAuthStore } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 
-import { Snackbar } from "./snackbar";
+import { leaveToLogin, stashPostSignOutNotice } from "./session-teardown";
 
 /**
  * True when the bundle was built with the Cypress E2E flag set
@@ -180,11 +180,16 @@ export const authCheck = async (
     } catch {
         auth.$reset();
         localStorage.clear();
-        routeChange.gotoLogin();
-        Snackbar.error({
+        // Same teardown as signOut (utils/session-teardown.ts): a route push
+        // would leave every cache and store of the ended session in memory.
+        // The notice rides across the reload in sessionStorage, which the
+        // localStorage.clear() above does not touch.
+        stashPostSignOutNotice({
+            type: "error",
             title: "You've been signed out",
             text: "Please log in again to confirm your identity."
         });
+        leaveToLogin();
     }
 };
 
@@ -254,13 +259,15 @@ const listener = (data: { payload: { event: string } }) => {
             }
 
             tokenRefreshTimeout = window.setTimeout(() => {
-                Snackbar.error({
+                // Fourth and last session-ending path; torn down like the
+                // others (utils/session-teardown.ts), notice replayed on boot.
+                stashPostSignOutNotice({
+                    type: "error",
                     title: "You've been signed out",
                     text: "Your session has expired. Please log in again."
-                }, 60_000);
-
-                routeChange.gotoLogin();
+                });
                 store.$reset();
+                leaveToLogin();
             }, 100);
             break;
     }

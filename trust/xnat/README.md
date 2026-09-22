@@ -104,6 +104,13 @@ a stale 2021 build that silently dropped slices from valid series).
 sync — it runs as a pre-commit hook and as the `dcm2niix-pin-sync` CI job — because a half-bumped set
 is otherwise silent: the old immutable tag simply keeps being pulled.
 
+That check compares files in this repository and never calls a running XNAT, so it cannot see the
+*live* registration. An XNAT provisioned before a bump keeps its old command in the XNAT database and
+goes on converting with the superseded image while looking perfectly healthy — both staging trusts sat
+in that state. Confirm a deployment with `GET /xapi/commands` (the `name -> image` pairs it returns are
+what imaging-api reports when nothing matches) and re-register with `configure-dcm2niix.sh`, or the
+`xnat-init` job on Kubernetes, if the image named there is not the current pin.
+
 #### Operator action: the GHCR package must be public
 
 **After the first publish, and again after any delete-and-recreate of the package, set
@@ -152,9 +159,75 @@ tolerated — the existing service account, PACS registration, and availability 
 In development (when `PROD` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
 
 > **Important — XNAT data volumes must be bind-mounted.**
-> XNAT's container service plugin executes Docker commands on the host (via the mounted Docker socket). Those host-spawned containers need access to XNAT data through host paths, so the data directories (`archive`, `build`, `cache`, `tomcat_logs`) must be bind-mounted rather than using named volumes. The `/${XNAT_PORT}` prefix isolates data directories per XNAT instance. See `docker-compose-stack.development.yml` for the full volume configuration.
+> XNAT's container service plugin executes Docker commands on the host. `xnat-web` does **not** mount
+> the Docker socket: it reaches Docker over `tcp://xnat-socket-proxy:2375` (set in
+> `xnat/config/container-service-backend-configuration.json`), and only the `xnat-socket-proxy`
+> sidecar mounts `/var/run/docker.sock:ro`, on a stack-scoped internal network no other trust service
+> can reach. Either way the containers it spawns run on the *host*, so they need XNAT's data through
+> host paths — the data directories (`archive`, `build`, `cache`, `tomcat_logs`) must therefore be
+> bind-mounted rather than using named volumes. Per-instance isolation comes from `XNAT_DATA_DIR`,
+> which the kit file's Host-local profile sets and every shipped kit carries (`./xnat-data` in
+> `trust/.env.example`, hence in anything `make new-trust` scaffolds; `./xnat-data-GSTT` /
+> `./xnat-data-KCH` in the dev examples) — a relative value resolves against `trust/xnat/`. Only
+> when the kit omits the key does `Makefile` fall back to a per-slot default derived from
+> `TRUST_NUM` (= `FL_KIT_SLOT_NUMBER`): `/opt/flip/xnat-trust<N>` under `PROD=stag|true`,
+> `./xnat-data-trust<N>` in development. See `docker-compose-stack.development.yml` for the full
+> volume configuration.
 
 If successful, you will be able to log in to XNAT with the service account credentials (specified in the trust's kit file, `trust/.env.<CODE>.<env>`) and see the registered PACS in the DICOM Query-Retrieve plugin.
+
+### Invite links and `aliasTokenTimeout`
+
+FLIP never emails an XNAT password. When a project is approved, imaging-api creates each new user with a random,
+undisclosed password and asks XNAT for an *alias token* on their behalf (`GET /data/services/tokens/issue/user/<name>`,
+which needs the service account's `Administrator` role); the hub emails the resulting host-less set-password path. The
+link's unused lifetime is XNAT's `aliasTokenTimeout` site setting (Site Administration → Security → User Logins /
+Session Controls → Alias Token Timeout; 48 hours by default) — `configure-xnat.sh` leaves it at the site default. Setting
+a password through the link invalidates it. Raising the timeout lengthens every invite link in flight, so treat it as a
+security setting. An account whose link expired unused is re-invited on the next project approval that includes the
+user (imaging-api re-issues a token for any existing account with no successful login), so no manual reset is needed.
+
+## PACS configuration
+
+`configure-xnat.sh` (run by `make up` / `up-xnat`, via `xnat-configure`) registers XNAT's DICOM SCP
+receiver and the upstream PACS from the trust kit file (`trust/.env.<CODE>.<env>` — see the
+`── Upstream PACS ──` block in `trust/.env.example`). Every variable below has a default describing
+the mocked Orthanc that ships for development; a real trust agrees them with its PACS manager. The
+script requires each to be non-empty once defaulted, so a kit line like `PACS_HOST=` fails loudly
+rather than silently falling back.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `XNAT_AETITLE` | `XNAT` | XNAT's **own** AE title. Applied in three places that must agree: the SCP receiver, the DQR calling AE, and the C-MOVE destination handed to the PACS. DQR matches that destination against a registered receiver by exact `AE:port`, so no translation is possible on that leg. |
+| `XNAT_PORT` | `8104` | XNAT's **DICOM SCP receiver** port. Defaults to the Trust_1 allocation so a single-trust host need not set it. |
+| `XNAT_WEB_PORT` | — (required) | The host-published **web-UI** port. No default of its own: it falls back to `XNAT_PORT`, which collides, so every kit must set it. |
+| `PACS_HOST` | `orthanc` | Upstream PACS hostname — the compose/k8s service name, or a real PACS host. |
+| `PACS_AETITLE` | `ORTHANC` | The PACS's AE title. |
+| `PACS_QR_PORT` | `4242` | The PACS query/retrieve port XNAT dials. Must be reachable **from the XNAT container** — not a host-published port. |
+| `PACS_LABEL` | `Test PACS instance` | Display label for the registration in the DQR UI. |
+| `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` | `true` | Whether the PACS supports relational queries / extended negotiation. A capability of the PACS, not a preference — one that does not support it rejects the association outright. Validated as literally `true` or `false` before it reaches `jq`. |
+| `PACS_AVAILABILITY_DAYS` | all seven days | Retrieval window: which days retrieval may run. |
+| `PACS_AVAILABILITY_START` / `_END` | `00:00` / `24:00` | Retrieval window start/end. |
+| `PACS_THREADS` | `1` | Concurrent retrieval threads. |
+| `PACS_UTILIZATION_PERCENT` | `100` | Share of the window/threads DQR may use. |
+| `DQR_MAX_PACS_REQUEST_ATTEMPTS` | `100` | Retries before DQR gives up on a request. |
+| `DQR_RETRY_WAIT_SECONDS` | `300` | Wait between those retries. |
+
+The throttle group exists because a production PACS may refuse further associations after a certain
+volume, and a trust may want retrieval confined to out-of-hours.
+
+**`XNAT_PORT` and `XNAT_WEB_PORT` are two different things** (they were one variable until FLIP#993,
+which is why host 8104 once served Tomcat while the receiver's 8104 was an unpublished container
+port). Both are host-published — the receiver so a real PACS can complete the C-STORE return leg of
+a retrieval, and dev keeps the same wiring — so they must differ; `xnat-reset` refuses to deploy if
+they collide or are non-numeric. The dev allocation is 8104/8105 (GSTT) and 8106/8107 (KCH).
+
+`configure-xnat.sh` updates an existing PACS registration in place when any of its kit-managed
+fields drift (host, query/retrieve port, label, extended-negotiation flag), and deletes every
+registration other than the configured one so exactly one survives — which is why imaging-api can
+read the PACS id back from XNAT at runtime rather than assuming `1`. The delete is conditional: if
+foreign registrations exist while `PACS_AETITLE`/`PACS_HOST` are still the mocked-Orthanc defaults,
+the script refuses and exits 1 rather than remove a real PACS the operator never declared (FLIP#993).
 
 ## Plugins
 
@@ -180,6 +253,26 @@ inspect the jars, or to build offline later — populates it explicitly with
 > The pre-1.10 flat layout (`xnat/xnat-web-1.9.3.war` + `xnat/plugins/`) is kept as-is while `main`
 > still builds 1.9.3; delete it once this upgrade reaches `main`.
 
+`xnat-plugins-download` delegates the presence check and the sync to
+[`scripts/ensure_plugins.sh`](scripts/ensure_plugins.sh), which matches plugin *families* by filename
+prefix (versions are whatever the S3 prefix holds) and records the prefix it synced from in a
+`.s3-prefix` stamp beside the jars — a mismatched or absent stamp forces a `--delete` re-sync, so an
+XNAT-version change can never bake a developer's stale jars into the new image.
+`make -C trust/xnat xnat-war-download` is the WAR half of the same idea: it fetches
+`xnat-<version>/xnat-web-<version>.war` into `xnat/build-artifacts/`, skipping S3 when the file is
+already there.
+
+### Other Make targets
+
+| Target | What it does |
+| --- | --- |
+| `xnat-shell KIT=<CODE>` | `docker exec -it` a bash shell in that trust's running `xnat-web` container. |
+| `xnat-configure XNAT_PROJECT=xnat<N>` | Re-run `configure-xnat.sh` + `configure-dcm2niix.sh` against a **live** instance, without resetting its data. |
+| `create-xnat-network KIT=<CODE>` | Ensure this trust's attachable overlay network exists (run for you by `up-xnat`). |
+| `xnat-stack-down STACK=<stack>` | `docker stack rm` one stack and **block** until its containers have stopped — `docker stack rm` is asynchronous, and `xnat-reset` must not delete bind-mount sources still held by a running container. Times out at 120s. |
+| `xnat-war-download` / `xnat-plugins-download` | Fill the local build-artifact / plugin caches from S3 (see above). |
+| `test` / `unit_test` / `local_test` | The anonymization-script test pack in [`tests/`](./tests/) — pure Python, no XNAT or Docker. |
+
 ### Plugin compatibility
 
 Make sure to always use the correct version of the plugins that are compatible with the XNAT version specified. Check the plugin's compatibility matrix for more information (for example, see [DQR Plugin Compatibility Matrix](https://wiki.xnat.org/xnat-tools/dqr-plugin-compatibility-matrix)).
@@ -199,7 +292,7 @@ The following table lists the plugin versions for the XNAT version `1.10.0` used
 | DICOM Query-Retrieve Plugin     | 3.0.0                       | Yes       | **Must upgrade** from 2.2.0 — rebuilt on JDK 21 + `dcm4che5`, plus a thread-leakage fix |
 | Container Service Plugin        | 3.8.1 (JDK 8 build)         | Yes       | **Must upgrade** from 3.7.3 — 3.8.x is the only column the compatibility matrix ticks for 1.10.0 |
 | Batch Launch Plugin             | 0.9.0 (JDK 8 build)         | Yes       | None — the matrix keeps BLP 0.9.0 for 1.10.0 |
-| OHIF Viewer Plugin              | 3.8.0 available; n/a here   | No        | None — deliberately not installed (FLIP#662) |
+| OHIF Viewer Plugin              | 3.8.0 (`-fat` build)        | Yes       | **Install** — 3.8.0 is the plugin's XNAT 1.10 release; it ships in every deployment mode (Swarm image, dev cache, Helm chart) |
 
 Not applicable to FLIP, but released alongside 1.10.0: **Distributed Events 2.0.0** (only needed for
 load-balanced multi-node XNAT — each FLIP trust runs a single node) and **MFA 1.6.0** (FLIP does not
@@ -216,21 +309,25 @@ use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a servic
 > were confirmed unchanged on a live 3.0.0 instance during the dev-stack smoke test.
 >
 > The DQR thread-leakage fix is also worth attention: it is plausibly related to the bulk-import
-> wedging investigated in FLIP#662 (worked around here with the raised heap in `.env` and by
-> excluding the OHIF viewer). Re-test a large cohort pull on 1.10 + DQR 3.0.0 before assuming those
-> workarounds are still needed.
+> wedging investigated in FLIP#662. What holds that wedge at bay is the directArchive JMS
+> build-concurrency cap baked in by `make-xnat-config.sh` plus the raised heap in `.env`; both stay
+> in place on 1.10. Re-test a large cohort pull (thousands of studies) on 1.10 + DQR 3.0.0 before
+> assuming either is no longer needed.
 
 **Staying on 1.9 instead?** Upstream also shipped **XNAT 1.9.3.4** (urgent fixes for JDK 8
 deployments) and **DQR 2.3.2** (the thread-leak fix alone, JDK 8). That is the lower-risk path to the
 DQR fix if this 1.10 upgrade stalls.
 
-The `xnat-1.10.0/` artifact set (WAR + DQR 3.0.0 + Container Service 3.8.1 + Batch Launch 0.9.0) is
-uploaded and CI-verified. All three upgraded artifacts are public downloads, no account needed:
+The `xnat-1.10.0/` artifact set (WAR + DQR 3.0.0 + Container Service 3.8.1 + Batch Launch 0.9.0 +
+OHIF viewer 3.8.0) is uploaded and CI-verified. All four upgraded artifacts are public downloads, no
+account needed:
 the WAR from `https://api.bitbucket.org/2.0/repositories/xnatdev/xnat-web/downloads/xnat-web-1.10.0.war`,
 DQR from
 `https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar`
-(the same repo also carries `2.3.2`/`2.4.0` for the JDK 8 fallback), and CS from
-`https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar`.
+(the same repo also carries `2.3.2`/`2.4.0` for the JDK 8 fallback), CS from
+`https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar`,
+and the viewer from `https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.8.0-fat.jar` (the
+same URL the Helm chart downloads at pod start).
 Local builds skip S3 when the files already sit in `xnat/build-artifacts/` and `xnat/plugins/`.
 
 ### Adding or updating a plugin
@@ -279,7 +376,7 @@ The development overlay (`docker-compose-stack.development.yml`) sets these cons
 
 - **Missing plugins or an S3/AWS error before startup** — confirm `FLIP_ARTIFACTS_BUCKET_NAME`, renew the selected AWS
   SSO session, then run `make -C trust/xnat xnat-plugins-download` from the repository root. The command must find the
-  batch-launch, container-service, and DICOM Query-Retrieve plugin families before startup can continue.
+  batch-launch, container-service, DICOM Query-Retrieve and OHIF viewer plugin families before startup can continue.
 
 - **XNAT serves its login page but configuration reports plugin-route 404s** — inspect
   `configure-xnat-<stack>.log` in the container. Once the plugin cache is repaired, rerun the individual Trust with

@@ -19,16 +19,11 @@
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 
 # Load the env file selected by PROD (dev by default), exactly as
-# fl-services/nvflare/Makefile does — with PROD=stag|true this brings in the
-# upload vars (AICENTRE_BUCKET_NAME, FLOWER_KIT_DATE) used by
-# upload-creds-to-s3.
-ifeq ($(PROD),true)
-MAIN_ENV_FILE := $(REPO_ROOT)/.env.production
-else ifeq ($(PROD),stag)
-MAIN_ENV_FILE := $(REPO_ROOT)/.env.stag
-else
-MAIN_ENV_FILE := $(REPO_ROOT)/.env.development
-endif
+# fl-services/nvflare/Makefile does — with PROD=stag|true (or lza|lza-stag for
+# the LZA estate, FLIP#749) this brings in the upload vars (AICENTRE_BUCKET_NAME,
+# FLOWER_KIT_DATE) used by upload-creds-to-s3.
+include $(REPO_ROOT)/deploy/env_mode.mk
+MAIN_ENV_FILE := $(REPO_ROOT)/$(ENV_FILE_NAME)
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
@@ -59,9 +54,23 @@ build:
 	@echo "🛠️  Building flower-{fl-api,superlink,supernode}:dev..."
 	$(DEV_COMPOSE) build fl-api superlink supernode-1
 
+# How many SuperNode credentials a provisioning run mints. Defaults to the size of
+# this environment's FL kit slot pool, so the kit covers every slot the hub can hand
+# out: a trust staged into slot N fetches keys/supernode_credentials_N, and the
+# NVFLARE-side staging guard now fails loudly when its slot's material is missing.
+# Getting it wrong is expensive rather than fiddly — there is no add-a-node path
+# (unlike nvflare's `provision --add_client`), because a re-run regenerates the CA and
+# invalidates every node already holding credentials. FL_KIT_SLOT_NAMES is a JSON
+# list, so count its entries by turning the separators into word breaks; a dev env
+# that names no pool falls back to generate_creds.py's own default of 2. Override
+# explicitly with NUM_SUPERNODES=<n>.
+COMMA := ,
+SLOT_COUNT := $(words $(subst $(COMMA), ,$(FL_KIT_SLOT_NAMES)))
+NUM_SUPERNODES ?= $(if $(filter 0,$(SLOT_COUNT)),2,$(SLOT_COUNT))
+
 # Provision per-net TLS certs + SuperNode keys → fl-services/flower/provision/creds/net-<N>.
 provision:
-	@bash $(PROVISION_SCRIPT) net-$(NET_NUMBER)
+	@FLOWER_NUM_SUPERNODES=$(NUM_SUPERNODES) bash $(PROVISION_SCRIPT) net-$(NET_NUMBER)
 
 # Upload provisioned Flower creds for one net to S3, where the ECS EFS
 # provisioning task syncs them onto the hub's EFS (deploy/providers/AWS/
@@ -71,14 +80,14 @@ provision:
 #     make provision NET_NUMBER=1
 #   make upload-creds-to-s3 NET_NUMBER=1 PROD=stag
 upload-creds-to-s3:
-	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true"; exit 1; }
+	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true|lza|lza-stag"; exit 1; }
 	@[ -n "$(FLOWER_KIT_DATE)" ] || { echo "❌ FLOWER_KIT_DATE not set — add it to the env file (e.g. 20260811)"; exit 1; }
 	@echo "⬆️  Uploading Flower creds (net-$(NET_NUMBER)) → s3://$(AICENTRE_BUCKET_NAME)/fl-flower-participant-kits/$(FLOWER_KIT_DATE)/net-$(NET_NUMBER) $(DRYRUN)"
 	aws s3 sync ./provision/creds/net-$(NET_NUMBER) s3://$(AICENTRE_BUCKET_NAME)/fl-flower-participant-kits/$(FLOWER_KIT_DATE)/net-$(NET_NUMBER) --delete --exclude "certificates/ca.key" $(DRYRUN)
 generate-tls-certificates-net-1:
-	@bash $(PROVISION_SCRIPT) net-1
+	@FLOWER_NUM_SUPERNODES=$(NUM_SUPERNODES) bash $(PROVISION_SCRIPT) net-1
 generate-tls-certificates-net-2:
-	@bash $(PROVISION_SCRIPT) net-2
+	@FLOWER_NUM_SUPERNODES=$(NUM_SUPERNODES) bash $(PROVISION_SCRIPT) net-2
 
 # Ensure the runs dir + placeholder dev-data mounts exist so `up` doesn't fail on the
 # bind mounts. Override DEV_IMAGES_DIR / DEV_DATAFRAME to run against real tutorial data.

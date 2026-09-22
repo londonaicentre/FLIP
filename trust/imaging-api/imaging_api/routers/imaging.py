@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from imaging_api.routers.schemas import ImportStudyRequest, ImportStudyResponse, PacsStatus, Study
 from imaging_api.services.imaging import (
     ping_pacs,
+    ping_registered_pacs,
     query_by_accession_number,
     queue_image_import_request,
 )
@@ -29,14 +30,21 @@ router = APIRouter(prefix="/imaging", tags=["Imaging"], dependencies=[Depends(au
 XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 
 
+@router.get("/ping_pacs", summary="Ping the registered Imaging Provider (PACS)")
 @router.get("/ping_pacs/{pacs_id}", summary="Ping Imaging Provider (PACS) by ID")
-def ping_pacs_endpoint(pacs_id: int, headers: XNATAuthHeaders) -> PacsStatus:
-    """
-    Pings the imaging provider (PACS) to check if it is reachable.
+def ping_pacs_endpoint(headers: XNATAuthHeaders, pacs_id: int | None = None) -> PacsStatus:
+    """Pings the imaging provider (PACS) to check if it is reachable.
+
+    Two routes, one handler. Without an id the PACS is resolved from XNAT the same way the import
+    path resolves it — the id XNAT assigns at registration is not knowable in advance, so a caller
+    that only wants to know whether the trust's PACS answers should not have to guess one. A stale
+    cached id (the PACS was re-registered while imaging-api stayed up) is dropped and re-resolved
+    once rather than pinning the probe to a dead registration. The by-id route stays for callers
+    that genuinely mean a specific registration.
 
     Args:
-        pacs_id (int): PACS ID to ping.
         headers (XNATAuthHeaders): XNAT authentication headers.
+        pacs_id (int | None): PACS ID to ping. Resolved from XNAT when omitted.
 
     Returns:
         PacsStatus: Status of the PACS system.
@@ -45,7 +53,7 @@ def ping_pacs_endpoint(pacs_id: int, headers: XNATAuthHeaders) -> PacsStatus:
         HTTPException: If PACS is not found or if there is an error during the ping operation.
     """
     try:
-        return ping_pacs(pacs_id, headers)
+        return ping_registered_pacs(headers) if pacs_id is None else ping_pacs(pacs_id, headers)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

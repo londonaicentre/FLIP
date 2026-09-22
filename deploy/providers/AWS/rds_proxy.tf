@@ -57,7 +57,7 @@ locals {
 resource "aws_security_group" "rds_proxy" {
   name        = "rds-proxy"
   description = "RDS Proxy - inbound 5432 from flip-api, outbound 5432 to RDS"
-  vpc_id      = module.flip_vpc.vpc_id
+  vpc_id      = local.vpc_id
 
   tags = {
     FlipSG = "true"
@@ -116,6 +116,9 @@ data "aws_iam_policy_document" "rds_proxy_assume" {
 resource "aws_iam_role" "rds_proxy" {
   name               = "flip-rds-proxy-role"
   assume_role_policy = data.aws_iam_policy_document.rds_proxy_assume.json
+  # FLIP#962: the CI apply role may only create or grant to a boundary-carrying
+  # role. See locals.tf and ci/main.tf.
+  permissions_boundary = local.iam_permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "rds_proxy" {
@@ -148,12 +151,16 @@ resource "aws_iam_role_policy" "rds_proxy" {
 ############################
 
 resource "aws_db_proxy" "flip_db" {
-  name                   = "flip-database-proxy"
-  engine_family          = "POSTGRESQL"
-  require_tls            = true
-  idle_client_timeout    = 1800
-  role_arn               = aws_iam_role.rds_proxy.arn
-  vpc_subnet_ids         = module.flip_vpc.private_subnets
+  name                = "flip-database-proxy"
+  engine_family       = "POSTGRESQL"
+  require_tls         = true
+  idle_client_timeout = 1800
+  role_arn            = aws_iam_role.rds_proxy.arn
+  # App subnets on the LZA network: the proxy's secret retrieval is believed
+  # to be service-side (verified during FLIP#749 WP3), but app placement keeps
+  # the central secretsmanager endpoint reachable either way; RDS itself sits
+  # in the isolated data subnets, reached over intra-VPC local routing.
+  vpc_subnet_ids         = local.app_subnet_ids
   vpc_security_group_ids = [aws_security_group.rds_proxy.id]
 
   auth {

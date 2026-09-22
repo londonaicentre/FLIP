@@ -47,7 +47,6 @@ from trust_api.utils.version import service_version
 DATA_ACCESS_API_URL = get_settings().DATA_ACCESS_API_URL
 IMAGING_API_URL = get_settings().IMAGING_API_URL
 XNAT_URL = get_settings().XNAT_URL
-PACS_ID = get_settings().PACS_ID
 OMOP_DB_HOST = get_settings().OMOP_DB_HOST
 OMOP_DB_PORT = get_settings().OMOP_DB_PORT
 HEALTH_COLLECT_INTERVAL_SECONDS = get_settings().HEALTH_COLLECT_INTERVAL_SECONDS
@@ -204,7 +203,10 @@ async def _probe_dicom(client: httpx.AsyncClient) -> dict:
         dict: Wire-shaped entry. ``unknown`` when the prober chain (imaging-api → XNAT)
         itself fails, ``down`` only when XNAT reports the DIMSE echo failed.
     """
-    url = f"{IMAGING_API_URL}/imaging/ping_pacs/{PACS_ID}"
+    # No id in the path: imaging-api resolves the registered PACS from XNAT. Pinning one here
+    # made trust-api a second source of truth for an id XNAT assigns at registration — a
+    # re-registered PACS reported permanently down while imports kept working (FLIP#993).
+    url = f"{IMAGING_API_URL}/imaging/ping_pacs"
     start = time.monotonic()
     try:
         response = await client.get(url, headers=trust_internal_headers())

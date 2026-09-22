@@ -45,6 +45,9 @@ data "aws_iam_policy_document" "ecs_tasks_assume" {
 resource "aws_iam_role" "ecs_task_execution" {
   name               = "ecs-task-execution-role"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+  # FLIP#962: the CI apply role may only create or grant to a boundary-carrying
+  # role. See locals.tf and ci/main.tf.
+  permissions_boundary = local.iam_permissions_boundary_arn
 }
 
 resource "aws_iam_role_policy_attachment" "ecs_task_execution_managed" {
@@ -88,6 +91,39 @@ resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
   policy = data.aws_iam_policy_document.ecs_task_execution_secrets.json
 }
 
+# ECR pull-through cache import (FLIP#749, LZA only). On the LZA account the
+# task images come from in-account pull-through caches instead of the public
+# registries — the account has no internet egress. Two cache rules exist
+# (created out-of-band, not managed here): `ghcr/` mirroring
+# ghcr.io/londonaicentre via a read-only PAT in the
+# `ecr-pullthroughcache/ghcr` secret, and a credential-less `ecr-public/` rule
+# for the EFS-provision utility image. The first pull of a new tag triggers a
+# service-side upstream import, which the pulling principal must be allowed to
+# perform (plus repository creation on a cache miss); already-cached pulls need
+# only the managed execution-role policy above.
+data "aws_iam_policy_document" "ecs_task_execution_ecr_pull_through" {
+  count = var.lza_managed_network ? 1 : 0
+
+  statement {
+    sid = "EcrPullThroughCacheImport"
+    actions = [
+      "ecr:BatchImportUpstreamImage",
+      "ecr:CreateRepository",
+    ]
+    resources = [
+      "arn:aws:ecr:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:repository/ghcr/*",
+      "arn:aws:ecr:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:repository/ecr-public/*",
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "ecs_task_execution_ecr_pull_through" {
+  count  = var.lza_managed_network ? 1 : 0
+  name   = "flip-ecs-task-execution-ecr-pull-through"
+  role   = aws_iam_role.ecs_task_execution.id
+  policy = data.aws_iam_policy_document.ecs_task_execution_ecr_pull_through[0].json
+}
+
 ############################
 # flip-api task role
 ############################
@@ -99,6 +135,9 @@ resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
 resource "aws_iam_role" "ecs_flip_api_task" {
   name               = "ecs-flip-api-task-role"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+  # FLIP#962: the CI apply role may only create or grant to a boundary-carrying
+  # role. See locals.tf and ci/main.tf.
+  permissions_boundary = local.iam_permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "ecs_flip_api_task" {
@@ -256,6 +295,9 @@ data "aws_iam_policy_document" "ecs_fl_api_task" {
 resource "aws_iam_role" "ecs_fl_api_task" {
   name               = "ecs-fl-api-task-role"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+  # FLIP#962: the CI apply role may only create or grant to a boundary-carrying
+  # role. See locals.tf and ci/main.tf.
+  permissions_boundary = local.iam_permissions_boundary_arn
 }
 
 resource "aws_iam_role_policy" "ecs_fl_api_task" {
@@ -281,6 +323,9 @@ resource "aws_iam_role_policy" "ecs_fl_api_task" {
 resource "aws_iam_role" "ecs_fl_server_task" {
   name               = "ecs-fl-server-task-role"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+  # FLIP#962: the CI apply role may only create or grant to a boundary-carrying
+  # role. See locals.tf and ci/main.tf.
+  permissions_boundary = local.iam_permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "ecs_fl_server_task" {
@@ -331,9 +376,13 @@ data "aws_iam_policy_document" "ecs_fl_server_task" {
     ]
   }
 
+  # Deliberately no s3:GetBucketLocation here (unlike S3ListFlResultsBucket above, which
+  # is unconditioned): a GetBucketLocation request carries no s3:prefix context key, so
+  # under the prefix condition below the grant can never authorize anything. Dropping it
+  # is a no-op on the effective permissions and stops it reading as a working allowance.
   statement {
     sid       = "S3ListAicentreBucketForKit"
-    actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
+    actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.aicentre_bucket.arn]
     condition {
       test     = "StringLike"

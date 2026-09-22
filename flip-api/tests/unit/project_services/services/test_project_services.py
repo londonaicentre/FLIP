@@ -120,9 +120,12 @@ class TestCreateProject:
 
         mock_db_session.flush.side_effect = DatabaseError("Database error")
 
-        with pytest.raises(HTTPException, match="Failed to create project: Database error"):
+        with pytest.raises(HTTPException) as exc_info:
             create_project(payload, current_user_id, mock_db_session)
 
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "Internal server error"
+        assert "Database error" not in exc_info.value.detail
         mock_db_session.rollback.assert_called_once()
 
 
@@ -158,8 +161,14 @@ class TestDeleteProject:
 
         mock_db_session.get.return_value = None
 
-        with pytest.raises(HTTPException, match=f"Failed to delete project: Project with ID {project_id} not found."):
+        # The service's own not-found ValueError is swallowed by its catch-all and surfaces as a
+        # generic 500 — the message is logged, not returned. The router pre-checks the project
+        # before calling in, so this branch is not what a client sees for a missing project.
+        with pytest.raises(HTTPException) as exc_info:
             delete_project(project_id, current_user_id, mock_db_session)
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "Internal server error"
 
     def test_delete_project_already_deleted(self, mock_db_session: MagicMock, sample_project: Projects):
         sample_project.deleted = True
@@ -179,9 +188,12 @@ class TestDeleteProject:
 
         mock_db_session.get.side_effect = DatabaseError("Database error")
 
-        with pytest.raises(HTTPException, match="Failed to delete project: Database error"):
+        with pytest.raises(HTTPException) as exc_info:
             delete_project(project_id, current_user_id, mock_db_session)
 
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "Internal server error"
+        assert "Database error" not in exc_info.value.detail
         mock_db_session.rollback.assert_called_once()
 
 
@@ -220,11 +232,13 @@ class TestEditProjectService:
 
         mock_db_session.get.return_value = None
 
-        with pytest.raises(
-            HTTPException,
-            match=f"Failed to edit project: Project {project_id} does not exist or is deleted, cannot edit.",
-        ):
+        # As for delete: the service's not-found ValueError surfaces as a generic 500 (logged, not
+        # returned); the router 404s a missing or deleted project before calling in.
+        with pytest.raises(HTTPException) as exc_info:
             edit_project_service(project_id, payload, current_user_id, mock_db_session)
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "Internal server error"
 
     def test_edit_project_service_deleted_project(self, mock_db_session: MagicMock, sample_project: Projects):
         sample_project.deleted = True
@@ -234,11 +248,13 @@ class TestEditProjectService:
 
         mock_db_session.get.return_value = sample_project
 
-        with pytest.raises(
-            HTTPException,
-            match=f"Failed to edit project: Project {project_id} does not exist or is deleted, cannot edit.",
-        ):
+        # As for delete: the service's not-found ValueError surfaces as a generic 500 (logged, not
+        # returned); the router 404s a missing or deleted project before calling in.
+        with pytest.raises(HTTPException) as exc_info:
             edit_project_service(project_id, payload, current_user_id, mock_db_session)
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "Internal server error"
 
     def test_edit_project_service_exception_handling(self, mock_db_session: MagicMock):
         project_id = uuid4()
@@ -247,9 +263,12 @@ class TestEditProjectService:
 
         mock_db_session.get.side_effect = DatabaseError("Database error")
 
-        with pytest.raises(HTTPException, match="Failed to edit project: Database error"):
+        with pytest.raises(HTTPException) as exc_info:
             edit_project_service(project_id, payload, current_user_id, mock_db_session)
 
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "Internal server error"
+        assert "Database error" not in exc_info.value.detail
         mock_db_session.rollback.assert_called_once()
 
 
@@ -554,6 +573,19 @@ class TestUpdateProjectStatus:
 
         with pytest.raises(ValueError, match="not found"):
             update_project_status(project_id, new_status, mock_db_session)
+
+    def test_update_project_status_flush_failure_returns_generic_detail(
+        self, mock_db_session: MagicMock, sample_project: Projects
+    ):
+        mock_db_session.get.return_value = sample_project
+        mock_db_session.flush.side_effect = Exception("connection to db-host:5432 refused")
+
+        with pytest.raises(HTTPException) as exc_info:
+            update_project_status(sample_project.id, ProjectStatus.APPROVED, mock_db_session)
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "Internal server error"
+        assert "db-host" not in exc_info.value.detail
 
 
 class TestGetProjectById:

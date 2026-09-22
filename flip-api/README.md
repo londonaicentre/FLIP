@@ -80,11 +80,36 @@ The flip-api is configured via environment variables. In development these are s
 | `AWS_REGION` | AWS region for Cognito and S3 |
 | `AWS_COGNITO_USER_POOL_ID` | AWS Cognito User Pool ID |
 | `AWS_COGNITO_APP_CLIENT_ID` | AWS Cognito App Client ID |
+| `AWS_SECRET_NAME` | Name of the AWS Secrets Manager secret `flip_api/utils/get_secrets.py` reads by default |
 | `AES_KEY_BASE64` | Base64-encoded AES-256 key used to encrypt trust task payloads and project IDs. Shared between hub (encryption) and trusts (decryption) |
-| `UPLOADED_MODEL_FILES_BUCKET` | S3 bucket for uploaded model files |
+| `UPLOADED_MODEL_FILES_BUCKET` | S3 bucket (staging prefix) for pre-scan model-file uploads |
+| `SCANNED_MODEL_FILES_BUCKET` | S3 bucket that promoted clean files land in — the platform's quarantine boundary; every consumer reads from here |
+| `FL_APP_DESTINATION_BUCKET` | S3 bucket for bundled FL applications served to trusts |
 | `UPLOADED_FEDERATED_DATA_BUCKET` | S3 bucket for storing models and artefacts |
 
 See [`.env.development.example`](../.env.development.example) for the full list of required variables.
+
+### Tunables
+
+A handful of scheduler and task-queue settings are absent from `.env.development.example` (all but
+`SCHEDULER_MALWARE_SCAN_RECONCILE_RATE`, which appears there commented out under the malware-scan
+block) because their `config.py` defaults are meant to be left alone in normal operation; override
+them only when diagnosing or deliberately changing that behaviour.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `HEARTBEAT_TIMEOUT_SECONDS` | `30` | How long since a trust's last heartbeat before it's considered offline |
+| `TASK_STALE_TIMEOUT_MINUTES` | `30` | How long a task can sit `IN_PROGRESS` before it's considered stale |
+| `TASK_MAX_RETRIES` | `3` | Max times a stale task is retried before being marked `FAILED` |
+| `SCHEDULER_STALE_TASK_RECOVERY_RATE` | `10` (minutes) | How often the scheduler checks for stale tasks |
+| `MAX_TASK_RESULT_LENGTH` | `10_000_000` (characters) | Max size of a task result payload |
+| `PROJECT_REIMPORT_RATE` | `60` (minutes) | How often to reimport studies for a given project |
+| `MAX_REIMPORT_COUNT` | `5` | Max reimport attempts before a project's imaging import stops retrying |
+| `SCHEDULE_RUN_JOBS_EXECUTION` | `true` | Whether the scheduler registers the FL job-pickup pass (`run_jobs_scheduled_task`). Only that one job is gated: the fl-api keep-alive, imaging reimport, stale-task recovery and malware-scan reconcile jobs are registered regardless |
+| `SCHEDULER_RUN_JOBS_RATE` | `1` (minute) | How often the scheduler's FL job-pickup pass runs |
+| `SCHEDULER_KEEP_FL_API_SESSION_ALIVE_RATE` | `2` (minutes) | How often the scheduler pings fl-api to keep its session alive |
+| `SCHEDULER_REIMPORT_IMAGING_PROJECT_STUDIES_RATE` | `30` (minutes) | How often the scheduler checks for projects with unimported studies |
+| `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE` | `1` (minute) | How often the scheduler re-checks uploads left `SCANNING` by a restart mid-scan |
 
 ## Database migrations
 
@@ -162,13 +187,13 @@ Integration tests use [testcontainers-python](https://github.com/testcontainers/
 
 ### AWS-touching tests (S3, Cognito, SES)
 
-A session-scoped autouse fixture (`aws_mock` in `tests/integration/conftest.py`) enters [`moto.mock_aws()`](https://github.com/getmoto/moto) for the whole test session, intercepting `boto3.client(...)` calls at the botocore layer. The flip-api production code paths in `src/flip_api/utils/s3_client.py`, `src/flip_api/utils/cognito_helpers.py`, and the inline `boto3.client("sesv2", ...)` constructions in `user_services/access_request.py` and `private_services/imaging_notifications.py` all hit the moto fake with no test-only branches in source.
+A session-scoped autouse fixture (`aws_mock` in `tests/integration/conftest.py`) enters [`moto.mock_aws()`](https://github.com/getmoto/moto) for the whole test session, intercepting `boto3.client(...)` calls at the botocore layer. The flip-api production code paths in `src/flip_api/utils/s3_client.py`, `src/flip_api/utils/cognito_helpers.py`, and the `boto3.client("sesv2", ...)` construction in `src/flip_api/utils/email_sender.py` (used by `user_services/access_request.py` and `private_services/imaging_notifications.py`) all hit the moto fake with no test-only branches in source.
 
 Per-service helper fixtures bootstrap the state each test needs:
 
 - `s3_buckets` — creates the buckets configured in `Settings` (`UPLOADED_MODEL_FILES_BUCKET`, `SCANNED_MODEL_FILES_BUCKET`, `UPLOADED_FEDERATED_DATA_BUCKET`, `FL_APP_DESTINATION_BUCKET`). The base FL application templates are not an S3 bucket — they are read from the local `FL_APP_BASE_DIR` tree baked into the image (FLIP#724).
 - `cognito_user_pool` — creates a moto user pool + app client and rebinds `Settings.AWS_COGNITO_USER_POOL_ID` / `AWS_COGNITO_APP_CLIENT_ID` to point at them, clearing the `_cognito_client` `lru_cache` so the next call rebuilds against the fresh IDs.
-- `ses_send_email_recorder` — captures every `sesv2.send_email` call. moto v5 explicitly raises `NotImplementedError` on `send_email` with `Content.Template`, and every flip-api SES caller uses templated content; the recorder wraps the production-code path up to the SDK boundary so the test asserts the boto3 call shape (`FromEmailAddress`, `Destination.ToAddresses`, `TemplateName`, `TemplateData`). It's the closest approximation to a real SES round-trip moto's coverage allows today.
+- `ses_send_email_recorder` — captures every `sesv2.send_email` call. moto v5 explicitly raises `NotImplementedError` on `send_email` with `Content.Template`, and every flip-api SES caller uses templated content; the recorder wraps the production-code path up to the SDK boundary so the test asserts the boto3 call shape (`FromEmailAddress`, `Destination.ToAddresses`, `TemplateName`, `TemplateData`). It's the closest approximation to a real SES round-trip moto's coverage allows today. It also pins `EMAIL_BACKEND="ses"`, since development defaults to the console backend (FLIP#919) — without that pin the SES path under test would never run. `tests/integration/test_console_email_backend.py` is the counterpart: it leaves the dev default alone and asserts the email paths succeed, and log rather than send, with no SES configuration at all.
 
 Why moto and not LocalStack: `cognito-idp` and `sesv2` are Pro-only on LocalStack — the free tier rejects `CreateUserPool` / `CreateEmailIdentity` outright. moto covers all three in OSS and runs in-process, so there's no container boot per test session.
 
@@ -185,7 +210,7 @@ Three developer utilities drive the **running dev stack** end to end (none run i
   honest lifecycle states through the real API; `--states` phases the pull-heavy approved entries, `--cleanup`
   removes everything it recorded in `tests/seed_demo_projects.json`. Idempotent: a re-run skips catalogue
   entries whose project name already exists on the hub, so it never duplicates the real imaging imports.
-- `flip_api/scripts/create_demo_users.py` (`make create_demo_users`) — provisions the demo Cognito users the
+- `src/flip_api/scripts/create_demo_users.py` (`make create_demo_users`) — provisions the demo Cognito users the
   recorder signs in as (`DEMO_RESEARCHER_PASSWORD` / `DEMO_ADMIN_PASSWORD` from env, never committed); restart
   flip-api afterwards so boot seeding grants their roles. Before any write it resolves the target pool's
   name/region/AWS account and requires an interactive `yes`, so a stale `AWS_COGNITO_USER_POOL_ID` or wrong

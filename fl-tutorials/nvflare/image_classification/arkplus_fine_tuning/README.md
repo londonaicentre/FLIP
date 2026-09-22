@@ -25,7 +25,7 @@ legacy Executor API to the Client API. The job is defined entirely in Python via
 
 `config.json["job_type"] = "standard"`. Each client runs [`app_files/trainer.py`](app_files/trainer.py)
 as an in-process Client-API script (`flare.init()` → `flare.receive()`/`flare.send()` round loop) via
-NVFLARE's `InProcessClientAPIExecutor`. There is **no `validator.py`** — the held-out validation folds
+NVFLARE's `ClientAPIExecutor` (`in_process` mode). There is **no `validator.py`** — the held-out validation folds
 into the trainer's `flare.is_evaluate()` branch (server-driven cross-site evaluation).
 
 ## Target labels
@@ -50,8 +50,9 @@ row are treated as negative. Labels come from the per-site dataframe (see Datase
 
 NVFLARE's persistor loads `models.get_model` from [`app_files/models.py`](app_files/models.py).
 `get_model()` builds an `ArkSwinTransformer` (in [`app_files/arkplus_flat_models.py`](app_files/arkplus_flat_models.py))
-sized from the `ARKPLUS` block, loads the backbone from the checkpoint with `LOAD_BACKBONE_ONLY=true`
-(the heads start fresh), and wraps it in `ArkPlusNVFlareWrapper` (which adapts Ark+'s
+sized from the `ARKPLUS` block, loads the backbone-only checkpoint that `make prepare-checkpoint` derives
+from the raw Ark6 file (`preprocess_checkpoints.py` strips `omni_heads.*` unconditionally, so the heads
+start fresh), and wraps it in `ArkPlusNVFlareWrapper` (which adapts Ark+'s
 `model(images, head_id) -> (features, logits)` to the `model(images) -> logits` interface, and exposes
 `forward_with_features` for the teacher/student loop). The trainer freezes every parameter that is not
 under `ark_model.omni_heads`, so only the classifier head trains.

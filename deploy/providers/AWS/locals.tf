@@ -24,6 +24,19 @@
 locals {
   flip_local_domain = "flip.local"
 
+  # Permissions boundary carried by every IAM role in this root (FLIP#962).
+  #
+  # Composed rather than looked up: the policy lives in the ci/ root, the two
+  # roots share no state, and a `data "aws_iam_policy"` here would make every
+  # plan fail in an account where ci/ has not been applied yet — including the
+  # `terraform validate` a contributor runs with no credentials at all.
+  # `make -C ci output permissions_boundary_arn` prints the ARN to compare.
+  iam_permissions_boundary_arn = (
+    var.iam_permissions_boundary_name == ""
+    ? null
+    : "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.iam_permissions_boundary_name}"
+  )
+
   # Service Discovery names (FQDN under the private hosted zone).
   service_discovery_names = {
     flip_api  = "flip-api.${local.flip_local_domain}"
@@ -89,7 +102,7 @@ locals {
   # operator (see `var.ENFORCE_MFA` description). Unset → omitted entirely so
   # flip-api's Pydantic Settings default (`ENFORCE_MFA = True`, see
   # `flip-api/src/flip_api/config.py:91`) anchors the secure value. This
-  # matches the design recorded in CLAUDE.md: "the Settings default (`true`)
+  # matches the design recorded in AGENTS.md: "the Settings default (`true`)
   # is the canonical secure anchor". Set ENFORCE_MFA=false in `.env.stag` to
   # disable MFA for stag-only testing (per TROUBLESHOOTING.md §4.3).
   enforce_mfa_env = var.ENFORCE_MFA == "" ? {} : { ENFORCE_MFA = var.ENFORCE_MFA }
@@ -100,6 +113,15 @@ locals {
   # (compose.production.nvflare.yml); fl_server_flower/fl_api_flower are the
   # Flower maps (compose.production.flower.yml). ecs_tasks.tf selects by
   # var.fl_backend (#566).
+  # The regional S3 endpoint host. One value, two consumers that must agree
+  # (FLIP#905): flip-api presigns bundle URLs against it as AWS_ENDPOINT_URL_S3,
+  # and pinning boto3 to a regional endpoint makes those URLs PATH-STYLE — the
+  # bucket in the path, the host exactly this — so it is also the one host the
+  # fl-api's bundle-fetch allow-list (BUNDLE_URL_ALLOWED_HOSTS) admits. Derived
+  # once so the two cannot drift: a change here moves both, and a change to
+  # either alone would 400 every bundle download.
+  s3_regional_endpoint_host = "s3.${var.AWS_REGION}.amazonaws.com"
+
   ecs_task_env = {
     flip_api = merge(local.enforce_mfa_env, {
       ENV        = "production"
@@ -108,7 +130,7 @@ locals {
       # ~24h DNS lag on freshly created non-us-east-1 buckets caused the
       # FLIP#24 500s. Same rationale as the matching block in
       # deploy/compose.production.yml; was compose-only until #566.
-      AWS_ENDPOINT_URL_S3       = "https://s3.${var.AWS_REGION}.amazonaws.com"
+      AWS_ENDPOINT_URL_S3       = "https://${local.s3_regional_endpoint_host}"
       AWS_COGNITO_USER_POOL_ID  = module.cognito.user_pool_id
       AWS_COGNITO_APP_CLIENT_ID = module.cognito.app_client_id
       POSTGRES_USER             = var.POSTGRES_USER
@@ -146,7 +168,6 @@ locals {
     fl_server = {
       LOCAL_DEV                      = "false"
       NET_ID                         = "net-1"
-      MIN_CLIENTS                    = tostring(var.MIN_CLIENTS)
       IMAGES_DIR                     = "/app/data/images"
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
       FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
@@ -176,19 +197,27 @@ locals {
       # CPU-only. Default 0; set via TF_VAR_JOB_RESOURCE_SPEC_* for GPU jobs.
       JOB_RESOURCE_SPEC_NUM_GPUS           = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
       JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = tostring(var.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB)
+      # The only host the server-side bundle fetch may download from: the
+      # presign origin above (FLIP#905). Empty would mean "any public host".
+      BUNDLE_URL_ALLOWED_HOSTS = local.s3_regional_endpoint_host
     }
     # Flower SuperLink (compose.production.flower.yml fl-server-net-1). TLS +
     # SuperNode-auth flags travel as the container command (ecs_tasks.tf), not
     # env. INTERNAL_SERVICE_KEY is injected via the secrets block.
-    fl_server_flower = {
+    fl_server_flower = merge({
       LOCAL_DEV                      = "false"
       NET_ID                         = "net-1"
-      MIN_CLIENTS                    = tostring(var.MIN_CLIENTS)
       IMAGES_DIR                     = "/app/data/images"
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
       FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
       INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
-    }
+      }, var.lza_managed_network ? {
+      # Sealed egress (FLIP#749): the SuperLink's per-run `uv sync` cannot reach any
+      # package index, so the ServerApp runs in the image's preinstalled environment
+      # instead — Flower's documented restricted-network mode (exit-code 608 docs).
+      # Researcher package additions ship via image rebuild, not pyproject.
+      FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION = "1"
+    } : {})
     # Flower fl-api (compose.production.flower.yml fl-api-net-1). SuperLink
     # addresses use the Cloud Map name — the provisioned server cert must
     # carry it as a SAN (FLOWER_EXTRA_SERVER_SANS at provision time).
@@ -199,6 +228,36 @@ locals {
       SUPERLINK_HEALTH_ADDRESS    = "${local.service_discovery_names.fl_server}:9097"
       SUPERLINK_ROOT_CERTIFICATES = "/certs/ca.crt"
       FLOWER_SRC_ROOT             = "/app/src"
+      # Same bundle-fetch allow-list as the NVFLARE map (FLIP#905).
+      BUNDLE_URL_ALLOWED_HOSTS = local.s3_regional_endpoint_host
     }
   }
+}
+
+# CloudWatch log retention, applied to every log group this root owns.
+#
+# 365 days is not an arbitrary choice: it is the organisation's own Landing
+# Zone Accelerator baseline (`cloudwatchLogRetentionInDays` in the LZA
+# `global-config.yaml`), which LZA already applies to every log group it
+# creates in the FLIPProduction and FLIPStaging accounts. FLIP's groups sat at
+# 7 days — 52x below that baseline, and far short of any realistic
+# incident-detection window. A group that has aged out cannot support the
+# incident triage claimed under the CAF-aligned DSPT (C1.d).
+#
+# Staging deliberately deviates to 90 days. Its trust data is mock, but its
+# IAM, Cognito and authentication events are real, and a staging compromise is
+# a genuine incident with a plausible pivot toward production — so the window
+# stays long enough to investigate one rather than returning to 7 days. LZA
+# itself does not distinguish the environments (it applies 365 to both), so
+# this is a documented deviation, recorded under "Retention and deletion" in
+# docs/source/governance-and-compliance.rst. An undocumented deviation is
+# indistinguishable from the drift this change is correcting.
+#
+# Cost is not a consideration at FLIP's volume. The hub emits roughly 11 MB of
+# logs per day, so a 365-day window is about 4 GB retained — cents per month
+# at CloudWatch's storage rate. Do not trade retention against storage here,
+# and do not build an export-to-S3/Glacier pipeline for it: at this volume the
+# pipeline costs more than the storage it saves.
+locals {
+  log_retention_days = var.environment == "prod" ? 365 : 90
 }

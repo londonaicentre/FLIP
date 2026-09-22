@@ -128,9 +128,8 @@ def run_jobs_core(db: Session) -> None:
         return
 
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An error occurred while running jobs: {str(e)}"
-        )
+        logger.exception("Error while running jobs")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e
 
 
 def run_jobs_scheduled_task() -> None:
@@ -146,6 +145,5 @@ def run_jobs_scheduled_task() -> None:
         with Session(get_engine()) as db:
             run_jobs_core(db)
     except Exception as e:
-        error_message = f"Error in scheduled run_jobs execution: {str(e)}"
-        logger.error(error_message)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
+        logger.exception("Error in scheduled run_jobs execution")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

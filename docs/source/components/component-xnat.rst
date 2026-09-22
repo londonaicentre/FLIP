@@ -8,7 +8,7 @@ This page provides a quick-reference guide to both interactions with the XNAT UI
 
 `XNAT <https://www.xnat.org/>`_ is an open-source imaging informatics software platform dedicated to imaging-based research. XNAT's core functions manage importing, archiving, processing and securely distributing imaging and related study data. Detailed documentation on how to use XNAT is `provided on their wiki <https://wiki.xnat.org/documentation/how-to-use-xnat>`_.
 
-Upon FLIP project approval, XNAT project creation tasks are queued for each trust. Trusts poll for these tasks and create the XNAT projects locally. Relevant imaging data is then imported from trust PACS systems. Model developers are granted access to the XNAT project at each trust in order to perform any data preparation and enrichment activities which may be necessary for the running & training of AI models.
+Upon FLIP project approval, XNAT project creation tasks are queued for each trust. Trusts poll for these tasks and create the XNAT projects locally. Relevant imaging data is then retrieved from the trust's PACS (see :doc:`PACS <component-pacs>`). Model developers are granted access to the XNAT project at each trust in order to perform any data preparation and enrichment activities which may be necessary for the running & training of AI models.
 
 *******
 XNAT UI
@@ -16,16 +16,21 @@ XNAT UI
 
 .. _receiving-xnat-credentials:
 
-Receiving XNAT Account Credentials
-==================================
+Receiving XNAT Account Access
+=============================
 
-On approval of a FLIP project, any associated users will be granted access to the respective XNAT project at each trust. New XNAT user accounts will be generated as necessary. The email address associated with the FLIP user account will be sent details of their XNAT account credentials pertaining to each participating trust.
+On approval of a FLIP project, any associated users are granted access to the respective XNAT project at each participating trust, and new XNAT user accounts are created as necessary.
 
-.. figure:: ../assets/xnat/credentials_email.png
-    :width: 500
-    :align: center
+If a new XNAT account is created for you, the email address associated with your FLIP account receives a link to set your own password for that trust's XNAT — no password is ever sent by email. The link is given without a host, as ``<your trust's XNAT address>/app/template/...``: the Central Hub does not know, and never emails, a trust's internal XNAT address, so replace that placeholder with the address you normally use to open XNAT at your trust (its XNAT administrator can tell you it) and keep the rest exactly as shown. Because XNAT is only reachable from inside the trust's secure network (see `Access`_ below), open the link from a machine on that network; it stops working as soon as you have set your password, and expires if left unused — by default 48 hours after it was issued, so set your password promptly (the window is the trust XNAT's ``aliasTokenTimeout`` site setting, see `Invite link lifetime`_ below).
 
-    Email sent with XNAT account credentials.
+If you already have an XNAT account at a trust and have logged in to it, being added to a further project there sends you a notification instead — log in with your existing credentials. An account that exists but has never been logged in to (its first link was lost, or expired unused) is sent a fresh set-password link on the next project approval that includes you, so a missed invite is recovered by re-approval rather than by a trust administrator resetting the account.
+
+.. _invite-link-lifetime:
+
+Invite link lifetime
+^^^^^^^^^^^^^^^^^^^^
+
+The set-password link is an XNAT *alias token* issued by the trust's service account. Its unused lifetime is not set by FLIP: it is the trust XNAT's ``aliasTokenTimeout`` site setting (**Administer → Site Administration → Security → User Logins / Session Controls → Alias Token Timeout**), 48 hours by default. Setting a password through the link invalidates it, whatever the timeout. A trust that raises the timeout lengthens the life of every invite link in flight, so it should be treated as a security setting rather than a convenience one; FLIP does not read or override it.
 
 Access
 ======
@@ -122,12 +127,31 @@ Navigate to a CT session by selecting it from a subject's list of experiments.
 
 A CT session is derived from an imported PACS DICOM Study. The CT session page contains a list of scans in which imaging study data is contained. This includes imported DICOM images and the respective NIFTI files which have also been made available.
 
+Every FLIP XNAT ships the `OHIF viewer <https://wiki.xnat.org/xnat-ohif-viewer>`_: **View Images** in the session's *Actions* menu opens the study in the browser, to check an import or to draw and save a segmentation or ROI annotation against it as part of :ref:`data enrichment <data-enrichment>`.
+
 Downloading and Uploading Imaging Data
 =======================================
 
-Imaging data will be automatically imported from trust PACS systems on XNAT project generation. Model developers may wish to download this data or upload new or amended imaging data to support model development.
+Imaging data is retrieved automatically from the trust's :doc:`PACS <component-pacs>` when the XNAT project is generated. Model developers may wish to download this data or upload new or amended imaging data to support model development.
 
 Information on how to download and upload imaging data the XNAT UI can be found `here <https://wiki.xnat.org/documentation/how-to-use-xnat#HowToUseXNAT-UploadingImageDatatoXNAT>`_.
+
+*****************************
+Retrieval from the Trust PACS
+*****************************
+
+Imaging reaches XNAT by retrieval from the trust's PACS, performed by XNAT's DICOM Query-Retrieve
+(DQR) plugin: XNAT queries the PACS for the studies in an approved cohort, and the PACS returns them
+for XNAT to archive.
+
+That connection — what the trust's PACS and network teams must configure, the AE titles and ports
+involved, and how to verify it — is described on its own page.
+
+.. seealso::
+
+   :doc:`PACS <component-pacs>` — connecting XNAT to a trust PACS.
+
+.. _dicom-anonymization:
 
 ****************************
 DICOM Anonymization
@@ -165,7 +189,7 @@ The default script performs only basic label mapping:
 FLIP Anonymization Script
 =========================
 
-FLIP replaces the default script with a comprehensive site-wide anonymization script (``anon_script.das``) that provides more thorough PHI removal, including:
+FLIP replaces the default script with a site-wide anonymization script (``anon_script.das``) that removes considerably more PHI than the XNAT default, including:
 
 - **Patient identifiers**: birth date, address, telephone numbers, other patient IDs
 - **Institutional identifiers**: institution name, address, department
@@ -175,6 +199,17 @@ FLIP replaces the default script with a comprehensive site-wide anonymization sc
 - **De-identification recording**: sets ``Patient Identity Removed`` and ``De-identification Method`` tags
 
 The script is configured automatically during XNAT initialization via ``configure-xnat.sh``. It is applied to all incoming DICOM data when the SCP receiver has ``anonymizationEnabled`` set to ``true``.
+
+Limits of the profile
+^^^^^^^^^^^^^^^^^^^^^
+
+The script is a denylist: 28 removal rules naming specific tags. It removes what it enumerates, and anything unenumerated survives. Three boundaries are worth stating explicitly, because a trust connecting a real PACS (see :doc:`component-pacs`) sends this script real patient data rather than the synthetic studies it has been exercised against:
+
+- **Vendor private tags are not removed.** Real PACS populate these heavily and they routinely carry identifiers. No rule in the script reaches them.
+- **Dates are not shifted or removed.** Only patient birth date and time are dropped; study, series and acquisition dates pass through unchanged.
+- **Burned-in annotation is untouched.** Identifiers rendered into pixel data are beyond the reach of any header rule.
+
+The script nevertheless sets ``Patient Identity Removed`` to ``YES`` on every object it processes. That assertion is only as strong as the rules above, so a trust connecting a real PACS should review the profile against its own information-governance requirements rather than read the tag as an assurance. Declaring a DICOM PS3.15 confidentiality profile, with coded ``De-identification Method Code Sequence`` values, is tracked as separate work.
 
 Anonymize API Endpoints
 =======================
@@ -204,6 +239,8 @@ DICOM to NIfTI Conversion
 
 XNAT can automatically convert DICOM images to NIfTI format using the ``dcm2niix`` tool via the Container Service plugin. The converter runs from FLIP's version-pinned image ``ghcr.io/londonaicentre/xnat-dcm2niix`` (built from ``trust/xnat/dcm2niix/``; never a mutable ``latest`` tag — the previously used Docker Hub ``xnat/dcm2niix:latest`` resolved to a stale 2021 build that silently dropped slices from valid series). On the Docker/swarm backend the setup script also registers ``ghcr.io`` as a credential-less Container Service *image host*: without an image-host entry matching the image's registry hostname, container-service 3.8.1's swarm launch path fails with a ``NullPointerException`` before any container exists, even for a public image (the Kubernetes backend pulls via kubelet and does not need the entry). FLIP controls this conversion on a per-project basis through two XNAT mechanisms:
 
+The pinned image is recorded in XNAT's own database when the command is registered, not read from the repository at run time, so an XNAT provisioned before a pin bump keeps converting with the superseded image and reports itself healthy. The pin-sync check compares repository files only and cannot detect this. ``GET /xapi/commands`` lists the ``name -> image`` pairs a deployment actually holds — the same listing imaging-api returns when no command matches the image it requests — and re-running ``configure-dcm2niix.sh`` (or the ``xnat-init`` job on Kubernetes) re-registers against the current pin.
+
 Commands vs Event Subscriptions
 ================================
 
@@ -220,6 +257,8 @@ When a FLIP project is created, the ``dicom_to_nifti`` setting controls the even
 - **Disabled** (``dicom_to_nifti=False``): An inactive event subscription is created. No automatic conversion occurs, but ``dcm2niix`` can still be triggered manually from the XNAT UI if needed.
 
 The event subscription can be activated or deactivated later via the XNAT Event Service API.
+
+A project created with 'Includes imaging data' turned off (``has_imaging=False``) never reaches XNAT at all: the Central Hub skips the imaging stage at approval, so no XNAT project, event subscription or PACS pull is created at any trust.
 
 Event Service API Endpoints
 ============================
@@ -261,4 +300,4 @@ The following methods are available to be used in training, located in the `flip
 - ``get_by_accession_number(project_id: str, accession_id: str, resource_type: ResourceType | list[ResourceType] = ResourceType.NIFTI) -> Path``
     Downloads scans of the requested resource type (``NIFTI`` by default) and places them in a directory made available to the FL training script. Takes the project ID and an accession ID (which can be obtained from ``get_dataframe``) and an optional ``resource_type`` (single value or list). Returns the path to where the scans are stored.
 
-See the :doc:`/components/component-fl-nodes` documentation for the full list of ``flip.*`` calls available to user training code.
+See the :doc:`/components/component-fl-nets` documentation for the full list of ``flip.*`` calls available to user training code.

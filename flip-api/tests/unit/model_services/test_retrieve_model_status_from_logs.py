@@ -30,7 +30,7 @@ test_user_id = uuid4()
 # Stands in for the Elasticsearch base URL, which is a Secrets Manager value in every deployed
 # environment. Asserting on a sentinel rather than on the exact message keeps the test about the
 # property (the host must not reach the caller) rather than about the wording.
-SECRET_ES_HOST = "vpc-flip-internal-es.eu-west-2.es.amazonaws.example"
+SECRET_ES_HOST = "vpc-flip-internal-es.eu-west-2.es.amazonaws.example"  # pragma: allowlist secret
 SECRET_ES_URL = f"https://{SECRET_ES_HOST}:9200"
 
 MODULE = "flip_api.model_services.retrieve_model_status_from_logs"
