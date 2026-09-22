@@ -9,4 +9,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared OMOP CDM contract for the dataset converters: table schemas and concept mappings."""
+"""Shared contract for the dataset converters.
+
+The OMOP side — table schemas, concept mappings, the per-project surrogate-key blocks and the
+verification gate — and, since FLIP#1261, the DICOM side: the deterministic NIfTI → DICOM writer
+(``dicom_writer``) and the synthetic patient identities (``synthetic_identity``) every converted
+study carries.
+"""
