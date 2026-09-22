@@ -97,3 +97,18 @@ def test_every_piped_run_step_fails_on_a_broken_pipe(jobs):
         if PIPE_RE.search(step.get("run", "")) and step.get("shell") != "bash"
     ]
     assert offenders == []
+
+
+def test_every_gh_pr_list_has_an_explicit_limit(jobs):
+    """An unbounded listing silently leaves superseded pin PRs open after the first page."""
+    commands = []
+    offenders = []
+    for job in jobs.values():
+        for step in steps_of(job):
+            run = re.sub(r"\\\n\s*", " ", step.get("run", ""))
+            for command in re.findall(r"(?m)^\s*(gh pr list\b.*)$", run):
+                commands.append(command)
+                if not re.search(r"\s--limit\s+\d+(?:\s|$)", command):
+                    offenders.append(step["name"])
+    assert commands, "the workflow must include a gh pr list command to guard"
+    assert offenders == []

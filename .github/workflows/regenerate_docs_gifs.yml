@@ -233,7 +233,7 @@ jobs:
         # of feeding the loop nothing and leaving the superseded PRs open, green.
         shell: bash
         run: |
-          gh pr list --state open --base develop --json number,headRefName \
+          gh pr list --state open --base develop --limit 100 --json number,headRefName \
             --jq '.[] | select(.headRefName | startswith("bot/docs-gifs-")) | .number' |
           while read -r number; do
             if [ "$number" != "$NEW_PR" ]; then
