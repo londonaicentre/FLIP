@@ -16,7 +16,7 @@ from uuid import uuid4
 import pytest
 from sqlmodel import Session
 
-from flip_api.db.models.user_models import PermissionRef, RolePermission
+from flip_api.db.models.user_models import TRUST_SCOPED_PERMISSIONS, PermissionRef, RolePermission
 from flip_api.db.seed.role_permissions import _grant_permissions, seed_role_permissions
 
 
@@ -89,6 +89,7 @@ def test_seed_role_permissions_grants_admin_all_and_researcher_create_only(mock_
         _exec_result(first=None),
         _exec_result(first=researcher_role_id),
         _exec_result(first=None),
+        _exec_result(first=None),
     ]
 
     seed_role_permissions(mock_session)
@@ -106,6 +107,56 @@ def test_seed_role_permissions_grants_admin_all_and_researcher_create_only(mock_
     assert PermissionRef.CAN_MANAGE_PROJECTS.value not in {rp.permission_id for rp in researcher_added}
 
 
+def test_seed_role_permissions_withholds_trust_scoped_permissions_from_admin(mock_session):
+    """Admin must NOT receive trust-scoped permissions (FLIP#1260).
+
+    The Admin grant is a blanket "every permission in the table", so a trust-scoped
+    permission added to the enum would otherwise be handed to every hub administrator —
+    giving them approval authority over every trust's data, the hole FLIP#1258 closes.
+    This pins the filter that keeps them out.
+    """
+    admin_role_id = uuid4()
+    ordinary = MagicMock(id=PermissionRef.CAN_CREATE_PROJECTS.value)
+    trust_scoped = [MagicMock(id=pid) for pid in sorted(TRUST_SCOPED_PERMISSIONS)]
+
+    mock_session.exec.side_effect = [
+        _exec_result(first=admin_role_id),
+        _exec_result(all_=[ordinary, *trust_scoped]),
+        _exec_result(first=None),
+        _exec_result(first=None),
+        _exec_result(first=None),
+        _exec_result(first=None),
+    ]
+
+    seed_role_permissions(mock_session)
+
+    granted = {c.args[0].permission_id for c in mock_session.add.call_args_list}
+    assert granted == {PermissionRef.CAN_CREATE_PROJECTS.value}
+    assert not (granted & TRUST_SCOPED_PERMISSIONS)
+
+
+def test_seed_role_permissions_grants_trust_scoped_permissions_to_trust_owner(mock_session):
+    """Trust Owner receives exactly the trust-scoped permissions.
+
+    The grant is global in ``role_permission`` (that table has no trust dimension); what
+    binds the authority to one trust is ``user_role.trust_id`` on the user's own grant.
+    """
+    trust_owner_role_id = uuid4()
+
+    mock_session.exec.side_effect = [
+        _exec_result(first=None),
+        _exec_result(first=None),
+        _exec_result(first=trust_owner_role_id),
+        *[_exec_result(first=None) for _ in TRUST_SCOPED_PERMISSIONS],
+    ]
+
+    seed_role_permissions(mock_session)
+
+    added = [c.args[0] for c in mock_session.add.call_args_list]
+    assert {rp.permission_id for rp in added} == set(TRUST_SCOPED_PERMISSIONS)
+    assert all(rp.role_id == trust_owner_role_id for rp in added)
+
+
 def test_seed_role_permissions_logs_when_admin_role_missing(mock_session, caplog):
     """Missing Admin role logs a debug message and skips the admin grant."""
     researcher_role_id = uuid4()
@@ -113,6 +164,7 @@ def test_seed_role_permissions_logs_when_admin_role_missing(mock_session, caplog
     mock_session.exec.side_effect = [
         _exec_result(first=None),
         _exec_result(first=researcher_role_id),
+        _exec_result(first=None),
         _exec_result(first=None),
     ]
 
@@ -133,6 +185,7 @@ def test_seed_role_permissions_logs_when_researcher_role_missing(mock_session, c
         _exec_result(first=admin_role_id),
         _exec_result(all_=[]),
         _exec_result(first=None),
+        _exec_result(first=None),
     ]
 
     with caplog.at_level("DEBUG", logger="uvicorn"):
@@ -148,6 +201,7 @@ def test_seed_role_permissions_no_roles_still_logs_completion(mock_session, capl
     mock_session.exec.side_effect = [
         _exec_result(first=None),
         _exec_result(first=None),
+        _exec_result(first=None),
     ]
 
     with caplog.at_level("DEBUG", logger="uvicorn"):
@@ -156,5 +210,6 @@ def test_seed_role_permissions_no_roles_still_logs_completion(mock_session, capl
     messages = [rec.message for rec in caplog.records]
     assert any("Admin role not found" in m for m in messages)
     assert any("Researcher role not found" in m for m in messages)
+    assert any("Trust Owner role not found" in m for m in messages)
     assert any("Role permissions seeded successfully." in m for m in messages)
     mock_session.add.assert_not_called()

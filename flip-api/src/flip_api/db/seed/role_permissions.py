@@ -15,7 +15,13 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from flip_api.db.database import get_engine
-from flip_api.db.models.user_models import Permission, PermissionRef, Role, RolePermission
+from flip_api.db.models.user_models import (
+    TRUST_SCOPED_PERMISSIONS,
+    Permission,
+    PermissionRef,
+    Role,
+    RolePermission,
+)
 from flip_api.db.seed.seed_logger import logger
 
 
@@ -53,11 +59,23 @@ def seed_role_permissions(session: Session) -> None:
     pairs. Does not remove permissions that have been taken out of the
     seed (that would need an explicit migration, not a seed).
 
-    - Admin: every permission defined in ``PermissionRef``.
+    - Admin: every permission defined in ``PermissionRef`` EXCEPT the
+      trust-scoped ones (see below).
     - Researcher: ``CAN_CREATE_PROJECTS`` only. ``CAN_MANAGE_PROJECTS`` is
       reserved for Admin — it bypasses per-project access checks (see issue #358).
     - Viewer: none — read-only access is enforced at the route layer by
       the absence of ``CAN_MANAGE_PROJECTS``.
+    - Trust Owner: the trust-scoped permissions. The grant is global here
+      (``role_permission`` has no trust dimension); what binds authority to a
+      single trust is the ``user_role.trust_id`` on the *user's* grant, checked
+      by ``has_trust_permissions``.
+
+    Trust-scoped permissions are withheld from Admin deliberately (FLIP#1260).
+    Hub-wide administration is not trust authority: granting them to Admin would
+    give every hub administrator approval rights over every trust's data, which is
+    the hole FLIP#1258 exists to close. ``has_trust_permissions`` already ignores
+    global grants, so this is the second of two independent guards — belt and braces
+    on the one rule that must not fail open.
 
     Args:
         session (Session): Database session.
@@ -67,7 +85,9 @@ def seed_role_permissions(session: Session) -> None:
     """
     admin_role_id = session.exec(select(Role.id).where(Role.name == "Admin")).first()
     if admin_role_id:
-        all_permission_ids = [p.id for p in session.exec(select(Permission)).all()]
+        all_permission_ids = [
+            p.id for p in session.exec(select(Permission)).all() if p.id not in TRUST_SCOPED_PERMISSIONS
+        ]
         _grant_permissions(session, admin_role_id, all_permission_ids)
     else:
         logger.debug("Admin role not found. Cannot seed role permissions.")
@@ -77,6 +97,12 @@ def seed_role_permissions(session: Session) -> None:
         _grant_permissions(session, researcher_role_id, [PermissionRef.CAN_CREATE_PROJECTS.value])
     else:
         logger.debug("Researcher role not found. Cannot seed role permissions.")
+
+    trust_owner_role_id = session.exec(select(Role.id).where(Role.name == "Trust Owner")).first()
+    if trust_owner_role_id:
+        _grant_permissions(session, trust_owner_role_id, sorted(TRUST_SCOPED_PERMISSIONS))
+    else:
+        logger.debug("Trust Owner role not found. Cannot seed role permissions.")
 
     logger.info("Role permissions seeded successfully.")
 

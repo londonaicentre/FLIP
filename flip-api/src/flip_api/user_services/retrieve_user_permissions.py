@@ -27,33 +27,43 @@ router = APIRouter(prefix="/users", tags=["user_services"])
 
 def has_role(user_id: UUID, db: Session) -> bool:
     """
-    Check if a user has at least one role assigned.
+    Check if a user has at least one GLOBAL role assigned.
+
+    Trust-scoped grants (FLIP#1260) do not count: this gates platform onboarding, and a
+    Trust Owner with no platform role still needs one to use the platform itself.
 
     Args:
         user_id (UUID): The unique identifier of the user.
         db (Session): The database session.
 
     Returns:
-        bool: True if the user has at least one role, False otherwise.
+        bool: True if the user has at least one global role, False otherwise.
     """
-    statement = select(UserRole).where(UserRole.user_id == user_id)
+    statement = select(UserRole).where(UserRole.user_id == user_id).where(col(UserRole.trust_id).is_(None))
     user_role = db.exec(statement).first()
     return user_role is not None
 
 
 def get_user_permissions(user_id: UUID, db: Session) -> list[Permission]:
     """
-    Retrieve all permissions for a given user based on their roles.
+    Retrieve all permissions for a given user based on their GLOBAL roles.
+
+    Trust-scoped grants (``user_role.trust_id`` set, FLIP#1260) are excluded: they confer
+    authority at one trust only, and folding them into the platform-wide permission list
+    would present a Trust Owner as holding those rights everywhere. Trust authority is
+    answered by ``auth_utils.has_trust_permissions``.
 
     Args:
         user_id (UUID): The unique identifier of the user.
         db (Session): The database session.
 
     Returns:
-        list[Permission]: A list of Permission objects associated with the user's roles.
+        list[Permission]: A list of Permission objects associated with the user's global roles.
     """
     # Get user roles
-    user_roles = db.exec(select(UserRole).where(col(UserRole.user_id) == user_id)).all()
+    user_roles = db.exec(
+        select(UserRole).where(col(UserRole.user_id) == user_id).where(col(UserRole.trust_id).is_(None))
+    ).all()
 
     # Get all permissions for these roles
     user_permissions: list[Permission] = []

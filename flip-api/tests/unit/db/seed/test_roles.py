@@ -48,7 +48,7 @@ def test_seed_roles_is_idempotent(session):
     seed_roles(session)
     seed_roles(session)
 
-    assert len(session.exec(select(Role)).all()) == 3
+    assert len(session.exec(select(Role)).all()) == len(CURRENT_ROLES)
 
 
 def test_seed_roles_applies_rename_keeping_same_id(session):
@@ -71,7 +71,7 @@ def test_seed_roles_applies_rename_keeping_same_id(session):
     seed_roles(session)  # must not raise on the existing primary key
 
     roles = session.exec(select(Role)).all()
-    assert len(roles) == 3  # no duplicate row for the reused id
+    assert len(roles) == len(CURRENT_ROLES)  # no duplicate row for the reused id
     viewer = session.get(Role, RoleRef.VIEWER.value)
     assert viewer.name == "Viewer"  # rename applied in place
 

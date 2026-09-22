@@ -50,6 +50,30 @@ class PermissionRef(Enum):
     CAN_MANAGE_USERS = UUID("f6dbd04e-d1ef-4cb7-84c2-c29fb35cf83b")
     CAN_UNSTAGE_PROJECTS = UUID("a695be07-23c7-448d-a5df-36c3f63ca29d")
 
+    # Trust-scoped permissions — meaningful ONLY when held with a `trust_id`
+    # (see TRUST_SCOPED_PERMISSIONS below and `has_trust_permissions`).
+    CAN_APPROVE_FOR_TRUST = UUID("3f9c5d21-7a64-4f0e-9b1d-2c8e6a4b7f35")
+    CAN_MANAGE_TRUST_GOVERNANCE = UUID("b7e41a68-0d2f-4c95-8e37-5a1b9c6d4e82")
+    CAN_MANAGE_TRUST_OWNERS = UUID("d24f8b73-6c19-4a5e-b8d0-7f3e2c9a5146")
+
+
+# Permissions that are only ever granted against a specific trust. A holder of
+# one of these at trust X has authority over trust X and nowhere else.
+#
+# These are deliberately EXCLUDED from the "Admin gets every permission" grant in
+# `db.seed.role_permissions`: hub-wide administration is not trust authority, and
+# a blanket grant would hand every hub admin approval rights over every trust's
+# data — which is exactly what FLIP#1258 exists to prevent. Enforcement lives in
+# `has_trust_permissions`, which ignores global (trust_id IS NULL) grants; this
+# set keeps the seeder from quietly creating them in the first place.
+TRUST_SCOPED_PERMISSIONS: frozenset[UUID] = frozenset(
+    {
+        PermissionRef.CAN_APPROVE_FOR_TRUST.value,
+        PermissionRef.CAN_MANAGE_TRUST_GOVERNANCE.value,
+        PermissionRef.CAN_MANAGE_TRUST_OWNERS.value,
+    }
+)
+
 
 class RoleRef(Enum):
     """Enum for predefined roles.
@@ -61,6 +85,8 @@ class RoleRef(Enum):
     ADMIN = UUID("64d3145b-034c-4328-b637-8eb54313b7c5")
     RESEARCHER = UUID("10b64ed0-bc90-4c01-9cc3-933c704905c1")
     VIEWER = UUID("cdee79c9-a5e1-4b9e-a315-1ec2f3d29efe")
+    # Held per-trust: a TRUST_OWNER row always carries a `trust_id`.
+    TRUST_OWNER = UUID("8a3d6f14-9b52-4e07-a6c8-1d4f7b2e9053")
 
 
 class UserRole(SQLModel, table=True):
@@ -68,12 +94,33 @@ class UserRole(SQLModel, table=True):
 
     ``user_id`` holds a Cognito ``sub`` UUID. There is intentionally no FK to
     a local users table — Cognito is the source of truth for user identity.
+
+    ``trust_id`` scopes the grant (FLIP#1260):
+
+    * ``NULL`` — a global role (Admin, Researcher, Viewer), platform-wide.
+    * set — the role is held *only* at that trust (Trust Owner). Owning two
+      trusts is two rows, which needs no special case.
+
+    The two are not interchangeable in either direction. A global grant does not
+    satisfy a trust-scoped check (``has_trust_permissions``), and a trust-scoped
+    grant does not satisfy a global one (``has_permissions``) — otherwise trust
+    authority would leak platform-wide.
+
+    The primary key is a surrogate ``id`` rather than the natural tuple because
+    Postgres forbids NULL in a primary-key column, and ``trust_id`` must be
+    nullable to express a global role. Uniqueness is enforced instead by two
+    partial indexes (see the FLIP#1260 migration): one over ``(user_id, role_id)``
+    where ``trust_id IS NULL``, one over ``(user_id, role_id, trust_id)`` where it
+    is NOT NULL. A plain UNIQUE constraint would not do: Postgres treats NULLs as
+    distinct, so it would let the same global role be granted twice.
     """
 
     __tablename__ = "user_role"
 
-    user_id: UUID = Field(primary_key=True)
-    role_id: UUID = Field(foreign_key="roles.id", primary_key=True)
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    user_id: UUID = Field(index=True)
+    role_id: UUID = Field(foreign_key="roles.id")
+    trust_id: UUID | None = Field(default=None, foreign_key="trust.id", index=True)
 
 
 class UserProfile(SQLModel, table=True):
