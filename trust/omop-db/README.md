@@ -28,14 +28,15 @@ use.
 
 ## Using the database (dev trust stacks)
 
-We have prepared mock data for each of the 2 dev trusts (GSTT and KCH) as postgres data volumes, published to the public Hugging Face dataset [`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data). In order to set up the database locally, these data volumes need to be downloaded/extracted. They are fetched anonymously over HTTPS — no AWS CLI or credentials required. This will be handled automatically when
-creating the trust containers, and similarly they will be updated locally when the desired version changes (note for devs: this is controlled by `trust/.data_version` — a git tag on that dataset, one pin for the OMOP and Orthanc data together; see "Data versions" in `trust/README.md`).
-
-```sh
-make update-omop-data           # both trusts (default)
-make update-omop-data TRUST=1   # Trust_1 only
-make update-omop-data TRUST=2   # Trust_2 only
-```
+The mock data for the dev trusts is the canonical per-project tables published to the public
+Hugging Face dataset [`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data)
+(`omop-csv/<project>/`), fetched anonymously over HTTPS — no AWS CLI or credentials required.
+`make -C trust up-trust` starts the container on an empty data dir — the image's init scripts create
+the schema and the `data_analyst_reader` role (the compose file passes `DATA_ACCESS_POSTGRES_PASSWORD`
+for that) — and then seeds this trust's slice of the default projects into it (see "Seeding a
+running trust" below). The seeded volume persists; a later `up` does nothing. The version is
+`trust/.data_version` — a git tag on that dataset, one pin for the OMOP and Orthanc data together;
+see "Data versions" in `trust/README.md`.
 
 The OMOP database container is normally started as part of a full trust stack from the repository root:
 
@@ -77,17 +78,18 @@ cd trust/omop-db && OMOP_DB_PORT=5434 OMOP_POSTGRES_USER=… OMOP_POSTGRES_PASSW
 
 ### Seeding a running trust with datasets (FLIP#1100)
 
-The snapshot above is a fixed two-project, two-trust cut. To load a chosen set of
-projects into a **running** trust — a different set, a third trust, a dataset that
-has no snapshot — seed it. Same lifecycle as the vocab load: one-time, after the
-stack is up, idempotent, and it persists in the bind-mounted volume until a
-`.data_version` bump. Run from `trust/` with the kit, which supplies the slot
-number, the port and the credentials:
+Seeding is how every trust gets its data: `up-trust` seeds the default projects at
+bring-up (`ensure-seeded`, which skips itself when the marker below already says
+so), and the same targets load any other published project into a **running**
+trust — a different set, a third trust. Idempotent, persisting in the bind-mounted
+volume; a `.data_version` bump makes the next `up-trust` re-seed at the new tag.
+Run from `trust/` with the kit, which supplies the slot number, the port and the
+credentials:
 
 ```sh
 make -C trust seed-omop KIT=GSTT PROJECTS="spleen_project cxr_project"   # OMOP rows only
-make -C trust seed KIT=GSTT PROJECTS="spleen_project cxr_project"        # + this trust's DICOMs into Orthanc
-make -C trust seed-trusts PROJECTS="spleen_project cxr_project"          # both dev trusts
+make -C trust seed KIT=GSTT PROJECTS="cxr_project"                       # + this trust's DICOMs into Orthanc
+make -C trust seed-trusts PROJECTS="cxr_project"                         # both dev trusts
 ```
 
 What it does: fetches the canonical CSVs for the listed `PROJECTS` at the pinned data
@@ -96,19 +98,22 @@ overrides — `image_feature`, `measurement` and `observation` are optional, sin
 whose labels live in XNAT publishes none of the first), selects this trust's rows by their
 `source_trust` column, deletes the listed projects' existing rows (by their own
 `person_id`s — Synthea EHR rows and other projects are untouched) and loads the
-slice, one transaction per project, into the constrained, vocab-loaded database
-a running trust is. `seed-orthanc` (see `trust/orthanc/README.md`) puts the same
-trust's studies into its PACS, selected by the same column, so OMOP and PACS
-agree by construction rather than by keeping two snapshots in lockstep.
+slice, one transaction per project. It works on the fresh, unconstrained database a
+trust starts as and on the constrained, vocab-loaded one it becomes after
+`load-omop-vocab`: the (Apache-licensed) DICOM vocabulary is loaded first
+(`load-dicom-vocab`, skipped when present), so the rows' imaging concepts resolve
+either way. `seed-orthanc` (see `trust/orthanc/README.md`) puts the same trust's
+studies into its PACS, selected by the same column, so OMOP and PACS agree by
+construction rather than by keeping two snapshots in lockstep.
 
-A seed writes a `.seeded` marker beside the trust's `db_data`. On the next
-`.data_version` bump, `update-omop-data` refuses to re-snapshot over a seeded
-volume — that would discard the seed *and* the vocabulary load — unless
-`FORCE=1`; then re-run `load-omop-vocab` and `seed`.
+A seed writes a `.seeded` marker beside the trust's `db_data` recording projects,
+partition and data version — what `ensure-seeded` compares to decide whether to
+re-seed. There is no `FORCE`: a re-seed replaces only the listed projects' rows.
 
 For database-only debugging (without the rest of the trust stack), `make -C trust/omop-db up-test-omop-trust1` will start just the first dev trust's OMOP container.
 
-Bringing the container up should not run any initialization scripts — the data volume already contains a populated database.
+The container's first start on an empty data dir runs the image's init scripts (schema, primary keys,
+indices, the read-only role); later starts find `PG_VERSION` and skip them.
 
 ### The Synthea EHR cohort (for the EHR risk-prediction tutorial)
 
@@ -126,6 +131,10 @@ Registry (anonymous HTTPS, no credentials, ~5 MB, downloaded at run time and cac
 make -C trust/omop-db load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # Trust_1 (GSTT)
 make -C trust/omop-db load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # Trust_2 (KCH)
 ```
+
+A Kubernetes trust publishes no host port: port-forward `svc/omop-db` and pass the connection as
+`make` variables instead — recipe in
+[`trust/deploy/helm/README.md`](../deploy/helm/README.md), "Local clusters (kind)".
 
 Design (see `src/omop_db_tools/synthea_ehr.py`): Synthea ids are shifted by `PERSON_ID_OFFSET` so
 they never collide with the imaging cohorts' existing keys at insert time, and the tutorial's
@@ -242,12 +251,11 @@ make populate                        # core vocab + DICOM vocab + each trust's d
 make apply-constraints               # FK constraints go on AFTER the load
 ```
 
-`up-build` creates the bind-mount sources (`volumes/Trust_<N>/db_data`) as you before starting
-anything: left to Docker, a missing source is created by the daemon as root, and
-`update_omop_data.sh` — which downloads into `volumes/` — then fails with "Permission denied" on a
+`up-build` creates the bind-mount sources (`volumes/Trust_<N>/db_data`) as the invoking user
+before starting anything: left to Docker, a missing source is created by the daemon as root, and
+`seed-omop` — which writes its marker beside `db_data` — then fails with "Permission denied" on a
 checkout where the build stack ran first. A `volumes/` you cannot write to fails that target loudly,
-with the `chown` to run. `export-pgdata` likewise hands each archive back to you; the `tar` itself
-has to run as root because postgres owns the data tree.
+with the `chown` to run.
 
 Populating runs from the host and needs `psql`/`pg_isready`
 (postgresql-client). The shipped build stack is **two-trust**: `NUM_TRUSTS` /
@@ -257,31 +265,20 @@ an `OMOP_DB_PORT_TRUST_<N>` in `.env.build` — `make populate NUM_TRUSTS=3
 PARTITION=modulo` fails fast until they exist (and `modulo` implies
 regenerating the matching imaging data). `populate` and `seed-omop` are the
 same loader (`omop_db_tools.import_tables`): `populate` passes `--clean all`
-(empty build databases), `seed-omop` uses the default `--clean projects`.
+(empty build databases), `seed-omop` uses the default `--clean projects`
+(`CLEAN=all` overrides — the one-time move off a re-cut project whose person
+ids all changed, e.g. spleen at the FLIP#1221 cut, since `projects` deletes by
+the *new* ids and would leave the old rows behind). `seed-omop` fetches the
+published tables at the pinned tag (`fetch-dataset --projects $(PROJECTS)`);
+`CANONICAL_DIR=<dir>` loads a local canonical tree (`<dir>/<project>/<table>.csv`,
+what `omop_db_tools.dataset build` writes) instead, which is how a project is
+proven on a running trust before its data version is tagged
+(`make -C fl-tutorials seed-brain-mri KIT=<CODE>`, FLIP#1221). `unseed-omop`
+(`import_tables --remove-only`) is the surgical reverse: it deletes the listed
+projects' rows by the person ids in the given tables — point it at the cut the
+trust actually holds, e.g. `HF_TRUST_DATA_REVISION=20260911` — and loads nothing.
 
-### Publishing new pgdata tarballs
-
-The published tarballs must be **vocab-free** (they are public): run the
-pipeline with the core-vocabulary step skipped and WITHOUT `apply-constraints`
-(the FKs reference the absent vocab tables — they are applied at seed time by
-the vocab load instead):
-
-```sh
-make up-build && make populate CORE_VOCAB=0
-make export-pgdata                   # dist/trust<N>_pgdata.tar (no version in the name)
-```
-
-Then publish them as part of a new data version — one commit on the dataset
-that replaces `trust<N>/trust<N>_pgdata.tar`, plus a tag — and bump
-`trust/.data_version` to that tag:
-
-```sh
-make -C trust publish-trust-data VERSION=20261001 PGDATA="omop-db/dist/trust1_pgdata.tar omop-db/dist/trust2_pgdata.tar"
-```
-
-The DICOM vocabulary and the synthetic cohort stay in the tarball (both freely
-redistributable); the archives are ~11 MB. The previous version's bytes remain
-at the previous tag; nothing is copied or renamed.
+### Publishing the image and the canonical tables
 
 To publish the image manually (CI normally does this): `make push`
 (GHCR write access required; `OMOP_DB_TAG` overrides the tag, and the target
@@ -289,7 +286,21 @@ asks for confirmation — CI publishes `:latest` only from `main`, so an
 unqualified push repoints the "newest release" pointer at a local build).
 
 The canonical dataset is regenerated from per-trust CSV exports with
-`uv run python -m omop_db_tools.dataset build --trust-dirs <dir1> <dir2> --dest <out>`.
+`uv run python -m omop_db_tools.dataset build --trust-dirs <dir1> <dir2> --dest <out>`
+and published as part of a new data version — one commit on the dataset that
+replaces `omop-csv/<project>/`, plus a tag — then `trust/.data_version` is
+bumped to that tag (`make -C trust publish-trust-data VERSION=… OMOP_CSV=<out>`).
+The previous version's bytes remain at the previous tag; nothing is copied or renamed.
+
+## Other Make targets
+
+| Target | What it does |
+| --- | --- |
+| `make fetch-dataset` | Download the canonical OMOP tables (`omop_db_tools.dataset fetch`) at `HF_TRUST_DATA_REVISION` into `data/canonical/`. A prerequisite of both `populate` and `seed-omop`; run it alone to prime the cache or to inspect the tables. |
+| `make down-build` | `docker compose down --remove-orphans` on the two build databases started by `up-build`. Leaves `volumes/Trust_<N>/db_data` in place. |
+| `make shell` | `docker exec -it` a `/bin/bash` in the running `omop-db` container, found by `docker ps -qf "name=omop-db"`. That filter is a substring match with no project scoping, so it only works while exactly one container matches: with two dev trusts up it substitutes both IDs and `docker exec` fails. Use `docker exec -it trust<N>-omop-db-1 /bin/bash` (the compose-project name) on a multi-trust host. |
+| `make lint` / `make mypy` | Ruff and mypy over the populate tooling (aliases for `local_lint` / `local_mypy`). |
+| `make test` / `make unit_test` / `make local_test` | All three are the same target: ruff + mypy + the pytest suite with coverage + `tests/test_load_core_vocab.sh` (bash, driving `files/load_core_vocab.sh` against a stubbed `psql`). No Postgres, no Docker. |
 
 ## Further Reading
 

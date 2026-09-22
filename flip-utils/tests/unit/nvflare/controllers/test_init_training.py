@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from nvflare.apis.fl_constant import ReturnCode
 
-from flip.constants import FlipConstants, FlipEvents
+from flip.constants import FlipEvents
 from flip.nvflare.controllers.init_training import InitTraining
 
 
@@ -25,7 +25,7 @@ class TestInitTraining:
         controller = InitTraining(model_id=model_id)
         assert controller._model_id_fallback == model_id
         assert controller._model_id is None
-        assert controller._min_clients == FlipConstants.MIN_CLIENTS
+        assert controller._min_clients == 1
 
     def test_resolve_model_id_uses_fallback_when_fl_ctx_has_no_custom_props(self):
         """Lazy resolution returns the constructor UUID when fl_ctx has no custom_props."""

@@ -41,11 +41,17 @@ def omop_ids() -> ModuleType:
 
 
 def test_every_known_project_has_a_distinct_block(omop_ids: ModuleType) -> None:
-    """cxr, spleen and prostate must each get their own non-overlapping block."""
+    """cxr, spleen, prostate, pathology and brain_mri must each get their own non-overlapping block.
+
+    pathology_project (FLIP#1181) holds 4_000_000, so brain_mri skipped to 5_000_000 rather than
+    collide with it in a shared trust database.
+    """
     blocks = omop_ids.PROJECT_ID_BLOCKS
     assert blocks["cxr_project"] == 1_000_000
     assert blocks["spleen_project"] == 2_000_000
     assert blocks["prostate_project"] == 3_000_000
+    assert blocks["pathology_project"] == 4_000_000
+    assert blocks["brain_mri_project"] == 5_000_000
     assert len(set(blocks.values())) == len(blocks), "block bases must be distinct"
 
 

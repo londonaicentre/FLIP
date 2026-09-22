@@ -42,7 +42,6 @@ def cohort() -> pd.DataFrame:
     frame = pd.DataFrame(
         {
             "person_id": np.arange(n),
-            "accession_id": [str(i) for i in range(n)],
             "age": rng.integers(20, 90, n).astype(float),
             "is_female": rng.integers(0, 2, n),
             "label": rng.integers(0, 2, n),

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import zipfile
@@ -23,11 +24,13 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 XNAT_DIR = REPO_ROOT / "trust" / "xnat"
 ENSURE_PLUGINS = REPO_ROOT / "trust" / "xnat" / "scripts" / "ensure_plugins.sh"
 WAIT_FOR_PLUGINS = REPO_ROOT / "trust" / "xnat" / "xnat" / "config" / "wait-for-xnat-plugins.sh"
+HELM_VALUES = REPO_ROOT / "trust" / "deploy" / "helm" / "values.yaml"
 PLUGIN_PREFIX = "xnat-1.10.0/plugins"
 REQUIRED_PLUGIN_NAMES = (
     "batch-launch-test.jar",
     "container-service-test.jar",
     "dicom-query-retrieve-test.jar",
+    "ohif-viewer-test.jar",
 )
 
 
@@ -53,21 +56,11 @@ def _aws_stub_writing_jars(template: Path, names: tuple[str, ...]) -> str:
     return f'dest="$4"; mkdir -p "$dest"; {copies}'
 
 
-def _plugin_env(tmp_path: Path, aws_body: str, ohif: bool = False) -> dict[str, str]:
-    """Environment for the plugin check, with a fake `aws` on PATH.
-
-    ``XNAT_OHIF_VIEWER`` is pinned rather than inherited. The xnat Makefile exports `.env`, where it
-    is enabled, so a test that inherited the ambient environment would assert the three-plugin
-    baseline while the script required four -- passing alone and failing under `make test`.
-    """
+def _plugin_env(tmp_path: Path, aws_body: str) -> dict[str, str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _write_executable(bin_dir / "aws", f"#!/bin/sh\nset -eu\n{aws_body}\n")
-    return {
-        **os.environ,
-        "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "XNAT_OHIF_VIEWER": "true" if ohif else "false",
-    }
+    return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
 
 
 def _run_plugin_check(plugin_dir: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -105,48 +98,6 @@ def test_plugin_check_downloads_and_validates_fresh_cache(tmp_path: Path) -> Non
     assert (plugin_dir / ".s3-prefix").read_text().strip() == PLUGIN_PREFIX
 
 
-def test_plugin_check_requires_ohif_when_enabled(tmp_path: Path) -> None:
-    """With the viewer on, a cache holding only the base three is incomplete and must re-sync."""
-    plugin_dir = tmp_path / "plugins"
-    plugin_dir.mkdir()
-    for name in REQUIRED_PLUGIN_NAMES:
-        _write_jar(plugin_dir / name)
-    (plugin_dir / ".s3-prefix").write_text(f"{PLUGIN_PREFIX}\n")
-    template = _write_jar(tmp_path / "template.jar")
-    env = _plugin_env(
-        tmp_path,
-        _aws_stub_writing_jars(template, (*REQUIRED_PLUGIN_NAMES, "ohif-viewer-test.jar")),
-        ohif=True,
-    )
-
-    result = _run_plugin_check(plugin_dir, env)
-
-    assert result.returncode == 0, result.stderr
-    assert "ohif-viewer-" in result.stdout
-    assert (plugin_dir / "ohif-viewer-test.jar").exists()
-
-
-def test_plugin_check_removes_ohif_when_disabled(tmp_path: Path) -> None:
-    """Turning the viewer off must remove a jar an earlier enabled run left behind.
-
-    The sync's --exclude hides those keys from --delete, so without an explicit removal the switch
-    would latch on: disabling it would leave the plugin installed and still loading.
-    """
-    plugin_dir = tmp_path / "plugins"
-    plugin_dir.mkdir()
-    for name in (*REQUIRED_PLUGIN_NAMES, "ohif-viewer-test.jar"):
-        _write_jar(plugin_dir / name)
-    (plugin_dir / ".s3-prefix").write_text(f"{PLUGIN_PREFIX}\n")
-    env = _plugin_env(tmp_path, 'echo "AWS must not be called" >&2; exit 99', ohif=False)
-
-    result = _run_plugin_check(plugin_dir, env)
-
-    assert result.returncode == 0, result.stderr
-    assert not (plugin_dir / "ohif-viewer-test.jar").exists()
-    for name in REQUIRED_PLUGIN_NAMES:
-        assert (plugin_dir / name).exists(), "disabling the viewer must not disturb the other plugins"
-
-
 def test_plugin_check_propagates_sync_failure(tmp_path: Path) -> None:
     result = _run_plugin_check(tmp_path / "plugins", _plugin_env(tmp_path, "exit 42"))
 
@@ -165,6 +116,100 @@ def test_plugin_check_rejects_incomplete_download(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "dicom-query-retrieve-" in result.stdout
+
+
+def test_plugin_check_rejects_a_download_without_the_ohif_viewer(tmp_path: Path) -> None:
+    """The viewer is a required family like the other three, not an optional extra."""
+    plugin_dir = tmp_path / "plugins"
+    template = _write_jar(tmp_path / "template.jar")
+    without_viewer = tuple(name for name in REQUIRED_PLUGIN_NAMES if not name.startswith("ohif-viewer-"))
+    env = _plugin_env(tmp_path, _aws_stub_writing_jars(template, without_viewer))
+
+    result = _run_plugin_check(plugin_dir, env)
+
+    assert result.returncode != 0
+    assert "ohif-viewer-" in result.stdout
+
+
+def test_plugin_sync_asks_s3_for_every_jar_in_the_prefix(tmp_path: Path) -> None:
+    """No family is filtered out of the sync: whatever the versioned prefix holds is the roster."""
+    plugin_dir = tmp_path / "plugins"
+    template = _write_jar(tmp_path / "template.jar")
+    argv_log = tmp_path / "aws-argv"
+    record_then_sync = f'printf "%s\\n" "$@" > "{argv_log}"; ' + _aws_stub_writing_jars(
+        template, REQUIRED_PLUGIN_NAMES
+    )
+
+    result = _run_plugin_check(plugin_dir, _plugin_env(tmp_path, record_then_sync))
+
+    assert result.returncode == 0, result.stderr
+    argv = argv_log.read_text().splitlines()
+    assert argv[:2] == ["s3", "sync"]
+    assert "--include" in argv
+    assert argv[argv.index("--include") + 1] == "*.jar"
+    assert not any("ohif" in arg for arg in argv), f"the sync filters the viewer out: {argv}"
+
+
+def _script_plugin_families() -> list[str]:
+    """Read the plugin families ``ensure_plugins.sh`` requires of the dev cache.
+
+    Returns:
+        Family names, each a ``required_prefixes`` entry with its trailing hyphen removed so it
+        is directly comparable with a chart key.
+    """
+    block = re.search(
+        r"^required_prefixes=\(\n(.*?)^\)", ENSURE_PLUGINS.read_text(), re.DOTALL | re.MULTILINE
+    )
+    assert block is not None, f"no required_prefixes=( ... ) array in {ENSURE_PLUGINS}"
+    return [prefix.rstrip("-") for prefix in re.findall(r'"([^"]+)"', block.group(1))]
+
+
+def _chart_plugin_families() -> list[str]:
+    """Read the plugin families the Helm chart's init container downloads.
+
+    Returns:
+        The ``xnat.web.plugins.urls`` keys. Parsed by indentation rather than with a YAML
+        loader so this suite keeps its single ``pydicom`` dependency.
+    """
+    lines = HELM_VALUES.read_text().splitlines()
+    starts = [i for i, line in enumerate(lines) if re.match(r"^\s*urls:\s*$", line)]
+    assert len(starts) == 1, f"expected one urls: block in {HELM_VALUES}, found {len(starts)}"
+    start = starts[0]
+    indent = len(lines[start]) - len(lines[start].lstrip())
+
+    families: list[str] = []
+    for line in lines[start + 1 :]:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        entry = re.match(r"^(\s+)([A-Za-z0-9_-]+):\s*\S", line)
+        if entry is None or len(entry.group(1)) <= indent:
+            break
+        families.append(entry.group(2))
+    return families
+
+
+def test_the_plugin_roster_is_the_same_in_the_script_and_the_helm_chart() -> None:
+    """The dev cache and the K8s init container must require the same plugin families.
+
+    ``ensure_plugins.sh`` guards only the Swarm and dev paths; the chart downloads its own
+    roster into an emptyDir that masks the image's plugins entirely. So a family wired into one
+    and not the other leaves K8s silently short of a plugin — nothing fails until XNAT is
+    serving, and then only on the route that plugin owns. The comment above
+    ``required_prefixes`` asks for the two to be kept in step; this pins it.
+
+    Order is not part of the contract, only membership: the chart lists the same four families
+    in a different order.
+    """
+    script = _script_plugin_families()
+    chart = _chart_plugin_families()
+
+    assert "ohif-viewer" in script, f"parsed no viewer out of {ENSURE_PLUGINS}: {script}"
+    assert "ohif-viewer" in chart, f"parsed no viewer out of {HELM_VALUES}: {chart}"
+    assert sorted(script) == sorted(chart), (
+        "the dev-cache roster and the chart roster disagree — "
+        f"only in ensure_plugins.sh: {sorted(set(script) - set(chart))}, "
+        f"only in values.yaml: {sorted(set(chart) - set(script))}"
+    )
 
 
 def test_plugin_check_resyncs_a_cache_holding_a_truncated_jar(tmp_path: Path) -> None:
@@ -314,10 +359,7 @@ def test_readiness_reaches_the_rotated_password_on_the_first_rejection(tmp_path:
 
     result = _run_readiness(
         _readiness_env(
-            tmp_path,
-            curl_body,
-            initial_password="initial",  # pragma: allowlist secret
-            rotated_password="rotated",  # pragma: allowlist secret
+            tmp_path, curl_body, initial_password="initial", rotated_password="rotated"  # pragma: allowlist secret
         )
     )
 
@@ -344,10 +386,7 @@ def test_readiness_forgives_a_transient_rejection_during_boot(tmp_path: Path) ->
 
     result = _run_readiness(
         _readiness_env(
-            tmp_path,
-            curl_body,
-            initial_password="initial",  # pragma: allowlist secret
-            rotated_password="rotated",  # pragma: allowlist secret
+            tmp_path, curl_body, initial_password="initial", rotated_password="rotated"  # pragma: allowlist secret
         )
     )
 
@@ -697,7 +736,7 @@ def _kit_tree(tmp_path: Path) -> Path:
     here aborts the parse and reads as a loop that never ran.
     """
     (tmp_path / "deploy").mkdir()
-    for fragment in ("fl_backend.mk", "instance.mk"):
+    for fragment in ("env_mode.mk", "fl_backend.mk", "instance.mk"):
         shutil.copy(REPO_ROOT / "deploy" / fragment, tmp_path / "deploy" / fragment)
     trust_dir = tmp_path / "trust"
     (trust_dir / "xnat").mkdir(parents=True)

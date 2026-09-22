@@ -30,8 +30,9 @@ PROJECT_ID_BLOCKS = {
     "prostate_project": 3_000_000,
     # Allocated by idc_pathology/build_omop_project.py from its own manifest row index (base + 2 + i,
     # so the block's first id is 4_000_002): an offset the published export already carries, recorded
-    # here rather than re-aligned to surrogate_ids() — that would change published ids.
+    # here rather than re-aligned to surrogate_ids() — that would change published ids (FLIP#1181).
     "pathology_project": 4_000_000,
+    "brain_mri_project": 5_000_000,
 }
 BLOCK_SIZE = 1_000_000
 

@@ -59,8 +59,12 @@ WEIGHTS_DIR := $(DATA_DIR)/weights
 	seed-idc-pathology upload-idc-pathology-annotations \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
 	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
-	reproduce-spleen-omop \
-	fetch-cxr-metadata-table build-cxr-omop-tables verify-cxr-omop-tables reproduce-cxr-omop
+	reproduce-spleen-omop build-spleen-canonical verify-spleen-dicom seed-spleen \
+	fetch-cxr-metadata-table build-cxr-omop-tables verify-cxr-omop-tables reproduce-cxr-omop \
+	download-brain-mri-msd-raw download-brain-mri-data convert-brain-mri-to-dicom \
+	create-brain-mri-metadata-table fetch-brain-mri-metadata-table build-brain-mri-omop-tables \
+	verify-brain-mri-omop-tables reproduce-brain-mri-omop build-brain-mri-canonical \
+	verify-brain-mri-dicom seed-brain-mri
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the layout
 # both harnesses read (data/xrays_mini_300/, gitignored). Idempotent — safe to re-run.
@@ -297,13 +301,19 @@ upload-idc-pathology-annotations:
 #
 # There are two ways to reach build-spleen-omop-tables:
 #   fetch-spleen-metadata-table   — the reproducible path. Downloads the published metadata table
-#                                   that actually produced the published OMOP export. No root, no
-#                                   1.5GB download. This is what the verification gate uses.
+#                                   that actually produced the published OMOP export. No 1.5GB
+#                                   download. This is what the verification gate uses.
 #   download-spleen-msd-raw -> convert-spleen-to-dicom -> create-spleen-metadata-table
-#                                 — the full regeneration path. Needs root and re-synthesises
-#                                   patient identities, so its output will NOT match the published
-#                                   export (see the README). Use it to exercise the DICOM stage.
+#                                 — the full regeneration path. Deterministic since FLIP#1221 (no
+#                                   root, the same bytes on every run), and from that cut the
+#                                   published export IS its output, so the two paths agree.
+#
+# Since FLIP#1221 the spleen DICOM set is NOT published either: MSD Task09 is open data, so like
+# brain_mri the set regenerates locally (dicom_output/<subject>/*.dcm) and only the OMOP tables and
+# source/dicom_metadata.csv go to aicentreflip/trust-data. build-spleen-canonical / verify-spleen-dicom /
+# seed-spleen are the same three steps brain_mri has, on the regenerated tree.
 SPLEEN_OMOP_UV := uv run --project datasets/spleen
+SPLEEN_DATA := data/spleen
 # The published tables are read at omop-csv/<project>/ on a data-version TAG on aicentreflip/trust-data
 # — the FLIP#1101 layout, one copy of every table with the version as a git tag. The pre-#1101 copies
 # at omop-csv/<version>/<project>/ are still published but nothing in the repo reads them since
@@ -330,14 +340,11 @@ download-spleen-msd-raw:
 		filepath='data/Task09_Spleen.tar', output_dir='data')"
 	@echo "✅ raw MSD extract at fl-tutorials/data/Task09_Spleen/imagesTr (41 cases)"
 
-# Regeneration path, step 1: NIfTI -> DICOM with synthesised patient identities.
-# WORKSTATION ONLY: pyplastimatch's install_precompiled_binaries() copies to /usr/local/bin, so this
-# needs root and is never run in CI. Run as:
-#   sudo $(shell which uv) run --project datasets/spleen python datasets/spleen/convert_spleen_dataset.py
-# from fl-tutorials/. Create the venv as your normal user first (any other target does it) — a sudo
-# run can leave a root-owned .venv that breaks every later non-sudo invocation.
+# Regeneration path, step 1: NIfTI -> DICOM with synthesised patient identities, on the shared
+# pydicom writer (utils/dicom_writer.py — no plastimatch, no root, deterministic; FLIP#1221).
+# PYTHONPATH=datasets because the converter imports utils.*, like the OMOP converters below.
 convert-spleen-to-dicom:
-	@cd .. && $(SPLEEN_OMOP_UV) python datasets/spleen/convert_spleen_dataset.py
+	@cd .. && PYTHONPATH=datasets $(SPLEEN_OMOP_UV) python datasets/spleen/convert_spleen_dataset.py
 
 # Regeneration path, step 2: DICOM -> tables/dicom_metadata.csv, then bridge it to where the OMOP
 # converter expects its input. The copy stands in for a step that was manual upstream:
@@ -364,8 +371,37 @@ verify-spleen-omop-tables:
 	@cd .. && $(SPLEEN_OMOP_UV) python datasets/utils/verify_omop_tables.py --project spleen_project --revision $(TRUST_DATA_REVISION)
 
 # The whole reproducible path in one command: fetch the canonical input, convert, verify.
-# Needs no root and no MSD download.
+# Needs no MSD download.
 reproduce-spleen-omop: fetch-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables
+
+# The canonical (source_trust) form that gets published and seeded, assembled from the per-trust
+# split by trust/omop-db's dataset tool into data/spleen/canonical/spleen_project/, with the metadata
+# table beside it (its own directory: publish-trust-data's OMOP_CSV= uploads every CSV under it).
+build-spleen-canonical:
+	@cd ../../trust/omop-db && uv run python -m omop_db_tools.dataset build \
+		--trust-dirs $(FL_TUTORIALS_DIR)/omop/trust_1 $(FL_TUTORIALS_DIR)/omop/trust_2 \
+		--dest $(FL_TUTORIALS_DIR)/$(SPLEEN_DATA)/canonical --projects spleen_project
+	@mkdir -p ../$(SPLEEN_DATA)/canonical/spleen_project/source \
+		&& cp ../data/spleen_metadata.csv ../$(SPLEEN_DATA)/canonical/spleen_project/source/dicom_metadata.csv
+	@echo "✅ canonical tables at $(FL_TUTORIALS_DIR)/$(SPLEEN_DATA)/canonical/spleen_project"
+
+# The regenerated DICOM tree against the canonical tables, both ways (publish_dicom.py's pre-publish
+# check, without the packaging this project no longer takes).
+verify-spleen-dicom:
+	@cd ../../trust/orthanc && uv run publish_dicom.py --verify-only --project spleen_project \
+		--tables-dir $(FL_TUTORIALS_DIR)/$(SPLEEN_DATA)/canonical --source $(FL_TUTORIALS_DIR)/dicom_output
+
+# Both halves of a running dev trust from the regenerated tree (the OMOP rows from canonical/, the
+# instances from dicom_output/). A trust still holding the pre-FLIP#1221 spleen cut needs CLEAN=all
+# once (every spleen id changed, so `projects` would leave the old rows beside the new) — pass the
+# other projects it holds in PROJECTS so they are reloaded too. DRY_RUN=1 counts the DICOM half only.
+seed-spleen:
+	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make seed-spleen KIT=GSTT [DRY_RUN=1] [CLEAR=1] [CLEAN=all]"; exit 1)
+	$(if $(DRY_RUN),@echo "DRY_RUN: skipping seed-omop",$(MAKE) -C ../../trust seed-omop KIT=$(KIT) PROJECTS=spleen_project \
+		CANONICAL_DIR=$(FL_TUTORIALS_DIR)/$(SPLEEN_DATA)/canonical $(if $(CLEAN),CLEAN=$(CLEAN)))
+	$(MAKE) -C ../../trust seed-orthanc KIT=$(KIT) PROJECTS=spleen_project \
+		DICOM_SOURCE=$(FL_TUTORIALS_DIR)/dicom_output TABLES_DIR=$(FL_TUTORIALS_DIR)/$(SPLEEN_DATA)/canonical \
+		$(if $(CLEAR),CLEAR=$(CLEAR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
 
 # ---------------------------------------------------------------------------------------------
 # cxr_project OMOP tables (FLIP#1092 wave 2)
@@ -396,3 +432,101 @@ verify-cxr-omop-tables:
 	@cd .. && $(CXR_OMOP_UV) python datasets/utils/verify_omop_tables.py --project cxr_project --revision $(TRUST_DATA_REVISION)
 
 reproduce-cxr-omop: fetch-cxr-metadata-table build-cxr-omop-tables verify-cxr-omop-tables
+
+# ---------------------------------------------------------------------------------------------
+# brain_mri_project OMOP tables + DICOM regeneration (FLIP#1221)
+#
+# MSD Task01_BrainTumour (BraTS; 484 four-channel MRI volumes, CC BY-SA 4.0) as four-series MR
+# studies. The whole chain is in-tree and needs no root:
+#   download-brain-mri-msd-raw -> convert-brain-mri-to-dicom -> create-brain-mri-metadata-table
+#     -> build-brain-mri-omop-tables -> build-brain-mri-canonical -> verify-brain-mri-dicom
+# and the reproducible path, fetch-brain-mri-metadata-table -> build -> verify, is
+# `reproduce-brain-mri-omop` (no download; GATE FAIL until the project's first publish, because the
+# gate refuses to compare nothing).
+#
+# Unlike spleen, the DICOM set is NEVER published: only the OMOP tables and source/dicom_metadata.csv
+# go to aicentreflip/trust-data. The converter is deterministic (utils/dicom_writer.py: every UID and
+# identity a function of the MSD case id), so the set regenerates byte-for-byte from the MSD tar —
+# `make convert-brain-mri-to-dicom METADATA_TABLE=data/brain_mri/source/dicom_metadata.csv` after
+# fetch-brain-mri-metadata-table converts exactly the published cohort. Otherwise BRAIN_MRI_NUM_CASES
+# (the N lowest-numbered cases; 40 is the published cohort, 20 per trust).
+#
+# seed-brain-mri KIT=<CODE> seeds a RUNNING dev trust from the local tree, both halves local (the OMOP
+# rows from canonical/, the instances from dicom/), so the platform pull can be proven before a data
+# version is tagged. After publishing, `make -C trust seed-omop KIT=<CODE> PROJECTS=brain_mri_project`
+# loads the same rows from the tag; the DICOM half always comes from the local tree.
+BRAIN_MRI_UV := uv run --project datasets/brain_mri
+BRAIN_MRI_DATA := data/brain_mri
+BRAIN_MRI_NUM_CASES ?= 40
+BRAIN_MRI_WORKERS ?= 4
+BRAIN_MRI_METADATA_URL := $(HF_TRUST_DATA_BASE)/omop-csv/brain_mri_project/source/dicom_metadata.csv
+FL_TUTORIALS_DIR := $(abspath ..)
+
+# Step 0: the tar (7.6 GB, md5-checked, kept beside the extract) and the training half of it —
+# data/Task01_BrainTumour/{imagesTr,labelsTr,dataset.json}; the unlabelled imagesTs are not extracted.
+download-brain-mri-msd-raw:
+	@cd .. && $(BRAIN_MRI_UV) python datasets/brain_mri/download_msd_brain_tumour.py --tar data/Task01_BrainTumour.tar --out-dir data
+	@echo "✅ raw MSD extract at fl-tutorials/data/Task01_BrainTumour/imagesTr (484 cases)"
+
+# The simulator layout (LOCAL_DEV): data/brain_mri/images/<accession>/scans/{input_<channel>_<case>,label_<case>}.nii.gz
+# + dataframe.csv, the same accessions the DICOM path stamps. NUM_CASES caps it (default 10, as spleen).
+download-brain-mri-data: download-brain-mri-msd-raw
+	@cd .. && PYTHONPATH=datasets $(BRAIN_MRI_UV) python datasets/brain_mri/prepare_brain_mri_local_data.py \
+		--out-dir $(BRAIN_MRI_DATA) --num-cases $(NUM_CASES)
+	@echo "✅ brain MRI data ready at $(FL_TUTORIALS_DIR)/$(BRAIN_MRI_DATA)/"
+
+# Step 1: NIfTI -> DICOM, one MR study of four series per case, data/brain_mri/dicom/<accession>/*.dcm.
+convert-brain-mri-to-dicom:
+	@cd .. && PYTHONPATH=datasets $(BRAIN_MRI_UV) python datasets/brain_mri/convert_brain_mri_to_dicom.py \
+		--out-dir $(BRAIN_MRI_DATA)/dicom --workers $(BRAIN_MRI_WORKERS) \
+		$(if $(METADATA_TABLE),--metadata-table $(METADATA_TABLE),--num-cases $(BRAIN_MRI_NUM_CASES))
+
+# Step 2: DICOM tree -> data/brain_mri/source/dicom_metadata.csv (one row per series; source_trust decided here).
+create-brain-mri-metadata-table:
+	@cd .. && PYTHONPATH=datasets $(BRAIN_MRI_UV) python datasets/brain_mri/create_brain_mri_metadata_table.py \
+		--dicom-dir $(BRAIN_MRI_DATA)/dicom --output $(BRAIN_MRI_DATA)/source/dicom_metadata.csv
+
+# Reproducible path: the published metadata table at the pinned data version, to the same path.
+fetch-brain-mri-metadata-table:
+	@cd .. && mkdir -p $(BRAIN_MRI_DATA)/source && curl -fsSL "$(BRAIN_MRI_METADATA_URL)" -o $(BRAIN_MRI_DATA)/source/dicom_metadata.csv
+	@echo "✅ metadata table at fl-tutorials/$(BRAIN_MRI_DATA)/source/dicom_metadata.csv (revision $(TRUST_DATA_REVISION))"
+
+# Step 3: metadata table -> omop/brain_mri_project/*.csv + omop/<trust>/brain_mri_project/*.csv (from either path above).
+build-brain-mri-omop-tables:
+	@cd .. && PYTHONPATH=datasets $(BRAIN_MRI_UV) python datasets/brain_mri/omop_convert_brain_mri.py \
+		--metadata $(BRAIN_MRI_DATA)/source/dicom_metadata.csv --omop-root .
+
+# The gate: the generated tables against the published export at the pinned data version.
+verify-brain-mri-omop-tables:
+	@cd .. && $(BRAIN_MRI_UV) python datasets/utils/verify_omop_tables.py --project brain_mri_project --revision $(TRUST_DATA_REVISION)
+
+reproduce-brain-mri-omop: fetch-brain-mri-metadata-table build-brain-mri-omop-tables verify-brain-mri-omop-tables
+
+# The canonical (source_trust) form that gets published and seeded: the per-trust split assembled by
+# trust/omop-db's dataset tool into data/brain_mri/canonical/brain_mri_project/, plus the metadata table
+# beside it so the conversion reproduces from the dataset alone. Its own directory on purpose:
+# publish-trust-data's OMOP_CSV= uploads every CSV under it.
+build-brain-mri-canonical:
+	@cd ../../trust/omop-db && uv run python -m omop_db_tools.dataset build \
+		--trust-dirs $(FL_TUTORIALS_DIR)/omop/trust_1 $(FL_TUTORIALS_DIR)/omop/trust_2 \
+		--dest $(FL_TUTORIALS_DIR)/$(BRAIN_MRI_DATA)/canonical --projects brain_mri_project
+	@mkdir -p ../$(BRAIN_MRI_DATA)/canonical/brain_mri_project/source \
+		&& cp ../$(BRAIN_MRI_DATA)/source/dicom_metadata.csv ../$(BRAIN_MRI_DATA)/canonical/brain_mri_project/source/
+	@echo "✅ canonical tables at $(FL_TUTORIALS_DIR)/$(BRAIN_MRI_DATA)/canonical/brain_mri_project"
+
+# The DICOM tree against the canonical tables, both ways (every accession, study UID and patient present
+# on both sides, no accession spanning two studies, no duplicate SOPInstanceUID) — publish_dicom.py's
+# pre-publish check, without the packaging step this project never takes.
+verify-brain-mri-dicom:
+	@cd ../../trust/orthanc && uv run publish_dicom.py --verify-only --project brain_mri_project \
+		--tables-dir $(FL_TUTORIALS_DIR)/$(BRAIN_MRI_DATA)/canonical --source $(FL_TUTORIALS_DIR)/$(BRAIN_MRI_DATA)/dicom
+
+# Both halves of a running dev trust from the local tree. DRY_RUN=1 counts the DICOM half and loads
+# nothing; CLEAR=1 removes the project's existing studies from Orthanc first.
+seed-brain-mri:
+	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make seed-brain-mri KIT=GSTT [DRY_RUN=1] [CLEAR=1]"; exit 1)
+	$(if $(DRY_RUN),@echo "DRY_RUN: skipping seed-omop",$(MAKE) -C ../../trust seed-omop KIT=$(KIT) PROJECTS=brain_mri_project \
+		CANONICAL_DIR=$(FL_TUTORIALS_DIR)/$(BRAIN_MRI_DATA)/canonical)
+	$(MAKE) -C ../../trust seed-orthanc KIT=$(KIT) PROJECTS=brain_mri_project \
+		DICOM_SOURCE=$(FL_TUTORIALS_DIR)/$(BRAIN_MRI_DATA)/dicom TABLES_DIR=$(FL_TUTORIALS_DIR)/$(BRAIN_MRI_DATA)/canonical \
+		$(if $(CLEAR),CLEAR=$(CLEAR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))

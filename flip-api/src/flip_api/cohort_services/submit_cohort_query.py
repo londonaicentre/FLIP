@@ -214,8 +214,10 @@ def submit_cohort_query(
         SubmitCohortQueryOutput: The result of the submission to each trust
 
     Raises:
-        HTTPException: If the query contains forbidden commands, if the SQL syntax is invalid, if no trusts are found,
-        or if there is an error communicating with the trusts.
+        HTTPException: If the query is over length, unparseable, not exactly one statement, or not
+        SELECT-shaped (see `validate_query`); if an imaging project's explicit SELECT list names no
+        `accession_id` column (see `projection_lacks_accession_id`); if no trusts are found; or if
+        there is an error communicating with the trusts.
     """
     try:
         if not can_modify_project(user_id, cohort_query.project_id, db):
@@ -268,7 +270,10 @@ def submit_cohort_query(
         try:
             parsed_query = validate_query(query_row.query)
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            # Deliberately user-facing (#906): validate_query composes every ValueError message itself
+            # (the sqlglot parse error is wrapped, never echoed), so str(e) is the hub's own validation
+            # text, which the UI surfaces to the researcher.
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
         # Imaging projects need an accession_id output column (the trusts' accession-ids route
         # selects it by name). Fast feedback only — see projection_lacks_accession_id.

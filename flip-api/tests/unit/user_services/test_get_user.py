@@ -155,8 +155,9 @@ def test_internal_server_error(user_id):
         response = client.get(f"/api/users/{user_id}")
 
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Internal server error" in response.json()["detail"]
-    mock_logger.error.assert_called_once()
+    assert response.json()["detail"] == "Internal server error"
+    assert "Test exception" not in response.json()["detail"]
+    mock_logger.exception.assert_called_once()
 
 
 # ---------------------
