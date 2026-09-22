@@ -217,10 +217,11 @@ make -C trust seed-trusts PROJECTS="spleen_project cxr_project"   # Seed the RUN
 make -C trust seed KIT=GSTT PROJECTS="…"   # one trust; seed-omop / seed-orthanc for one half
 ```
 
-**Trust data has two paths** — pre-built snapshots mounted by `make up`, and seeding into a
-*running* trust — and a data version is a git tag on `aicentreflip/trust-data`, pinned once in
-`trust/.data_version`. Both, plus the publishing rule:
-[`trust/AGENTS.md`](trust/AGENTS.md#trust-data-snapshots-seeding-and-versioning).
+**Trust data has one path — seeding (FLIP#1101/#1187).** `make up` starts each trust's omop-db and
+Orthanc on empty volumes and then seeds them from the published canonical tables at the version
+pinned in `trust/.data_version` — the one pin for OMOP and Orthanc together, a data version being a
+git tag on `aicentreflip/trust-data`. The seed markers, what re-seeds, and the publishing rule:
+[`trust/AGENTS.md`](trust/AGENTS.md#trust-data-seeding-and-versioning).
 
 ### Demo Video Recorder
 

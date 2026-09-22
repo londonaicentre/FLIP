@@ -22,7 +22,7 @@ Check the stack is up:
 
     omopDb.vocabLoad.s3Bucket is empty, so the omop-vocab-load hook was skipped.
 
-    The omop-db image and the restored pgdata are vocab-free by design: the
+    The omop-db image and the seeded database are vocab-free by design: the
     licensed bundle (SNOMED CT / LOINC / Read v2 / dm+d) cannot be published,
     so this chart will not fetch it for you.
 

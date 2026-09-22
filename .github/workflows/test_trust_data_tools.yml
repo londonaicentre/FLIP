@@ -13,9 +13,9 @@ name: Trust - Data tools CI
 
 # The trust-level data tooling that has no service container: the PACS seeder
 # (trust/orthanc/seed_orthanc.py), the dataset publisher
-# (trust/publish_trust_data.py) and the .seeded guard that stops a data-version
-# bump discarding a seeded volume (trust/tests/test_seed_guard.sh, which drives
-# both update_*_data.sh against a sandbox with curl/tar/sudo stubbed).
+# (trust/publish_trust_data.py) and the seed-marker contract between
+# `make -C trust ensure-seeded` and the two seed targets it dispatches to
+# (trust/tests/test_seed_marker_contract.sh, a dry-run over the real Makefiles).
 # The scripts are PEP 723 with their own pytest suites; nothing here needs
 # Orthanc, Postgres or Hugging Face credentials.
 # Deliberately its own workflow rather than a job on "Trust - OMOP DB CI": the
@@ -29,10 +29,9 @@ on:
       - "trust/orthanc/publish_dicom.py"
       - "trust/orthanc/tests/**"
       - "trust/orthanc/Makefile"
-      - "trust/orthanc/update_orthanc_data.sh"
       - "trust/omop-db/Makefile"
-      - "trust/omop-db/update_omop_data.sh"
       - "trust/publish_trust_data.py"
+      - "trust/seed_trust.sh"
       - "trust/tests/**"
       - "trust/Makefile"
       - ".github/workflows/test_trust_data_tools.yml"
@@ -42,9 +41,8 @@ on:
       - "deploy/env_mode.mk"
       - "deploy/fl_backend.mk"
       - "deploy/instance.mk"
-      # Two consumers: trust/orthanc/Makefile includes+exports the GSTT kit example at parse
-      # time, and trust/tests/test_seed_guard.sh copies it into its sandbox as a fixture — so
-      # a content-only edit can fail this suite, not just an unparseable one. The KCH twin
+      # trust/orthanc/Makefile includes+exports the GSTT kit example at parse time, so a
+      # content-only edit can fail this suite, not just an unparseable one. The KCH twin
       # exists but no Makefile reads it.
       - "trust/.env.GSTT.development.example"
   pull_request:
@@ -69,10 +67,9 @@ jobs:
         trust/orthanc/publish_dicom.py
         trust/orthanc/tests/**
         trust/orthanc/Makefile
-        trust/orthanc/update_orthanc_data.sh
         trust/omop-db/Makefile
-        trust/omop-db/update_omop_data.sh
         trust/publish_trust_data.py
+        trust/seed_trust.sh
         trust/tests/**
         trust/Makefile
         .github/workflows/test_trust_data_tools.yml
@@ -103,5 +100,5 @@ jobs:
 
       # trust/Makefile includes deploy/fl_backend.mk at parse time, which refuses an unset
       # FL_BACKEND; a dev checkout gets it from .env.development, CI has no such file.
-      - name: Dataset publisher + .seeded guard — unit tests + lint
+      - name: Dataset publisher + seed procedure + seed-marker contract — unit tests + lint
         run: make -C trust test-trust-data-tools FL_BACKEND=nvflare
