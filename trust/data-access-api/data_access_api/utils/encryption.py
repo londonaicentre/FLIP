@@ -29,7 +29,7 @@ which add entries and change nothing on the wire.
 
 The **context** is not carried in the envelope: both sides derive it from what they
 already know (``task:<task_type>`` for a task payload, ``project_id`` for the project id
-handed to FL clients, ``xnat_password`` for the credential a trust returns). It is bound
+handed to FL clients, ``xnat_setup_path`` for the set-password link a trust returns). It is bound
 into the authentication tag, so a payload sealed for one purpose does not verify when
 presented for another — a task payload cannot be re-targeted at a different handler by
 rewriting the unauthenticated ``task_type`` beside it.
@@ -83,7 +83,7 @@ SHARED_KID = "shared"
 #: Context labels (see the module docstring). Producer and consumer must pass the same one, and a
 #: mismatch fails closed as an opaque ``InvalidTag``, so call sites use these rather than literals.
 PROJECT_ID_CONTEXT = "project_id"
-XNAT_PASSWORD_CONTEXT = "xnat_password"  # pragma: allowlist secret — a context label, not a credential
+XNAT_SETUP_PATH_CONTEXT = "xnat_setup_path"  # the XNAT set-password link imaging-api returns (FLIP-PT-079)
 
 
 def task_context(task_type: str) -> str:

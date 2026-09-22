@@ -109,7 +109,7 @@ BUNDLED_APP_DIR_PREFIXES: dict[str, tuple[str, ...]] = {
 #
 # There is deliberately no slot for a lockfile, and no template commits one. Flower resolves
 # dependencies fresh on every app launch at every trust (``uv sync``, see FL_APP_BASE_DIR in
-# CLAUDE.md), so a committed ``uv.lock`` would be a resolution for the developer's machine rather
+# AGENTS.md), so a committed ``uv.lock`` would be a resolution for the developer's machine rather
 # than for the trust — which is also why ``uv.lock`` is named in EXCLUDED_APP_FILE_NAMES below, to
 # keep one out of an app folder. If reproducible per-run resolution ever becomes a requirement,
 # both halves have to change together: add the lockfile here and stop excluding it there, and the

@@ -193,6 +193,21 @@ RestrictedPython, OS-level sandboxing — each rejected as either easily bypasse
 fit for legitimate ML code), not an oversight — see FLIP#877 (tracking GHSA-8465) for the
 full reasoning, so it does not need re-deciding the next time this class of finding comes up.
 
+**The FL API fetches app bundles only from the hub's object store.** When a job is
+submitted, the net's FL API downloads the bundled app server-side from presigned S3 URLs
+handed to it by the Central Hub API. The FL API authenticates no caller of its own — it
+trusts its position on the hub's internal network — so that download is guarded as a
+server-side request forgery surface: URLs must be https on the default port, may not name
+a private, loopback or link-local address as an IP literal in any spelling, and a DNS name
+is resolved with every answer held to the same check, failing closed if it cannot be
+resolved. Above those checks sits an explicit host allow-list, ``BUNDLE_URL_ALLOWED_HOSTS``,
+consulted before any name is resolved: every deployment derives it from its AWS region as
+the regional S3 endpoint the hub presigns against (``s3.<region>.amazonaws.com``), so the
+FL API will fetch from that one host and nothing else. The allow-list is the control that
+matters — the range check on resolved addresses cannot, on its own, close a DNS-rebinding
+race between the check and the fetch — and an FL API started without it logs a warning
+naming what that leaves open.
+
 **FL traffic is mutually authenticated.** Both supported backends — NVIDIA FLARE and
 Flower — run over TLS with per-participant certificates issued during network
 provisioning, so the FL server and each client authenticate *each other* rather than one

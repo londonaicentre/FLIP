@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["requests>=2.32.5"]
+# dependencies = ["requests>=2.32.5", "pydicom>=3.0.1"]
 # ///
 # Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,11 +32,20 @@ re-POST, so a re-run uploads nothing and changes nothing. Refuses to upload anyt
 accession in this trust's OMOP slice has no directory in the archive — that mismatch is the exact
 failure this pipeline exists to prevent, and it must be loud.
 
+A project whose DICOMs are NOT on the dataset — regenerated locally from a public source instead of
+re-hosted (spleen and brain MRI since FLIP#1221) — is seeded with ``--source <dicom tree>
+--tables-dir <canonical tables>``, the same two inputs ``publish_dicom.py`` verifies: the tree is read
+in any layout, grouped by the ``AccessionNumber`` tag, and the slice is selected from the local
+``image_occurrence.csv`` by the same ``source_trust`` column.
+
 Normally reached through ``make -C trust seed-orthanc KIT=<CODE>``, which supplies the slot number,
 the PACS port and the credentials from the kit. Direct use::
 
     ORTHANC_USERNAME=… ORTHANC_PASSWORD=… uv run trust/orthanc/seed_orthanc.py \\
-        --trust-index 2 --orthanc-url http://127.0.0.1:8044 --projects spleen_project cxr_project
+        --trust-index 2 --orthanc-url http://127.0.0.1:8044 --projects cxr_project
+    ORTHANC_USERNAME=… ORTHANC_PASSWORD=… uv run trust/orthanc/seed_orthanc.py \\
+        --trust-index 1 --orthanc-url http://127.0.0.1:8042 --projects brain_mri_project \\
+        --source ../../fl-tutorials/data/brain_mri/dicom --tables-dir ../../fl-tutorials/data/brain_mri/canonical
 """
 
 from __future__ import annotations
@@ -44,12 +53,14 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import shutil
 import sys
 import tarfile
 import time
 from collections import Counter
 from pathlib import Path
 
+import pydicom
 import requests
 
 HF_TRUST_DATA_REPO = os.environ.get("HF_TRUST_DATA_REPO", "aicentreflip/trust-data")
@@ -137,26 +148,43 @@ def fetch_image_occurrence(revision: str, project: str, cache_dir: Path) -> list
         return list(csv.DictReader(handle))
 
 
-def ensure_dicoms(revision: str, project: str, cache_dir: Path) -> Path:
+def ensure_dicoms(revision: str, project: str, cache_dir: Path, attempts: int = 3) -> Path:
     """Stream ``dicom/<project>.tar.gz`` at ``revision`` into the cache once; return the project directory.
 
     The cache is keyed by revision (``<cache_dir>/<revision>/<project>/``), so a bump never reuses
     the previous version's instances. Extracts as it downloads (no 2× disk, no waiting for the whole
     archive), and marks completion with a file so a run interrupted mid-extract is redone rather
     than trusted.
+
+    Retried, because this is a ~2 GB stream over the public internet and an ``IncompleteRead``
+    part-way through is a real occurrence: only the Kubernetes hook has a Job ``backoffLimit``
+    behind it, so on a dev host and on the EC2 play a single transient fault would otherwise fail
+    the whole bring-up and cost the operator the entire stream again.
     """
     project_dir = cache_dir / revision / project
     if (project_dir / COMPLETE_MARKER).is_file():
         return project_dir
     url = hf_url(revision, f"dicom/{project}.tar.gz")
     print(f"📦 {project}: streaming {url} into {project_dir}", flush=True)
-    project_dir.mkdir(parents=True, exist_ok=True)
-    with requests.get(url, stream=True, timeout=300) as response:
-        response.raise_for_status()
-        with tarfile.open(fileobj=response.raw, mode="r|gz") as tar:
-            tar.extractall(project_dir, filter="data")
-    (project_dir / COMPLETE_MARKER).write_text(f"{url}\n")
-    return project_dir
+    for attempt in range(1, attempts + 1):
+        # Whatever a cut-short attempt extracted goes, so the next one starts on an empty
+        # directory rather than over half a tree; the marker is what makes that safe to do.
+        shutil.rmtree(project_dir, ignore_errors=True)
+        project_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            with requests.get(url, stream=True, timeout=300) as response:
+                response.raise_for_status()
+                with tarfile.open(fileobj=response.raw, mode="r|gz") as tar:
+                    tar.extractall(project_dir, filter="data")
+        except (requests.RequestException, tarfile.TarError, EOFError, OSError) as error:
+            if attempt == attempts:
+                raise
+            print(f"   retry {attempt}/{attempts} after {type(error).__name__}: {error}", flush=True)
+            time.sleep(attempt * 5)
+            continue
+        (project_dir / COMPLETE_MARKER).write_text(f"{url}\n")
+        return project_dir
+    raise AssertionError("unreachable")
 
 
 def upload_instance(session: requests.Session, orthanc_url: str, data: bytes, attempts: int = 3) -> str:
@@ -201,6 +229,34 @@ def delete_studies(session: requests.Session, orthanc_url: str, accessions: list
     return deleted
 
 
+def scan_local_tree(source: Path) -> dict[str, list[Path]]:
+    """Every ``*.dcm`` under ``source``, in any layout, grouped by its ``AccessionNumber`` tag (headers only).
+
+    A regenerated set is laid out however its converter chose — spleen's by subject, brain MRI's by
+    accession — so the tree is read the way ``publish_dicom.py`` reads it: by the tag, not the path.
+    """
+    files = sorted(Path(source).rglob("*.dcm"))
+    if not files:
+        raise SystemExit(f"❌ no *.dcm under {source} — regenerate the set first (see the dataset's README)")
+    by_accession: dict[str, list[Path]] = {}
+    for i, path in enumerate(files, 1):
+        ds = pydicom.dcmread(str(path), stop_before_pixels=True)
+        by_accession.setdefault(str(ds.AccessionNumber), []).append(path)
+        if i % 5000 == 0 or i == len(files):
+            print(f"   scanned {i}/{len(files)} instances under {source}", flush=True)
+    return by_accession
+
+
+def read_local_image_occurrence(tables_dir: Path, project: str) -> list[dict[str, str]]:
+    """``image_occurrence.csv`` from a local canonical tree (``<tables_dir>/<project>/``), the pre-publish twin of
+    :func:`fetch_image_occurrence` — the same input ``publish_dicom.py --tables-dir`` verifies against."""
+    path = Path(tables_dir) / project / "image_occurrence.csv"
+    if not path.is_file():
+        raise SystemExit(f"❌ missing canonical table: {path} (build it with `omop_db_tools.dataset build`)")
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
 def seed_project(
     session: requests.Session,
     orthanc_url: str,
@@ -210,17 +266,48 @@ def seed_project(
     cache_dir: Path,
     clear: bool,
     dry_run: bool,
+    source: Path | None = None,
+    tables_dir: Path | None = None,
+    remove_only: bool = False,
 ) -> Counter:
-    rows = fetch_image_occurrence(revision, project, cache_dir)
-    accessions = select_accessions(rows, trust_index)
-    project_dir = ensure_dicoms(revision, project, cache_dir)
-    if missing := missing_accessions(project_dir, accessions):
+    """Seed one project. Published (``revision``) by default; with ``source`` + ``tables_dir`` a project whose
+    DICOMs are NOT on the dataset is seeded from a local tree (any layout) and local canonical tables
+    (spleen, brain_mri — FLIP#1221) — same selection by ``source_trust``, same zero-mismatch guard.
+    ``remove_only`` deletes this trust's studies for the project instead of uploading anything."""
+    local = source is not None or tables_dir is not None
+    if local and (source is None or tables_dir is None):
         raise SystemExit(
-            f"❌ {project}: {len(missing)} of trust {trust_index}'s {len(accessions)} accessions have no DICOM "
-            f"directory in dicom/{project}.tar.gz @ {revision} (e.g. {missing[:3]}). The OMOP slice and the DICOM "
-            "set disagree — nothing uploaded. Re-publish the DICOM set with publish_dicom.py --verify-only."
+            "❌ --source and --tables-dir go together: a local DICOM tree needs the local tables it was cut from"
         )
-    files = [p for a in accessions for p in sorted((project_dir / a).glob("*.dcm"))]
+    if local:
+        rows = read_local_image_occurrence(tables_dir, project)  # type: ignore[arg-type]
+    else:
+        rows = fetch_image_occurrence(revision, project, cache_dir)
+    accessions = select_accessions(rows, trust_index)
+    if remove_only:
+        # Unseed: this trust's studies for the project, as the tables at this revision (or these local
+        # tables) name them — how a re-cut project's previous studies leave a PACS. No DICOM is resolved.
+        print(f"🧹 {project}: trust {trust_index} owns {len(accessions)} studies to remove", flush=True)
+        if dry_run:
+            return Counter({"dry-run-remove": len(accessions)})
+        return Counter({"removed": delete_studies(session, orthanc_url, accessions)})
+    if local:
+        tree = scan_local_tree(Path(source))  # type: ignore[arg-type]
+        missing = [a for a in accessions if a not in tree]
+        where = f"the local tree {source}"
+    else:
+        project_dir = ensure_dicoms(revision, project, cache_dir)
+        missing = missing_accessions(project_dir, accessions)
+        tree = {a: sorted((project_dir / a).glob("*.dcm")) for a in accessions if a not in missing}
+        where = f"dicom/{project}.tar.gz @ {revision}"
+    if missing:
+        noun = "DICOM" if local else "DICOM directory"
+        raise SystemExit(
+            f"❌ {project}: {len(missing)} of trust {trust_index}'s {len(accessions)} accessions have no {noun} "
+            f"in {where} (e.g. {missing[:3]}). The OMOP slice and the DICOM set disagree — nothing "
+            "uploaded. Check the set with publish_dicom.py --verify-only."
+        )
+    files = [p for a in accessions for p in tree[a]]
     print(f"📦 {project}: trust {trust_index} owns {len(accessions)} studies / {len(files)} instances", flush=True)
     if dry_run:
         return Counter({"dry-run": len(files)})
@@ -248,8 +335,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--orthanc-url", default=None, help="default: http://127.0.0.1:$PACS_UI_PORT")
     parser.add_argument("--cache-dir", type=Path, default=Path(__file__).resolve().parent / "volumes" / "dicom")
     parser.add_argument("--clear-projects", action="store_true", help="delete these projects' studies first")
+    parser.add_argument(
+        "--remove-only",
+        action="store_true",
+        help="unseed: delete this trust's studies for these projects, as the tables at --revision (or --tables-dir) "
+        "name them, and upload nothing — how a re-cut project's previous studies leave a PACS",
+    )
     parser.add_argument("--dry-run", action="store_true", help="resolve and count; upload nothing")
+    parser.add_argument(
+        "--source",
+        type=Path,
+        default=None,
+        help="a local DICOM tree (any layout) for a project whose DICOMs are not on the dataset; with --tables-dir",
+    )
+    parser.add_argument(
+        "--tables-dir",
+        type=Path,
+        default=None,
+        help="local canonical tables (<dir>/<project>/<table>.csv) the local tree was cut from; with --source",
+    )
     args = parser.parse_args(argv)
+    if (args.source is None) != (args.tables_dir is None):
+        raise SystemExit(
+            "❌ --source and --tables-dir go together: a local DICOM tree needs the local tables it was cut from"
+        )
 
     revision = resolve_revision(args.revision)
     kit_hint = "it comes from the trust's kit file; use `make -C trust seed-orthanc KIT=<CODE>` to supply it"
@@ -263,9 +372,20 @@ def main(argv: list[str] | None = None) -> int:
     total: Counter = Counter()
     for project in args.projects:
         total += seed_project(
-            session, orthanc_url, revision, project, args.trust_index, args.cache_dir, args.clear_projects, args.dry_run
+            session,
+            orthanc_url,
+            revision,
+            project,
+            args.trust_index,
+            args.cache_dir,
+            args.clear_projects,
+            args.dry_run,
+            source=args.source,
+            tables_dir=args.tables_dir,
+            remove_only=args.remove_only,
         )
-    print(f"\n✅ trust {args.trust_index} @ {orthanc_url}: {dict(total)} across {args.projects} (revision {revision})")
+    provenance = f"local tree {args.source}" if args.source else f"revision {revision}"
+    print(f"\n✅ trust {args.trust_index} @ {orthanc_url}: {dict(total)} across {args.projects} ({provenance})")
     return 0
 
 

@@ -120,5 +120,5 @@ apply to a tutorial's workstation venv.
   with datasets and Makefile targets).
 - [`docs/source/working-with-flip-apps.rst`](../docs/source/working-with-flip-apps.rst) — the guides
   for adapting or building an app to upload to FLIP.
-- `flip-api/CLAUDE.md` and the root `CLAUDE.md` (`FL_APP_BASE_DIR`) — how flip-api discovers,
+- `flip-api/AGENTS.md` and the root `AGENTS.md` (`FL_APP_BASE_DIR`) — how flip-api discovers,
   validates and bundles these templates at runtime.

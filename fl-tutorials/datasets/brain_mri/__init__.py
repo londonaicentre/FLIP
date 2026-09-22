@@ -8,21 +8,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
 
-FLIP - Federated Learning & Interoperability Platform
+"""The brain MRI dataset tooling (MSD Task01_BrainTumour → mock MR studies → OMOP; FLIP#1221).
 
-Hello,
-
-An XNAT account has been created at trust {{trust_name}}. You have been granted access to project: {{project_name}} (ID: {{project_id}}).
-
-Your XNAT credentials:
-  Username: {{username}}
-  Password: {{password}}
-
-Please change your password when you first log in.
-
-This is an automated message. Please do not reply to this email. This message may contain confidential information. If you are not the intended recipient, please do not disclose, copy, or distribute it.
-
-The FLIP Team
-Federated Learning and Interoperability Platform
+Run with ``PYTHONPATH=datasets`` from ``fl-tutorials/`` (the Makefile does), so both this package and
+the shared ``utils`` contract resolve.
+"""
