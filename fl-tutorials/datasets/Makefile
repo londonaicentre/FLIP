@@ -43,6 +43,9 @@ SYNTHEA_UV := uv run --project synthea
 # (upload-spleen-labels: flip.xnat may be newer here; download-weights: the `full` env is the
 # one every tutorial already runs in, so pretrained-weight staging needs no extra project).
 FLIP_UTILS_DIR ?= $(abspath ../../flip-utils)
+# Absolute, because the canonical/verify/seed targets below cd into trust/ and hand these
+# paths to tools running there.
+FL_TUTORIALS_DIR := $(abspath ..)
 # Pretrained weights land flat under data/weights/ and are then copied into the tutorial's app
 # dir by that tutorial's own `make weights` (FLIP#1206) — the download is shared tooling, the
 # consumption belongs to the app that ships the file.
@@ -55,7 +58,7 @@ WEIGHTS_DIR := $(DATA_DIR)/weights
 	download-arkplus-eval-data download-synthea-data upload-spleen-labels \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
 	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
-	reproduce-spleen-omop \
+	reproduce-spleen-omop build-spleen-canonical verify-spleen-dicom seed-spleen \
 	fetch-cxr-metadata-table build-cxr-omop-tables verify-cxr-omop-tables reproduce-cxr-omop
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the layout
@@ -177,13 +180,20 @@ upload-spleen-labels:
 #
 # There are two ways to reach build-spleen-omop-tables:
 #   fetch-spleen-metadata-table   — the reproducible path. Downloads the published metadata table
-#                                   that actually produced the published OMOP export. No root, no
-#                                   1.5GB download. This is what the verification gate uses.
+#                                   that actually produced the published OMOP export. No 1.5GB
+#                                   download. This is what the verification gate uses.
 #   download-spleen-msd-raw -> convert-spleen-to-dicom -> create-spleen-metadata-table
-#                                 — the full regeneration path. Needs root and re-synthesises
-#                                   patient identities, so its output will NOT match the published
-#                                   export (see the README). Use it to exercise the DICOM stage.
+#                                 — the full regeneration path. Deterministic since FLIP#1261 (no
+#                                   root, the same bytes on every run), and from that cut the
+#                                   published export IS its output, so the two paths agree.
+#
+# Since FLIP#1261 the spleen DICOM set is NOT published: MSD Task09 is open data, so the set
+# regenerates locally (dicom_output/<subject>/*.dcm) and only the OMOP tables and
+# source/dicom_metadata.csv go to aicentreflip/trust-data. build-spleen-canonical then assembles
+# what gets published and seeded, verify-spleen-dicom checks the tree against it both ways, and
+# seed-spleen loads both halves of a running trust from it.
 SPLEEN_OMOP_UV := uv run --project datasets/spleen
+SPLEEN_DATA := data/spleen
 # The published tables are read at omop-csv/<project>/ on a data-version TAG on aicentreflip/trust-data
 # — the FLIP#1101 layout, one copy of every table with the version as a git tag. The pre-#1101 copies
 # at omop-csv/<version>/<project>/ are still published but nothing in the repo reads them since
@@ -210,14 +220,11 @@ download-spleen-msd-raw:
 		filepath='data/Task09_Spleen.tar', output_dir='data')"
 	@echo "✅ raw MSD extract at fl-tutorials/data/Task09_Spleen/imagesTr (41 cases)"
 
-# Regeneration path, step 1: NIfTI -> DICOM with synthesised patient identities.
-# WORKSTATION ONLY: pyplastimatch's install_precompiled_binaries() copies to /usr/local/bin, so this
-# needs root and is never run in CI. Run as:
-#   sudo $(shell which uv) run --project datasets/spleen python datasets/spleen/convert_spleen_dataset.py
-# from fl-tutorials/. Create the venv as your normal user first (any other target does it) — a sudo
-# run can leave a root-owned .venv that breaks every later non-sudo invocation.
+# Regeneration path, step 1: NIfTI -> DICOM with synthesised patient identities, on the shared
+# pydicom writer (utils/dicom_writer.py — no plastimatch, no root, deterministic; FLIP#1261).
+# PYTHONPATH=datasets because the converter imports utils.*, like the OMOP converters below.
 convert-spleen-to-dicom:
-	@cd .. && $(SPLEEN_OMOP_UV) python datasets/spleen/convert_spleen_dataset.py
+	@cd .. && PYTHONPATH=datasets $(SPLEEN_OMOP_UV) python datasets/spleen/convert_spleen_dataset.py
 
 # Regeneration path, step 2: DICOM -> tables/dicom_metadata.csv, then bridge it to where the OMOP
 # converter expects its input. The copy stands in for a step that was manual upstream:
@@ -244,8 +251,37 @@ verify-spleen-omop-tables:
 	@cd .. && $(SPLEEN_OMOP_UV) python datasets/utils/verify_omop_tables.py --project spleen_project --revision $(TRUST_DATA_REVISION)
 
 # The whole reproducible path in one command: fetch the canonical input, convert, verify.
-# Needs no root and no MSD download.
+# Needs no MSD download.
 reproduce-spleen-omop: fetch-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables
+
+# The canonical (source_trust) form that gets published and seeded, assembled from the per-trust
+# split by trust/omop-db's dataset tool into data/spleen/canonical/spleen_project/, with the metadata
+# table beside it (its own directory: publish-trust-data's OMOP_CSV= uploads every CSV under it).
+build-spleen-canonical:
+	@cd ../../trust/omop-db && uv run python -m omop_db_tools.dataset build \
+		--trust-dirs $(FL_TUTORIALS_DIR)/omop/trust_1 $(FL_TUTORIALS_DIR)/omop/trust_2 \
+		--dest $(FL_TUTORIALS_DIR)/$(SPLEEN_DATA)/canonical --projects spleen_project
+	@mkdir -p ../$(SPLEEN_DATA)/canonical/spleen_project/source \
+		&& cp ../data/spleen_metadata.csv ../$(SPLEEN_DATA)/canonical/spleen_project/source/dicom_metadata.csv
+	@echo "✅ canonical tables at $(FL_TUTORIALS_DIR)/$(SPLEEN_DATA)/canonical/spleen_project"
+
+# The regenerated DICOM tree against the canonical tables, both ways (publish_dicom.py's pre-publish
+# check, without the packaging this project no longer takes).
+verify-spleen-dicom:
+	@cd ../../trust/orthanc && uv run publish_dicom.py --verify-only --project spleen_project \
+		--tables-dir $(FL_TUTORIALS_DIR)/$(SPLEEN_DATA)/canonical --source $(FL_TUTORIALS_DIR)/dicom_output
+
+# Both halves of a running dev trust from the regenerated tree (the OMOP rows from canonical/, the
+# instances from dicom_output/). A trust still holding the pre-FLIP#1261 spleen cut needs CLEAN=all
+# once (every spleen id changed, so `projects` would leave the old rows beside the new) — pass the
+# other projects it holds in PROJECTS so they are reloaded too. DRY_RUN=1 counts the DICOM half only.
+seed-spleen:
+	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make seed-spleen KIT=GSTT [DRY_RUN=1] [CLEAR=1] [CLEAN=all]"; exit 1)
+	$(if $(DRY_RUN),@echo "DRY_RUN: skipping seed-omop",$(MAKE) -C ../../trust seed-omop KIT=$(KIT) PROJECTS=spleen_project \
+		CANONICAL_DIR=$(FL_TUTORIALS_DIR)/$(SPLEEN_DATA)/canonical $(if $(CLEAN),CLEAN=$(CLEAN)))
+	$(MAKE) -C ../../trust seed-orthanc KIT=$(KIT) PROJECTS=spleen_project \
+		DICOM_SOURCE=$(FL_TUTORIALS_DIR)/dicom_output TABLES_DIR=$(FL_TUTORIALS_DIR)/$(SPLEEN_DATA)/canonical \
+		$(if $(CLEAR),CLEAR=$(CLEAR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
 
 # ---------------------------------------------------------------------------------------------
 # cxr_project OMOP tables (FLIP#1092 wave 2)

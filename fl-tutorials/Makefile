@@ -28,7 +28,7 @@ DATASET_TARGETS := download-xray-data download-weights \
 	download-arkplus-eval-data \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
 	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
-	reproduce-spleen-omop \
+	reproduce-spleen-omop build-spleen-canonical verify-spleen-dicom seed-spleen \
 	fetch-cxr-metadata-table build-cxr-omop-tables verify-cxr-omop-tables reproduce-cxr-omop
 
 .PHONY: $(TUTORIAL_TARGETS) $(DATASET_TARGETS)
