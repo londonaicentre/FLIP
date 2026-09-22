@@ -14,6 +14,7 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID, uuid4
 
+from sqlalchemy import Index, text
 from sqlmodel import Field, SQLModel
 
 from flip_api.domain.schemas.status import AccessRequestStatus
@@ -109,13 +110,35 @@ class UserRole(SQLModel, table=True):
     The primary key is a surrogate ``id`` rather than the natural tuple because
     Postgres forbids NULL in a primary-key column, and ``trust_id`` must be
     nullable to express a global role. Uniqueness is enforced instead by two
-    partial indexes (see the FLIP#1260 migration): one over ``(user_id, role_id)``
+    partial indexes (declared in ``__table_args__`` and created by the FLIP#1260
+    migration): one over ``(user_id, role_id)``
     where ``trust_id IS NULL``, one over ``(user_id, role_id, trust_id)`` where it
     is NOT NULL. A plain UNIQUE constraint would not do: Postgres treats NULLs as
     distinct, so it would let the same global role be granted twice.
     """
 
     __tablename__ = "user_role"
+
+    # Declared here, not only in the FLIP#1260 migration: the drift guard
+    # (tests/integration/test_migrations.py) diffs SQLModel.metadata against the
+    # migrated schema, so an index that lives only in a migration reads as drift.
+    __table_args__ = (
+        Index(
+            "uq_user_role_global",
+            "user_id",
+            "role_id",
+            unique=True,
+            postgresql_where=text("trust_id IS NULL"),
+        ),
+        Index(
+            "uq_user_role_per_trust",
+            "user_id",
+            "role_id",
+            "trust_id",
+            unique=True,
+            postgresql_where=text("trust_id IS NOT NULL"),
+        ),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     user_id: UUID = Field(index=True)
