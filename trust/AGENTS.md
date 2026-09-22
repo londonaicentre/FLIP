@@ -123,10 +123,14 @@ make tests                     # Run tests on all 3 API services
 make build                     # Build all trust Docker images
 make create-networks           # Create Docker overlay networks
 make ensure-seeded KIT=GSTT [PROJECTS="…"]  # What up-trust runs after compose up: seed unless the markers already say so (#1187)
-make seed KIT=GSTT PROJECTS="spleen_project cxr_project"  # Seed a RUNNING trust unconditionally: OMOP rows + DICOMs by source_trust (#1100)
+make seed KIT=GSTT PROJECTS="cxr_project"  # Seed a RUNNING trust unconditionally: OMOP rows + DICOMs by source_trust (#1100), from the published tag
 make seed-trusts PROJECTS="…"  # Both dev trusts; seed-omop / seed-orthanc for one half; CLEAR=1, DRY_RUN=1 on the PACS half
+make seed-omop KIT=GSTT PROJECTS=spleen_project CANONICAL_DIR=/abs/canonical   # local tables instead of the tag (#1261); CLEAN=all = wipe every project first
+make seed-orthanc KIT=GSTT PROJECTS=spleen_project DICOM_SOURCE=/abs/dicom TABLES_DIR=/abs/canonical  # a regenerated DICOM tree (spleen: never published)
+                               # …both wrapped by `make -C fl-tutorials seed-spleen KIT=<CODE>`
+make unseed KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911  # take a project OUT (rows by its person ids, studies by its accessions, as those tables name them) — the move off a re-cut project; other projects untouched
 make seed KIT=GSTT SOURCE_TRUST=1  # Override the OMOP partition; defaults to the FL kit slot, which is a convention, not an invariant (see README "Which partition a trust is seeded with")
-make publish-trust-data VERSION=<tag> [OMOP_CSV=… DICOM=… CARD=…]  # ONE commit on aicentreflip/trust-data + ONE tag; then bump trust/.data_version (the single pin, OMOP + Orthanc)
+make publish-trust-data VERSION=<tag> [OMOP_CSV=… DICOM=… CARD=… DELETE=…]  # ONE commit on aicentreflip/trust-data + ONE tag; then bump trust/.data_version (the single pin, OMOP + Orthanc). DELETE= retires a file from main (earlier tags keep it)
 make test-trust-data-tools  # Three things: publisher pytest + ruff, shellcheck over seed_trust.sh, and the seed-marker contract harness (tests/test_seed_marker_contract.sh)
 ```
 

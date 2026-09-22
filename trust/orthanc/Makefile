@@ -72,11 +72,29 @@ PROJECTS ?= cxr_project spleen_project
 SEED_STORAGE_DIR = $(or $(ORTHANC_STORAGE_DIR_TRUST_$(TRUST_INDEX)),orthanc/orthanc-storage-trust$(TRUST_INDEX))
 SEED_STORAGE_ABS = $(if $(filter /%,$(SEED_STORAGE_DIR)),$(SEED_STORAGE_DIR),../$(SEED_STORAGE_DIR))
 SEED_MARKER = $(dir $(SEED_STORAGE_ABS)).$(notdir $(SEED_STORAGE_ABS)).seeded
+# A project whose DICOMs are NOT on the dataset (spleen — FLIP#1261) is seeded from a
+# local tree: DICOM_SOURCE=<dir of <accession>/*.dcm> TABLES_DIR=<canonical tables,
+# <dir>/<project>/*.csv>, the same two inputs publish_dicom.py verifies. Both or neither. The marker
+# then records source=<dir> in place of the data version, since no published revision produced
+# those instances.
+DICOM_SOURCE ?=
+TABLES_DIR ?=
+SEED_PROVENANCE = $(if $(DICOM_SOURCE),source=$(DICOM_SOURCE),version=$${HF_TRUST_DATA_REVISION:-$$(tr -d ' \n\r\t' < ../.data_version)})
 seed-orthanc:
 	PACS_UI_PORT=$(PACS_UI_PORT) ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
 	  uv run seed_orthanc.py --trust-index $(SOURCE_TRUST) --projects $(PROJECTS) \
+	  $(if $(DICOM_SOURCE),--source $(DICOM_SOURCE)) $(if $(TABLES_DIR),--tables-dir $(TABLES_DIR)) \
 	  $(if $(filter 1,$(CLEAR)),--clear-projects) $(if $(filter 1,$(DRY_RUN)),--dry-run)
-	@$(if $(filter 1,$(DRY_RUN)),true,printf 'projects=%s\nsource_trust=%s\nversion=%s\n' "$(PROJECTS)" "$(SOURCE_TRUST)" "$${HF_TRUST_DATA_REVISION:-$$(tr -d ' \n\r\t' < ../.data_version)}" > "$(SEED_MARKER)" && echo "✅ marker: $(SEED_MARKER)")
+	@$(if $(filter 1,$(DRY_RUN)),true,printf 'projects=%s\nsource_trust=%s\n%s\n' "$(PROJECTS)" "$(SOURCE_TRUST)" "$(SEED_PROVENANCE)" > "$(SEED_MARKER)" && echo "✅ marker: $(SEED_MARKER)")
+
+# Unseed: delete this trust's studies for the listed projects, as the tables at
+# HF_TRUST_DATA_REVISION (or TABLES_DIR=) name them, and upload nothing — the PACS half
+# of moving off a re-cut project. Marker left as is.
+unseed-orthanc:
+	PACS_UI_PORT=$(PACS_UI_PORT) ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
+	  uv run seed_orthanc.py --trust-index $(SOURCE_TRUST) --projects $(PROJECTS) --remove-only \
+	  $(if $(TABLES_DIR),--source $(or $(DICOM_SOURCE),.) --tables-dir $(TABLES_DIR)) \
+	  $(if $(filter 1,$(DRY_RUN)),--dry-run)
 
 # seed_orthanc.py's unit tests (pure selection/guard logic + the upload contract
 # against a scripted session) and publish_dicom.py's (the both-ways verification).

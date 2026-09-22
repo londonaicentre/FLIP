@@ -150,6 +150,13 @@ holds **exactly one copy of every artefact at an unversioned path**, one pair pe
 omop-csv/<project>/*.csv       omop-csv/<project>/source/…        dicom/<project>.tar.gz
 ```
 
+Not every project has a `dicom/` set. A project cut from open data — `spleen_project`, from the
+Medical Segmentation Decathlon — publishes only its tables and the metadata table they were built
+from; its DICOMs are regenerated locally by a deterministic converter (`fl-tutorials/datasets/`,
+FLIP#1261) and seeded from that tree (`make -C fl-tutorials seed-spleen KIT=<CODE>`, which drives
+`seed-omop … CANONICAL_DIR=` and `seed-orthanc … DICOM_SOURCE= TABLES_DIR=` here). `cxr_project`
+and `prostate_project` still ship one.
+
 A trust is stood up by **seeding** those into its running omop-db and Orthanc (`up-trust` does it,
 see below); there are no volume snapshots to download. A **data version is a git tag on that
 dataset**, and [`.data_version`](.data_version) in this directory pins one — a single pin for OMOP
@@ -169,7 +176,11 @@ uv run orthanc/publish_dicom.py --project … --revision main --out orthanc/dist
 make publish-trust-data VERSION=20261001 DRY_RUN=1 \
   OMOP_CSV=omop-db/data/canonical DICOM=orthanc/dist/dicom/<project>.tar.gz [CARD=…]
 make publish-trust-data VERSION=20261001 …            # for real; then set .data_version to 20261001
+make publish-trust-data VERSION=20261001 OMOP_CSV=… DELETE=dicom/spleen_project.tar.gz   # retire a re-hosted set
 ```
+
+`DELETE=<path in repo>` removes a file from `main` in the same commit (earlier tags keep it) — how
+`dicom/spleen_project.tar.gz` went when spleen moved to local regeneration.
 
 (`hf auth login` with write access to the dataset is needed.) Bumping `.data_version` is what
 moves a checkout: the next `up-trust` (its `ensure-seeded` step) re-seeds the trust's projects at
@@ -179,7 +190,8 @@ every seed/enrichment run reads at the new tag.
 ### Seeding at bring-up
 
 `up-trust` starts omop-db and Orthanc on empty, pre-created volumes and then runs
-`ensure-seeded`, which loads `PROJECTS` (default `cxr_project spleen_project`) from the dataset at
+`ensure-seeded`, which loads `PROJECTS` (default `cxr_project` — the projects that publish a DICOM
+set, see above) from the dataset at
 the pinned version. Each half leaves a marker beside its store — `<omop dir>/../.seeded` and
 `<orthanc parent>/.<storage dir>.seeded` — recording projects, partition and version; a marker
 that matches means nothing to do, so a second `up` fetches and uploads nothing and the seeded
@@ -189,7 +201,7 @@ takes seconds. The DICOM vocabulary is loaded with the rows; the licensed core v
 the separate credentialed `make -C trust/omop-db load-omop-vocab` step.
 
 ```sh
-make -C trust ensure-seeded KIT=GSTT PROJECTS="spleen_project cxr_project"   # what up-trust runs; safe to repeat
+make -C trust ensure-seeded KIT=GSTT PROJECTS="cxr_project"                   # what up-trust runs; safe to repeat
 make -C trust seed KIT=GSTT PROJECTS="prostate_project"                       # add a project, unconditionally
 ```
 
@@ -228,7 +240,7 @@ To seed the whole shipped dev roster in one go — `seed KIT=GSTT` then `seed KI
 projects, same partition-by-slot default:
 
 ```sh
-make -C trust seed-trusts PROJECTS="spleen_project cxr_project"
+make -C trust seed-trusts PROJECTS="cxr_project"
 ```
 
 `seed` itself is just `seed-omop` + `seed-orthanc`; run either half alone with
@@ -237,6 +249,23 @@ make -C trust seed-trusts PROJECTS="spleen_project cxr_project"
 `SOURCE_TRUST` moves only the partition. The trust's volumes, ports and the `.seeded` marker stay
 keyed to its kit slot, which is why it exists as its own variable rather than an override of
 `TRUST_NUM`.
+
+### Unseeding, and moving off a re-cut project
+
+`make -C trust unseed KIT=<CODE> PROJECTS="…"` takes the listed projects *out* of a running trust —
+OMOP rows by the person ids and PACS studies by the accessions the tables at
+`HF_TRUST_DATA_REVISION` (or `CANONICAL_DIR=` / `TABLES_DIR=`) name — and loads nothing; every other
+project stays. It exists for a project whose identities were re-cut (spleen at the FLIP#1261 tag:
+every person id, accession and UID changed), where `seed-omop`'s default `--clean projects` would
+delete by the *new* ids and leave the old rows beside them:
+
+```sh
+make -C trust unseed KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911   # the cut the trust holds
+make -C fl-tutorials seed-spleen KIT=GSTT                                              # the new cut, from the local tree
+```
+
+`seed-omop CLEAN=all` is the blunt alternative (every project's rows go first); `populate` on the
+build stack is the same loader with that mode.
 
 ## OMOP Database
 
