@@ -1,0 +1,499 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""seed_orthanc: trust-slice selection, the zero-mismatch guard, and the upload contract."""
+
+from __future__ import annotations
+
+import importlib.util
+import io
+import sys
+import tarfile
+from pathlib import Path
+from types import ModuleType
+
+import pytest
+import requests
+
+SCRIPT = Path(__file__).resolve().parents[1] / "seed_orthanc.py"
+
+
+@pytest.fixture(scope="module")
+def seed() -> ModuleType:
+    """Import the PEP 723 script as a module (it has no package)."""
+    spec = importlib.util.spec_from_file_location("seed_orthanc_under_test", SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestRevisionAndUrls:
+    def test_url_is_revision_then_unversioned_path(self, seed):
+        """The data version is the revision the URL resolves at, never a directory or a suffix."""
+        assert seed.hf_url("20260729", "dicom/cxr_project.tar.gz") == (
+            "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/20260729/dicom/cxr_project.tar.gz"
+        )
+
+    def test_explicit_revision_wins_over_env_and_pin(self, seed, monkeypatch):
+        monkeypatch.setenv("HF_TRUST_DATA_REVISION", "main")
+        assert seed.resolve_revision("abc123") == "abc123"
+
+    def test_env_overrides_the_pin(self, seed, monkeypatch):
+        monkeypatch.setenv("HF_TRUST_DATA_REVISION", "main")
+        assert seed.resolve_revision(None) == "main"
+
+    def test_pinned_tag_is_the_default(self, seed, monkeypatch, tmp_path):
+        monkeypatch.delenv("HF_TRUST_DATA_REVISION", raising=False)
+        pin = tmp_path / ".data_version"
+        pin.write_text("20260729\n")
+        monkeypatch.setattr(seed, "DATA_VERSION_FILE", pin)
+        assert seed.resolve_revision(None) == "20260729"
+
+
+class TestSelectAccessions:
+    def test_selects_only_this_trusts_rows_in_table_order(self, seed):
+        rows = [
+            {"accession_id": "FAK1", "source_trust": "1"},
+            {"accession_id": "FAK2", "source_trust": "2"},
+            {"accession_id": "FAK3", "source_trust": "1"},
+        ]
+        assert seed.select_accessions(rows, 1) == ["FAK1", "FAK3"]
+        assert seed.select_accessions(rows, 2) == ["FAK2"]
+
+    def test_deduplicates_a_multi_series_study(self, seed):
+        rows = [{"accession_id": "FAK1", "source_trust": "1"}] * 3
+        assert seed.select_accessions(rows, 1) == ["FAK1"]
+
+    def test_a_trust_with_no_rows_gets_nothing(self, seed):
+        assert seed.select_accessions([{"accession_id": "FAK1", "source_trust": "1"}], 3) == []
+
+    def test_a_table_without_the_column_says_so(self, seed):
+        # A brand-new dataset published without source_trust used to die as a bare KeyError.
+        rows = [{"accession_id": "FAK1", "person_id": "7"}]
+        with pytest.raises(SystemExit, match="no 'source_trust' column"):
+            seed.select_accessions(rows, 1)
+
+    def test_a_blank_cell_names_the_line(self, seed):
+        rows = [{"accession_id": "FAK1", "source_trust": "1"}, {"accession_id": "FAK2", "source_trust": ""}]
+        with pytest.raises(SystemExit, match="line 3"):
+            seed.select_accessions(rows, 1)
+
+    def test_an_empty_table_is_not_a_column_error(self, seed):
+        assert seed.select_accessions([], 1) == []
+
+
+class TestRequireEnv:
+    def test_returns_the_value(self, seed, monkeypatch):
+        monkeypatch.setenv("PACS_UI_PORT", "8042")
+        assert seed.require_env("PACS_UI_PORT", "hint") == "8042"
+
+    def test_an_unset_variable_is_named(self, seed, monkeypatch):
+        monkeypatch.delenv("ORTHANC_PASSWORD", raising=False)
+        with pytest.raises(SystemExit, match="ORTHANC_PASSWORD is not set"):
+            seed.require_env("ORTHANC_PASSWORD", "it comes from the kit")
+
+
+class TestMissingAccessions:
+    def test_reports_every_accession_without_a_directory(self, seed, tmp_path):
+        (tmp_path / "FAK1").mkdir()
+        (tmp_path / "FAK3").write_text("a file, not a directory")
+
+        assert seed.missing_accessions(tmp_path, ["FAK1", "FAK2", "FAK3"]) == ["FAK2", "FAK3"]
+
+
+class _Response:
+    def __init__(self, status: int, body: dict | list | None = None):
+        self.status_code = status
+        self._body = body if body is not None else {}
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}")
+
+
+class _Session:
+    """Scripted responses per call; records what was sent."""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.posts: list[tuple[str, dict]] = []
+        self.deletes: list[str] = []
+
+    def post(self, url, **kwargs):
+        self.posts.append((url, kwargs))
+        nxt = self.responses.pop(0)
+        if isinstance(nxt, Exception):
+            raise nxt
+        return nxt
+
+    def delete(self, url, **kwargs):
+        self.deletes.append(url)
+        return _Response(200)
+
+
+class TestEnsureDicoms:
+    """The ~2 GB stream: only the Kubernetes hook has a Job backoffLimit behind it, so a single
+    transient fault would otherwise fail a dev or EC2 bring-up and cost the whole stream again."""
+
+    @staticmethod
+    def _tar_bytes(name="a.dcm", payload=b"DICM"):
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            tar.addfile(info, io.BytesIO(payload))
+        return buffer.getvalue()
+
+    def _install(self, seed, monkeypatch, outcomes):
+        """Make requests.get return each outcome in turn; an Exception instance is raised."""
+        calls = []
+
+        class _Stream:
+            def __init__(self, body):
+                self.raw = io.BytesIO(body)
+
+            def raise_for_status(self):
+                return None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def fake_get(url, **kwargs):
+            calls.append(url)
+            outcome = outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return _Stream(outcome)
+
+        monkeypatch.setattr(seed.requests, "get", fake_get)
+        monkeypatch.setattr(seed.time, "sleep", lambda _: None)
+        return calls
+
+    def test_a_cut_short_stream_is_retried_and_the_marker_written_once_whole(self, seed, tmp_path, monkeypatch):
+        calls = self._install(seed, monkeypatch, [requests.ConnectionError("IncompleteRead"), self._tar_bytes()])
+
+        project_dir = seed.ensure_dicoms("v1", "cxr_project", tmp_path)
+
+        assert len(calls) == 2
+        assert (project_dir / "a.dcm").read_bytes() == b"DICM"
+        assert (project_dir / seed.COMPLETE_MARKER).is_file()
+
+    def test_a_failed_attempt_leaves_nothing_behind_for_the_next_one(self, seed, tmp_path, monkeypatch):
+        """A half-extracted tree must not be mixed into the retry, nor mistaken for a complete one."""
+        self._install(seed, monkeypatch, [self._tar_bytes("fresh.dcm")])
+        project_dir = tmp_path / "v1" / "cxr_project"
+        project_dir.mkdir(parents=True)
+        (project_dir / "stale.dcm").write_bytes(b"OLD")  # no marker: a previous run died mid-extract
+
+        seed.ensure_dicoms("v1", "cxr_project", tmp_path)
+
+        assert not (project_dir / "stale.dcm").exists()
+        assert (project_dir / "fresh.dcm").read_bytes() == b"DICM"
+
+    def test_gives_up_after_the_last_attempt(self, seed, tmp_path, monkeypatch):
+        calls = self._install(seed, monkeypatch, [requests.ConnectionError("reset")] * 3)
+
+        with pytest.raises(requests.ConnectionError):
+            seed.ensure_dicoms("v1", "cxr_project", tmp_path, attempts=3)
+        assert len(calls) == 3
+        assert not (tmp_path / "v1" / "cxr_project" / seed.COMPLETE_MARKER).exists()
+
+    def test_a_complete_cache_is_not_re_streamed(self, seed, tmp_path, monkeypatch):
+        calls = self._install(seed, monkeypatch, [])
+        project_dir = tmp_path / "v1" / "cxr_project"
+        project_dir.mkdir(parents=True)
+        (project_dir / seed.COMPLETE_MARKER).write_text("done\n")
+
+        assert seed.ensure_dicoms("v1", "cxr_project", tmp_path) == project_dir
+        assert calls == []
+
+
+class TestUploadInstance:
+    def test_posts_application_dicom_and_returns_orthancs_status(self, seed, monkeypatch):
+        session = _Session([_Response(200, {"Status": "AlreadyStored"})])
+
+        status = seed.upload_instance(session, "http://pacs", b"DICM")
+
+        assert status == "AlreadyStored"
+        url, kwargs = session.posts[0]
+        assert url == "http://pacs/instances"
+        assert kwargs["headers"] == {"Content-Type": "application/dicom"}
+        assert kwargs["data"] == b"DICM"
+
+    def test_retries_a_5xx_then_succeeds(self, seed, monkeypatch):
+        monkeypatch.setattr(seed.time, "sleep", lambda _: None)
+        session = _Session([_Response(503), _Response(200, {"Status": "Success"})])
+
+        assert seed.upload_instance(session, "http://pacs", b"DICM") == "Success"
+        assert len(session.posts) == 2
+
+    def test_retries_a_connection_error_then_succeeds(self, seed, monkeypatch):
+        monkeypatch.setattr(seed.time, "sleep", lambda _: None)
+        session = _Session([requests.ConnectionError("reset"), _Response(200, {"Status": "Success"})])
+
+        assert seed.upload_instance(session, "http://pacs", b"DICM") == "Success"
+
+    def test_a_4xx_is_raised_at_once_not_retried(self, seed, monkeypatch):
+        monkeypatch.setattr(seed.time, "sleep", lambda _: None)
+        session = _Session([_Response(401), _Response(200, {"Status": "Success"})])
+
+        with pytest.raises(requests.HTTPError, match="401"):
+            seed.upload_instance(session, "http://pacs", b"DICM")
+        assert len(session.posts) == 1
+
+    def test_gives_up_after_the_last_attempt(self, seed, monkeypatch):
+        monkeypatch.setattr(seed.time, "sleep", lambda _: None)
+        session = _Session([_Response(500), _Response(500), _Response(500)])
+
+        with pytest.raises(requests.HTTPError, match="500"):
+            seed.upload_instance(session, "http://pacs", b"DICM", attempts=3)
+        assert len(session.posts) == 3
+
+
+class TestDeleteStudies:
+    def test_finds_by_accession_and_deletes_every_hit(self, seed):
+        session = _Session([_Response(200, ["study-a", "study-b"]), _Response(200, [])])
+
+        assert seed.delete_studies(session, "http://pacs", ["FAK1", "FAK2"]) == 2
+        assert session.posts[0][1]["json"] == {"Level": "Study", "Query": {"AccessionNumber": "FAK1"}}
+        assert session.deletes == ["http://pacs/studies/study-a", "http://pacs/studies/study-b"]
+
+
+def _dcm(path: Path, accession: str) -> Path:
+    """A minimal real DICOM instance carrying an AccessionNumber, for the local-tree scan."""
+    import pydicom
+    from pydicom.dataset import Dataset, FileMetaDataset
+    from pydicom.uid import CTImageStorage, ExplicitVRLittleEndian, generate_uid
+
+    ds = Dataset()
+    ds.file_meta = FileMetaDataset()
+    ds.file_meta.MediaStorageSOPClassUID = CTImageStorage
+    ds.file_meta.MediaStorageSOPInstanceUID = generate_uid()
+    ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    ds.SOPClassUID = CTImageStorage
+    ds.SOPInstanceUID = ds.file_meta.MediaStorageSOPInstanceUID
+    ds.AccessionNumber = accession
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ds.save_as(str(path), enforce_file_format=True)
+    assert pydicom.dcmread(str(path), stop_before_pixels=True).AccessionNumber == accession
+    return path
+
+
+class TestLocalSource:
+    """A project whose DICOMs are not on the dataset (spleen, brain_mri — FLIP#1221): seeded from a local
+    tree in ANY layout (grouped by the AccessionNumber tag) and local canonical tables, with the same
+    source_trust selection and the same zero-mismatch guard."""
+
+    @staticmethod
+    def _tables(root: Path, rows: list[dict[str, str]]) -> Path:
+        import csv
+
+        tables = root / "canonical"
+        (tables / "brain_mri_project").mkdir(parents=True)
+        with (tables / "brain_mri_project" / "image_occurrence.csv").open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["accession_id", "source_trust"])
+            writer.writeheader()
+            writer.writerows(rows)
+        return tables
+
+    def test_uploads_this_trusts_slice_from_a_subject_named_tree(self, seed, tmp_path, monkeypatch):
+        """spleen's layout: dicom_output/<subject>/*.dcm — the accession is in the header, not the path."""
+        source = tmp_path / "dicom_output"
+        _dcm(source / "spleen_2" / "a.dcm", "FAK1")
+        _dcm(source / "spleen_3" / "a.dcm", "FAK2")
+        _dcm(source / "spleen_3" / "b.dcm", "FAK2")
+        tables = self._tables(
+            tmp_path, [{"accession_id": "FAK1", "source_trust": "2"}, {"accession_id": "FAK2", "source_trust": "1"}]
+        )
+        monkeypatch.setattr(seed, "fetch_image_occurrence", lambda *a, **k: pytest.fail("must not fetch from HF"))
+        monkeypatch.setattr(seed, "ensure_dicoms", lambda *a, **k: pytest.fail("must not fetch from HF"))
+        session = _Session([_Response(200, {"Status": "Success"}), _Response(200, {"Status": "AlreadyStored"})])
+
+        outcome = seed.seed_project(
+            session,
+            "http://pacs",
+            "20260901",
+            "brain_mri_project",
+            1,
+            tmp_path,
+            False,
+            False,
+            source=source,
+            tables_dir=tables,
+        )
+
+        assert outcome == {"Success": 1, "AlreadyStored": 1}
+        assert [url for url, _ in session.posts] == ["http://pacs/instances"] * 2
+        posted = {kw["data"] for _, kw in session.posts}
+        assert posted == {p.read_bytes() for p in (source / "spleen_3").glob("*.dcm")}, "only FAK2, trust 1's"
+
+    def test_scan_groups_by_accession_across_layouts(self, seed, tmp_path):
+        _dcm(tmp_path / "FAK1" / "x.dcm", "FAK1")
+        _dcm(tmp_path / "deep" / "er" / "y.dcm", "FAK1")
+        _dcm(tmp_path / "FAK2" / "z.dcm", "FAK2")
+
+        tree = seed.scan_local_tree(tmp_path)
+
+        assert {a: len(files) for a, files in tree.items()} == {"FAK1": 2, "FAK2": 1}
+
+    def test_an_empty_tree_is_loud(self, seed, tmp_path):
+        with pytest.raises(SystemExit, match="no \\*.dcm"):
+            seed.scan_local_tree(tmp_path)
+
+    def test_the_zero_mismatch_guard_still_holds(self, seed, tmp_path):
+        source = tmp_path / "dicom"
+        _dcm(source / "FAK1" / "a.dcm", "FAK1")
+        tables = self._tables(
+            tmp_path, [{"accession_id": "FAK1", "source_trust": "1"}, {"accession_id": "FAK2", "source_trust": "1"}]
+        )
+        session = _Session([])
+
+        with pytest.raises(SystemExit, match="1 of trust 1's 2 accessions have no DICOM in the local tree"):
+            seed.seed_project(
+                session,
+                "http://pacs",
+                "20260901",
+                "brain_mri_project",
+                1,
+                tmp_path,
+                False,
+                False,
+                source=source,
+                tables_dir=tables,
+            )
+        assert session.posts == []
+
+    def test_a_missing_local_table_is_named(self, seed, tmp_path):
+        source = tmp_path / "dicom"
+        _dcm(source / "FAK1" / "a.dcm", "FAK1")
+        with pytest.raises(SystemExit, match="image_occurrence.csv"):
+            seed.seed_project(
+                _Session([]), "http://pacs", "20260901", "brain_mri_project", 1, tmp_path, False, False,
+                source=source, tables_dir=tmp_path / "nowhere",
+            )  # fmt: skip
+
+    def test_cli_requires_both_local_flags_together(self, seed, tmp_path, monkeypatch):
+        monkeypatch.setenv("ORTHANC_USERNAME", "u")
+        monkeypatch.setenv("ORTHANC_PASSWORD", "p")
+        with pytest.raises(SystemExit, match="--source and --tables-dir"):
+            seed.main(
+                [
+                    "--trust-index",
+                    "1",
+                    "--projects",
+                    "brain_mri_project",
+                    "--orthanc-url",
+                    "http://pacs",
+                    "--source",
+                    str(tmp_path),
+                    "--dry-run",
+                ]
+            )
+        with pytest.raises(SystemExit, match="--source and --tables-dir"):
+            seed.main(
+                [
+                    "--trust-index",
+                    "1",
+                    "--projects",
+                    "brain_mri_project",
+                    "--orthanc-url",
+                    "http://pacs",
+                    "--tables-dir",
+                    str(tmp_path),
+                    "--dry-run",
+                ]
+            )
+
+
+class TestRemoveOnly:
+    """Unseeding: the studies the tables at a revision name for this trust are deleted, nothing is resolved."""
+
+    def test_deletes_this_trusts_studies_and_touches_no_dicom(self, seed, tmp_path, monkeypatch):
+        rows = [{"accession_id": "FAK1", "source_trust": "1"}, {"accession_id": "FAK2", "source_trust": "2"}]
+        monkeypatch.setattr(seed, "fetch_image_occurrence", lambda *a, **k: rows)
+        monkeypatch.setattr(seed, "ensure_dicoms", lambda *a, **k: pytest.fail("an unseed must not fetch DICOMs"))
+        session = _Session([_Response(200, ["study-a"])])
+
+        outcome = seed.seed_project(
+            session, "http://pacs", "20260911", "spleen_project", 1, tmp_path, False, False, remove_only=True
+        )
+
+        assert outcome == {"removed": 1}
+        assert session.posts[0][1]["json"]["Query"] == {"AccessionNumber": "FAK1"}
+        assert session.deletes == ["http://pacs/studies/study-a"]
+
+    def test_dry_run_counts_and_deletes_nothing(self, seed, tmp_path, monkeypatch):
+        rows = [{"accession_id": "FAK1", "source_trust": "1"}]
+        monkeypatch.setattr(seed, "fetch_image_occurrence", lambda *a, **k: rows)
+        session = _Session([])
+
+        outcome = seed.seed_project(
+            session, "http://pacs", "20260911", "spleen_project", 1, tmp_path, False, True, remove_only=True
+        )
+
+        assert outcome == {"dry-run-remove": 1}
+        assert session.posts == []
+        assert session.deletes == []
+
+
+class TestSeedProjectGuard:
+    def test_refuses_to_upload_anything_when_an_accession_has_no_dicoms(self, seed, tmp_path, monkeypatch):
+        """The zero-mismatch guard: OMOP says trust 1 owns FAK2, the archive has no FAK2 — stop."""
+        project_dir = tmp_path / "20260729" / "cxr_project"
+        (project_dir / "FAK1").mkdir(parents=True)
+        (project_dir / seed.COMPLETE_MARKER).write_text("cached")
+        rows = [{"accession_id": "FAK1", "source_trust": "1"}, {"accession_id": "FAK2", "source_trust": "1"}]
+        monkeypatch.setattr(seed, "fetch_image_occurrence", lambda *a, **k: rows)
+        session = _Session([])
+
+        with pytest.raises(SystemExit, match="1 of trust 1's 2 accessions have no DICOM directory"):
+            seed.seed_project(session, "http://pacs", "20260729", "cxr_project", 1, tmp_path, False, False)
+        assert session.posts == [], "nothing may be uploaded when the slice does not resolve"
+
+    def test_dry_run_counts_this_trusts_instances_and_uploads_nothing(self, seed, tmp_path, monkeypatch):
+        project_dir = tmp_path / "20260729" / "cxr_project"
+        for acc, n in (("FAK1", 2), ("FAK2", 3)):
+            (project_dir / acc).mkdir(parents=True)
+            for i in range(n):
+                (project_dir / acc / f"{i}.dcm").write_bytes(b"DICM")
+        (project_dir / seed.COMPLETE_MARKER).write_text("cached")
+        rows = [{"accession_id": "FAK1", "source_trust": "1"}, {"accession_id": "FAK2", "source_trust": "2"}]
+        monkeypatch.setattr(seed, "fetch_image_occurrence", lambda *a, **k: rows)
+        session = _Session([])
+
+        outcome = seed.seed_project(session, "http://pacs", "20260729", "cxr_project", 1, tmp_path, False, True)
+
+        assert outcome == {"dry-run": 2}, "only FAK1 belongs to trust 1"
+        assert session.posts == []
+
+    def test_uploads_exactly_this_trusts_files(self, seed, tmp_path, monkeypatch):
+        project_dir = tmp_path / "20260729" / "cxr_project"
+        for acc in ("FAK1", "FAK2"):
+            (project_dir / acc).mkdir(parents=True)
+            (project_dir / acc / "0.dcm").write_bytes(acc.encode())
+        (project_dir / seed.COMPLETE_MARKER).write_text("cached")
+        rows = [{"accession_id": "FAK1", "source_trust": "2"}, {"accession_id": "FAK2", "source_trust": "1"}]
+        monkeypatch.setattr(seed, "fetch_image_occurrence", lambda *a, **k: rows)
+        session = _Session([_Response(200, {"Status": "Success"})])
+
+        outcome = seed.seed_project(session, "http://pacs", "20260729", "cxr_project", 1, tmp_path, False, False)
+
+        assert outcome == {"Success": 1}
+        assert [kw["data"] for _, kw in session.posts] == [b"FAK2"]

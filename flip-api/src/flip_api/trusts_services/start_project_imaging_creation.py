@@ -29,7 +29,7 @@ from flip_api.domain.interfaces.trust import (
 from flip_api.domain.schemas.status import TaskType
 from flip_api.project_services.services.project_services import get_project, get_users_with_access
 from flip_api.utils.cognito_helpers import get_cognito_users, get_user_pool_id
-from flip_api.utils.encryption import encrypt
+from flip_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/trust", tags=["trusts_services"])
@@ -112,7 +112,7 @@ async def start_project_imaging_creation(
             persist_payload = IPersistCohort(
                 project_id=project_id,
                 trust_id=trust.id,
-                encrypted_project_id=encrypt(str(project_id)),
+                encrypted_project_id=encrypt(str(project_id), context=PROJECT_ID_CONTEXT),
                 query=project.query.query,
                 query_id=project.query.id,
             )

@@ -113,6 +113,7 @@ import { useRoute } from "vue-router";
 import AiErrorAlert from "@/components/AiAlert/AiErrorAlert.vue";
 import { useAuthStore } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
+import { leaveToLogin } from "@/utils/session-teardown";
 
 const isDark = useDark();
 const errorStore = useErrorStore();
@@ -150,6 +151,6 @@ const backToLogin = (): void => {
     amplifySignOut().catch(() => { /* no-op: nothing to sign out of is fine */ });
     authStore.$reset();
     localStorage.clear();
-    window.location.assign("/auth/login");
+    leaveToLogin();
 };
 </script>

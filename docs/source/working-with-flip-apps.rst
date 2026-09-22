@@ -7,6 +7,17 @@ Central Hub and each participating Trust. The guides in this section walk
 through how to adapt or build apps so they can be uploaded to FLIP and
 orchestrated by the FL framework (Flower or NVIDIA FLARE).
 
+One rule applies to every app before anything framework-specific: **an app is offline**.
+Whatever it needs at run time — pretrained weights, checkpoints, an auxiliary network for a
+loss — must be one of the files uploaded with it, never something the code fetches when the
+model is built (``pretrained=True``, ``torch.hub.load``, ``from_pretrained("org/model")``,
+``load_state_dict_from_url``). On a platform-managed estate the FL server has no route to the
+internet, and neither does a Trust's training host behind an NHS firewall, so an app cannot
+assume one anywhere: such a call hangs the job there; and a file fetched after the upload was
+inspected is not the file that was inspected. The *Model Files* section of the
+:doc:`user guide <user-guides/user-common>` spells out the failure modes; the latent-diffusion
+tutorial shows how to ship a network a library would otherwise download.
+
 .. toctree::
    :maxdepth: 2
 

@@ -34,7 +34,7 @@ from flip_api.domain.schemas.private import TaskResultInput, TrustHeartbeatInput
 from flip_api.domain.schemas.status import TaskStatus, TaskType
 from flip_api.private_services.imaging_notifications import handle_imaging_task_completed
 from flip_api.private_services.snapshot_notifications import handle_snapshot_task_completed
-from flip_api.utils.encryption import encrypt
+from flip_api.utils.encryption import encrypt, task_context
 from flip_api.utils.logger import logger
 from flip_api.utils.rate_limiter import limiter
 
@@ -98,7 +98,9 @@ def _get_pending_tasks(trust: Trust, db: Session) -> dict[str, object]:
                 TrustTaskResponse(
                     id=task.id,
                     task_type=task.task_type,
-                    payload=encrypt(task.payload),
+                    # Sealed for this task type: task_type rides beside the payload unauthenticated, so
+                    # binding it into the tag is what stops a hop re-targeting the payload at another handler.
+                    payload=encrypt(task.payload, context=task_context(task.task_type)),
                     created_at=task.created_at,
                 )
             )

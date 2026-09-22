@@ -39,12 +39,12 @@ they run FLIP's own bundled Orthanc, which XNAT reaches over the container netwo
 their security groups keep no ingress rules at all.
 
 **Only the Central Hub is internet-facing.** It sits behind CloudFront with modern TLS,
-HSTS, AWS WAF managed rules, and an internal-only Application Load Balancer. Nothing
+HSTS, AWS WAF managed rules, and an internal-only load balancer. Nothing
 else in the platform is reachable from the public internet.
 
 **A site-to-site VPN is available on request.** Trust-to-hub traffic is encrypted in
-transit by default, and payloads carry their own encryption layer on top of
-that. Where a trust's own policy calls for network-layer separation as well, a
+transit by default, and payloads carry their own authenticated encryption layer
+(AES-256-GCM) on top of that. Where a trust's own policy calls for network-layer separation as well, a
 site-to-site VPN between the trust's network and the hub VPC can be provisioned,
 carrying all outbound polling and FL client traffic.
 
@@ -62,7 +62,8 @@ reference implementation for organisations with elevated compliance requirements
 the pattern AWS recommends for healthcare and public sector workloads. It provides
 account separation, centrally managed guardrails, consistent logging and encryption
 baselines, and a controlled path for images and dependencies entering the environment,
-applied uniformly across environments rather than configured per service.
+applied uniformly across environments rather than configured per service. What that changes
+in the Central Hub's own layout is on :ref:`deploy-central-hub-aws-lza`.
 
 Within that estate:
 
@@ -207,6 +208,21 @@ RestrictedPython, OS-level sandboxing — each rejected as either easily bypasse
 fit for legitimate ML code), not an oversight — see FLIP#877 (tracking GHSA-8465) for the
 full reasoning, so it does not need re-deciding the next time this class of finding comes up.
 
+**The FL API fetches app bundles only from the hub's object store.** When a job is
+submitted, the net's FL API downloads the bundled app server-side from presigned S3 URLs
+handed to it by the Central Hub API. The FL API authenticates no caller of its own — it
+trusts its position on the hub's internal network — so that download is guarded as a
+server-side request forgery surface: URLs must be https on the default port, may not name
+a private, loopback or link-local address as an IP literal in any spelling, and a DNS name
+is resolved with every answer held to the same check, failing closed if it cannot be
+resolved. Above those checks sits an explicit host allow-list, ``BUNDLE_URL_ALLOWED_HOSTS``,
+consulted before any name is resolved: every deployment derives it from its AWS region as
+the regional S3 endpoint the hub presigns against (``s3.<region>.amazonaws.com``), so the
+FL API will fetch from that one host and nothing else. The allow-list is the control that
+matters — the range check on resolved addresses cannot, on its own, close a DNS-rebinding
+race between the check and the fetch — and an FL API started without it logs a warning
+naming what that leaves open.
+
 **FL traffic is mutually authenticated.** Both supported backends — NVIDIA FLARE and
 Flower — run over TLS with per-participant certificates issued during network
 provisioning, so the FL server and each client authenticate *each other* rather than one
@@ -230,13 +246,23 @@ Data in transit and at rest
 Central Hub runs over HTTPS, outbound from the trust only. On top of that transport
 encryption, task payloads are themselves encrypted before they are handed to the
 transport, so the payload body is never carried in the clear inside an established
-session. Stated precisely, because this page exists to be relied on: today the payload
-layer uses a **single platform-wide symmetric key**, and message integrity is provided
-by the TLS transport rather than by the payload cipher itself. An upgrade to
-**authenticated encryption with per-trust keys** — tampering makes decryption fail
-outright, each trust's traffic is protected by its own key so a compromise at one trust
-exposes no other's, and keys carry identifiers so they can be rotated without a
-synchronised cutover — is in delivery, not yet a shipped control.
+session. The payload layer is **authenticated encryption** (AES-256-GCM), and it is
+checked end to end: TLS terminates at CloudFront and again at the load balancer in front
+of the hub, so transport integrity is only ever hop by hop, whereas the payload's
+authentication tag is verified by the receiving service itself — including on the leg
+from an FL client to the trust's own services, which has no TLS at all. A payload altered
+at any hop or boundary fails decryption outright rather than yielding altered content, and
+the tag also binds the payload's purpose, so an instruction the hub issued for one action
+cannot be re-labelled as another. Stated precisely, because this page exists to be relied
+on: this covers what the hub sends to a trust and what a trust's FL client presents to its
+own services; a trust's responses back to the hub (cohort statistics, task outcomes)
+travel as plain JSON under TLS alone. And the payload layer still uses a **single
+platform-wide symmetric key**, so the tag proves that a holder of the platform key
+produced the payload, not which participant did — a compromised participant could still
+forge payloads for another. The upgrade to **per-trust keys** — each trust's traffic
+protected by its own key, so a compromise at one trust can neither read nor forge
+another's, and keys carrying identifiers so they can be rotated without a synchronised
+cutover — is in delivery, not yet a shipped control.
 
 **At rest**, model and results storage uses S3 with managed encryption under a
 customer-managed KMS key, versioning, blocked public access, HTTPS-only bucket policies,

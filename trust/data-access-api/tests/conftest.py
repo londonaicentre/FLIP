@@ -16,7 +16,7 @@ import os
 # Plaintext test key used by tests to authenticate against the /cohort router.
 # Provisioned via TRUST_INTERNAL_SERVICE_KEY below so Settings() picks it up at
 # app-import time.
-TEST_TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"
+TEST_TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"  # pragma: allowlist secret
 AUTH_HEADERS = {"X-Trust-Internal-Service-Key": TEST_TRUST_INTERNAL_SERVICE_KEY}
 
 # 32-byte AES key (base64), single source for both the env default below and the
@@ -35,7 +35,7 @@ WRITE_AUTH_HEADERS = {**AUTH_HEADERS, **COHORT_ADMIN_HEADERS}
 # Compose environment or .env files in deployed environments.
 _TEST_ENV_DEFAULTS = {
     "DATA_ACCESS_POSTGRES_USER": "test_user",
-    "DATA_ACCESS_POSTGRES_PASSWORD": "test_password",
+    "DATA_ACCESS_POSTGRES_PASSWORD": "test_password",  # pragma: allowlist secret
     "OMOP_POSTGRES_DB": "test_omop_db",
     "AES_KEY_BASE64": TEST_AES_KEY_BASE64,
     "TRUST_INTERNAL_SERVICE_KEY": TEST_TRUST_INTERNAL_SERVICE_KEY,

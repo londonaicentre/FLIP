@@ -23,7 +23,7 @@ Layout, one directory per hub project id::
 
     <COHORT_SNAPSHOT_DIR>/<project-uuid>/
         dataframe.parquet   # the frozen cohort, dtype-faithful (parquet, no index)
-        meta.json           # row_count / columns / query_hash / created_at / format_version
+        meta.json           # row_count / subject_count / columns / query_hash / created_at / format_version
 
 Writes are atomic at directory granularity: everything lands in a ``.tmp-*`` sibling first
 and is activated with ``os.replace`` renames, so a reader never observes a half-written
@@ -74,6 +74,10 @@ class SnapshotMeta:
     """The snapshot's serving-relevant facts, readable without deserialising the frame."""
 
     row_count: int
+    # Distinct subjects the cohort covers (``count_distinct_subjects`` at creation). The
+    # disclosure threshold is applied to this, not to row_count; a snapshot is never
+    # persisted without it.
+    subject_count: int
     columns: list[str]
     query_hash: str
     created_at: str  # ISO-8601 UTC
@@ -167,13 +171,15 @@ def ensure_store() -> None:
     logger.info(f"Cohort snapshot store ready at {base}")
 
 
-def save_snapshot(project_id: str, df: pd.DataFrame, query_hash: str) -> SnapshotMeta:
+def save_snapshot(project_id: str, df: pd.DataFrame, query_hash: str, subject_count: int) -> SnapshotMeta:
     """Persist the cohort dataframe for ``project_id``, atomically replacing any predecessor.
 
     Args:
         project_id (str): The decrypted hub project id (must be a UUID).
         df (pd.DataFrame): The cohort exactly as ``get_records`` returned it.
         query_hash (str): ``normalised_query_hash`` of the raw SQL that produced ``df``.
+        subject_count (int): Distinct subjects ``df`` covers, as ``count_distinct_subjects``
+            established them; the serve-time disclosure gate reads this.
 
     Returns:
         SnapshotMeta: What was written.
@@ -206,6 +212,7 @@ def save_snapshot(project_id: str, df: pd.DataFrame, query_hash: str) -> Snapsho
 
     meta = SnapshotMeta(
         row_count=len(df),
+        subject_count=subject_count,
         columns=[str(column) for column in df.columns],
         query_hash=query_hash,
         created_at=datetime.now(UTC).isoformat(),

@@ -17,12 +17,12 @@ permissions:
 on:
   pull_request:
     paths:
-      - "deploy/providers/local/**"
+      - "trust/deploy/ansible/**"
       - ".github/workflows/test_local_trust_playbook.yml"
   push:
     branches: [develop, main]
     paths:
-      - "deploy/providers/local/**"
+      - "trust/deploy/ansible/**"
       - ".github/workflows/test_local_trust_playbook.yml"
   workflow_dispatch:
 
@@ -43,5 +43,5 @@ jobs:
         run: pip install uv
 
       - name: Run playbook regression tests
-        working-directory: deploy/providers/local
+        working-directory: trust/deploy/ansible
         run: uv run --no-project --with pytest --with pyyaml --with jinja2 pytest tests/ -v

@@ -39,11 +39,12 @@ sample_dataframe_query = {
 }
 
 
-def _snapshot(df: pd.DataFrame, query: str = FROZEN_QUERY) -> Snapshot:
+def _snapshot(df: pd.DataFrame, query: str = FROZEN_QUERY, subject_count: int | None = None) -> Snapshot:
     return Snapshot(
         df=df,
         meta=SnapshotMeta(
             row_count=len(df),
+            subject_count=len(df) if subject_count is None else subject_count,
             columns=[str(column) for column in df.columns],
             query_hash=normalised_query_hash(query),
             created_at=datetime.now(UTC).isoformat(),
@@ -92,6 +93,24 @@ def test_dataframe_frozen_below_threshold_uses_the_fixed_refusal(
     mock_get_snapshot.return_value = _snapshot(pd.DataFrame({"accession_id": ["A1"]}))
 
     response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == _BELOW_THRESHOLD_DETAIL
+
+
+@pytest.mark.parametrize("path", ["/cohort/dataframe", "/cohort/accession-ids"])
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_snapshot")
+def test_row_level_routes_gate_on_frozen_subjects_not_rows(mock_get_snapshot, mock_decrypt, mock_get_settings, path):
+    """Twelve studies from three patients is three subjects: the gate reads the frozen subject
+    count, so a row count above the floor does not carry a cohort of too few people through."""
+    mock_decrypt.return_value = "my_project"
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
+    frozen = pd.DataFrame({"accession_id": [f"A{i}" for i in range(12)]})
+    mock_get_snapshot.return_value = _snapshot(frozen, subject_count=3)
+
+    response = client.post(path, json=sample_dataframe_query, headers=AUTH_HEADERS)
 
     assert response.status_code == 403
     assert response.json()["detail"] == _BELOW_THRESHOLD_DETAIL
@@ -192,11 +211,12 @@ def test_create_snapshot_freezes_the_validated_query_result(
     mock_snapshot_enabled.return_value = True
     mock_decrypt.return_value = "8b2e9d6e-5a53-4f2e-9c37-2c8f4f0f2d11"
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 2
-    frozen = pd.DataFrame({"accession_id": ["A1", "A2", "A3"]})
+    frozen = pd.DataFrame({"person_id": [1, 2, 3], "accession_id": ["A1", "A2", "A3"]})
     mock_get_records.return_value = frozen
     mock_save_snapshot.return_value = SnapshotMeta(
         row_count=3,
-        columns=["accession_id"],
+        subject_count=3,
+        columns=["person_id", "accession_id"],
         query_hash=normalised_query_hash(FROZEN_QUERY),
         created_at="2026-08-26T00:00:00+00:00",
     )
@@ -214,6 +234,8 @@ def test_create_snapshot_freezes_the_validated_query_result(
     mock_get_records.assert_called_once_with(mock_validate_query.return_value, use_cache=False)
     mock_save_snapshot.assert_called_once()
     assert mock_save_snapshot.call_args.kwargs["query_hash"] == normalised_query_hash(FROZEN_QUERY)
+    # The distinct-subject count is frozen with the artefact for the serve-time gate.
+    assert mock_save_snapshot.call_args.kwargs["subject_count"] == 3
 
 
 @patch("data_access_api.routers.cohort.get_settings")
@@ -228,7 +250,7 @@ def test_create_snapshot_below_threshold_persists_nothing(
     mock_snapshot_enabled.return_value = True
     mock_decrypt.return_value = "8b2e9d6e-5a53-4f2e-9c37-2c8f4f0f2d11"
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
-    mock_get_records.return_value = pd.DataFrame({"accession_id": ["A1"]})
+    mock_get_records.return_value = pd.DataFrame({"person_id": [1], "accession_id": ["A1"]})
 
     response = client.post("/cohort/snapshot", json=sample_dataframe_query, headers=WRITE_AUTH_HEADERS)
 
@@ -249,7 +271,7 @@ def test_create_snapshot_oversize_returns_413_without_detail_leakage(
     mock_snapshot_enabled.return_value = True
     mock_decrypt.return_value = "8b2e9d6e-5a53-4f2e-9c37-2c8f4f0f2d11"
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 2
-    mock_get_records.return_value = pd.DataFrame({"accession_id": ["A1", "A2", "A3"]})
+    mock_get_records.return_value = pd.DataFrame({"person_id": [1, 2, 3], "accession_id": ["A1", "A2", "A3"]})
     mock_save_snapshot.side_effect = SnapshotTooLarge("snapshot is 999 bytes, over the 10-byte limit")
 
     response = client.post("/cohort/snapshot", json=sample_dataframe_query, headers=WRITE_AUTH_HEADERS)
@@ -277,7 +299,7 @@ def test_create_snapshot_non_uuid_project_id_returns_400(
     mock_snapshot_enabled.return_value = True
     mock_decrypt.return_value = "not-a-uuid"
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 2
-    mock_get_records.return_value = pd.DataFrame({"accession_id": ["A1", "A2", "A3"]})
+    mock_get_records.return_value = pd.DataFrame({"person_id": [1, 2, 3], "accession_id": ["A1", "A2", "A3"]})
     mock_save_snapshot.side_effect = ValueError("project_id must be a UUID")
 
     response = client.post("/cohort/snapshot", json=sample_dataframe_query, headers=WRITE_AUTH_HEADERS)

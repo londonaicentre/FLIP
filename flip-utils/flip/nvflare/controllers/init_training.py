@@ -22,7 +22,7 @@ from nvflare.apis.signal import Signal
 from nvflare.app_common.app_constant import AppConstants
 
 from flip import FLIP
-from flip.constants import FlipConstants, FlipEvents, FlipTasks
+from flip.constants import FlipEvents, FlipTasks
 from flip.nvflare.runtime import get_flip_model_id
 
 
@@ -30,7 +30,7 @@ class InitTraining(Controller):
     def __init__(
         self,
         model_id: str = "",
-        min_clients: int = FlipConstants.MIN_CLIENTS,
+        min_clients: int = 1,
         flip: FLIP = FLIP(),
         cleanup_timeout: int = 600,
     ):
@@ -42,8 +42,10 @@ class InitTraining(Controller):
         Args:
             model_id (str, optional): ID of the model that the training is being performed under. When omitted
                 the ID is resolved lazily from the job's meta.json custom_props at first use.
-            min_clients (int, optional): Minimum number of clients. Defaults to 1 for the aggregation to take place with
-                successful results.
+            min_clients (int, optional): Minimum number of clients that must respond to the cleanup task.
+                Defaults to 1; on the platform fl-api sets it to the participating-trust count for every job
+                (``config["min_clients"] = len(trusts)`` in ``prepare_config.py``), so it is never a
+                deployment-wide setting.
             flip (FLIP, optional): FLIP instance used for status updates and exception reporting (default: FLIP()).
             cleanup_timeout (int, optional): Timeout for image cleanup, defaults to 600 seconds (10 minutes)
 
@@ -55,10 +57,10 @@ class InitTraining(Controller):
 
         super().__init__()
 
-        if min_clients < FlipConstants.MIN_CLIENTS:
+        if min_clients < 1:
             raise ValueError(
-                f"Invalid number of minimum clients specified. {min_clients} is less than "
-                f"{FlipConstants.MIN_CLIENTS} which is the minimum number for a successful aggregation"
+                f"Invalid number of minimum clients specified. {min_clients} is less than 1, "
+                "which is the minimum number for a successful aggregation"
             )
 
         if cleanup_timeout < 0:

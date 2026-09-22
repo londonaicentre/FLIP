@@ -1,0 +1,10 @@
+schema_type: dataframe
+columns:
+  episode_id:
+    dtype: int64
+  event_id:
+    dtype: int64
+  episode_event_field_concept_id:
+    dtype: int64
+strict: true
+drop_invalid_rows: false

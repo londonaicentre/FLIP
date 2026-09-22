@@ -19,10 +19,12 @@
         "validate_dm"
       ],
       "executor": {
-        "path": "nvflare.app_common.executors.in_process_client_api_executor.InProcessClientAPIExecutor",
+        "path": "nvflare.app_common.executors.client_api_executor.ClientAPIExecutor",
         "args": {
+          "execution_mode": "in_process",
           "task_script_path": "custom/trainer.py",
-          "task_script_args": "--project_id {project_id}"
+          "task_script_args": "--project_id {project_id}",
+          "params_exchange_format": "numpy"
         }
       }
     }

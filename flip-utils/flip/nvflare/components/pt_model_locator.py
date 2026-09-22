@@ -54,9 +54,11 @@ class PTModelLocator(ModelLocator):
                     self.log_error(fl_ctx, f"Model file not found at {model_path}", fire_event=False)
                     return None
 
-                # Load the torch model
+                # Load the torch model. The file is PTFileModelPersistor's own output — an OrderedDict of
+                # tensors plus plain train_conf/meta_props dicts — so the weights-only unpickler round-trips
+                # it, and a swapped .pt cannot run code in the fl-server process.
                 device = "cuda" if torch.cuda.is_available() else "cpu"
-                data = torch.load(model_path, map_location=device)
+                data = torch.load(model_path, map_location=device, weights_only=True)
 
                 # Setup the persistence manager.
                 if self.model:

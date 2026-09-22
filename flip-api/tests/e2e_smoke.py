@@ -107,6 +107,12 @@ TUTORIALS: dict[str, TutorialCopy] = {
         "Measuring how well the existing Ark+ chest X-ray model recognises chest conditions on each "
         "participating trust's radiographs, without retraining it.",
     ),
+    "ehr_risk_prediction": TutorialCopy(
+        "EHR risk prediction",
+        "Predicting which patients will go on to develop type 2 diabetes from their routine electronic "
+        "health records — demographics plus the conditions and hospital visits recorded before diagnosis — "
+        "with a model trained across the participating trusts.",
+    ),
     "arkplus_multimodel_classification_evaluation": TutorialCopy(
         "Ark+ multi-model classification evaluation",
         "Comparing several existing Ark+ chest X-ray models on each participating trust's radiographs to "
@@ -746,7 +752,12 @@ def wait_for_model_advanced(
         time.sleep(poll_interval)
     raise SmokeFailure(
         f"Model did not advance past INITIATED within {timeout_s}s (last status: {last_status or 'unknown'}). "
-        "Check that fl-server + fl-clients are running and that the FL scheduler picked up the job."
+        "Check that fl-server + fl-clients are running and that the FL scheduler picked up the job. "
+        "If the job WAS submitted and the server-side job process hung at start-up (on NVFLARE the client log "
+        "says 'cannot sync with server Runner'; on Flower the run never issues a round), the usual cause is an "
+        "app that downloads weights at run time (pretrained=True, torch.hub, from_pretrained) — which an FL app "
+        "must not do, and on a platform-managed estate cannot (FLIP#1206); the net stays BUSY until "
+        "POST /fl/stop/{model_id}."
     )
 
 

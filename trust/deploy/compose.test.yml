@@ -32,7 +32,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: test_user
-      POSTGRES_PASSWORD: test_password
+      POSTGRES_PASSWORD: test_password  # pragma: allowlist secret
       POSTGRES_DB: test_omop_db
     ports:
       - "5432"
@@ -66,13 +66,13 @@ services:
       OMOP_DB_SERVICE_NAME: omop-db-test
       OMOP_DB_PORT: "5432"
       DATA_ACCESS_POSTGRES_USER: test_user
-      DATA_ACCESS_POSTGRES_PASSWORD: test_password
+      DATA_ACCESS_POSTGRES_PASSWORD: test_password  # pragma: allowlist secret
       OMOP_POSTGRES_DB: test_omop_db
       AES_KEY_BASE64: "QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA="  # pragma: allowlist secret
       ENV: production
       DEBUG: "false"
       LOG_LEVEL: INFO
-      TRUST_INTERNAL_SERVICE_KEY_HEADER: X-Trust-Internal-Service-Key
+      TRUST_INTERNAL_SERVICE_KEY_HEADER: X-Trust-Internal-Service-Key  # pragma: allowlist secret
       # Must match the value pre-set in trust/trust-api/tests/conftest.py so the
       # in-process trust-api side and the containerised data-access-api use the
       # same per-trust shared secret on every /cohort call.

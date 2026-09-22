@@ -197,7 +197,8 @@ def test_retrieve_model_unexpected_error(
         with pytest.raises(HTTPException) as exc:
             retrieve_model(model_id=test_model_id, db=override_dependencies, user_id=test_user_id)
         assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "broken SQL file" in exc.value.detail
+        assert exc.value.detail == "Internal server error"
+        assert "broken SQL file" not in exc.value.detail
 
 
 def test_load_sql_reads_file_contents():

@@ -72,7 +72,7 @@ FLIP **pulls**; the PACS is never configured to push into XNAT. XNAT's
 performs the retrieval, driven over REST by the imaging API:
 
 1. The cohort query is re-run against the trust's OMOP database and returns **accession numbers
-   only**.
+   only**, de-duplicated — a cohort with one row per series names each study once.
 2. For each accession number, XNAT issues a **C-FIND** to the PACS at STUDY level, matching on
    Accession Number ``(0008,0050)``, to resolve the Study Instance UID.
 3. XNAT issues a **C-MOVE** to the PACS, naming itself as the move destination.

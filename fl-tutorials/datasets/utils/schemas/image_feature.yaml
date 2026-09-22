@@ -1,0 +1,43 @@
+schema_type: dataframe
+columns:
+  image_feature_id:
+    dtype: int64
+    unique: true
+  person_id:
+    dtype: int64
+  image_occurrence_id:
+    dtype: int64
+  image_feature_event_field_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  image_feature_event_id:
+    dtype: int64
+    nullable: true
+    required: false
+  image_feature_concept_id:
+    dtype: int64
+  image_feature_type_concept_id:
+    dtype: int64
+  image_finding_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  image_finding_id:
+    dtype: int64
+    nullable: true
+    required: false
+  anatomic_site_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  alg_system:
+    dtype: string[python]
+    nullable: true
+    required: false
+  alg_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

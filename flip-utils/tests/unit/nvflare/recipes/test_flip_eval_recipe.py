@@ -30,21 +30,21 @@ class TestFlipEvalRecipe:
     def test_builds_fed_job_with_flip_components(self):
         """A default recipe should construct a FedJob with the FLIP evaluation wiring."""
         recipe = FlipEvalRecipe()
-        assert recipe.job is not None
-        assert recipe.job.name == "flip_evaluation"
-        assert recipe.job.job.min_clients == 1
+        assert recipe._job is not None
+        assert recipe._job.name == "flip_evaluation"
+        assert recipe._job.job.min_clients == 1
 
     def test_meta_props_carry_model_id_into_custom_props(self):
         """The FedJob's meta carries the FLIP model_id into custom_props so components resolve it lazily."""
         recipe = FlipEvalRecipe()
-        meta = recipe.job.job.meta_props
+        meta = recipe._job.job.meta_props
         assert FLIP_CUSTOM_PROPS_KEY in meta
         assert meta[FLIP_CUSTOM_PROPS_KEY][FLIP_MODEL_ID_KEY] == _DEV_MODEL_ID
 
     def test_custom_model_id_propagates_to_meta_props(self):
         custom_id = "abcdef01-2345-6789-abcd-ef0123456789"
         recipe = FlipEvalRecipe(model_id=custom_id)
-        assert recipe.job.job.meta_props[FLIP_CUSTOM_PROPS_KEY][FLIP_MODEL_ID_KEY] == custom_id
+        assert recipe._job.job.meta_props[FLIP_CUSTOM_PROPS_KEY][FLIP_MODEL_ID_KEY] == custom_id
 
     def test_eval_script_normalisation(self):
         """Bare ``evaluator.py`` is rewritten to ``custom/evaluator.py``; explicit prefix kept."""
@@ -80,7 +80,7 @@ class TestFlipEvalRecipe:
             recipe = FlipEvalRecipe()
             recipe.export(tmp_path)
 
-            job_dir = tmp_path / recipe.job.name
+            job_dir = tmp_path / recipe._job.name
             assert (job_dir / "meta.json").exists()
             server_cfg_path = job_dir / "app" / "config" / "config_fed_server.json"
             client_cfg_path = job_dir / "app" / "config" / "config_fed_client.json"
@@ -110,7 +110,7 @@ class TestFlipEvalRecipe:
             client_cfg = json.loads(client_cfg_path.read_text())
             client_blob = json.dumps(client_cfg)
             # Client uses the stock Client-API executor for the validate task; no RUN_EVALUATOR.
-            assert "InProcessClientAPIExecutor" in client_blob
+            assert "ClientAPIExecutor" in client_blob
             assert "RUN_EVALUATOR" not in client_blob
             # validate task is registered on the executor.
             executor_tasks = [t for e in client_cfg["executors"] for t in e["tasks"]]

@@ -56,12 +56,13 @@ def _sample_df() -> pd.DataFrame:
 
 def test_save_then_get_round_trips_the_frame_dtype_faithfully(store):
     df = _sample_df()
-    meta = save_snapshot(PROJECT_ID, df, query_hash=QUERY_HASH)
+    meta = save_snapshot(PROJECT_ID, df, query_hash=QUERY_HASH, subject_count=3)
 
     snapshot = get_snapshot(PROJECT_ID)
     assert snapshot is not None
     pd.testing.assert_frame_equal(snapshot.df, df)
     assert snapshot.meta.row_count == 3
+    assert snapshot.meta.subject_count == 3
     assert snapshot.meta.columns == ["accession_id", "age", "measured_at"]
     assert snapshot.meta.query_hash == QUERY_HASH
     assert snapshot.meta.has_accessions is True
@@ -69,9 +70,14 @@ def test_save_then_get_round_trips_the_frame_dtype_faithfully(store):
 
 
 def test_save_overwrites_atomically_on_reapproval(store):
-    save_snapshot(PROJECT_ID, _sample_df(), query_hash=QUERY_HASH)
+    save_snapshot(PROJECT_ID, _sample_df(), query_hash=QUERY_HASH, subject_count=3)
     replacement = pd.DataFrame({"person_id": [1, 2]})
-    save_snapshot(PROJECT_ID, replacement, query_hash=normalised_query_hash("SELECT person_id FROM omop.person"))
+    save_snapshot(
+        PROJECT_ID,
+        replacement,
+        query_hash=normalised_query_hash("SELECT person_id FROM omop.person"),
+        subject_count=2,
+    )
 
     snapshot = get_snapshot(PROJECT_ID)
     assert snapshot is not None
@@ -91,7 +97,7 @@ def test_get_returns_none_for_unknown_project_and_non_uuid_ids(store):
 
 def test_save_rejects_non_uuid_project_id(store):
     with pytest.raises(ValueError, match="UUID"):
-        save_snapshot("../escape", _sample_df(), query_hash=QUERY_HASH)
+        save_snapshot("../escape", _sample_df(), query_hash=QUERY_HASH, subject_count=3)
     assert list(store.iterdir()) == []
 
 
@@ -100,7 +106,7 @@ def test_save_refuses_oversized_snapshot_without_truncating(store):
         mock_settings.return_value.COHORT_SNAPSHOT_DIR = str(store)
         mock_settings.return_value.SNAPSHOT_MAX_BYTES = 10
         with pytest.raises(SnapshotTooLarge, match="SNAPSHOT_MAX_BYTES"):
-            save_snapshot(PROJECT_ID, _sample_df(), query_hash=QUERY_HASH)
+            save_snapshot(PROJECT_ID, _sample_df(), query_hash=QUERY_HASH, subject_count=3)
     # Refused means nothing persisted — no partial artefact to poison training data.
     assert get_snapshot(PROJECT_ID) is None
 
@@ -112,17 +118,17 @@ def test_disabled_store_reads_none_and_refuses_writes():
         assert get_snapshot(PROJECT_ID) is None
         assert delete_snapshot(PROJECT_ID) is False
         with pytest.raises(SnapshotStoreDisabled):
-            save_snapshot(PROJECT_ID, _sample_df(), query_hash=QUERY_HASH)
+            save_snapshot(PROJECT_ID, _sample_df(), query_hash=QUERY_HASH, subject_count=3)
 
 
 def test_corrupt_meta_is_treated_as_absent(store):
-    save_snapshot(PROJECT_ID, _sample_df(), query_hash=QUERY_HASH)
+    save_snapshot(PROJECT_ID, _sample_df(), query_hash=QUERY_HASH, subject_count=3)
     (store / PROJECT_ID / "meta.json").write_text("{not json")
     assert get_snapshot(PROJECT_ID) is None
 
 
 def test_unknown_format_version_is_treated_as_absent(store):
-    save_snapshot(PROJECT_ID, _sample_df(), query_hash=QUERY_HASH)
+    save_snapshot(PROJECT_ID, _sample_df(), query_hash=QUERY_HASH, subject_count=3)
     meta_path = store / PROJECT_ID / "meta.json"
     meta = json.loads(meta_path.read_text())
     meta["format_version"] = 999
@@ -131,14 +137,14 @@ def test_unknown_format_version_is_treated_as_absent(store):
 
 
 def test_delete_is_idempotent(store):
-    save_snapshot(PROJECT_ID, _sample_df(), query_hash=QUERY_HASH)
+    save_snapshot(PROJECT_ID, _sample_df(), query_hash=QUERY_HASH, subject_count=3)
     assert delete_snapshot(PROJECT_ID) is True
     assert get_snapshot(PROJECT_ID) is None
     assert delete_snapshot(PROJECT_ID) is False
 
 
 def test_ensure_store_sweeps_stale_write_debris(store):
-    save_snapshot(PROJECT_ID, _sample_df(), query_hash=QUERY_HASH)
+    save_snapshot(PROJECT_ID, _sample_df(), query_hash=QUERY_HASH, subject_count=3)
     (store / ".tmp-crashed-write").mkdir()
     (store / ".old-crashed-swap").mkdir()
 
