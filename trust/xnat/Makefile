@@ -58,13 +58,10 @@ export XNAT_TAG
 # file. The XNAT swarm stack name and overlay network are derived from the
 # assigned slot NUMBER (not the CODE), so XNAT co-resides on the same
 # deploy_trust-network-<N> as the slot-numbered trust core services.
-ifeq ($(PROD),true)
-ENV := production
-else ifeq ($(PROD),stag)
-ENV := stag
-else
-ENV := development
-endif
+# ENV (the kit suffix) and IS_DEPLOYED (non-empty for every PROD value except
+# unset — the LZA pair takes the stag/prod paths and stack files below, with its
+# own kit suffix) come from the shared table in ../../deploy/env_mode.mk.
+include ../../deploy/env_mode.mk
 KIT_FILE := $(if $(wildcard ../.env.$(KIT).$(ENV)),../.env.$(KIT).$(ENV),../.env.$(KIT))
 -include $(KIT_FILE)
 # Kit-file values must reach the shell env, not just Make vars. docker stack
@@ -90,7 +87,8 @@ include ../../deploy/instance.mk
 # Whether this trust runs MONAI Label. Read from the kit file by the -include above, or
 # passed on the command line (which Make forwards to this sub-make automatically). Gates
 # export_mask registration in xnat-configure — see xnat-configure-export-mask. Mirrors the
-# same default in trust/Makefile.
+# same default in trust/Makefile. (The OHIF viewer plugin MONAI Label registers through ships
+# by default in every mode since #1243, so this no longer gates the plugin download.)
 MONAI_LABEL ?= false
 # Slot NUMBER the hub assigned this trust, read from the kit file — NOT a
 # substring of the CODE. Drives the stack name (xnat<N>) and overlay network
@@ -140,7 +138,7 @@ PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 # bind-mount it directly without a separate `${XNAT_PATH}/` prefix. Both
 # this recipe and the compose stacks read the same exported var so the
 # dirs Make creates and the dirs compose mounts stay in lockstep.
-XNAT_DATA_DIR ?= $(if $(filter true stag,$(PROD)),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM))
+XNAT_DATA_DIR ?= $(if $(IS_DEPLOYED),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM))
 XNAT_DATA_DIR := $(abspath $(XNAT_DATA_DIR))
 export XNAT_DATA_DIR
 
@@ -179,7 +177,7 @@ XNAT_DIR_OWNER := $(XNAT_CONTAINER_UID):$(XNAT_CONTAINER_GID)
 # The bind-mount sources xnat-reset provisions. xnat-db-data is stag/prod-only:
 # the development stack gives xnat-db no persistent bind mount.
 XNAT_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive build cache) \
-                  $(if $(filter true stag,$(PROD)),$(XNAT_DATA_DIR)/xnat-db-data)
+                  $(if $(IS_DEPLOYED),$(XNAT_DATA_DIR)/xnat-db-data)
 
 # Verify every bind-mount source is owned by the container uid, and fail naming
 # the exact remedy when it is not. Fatal rather than a warning because the
@@ -227,10 +225,7 @@ export XNAT_PATH=$(realpath .)
 # xnat/plugins over the image, so only development needs the host-side plugin cache (and the S3
 # bucket and AWS credentials that populate it). Production bakes plugins into the image, and a
 # trust host has neither FLIP_ARTIFACTS_BUCKET_NAME nor a reason to reach S3 for them.
-ifeq ($(PROD),true)
-STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.production.yml
-XNAT_PLUGINS_FROM_HOST =
-else ifeq ($(PROD),stag)
+ifneq ($(IS_DEPLOYED),)
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.production.yml
 XNAT_PLUGINS_FROM_HOST =
 else
@@ -496,7 +491,7 @@ xnat-plugins-download:
 	  echo "   Set it in .env.development (see the 'S3 Buckets' block), or pass it on the command"; \
 	  echo "   line: make xnat-plugins-download FLIP_ARTIFACTS_BUCKET_NAME=<bucket>."; \
 	  exit 1; }
-	@MONAI_LABEL="$(strip $(MONAI_LABEL))" ./scripts/ensure_plugins.sh "xnat/plugins" "$(FLIP_ARTIFACTS_BUCKET_NAME)" "xnat-$(XNAT_VERSION)/plugins"
+	@./scripts/ensure_plugins.sh "xnat/plugins" "$(FLIP_ARTIFACTS_BUCKET_NAME)" "xnat-$(XNAT_VERSION)/plugins"
 
 # Creates the data-volume directory structure for one trust's XNAT stack and
 # wipes any previous data. Docker Swarm requires host directories to exist
@@ -539,7 +534,7 @@ xnat-reset:
 	fi
 	@set -e; \
 	echo "Deleting previous XNAT data and creating new directories for $(KIT) ..."; \
-	if [ "$(PROD)" = "true" ] || [ "$(PROD)" = "stag" ]; then \
+	if [ -n "$(IS_DEPLOYED)" ]; then \
 		echo "  📍 Using prod data dir: $(XNAT_DATA_DIR)/"; \
 		xnat_ctx="$$(docker context show)"; \
 		xnat_endpoint="$$(docker context inspect "$$xnat_ctx" --format '{{.Endpoints.docker.Host}}' 2>/dev/null)"; \

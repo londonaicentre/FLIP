@@ -22,6 +22,13 @@ on:
       - "trust/observability/**"
       - ".github/workflows/test_trust_data_access_api.yml"
       - ".github/actions/setup-trust-test-env/**"
+      # The shared bootstrap action copies the root env template to .env.development,
+      # which data_access_api/config.py reads as its env_file.
+      - ".env.development.example"
+      # This service's Makefile includes+exports the GSTT kit example at parse time, so a
+      # line make cannot read stops the suite before a test runs, and its values land in the
+      # environment Settings reads. The KCH twin exists but no Makefile reads it.
+      - "trust/.env.GSTT.development.example"
   pull_request:
     branches: [main, develop]
 
@@ -29,7 +36,29 @@ permissions:
   contents: read
 
 jobs:
+  # Gate for pull requests into develop: run the suite only when the PR touches this
+  # service (pr_paths_changed.yml; PRs into main always run everything). The list is
+  # the push `paths:` filter above, verbatim — scripts/tests/test_pr_paths_changed.py
+  # fails when the two drift.
+  changes:
+    uses: ./.github/workflows/pr_paths_changed.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      paths: |
+        trust/data-access-api/**
+        trust/deploy/compose.test.yml
+        trust/trust-api/tests/integration/fixtures/**
+        trust/observability/**
+        .github/workflows/test_trust_data_access_api.yml
+        .github/actions/setup-trust-test-env/**
+        .env.development.example
+        trust/.env.GSTT.development.example
+
   data-access-api:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     environment: flip
     defaults:
@@ -65,6 +94,8 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   data-access-api-integration:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     # Drives the data-access-api ``/cohort`` endpoints against a real seeded Postgres
     # via the shared trust/deploy/compose.test.yml stack. Catches SQL-template / OMOP-schema
     # / auth regressions that the mocked unit suite cannot. See issue #369 (B3).

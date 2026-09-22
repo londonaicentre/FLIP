@@ -75,8 +75,11 @@ make -C fl-services/nvflare provision-2-nets
 make up
 ```
 
-If Swarm is already active, `docker swarm init` reports that and can be skipped. Open `https://localhost` for the UI
-and `http://localhost:8080/api/docs` for the Central Hub API documentation.
+If Swarm is already active, `docker swarm init` reports that and can be skipped. Open
+`http://localhost:<UI_PORT>` for the UI and `http://localhost:8080/api/docs` for the Central Hub API
+documentation. Set `UI_PORT` to a port the dev Cognito client registers as a browser origin
+(44350–44359) or the UI loads but every API call fails CORS — see "Browser-usable UI ports" in
+[deploy/providers/AWS/dev/README.md](deploy/providers/AWS/dev/README.md).
 
 ### Load the OMOP vocabulary
 
@@ -132,7 +135,7 @@ reload. More detail is in [Running the stack](CONTRIBUTING.md#running-the-stack-
 | Set up a development environment or contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Run or adapt a federated-learning example | [FL tutorials](fl-tutorials/README.md) |
 | Build a FLIP application | [Working with FLIP apps](https://londonaicentreflip.readthedocs.io/en/latest/working-with-flip-apps.html) |
-| Deploy the Central Hub on AWS | [Central Hub deployment](docs/source/deploy-flip/deploy-central-hub.rst) |
+| Deploy the Central Hub on AWS | [Central Hub deployment](docs/source/deploy-flip/deploy-central-hub.rst) — self-contained ([on AWS](docs/source/deploy-flip/deploy-central-hub-aws.rst)) or on a Landing Zone Accelerator estate ([on AWS (LZA)](docs/source/deploy-flip/deploy-central-hub-aws-lza.rst)) |
 | Deploy a Trust on premises | [On-prem host playbook](trust/deploy/ansible/README.md) |
 | Deploy a Trust on Kubernetes | [Helm chart](trust/deploy/helm/README.md) |
 | Operate Trust-side services | [Trust services](trust/README.md) |

@@ -14,8 +14,8 @@
 # multi-organ) in the XNAT OHIF viewer. Mirrors the compose overlay
 # (trust/deploy/compose_trust.*.monailabel.yml) — see trust/README.md#monai-label-optional
 # for the operational caveats (browser-reachable URL, unauthenticated API, stock-viewer
-# quirks). Unlike compose, the chart's XNAT already ships the ohif-viewer plugin in its
-# roster, so there is no separate plugin step here.
+# quirks). The chart's XNAT ships the ohif-viewer plugin in its roster (as every FLIP
+# XNAT does), so there is no separate plugin step here.
 #
 # The entrypoint handles XNAT registration itself: it polls XNAT and the service account,
 # starts the server, then PUTs monailabel.publicUrl to /xapi/ohifaiaa/servers and fails

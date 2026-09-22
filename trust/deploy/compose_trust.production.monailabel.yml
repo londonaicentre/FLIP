@@ -15,10 +15,8 @@
 # Image-only like the rest of the production compose — published by
 # .github/workflows/docker_build_monailabel.yml.
 #
-# Enabling this re-introduces the XNAT OHIF viewer plugin that the trust XNAT
-# deliberately excludes (FLIP#662 bulk-import livelock): intended for hybrid/on-prem
-# annotation trusts, weigh it before enabling on a trust that pulls large cohorts.
-# up-trust prints this warning when the flag is on.
+# The XNAT OHIF viewer plugin it registers through ships by default in every
+# deployment mode (#1243), so no extra plugin step is needed.
 
 services:
 

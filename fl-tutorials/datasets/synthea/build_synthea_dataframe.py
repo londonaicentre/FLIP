@@ -171,14 +171,8 @@ def derive_features(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
     # this only ever drops history-free negatives.
     frame = frame[frame["person_id"].isin(conditions["person_id"])]
 
-    # accession_id: this cohort fetches no imaging, but the FLIP dev client requires the
-    # column (flip-utils FLIPStandardDev.get_dataframe) — the app ignores it. Same aliasing
-    # as query.sql; do not remove it or `make run-tutorial` breaks.
-    frame["accession_id"] = frame["person_id"].astype(str)
-
     columns = [
         "person_id",
-        "accession_id",
         "age",
         "is_female",
         *CONDITION_FLAGS,

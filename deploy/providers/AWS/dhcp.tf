@@ -19,8 +19,15 @@
 #
 # AmazonProvidedDNS is the default. Using it explicitly here prevents
 # Terraform from replacing it with nothing on re-apply.
+#
+# Gated off on the LZA platform-managed network (FLIP#749): the VPC's
+# attributes are owned by the accelerator pipeline, so we don't re-associate
+# its DHCP options. Only the bare-hostname search-domain convenience is lost —
+# every in-repo consumer already resolves the Cloud Map FQDNs (see
+# locals.service_discovery_names).
 
 resource "aws_vpc_dhcp_options" "flip" {
+  count               = var.lza_managed_network ? 0 : 1
   domain_name         = local.flip_local_domain
   domain_name_servers = ["AmazonProvidedDNS"]
 
@@ -30,6 +37,20 @@ resource "aws_vpc_dhcp_options" "flip" {
 }
 
 resource "aws_vpc_dhcp_options_association" "flip" {
-  vpc_id          = module.flip_vpc.vpc_id
-  dhcp_options_id = aws_vpc_dhcp_options.flip.id
+  count           = var.lza_managed_network ? 0 : 1
+  vpc_id          = local.vpc_id
+  dhcp_options_id = aws_vpc_dhcp_options.flip[0].id
+}
+
+# State migration for the counts added above (FLIP#749): keeps existing legacy
+# states aligned without a manual `terraform state mv`. Safe to remove once
+# every live state file has been migrated.
+moved {
+  from = aws_vpc_dhcp_options.flip
+  to   = aws_vpc_dhcp_options.flip[0]
+}
+
+moved {
+  from = aws_vpc_dhcp_options_association.flip
+  to   = aws_vpc_dhcp_options_association.flip[0]
 }
