@@ -60,13 +60,11 @@ DEV_MAIN_TF = AWS_PROVIDER_DIR / "dev" / "main.tf"
 
 # Every file that writes the dev UI port bounds out in prose. The multi-instance knobs live in
 # deploy/AGENTS.md, not the root instruction file, so that is where FLIP_INSTANCE names the block.
-# CLAUDE.md is AGENTS.md's mandated mirror, so it is checked when present rather than required.
 DEV_PORT_DOCS = (
     AWS_PROVIDER_DIR / "dev" / "README.md",
     REPO_ROOT / ".env.development.example",
     REPO_ROOT / "deploy" / "AGENTS.md",
 )
-DEV_PORT_DOC_MIRROR = REPO_ROOT / "deploy" / "CLAUDE.md"
 
 # Where a `local.<name>` entry in the list may be defined.
 LOCALS_SOURCES = (AWS_PROVIDER_DIR / "locals.tf", AWS_PROVIDER_DIR / "cloudfront.tf")
@@ -242,15 +240,14 @@ def test_dev_generated_origins_expand_the_port_variable() -> None:
 def test_dev_ui_port_bounds_match_the_documentation() -> None:
     """Every file that writes the port bounds out in prose must name the current ones.
 
-    The bounds live in four documents and one Terraform default. Widening the block without
+    The bounds live in three documents and one Terraform default. Widening the block without
     the docs sends a developer to an unregistered port; the only symptom is a browser CORS
     error, with nothing red in CI.
     """
     lowest, highest = _dev_ui_port_bounds()
     written = re.compile(rf"{lowest}\s*[-–—]\s*{highest}")
 
-    paths = [*DEV_PORT_DOCS, *([DEV_PORT_DOC_MIRROR] if DEV_PORT_DOC_MIRROR.exists() else [])]
-    stale = [path for path in paths if not written.search(path.read_text())]
+    stale = [path for path in DEV_PORT_DOCS if not written.search(path.read_text())]
     assert not stale, (
         f"var.dev_ui_ports now spans {lowest}-{highest}; these still document the old bounds: "
         f"{[str(path.relative_to(REPO_ROOT)) for path in stale]}"

@@ -384,7 +384,7 @@ flClient:
   #
   # Required whenever flClient.enabled. The chart deliberately offers no way to fetch
   # the kit itself: a trust never holds FLIP's AWS credentials (see the trust boundary
-  # in CLAUDE.md — "FL clients intentionally have no Central Hub credentials"), and the
+  # in AGENTS.md — "FL clients intentionally have no Central Hub credentials"), and the
   # kit reaches an operator out-of-band, as trust/README.md describes. The kit is placed
   # on the node before the workload starts, which is also what a real trust does — so
   # what is deployed here is what is deployed in production.

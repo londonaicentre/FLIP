@@ -548,7 +548,7 @@ ORTHANC_SEED_MARKER = $(dir $(ORTHANC_STORAGE_ABS)).$(notdir $(ORTHANC_STORAGE_A
 TRUST_DATA_REVISION = $(or $(HF_TRUST_DATA_REVISION),$(shell tr -d ' \n\r\t' < .data_version))
 
 # The containers are found by their compose labels rather than by name, so this works
-# on a second FLIP_INSTANCE too (container names are never set, see CLAUDE.md).
+# on a second FLIP_INSTANCE too (container names are never set, see AGENTS.md).
 trust_container = $$(docker ps -q -f label=com.docker.compose.project=$(TRUST_PROJECT) -f label=com.docker.compose.service=$(1) | head -1)
 
 # omop-db is ready once its FINAL server answers over TCP: during a first-start init the

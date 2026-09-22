@@ -696,7 +696,7 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	## registering the new revision. Task-def tags are carried over only when non-empty
 	## (register-task-definition rejects an empty tags array). Pass TAG=sha-<short7> to
 	## deploy a hotfix / feature-branch image (build it first via workflow_dispatch — see
-	## CLAUDE.md); revert with `make rollback-centralhub`.
+	## AGENTS.md); revert with `make rollback-centralhub`.
 	## FL quiesce warning (FLIP#770): an ECS replacement kills any in-flight training run
 	## (fl-server run state is ephemeral) and strands its model/net BUSY. For now this is a
 	## printed reminder only, not an enforced gate — enable Deployment Mode first (it pauses

@@ -28,7 +28,7 @@ import pytest
 FL_TUTORIALS = Path(__file__).resolve().parents[1]
 REPO_ROOT = FL_TUTORIALS.parent
 DOC_SOURCES = [
-    REPO_ROOT / "CLAUDE.md",
+    REPO_ROOT / "AGENTS.md",
     *FL_TUTORIALS.rglob("README.md"),
 ]
 _DOCUMENTED = re.compile(r"make -C fl-tutorials ([a-z][a-z0-9-]*)")

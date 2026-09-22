@@ -60,7 +60,7 @@ pandas, natsort; `uv.lock` is gitignored):
 - `upload_spleen_labels_to_xnat.py` — the data-enrichment step: push `label_*.nii.gz` files
   into a real FLIP project's XNAT (see the
   [spleen tutorial README](../nvflare/image_segmentation/3d_spleen_segmentation/README.md)
-  for the full walkthrough, and the repo-root `CLAUDE.md` for its `e2e_smoke` wiring). Runs
+  for the full walkthrough, and the repo-root `AGENTS.md` for its `e2e_smoke` wiring). Runs
   against the in-tree `flip-utils`, not `spleen/`'s env.
 - `download_spleen_checkpoint.py` — fetch the evaluation-tutorial checkpoint from Hugging
   Face. A pure Hugging Face fetch, so like the xray/arkplus scripts it runs via
