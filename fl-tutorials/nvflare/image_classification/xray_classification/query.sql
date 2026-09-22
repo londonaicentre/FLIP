@@ -50,7 +50,15 @@ observation_value AS (
     GROUP BY
         fo.image_occurrence_id
 )
+-- Row grain is one row per imaging STUDY (image_occurrence), which is what the app trains on:
+-- it expands each accession_id into that study's DICOM files, and the findings below are
+-- recorded per study, not per patient. person_id is projected so the trust can additionally
+-- report per-SUBJECT demographics -- get_age_distribution / get_sex_distribution key off that
+-- column, dedupe it with .unique() and count rows in omop.person, so a patient with several
+-- studies is counted once. Without the column both distributions come back empty.
 SELECT
+    -- subject (drives the per-subject age/sex distributions; the app ignores the column)
+    io.person_id,
     -- image occurrence
     io.accession_id,
     io.image_occurrence_date AS "Image date",
@@ -68,4 +76,11 @@ FROM
     JOIN omop.concept modality_concept ON modality_concept.concept_id = io.modality_concept_id
     JOIN omop.concept io_anatomic_site_concept ON io.anatomic_site_concept_id = io_anatomic_site_concept.concept_id
     JOIN omop.concept ife_anatomic_site_concept ON ov.anatomic_site_concept_id = ife_anatomic_site_concept.concept_id
+-- Load-bearing, not cosmetic: without it the LIMIT below picks an unspecified 300 studies in an
+-- unspecified order, so the same cohort can disagree with itself between approval, the imaging
+-- pull and training -- the app can then be handed a study whose DICOM was never fetched. Ordered
+-- on the primary key rather than accession_id, which carries no unique constraint and so is not a
+-- total order.
+ORDER BY
+    io.image_occurrence_id
 LIMIT 300

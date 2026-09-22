@@ -31,6 +31,14 @@ Two failure modes are guarded, and both are silent in a plan diff:
 
 The dev root is asserted in the opposite direction: it *must* keep localhost, so that
 a well-meant "no localhost in Terraform" sweep cannot break local development instead.
+It also computes its two browser-origin lists rather than passing the variables straight
+through — ``var.dev_ui_ports`` is expanded into one ``http://localhost:<port>`` origin each
+(FLIP#1227) — so the variable defaults alone are a strict subset of what reaches AWS. The
+wiring is therefore guarded too: without it, restoring ``callback_urls = var.cognito_callback_urls``
+would leave this suite green while every pre-registered port silently stopped working in a
+browser. The port bounds are pinned to the prose that documents them for the same reason —
+a widened block that the docs still describe with the old numbers sends a developer to an
+unregistered port, and the failure is a browser CORS error with nothing red anywhere.
 
 The stag/prod list holds a ``local.`` reference rather than a quoted URL, because the
 canonical origin differs between a DNS-managed environment and a zone-less LZA bring-up
@@ -42,11 +50,21 @@ no entry at all — and follows each reference to its definition, asserting over
 import re
 from pathlib import Path
 
-from tf_source import hcl_block
+from tf_source import hcl_block, strip_comments
 
 AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
+REPO_ROOT = AWS_PROVIDER_DIR.parents[2]
 STAG_PROD_SERVICES_TF = AWS_PROVIDER_DIR / "services.tf"
 DEV_VARIABLES_TF = AWS_PROVIDER_DIR / "dev" / "variables.tf"
+DEV_MAIN_TF = AWS_PROVIDER_DIR / "dev" / "main.tf"
+
+# Every file that writes the dev UI port bounds out in prose. The multi-instance knobs live in
+# deploy/AGENTS.md, not the root instruction file, so that is where FLIP_INSTANCE names the block.
+DEV_PORT_DOCS = (
+    AWS_PROVIDER_DIR / "dev" / "README.md",
+    REPO_ROOT / ".env.development.example",
+    REPO_ROOT / "deploy" / "AGENTS.md",
+)
 
 # Where a `local.<name>` entry in the list may be defined.
 LOCALS_SOURCES = (AWS_PROVIDER_DIR / "locals.tf", AWS_PROVIDER_DIR / "cloudfront.tf")
@@ -155,3 +173,82 @@ def test_dev_root_keeps_localhost_callback_urls() -> None:
     block = hcl_block(DEV_VARIABLES_TF.read_text(), 'variable "cognito_callback_urls"')
     urls = _list_entries(block, "default")
     assert any("localhost" in url.lower() for url in urls), f"dev callback_urls lost its localhost origins: {urls}"
+
+
+def _dev_argument(header: str, argument: str) -> str:
+    """Read a single-valued argument out of a block in the dev root's ``main.tf``.
+
+    Args:
+        header (str): The block header, e.g. ``module "cognito"``.
+        argument (str): The argument name, e.g. ``callback_urls``.
+
+    Returns:
+        str: The right-hand side, stripped — ``local.callback_urls`` for a reference.
+    """
+    block = strip_comments(hcl_block(strip_comments(DEV_MAIN_TF.read_text()), header))
+    match = re.search(rf"^\s*{re.escape(argument)}\s*=\s*(.+)$", block, re.MULTILINE)
+    assert match is not None, f"{header} does not set {argument}"
+    return match.group(1).strip()
+
+
+def _dev_ui_port_bounds() -> tuple[int, int]:
+    """Return the lowest and highest port in ``var.dev_ui_ports``'s default.
+
+    Returns:
+        tuple[int, int]: ``(lowest, highest)``.
+    """
+    block = hcl_block(DEV_VARIABLES_TF.read_text(), 'variable "dev_ui_ports"')
+    ports = [int(port) for port in _list_entries(block, "default")]
+    assert ports, "var.dev_ui_ports default must not be empty — it is the whole mechanism"
+    return min(ports), max(ports)
+
+
+def test_dev_cognito_receives_the_generated_callback_urls() -> None:
+    """The dev app client must be given the generated list, not the bare variable.
+
+    ``var.cognito_callback_urls``'s default keeps a localhost origin, so the guard above
+    stays green even if this wiring is dropped — at which point the ports pre-registered
+    from ``var.dev_ui_ports`` quietly stop being browser origins.
+    """
+    assert _dev_argument('module "cognito"', "callback_urls") == "local.callback_urls"
+
+
+def test_dev_buckets_receive_the_generated_cors_origins() -> None:
+    """Both browser-facing dev buckets must take the same generated origins as Cognito.
+
+    A bucket left on the bare variable is reachable from fewer origins than the API allows,
+    so a presigned upload or download fails in the browser alone.
+    """
+    for header in ('module "flip_model_files_uploads_bucket"', 'module "flip_fl_results_bucket"'):
+        assert _dev_argument(header, "cors_allowed_origins") == "local.bucket_cors_origins", header
+
+
+def test_dev_generated_origins_expand_the_port_variable() -> None:
+    """Both generated lists must fold in the origins expanded from ``var.dev_ui_ports``."""
+    locals_block = strip_comments(hcl_block(strip_comments(DEV_MAIN_TF.read_text()), "locals {"))
+
+    expansion = re.search(r"^\s*dev_ui_port_origins\s*=\s*(.+)$", locals_block, re.MULTILINE)
+    assert expansion is not None, "local.dev_ui_port_origins is gone"
+    assert "var.dev_ui_ports" in expansion.group(1), "local.dev_ui_port_origins no longer reads var.dev_ui_ports"
+
+    for name in ("callback_urls", "bucket_cors_origins"):
+        match = re.search(rf"^\s*{name}\s*=\s*(.+)$", locals_block, re.MULTILINE)
+        assert match is not None, f"local.{name} is gone"
+        assert "local.dev_ui_port_origins" in match.group(1), f"local.{name} dropped the generated origins"
+
+
+def test_dev_ui_port_bounds_match_the_documentation() -> None:
+    """Every file that writes the port bounds out in prose must name the current ones.
+
+    The bounds live in three documents and one Terraform default. Widening the block without
+    the docs sends a developer to an unregistered port; the only symptom is a browser CORS
+    error, with nothing red in CI.
+    """
+    lowest, highest = _dev_ui_port_bounds()
+    written = re.compile(rf"{lowest}\s*[-–—]\s*{highest}")
+
+    stale = [path for path in DEV_PORT_DOCS if not written.search(path.read_text())]
+    assert not stale, (
+        f"var.dev_ui_ports now spans {lowest}-{highest}; these still document the old bounds: "
+        f"{[str(path.relative_to(REPO_ROOT)) for path in stale]}"
+    )

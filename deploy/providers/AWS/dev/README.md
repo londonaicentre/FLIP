@@ -58,6 +58,40 @@ make status          # terraform state list
 make destroy         # refused while prevent_destroy is set
 ```
 
+### Browser-usable UI ports
+
+flip-api derives its CORS allowlist from the app client's callback URLs, and Cognito matches those
+exactly (no wildcard, no range), so a UI port is usable in a browser only if it is registered here.
+Rather than an apply per port, `var.dev_ui_ports` (default 44350–44359) is expanded into one
+`http://localhost:<port>` origin each and added to both the callback list and the buckets' CORS
+origins — the same list for both, rather than an S3 wildcard, so a bucket is never reachable from an
+origin the API would refuse (FLIP#1227). Pick a port from the list as `UI_PORT` and nothing here
+needs to change.
+
+Do not reach for the other registered entry, `https://localhost:443`. It matches only a UI actually
+served over TLS, and the dev container is not: `npm run dev` is `vite --host 0.0.0.0 --port 443`
+with no `server.https` and no cert material, so a browser on the repo's default `UI_PORT` sends
+`Origin: http://localhost:443`, which nothing registers.
+
+The generated entries are origins, not live redirect targets. `modules/cognito` leaves
+`allowed_oauth_flows_user_pool_client` unset (provider default false), so the hosted UI cannot
+redirect to any of them and flip-api reads the list purely as origins (`flip_api/utils/cors.py`).
+Enabling that client flag on the dev pool means revisiting this list first — the module's `implicit`
+flow would otherwise hand tokens to whichever local process won the race for one of these ports.
+
+On the shared dev host the ports are taken by convention, one per developer. This table is the
+canonical claim list: anything else describing the convention — including the `CONTRIBUTING.md`
+"Shared dev host" section FLIP#1227 asks for — links here rather than restating it.
+
+| Port | Developer |
+| --- | --- |
+| 44357 | yl |
+| 44356 | at24 |
+| 44355 | next |
+
+A port outside the list, or a host other than `localhost`, needs an apply — see "Changing the
+browser CORS allowlist" in [`../README.md`](../README.md).
+
 ## First-time setup
 
 The dev resources are Terraform-managed from day one. There is no import workflow — the stack creates every resource it needs.

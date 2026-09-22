@@ -352,8 +352,9 @@ provision a trust host outside all three, you must replicate this ownership or f
 failure is worth recognising because it does not look like a permissions problem: XNAT accepts the
 inbound DICOM association, fails the write and aborts it, so the PACS reports a *network* fault
 (`Peer aborted Association`), while the same EACCES stops XNAT writing the application logs that
-would name the cause. In dev, `trust/orthanc/update_orthanc_data.sh` instead `chmod`s the mock
-storage world-writable so a developer needs no `sudo` to re-seed it.
+would name the cause. In dev, `trust/Makefile`'s `ensure_data_dirs` instead chowns the mock
+storage directory to uid 999 before the first start (through a throwaway alpine container when the
+caller is not root), so a developer needs no `sudo` to seed it.
 
 XNAT's dev tree deliberately does **not** follow that convention. `xnat-reset` creates
 `trust/xnat/xnat-data-trust<N>/` under `sudo` and chowns it to UID 1001, so on a host whose developer
@@ -536,15 +537,16 @@ FL clients relay metrics and exceptions to the fl-server, which forwards them to
 
 On top of TLS, three things are encrypted under the platform-wide `AES_KEY_BASE64`: every hub → trust task
 payload, the encrypted project id the hub hands to FL clients (which forward it to imaging-api and
-data-access-api on every image download and cohort call), and the XNAT password imaging-api returns in a task
-result. Since FLIP#1179 the cipher is **AES-256-GCM** in a versioned envelope — base64 of
-`{"v": 1, "kid": "shared", "iv": <b64 12-byte nonce>, "ct": <b64 ciphertext||tag>}` — with the version, the key
-id and a **context** bound into the authentication tag, so a payload altered anywhere between the sending and the
-receiving service fails decryption outright instead of decrypting to altered content. The context is not carried
-on the wire; both sides derive it from what they already know (`task:<task_type>` for a task payload, `project_id`
-for the project id, `xnat_password` for the credential), so a task payload cannot be re-targeted at a different
-handler by rewriting the unauthenticated `task_type` beside it. What is *not* covered: the trust's own responses
-(cohort results, task outcomes) travel back to the hub as plain JSON under TLS only.
+data-access-api on every image download and cohort call), and the XNAT set-password link imaging-api returns
+in a task result (FLIP-PT-079 — never a password). Since FLIP#1179 the cipher is **AES-256-GCM** in a
+versioned envelope — base64 of `{"v": 1, "kid": "shared", "iv": <b64 12-byte nonce>, "ct": <b64 ciphertext||tag>}`
+— with the version, the key id and a **context** bound into the authentication tag, so a payload altered anywhere
+between the sending and the receiving service fails decryption outright instead of decrypting to altered content.
+The context is not carried on the wire; both sides derive it from what they already know (`task:<task_type>` for a
+task payload, `project_id` for the project id, `xnat_setup_path` for the set-password link), so a task payload
+cannot be re-targeted at a different handler by rewriting the unauthenticated `task_type` beside it. What is *not*
+covered: the trust's own responses (cohort results, task outcomes) travel back to the hub as plain JSON under TLS
+only.
 
 Two operational consequences:
 

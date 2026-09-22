@@ -33,9 +33,9 @@ COPY --chmod=0755 flip-entrypoint.sh /flip-entrypoint.sh
 # Every pre-start write the entrypoint performs is 999-safe: /etc/hostid is
 # owned by orthanc (so the random hostid is written in place), the generated
 # config is written to /tmp/orthanc.json, and /var/lib/orthanc is orthanc-owned.
-# The only path that must be made 999-writable is the storage bind mount, which
-# is handled at the provisioning layer (update_orthanc_data.sh in dev, the
-# Ansible playbooks in prod). Running non-root from PID 1 means no capabilities
+# The only path that must be made 999-owned is the storage bind mount, which
+# is handled at the provisioning layer (trust/Makefile's ensure_data_dirs in dev
+# and on-prem, the Ansible playbooks on EC2). Running non-root from PID 1 means no capabilities
 # survive into the process (no-new-privileges), so cap_add is minimal.
 USER orthanc
 

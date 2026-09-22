@@ -16,16 +16,21 @@ XNAT UI
 
 .. _receiving-xnat-credentials:
 
-Receiving XNAT Account Credentials
-==================================
+Receiving XNAT Account Access
+=============================
 
-On approval of a FLIP project, any associated users will be granted access to the respective XNAT project at each trust. New XNAT user accounts will be generated as necessary. The email address associated with the FLIP user account will be sent details of their XNAT account credentials pertaining to each participating trust.
+On approval of a FLIP project, any associated users are granted access to the respective XNAT project at each participating trust, and new XNAT user accounts are created as necessary.
 
-.. figure:: ../assets/xnat/credentials_email.png
-    :width: 500
-    :align: center
+If a new XNAT account is created for you, the email address associated with your FLIP account receives a link to set your own password for that trust's XNAT — no password is ever sent by email. The link is given without a host, as ``<your trust's XNAT address>/app/template/...``: the Central Hub does not know, and never emails, a trust's internal XNAT address, so replace that placeholder with the address you normally use to open XNAT at your trust (its XNAT administrator can tell you it) and keep the rest exactly as shown. Because XNAT is only reachable from inside the trust's secure network (see `Access`_ below), open the link from a machine on that network; it stops working as soon as you have set your password, and expires if left unused — by default 48 hours after it was issued, so set your password promptly (the window is the trust XNAT's ``aliasTokenTimeout`` site setting, see `Invite link lifetime`_ below).
 
-    Email sent with XNAT account credentials (password masked).
+If you already have an XNAT account at a trust and have logged in to it, being added to a further project there sends you a notification instead — log in with your existing credentials. An account that exists but has never been logged in to (its first link was lost, or expired unused) is sent a fresh set-password link on the next project approval that includes you, so a missed invite is recovered by re-approval rather than by a trust administrator resetting the account.
+
+.. _invite-link-lifetime:
+
+Invite link lifetime
+^^^^^^^^^^^^^^^^^^^^
+
+The set-password link is an XNAT *alias token* issued by the trust's service account. Its unused lifetime is not set by FLIP: it is the trust XNAT's ``aliasTokenTimeout`` site setting (**Administer → Site Administration → Security → User Logins / Session Controls → Alias Token Timeout**), 48 hours by default. Setting a password through the link invalidates it, whatever the timeout. A trust that raises the timeout lengthens the life of every invite link in flight, so it should be treated as a security setting rather than a convenience one; FLIP does not read or override it.
 
 Access
 ======
@@ -121,6 +126,8 @@ Navigate to a CT session by selecting it from a subject's list of experiments.
     A specific CT session.
 
 A CT session is derived from an imported PACS DICOM Study. The CT session page contains a list of scans in which imaging study data is contained. This includes imported DICOM images and the respective NIFTI files which have also been made available.
+
+Every FLIP XNAT ships the `OHIF viewer <https://wiki.xnat.org/xnat-ohif-viewer>`_: **View Images** in the session's *Actions* menu opens the study in the browser, to check an import or to draw and save a segmentation or ROI annotation against it as part of :ref:`data enrichment <data-enrichment>`.
 
 Downloading and Uploading Imaging Data
 =======================================
