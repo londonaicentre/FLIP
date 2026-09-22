@@ -33,6 +33,15 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$(cd "${HERE}/.." && pwd)/check-fl-plan-impact.sh"
 
+# Drive the script as if from a laptop unless a test says otherwise. A GitHub
+# runner exports GITHUB_ACTIONS and GITHUB_STEP_SUMMARY into every step, so
+# inheriting them costs twice: the "outside Actions" case below cannot be
+# expressed at all (the script annotates, correctly, and the assertion fails only
+# in CI), and each of the eight held-plan fixtures appends a bogus "Apply held"
+# block to the real job summary — the harness forging the very signal it exists
+# to check. The two Actions-surface tests set both explicitly, per command.
+unset GITHUB_ACTIONS GITHUB_STEP_SUMMARY
+
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "${TEST_ROOT}"' EXIT
 
