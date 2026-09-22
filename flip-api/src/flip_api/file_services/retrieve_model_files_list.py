@@ -104,8 +104,8 @@ def retrieve_model_files_list(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unhandled error: {str(e)}")
+        logger.exception("Error retrieving model files list from S3")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {e}",
-        )
+            detail="Internal server error",
+        ) from e

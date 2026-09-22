@@ -62,7 +62,7 @@ pandas, natsort; `uv.lock` is gitignored):
 - `upload_spleen_labels_to_xnat.py` — the data-enrichment step: push `label_*.nii.gz` files
   into a real FLIP project's XNAT (see the
   [spleen tutorial README](../nvflare/image_segmentation/3d_spleen_segmentation/README.md)
-  for the full walkthrough, and the repo-root `CLAUDE.md` for its `e2e_smoke` wiring). Runs
+  for the full walkthrough, and the repo-root `AGENTS.md` for its `e2e_smoke` wiring). Runs
   against the in-tree `flip-utils`, not `spleen/`'s env.
 - `download_spleen_checkpoint.py` — fetch the evaluation-tutorial checkpoint from Hugging
   Face. A pure Hugging Face fetch, so like the xray/arkplus scripts it runs via
@@ -191,8 +191,9 @@ UID changed at that cut, so `seed-omop`'s default `--clean projects` (which dele
 person ids) would leave the old rows beside the new ones. Once, pass `CLEAN=all` and every project
 the trust holds so they are all reloaded (`make -C fl-tutorials seed-spleen KIT=GSTT CLEAN=all`
 reloads spleen; then `make -C trust seed-omop KIT=GSTT PROJECTS=cxr_project` for the rest) and
-`CLEAR=1` on the PACS half. The `make up` volume snapshots (`update-omop-data` /
-`update-orthanc-data`) still carry the previous cut until FLIP#1190 replaces them with seeding.
+`CLEAR=1` on the PACS half. There are no volume snapshots to re-cut: since FLIP#1190 a bring-up
+seeds from the dataset at the pinned version (`make -C trust ensure-seeded`), and the projects it
+seeds by default are the ones that publish a DICOM set — spleen and brain_mri are not among them.
 
 ### Brain MRI: the same chain, four MR series per study
 

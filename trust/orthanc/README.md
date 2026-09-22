@@ -23,19 +23,14 @@ Orthanc username and password are set by `ORTHANC_USERNAME` and `ORTHANC_PASSWOR
 
 Only humans consume these credentials (the Orthanc Explorer UI on the published `PACS_UI_PORT`, or via the XNAT nginx `/orthanc/` reverse proxy, which passes the browser's `Authorization` header through). The platform's data path is plain DICOM (DIMSE) on port 4242 — XNAT's DQR plugin does C-FIND/C-MOVE by AE title, which involves no HTTP credentials. The DICOM-Web plugin is not enabled: nothing in FLIP issues QIDO/WADO/STOW requests.
 
-You'll need to populate Orthanc with DICOM files in order to test FLIP locally. We have prepared mock DICOM data for each of the 2 dev trusts (GSTT and KCH) as Orthanc storage volumes, published to the public Hugging Face dataset [`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data). In order to set up the storage locally, these data volumes need to be downloaded/extracted. They are fetched anonymously over HTTPS — no AWS CLI or credentials required. This is handled automatically when bringing up the trust containers via `make up` / `make up-trusts` (from the repository root) or `make -C trust up-trust KIT=GSTT` / `make -C trust up-trust KIT=KCH` for a single trust, and similarly they will be updated locally when the desired version changes (note for devs: this is controlled by [`trust/.data_version`](../.data_version) — the one pin for
-OMOP and Orthanc together, which `update_orthanc_data.sh` reads as `../.data_version`, not a file in
-this directory).
-
-```sh
-make update-orthanc-data           # both trusts (default)
-make update-orthanc-data TRUST=1   # Trust_1 only
-make update-orthanc-data TRUST=2   # Trust_2 only
-```
-
-The target is a thin wrapper around [`update_orthanc_data.sh`](update_orthanc_data.sh), which
-compares `trust/.data_version` against each trust's `volumes/.local_data_version_trust<N>` marker
-and re-downloads and extracts only what has drifted.
+You'll need to populate Orthanc with DICOM files in order to test FLIP locally. The mock DICOM is the
+per-project sets published to the public Hugging Face dataset
+[`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data)
+(`dicom/<project>.tar.gz`), fetched anonymously over HTTPS — no AWS CLI or credentials required.
+Bringing a trust up (`make up-trusts` from the repository root, or `make -C trust up-trust KIT=GSTT`
+for one) starts Orthanc on an empty, 999-owned storage dir and then seeds this trust's slice of the
+default projects into it (below); the storage persists, so a later `up` uploads nothing. The version
+is `trust/.data_version`, a git tag on that dataset.
 
 ### Other Make targets
 
@@ -52,7 +47,7 @@ address the **Trust_1** slot; drive any other trust through `make -C trust up-tr
 
 ## Seeding a running Orthanc with datasets (FLIP#1100)
 
-The storage volume above is a fixed two-project, two-trust snapshot. To put a
+Seeding is how Orthanc gets its studies — at bring-up, and to put a
 chosen set of projects' studies into a **running** trust's PACS — the PACS half
 of `make -C trust seed KIT=<CODE>` — seed it:
 
@@ -76,9 +71,10 @@ upload anything if an accession in the OMOP slice has no directory in the
 archive. Orthanc dedupes on `SOPInstanceUID` and never overwrites, so a re-run
 is a no-op (`AlreadyStored`) and replacing instances needs `CLEAR=1`.
 
-A seed writes `.seeded` inside the storage dir. On the next `.data_version`
-bump, `update-orthanc-data` refuses to re-snapshot over a seeded volume unless
-`FORCE=1`, before the ~1 GB download.
+A seed writes a marker beside the storage dir (`<parent>/.<storage dir>.seeded`, the
+dir itself being owned by Orthanc's uid) recording projects, partition and data
+version; `make -C trust ensure-seeded` compares it to decide whether to re-seed,
+and on a `.data_version` bump re-runs the seed with `CLEAR=1` for the listed projects.
 
 ### Publishing a project's DICOM set
 
@@ -111,8 +107,11 @@ from `20260729` on) and `prostate_project`. `spleen_project`'s set (41 studies,
 3,650 instances, filled) is on the tags up to the FLIP#1221 cut only: from then on
 spleen — like `brain_mri_project` — regenerates its DICOMs locally from the public
 MSD archive and publishes only its tables, so there is nothing to package. All
-published sets are the original generator outputs, verified against the
-published OMOP — not extractions from the storage tarballs.
+published sets are the original generator outputs, verified against the published
+OMOP. They are what a bring-up seeds from — every trust, dev, on-prem, EC2 or
+Kubernetes, seeds its Orthanc from the dataset (FLIP#1187) — which is why the
+default `PROJECTS` is the published-set list and a locally regenerated project is
+seeded explicitly, below.
 
 ### Seeding a project whose DICOMs are not on the dataset
 
@@ -130,9 +129,3 @@ can be proven on a running trust before its data version is tagged.
 is the reverse: it deletes this trust's studies for the projects as the tables at
 `HF_TRUST_DATA_REVISION` (or `TABLES_DIR=`) name them and uploads nothing — the PACS
 half of moving off a re-cut project (see `trust/README.md`, "Unseeding").
-
-To cut a new storage tarball (the snapshot path, for EC2/k8s): seed a fresh
-Orthanc with `seed-orthanc`, then `tar -C <storage dir> -cf trust<N>_orthanc_data.tar .`
-and publish it with `make -C trust publish-trust-data VERSION=… ORTHANC=…` — the
-DICOM sets are the source, the tarball is derived from them, and the version is
-the tag, not the filename.

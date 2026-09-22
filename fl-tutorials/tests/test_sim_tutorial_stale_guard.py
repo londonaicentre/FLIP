@@ -15,13 +15,15 @@
 # on a developer host: the FLIP dev stack's fl-server SuperLink runs in a container whose
 # processes are visible in the host PID namespace and match the same pattern. The guard must
 # therefore kill only processes that are (a) in this host's PID namespace and (b) started from
-# this checkout, and it must decide (a) without a runtime-specific cgroup string — under docker's
-# systemd driver /proc/<pid>/cgroup reads docker-<id>.scope, under cgroupfs it is /docker/<id>,
-# under kubelet /kubepods/... — so a literal match protects only one setup.
+# this checkout's flip-utils venv, and it must decide (a) without a runtime-specific cgroup string
+# — under docker's systemd driver /proc/<pid>/cgroup reads docker-<id>.scope, under cgroupfs it is
+# /docker/<id>, under kubelet /kubepods/... — so a literal match protects only one setup. (b) is
+# the venv path rather than the checkout path because a worktree under .claude/worktrees/ shares
+# the main checkout's path as a prefix: the main checkout's sim must not kill a worktree's.
 #
 # Exercised for real: the function is lifted out of the script and run against decoy processes
 # whose command line carries a marker that exists nowhere else (so nothing outside this test can
-# match), with the decoys spread across the three cases the guard has to tell apart.
+# match), with the decoys spread across the four cases the guard has to tell apart.
 
 from __future__ import annotations
 
@@ -48,11 +50,18 @@ def _guard_script(marker: str) -> str:
     return function.replace(LIVE_PATTERN, marker) + "stop_stale_superlinks\n"
 
 
+def _venv_python(checkout: str) -> str:
+    """What a simulator process's command line carries: its checkout's flip-utils venv."""
+    return f"{checkout}/flip-utils/.venv/bin/python"
+
+
 def _decoy(marker: str, checkout: str) -> subprocess.Popen[bytes]:
     # The marker reaches the decoy through its own argv only — never through a wrapper shell's,
     # which is the pgrep self-match trap the guard's own caller would otherwise fall into.
     return subprocess.Popen(
-        ["sh", "-c", f"sleep 120; echo {marker} {checkout}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ["sh", "-c", f"sleep 120; echo {marker} {_venv_python(checkout)}"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
 
@@ -71,7 +80,7 @@ def _decoy_in_other_pid_namespace(marker: str, checkout: str) -> subprocess.Pope
     decoy = 'python3 -c "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_DFL); time.sleep(120)"'
     return subprocess.Popen(
         ["unshare", "-Urpf", "--kill-child", "sh", "-c", f"{decoy} $MARKER $CHECKOUT & wait"],
-        env={**os.environ, "MARKER": marker, "CHECKOUT": checkout},
+        env={**os.environ, "MARKER": marker, "CHECKOUT": _venv_python(checkout)},
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -96,12 +105,13 @@ def test_kills_only_this_checkouts_processes_in_this_pid_namespace(tmp_path: Pat
     checkout = str(tmp_path / "checkout")
     own = _decoy(marker, checkout)
     other = _decoy(marker, str(tmp_path / "elsewhere"))
+    nested = _decoy(marker, f"{checkout}/.claude/worktrees/feature")
     namespaced = _decoy_in_other_pid_namespace(marker, checkout)
     try:
-        expected = 3 if namespaced else 2
+        expected = 4 if namespaced else 3
         assert _wait_for(lambda: len(_pids_matching(marker)) >= expected), "decoys did not all start"
         before = _pids_matching(marker)
-        inner = before - {own.pid, other.pid}
+        inner = before - {own.pid, other.pid, nested.pid}
         assert len(inner) == (1 if namespaced else 0), before
 
         script = tmp_path / "guard.sh"
@@ -114,12 +124,14 @@ def test_kills_only_this_checkouts_processes_in_this_pid_namespace(tmp_path: Pat
         assert own.wait(timeout=5) == -signal.SIGTERM, "the stale process from this checkout was not stopped"
         assert f"stopped stale simulator process {own.pid}" in result.stdout
         assert other.poll() is None, "a process from another checkout was killed"
+        assert nested.poll() is None, "a process from a worktree nested under this checkout was killed"
         if namespaced:
             assert namespaced.poll() is None
             assert inner <= _pids_matching(marker), "a process in another PID namespace (a container's) was killed"
         assert str(other.pid) not in result.stdout
+        assert str(nested.pid) not in result.stdout
     finally:
-        for proc in (own, other, namespaced):
+        for proc in (own, other, nested, namespaced):
             if proc is not None and proc.poll() is None:
                 proc.kill()
                 proc.wait(timeout=5)

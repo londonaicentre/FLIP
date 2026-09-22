@@ -276,9 +276,16 @@ This runbook is for the case where **you** have lost access to your TOTP device 
 
 The Central Hub has **one supported production deployment**: ECS Fargate via the Terraform root in
 [`deploy/providers/AWS/`](providers/AWS/README.md). The task definitions in `ecs_tasks.tf` (env maps in
-`locals.tf`) are the **canonical definition of production container config**. Deploying into an AWS
-LZA-governed account is an env-gated **mode** of that same root, not a separate path
-([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). The ECS FL task definitions serve **both
+`locals.tf`) are the **canonical definition of production container config**. That root offers **two
+deployment modes**, both permanently supported: the default **self-contained single-account** shape
+(`PROD=stag`/`PROD=true`), where FLIP creates its own VPC and edge; and the **platform-managed** shape
+(`PROD=lza`, or `PROD=lza-stag` for a staging estate) for an AWS Landing Zone Accelerator estate, where the
+network and edge are owned by the accelerator. The second is an env-gated mode of the same root, not a separate path — see
+[Deploying onto an LZA estate](providers/AWS/README.md#deploying-onto-an-lza-estate-prodlza)
+([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). What each mode costs to run — hub only,
+trust hosts excluded because their GPU sizing is a per-trust decision — is on the docs site's
+[Deploy the Central Hub → Running costs](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#running-costs)
+section. The ECS FL task definitions serve **both
 FL backends** ([FLIP#566](https://github.com/londonaicentre/FLIP/issues/566)): `FL_BACKEND` in the env file
 switches the same task families between NVFLARE and Flower (SuperLink ports/command/creds — Flower
 additionally needs `FLOWER_KIT_DATE` and provisioned creds uploaded via
@@ -291,7 +298,8 @@ Cloud Map + public FL hostnames).
 > `compose.production*.yml` files remain maintained **only** as the local prod-image harness
 > (`make up PROD=stag|true` — the baked images, no dev mounts). When changing production config, change
 > Terraform first and update the compose files only as far as the local harness needs. Remaining hub-EC2
-> material is removed once the LZA migration's legacy decommission lands (FLIP#749 WP6).
+> material is removed once the AI Centre's own legacy account is decommissioned (FLIP#749 WP6) — that
+> retires one *account*, not the self-contained deployment mode, which stays supported.
 
 ### Trusts
 
@@ -344,8 +352,9 @@ provision a trust host outside all three, you must replicate this ownership or f
 failure is worth recognising because it does not look like a permissions problem: XNAT accepts the
 inbound DICOM association, fails the write and aborts it, so the PACS reports a *network* fault
 (`Peer aborted Association`), while the same EACCES stops XNAT writing the application logs that
-would name the cause. In dev, `trust/orthanc/update_orthanc_data.sh` instead `chmod`s the mock
-storage world-writable so a developer needs no `sudo` to re-seed it.
+would name the cause. In dev, `trust/Makefile`'s `ensure_data_dirs` instead chowns the mock
+storage directory to uid 999 before the first start (through a throwaway alpine container when the
+caller is not root), so a developer needs no `sudo` to seed it.
 
 XNAT's dev tree deliberately does **not** follow that convention. `xnat-reset` creates
 `trust/xnat/xnat-data-trust<N>/` under `sudo` and chowns it to UID 1001, so on a host whose developer
@@ -528,15 +537,16 @@ FL clients relay metrics and exceptions to the fl-server, which forwards them to
 
 On top of TLS, three things are encrypted under the platform-wide `AES_KEY_BASE64`: every hub → trust task
 payload, the encrypted project id the hub hands to FL clients (which forward it to imaging-api and
-data-access-api on every image download and cohort call), and the XNAT password imaging-api returns in a task
-result. Since FLIP#1179 the cipher is **AES-256-GCM** in a versioned envelope — base64 of
-`{"v": 1, "kid": "shared", "iv": <b64 12-byte nonce>, "ct": <b64 ciphertext||tag>}` — with the version, the key
-id and a **context** bound into the authentication tag, so a payload altered anywhere between the sending and the
-receiving service fails decryption outright instead of decrypting to altered content. The context is not carried
-on the wire; both sides derive it from what they already know (`task:<task_type>` for a task payload, `project_id`
-for the project id, `xnat_password` for the credential), so a task payload cannot be re-targeted at a different
-handler by rewriting the unauthenticated `task_type` beside it. What is *not* covered: the trust's own responses
-(cohort results, task outcomes) travel back to the hub as plain JSON under TLS only.
+data-access-api on every image download and cohort call), and the XNAT set-password link imaging-api returns
+in a task result (FLIP-PT-079 — never a password). Since FLIP#1179 the cipher is **AES-256-GCM** in a
+versioned envelope — base64 of `{"v": 1, "kid": "shared", "iv": <b64 12-byte nonce>, "ct": <b64 ciphertext||tag>}`
+— with the version, the key id and a **context** bound into the authentication tag, so a payload altered anywhere
+between the sending and the receiving service fails decryption outright instead of decrypting to altered content.
+The context is not carried on the wire; both sides derive it from what they already know (`task:<task_type>` for a
+task payload, `project_id` for the project id, `xnat_setup_path` for the set-password link), so a task payload
+cannot be re-targeted at a different handler by rewriting the unauthenticated `task_type` beside it. What is *not*
+covered: the trust's own responses (cohort results, task outcomes) travel back to the hub as plain JSON under TLS
+only.
 
 Two operational consequences:
 
