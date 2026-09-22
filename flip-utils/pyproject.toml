@@ -143,8 +143,9 @@ url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu130" }
-torchvision = { index = "pytorch-cu130" }
+# macOS uses native CPU/MPS wheels from PyPI; CUDA wheels are Linux/Windows only.
+torch = { index = "pytorch-cu130", marker = "sys_platform != 'darwin'" }
+torchvision = { index = "pytorch-cu130", marker = "sys_platform != 'darwin'" }
 
 [tool.hatch.version]
 path = "flip/__init__.py"
