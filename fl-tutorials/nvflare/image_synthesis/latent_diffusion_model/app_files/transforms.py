@@ -9,14 +9,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MONAI transforms for chest-X-ray inputs.
+"""MONAI transforms for the brain-MRI cohort (MSD Task01_BrainTumour).
 
-Taken from the ``xray_classification`` tutorial — same reader, same pinning, same chain — with one
-deliberate difference: the images are resized to 256x256 rather than the classifier's 224, because
-a power of two divides cleanly through every downsampling level of the autoencoder and the two
-diffusion models. ``SPATIAL_SHAPE`` is exported so the trainers can shape their noise tensors from
-the same constant the resize uses; ``config.json``'s ``spatial_shape`` must agree with it (pinned by
-fl-tutorials/tests/test_image_synthesis_config_parity.py).
+One 3-D volume per **series**: the study's four co-registered channels (FLAIR, T1w, T1Gd, T2w)
+arrive as four separate NIfTI files, and each is an independent single-channel sample here. What
+distinguishes them is carried alongside the pixels as ``modality`` / ``modality_index``, which the
+latent diffusion tutorial turns into its cross-attention condition — see ``MODALITY_KEYS``.
+
+The chain is short on purpose:
+
+* ``LoadImaged`` + ``EnsureChannelFirstd`` — NIfTI, so no reader is pinned. The X-ray tutorials pin
+  ``PydicomReader(swap_ij=False)`` because DICOM ``PixelData`` has no orientation of its own and the
+  wrong reader silently transposes it; a NIfTI carries an affine, and ``Orientationd`` below reads it.
+* ``Orientationd(axcodes="RAS")`` — the one guarantee that matters. The simulator layout splits the
+  channels straight out of the MSD 4-D volume while a platform pull comes through dcm2niix, so the
+  two paths can disagree on axis order; reorienting from the affine makes them agree.
+* ``Resized`` to :data:`SPATIAL_SHAPE` — a fixed grid, not a fixed voxel size. ``Spacingd`` +
+  ``ResizeWithPadOrCropd`` (the spleen chain) preserves millimetres and pads, which suits
+  segmentation; a generative model needs every sample on the same grid, and 96 is divisible by
+  ``2**2`` so it survives the autoencoder's two downsamplings exactly (96 -> 48 -> 24).
+* ``ScaleIntensityd`` to [0, 1] — **per volume**, which is the right choice for MR and the wrong one
+  for CT. MR intensities have no absolute meaning: the same tissue reads differently across scanners
+  and sequences, so a fixed window (the spleen chain's ``ScaleIntensityRanged(a_min=-57, a_max=250)``,
+  calibrated Hounsfield units) has nothing to calibrate against here.
 
 By convention a FLIP app declares its transforms here, so the inference chain can be found in one
 predictable place when the model is later packaged for deployment. See
@@ -25,12 +40,18 @@ predictable place when the model is later packaged for deployment. See
 
 import monai.transforms as mt
 
-#: Spatial size every image is resized to. Must equal ``config.json``'s ``spatial_shape``.
-SPATIAL_SHAPE = [256, 256]
+#: Spatial size every volume is resampled to. Must equal ``config.json``'s ``spatial_shape``
+#: (pinned by fl-tutorials/tests/test_image_synthesis_config_parity.py).
+SPATIAL_SHAPE = [96, 96, 96]
+
+#: Non-image keys a sample carries through the chain. MONAI's dictionary transforms copy unknown
+#: keys untouched, and the default collate turns ``modality_index`` into a batch tensor — which is
+#: what the latent diffusion tutorial one-hot encodes into its cross-attention condition.
+MODALITY_KEYS = ("modality", "modality_index")
 
 
-def get_xray_transforms(is_validation: bool = False) -> mt.Compose:
-    """Return the MONAI transforms used for chest-X-ray training/validation.
+def get_brain_mri_transforms(is_validation: bool = False) -> mt.Compose:
+    """Return the MONAI transforms used for brain-MRI training/validation.
 
     Args:
         is_validation (bool): When True, skip random affine augmentation so validation is
@@ -40,20 +61,24 @@ def get_xray_transforms(is_validation: bool = False) -> mt.Compose:
         mt.Compose: Composed transform pipeline keyed on "image".
     """
     transforms = [
-        # The reader is pinned rather than left to MONAI's auto-detection. LoadImaged tries its
-        # registered readers last-registered-first, so which one wins depends on which optional
-        # backends happen to be installed: adding `itk` to the environment promotes ITKReader and
-        # silently changes the array's axis order. PydicomReader(swap_ij=False) returns the pixel
-        # array exactly as DICOM PixelData stores it, indexed (row, column). MONAI's default
-        # swap_ij=True returns it transposed, i.e. the model is fed sideways radiographs, and no
-        # rotation or flip undoes a transpose: a Rotate90d(k=-1) leaves the radiograph upright but
-        # mirrored, which looks entirely correct and silently swaps the patient's left and right.
-        # fl-tutorials/tests/ pins this against the raw PixelData for every app on this path.
-        mt.LoadImaged(keys=["image"], reader="PydicomReader", swap_ij=False),
+        mt.LoadImaged(keys=["image"], image_only=True),
         mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
+        mt.Orientationd(keys=["image"], axcodes="RAS"),
         mt.Resized(keys=["image"], spatial_size=SPATIAL_SHAPE),
-        mt.ScaleIntensityd(keys=["image"]),
+        mt.ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
     ]
     if not is_validation:
-        transforms.append(mt.RandAffined(keys=["image"], rotate_range=[-0.05, 0.05], scale_range=[0.01, 0.05]))
+        # Small and shape-only: a generative model learns the intensity distribution it is shown, so
+        # augmentation here must not touch intensities. padding_mode="border" keeps the rotated
+        # corners from introducing a hard zero edge the autoencoder would learn to reproduce.
+        transforms.append(
+            mt.RandAffined(
+                keys=["image"],
+                rotate_range=(-0.05, 0.05),
+                scale_range=(0.01, 0.05),
+                translate_range=(-0.05, 0.05),
+                prob=1.0,
+                padding_mode="border",
+            )
+        )
     return mt.Compose(transforms)

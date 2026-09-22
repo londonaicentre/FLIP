@@ -11,13 +11,21 @@
 
 """NVFLARE Client API script for the FLIP autoencoder (VAE) tutorial.
 
-Trains a KL-regularised autoencoder and its patch discriminator on 2-D chest X-rays, as an ordinary
+Trains a KL-regularised autoencoder and its patch discriminator on 3-D brain MRI, as an ordinary
 single-stage FedAvg job: one ``train`` task and one ``validate`` task, dispatched on
 ``flare.is_train()`` / ``flare.is_evaluate()``.
 
-Data loading follows the ``xray_classification`` tutorial: DICOM files fetched per accession and read
-through the pinned ``PydicomReader`` chain in ``transforms.py``. The cohort's label columns are
-ignored — a generative model needs only the pixels.
+Data loading fetches each accession's NIfTI series and reads them through ``transforms.py``. A brain
+MRI study is four co-registered sequences (FLAIR, T1w, T1Gd, T2w), and **every one of them is a
+training sample here**: the autoencoder is deliberately modality-agnostic, so that one autoencoder
+compresses all four and the latent diffusion tutorial downstream can condition on which is which.
+``MODALITIES`` in ``config.json`` is the switch — leave all four listed to train across sequences,
+or set it to ``["T1w"]`` for the single-sequence form. Nothing here reads the conditioning label; it
+is attached to each sample (see ``modality.py``) for the diffusion tutorial's benefit.
+
+Because the samples within one study are four views of one brain, the train/validation split is by
+**accession**, not by file. Splitting by file would put a subject's T1w in training and their T2w in
+validation, and the reported SSIM would then be measuring memorisation.
 
 This is the first half of what used to be the two-stage latent diffusion job, split out so an
 autoencoder can be trained, scored and re-used on its own. The reconstruction/adversarial maths is
@@ -38,11 +46,11 @@ import einops
 import nibabel as nib
 import numpy as np
 import nvflare.client as flare
-import pydicom
 import torch
 from debug_samples import save_grid
 from flip import FLIP
 from flip.constants import ResourceType
+from modality import modality_of
 from models import get_model
 from monai.data import DataLoader, Dataset
 from monai.losses import PatchAdversarialLoss, PerceptualLoss
@@ -50,7 +58,7 @@ from monai.metrics import compute_ssim_and_cs
 from nvflare.client.tracking import SummaryWriter
 from torch.amp import GradScaler, autocast
 from torchvision.models import SqueezeNet1_1_Weights
-from transforms import get_xray_transforms
+from transforms import get_brain_mri_transforms
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +130,15 @@ class KLDivergenceLoss:
     """
     Expects z_mu (B, *latent_shape) and z_sigma (B, *latent_shape).
     Returns per-batch mean KL (averaged over batch).
+
+    Computed in float32 even when the caller is inside ``autocast``. The autoencoder hands back
+    fp16 tensors there, and this expression squares them: fp16 tops out at 65504, so any sigma
+    above ~256 overflows to ``inf`` — and ``z_mu**2 + inf - log(inf) - 1`` is ``inf - inf``, i.e.
+    **NaN**. That NaN reaches the weights and the next forward produces a NaN reconstruction, which
+    the training loop can only report as "NaN in autoencoder reconstruction" a step after the real
+    event. Early in training sigma genuinely does reach that range (observed above 2e4 on 3-D brain
+    MRI within ~15 steps), so this is a live failure, not a theoretical one. The cast costs one
+    copy of the latent, which is small next to the volumes themselves.
     """
 
     def __call__(
@@ -130,8 +147,8 @@ class KLDivergenceLoss:
         z_sigma: torch.Tensor,
     ) -> torch.Tensor:
         # We remove spatial notion
-        z_mu_m = z_mu.flatten(start_dim=2)
-        z_sigma_m = z_sigma.flatten(start_dim=2)
+        z_mu_m = z_mu.float().flatten(start_dim=2)
+        z_sigma_m = z_sigma.float().flatten(start_dim=2)
         kl_loss = 0.5 * torch.sum(z_mu_m.pow(2) + z_sigma_m.pow(2) - torch.log(z_sigma_m.pow(2)) - 1, dim=[-1])
         kl_loss = torch.sum(kl_loss) / kl_loss.shape[0]
 
@@ -150,8 +167,12 @@ def detect_axial_anisotropy(image_path: str, threshold: float = 1.5) -> bool:
     loss compares voxels that are not comparable, so the 2-D sliced form is the better signal (see
     :meth:`AutoencoderTrainer.reset_perceptual_to_anisotropic`).
 
-    Not called by the shipped DICOM loader — a 2-D radiograph has no through-plane axis. A 3-D port's
-    loader should call it on the first readable volume, as the original NIfTI loader did.
+    Not called by the shipped brain-MRI loader, on purpose. ``transforms.py`` resamples every volume
+    onto an isotropic 96^3 grid, so by the time a tensor reaches a loss there is no through-plane
+    axis to be coarse: the answer would always be False, and asking on the *raw* geometry instead
+    (240x240x155, a ratio of 1.55) would log "found axial anisotropy" about data that is about to be
+    made isotropic. Kept, and worth calling on the first readable volume, for a cohort that is
+    genuinely thick-slice and resampled to a grid that preserves that.
 
     Args:
         image_path (str): Path to a NIfTI volume.
@@ -218,6 +239,27 @@ def load_config() -> dict:
     config_path = Path(__file__).parent.resolve() / "config.json"
     with open(config_path) as f:
         return json.load(f)
+
+
+def split_for_site(items: list[dict], site_name: str) -> list[dict]:
+    """Give each simulated site half the cohort, splitting on accession rather than on items.
+
+    Local/simulator runs point every client at the same DEV dataset, so without this both sites
+    train on identical data; in production each trust's data-access API already scopes the cohort to
+    its own. The NVFLARE simulator names its clients "site-1"/"site-2" — normalise so the split
+    actually applies (as arkplus_fine_tuning's data_utils does). Production trust names never match,
+    so real runs are returned unsplit.
+
+    Splitting on the *accession* keeps a study's sequences together: halving the item list would cut
+    through the middle of a study and give one site a brain's T1w and the other its T2w.
+    """
+    normalised = site_name.replace("-", "")
+    if normalised not in ("site1", "site2"):
+        return items
+    accessions = list(dict.fromkeys(item["accession_id"] for item in items))
+    half = len(accessions) // 2
+    mine = set(accessions[:half] if normalised == "site1" else accessions[half:])
+    return [item for item in items if item["accession_id"] in mine]
 
 
 def batch_accumulation_step(batch_size: int) -> int:
@@ -295,24 +337,25 @@ class AutoencoderTrainer:
         # The NVFLARE simulator names its clients "site-1"/"site-2"; normalise so the split actually applies
         # (as arkplus_fine_tuning's data_utils does). Production trust names never match, so real runs are unsplit.
         self.site_name = flare.get_site_name()
-        site_name = self.site_name.replace("-", "")
-        if site_name == "site1":
-            self.train_items = self.train_items[: len(self.train_items) // 2]
-        elif site_name == "site2":
-            self.train_items = self.train_items[len(self.train_items) // 2 :]
+        self.train_items = split_for_site(self.train_items, self.site_name)
 
-        self._train_dataset = Dataset(self.train_items, transform=get_xray_transforms())
-        self._val_dataset = Dataset(self.val_items, transform=get_xray_transforms(is_validation=True))
+        self._train_dataset = Dataset(self.train_items, transform=get_brain_mri_transforms())
+        self._val_dataset = Dataset(self.val_items, transform=get_brain_mri_transforms(is_validation=True))
 
     def build_datalist(self, dataframe) -> tuple[list, list]:
-        """Fetch each accession's DICOM images and split into train/validation lists.
+        """Fetch each accession's NIfTI series and split into train/validation lists.
 
-        Mirrors ``xray_classification``'s ``build_datalist`` with the label extraction removed: the
-        cohort query still returns its lesion columns, but nothing here reads them. Each file's header
-        is parsed before the path is accepted, so an unreadable DICOM is dropped now rather than
-        failing a training step later.
+        One study yields one sample per configured modality — four, unless ``MODALITIES`` narrows
+        the run to fewer. Each sample carries the modality label and its index in ``MODALITIES``
+        alongside the path; ``transforms.py`` passes both through untouched, and the collate turns
+        the index into a batch tensor.
+
+        **The split is by accession.** The four series of one study are four views of the same
+        brain, so a file-wise split would leak a subject across the boundary and make the validation
+        score meaningless. Whole studies go to one side or the other.
         """
-        datalist: list[dict[str, str]] = []
+        modalities = self.config["MODALITIES"]
+        by_accession: dict[str, list[dict]] = {}
 
         for accession_id in dataframe["accession_id"]:
             try:
@@ -320,26 +363,50 @@ class AutoencoderTrainer:
                     self.project_id,
                     accession_id,
                     resource_type=[
-                        ResourceType.DICOM,
+                        ResourceType.NIFTI,
                     ],
                 )
             except Exception as err:
                 logger.info(f"Could not get image data folder path for {accession_id}: {err}")
                 continue
 
-            for image in sorted(accession_folder_path.rglob("*.dcm")):
-                try:
-                    pydicom.dcmread(str(image), stop_before_pixels=True)
-                except Exception as err:
-                    logger.warning(f"Skipping invalid DICOM {image.name}: {err}")
+            items = []
+            for image in sorted(accession_folder_path.rglob("input_*.nii.gz")):
+                modality = modality_of(image, modalities)
+                if modality is None:
+                    # A sequence this run excludes, not an error: MODALITIES is the cohort filter.
                     continue
-                datalist.append({"image": str(image)})
+                items.append(
+                    {
+                        "image": str(image),
+                        "accession_id": str(accession_id),
+                        "modality": modality,
+                        "modality_index": modalities.index(modality),
+                    }
+                )
+            if items:
+                by_accession[str(accession_id)] = items
 
-        logger.info(f"Found {len(datalist)} files in total.")
+        found = sum(len(items) for items in by_accession.values())
+        logger.info(
+            f"Found {found} volume(s) across {len(by_accession)} accession(s), "
+            f"modalities {modalities}."
+        )
+        if not by_accession:
+            raise RuntimeError(
+                f"No volumes matched MODALITIES={modalities}. The cohort's files are named "
+                "input_<modality>_<case>.nii.gz — check that the configured labels are the ones "
+                "the data actually carries."
+            )
 
-        # Validation / train splits:
-        val_size = int(self.config["VAL_SPLIT"] * len(datalist))
-        return datalist[val_size:], datalist[:val_size]
+        # Validation / train splits, whole accessions at a time.
+        accessions = list(by_accession)
+        val_accessions = accessions[: int(self.config["VAL_SPLIT"] * len(accessions))]
+        train_accessions = accessions[len(val_accessions) :]
+        return (
+            [item for accession in train_accessions for item in by_accession[accession]],
+            [item for accession in val_accessions for item in by_accession[accession]],
+        )
 
     def reset_perceptual_to_anisotropic(self):
         """Swap the perceptual loss for its 2-D form when 3-D data turns out to be thick-slice.

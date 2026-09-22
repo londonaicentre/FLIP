@@ -1,6 +1,9 @@
 JOB_TYPE=standard
-DEV_IMAGES_DIR=../../../data/xrays_mini_300/accession-resources/
-DEV_DATAFRAME=../../../data/xrays_mini_300/dataframe.csv
+# Populate with:
+#   make -C fl-tutorials download-brain-mri-msd-raw            # 7.6 GB MSD tar, once
+#   make -C fl-tutorials download-brain-mri-data NUM_CASES=20  # -> data/brain_mri/
+DEV_IMAGES_DIR=../../../data/brain_mri/images
+DEV_DATAFRAME=../../../data/brain_mri/dataframe.csv
 # Any value works for local sim: LOCAL_DEV ignores project_id (data comes from
 # DEV_DATAFRAME/DEV_IMAGES_DIR) and `make sim` runs the job directly, handing the placeholder
 # straight to the trainer. Export paths substitute it into the recipe's "--project_id" task arg,

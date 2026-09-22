@@ -11,9 +11,25 @@
 
 """NVFLARE Client API script for the FLIP latent diffusion tutorial.
 
-Trains a ``DiffusionModelUNet`` inside a **frozen** autoencoder's latent space, as an ordinary
-single-stage FedAvg job: one ``train`` task and one ``validate`` task, dispatched on
+Trains a ``DiffusionModelUNet`` inside a **frozen** autoencoder's latent space, on 3-D brain MRI, as
+an ordinary single-stage FedAvg job: one ``train`` task and one ``validate`` task, dispatched on
 ``flare.is_train()`` / ``flare.is_evaluate()``.
+
+**Conditioning.** A brain MRI study is four co-registered sequences (FLAIR, T1w, T1Gd, T2w), and the
+model is told which one it is denoising: the modality is one-hot encoded and fed to the UNet as a
+length-1 cross-attention sequence (``modality.py``). That is what makes one model able to generate a
+T2w *or* a T1Gd volume on demand rather than an average of the four. Two knobs in ``config.json``
+switch the whole thing, and they move together:
+
+* ``MODALITIES`` — which sequences enter the cohort at all;
+* ``net_config.diffusion_model.with_conditioning`` / ``cross_attention_dim`` — whether the model is
+  told, and over how many classes.
+
+Conditioned on all four is ``MODALITIES`` of length 4 with ``with_conditioning: true`` and
+``cross_attention_dim: 4``. The unconditional single-sequence form is ``["T1w"]`` with
+``with_conditioning: false`` and ``cross_attention_dim: 0``. Anything else is a mismatch, and the
+parity test in fl-tutorials/tests/ refuses it — an unconditioned model quietly trained on four
+mixed sequences is a plausible-looking way to get blur.
 
 The autoencoder is not trained here. It arrives as an uploaded checkpoint declared by
 ``SERVER_CHECKPOINT`` in ``config.json``, which the FL server loads into the round-0 global model and
@@ -39,18 +55,18 @@ from pathlib import Path
 
 import numpy as np
 import nvflare.client as flare
-import pydicom
 import torch
 from debug_samples import samples_enabled, save_grid
 from flip import FLIP
 from flip.constants import FlipConstants, ResourceType
 from latent_utils import build_inferer
+from modality import modality_of, one_hot_condition
 from models import get_model
 from monai.data import DataLoader, Dataset
 from monai.networks.schedulers import DDPMScheduler
 from nvflare.client.tracking import SummaryWriter
 from torch.amp import GradScaler, autocast
-from transforms import get_xray_transforms
+from transforms import get_brain_mri_transforms
 
 logger = logging.getLogger(__name__)
 
@@ -85,11 +101,44 @@ def load_config() -> dict:
         return json.load(f)
 
 
+def split_for_site(items: list[dict], site_name: str) -> list[dict]:
+    """Give each simulated site half the cohort, splitting on accession rather than on items.
+
+    Local/simulator runs point every client at the same DEV dataset, so without this both sites
+    train on identical data; in production each trust's data-access API already scopes the cohort to
+    its own. The NVFLARE simulator names its clients "site-1"/"site-2" — normalise so the split
+    actually applies (as arkplus_fine_tuning's data_utils does). Production trust names never match,
+    so real runs are returned unsplit.
+
+    Splitting on the *accession* keeps a study's sequences together: halving the item list would cut
+    through the middle of a study and give one site a brain's T1w and the other its T2w.
+    """
+    normalised = site_name.replace("-", "")
+    if normalised not in ("site1", "site2"):
+        return items
+    accessions = list(dict.fromkeys(item["accession_id"] for item in items))
+    half = len(accessions) // 2
+    mine = set(accessions[:half] if normalised == "site1" else accessions[half:])
+    return [item for item in items if item["accession_id"] in mine]
+
+
 def batch_accumulation_step(batch_size: int) -> int:
     """Accumulate gradients up to an effective batch of 8 when the configured batch is smaller."""
     if batch_size < 8:
         return 8 // batch_size
     return 1
+
+
+def batch_condition(batch: dict, config: dict, device: torch.device) -> torch.Tensor | None:
+    """The cross-attention condition for a batch, or None when this run is unconditional.
+
+    Returns None whenever ``with_conditioning`` is off, which is what the inferer expects for an
+    unconditional model — passing a context tensor to a UNet built without cross-attention layers
+    raises rather than being ignored, so the two must be read from the same place.
+    """
+    if not config["net_config"]["diffusion_model"]["with_conditioning"]:
+        return None
+    return one_hot_condition(batch["modality_index"], len(config["MODALITIES"]), device)
 
 
 def freeze_autoencoder(model: torch.nn.Module) -> None:
@@ -145,24 +194,26 @@ class LatentDiffusionTrainer:
         # in production each trust's data-access API already scopes the cohort to its own data.
         # The NVFLARE simulator names its clients "site-1"/"site-2"; normalise so the split actually applies
         # (as arkplus_fine_tuning's data_utils does). Production trust names never match, so real runs are unsplit.
-        site_name = flare.get_site_name().replace("-", "")
-        if site_name == "site1":
-            self.train_items = self.train_items[: len(self.train_items) // 2]
-        elif site_name == "site2":
-            self.train_items = self.train_items[len(self.train_items) // 2 :]
+        self.site_name = flare.get_site_name()
+        self.train_items = split_for_site(self.train_items, self.site_name)
 
-        self._train_dataset = Dataset(self.train_items, transform=get_xray_transforms())
-        self._val_dataset = Dataset(self.val_items, transform=get_xray_transforms(is_validation=True))
+        self._train_dataset = Dataset(self.train_items, transform=get_brain_mri_transforms())
+        self._val_dataset = Dataset(self.val_items, transform=get_brain_mri_transforms(is_validation=True))
 
     def build_datalist(self, dataframe) -> tuple[list, list]:
-        """Fetch each accession's DICOM images and split into train/validation lists.
+        """Fetch each accession's NIfTI series and split into train/validation lists.
 
-        Mirrors ``xray_classification``'s ``build_datalist`` with the label extraction removed: the
-        cohort query still returns its lesion columns, but nothing here reads them. Each file's header
-        is parsed before the path is accepted, so an unreadable DICOM is dropped now rather than
-        failing a training step later.
+        One study yields one sample per configured modality — four, unless ``MODALITIES`` narrows
+        the run to fewer. Each sample carries the modality label and its index in ``MODALITIES``
+        alongside the path; ``transforms.py`` passes both through untouched, and the collate turns
+        the index into a batch tensor.
+
+        **The split is by accession.** The four series of one study are four views of the same
+        brain, so a file-wise split would leak a subject across the boundary and make the validation
+        score meaningless. Whole studies go to one side or the other.
         """
-        datalist: list[dict[str, str]] = []
+        modalities = self.config["MODALITIES"]
+        by_accession: dict[str, list[dict]] = {}
 
         for accession_id in dataframe["accession_id"]:
             try:
@@ -170,26 +221,50 @@ class LatentDiffusionTrainer:
                     self.project_id,
                     accession_id,
                     resource_type=[
-                        ResourceType.DICOM,
+                        ResourceType.NIFTI,
                     ],
                 )
             except Exception as err:
                 logger.info(f"Could not get image data folder path for {accession_id}: {err}")
                 continue
 
-            for image in sorted(accession_folder_path.rglob("*.dcm")):
-                try:
-                    pydicom.dcmread(str(image), stop_before_pixels=True)
-                except Exception as err:
-                    logger.warning(f"Skipping invalid DICOM {image.name}: {err}")
+            items = []
+            for image in sorted(accession_folder_path.rglob("input_*.nii.gz")):
+                modality = modality_of(image, modalities)
+                if modality is None:
+                    # A sequence this run excludes, not an error: MODALITIES is the cohort filter.
                     continue
-                datalist.append({"image": str(image)})
+                items.append(
+                    {
+                        "image": str(image),
+                        "accession_id": str(accession_id),
+                        "modality": modality,
+                        "modality_index": modalities.index(modality),
+                    }
+                )
+            if items:
+                by_accession[str(accession_id)] = items
 
-        logger.info(f"Found {len(datalist)} files in total.")
+        found = sum(len(items) for items in by_accession.values())
+        logger.info(
+            f"Found {found} volume(s) across {len(by_accession)} accession(s), "
+            f"modalities {modalities}."
+        )
+        if not by_accession:
+            raise RuntimeError(
+                f"No volumes matched MODALITIES={modalities}. The cohort's files are named "
+                "input_<modality>_<case>.nii.gz — check that the configured labels are the ones "
+                "the data actually carries."
+            )
 
-        # Validation / train splits:
-        val_size = int(self.config["VAL_SPLIT"] * len(datalist))
-        return datalist[val_size:], datalist[:val_size]
+        # Validation / train splits, whole accessions at a time.
+        accessions = list(by_accession)
+        val_accessions = accessions[: int(self.config["VAL_SPLIT"] * len(accessions))]
+        train_accessions = accessions[len(val_accessions) :]
+        return (
+            [item for accession in train_accessions for item in by_accession[accession]],
+            [item for accession in val_accessions for item in by_accession[accession]],
+        )
 
     def make_loaders(self, batch_size: int, shuffle: bool = True) -> tuple[DataLoader, DataLoader]:
         train_loader = DataLoader(self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1)
@@ -233,6 +308,7 @@ class LatentDiffusionTrainer:
 
             for batch in train_loader:
                 images = batch["image"].to(self.device)
+                condition = batch_condition(batch, self.config, self.device)
 
                 with autocast(enabled=False, device_type=self.device.type):
                     noise = torch.randn(
@@ -252,7 +328,7 @@ class LatentDiffusionTrainer:
                         autoencoder_model=self.model.autoencoder,
                         noise=noise,
                         timesteps=timesteps,
-                        condition=None,
+                        condition=condition,
                         mode="crossattn",
                     )
                     loss = self.losses_dm["loss"](noise.float(), noise_pred.float())
@@ -276,6 +352,7 @@ class LatentDiffusionTrainer:
             val_loss_epoch = 0
             for batch in val_loader:
                 images = batch["image"].to(self.device)
+                condition = batch_condition(batch, self.config, self.device)
                 self.model.diffusion_model.eval()
                 with autocast(enabled=False, device_type=self.device.type):
                     noise = torch.randn(
@@ -296,7 +373,7 @@ class LatentDiffusionTrainer:
                             autoencoder_model=self.model.autoencoder,
                             noise=noise,
                             timesteps=timesteps,
-                            condition=None,
+                            condition=condition,
                             mode="crossattn",
                         )
                     val_loss_epoch += self.losses_dm["loss"](noise.float(), noise_pred.float()).item()
@@ -352,6 +429,7 @@ def validate(
     val_loss = []
     for batch in test_loader:
         images = batch["image"].to(device)
+        condition = batch_condition(batch, config, device)
         with autocast(enabled=False, device_type=device.type):
             with torch.no_grad():
                 noise = torch.randn(
@@ -367,7 +445,7 @@ def validate(
                     autoencoder_model=model.autoencoder,
                     noise=noise,
                     timesteps=timesteps,
-                    condition=None,
+                    condition=condition,
                     mode="crossattn",
                 )
             val_loss.append(loss_fn(noise.float(), noise_pred.float()).item())
@@ -379,22 +457,35 @@ def validate(
     # Run it when either the dev sanity check or client-local debug images are asked for; it is a full
     # reverse diffusion (num_train_timesteps steps), so it stays off the per-epoch path.
     if FlipConstants.LOCAL_DEV or samples_enabled(config):
-        logger.info("[DEBUG]: Sampling images...")
+        modalities = config["MODALITIES"]
+        conditioned = config["net_config"]["diffusion_model"]["with_conditioning"]
+        # Sample ONE volume per modality when conditioned, so the grid answers the question
+        # conditioning exists to answer: do these columns actually differ? A batch of samples all
+        # drawn under the same condition cannot show that. Unconditioned, one sample is the lot.
+        sample_count = len(modalities) if conditioned else 1
+        how = "conditioned" if conditioned else "unconditional"
+        logger.info(f"[DEBUG]: Sampling {sample_count} volume(s) ({how})...")
         noise = torch.randn(
-            [config["BATCH_SIZE"]] + [model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape
+            [sample_count] + [model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape
         ).to(device)
+        conditioning = (
+            one_hot_condition(torch.arange(sample_count), len(modalities), device) if conditioned else None
+        )
         # save_intermediates=False: LatentDiffusionInferer would otherwise retain the whole denoising
         # trajectory (one decoded tensor per timestep) and the second return value is discarded.
         sampled_images = inferer.sample(
             input_noise=noise,
-            conditioning=None,
+            conditioning=conditioning,
             diffusion_model=model.diffusion_model,
             scheduler=scheduler,
             save_intermediates=False,
             autoencoder_model=model.autoencoder,
         )
         logger.info(f"Sampled images shape: {sampled_images.detach().cpu().numpy().shape}")
-        save_grid({"sample": sampled_images}, "samples", config, site_name=flare.get_site_name())
+        # One grid column per modality, in MODALITIES order — the filename says so, since the grid
+        # itself carries no labels.
+        name = f"samples_{'_'.join(modalities)}" if conditioned else "samples"
+        save_grid({"sample": sampled_images}, name, config, site_name=flare.get_site_name())
 
     mean_val_loss = float(np.mean(val_loss)) if val_loss else float("nan")
     logger.info(f"Validation DM: {mean_val_loss}")

@@ -30,6 +30,17 @@ convention, so every way it breaks breaks **quietly**:
   named exactly ``LOCAL_ROUNDS`` — but only at submit time, i.e. after upload, on the platform.
   Catching it here keeps that a local failure.
 
+Since FLIP#1221 the three no longer share a cohort: ``autoencoder`` and ``latent_diffusion_model``
+train on 3-D brain MRI (four MR sequences per study), while ``diffusion_model`` stays on 2-D chest
+X-rays as the cheap read-this-first tutorial. That adds a second silent-failure surface, because the
+brain pair's conditioning is spread across two config keys that must agree:
+
+* ``MODALITIES`` decides which sequences enter the cohort; ``cross_attention_dim`` decides how many
+  classes the UNet's cross-attention is built for. A model told "4 classes" while the loader feeds 5
+  raises; told "4" while the loader feeds 1 trains happily on three dead one-hot columns. And
+  ``with_conditioning: false`` beside four modalities trains an unconditional model on four mixed
+  sequences, whose failure mode is a blurred average that looks like slow convergence.
+
 These are static checks over the shipped ``config.json`` / ``job.py`` files, plus one that
 instantiates the latent network to compare the regex against real parameter names. Nothing trains.
 """
@@ -53,6 +64,8 @@ _DIFFUSION = _SYNTHESIS_ROOT / "diffusion_model"
 _LATENT_DIFFUSION = _SYNTHESIS_ROOT / "latent_diffusion_model"
 
 _ALL_TUTORIALS = (_AUTOENCODER, _DIFFUSION, _LATENT_DIFFUSION)
+# The two retargeted onto the 3-D brain-MRI cohort, which share the modality contract.
+_BRAIN_MRI_TUTORIALS = (_AUTOENCODER, _LATENT_DIFFUSION)
 
 # The submodule prefix the checkpoint handoff rides on. Both networks must name the autoencoder
 # submodule `autoencoder`, so its parameters are keyed `autoencoder.*` in both state dicts.
@@ -195,6 +208,131 @@ def test_pixel_diffusion_spatial_shape_is_divisible_by_downsampling() -> None:
     )
 
 
+@pytest.mark.parametrize("tutorial", _BRAIN_MRI_TUTORIALS, ids=lambda p: p.name)
+def test_modality_list_is_non_empty_and_unique(tutorial: Path) -> None:
+    """``MODALITIES`` is a real list of distinct labels.
+
+    It is the cohort filter *and* the one-hot vocabulary, so a duplicate would give two sequences
+    the same index — silently training them as one class — and an empty list would select no files
+    at all, which the loader turns into a raised error rather than an empty epoch.
+    """
+    modalities = _config(tutorial)["MODALITIES"]
+    assert modalities, "MODALITIES is empty: the loader would match no files"
+    assert len(set(modalities)) == len(modalities), f"duplicate entries in MODALITIES: {modalities}"
+
+
+def test_modality_lists_match_across_the_brain_mri_tutorials() -> None:
+    """The autoencoder and the latent job agree on the sequences, in the same order.
+
+    Order is part of the contract, not just membership: the index into ``MODALITIES`` *is* the
+    one-hot position. Two lists holding the same four labels in different orders would train the
+    autoencoder on the same pixels but teach the diffusion model to call a T2w volume a FLAIR.
+    """
+    lists = {t.name: _config(t)["MODALITIES"] for t in _BRAIN_MRI_TUTORIALS}
+    assert len(set(map(tuple, lists.values()))) == 1, f"MODALITIES differs between tutorials: {lists}"
+
+
+def test_latent_conditioning_agrees_with_the_modality_list() -> None:
+    """``with_conditioning`` and ``cross_attention_dim`` are consistent with ``MODALITIES``.
+
+    The two supported shapes, and nothing between them:
+
+    * conditioned   — ``with_conditioning: true``  and ``cross_attention_dim == len(MODALITIES)``
+    * unconditional — ``with_conditioning: false`` and ``cross_attention_dim == 0``
+
+    ``models.py`` maps a ``cross_attention_dim`` of 0 to ``None``, so a non-zero value beside
+    ``with_conditioning: false`` builds cross-attention layers nothing ever feeds, and a mismatched
+    non-zero value beside ``true`` raises only once a real batch reaches the UNet — on a trust, mid
+    round. Both are caught here instead.
+    """
+    config = _config(_LATENT_DIFFUSION)
+    diffusion = config["net_config"]["diffusion_model"]
+    if diffusion["with_conditioning"]:
+        assert diffusion["cross_attention_dim"] == len(config["MODALITIES"]), (
+            f"cross_attention_dim {diffusion['cross_attention_dim']} != len(MODALITIES) "
+            f"{len(config['MODALITIES'])}: the one-hot condition would not fit the attention layers"
+        )
+    else:
+        assert diffusion["cross_attention_dim"] == 0, (
+            "with_conditioning is false, so cross_attention_dim must be 0 (models.py maps 0 -> None)"
+        )
+
+
+def test_modality_helper_is_identical_across_tutorials() -> None:
+    """Both copies of ``modality.py`` are byte-identical.
+
+    Duplicated for the same reason ``transforms.py`` is — ``app_files/`` is the per-model upload
+    unit — and the two copies must agree, because the index the autoencoder's loader assigns is the
+    index the latent job one-hot encodes.
+    """
+    contents = {t.name: (t / "app_files" / "modality.py").read_bytes() for t in _BRAIN_MRI_TUTORIALS}
+    assert len(set(contents.values())) == 1, f"modality.py differs between {sorted(contents)}"
+
+
+def test_modality_parse_matches_the_cohort_filenames() -> None:
+    """The filename parse handles the real names, and refuses the near-miss.
+
+    ``T1w`` is a prefix of nothing but a substring of ``T1Gd``-adjacent spellings, and the case ids
+    carry underscores of their own (``BRATS_001``), so a naive ``split("_")[1]`` or an ``in``
+    substring test both go wrong on real data. Pinned against the names
+    ``prepare_brain_mri_local_data.py`` writes and dcm2niix reproduces.
+    """
+    modality = _load_app_module(_AUTOENCODER, "modality")
+    modalities = _config(_AUTOENCODER)["MODALITIES"]
+
+    for label in modalities:
+        assert modality.modality_of(f"input_{label}_BRATS_001.nii.gz", modalities) == label
+
+    # A sequence this run excludes is not an error, just not selected.
+    assert modality.modality_of("input_T1w_BRATS_001.nii.gz", ["FLAIR"]) is None
+    # The label, not the case id, decides — even when the case id looks like one.
+    assert modality.modality_of("input_FLAIR_BRATS_T2w.nii.gz", modalities) is None
+    # And the non-input files in the same directory are never claimed.
+    assert modality.modality_of("label_BRATS_001.nii.gz", modalities) is None
+
+
+def test_one_hot_condition_has_the_shape_cross_attention_expects() -> None:
+    """The condition is ``(batch, 1, len(MODALITIES))`` — the shape ``mode="crossattn"`` wants.
+
+    A one-hot of the wrong rank does not raise where it is built; it raises (or worse, broadcasts)
+    inside the UNet's attention, which is a long way from the mistake.
+    """
+    modality = _load_app_module(_AUTOENCODER, "modality")
+    condition = modality.one_hot_condition(torch.tensor([0, 2, 1]), 4, torch.device("cpu"))
+    assert condition.shape == (3, 1, 4)
+    assert condition.dtype == torch.float32
+    assert torch.equal(condition.argmax(dim=-1).reshape(-1), torch.tensor([0, 2, 1]))
+
+
+def test_latent_grid_survives_both_downsampling_ladders() -> None:
+    """``spatial_shape`` divides cleanly through the autoencoder, and the latent through the UNet.
+
+    Two ladders in series, and only the second has a safety net: ``derive_new_latent_shape`` pads a
+    ragged latent before the UNet, but nothing absorbs a ragged *image* shape at the autoencoder.
+    An indivisible ``spatial_shape`` surfaces as a size mismatch when the decoder tries to meet its
+    skip connections — deep inside a training step, not at start-up.
+    """
+    config = _config(_LATENT_DIFFUSION)
+    net = config["net_config"]
+
+    ae_factor = 2 ** (len(net["stage_1"]["channels"]) - 1)
+    ragged = [dim for dim in config["spatial_shape"] if dim % ae_factor]
+    assert not ragged, (
+        f"spatial_shape {config['spatial_shape']} must be divisible by the autoencoder's "
+        f"{ae_factor}x downsampling; offending dims: {ragged}"
+    )
+
+    # What the UNet actually sees. Padding would rescue it, but needing the padding at all means the
+    # two ladders were not chosen together — say so here rather than discovering it in a log.
+    latent = [dim // ae_factor for dim in config["spatial_shape"]]
+    dm_factor = 2 ** (len(net["diffusion_model"]["channels"]) - 1)
+    ragged = [dim for dim in latent if dim % dm_factor]
+    assert not ragged, (
+        f"the {latent} latent must be divisible by the diffusion UNet's {dm_factor}x downsampling; "
+        f"offending dims: {ragged} (derive_new_latent_shape would pad, but the ladders should match)"
+    )
+
+
 def test_latent_server_checkpoint_matches_job_py_constant() -> None:
     """``SERVER_CHECKPOINT`` names the same file ``job.py`` stages server-side.
 
@@ -300,14 +438,13 @@ def test_spatial_shape_matches_the_transform_resize(tutorial: Path) -> None:
 def test_spatial_dims_agrees_with_spatial_shape(tutorial: Path) -> None:
     """``net_config.spatial_dims`` matches the dimensionality of ``spatial_shape``.
 
-    These tutorials were ported from a 3-D CT original to 2-D chest X-rays. A leftover
-    ``spatial_dims: 3`` beside a 2-D ``spatial_shape`` builds a network that cannot consume the data
-    the transform chain produces, so pin them to each other.
+    A leftover ``spatial_dims`` from the other cohort builds a network that cannot consume the data
+    the transform chain produces, so pin them to each other. This is a live hazard rather than a
+    theoretical one: these tutorials have now been moved between 2-D and 3-D twice, and the two
+    brain-MRI ones sit beside a 2-D X-ray one in the same directory.
 
-    Deliberately asserts *consistency* rather than ``== 2``: the autoencoder keeps working 3-D helpers
-    for anyone porting these tutorials back to volumes (see "Porting this tutorial to 3-D" in its
-    README), and a test that hard-codes 2 would fail such a port for no good reason. An inconsistent
-    pair — which is the actual defect this catches — still fails either way.
+    Deliberately asserts *consistency* rather than a literal, so it holds for both cohorts. An
+    inconsistent pair — the actual defect — fails either way.
     """
     config = _config(tutorial)
     assert config["net_config"]["spatial_dims"] == len(config["spatial_shape"])

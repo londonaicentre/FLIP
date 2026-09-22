@@ -17,10 +17,12 @@ from its file path under a unique module name, which also keeps the three same-n
 ``data_utils`` modules from colliding in ``sys.modules``.
 
 **Scope.** Only apps that read 2-D DICOM through MONAI's ``LoadImaged`` belong here. The spleen
-tutorials load 3-D NIfTI through ``Orientationd``/``Spacingd``, where the axis-order correction these
-tests pin would be actively wrong — they are deliberately absent. The three ``image_synthesis``
-tutorials are registered: they read the same 2-D DICOM chest X-rays as ``xray_classification``,
-through a copy of its chain, so the same orientation guarantees must hold for them.
+tutorials, and the ``autoencoder`` and ``latent_diffusion_model`` tutorials since they were
+retargeted onto the 3-D brain-MRI cohort, load NIfTI through ``Orientationd``/``Spacingd``, where the
+axis-order correction these tests pin would be actively wrong — they are deliberately absent. Those
+chains take their axis order from the image's own affine, which is the guarantee a DICOM pixel array
+cannot give. ``diffusion_model`` stays registered: it is still the 2-D chest-X-ray tutorial, reading
+``xray_classification``'s chain through a copy, so the same orientation guarantees must hold for it.
 """
 
 from __future__ import annotations
@@ -172,19 +174,9 @@ DICOM_APPS: tuple[TutorialApp, ...] = (
         module_path="flower/xray_classification/app/transforms.py",
     ),
     TutorialApp(
-        app_id="nvflare_autoencoder",
-        backend="nvflare",
-        module_path="nvflare/image_synthesis/autoencoder/app_files/transforms.py",
-    ),
-    TutorialApp(
         app_id="nvflare_diffusion_model",
         backend="nvflare",
         module_path="nvflare/image_synthesis/diffusion_model/app_files/transforms.py",
-    ),
-    TutorialApp(
-        app_id="nvflare_latent_diffusion_model",
-        backend="nvflare",
-        module_path="nvflare/image_synthesis/latent_diffusion_model/app_files/transforms.py",
     ),
 )
 
