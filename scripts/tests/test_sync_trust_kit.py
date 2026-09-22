@@ -39,7 +39,7 @@ LIB_SCRIPT = SCRIPTS_DIR / "trust_kit_lib.py"
 HUB_SHARED_DEFAULTS: dict[str, str] = {
     "AES_KEY_BASE64": "v1==",  # trailing-= bug regression
     "CENTRAL_HUB_API_URL": "http://localhost:8080/api",
-    "TRUST_API_KEY_HEADER": "Authorization",
+    "TRUST_API_KEY_HEADER": "Authorization",  # pragma: allowlist secret
     "FL_BACKEND": "flower",
     "FLOWER_KIT_DATE": "20260101",
     "FLARE_KIT_DATE": "20260102",
@@ -101,7 +101,7 @@ def test_1_appends_hub_shared_block() -> None:
         kit = root / "trust" / ".env.Trust_1"
         kit.write_text(
             "TRUST_API_KEY=preserved-key\n"
-            "TRUST_INTERNAL_SERVICE_KEY=preserved-internal\n"
+            "TRUST_INTERNAL_SERVICE_KEY=preserved-internal\n"  # pragma: allowlist secret
             "FL_KIT_SLOT=Trust_1\n"
             "FL_KIT_SLOT_NUMBER=1\n"
         )
@@ -109,6 +109,7 @@ def test_1_appends_hub_shared_block() -> None:
         _assert(result.returncode == 0, "exit 0", result.stderr)
         content = kit.read_text()
         _assert("TRUST_API_KEY=preserved-key" in content, "credentials preserved")
+        # pragma: allowlist nextline secret
         _assert("TRUST_INTERNAL_SERVICE_KEY=preserved-internal" in content, "internal service key preserved")
         _assert("AES_KEY_BASE64=v1==" in content, "trailing = preserved (regression)")
         _assert("Hub-shared (managed" in content, "sentinel header added")

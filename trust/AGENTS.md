@@ -122,15 +122,12 @@ make debug-data-access-api     # Debug data-access-api only
 make tests                     # Run tests on all 3 API services
 make build                     # Build all trust Docker images
 make create-networks           # Create Docker overlay networks
-make update-omop-data          # Download/extract mock OMOP data (both trusts)
-make update-omop-data TRUST=1  # Trust_1 only
-make update-orthanc-data       # Download/extract mock DICOM data (both trusts)
-make update-orthanc-data TRUST=1  # Trust_1 only
-make seed KIT=GSTT PROJECTS="spleen_project cxr_project"  # Seed a RUNNING trust: OMOP rows + DICOMs by source_trust (#1100)
+make ensure-seeded KIT=GSTT [PROJECTS="…"]  # What up-trust runs after compose up: seed unless the markers already say so (#1187)
+make seed KIT=GSTT PROJECTS="spleen_project cxr_project"  # Seed a RUNNING trust unconditionally: OMOP rows + DICOMs by source_trust (#1100)
 make seed-trusts PROJECTS="…"  # Both dev trusts; seed-omop / seed-orthanc for one half; CLEAR=1, DRY_RUN=1 on the PACS half
 make seed KIT=GSTT SOURCE_TRUST=1  # Override the OMOP partition; defaults to the FL kit slot, which is a convention, not an invariant (see README "Which partition a trust is seeded with")
-make publish-trust-data VERSION=<tag> [PGDATA=… ORTHANC=… OMOP_CSV=… DICOM=…]  # ONE commit on aicentreflip/trust-data + ONE tag; then bump trust/.data_version (the single pin, OMOP + Orthanc)
-make test-trust-data-tools  # Publisher pytest + ruff, then tests/test_seed_guard.sh — the .seeded guard driven end-to-end (make target writes the marker, update script reads it) in a sandbox with curl/tar/sudo stubbed
+make publish-trust-data VERSION=<tag> [OMOP_CSV=… DICOM=… CARD=…]  # ONE commit on aicentreflip/trust-data + ONE tag; then bump trust/.data_version (the single pin, OMOP + Orthanc)
+make test-trust-data-tools  # Three things: publisher pytest + ruff, shellcheck over seed_trust.sh, and the seed-marker contract harness (tests/test_seed_marker_contract.sh)
 ```
 
 ## Environment
@@ -142,3 +139,81 @@ make test-trust-data-tools  # Publisher pytest + ruff, then tests/test_seed_guar
 - Site-enforced FL privacy policy (NVFLARE only, FLIP#851): `FL_SITE_PRIVACY_POLICY=percentile` (+ optional `FL_SITE_PRIVACY_*` params, see `trust/.env.example`) in the kit's Host-local profile. Rendered into the fl-client's NVFLARE `local/privacy.json` at container start by `python -m flip.nvflare.site_policy` — composes on top of (runs before) any app-level filter, jobs can't opt out, invalid values fail the fl-client closed. Unset = no site policy (previous behavior). Apply with `make -C trust up-fl-clients-kit KIT=<CODE>`.
 - The two shipped dev trusts (GSTT, KCH) have separate ports, networks, and data dirs. Their FL kit *slots* are still named `Trust_1` / `Trust_2` — those are the pre-provisioned FL participant-kit identities (cert CN for NVFLARE, supernode number for Flower), assigned to a trust by the hub at registration. A trust (GSTT) claims a slot (Trust_1); they are different things.
 - Local trust uses `trust-local` project name to avoid port collisions
+
+## XNAT and PACS Environment Variables
+
+- `XNAT_PORT` / `XNAT_WEB_PORT` / `XNAT_AETITLE` — XNAT's DICOM SCP receiver port, its host-published
+  web-UI port, and its AE title. `XNAT_PORT` was historically one variable doing both jobs, which is
+  why host 8104 served Tomcat while the DICOM receiver's 8104 was an unpublished container port
+  (FLIP#993). `XNAT_AETITLE` is applied to the SCP receiver, `dqrCallingAe`, and the C-MOVE
+  destination in `ImportStudyRequest` — DQR matches that destination against a registered receiver by
+  exact `AE:port`, so all three must agree and no translation is possible on that leg. Both ports are
+  host-published — the receiver so a real PACS can complete the C-STORE return leg of a retrieval,
+  and dev keeps the same wiring — so they must differ; the Makefile refuses to deploy if they
+  collide. Dev allocation: 8104/8105 (GSTT), 8106/8107 (KCH).
+- `PACS_HOST` / `PACS_AETITLE` / `PACS_QR_PORT` / `PACS_LABEL` — the upstream PACS, defaulting to the
+  mocked Orthanc (`orthanc` / `ORTHANC` / `4242`). `PACS_QR_PORT` must be reachable *from the XNAT
+  container*, not a host-published port — conflating the two is what the retired `PACS_DICOM_PORT`
+  did (FLIP#822/#862). `configure-xnat.sh` updates an existing registration in place when the host or
+  port drift, and imaging-api reads the PACS id from XNAT at runtime rather than assuming 1 —
+  `configure-xnat.sh` keeps exactly one registration, so it is the sole one XNAT reports.
+- `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` — whether the PACS supports relational queries / extended
+  negotiation (default `true`). A capability of the PACS rather than a preference: one that does not
+  support it rejects the association outright. Validated as literally `true` or `false` before it
+  reaches jq, so a `yes` or a bare `1` fails naming the variable instead of registering the number 1.
+- `PACS_AVAILABILITY_DAYS` / `_START` / `_END` / `PACS_THREADS` / `PACS_UTILIZATION_PERCENT` /
+  `DQR_MAX_PACS_REQUEST_ATTEMPTS` / `DQR_RETRY_WAIT_SECONDS` — the retrieval throttle. A production
+  PACS may refuse further associations after a certain volume, so the window and thread count are
+  agreed with the trust's PACS manager. Defaults are all week, all day, one thread.
+
+## Trust-internal Service Authentication
+
+**Threat.** Imaging-api proxies privileged XNAT operations using a service account; data-access-api executes arbitrary SQL against OMOP using a service account. Without caller authentication on these APIs, any container on the trust Docker network — or any operator with SSM port-forward access — can drive XNAT-admin operations and run unrestricted OMOP queries. Both surfaces sit behind no inbound firewall on the trust host (everything is internal to the Docker network) and neither used to validate the caller's identity.
+
+**Mitigation.** Every trust-internal call carries a shared-secret header. The header name comes from `TRUST_INTERNAL_SERVICE_KEY_HEADER` (default `X-Trust-Internal-Service-Key`), the value is the per-trust `TRUST_INTERNAL_SERVICE_KEY` from the trust's kit file (`trust/.env.<CODE>.<env>`). Receivers (imaging-api, data-access-api) compare the header against their own copy of the key with `hmac.compare_digest` (constant-time, defeats timing side-channels). Senders are trust-api, imaging-api (when calling data-access-api `/cohort/accession-ids`), and fl-client. The same key is held in plaintext by every trust-internal container — the trust boundary is the trust itself, not individual service-pairs within it. `/health` stays unauthenticated so liveness probes keep working.
+
+**Per-trust scope.** Each trust gets a distinct key. A leak in Trust_1 cannot drive operations on Trust_2's APIs. The hub never sees these keys — they live only in trust-side env: `register_trust` writes `TRUST_INTERNAL_SERVICE_KEY` into the trust's kit file (`trust/.env.<CODE>.<env>`), which `trust/Makefile` `-include`s so every trust-internal container inherits it. This is deliberately distinct from the hub's `INTERNAL_SERVICE_KEY` (which protects fl-server → flip-api on the Central Hub).
+
+**Generating keys.** The key is minted by `register_trust` (`make register-trusts`), which writes `TRUST_INTERNAL_SERVICE_KEY` into the trust's kit file. Re-register to rotate.
+
+**Per-service code.** The auth check lives in each receiving service's `utils/internal_auth.py`:
+
+- `trust/imaging-api/imaging_api/utils/internal_auth.py` — applied at the router level on every imaging-api router except `/health`.
+- `trust/data-access-api/data_access_api/utils/internal_auth.py` — applied at the router level on `/cohort` (covers `/cohort`, `/cohort/dataframe`, `/cohort/accession-ids`).
+
+The senders construct the header inline at call sites:
+
+- `trust-api/trust_api/services/task_handlers.py::trust_internal_headers()` — used on outbound imaging-api and data-access-api calls.
+- `imaging-api/imaging_api/services_external/data_access.py` — used on the outbound `/cohort/accession-ids` call.
+- The `flip` Python package — lives at [`flip-utils/flip/`](../flip-utils/flip/) in this mono-repo, consumed by both the NVFLARE and Flower fl-client / fl-server images built from `fl-services/`. Wraps every fl-client call to imaging-api (`flip.get_by_accession_number`, etc.) and data-access-api (`flip.get_dataframe`). The package reads `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and forwards it on every request. **User-uploaded training code (`client_app.py`, `server_app.py`, anything under `tutorials/`) does not deal with the header directly** — it calls `flip.*` and the package handles transport-level auth.
+
+## Trust data: seeding and versioning
+
+**Trust data has one path: seeding (FLIP#1101/#1187).** `make up` starts each trust's omop-db and
+Orthanc on empty, pre-created volumes and then runs `make -C trust ensure-seeded`, which loads
+`PROJECTS` (default `cxr_project spleen_project`) from the published canonical tables at the pinned
+`trust/.data_version`: OMOP rows via `omop_db_tools.import_tables` (the DICOM vocabulary first,
+skipped if present) and DICOMs via `trust/orthanc/seed_orthanc.py`, both selected by the same
+`source_trust` column, so a trust's OMOP rows and the studies in its PACS agree by construction. Each
+half leaves a marker beside its store (`volumes/Trust_<N>/.seeded`, `orthanc/.orthanc-storage-trust<N>.seeded`)
+recording projects/partition/version; a matching marker means a later `up` fetches and uploads
+nothing and the volumes just persist on the host, a differing one (a `.data_version` bump, a changed
+`PROJECTS`) re-seeds those projects — rows replaced, studies cleared and re-uploaded. There is no
+`FORCE` and no snapshot: the pre-#1187 `trust<N>_pgdata.tar` / `trust<N>_orthanc_data.tar` volume
+tarballs, `update-*-data` scripts and `export-pgdata` are gone. The first bring-up on a fresh host
+posts ~2 GB of DICOM per trust through Orthanc's REST API (minutes); the OMOP half is seconds. The
+omop-db image's init scripts need `DATA_ACCESS_POSTGRES_PASSWORD` in the container env (compose
+passes it) to create the read-only role on that first start. Adding a dataset means publishing its
+`omop-csv/<project>/` tables and `dicom/<project>.tar.gz` (`trust/orthanc/publish_dicom.py` verifies
+both agree before packaging). The FL simulator (`make -C fl-tutorials run-tutorial`) is a separate
+path: LOCAL_DEV reads `fl-tutorials/data/` straight from disk and touches no trust service.
+
+**One copy of every artefact; a data version is a git tag.** `aicentreflip/trust-data` holds each
+file once, at an unversioned path on `main` (`omop-csv/<project>/`, `dicom/<project>.tar.gz`). A data
+version is a tag on that dataset, and `trust/.data_version` is the ONE pin, for OMOP and Orthanc
+together: every consumer (`omop_db_tools.dataset`, `seed_orthanc.py`, the
+spleen uploader, Ansible, the Helm chart) fetches `resolve/<tag>/<path>`, so old versions stay
+reachable at their tags forever and are never duplicated. `HF_TRUST_DATA_REVISION` overrides the
+tag (`main` to work against content that is not tagged yet). Publishing a version is
+`make -C trust publish-trust-data VERSION=<tag> …` — one commit on the dataset plus one tag —
+then a bump of `trust/.data_version`. Never add a versioned filename or directory to the dataset.

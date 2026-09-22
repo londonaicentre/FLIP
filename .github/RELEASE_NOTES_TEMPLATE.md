@@ -15,38 +15,39 @@
 
 ## :sparkles: Highlights
 
-- **FL frameworks move to current GA releases** — NVFLARE 2.8.0 → 2.9.0 (#1174, via the 2.8.1 interim in #1046) and Flower → 1.36.0 (#1175).
-- **Real Trust PACS support** (#994) — XNAT's DICOM receiver and web UI get separate host ports (`XNAT_PORT` / `XNAT_WEB_PORT`), the upstream PACS is configured per trust (`PACS_HOST` / `PACS_AETITLE` / `PACS_QR_PORT`, retrieval throttle, extended-negotiation flag), and imaging-api reads the PACS id from XNAT instead of assuming 1.
-- **Trust data: one copy, versions as tags** (#1101) — `aicentreflip/trust-data` holds every artefact once at an unversioned path; a data version is a git tag pinned by the single `trust/.data_version`. The new seed pipeline (`make -C trust seed-trusts PROJECTS=…`) loads any published project into a running trust by `source_trust`. OMOP mock-data generation is reproducible in-tree and gated against the published export (#1097), with the dataset tooling consolidated under `fl-tutorials/datasets/` (#1070).
-- **Terraform runs in CI** (#1082) — OIDC-authenticated plan on every PR touching `deploy/providers/AWS/**`, apply on merge (`develop` → stag, `main` → prod), nightly drift detection, plus a checkov security lint (#1057) and LZA-aligned CloudWatch retention (#1156).
-- **Per-trust FL privacy policy** (#853) — each trust enforces its own NVFLARE site-side `privacy.json`.
-- **Tabular-only projects** (#1129) — a project can opt out of the imaging stage (`has_imaging`), so EHR-only cohorts skip XNAT entirely.
-- **UI** — one Models page with a project filter and unified tables (#1014); consistent per-trust colours and sorted metrics plots (#1012); dependency scoping enforced in CI and Mirage no longer shipped (#1061).
-- **Dev experience** — a second dev hub on one host via `FLIP_INSTANCE` (#958); 13 local-setup blockers fixed across macOS, non-interactive runs and the K8s trust chart (#1010); the published FL images run with any host UID (#1172); SES is out of dev deployments (#1083).
+- **Authenticated encryption for every hub↔trust payload** (#1180) — AES-256-GCM in a versioned, key-id'd envelope, with the payload's purpose bound into the authentication tag, replacing unauthenticated AES-CBC. A tampered payload, a wrong key or a re-targeted task now fails closed instead of decrypting to plausible plaintext. **There is no CBC fallback** — see Breaking Changes.
+- **LZA-managed AWS estates** (#749, via #979, #1182, #1192) — `PROD=lza` / `PROD=lza-stag` deployment modes for Landing Zone Accelerator workload accounts, the web leg served from the internal NLB with static targets (no relay Lambda), and an LZA variant of the Central Hub diagrams and deploy pages.
+- **The trust node, in its shapes** (#1213, via #1214) — the Helm chart and the on-prem Ansible play move under `trust/deploy/` beside the compose files, leaving `deploy/providers/` as infrastructure provisioning only.
+- **OHIF viewer ships as a default XNAT plugin** (#1243, via #1244) in every deployment mode — compose, EC2, on-prem and Kubernetes — with the plugin roster pinned across `ensure_plugins.sh` and the Helm chart.
+- **FL apps are offline by contract** (#1206, #1208, via #1207, #1209) — nothing under `fl-apps/` or a tutorial's app directory may fetch weights at run time, weights ship as scanned uploads staged by `make -C fl-tutorials download-weights`, and every `torch.load` is pinned to `weights_only=True`. An AST guard in CI enforces both.
+- **Flower tutorials run on the flwr simulator** (#1159) with app code identical to the platform's — `make -C fl-tutorials sim-tutorial TUTORIAL=… FL_BACKEND=flower`, no containers, site identity from the run config.
+- **Federated EHR risk prediction** (#1068) — a T2DM MLP over OMOP tabular data on Synthea open data, on both backends, exercising the tabular-only (no-imaging) project path end to end.
+- **XNAT invites, not emailed passwords** (PT-079, via #977) — new trust users get a set-password link instead of a credential in an email, with enclave branding on the templates.
+- **September security review landed** (#1202) — enforcing CSP, an authenticated `GET /api/trust/health`, a real `BUNDLE_URL_ALLOWED_HOSTS` with resolved bundle hosts, a sign-out that discards the page's cache, a fork-PR image-build guard and a narrowed omop-db grant.
+- **CI proportional to the change** (#1223, #1254) — the service suites run only for the paths they cover on PRs into `develop`, with the full suite on PRs into `main`; and detect-secrets can now actually fail the build (#1215, via #1216).
 
 ## :warning: Breaking Changes
 
-- **Merging to `main` now applies production infrastructure** (#1082). The previous "don't `make apply` for prod" rule is superseded; the FL quiesce gate holds any apply that would replace `fl-server-net-1` / `fl-api-net-1` until re-dispatched with `fl_quiesced: true`.
-- **Trust-data layout** (#1101): the per-service `trust/omop-db/.data_version` and `trust/orthanc/.data_version` pins are replaced by one `trust/.data_version`, and the versioned filenames (`trust<N>_pgdata_<v>.tar`, `omop-csv/<v>/`) are no longer read — every consumer fetches `resolve/<tag>/<unversioned path>`. Trust hosts must run this release's scripts before the legacy files are removed from the dataset.
-- **XNAT ports** (#994): `XNAT_PORT` is now the DICOM SCP receiver port only; the host-published web UI port is the new `XNAT_WEB_PORT`, and the two must differ. Trust kit files need both.
-- **Flower apps require `config.json`** (#991, #1056): the hub no longer guesses a job type; a missing `config.json` fails loudly instead of defaulting to `standard`. Flower also needs `.toml` in `ALLOWED_MODEL_FILE_EXTENSIONS`.
-- **FL client image scope** (#954): each fl-client mounts only its own net's slice of the images tree; training code paths are unchanged, but host directories must be pre-created writable per net.
-- **NVFLARE 2.9.0** (#1174) carries upstream breaking changes for custom jobs; see the tutorial and template updates in that PR.
-- **Database migration** (#1129): flip-api adds the `has_imaging` column via Alembic; it runs at boot.
+- **AES-256-GCM is a flag day** (#1180). There is no compatibility with the pre-#1179 CBC format, so the hub and **every** trust registered to it must upgrade together: enable Deployment Mode, wait for FL to quiesce, then redeploy the hub and all trust services. `AES_KEY_BASE64` must decode to exactly **32 bytes** — a 16- or 24-byte key is now rejected rather than silently running AES-128/192 — and any mismatch surfaces as `Invalid payload: failed authentication` on every task.
+- **`MIN_CLIENTS` is removed** (#1230, via #1233 and #1235). The FL quorum is a property of a job, not of the federation: fl-api already writes the project's trust count into every job. Delete the line from kit and env files — a leftover is ignored. On stag/prod, dropping it from the fl-server task definitions is a task-definition revision, so the Terraform apply trips the FL quiesce gate (#770).
+- **Trust deployment paths moved** (#1214): `deploy/providers/kubernetes/` → `trust/deploy/helm/`, and `deploy/providers/local/site_local_trust.yml` → `trust/deploy/ansible/onprem.yml`. The `make` verbs (`deploy-trust-k8s`, `provision-local-trust`) are unchanged; anything referencing the old paths directly — operator scripts, CI filters, local checkouts — needs updating.
+- **`GET /api/trust/health` now requires authentication** (#1202). It previously returned every trust's id, name and online flag to any anonymous caller behind CloudFront. No FLIP consumer changes: the UI already polls it beside the authenticated `/trust`.
+- **flip-ui's Content-Security-Policy is enforcing, not report-only** (#417, via #1202), and gains `base-uri 'none'` + `form-action 'self'`. A deployment that relied on report-only tolerance will now see violations blocked.
+- **FL apps may not download at run time** (#1206, #1208). `pretrained=True`, torchvision weight enums, `torch.hub.load`, `from_pretrained("org/x")`, `load_state_dict_from_url`, MONAI bundle downloads and any `torch.load` without `weights_only=True` fail the guard inside `fl-apps/` and `fl-tutorials/**/app*/`. Operator-provided app templates need the same treatment; weights ship as uploaded files instead.
 
 ## :seedling: New Features
 
-- Real Trust PACS configuration and DQR (#994); tabular-only projects (#1129); per-trust FL privacy policy (#853).
-- Seed pipeline and tag-versioned trust data (#1101); reproducible OMOP mock-data provenance (#1097); shared `fl-tutorials/datasets/` tree (#1070).
-- One Models page (#1014); torch.jit-free MAP bundle form (#1020); second dev hub (#958); SES removed from dev (#1083); CloudWatch retention aligned with the LZA baseline (#1156).
-- Terraform plan/apply/drift in CI (#1082) with checkov lint (#1057).
+- LZA deployment modes and the internal-NLB web edge (#979, #1182); trust deployment layout under `trust/deploy/` (#1214); the OHIF viewer as a default XNAT plugin (#1244); XNAT set-password invites with enclave branding (#977).
+- Flower simulator parity for the tutorials (#1159); the federated EHR T2DM risk-prediction tutorial on both backends (#1068); hash-checked, offline weight staging via `make -C fl-tutorials download-weights` (#1207, #1209).
+- The project page's three cards fill the viewport (#1169).
+- Path-gated service test suites on PRs into `develop` (#1223, #1254) and enforced repo-wide secret scanning (#1216).
 
 ## :bug: Bug Fixes
 
-- **Security**: any authenticated user could read any user's full profile (#943); `callback_urls` is the live CORS allowlist and prod included localhost (#1088); cloud trust EC2 kit fetch — KMS grant, silent no-op and cross-trust key exposure (#1009); the app bundle is now an allowlist, shipping only the app folders plus the backend's root file (#1008).
-- **Trust / imaging**: cohort downloads cached server-side and each FL client scoped to its own net (#954); XNAT dcm2niix pinned to a stale build that silently dropped slices (#981); imaging import status going stale after a failed refresh (#1023); dcm2niix command mismatch mis-reported as a missing plugin (#1094); XNAT bind mounts provisioned as the container uid (#1096); fl-client kit volume ignoring `flBackend` (#1000); soft-deleting a project no longer tries to delete trust imaging (#964).
-- **FL / images**: published NVFLARE images crash-looped unless the host UID was 1000 (#1172); `FLIP_Session` narrowing its NVFLARE base signature (#1034); single-trust hang and job-type guessing (#991); spleen downloader picking cases lexicographically (#1062); spleen enrichment no longer depends on a private repo (#955); `.data_version` path after the datasets move (#1103).
-- **Hub / UI**: first login after MFA enrolment failing for up to 60 s (#1016); metrics plot colours (#1012); flip-ui dependency scoping (#1061) and the typecheck regression (#1076); trust-api `.dockerignore` (#1004); local dev setup blockers (#1010); Ark+ demo re-capture (#1029).
+- **Security**: blind SSRF into the admin-authenticated XNAT API via `accession_id` (#1137); the September hardening set in #1202 — enforcing CSP (#417), authenticated trust health, the session cache surviving sign-out into the next account's tab (#995), bundle hosts resolved and held to the allow-list (#905), a fork-PR image-build guard (#882), an exception-text sweep (#906) and a narrowed omop-db read grant (#904); run-directory checkpoints loaded with `weights_only=True` (#1245, via #1246).
+- **Trust / imaging**: multi-series cohorts queued and counted each study once per row instead of once per series (#1124); a rotated `xnat-db` password never reaching an already-initialised volume (#1072); `xnat-web` located by swarm label rather than a name substring (#1210, via #1211).
+- **FL / tutorials**: the latent-diffusion tutorial aborting when a finished controller answered a sibling's round (#1178); the Flower simulator returning 0 whatever became of the run, and silently reusing a SuperLink left behind by another checkout (#1249, via #1250); `MIN_CLIENTS` rendering as `""` on a fresh clone (#1230, via #1233).
+- **CI**: imaging-api's env-file step that nothing read (#1255).
 
 ## :file_folder: PRs merged in this release
 

@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import shutil
 import sys
 import tarfile
 import time
@@ -137,26 +138,43 @@ def fetch_image_occurrence(revision: str, project: str, cache_dir: Path) -> list
         return list(csv.DictReader(handle))
 
 
-def ensure_dicoms(revision: str, project: str, cache_dir: Path) -> Path:
+def ensure_dicoms(revision: str, project: str, cache_dir: Path, attempts: int = 3) -> Path:
     """Stream ``dicom/<project>.tar.gz`` at ``revision`` into the cache once; return the project directory.
 
     The cache is keyed by revision (``<cache_dir>/<revision>/<project>/``), so a bump never reuses
     the previous version's instances. Extracts as it downloads (no 2× disk, no waiting for the whole
     archive), and marks completion with a file so a run interrupted mid-extract is redone rather
     than trusted.
+
+    Retried, because this is a ~2 GB stream over the public internet and an ``IncompleteRead``
+    part-way through is a real occurrence: only the Kubernetes hook has a Job ``backoffLimit``
+    behind it, so on a dev host and on the EC2 play a single transient fault would otherwise fail
+    the whole bring-up and cost the operator the entire stream again.
     """
     project_dir = cache_dir / revision / project
     if (project_dir / COMPLETE_MARKER).is_file():
         return project_dir
     url = hf_url(revision, f"dicom/{project}.tar.gz")
     print(f"📦 {project}: streaming {url} into {project_dir}", flush=True)
-    project_dir.mkdir(parents=True, exist_ok=True)
-    with requests.get(url, stream=True, timeout=300) as response:
-        response.raise_for_status()
-        with tarfile.open(fileobj=response.raw, mode="r|gz") as tar:
-            tar.extractall(project_dir, filter="data")
-    (project_dir / COMPLETE_MARKER).write_text(f"{url}\n")
-    return project_dir
+    for attempt in range(1, attempts + 1):
+        # Whatever a cut-short attempt extracted goes, so the next one starts on an empty
+        # directory rather than over half a tree; the marker is what makes that safe to do.
+        shutil.rmtree(project_dir, ignore_errors=True)
+        project_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            with requests.get(url, stream=True, timeout=300) as response:
+                response.raise_for_status()
+                with tarfile.open(fileobj=response.raw, mode="r|gz") as tar:
+                    tar.extractall(project_dir, filter="data")
+        except (requests.RequestException, tarfile.TarError, EOFError, OSError) as error:
+            if attempt == attempts:
+                raise
+            print(f"   retry {attempt}/{attempts} after {type(error).__name__}: {error}", flush=True)
+            time.sleep(attempt * 5)
+            continue
+        (project_dir / COMPLETE_MARKER).write_text(f"{url}\n")
+        return project_dir
+    raise AssertionError("unreachable")
 
 
 def upload_instance(session: requests.Session, orthanc_url: str, data: bytes, attempts: int = 3) -> str:

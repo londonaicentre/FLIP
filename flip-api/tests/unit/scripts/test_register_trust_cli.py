@@ -62,8 +62,8 @@ def test_registers_new_trust_and_returns_one_kit(monkeypatch, session):
     assert len(kits) == 1
     kit = kits[0]
     assert kit["trust_name"] == "Open Trust (EC2)"
-    assert kit["trust_api_key"] == "plain-api-Open Trust (EC2)"
-    assert kit["trust_internal_service_key"] == "plain-internal-Open Trust (EC2)"
+    assert kit["trust_api_key"] == "plain-api-Open Trust (EC2)"  # pragma: allowlist secret
+    assert kit["trust_internal_service_key"] == "plain-internal-Open Trust (EC2)"  # pragma: allowlist secret
     assert kit["fl_kit_slot"] == "Trust_007"
     assert kit["fl_kit_slot_number"] == 7
     assert set(kit) == {
@@ -190,7 +190,7 @@ def test_main_happy_path_prints_kit_json(monkeypatch, capsys):
                 "trust_id": "tid",
                 "trust_name": name,
                 "trust_api_key": "k",
-                "trust_internal_service_key": "ik",
+                "trust_internal_service_key": "ik",  # pragma: allowlist secret
                 "fl_kit_slot": "Trust_001",
                 "fl_kit_slot_number": 1,
             }
@@ -322,7 +322,7 @@ def test_kit_dict_includes_hub_shared_block_from_env(monkeypatch, session):
     env = {
         "AES_KEY_BASE64": "Zm9vYmFy",
         "CENTRAL_HUB_API_URL": "https://hub.example/api",
-        "TRUST_API_KEY_HEADER": "Authorization",
+        "TRUST_API_KEY_HEADER": "Authorization",  # pragma: allowlist secret
         "FL_BACKEND": "flower",
         "FLOWER_KIT_DATE": "20260401",
         "FLARE_KIT_DATE": "20260318",

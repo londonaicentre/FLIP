@@ -29,6 +29,13 @@ services:
     environment:
       - DEBUG=${DEBUG}
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
+      # Host allow-list for the server-side bundle fetch (FLIP#905): the only host the FL API
+      # may download an app bundle from. flip-api pins AWS_ENDPOINT_URL_S3 to the regional
+      # endpoint (see its service block), which makes boto3 presign PATH-STYLE URLs — host
+      # exactly s3.<region>.amazonaws.com, bucket in the path — so the same AWS_REGION derives
+      # the one host to admit. The two lines must move together, or every bundle download 400s.
+      # `:?` mirrors flip-api's guard so a missing region fails at `up`, not at the first run.
+      - BUNDLE_URL_ALLOWED_HOSTS=s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app/src
@@ -63,6 +70,8 @@ services:
     environment:
       - DEBUG=${DEBUG}
       - SUPERLINK_ADDRESS=fl-server-net-2:9093
+      # Bundle-fetch host allow-list, derived from AWS_REGION like fl-api-net-1 (FLIP#905).
+      - BUNDLE_URL_ALLOWED_HOSTS=s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-2:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app/src

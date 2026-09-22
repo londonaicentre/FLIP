@@ -269,7 +269,7 @@ awscli() {
 }
 
 if ! awscli sts get-caller-identity >/dev/null 2>&1; then
-    die "Could not authenticate with AWS profile '${AWS_PROFILE_ARG}'. Run 'aws sso login --profile ${AWS_PROFILE_ARG}' and retry. (Per CLAUDE.md, production access uses AWS SSO under profile 'prod'.)"
+    die "Could not authenticate with AWS profile '${AWS_PROFILE_ARG}'. Run 'aws sso login --profile ${AWS_PROFILE_ARG}' and retry. (Per AGENTS.md, production access uses AWS SSO under profile 'prod'.)"
 fi
 
 log "Authenticated as: $(awscli sts get-caller-identity --query Arn --output text)"

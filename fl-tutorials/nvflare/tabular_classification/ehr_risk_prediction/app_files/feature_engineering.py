@@ -42,8 +42,8 @@ def select_features(
     """Project the cohort dataframe onto the configured feature/label columns.
 
     Args:
-        dataframe (pd.DataFrame): The cohort dataframe. Extra columns (``accession_id``,
-            ``person_id``) are simply not selected.
+        dataframe (pd.DataFrame): The cohort dataframe. Extra columns (``person_id``) are
+            simply not selected.
         feature_columns (list[str]): Ordered feature column names (``config.json``'s
             ``FEATURES`` — the order defines the model's input layout).
         label_column (str): The binary label column.

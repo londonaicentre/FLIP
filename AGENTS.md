@@ -36,7 +36,19 @@ FLIP/
 └── scripts/            # Utility scripts (incl. check-fl-provisioned.sh — the `make up` FL-kit guard)
 ```
 
-Service-specific details are in `flip-api/AGENTS.md`, `trust/AGENTS.md`, `trust/*/AGENTS.md`, and `deploy/providers/AWS/AGENTS.md`.
+Detail lives with the code it describes. This file keeps what is true across the repo; each tree's own
+`AGENTS.md` carries the rest:
+
+| File | Covers |
+|------|--------|
+| `flip-api/AGENTS.md` | Hub service layout, migrations, the e2e smoke harness, the demo recorder, hub env vars (auth, email, model-file scanning) |
+| `trust/AGENTS.md` | Trust stack, kit files, trust data + seeding, XNAT/PACS env vars, trust-internal service auth |
+| `trust/*/AGENTS.md` | Per-service detail (trust-api, imaging-api, data-access-api, omop-db) |
+| `deploy/AGENTS.md` | Compose layer and the multi-instance knobs (`FLIP_INSTANCE`, `MAIN_ENV_FILE`, `DB_PORT`) |
+| `deploy/providers/AWS/AGENTS.md` | Terraform, the CI plan/apply/drift flow, image tags and deploys |
+| `fl-services/AGENTS.md` | FL images, provisioning, `FL_*` env vars |
+| `fl-tutorials/AGENTS.md` | Tutorials and the shared dataset tooling |
+| `docs/AGENTS.md` | Sphinx docs index and build |
 
 The `flip-utils/`, `fl-services/`, `fl-apps/`, and `fl-tutorials/` trees hold the FL base library, Docker services,
 app templates, and tutorials for both NVFLARE and Flower. Both
@@ -130,158 +142,28 @@ make local_test            # Tests without Docker
 
 ### End-to-End Smoke Test
 
-`make e2e_smoke` (from root) drives a full project lifecycle against an **already-running stack**: create project → submit cohort query → wait for image pull → run FL training → download results. It is the scripted form of the manual UI sanity-check and is **not run in CI**. Long-running (image pull + FL training) — run it in the background.
-
-Prerequisites:
-- Stack up via `make up` (central hub + trusts + XNAT) with trusts registered; Orthanc PACS seeded with DICOM data so image pull has something to pull.
-- The tutorial files are in-tree at `fl-tutorials/<backend>/` (NVFLARE and Flower both migrated from the legacy fl-base repos).
-
-Defaults track `FL_BACKEND` (default `nvflare`): `MODEL_FILES_DIR` and `QUERY_FILE` point at `fl-tutorials/nvflare/image_classification/xray_classification/`. For Flower, they point at the in-tree `fl-tutorials/flower/xray_classification/`. Common overrides:
+`make e2e_smoke` (from root) drives a full project lifecycle against an **already-running stack**:
+create project → submit cohort query → wait for image pull → run FL training → download results. It
+is the scripted form of the manual UI sanity-check, is **not run in CI**, and is long-running — run
+it in the background.
 
 ```bash
-make e2e_smoke FL_BACKEND=flower                               # use the Flower tutorial
-make e2e_smoke MODEL_FILES_DIR=/path/app QUERY_FILE=/path/q.sql
-make e2e_smoke EXTRA_ARGS="--abort-midway"                     # exercise the FL stop-training path
-make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5 --image-pull-timeout 1200"
-make e2e_smoke EXTRA_ARGS="--project-id <UUID>"               # reuse an approved project (see below)
-make e2e_smoke EXTRA_ARGS="--trusts GSTT"                     # subset of trusts (codes/names, comma-separated);
-                                                              # a registered-but-offline trust no longer blocks the run
+make e2e_smoke                                  # defaults track FL_BACKEND (default nvflare)
+make e2e_smoke FL_BACKEND=flower
+make e2e_smoke EXTRA_ARGS="--project-id <UUID>" # reuse an approved project, skip the ~6 min re-pull
+make e2e_smoke EXTRA_ARGS="--no-imaging"        # tabular-only project (has_imaging=false, FLIP#1071)
 ```
 
-The `--project-id <UUID>` override (printed as `project_id=<UUID>` at the start of any run) reuses an
-existing approved project: it skips cohort submission + approval and jumps straight to model
-create → upload → train → download. The image-pull wait still runs but returns immediately when the
-studies are already pulled — so it lets you iterate on training/app code (and re-run after an upload
-or fl-api change) without re-creating the project and re-pulling DICOM (~6 min/backend) each time.
+The spleen tutorials additionally need a **data-enrichment** step (label upload to XNAT) between the
+image pull and training; `make -C flip-api e2e_smoke_spleen` carries it. Full flag reference, the
+enrichment contract, the `$`-escaping trap, smoking a remote (stag / prod / LZA) hub and the
+both-backends switch: [`flip-api/AGENTS.md`](flip-api/AGENTS.md#end-to-end-smoke-test).
 
-**Smoking the spleen segmentation app requires a data-enrichment step (it needs labels).** *Data enrichment*
-is the platform stage where a model developer adds whatever an app needs on top of the pulled imaging data in
-XNAT (`docs/source/user-guides/user-data-enrichment.rst` — a project cannot start training until enrichment is
-confirmed complete, even when nothing was added).
-
-**Which supervised apps need it:** only those whose labels are **not in OMOP**. A segmentation mask is a 3D
-volume with nowhere to live in the cohort query, so the spleen apps
-(`fl-tutorials/<backend>/3d_spleen_segmentation*`) pair each converted `input_*.nii.gz` with a sibling
-`label_*.nii.gz` that has to be uploaded to XNAT. The xray classification tutorial is the counter-example: its
-labels *are* in OMOP, projected as dataframe columns by `query.sql` (`image_feature` → `observation`), and it
-needs no enrichment. Skip a required enrichment and the smoke pulls, converts, starts training and then fails
-with `No image/label pairs found: N image(s) …, none with a matching label_*.nii.gz` — which names the actual
-cause. (Older app copies die with torch's opaque `num_samples=0` instead.)
-
-`e2e_smoke` has a hook for exactly this: `--data-enrichment-cwd` + `--data-enrichment-cmd` run a shell command
-**between the image pull and training**, with `FLIP_PROJECT_ID` exported. Since FLIP#776 the spleen uploader is
-in-tree at `fl-tutorials/datasets/spleen/upload_spleen_labels_to_xnat.py` (the shared dataset-tooling tree)
-— **no private repo required**. It resolves each trust's XNAT project by `secondary_ID == <FLIP project_id>`,
-fetches the accession→MSD-case mapping at run time from the public `aicentreflip/trust-data` dataset
-(`omop-csv/spleen_project/image_occurrence.csv` at the pinned data-version tag, which also carries `source_trust`), and writes each
-label into the scan's existing `NIFTI` resource, renaming `input_` → `label_`. The XNAT protocol work lives in
-`flip.xnat` (`flip-utils/flip/xnat/`), also exposed as the `flip-xnat` CLI.
-
-**Enrich every trust, not one.** Each trust's XNAT holds only its own studies, so a trust left without
-labels takes the run down at the zero-pairs guard. One invocation covers the roster: pass a
-space-separated `XNAT_URLS` (credentials from `XNAT_USER`/`XNAT_PASS`) or repeat `XNAT_CREDENTIALS_FILES`
-for per-trust logins. The whole mapping goes to every server and each ignores the others' studies, so no
-per-trust splitting is needed. A run that resolves **no** destination anywhere now exits non-zero, so the
-smoke can no longer walk past a wholly-skipped enrichment into a doomed training run (`--allow-no-op`
-opts out). `TRUST=N` filters by the OMOP `source_trust` column (1=GSTT, 2=KCH) and is rarely needed —
-note that is the OMOP partition, **not** the FL kit slot of the same `Trust_N` name.
-
-Prereqs: `make -C fl-tutorials download-spleen-data NUM_CASES=41` (a smaller download enriches only part
-of the cohort — the command warns, naming the missing cases) and `XNAT_USER`/`XNAT_PASS`. Standalone,
-outside the smoke:
-
-```bash
-make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid> \
-  XNAT_URLS="http://127.0.0.1:8105 http://127.0.0.1:8107" DRY_RUN=1   # then drop DRY_RUN
-```
-
-The mapping is cached beside the labels dir (so a re-run needs no huggingface.co egress) and
-`HF_TRUST_DATA_REVISION=<sha|main>` overrides the dataset revision, which defaults to the tag in
-`trust/.data_version`. The uploader speaks REST to XNAT, so those URLs carry each trust's
-**`XNAT_WEB_PORT`** — 8105 (GSTT) and 8107 (KCH) since the FLIP#993 split, not 8104/8106, which are
-now the DICOM SCP receiver ports. Dialling the old numbers reaches a DIMSE listener and hangs rather
-than refusing the connection.
-
-Through the smoke, `make -C flip-api e2e_smoke_spleen` (or `e2e_smoke_spleen_evaluation`) carries the
-in-tree command already, targeting both dev trusts via `SPLEEN_XNAT_URLS` (override for another roster;
-`SPLEEN_LABELS_DIR` likewise). The enrichment flags ride in `ENRICHMENT_ARGS`, deliberately *not*
-`EXTRA_ARGS` — a command-line variable beats a target-specific one, so folding them together made
-`make e2e_smoke_spleen EXTRA_ARGS="--project-id <uuid>"` silently skip enrichment. To invoke it directly
-instead:
-
-```bash
-cd flip-api && uv run python -m tests.e2e_smoke \
-  --model-files-dir ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/app_files \
-  --query-file ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql \
-  --data-enrichment-cwd ../fl-tutorials/datasets/spleen \
-  --data-enrichment-cmd 'uv run --no-project --with ../../../flip-utils python upload_spleen_labels_to_xnat.py --flip-project-id "$FLIP_PROJECT_ID" --labels-dir ../../data/spleen/images --xnat-url http://127.0.0.1:8105 --xnat-url http://127.0.0.1:8107'
-```
-
-(The `$`-escaping trap still applies to any hand-written `EXTRA_ARGS`: `make -C flip-api …` expands once, so
-`$$FLIP_PROJECT_ID` survives; the **root** `make e2e_smoke` re-expands through a second make and shell, so no
-`$`-escape survives it — `$$` lands empty and `$$$$` injects the recipe shell's PID. Pass the id literally
-there. The in-Makefile targets handle this for you. Note that `e2e_smoke_spleen` uploads the **Flower**
-tutorial (`../fl-tutorials/flower/3d_spleen_segmentation/{app,query.sql}`), not the NVFLARE paths shown in the
-direct-invocation example above — pair it with `FL_BACKEND=flower`, or invoke `tests.e2e_smoke` directly with
-the NVFLARE paths for the NVFLARE tutorial. The enrichment step itself is backend-agnostic and runs out of the
-shared `fl-tutorials/datasets/spleen/` tree either way.)
-
-Enrichment must land **after** the pull and after DICOM→NIfTI conversion; the hook's position guarantees that.
-The uploader derives each target filename from the converted `input_*.nii.gz`, so with no `NIFTI` resource it
-skips every scan (reported as *skipped (no image in resource)*) — i.e. a broken XNAT Container Service surfaces
-as "no labels".
-
-**Smoking a REMOTE hub (stag / prod / an LZA account).** The smoke's base URL is `flip_api.utils.constants.BASE_URL`,
-which defaults to `http://localhost:8080/api` — the *local dev hub* — unless `FLIP_E2E_BASE_URL` is set; forgetting it
-hands your remote token to the dev hub, which answers `500 Internal server error during authentication`, and nothing on
-the remote hub logs a request. Remote hubs enforce MFA, so the Cognito password flow is out: pass a pre-obtained bearer
-as `FLIP_E2E_TOKEN` (the Cognito **AccessToken** of a TOTP-enrolled admin) plus `FLIP_E2E_REFRESH_TOKEN` so the smoke
-can renew it across a long training run. The module also imports flip-api `Settings`, whose dev class requires
-`POSTGRES_PASSWORD` even though the smoke never opens the database — export any dummy value on an LZA env, which has
-none (IAM DB auth). Run it through the root target so `PROD` selects the env file:
-`FLIP_E2E_BASE_URL=https://<edge>/api FLIP_E2E_TOKEN=… FLIP_E2E_REFRESH_TOKEN=… POSTGRES_PASSWORD=x make e2e_smoke_ehr PROD=lza-stag FL_BACKEND=nvflare EXTRA_ARGS="--trusts <CODE>"`.
-
-**Tabular-only projects (no imaging stage — FLIP#1071).** A project created with "Includes imaging data"
-off (`has_imaging=false`, creation-time and immutable like `dicom_to_nifti`) is approved without the
-CREATE_IMAGING fan-out: no XNAT project, no accession-ids call, no pull, and `GET /projects/{id}/image/status`
-returns `200 []`. The EHR risk-prediction tutorials are the first such cohort: `make e2e_smoke_ehr [FL_BACKEND=flower]`
-(root or `-C flip-api`) picks that tutorial for the backend and pins `--no-imaging`, which creates the project
-with the flag off and skips the image-pull wait (the smoke reads `has_imaging` back off the project, so
-`--project-id` reuse honours it too; `make e2e_smoke EXTRA_ARGS="--no-imaging"` is the generic form). The flag
-rides in `TARGET_ARGS`, a third recipe slot placed between `ENRICHMENT_ARGS` and `EXTRA_ARGS`, for the same reason
-enrichment does not use `EXTRA_ARGS`. Prereq on the dev stack: `make -C trust load-synthea-ehr` on every trust
-(TRUST_INDEX=1 OMOP_DB_PORT=5434, TRUST_INDEX=2 OMOP_DB_PORT=5436), then restart both data-access-apis if the
-EHR query was ever submitted before the load (results are cached by query text). Imaging projects
-get fast feedback instead: submitting a cohort whose explicit SELECT list
-has no `accession_id` column is a 400 at submission (hub pre-check, not a security control — `SELECT *` passes
-through to the trust's authoritative check).
-
-**Testing a change on BOTH FL backends in one sitting (the backend switch).** The pulled DICOM lives in
-each trust's Orthanc/XNAT, which `make restart-fl` leaves untouched — so you can pull once on the first
-backend and *reuse the same project* for the second, skipping the second image pull entirely:
-
-```bash
-# 0. Rebuild the fl-api image(s) from your branch first — the running stack serves PUBLISHED images,
-#    not your code. Full: `make build-fl FL_BACKEND=<backend>`; fl-api-only fast path:
-#    DOCKER_GID=$(id -g) docker compose -f fl-services/<backend>/compose.dev.yml build <fl-api|flip-fl-api>
-make e2e_smoke FL_BACKEND=flower                                          # note the printed project_id=<UUID>
-make restart-fl FL_BACKEND=nvflare DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev  # switch backend onto rebuilt :dev images
-make e2e_smoke FL_BACKEND=nvflare EXTRA_ARGS="--project-id <UUID>"        # reuse project → skip cohort + re-pull
-```
-
-Before trusting either run, confirm the live container actually carries your code (the stack silently
-runs old images otherwise): `docker exec deploy-fl-api-net-1-1 cat fl_api/utils/upload.py`
-(the compose SERVICE name — dev containers set no `container_name`, so they are named by the project). See
-[Running FL Tutorials Locally](#running-fl-tutorials-locally) for `make build-fl` / `:dev` image details.
+Tabular-only cohorts (`has_imaging=false`, FLIP#1071) skip the imaging stage entirely; the EHR
+risk-prediction tutorials are the first such cohort and have their own target,
+`make e2e_smoke_ehr [FL_BACKEND=flower]`, which pins `--no-imaging` for you.
 
 ### Running FL Tutorials Locally
-
-The NVFLARE tutorials live in `fl-tutorials/` and are all **Client-API** apps (the legacy Executor
-tutorials, templates and their Docker `testing/` harness are removed; the pre-rename `*_client_api`
-job-type names survive only as accepted aliases for models created before the rename). Each tutorial carries a `.env.app` and a `job.py` driving a FLIP recipe;
-`make run` delegates to `make sim`, which runs the NVFLARE simulator (SimEnv) in the flip-utils venv
-with the `full` ML extra (needs a GPU; per-tutorial `make export` builds the full job config with no
-GPU). From the repo root:
 
 ```bash
 make -C fl-tutorials list-tutorials
@@ -289,53 +171,17 @@ make -C fl-tutorials download-xray-data                  # xray dataset (HF); sp
 make -C fl-tutorials download-arkplus-finetuning-data    # Ark+ TRAIN splits (HF, ~6.3 GB): arkplus_fine_tuning
 make -C fl-tutorials download-arkplus-eval-data          # Ark+ HOLD-OUT splits (HF, ~1.6 GB): the two arkplus evaluation tutorials
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
-make -C fl-tutorials run-all-tutorials                   # every tutorial (heavy; stops on first failure)
 make -C fl-tutorials sim-tutorial TUTORIAL=xray_classification FL_BACKEND=flower   # simulator, no containers
+make -C fl-tutorials test                                # ruff + the CPU-only transform-chain suite
 ```
 
-`sim-tutorial` means "no containers" on both backends. On NVFLARE it is an alias for
-`run-tutorial`, which already runs the simulator; on Flower it runs `flwr run` in-process
-(no SuperLink, no SuperNodes, no fl-api, no Docker) where `run-tutorial` brings up the
-standalone compose stack. The app code is identical either way — site identity comes from
-`context.node_config`'s `partition-id`, falling back to the `SUPERNODE_NAME` a container sets
-(`flip.flower.identity`). Under `LOCAL_DEV` both paths hand every client the same
-`DEV_DATAFRAME`, so `partition_cohort` slices it per site; deployed, each trust's
-data-access-api already serves its own cohort and no partitioning happens. The one thing the
-Flower simulator supplies in place of fl-api's submit step is the evaluation tutorial's
-checkpoint: `sim-tutorial.sh` passes `--run-config` pointing `flip-job-dir` at
-`fl-tutorials/data/model_checkpoints` (fetched by `download-spleen-checkpoint`, part of
-`download-spleen-data`) and `checkpoint` at `model.pt`, so
-`make -C fl-tutorials sim-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower`
-runs unchanged app code too.
-
-To iterate on the FL images, `make build-fl` builds them locally as `:dev` (see `fl-services/nvflare/README.md`);
-run the stack on them with `make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`.
-
-The tutorials' mock OMOP data is generated in-tree, per dataset, under `fl-tutorials/datasets/`
-(FLIP#1092). Each project is reproducible without root from a pinned published metadata table and
-verified against the published export by one shared gate
-(`datasets/utils/verify_omop_tables.py --project <name>`):
-
-```bash
-make -C fl-tutorials reproduce-spleen-omop          # fetch -> build -> verify, chained
-make -C fl-tutorials reproduce-cxr-omop             # same three for cxr_project
-make -C fl-tutorials fetch-spleen-metadata-table    # or step by step: pinned metadata table
-make -C fl-tutorials build-spleen-omop-tables       # -> omop/<trust>/spleen_project/*.csv
-make -C fl-tutorials verify-spleen-omop-tables      # diff against the published export
-make -C fl-tutorials convert-spleen-to-dicom        # spleen-only full regeneration (workstation/root)
-make -C fl-tutorials create-spleen-metadata-table   # spleen-only full regeneration
-```
-
-**Scope differs per dataset, and it is not an oversight.** Spleen carries the whole chain from the
-public MSD download. **cxr carries only the OMOP conversion** — the synthetic chest X-rays, their
-DICOM write and their metadata extraction live in the private `londonaicentre/xraycat` repo, so the
-in-tree provenance chain starts at the published metadata table. Neither regeneration path
-reproduces the published export byte-for-byte anyway (spleen re-synthesises patient identities on
-every run), which is why the gate's fixed input is the published metadata table rather than the
-images.
-
-See `fl-tutorials/datasets/README.md` ("OMOP mock-data generation") for both chains, the shared
-contract in `datasets/utils/`, and the `download-spleen-msd-raw` regeneration-path first step.
+`make run` delegates to `make sim` (NVFLARE simulator, needs a GPU; per-tutorial `make export` builds
+the job config without one). `sim-tutorial` means "no containers" on both backends — an alias for
+`run-tutorial` on NVFLARE, a `flwr run` against a SuperLink flwr starts itself on Flower. Mock OMOP
+data is generated in-tree per dataset under `fl-tutorials/datasets/`. Tutorial layout, the simulator
+paths, the dataset regeneration chains and their verification gate:
+[`fl-tutorials/AGENTS.md`](fl-tutorials/AGENTS.md). FL image building (`make build-fl`, the `:dev`
+tag): [`fl-services/AGENTS.md`](fl-services/AGENTS.md).
 
 ### Linting & Type Checking
 
@@ -372,53 +218,18 @@ make -C trust seed-trusts PROJECTS="spleen_project cxr_project"   # Seed the RUN
 make -C trust seed KIT=GSTT PROJECTS="…"   # one trust; seed-omop / seed-orthanc for one half
 ```
 
-**Trust data has two paths.** `make up` mounts pre-built snapshots (`update-omop-data` /
-`update-orthanc-data`, pinned by `trust/.data_version`) — a fixed two-project, two-trust cut.
-**Seeding** loads a chosen set of projects into a *running* trust instead: OMOP rows via
-`omop_db_tools.import_tables` and DICOMs via `trust/orthanc/seed_orthanc.py`, both selected by the
-same `source_trust` column of the published canonical tables, so a trust's OMOP rows and the studies
-in its PACS agree by construction. Same lifecycle as `load-omop-vocab`: one-time after `up-trusts`,
-idempotent, persists in the bind-mounted volumes until a `.data_version` bump — which the update
-scripts then refuse to apply over a seeded volume without `FORCE=1`. Adding a dataset means
-publishing its `omop-csv/<project>/` tables and `dicom/<project>.tar.gz`
-(`trust/orthanc/publish_dicom.py` verifies both agree before packaging), not a new pair of tarballs.
-The FL simulator (`make -C fl-tutorials run-tutorial`) is a third, separate path: LOCAL_DEV reads
-`fl-tutorials/data/` straight from disk and touches no trust service.
-
-**One copy of every artefact; a data version is a git tag.** `aicentreflip/trust-data` holds each
-file once, at an unversioned path on `main` (`trust<N>/trust<N>_pgdata.tar`,
-`trust<N>/trust<N>_orthanc_data.tar`, `omop-csv/<project>/`, `dicom/<project>.tar.gz`). A data
-version is a tag on that dataset, and `trust/.data_version` is the ONE pin, for OMOP and Orthanc
-together: every consumer (the two update scripts, `omop_db_tools.dataset`, `seed_orthanc.py`, the
-spleen uploader, Ansible, the Helm chart) fetches `resolve/<tag>/<path>`, so old versions stay
-reachable at their tags forever and are never duplicated. `HF_TRUST_DATA_REVISION` overrides the
-tag (`main` to work against content that is not tagged yet). Publishing a version is
-`make -C trust publish-trust-data VERSION=<tag> …` — one commit on the dataset plus one tag —
-then a bump of `trust/.data_version`. Never add a versioned filename or directory to the dataset.
+**Trust data has one path — seeding (FLIP#1101/#1187).** `make up` starts each trust's omop-db and
+Orthanc on empty volumes and then seeds them from the published canonical tables at the version
+pinned in `trust/.data_version` — the one pin for OMOP and Orthanc together, a data version being a
+git tag on `aicentreflip/trust-data`. The seed markers, what re-seeds, and the publishing rule:
+[`trust/AGENTS.md`](trust/AGENTS.md#trust-data-seeding-and-versioning).
 
 ### Demo Video Recorder
 
-`make demo-video` records the full end-to-end walkthrough (researcher creates project + cohort → admin checks
-Connection Status, stages + approves → XNAT/OHIF DICOM view at a trust → model + app upload → training → results
-download) against the **live dev stack** and assembles one mp4. Local dev tool, not run in CI. Six Cypress segments
-(`flip-ui/test/cypress/demo/`, config `flip-ui/cypress.demo.config.ts` — a live-wired fork of the docs-GIF harness
-with a `demoCaption` subtitle verb) run in Docker (`cypress/included`, `--network host`); the slow platform waits
-(cohort responses, ~6 min imaging import, FL training) happen **off-camera** between segments via
-`flip-api/tests/demo_video.py`, which reuses `tests/e2e_smoke.py`'s wait functions and finally calls
-`flip-ui/scripts/assemble-demo-video.sh` (same crop constants as `videos-to-gifs.sh`). Prerequisites: stack up,
-live AWS SSO session, and ideally the demo Cognito users — `make demo-users` (reads `DEMO_RESEARCHER_PASSWORD` /
-`DEMO_ADMIN_PASSWORD` from env, never committed) then restart flip-api so seeding grants their roles; without them
-the recorder falls back to the well-known admin for both parts. Useful `DEMO_ARGS`: `--app ehr` (record the tabular EHR
-risk-prediction tutorial: the project is created with imaging off and the XNAT segment is skipped), `--app spleen` (record the 3D
-spleen segmentation tutorial instead of chest X-ray; pair with `--data-enrichment-cwd/-cmd` for the off-camera
-label upload, same contract as `e2e_smoke`), `--publish-segmentations` (republish those NIfTI labels as DICOM-SEG
-ROI collections via `flip-api/tests/xnat_seg_upload.py` so segment 3 shows the segmentation overlaid in OHIF —
-dcmqi in Docker for the conversion, the viewer's own `PUT /xapi/roi/…?type=SEG` for the upload; `--seg-limit`
-caps how many sessions per trust are converted), `--skip-xnat`, `--project-id <uuid> --from-segment <n>` (iterate
-on later segments without re-running the pull), `--trusts GSTT`, `--fl-backend flower`, `--video-scale 1` (fast
-drafts; the default 3 renders the browser at 3× device pixels so the 1280x800 viewport is captured at 3840x2400 —
-4K-class). Segment mp4s + the final video land under `flip-ui/test/cypress/demo/` (gitignored). The final mp4 is
-named for the recorded app (`flip-demo-xray.mp4` / `flip-demo-spleen.mp4`).
+`make demo-video` records the full end-to-end walkthrough against the **live dev stack** and
+assembles one mp4 (local dev tool, not run in CI; Cypress segments plus off-camera platform waits).
+Prerequisites, the `DEMO_ARGS` flags and the demo Cognito users:
+[`flip-api/AGENTS.md`](flip-api/AGENTS.md#demo-video-recorder).
 
 ### Database migrations (flip-api)
 
@@ -499,7 +310,7 @@ After changes, evaluate if docs need updating:
 | FL framework features | `docs/source/components/component-fl-nets.rst` |
 | Trust service changes | `trust/README.md`, relevant `trust/*/README.md`, `docs/source/components/component-trust-apis.rst` |
 | Auth/role changes | `docs/source/sys-admin/admin-user-roles.rst` |
-| Agent instructions (this file's `CLAUDE`/`AGENTS` pair, at any level) | Both members of the pair, in the same PR: every `CLAUDE`-named instructions file has an `AGENTS`-named mirror in the same directory — an exact copy with only the file name substituted (title + cross-references). Edit the `CLAUDE`-named file, then regenerate its twin from it with `sed 's/CLAUDE\.md/AGENTS.md/g'`; never edit the `AGENTS`-named twin directly. |
+| Agent instructions (this file, at any level) | Edit it directly. `AGENTS.md` is the cross-tool standard and is the only copy: there is no `CLAUDE.md` beside it any more, at any level, neither as a file nor as a symlink — do not reintroduce one. Claude Code reads `AGENTS.md` only from version 2.1.277 onward and only in a project with no CLAUDE-named file of its own, so three situations hand a session **no project instructions at all**, silently and without an error: a CLI older than 2.1.277; the `instructionFiles` option set to `claude-md`, which is a user or managed setting that per-project settings cannot override; and Bedrock, Vertex or Foundry, where the fallback does not exist. That per-project check is also a trap for contributors — a personal `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` at or above the working directory suppresses every `AGENTS.md` in the tree, so personal instructions belong in `~/.claude/`, never in a checkout. `CONTRIBUTING.md` carries the same warning for humans; keep the two in step. |
 
 ## Code Style & Conventions
 
@@ -534,38 +345,21 @@ After changes, evaluate if docs need updating:
 
 ### Key Environment Variables
 
-- `FL_BACKEND` — `nvflare` (default) or `flower`. Two roles: (1) deploy layer — selects which fl-* images run (compose/Makefile); (2) flip-api — sets the `FLNets.fl_backend` column at seed time. The seeded value is **canonical**: flip-api reads `FL_BACKEND` only at seeding and never reconciles it at runtime. To switch frameworks, `make restart-fl FL_BACKEND=...` recreates flip-api so its startup seeding re-applies the backend onto every net.
-- `FL_PROVISIONED_DIR` — path to the in-tree provisioned FL artifacts, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`: `fl-services/nvflare/provision/workspace-dev` (nvflare startup kits) or `fl-services/flower/provision/creds` (flower per-net TLS certs + SuperNode keys). Both gitignored. Read only by the dev compose overlays for the cert/workspace volume mounts; override at the CLI for a one-off (`make up FL_PROVISIONED_DIR=...`). FL Makefiles are **per-backend** — each `fl-services/<backend>/Makefile` owns that backend's `build`/`provision`/`up`/`down`/`submit` (flower also `up-secure`); the root Makefile forwards only `build-fl` by `FL_BACKEND`. Each backend's `fl-services/<backend>/Makefile` also owns its network provisioning (NVFLARE adds `provision`/`provision-2-nets`/`provision-stag`/`provision-prod`/`upload-kits-to-s3`; the project YAMLs, `scripts/`, and gitignored `workspace-{dev,stag,prod}/` output live under `provision/`). Provision with `make -C fl-services/nvflare provision-2-nets` (nvflare) or `make -C fl-services/flower provision NET_NUMBER=<N>` (flower). To run a backend standalone + submit without the full stack: `make -C fl-services/<backend> up` (or `up-secure`) then `make -C fl-services/<backend> submit APP=<job>`.
-- `FL_APP_BASE_DIR` — Local directory holding the base FL application templates (the repo's `fl-apps/` tree), baked into the flip-api image and bind-mounted in dev. flip-api walks `<FL_APP_BASE_DIR>/<backend>/<job_type>/` to bundle an application (uploading into `FL_APP_DESTINATION_BUCKET/<model_id>`) and reads each backend's manifest from `<FL_APP_BASE_DIR>/<backend>/required_files.json`. The walk is an **allowlist, not a mirror** (FLIP#1008): the bundle is the backend's app folder(s) — `app/`, plus NVFLARE's per-site `app_*/` — together with its single root file (`meta.json` for NVFLARE, `pyproject.toml` for Flower), and everything else in the template directory is excluded and listed at debug level. Inside an app folder, dot-prefixed entries, `__pycache__`, `*.pyc`/`*.pyo`, `uv.lock` and symlinks are dropped too. This matters most for an operator-provided tree: the walk fails **closed**, so an unrecognised file is silently omitted rather than shipped to a trust, and the omissions appear only in the debug log. Default `/app/fl-apps`; override to mount operator-provided templates. Replaces the removed `FL_APP_BASE_BUCKET` S3 dependency (FLIP#724): base templates are no longer published to S3 (the `fl-apps-push-s3-*` sync workflows are gone), so a template hotfix now ships by rebuilding + redeploying the flip-api image rather than syncing S3. `fl-apps/` is baked into the image via a BuildKit named build context (`fl_apps=../fl-apps`) since it sits outside flip-api's build context. For the Flower backend, the template pyprojects also steer Flower's **per-run dependency install** (`uv sync` on every app launch; SuperNodes opt in via `--allow-runtime-dependency-installation` in the composes): `[tool.uv.sources]` pins `flip-utils` to the source kept at `/opt/flip-utils` inside the FL images (never PyPI — FLIP#767; a flip-utils change ships by rebuilding the FL images, `make build-fl FL_BACKEND=flower`) and torch/torchvision to the cu128 index (PyPI's default cu130 wheels need driver >=580).
-- `FL_KIT_SLOT_NAMES` — JSON list (e.g. `["Trust_1", "Trust_2"]`) of FL kit-slot names for the hub's `fl_kit_slot` pool that `register_trust` claims from; each name must match a provisioned participant kit (in-tree workspace for dev, `s3://<AICENTRE_BUCKET_NAME>/fl-flare-participant-kits/<FLARE_KIT_DATE>/net-<N>/services/<slot>/` for stag/prod; slot names are global across nets — every net carries a kit per name). The pool is seeded at flip-api boot and **reconciled on demand** when a registration finds it exhausted (`resolve_fl_kit_slot_names`, additive — never deletes or re-assigns rows); only then does `NoFreeKitSlotError` surface. Single source per env: dev = this env var (a `DevSettings`-only field; restart to change, settings load once); stag/prod = the `/flip/fl_kit_slot_names` SSM parameter (Terraform-rendered from this var — the list is plain config, not a secret; deliberately **no env fallback**, so a broken/missing parameter means the pool can't grow, loudly, never masked by stale task-def env). Growing the pool is an env-file edit + `make -C deploy/providers/AWS apply-fl-kit-slots` (targeted plan/apply of just the parameter, plain-text diff) — **no restart, no task-definition change**. One-command workflow: `make -C deploy/providers/AWS add-fl-kits N=<n> PROD=stag|true` (N = "ensure N more live slots": activate spares toward N first, mint only the shortfall on every net → additive S3 upload → env edit → parameter apply); full runbook in `fl-services/nvflare/README.md` ("Onboarding a new client onto an existing network"). NVFLARE-only dynamics — Flower's SuperNode key labelling reads the list at net startup.
-- `XNAT_PORT` / `XNAT_WEB_PORT` / `XNAT_AETITLE` — XNAT's DICOM SCP receiver port, its host-published
-  web-UI port, and its AE title. `XNAT_PORT` was historically one variable doing both jobs, which is
-  why host 8104 served Tomcat while the DICOM receiver's 8104 was an unpublished container port
-  (FLIP#993). `XNAT_AETITLE` is applied to the SCP receiver, `dqrCallingAe`, and the C-MOVE
-  destination in `ImportStudyRequest` — DQR matches that destination against a registered receiver by
-  exact `AE:port`, so all three must agree and no translation is possible on that leg. Both ports are
-  host-published — the receiver so a real PACS can complete the C-STORE return leg of a retrieval,
-  and dev keeps the same wiring — so they must differ; the Makefile refuses to deploy if they
-  collide. Dev allocation: 8104/8105 (GSTT), 8106/8107 (KCH).
-- `PACS_HOST` / `PACS_AETITLE` / `PACS_QR_PORT` / `PACS_LABEL` — the upstream PACS, defaulting to the
-  mocked Orthanc (`orthanc` / `ORTHANC` / `4242`). `PACS_QR_PORT` must be reachable *from the XNAT
-  container*, not a host-published port — conflating the two is what the retired `PACS_DICOM_PORT`
-  did (FLIP#822/#862). `configure-xnat.sh` updates an existing registration in place when the host or
-  port drift, and imaging-api reads the PACS id from XNAT at runtime rather than assuming 1 —
-  `configure-xnat.sh` keeps exactly one registration, so it is the sole one XNAT reports.
-- `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` — whether the PACS supports relational queries / extended
-  negotiation (default `true`). A capability of the PACS rather than a preference: one that does not
-  support it rejects the association outright. Validated as literally `true` or `false` before it
-  reaches jq, so a `yes` or a bare `1` fails naming the variable instead of registering the number 1.
-- `PACS_AVAILABILITY_DAYS` / `_START` / `_END` / `PACS_THREADS` / `PACS_UTILIZATION_PERCENT` /
-  `DQR_MAX_PACS_REQUEST_ATTEMPTS` / `DQR_RETRY_WAIT_SECONDS` — the retrieval throttle. A production
-  PACS may refuse further associations after a certain volume, so the window and thread count are
-  agreed with the trust's PACS manager. Defaults are all week, all day, one thread.
+Cross-cutting keys and URLs live here. The rest are documented where they are consumed:
+**FL** (`FL_BACKEND`, `FL_PROVISIONED_DIR`, `FL_APP_BASE_DIR`, `BUNDLE_URL_ALLOWED_HOSTS`,
+`FL_KIT_SLOT_NAMES`) in
+[`fl-services/AGENTS.md`](fl-services/AGENTS.md#environment-variables) ·
+**multi-instance** (`FLIP_INSTANCE`, `MAIN_ENV_FILE`, `DB_PORT`) in
+[`deploy/AGENTS.md`](deploy/AGENTS.md#multi-instance-environment-variables) ·
+**XNAT/PACS** (`XNAT_PORT`, `PACS_*`, `DQR_*`) in
+[`trust/AGENTS.md`](trust/AGENTS.md#xnat-and-pacs-environment-variables) ·
+**hub auth, email and model-file scanning** (`ENFORCE_MFA`, `EMAIL_BACKEND`, `MAX_MODEL_FILE_BYTES`,
+`PRE_SIGNED_URL_EXPIRATION_SECONDS`, the two model-file buckets, `ALLOWED_MODEL_FILE_EXTENSIONS`,
+`PICKLESCAN_*`, `BANDIT_TIMEOUT_SECONDS`, `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE`, DB auth) in
+[`flip-api/AGENTS.md`](flip-api/AGENTS.md#hub-environment-variables).
+
 - `PROD` — `true` (production), `stag` (staging), `lza` / `lza-stag` (production / staging on an AWS Landing Zone Accelerator estate, FLIP#749 — meaningful for `deploy/providers/AWS` targets, the FL-kit upload targets under `fl-services/<backend>/`, and the kit-file targets here (`new-trust`, `sync-trust-kit[s]`), which must name `trust/.env.<CODE>.lza-prod` / `.lza-stag` the way the AWS side reads them back; select the root `.env.lza-prod` / `.env.lza-stag` and the platform-managed-network Terraform path, see `deploy/providers/AWS/README.md` "Deploying onto an LZA estate"), unset (development). What each value means is derived **once**, in `deploy/env_mode.mk` (`ENV` — the token in `.env.$(ENV)` and `trust/.env.<CODE>.$(ENV)` — plus `ENV_FILE_NAME`, `__DCKR_SUFFIX`, `ENV_CLASS` = `prod|stag`, `IS_LZA`, `IS_DEPLOYED`), included at the top of every Makefile that reads `PROD` — root, `deploy/providers/AWS`, `trust`, `trust/xnat`, `fl-services/{nvflare,flower}` — so a new value is added in one place and the scripts those Makefiles drive (`register-trusts.sh`, `add_fl_kits.sh`) receive the derived token rather than re-mapping `PROD`; a misspelt `PROD` fails at parse time instead of falling through to the development shape (`deploy/providers/AWS/tests/test_env_mode.py` pins the table)
-- `FLIP_INSTANCE` — names a **second dev hub** so two stacks can run on one host (FLIP#957). Unset (the norm) every derived name is exactly what it was before the knob existed. When set it prefixes four things, all of them names that are global to the docker daemon and so cannot be scoped by `-p`: the hub compose project name (`COMPOSE_PROJECT`), all six hub-side Docker networks, each trust's compose project (`TRUST_PROJECT`, `<instance>-trust<N>`) and each trust's XNAT swarm stack (`XNAT_STACK`, `<instance>-xnat<N>`). The last two carry it for the same reason the trust overlays do — FL kit slots are handed out per hub, so a second hub restarts its numbering at 1 and its first trust would otherwise adopt or deploy over the default stack's `trust1`/`xnat1`. Those six follow **one** name rule — `${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_<name>`, i.e. `deploy_central-hub-network`, `deploy_central-hub-trust-apis-network`, `deploy_fl-net-{1,2}` **and** `deploy_trust-network-{1,2}` — where `deploy_` names the hub compose project that owns the network, which is also exactly what compose would generate (`<project>_<key>`) if it still created them. It stopped generating anything once they became `external: true` ("the `name` field is used as is and is not scoped with the project name"), which is why the prefix is written out by hand in the composes, both Makefiles and `scripts/check_local_status.py`. FLIP#957 renamed **four** of them onto that rule: `central-hub-network` and `central-hub-trust-apis-network` had been left bare, and `shared-net-{1,2}` became `fl-net-{1,2}` — "shared" described who happened to be attached rather than what the network is for, and stopped being true the moment flip-api came off it. The two numbering axes are **not** parallel, which is the trap the new name defuses: `fl-net-<N>` is numbered by **FL net** (the `fl_nets` table, `NET_NUMBER`, `fl-server-net-<N>`) while `trust-network-<N>` is numbered by **trust slot**, so one trust routinely sits on `trust-network-2` and `fl-net-1` at once. `fl-net-<N>` is the FL **data plane**, and its membership is exactly two services — the hub's `fl-server-net-<N>` and every trust's `fl-client-net-<N>`, making it the FL twin of `central-hub-trust-apis-network` (flip-api ↔ trust-api). Everything else hub-side stays on `default` and reaches the FL server there over its control ports: **`flip-api` is deliberately not on it**, and neither are `fl-api-net-<N>` or flower's `register-supernode-keys-net-<N>`: it fronts the database, nothing on the FL data plane calls it (an fl-client carries no hub URL and no hub credential, only `TRUST_INTERNAL_SERVICE_KEY`), and the one callback that exists — fl-server's `FLIP_API_INTERNAL_URL` — goes over `default`, the hub-internal network, which both fl-servers now join. Because these networks are external and pre-created, all four renames are **not** transparent — an existing dev host must re-run `make create-networks`, recreate whatever was attached to the old ones, and `docker network rm` the four leftovers. The project name matters because compose derives it from the directory of the first `-f` file, always `deploy/`, so without it both stacks land in project `deploy` and `up` on one tears down the other. The networks are prefixed *separately* rather than left to `-p` because they are a cross-project contract: the hub project creates them and each trust — its own compose project — joins them `external: true` by literal name, which `-p` cannot scope. The trust overlays carry the prefix like everything else because a trust number alone does not isolate them: slots are handed out per-hub, so a second hub restarts its numbering at 1 and its first trust would otherwise land on the default stack's `deploy_trust-network-1`. Since every network belongs to exactly one instance, `make remove-networks FLIP_INSTANCE=<x>` is instance-scoped and removes that instance's networks *including* its trust overlays. Both values are derived once in [`deploy/instance.mk`](deploy/instance.mk) (`INSTANCE_PREFIX` and `COMPOSE_PROJECT`), included by the root, trust, `trust/xnat`, flip-api and flip-ui Makefiles, which also exports `FLIP_INSTANCE` so the compose files see it; the compose files interpolate `${FLIP_INSTANCE}` rather than the make variable because they are also invoked directly, without make. **Container names are not prefixed and are not set at all** — no hub service declares `container_name`, in the development composes or the production ones, so compose names them from the project. On the default stack that is `deploy-flip-api-1`, `deploy-flip-db-1`, `deploy-flip-ui-1`, `deploy-pgadmin-1`, `deploy-fl-api-net-1-1`, `deploy-fl-server-net-1-1`; on a second stack `<instance>-deploy-…`. Since FLIP normally runs a single hub those default-stack names are deterministic, so **docs spell them out literally** — a concrete name is easier to read, copy and grep than a `docker compose -p deploy exec <service>` form — and only a doc explicitly about a second stack needs the `<instance>-deploy-…` variant. **Tooling must not**: a Makefile or script has to work on either instance, so it addresses the service through compose (`$(DOCKER_COMMAND) logs flip-api`) or resolves the container from the `com.docker.compose.project` / `.service` labels, as [`scripts/check_local_status.py`](scripts/check_local_status.py) does. (None of this reaches AWS: the production composes are a local prod-image harness, never a deployment target — on ECS the container names come from the task definitions in `deploy/providers/AWS/ecs_tasks.tf` and discovery from Cloud Map.) The compose **service keys** are the stable identity instead, and are load-bearing: docker registers each as a network alias on every network the container joins, which is how the FL kits keep resolving `fl-server-net-1` (`fed_client.json`'s `target`, and the SuperLink certificate's SAN) and how `NET_ENDPOINTS` reaches `fl-api-net-1`. Renaming a service key breaks TLS and the provisioned kits; renaming a container name breaks nothing. A second stack also needs its own value for every host port (`UI_PORT`, `API_PORT`, `DB_PORT`, `PGADMIN_PORT`, `FL_API_PORT`, `API_DEBUG_PORT`, `FL_API_DEBUG_PORT`, and on flower `FLOWER_SUPERLINK_NET_{1,2}_PORT`), its own `CENTRAL_HUB_API_URL` (it embeds `API_PORT`, so a copied env file silently points the second stack's UI and trust-api at the *first* stack's API — the one misconfiguration here that still starts cleanly and looks right), its own `XNAT_PORT` per trust kit, and its own trust numbers — all host-global and not covered by the prefix. Two traps when running one: `NET_ENDPOINTS` (which the hub seeds into `fl_nets` at boot) must carry the service name `fl-api-net-1`, never the pre-FLIP#957 `flip-fl-api-net-1`, which is now a DNS name in no stack at all; and `FL_PROVISIONED_DIR` may be given as either a relative or an absolute path (relative resolves against the repo root).
-- `MAIN_ENV_FILE` — which repo-root env file the Makefiles load, as a bare **filename** (never a path). Defaults by `PROD` to `.env.production` / `.env.stag` / `.env.lza-prod` / `.env.lza-stag` / `.env.development`; override it to run a second stack from the *same checkout* — `make up MAIN_ENV_FILE=.env.b.development FLIP_INSTANCE=b` — instead of needing a second clone. The root Makefile `export`s it, and the flip-api, flip-ui and trust Makefiles each `include ../$(MAIN_ENV_FILE)`, which is why the value must stay a bare filename: each one prepends its own `../`. Every include is wildcard-guarded, so a value that resolves to nothing is **skipped silently** and the service builds with no environment at all rather than failing — check the `Using MAIN_ENV_FILE:` line each Makefile prints if a second stack comes up with empty config. `scripts/check_local_status.py` honours it too (via the environment), so a status check reports on the stack you are actually running.
-- `DB_PORT` — in **dev** this is the *host* port flip-db is published on (the container side is pinned to 5432, which is what flip-api dials over the docker network); in `.env.stag` / `.env.production` it is the port the RDS Proxy listens on, since nothing is published there. Both default to 5432, so the difference only shows up when a second dev stack moves it.
-- `AES_KEY_BASE64` — the platform-wide key for the hub↔trust payload envelope: AES-256-GCM since FLIP#1179 (base64 of `{"v":1,"kid":"shared","iv","ct"}`; version, kid and a caller-supplied *context* — `task:<task_type>`, `project_id`, `xnat_password` — bound into the tag, so every `encrypt`/`decrypt` call site passes the same `context=` and a payload sealed for one purpose does not open for another), with **no compatibility for the pre-#1179 CBC format**, so a hub and every trust registered to it upgrade across that change together (Deployment Mode → quiesce → redeploy hub + trusts). Must be byte-identical on the hub and every trust container that decrypts (trust-api, imaging-api, data-access-api) and decode to exactly 32 bytes — every `get_aes_key()` refuses a 16- or 24-byte key rather than silently running AES-128/192; a mismatch fails closed as `Invalid payload: failed authentication` on every task (imaging-api / data-access-api answer the FL client with a 400). On stag/prod the hub's copy is what the CI Terraform apply wrote into Secrets Manager from the GitHub environment — reconcile the operator env file from deployed state (`deploy/providers/AWS/scripts/reconcile_ci_env.py`), never the other way round. Per-trust keys are the FLIP#845 follow-up.
+- `AES_KEY_BASE64` — the platform-wide key for the hub↔trust payload envelope: AES-256-GCM since FLIP#1179 (base64 of `{"v":1,"kid":"shared","iv","ct"}`; version, kid and a caller-supplied *context* — `task:<task_type>`, `project_id`, `xnat_setup_path` — bound into the tag, so every `encrypt`/`decrypt` call site passes the same `context=` and a payload sealed for one purpose does not open for another), with **no compatibility for the pre-#1179 CBC format**, so a hub and every trust registered to it upgrade across that change together (Deployment Mode → quiesce → redeploy hub + trusts). Must be byte-identical on the hub and every trust container that decrypts (trust-api, imaging-api, data-access-api) and decode to exactly 32 bytes — every `get_aes_key()` refuses a 16- or 24-byte key rather than silently running AES-128/192; a mismatch fails closed as `Invalid payload: failed authentication` on every task (imaging-api / data-access-api answer the FL client with a 400). On stag/prod the hub's copy is what the CI Terraform apply wrote into Secrets Manager from the GitHub environment — reconcile the operator env file from deployed state (`deploy/providers/AWS/scripts/reconcile_ci_env.py`), never the other way round. Per-trust keys are the FLIP#845 follow-up.
 - A remote trust operator only needs their kit file (`trust/.env.<KIT>`) — no hub `.env.<env>` needed on trust hosts.
   See `trust/README.md` for the standalone-operator quick-start.
 - `TRUST_API_KEY` — single per-trust plaintext API key, lives only in that trust's kit file (`trust/.env.<CODE>.<env>`), never on the hub
@@ -577,16 +371,6 @@ After changes, evaluate if docs need updating:
 - Trusts are NOT enumerated in the hub env file. The kit files (`trust/.env.<CODE>.<env>`) ARE the roster: `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..."` scaffolds one, `make register-trust KIT=<CODE>` registers it. The old `TRUST_<n>_NAME` / `TRUST_<n>_CODE` / `TRUST_<n>_REGION` / `TRUST_<n>_HOST` deploy vars and `register-trust-<n>` targets are removed.
 - `CENTRAL_HUB_API_URL` — public base URL of flip-api (with `/api`); read by flip-ui and trust-api. In prod this is the CloudFront URL.
 - `FLIP_API_INTERNAL_URL` — Central-Hub-internal base URL of flip-api (with `/api`); read **only** by fl-server. Must resolve over the Docker network (e.g. `http://flip-api:8000/api`), never the CloudFront URL — CloudFront strips `X-Internal-Service-Key` at the edge.
-- Database auth — In production (`ENV=production`) flip-api authenticates to Postgres through **RDS Proxy** using a short-lived AWS IAM auth token minted per-connection by a SQLAlchemy `do_connect` hook in `flip_api/db/database.py` (passwordless engine URL, `sslmode=require`, `pool_pre_ping` + `pool_recycle`). The proxy reaches RDS with the rotating RDS-managed master secret it re-reads natively, so the app holds no static DB credential and secret rotation no longer causes an outage (FLIP#556). Dev (`ENV=development`) uses the static `POSTGRES_PASSWORD` from the environment. There is no separate toggle — the path is selected by `ENV`.
-- `ENFORCE_MFA` — `true` (the `Settings` default; do **not** set in `.env*` files for stag/prod) gates every authenticated route on TOTP enrolment via the app-layer MFA check in `verify_token`. The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator app. Production compose (`compose.production.yml`) passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so the env var can be overridden from `.env.stag`/`.env.prod` for testing, but falls back to the secure `true` default when unset. Intentionally not in `.env.development.example` or AWS Secrets Manager — the Settings default (`true`) is the canonical secure anchor. The UI mirrors this flag from `/users/me/mfa/status` and skips the enrolment redirect when it's false.
-- `EMAIL_BACKEND` — `ses` (send through AWS SESv2) or `console` (log the would-be email instead). The **default** is selected per environment class in `flip_api/config.py` rather than by an env file: `DevSettings` defaults to `console`, so a local stack needs no SES identity, templates or verified address (FLIP#919), and `ProdSettings` narrows the type to `Literal["ses"]`, making `console` a boot-time `ValidationError` in stag/prod. A developer can still opt into the SES path by setting `EMAIL_BACKEND=ses` (plus the two `AWS_SES_*` addresses) in `.env.development`; `deploy/compose.development.yml` passes all three through to flip-api, since that service declares an explicit `environment:` list and no `env_file`, so a variable it does not name cannot reach the app however the env file is written. A dedicated flag rather than an `ENV` branch (same rationale as `ENFORCE_MFA`) so tests and local experiments can select the SES path without also flipping DB auth, encryption and docs exposure. The base `Settings` default (`ses`) is *not* a safety net for a misconfigured deploy — an unset `ENV` resolves to `DevSettings` and hence `console` — it exists so the field is declared for `ProdSettings` to narrow. All email dispatch goes through `flip_api/utils/email_sender.py::send_templated_email`; the console backend redacts secret-shaped keys so the decrypted XNAT password never reaches the logs. The two `AWS_SES_*` addresses are consumed only by the SES path and remain **required** in stag/prod.
-- `MAX_MODEL_FILE_BYTES` — Hard cap on the file size of a single model-file upload, in bytes. Bound on the presigned POST policy so S3 rejects oversized payloads at the edge — the hub never sees them. Default `5368709120` (5 GiB) — raised from 100 MiB so large evaluation checkpoints (e.g. the ~759 MiB Ark+ weights, ~1.5 GiB for the multimodel variant) can be uploaded; such checkpoints are staged server-side by the FL API and loaded by the fl-server, not bundled into the app deployed to clients. The S3 policy condition allows a small fixed overhead above this for multipart/form-data framing (see `_MULTIPART_OVERHEAD_BUFFER_BYTES` in `flip_api/utils/s3_client.py`); the UI guard at `flip-ui/src/utils/file.ts` compares against this raw value so a file at exactly the cap is accepted on both sides.
-- `PRE_SIGNED_URL_EXPIRATION_SECONDS` — Setting default for presigned-URL TTLs, in seconds: the model-file presigned POST policy (upload) and the presigned GET URLs for model-file downloads (FLIP#784). The hub silently clamps to the 1800s (30 min) security ceiling encoded as `MAX_PRESIGNED_URL_TTL_SECONDS` in `flip_api/utils/s3_client.py` (a leaked URL is a capability against the bucket in either direction — writable for POST, readable for GET — so the leak window must stay tight). The ceiling is 1800s rather than the original 600s to give larger transfers (up to the `MAX_MODEL_FILE_BYTES` cap) enough time to complete. Setting default equals the ceiling (1800) so default-configured deployments never trip the clamp; over-ceiling operator values leave a warning in the logs and are clamped.
-- `UPLOADED_MODEL_FILES_BUCKET` / `SCANNED_MODEL_FILES_BUCKET` — the two model-file prefixes, and the platform's quarantine boundary (FLIP#52). Researcher uploads are written to the `uploaded/` staging prefix by the presigned POST policy; `POST /files/process-scanned-file/{model_id}/{file}` registers the row as `SCANNING` and schedules the scan, which promotes clean files into `scanned/` and deletes rejected ones. Every consumer — the FL app bundler (`fl_services/services/fl_service.py`), model-file downloads, and listings — reads `scanned/` only, so an unscanned or rejected file can never be bundled to a trust. **They must point at distinct prefixes**: pointed at the same location the promote step degrades to a no-op (logged) and the boundary disappears.
-- `ALLOWED_MODEL_FILE_EXTENSIONS` — extension whitelist enforced before a presigned POST policy is minted, so a disallowed type never reaches S3. JSON list or comma-separated string, matched case-insensitively; default `.py .json .toml .pt .pth .pkl .txt .yaml .yml .safetensors`. `.toml` is **required by the Flower backend** — every Flower app and tutorial ships a `config.toml` run-config that fl-api-flower feeds to `flwr run --run-config`, so dropping it rejects every Flower upload. Opaque archives (`.zip`/`.tar`) are excluded — the scan pipeline cannot gate their contents. A value that normalises to nothing (`",,,"`) falls back to the default rather than an empty list, which would otherwise reject everything (or, for `PICKLESCAN_FILE_SUFFIXES`, silently skip all scanning). A rejection returns 400 with the allowed set, which the UI surfaces verbatim.
-- `PICKLESCAN_FILE_SUFFIXES` / `PICKLESCAN_TIMEOUT_SECONDS` — which uploads get a structural picklescan before promotion (default `.pt .pth .pkl .pickle`) and the wall-clock cap per scan (default 120s). Dangerous globals mark the file `INFECTED` and delete the object; a scan that errors or times out fails closed to `ERROR`. Signature-based AV (GuardDuty Malware Protection for S3) is tracked separately in FLIP#838.
-- `BANDIT_TIMEOUT_SECONDS` — wall-clock cap (default 60s) on the non-blocking Bandit pass over `.py` uploads (FLIP#877, GHSA-8465). Unlike `PICKLESCAN_TIMEOUT_SECONDS` a timeout here just means no findings are recorded (fail-open, never `ERROR`) — Bandit is advisory only and never gates promotion. Findings land on `UploadedFiles.bandit_findings` (`[]` = scanned clean, `NULL` = never scanned) and surface in the UI as an amber indicator. `bandit` is a dependency baked into the `flip-api` image, not the mounted `src/`: under the dev pull-by-default sourcing above, running without `BUILD=true` after picking up this dependency serves an image with no `bandit` binary, so every upload silently records `NULL` findings while the UI and docs still claim a scan ran.
-- `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE` — how often (minutes, default 1) the sweep re-checks uploads left `SCANNING` by an app restart mid-scan.
 
 ## Deployment Architecture
 
@@ -640,65 +424,54 @@ preview), `test_docs_scripts.yml` (`make -C docs test`: the fetcher/publisher su
 `docs/tests/`, the rst-figure ↔ demo-spec wiring guard, and a static guard over the regenerate
 workflow's token scope, `develop` gate and tag minting).
 
+### PR path gate: service suites run only for the paths they cover (PRs into develop)
+
+The seven service test workflows (`test_flip_ui.yml`, `test_flip_api.yml`, the four `test_trust_*_api.yml`/`test_trust_omop_db.yml`, `test_trust_data_tools.yml`) fire on every PR but run their jobs only when the PR touches the paths they cover; a PR into `main` always runs everything. A `paths:` filter on `pull_request` cannot express that (one list for every target branch), so each workflow's first job calls the reusable `.github/workflows/pr_paths_changed.yml`, which runs `scripts/pr_paths_changed.py` against the PR's file list (`gh api pulls/N/files`, hence `pull-requests: read` on that job) and every test job `needs: changes` + `if: needs.changes.outputs.run == 'true'` — a skipped job reports *skipped*, never a missing check. The gate's list is the workflow's push `paths:` filter **verbatim** (GitHub's own pattern syntax, `*` stops at `/`, `**` does not); `scripts/tests/test_pr_paths_changed.py` fails when the two drift, when a job in a gated workflow lacks the `needs`/`if` pair, or when a `paths:` filter appears on `pull_request`. Touching the gate itself (script or reusable workflow) re-runs every suite. A workflow's list must name every input its suite consumes, including the ones outside its own tree — the root `.env.development.example` (copied to `.env.development`, which `flip_api`/`trust_api`/`data_access_api` `config.py` read as their `env_file`) and the `deploy/*.mk` fragments the Makefiles parse-time-include — or a PR confined to one of those reaches `develop` with no service suite having run. Adding a service test workflow with a push path filter means gating it the same way and listing it in the test's `GATED_WORKFLOWS`. `docs.yml` and the secret-scanning/acceptance-criteria workflows stay unfiltered on purpose.
+
 ### Terraform runs in CI (FLIP#962)
 
-`validate_terraform.yml` still does the credential-free `fmt`/`validate` pass. On top of that, three
-OIDC-authenticated workflows drive real state — no long-lived AWS keys in GitHub:
-`terraform_plan.yml` (plan staging on every PR touching `deploy/providers/AWS/**`, read-only role,
-`-lock=false`), `terraform_apply.yml` (push to `develop` → stag, push to `main` → **prod**), and
-`terraform_drift.yml` (nightly plan, one issue per environment). **Merging to `main` now changes
-production infrastructure** — the previous "don't `make apply` for prod" rule is superseded.
+`validate_terraform.yml` does the credential-free `fmt`/`validate` pass. On top of that, three
+OIDC-authenticated workflows drive real state — no long-lived AWS keys in GitHub: `terraform_plan.yml`
+(plan staging on every PR touching `deploy/providers/AWS/**`), `terraform_apply.yml` (push to
+`develop` → stag, push to `main` → **prod**), and `terraform_drift.yml` (nightly plan, one issue per
+environment). **Merging to `main` now changes production infrastructure** — the previous "don't
+`make apply` for prod" rule is superseded.
 
-Drift runs **twice**, and the ref decides the environment: a `schedule` only ever fires from the
-default branch, so the nightly run is a develop run checking stag, and it dispatches
-`terraform_drift.yml --ref main` for the prod leg. That keeps the `aws-prod` GitHub environment
-restricted to `main` alone — an environment's secrets are readable by any workflow that names it and
-runs on an admitted branch, before any AWS call — and makes the prod plan compare main's HCL rather
-than reporting every unreleased develop change as drift.
-
-Two guards make the unattended apply safe, and both live in `deploy/providers/AWS/scripts/`:
-`resolve-image-tags.sh` pins this commit's `sha-<short7>` (falling back to the tag the service is
-already running — the configured `:stag`/`:prod` never *replaces* a deployed tag, which would
-discard the FLIP#751 pin; every lookup fails **closed**, absence recognised only from ECS's own
-`failures[].reason == "MISSING"`, because an AWS error that reads as "no service" is exactly what
-un-pins the release). Plan and drift run it too, in its `RESOLVE_SHA_TAG=false` mode, or they would
-report a permanent `sha-… → :prod` diff against the pin an apply has written.
-`check-fl-plan-impact.sh` holds any apply whose plan touches `fl-server-net-1` / `fl-api-net-1` or
-deletes EFS, because that would kill an in-flight training run (FLIP#770); the held apply is
-released by re-dispatching `terraform_apply.yml` with the `fl_quiesced: true` input, an operator
-attestation nothing on the runner can verify.
-
-Terraform inputs reach CI through `deploy/providers/AWS/scripts/compose-ci-env.sh`, which composes
-`.env.stag` / `.env.production` from the `aws-stag` / `aws-prod` GitHub environments so the Makefile
-stays the one definition of the env-to-`TF_VAR_` mapping. Consequence: **adding an `export TF_VAR_…`
-line means also updating that script's manifest, all three workflow `env:` blocks, and both GitHub
-environments** — `deploy/providers/AWS/scripts/tests/test_compose_ci_env.sh` fails the build
-otherwise. The OIDC roles are
-a separate Terraform root, `deploy/providers/AWS/ci/`, applied from a laptop only. Full flow, one-time
-setup and break-glass: [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md).
+Two guards make the unattended apply safe (`resolve-image-tags.sh` pins this commit's sha tag;
+`check-fl-plan-impact.sh` holds any apply that would kill an in-flight training run), and Terraform
+inputs reach CI through `deploy/providers/AWS/scripts/compose-ci-env.sh` — so **adding an `export TF_VAR_…` line means
+also updating that script's manifest, all three workflow `env:` blocks, and both GitHub
+environments**. Full detail: [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS/AGENTS.md#terraform-ci-flip962).
 
 ### Docker image builds: gated on tests, manual trigger for branches
 
-**The application `docker_build_*.yml` workflows (`flip_api`, `trust_trust_api`, `trust_imaging_api`, `trust_data_access_api`, `omop_db`) auto-publish to GHCR only after their service's test workflow passes on `develop` or `main`.** They trigger via `workflow_run` on the matching test workflow (`FLIP API CI`, `Trust - Trust API CI`, etc.) and a job-level `if` gates on `workflow_run.conclusion == 'success'` — a red test suite never publishes. Path filtering is inherited from the test workflow, so a build still only fires when that service changed. (`orthanc`, `xnat_*` keep their direct push trigger — they have no separate test workflow to gate on; `orthanc` instead runs an in-job auth smoke test between build and push, and also on PRs touching `trust/orthanc/**`, so a red smoke never publishes — FLIP-PT-091; `flip-ui` is a CI smoke test that never publishes.)
+**The application `docker_build_*.yml` workflows (`flip_api`, `trust_trust_api`, `trust_imaging_api`,
+`trust_data_access_api`, `omop_db`) auto-publish to GHCR only after their service's test workflow
+passes on `develop` or `main`** — they trigger via `workflow_run` and a job-level `if` gates on
+success, so a red test suite never publishes. Path filtering is inherited from the test workflow, so a
+build still only fires when that service changed. (`orthanc` and `xnat_*` keep their direct push
+trigger, having no separate test workflow; `orthanc` runs an in-job auth smoke test instead. `flip-ui`
+is a CI smoke test that never publishes — it is rebuilt locally by `make deploy-ui` and never consumed
+from GHCR; the rest are.) Every publish also pushes an immutable **`sha-<short7>`** tag that
+hub ECS deploys pin — see
+[`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS/AGENTS.md#image-tags-deploys-and-the-fl-quiesce)
+for deploys, rollback and the FL quiesce reminder.
 
-Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of the built commit) alongside the mutable `:stag`/`:prod` tags. Hub ECS deploys pin these sha tags via task-definition revisions — `make deploy-centralhub` resolves the env branch tip's tag, `make rollback-centralhub` repoints at the previous revision (FLIP#751; see `deploy/providers/AWS/README.md` "Central Hub deploys and rollback"). `deploy-centralhub` also prints an **FL quiesce reminder** (FLIP#770; on `PROD=true` it adds an interactive are-you-sure confirmation, stag stays non-interactive): replacing `fl-server-net-1` kills any in-flight training run, so enable deployment mode first — it pauses FL job pickup (queued jobs hold; the running job finishes and frees its net) — and wait until the hub's `GET /fl/quiesce` reports deployment mode ON and no BUSY net, making "enable mode → wait → deploy → disable" the standard redeploy workflow.
-
-> **Note:** `workflow_run` triggers only take effect once these workflow files are on the repo's **default branch**. The first merge that introduces them won't retroactively publish; subsequent qualifying pushes will.
-
-Branch pushes do NOT build images. If you pin a branch-named tag in a compose file (e.g. `ghcr.io/londonaicentre/flip-api:my-feature-branch`) for prod testing, manually trigger the relevant build workflow via `workflow_dispatch` (which bypasses the test gate):
+Branch pushes do NOT build images. If you pin a branch-named tag in a compose file for prod testing,
+trigger the build manually (`workflow_dispatch` bypasses the test gate) and wait for green before
+redeploying:
 
 ```bash
 gh workflow run docker_build_flip_api.yml --ref <branch-name>
-gh workflow run docker_build_flip_ui.yml --ref <branch-name>          # only if UI image is consumed; deploy-ui builds locally
-gh workflow run docker_build_trust_trust_api.yml --ref <branch-name>
-# ...one per service whose image you've pinned
+gh run list --workflow=docker_build_flip_api.yml --branch <branch>
 ```
 
-Wait for green completion (`gh run list --workflow=docker_build_flip_api.yml --branch <branch>`) before redeploying. The `flip-ui` is rebuilt locally by `make deploy-ui` and does not consume GHCR; the rest do.
+> **Note:** `workflow_run` triggers only take effect once these workflow files are on the repo's
+> **default branch**. The first merge that introduces them won't retroactively publish.
 
 ## Pre-commit Hooks
 
-TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict markers, YAML validation, end-of-file-fixer, private key detection, env var validation, fl-apps required-files generation (`fl-apps-required-files` — regenerates each `fl-apps/<backend>/required_files.json` from its per-template arrays via `fl-apps/check_required_files.sh`; rewrites-and-fails on drift like `prettier`, so re-stage and commit again — backstopped by the `fl-apps-check-required-files.yml` CI workflow. The aggregate is `linguist-generated` in `.gitattributes`; never hand-edit it — edit the per-template `required_files.json`), `xnat-dcm2niix-pin-sync` (checks the pinned `DCM2NIIX_VERSION` image tag stays in sync across the four hand-written sites that reference it; report-only, backstopped by the dcm2niix-pin-sync job in `test_trust_xnat.yml` — #980), `prettier` (scoped to `deploy/providers/AWS/**/*.{yml,yaml}`), uv lockfile sync (`uv-lock`, one entry per uv project). Install: `pre-commit install`.
+TruffleHog, detect-secrets (also enforced repo-wide by the `Detect Secrets Scan` CI job against `.secrets.baseline` since FLIP#1215 — allowlist a dummy value inline with `# pragma: allowlist secret`, see CONTRIBUTING.md "Secret scanning"), large file check (max 1000KB), merge conflict markers, YAML validation, end-of-file-fixer, private key detection, env var validation, fl-apps required-files generation (`fl-apps-required-files` — regenerates each `fl-apps/<backend>/required_files.json` from its per-template arrays via `fl-apps/check_required_files.sh`; rewrites-and-fails on drift like `prettier`, so re-stage and commit again — backstopped by the `fl-apps-check-required-files.yml` CI workflow. The aggregate is `linguist-generated` in `.gitattributes`; never hand-edit it — edit the per-template `required_files.json`), `xnat-dcm2niix-pin-sync` (checks the pinned `DCM2NIIX_VERSION` image tag stays in sync across the four hand-written sites that reference it; report-only, backstopped by the dcm2niix-pin-sync job in `test_trust_xnat.yml` — #980), `prettier` (scoped to `deploy/providers/AWS/**/*.{yml,yaml}`), uv lockfile sync (`uv-lock`, one entry per uv project). Install: `pre-commit install`.
 
 ## Security Rules
 
@@ -710,33 +483,23 @@ TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict marker
 - Internal service key for fl-server-to-hub auth (separate from trust keys).
 - Trust-internal service key for trust-api / imaging-api / fl-client → imaging-api / data-access-api auth (per-trust, never leaves trust env). See **Trust-internal Service Authentication** below.
 - FL clients intentionally have no Central Hub credentials.
-- **FL apps never download at run time** (#1206). No `pretrained=True`, `weights=<torchvision enum>`, `torch.hub.load`, `from_pretrained("org/x")`, `load_state_dict_from_url` or MONAI bundle download in anything under `fl-tutorials/**/app*/` or `fl-apps/`, and no `PerceptualLoss`/`LPIPS` construction unless the module first stages a torch.hub dir: on a platform-managed estate the FL server has no internet route, nor does a trust host behind an NHS firewall (the server-side job process hangs; on NVFLARE the client dies with `cannot sync with server Runner`, on Flower the run never issues a round; the net stays BUSY), and a run-time fetch bypasses the scanned upload path — the file a Trust can inspect is no longer the file that runs, and a swapped `.pth` is code execution beside patient data. Weights ship as uploaded files (`.safetensors` preferred); a tutorial that needs one stages it with its own `make weights` (shared, hash-checked download `make -C fl-tutorials download-weights ARCH=<arch>`, checkpoints listed in `fl-tutorials/datasets/weights/fetch_weights.py`). `fl-tutorials/tests/test_offline_apps.py` is the AST guard (import aliases and module constants resolved; a lint, not a sandbox); `fl-tutorials/datasets/` (host-side download tooling) is exempt by design.
+- **FL apps never download at run time** (#1206). No `pretrained=True`, `weights=<torchvision enum>`, `torch.hub.load`, `from_pretrained("org/x")`, `load_state_dict_from_url` or MONAI bundle download in anything under `fl-tutorials/**/app*/` or `fl-apps/`, and no `PerceptualLoss`/`LPIPS` construction unless the module first stages a torch.hub dir: on a platform-managed estate the FL server has no internet route, nor does a trust host behind an NHS firewall (the server-side job process hangs; on NVFLARE the client dies with `cannot sync with server Runner`, on Flower the run never issues a round; the net stays BUSY), and a run-time fetch bypasses the scanned upload path — the file a Trust can inspect is no longer the file that runs, and a swapped `.pth` is code execution beside patient data. Weights ship as uploaded files (`.safetensors` preferred); a tutorial that needs one stages it with its own `make weights` (shared, hash-checked download `make -C fl-tutorials download-weights ARCH=<arch>`, checkpoints listed in `fl-tutorials/datasets/weights/fetch_weights.py`). `fl-tutorials/tests/test_offline_apps.py` is the AST guard (import aliases and module constants resolved; a lint, not a sandbox); `fl-tutorials/datasets/` (host-side download tooling) is exempt by design. The same guard holds every `torch.load` in those app dirs to an explicit `weights_only=True` (#1245/#1249): leaving it off is only safe while torch's default says so, and a checkpoint that unpickles arbitrary objects is the same code-execution class. Raw upstream checkpoints that need full unpickling are converted host-side in the tutorials' `process_tools/`, outside the walked app dirs.
 - Each fl-client mounts only its own net's slice of the images tree (`<BASE_IMAGES_DOWNLOAD_DIR>/net-N`, at the unchanged container path `/app/data/images/net-N`) so training code cannot read another net's cached studies; imaging-api keeps the whole-tree mount. The slice is what bounds the imaging-api download cache below: cached studies now survive across rounds (and, on Flower, across jobs — it has no `CleanupImages`), so a whole-tree mount would hand every client a durable copy of every other net's cohort rather than a within-job one. The `net-N` mount sources must be pre-created writable by imaging-api's uid and the client (which also writes: `flip.add_resource` staging, NVFLARE `CleanupImages`): trust `Makefile` `$(ensure_net_dirs)` (ownership-aware — the on-prem bring-up runs under sudo), AWS `site.yml`, the on-prem `onprem.yml`, K8s `images-init`. A Docker/kubelet/sudo-created root-owned mount source breaks those writes (downloads 500 → `num_samples=0`). Ownership is **backend-aware**: NVFLARE's client shares imaging-api's uid so owner write suffices (`0755`), but Flower's is built on upstream `flwr/base` and runs as `app` (uid/gid 49999), so its `net-N` dirs are group-writable — group `49999` + `0775` on the prod/on-prem/K8s paths, the host GID + `0775` in dev (where the compose already `group_add`s it). All four pre-creation paths fail loudly rather than warn when they cannot apply this.
 - Cohort-query validation is three-layer and **deliberately asymmetric — do not "sync" the layers**. Only the trust-side `data_access_api.services.cohort.validate_query` is authoritative (single parse-validate-emit; length, single-statement, SELECT-only, no `INSERT`/`UPDATE`/`DELETE`/`MERGE` anywhere in the tree — a writable CTE parses as a top-level `Select`, so the shape check alone misses it — `omop`-schema pin, literal `LIMIT`/`OFFSET`; re-emits from the checked AST; backed by the read-only `data_analyst_reader` role — pass its return value to the engine, never the caller's raw string). The hub-side `flip_api.cohort_services.submit_cohort_query.validate_query` is a *fast-feedback validity pre-check only, not a security control*: it exists so a malformed query fails in-hand instead of after an async fan-out to every trust, and enforces only what every trust would reject anyway. The flip-ui cohort form validates required-field only. A trust must stay safe regardless of what the hub checked, so hub drift is safe by construction. **No layer uses a keyword denylist** — the removed one blocked legitimate `SUBSTRING()` while stopping nothing; blind extraction is defeated by the literal-`LIMIT` rule and DDL/DML by the read-only role. See [`trust/data-access-api/README.md`](trust/data-access-api/README.md#cohort-query-validation).
-- Row-level cohort egress is gated on `COHORT_QUERY_THRESHOLD` at **both** row-level routes — `/cohort/dataframe` (FL training data) and `/cohort/accession-ids` (the accession list that decides whose imaging is pulled into XNAT) — sharing one fixed refusal string so a below-threshold cohort is indistinguishable from an empty one. The threshold is the trust's own disclosure floor (default 10, set per trust in its kit file), enforced trust-side rather than relying on the hub's staging guard. Both gates evaluate the **live** cohort on every call: FLIP stores the cohort only as a SQL string and re-runs it against OMOP at every stage, so a project can import cleanly and later start refusing (FLIP#857).
+- Row-level cohort egress is gated on `COHORT_QUERY_THRESHOLD` at **both** row-level routes — `/cohort/dataframe` (FL training data) and `/cohort/accession-ids` (the accession list that decides whose imaging is pulled into XNAT) — sharing one fixed refusal string so a below-threshold cohort is indistinguishable from an empty one. The threshold counts **distinct subjects, not rows**: the floor exists to stop a response revealing that ">=1 patient matched", and rows only stood in for patients while every cohort was one row per person — one row per imaging study (ten X-rays from one patient) and tabular projects (FLIP#1071) both broke that. `count_distinct_subjects` resolves subjects from `person_id` directly, else from `accession_id` through `omop.image_occurrence`; a cohort exposing neither is refused, as a 400 naming the column on `/cohort/dataframe` (query shape, not contents, so it is safe to be specific) and as the ordinary indistinguishable 403 on `/cohort/accession-ids`. The threshold is the trust's own disclosure floor (default 10, set per trust in its kit file), enforced trust-side rather than relying on the hub's staging guard. Both gates evaluate the **live** cohort on every call: FLIP stores the cohort only as a SQL string and re-runs it against OMOP at every stage, so a project can import cleanly and later start refusing (FLIP#857).
 - Do not hardcode env values in Dockerfiles or compose files.
 - 72-hour supply-chain cooldown on Python/npm package installs — enforced by uv `exclude-newer` (`[tool.uv]` in every `pyproject.toml`) and npm `min-release-age` (`flip-ui/.npmrc`, requires npm >= 11.10 which Node 24 LTS ships), backstopped by a `uv lock --check` CI gate in `secret-scanning.yml`. See CONTRIBUTING.md ("Dependency cooldown").
 
 ## Trust-internal Service Authentication
 
-**Threat.** Imaging-api proxies privileged XNAT operations using a service account; data-access-api executes arbitrary SQL against OMOP using a service account. Without caller authentication on these APIs, any container on the trust Docker network — or any operator with SSM port-forward access — can drive XNAT-admin operations and run unrestricted OMOP queries. Both surfaces sit behind no inbound firewall on the trust host (everything is internal to the Docker network) and neither used to validate the caller's identity.
+Every trust-internal call (trust-api, imaging-api, fl-client → imaging-api / data-access-api) carries
+a shared-secret header: name from `TRUST_INTERNAL_SERVICE_KEY_HEADER`, value the per-trust
+`TRUST_INTERNAL_SERVICE_KEY` from that trust's kit file, compared with `hmac.compare_digest`. Each
+trust gets a distinct key and the hub never sees it. `/health` stays unauthenticated. User-uploaded
+training code never handles the header — it calls `flip.*` and the package forwards it.
 
-**Mitigation.** Every trust-internal call carries a shared-secret header. The header name comes from `TRUST_INTERNAL_SERVICE_KEY_HEADER` (default `X-Trust-Internal-Service-Key`), the value is the per-trust `TRUST_INTERNAL_SERVICE_KEY` from the trust's kit file (`trust/.env.<CODE>.<env>`). Receivers (imaging-api, data-access-api) compare the header against their own copy of the key with `hmac.compare_digest` (constant-time, defeats timing side-channels). Senders are trust-api, imaging-api (when calling data-access-api `/cohort/accession-ids`), and fl-client. The same key is held in plaintext by every trust-internal container — the trust boundary is the trust itself, not individual service-pairs within it. `/health` stays unauthenticated so liveness probes keep working.
-
-**Per-trust scope.** Each trust gets a distinct key. A leak in Trust_1 cannot drive operations on Trust_2's APIs. The hub never sees these keys — they live only in trust-side env: `register_trust` writes `TRUST_INTERNAL_SERVICE_KEY` into the trust's kit file (`trust/.env.<CODE>.<env>`), which `trust/Makefile` `-include`s so every trust-internal container inherits it. This is deliberately distinct from the hub's `INTERNAL_SERVICE_KEY` (which protects fl-server → flip-api on the Central Hub).
-
-**Generating keys.** The key is minted by `register_trust` (`make register-trusts`), which writes `TRUST_INTERNAL_SERVICE_KEY` into the trust's kit file. Re-register to rotate.
-
-**Per-service code.** The auth check lives in each receiving service's `utils/internal_auth.py`:
-
-- `trust/imaging-api/imaging_api/utils/internal_auth.py` — applied at the router level on every imaging-api router except `/health`.
-- `trust/data-access-api/data_access_api/utils/internal_auth.py` — applied at the router level on `/cohort` (covers `/cohort`, `/cohort/dataframe`, `/cohort/accession-ids`).
-
-The senders construct the header inline at call sites:
-
-- `trust-api/trust_api/services/task_handlers.py::trust_internal_headers()` — used on outbound imaging-api and data-access-api calls.
-- `imaging-api/imaging_api/services_external/data_access.py` — used on the outbound `/cohort/accession-ids` call.
-- The `flip` Python package — lives at [`flip-utils/flip/`](flip-utils/flip/) in this mono-repo, consumed by both the NVFLARE and Flower fl-client / fl-server images built from `fl-services/`. Wraps every fl-client call to imaging-api (`flip.get_by_accession_number`, etc.) and data-access-api (`flip.get_dataframe`). The package reads `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and forwards it on every request. **User-uploaded training code (`client_app.py`, `server_app.py`, anything under `tutorials/`) does not deal with the header directly** — it calls `flip.*` and the package handles transport-level auth.
+Threat model, per-service code paths and key rotation:
+[`trust/AGENTS.md`](trust/AGENTS.md#trust-internal-service-authentication).
 
 ## Code Modification Rules
 
