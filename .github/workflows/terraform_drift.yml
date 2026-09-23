@@ -128,6 +128,13 @@ jobs:
           # script derives the env-file name, the AWS_PROFILE the Makefile's guard
           # expects and which keys are required, from this one token.
           PROD: ${{ vars.TF_PROD || (github.ref_name == 'main' && 'true' || 'stag') }}
+          # The class this run is allowed to compose, asserted by the script. The
+          # ref says which class the *branch* deploys; TF_PROD says which estate to
+          # deploy it into, and nothing else checks the two agree. They must:
+          # TF_PROD=stag (or lza-stag) on aws-prod makes the drift job plan the prod
+          # estate with staging's shape — the same silent direction the apply
+          # workflow guards against.
+          EXPECTED_ENV_CLASS: ${{ github.ref_name == 'main' && 'prod' || 'stag' }}
           AWS_REGION: ${{ vars.AWS_REGION }}
           VPC_NAME: ${{ vars.VPC_NAME }}
           FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}

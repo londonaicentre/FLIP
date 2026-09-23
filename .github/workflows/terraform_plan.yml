@@ -115,6 +115,12 @@ jobs:
           # name, the AWS_PROFILE the Makefile's guard expects, and which keys are
           # required — one token, one table.
           PROD: ${{ vars.TF_PROD || 'stag' }}
+          # The class this run is allowed to compose, asserted by the script: this
+          # workflow declares `environment: aws-stag` unconditionally, so a TF_PROD
+          # on aws-stag naming a prod-grade estate (true / lza) is a mis-set
+          # variable, and the plan it would produce is one nobody asked for. Literal
+          # rather than ref-derived: plans are staging-only by construction.
+          EXPECTED_ENV_CLASS: stag
           AWS_REGION: ${{ vars.AWS_REGION }}
           VPC_NAME: ${{ vars.VPC_NAME }}
           FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}

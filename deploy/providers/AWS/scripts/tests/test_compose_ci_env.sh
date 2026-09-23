@@ -596,6 +596,76 @@ else
     ok "writes no raw TF_VAR_ lines for a legacy environment"
 fi
 
+# 15. THE ENV CLASS. The workflows state the class their ref implies and the script
+#     refuses a TF_PROD that names the other one. There is one freely settable
+#     variable between a run and the account it shapes, and getting it wrong is not
+#     a wrong-looking plan: TF_PROD=stag on aws-prod composes a prod estate with
+#     staging's destructive defaults — the RDS comes out with
+#     deletion_protection = false, skip_final_snapshot = true — inside an apply job
+#     nobody is watching. The compose step is the last cheap place to stop it.
+#
+#     The value is per workflow, not per file: terraform_plan.yml declares
+#     aws-stag unconditionally and only ever plans staging, so a literal is the
+#     correct assertion there; the other two follow the ref (main -> prod).
+echo ""
+echo "-- every workflow states the class its ref implies"
+class_offenders=""
+for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
+    wf_path="${WORKFLOW_DIR}/${wf}"
+    [[ -f "${wf_path}" ]] || continue
+    # Anchored to the key: an explanatory comment above the line must not be read
+    # as its value.
+    class_lines="$(grep -oE '^[[:space:]]*EXPECTED_ENV_CLASS:[[:space:]]*.*$' "${wf_path}" |
+        sed -E 's/^[[:space:]]*EXPECTED_ENV_CLASS:[[:space:]]*//')"
+    count="$(printf '%s\n' "${class_lines}" | grep -c .)"
+    distinct="$(printf '%s\n' "${class_lines}" | grep . | LC_ALL=C sort -u | wc -l)"
+    case "${wf}" in
+        terraform_plan.yml) want="stag" ;;
+        *) want="\${{ github.ref_name == 'main' && 'prod' || 'stag' }}" ;;
+    esac
+    if [[ "${count}" -ge 1 && "${distinct}" -eq 1 && "${class_lines}" == "${want}" ]]; then
+        continue
+    fi
+    class_offenders="${class_offenders} ${wf}(lines=${count},value=${class_lines:-<absent>})"
+done
+if [[ -z "${class_offenders}" ]]; then
+    ok "all three declare the class their ref implies"
+else
+    no "all three declare the class their ref implies" \
+        "expected 'stag' in the plan workflow and the ref-derived value in the others:" ${class_offenders}
+fi
+
+echo ""
+echo "-- a declared class that disagrees with the token is refused"
+run_case "a stag estate under a prod ref is refused" EXPECTED_ENV_CLASS=prod
+expect_rc 1 "exits 1"
+expect_stderr "PROD=stag" "names the token it composed for"
+expect_stderr "expects prod" "names the class the caller declared"
+run_case "a prod estate under a stag ref is refused" PROD=true EXPECTED_ENV_CLASS=stag
+expect_rc 1 "exits 1"
+expect_stderr "PROD=true" "names the token"
+# A cross-check, not an input: a matching declaration composes the same target.
+run_case "a matching class composes" EXPECTED_ENV_CLASS=stag
+expect_rc 0 "exits 0"
+if grep -qxF 'AWS_PROFILE=stag' "${OUT_FILE}"; then
+    ok "and composes the target the token alone would have"
+else
+    no "and composes the target the token alone would have" "file: $(grep '^AWS_PROFILE' "${OUT_FILE}")"
+fi
+
+echo ""
+echo "-- in CI the declaration is mandatory, or a workflow could drop it in silence"
+run_case "CI without a class is refused" GITHUB_ACTIONS=true
+expect_rc 1 "exits 1"
+expect_stderr "EXPECTED_ENV_CLASS is not set" "says what is missing"
+expect_stderr "github.ref_name" "and shows the line to add"
+run_case "CI with a matching class composes" GITHUB_ACTIONS=true EXPECTED_ENV_CLASS=stag
+expect_rc 0 "exits 0"
+# Outside CI there is nothing to check against: a laptop composes what it is told
+# to, and the Makefile's account guard is what catches the mismatch there.
+run_case "a laptop run may omit it, or pass it empty" EXPECTED_ENV_CLASS=
+expect_rc 0 "exits 0"
+
 echo ""
 echo "==== ${PASS} passed, ${FAIL} failed ===="
 [[ "${FAIL}" -eq 0 ]]

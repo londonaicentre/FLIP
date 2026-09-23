@@ -152,12 +152,14 @@ name and branch match the pinned `job_workflow_ref` exactly.
   account ever uses another name, override it (`CI_STATE_BUCKET=` for
   `scripts/setup-github-environments.sh`, `--bucket` for
   `scripts/reconcile_ci_env.py`).
-- The boundary is attached on **every** mode now, LZA included. This root used to be
-  applied only in the self-contained accounts, and the FLIP root blanked
-  `TF_VAR_iam_permissions_boundary_name` on `PROD=lza` / `PROD=lza-stag` because a
-  name that resolves to nothing fails every role update with `NoSuchEntity`. Applying
-  this root in the LZA accounts first is what retires that exception; an env file can
-  still blank the variable for an account where `ci/` has not been applied.
+- The boundary is attached on every mode whose applies run through this root, and
+  detached on the LZA modes until this root has been applied there. This root
+  declares `AICentre-FLIPTerraformBoundary`, and a name that resolves to nothing
+  fails every role update with `NoSuchEntity` — so while either LZA account is
+  still changed by laptop applies, the main root's Makefile blanks the variable on
+  `PROD=lza` / `PROD=lza-stag` (`export TF_VAR_iam_permissions_boundary_name ?=`).
+  Applying this root in those accounts first is what retires the exception; an env
+  file can set the variable explicitly on any mode in the meantime.
 
 ## The plan role reads one secret, on purpose
 

@@ -857,7 +857,7 @@ fixed per account by design.
 | `TF_VAR_lza_managed_network` | `true` — the platform-managed-network toggle, orthogonal to `environment` (see below) |
 | Trust kit suffix | `trust/.env.<CODE>.lza-prod` — a separate namespace so legacy prod kits are never overwritten |
 | `deploy-centralhub` git ref | `origin/main` (same as legacy prod) |
-| `TF_VAR_iam_permissions_boundary_name` | The `AICentre-FLIPTerraformBoundary` default — the policy is declared by the `ci/` root, which fences the GitHub OIDC apply role, and the LZA workload accounts run that root like any other (see "Repointing CI at the LZA accounts": `ci/` first, then this root). It used to be blanked on these two modes because `ci/` had never been applied there, and attaching a name that does not resolve failed every role update with `NoSuchEntity`. An env file can still set it to `""` for an account where `ci/` genuinely has not been applied ([FLIP#1199](https://github.com/londonaicentre/FLIP/issues/1199)) |
+| `TF_VAR_iam_permissions_boundary_name` | The `AICentre-FLIPTerraformBoundary` default — the policy is declared by the `ci/` root, which exists to fence the GitHub OIDC apply role. **Blanked on the two LZA modes** (`PROD=lza` / `PROD=lza-stag`): that root has not been applied in those accounts yet and both estates are still changed by laptop applies, where an attach whose name resolves to nothing fails every role update with `NoSuchEntity`. An env file that sets the variable itself wins on any mode — `?=` only supplies the default, so re-attaching one account by hand is a one-line change. Re-attaching both in code is a follow-up, ordered after `make -C ci apply` has run there: see "Repointing CI at the LZA accounts" ([FLIP#1199](https://github.com/londonaicentre/FLIP/issues/1199)) |
 
 **Platform-managed vs FLIP-managed.** The LZA account's network is owned by the accelerator pipeline
 ([londonaicentre/lza](https://github.com/londonaicentre/lza)) and VPC-layer creation is SCP-denied in-account, so with
@@ -1580,12 +1580,21 @@ second is a GitHub change:
    not change: the branch policy on `aws-prod` is a property of the pipeline, and
    re-creating an environment to rename it would drop every secret it holds.
 
-| | Account | `TF_PROD` | Env file | Profile guard | `LZA_REQUIRED_KEYS` |
-| --- | --- | --- | --- | --- | --- |
-| Legacy staging | `080369786334` | `stag` | `.env.stag` | `stag` | no |
-| Legacy production | `046651569599` | `true` | `.env.production` | `prod` | no |
-| LZA staging | `863478709690` | `lza-stag` | `.env.lza-stag` | `lza-stag` | yes |
-| LZA production | `893493035022` | `lza` | `.env.lza-prod` | `lza-prod` | yes |
+| | Account | `TF_PROD` | Env file | `ENV_CLASS` | Profile guard | `LZA_REQUIRED_KEYS` |
+| --- | --- | --- | --- | --- | --- | --- |
+| Legacy staging | `080369786334` | `stag` | `.env.stag` | `stag` | `stag` | no |
+| Legacy production | `046651569599` | `true` | `.env.production` | `prod` | `prod` | no |
+| LZA staging | `863478709690` | `lza-stag` | `.env.lza-stag` | `stag` | `lza-stag` | yes |
+| LZA production | `893493035022` | `lza` | `.env.lza-prod` | `prod` | `lza-prod` | yes |
+
+`ENV_CLASS` is `deploy/env_mode.mk`'s derivation, carried per row of
+`compose-ci-env.sh`'s table as well: the workflows pass the class their ref implies
+as `EXPECTED_ENV_CLASS` (`main` → `prod`, otherwise `stag`; `stag` in
+`terraform_plan.yml`, which only ever plans staging) and the script refuses to
+compose when the two disagree. That is what keeps a mis-set `TF_PROD` from quietly
+planning the prod estate with staging's shape — the prod RDS then reads
+`deletion_protection = false` and `skip_final_snapshot = true` — in an unattended
+apply on `main`.
 
 Run these in order **per account**, from a laptop authenticated to that account:
 
@@ -1623,6 +1632,12 @@ make seed-ci-keypair-param PROD=lza-stag
 #    — the boundary every role in the main root is created under — so it comes
 #    *before* any main-root apply in a new account, not after.
 make -C ci init PROD=lza-stag && make -C ci plan PROD=lza-stag && make -C ci apply PROD=lza-stag
+#    Once this has run in BOTH LZA accounts, the main root can start attaching the
+#    boundary there: delete the `ifneq ($(IS_LZA),)` block in the Makefile and flip
+#    tests/test_iam_permissions_boundary.py (its docstring names the two tests). Left
+#    in place deliberately until then — `make plan/apply PROD=lza|lza-stag` from a
+#    laptop, which is still how both estates change, would otherwise fail every role
+#    update with NoSuchEntity.
 
 # 4. The GitHub environment: creates it if absent, sets TF_PROD, reads the two role
 #    ARNs out of ci/ state (and refuses if ci/ is initialised for another account),

@@ -119,20 +119,24 @@ export TF_VAR_lza_vpc_name=$(LZA_VPC_NAME)
 endif
 
 # IAM permissions boundary (FLIP#1082): the boundary policy is owned by the ci/
-# root, which exists to fence the GitHub OIDC apply role. It used to be detached
-# on the LZA modes (export TF_VAR_iam_permissions_boundary_name ?=, FLIP#1199's
-# left-open half): those accounts were applied by hand under the platform's admin
-# permission set and never received ci/, so the policy did not exist there and
-# attaching a name that does not resolve fails every role update with
-# NoSuchEntity. That is no longer the arrangement — the LZA accounts are applied
-# through the same pipeline as the rest and get ci/ applied before anything else
-# (README, "Repointing CI at the LZA accounts"), so the boundary is carried in
-# every account this stack deploys into, which is the whole point of it being a
-# boundary rather than a per-environment preference.
-#
-# An env file can still set TF_VAR_iam_permissions_boundary_name="" for an
-# account where ci/ genuinely has not been applied; variables.tf documents "" as
-# that escape hatch, and tests/test_iam_permissions_boundary.py pins both paths.
+# root, which exists to fence the GitHub OIDC apply role and is applied only in
+# the accounts whose applies run through that pipeline. Detached on the LZA modes
+# for now: ci/ has not been applied in either of those accounts yet, they are
+# still changed by laptop applies, and attaching a name that does not resolve
+# fails every one of those role updates with NoSuchEntity — which is the failure
+# this default was added for during the FLIP#749 bring-up. variables.tf documents
+# "" as the value for an account where ci/ has never been applied, and an env file
+# that sets the variable itself still wins: `?=` only supplies the default.
+ifneq ($(IS_LZA),)
+export TF_VAR_iam_permissions_boundary_name ?=
+endif
+
+# Re-attaching it — deleting the block above — is a follow-up, and it is *ordered*
+# after the thing it depends on: first `make -C ci apply PROD=lza-stag` /
+# `PROD=lza` in both accounts (README, "Repointing CI at the LZA accounts",
+# step 3), then drop the block and flip tests/test_iam_permissions_boundary.py to
+# assert that no mode detaches it. Re-attaching here would break every manual
+# LZA apply in the window before that step runs.
 
 # Kit-file env suffix — the ENV token from env_mode.mk (.production / .stag /
 # .lza-prod / .lza-stag): selects the trust kit file trust/.env.<KIT>.<suffix> for

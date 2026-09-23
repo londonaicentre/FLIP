@@ -62,11 +62,24 @@ STUB_ENV = {
 }
 
 
+def _script_env(**extra: str) -> dict[str, str]:
+    """The environment to run the compose script in, independent of where this runs.
+
+    ``GITHUB_ACTIONS`` is dropped because the script treats it as "this is CI" and then
+    *requires* ``EXPECTED_ENV_CLASS``; a pytest run on a runner inherits it, so leaving
+    it in would make these probes assert the CI requirement instead of the table. The
+    requirement has its own test below, which sets it deliberately.
+    """
+    env = {k: v for k, v in os.environ.items() if k not in {"GITHUB_ACTIONS", "EXPECTED_ENV_CLASS", "PROD"}}
+    env.update(extra)
+    return env
+
+
 def _script_target(token: str) -> dict[str, str]:
     """Run the compose script's ``--print-env`` and parse its KEY=value output."""
     result = subprocess.run(
         [str(SCRIPT), "--print-env"],
-        env={**os.environ, "PROD": token},
+        env=_script_env(PROD=token),
         text=True,
         capture_output=True,
         check=True,
@@ -101,10 +114,86 @@ def _env_mode(token: str, tmp_path: Path, extra: dict[str, str] | None = None) -
 @pytest.mark.parametrize("token", TOKENS)
 def test_compose_target_matches_env_mode(token: str, tmp_path: Path) -> None:
     script = _script_target(token)
-    env, env_file_name, _env_class, is_lza = _env_mode(token, tmp_path)
+    env, env_file_name, env_class, is_lza = _env_mode(token, tmp_path)
     assert script["ENV"] == env
     assert script["ENV_FILE_NAME"] == env_file_name
     assert bool(script.get("ENV_FILE_NAME", "").startswith(".env.lza-")) == bool(is_lza)
+    # The class the script asserts against is env_mode.mk's own derivation, not a
+    # second opinion about which estates are prod-grade: `true` and `lza` are prod,
+    # `stag` and `lza-stag` are not, and that mapping is the whole content of the
+    # class guard the workflows rely on.
+    assert script["ENV_CLASS"] == env_class
+
+
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [
+        ("stag", "prod"),  # the dangerous direction: a stag estate under a prod ref
+        ("lza-stag", "prod"),
+        ("true", "stag"),  # and the mirror: prod composed for a staging run
+        ("lza", "stag"),
+    ],
+)
+def test_a_class_mismatch_is_refused(token: str, expected: str) -> None:
+    """``TF_PROD`` alone chooses the account shape, so the caller's class is asserted.
+
+    TF_PROD=stag on aws-prod composes a prod-sized plan whose RDS is refreshed as
+    ``deletion_protection = false``, ``skip_final_snapshot = true`` — and the apply
+    job then applies it unattended. The compose step is the last place that can stop
+    it cheaply.
+    """
+    result = subprocess.run(
+        [str(SCRIPT), "--print-env"],
+        env=_script_env(PROD=token, EXPECTED_ENV_CLASS=expected),
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode != 0
+    assert "but this run expects" in result.stderr
+    assert f"PROD={token}" in result.stderr
+
+
+@pytest.mark.parametrize("token", TOKENS)
+def test_a_matching_class_composes_the_same_target(token: str) -> None:
+    plain = _script_target(token)
+    declared = dict(
+        line.split("=", 1)
+        for line in subprocess.run(
+            [str(SCRIPT), "--print-env"],
+            env=_script_env(PROD=token, EXPECTED_ENV_CLASS=plain["ENV_CLASS"]),
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.splitlines()
+        if "=" in line
+    )
+    assert declared == plain
+
+
+def test_ci_runs_must_state_their_class() -> None:
+    """In CI the assertion is mandatory, or a workflow could silently drop it.
+
+    The guard is only worth having if it cannot be forgotten: every workflow that
+    composes this file passes EXPECTED_ENV_CLASS from its ref, and a new one that
+    does not gets a red compose step naming the line to add.
+    """
+    missing = subprocess.run(
+        [str(SCRIPT), "--print-env"],
+        env=_script_env(PROD="stag", GITHUB_ACTIONS="true"),
+        text=True,
+        capture_output=True,
+    )
+    assert missing.returncode != 0
+    assert "EXPECTED_ENV_CLASS is not set" in missing.stderr
+
+    stated = subprocess.run(
+        [str(SCRIPT), "--print-env"],
+        env=_script_env(PROD="stag", GITHUB_ACTIONS="true", EXPECTED_ENV_CLASS="stag"),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert "ENV_CLASS=stag" in stated.stdout
 
 
 @pytest.mark.parametrize("token", TOKENS)
@@ -146,7 +235,7 @@ def test_the_wrong_profile_is_still_refused(token: str, tmp_path: Path) -> None:
 def test_an_unknown_token_is_refused_by_the_script() -> None:
     result = subprocess.run(
         [str(SCRIPT), "--print-env"],
-        env={**os.environ, "PROD": "prod"},
+        env=_script_env(PROD="prod"),
         text=True,
         capture_output=True,
     )
@@ -246,7 +335,7 @@ def test_a_real_compose_lands_on_that_default_path() -> None:
     try:
         subprocess.run(
             [str(SCRIPT)],
-            env={**os.environ, **COMPOSE_ENV, "PROD": "lza-stag"},
+            env=_script_env(**COMPOSE_ENV, PROD="lza-stag"),
             text=True,
             capture_output=True,
             check=True,

@@ -223,7 +223,10 @@ ci_output() {
 # cutover (#749) keeps the naming — but it is a default, not an assumption:
 # override CI_STATE_BUCKET if an account ever uses another name.
 CI_STATE_BUCKET="${CI_STATE_BUCKET:-flip-terraform-state-${ENV}}"
-CI_BACKEND_STATE="${AWS_DIR}/ci/.terraform/terraform.tfstate"
+# Overridable so scripts/tests/test_setup_github_environments.sh can point it at a
+# seeded state file instead of the working directory's, and so an operator in a
+# second checkout can name the one they actually initialised.
+CI_BACKEND_STATE="${CI_BACKEND_STATE:-${AWS_DIR}/ci/.terraform/terraform.tfstate}"
 
 # A fresh checkout has no ci/.terraform at all. The grep below then exits 2, and
 # under `set -o pipefail` that killed the whole script — silently, because grep's
@@ -301,7 +304,7 @@ set_one() {
             MISSING+=("${key}")
             return 0
         fi
-        if [[ " ${REQUIRED_KEYS[*]} " == *" ${key} " ]]; then
+        if [[ " ${REQUIRED_KEYS[*]} " == *" ${key} "* ]]; then
             MISSING+=("${key}")
         else
             OPTIONAL_ABSENT+=("${key}")

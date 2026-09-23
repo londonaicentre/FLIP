@@ -160,6 +160,14 @@ jobs:
           # env-file name, the AWS_PROFILE the Makefile's guard expects and which
           # keys are required, from this one token.
           PROD: ${{ vars.TF_PROD || (github.ref_name == 'main' && 'true' || 'stag') }}
+          # The class this run is allowed to compose, asserted by the script. The
+          # ref says which class the *branch* deploys; TF_PROD says which estate to
+          # deploy it into, and nothing else checks the two agree. They must:
+          # TF_PROD=stag (or lza-stag) on aws-prod composes a prod-sized plan whose
+          # RDS is refreshed as deletion_protection = false, skip_final_snapshot =
+          # true — then applies it unattended on main. With this, that is a red
+          # compose step instead of a plan someone has to read closely.
+          EXPECTED_ENV_CLASS: ${{ github.ref_name == 'main' && 'prod' || 'stag' }}
           AWS_REGION: ${{ vars.AWS_REGION }}
           VPC_NAME: ${{ vars.VPC_NAME }}
           FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}

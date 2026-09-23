@@ -46,6 +46,18 @@
 # Makefile's account guard expects, and which keys are required. One token, one
 # table, no second place for the two to disagree.
 #
+# EXPECTED_ENV_CLASS is the caller's own statement of which *class* this run should
+# be composing, and the workflows pass it from the ref (main -> prod, everything
+# else -> stag; `stag` in terraform_plan.yml, which only ever plans staging). It is
+# required when this runs in CI and ignored on a laptop. One freely settable
+# variable now chooses the account shape, and the dangerous direction is silent:
+# TF_PROD=stag on aws-prod composes a prod-sized plan whose RDS is refreshed as
+# `deletion_protection = false`, `skip_final_snapshot = true` — in an unattended
+# apply on main. The class is not a second token to keep in sync: it is the value
+# env_mode.mk derives as ENV_CLASS, carried per row of the table below and pinned
+# against that file by tests/test_ci_env_target.py, so a mis-set TF_PROD is a red
+# compose step instead of a plan someone has to read closely.
+#
 # The output file defaults to <repo root>/.env.<ENV> — the exact path
 # `deploy/providers/AWS/Makefile` derives through env_mode.mk — so CI cannot
 # compose one file and have make include another. Pass a path to override (the
@@ -79,11 +91,12 @@ fi
 # token (ENV_FILE_NAME); AWS_PROFILE_VALUE is what the Makefile's account guard
 # demands for that ENV (PROD_AWS_PROFILE / STAG_AWS_PROFILE / LZA_AWS_PROFILE /
 # LZA_STAG_AWS_PROFILE); GH_ENV is the GitHub environment holding this
-# environment's values. The LZA tokens reuse aws-stag / aws-prod: the estate was
-# repointed at the LZA accounts rather than given a third and fourth environment
-# (README, "Repointing CI at the LZA accounts"). tests/test_ci_env_target.py
-# pins ENV and ENV_FILE against a real `make` probe, so this table cannot drift
-# from env_mode.mk silently.
+# environment's values; ENV_CLASS_VALUE is env_mode.mk's ENV_CLASS (prod | stag).
+# The LZA tokens reuse aws-stag / aws-prod: the estate was repointed at the LZA
+# accounts rather than given a third and fourth environment (README, "Repointing
+# CI at the LZA accounts"). tests/test_ci_env_target.py pins ENV, ENV_FILE and
+# ENV_CLASS against a real `make` probe, so this table cannot drift from
+# env_mode.mk silently.
 PROD_TOKEN="${PROD:-}"
 case "${PROD_TOKEN}" in
     stag)
@@ -91,24 +104,28 @@ case "${PROD_TOKEN}" in
         ENV_FILE=.env.stag
         AWS_PROFILE_VALUE=stag
         GH_ENV=aws-stag
+        ENV_CLASS_VALUE=stag
         ;;
     true)
         ENV=production
         ENV_FILE=.env.production
         AWS_PROFILE_VALUE=prod
         GH_ENV=aws-prod
+        ENV_CLASS_VALUE=prod
         ;;
     lza-stag)
         ENV=lza-stag
         ENV_FILE=.env.lza-stag
         AWS_PROFILE_VALUE=lza-stag
         GH_ENV=aws-stag
+        ENV_CLASS_VALUE=stag
         ;;
     lza)
         ENV=lza-prod
         ENV_FILE=.env.lza-prod
         AWS_PROFILE_VALUE=lza-prod
         GH_ENV=aws-prod
+        ENV_CLASS_VALUE=prod
         ;;
     "")
         die "PROD is not set. It selects the mode: stag, true, lza-stag or lza.
@@ -128,6 +145,29 @@ else
     IS_LZA=""
 fi
 
+# The class assertion described in the usage block. It runs before the print-only
+# path on purpose: a mismatched token should fail on the first invocation in a
+# job, not on the one that writes the file.
+if [[ -n "${EXPECTED_ENV_CLASS:-}" ]]; then
+    if [[ "${EXPECTED_ENV_CLASS}" != "${ENV_CLASS_VALUE}" ]]; then
+        die "PROD=${PROD_TOKEN} composes the ${ENV_CLASS_VALUE}-class estate (${ENV_FILE}), but this run expects ${EXPECTED_ENV_CLASS}.
+   In CI the expectation comes from the branch (main -> prod, otherwise stag), so
+   this is TF_PROD naming the wrong estate on the GitHub environment — not a reason
+   to change the branch. Refusing to compose, because the dangerous direction is
+   silent: a stag-grade token on prod plans the prod RDS with
+   deletion_protection = false and skip_final_snapshot = true, unattended.
+   Fix TF_PROD (${GH_ENV} expects one of: stag, true, lza-stag, lza)."
+    fi
+elif [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    die "EXPECTED_ENV_CLASS is not set, and this is running in CI.
+   Every workflow that composes this file passes it from the ref, so add
+       EXPECTED_ENV_CLASS: \${{ github.ref_name == 'main' && 'prod' || 'stag' }}
+   to the step's env (terraform_plan.yml passes the literal 'stag' — it only plans
+   staging). Without it, a mis-set TF_PROD composes the wrong estate in silence,
+   which is the whole point of the assertion; set it to '${ENV_CLASS_VALUE}' if
+   ${PROD_TOKEN} is genuinely the intended mode for this job."
+fi
+
 DEFAULT_OUT_FILE="${REPO_ROOT}/${ENV_FILE}"
 
 # `--print-env` prints the derived target and exits — no values needed. It exists
@@ -135,8 +175,8 @@ DEFAULT_OUT_FILE="${REPO_ROOT}/${ENV_FILE}"
 # against `deploy/env_mode.mk` and the Makefile by a test
 # (tests/test_ci_env_target.py) instead of by reading the files side by side.
 if [[ "${1:-}" == "--print-env" ]]; then
-    printf 'ENV=%s\nENV_FILE_NAME=%s\nAWS_PROFILE=%s\nGH_ENV=%s\nOUT_FILE=%s\n' \
-        "${ENV}" "${ENV_FILE}" "${AWS_PROFILE_VALUE}" "${GH_ENV}" "${DEFAULT_OUT_FILE}"
+    printf 'ENV=%s\nENV_FILE_NAME=%s\nAWS_PROFILE=%s\nGH_ENV=%s\nENV_CLASS=%s\nOUT_FILE=%s\n' \
+        "${ENV}" "${ENV_FILE}" "${AWS_PROFILE_VALUE}" "${GH_ENV}" "${ENV_CLASS_VALUE}" "${DEFAULT_OUT_FILE}"
     exit 0
 fi
 

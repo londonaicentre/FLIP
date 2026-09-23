@@ -17,16 +17,23 @@
 
 Every IAM role this root owns carries ``var.iam_permissions_boundary_name``,
 whose ``variables.tf`` default is the ``AICentre-FLIPTerraformBoundary`` policy
-declared by the ``ci/`` root, so the boundary must resolve in any account the
-stack is applied to — which is why ``ci/`` is applied there first.
+declared by the ``ci/`` root, so the boundary resolves in any account the stack is
+applied to — which is why ``ci/`` is applied there first.
 
-The LZA modes used to be the exception: those accounts were applied by hand and
-never received ``ci/``, so the Makefile exported the variable as ``""`` on
-``PROD=lza`` / ``PROD=lza-stag`` to keep role updates from failing with
-``NoSuchEntity``. They are applied through the same pipeline now and that
-carve-out is gone. These probes run ``make`` for real, with the env-file include
-pointed at nothing so they are independent of any local ``.env.*`` file, and read
-back what Terraform would see.
+The self-contained modes are the ones the pipeline applies today, so they carry
+it. The LZA modes are detached, and this is the *current* state rather than a
+preference: ``ci/`` has not been applied in either LZA account yet and those
+estates are still changed by laptop applies, where an attach whose name resolves
+to nothing fails every role update with ``NoSuchEntity`` (the failure the
+Makefile default was added for). Re-attaching is a follow-up, ordered after
+``make -C ci apply PROD=lza-stag`` / ``PROD=lza`` has run in both accounts: delete
+the ``ifneq ($(IS_LZA),)`` block in the Makefile and merge
+``test_the_lza_modes_detach_the_boundary_until_ci_lands_there`` into
+``test_the_self_contained_modes_let_the_terraform_default_apply``.
+
+These probes run ``make`` for real, with the env-file include pointed at nothing
+so they are independent of any local ``.env.*`` file, and read back what
+Terraform would see.
 """
 
 import os
@@ -78,21 +85,40 @@ def _probe(tmp_path: Path, prod: str, extra_env: dict[str, str] | None = None) -
     return "|".join(values)
 
 
-@pytest.mark.parametrize("prod", ["stag", "true", "lza-stag", "lza"])
-def test_no_mode_detaches_the_boundary(tmp_path: Path, prod: str) -> None:
-    """Every deployed mode lets the Terraform default apply — the LZA pair included.
+@pytest.mark.parametrize("prod", ["stag", "true"])
+def test_the_self_contained_modes_let_the_terraform_default_apply(tmp_path: Path, prod: str) -> None:
+    """The modes the pipeline applies: no export at all, so the default stands.
 
-    An exported empty string here is the FLIP#1199 bug in reverse: on an account
-    whose ``ci/`` root *has* been applied, it silently strips the boundary from
-    every role the apply creates or updates.
+    An exported empty string here would be the FLIP#1199 bug in reverse — those
+    accounts *have* a boundary policy, so blanking it silently strips the boundary
+    from every role the apply creates or updates.
     """
     assert _probe(tmp_path, prod) == "UNSET|"
 
 
+@pytest.mark.parametrize("prod", ["lza-stag", "lza"])
+def test_the_lza_modes_detach_the_boundary_until_ci_lands_there(tmp_path: Path, prod: str) -> None:
+    """The LZA carve-out, still in place: ``ci/`` has not been applied there (#1199).
+
+    ``AICentre-FLIPTerraformBoundary`` does not exist in either LZA account yet, and
+    both estates are still changed by manual ``make plan/apply PROD=lza|lza-stag``
+    runs — where an attach whose name resolves to nothing fails every role update
+    with ``NoSuchEntity``. So the Makefile exports the variable as ``""`` for these
+    two modes and an apply there keeps working.
+
+    This test flips when the ordering has actually happened: once
+    ``make -C ci apply PROD=lza-stag`` and ``PROD=lza`` have run in both accounts,
+    delete the ``ifneq ($(IS_LZA),)`` block in the Makefile and fold this case into
+    the self-contained one above.
+    """
+    assert _probe(tmp_path, prod) == "|exported"
+
+
 @pytest.mark.parametrize("prod", ["stag", "true", "lza-stag", "lza"])
 def test_an_env_file_boundary_name_still_wins(tmp_path: Path, prod: str) -> None:
-    # The escape hatch for an account where ci/ has not been applied: the operator
-    # writes TF_VAR_iam_permissions_boundary_name= into the env file (it is what
-    # `include` exports).
+    # `?=` supplies a default, it does not override: an operator who sets the
+    # variable in the env file (which `include` exports) gets that name on every
+    # mode, LZA included — the escape hatch for an account where ci/ has not been
+    # applied is the same mechanism as re-attaching it by hand.
     probe = _probe(tmp_path, prod, {"TF_VAR_iam_permissions_boundary_name": "Custom-Boundary"})
     assert probe == "Custom-Boundary|exported"
