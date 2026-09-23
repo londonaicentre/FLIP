@@ -594,7 +594,7 @@ helm upgrade trust-release trust/deploy/helm -n flip-trust \
   -f trust/deploy/helm/values.yaml \
   --set imageTag=stag \
   --set trustData.version=<data-version tag> \
-  --set trustData.seed.projects="cxr_project spleen_project"
+  --set trustData.seed.projects="cxr_project"
 ```
 
 If the hook fails, its Job is kept (`hook-delete-policy: before-hook-creation,hook-succeeded`)

@@ -269,11 +269,11 @@ PVCs explicitly if you want a clean slate.
 | `imagePullSecrets` | `[]` | Registry credentials for private images |
 | `namespace.create` | `true` | Whether to create the namespace |
 | `namespace.name` | `""` | Namespace name (defaults to release namespace) |
-| `trustData.version` | `20260901` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
+| `trustData.version` | `20260917` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
 | `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the seed fetches from |
 | `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc |
 | `trustData.seed.omop` / `.orthanc` | `true` / `false` | Which stores to seed. Orthanc is off by default: ~2 GB of DICOM per trust, posted over REST (minutes, once) |
-| `trustData.seed.projects` | `cxr_project spleen_project` | Published projects to load (`omop-csv/<project>/` + `dicom/<project>.tar.gz`) |
+| `trustData.seed.projects` | `cxr_project` | Published projects to load (`omop-csv/<project>/` + `dicom/<project>.tar.gz`). One list for both halves, so only projects the dataset carries both for; spleen and brain_mri publish tables only since FLIP#1221 and regenerate their DICOMs locally, which no in-cluster hook can do |
 | `trustData.seed.sourceTrust` | `""` (= `trustNumber`) | The dataset partition (`source_trust`) this trust receives |
 | `trustData.seed.sourceRef` | `develop` | FLIP git ref the seed tools are installed from at run time — match the ref your images were built from (`main` for `:prod`) |
 | `trustData.seed.dicomVocabBundle` | `vocab_dicom_paulnagy_20260109` | The Apache-licensed DICOM vocabulary bundle loaded before the rows |
