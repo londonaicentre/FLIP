@@ -27,7 +27,8 @@ all connected Trust environments.
 The Central Hub API orchestrates the full lifecycle of a federated learning study:
 
 1. **Project management** — create, approve, and track FL projects across participating Trusts
-2. **User management** — via AWS Cognito, managing researcher and administrator accounts
+2. **User management** — researcher and administrator accounts in the configured OIDC identity provider (AWS
+   Cognito in staging and production, Keycloak in local development)
 3. **Cohort queries** — dispatch OMOP SQL queries to Trust sites and aggregate results
 4. **Model coordination** — trigger training jobs, retrieve aggregated models, and store metrics
 5. **Audit logging** — record all significant platform events for governance and compliance
@@ -77,9 +78,17 @@ The flip-api is configured via environment variables. In development these are s
 | `DB_PORT` | PostgreSQL port |
 | `POSTGRES_USER` | PostgreSQL username |
 | `POSTGRES_DB` | PostgreSQL database name |
-| `AWS_REGION` | AWS region for Cognito and S3 |
-| `AWS_COGNITO_USER_POOL_ID` | AWS Cognito User Pool ID |
-| `AWS_COGNITO_APP_CLIENT_ID` | AWS Cognito App Client ID |
+| `AWS_REGION` | AWS region for S3 (and Cognito under `AUTH_BACKEND=cognito`) |
+| `AUTH_BACKEND` | Identity provider: `keycloak` (dev default — the `keycloak` service in `deploy/compose.development.yml`) or `cognito` (staging and production, the only value `ProdSettings` accepts) |
+| `AWS_COGNITO_USER_POOL_ID` | AWS Cognito User Pool ID (`AUTH_BACKEND=cognito` only) |
+| `AWS_COGNITO_APP_CLIENT_ID` | AWS Cognito App Client ID (`AUTH_BACKEND=cognito` only) |
+| `KEYCLOAK_URL` | Keycloak base URL as flip-api reaches it over the Docker network (JWKS + Admin REST API); dev default `http://keycloak:8080` |
+| `KEYCLOAK_PUBLIC_URL` | Keycloak base URL as the browser reaches it, hence the `iss` every token carries; dev default `http://localhost:8180` (follows `KEYCLOAK_PORT`) |
+| `KEYCLOAK_REALM` | Realm name (default `flip`) |
+| `KEYCLOAK_CLIENT_ID` | Public browser client the UI signs in with (default `flip-ui`); its redirect URIs are the CORS allowlist |
+| `KEYCLOAK_AUDIENCE` | `aud` claim the verifier requires (default `flip-api`) |
+| `KEYCLOAK_ADMIN_CLIENT_ID` | Confidential service-account client flip-api administers users as (default `flip-api-admin`) |
+| `KEYCLOAK_ADMIN_CLIENT_SECRET` | That client's secret; shared by the realm import and flip-api (dev placeholder in `.env.development.example`) |
 | `AWS_SECRET_NAME` | Name of the AWS Secrets Manager secret `flip_api/utils/get_secrets.py` reads by default |
 | `AES_KEY_BASE64` | Base64-encoded AES-256 key used to encrypt trust task payloads and project IDs. Shared between hub (encryption) and trusts (decryption) |
 | `UPLOADED_MODEL_FILES_BUCKET` | S3 bucket (staging prefix) for pre-scan model-file uploads |
@@ -169,7 +178,7 @@ The `queries.queried_trust_ids` column is an `ARRAY(UUID)` (`postgresql.ARRAY(sa
 
 ## Testing
 
-Tests are split into `tests/unit/` (no real backing services) and `tests/integration/` (real Postgres / Cognito / S3 / sibling APIs). See [Where does my test go?](../CONTRIBUTING.md#where-does-my-test-go) in `CONTRIBUTING.md` for the placement rule.
+Tests are split into `tests/unit/` (no real backing services) and `tests/integration/` (real Postgres / Keycloak / Cognito / S3 / sibling APIs). See [Where does my test go?](../CONTRIBUTING.md#where-does-my-test-go) in `CONTRIBUTING.md` for the placement rule.
 
 Run unit tests (no Docker / DB / network needed):
 
@@ -187,15 +196,19 @@ Integration tests use [testcontainers-python](https://github.com/testcontainers/
 
 ### AWS-touching tests (S3, Cognito, SES)
 
-A session-scoped autouse fixture (`aws_mock` in `tests/integration/conftest.py`) enters [`moto.mock_aws()`](https://github.com/getmoto/moto) for the whole test session, intercepting `boto3.client(...)` calls at the botocore layer. The flip-api production code paths in `src/flip_api/utils/s3_client.py`, `src/flip_api/utils/cognito_helpers.py`, and the `boto3.client("sesv2", ...)` construction in `src/flip_api/utils/email_sender.py` (used by `user_services/access_request.py` and `private_services/imaging_notifications.py`) all hit the moto fake with no test-only branches in source.
+A session-scoped autouse fixture (`aws_mock` in `tests/integration/conftest.py`) enters [`moto.mock_aws()`](https://github.com/getmoto/moto) for the whole test session, intercepting `boto3.client(...)` calls at the botocore layer. The flip-api production code paths in `src/flip_api/utils/s3_client.py`, the Cognito identity provider `src/flip_api/auth/identity/cognito.py`, and the `boto3.client("sesv2", ...)` construction in `src/flip_api/utils/email_sender.py` (used by `user_services/access_request.py` and `private_services/imaging_notifications.py`) all hit the moto fake with no test-only branches in source.
 
 Per-service helper fixtures bootstrap the state each test needs:
 
 - `s3_buckets` — creates the buckets configured in `Settings` (`UPLOADED_MODEL_FILES_BUCKET`, `SCANNED_MODEL_FILES_BUCKET`, `UPLOADED_FEDERATED_DATA_BUCKET`, `FL_APP_DESTINATION_BUCKET`). The base FL application templates are not an S3 bucket — they are read from the local `FL_APP_BASE_DIR` tree baked into the image (FLIP#724).
-- `cognito_user_pool` — creates a moto user pool + app client and rebinds `Settings.AWS_COGNITO_USER_POOL_ID` / `AWS_COGNITO_APP_CLIENT_ID` to point at them, clearing the `_cognito_client` `lru_cache` so the next call rebuilds against the fresh IDs.
+- `cognito_user_pool` — creates a moto user pool + app client, pins `AUTH_BACKEND=cognito` and rebinds `Settings.AWS_COGNITO_USER_POOL_ID` / `AWS_COGNITO_APP_CLIENT_ID` to point at them, clearing the provider cache (`auth/identity/factory.py`) so the next request builds a Cognito provider against the fresh IDs.
 - `ses_send_email_recorder` — captures every `sesv2.send_email` call. moto v5 explicitly raises `NotImplementedError` on `send_email` with `Content.Template`, and every flip-api SES caller uses templated content; the recorder wraps the production-code path up to the SDK boundary so the test asserts the boto3 call shape (`FromEmailAddress`, `Destination.ToAddresses`, `TemplateName`, `TemplateData`). It's the closest approximation to a real SES round-trip moto's coverage allows today. It also pins `EMAIL_BACKEND="ses"`, since development defaults to the console backend (FLIP#919) — without that pin the SES path under test would never run. `tests/integration/test_console_email_backend.py` is the counterpart: it leaves the dev default alone and asserts the email paths succeed, and log rather than send, with no SES configuration at all.
 
 Why moto and not LocalStack: `cognito-idp` and `sesv2` are Pro-only on LocalStack — the free tier rejects `CreateUserPool` / `CreateEmailIdentity` outright. moto covers all three in OSS and runs in-process, so there's no container boot per test session.
+
+### Keycloak-touching tests
+
+`tests/integration/test_keycloak_round_trips.py` is the twin of `test_cognito_round_trips.py` for the Keycloak provider (`src/flip_api/auth/identity/keycloak.py`): it boots the pinned Keycloak image (kept in step with `deploy/compose.development.yml`) under Testcontainers with the committed dev realm `deploy/keycloak/flip-realm.json` imported at boot, so `register_user` really creates a user, `delete_user` really removes one, and a token minted by Keycloak's password grant really passes `verify_token`. The same import proves the realm file's `${...}` placeholders resolve. Separately, `.github/workflows/local_auth_smoke.yml` boots flip-db, keycloak and flip-api from the dev compose on a runner with no AWS credentials and runs `tests/local_auth_smoke.py` to sign in as the seeded admin — the CI proof that the hub starts and authenticates without AWS.
 
 ### Demo tooling (live stack)
 
@@ -210,11 +223,13 @@ Three developer utilities drive the **running dev stack** end to end (none run i
   honest lifecycle states through the real API; `--states` phases the pull-heavy approved entries, `--cleanup`
   removes everything it recorded in `tests/seed_demo_projects.json`. Idempotent: a re-run skips catalogue
   entries whose project name already exists on the hub, so it never duplicates the real imaging imports.
-- `src/flip_api/scripts/create_demo_users.py` (`make create_demo_users`) — provisions the demo Cognito users the
-  recorder signs in as (`DEMO_RESEARCHER_PASSWORD` / `DEMO_ADMIN_PASSWORD` from env, never committed); restart
-  flip-api afterwards so boot seeding grants their roles. Before any write it resolves the target pool's
-  name/region/AWS account and requires an interactive `yes`, so a stale `AWS_COGNITO_USER_POOL_ID` or wrong
-  SSO account can't plant a known-password admin in an unintended pool.
+- `src/flip_api/scripts/create_demo_users.py` (`make create_demo_users`, `make demo-users` from the repo root —
+  runs inside the flip-api container) — provisions the demo users the recorder signs in as in the configured
+  identity provider (the local Keycloak realm, or the Cognito pool under `AUTH_BACKEND=cognito`;
+  `DEMO_RESEARCHER_PASSWORD` / `DEMO_ADMIN_PASSWORD` from env, never committed); restart flip-api afterwards so
+  boot seeding grants their roles. Before any write it names the target (pool name/region/AWS account, or
+  Keycloak realm + URL) and requires an interactive `yes`, so a stale `AWS_COGNITO_USER_POOL_ID` or wrong SSO
+  account can't plant a known-password admin in an unintended pool.
 
 `aws_mock` also pins `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` / `AWS_DEFAULT_REGION` to test-only stub values in the environment for the duration of the session, and clobbers any `AWS_PROFILE` from the developer's shell. Real-AWS credentials are never reachable while the fixture is active.
 

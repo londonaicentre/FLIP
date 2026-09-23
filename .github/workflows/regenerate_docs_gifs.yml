@@ -45,6 +45,7 @@ jobs:
       VITE_LOCAL: "false"
       VITE_E2E: "true"
       CENTRAL_HUB_API_URL: "http://localhost:8080"
+      AUTH_BACKEND: "cognito"
       AWS_COGNITO_USER_POOL_ID: "eu-west-2_DUMMY1234"
       AWS_COGNITO_APP_CLIENT_ID: "dummyclientid1234567890ab"
       AWS_REGION: "eu-west-2"
@@ -71,6 +72,7 @@ jobs:
           VITE_LOCAL=false
           VITE_E2E=true
           CENTRAL_HUB_API_URL=http://localhost:8080
+          AUTH_BACKEND=cognito
           AWS_COGNITO_USER_POOL_ID=eu-west-2_DUMMY1234
           AWS_COGNITO_APP_CLIENT_ID=dummyclientid1234567890ab
           AWS_REGION=eu-west-2

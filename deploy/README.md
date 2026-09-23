@@ -34,7 +34,10 @@ they are filed by two different rules:
 | Deploy a trust to **Kubernetes** (Helm) | [`trust/deploy/helm/`](../trust/deploy/helm/README.md) |
 
 Every compose file in **this** directory is Central-Hub-only — `flip-ui`, `flip-api`, `flip-db`, `pgadmin`,
-and the `fl-api-net-*` / `fl-server-net-*` FL server side. No trust service is defined here. The one place
+`keycloak` (development only: the local identity provider, ephemeral — no volume — importing
+[`keycloak/flip-realm.json`](keycloak/README.md) at every boot with `start-dev --import-realm`; a realm edit
+needs `make reset-keycloak`, since the import skips a realm that already exists), and the `fl-api-net-*` /
+`fl-server-net-*` FL server side. No trust service is defined here. The one place
 hub compose touches "trust" is **networking**: `compose.development.yml` joins
 `central-hub-trust-apis-network`, `trust-network-1/2` and `fl-net-1/2` as `external: true` — exactly as
 the trust composes do. Neither side *creates* them; `make create-networks` does. There are **six**
@@ -224,6 +227,8 @@ The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`)
 
 The flag is mirrored to the UI via `/users/me/mfa/status` (`required: bool`) so the router guard knows when to skip the enrolment redirect.
 
+Local Keycloak stacks (`AUTH_BACKEND=keycloak`, the dev default) keep `ENFORCE_MFA=false`: the browser signs in with the OIDC password grant, which cannot enrol or answer TOTP, so `true` there only logs a warning at boot and locks browser users out. TOTP, forgot-password and admin password resets are done in the Keycloak console (`http://localhost:8180/admin`) instead.
+
 ##### Resetting MFA for another user
 
 For users other than yourself, use the FLIP Admin UI. See the *Reset User MFA* subsection in [`docs/source/sys-admin/admin-project-and-user-management.rst`](../docs/source/sys-admin/admin-project-and-user-management.rst) for the step-by-step flow. The UI calls `POST /users/{user_id}/mfa/reset` on `flip-api`, which runs the same two Cognito operations documented below but under the FLIP permission model (requires `CAN_MANAGE_USERS`) and leaves an application-level audit trail.
@@ -266,7 +271,7 @@ This runbook is for the case where **you** have lost access to your TOTP device 
 
 4. The administrator now signs in with their existing password. Because `SOFTWARE_TOKEN_MFA` is no longer in their `UserMFASettingList`, the `flip-api` MFA gate and the `flip-ui` router guard funnel them through the post-auth enrolment page where they register a new authenticator. Their password does not need to be reset.
 
-> **Note:** These two CLI commands have exactly the same server-side effect as clicking **Reset MFA** in the Admin UI — the UI endpoint (`reset_user_mfa` in `flip-api/src/flip_api/utils/cognito_helpers.py`) calls `admin_set_user_mfa_preference` followed by `admin_user_global_sign_out`. The CLI path exists only because it does not require a signed-in FLIP session.
+> **Note:** These two CLI commands have exactly the same server-side effect as clicking **Reset MFA** in the Admin UI — the UI endpoint calls the Cognito identity provider (`_reset_mfa` in `flip-api/src/flip_api/auth/identity/cognito.py`), which runs `admin_set_user_mfa_preference` followed by `admin_user_global_sign_out`. The CLI path exists only because it does not require a signed-in FLIP session.
 >
 > **Warning:** This path is an AWS-level escape hatch and is **not** audit-logged inside FLIP. Use it only for administrator self-recovery. For any user who is not currently locked out of FLIP itself, prefer the Admin UI flow so the reset is captured in the application logs.
 

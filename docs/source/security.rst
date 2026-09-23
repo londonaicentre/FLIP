@@ -85,8 +85,10 @@ Within that estate:
 Identity and access
 *******************
 
-**Authentication is layered.** Sign-in uses AWS Cognito with the SRP password protocol,
-which never transmits the password itself. Access tokens are verified on every request:
+**Authentication is layered.** In every deployed environment sign-in uses AWS Cognito with
+the SRP password protocol, which never transmits the password itself; the local development
+backend (Keycloak) uses the OIDC password grant on loopback only and is refused by the
+production configuration at boot. Access tokens are verified on every request:
 the signature algorithm is pinned, the issuer and audience are checked, and ID tokens
 presented in place of access tokens are rejected.
 
