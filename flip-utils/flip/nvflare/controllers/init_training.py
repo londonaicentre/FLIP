@@ -21,8 +21,8 @@ from nvflare.apis.shareable import Shareable
 from nvflare.apis.signal import Signal
 from nvflare.app_common.app_constant import AppConstants
 
-from flip import FLIP
-from flip.constants import FlipConstants, FlipEvents, FlipTasks
+from flip import FLIP, FLIPBase
+from flip.constants import FlipEvents, FlipTasks
 from flip.nvflare.runtime import get_flip_model_id
 
 
@@ -30,8 +30,8 @@ class InitTraining(Controller):
     def __init__(
         self,
         model_id: str = "",
-        min_clients: int = FlipConstants.MIN_CLIENTS,
-        flip: FLIP = FLIP(),
+        min_clients: int = 1,
+        flip: FLIPBase = FLIP(),
         cleanup_timeout: int = 600,
     ):
         """The controller that is executed pre-training and is a part of the FLIP training model
@@ -42,9 +42,11 @@ class InitTraining(Controller):
         Args:
             model_id (str, optional): ID of the model that the training is being performed under. When omitted
                 the ID is resolved lazily from the job's meta.json custom_props at first use.
-            min_clients (int, optional): Minimum number of clients. Defaults to 1 for the aggregation to take place with
-                successful results.
-            flip (FLIP, optional): FLIP instance used for status updates and exception reporting (default: FLIP()).
+            min_clients (int, optional): Minimum number of clients that must respond to the cleanup task.
+                Defaults to 1; on the platform fl-api sets it to the participating-trust count for every job
+                (``config["min_clients"] = len(trusts)`` in ``prepare_config.py``), so it is never a
+                deployment-wide setting.
+            flip (FLIPBase, optional): FLIP instance used for status updates and exception reporting (default: FLIP()).
             cleanup_timeout (int, optional): Timeout for image cleanup, defaults to 600 seconds (10 minutes)
 
         Raises:
@@ -55,10 +57,10 @@ class InitTraining(Controller):
 
         super().__init__()
 
-        if min_clients < FlipConstants.MIN_CLIENTS:
+        if min_clients < 1:
             raise ValueError(
-                f"Invalid number of minimum clients specified. {min_clients} is less than "
-                f"{FlipConstants.MIN_CLIENTS} which is the minimum number for a successful aggregation"
+                f"Invalid number of minimum clients specified. {min_clients} is less than 1, "
+                "which is the minimum number for a successful aggregation"
             )
 
         if cleanup_timeout < 0:
@@ -149,10 +151,16 @@ class InitTraining(Controller):
         client_task.result = None
 
     def _accept_cleanup_result(self, client_name: str, result: Shareable, fl_ctx: FLContext) -> bool | None:
+        """Accept one client's cleanup result, panicking the run on an execution failure.
+
+        Returns:
+            bool | None: ``False`` once the run has been panicked; ``None`` when the result needs
+            no action (an OK or unrecognised return code).
+        """
         rc = result.get_return_code()
 
         if rc and rc == ReturnCode.OK:
-            return
+            return None
 
         if rc in [ReturnCode.EXECUTION_EXCEPTION, ReturnCode.TASK_UNKNOWN]:
             formatted_exception = result.get_header("exception")
@@ -167,3 +175,5 @@ class InitTraining(Controller):
 
             self.system_panic("Execution Exception initiating client training. InitTraining exiting.", fl_ctx=fl_ctx)
             return False
+
+        return None

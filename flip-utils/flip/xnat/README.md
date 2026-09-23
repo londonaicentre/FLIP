@@ -110,6 +110,6 @@ uv run --no-project --with ./flip-utils python fl-tutorials/datasets/spleen/uplo
 
 It is wired into the platform's end-to-end smoke test via `--data-enrichment-cwd` /
 `--data-enrichment-cmd`, and into `make -C fl-tutorials upload-spleen-labels` — see the root
-`CLAUDE.md` ("Smoking the spleen segmentation app requires a data-enrichment step") for the full
+`AGENTS.md` ("Smoking the spleen segmentation app requires a data-enrichment step") for the full
 runbook, including why enrichment must run after DICOM-to-NIfTI conversion and why every Trust in
 the roster must be enriched, not just one.

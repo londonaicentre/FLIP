@@ -37,7 +37,6 @@ data:
   NUM_AVAILABLE_GPUS: {{ .Values.flClient.gpu.count | quote }}
   MEMORY_PER_GPU_IN_GIB: "7"
   LOCAL_DEV: "false"
-  MIN_CLIENTS: "1"
   IMAGES_DIR: {{ .Values.flClient.imagesDir | quote }}
   DATA_ACCESS_API_URL: "http://data-access-api:8000"
   IMAGING_API_URL: "http://imaging-api:8000"

@@ -25,11 +25,14 @@ from botocore.exceptions import ClientError
 from flip_api.utils.email_sender import send_templated_email
 
 SECRET_PASSWORD = "sup3r-s3cret-xnat-pw"  # pragma: allowlist secret
-CREDENTIALS_DATA = {
+# The invite template's credential-bearing field: the alias-token pair in the set-password path is a
+# bearer capability over the XNAT account (FLIP-PT-079), so it must be redacted exactly like a password.
+SECRET_SETUP_PATH = f"/app/template/XDATScreen_UpdateUser.vm?a=alias-123&s={SECRET_PASSWORD}"
+INVITE_DATA = {
     "trust_name": "Trust_1",
     "project_name": "Test Project",
     "username": "user1",
-    "password": SECRET_PASSWORD,
+    "setup_path": SECRET_SETUP_PATH,
 }
 
 
@@ -59,24 +62,25 @@ def test_console_backend_does_not_call_aws(console_backend, caplog):
         with caplog.at_level(logging.WARNING, logger="uvicorn"):
             send_templated_email(
                 recipient="user1@test.com",
-                template_name="flip-xnat-credentials",
-                template_data=CREDENTIALS_DATA,
+                template_name="flip-xnat-invite",
+                template_data=INVITE_DATA,
             )
 
     mock_boto3.client.assert_not_called()
-    assert "flip-xnat-credentials" in caplog.text
+    assert "flip-xnat-invite" in caplog.text
     assert "user1@test.com" in caplog.text
 
 
-def test_console_backend_redacts_the_password(console_backend, caplog):
-    """The XNAT credentials template carries a decrypted password; it must never reach the logs."""
+def test_console_backend_redacts_the_setup_path(console_backend, caplog):
+    """The XNAT invite template carries the decrypted set-password link; it must never reach the logs."""
     with caplog.at_level(logging.WARNING, logger="uvicorn"):
         send_templated_email(
             recipient="user1@test.com",
-            template_name="flip-xnat-credentials",
-            template_data=CREDENTIALS_DATA,
+            template_name="flip-xnat-invite",
+            template_data=INVITE_DATA,
         )
 
+    assert SECRET_SETUP_PATH not in caplog.text
     assert SECRET_PASSWORD not in caplog.text
     assert "***REDACTED***" in caplog.text
     # Non-secret fields stay legible so the log is still useful in dev.
@@ -86,14 +90,14 @@ def test_console_backend_redacts_the_password(console_backend, caplog):
 
 @pytest.mark.parametrize(
     "key",
-    ["password", "temp_password", "api_secret", "access_token", "CREDENTIAL", "userPassword"],
+    ["password", "temp_password", "api_secret", "access_token", "CREDENTIAL", "userPassword", "setup_path"],
 )
 def test_console_backend_redacts_any_secret_shaped_key(console_backend, caplog, key):
     """The denylist must fail safe: a future secret-shaped field is redacted without a code change."""
     with caplog.at_level(logging.WARNING, logger="uvicorn"):
         send_templated_email(
             recipient="user1@test.com",
-            template_name="flip-xnat-credentials",
+            template_name="flip-xnat-invite",
             template_data={key: SECRET_PASSWORD, "username": "user1"},
         )
 
@@ -108,9 +112,10 @@ def test_console_backend_redacts_any_secret_shaped_key(console_backend, caplog, 
         {"user": {"password": SECRET_PASSWORD}},
         {"account": {"credentials": {"api_token": SECRET_PASSWORD}}},
         {"users": [{"username": "user1", "temp_password": SECRET_PASSWORD}]},
+        {"invite": {"setup_path": SECRET_PASSWORD}},
         {"tokens": [SECRET_PASSWORD]},
     ],
-    ids=["nested-dict", "twice-nested", "list-of-dicts", "list-of-secrets"],
+    ids=["nested-dict", "twice-nested", "list-of-dicts", "nested-setup-path", "list-of-secrets"],
 )
 def test_console_backend_redacts_secrets_below_the_top_level(console_backend, caplog, payload):
     """The marker match must not be defeated by a parent key that matches nothing.
@@ -123,7 +128,7 @@ def test_console_backend_redacts_secrets_below_the_top_level(console_backend, ca
     with caplog.at_level(logging.WARNING, logger="uvicorn"):
         send_templated_email(
             recipient="user1@test.com",
-            template_name="flip-xnat-credentials",
+            template_name="flip-xnat-invite",
             template_data=payload,
         )
 
@@ -136,7 +141,7 @@ def test_console_backend_keeps_non_secret_nested_values_legible(console_backend,
     with caplog.at_level(logging.WARNING, logger="uvicorn"):
         send_templated_email(
             recipient="user1@test.com",
-            template_name="flip-xnat-credentials",
+            template_name="flip-xnat-invite",
             template_data={"project": {"name": "Test Project", "trust": "Trust_1"}, "password": SECRET_PASSWORD},
         )
 
@@ -150,7 +155,7 @@ def test_console_backend_keeps_secret_length_as_a_diagnostic(console_backend, ca
     with caplog.at_level(logging.WARNING, logger="uvicorn"):
         send_templated_email(
             recipient="user1@test.com",
-            template_name="flip-xnat-credentials",
+            template_name="flip-xnat-invite",
             template_data={"password": ""},
         )
 
@@ -210,7 +215,7 @@ def test_ses_backend_serialises_values_json_cannot_encode(ses_backend):
         project_id = uuid4()
         send_templated_email(
             recipient="user1@test.com",
-            template_name="flip-xnat-credentials",
+            template_name="flip-xnat-invite",
             template_data={"project_id": project_id, "when": datetime(2026, 1, 1)},
         )
 

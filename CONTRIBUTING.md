@@ -108,6 +108,28 @@ as `nvflare` show up as unresolved.
 After opening, confirm the per-folder interpreter with **Python: Select Interpreter** (it prompts for the folder first,
 then the `.venv`), and run **Developer: Reload Window** if an import is still flagged.
 
+#### Coding-agent instructions (`AGENTS.md`)
+
+This repo's instructions for coding agents live in [`AGENTS.md`](AGENTS.md), with one more per service directory.
+`AGENTS.md` is the cross-tool standard and is now the only copy — the `CLAUDE.md` twin that used to sit beside each one
+has been removed.
+
+Claude Code reads `AGENTS.md` only from **version 2.1.277** onward, so check `claude --version` and upgrade if you are
+behind. Three situations silently give a session **no project instructions at all** — no error, and nothing in the
+output to say so:
+
+- a Claude Code older than 2.1.277;
+- the `instructionFiles` option set to `claude-md`, which turns the fallback off (`/config` → Project instructions). It
+  is a user or organisation-managed setting and per-project settings are not read for it, so this repo cannot correct it
+  for you;
+- Claude Code running via Bedrock, Vertex or Foundry, where `AGENTS.md` support does not exist at all. Those need a
+  `CLAUDE.md`, which this repo no longer carries.
+
+One trap is worth knowing about, because it looks like nothing is wrong: the fallback is decided per project, and *any*
+CLAUDE-named file satisfies it. Keep a personal `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` inside your
+checkout and every `AGENTS.md` in the tree is skipped — you lose the repo's instructions wholesale, in favour of your own
+notes. Keep personal instructions in `~/.claude/` instead of in the working copy.
+
 ### Python environment management
 
 FLIP uses [UV](https://docs.astral.sh/uv) for all Python services. Each service has a `pyproject.toml` and a
@@ -206,6 +228,7 @@ Three changes affect checkouts created before them. None is picked up automatica
 | `NLB_SUBDOMAIN` is now a live assignment in `.env.development.example` | Add `NLB_SUBDOMAIN=<your-nlb-subdomain>` to your `.env.development`. `scripts/check_env_vars.py` is a pre-commit hook requiring every variable in the example file to be present in yours, and its regex matches real `^KEY=` assignments only — so a still-commented `# NLB_SUBDOMAIN=` fails your next commit, naming the variable. Nothing in a purely local stack resolves the value; it is required because `scripts/trust_kit_lib.py` lists it among the Hub-shared keys. |
 | uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the NVFLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
 | `NUM_AVAILABLE_GPUS` defaults to `0` in the two shipped dev kit examples (`trust/.env.GSTT.development.example`, `trust/.env.KCH.development.example`) | Only those two pre-populated example kits were changed; the base template (`trust/.env.example`) that `make new-trust` scaffolds from still defaults to `1`, and an existing `trust/.env.<CODE>.<env>` keeps its own value regardless. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
+| `MIN_CLIENTS` is removed everywhere (FLIP#1230) | Nothing to add. Delete the `MIN_CLIENTS=` line from your `.env.development` and from any `trust/.env.<CODE>.<env>` kit if you like — a leftover is ignored. The FL images no longer read it: the per-job quorum is the participating-trust count, which fl-api writes into every job (`min_clients = len(trusts)` on NVFLARE, `flip-min-clients` on Flower), so a hub-wide value could only ever veto a legitimate project (set to 3, a 2-trust project never starts) and never lowered anything. On stag/prod the `MIN_CLIENTS` GitHub environment variable is now unread and can be deleted. |
 
 For the full local stack, replace every placeholder in these minimum groups before running `make up`:
 
@@ -316,10 +339,26 @@ pushes. These are:
   and `trust-*` GHCR build-and-push workflows.
 - **Releases** — `release.yml` and `release-pypi.yml` (git tags, GitHub releases, PyPI publishing).
 
-Everything that **validates** your change still runs on your fork, and a red result there is a real failure to fix:
-lint, type-checking, unit and integration tests, docs, Terraform validation, Helm tests, and secret scanning.
+Everything that **validates** your change still runs, and a red result is a real failure to fix: lint,
+type-checking, unit and integration tests, docs, Terraform validation, Helm tests, and secret scanning.
 Coverage upload to Codecov is non-blocking (`fail_ci_if_error: false`), so a missing `CODECOV_TOKEN` on your fork
 never fails an otherwise-green job.
+
+### Why a test suite shows as skipped
+
+Skipped is also the normal result for a service test suite your change does not touch. On a PR into `develop` the
+seven service workflows (`test_flip_ui.yml`, `test_flip_api.yml`, the three `test_trust_*_api.yml`,
+`test_trust_omop_db.yml` and `test_trust_data_tools.yml`) still start, but each gates its jobs on
+[`pr_paths_changed.yml`](.github/workflows/pr_paths_changed.yml), which runs the suite only when a changed file
+matches the paths that workflow covers — the same list as its push `paths:` filter, plus the gate itself. A PR into
+`main` always runs everything. So a `flip-ui`-only change legitimately shows the six trust and flip-api suites as
+skipped, and that is not a fork restriction, a missing check, or something to re-run: check the `changes / decide`
+job, which prints the file that matched or the number of files that did not.
+
+Two consequences worth knowing. A suite skips only if **none** of its paths matched, so if you believe your change
+affects a suite that skipped, the fix is to add the path it consumes to that workflow's list — in **both** copies,
+or `scripts/tests/test_pr_paths_changed.py` fails. And because the gate reads the PR's own file list, editing the
+gate re-runs every suite.
 
 ### Checkov security lint (Terraform)
 
@@ -341,6 +380,44 @@ list — including the classes triaged in FLIP#1058 and deliberately *not* promo
 broken checkov install can never produce a vacuous green. The script's own guards (version pin, unknown check
 IDs, skip rationale, canary) are regression-tested by `deploy/providers/AWS/scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
 run by the same workflow's `Deploy script tests` job.
+
+### Secret scanning (detect-secrets)
+
+Two scanners run on every PR. TruffleHog (`--only-verified`) fails only on a credential it can confirm is live.
+detect-secrets is the structural one — it flags anything *shaped* like a secret (keyword assignments, high-entropy
+strings, JWTs, basic-auth URLs) — and since FLIP#1215 **CI enforces it**: the `Detect Secrets Scan` job runs
+`detect-secrets-hook --baseline .secrets.baseline` over every tracked file (lockfiles excluded), the same entry
+point and version (`1.5.0`) as the pre-commit hook, and fails on any finding the baseline does not already carry.
+Before that the job ran a bare `detect-secrets scan`, which prints a report and cannot exit non-zero, and the
+pre-commit CI job ran the hook with `|| true` — so nothing ever failed and ~110 unbaselined test literals had
+accumulated. A stale baseline (an entry whose line moved or whose literal disappeared — hook exit 3) also fails
+the job, with the rewritten baseline in the log: commit the rewrite deliberately rather than let coverage rot.
+The hook re-serialises the whole file when it rewrites it, so `.secrets.baseline` is committed in the hook's own
+key order (`version`, `plugins_used`, `filters_used`, `results`, `generated_at`, `indent=2`); a rewrite then
+diffs only the moved `line_number`s and `generated_at`, and that is the expected shape when an unrelated edit to
+a baselined file (a Cypress fixture, say) shifts its lines.
+
+Locally the pre-commit hook scans only the files in the commit being made, so it will flag a dummy value the
+first time you touch a file that already contains one. To allowlist a false positive:
+
+1. **Inline pragma, preferred** — append `# pragma: allowlist secret` (YAML, Python, shell, Make) or
+   `// pragma: allowlist secret` (TypeScript) to the line. Where that would push a Python line past 120 columns,
+   put `# pragma: allowlist nextline secret` on its own line directly above instead (nothing else may precede
+   it on that line). The comment documents the decision next to the value, survives edits, and needs no baseline
+   entry.
+2. **Baseline entry** — only for files that cannot carry a comment (JSON fixtures). Run
+   `uvx --from detect-secrets==1.5.0 detect-secrets scan <file>` and copy that file's `results` entries into
+   `.secrets.baseline` with `"is_secret": false`, keeping the hook's key order above. Never run a bare
+   `detect-secrets scan --baseline .secrets.baseline` and commit the result — it re-derives every repo-wide finding
+   and buries the real change — and never add entries for gitignored files.
+3. **Filter** — for a whole class of false positives (Alembic revision ids, Excalidraw element ids) add a
+   `should_exclude_line` / `should_exclude_file` pattern under `filters_used` in the baseline, as the existing ones do.
+
+Whatever you allowlist must be a value that is safe in a public repository: a documented mock credential
+(`minioadmin`, `test-*`, `plain-api`), a synthetic token, or a recorded response whose issuer and accounts are
+confirmed gone (the 2022 Cognito fixtures under `flip-ui/test/cypress/fixtures/auth/` are baselined on that
+basis — say so in the PR). Prefer a synthetic fixture for anything new; a recording of a live system is not a
+false positive.
 
 ### Running the stack (pull vs. build)
 
@@ -453,12 +530,15 @@ make unit_test
 test suite (ruff, mypy, and pytest).
 
 For the FL base library in `flip-utils/`, unit tests can be run either directly with pytest or via the shipped
-Makefile target:
+Makefile target, which runs the same ruff → mypy → pytest sequence as the other services (and as the
+`flip-tests` job in `unit-tests.yml`):
 
 ```bash
 cd flip-utils && uv run pytest tests/unit -s -vv
 # or:
-make -C flip-utils unit-test   # ruff --fix + pytest with coverage
+make -C flip-utils unit-test   # ruff --fix + ruff format --check + mypy + pytest with coverage
+make -C flip-utils mypy        # type check only
+make -C flip-utils format      # apply ruff format (format-check: check only)
 ```
 
 See [`flip-utils/README.md`](flip-utils/README.md) for the FL package's tests, and
@@ -773,28 +853,75 @@ The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs
   load balancer, …) is added without being drawn. A Terraform change of that kind updates
   `TERRAFORM_ADDRESSES` in the script in the same PR, then `make aws-diagram` refreshes the two committed
   copies the AWS README embeds.
+- It needs **network access to huggingface.co** (and `*.hf.co`). The user-guide GIFs are not tracked in git
+  (FLIP#1236): `conf.py` fetches the version pinned in `docs/.gifs_version` from the public dataset
+  `aicentreflip/docs-gifs` into the gitignored `docs/source/assets/generated/gifs/`, verifying every file
+  against the published manifest, and fails loudly if it cannot. A repeat build makes no network request.
+  `FLIP_DOCS_SKIP_GIF_FETCH=1 make -C docs docs` builds text-only offline (the user-guide pages then warn
+  about their missing images). See "Documentation GIFs" below.
+
 
 ## Documentation GIFs
 
-The admin user-action GIFs under `docs/source/assets/admin/` (referenced from
-`docs/source/sys-admin/admin-project-and-user-management.rst`) are
-auto-regenerated on every push to `main` by
-`.github/workflows/regenerate_docs_gifs.yml`. The workflow records the demo
-Cypress specs under `flip-ui/test/cypress/docs/admin/` against a fully mocked
-backend, converts the resulting videos to GIFs with `ffmpeg`, and opens a PR
-against `develop` for human review.
+The animated walkthroughs in the user guides (`docs/source/user-guides/user-common.rst` and
+`docs/source/sys-admin/admin-project-and-user-management.rst`) are Cypress recordings of the UI against a
+fully mocked backend. **They are not tracked in git** (FLIP#1236 — 65 MB that re-recording rewrote on every
+run was 95% of a clone). Instead:
 
-To regenerate locally:
+- `.github/workflows/regenerate_docs_gifs.yml` runs on every push to `develop` that touches `flip-ui/src/**`,
+  the Cypress docs harness (`flip-ui/test/cypress/docs/**`, `cypress.docs.config.ts`,
+  `scripts/videos-to-gifs.sh`) or the workflow itself, or by hand via *Run workflow*: its `record` job mints
+  the version tag, records the demo specs under `flip-ui/test/cypress/docs/<category>/<name>.spec.ts` and
+  converts each video to `docs/source/assets/generated/gifs/<category>/<name>.gif` with `ffmpeg`; its
+  `publish` job — **`develop` only**; a dispatch from a branch records without publishing — publishes that
+  directory to the public Hugging Face dataset
+  [`aicentreflip/docs-gifs`](https://huggingface.co/datasets/aicentreflip/docs-gifs) as **one commit and one
+  tag** `YYYYMMDDTHHMMSSZ-<sha7>` (`docs/scripts/publish_docs_gifs.py`), verifies the tag resolves
+  anonymously, and opens a PR whose only diff is the pin, `docs/.gifs_version`. A later run opens a fresh PR
+  and closes the superseded one.
+- The docs build (`make -C docs docs`, the docs CI job, ReadTheDocs) fetches the pinned tag at build time
+  (`docs/scripts/fetch_docs_gifs.py`, called from `docs/source/conf.py`) — see "Building the documentation".
+- **Review the pin PR in its ReadTheDocs preview** (the `docs/readthedocs.org:londonaicentreflip` check):
+  RTD builds the PR with the new pin, so the pages show the recordings in context. Re-recording is nondeterministic (frame
+  timing plus the animated demo cursor), so every GIF is new bytes even where the UI didn't change — merge if
+  the genuinely-changed clips look right, otherwise close.
+- **Dataset tags are never moved or deleted**, so `stable` and every historical docs version keep resolving the
+  tag they were built with. A re-recording is always a new tag.
+
+### Adding a new GIF
+
+Authoring is two-step, because a PR cannot ship the GIF itself:
+
+1. Add the demo spec `flip-ui/test/cypress/docs/<category>/<name>.spec.ts` (the filename maps 1:1 to the GIF;
+   reuse the functional suite's fixtures and `globalIntercepts`, and layer the cursor overlay from
+   `flip-ui/test/cypress/docs/support/demoCursor.ts` so the recording reads as visible user actions) and the
+   figure `.. figure:: ../assets/generated/gifs/<category>/<name>.gif` in the rst. `make -C docs test` checks
+   the two agree. Until the GIF is published, the docs build warns "image file not readable" for that one
+   figure — expected, and deliberately not fatal.
+2. Once the PR merges to `develop`, the workflow records and publishes everything and opens the pin PR;
+   merging that makes the new figure render.
+
+### Previewing locally
 
 ```bash
 cd flip-ui
-npm run docs:record   # records videos under test/cypress/videos/docs/admin/
-npm run docs:gifs     # ffmpeg → docs/source/assets/admin/*.gif (requires ffmpeg on PATH)
+npm run docs:record   # records videos under test/cypress/videos/
+npm run docs:gifs     # ffmpeg → docs/source/assets/generated/gifs/<category>/*.gif (requires ffmpeg on PATH)
+FLIP_DOCS_SKIP_GIF_FETCH=1 make -C ../docs docs   # build on YOUR recordings, not the pinned ones
 ```
 
-The demo specs reuse the functional suite's fixtures and `globalIntercepts`,
-and layer a CSS cursor overlay (`flip-ui/test/cypress/docs/support/demoCursor.ts`)
-on top so the recorded GIFs read as visible user actions. When adding a new
-admin-area UI flow that should be documented, add one demo spec under
-`flip-ui/test/cypress/docs/admin/<gif-basename>.spec.ts` — the filename maps
-1:1 to the output GIF name.
+Without the skip flag the build restores the pinned bytes over any file that differs — the pin wins.
+
+### Publishing by hand
+
+Rarely needed (the workflow does it), but the same script works from a laptop with an account that can
+write to the dataset:
+
+```bash
+uvx --from 'huggingface_hub>=1.6' hf auth login
+uv run docs/scripts/publish_docs_gifs.py --source-commit "$(git rev-parse origin/develop)" --dry-run
+uv run docs/scripts/publish_docs_gifs.py --source-commit "$(git rev-parse origin/develop)"   # then pin the printed tag
+```
+
+`--gifs-dir` points at a different tree; `FLIP_DOCS_GIFS_REPO` / `FLIP_DOCS_GIFS_REVISION` (e.g. `main`) let a
+build read another dataset or an untagged revision, mirroring `HF_TRUST_DATA_REVISION`.

@@ -35,7 +35,7 @@ VALID_TEST_KEY_HASH = hashlib.sha256(VALID_TEST_KEY.encode()).hexdigest()
 WRONG_TEST_KEY = "wrong_secret_key_67890_invalid"
 TRUST_NAME = "Trust_1"
 
-INTERNAL_SERVICE_KEY = "internal_service_key_abc123"
+INTERNAL_SERVICE_KEY = "internal_service_key_abc123"  # pragma: allowlist secret
 INTERNAL_SERVICE_KEY_HASH = hashlib.sha256(INTERNAL_SERVICE_KEY.encode()).hexdigest()
 
 PATCH_HAS_PERMISSIONS = "flip_api.auth.access_manager.has_permissions"
