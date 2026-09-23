@@ -68,15 +68,6 @@ def _write_kit(tmp: Path, tag: str = "sha-badcff1", fl_tag: str = "sha-badcff1")
     return kit
 
 
-def _needs_tag(fn, *args) -> str:
-    """Call ``fn`` and return the NeedsTag message it raises (fail if it does not raise)."""
-    try:
-        fn(*args)
-    except su.NeedsTag as e:
-        return str(e)
-    raise AssertionError("NeedsTag not raised")
-
-
 def _raised(exc_type: type[BaseException], fn, *args) -> BaseException:
     """Call ``fn`` and return the ``exc_type`` it raises (fail if it does not raise)."""
     try:
@@ -84,6 +75,11 @@ def _raised(exc_type: type[BaseException], fn, *args) -> BaseException:
     except exc_type as e:
         return e
     raise AssertionError(f"{exc_type.__name__} not raised")
+
+
+def _needs_tag(fn, *args) -> str:
+    """The NeedsTag message ``fn`` raises."""
+    return str(_raised(su.NeedsTag, fn, *args))
 
 
 class ImageTagShape(unittest.TestCase):
