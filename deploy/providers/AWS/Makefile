@@ -1114,13 +1114,15 @@ deploy-trust: check-trust-ec2-enabled ssh-config update-env stage-fl-kit ## Depl
 # target tag, recreate what changed, redeploy XNAT without reset, converge its config).
 # TAG defaults to the release the hub runs; FORCE=1 allows a downgrade; YES=1 skips the
 # confirmation. The kit file read is this workstation's trust/.env.<KIT>.<env>, exactly as
-# deploy-trust evaluates compose here against the remote daemon.
+# deploy-trust evaluates compose here against the remote daemon. NUM_AVAILABLE_GPUS=0 pins the
+# fl-client to CPU as up-trust-ec2 does (the t3.xlarge has no GPU): on the command line it beats
+# a template kit's 1, dropping the GPU overlay and reaching compose's env over the --env-file.
 .PHONY: upgrade-trust-ec2
 upgrade-trust-ec2: check-trust-ec2-enabled ssh-config ## Move the EC2 trust to a release tag without re-seeding data (FLIP#1204)
 	@echo "👷 Create docker context if not exists, pointing to flip-trust to ssh://flip-trust"
 	@docker context create flip-trust --docker "host=ssh://flip-trust" || echo "   Context 'flip-trust' already exists"
 	@echo "⬆️  Upgrading Trust services on EC2 (KIT=$(KIT))..."
-	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../trust upgrade-trust KIT=$(KIT) PROD=${PROD} TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT)
+	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../trust upgrade-trust KIT=$(KIT) PROD=${PROD} TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT) NUM_AVAILABLE_GPUS=0
 	@echo "✅ Trust upgrade complete!"
 
 .PHONY: provision-local-trust

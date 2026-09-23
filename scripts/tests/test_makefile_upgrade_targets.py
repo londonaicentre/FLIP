@@ -96,7 +96,7 @@ DESTRUCTIVE = (
 )
 
 
-def _dry_run(target: str, *extra: str, subdir: str = "trust") -> str:
+def _dry_run(target: str, *extra: str, subdir: str = "trust", kit: str = KIT) -> str:
     """`make -n` the target in a scratch copy of the repo's Makefiles with a scratch kit.
 
     ``subdir`` is where the target lives: ``trust`` for the trust-level verbs, ``.`` for the
@@ -116,7 +116,7 @@ def _dry_run(target: str, *extra: str, subdir: str = "trust") -> str:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(REPO / rel, dst)
         shutil.copy(REPO / "trust" / "xnat" / ".env", root / "trust" / "xnat" / ".env")
-        (root / "trust" / ".env.SCR.production").write_text(KIT)
+        (root / "trust" / ".env.SCR.production").write_text(kit)
         # scripts/ paths are referenced relative to trust/, so the resolver must exist to
         # be printed; an empty file is enough for -n.
         (root / "scripts").mkdir()
@@ -161,6 +161,18 @@ class UpgradeVerbs(unittest.TestCase):
         assert "sha-badcff1" in out, out  # printed from the kit, not from TAG=
         for step in DESTRUCTIVE:
             assert step not in out, f"{step!r} reached from _upgrade-trust-apply:\n{out}"
+
+    def test_apply_phase_honours_a_cpu_only_override(self):
+        """upgrade-trust-ec2 passes NUM_AVAILABLE_GPUS=0: it must beat a template kit's 1 (FLIP#1204).
+
+        The EC2 trust is GPU-less; with the kit's value the apply phase adds the GPU overlay and the
+        recreated fl-client fails with "could not select device driver nvidia".
+        """
+        gpu_kit = KIT.replace("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")
+        assert gpu_kit != KIT, "scratch kit no longer carries NUM_AVAILABLE_GPUS"
+        assert ".gpu.yml" in _dry_run("_upgrade-trust-apply", kit=gpu_kit), "a GPU kit should get the overlay"
+        out = _dry_run("_upgrade-trust-apply", "NUM_AVAILABLE_GPUS=0", kit=gpu_kit)
+        assert ".gpu.yml" not in out, f"the CPU-only override did not drop the GPU overlay:\n{out}"
 
     def test_up_trust_is_still_the_first_install_verb(self):
         """The guard would be meaningless if up-trust had quietly stopped seeding and resetting."""

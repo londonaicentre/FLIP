@@ -74,6 +74,20 @@ def test_upgrade_trust_ec2_is_the_data_safe_verb() -> None:
         assert forbidden not in recipe, f"upgrade-trust-ec2 must not run {forbidden}"
 
 
+def test_upgrade_trust_ec2_keeps_the_fl_client_cpu_only() -> None:
+    """The EC2 t3.xlarge has no GPU; up-trust-ec2 pins the fl-client to CPU and the upgrade must too.
+
+    A kit seeded from the template carries NUM_AVAILABLE_GPUS=1, so without the override the
+    upgrade adds the GPU overlay (compose_trust.<env>.gpu.yml) and the recreated fl-client fails
+    with "could not select device driver nvidia" — found by the FLIP#1204 stag run. Passing
+    NUM_AVAILABLE_GPUS=0 on the sub-make's command line both drops the overlay (GPU_OVERRIDE keys
+    on it) and reaches the recipe's shell env, which beats the kit's --env-file for the
+    fl-client's generated resources.json.
+    """
+    call = next(line for line in _recipe("upgrade-trust-ec2").splitlines() if "upgrade-trust " in line)
+    assert "NUM_AVAILABLE_GPUS=0" in call, f"upgrade-trust-ec2 must pin the fl-client to CPU:\n{call}"
+
+
 def test_deploy_trust_still_reseeds_so_the_two_verbs_stay_distinct() -> None:
     """deploy-trust is the first-install verb; if it ever stops re-seeding, the split above is moot.
 
