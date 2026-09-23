@@ -240,10 +240,114 @@ def _read_dataframe(dataframe_path: str | None = None) -> pd.DataFrame:
     raise RuntimeError(f"Dataframe path is not set or does not exist: {path!r}")
 
 
-def _load_dataframe(site_cfg: SiteDataConfig, project_id: str = "", query: str = "") -> pd.DataFrame:
-    """Load the cohort dataframe: local CSV in the simulator, FLIP API on a real trust."""
+# ---------------------------------------------------------------------------
+# Simulator-only sample cap (MAX_SAMPLES)
+# ---------------------------------------------------------------------------
+MAX_SAMPLES_ENV = "MAX_SAMPLES"
+
+
+def get_sim_max_samples() -> int:
+    """Return the simulator's per-site row cap from ``MAX_SAMPLES``; ``0`` means no cap.
+
+    Unset, empty and ``0`` all mean "read every row". Read only on the ``LOCAL_DEV`` path (see
+    :func:`_load_dataframe`), so a deployed job never sees it.
+
+    Raises:
+        ValueError: If ``MAX_SAMPLES`` is set to anything but a non-negative integer.
+    """
+    raw = os.environ.get(MAX_SAMPLES_ENV, "").strip()
+    if not raw:
+        return 0
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{MAX_SAMPLES_ENV} must be a non-negative integer, got {raw!r}") from None
+    if value < 0:
+        raise ValueError(f"{MAX_SAMPLES_ENV} must be a non-negative integer, got {raw!r}")
+    return value
+
+
+def cap_dataframe(
+    df: pd.DataFrame,
+    max_samples: int,
+    class_columns: Sequence[str],
+    positive_values: Sequence[str],
+    seed: int,
+) -> pd.DataFrame:
+    """Return a deterministic, class-balanced subset of at most ``max_samples`` rows of ``df``.
+
+    Each row is keyed by the first of ``class_columns`` whose value is one of ``positive_values``
+    (rows positive for none share one extra key). Rows are then drawn round-robin across keys, each
+    key from its own seeded shuffle, so every class the dataframe holds is represented as evenly as the
+    cap allows -- a plain ``head`` could hand a small cap a single class, leaving the per-lesion AUCs
+    undefined and the label-aware train/val split with no positives to place. The kept rows stay in
+    their original order.
+
+    Args:
+        df: The full cohort dataframe.
+        max_samples: The cap; ``0`` (or anything not below ``len(df)``) returns ``df`` unchanged.
+        class_columns: Label columns in priority order; columns absent from ``df`` are ignored.
+        positive_values: Cell values (compared as strings) that mark a row positive for a column.
+        seed: Seed for the per-key shuffles.
+
+    Returns:
+        pd.DataFrame: ``df`` itself when no cap applies, else the selected rows.
+    """
+    if max_samples <= 0 or len(df) <= max_samples:
+        return df
+    present = [column for column in class_columns if column in df.columns]
+    positive = df[present].astype(str).isin([str(v) for v in positive_values]).to_numpy()
+    groups: dict[str, list[int]] = {}
+    for position, row in enumerate(positive):
+        key = next((present[i] for i, is_positive in enumerate(row) if is_positive), "")
+        groups.setdefault(key, []).append(position)
+    rng = np.random.default_rng(seed)
+    queues = [list(rng.permutation(positions)) for _, positions in sorted(groups.items())]
+    selected: list[int] = []
+    while len(selected) < max_samples:
+        for queue in queues:
+            if queue and len(selected) < max_samples:
+                selected.append(int(queue.pop()))
+    return df.iloc[sorted(selected)]
+
+
+def _cap_for_sim(df: pd.DataFrame, cfg: dict, site_name: str, logger=None) -> pd.DataFrame:
+    """Apply the ``MAX_SAMPLES`` cap to a simulator site's dataframe, balanced over the config's classes."""
+    max_samples = get_sim_max_samples()
+    lesions = cfg.get("LESIONS", {})
+    class_columns = [lesions[key] for key in sorted(lesions, key=int) if int(key) >= 0]
+    class_columns += [name for key, name in lesions.items() if int(key) < 0]
+    value_to_numerical = cfg.get("value_to_numerical", {"1": "Yes", "0": "No"})
+    positive_values = [str(value_to_numerical.get("1", "Yes")), "1"]
+    capped = cap_dataframe(df, max_samples, class_columns, positive_values, seed=int(cfg.get("SPLIT_SEED", 42)))
+    if capped is not df and logger is not None:
+        logger.info(
+            "%s=%d: simulator site=%s reads %d of %d dataframe rows (set %s=0 for the full dataset).",
+            MAX_SAMPLES_ENV,
+            max_samples,
+            site_name,
+            len(capped),
+            len(df),
+            MAX_SAMPLES_ENV,
+        )
+    return capped
+
+
+def _load_dataframe(
+    site_cfg: SiteDataConfig,
+    project_id: str = "",
+    query: str = "",
+    config: dict | None = None,
+    logger=None,
+) -> pd.DataFrame:
+    """Load the cohort dataframe: local CSV in the simulator, FLIP API on a real trust.
+
+    Only the simulator branch honours ``MAX_SAMPLES``: a deployed job's cohort is whatever the trust's
+    data-access-api returns, never capped.
+    """
     if _is_local_dev():
-        return _read_dataframe(site_cfg.dataframe)
+        df = _read_dataframe(site_cfg.dataframe)
+        return _cap_for_sim(df, config or load_config(), site_cfg.site_name, logger=logger)
     return FLIP().get_dataframe(project_id, query)
 
 
@@ -304,7 +408,7 @@ def build_eval_datalist(
     value_to_numerical = cfg.get("value_to_numerical", {"1": "Yes", "0": "No"})
     project_id = project_id if project_id is not None else os.environ.get("PROJECT_ID", "")
     query = query if query is not None else os.environ.get("QUERY", "")
-    df = _load_dataframe(site_cfg, project_id=project_id, query=query)
+    df = _load_dataframe(site_cfg, project_id=project_id, query=query, config=cfg, logger=logger)
     accession_col = _find_accession_column(df)
 
     if logger is not None:

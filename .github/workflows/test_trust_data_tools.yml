@@ -34,6 +34,8 @@ on:
       - "trust/seed_trust.sh"
       - "trust/tests/**"
       - "trust/Makefile"
+      - "trust/xnat/Makefile"
+      - "scripts/make_dry_run.py"
       - ".github/workflows/test_trust_data_tools.yml"
       # `make -C trust test-trust-data-tools` parse-time-includes all three (trust/Makefile
       # lines 25, 94, 98 — make's own MAKEFILE_LIST names them), so a change to any can
@@ -72,6 +74,8 @@ jobs:
         trust/seed_trust.sh
         trust/tests/**
         trust/Makefile
+        trust/xnat/Makefile
+        scripts/make_dry_run.py
         .github/workflows/test_trust_data_tools.yml
         deploy/env_mode.mk
         deploy/fl_backend.mk

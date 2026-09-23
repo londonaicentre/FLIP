@@ -35,6 +35,25 @@
 - **flip-ui's Content-Security-Policy is enforcing, not report-only** (#417, via #1202), and gains `base-uri 'none'` + `form-action 'self'`. A deployment that relied on report-only tolerance will now see violations blocked.
 - **FL apps may not download at run time** (#1206, #1208). `pretrained=True`, torchvision weight enums, `torch.hub.load`, `from_pretrained("org/x")`, `load_state_dict_from_url`, MONAI bundle downloads and any `torch.load` without `weights_only=True` fail the guard inside `fl-apps/` and `fl-tutorials/**/app*/`. Operator-provided app templates need the same treatment; weights ship as uploaded files instead.
 
+## :arrows_counterclockwise: Site upgrade
+
+<!-- The prompt to trust operators (FLIP#1204). Sites upgrade on their own schedule and to the
+     release their hub runs; this section is how they learn what this release asks of them. -->
+
+<!-- Fill the first three lines in for EVERY release; they are not boilerplate. "Ordering" is where a
+     flag-day is announced: a payload-cipher change or an FL-framework bump means hub AND sites in one
+     Deployment-Mode window, and a site left behind fails every task until it moves. -->
+
+- **Required:** <yes | no> — <what in this release changes the hub↔site contract, or "nothing; upgrade at your convenience">.
+- **Ordering:** <hub first, sites at their own pace | sites first | hub and sites together in one maintenance window (flag-day: <why>)>.
+- **Refreshed kit needed:** <no — the Hub-shared block is unchanged | yes — <which value changed>>. (If the hub's AES key or FL kit date changed with your hub deploy, re-sync: `make sync-trust-kit KIT=<CODE> PROD=<env>` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>`.)
+- **Operator command**, on the trust host, from your FLIP checkout:
+  ```bash
+  git fetch --tags origin && git checkout {{TAG}}        # the compose files and the verb come from the checkout, not the images
+  sudo -E make upgrade-onprem-trust KIT=<slot>           # defaults to the release the hub runs; TAG={{TAG}} pins it before the hub moves
+  ```
+  Kubernetes: `make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> PROD=<env> TAG={{TAG}}`; EC2: `make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env> TAG={{TAG}}` — both from a checkout at {{TAG}}. Runbook: *docs → System administrators → Upgrading a site*. Sites on v0.7.0 or earlier do not have the command until they check out the tag.
+
 ## :seedling: New Features
 
 - LZA deployment modes and the internal-NLB web edge (#979, #1182); trust deployment layout under `trust/deploy/` (#1214); the OHIF viewer as a default XNAT plugin (#1244); XNAT set-password invites with enclave branding (#977).

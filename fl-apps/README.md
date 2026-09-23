@@ -111,7 +111,7 @@ Some tutorial files are kept as byte-identical copies of another file, and two g
   too, or drift on the new path goes uncaught.
 
 `pyproject.toml` files are deliberately **not** paired — the template's `[tool.uv]` tables pin
-`flip-utils` to the in-image `/opt/flip-utils` source and torch to the cu128 index, neither of which
+`flip-utils` to the in-image `/opt/flip-utils` source and torch to the cu130 index, neither of which
 apply to a tutorial's workstation venv.
 
 ## Where to look next

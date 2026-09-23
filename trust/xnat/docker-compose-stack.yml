@@ -134,6 +134,12 @@ services:
       replicas: 1
       restart_policy:
         condition: any
+      # An in-place upgrade (make upgrade-xnat) replaces xnat-web alongside this service; until
+      # the new xnat-web task is up its name does not resolve and nginx exits with `host not
+      # found in upstream "xnat-web"`. restart_policy retries it, and `continue` keeps Swarm's
+      # default (pause) from stopping the whole update on that first failed start (FLIP#1204).
+      update_config:
+        failure_action: continue
       placement:
         constraints: [node.role == manager]
     security_opt:

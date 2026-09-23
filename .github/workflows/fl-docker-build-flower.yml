@@ -15,6 +15,12 @@ name: Build and Push Flower FL Docker Images
 on:
   push:
     branches: [main, develop]
+    # Release builds (FLIP#1204): a run at refs/tags/v<X.Y.Z> rebuilds the whole Flower image set
+    # at the release commit and pushes :v<X.Y.Z>, changed or not — the fl-server a hub deploys and
+    # the fl-client a site pins carry the same framework by construction. For a real release that
+    # run is release.yml's workflow_dispatch at the tag (its GITHUB_TOKEN tag push starts no
+    # workflow); this trigger fires for a hand-pushed release candidate (v<X.Y.Z>-rc.N).
+    tags: ['v*.*.*']
     paths:
       - "fl-services/flower/**"
       # The fl-base image installs the in-repo flip-utils, so flip-utils changes
@@ -51,6 +57,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      # A stable v<X.Y.Z> tag must point at a commit on main — releases are cut there by
+      # release.yml; pre-release (-rc.N) tags are the release-candidate path and pass.
+      - name: Release tag guard
+        uses: ./.github/actions/release-tag-guard
+
       - name: Determine image tags
         id: tags
         run: |
@@ -66,6 +77,15 @@ jobs:
           SERVER_TAGS="${REGISTRY}/${ORG}/${SERVER_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${SERVER_IMAGE}:sha-${SHORT_SHA}"
           CLIENT_TAGS="${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${CLIENT_IMAGE}:sha-${SHORT_SHA}"
           API_TAGS="${REGISTRY}/${ORG}/${API_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${API_IMAGE}:sha-${SHORT_SHA}"
+
+          # Release tag (FLIP#1204): refs/tags/v<X.Y.Z> → :v<X.Y.Z> on all four images. The
+          # ref name is read from the environment, not templated into the script.
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            BASE_TAGS="${BASE_TAGS},${REGISTRY}/${ORG}/${BASE_IMAGE}:${GITHUB_REF_NAME}"
+            SERVER_TAGS="${SERVER_TAGS},${REGISTRY}/${ORG}/${SERVER_IMAGE}:${GITHUB_REF_NAME}"
+            CLIENT_TAGS="${CLIENT_TAGS},${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${GITHUB_REF_NAME}"
+            API_TAGS="${API_TAGS},${REGISTRY}/${ORG}/${API_IMAGE}:${GITHUB_REF_NAME}"
+          fi
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             BASE_TAGS="${BASE_TAGS},${REGISTRY}/${ORG}/${BASE_IMAGE}:prod"
@@ -121,18 +141,26 @@ jobs:
             docker tag $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$BASE_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker tag $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$BASE_IMAGE:stag
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker tag $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$BASE_IMAGE:${GITHUB_REF_NAME}
           fi
 
           echo "✅ Built base image."
 
       - name: Push Base Image
         run: |
-          docker push $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }}
-          docker push $REGISTRY/$ORG/$BASE_IMAGE:sha-$SHORT_SHA
+          # A release-tag run publishes only :v<X.Y.Z>: the sha tags belong to the branch build
+          # of the same commit and stay immutable.
+          if [[ "${{ github.ref }}" != refs/tags/v* ]]; then
+            docker push $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }}
+            docker push $REGISTRY/$ORG/$BASE_IMAGE:sha-$SHORT_SHA
+          fi
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker push $REGISTRY/$ORG/$BASE_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker push $REGISTRY/$ORG/$BASE_IMAGE:stag
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker push $REGISTRY/$ORG/$BASE_IMAGE:${GITHUB_REF_NAME}
           fi
           echo "✅ Pushed base image."
 
@@ -144,6 +172,8 @@ jobs:
             docker rmi $REGISTRY/$ORG/$BASE_IMAGE:prod || true
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker rmi $REGISTRY/$ORG/$BASE_IMAGE:stag || true
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker rmi $REGISTRY/$ORG/$BASE_IMAGE:${GITHUB_REF_NAME} || true
           fi
           docker system prune -f
           echo "Disk space after base image cleanup:"
@@ -164,18 +194,24 @@ jobs:
             docker tag $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$SERVER_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker tag $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$SERVER_IMAGE:stag
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker tag $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$SERVER_IMAGE:${GITHUB_REF_NAME}
           fi
 
           echo "✅ Built SuperLink."
 
       - name: Push SuperLink Image
         run: |
-          docker push $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }}
-          docker push $REGISTRY/$ORG/$SERVER_IMAGE:sha-$SHORT_SHA
+          if [[ "${{ github.ref }}" != refs/tags/v* ]]; then
+            docker push $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }}
+            docker push $REGISTRY/$ORG/$SERVER_IMAGE:sha-$SHORT_SHA
+          fi
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker push $REGISTRY/$ORG/$SERVER_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker push $REGISTRY/$ORG/$SERVER_IMAGE:stag
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker push $REGISTRY/$ORG/$SERVER_IMAGE:${GITHUB_REF_NAME}
           fi
           echo "✅ Pushed SuperLink."
 
@@ -187,6 +223,8 @@ jobs:
             docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:prod || true
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:stag || true
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:${GITHUB_REF_NAME} || true
           fi
           docker system prune -f
           echo "Disk space after SuperLink cleanup:"
@@ -207,18 +245,24 @@ jobs:
             docker tag $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$CLIENT_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker tag $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$CLIENT_IMAGE:stag
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker tag $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$CLIENT_IMAGE:${GITHUB_REF_NAME}
           fi
 
           echo "✅ Built SuperNode."
 
       - name: Push SuperNode Image
         run: |
-          docker push $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }}
-          docker push $REGISTRY/$ORG/$CLIENT_IMAGE:sha-$SHORT_SHA
+          if [[ "${{ github.ref }}" != refs/tags/v* ]]; then
+            docker push $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }}
+            docker push $REGISTRY/$ORG/$CLIENT_IMAGE:sha-$SHORT_SHA
+          fi
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker push $REGISTRY/$ORG/$CLIENT_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker push $REGISTRY/$ORG/$CLIENT_IMAGE:stag
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker push $REGISTRY/$ORG/$CLIENT_IMAGE:${GITHUB_REF_NAME}
           fi
           echo "✅ Pushed SuperNode."
 
@@ -230,6 +274,8 @@ jobs:
             docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:prod || true
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:stag || true
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:${GITHUB_REF_NAME} || true
           fi
           docker system prune -f
           echo "Disk space after SuperNode cleanup:"
@@ -249,18 +295,24 @@ jobs:
             docker tag $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$API_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker tag $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$API_IMAGE:stag
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker tag $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$API_IMAGE:${GITHUB_REF_NAME}
           fi
 
           echo "✅ Built FL API."
 
       - name: Push FL API Image
         run: |
-          docker push $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }}
-          docker push $REGISTRY/$ORG/$API_IMAGE:sha-$SHORT_SHA
+          if [[ "${{ github.ref }}" != refs/tags/v* ]]; then
+            docker push $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }}
+            docker push $REGISTRY/$ORG/$API_IMAGE:sha-$SHORT_SHA
+          fi
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker push $REGISTRY/$ORG/$API_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker push $REGISTRY/$ORG/$API_IMAGE:stag
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker push $REGISTRY/$ORG/$API_IMAGE:${GITHUB_REF_NAME}
           fi
           echo "✅ Pushed FL API."
 
@@ -272,6 +324,8 @@ jobs:
             docker rmi $REGISTRY/$ORG/$API_IMAGE:prod || true
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker rmi $REGISTRY/$ORG/$API_IMAGE:stag || true
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker rmi $REGISTRY/$ORG/$API_IMAGE:${GITHUB_REF_NAME} || true
           fi
           # Clean up the base image
           docker rmi $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} || true

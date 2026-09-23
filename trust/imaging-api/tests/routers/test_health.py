@@ -58,10 +58,21 @@ async def test_health_check(client):
 
 
 @pytest.mark.asyncio
-async def test_health_reports_package_version(client):
+async def test_health_reports_package_version(client, monkeypatch):
+    monkeypatch.delenv("FLIP_RELEASE", raising=False)
     response = client.get("/health/")
     assert response.status_code == 200
     assert response.json()["version"] == _pyproject_version()
+
+
+@pytest.mark.asyncio
+async def test_health_reports_the_baked_release_over_the_package_version(client, monkeypatch):
+    """A CI-built image carries FLIP_RELEASE; that is the build the hub's Connection Status
+    should name, not the informational pyproject number two different builds can share (FLIP#1204)."""
+    monkeypatch.setenv("FLIP_RELEASE", "v9.9.9")
+    response = client.get("/health/")
+    assert response.status_code == 200
+    assert response.json()["version"] == "v9.9.9"
 
 
 @pytest.mark.parametrize(
