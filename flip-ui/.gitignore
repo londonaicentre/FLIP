@@ -53,7 +53,7 @@ test/ui/screenshots/integration/diff
 ######################
 test/cypress/screenshots/*
 test/cypress/videos/*
-# Cypress docs GIF recording — raw videos (converted to GIFs in docs/source/assets/admin/)
+# Cypress docs GIF recording — raw videos (converted to GIFs in docs/source/assets/generated/gifs/, FLIP#1236)
 /test/cypress/videos/docs/
 
 # Demo-video recorder artefacts (cypress.demo.config.ts + flip-api/tests/demo_video.py)
