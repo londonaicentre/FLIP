@@ -140,9 +140,7 @@ def parse_env(env: Mapping[str, str]) -> SitePolicy | None:
 
     percentile_raw = _get(env, _PERCENTILE_VAR)
     gamma_raw = _get(env, _GAMMA_VAR)
-    percentile = 10 if percentile_raw is None else _parse_value(
-        _PERCENTILE_VAR, percentile_raw, minimum=0, maximum=100
-    )
+    percentile = 10 if percentile_raw is None else _parse_value(_PERCENTILE_VAR, percentile_raw, minimum=0, maximum=100)
     gamma = 0.01 if gamma_raw is None else _parse_value(_GAMMA_VAR, gamma_raw, minimum=0, minimum_exclusive=True)
     return SitePolicy(percentile=percentile, gamma=gamma)
 
