@@ -313,9 +313,7 @@ class TestLocalDifferentialPrivacyWiring:
 
         sys.modules["models"].get_model = lambda: torch.nn.Linear(1, 1)
         recipe.export(tmp_path)
-        client_cfg = json.loads(
-            (tmp_path / recipe.job.name / "app" / "config" / "config_fed_client.json").read_text()
-        )
+        client_cfg = json.loads((tmp_path / recipe.job.name / "app" / "config" / "config_fed_client.json").read_text())
         return [
             entry
             for chain in client_cfg["task_result_filters"]
