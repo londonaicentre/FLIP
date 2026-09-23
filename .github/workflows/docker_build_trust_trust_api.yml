@@ -14,11 +14,7 @@ name: Build and Push Docker Image for Trust API
 
 on:
   workflow_dispatch:
-  # Release builds (FLIP#1204): a run at refs/tags/v<X.Y.Z> rebuilds this image at the release
-  # commit and pushes :v<X.Y.Z>, changed or not, so a site can pin ONE release across its whole
-  # stack. For a real release that run is release.yml's workflow_dispatch at the tag (its own
-  # GITHUB_TOKEN tag push starts no workflow); this push trigger fires for a hand-pushed
-  # release candidate (v<X.Y.Z>-rc.N).
+  # Release builds (FLIP#1204): every image, at the tag — see AGENTS.md "Docker image builds".
   push:
     tags: ['v*.*.*']
   # Publish only after the trust-api test suite ("Trust - Trust API CI") completes
@@ -36,11 +32,8 @@ permissions:
 
 jobs:
   build-and-push:
-    # Only publish when the upstream test run passed. workflow_dispatch (manual)
-    # and the release-tag push have no workflow_run context, so allow them through
-    # unconditionally — a stable tag's commit is on main, whose tests run on it (the
-    # release-tag guard below enforces that); a release-candidate tag is a deliberate
-    # hand-pushed build of a release PR head.
+    # Only publish when the upstream test run passed. workflow_dispatch (manual) and a release-tag
+    # run have no workflow_run context, so they pass; the release-tag guard below checks the tag.
     # The head_repository clause is the trust boundary (FLIP#882): a fork PR's
     # test run satisfies every other gate, and the checkout below fetches the
     # triggering run's code. `github.repository == …` only stops a fork's own
@@ -114,12 +107,8 @@ jobs:
           # must match the tag resolution in deploy/providers/AWS/Makefile.
           TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${SHA:0:7}"
 
-          # Release tag (FLIP#1204): a run at refs/tags/v<X.Y.Z> (release.yml's dispatch, or a
-          # hand-pushed release candidate) publishes :v<X.Y.Z> ONLY. The sha tags belong to the
-          # branch build of the same commit and stay immutable: a second push would swap the
-          # image under a sha-pinned hub, with a different FLIP_RELEASE baked in. RELEASE is what
-          # the image bakes as FLIP_RELEASE so /health names the build: the release tag when
-          # there is one, else the sha tag.
+          # A release-tag run publishes :v<X.Y.Z> only — see AGENTS.md "Docker image builds".
+          # RELEASE is baked as FLIP_RELEASE so /health names the build.
           RELEASE="sha-${SHA:0:7}"
           if [[ "$GH_REF" == refs/tags/v* ]]; then
             RELEASE="$GH_REF_NAME"

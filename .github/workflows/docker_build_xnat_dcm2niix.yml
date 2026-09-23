@@ -14,11 +14,7 @@ name: Build and Push Docker Image for XNAT dcm2niix
 
 on:
   workflow_dispatch:
-  # Release builds (FLIP#1204): a run at refs/tags/v<X.Y.Z> rebuilds this image at the release
-  # commit and pushes :v<X.Y.Z>, changed or not, so a site can pin ONE release across its whole
-  # stack. For a real release that run is release.yml's workflow_dispatch at the tag (its own
-  # GITHUB_TOKEN tag push starts no workflow); this push trigger fires for a hand-pushed
-  # release candidate (v<X.Y.Z>-rc.N).
+  # Release builds (FLIP#1204): every image, at the tag — see AGENTS.md "Docker image builds".
   push:
     branches: [main, develop]
     tags: ['v*.*.*']
@@ -90,9 +86,7 @@ jobs:
           [[ -n "$DCM2NIIX_VERSION" ]] || { echo "::error::could not read ARG DCM2NIIX_VERSION from Dockerfile"; exit 1; }
           TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${DCM2NIIX_VERSION}"
 
-          # Release tag (FLIP#1204): a run at refs/tags/v<X.Y.Z> (release.yml's dispatch, or a
-          # hand-pushed release candidate) publishes :v<X.Y.Z> ONLY. The sha tags belong to the
-          # branch build of the same commit and stay immutable.
+          # A release-tag run publishes :v<X.Y.Z> only — see AGENTS.md "Docker image builds".
           if [[ "$GH_REF" == refs/tags/v* ]]; then
             TAGS="${REGISTRY}/${IMAGE_NAME}:${GH_REF_NAME}"
           else

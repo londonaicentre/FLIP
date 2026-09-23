@@ -15,11 +15,7 @@ name: Build and Push NVFLARE FL Docker Images
 on:
   push:
     branches: [main, develop]
-    # Release builds (FLIP#1204): a run at refs/tags/v<X.Y.Z> rebuilds the whole NVFLARE image set
-    # at the release commit and pushes :v<X.Y.Z>, changed or not — the fl-server a hub deploys and
-    # the fl-client a site pins carry the same framework by construction. For a real release that
-    # run is release.yml's workflow_dispatch at the tag (its GITHUB_TOKEN tag push starts no
-    # workflow); this trigger fires for a hand-pushed release candidate (v<X.Y.Z>-rc.N).
+    # Release builds (FLIP#1204): every image, at the tag — see AGENTS.md "Docker image builds".
     tags: ['v*.*.*']
     paths:
       - "fl-services/nvflare/**"
@@ -76,13 +72,12 @@ jobs:
           CLIENT_TAGS="${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${CLIENT_IMAGE}:sha-${SHORT_SHA}"
           API_TAGS="${REGISTRY}/${ORG}/${API_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${API_IMAGE}:sha-${SHORT_SHA}"
 
-          # Release tag (FLIP#1204): refs/tags/v<X.Y.Z> → :v<X.Y.Z> on all four images. The
-          # ref name is read from the environment, not templated into the script.
+          # A release-tag run publishes :v<X.Y.Z> only — see AGENTS.md "Docker image builds".
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            BASE_TAGS="${BASE_TAGS},${REGISTRY}/${ORG}/${BASE_IMAGE}:${GITHUB_REF_NAME}"
-            SERVER_TAGS="${SERVER_TAGS},${REGISTRY}/${ORG}/${SERVER_IMAGE}:${GITHUB_REF_NAME}"
-            CLIENT_TAGS="${CLIENT_TAGS},${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${GITHUB_REF_NAME}"
-            API_TAGS="${API_TAGS},${REGISTRY}/${ORG}/${API_IMAGE}:${GITHUB_REF_NAME}"
+            BASE_TAGS="${REGISTRY}/${ORG}/${BASE_IMAGE}:${GITHUB_REF_NAME}"
+            SERVER_TAGS="${REGISTRY}/${ORG}/${SERVER_IMAGE}:${GITHUB_REF_NAME}"
+            CLIENT_TAGS="${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${GITHUB_REF_NAME}"
+            API_TAGS="${REGISTRY}/${ORG}/${API_IMAGE}:${GITHUB_REF_NAME}"
           fi
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
@@ -131,32 +126,16 @@ jobs:
             -t $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} \
             -t $REGISTRY/$ORG/$BASE_IMAGE:sha-$SHORT_SHA .
 
-          # Tag environment-specific
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            docker tag $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$BASE_IMAGE:prod
-          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
-            docker tag $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$BASE_IMAGE:stag
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            docker tag $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$BASE_IMAGE:${GITHUB_REF_NAME}
-          fi
-
           echo "✅ Built base image."
 
       - name: Push Base Image
+        env:
+          TAGS: ${{ steps.tags.outputs.base_tags }}
         run: |
-          # A release-tag run publishes only :v<X.Y.Z>: the sha tags belong to the branch build
-          # of the same commit and stay immutable.
-          if [[ "${{ github.ref }}" != refs/tags/v* ]]; then
-            docker push $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }}
-            docker push $REGISTRY/$ORG/$BASE_IMAGE:sha-$SHORT_SHA
-          fi
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            docker push $REGISTRY/$ORG/$BASE_IMAGE:prod
-          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
-            docker push $REGISTRY/$ORG/$BASE_IMAGE:stag
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            docker push $REGISTRY/$ORG/$BASE_IMAGE:${GITHUB_REF_NAME}
-          fi
+          for tag in ${TAGS//,/ }; do
+            docker tag "$REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }}" "$tag"
+            docker push "$tag"
+          done
           echo "✅ Pushed base image."
 
       - name: Cleanup after base image
@@ -185,29 +164,16 @@ jobs:
             -t $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} \
             -t $REGISTRY/$ORG/$SERVER_IMAGE:sha-$SHORT_SHA fl-services/nvflare/fl-server
 
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            docker tag $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$SERVER_IMAGE:prod
-          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
-            docker tag $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$SERVER_IMAGE:stag
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            docker tag $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$SERVER_IMAGE:${GITHUB_REF_NAME}
-          fi
-
           echo "✅ Built FL Server."
 
       - name: Push FL Server Image
+        env:
+          TAGS: ${{ steps.tags.outputs.server_tags }}
         run: |
-          if [[ "${{ github.ref }}" != refs/tags/v* ]]; then
-            docker push $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }}
-            docker push $REGISTRY/$ORG/$SERVER_IMAGE:sha-$SHORT_SHA
-          fi
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            docker push $REGISTRY/$ORG/$SERVER_IMAGE:prod
-          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
-            docker push $REGISTRY/$ORG/$SERVER_IMAGE:stag
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            docker push $REGISTRY/$ORG/$SERVER_IMAGE:${GITHUB_REF_NAME}
-          fi
+          for tag in ${TAGS//,/ }; do
+            docker tag "$REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }}" "$tag"
+            docker push "$tag"
+          done
           echo "✅ Pushed FL Server."
 
       - name: Cleanup after FL Server
@@ -236,29 +202,16 @@ jobs:
             -t $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} \
             -t $REGISTRY/$ORG/$CLIENT_IMAGE:sha-$SHORT_SHA fl-services/nvflare/fl-client
 
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            docker tag $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$CLIENT_IMAGE:prod
-          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
-            docker tag $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$CLIENT_IMAGE:stag
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            docker tag $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$CLIENT_IMAGE:${GITHUB_REF_NAME}
-          fi
-
           echo "✅ Built FL Client."
 
       - name: Push FL Client Image
+        env:
+          TAGS: ${{ steps.tags.outputs.client_tags }}
         run: |
-          if [[ "${{ github.ref }}" != refs/tags/v* ]]; then
-            docker push $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }}
-            docker push $REGISTRY/$ORG/$CLIENT_IMAGE:sha-$SHORT_SHA
-          fi
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            docker push $REGISTRY/$ORG/$CLIENT_IMAGE:prod
-          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
-            docker push $REGISTRY/$ORG/$CLIENT_IMAGE:stag
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            docker push $REGISTRY/$ORG/$CLIENT_IMAGE:${GITHUB_REF_NAME}
-          fi
+          for tag in ${TAGS//,/ }; do
+            docker tag "$REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }}" "$tag"
+            docker push "$tag"
+          done
           echo "✅ Pushed FL Client."
 
       - name: Cleanup after FL Client
@@ -286,29 +239,16 @@ jobs:
             -t $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} \
             -t $REGISTRY/$ORG/$API_IMAGE:sha-$SHORT_SHA fl-services/nvflare/fl-api-base
 
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            docker tag $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$API_IMAGE:prod
-          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
-            docker tag $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$API_IMAGE:stag
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            docker tag $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$API_IMAGE:${GITHUB_REF_NAME}
-          fi
-
           echo "✅ Built FL API."
 
       - name: Push FL API Image
+        env:
+          TAGS: ${{ steps.tags.outputs.api_tags }}
         run: |
-          if [[ "${{ github.ref }}" != refs/tags/v* ]]; then
-            docker push $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }}
-            docker push $REGISTRY/$ORG/$API_IMAGE:sha-$SHORT_SHA
-          fi
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            docker push $REGISTRY/$ORG/$API_IMAGE:prod
-          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
-            docker push $REGISTRY/$ORG/$API_IMAGE:stag
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            docker push $REGISTRY/$ORG/$API_IMAGE:${GITHUB_REF_NAME}
-          fi
+          for tag in ${TAGS//,/ }; do
+            docker tag "$REGISTRY/$ORG/$API_IMAGE:${{ github.sha }}" "$tag"
+            docker push "$tag"
+          done
           echo "✅ Pushed FL API."
 
       - name: Final cleanup
