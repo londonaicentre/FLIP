@@ -80,6 +80,7 @@ verified against the published export by one shared gate
 make -C fl-tutorials reproduce-spleen-omop          # fetch -> build -> verify, chained
 make -C fl-tutorials reproduce-brain-mri-omop       # same three for brain_mri_project
 make -C fl-tutorials reproduce-cxr-omop             # same three for cxr_project
+make -C fl-tutorials reproduce-idc-pathology-omop   # same three for pathology_project (input: the slide manifest)
 make -C fl-tutorials fetch-spleen-metadata-table    # or step by step: pinned metadata table
 make -C fl-tutorials build-spleen-omop-tables       # -> omop/<trust>/spleen_project/*.csv
 make -C fl-tutorials verify-spleen-omop-tables      # diff against the published export
@@ -101,9 +102,14 @@ seeded from the local tree (`seed-<dataset> KIT=`, both halves local, which also
 before a data version is tagged). **cxr carries only the OMOP conversion** — the synthetic chest X-rays,
 their DICOM write and their metadata extraction live in the private `londonaicentre/xraycat` repo, so
 the in-tree provenance chain starts at the published metadata table and its DICOM set is still
-re-hosted (`dicom/cxr_project.tar.gz`).
+re-hosted (`dicom/cxr_project.tar.gz`). **idc_pathology publishes tables and a manifest but no imaging**:
+the whole-slide images are fetched from the public NCI Imaging Data Commons on demand, so
+`aicentreflip/trust-data` carries `omop-csv/pathology_project/` (with `source/manifest.csv`, the lockfile
+the tables derive from) and no `dicom/pathology_project.tar.gz`. Nothing of it is committed either — the
+manifest is fetched into the gitignored data root, and a re-selection is published as a new data version,
+not a diff.
 
-See `fl-tutorials/datasets/README.md` ("OMOP mock-data generation") for all three chains, the shared
+See `fl-tutorials/datasets/README.md` ("OMOP mock-data generation") for all four chains, the shared
 contract in `datasets/utils/`, and the `download-<dataset>-msd-raw` regeneration-path first step.
 
 ## End-to-end on the platform
