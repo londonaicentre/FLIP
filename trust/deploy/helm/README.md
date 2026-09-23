@@ -569,7 +569,10 @@ flClient:
 ```
 
 Requires the [NVIDIA GPU Operator](https://github.com/NVIDIA/gpu-operator) to be
-installed in the cluster.
+installed in the cluster, with an NVIDIA driver of **580 or newer** on the GPU nodes: the FL
+images ship PyTorch built for CUDA 13. The operator installs the driver itself, so pin its
+`driver.version` to a 580+ release (or, with `driver.enabled=false`, pre-install one on the
+node).
 
 ### Autoscaling
 

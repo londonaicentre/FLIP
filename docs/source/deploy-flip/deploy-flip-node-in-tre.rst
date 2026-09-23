@@ -48,7 +48,8 @@ operator. The TRE operator is responsible for:
 **Compute provisioning**
 
 - Providing a host with Docker Engine, Docker Compose, and Docker Swarm support, plus at
-  least one NVIDIA GPU accessible via the NVIDIA Container Toolkit.
+  least one NVIDIA GPU accessible via the NVIDIA Container Toolkit, on NVIDIA driver 580 or
+  newer (the FL images ship CUDA 13 builds of PyTorch).
 - Creating the writable host paths the FLIP stack expects under ``/opt/flip/`` (for certs,
   FL data, OMOP DB volumes, and observability storage -- see the Ansible playbook at
   ``trust/deploy/ansible/onprem.yml``).
@@ -278,6 +279,11 @@ Compute
 - **Sufficient GPU resources**: At minimum, one NVIDIA GPU for inference/evaluation. For FL
   training, GPU memory requirements depend on the model architecture.
 
+- **NVIDIA driver 580 or newer**: The FL images ship PyTorch built for CUDA 13, which bundles its
+  own CUDA runtime but needs a host driver of at least 580. No CUDA toolkit is needed on the host.
+  Check the "Driver Version" reported by ``nvidia-smi``; on an older driver the FL client cannot
+  initialise the GPU.
+
 Networking
 -----------
 
@@ -316,6 +322,7 @@ Software
 ---------
 
 - Docker Engine (>= 24.0) with Docker Compose (>= 2.40)
+- NVIDIA driver (>= 580)
 - NVIDIA Container Toolkit
 - Python 3.12 or 3.13
 - PostgreSQL client libraries (``postgresql-client``)
@@ -565,8 +572,8 @@ Differences from On-Premise Deployment
      - Model updates via FL channel
      - Model updates via FL channel (**per-project approval; see the egress policy above**)
    * - GPU access
-     - Trust-managed DGX / GPU servers
-     - TRE-provided GPU compute with NVIDIA Container Toolkit
+     - Trust-managed DGX / GPU servers (NVIDIA driver >= 580)
+     - TRE-provided GPU compute with NVIDIA Container Toolkit (NVIDIA driver >= 580)
 
 UK TRE Federation Landscape
 ============================

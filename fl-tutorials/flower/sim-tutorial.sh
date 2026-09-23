@@ -54,12 +54,22 @@ CONTROL_ADDRESS="127.0.0.1:$CONTROL_PORT"
 # path, not the bare checkout path — a worktree under .claude/worktrees/ starts with it too.
 STOPPED_ANY=""
 stop_stale_superlinks() {
-  local pid own_ns pid_ns
-  own_ns="$(readlink /proc/$$/ns/pid)"
+  local pid own_ns pid_ns command_line platform
+  platform="$(uname -s)"
+  case "$platform" in
+    Linux) own_ns="$(readlink /proc/$$/ns/pid)" || return 1 ;;
+    Darwin) ;; # Docker processes live in a VM, outside the macOS process table.
+    *) return 0 ;; # Unknown process-isolation semantics: leave processes alone.
+  esac
   for pid in $(pgrep -f "flwr-simulation|flwr-serverapp|flower-superlink" 2>/dev/null || true); do
-    pid_ns="$(readlink "/proc/$pid/ns/pid" 2>/dev/null)" || continue       # unreadable: not ours
-    [ "$pid_ns" = "$own_ns" ] || continue                                  # containerised, not ours
-    tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q "$REPO_ROOT/flip-utils/" || continue
+    if [ "$platform" = Linux ]; then
+      pid_ns="$(readlink "/proc/$pid/ns/pid" 2>/dev/null)" || continue
+      [ "$pid_ns" = "$own_ns" ] || continue
+      command_line="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)" || continue
+    else
+      command_line="$(ps -ww -p "$pid" -o command= 2>/dev/null)" || continue
+    fi
+    printf '%s\n' "$command_line" | grep -Fq "$REPO_ROOT/flip-utils/" || continue
     kill "$pid" 2>/dev/null && { echo "   stopped stale simulator process $pid"; STOPPED_ANY=1; }
   done
 }
