@@ -174,6 +174,18 @@ class UpgradeVerbs(unittest.TestCase):
         out = _dry_run("_upgrade-trust-apply", "NUM_AVAILABLE_GPUS=0", kit=gpu_kit)
         assert ".gpu.yml" not in out, f"the CPU-only override did not drop the GPU overlay:\n{out}"
 
+    def test_upgrade_xnat_checks_ownership_where_the_directories_are(self):
+        """With a remote (ssh://) docker context the XNAT dirs live on the trust host (FLIP#1204).
+
+        upgrade-trust-ec2 drives upgrade-xnat from the admin workstation, so a bare `stat -c` reads
+        this machine's filesystem (and fails outright on BSD stat) instead of the trust host's —
+        the same split xnat-reset already makes.
+        """
+        out = _dry_run("upgrade-xnat", subdir="trust/xnat")
+        assert "ssh://*)" in out, f"upgrade-xnat has no remote-context branch:\n{out}"
+        assert 'ssh "$xnat_ctx" "stat -c' in out, f"the remote branch must stat over ssh:\n{out}"
+        assert "Fix: ssh $xnat_ctx sudo chown" in out, f"the remote remedy must be runnable on the host:\n{out}"
+
     def test_up_trust_is_still_the_first_install_verb(self):
         """The guard would be meaningless if up-trust had quietly stopped seeding and resetting."""
         out = _dry_run("up-trust")

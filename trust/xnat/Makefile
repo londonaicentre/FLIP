@@ -442,7 +442,15 @@ upgrade-xnat: create-xnat-network
 	$(require_kit)
 	$(require_xnat_passwords)
 	@echo "⬆️  Upgrading XNAT stack $(XNAT_STACK) to $(XNAT_TAG) (data dir $(XNAT_DATA_DIR) kept)..."
-	@$(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS)))
+	@# Check the directories where they are: on the trust host over ssh when the swarm is remote
+	@# (upgrade-trust-ec2 runs this from the admin workstation), locally otherwise — the same
+	@# split the first-install reset target makes.
+	@xnat_ctx="$$(docker context show)"; \
+	xnat_endpoint="$$(docker context inspect "$$xnat_ctx" --format '{{.Endpoints.docker.Host}}' 2>/dev/null)"; \
+	case "$$xnat_endpoint" in \
+		ssh://*) $(call check_xnat_dir_owner,ssh "$$xnat_ctx" "stat -c '%u:%g' $(XNAT_WEB_DATA_DIRS)",ssh $$xnat_ctx,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
+		*) $(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
+	esac
 	$(MAKE) xnat-backup KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
 	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
