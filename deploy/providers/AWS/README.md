@@ -1039,6 +1039,15 @@ the only applier for the self-contained accounts, so a local apply is reverted b
 nightly drift job in between. It is deliberately a separate switch from `MANAGE_DNS` so the drop lands in a chosen
 window instead of whenever a release reaches production.
 
+> [!IMPORTANT]
+> **Release the alias before repointing CI (FLIP#1199).** The alias lives on the *legacy* distribution, so the
+> apply that drops it has to target the legacy account. Once `TF_PROD` on an environment selects an LZA estate
+> (`lza` / `lza-stag`), that environment applies LZA instead and there is **no CI path to the legacy account left**.
+> `RELEASE_WEB_ALIAS=true` would then land on the LZA account, where `manage_dns` is false and the flag is a no-op —
+> so it would look applied, change nothing, and the web would never cut over. Drop the alias while `TF_PROD` still
+> selects the legacy estate (or is unset). Afterwards it takes a manual apply against legacy with its own env file,
+> which is at least no longer fought by CI, since CI has stopped touching that account.
+
 **Staging inverts step 2 and step 3, and it is not optional.** Production gets an overlap window because the
 receiving edge can hold a wildcard while legacy keeps the exact name — both answer, exact wins, and nothing breaks
 until the exact one goes. There is only one wildcard per zone and production has it, so the staging edge has to
