@@ -297,6 +297,25 @@ def test_heartbeat_reply_names_the_hub_build_and_its_key(mock_auth, mock_trust, 
     app.dependency_overrides.pop(get_session, None)
 
 
+def test_heartbeat_survives_an_unloadable_hub_key(mock_auth, mock_trust, caplog):
+    """Liveness must not depend on the key: an unreadable key already fails every task, and failing
+    the heartbeat too would show every trust Offline. The reply goes out without a fingerprint."""
+    mock_db = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    with patch("flip_api.utils.encryption.get_aes_key", side_effect=ValueError("AES key must be 32 bytes")):
+        response = client.post("/api/trust/heartbeat")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["aes_key_fingerprint"] is None
+    assert data["trust_id"] == str(mock_trust.id)
+    assert mock_trust.last_heartbeat is not None
+    assert any("fingerprint the AES key" in r.message for r in caplog.records)
+
+    app.dependency_overrides.pop(get_session, None)
+
+
 def _snapshot_body():
     """A valid heartbeat body as sent by a collector-enabled trust-api."""
     return {
