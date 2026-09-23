@@ -84,11 +84,19 @@ DESTRUCTIVE = (
 )
 
 
-def dry_run(target: str, *extra: str, subdir: str = "trust", kit: str = KIT) -> str:
-    """`make -n` the target in a scratch copy of the repo's Makefiles with a scratch kit.
+def run_target(
+    target: str,
+    *extra: str,
+    subdir: str = "trust",
+    kit: str = KIT,
+    dry: bool = False,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run ``make [-n] <target>`` in a scratch copy of the repo's Makefiles with a scratch kit.
 
     ``subdir`` is where the target lives: ``trust`` for the trust-level verbs, ``.`` for the
-    root operator entry points.
+    root operator entry points. ``env`` is layered over the caller's environment — how a test
+    puts a stub ``docker`` first on PATH for a real (non ``-n``) run.
     """
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -109,13 +117,17 @@ def dry_run(target: str, *extra: str, subdir: str = "trust", kit: str = KIT) -> 
         # be printed; an empty file is enough for -n.
         (root / "scripts").mkdir()
         (root / "scripts" / "site_upgrade.py").write_text("")
-        env = {**os.environ, "PROD": "true"}
-        result = subprocess.run(
-            ["make", "-n", "-C", str(root / subdir), target, "KIT=SCR", "PROD=true", *extra],
+        return subprocess.run(
+            ["make", *(["-n"] if dry else []), "-C", str(root / subdir), target, "KIT=SCR", "PROD=true", *extra],
             capture_output=True,
             text=True,
-            env=env,
+            env={**os.environ, "PROD": "true", **(env or {})},
             timeout=60,
         )
-        assert result.returncode == 0, f"make -n {target} failed:\n{result.stdout}\n{result.stderr}"
-        return result.stdout
+
+
+def dry_run(target: str, *extra: str, subdir: str = "trust", kit: str = KIT) -> str:
+    """`make -n` the target (see :func:`run_target`); the recipe it would run, asserting make accepted it."""
+    result = run_target(target, *extra, subdir=subdir, kit=kit, dry=True)
+    assert result.returncode == 0, f"make -n {target} failed:\n{result.stdout}\n{result.stderr}"
+    return result.stdout

@@ -197,6 +197,8 @@ XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archiv
 # the local branches, `ssh <ctx>` on the remote-swarm one, where the paths live
 # on the trust host and an operator pasting a bare `sudo chown` would either get
 # "no such file or directory" or chown a same-named path on their own machine.
+# $(3), optional, is how many sources $(1) stats — every entry of $(XNAT_DATA_DIRS) by
+# default; upgrade-xnat passes the count of $(XNAT_WEB_DATA_DIRS), the subset it checks.
 #
 # stat's stderr is deliberately not discarded. A stat that fails for a reason
 # other than a missing directory — an unreadable parent, or a non-GNU stat that
@@ -451,7 +453,7 @@ upgrade-xnat: create-xnat-network
 		ssh://*) $(call check_xnat_dir_owner,ssh "$$xnat_ctx" "stat -c '%u:%g' $(XNAT_WEB_DATA_DIRS)",ssh $$xnat_ctx,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
 		*) $(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
 	esac
-	$(MAKE) xnat-backup KIT=$(KIT)
+	$(MAKE) xnat-backup KIT=$(KIT) XNAT_BACKUP_REQUIRED=1
 	XNAT_PATH=${XNAT_PATH} \
 	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
 	XNAT_WEB_PORT=$(XNAT_WEB_PORT_EFFECTIVE) \
@@ -464,20 +466,39 @@ upgrade-xnat: create-xnat-network
 # pg_dumpall of the running xnat-db into $(XNAT_DATA_DIR)/backups/ — the rollback path for
 # an XNAT upgrade, since XNAT's schema migrations are forward-only. Both ends go through
 # docker: the dump runs inside the db container, and the file lands in the (root- or
-# 1001-owned) data dir via a throwaway container rather than needing sudo. Skipped with a
-# note when no xnat-db is running (a first install has nothing to back up). The container
+# 1001-owned) data dir via a throwaway container rather than needing sudo. The container
 # is found by the swarm labels, like xnat_web_container_ids above — `--filter name=` is a
 # substring match that also catches a FLIP_INSTANCE-prefixed stack's db (FLIP#1210).
+# With no xnat-db running it notes that and succeeds (a first install has nothing to back
+# up) — unless XNAT_BACKUP_REQUIRED is set, as upgrade-xnat sets it: a live site is never
+# migrated without a dump. bash + pipefail because a failed pg_dumpall still leaves gzip
+# writing a valid, empty or truncated stream; and only a dump ending in pg_dumpall's
+# completion trailer counts — anything else is deleted and the recipe fails.
+xnat-backup: SHELL := /bin/bash
 xnat-backup:
 	$(require_kit)
-	@db=$$(docker ps -q --filter "label=com.docker.stack.namespace=$(XNAT_STACK)" --filter "label=com.docker.swarm.service.name=$(XNAT_STACK)_xnat-db" | head -1); \
-	if [ -z "$$db" ]; then echo "ℹ️  No running $(XNAT_STACK)_xnat-db — nothing to back up."; exit 0; fi; \
-	stamp=$$(date +%Y%m%d-%H%M%S); \
-	echo "💾 Backing up the XNAT database to $(XNAT_DATA_DIR)/backups/xnat-db-$$stamp.sql.gz ..."; \
-	docker run --rm -v "$(XNAT_DATA_DIR):/x" alpine:3.20 mkdir -p /x/backups && \
-	docker exec "$$db" sh -c 'pg_dumpall -U postgres | gzip -c' \
-	  | docker run --rm -i -v "$(XNAT_DATA_DIR)/backups:/b" alpine:3.20 sh -c "cat > /b/xnat-db-$$stamp.sql.gz" && \
-	docker run --rm -v "$(XNAT_DATA_DIR)/backups:/b" alpine:3.20 sh -c "gzip -t /b/xnat-db-$$stamp.sql.gz && ls -l /b/xnat-db-$$stamp.sql.gz"
+	@set -o pipefail; \
+	db=$$(docker ps -q --filter "label=com.docker.stack.namespace=$(XNAT_STACK)" --filter "label=com.docker.swarm.service.name=$(XNAT_STACK)_xnat-db" | head -1); \
+	if [ -z "$$db" ]; then \
+	  if [ -n "$(XNAT_BACKUP_REQUIRED)" ]; then \
+	    echo "❌ No running $(XNAT_STACK)_xnat-db to back up — refusing to upgrade XNAT without a dump."; \
+	    echo "   Check the stack (docker stack ps $(XNAT_STACK)), or pass XNAT_BACKUP_REQUIRED= to go on without one."; \
+	    exit 1; \
+	  fi; \
+	  echo "ℹ️  No running $(XNAT_STACK)_xnat-db — nothing to back up."; exit 0; \
+	fi; \
+	dump="xnat-db-$$(date +%Y%m%d-%H%M%S).sql.gz"; \
+	echo "💾 Backing up the XNAT database to $(XNAT_DATA_DIR)/backups/$$dump ..."; \
+	docker run --rm -v "$(XNAT_DATA_DIR):/x" alpine:3.20 mkdir -p /x/backups || exit 1; \
+	if docker exec "$$db" pg_dumpall -U postgres \
+	     | docker run --rm -i -v "$(XNAT_DATA_DIR)/backups:/b" alpine:3.20 sh -c "gzip -c > /b/$$dump" \
+	   && docker run --rm -v "$(XNAT_DATA_DIR)/backups:/b" alpine:3.20 \
+	        sh -c "gzip -t /b/$$dump && zcat /b/$$dump | tail -n 5 | grep -q 'PostgreSQL database cluster dump complete' && ls -l /b/$$dump"; then \
+	  exit 0; \
+	fi; \
+	docker run --rm -v "$(XNAT_DATA_DIR)/backups:/b" alpine:3.20 rm -f "/b/$$dump"; \
+	echo "❌ The XNAT database dump failed or is incomplete — no backup was kept, and nothing was upgraded."; \
+	exit 1
 
 # Get a shell in the running xnat-web container for the selected trust.
 xnat-shell:

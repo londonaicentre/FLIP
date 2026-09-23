@@ -80,10 +80,11 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
   container uid (1001 — an archive written by a pre-hardening root `xnat-web` needs one
   `chown -R` first), redeploys the stack onto the kit's `XNAT_TAG` (XNAT migrates its own schema on
   boot; migrations are forward-only, hence the dump), then re-runs `configure-xnat.sh`, which
-  *converges* an already-initialised instance — re-applying `siteUrl` (a 1.9→1.10 migration
-  empties it and the instance re-reports itself uninitialised until it is set), the DICOM receiver,
-  the DQR lockdown, the PACS registration and the Container Service backend — while skipping the
-  first-boot-only admin password rotation and service-account creation.
+  *converges* a configured instance — picked by which admin password XNAT accepts, since a
+  1.9→1.10 migration empties `siteUrl` and the instance re-reports itself uninitialised — re-applying
+  `siteUrl`, the DICOM receiver, the DQR lockdown, the PACS registration and the Container Service
+  backend, and skipping only the first-boot admin password rotation (the service account is
+  re-requested and an existing one left as-is).
 
 ## Setup
 

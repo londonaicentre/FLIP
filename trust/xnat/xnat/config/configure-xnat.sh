@@ -169,40 +169,45 @@ xnat_curl() {
   fi
 }
 
-# Which of the two modes this run is in: FIRST BOOT (a fresh instance, the admin account still on
-# its initial password) or CONVERGE (an instance a prior run fully configured — initialized=true
-# and the initial password no longer authenticates). First boot rotates the admin password and
-# creates the service account; converge skips both and re-applies everything else, using the
-# rotated password. Before FLIP#1204 converge was an early `exit 0`, which was fine while every
-# Swarm redeploy went through xnat-reset and so always met a fresh instance; `upgrade-xnat` now
-# redeploys onto a LIVE data dir, and an upgrade must still land the receiver port, the DQR
-# lockdown, the PACS registration and (after a 1.9→1.10 migration, which empties it) siteUrl.
-# NOTE: when the configured admin password equals the initial one (the dev kits do this), the
-# converge mode is never detected and the whole script re-runs on every `make up-trust` — so the
-# conflict-prone calls below (service account, PACS registration, availability intervals) carry
-# their own already-configured guards rather than relying on this mode switch.
-# (These probes check status codes explicitly — a non-200 here is a signal,
-# not an error, so they intentionally stay bare curl rather than xnat_curl.
-# They carry xnat_curl's deadlines even so: the wall-clock wait above proves XNAT serves the login
-# page, not that an authenticated route answers, so an XNAT wedged on its database — the documented
-# "reverted to uninitialized Setup mode" failure — would otherwise hang the deploy here with no
-# output and no timeout.)
-ALREADY_CONFIGURED=false
+# Which admin password this XNAT accepts decides the mode. FIRST BOOT: the initial password still
+# authenticates — activate with it, then rotate it. CONVERGE: only the configured (rotated) password
+# does — an instance a prior run configured, or one just migrated from 1.9, which re-reports itself
+# uninitialised; activate with the rotated password and skip the rotation. Everything else is
+# re-applied in both modes, which is what lets `upgrade-xnat` redeploy onto a LIVE data dir and
+# still land the receiver port, the DQR lockdown, the PACS registration and siteUrl.
+# NOTE: when the configured admin password equals the initial one (the dev kits do this), every run
+# is a first boot — so the conflict-prone calls below (service account, PACS registration,
+# availability intervals) carry their own already-configured guards rather than relying on the mode.
+# (These probes check status codes explicitly — a non-200 here is a signal, not an error, so they
+# stay bare curl rather than xnat_curl. They carry xnat_curl's deadlines even so, and `|| true` so a
+# timeout reaches the checks below instead of ending the script under set -e with no output: the
+# wall-clock wait above proves XNAT serves the login page, not that an authenticated route answers.)
+ADMIN_PASSWORD_ROTATED=false
 init_pw_status=$(curl -s --connect-timeout 5 --max-time 15 -o /dev/null -w '%{http_code}' \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
-  "$XNAT_URL/xapi/siteConfig/initialized")
+  "$XNAT_URL/xapi/siteConfig/initialized") || true
 if [[ "${init_pw_status}" != "200" ]]; then
-  initialized=$(curl -s --connect-timeout 5 --max-time 15 \
+  rotated_probe=$(curl -s --connect-timeout 5 --max-time 15 -w '\n%{http_code}' \
     -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
-    "$XNAT_URL/xapi/siteConfig/initialized")
+    "$XNAT_URL/xapi/siteConfig/initialized") || true
+  rotated_status="${rotated_probe##*$'\n'}"
+  initialized="${rotated_probe%$'\n'*}"
+  if [[ "${rotated_status}" != "200" ]]; then
+    echo "ERROR: neither admin password authenticates (initial: HTTP ${init_pw_status:-000}," \
+      "configured: HTTP ${rotated_status:-000})." >&2
+    echo "  Check XNAT_ADMIN_PASSWORD in the kit against this XNAT's admin account." >&2
+    exit 1
+  fi
+  ADMIN_PASSWORD_ROTATED=true
   if [[ "${initialized}" == "true" ]]; then
-    echo "XNAT already configured (initialized=true, initial password no longer works) — converging configuration."
-    ALREADY_CONFIGURED=true
+    echo "XNAT already configured (the initial admin password no longer works) — converging configuration."
+  else
+    echo "XNAT reports itself uninitialised but only the configured admin password works" \
+      "(an instance migrated from an older XNAT) — activating it with that password."
   fi
 fi
-# The admin password the activation call authenticates with: the initial one on first boot,
-# the rotated one when converging.
-if [[ "$ALREADY_CONFIGURED" == true ]]; then
+# The admin password the activation call authenticates with: whichever one XNAT accepts.
+if [[ "$ADMIN_PASSWORD_ROTATED" == true ]]; then
   ACTIVATION_PASSWORD="${XNAT_ADMIN_PASSWORD}"
 else
   ACTIVATION_PASSWORD="${XNAT_ADMIN_INITIAL_PASSWORD}"
@@ -242,8 +247,8 @@ xnat_curl -X POST "$XNAT_URL/xapi/siteConfig" \
 XNAT_URL="$XNAT_URL" bash wait-for-xnat-plugins.sh
 
 # Change admin password — first boot only: on converge the initial password no longer
-# authenticates (that is how converge was detected), and the rotated one is already in place.
-if [[ "$ALREADY_CONFIGURED" == true ]]; then
+# authenticates, and the rotated one is already in place.
+if [[ "$ADMIN_PASSWORD_ROTATED" == true ]]; then
   echo "Admin password already rotated — leaving as-is."
 else
   echo "Changing admin password..."
