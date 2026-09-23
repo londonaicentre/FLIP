@@ -327,9 +327,9 @@ need only your trust's kit file (`trust/.env.<CODE>.<env>`).
 ### Upgrading to a release (FLIP#1204)
 
 ```bash
-git fetch --tags origin && git checkout v0.7.0              # the checkout first: compose files + this verb come from it
+git fetch --tags origin && git checkout vX.Y.Z              # the checkout first: compose files + this verb come from it
 sudo -E make upgrade-onprem-trust KIT=<slot>              # → the release the hub runs
-sudo -E make upgrade-onprem-trust KIT=<slot> TAG=v0.7.0   # → a named release
+sudo -E make upgrade-onprem-trust KIT=<slot> TAG=vX.Y.Z   # → a named release
 ```
 
 Runs the readiness checklist, resolves the target (the hub's `/api/health`

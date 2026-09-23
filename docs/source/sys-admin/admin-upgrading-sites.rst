@@ -63,7 +63,7 @@ follow.
 
       cd <your FLIP checkout>
       git fetch --tags origin
-      git checkout v0.7.0          # the release named in the Site upgrade section
+      git checkout vX.Y.Z          # the release named in the Site upgrade section
 
    Your kit (``trust/.env.<CODE>.production``), the FL kit and the data directories are
    untracked, so checking out a tag never touches them. The upgrade verb refuses a release
@@ -73,10 +73,11 @@ follow.
 
    .. note::
 
-      On the first upgrade from a site installed before this runbook existed (v0.6.0 or
+      On the first upgrade from a site installed before this runbook existed (v0.7.0 or
       earlier) the ``upgrade-onprem-trust`` command is not in your checkout yet — it arrived
       with the release you are moving to. The checkout step above is what makes it appear;
-      run it first, then continue.
+      run it first, then continue. A hub on v0.7.0 or earlier does not report its release
+      either, so until the hub has moved past it the command stops and asks for ``TAG=``.
 
 4. **Run the upgrade.** From that checkout:
 
@@ -84,7 +85,7 @@ follow.
 
       sudo -E make upgrade-onprem-trust KIT=<slot>            # e.g. KIT=Trust_2
       # or pin explicitly:
-      sudo -E make upgrade-onprem-trust KIT=<slot> TAG=v0.7.0
+      sudo -E make upgrade-onprem-trust KIT=<slot> TAG=vX.Y.Z
 
    What it does, in order:
 
@@ -125,7 +126,7 @@ follow.
    .. code-block:: bash
 
       curl -s http://127.0.0.1:${TRUST_API_PORT:-8020}/health
-      # {"status":"ok","version":"v0.7.0","hub_version":"v0.7.0","hub_key_match":true,"dead_tasks":[]}
+      # {"status":"ok","version":"vX.Y.Z","hub_version":"vX.Y.Z","hub_key_match":true,"dead_tasks":[]}
 
    ``version`` is the build the container was made from; ``hub_version`` is what the hub says
    about itself; ``hub_key_match: true`` means your kit's AES key is the hub's. On the hub, the
@@ -184,7 +185,31 @@ release→release move backwards is otherwise refused):
 
 .. code-block:: bash
 
-   sudo -E make upgrade-onprem-trust KIT=<slot> TAG=v0.6.0 FORCE=1
+   sudo -E make upgrade-onprem-trust KIT=<slot> TAG=vX.Y.Z FORCE=1
+
+Releases up to and including v0.7.0 predate this runbook, which changes two things when the
+previous release is one of them. Its images were never tagged ``:v<X.Y.Z>`` — the registry
+check refuses ``TAG=v0.7.0`` — and its checkout has no upgrade command. Stay on your current
+checkout and roll back to the images built from that release's commit instead:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Release
+     - Image tag
+   * - v0.7.0
+     - ``sha-23cf331``
+   * - v0.6.0
+     - ``sha-22d845f``
+
+.. code-block:: bash
+
+   sudo -E make upgrade-onprem-trust KIT=<slot> TAG=sha-23cf331
+
+A ``sha-`` tag carries no release order, so the command does not recognise this as a
+downgrade and needs no ``FORCE=1`` — confirm the printed ``site <current> → target sha-…``
+yourself. The images then run under the newer checkout's compose files, a pairing no
+release was tested in; it is the way back, not a place to stay.
 
 XNAT is the exception: its schema migrations are forward-only. The upgrade took a dump before
 changing the XNAT tag — ``$XNAT_DATA_DIR/backups/xnat-db-<stamp>.sql.gz`` — so a rollback across
