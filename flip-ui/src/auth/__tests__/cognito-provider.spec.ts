@@ -194,6 +194,21 @@ describe("CognitoAuthProvider", () => {
             expect(getSetupUri).toHaveBeenCalledWith("FLIP", "u@e.com");
         });
 
+        it("rejects with UNSUPPORTED when Cognito asks for TOTP setup but sends no setup details", async () => {
+            // Resolving TOTP_SETUP without a secret would render an empty QR
+            // the user can never satisfy; fail the sign-in instead.
+            vi.mocked(signIn).mockResolvedValue({
+                isSignedIn: false,
+                nextStep: { signInStep: "CONTINUE_SIGN_IN_WITH_TOTP_SETUP" }
+            } as never);
+
+            const err = await provider.signIn("u@e.com", "p").catch((e: unknown) => e);
+
+            expect(err).toBeInstanceOf(AuthError);
+            expect((err as AuthError).code).toBe("UNSUPPORTED");
+            expect((err as AuthError).message).toMatch(/no setup details/);
+        });
+
         it("rejects with UNSUPPORTED when Amplify reports neither signed-in nor a known step", async () => {
             // Previously a silent no-op that left the user on the login page with
             // no feedback; surfacing it lets Login.vue show its error snackbar.

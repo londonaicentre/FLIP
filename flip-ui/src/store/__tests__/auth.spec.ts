@@ -459,6 +459,20 @@ describe("authStore", () => {
             expect(auth.getUser).not.toHaveBeenCalled();
         });
 
+        it("records a further challenge the provider hands back instead of assuming the sign-in is done", async () => {
+            // The seam lets a provider order its challenges differently from
+            // Cognito; a step that is not DONE must be recorded for the
+            // router, not painted over with DONE + mfaEnabled=true.
+            auth.confirmTotpChallenge.mockResolvedValue({ step: SignInStep.NEW_PASSWORD_REQUIRED });
+
+            await store.confirmTotpChallenge("123456");
+
+            expect(store.signInStep).toBe(SignInStep.NEW_PASSWORD_REQUIRED);
+            expect(store.mfaEnabled).toBeNull();
+            expect(auth.getUser).not.toHaveBeenCalled();
+            expect(Snackbar.show).not.toHaveBeenCalled();
+        });
+
         it("swallows post-success hydrate failures, leaves mfaEnabled=null and notifies the user", async () => {
             // Without a user-facing signal, a transient hydrate failure right
             // after a valid TOTP code leaves the user thinking sign-in worked
@@ -495,6 +509,24 @@ describe("authStore", () => {
             expect(store.mfaEnabled).toBe(true);
             expect(store.signInStep).toBe(SignInStep.DONE);
             expect(getMfaStatus).not.toHaveBeenCalled();
+        });
+
+        it("records a further challenge the provider hands back, with the spent secret cleared", async () => {
+            // The code was accepted (the secret is used up and must not be
+            // re-rendered as a QR) but the provider says another step remains:
+            // record it, and do not hydrate as if MFA were already active.
+            store.totpSetup = {
+                sharedSecret: "ABC",
+                setupUri: "otpauth://..."
+            };
+            auth.confirmTotpSetup.mockResolvedValue({ step: SignInStep.NEW_PASSWORD_REQUIRED });
+
+            await store.confirmTotpSetup("123456");
+
+            expect(store.totpSetup).toBeNull();
+            expect(store.signInStep).toBe(SignInStep.NEW_PASSWORD_REQUIRED);
+            expect(store.mfaEnabled).toBeNull();
+            expect(auth.getUser).not.toHaveBeenCalled();
         });
 
         it("keeps the setup secret when the code is rejected so the user can retry against the same QR", async () => {

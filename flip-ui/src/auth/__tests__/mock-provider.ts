@@ -41,9 +41,24 @@ export const NO_CAPABILITIES: AuthCapabilities = {
 };
 
 /**
- * Build a provider whose methods are all spies. Defaults describe a signed-out
- * Cognito-shaped backend: `hasSession` false, `getAccessToken` null, and
- * `onSessionExpired` returning a no-op unsubscribe.
+ * The signed-out defaults every spy starts from: `hasSession` false,
+ * `getAccessToken` null, the void methods resolving, and `onSessionExpired`
+ * returning a no-op unsubscribe. Challenge-chain methods (`signIn`,
+ * `confirmTotpSetup`, ...) have no default — a spec arms the step it needs.
+ * Shared by the factory and the reset so the two cannot drift.
+ */
+function armSignedOutDefaults(provider: MockAuthProvider): void {
+    provider.getAccessToken.mockResolvedValue(null);
+    provider.hasSession.mockResolvedValue(false);
+    provider.signOut.mockResolvedValue(undefined);
+    provider.resetPassword.mockResolvedValue(undefined);
+    provider.confirmResetPassword.mockResolvedValue(undefined);
+    provider.onSessionExpired.mockReturnValue(() => undefined);
+}
+
+/**
+ * Build a provider whose methods are all spies, armed with the signed-out
+ * defaults of a Cognito-shaped backend (see `armSignedOutDefaults`).
  */
 export function makeMockAuthProvider(overrides: {
     backend?: AuthBackend;
@@ -62,14 +77,15 @@ export function makeMockAuthProvider(overrides: {
         confirmTotpSetup: vi.fn(),
         setUpTotp: vi.fn(),
         verifyTotpSetup: vi.fn(),
-        getAccessToken: vi.fn(async () => null),
+        getAccessToken: vi.fn(),
         getUser: vi.fn(),
-        hasSession: vi.fn(async () => false),
-        signOut: vi.fn(async () => undefined),
-        resetPassword: vi.fn(async () => undefined),
-        confirmResetPassword: vi.fn(async () => undefined),
-        onSessionExpired: vi.fn(() => () => undefined)
+        hasSession: vi.fn(),
+        signOut: vi.fn(),
+        resetPassword: vi.fn(),
+        confirmResetPassword: vi.fn(),
+        onSessionExpired: vi.fn()
     };
+    armSignedOutDefaults(provider);
 
     return provider;
 }
@@ -82,10 +98,5 @@ export function resetMockAuthProvider(provider: MockAuthProvider): void {
             (member as Mock).mockReset();
         }
     }
-    provider.getAccessToken.mockResolvedValue(null);
-    provider.hasSession.mockResolvedValue(false);
-    provider.signOut.mockResolvedValue(undefined);
-    provider.resetPassword.mockResolvedValue(undefined);
-    provider.confirmResetPassword.mockResolvedValue(undefined);
-    provider.onSessionExpired.mockReturnValue(() => undefined);
+    armSignedOutDefaults(provider);
 }

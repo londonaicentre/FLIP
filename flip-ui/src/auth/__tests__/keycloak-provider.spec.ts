@@ -41,6 +41,17 @@ function jsonResponse(status: number, body: unknown): Response {
     } as unknown as Response;
 }
 
+/** A response with no JSON body: Keycloak's 204 from /logout, or a proxy's HTML error page. */
+function emptyResponse(status: number): Response {
+    return {
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => {
+            throw new SyntaxError("Unexpected end of JSON input");
+        }
+    } as unknown as Response;
+}
+
 function makeJwt(payload: Record<string, unknown>): string {
     const b64url = (s: string): string =>
         Buffer.from(s, "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -416,6 +427,14 @@ describe("KeycloakAuthProvider", () => {
             expect(err).toBeInstanceOf(AuthError);
             expect((err as AuthError).code).toBe("MISSING_SESSION_TOKENS");
         });
+
+        it("rejects a token that carries no `sub` claim rather than inventing an identity", async () => {
+            // `sub` is the user id the store keys permissions on; a token
+            // without one must not produce a user with an empty id.
+            seedSession({ idToken: makeJwt({ preferred_username: "nobody" }) });
+
+            await expect(provider.getUser()).rejects.toThrow(/no `sub` claim/);
+        });
     });
 
     describe("hasSession", () => {
@@ -424,6 +443,19 @@ describe("KeycloakAuthProvider", () => {
 
             window.localStorage.setItem(STORAGE_KEY, "{not json");
             await expect(provider.hasSession()).resolves.toBe(false);
+        });
+
+        it("is false for a blob that parses but lacks the token fields, and no token is handed out from it", async () => {
+            // An older or corrupted session shape (say, a tampered
+            // `expiresAt`) is treated as signed out rather than trusted.
+            window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+                accessToken: ACCESS_TOKEN,
+                expiresAt: "never"
+            }));
+
+            await expect(provider.hasSession()).resolves.toBe(false);
+            await expect(provider.getAccessToken()).resolves.toBeNull();
+            expect(fetchMock).not.toHaveBeenCalled();
         });
 
         it("is true while the refresh token has not expired", async () => {
@@ -448,7 +480,9 @@ describe("KeycloakAuthProvider", () => {
     describe("signOut", () => {
         it("POSTs client_id + refresh_token to the logout endpoint and clears storage", async () => {
             seedSession();
-            fetchMock.mockResolvedValueOnce(jsonResponse(204, null));
+            // Keycloak answers /logout with a body-less 204, which `json()`
+            // rejects on; that is success, not a failure.
+            fetchMock.mockResolvedValueOnce(emptyResponse(204));
 
             // `global` is meaningless here (no server-side session list to
             // revoke), so the store's `{ global: false }` is ignored.
@@ -484,9 +518,24 @@ describe("KeycloakAuthProvider", () => {
             expect(storedSession()).toBeNull();
         });
 
+        it("surfaces a non-400 HTTP failure as a plain error naming the status, and clears storage", async () => {
+            // A 5xx (or a proxy's HTML error page) is not "the session had
+            // already ended": the refresh token may still be live server-side,
+            // so the store must get a real error to warn the user with.
+            seedSession();
+            fetchMock.mockResolvedValueOnce(emptyResponse(502));
+
+            const err = await provider.signOut().catch((e: unknown) => e);
+
+            expect(err).toBeInstanceOf(Error);
+            expect(err).not.toBeInstanceOf(AuthError);
+            expect((err as Error).message).toMatch(/logout failed \(HTTP 502\)/);
+            expect(storedSession()).toBeNull();
+        });
+
         it("reads the stored session synchronously, so a caller clearing localStorage right after still logs out server-side", async () => {
             seedSession();
-            fetchMock.mockResolvedValueOnce(jsonResponse(204, null));
+            fetchMock.mockResolvedValueOnce(emptyResponse(204));
 
             const pending = provider.signOut();
             window.localStorage.clear();
