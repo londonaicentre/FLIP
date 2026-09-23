@@ -80,7 +80,9 @@ jobs:
         # S3-endpoint guard in the compose (nothing here reaches AWS); the Cognito ids
         # stay commented out. UID/GID are make expressions in the example, so the shell
         # values are appended for docker compose, which reads the file as dotenv.
-        run: |
+        # (detect-secrets attributes a block scalar's findings to this line: the
+        # fixed dev password below is the allowlisted one.)
+        run: | # pragma: allowlist secret
           cp .env.development.example .env.development
           {
             echo "AWS_REGION=eu-west-2"
