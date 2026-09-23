@@ -12,6 +12,7 @@
 
 import json
 import os
+from typing import Any
 
 import torch
 import torch.cuda
@@ -26,7 +27,16 @@ from flip.nvflare.runtime import get_flip_model_id
 
 
 class PTModelLocator(ModelLocator):
-    def __init__(self, exclude_vars: list[str] | None = None, model: torch.nn.Module | None = None) -> None:
+    def __init__(
+        self, exclude_vars: list[str] | None = None, model: torch.nn.Module | dict[str, Any] | None = None
+    ) -> None:
+        """
+        Args:
+            exclude_vars: Accepted for config compatibility with the stock locators; not applied here.
+            model: The server model object, or the ``{"path": ..., "args": ...}`` component config a
+                recipe passes (NVFLARE's ComponentBuilder instantiates it before this locator is
+                built at run time). ``None`` builds it from the app's ``models.get_model()``.
+        """
         super(PTModelLocator, self).__init__()
 
         if model is None:
@@ -81,7 +91,16 @@ class PTModelLocator(ModelLocator):
 
 
 class InitialPTModelLocator(ModelLocator):
-    def __init__(self, exclude_vars: list[str] | None = None, model: torch.nn.Module | None = None) -> None:
+    def __init__(
+        self, exclude_vars: list[str] | None = None, model: torch.nn.Module | dict[str, Any] | None = None
+    ) -> None:
+        """
+        Args:
+            exclude_vars: Accepted for config compatibility with the stock locators; not applied here.
+            model: The server model object, or the ``{"path": ..., "args": ...}`` component config a
+                recipe passes (NVFLARE's ComponentBuilder instantiates it before this locator is
+                built at run time). ``None`` builds it from the app's ``models.get_model()``.
+        """
         super(InitialPTModelLocator, self).__init__()
 
         if model is None:
@@ -200,8 +219,7 @@ class EvaluationModelLocator(ModelLocator):
 
         self.log_error(
             fl_ctx,
-            f"Checkpoint for model '{name}' not found at '{bundled_path}' "
-            f"(LOCAL_DEV; shared-volume fetch skipped).",
+            f"Checkpoint for model '{name}' not found at '{bundled_path}' (LOCAL_DEV; shared-volume fetch skipped).",
             fire_event=True,
         )
         return None
