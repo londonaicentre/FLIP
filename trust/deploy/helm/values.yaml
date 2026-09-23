@@ -743,6 +743,11 @@ xnat:
       #   https://wiki.xnat.org/container-service/container-service-compatibility-matrix
       # and OHIF viewer 3.8.0 is the plugin's XNAT 1.10 release:
       #   https://wiki.xnat.org/xnat-ohif-viewer
+      # Convention, relied on by `make status`: each key is the jar's basename up to the
+      # version, so the filename reads `<key>-<version>...jar`. The roster check pairs a
+      # key with the jars on the pod by exactly that shape; a key spelled otherwise still
+      # deploys fine, but a version skew under it reports as a missing download rather
+      # than a stale jar, sending the operator to init-container logs that are clean.
       urls:
         container-service: "https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar"
         dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar"

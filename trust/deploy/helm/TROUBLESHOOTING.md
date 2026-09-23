@@ -18,6 +18,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
    - [2.5 C-MOVE Testing from the DCMTK Pod](#25-c-move-testing-from-the-dcmtk-pod)
    - [2.6 Checking DICOM Connectivity](#26-checking-dicom-connectivity)
+   - [2.7 C-ECHO Passes, C-STORE Aborts (`AbstractMethodError` in dicom.log)](#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog)
 3. [OMOP Data Issues](#3-omop-data-issues)
 4. [Trust Registration and Heartbeat](#4-trust-registration-and-heartbeat)
 5. [XNAT HTTPS Issues](#5-xnat-https-issues)
@@ -527,6 +528,110 @@ at the service layer, so DB-only changes need a restart to take effect).
 
 ---
 
+### 2.7 C-ECHO Passes, C-STORE Aborts (`AbstractMethodError` in dicom.log)
+
+**Symptom.** `echoscu` succeeds against the XNAT receiver, the release is `deployed`, the
+`xnat-web` pod is `Ready` and its web UI answers — but every real transfer ends with
+*Peer aborted Association*, and nothing lands in the prearchive.
+
+C-ECHO completes inside the DICOM association layer and never reaches XNAT's importer, so it
+cannot see this class of fault. The first object of a C-STORE does reach it, and if a plugin
+was compiled against a different XNAT core than the one running, the JVM throws
+`AbstractMethodError` from `GradualDicomImporter.customProcessing` and drops the association:
+
+```bash
+xnat_pod=$(kubectl get pods -n flip-trust -l app.kubernetes.io/component=xnat-web \
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n flip-trust "$xnat_pod" -- \
+  grep -E 'AbstractMethodError|unable to read DICOM object null' /data/xnat/home/logs/dicom.log
+```
+
+**Cause.** The running pod's plugin jars are older than the chart's roster. XNAT 1.10.0 needs
+DQR 3.0.0 and Container Service 3.8.x; the 1.9.x DQR (`dicom-query-retrieve-2.3.2-xpl.jar`)
+implements the `ArchiveProcessor.process(...)` signature of the older core.
+
+The pod is where the drift lives, not the values file. `templates/xnat-web.yaml` mounts an
+**emptyDir** at `/data/xnat/home/plugins` and the `download-plugins` init container refills it
+from `xnat.web.plugins.urls` on **every pod creation** — there is no PVC holding stale jars. So
+any pod created from an up-to-date pod spec has the right roster, and a pod with the wrong one
+proves its **spec** is old: no `helm upgrade` has rolled `xnat-web` since the roster changed.
+
+In FLIP#1228 that is precisely what happened: `values.yaml` had carried the corrected roster
+since August, and the pod created on 26 Aug still ran `dicom-query-retrieve-2.3.2-xpl.jar` and
+`container-service-3.8.0-fat.jar`.
+
+**Which of the three reasons a spec goes un-rolled is yours is worth establishing before you
+act — they have different fixes.** Note that a failed post-upgrade hook is *not* on the list:
+`xnat-init` is `post-install,post-upgrade` and `deploy` passes neither `--atomic` nor `--wait`,
+so Helm has already applied the Deployment by the time the hook runs and a hook timeout cannot
+by itself keep an old pod spec live.
+
+1. **The upgrade never carried the new URLs** — an older checkout, or an overrides file pinning
+   old versions. The release's own history settles it:
+
+   ```bash
+   helm get values trust-release -n flip-trust --revision <N> --all | grep -A5 urls
+   ```
+
+2. **The rollout stalled.** `xnat-web` is a singleton on a ReadWriteOnce volume; under the
+   default RollingUpdate the new pod is surged *alongside* the old one, is refused the volume on
+   another node and shares one data directory and database on the same, so it never goes Ready
+   and the old pod serves on. The chart now declares `strategy: Recreate` to prevent this, but a
+   release last upgraded before that lands still shows it:
+
+   ```bash
+   kubectl -n flip-trust get rs,pods -l app.kubernetes.io/component=xnat-web
+   # two ReplicaSets with a stuck surge pod = this case
+   ```
+
+3. **The upgrade never completed.** Five consecutive upgrades failed with
+   `resource Job/flip-trust/trust-release-flip-trust-xnat-init not ready`, the `xnat-init` hook
+   running longer (~22 min observed) than the then-hardcoded `--timeout 20m`. That leaves the
+   release `failed` and the operator reading a hook problem rather than an un-deployed chart —
+   and, when case 2 is also in play, it is the stalled rollout the job is really waiting behind.
+
+**Detection.**
+
+```bash
+# The one-liner: what the pod actually carries
+kubectl exec -n flip-trust "$xnat_pod" -- ls -la /data/xnat/home/plugins
+# expect dicom-query-retrieve-3.0.0-xpl.jar and container-service-3.8.1-fat.jar,
+# and NO 2.3.2-xpl / 3.8.0-fat
+
+# The same comparison, automated against the release's own values
+make -C trust/deploy/helm status        # FAILs naming both the expected and the found version
+
+# Exercise the path the roster is on, rather than just the socket
+make -C trust/deploy/helm smoke-cstore  # real C-STORE via the PACS, then reads dicom.log
+```
+
+**Fix.** Get one `helm upgrade` to complete, from a checkout that carries both the roster and
+`strategy: Recreate`, with a timeout above the init job's real duration:
+
+```bash
+kubectl get job -n flip-trust -w    # time one run before choosing a value
+make -C trust/deploy/helm deploy-trust-k8s KIT=<KIT> HELM_TIMEOUT=45m
+```
+
+The first upgrade onto `Recreate` changes the strategy and replaces the pod in one go. If a
+surge pod from case 2 is still wedged, `kubectl -n flip-trust delete pod <surge pod>` clears it
+so the replacement can take the volume.
+
+`HELM_TIMEOUT` (default `30m`) governs both the Helm hook wait in `deploy` and the `kubectl wait`
+in `xnat-init`. If the hook is genuinely wedged rather than merely slow, deploy with
+`--set xnat.initJob.enabled=false` and then run `make -C trust/deploy/helm xnat-init` on its own,
+where its logs are readable directly.
+
+Then confirm the pod rolled and re-test:
+
+```bash
+kubectl exec -n flip-trust "$xnat_pod" -- ls -la /data/xnat/home/plugins   # mtime = today
+kubectl exec -n flip-trust "$xnat_pod" -- curl -sf -u <admin> localhost:8080/xapi/dqr/settings
+make -C trust/deploy/helm smoke-cstore
+```
+
+---
+
 ## 3. OMOP Data Issues
 
 ### Check OMOP DB Status
@@ -723,6 +828,8 @@ machine and in `trust/deploy/helm/scripts/`. Key scripts:
 | Script | Purpose |
 |--------|---------|
 | `sync_k8s_kit.py` | Sync a registered trust kit into the cluster (Secret + override) |
+| `smoke-cstore.sh` | Drive a real C-STORE through the PACS and read XNAT's receiver log (§2.7) |
+| `check_status.py` | Full deployment smoke, including the plugin-roster comparison (§2.7) |
 
 ### Available Tools on DCMTK Pod
 

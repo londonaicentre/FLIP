@@ -59,10 +59,17 @@ spec:
       # (600-1200s), site-activation wait (300-900s) and ContainerManager wait
       # (300-900s) — 40 to 90 minutes, against roughly 50 at the old max() of the
       # two chains. Neither figure is reachable: `make deploy` passes
-      # `--timeout 20m`, which bounds the hook below both, and did so before this
-      # change too. Observed installs complete in 37-69s. If a budget here is ever
-      # raised past 20m, raise the helm timeout with it or the Job will be killed
-      # mid-wait and the hook failure will name helm rather than the wait.
+      # `--timeout $(HELM_TIMEOUT)`, which bounds the hook below both, and did so
+      # before this change too. Observed installs complete in 37-69s on a laptop
+      # kind cluster and ~22 minutes on a real trust cluster. If a budget here is
+      # ever raised past HELM_TIMEOUT (30m by default, trust/deploy/helm/Makefile),
+      # raise that with it: the extra budget is otherwise unreachable, because Helm
+      # stops waiting first and marks the release failed. (It does not stop this Job —
+      # there is no activeDeadlineSeconds here and the delete policy is
+      # before-hook-creation,hook-succeeded, so the Job runs on while the release
+      # already reads as failed.) The hook failure then names helm rather than the wait
+      # that expired — exactly how FLIP#1228 hid a correct chart behind five
+      # consecutive "Job not ready" upgrades.
       initContainers:
         - name: configure-xnat-web
           # Runs the same configure-xnat.sh the Compose deployment runs, from the same image that
