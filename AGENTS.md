@@ -408,7 +408,8 @@ GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml` (per
 `test_trust_data_access_api.yml`, `test_trust_imaging_api.yml`, `test_trust_trust_api.yml`,
 `test_trust_omop_db.yml`, `test_trust_xnat.yml`, plus `test_trust_data_tools.yml` for the
 orthanc/omop-db data-publishing scripts and `test_trust_kit_scripts.yml` for `scripts/**` +
-the compose files' container-identity contract), `fl-tutorials-tests.yml`, `test_map_apps.yml`,
+the compose files' container-identity contract, plus the repo-level `tests/` (root Makefile) and
+`.github/tests/` (workflows and actions) trees), `fl-tutorials-tests.yml`, `test_map_apps.yml`,
 `docker_build_*.yml` (per-service GHCR publish; the application images and
 `docker_build_omop_db.yml` are gated on that service's test workflow, while
 `docker_build_orthanc.yml` and `docker_build_xnat_{db,dcm2niix,nginx,web}.yml` publish
@@ -479,7 +480,7 @@ A run of an image workflow on a `v*.*.*` tag ref builds **every** image at that 
 **dispatches** the twelve builds at the tag it created (`gh workflow run … --ref v<X.Y.Z>`): the tag is
 pushed with `GITHUB_TOKEN`, and GitHub starts no workflow for an event created that way, so the
 workflows' own `push.tags` trigger only ever fires for a hand-pushed tag (a release candidate).
-`scripts/tests/test_release_image_tags.py` pins the dispatch roster to the publishing workflows. Every
+`.github/tests/workflows/test_release.py` pins the dispatch roster to the publishing workflows. Every
 image workflow runs `.github/actions/release-tag-guard` first: a **stable** `v<X.Y.Z>` whose commit is
 not on `main` fails the build, pre-release `v<X.Y.Z>-rc.N` tags pass (the release-candidate path,
 CONTRIBUTING "Testing a release candidate"). Who may create `v*` tags is left to write access by

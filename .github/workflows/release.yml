@@ -68,7 +68,7 @@ jobs:
             # dispatched here explicitly, at the tag, one run each: inside them github.ref is
             # refs/tags/v<X.Y.Z> and github.sha the tagged commit, exactly as a hand-pushed
             # tag would present. The roster is every publishing image workflow;
-            # scripts/tests/test_release_image_tags.py holds it to the set that carries the
+            # .github/tests/workflows/test_release.py holds it to the set that carries the
             # tag trigger, so a workflow added without being listed here fails CI.
             - name: Build every image at the release tag
               if: steps.tag_check.outputs.exists == 'false'
