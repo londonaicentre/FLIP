@@ -14,6 +14,13 @@ name: Build and Push Docker Image for OMOP DB
 
 on:
   workflow_dispatch:
+  # Release builds (FLIP#1204): a run at refs/tags/v<X.Y.Z> rebuilds this image at the release
+  # commit and pushes :v<X.Y.Z>, changed or not, so a site can pin ONE release across its whole
+  # stack. For a real release that run is release.yml's workflow_dispatch at the tag (its own
+  # GITHUB_TOKEN tag push starts no workflow); this push trigger fires for a hand-pushed
+  # release candidate (v<X.Y.Z>-rc.N).
+  push:
+    tags: ['v*.*.*']
   # Publish only after the omop-db test suite ("Trust - OMOP DB CI") completes
   # on main/develop; the job-level `if` below gates on its success. The image
   # is vocab-free (FLIP#842) — nothing licensed enters the build context, which
@@ -29,7 +36,10 @@ permissions:
 jobs:
   build-and-push:
     # Only publish when the upstream test run passed. workflow_dispatch (manual)
-    # has no workflow_run context, so allow it through unconditionally.
+    # and the release-tag push have no workflow_run context, so allow them through
+    # unconditionally — a stable tag's commit is on main, whose tests run on it (the
+    # release-tag guard below enforces that); a release-candidate tag is a deliberate
+    # hand-pushed build of a release PR head.
     # The head_repository clause is the trust boundary (FLIP#882): a fork PR's
     # test run satisfies every other gate, and the checkout below fetches the
     # triggering run's code. `github.repository == …` only stops a fork's own
@@ -38,6 +48,7 @@ jobs:
     # terraform_plan.yml. One shared workflow for these copies: FLIP#1201.
     if: >-
       (github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
       (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_repository.full_name == github.repository)) &&
       github.repository == 'londonaicentre/FLIP'
@@ -59,6 +70,11 @@ jobs:
           # back to the dispatched ref so manual builds check out correctly.
           repository: ${{ github.event.workflow_run.head_repository.full_name || github.repository }}
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      # A stable v<X.Y.Z> tag must point at a commit on main — releases are cut there by
+      # release.yml; pre-release (-rc.N) tags are the release-candidate path and pass.
+      - name: Release tag guard
+        uses: ./.github/actions/release-tag-guard
 
       - name: Determine tags
         id: tags
@@ -92,9 +108,16 @@ jobs:
           # Length 7 must match the tag resolution in deploy/providers/AWS/Makefile.
           TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${SHA:0:7}"
 
-          # Branch name sanitization
-          SAFE_REF_NAME=$(echo "$REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
-          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"
+          # Release tag (FLIP#1204): a run at refs/tags/v<X.Y.Z> (release.yml's dispatch, or a
+          # hand-pushed release candidate) publishes :v<X.Y.Z> ONLY. The sha tags belong to the
+          # branch build of the same commit and stay immutable.
+          if [[ "$GH_REF" == refs/tags/v* ]]; then
+            TAGS="${REGISTRY}/${IMAGE_NAME}:${GH_REF_NAME}"
+          else
+            # Branch name sanitization
+            SAFE_REF_NAME=$(echo "$REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
+            TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"
+          fi
 
           # Branch number (if starts with number)
           if [[ "$REF_NAME" =~ ^[0-9]+ ]]; then
