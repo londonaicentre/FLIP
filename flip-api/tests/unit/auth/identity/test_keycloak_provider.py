@@ -118,7 +118,8 @@ class FakeKeycloak:
                 if form.get("totp"):
                     body["totp_seen"] = form["totp"][0]
                 return httpx.Response(200, json=body)
-            return httpx.Response(401, json={"error": "invalid_grant", "error_description": "Invalid user credentials"})
+            # Keycloak 26 answers a bad password with 400 invalid_grant (older releases used 401).
+            return httpx.Response(400, json={"error": "invalid_grant", "error_description": "Invalid user credentials"})
         if form.get("grant_type") == ["refresh_token"]:
             if form.get("refresh_token") == ["refresh-1"]:
                 return httpx.Response(200, json={"access_token": "user-token-2", "refresh_token": "refresh-2"})
