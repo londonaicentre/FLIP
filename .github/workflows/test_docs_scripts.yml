@@ -1,0 +1,58 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Docs scripts CI
+
+# The build-time scripts under docs/scripts/ — the docs GIFs fetcher that
+# docs/source/conf.py calls and the publisher the regeneration workflow calls
+# (FLIP#1236) — the conf.py hook itself, and the static guards keeping the rst
+# figures, the demo specs, the recorder, the pin, the dataset card and the regenerate
+# workflow's token scope in step. PEP 723 scripts with their own pytest suite; nothing
+# here needs network, graphviz or Hugging Face credentials, so it is its own small job
+# rather than a step on "FLIP Documentation CI", which builds the whole site.
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "docs/scripts/**"
+      - "docs/tests/**"
+      - "docs/Makefile"
+      - "docs/.gifs_version"
+      - "docs/source/conf.py"
+      - "docs/source/**/*.rst"
+      - "flip-ui/test/cypress/docs/**"
+      - "flip-ui/scripts/videos-to-gifs.sh"
+      - ".github/workflows/test_docs_scripts.yml"
+      - ".github/workflows/regenerate_docs_gifs.yml"
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  docs-scripts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: ./docs/.python-version
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Fetcher + publisher + wiring guard — unit tests + lint
+        run: make -C docs test
