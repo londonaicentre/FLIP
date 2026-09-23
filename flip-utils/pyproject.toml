@@ -116,6 +116,7 @@ constraint-dependencies = [
     "python-dotenv>=1.2.2",      # CVE-2026-28684
     "requests>=2.33.0",          # CVE-2026-25645
     "setuptools>=83.0.0",        # CVE-2026-59890
+    "soupsieve>=2.9.0",          # CVE-2026-85999, CVE-2026-86000
     "urllib3>=2.7.0",            # CVE-2026-44431, CVE-2025-66471/66418
     "werkzeug>=3.1.6",           # CVE-2026-27199, CVE-2026-21860, CVE-2025-66221, CVE-2024-49767/49766
 ]

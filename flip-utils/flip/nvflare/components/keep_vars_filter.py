@@ -53,18 +53,21 @@ class KeepOnlyVars(DXOFilter):
         # become a no-op. (The deploy-time fl-server injection writes args.include_vars explicitly, so only
         # the recipe/export path depended on this.)
         self.include_vars = include_vars
-        self.skip = not (isinstance(include_vars, str) and include_vars)
-        self.pattern = re.compile(include_vars) if not self.skip else None
+        self.pattern: re.Pattern[str] | None = (
+            re.compile(include_vars) if isinstance(include_vars, str) and include_vars else None
+        )
+        self.skip = self.pattern is None
 
     def process_dxo(self, dxo: DXO, shareable: Shareable, fl_ctx: FLContext) -> DXO | None:
-        if self.skip:
+        pattern = self.pattern
+        if pattern is None:
             return None
 
         weights = dxo.data
         var_names = list(weights.keys())  # copy: we mutate `weights` below
         kept = 0
         for var_name in var_names:
-            if self.pattern.search(var_name):
+            if pattern.search(var_name):
                 kept += 1
             else:
                 weights.pop(var_name, None)
@@ -74,13 +77,12 @@ class KeepOnlyVars(DXOFilter):
             # warn loudly rather than silently submit an empty update.
             self.log_warning(
                 fl_ctx,
-                f"KeepOnlyVars: regex {self.pattern.pattern!r} matched no keys; "
-                f"dropped ALL {len(var_names)} variable(s).",
+                f"KeepOnlyVars: regex {pattern.pattern!r} matched no keys; dropped ALL {len(var_names)} variable(s).",
             )
         else:
             self.log_info(
                 fl_ctx,
-                f"KeepOnlyVars: kept {kept} of {len(var_names)} variable(s) matching {self.pattern.pattern!r}.",
+                f"KeepOnlyVars: kept {kept} of {len(var_names)} variable(s) matching {pattern.pattern!r}.",
             )
 
         dxo.data = weights

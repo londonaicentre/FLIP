@@ -34,7 +34,10 @@ set -euo pipefail
 WORK_DIR="${WORK_DIR:-/work}"
 FLIP_REF="${FLIP_REF:-develop}"
 HF_TRUST_DATA_REPO="${HF_TRUST_DATA_REPO:-aicentreflip/trust-data}"
-PROJECTS="${PROJECTS:-cxr_project spleen_project}"
+# Only projects the dataset publishes BOTH tables and a DICOM set for: one list drives both
+# halves, and since FLIP#1221 spleen and brain_mri publish tables only (their DICOMs are
+# regenerated locally, which nothing in a cluster or on an EC2 host can do).
+PROJECTS="${PROJECTS:-cxr_project}"
 NUM_TRUSTS="${NUM_TRUSTS:-2}"
 VOCAB_DICOM_BUNDLE="${VOCAB_DICOM_BUNDLE:-vocab_dicom_paulnagy_20260109}"
 TOOLS_SPEC="${TOOLS_SPEC:-omop-db-tools @ https://github.com/londonaicentre/FLIP/archive/${FLIP_REF}.tar.gz#subdirectory=trust/omop-db}"

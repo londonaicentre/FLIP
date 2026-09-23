@@ -24,7 +24,7 @@ from nvflare.apis.shareable import Shareable
 from nvflare.apis.signal import Signal
 from nvflare.app_common.app_constant import AppConstants
 
-from flip import FLIP
+from flip import FLIP, FLIPBase
 from flip.constants import FlipEvents, FlipTasks
 from flip.nvflare.runtime import get_flip_model_id
 
@@ -34,7 +34,7 @@ class InitEvaluation(Controller):
         self,
         model_id: str = "",
         min_clients: int = 1,
-        flip: FLIP = FLIP(),
+        flip: FLIPBase = FLIP(),
         cleanup_timeout: int = 600,
     ):
         """The controller that is executed pre-evaluation and is a part of the FLIP evaluation model.
@@ -49,7 +49,7 @@ class InitEvaluation(Controller):
                 Defaults to 1; on the platform fl-api sets it to the participating-trust count for every job
                 (``config["min_clients"] = len(trusts)`` in ``prepare_config.py``), so it is never a
                 deployment-wide setting.
-            flip (FLIP, optional): FLIP instance used for status updates and exception reporting (default: FLIP()).
+            flip (FLIPBase, optional): FLIP instance used for status updates and exception reporting (default: FLIP()).
             cleanup_timeout (int, optional): Timeout for image cleanup, defaults to 600 seconds (10 minutes)
 
         Raises:
@@ -181,10 +181,16 @@ class InitEvaluation(Controller):
         client_task.result = None
 
     def _accept_cleanup_result(self, client_name: str, result: Shareable, fl_ctx: FLContext) -> bool | None:
+        """Accept one client's cleanup result, panicking the run on an execution failure.
+
+        Returns:
+            bool | None: ``False`` once the run has been panicked; ``None`` when the result needs
+            no action (an OK or unrecognised return code).
+        """
         rc = result.get_return_code()
 
         if rc and rc == ReturnCode.OK:
-            return
+            return None
 
         if rc in [ReturnCode.EXECUTION_EXCEPTION, ReturnCode.TASK_UNKNOWN]:
             formatted_exception = result.get_header("exception")
@@ -199,3 +205,5 @@ class InitEvaluation(Controller):
 
             self.system_panic("Execution Exception initiating client training. InitTraining exiting.", fl_ctx=fl_ctx)
             return False
+
+        return None

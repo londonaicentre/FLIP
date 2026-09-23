@@ -38,7 +38,7 @@ from flwr.common import ConfigRecord, log
 from flwr.serverapp import Grid
 from flwr.serverapp.strategy import FedAvg, Result
 
-from flip import FLIP
+from flip import FLIPBase
 from flip.constants.flip_constants import ModelStatus
 from flip.flower.progress import (
     RoundTelemetry,
@@ -117,7 +117,7 @@ class FlipFedAvg(FedAvg):
 
     def __init__(
         self,
-        flip: FLIP,
+        flip: FLIPBase,
         model_id: str,
         *args,
         best_model_metric: str | None = None,
