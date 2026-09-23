@@ -46,7 +46,9 @@ covers `datasets/cxr/omop_convert_cxr.py`, and
 Cross-cutting guards that assert a property across several source files
 (`test_dicom_orientation.py`, `test_flower_min_clients_wiring.py`,
 `test_spleen_inference_config_parity.py`, `test_fl_tutorials_make_targets.py`,
-`test_sim_tutorial_stale_guard.py`, `test_sim_tutorial_exit_status.py`) stay at the root of `tests/`, because
+`test_sim_tutorial_stale_guard.py`, `test_sim_tutorial_exit_status.py`,
+`test_arkplus_sim_max_samples.py` — the Ark+ apps' simulator-only `MAX_SAMPLES` cap, across all three
+`data_utils.py`) stay at the root of `tests/`, because
 no single source path describes what they cover.
 
 **Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers

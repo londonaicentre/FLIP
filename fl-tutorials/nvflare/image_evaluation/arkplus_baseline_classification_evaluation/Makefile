@@ -42,6 +42,16 @@ override SITE1_DATAFRAME  := $(call abspath_app,$(SITE1_DATAFRAME))
 override SITE2_IMAGES_DIR := $(call abspath_app,$(SITE2_IMAGES_DIR))
 override SITE2_DATAFRAME  := $(call abspath_app,$(SITE2_DATAFRAME))
 
+# --- Local-run knobs ---
+# Simulator-only cap on the hold-out rows each simulated site scores (a deterministic, class-balanced
+# subset; see cap_dataframe in app_files/data_utils.py). The default makes a plain `make sim` a quick
+# smoke test; `make sim MAX_SAMPLES=0` (or empty) scores the full ~470 studies per site. Only the
+# LOCAL_DEV dataframe path reads it — a deployed job's cohort comes from the trust and is never capped.
+MAX_SAMPLES ?= 64
+
+# Simulator workspace root, matching job.py's default.
+WORKSPACE ?= /tmp/nvflare/arkplus_baseline_eval
+
 .PHONY: run export sim download-raw-checkpoint prepare-checkpoint clean
 
 # --- Raw checkpoint download ---
@@ -101,11 +111,14 @@ export: prepare-checkpoint
 # resolved to absolute paths above so the simulator's client workers (which run from the workspace dir,
 # not here) find the LOCAL_DEV dataset. FLIP-specific values come from FLIP_PROJECT_ID / FLIP_QUERY.
 sim:
+	@echo "Running evaluation with: max_samples=$(or $(MAX_SAMPLES),0) (0 = full dataset)"
+	MAX_SAMPLES="$(MAX_SAMPLES)" \
 	DEV_IMAGES_DIR="$(DEV_IMAGES_DIR)" DEV_DATAFRAME="$(DEV_DATAFRAME)" \
 	SITE1_IMAGES_DIR="$(SITE1_IMAGES_DIR)" SITE1_DATAFRAME="$(SITE1_DATAFRAME)" \
 	SITE2_IMAGES_DIR="$(SITE2_IMAGES_DIR)" SITE2_DATAFRAME="$(SITE2_DATAFRAME)" \
 	$(UV_RUN) python job.py \
-		--n_clients 2
+		--n_clients 2 \
+		--workspace $(WORKSPACE)
 
 # --- Tutorial-harness entrypoint ---
 # The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app and invokes

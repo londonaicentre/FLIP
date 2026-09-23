@@ -171,6 +171,12 @@ The fine-tuned checkpoint is auto-downloaded from HuggingFace on the first prepa
 source, set `RAW_CHECKPOINT` / `FINETUNED_CHECKPOINT` in `.env.app` (or pass on the CLI, e.g.
 `make run FINETUNED_CHECKPOINT=/path/to/custom_finetuned.pt`).
 
+`make run`/`make sim` score a deterministic, class-balanced subset of `MAX_SAMPLES` (default `64`)
+hold-out studies per simulated site (`cap_dataframe` in `app_files/data_utils.py`), so a plain run is a
+quick smoke test; `make run MAX_SAMPLES=0` (or empty) scores the full ~470 studies per site. The cap is
+simulator-only: only the `LOCAL_DEV` dataframe path reads it, and a deployed job scores whatever cohort
+the trust's data-access-api returns. `WORKSPACE` overrides the simulator workspace root.
+
 Useful targets: `make prepare-checkpoint` (prepare both checkpoints only), `make clean` (removes `./fl_job`).
 
 ## Key files

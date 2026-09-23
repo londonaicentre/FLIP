@@ -60,6 +60,13 @@ matches a worktree nested under it), so the fix is to stop the named pid (or run
 an `ss` that cannot probe the port counts as taken, never as free. The tabular EHR tutorial maps
 `DEV_DATAFRAME` only (`fl-tutorials/data/synthea/dataframe.csv`, from `download-synthea-data`).
 
+The three NVFLARE Ark+ tutorials (`arkplus_fine_tuning` and the two `arkplus_*_evaluation` apps) cap
+the dataframe rows each simulated site reads with `MAX_SAMPLES` (Makefile default `64`, a
+deterministic class-balanced subset — `cap_dataframe` in each app's `data_utils.py`), so a plain
+`make sim` is a few-minute smoke; `MAX_SAMPLES=0` runs the full dataset, and `reproduce-overhead`
+pins it. Only the `LOCAL_DEV` branch of `_load_dataframe` reads it, so a deployed job is never capped
+(`tests/test_arkplus_sim_max_samples.py` pins both halves).
+
 To iterate on the FL images, `make build-fl` builds them locally as `:dev` (see `fl-services/nvflare/README.md`);
 run the stack on them with `make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`.
 

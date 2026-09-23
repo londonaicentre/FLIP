@@ -7,6 +7,7 @@ RAW_CHECKPOINT=models/Ark6_swinLarge768_ep50.pth.tar
 FLIP_PROJECT_ID=
 FLIP_QUERY=
 
-# Optional local-run knobs (Makefile defaults: NUM_ROUNDS=3, N_CLIENTS=2; CLI overrides win, e.g. `make run NUM_ROUNDS=10`)
+# Optional local-run knobs (Makefile defaults: NUM_ROUNDS=3, N_CLIENTS=2, MAX_SAMPLES=64; CLI overrides win, e.g. `make run NUM_ROUNDS=10`)
 # NUM_ROUNDS=10
 # N_CLIENTS=2
+# MAX_SAMPLES=0   # simulator only: rows per site, 0 = full dataset

@@ -124,12 +124,12 @@ on one GPU, so it's useful for smoke-testing code changes and hyperparameter swe
 
 .. code-block:: bash
 
-   # From the repo root — 3 rounds is the default for a quick smoke test
+   # From the repo root — the defaults (3 rounds, 64 studies per site) are a quick smoke test
    make -C fl-tutorials download-arkplus-finetuning-data   # one-time
    make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning
 
-   # 50-round full replica (hours on GPU)
-   make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning NUM_ROUNDS=50
+   # 50-round full replica on the full dataset (hours on GPU)
+   make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning NUM_ROUNDS=50 MAX_SAMPLES=0
 
 Or directly from the tutorial directory:
 
@@ -138,6 +138,13 @@ Or directly from the tutorial directory:
    cd fl-tutorials/nvflare/image_classification/arkplus_fine_tuning
    make run RAW_CHECKPOINT=/path/to/Ark6_swinLarge768_ep50.pth.tar
    make run NUM_ROUNDS=50   # override the default 3 rounds
+   make run MAX_SAMPLES=0   # train on every study instead of the default 64 per site
+
+``MAX_SAMPLES`` caps how many studies each simulated site reads, picking a deterministic,
+class-balanced subset so the train/validation split and the per-lesion AUCs still compute. It is a
+simulator-only knob: a job submitted to FLIP trains on the full cohort the trust returns. The number
+of local epochs per round is not a simulator knob — the simulator uses ``LOCAL_ROUNDS`` from
+``config.json``, as a deployed job does.
 
 The checkpoint is prepared automatically by ``make run`` (a no-op if ``pretrained_weights.pt``
 already exists). On a multi-GPU host pick a device with ``CUDA_VISIBLE_DEVICES=<n>``.
