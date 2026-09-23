@@ -47,22 +47,31 @@ by a comment that merely mentions the thing.
 """
 
 import re
+import subprocess
 from pathlib import Path
 
 from tf_source import hcl_block
 
 AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
+# Asked of git rather than counted in parents[N], so a move of either side cannot leave this
+# guard reading a file that no longer exists.
+REPO_ROOT = Path(
+    subprocess.check_output(["git", "rev-parse", "--show-toplevel"], cwd=AWS_PROVIDER_DIR, text=True).strip()
+)
 SITE_YML = AWS_PROVIDER_DIR / "site.yml"
+# The two S3 stages live in the shared flip_fl_kit role (FLIP#1213); site.yml composes it
+# with fl_kit_source=s3. The role's task list sits at the top level of its file.
+KIT_STAGE_TASKS = REPO_ROOT / "trust" / "deploy" / "ansible" / "roles" / "flip_fl_kit" / "tasks" / "s3.yml"  # noqa: E501
 MAIN_TF = AWS_PROVIDER_DIR / "main.tf"
 
 NVFLARE_SYNC_TASK = "sync NVFLARE participant kit from S3"
 FLOWER_SYNC_TASK = "sync Flower net-1 certificates and keys from S3"
 
-TASK_BODY_INDENT = 8
+TASK_BODY_INDENT = 4
 
 
 def _task_shell(task_name: str) -> str:
-    """Return the ``shell:`` script of one Ansible task in ``site.yml``.
+    """Return the ``shell:`` script of one Ansible task in the kit-staging role.
 
     Args:
         task_name (str): The task's ``name:``, matched exactly.
@@ -71,9 +80,9 @@ def _task_shell(task_name: str) -> str:
         str: The script, with comment-only lines removed so an assertion cannot be
             satisfied by a comment.
     """
-    playbook = SITE_YML.read_text()
+    playbook = KIT_STAGE_TASKS.read_text()
     start = playbook.find(f"- name: {task_name}\n")
-    assert start != -1, f"no task named {task_name!r} in site.yml — this guard has drifted from the play"
+    assert start != -1, f"no task named {task_name!r} in {KIT_STAGE_TASKS.name} — this guard has drifted from the role"
 
     rest = playbook[start:]
     marker = "shell: |\n"
@@ -158,10 +167,10 @@ def test_both_kit_syncs_fail_when_the_fetch_produces_nothing():
 
 def test_kit_sources_are_consumed_bare():
     """``trust_s3_source`` ends in ``/``; appending another gives ``net-1//``, which matches no key."""
-    playbook = SITE_YML.read_text()
+    playbook = KIT_STAGE_TASKS.read_text()
 
     definitions = re.findall(r"^\s*trust_s3_source:\s*\"([^\"]+)\"\s*$", playbook, re.MULTILINE)
-    assert len(definitions) == 2, f"expected one trust_s3_source per backend play, found {len(definitions)}"
+    assert len(definitions) == 2, f"expected one trust_s3_source per backend stage, found {len(definitions)}"
     for source in definitions:
         assert source.endswith("/"), f"trust_s3_source {source!r} does not end in a slash"
 
