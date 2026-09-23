@@ -436,7 +436,11 @@ Two guards make the unattended apply safe (`resolve-image-tags.sh` pins this com
 `check-fl-plan-impact.sh` holds any apply that would kill an in-flight training run), and Terraform
 inputs reach CI through `deploy/providers/AWS/scripts/compose-ci-env.sh` — so **adding an `export TF_VAR_…` line means
 also updating that script's manifest, all three workflow `env:` blocks, and both GitHub
-environments**. Full detail: [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS/AGENTS.md#terraform-ci-flip962).
+environments**. Which account and which mode a run targets is the `TF_PROD` variable on the
+GitHub environment — the `deploy/env_mode.mk` token (`stag` | `true` | `lza-stag` | `lza`), which
+selects the env file, the AWS profile and the required key set — so repointing an estate at another
+AWS account is a value change, never a workflow edit (FLIP#1199, "Repointing CI at the LZA
+accounts"). Full detail: [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS/AGENTS.md#terraform-ci-flip962).
 
 ### Docker image builds: gated on tests, manual trigger for branches
 

@@ -55,8 +55,12 @@ no() {
 
 # A complete, valid value set. Cases copy this and mutate one key, so each test
 # asserts the effect of exactly one difference.
+#
+# PROD is the deploy/env_mode.mk token the script now takes (it used to be
+# TF_ENV). The LZA keys are deliberately absent here: absent is the correct value
+# on the legacy tokens, and the LZA cases below add them.
 BASE_ENV=(
-    TF_ENV=stag
+    PROD=stag
     AWS_REGION=eu-west-2
     FLIP_TFSTATE_BUCKET_NAME=flip-terraform-state-stag
     VPC_NAME=flip-vpc
@@ -94,6 +98,19 @@ BASE_ENV=(
     DEPLOY_TRUST_EC2=false
     LOCAL_TRUST_PUBLIC_IPS='["203.0.113.10"]'
     K8S_TRUST_PUBLIC_IPS=[]
+)
+
+# The keys a platform-managed (LZA) estate adds on top of BASE_ENV (FLIP#749).
+# Required on the two LZA tokens, expected absent on the legacy ones — see
+# section 14. Held here beside BASE_ENV because both the AWS_PROFILE cases and
+# the LZA section need a value set that composes.
+LZA_ENV=(
+    ACCESS_LOGS_BUCKET_NAME=flip-access-logs-lza
+    EFS_PROVISION_IMAGE=123456789012.dkr.ecr.eu-west-2.amazonaws.com/ecr-public/aws-cli/aws-cli:2.22.35
+    LZA_VPC_NAME=AWSAccelerator-eu-west-2-prod
+    MANAGE_DNS=false
+    LZA_ELB_ACCESS_LOGS_BUCKET=central-elb-access-logs
+    NETWORKING_INGRESS_CIDRS='["10.12.0.0/24"]'
 )
 
 # Run the script under `env -i` with BASE_ENV plus any overrides given as
@@ -202,10 +219,11 @@ fi
 #     key here does fail loudly at compose time, but it fails in a deploy run;
 #     catching it in this harness costs nothing and fails in the PR instead.
 #
-#     Keys the workflow supplies by other means are excluded: TF_ENV and
-#     FL_KIT_DATE selectors are computed, and the apply workflow deliberately
-#     omits DOCKER_TAG / DOCKER_FL_TAG so the resolved sha tags from
-#     resolve-image-tags.sh are inherited rather than overridden (hazard A).
+#     Keys the workflow supplies by other means are excluded: the FL_KIT_DATE
+#     selectors are computed, and the apply workflow deliberately omits
+#     DOCKER_TAG / DOCKER_FL_TAG so the resolved sha tags from
+#     resolve-image-tags.sh are inherited rather than overridden (hazard A). PROD
+#     is not a manifest key at all — it is the selector, checked separately below.
 for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
     echo ""
     echo "-- ${wf} passes every manifest key through"
@@ -222,7 +240,7 @@ for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
     # `vars.DOCKER_TAG` line in the compose step would override the resolved tag
     # and put the mutable one back. The assertion below requires the resolver
     # instead, so the exemption cannot be used to simply drop the key.
-    exempt='^(TF_ENV|FLARE_KIT_DATE|FLOWER_KIT_DATE|DOCKER_TAG|DOCKER_FL_TAG)$'
+    exempt='^(FLARE_KIT_DATE|FLOWER_KIT_DATE|DOCKER_TAG|DOCKER_FL_TAG)$'
     wanted="$(echo "${manifest}" | grep -vE "${exempt}")"
     absent="$(LC_ALL=C comm -23 <(echo "${wanted}") <(echo "${wf_keys}"))"
     if [[ -z "${absent}" ]]; then
@@ -234,7 +252,38 @@ for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
     fi
 done
 
-# 1c. EVERY WORKFLOW MUST RESOLVE THE IMAGE TAGS, AND NONE MAY OVERRIDE THEM.
+# 1c. EVERY WORKFLOW MUST READ THE MODE TOKEN IN BOTH STEPS THAT NEED IT.
+#
+#     TF_PROD is the only mode input, and two steps consume it: the compose step
+#     (which writes .env.<ENV>) and the make step that resolves TF_VAR_* (which
+#     includes .env.<ENV>). They have to agree, or a run composes one
+#     environment's file and then reads another's — and because the Makefile's
+#     env-file include is wildcard-guarded, a missing file is skipped silently
+#     and Terraform sees an empty input set. Two identical lines per workflow, and
+#     each must consult vars.TF_PROD.
+echo ""
+echo "-- every workflow reads the mode token in both steps"
+token_offenders=""
+for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
+    wf_path="${WORKFLOW_DIR}/${wf}"
+    [[ -f "${wf_path}" ]] || continue
+    prod_lines="$(grep -oE '^[[:space:]]+PROD:[[:space:]]+.*$' "${wf_path}" | sed -E 's/^[[:space:]]+PROD:[[:space:]]+//')"
+    count="$(printf '%s\n' "${prod_lines}" | grep -c .)"
+    distinct="$(printf '%s\n' "${prod_lines}" | grep . | LC_ALL=C sort -u | wc -l)"
+    vars_refs="$(printf '%s\n' "${prod_lines}" | grep -c 'vars\.TF_PROD')"
+    if [[ "${count}" -ge 2 && "${distinct}" -eq 1 && "${vars_refs}" -eq "${count}" ]]; then
+        continue
+    fi
+    token_offenders="${token_offenders} ${wf}(lines=${count},distinct=${distinct},from-tf-prod=${vars_refs})"
+done
+if [[ -z "${token_offenders}" ]]; then
+    ok "all three select PROD from TF_PROD, identically in every step"
+else
+    no "all three select PROD from TF_PROD, identically in every step" \
+        "compose and make would disagree about the environment:" ${token_offenders}
+fi
+
+# 1d. EVERY WORKFLOW MUST RESOLVE THE IMAGE TAGS, AND NONE MAY OVERRIDE THEM.
 #
 #     `vars.DOCKER_TAG` is the mutable `:stag` / `:prod`; an apply writes the
 #     immutable `sha-<short7>` pin (FLIP#751) into the task definitions. A plan or
@@ -269,7 +318,7 @@ else
         "this overrides the resolved tag and reintroduces the un-pin:" ${override_offenders}
 fi
 
-# 1d. NO WORKFLOW MAY PUBLISH A PLAN FILE AS AN ARTIFACT.
+# 1e. NO WORKFLOW MAY PUBLISH A PLAN FILE AS AN ARTIFACT.
 #
 #     tf-via-pr defaults upload-plan to true, and a Terraform plan file is a zip
 #     containing the full tfstate — AES_KEY_BASE64, INTERNAL_SERVICE_KEY and
@@ -319,17 +368,32 @@ else
 fi
 
 # 3. AWS_PROFILE is derived, not stored — this is what stops a mis-set GitHub
-#    variable from pointing a stag run at the prod account.
+#    variable from pointing a stag run at the prod account. The token-to-profile
+#    mapping is the one the Makefile's guard expects for that ENV.
 if grep -qx 'AWS_PROFILE=stag' "${OUT_FILE}"; then
-    ok "derives AWS_PROFILE=stag from TF_ENV"
+    ok "derives AWS_PROFILE=stag from the stag token"
 else
-    no "derives AWS_PROFILE=stag from TF_ENV" "file: $(grep '^AWS_PROFILE' "${OUT_FILE}")"
+    no "derives AWS_PROFILE=stag from the stag token" "file: $(grep '^AWS_PROFILE' "${OUT_FILE}")"
 fi
-run_case "prod environment" TF_ENV=prod
+run_case "prod environment" PROD=true
 if grep -qx 'AWS_PROFILE=prod' "${OUT_FILE}"; then
-    ok "derives AWS_PROFILE=prod from TF_ENV"
+    ok "derives AWS_PROFILE=prod from the true token"
 else
-    no "derives AWS_PROFILE=prod from TF_ENV"
+    no "derives AWS_PROFILE=prod from the true token"
+fi
+# The LZA pair: the LZA_AWS_PROFILE / LZA_STAG_AWS_PROFILE knobs in the Makefile,
+# so a JIT-bound run passes the same guard a laptop does.
+run_case "lza staging environment" PROD=lza-stag "${LZA_ENV[@]}"
+if grep -qx 'AWS_PROFILE=lza-stag' "${OUT_FILE}"; then
+    ok "derives AWS_PROFILE=lza-stag from the lza-stag token"
+else
+    no "derives AWS_PROFILE=lza-stag from the lza-stag token" "file: $(grep '^AWS_PROFILE' "${OUT_FILE}")"
+fi
+run_case "lza prod environment" PROD=lza "${LZA_ENV[@]}"
+if grep -qx 'AWS_PROFILE=lza-prod' "${OUT_FILE}"; then
+    ok "derives AWS_PROFILE=lza-prod from the lza token"
+else
+    no "derives AWS_PROFILE=lza-prod from the lza token"
 fi
 
 # 4. UNSET OPTIONAL KEYS ARE OMITTED, not written empty. The Makefile guards
@@ -464,9 +528,73 @@ expect_rc 0 "exits 0"
 run_case "unknown FL_BACKEND is rejected" FL_BACKEND=jax
 expect_rc 1 "exits 1"
 expect_stderr "must be 'nvflare' or 'flower'" "explains the valid set"
-run_case "unknown TF_ENV is rejected" TF_ENV=dev
+run_case "unknown PROD token is rejected" PROD=dev
 expect_rc 1 "exits 1"
-expect_stderr "TF_ENV must be" "explains the valid set"
+expect_stderr "PROD must be one of" "explains the valid set"
+# Unset is not a mode: it used to default to staging, which is exactly how a run
+# could compose for the wrong estate without anyone choosing one.
+run_case "an unset PROD is rejected rather than defaulted" PROD
+expect_rc 1 "exits 1"
+expect_stderr "PROD is not set" "says so"
+
+# 14. THE LZA MODES (FLIP#749). Same three workflows and the same script — the
+#     token decides which keys a platform-managed estate needs, and the four that
+#     have no `export TF_VAR_…` line in the Makefile are written as raw exports.
+echo ""
+echo "-- the LZA tokens require the LZA keys"
+run_case "lza-stag composes with the LZA key set" PROD=lza-stag "${LZA_ENV[@]}"
+expect_rc 0 "exits 0"
+if grep -qxF 'AWS_PROFILE=lza-stag' "${OUT_FILE}"; then
+    ok "composes for the lza-stag environment"
+else
+    no "composes for the lza-stag environment" "file: $(grep '^AWS_PROFILE' "${OUT_FILE}")"
+fi
+# The raw-export form is what carries these to Terraform without a Makefile line
+# of their own; `make_value_of` reads the make variable back, which is exactly
+# what `print-tf-env`'s `env | grep '^TF_VAR_'` sees.
+if grep -qxF 'export TF_VAR_networking_ingress_cidrs=["10.12.0.0/24"]' "${OUT_FILE}"; then
+    ok "writes NETWORKING_INGRESS_CIDRS as a raw TF_VAR_ export"
+else
+    no "writes NETWORKING_INGRESS_CIDRS as a raw TF_VAR_ export" \
+        "file: $(grep 'TF_VAR_networking' "${OUT_FILE}" || echo 'no raw export line')"
+fi
+got="$(make_value_of TF_VAR_networking_ingress_cidrs "${OUT_FILE}")"
+if [[ "${got}" == '["10.12.0.0/24"]' ]]; then
+    ok "the raw export round-trips through make as a list literal"
+else
+    no "the raw export round-trips through make as a list literal" "make saw: ${got}"
+fi
+# ...and the key must NOT also appear in the plain `KEY=value` form: one key, one
+# line in the file.
+if grep -qxF 'NETWORKING_INGRESS_CIDRS=["10.12.0.0/24"]' "${OUT_FILE}"; then
+    no "does not write the raw keys twice" "the plain form is present as well"
+else
+    ok "does not write the raw keys twice"
+fi
+
+# The destructive default, in the same spirit as DEPLOY_TRUST_EC2 above: an absent
+# NETWORKING_INGRESS_CIDRS is not "no change", it is every rule the estate's edge
+# reaches the internal NLB through.
+for key in ACCESS_LOGS_BUCKET_NAME EFS_PROVISION_IMAGE LZA_VPC_NAME MANAGE_DNS LZA_ELB_ACCESS_LOGS_BUCKET NETWORKING_INGRESS_CIDRS; do
+    run_case "on lza-stag, ${key} is required" PROD=lza-stag "${LZA_ENV[@]}" "${key}"
+    expect_rc 1 "exits 1"
+    expect_stderr "${key}" "names it"
+done
+
+# The two web-edge values are the opposite case: the edge is built from this
+# stack's outputs, so empty — omitted — is correct on a first apply.
+run_case "lza composes with the web-edge values empty" PROD=lza "${LZA_ENV[@]}"
+expect_rc 0 "exits 0"
+
+# Requiring them on every token would block a self-contained deployment that
+# shares this script, and the legacy value for all of them is absent.
+run_case "the legacy tokens do not require the LZA keys" PROD=stag
+expect_rc 0 "exits 0"
+if grep -q 'TF_VAR_' "${OUT_FILE}"; then
+    no "writes no raw TF_VAR_ lines for a legacy environment" "file carries: $(grep 'TF_VAR_' "${OUT_FILE}")"
+else
+    ok "writes no raw TF_VAR_ lines for a legacy environment"
+fi
 
 echo ""
 echo "==== ${PASS} passed, ${FAIL} failed ===="

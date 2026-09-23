@@ -135,6 +135,24 @@ When adding a new secret requirement:
 3. Update the relevant CI workflow(s) to override the value
 4. Document the secret in this file
 
+## Terraform environment secrets (not repository secrets)
+
+The AWS deployment pipeline does **not** use repository secrets. It uses two
+GitHub *environments* — `aws-stag` and `aws-prod` — so the values are scoped to the
+environment and readable only on the branches its deployment branch policy admits
+(`aws-prod` admits `main` alone; that restriction is security, not tidiness).
+
+Which account and which mode an environment drives is set by its **`TF_PROD`**
+variable — the `deploy/env_mode.mk` token, one of `stag` | `true` | `lza-stag` |
+`lza` — together with `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN`, the OIDC roles it
+assumes. Repointing an environment at a different AWS account is a change to those
+values, not to any workflow. The full key list, the seeding procedure and the
+per-account bootstrap order are documented with the stack that consumes them:
+`deploy/providers/AWS/README.md` → "Terraform CI: plan on PR, apply on merge" and
+"Repointing CI at the LZA accounts". Seeding is done by
+`deploy/providers/AWS/scripts/setup-github-environments.sh --mode <token>` (repo
+admin, `--dry-run` first, from a machine holding the operator's `.env.<env>` file).
+
 ## Security Notes
 
 - ✅ `.env.development` is in `.gitignore` and should never be committed

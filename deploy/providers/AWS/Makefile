@@ -119,17 +119,20 @@ export TF_VAR_lza_vpc_name=$(LZA_VPC_NAME)
 endif
 
 # IAM permissions boundary (FLIP#1082): the boundary policy is owned by the ci/
-# root, which exists to fence the GitHub OIDC apply role and is applied only in
-# the accounts whose applies run through that pipeline. The LZA workload accounts
-# are applied by hand under the platform's admin permission set and never receive
-# ci/, so the policy does not exist there and attaching it fails every role
-# update with NoSuchEntity. Detach it on the LZA modes unless the env file says
-# otherwise — variables.tf documents "" as the correct value for an account where
-# ci/ has never been applied. Re-attach (drop this default) the day LZA applies
-# move to CI and ci/ is applied there first.
-ifneq ($(IS_LZA),)
-export TF_VAR_iam_permissions_boundary_name ?=
-endif
+# root, which exists to fence the GitHub OIDC apply role. It used to be detached
+# on the LZA modes (export TF_VAR_iam_permissions_boundary_name ?=, FLIP#1199's
+# left-open half): those accounts were applied by hand under the platform's admin
+# permission set and never received ci/, so the policy did not exist there and
+# attaching a name that does not resolve fails every role update with
+# NoSuchEntity. That is no longer the arrangement — the LZA accounts are applied
+# through the same pipeline as the rest and get ci/ applied before anything else
+# (README, "Repointing CI at the LZA accounts"), so the boundary is carried in
+# every account this stack deploys into, which is the whole point of it being a
+# boundary rather than a per-environment preference.
+#
+# An env file can still set TF_VAR_iam_permissions_boundary_name="" for an
+# account where ci/ genuinely has not been applied; variables.tf documents "" as
+# that escape hatch, and tests/test_iam_permissions_boundary.py pins both paths.
 
 # Kit-file env suffix — the ENV token from env_mode.mk (.production / .stag /
 # .lza-prod / .lza-stag): selects the trust kit file trust/.env.<KIT>.<suffix> for
