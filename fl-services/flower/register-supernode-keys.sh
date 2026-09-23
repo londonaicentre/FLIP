@@ -23,7 +23,7 @@ EOF
 
 echo "Configured Flower CLI for SuperLink Control API at ${SUPERLINK_ADDRESS:-superlink:9093}"
 
-# Optional: TRUST_NAMES and FL_API_ADDRESS for node → trust name registration.
+# TRUST_NAMES names each key's node (one per /keys/*.pub, sorted; required); FL_API_ADDRESS is optional.
 # TRUST_NAMES accepts both JSON list (["Trust_1", "Trust_2"]) and comma-separated (Trust_1,Trust_2).
 raw_trust_names="${TRUST_NAMES:-}"
 # Strip JSON brackets and quotes, then split on commas
@@ -55,7 +55,14 @@ for pub_key in "${pub_keys[@]}"; do
     echo "  Registering ${pub_key}..."
     node_id=""
 
-    if output=$(flwr supernode register "$pub_key" local --format json 2>&1); then
+    # flwr>=1.38 stores --name against the registered key, and the SuperLink hands it to the
+    # ServerApp through Grid.get_nodes() (NodeInfo.name) — the authenticated node → trust
+    # identity FLIP#1270 filters on. Every key must therefore carry a trust name.
+    if [ "$idx" -ge "${#trust_names[@]}" ] || [ -z "${trust_names[$idx]}" ]; then
+        echo "ERROR: no trust name for ${pub_key} (key #$((idx + 1)), TRUST_NAMES has ${#trust_names[@]})" >&2
+        exit 1
+    fi
+    if output=$(flwr supernode register "$pub_key" local --name "${trust_names[$idx]}" --format json 2>&1); then
         # Parse node_id from JSON output: {"success": true, "node-id": <id>}
         # node-id may be quoted ("123") or unquoted (123) depending on Flower version
         node_id=$(echo "$output" | grep -oP '"node-id":\s*"?\K[0-9]+' || true)

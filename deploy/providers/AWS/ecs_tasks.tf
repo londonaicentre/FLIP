@@ -287,13 +287,18 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
         "--ssl-certfile", "/certs/server.pem",
         "--ssl-keyfile", "/certs/server.key",
         "--enable-supernode-auth",
+        # flwr>=1.37: the Control API is HTTP on --host/--port (default
+        # 127.0.0.1:8000); keep it on 0.0.0.0:9093 so SUPERLINK_ADDRESS, the
+        # port mapping and the SG rule in ecs_sg.tf stay valid (FLIP#1271).
+        "--host", "0.0.0.0",
+        "--port", tostring(local.flower_superlink_exec_port),
         "--health-server-address", "0.0.0.0:${local.flower_superlink_health_port}",
       ] : null
       linuxParameters = var.fl_backend == "flower" ? { initProcessEnabled = true } : null
 
       # NVFLARE serves client gRPC + admin multiplexed on one port. Flower's
-      # SuperLink splits Fleet (9092, what the NLB forwards to), Exec (9093,
-      # fl-api submits runs here) and health (9097).
+      # SuperLink splits Fleet (9092, what the NLB forwards to), the HTTP
+      # Control API (9093, fl-api submits runs here) and health (9097).
       portMappings = var.fl_backend == "flower" ? [
         { containerPort = local.flower_superlink_fleet_port, protocol = "tcp" },
         { containerPort = local.flower_superlink_exec_port, protocol = "tcp" },

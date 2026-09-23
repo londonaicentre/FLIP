@@ -32,10 +32,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 # Run in flip-utils' env so the app sees the same flip package a SuperNode image carries.
 FLIP_UV=(uv run --project "$REPO_ROOT/flip-utils" --extra full)
-# flwr resolves the `local` connection to a SuperLink on these two ports (flwr/cli/constant.py)
-# and reuses whatever already answers on the control port — it does not check who started it.
-CONTROL_PORT="${FLWR_LOCAL_CONTROL_API_PORT:-39093}"
-RUNTIME_PORT="${FLWR_LOCAL_RUNTIME_API_PORT:-39091}"
+# flwr resolves the `local` connection to a SuperLink on this port (flwr/cli/constant.py) and
+# reuses whatever already answers its /health there — it does not check who started it. Since
+# flwr 1.37 the Control API is served over HTTP on this one port; the legacy gRPC control address
+# (127.0.0.1:${FLWR_LOCAL_CONTROL_API_PORT:-39093}) is still passed to the local SuperLink but
+# nothing listens on it, so it is neither probed nor waited on here.
+CONTROL_PORT="${FLWR_LOCAL_SUPERLINK_HTTP_API_PORT:-39091}"
 CONTROL_ADDRESS="127.0.0.1:$CONTROL_PORT"
 
 # flwr keeps a long-lived local SuperLink and Ray workers inherit ITS environment, not what we
@@ -82,11 +84,11 @@ listener_pid() {
   { ss -Hltnp "sport = :$1" 2>/dev/null || true; } | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2 || true
 }
 
-# A SuperLink we just signalled may hold its ports a moment longer. flwr probes the control
-# port at once (a 0.4 s gRPC deadline) and adopts whatever answers, so the run could land on a
-# process mid-shutdown ("Connection to the SuperLink is unavailable"); and it cannot start a
-# replacement while the runtime port is still bound. Give it up to five seconds to let go of
-# each, and refuse to go on if it has not.
+# A SuperLink we just signalled may hold its port a moment longer. flwr probes /health on the
+# control port at once and adopts whatever answers, so the run could land on a process
+# mid-shutdown ("Connection to the SuperLink is unavailable"); and it cannot start a replacement
+# while the port is still bound. Give it up to five seconds to let go, and refuse to go on if it
+# has not.
 wait_for_port_release() {
   local port pid _
   for port in "$@"; do
@@ -244,7 +246,7 @@ export WORKING_DIR="${WORKING_DIR:-$REPO_ROOT/fl-services/flower/runs}"
 mkdir -p "$WORKING_DIR"
 
 stop_stale_superlinks
-[ -n "$STOPPED_ANY" ] && wait_for_port_release "$CONTROL_PORT" "$RUNTIME_PORT"
+[ -n "$STOPPED_ANY" ] && wait_for_port_release "$CONTROL_PORT"
 refuse_foreign_superlink "$CONTROL_PORT"
 
 # How many simulated sites, from the tutorial's own flip-min-clients so the two cannot drift.

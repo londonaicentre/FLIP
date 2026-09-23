@@ -85,6 +85,12 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
+      # flwr>=1.37: the Control API is HTTP on --host/--port (default 127.0.0.1:8000);
+      # keep it on 0.0.0.0:9093 so SUPERLINK_ADDRESS stays valid (see compose.dev.yml).
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9093"
       - --health-server-address
       - ${SUPERLINK_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9097}
     networks:
@@ -92,7 +98,7 @@ services:
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys:
-    image: flwr/base:1.36.0-py3.12-ubuntu24.04
+    image: flwr/base:1.38.0-py3.12-ubuntu24.04
     environment:
       - FL_API_ADDRESS=${FL_API_ADDRESS:-http://fl-api:8000}
       - TRUST_NAMES=${TRUST_NAMES:-Trust_1,Trust_2}

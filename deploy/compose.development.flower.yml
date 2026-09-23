@@ -136,6 +136,12 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
+      # flwr>=1.37: the Control API is HTTP on --host/--port (default 127.0.0.1:8000);
+      # keep it on 0.0.0.0:9093 so SUPERLINK_ADDRESS and the port map stay valid (FLIP#1271).
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9093"
       - --health-server-address
       - 0.0.0.0:9097
     ports:
@@ -236,6 +242,12 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
+      # flwr>=1.37: the Control API is HTTP on --host/--port (default 127.0.0.1:8000);
+      # keep it on 0.0.0.0:9093 so SUPERLINK_ADDRESS and the port map stay valid (FLIP#1271).
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9093"
       - --health-server-address
       - 0.0.0.0:9097
     ports:

@@ -83,6 +83,14 @@ services:
     # runtime-dependency section).
     command:
       - --insecure
+      # flwr>=1.37 serves the Control API (what `flwr run|ls|stop` and the key registration
+      # talk to) over HTTP from --host/--port, defaulting to 127.0.0.1:8000; the gRPC Control
+      # API on 9093 no longer starts. Bind it to 0.0.0.0:9093 so every SUPERLINK_ADDRESS,
+      # port map and security-group rule written for 9093 stays valid (FLIP#1271).
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9093"
       - --health-server-address
       - ${SUPERLINK_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9097}
     # No host port published by default; fl-api reaches the SuperLink over the
