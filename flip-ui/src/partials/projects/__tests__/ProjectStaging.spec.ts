@@ -48,14 +48,16 @@ const trustNew = {
     project_count: 0
 };
 
-function mountStaging(stageableTrustIds: string[] | undefined, trusts = [trustA, trustB, trustNew]) {
+function mountStaging(stageableTrustIds: string[] | undefined, trusts = [trustA, trustB, trustNew], hasQuery = true) {
     const pinia = createTestingPinia({
         createSpy: vi.fn,
-        stubActions: false
+        stubActions: false,
+        // The Stage button is v-if="!isViewer", i.e. needs CanCreateProjects.
+        initialState: { auth: { user: { permissions: ["CanCreateProjects"] } } }
     });
     const wrapper = mount(ProjectStaging, {
         props: {
-            hasQuery: true,
+            hasQuery,
             staging: false,
             stageableTrustIds
         },
@@ -129,5 +131,57 @@ describe("ProjectStaging — empty staging-list messaging", () => {
         const alert = wrapper.findComponent(AiAlert);
         expect(alert.props("variant")).toBe("error");
         expect(alert.props("text")).toContain("Unable to load Trusts");
+    });
+});
+
+// The staging card swaps into the same left-column slot as ProjectApproval, so it
+// carries the same fill-height contract (FLIP#1168): the page column is
+// lg:overflow-hidden, so a content-height card with no internal scroller would
+// clip a long roster — and the Stage Project button under it — with no way to
+// reach it. Same assertions as ProjectApproval.spec's layout test.
+describe("ProjectStaging — fill-height layout contract", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it("stretches the card to its slot, scrolls the roster internally and pins the Stage button", async () => {
+        const wrapper = mountStaging([trustA.id, trustB.id]);
+        await flushPromises();
+
+        // Without h-full the card sizes to content inside its lg:flex-1 wrapper and
+        // never reaches the shared baseline the other three cards end on.
+        const card = wrapper.element;
+        expect(card.className).toContain("flex");
+        expect(card.className).toContain("flex-col");
+        expect(card.className).toContain("h-full");
+
+        // Every link in the chain has to be a flex column for flex-1 to mean anything.
+        const form = wrapper.find("form");
+        expect(form.classes()).toEqual(expect.arrayContaining(["flex", "flex-col", "flex-1", "min-h-0"]));
+        const roster = wrapper.find("ul[role=list]").element.parentElement;
+        expect(roster?.parentElement?.className).toContain("flex-col");
+
+        const scroller = roster;
+        expect(scroller?.className).toContain("overflow-y-auto");
+        expect(scroller?.className).toContain("flex-1");
+        expect(scroller?.className).toContain("min-h-0");
+
+        // The button lives outside the scroller so it never scrolls out of reach.
+        const stage = wrapper.find("[data-test=stage-project-btn]").element.closest("div.p-4");
+        expect(stage?.className).toContain("shrink-0");
+        expect(stage?.className).toContain("mt-auto");
+        expect(scroller?.contains(stage)).toBe(false);
+    });
+
+    it("does not centre the query-required alert in the fill-height card", async () => {
+        const wrapper = mountStaging(undefined, [trustA, trustB, trustNew], false);
+        await flushPromises();
+
+        // m-auto absorbs the free space of the flex column and floats the alert to the
+        // middle of the card (the regression ProjectStatus and LatestModels also avoid).
+        const alert = wrapper.find("[data-test=query-required-alert]");
+        expect(alert.exists()).toBe(true);
+        expect(alert.classes()).not.toContain("m-auto");
+        expect(alert.classes()).toContain("shrink-0");
     });
 });

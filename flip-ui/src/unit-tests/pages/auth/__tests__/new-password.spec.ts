@@ -78,6 +78,7 @@ function mountNewPassword(
             stubs: {
                 Form: {
                     template:
+                        // pragma: allowlist nextline secret
                         "<form @submit.prevent=\"$emit('submit', { password: 'NewPassw0rd!', passwordConfirmation: 'NewPassw0rd!' })\"><slot /></form>",
                     inheritAttrs: false,
                     emits: ["submit"]

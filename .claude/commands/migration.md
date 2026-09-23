@@ -4,7 +4,7 @@ argument-hint: "<short description of the schema change>"
 allowed-tools: Bash(make:*), Bash(git:*), Read, Edit
 ---
 
-You are creating a database migration for **flip-api**. CLAUDE.md makes this a hard rule:
+You are creating a database migration for **flip-api**. AGENTS.md makes this a hard rule:
 any schema-affecting change to `flip-api/src/flip_api/db/models/*.py` **must** ship an
 Alembic revision in the same change, or the integration drift guard
 (`flip-api/tests/integration/test_migrations.py`) fails.

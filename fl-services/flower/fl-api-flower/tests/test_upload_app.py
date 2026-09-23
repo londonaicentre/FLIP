@@ -15,8 +15,10 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 from tomlkit import parse
 
+from fl_api import app as app_module
 from fl_api.schemas import UploadAppRequest
 
 
@@ -479,3 +481,12 @@ def test_upload_app_rejects_redirect_response(client, upload_dir, monkeypatch):
     response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
 
     assert response.status_code == 400
+
+
+def test_startup_reports_empty_bundle_allow_list(monkeypatch):
+    """Startup calls the once-per-process allow-list check, so the boot log carries the warning (FLIP#905)."""
+    calls = []
+    monkeypatch.setattr(app_module, "warn_if_bundle_url_allow_list_empty", lambda: calls.append(True))
+    with TestClient(app_module.app):
+        pass
+    assert calls == [True]

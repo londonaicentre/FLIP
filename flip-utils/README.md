@@ -26,9 +26,7 @@ image and is imported as `from flip import ...` by user-uploaded training code. 
 - **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples per backend (`nvflare/`, `flower/`)
 - **[`../fl-services/`](../fl-services/)** — Docker images and network provisioning for FL networks per backend (`nvflare/`, `flower/`); each backend's `Makefile` owns build / provision / up / down / submit
 
-Paths like `tutorials/` referenced in older sections of this README refer to the now-sibling top-level
-[`../fl-tutorials/`](../fl-tutorials/) tree, and Make targets called out below run from the `flip-utils/` directory
-unless otherwise noted.
+Make targets called out below run from the `flip-utils/` directory unless otherwise noted.
 
 ## Table of Contents
 
@@ -43,9 +41,8 @@ unless otherwise noted.
   - [App / Tutorial Compatibility](#app--tutorial-compatibility)
 - [FL Services API](#fl-services-api)
   - [Prerequisites](#prerequisites)
-  - [Provisioning a Network](#provisioning-a-network)
-  - [Running the Network](#running-the-network)
-  - [Integration Testing](#integration-testing)
+  - [Provisioning the 2 Networks](#provisioning-the-2-networks)
+  - [Running a Network](#running-a-network)
   - [CI/CD](#cicd)
   - [Makefile Reference](#makefile-reference)
 - [Security](#security)
@@ -79,6 +76,10 @@ flip/
 ├── core/         # FLIPBase, FLIPStandardProd/Dev implementations, FLIP() factory
 ├── constants/    # FlipConstants (pydantic-settings), enums, PTConstants
 ├── utils/        # General utilities: Utils, model weight helpers
+├── schemas.py    # Shared Pydantic schemas
+├── exceptions.py # Package-level exception types
+├── xnat/         # XNAT protocol client and enrichment helpers (also exposed as the `flip-xnat` CLI)
+├── export/       # Model-export bundling (`python -m flip.export`; see map-apps/README.md)
 ├── nvflare/      # NVFLARE-specific logic and components
 │   ├── controllers/  # FLIP workflows (ScatterAndGather, BroadcastTask, …)
 │   ├── components/   # Event handlers, persistors, privacy filters, locators, …
@@ -87,6 +88,7 @@ flip/
 │   └── metrics.py    # Metrics collection and reporting
 └── flower/       # Flower-specific server-side helpers
     ├── metrics.py    # handle_client_metrics / handle_client_exception
+    ├── privacy.py    # flip_local_dp_mod (Flower local DP: clipping + Gaussian noise)
     ├── progress.py   # RoundTelemetry + typed round events
     ├── selection.py  # BestModelSelector + best-model run-config parsing
     └── strategy.py   # FlipFedAvg (hub telemetry + best-model wiring; needs flwr)
@@ -128,7 +130,7 @@ directly.
 | `trainer.py` | Training logic — a plain `nvflare.client` script (`flare.init`/`receive`/`send`) |
 | `validator.py` | Extra validation module where the job type requires one (`diffusion_model`) |
 | `models.py` | Model definitions — must export `get_model()` function |
-| `config.json` | Hyperparameters — must include `LOCAL_ROUNDS` and `LEARNING_RATE`; optional `BEST_MODEL_METRIC` / `BEST_MODEL_METRIC_MINIMIZE` enable best-model selection (see below) |
+| `config.json` | Job configuration — only `job_type` is required; platform keys such as `LOCAL_ROUNDS` are defaulted when absent, and app settings such as `LEARNING_RATE` are passed through untouched; optional `BEST_MODEL_METRIC` / `BEST_MODEL_METRIC_MINIMIZE` enable best-model selection (see below) |
 | `transforms.py` | Data transforms (optional) |
 
 ### Best-Model Selection (optional)
@@ -203,7 +205,9 @@ drives a FLIP recipe on the NVFLARE simulator (SimEnv) from the flip-utils venv.
 ### Unit Tests
 
 ```bash
-make unit-test
+make unit-test        # ruff --fix, ruff format --check, then mypy, then pytest with coverage
+make mypy             # type check only
+make format           # apply ruff format (make format-check only checks)
 # or
 uv run pytest -s -vv
 ```
@@ -257,7 +261,7 @@ This uses the network-specific provisioning project files (`fl-services/nvflare/
 
 ### Provisioning Networks for Staging/Production
 
-Note the provisioning project file `net-1_project_stag.yml` changes the name of the FL server to the full domain name i.e. `stag.flip.aicentre.co.uk` instead of `fl-server-net-1`, since the FL
+Note the provisioning project file `net-1_project_stag.yml` changes the name of the FL server to the full domain name i.e. `fl.stag.flip.aicentre.co.uk` instead of `fl-server-net-1`, since the FL
 clients won't be on the same Docker network as the FL server (as they are in development) and won't be able to resolve internal Docker hostnames.
 
 Run:
@@ -277,7 +281,7 @@ make -C fl-services/nvflare provision NET_NUMBER=3
 ### Running a Network
 
 From ``fl-services/nvflare/`` (the per-backend Makefile that owns these targets — the
-``flip-utils/`` directory itself only ships ``unit-test``):
+``flip-utils/`` directory itself only ships ``lint``, ``mypy`` and ``unit-test``):
 
 ```bash
 make build                # Build the :dev FL images (flare-fl-{base,server,client,api})
@@ -300,7 +304,7 @@ make -C fl-tutorials run-all-tutorials
 
 GitHub Actions workflows use OIDC to authenticate to AWS (no long-lived keys).
 
-The base FL application templates (this `fl-apps/` tree) are **no longer published to S3**. They are
+The base FL application templates ([`../fl-apps/`](../fl-apps/)) are **no longer published to S3**. They are
 baked into the flip-api image at build time and read from a local directory (`FL_APP_BASE_DIR`,
 default `/app/fl-apps`); flip-api validates job types and bundles applications straight from that
 tree (FLIP#724). Two CI checks still guard the templates on every PR:
@@ -331,7 +335,9 @@ means edits take effect immediately without a rebuild. A new job type needs no S
 
 | Command | Description |
 | --------- | ------------- |
-| `make unit-test` | Run pytest unit tests for flip python package |
+| `make unit-test` | Run ruff (lint + format check), mypy and the pytest unit tests for the flip python package |
+| `make mypy` | Type-check the flip python package only |
+| `make format` / `make format-check` | Apply / check ruff formatting for the flip python package |
 
 #### Running tutorials (from the repo root)
 

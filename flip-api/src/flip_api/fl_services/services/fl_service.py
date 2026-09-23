@@ -34,7 +34,7 @@ from flip_api.domain.interfaces.fl import (
 from flip_api.domain.schemas.status import FLJobStatus, FLTargets, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import mlflow_run_service
-from flip_api.utils.encryption import encrypt
+from flip_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 from flip_api.utils.exceptions import JobAbortedError, NotFoundError
 from flip_api.utils.http import http_delete, http_get, http_post
 from flip_api.utils.logger import logger
@@ -110,7 +110,7 @@ BUNDLED_APP_DIR_PREFIXES: dict[str, tuple[str, ...]] = {
 #
 # There is deliberately no slot for a lockfile, and no template commits one. Flower resolves
 # dependencies fresh on every app launch at every trust (``uv sync``, see FL_APP_BASE_DIR in
-# CLAUDE.md), so a committed ``uv.lock`` would be a resolution for the developer's machine rather
+# AGENTS.md), so a committed ``uv.lock`` would be a resolution for the developer's machine rather
 # than for the trust — which is also why ``uv.lock`` is named in EXCLUDED_APP_FILE_NAMES below, to
 # keep one out of an app folder. If reproducible per-run resolution ever becomes a requirement,
 # both halves have to change together: add the lockfile here and stop excluding it there, and the
@@ -684,7 +684,7 @@ def start_training(
     from flip_api.fl_services.services import fl_scheduler_service
 
     required_info = fl_scheduler_service.get_required_training_details(model_id, session)
-    encrypted_project_id = encrypt(required_info.project_id)
+    encrypted_project_id = encrypt(required_info.project_id, context=PROJECT_ID_CONTEXT)
 
     training_details = IStartTrainingBody(
         project_id=encrypted_project_id,

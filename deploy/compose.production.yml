@@ -63,6 +63,8 @@ services:
       # at request time with an opaque EndpointConnectionError, which is
       # exactly the kind of CORS-preflight-failure surprise this env var is
       # supposed to prevent.
+      # Also the reason the fl-api's BUNDLE_URL_ALLOWED_HOSTS (compose.production.<backend>.yml)
+      # is exactly s3.<region>.amazonaws.com: this endpoint makes the presigned URLs path-style.
       - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
       - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}

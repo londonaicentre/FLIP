@@ -141,20 +141,21 @@ def get_uploaded_files_info(
         return result
 
     except ValueError as e:
-        # Invalid UUID format
-        logger.error(f"Invalid UUID format: {str(e)}")
+        # Invalid UUID format. Category only: this clause also catches pydantic's ValidationError
+        # (a ValueError subclass), whose text echoes the rejected input and the model's field layout.
+        logger.exception("Invalid UUID format in file ids")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid UUID format: {str(e)}",
-        )
+            detail="Invalid UUID format",
+        ) from e
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unhandled error: {str(e)}")
+        logger.exception("Error retrieving uploaded file info")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {e}",
-        )
+            detail="Internal server error",
+        ) from e
 
 
 # TODO [#114] This endpoint was not defined in the old repo.
@@ -211,8 +212,8 @@ def get_uploaded_files_info_post(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unhandled error: {str(e)}")
+        logger.exception("Error retrieving uploaded file info")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {e}",
-        )
+            detail="Internal server error",
+        ) from e

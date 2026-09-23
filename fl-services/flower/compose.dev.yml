@@ -42,6 +42,9 @@ services:
       - SUPERLINK_ADDRESS=${SUPERLINK_ADDRESS:-superlink:9093}
       - SUPERLINK_HEALTH_ADDRESS=${SUPERLINK_HEALTH_ADDRESS:-superlink:9097}
       - FLOWER_SRC_ROOT=/app/src
+      # No BUNDLE_URL_ALLOWED_HOSTS here on purpose: this harness has no hub, so nothing presigns
+      # bundle URLs for it (jobs are submitted by folder name) and the fl-api logs the documented
+      # empty-allow-list warning at startup. Every hub deployment sets it — see deploy/compose.*.yml.
     volumes:
       - ../../fl-tutorials/flower:/app/src
       - ../../fl-services/flower/fl-api-flower/fl_api:/app/fl_api
@@ -115,9 +118,10 @@ services:
       - superlink:9092
       - --health-server-address
       - ${SUPERNODE_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
-      # ClientApp-side runtime dependency install (default-off on SuperNodes in
-      # flwr 1.32): resolves the app's declared deps per run (the fl-apps
-      # templates pin flip-utils to /opt/flip-utils via [tool.uv.sources]; FLIP#767).
+      # ClientApp-side runtime dependency install (still default-off on
+      # SuperNodes at flwr 1.36): resolves the app's declared deps per run
+      # (the fl-apps templates pin flip-utils to /opt/flip-utils via
+      # [tool.uv.sources]; FLIP#767).
       - --allow-runtime-dependency-installation
     deploy:
       resources:
@@ -153,9 +157,10 @@ services:
       - superlink:9092
       - --health-server-address
       - ${SUPERNODE_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
-      # ClientApp-side runtime dependency install (default-off on SuperNodes in
-      # flwr 1.32): resolves the app's declared deps per run (the fl-apps
-      # templates pin flip-utils to /opt/flip-utils via [tool.uv.sources]; FLIP#767).
+      # ClientApp-side runtime dependency install (still default-off on
+      # SuperNodes at flwr 1.36): resolves the app's declared deps per run
+      # (the fl-apps templates pin flip-utils to /opt/flip-utils via
+      # [tool.uv.sources]; FLIP#767).
       - --allow-runtime-dependency-installation
     deploy:
       resources:

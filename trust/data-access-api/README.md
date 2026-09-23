@@ -55,7 +55,7 @@ It requires the [OMOP database](../omop-db/) to be running and populated with da
 
 ## Configuration
 
-Key environment variables (set in [`.env.development.example`](../../.env.development.example)):
+Key environment variables. Most come from the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>` — but `OMOP_DB_SERVICE_NAME` is an internal-topology constant with a default in `data_access_api/config.py` (`"omop-db"`); it is deliberately absent from the kit template and must not be injected.
 
 | Variable | Description |
 | --- | --- |
@@ -64,9 +64,23 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 | `DATA_ACCESS_POSTGRES_USER` | PostgreSQL username for OMOP database access |
 | `DATA_ACCESS_POSTGRES_PASSWORD` | PostgreSQL password for OMOP database access |
 | `OMOP_POSTGRES_DB` | Name of the OMOP PostgreSQL database |
-| `AES_KEY_BASE64` | AES encryption key for decrypting project identifiers |
+| `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Required on every `/cohort` request. |
+| `CACHE_TTL_DAYS` | Age (days, default `60`) at which a cached result is treated as expired and dropped on the next lookup |
+| `CACHE_MAX_RESULT_ROWS` | Largest result (rows, default `50000`) that is cached at all — anything bigger is returned but not stored, keeping memory bounded |
+| `CACHE_MAX_ENTRIES` | Maximum number of cached results (default `64`); inserting past the limit evicts the oldest entry |
+
+### Query cache
+
+Executed cohort SQL is memoised in an **in-process, per-container** dictionary
+(`services/query_cache.py`), keyed by a SHA-256 of the whitespace-normalised, lower-cased query plus
+its bound parameters. FLIP stores a cohort only as SQL and re-runs it at every stage — statistics,
+dataframe, accession ids — so the same query arrives repeatedly; the cache spares OMOP the repeat
+scan. It holds DataFrames in memory and is copied in and out, is not shared between replicas, and is
+lost on restart, which is why all three bounds above exist. Note it is a *result* cache with no
+invalidation hook: within `CACHE_TTL_DAYS`, a query re-run after the underlying OMOP rows change can
+return the earlier result.
 
 ## Authentication
 
@@ -149,11 +163,14 @@ tree. Underneath all of this the service connects as `data_analyst_reader`, a ro
 only and `INSERT`/`UPDATE`/`DELETE`/`TRUNCATE`/`CREATE` never granted, so DDL and DML are refused by
 Postgres itself. That is why `validate_query` does not keyword-filter for `DROP` and friends.
 
-The role bounds *writes*, not *reads*, and its read scope differs by deployment: the Kubernetes
-chart grants it `pg_read_all_data` (every table in every schema), while the Compose path grants
-only `omop`. Rule 5 is therefore the sole barrier keeping a caller inside `omop` on a Kubernetes
-trust — it is not a redundant layer over a narrow grant, and must not be weakened as though it were.
-Narrowing the chart's grant to match Compose is tracked in [FLIP#904](https://github.com/londonaicentre/FLIP/issues/904).
+The role's read scope is the `omop` schema alone, on both deployment paths: Compose and the
+Kubernetes chart provision it from the same `trust/omop-db/files/create_readonly_users.sql`
+(the chart runs the image's copy from its omop-db `postStart` hook, since a restored PVC skips
+initdb — FLIP#904; the chart used to grant `pg_read_all_data`, every table in every schema). Rule 5
+is nonetheless kept as a full barrier in its own right, not a redundant layer: the grant is applied
+by the *image's* copy of that file, so an image tag built before FLIP#904 leaves a Kubernetes role
+as wide as before (the hook logs a warning naming it), and unqualified `pg_catalog` names resolve
+regardless of any schema grant. Do not weaken it on the assumption the role is scoped.
 
 Emitting from `validate_query` rather than from a second helper is deliberate: it keeps one parse
 and one policy, so there is no second copy of the single-statement and SELECT-shape rules to drift
@@ -199,8 +216,54 @@ hub's response.
 
 ### Row-level data and the disclosure threshold
 
+The threshold counts **distinct subjects, not rows**. The floor exists to stop a response revealing
+that at least one *patient* matched, and rows only stood in for patients while every cohort was one
+row per person. A cohort can now be one row per imaging study, where ten rows may be one patient
+with ten X-rays, and tabular projects (FLIP#1071) changed the grain again. The row count is kept
+as an **upper bound** on the subject count rather than assumed as a consequence of it, so counting
+subjects replaces the row check without ever being weaker than it.
+
+A cohort exposes its subjects one of two ways, resolved by `count_distinct_subjects`:
+
+| Projected column | How subjects are counted |
+|---|---|
+| `person_id` | Counted directly from the dataframe, no database round trip; never more than the row count |
+| `accession_id` | Resolved through `omop.image_occurrence`; the row count remains an upper bound, since nothing in the schema stops one accession number mapping to several people |
+
+A cohort exposing neither cannot be gated and is refused. `/cohort/dataframe` reports that as a
+**400** naming the missing column, which is safe to be specific about because it describes the
+query's shape and never its contents. `/cohort/accession-ids` cannot do the same: its refusal must
+stay byte-identical across a zero cohort, a below-threshold one and an uncountable one, so all
+three return the same 403. Accession numbers that resolve to no imaging study contribute no
+subject, so a query aliasing an unrelated column to that name fails closed.
+
+### Cohort charts
+
+`/cohort` returns its aggregates as **named series** (`{"name": ..., "results": [{"value", "count"}]}`).
+The hub collects whatever names the trusts send and the UI renders them with no fixed list on either
+side, so adding a chart is a trust-side change alone. A trust that omits one is skipped for it, which
+is how a single roster can mix imaging and tabular trusts.
+
+| Chart | Emitted when | Counted in |
+|---|---|---|
+| Counts / Nulls | always | rows, per column |
+| Age Distribution, Sex Distribution | the cohort projects `person_id` | distinct subjects |
+| Modality Distribution | the cohort projects `accession_id` | distinct studies |
+
+Modality is counted in studies rather than people on purpose: it is a property of an imaging study,
+so one patient contributing a CT and an MR is one row in the age and sex charts and two here. The
+concept lookup is a LEFT JOIN falling back to the raw `modality_concept_id`, so a trust missing its
+OMOP vocabulary (FLIP#967) still gets an answer, just an unlabelled one. Every distribution passes
+through `make_other_category`, so buckets below the threshold group into "Other" — and "Other" is
+held to the same floor: it is emitted only when the folded total itself reaches the threshold,
+otherwise dropped, so no sub-threshold count is ever published (a lone small bucket relabelled
+"Other" would be that bucket's exact count).
+
 `/cohort` returns aggregate statistics and suppresses any count below `COHORT_QUERY_THRESHOLD`,
-including a genuine zero, so the response cannot reveal that at least one patient matched.
+including a genuine zero, so the response cannot reveal that at least one patient matched. A cohort
+whose subjects cannot be established is suppressed the same way, rather than raised, so the
+response shape never varies with the cause of a shortfall; the researcher currently sees that as a
+privacy refusal rather than a query-shape problem, which FLIP#1219 tracks.
 
 `/cohort/dataframe` is the training-data path — user FL code reaches it through
 `flip.get_dataframe(...)` — so it necessarily returns row-level records; a model trains on rows.
@@ -247,8 +310,8 @@ not agree on a value.
 
 It must be a **positive integer**; `0` or a negative value is rejected at startup rather than
 accepted. A threshold of `0` would disable every check that reads it in one stroke — both row-level
-gates (`len(df) < 0` is never true, so `/cohort/dataframe` and `/cohort/accession-ids` would release
-a cohort of any size) and the statistics suppression on `/cohort`. Settings are built at import, so
+gates (a subject count is never below `0`, so `/cohort/dataframe` and `/cohort/accession-ids` would
+release a cohort of any size) and the statistics suppression on `/cohort`. Settings are built at import, so
 a bad value stops the service starting instead of leaving it running with no floor. Requiring the
 value to be at least the shipped `10`, rather than merely positive, is tracked in FLIP#870.
 
