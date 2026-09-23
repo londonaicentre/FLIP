@@ -47,7 +47,7 @@ def roles_data(roles_factory):
     return roles_factory()
 
 
-def test_successful_role_update(mock_db, user_id, token_id, roles_data):
+def test_successful_role_update(fake_idp, mock_db, user_id, token_id, roles_data):
     """Test successful role update.
 
     Asserts the single-transaction contract: delete-old, insert-new, audit
@@ -55,28 +55,23 @@ def test_successful_role_update(mock_db, user_id, token_id, roles_data):
     into multiple commits would silently risk wiping roles on partial
     failure.
     """
-    # Setup: target user exists in Cognito, role_ids_from_db returns the requested roles
+    # Setup: target user exists in the identity provider, role_ids_from_db returns the requested roles
     mock_db.exec.return_value.all.return_value = roles_data.roles
+    fake_idp.get_username.return_value = "user@example.com"
 
     # Mock delete
     mock_db.execute.return_value = MagicMock(rowcount=1)
 
-    with (
-        patch("flip_api.user_services.set_user_roles.has_permissions") as mock_has_permissions,
-        patch("flip_api.user_services.set_user_roles.get_username") as mock_get_username,
-        patch("flip_api.user_services.set_user_roles.get_settings") as mock_get_settings,
-    ):
+    with patch("flip_api.user_services.set_user_roles.has_permissions") as mock_has_permissions:
         mock_has_permissions.return_value = True
-        mock_get_username.return_value = "user@example.com"
-        mock_get_settings.return_value.AWS_COGNITO_USER_POOL_ID = "pool-id"
 
         # Execute
-        result = set_user_roles(user_id, roles_data, mock_db, token_id)
+        result = set_user_roles(user_id, roles_data, mock_db, token_id, idp=fake_idp)
 
         # Assert
         assert result == roles_data
         mock_has_permissions.assert_called_once_with(token_id, [PermissionRef.CAN_MANAGE_USERS], mock_db)
-        mock_get_username.assert_called_once_with(str(user_id), "pool-id")
+        fake_idp.get_username.assert_called_once_with(user_id)
         mock_db.exec.assert_called_once()
         # One DELETE for old grants, one add_all for new grants, one add for audit, one commit.
         mock_db.execute.assert_called_once()
@@ -93,29 +88,28 @@ def test_successful_role_update(mock_db, user_id, token_id, roles_data):
         assert audit_row.modified_by_user_id == token_id
 
 
-def test_cognito_5xx_returns_503(mock_db, user_id, token_id, roles_data):
-    """A 5xx from get_username (Cognito read failure) must surface as 503.
+def test_provider_5xx_returns_503(fake_idp, mock_db, user_id, token_id, roles_data):
+    """A 5xx from get_username (identity-provider read failure) must surface as 503.
 
     The step-function caller uses 503 to mean "could not verify; do NOT
     destructively roll back the just-created user". A bare 500 here would
-    cause a transient Cognito blip to destroy a valid registration.
+    cause a transient provider blip to destroy a valid registration.
     """
-    with (
-        patch("flip_api.user_services.set_user_roles.has_permissions") as mock_has_permissions,
-        patch("flip_api.user_services.set_user_roles.get_username") as mock_get_username,
-        patch("flip_api.user_services.set_user_roles.get_settings") as mock_get_settings,
-    ):
+    fake_idp.get_username.side_effect = HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Failed to get users",
+    )
+
+    with patch("flip_api.user_services.set_user_roles.has_permissions") as mock_has_permissions:
         mock_has_permissions.return_value = True
-        mock_get_settings.return_value.AWS_COGNITO_USER_POOL_ID = "pool-id"
-        mock_get_username.side_effect = HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get Cognito users",
-        )
 
         with pytest.raises(HTTPException) as exc_info:
-            set_user_roles(user_id, roles_data, mock_db, token_id)
+            set_user_roles(user_id, roles_data, mock_db, token_id, idp=fake_idp)
 
         assert exc_info.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert exc_info.value.detail == (
+            "Could not verify user existence with the identity provider; please try again."
+        )
         # No DB writes — we couldn't confirm the user exists, so don't touch grants.
         mock_db.execute.assert_not_called()
         mock_db.add_all.assert_not_called()
@@ -123,7 +117,7 @@ def test_cognito_5xx_returns_503(mock_db, user_id, token_id, roles_data):
         mock_db.commit.assert_not_called()
 
 
-def test_cognito_non_404_4xx_propagates_unchanged(mock_db, user_id, token_id, roles_data):
+def test_provider_non_404_4xx_propagates_unchanged(fake_idp, mock_db, user_id, token_id, roles_data):
     """Non-404 4xx from get_username (e.g. a future 400 or 429) must propagate.
 
     A blanket "non-404 -> 503" remap would mask a real 400 (caller bug) or 429
@@ -131,53 +125,45 @@ def test_cognito_non_404_4xx_propagates_unchanged(mock_db, user_id, token_id, ro
     503; client-error 4xx codes should stay as themselves so the caller sees
     the actual signal.
     """
-    with (
-        patch("flip_api.user_services.set_user_roles.has_permissions") as mock_has_permissions,
-        patch("flip_api.user_services.set_user_roles.get_username") as mock_get_username,
-        patch("flip_api.user_services.set_user_roles.get_settings") as mock_get_settings,
-    ):
+    fake_idp.get_username.side_effect = HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="Identity provider throttled",
+    )
+
+    with patch("flip_api.user_services.set_user_roles.has_permissions") as mock_has_permissions:
         mock_has_permissions.return_value = True
-        mock_get_settings.return_value.AWS_COGNITO_USER_POOL_ID = "pool-id"
-        mock_get_username.side_effect = HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Cognito throttled",
-        )
 
         with pytest.raises(HTTPException) as exc_info:
-            set_user_roles(user_id, roles_data, mock_db, token_id)
+            set_user_roles(user_id, roles_data, mock_db, token_id, idp=fake_idp)
 
         # Original 429 surfaces unchanged — not remapped to 503.
         assert exc_info.value.status_code == status.HTTP_429_TOO_MANY_REQUESTS
-        assert exc_info.value.detail == "Cognito throttled"
+        assert exc_info.value.detail == "Identity provider throttled"
         mock_db.execute.assert_not_called()
         mock_db.add_all.assert_not_called()
         mock_db.commit.assert_not_called()
 
 
-def test_user_not_found_in_cognito_returns_404(mock_db, user_id, token_id, roles_data):
-    """Setting roles for a sub that does not exist in Cognito should return 404, not 500."""
-    with (
-        patch("flip_api.user_services.set_user_roles.has_permissions") as mock_has_permissions,
-        patch("flip_api.user_services.set_user_roles.get_username") as mock_get_username,
-        patch("flip_api.user_services.set_user_roles.get_settings") as mock_get_settings,
-    ):
+def test_user_not_found_in_provider_returns_404(fake_idp, mock_db, user_id, token_id, roles_data):
+    """Setting roles for a sub the identity provider does not know should return 404, not 500."""
+    fake_idp.get_username.side_effect = HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"User with ID {user_id} is not registered.",
+    )
+
+    with patch("flip_api.user_services.set_user_roles.has_permissions") as mock_has_permissions:
         mock_has_permissions.return_value = True
-        mock_get_settings.return_value.AWS_COGNITO_USER_POOL_ID = "pool-id"
-        mock_get_username.side_effect = HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with ID {user_id} is not registered.",
-        )
 
         with pytest.raises(HTTPException) as exc_info:
-            set_user_roles(user_id, roles_data, mock_db, token_id)
+            set_user_roles(user_id, roles_data, mock_db, token_id, idp=fake_idp)
 
         assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
-        assert str(user_id) in exc_info.value.detail
+        assert exc_info.value.detail == f"User with ID {user_id} not found"
         mock_db.add_all.assert_not_called()
         mock_db.execute.assert_not_called()
 
 
-def test_permission_denied(mock_db, user_id, token_id, roles_data):
+def test_permission_denied(fake_idp, mock_db, user_id, token_id, roles_data):
     """Test when user doesn't have the required permissions."""
     with (
         patch("flip_api.user_services.set_user_roles.has_permissions") as mock_has_permissions,
@@ -187,34 +173,31 @@ def test_permission_denied(mock_db, user_id, token_id, roles_data):
 
         # Execute and assert
         with pytest.raises(HTTPException) as exc_info:
-            set_user_roles(user_id, roles_data, mock_db, token_id)
+            set_user_roles(user_id, roles_data, mock_db, token_id, idp=fake_idp)
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
         mock_logger.error.assert_called_once()
+        # The existence check must not run for an unauthorised caller.
+        fake_idp.get_username.assert_not_called()
 
 
-def test_invalid_roles(mock_db, user_id, token_id, roles_data):
+def test_invalid_roles(fake_idp, mock_db, user_id, token_id, roles_data):
     """Test when some roles don't exist in the database."""
     mock_db.exec.return_value.all.return_value = []  # No roles in db
+    fake_idp.get_username.return_value = "user@example.com"
 
-    with (
-        patch("flip_api.user_services.set_user_roles.has_permissions") as mock_has_permissions,
-        patch("flip_api.user_services.set_user_roles.get_username") as mock_get_username,
-        patch("flip_api.user_services.set_user_roles.get_settings") as mock_get_settings,
-    ):
+    with patch("flip_api.user_services.set_user_roles.has_permissions") as mock_has_permissions:
         mock_has_permissions.return_value = True
-        mock_get_username.return_value = "user@example.com"
-        mock_get_settings.return_value.AWS_COGNITO_USER_POOL_ID = "pool-id"
 
         # Execute and assert
         with pytest.raises(HTTPException) as exc_info:
-            set_user_roles(user_id, roles_data, mock_db, token_id)
+            set_user_roles(user_id, roles_data, mock_db, token_id, idp=fake_idp)
 
         assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
         assert "Invalid role(s):" in exc_info.value.detail
 
 
-def test_commit_failure_rolls_back_session(mock_db, user_id, token_id, roles_data):
+def test_commit_failure_rolls_back_session(fake_idp, mock_db, user_id, token_id, roles_data):
     """A failed db.commit() must trigger db.rollback() before raising 500.
 
     Without the rollback the request-scoped session is left in an aborted
@@ -225,18 +208,13 @@ def test_commit_failure_rolls_back_session(mock_db, user_id, token_id, roles_dat
     mock_db.exec.return_value.all.return_value = roles_data.roles
     mock_db.execute.return_value = MagicMock(rowcount=1)
     mock_db.commit.side_effect = Exception("DB unavailable")
+    fake_idp.get_username.return_value = "user@example.com"
 
-    with (
-        patch("flip_api.user_services.set_user_roles.has_permissions") as mock_has_permissions,
-        patch("flip_api.user_services.set_user_roles.get_username") as mock_get_username,
-        patch("flip_api.user_services.set_user_roles.get_settings") as mock_get_settings,
-    ):
+    with patch("flip_api.user_services.set_user_roles.has_permissions") as mock_has_permissions:
         mock_has_permissions.return_value = True
-        mock_get_username.return_value = "user@example.com"
-        mock_get_settings.return_value.AWS_COGNITO_USER_POOL_ID = "pool-id"
 
         with pytest.raises(HTTPException) as exc_info:
-            set_user_roles(user_id, roles_data, mock_db, token_id)
+            set_user_roles(user_id, roles_data, mock_db, token_id, idp=fake_idp)
 
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         # SQLAlchemy text must not leak through detail.

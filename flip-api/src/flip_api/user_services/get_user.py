@@ -18,10 +18,10 @@ from sqlmodel import Session
 
 from flip_api.auth.auth_utils import has_any_permission, has_permissions
 from flip_api.auth.dependencies import verify_token
+from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.schemas.users import CognitoUser, ProjectMemberLookup
-from flip_api.utils.cognito_helpers import get_user_by_email_or_id, get_user_pool_id
 from flip_api.utils.logger import logger
 from flip_api.utils.user_roles import apply_user_profile
 
@@ -44,6 +44,7 @@ def get_current_user(
     request: Request,
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
+    idp: IdentityProvider = Depends(get_identity_provider),
 ) -> CognitoUser:
     """
     Get the authenticated caller's own user details.
@@ -66,8 +67,7 @@ def get_current_user(
     Raises:
         HTTPException: 404 if the token's subject has no matching Cognito record.
     """
-    user_pool_id = get_user_pool_id(request)
-    user = get_user_by_email_or_id(user_pool_id, user_id=token_id)
+    user = idp.get_user(user_id=token_id)
 
     return apply_user_profile(user, db)
 
@@ -87,6 +87,7 @@ def lookup_project_member(
     email: EmailStr = Query(..., description="Email address of the prospective project member"),
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
+    idp: IdentityProvider = Depends(get_identity_provider),
 ) -> ProjectMemberLookup:
     """
     Resolve an email address to the minimal identity needed to add a project member.
@@ -136,10 +137,8 @@ def lookup_project_member(
             detail="User is not permitted to look up project members.",
         )
 
-    user_pool_id = get_user_pool_id(request)
-
     try:
-        user = get_user_by_email_or_id(user_pool_id, email=email)
+        user = idp.get_user(email=email)
     except HTTPException as e:
         if e.status_code == status.HTTP_404_NOT_FOUND:
             # The helper's message renders as "... or ID: None is not registered." for an
@@ -169,6 +168,7 @@ def get_user(
     request: Request,
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
+    idp: IdentityProvider = Depends(get_identity_provider),
 ) -> CognitoUser:
     """
     Get user details by ID.
@@ -206,8 +206,7 @@ def get_user(
                 status_code=status.HTTP_403_FORBIDDEN, detail=f"User with ID: {token_id} was unable to manage users"
             )
 
-        user_pool_id = get_user_pool_id(request)
-        user = get_user_by_email_or_id(user_pool_id, user_id=user_id)
+        user = idp.get_user(user_id=user_id)
 
         return apply_user_profile(user, db)
 

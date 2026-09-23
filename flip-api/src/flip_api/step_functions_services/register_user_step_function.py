@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
+from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.db.database import get_session
 from flip_api.domain.interfaces.user import IRegisterUser, IRegisterUserDto, IRoles
 from flip_api.user_services.delete_user import delete_user
@@ -43,6 +44,7 @@ def _rollback_after_role_failure(
     request: Request,
     db: Session,
     token_id: UUID,
+    idp: IdentityProvider,
 ) -> "HTTPException":
     """Roll back a just-registered Cognito user after role assignment failed definitively.
 
@@ -66,7 +68,7 @@ def _rollback_after_role_failure(
     """
     logger.exception(f"Failed to set user roles for user {user_id}; rolling back")
     try:
-        delete_user(user_id=user_id, request=request, db=db, token_id=token_id)
+        delete_user(user_id=user_id, request=request, db=db, token_id=token_id, idp=idp)
     except Exception as rollback_err:
         # For HTTPException, prefer `.detail` (the operator-facing message);
         # for any other exception, str() is the closest equivalent. Catching
@@ -96,6 +98,7 @@ def register_user_step_function_endpoint(
     user_data: IRegisterUser,
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
+    idp: IdentityProvider = Depends(get_identity_provider),
 ) -> IRegisterUserDto:
     """
     Register a new user and assign roles.
@@ -129,6 +132,7 @@ def register_user_step_function_endpoint(
             request=request,
             db=db,
             token_id=token_id,
+            idp=idp,
         )
 
         user_id = register_response.user_id
@@ -137,7 +141,9 @@ def register_user_step_function_endpoint(
         logger.info(f"Setting roles for user {user_id}: {roles}")
 
         try:
-            set_roles_response = set_user_roles(user_id=user_id, roles_data=roles, db=db, token_id=token_id)
+            set_roles_response = set_user_roles(
+                user_id=user_id, roles_data=roles, db=db, token_id=token_id, idp=idp
+            )
             logger.info(f"Roles set successfully for user {user_id}: {set_roles_response}")
 
         except Exception as role_err:
@@ -162,6 +168,7 @@ def register_user_step_function_endpoint(
                 request=request,
                 db=db,
                 token_id=token_id,
+                idp=idp,
             ) from role_err
 
         logger.info(f"User {user_id} registered successfully with roles {roles}")

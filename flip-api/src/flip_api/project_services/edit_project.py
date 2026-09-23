@@ -17,12 +17,12 @@ from sqlmodel import Session
 
 from flip_api.auth.access_manager import can_modify_project
 from flip_api.auth.dependencies import verify_token
+from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Projects
 from flip_api.domain.interfaces.project import IEditProject, IProjectDetails
 from flip_api.domain.schemas.status import ProjectStatus
 from flip_api.project_services.services.project_services import edit_project_service
-from flip_api.utils.cognito_helpers import filter_enabled_users, get_user_pool_id
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/projects", tags=["project_services"])
@@ -41,6 +41,7 @@ def edit_project_endpoint(
     project_details: IEditProject = Body(..., description="Details of the project to edit."),
     user_id: UUID = Depends(verify_token),
     db: Session = Depends(get_session),
+    idp: IdentityProvider = Depends(get_identity_provider),
 ) -> Projects:
     """
     Edits a project with the provided ID. This endpoint allows users with the appropriate permissions to update the
@@ -87,8 +88,7 @@ def edit_project_endpoint(
     # Validate users
     if project_details.users:
         # Ensure that all users exist and are not disabled
-        user_pool_id = get_user_pool_id(request)
-        valid_users = filter_enabled_users(user_pool_id, project_details.users)
+        valid_users = idp.filter_enabled_users(project_details.users)
     else:
         valid_users = []
 

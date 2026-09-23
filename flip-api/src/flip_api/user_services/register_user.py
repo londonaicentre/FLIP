@@ -17,22 +17,18 @@ from sqlmodel import Session
 
 from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
+from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef, UserProfile, UsersAudit
 from flip_api.domain.interfaces.user import IRegisterUser, IUserResponse
-from flip_api.utils.cognito_helpers import (
-    create_cognito_user,
-    delete_cognito_user,
-    get_user_pool_id,
-)
 from flip_api.utils.logger import logger
 from flip_api.utils.user_roles import get_all_roles, validate_roles
 
 router = APIRouter(prefix="/users", tags=["user_services"])
 
 
-def _rollback_cognito_on_audit_failure(email: str, user_pool_id: str, original_err: Exception) -> None:
-    """Delete the just-created Cognito user after a failed audit-row write.
+def _rollback_cognito_on_audit_failure(idp: IdentityProvider, email: str, original_err: Exception) -> None:
+    """Delete the just-created identity-provider user after a failed audit-row write.
 
     The audit commit owns the failure path; this helper just attempts the
     Cognito-side rollback and translates a rollback failure into the more
@@ -44,29 +40,29 @@ def _rollback_cognito_on_audit_failure(email: str, user_pool_id: str, original_e
     ``register_user_step_function`` so the two rollback shapes look the same.
 
     Args:
-        email: Email of the Cognito user to delete (the username).
-        user_pool_id: Cognito user pool ID.
+        idp: The identity provider the user was created in.
+        email: Email of the user to delete (the username).
         original_err: The audit-write exception, chained as ``__cause__`` if
             this helper raises so the operator sees the original trigger.
 
     Raises:
         HTTPException: 500 with a "manual cleanup required" detail iff the
-            ``delete_cognito_user`` call itself fails. A successful rollback
+            ``delete_user`` call itself fails. A successful rollback
             returns cleanly; the caller then raises the "Please try again"
             500.
     """
     try:
-        delete_cognito_user(email, user_pool_id)
+        idp.delete_user(email)
     except Exception:
         logger.exception(
-            f"Failed to roll back Cognito user {email} after audit-write failure; "
+            f"Failed to roll back identity-provider user {email} after audit-write failure; "
             f"manual cleanup required."
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
                 "Failed to register user; rollback also failed. "
-                "Manual cleanup of the Cognito user required."
+                "Manual cleanup of the identity-provider user required."
             ),
         ) from original_err
 
@@ -78,6 +74,7 @@ def register_user(
     request: Request,
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
+    idp: IdentityProvider = Depends(get_identity_provider),
 ) -> IUserResponse:
     """
     Register a new user in Cognito.
@@ -113,14 +110,11 @@ def register_user(
         available_roles = get_all_roles(db)
         validate_roles(user_data.roles, available_roles)
 
-        # Get user pool ID
-        user_pool_id = get_user_pool_id(request)
+        # Create the user in the identity provider (it sends the invitation)
+        user_id = idp.create_user(user_data.email)
 
-        # Create user in Cognito
-        user_id = create_cognito_user(user_data.email, user_pool_id)
-
-        # Store FLIP-owned profile data and audit the registration. Cognito
-        # remains the source of truth for authentication identity.
+        # Store FLIP-owned profile data and audit the registration. The
+        # identity provider remains the source of truth for authentication identity.
         try:
             db.add(
                 UserProfile(
@@ -139,7 +133,7 @@ def register_user(
             # UsernameExistsException; the helper raises its own 500 (with a
             # distinct detail) if the rollback itself fails, otherwise we
             # fall through to the retryable "Please try again" 500.
-            _rollback_cognito_on_audit_failure(user_data.email, user_pool_id, audit_err)
+            _rollback_cognito_on_audit_failure(idp, user_data.email, audit_err)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to register user. Please try again.",

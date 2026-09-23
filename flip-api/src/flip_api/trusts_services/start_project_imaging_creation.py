@@ -18,6 +18,7 @@ from sqlmodel import Session
 
 from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
+from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import TrustTask
 from flip_api.db.models.user_models import PermissionRef
@@ -27,7 +28,6 @@ from flip_api.domain.interfaces.trust import (
 )
 from flip_api.domain.schemas.status import TaskType
 from flip_api.project_services.services.project_services import get_project, get_users_with_access
-from flip_api.utils.cognito_helpers import get_cognito_users, get_user_pool_id
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/trust", tags=["trusts_services"])
@@ -48,6 +48,7 @@ async def start_project_imaging_creation(
     trust: ITrust = Body(..., description="Trust information"),
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
+    idp: IdentityProvider = Depends(get_identity_provider),
 ) -> dict[str, str]:
     """
     Queues imaging project creation as a task for the trust.
@@ -90,15 +91,14 @@ async def start_project_imaging_creation(
             )
 
         # Get project users
-        user_pool_id = get_user_pool_id(request)
         users_with_access = [uid for uid in get_users_with_access(project_id, db)]
 
         # Add owner of project to list of users
         users_with_access.append(project.owner_id)
         unique_users = {uid for uid in users_with_access}
 
-        # Get Cognito users
-        cognito_users = get_cognito_users(params={"UserPoolId": user_pool_id})
+        # Get the identity-provider records for them
+        cognito_users = idp.list_users()
 
         # Create request data for trust
         request_data = ICreateImagingProject(

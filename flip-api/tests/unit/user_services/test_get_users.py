@@ -49,7 +49,6 @@ def override_deps(mock_db):
 
 class TestGetUsers:
     @patch("flip_api.user_services.get_users.get_user_role_data")
-    @patch("flip_api.user_services.get_users.get_cognito_users")
     @patch("flip_api.user_services.get_users.get_total_pages")
     @patch("flip_api.user_services.get_users.get_paging_details")
     @patch("flip_api.user_services.get_users.has_permissions")
@@ -58,13 +57,13 @@ class TestGetUsers:
         mock_has_permissions,
         mock_paging_details,
         mock_get_total,
-        mock_get_cognito_users,
         mock_get_user_role_data,
+        fake_idp,
     ):
         mock_has_permissions.return_value = True
 
         mock_paging_details.return_value = MagicMock(page_number_int=1, page_size_int=2)
-        mock_get_cognito_users.return_value = ["user1", "user2"]
+        fake_idp.list_users.return_value = ["user1", "user2"]
         mock_get_user_role_data.return_value = [
             IUser(id=uuid4(), email="user1@example.com", is_disabled=False, roles=[]),
             IUser(id=uuid4(), email="user2@example.com", is_disabled=True, roles=[]),
@@ -75,7 +74,6 @@ class TestGetUsers:
 
         assert response.status_code == status.HTTP_200_OK
         body = response.json()
-        print(body)
 
         assert body["page"] == 1
         assert body["pageSize"] == 1
@@ -84,30 +82,32 @@ class TestGetUsers:
         assert body["data"] == [
             user.model_dump(mode="json", by_alias=True) for user in mock_get_user_role_data.return_value
         ]
+        fake_idp.list_users.assert_called_once_with()
 
     @patch("flip_api.user_services.get_users.has_permissions")
-    @patch("flip_api.user_services.get_users.get_pool_id")
-    def test_get_users_no_permission(self, mock_get_user_pool_id, mock_has_permissions):
-        mock_get_user_pool_id.return_value = "mock-pool"
+    def test_get_users_no_permission(self, mock_has_permissions, fake_idp):
         mock_has_permissions.return_value = False
 
         response = client.get("/api/users")
         assert response.status_code == status.HTTP_403_FORBIDDEN
         assert "unable to manage users" in response.json()["detail"]
+        # The listing must not be fetched for an unauthorised caller.
+        fake_idp.list_users.assert_not_called()
 
-    @patch("flip_api.user_services.get_users.get_pool_id", side_effect=Exception("pool error"))
     @patch("flip_api.user_services.get_users.has_permissions", return_value=True)
-    def test_get_users_invalid_pool(self, mock_has_permissions, mock_get_user_pool_id):
-        response = client.get("/api/users")
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert response.json()["detail"] == "Failed to get user pool ID"
-        assert "pool error" not in response.json()["detail"]
+    def test_get_users_provider_failure(self, mock_has_permissions, fake_idp):
+        """An identity-provider read failure is a generic 500 that does not leak the cause."""
+        fake_idp.list_users.side_effect = Exception("provider down")
 
-    @patch("flip_api.user_services.get_users.get_pool_id", side_effect=Exception("server crash"))
-    @patch("flip_api.user_services.get_users.has_permissions", side_effect=Exception("deep error"))
-    def test_get_users_unexpected_error(self, mock_has_permissions, mock_get_user_pool_id):
         response = client.get("/api/users")
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert response.json()["detail"] == "Internal server error"
-        assert "server crash" not in response.json()["detail"]
+        assert "provider down" not in response.json()["detail"]
+
+    @patch("flip_api.user_services.get_users.has_permissions", side_effect=Exception("deep error"))
+    def test_get_users_unexpected_error(self, mock_has_permissions, fake_idp):
+        response = client.get("/api/users")
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert response.json()["detail"] == "Internal server error"
         assert "deep error" not in response.json()["detail"]
+        fake_idp.list_users.assert_not_called()

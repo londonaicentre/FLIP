@@ -15,15 +15,18 @@ from uuid import UUID
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.auth.token_verifier import verify_access_token
 from flip_api.config import get_settings
-from flip_api.utils.cognito_helpers import is_mfa_enabled
 from flip_api.utils.logger import logger
 
 security = HTTPBearer()
 
 
-def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UUID:
+def verify_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    idp: IdentityProvider = Depends(get_identity_provider),
+) -> UUID:
     """
     Verify a bearer token and enforce that the caller has TOTP MFA enabled.
 
@@ -37,6 +40,8 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) 
     Args:
         credentials (HTTPAuthorizationCredentials): Bearer credentials from
             the incoming request.
+        idp (IdentityProvider): The configured identity provider, asked for
+            the caller's MFA state.
 
     Returns:
         UUID: The user ID (``sub`` claim) from the verified token.
@@ -53,7 +58,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) 
         logger.debug(f"ENFORCE_MFA disabled — skipping MFA gate for user: {identity.sub}")
         return identity.sub
 
-    if not is_mfa_enabled(identity.username, get_settings().AWS_COGNITO_USER_POOL_ID):
+    if not idp.is_mfa_enabled(identity.username):
         logger.warning(f"User {identity.sub} hit MFA-gated route without active TOTP")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

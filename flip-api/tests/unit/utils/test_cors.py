@@ -10,13 +10,16 @@
 # limitations under the License.
 #
 
-"""Unit tests for the Cognito-derived CORS allowlist (`flip_api.utils.cors`)."""
+"""Unit tests for the pure CORS-origin normalisers in ``flip_api.utils.cors``.
 
-from unittest.mock import patch
+Fetching the allowlist from the identity backend is the provider's job
+(``IdentityProvider.allowed_origins``); those tests live with the provider in
+``tests/unit/auth/identity/``. This module covers only the URL → origin arithmetic.
+"""
 
 import pytest
 
-from flip_api.utils.cors import _origin_from_url, get_cors_allowed_origins
+from flip_api.utils.cors import _origin_from_url, normalise_origins
 
 
 class TestOriginFromUrl:
@@ -45,56 +48,30 @@ class TestOriginFromUrl:
         assert _origin_from_url(url) is None
 
 
-class TestGetCorsAllowedOrigins:
-    """Tests for get_cors_allowed_origins (Cognito-derived CORS allowlist)."""
+class TestNormaliseOrigins:
+    """Tests for normalise_origins: the list form every identity backend feeds ``CORSMiddleware``."""
 
-    @pytest.fixture
-    def mock_boto3_client(self):
-        with patch("flip_api.utils.cognito_helpers.boto3.client") as mock_client:
-            yield mock_client
+    def test_normalizes_dedupes_and_preserves_order(self):
+        urls = [
+            "https://app.flip.aicentre.co.uk",
+            "https://localhost:443",
+            # Duplicate after normalization (path dropped) — must be deduped, first position kept.
+            "https://app.flip.aicentre.co.uk/callback",
+            "http://localhost:8080",
+            # Duplicate after normalization (default port stripped).
+            "https://localhost",
+        ]
 
-    @pytest.fixture
-    def mock_settings(self):
-        """Patch `get_settings` in *both* modules this path crosses.
+        assert normalise_origins(urls) == [
+            "https://app.flip.aicentre.co.uk",
+            "https://localhost",
+            "http://localhost:8080",
+        ]
 
-        `get_cors_allowed_origins` reads the pool/client IDs via `cors.get_settings`,
-        but the client it calls them on is built by `cognito_helpers._cognito_client`,
-        which reads `AWS_REGION` via `cognito_helpers.get_settings`. Patching only one
-        leaves the other resolving real environment config — green on a dev machine
-        with a real `AWS_REGION`, red only in CI where it is the `<your-aws-region>`
-        placeholder from `.env.development.example`.
-        """
-        with (
-            patch("flip_api.utils.cors.get_settings") as mock_get_settings,
-            patch("flip_api.utils.cognito_helpers.get_settings", mock_get_settings),
-        ):
-            settings = mock_get_settings.return_value
-            settings.AWS_REGION = "eu-west-2"
-            settings.AWS_COGNITO_USER_POOL_ID = "pool-id"
-            settings.AWS_COGNITO_APP_CLIENT_ID = "client-id"
-            yield mock_get_settings
+    def test_drops_unusable_entries(self):
+        assert normalise_origins(["", "not-a-url", "/just/a/path", "https://ok.example.com"]) == [
+            "https://ok.example.com"
+        ]
 
-    def test_returns_normalized_unique_origins(self, mock_boto3_client, mock_settings):
-        """CallbackURLs are normalized to origins and deduplicated, preserving order."""
-        mock_boto3_client.return_value.describe_user_pool_client.return_value = {
-            "UserPoolClient": {
-                "CallbackURLs": [
-                    "https://app.flip.aicentre.co.uk",
-                    "https://localhost:443",
-                    # Duplicate after normalization (default port stripped) — must be deduped.
-                    "https://app.flip.aicentre.co.uk/callback",
-                ]
-            }
-        }
-
-        origins = get_cors_allowed_origins()
-
-        assert origins == ["https://app.flip.aicentre.co.uk", "https://localhost"]
-        mock_boto3_client.assert_called_once_with("cognito-idp", region_name="eu-west-2")
-        mock_boto3_client.return_value.describe_user_pool_client.assert_called_once_with(
-            UserPoolId="pool-id", ClientId="client-id"
-        )
-
-    def test_returns_empty_list_when_no_callback_urls(self, mock_boto3_client, mock_settings):
-        mock_boto3_client.return_value.describe_user_pool_client.return_value = {"UserPoolClient": {}}
-        assert get_cors_allowed_origins() == []
+    def test_empty_input_gives_empty_list(self):
+        assert normalise_origins([]) == []

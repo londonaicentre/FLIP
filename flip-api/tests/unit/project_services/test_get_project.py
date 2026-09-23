@@ -66,14 +66,6 @@ def mock_project():
     return project
 
 
-@pytest.fixture
-def mock_owner():
-    """Mock user object returned from get_user_by_email_or_id"""
-    owner = MagicMock()
-    owner.email = "owner@example.com"
-    return owner
-
-
 # @pytest.fixture
 # def mock_approved_trusts():
 #     """Mock approved trusts returned from get_approved_trusts_for_project"""
@@ -128,7 +120,7 @@ def test_get_project_details_invalid_id(client, mock_db):
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
 
-def test_get_project_details_returns_users_as_objects(client, mock_db, mock_project):
+def test_get_project_details_returns_users_as_objects(client, mock_db, mock_project, fake_idp):
     """Test that users are returned as objects with id, email, and isDisabled — and nothing more."""
     owner_user = CognitoUser(id=TEST_OWNER_ID, email="owner@example.com", is_disabled=False)
     access_user = CognitoUser(id=TEST_USER_ID, email="user@example.com", is_disabled=False)
@@ -142,17 +134,20 @@ def test_get_project_details_returns_users_as_objects(client, mock_db, mock_proj
         patch("flip_api.project_services.get_project.get_trusts_approval_status_for_project", return_value=[]),
         patch("flip_api.project_services.get_project.get_users_with_access", return_value=[TEST_USER_ID]),
         patch("flip_api.project_services.get_project.get_project_query", return_value=None),
-        patch("flip_api.project_services.get_project.get_settings") as mock_settings,
-        patch("flip_api.project_services.get_project.get_user_by_email_or_id") as mock_get_user,
     ):
-        mock_settings.return_value.AWS_COGNITO_USER_POOL_ID = "test-pool"
         # First call: owner lookup (by user_id=TEST_OWNER_ID), second call: access user lookup
-        mock_get_user.side_effect = [owner_user, access_user]
+        fake_idp.get_user.side_effect = [owner_user, access_user]
 
         response = client.get(f"/api/projects/{TEST_PROJECT_ID}")
 
     assert response.status_code == status.HTTP_200_OK
     data = response.json()
+
+    # Every lookup goes through the provider by id — owner first, then each user with access.
+    assert [c.kwargs for c in fake_idp.get_user.call_args_list] == [
+        {"user_id": TEST_OWNER_ID},
+        {"user_id": TEST_USER_ID},
+    ]
 
     # Users should be objects with id, email, isDisabled — not plain email strings
     assert isinstance(data["users"], list)
@@ -174,7 +169,7 @@ def test_get_project_details_returns_users_as_objects(client, mock_db, mock_proj
         assert user.get("organisation", "") == ""
 
 
-def test_get_project_details_filters_disabled_users(client, mock_db, mock_project):
+def test_get_project_details_filters_disabled_users(client, mock_db, mock_project, fake_idp):
     """Test that disabled users are excluded from the users list."""
     owner_user = CognitoUser(id=TEST_OWNER_ID, email="owner@example.com", is_disabled=False)
     disabled_user = CognitoUser(id=TEST_USER_ID, email="disabled@example.com", is_disabled=True)
@@ -188,11 +183,8 @@ def test_get_project_details_filters_disabled_users(client, mock_db, mock_projec
         patch("flip_api.project_services.get_project.get_trusts_approval_status_for_project", return_value=[]),
         patch("flip_api.project_services.get_project.get_users_with_access", return_value=[TEST_USER_ID]),
         patch("flip_api.project_services.get_project.get_project_query", return_value=None),
-        patch("flip_api.project_services.get_project.get_settings") as mock_settings,
-        patch("flip_api.project_services.get_project.get_user_by_email_or_id") as mock_get_user,
     ):
-        mock_settings.return_value.AWS_COGNITO_USER_POOL_ID = "test-pool"
-        mock_get_user.side_effect = [owner_user, disabled_user]
+        fake_idp.get_user.side_effect = [owner_user, disabled_user]
 
         response = client.get(f"/api/projects/{TEST_PROJECT_ID}")
 
@@ -204,7 +196,7 @@ def test_get_project_details_filters_disabled_users(client, mock_db, mock_projec
     assert data["users"][0]["email"] == "owner@example.com"
 
 
-def test_get_project_details_surfaces_has_imaging_false(client, mock_db, mock_project):
+def test_get_project_details_surfaces_has_imaging_false(client, mock_db, mock_project, fake_idp):
     """The detail route is what the UI's chip/layout and the smoke read the flag off (FLIP#1071)."""
     owner_user = CognitoUser(id=TEST_OWNER_ID, email="owner@example.com", is_disabled=False)
     mock_project.description = "Test description"
@@ -218,10 +210,8 @@ def test_get_project_details_surfaces_has_imaging_false(client, mock_db, mock_pr
         patch("flip_api.project_services.get_project.get_trusts_approval_status_for_project", return_value=[]),
         patch("flip_api.project_services.get_project.get_users_with_access", return_value=[]),
         patch("flip_api.project_services.get_project.get_project_query", return_value=None),
-        patch("flip_api.project_services.get_project.get_settings") as mock_settings,
-        patch("flip_api.project_services.get_project.get_user_by_email_or_id", return_value=owner_user),
     ):
-        mock_settings.return_value.AWS_COGNITO_USER_POOL_ID = "test-pool"
+        fake_idp.get_user.return_value = owner_user
 
         response = client.get(f"/api/projects/{TEST_PROJECT_ID}")
 

@@ -15,8 +15,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 
 from flip_api.auth.dependencies import verify_token_no_mfa
+from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.config import get_settings
-from flip_api.utils.cognito_helpers import get_user_pool_id, get_username, is_mfa_enabled
 
 router = APIRouter(prefix="/users", tags=["user_services"])
 
@@ -25,6 +25,7 @@ router = APIRouter(prefix="/users", tags=["user_services"])
 def get_own_mfa_status(
     request: Request,
     token_id: UUID = Depends(verify_token_no_mfa),
+    idp: IdentityProvider = Depends(get_identity_provider),
 ) -> dict[str, bool]:
     """
     Report whether the caller has an active TOTP authenticator and
@@ -48,9 +49,8 @@ def get_own_mfa_status(
         HTTPException: 404 if the token's sub does not resolve to a
         Cognito user, 500 on Cognito errors.
     """
-    user_pool_id = get_user_pool_id(request)
-    username = get_username(str(token_id), user_pool_id)
+    username = idp.get_username(token_id)
     return {
-        "enabled": is_mfa_enabled(username, user_pool_id),
+        "enabled": idp.is_mfa_enabled(username),
         "required": get_settings().ENFORCE_MFA,
     }

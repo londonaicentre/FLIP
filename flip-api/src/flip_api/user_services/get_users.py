@@ -17,10 +17,10 @@ from sqlmodel import Session
 
 from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
+from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.schemas.users import IUser
-from flip_api.utils.cognito_helpers import get_cognito_users, get_pool_id
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import IPagedData, get_paging_details, get_total_pages
 from flip_api.utils.user_roles import get_user_role_data
@@ -40,6 +40,7 @@ def get_users(
     request: Request,
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
+    idp: IdentityProvider = Depends(get_identity_provider),
 ) -> IPagedData[IUser]:
     """
     Get a list of users with pagination.
@@ -65,18 +66,11 @@ def get_users(
                 status_code=status.HTTP_403_FORBIDDEN, detail=f"User with ID: {token_id} was unable to manage users"
             )
 
-        # Get user pool ID from request
-        try:
-            user_pool_id = get_pool_id(request)
-        except Exception as e:
-            logger.exception("Failed to get user pool ID")
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to get user pool ID") from e
-
         # Create paging info
         paging_info = get_paging_details(dict(request.query_params))
 
-        # Get users from Cognito
-        users = get_cognito_users(params={"UserPoolId": user_pool_id})
+        # Get users from the identity provider
+        users = idp.list_users()
 
         data: list[IUser] = []
 

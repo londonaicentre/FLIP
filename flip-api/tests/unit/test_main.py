@@ -105,6 +105,7 @@ class TestDocsGating:
     def test_docs_urls_none_in_production(self, monkeypatch):
         """With ENV=production, the FastAPI app must build with all three URLs unset."""
         monkeypatch.setattr(config, "_settings", SimpleNamespace(ENV="production"))
+        original_app = main.app
         try:
             # FastAPI bakes docs_url/openapi_url/redoc_url into the router at app
             # construction time, so patching the live app object after the fact has
@@ -120,6 +121,12 @@ class TestDocsGating:
             assert client.get("/api/openapi.json").status_code == 404
             assert client.get("/api/redoc").status_code == 404
         finally:
-            # Other tests in the suite hold references to the dev-mode app — restore it.
+            # Other tests in the suite hold references to the dev-mode app object
+            # (module-level `from flip_api.main import app`, module-level
+            # TestClients) while fixtures such as `fake_idp` resolve
+            # `flip_api.main.app` lazily. Reloading rebuilds the module under
+            # dev settings but binds a *new* FastAPI object; put the original
+            # back so both kinds of reference keep meeting the same app.
             monkeypatch.undo()
             importlib.reload(main)
+            main.app = original_app

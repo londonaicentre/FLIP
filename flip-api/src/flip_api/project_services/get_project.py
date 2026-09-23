@@ -17,7 +17,7 @@ from sqlmodel import Session
 
 from flip_api.auth.access_manager import can_access_project
 from flip_api.auth.dependencies import verify_token
-from flip_api.config import get_settings
+from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.db.database import get_session
 from flip_api.domain.interfaces.project import IReturnedProject
 from flip_api.domain.schemas.actions import ProjectAuditAction
@@ -28,9 +28,6 @@ from flip_api.project_services.services.project_services import (
     get_project_query,
     get_trusts_approval_status_for_project,
     get_users_with_access,
-)
-from flip_api.utils.cognito_helpers import (
-    get_user_by_email_or_id,
 )
 from flip_api.utils.logger import logger
 
@@ -60,6 +57,7 @@ def get_project_details_endpoint(
     project_id: UUID,  # FastAPI handles UUID validation, returns 422 if invalid
     db: Session = Depends(get_session),
     current_user_id: UUID = Depends(verify_token),
+    idp: IdentityProvider = Depends(get_identity_provider),
 ) -> IReturnedProject:
     """
     Retrieves detailed information for a given project ID.
@@ -109,26 +107,13 @@ def get_project_details_endpoint(
     users_with_access_info = get_users_with_access(project_id, db)
     logger.debug(f"Fetched {len(users_with_access_info)} users with access for project {project_id}")
 
-    # Get cognito users
-    # Assuming this call is intended to fetch the project owner's details.
-    # The use of current_user_id here alongside project_db.owner_id (as email) is specific to its implementation.
-    user_pool_id = get_settings().AWS_COGNITO_USER_POOL_ID
-    owner_cognito_user = get_user_by_email_or_id(user_pool_id=user_pool_id, user_id=project_db.owner_id)
-
-    if owner_cognito_user is None:
-        logger.error(
-            f"Owner Cognito user details could not be retrieved for project {project_id} "
-            f"(based on project_db.owner_id: {project_db.owner_id}). Requesting user: {current_user_id}."
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve project owner's details.",
-        )
+    # Resolve the project owner's identity-provider record (404 if the owner is gone).
+    owner_cognito_user = idp.get_user(user_id=project_db.owner_id)
 
     if owner_cognito_user.email is None:
         logger.error(
-            f"Owner Cognito user (identified by project_db.owner_id: {project_db.owner_id}) for project {project_id} "
-            f"has no email address in Cognito. Requesting user: {current_user_id}."
+            f"Owner (project_db.owner_id: {project_db.owner_id}) of project {project_id} "
+            f"has no email address in the identity provider. Requesting user: {current_user_id}."
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -139,10 +124,7 @@ def get_project_details_endpoint(
     # Pydantic will validate if it's a valid EmailStr format during IReturnedProject instantiation.
     resolved_owner_email = owner_cognito_user.email
 
-    users_with_access_cognito = [
-        get_user_by_email_or_id(user_pool_id=user_pool_id, user_id=user_id)
-        for user_id in users_with_access_info
-    ]
+    users_with_access_cognito = [idp.get_user(user_id=user_id) for user_id in users_with_access_info]
     users_with_access_cognito.append(owner_cognito_user)
 
     # Deduplicate by ID and filter out disabled users (matching legacy behavior)

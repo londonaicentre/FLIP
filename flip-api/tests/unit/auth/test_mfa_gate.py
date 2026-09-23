@@ -22,7 +22,7 @@ sensitive route is caught here, not in production.
 
 import uuid
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import Depends, FastAPI
@@ -30,6 +30,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token, verify_token_no_mfa
+from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.auth.token_verifier import VerifiedIdentity
 
 
@@ -40,8 +41,15 @@ def user_sub() -> str:
 
 @pytest.fixture
 def gated_app() -> FastAPI:
-    """Tiny FastAPI app with one MFA-gated route and one bypass route."""
+    """Tiny FastAPI app with one MFA-gated route and one bypass route.
+
+    The identity provider is a ``MagicMock`` installed as the dependency
+    override and exposed on ``app.state.idp`` so each test can script
+    ``is_mfa_enabled`` — the only provider call the gate makes.
+    """
     app = FastAPI()
+    app.state.idp = MagicMock(spec=IdentityProvider)
+    app.dependency_overrides[get_identity_provider] = lambda: app.state.idp
 
     @app.get("/gated")
     def gated_route(_user_id: uuid.UUID = Depends(verify_token)) -> dict[str, str]:
@@ -65,10 +73,10 @@ def test_mfa_gated_route_returns_403_when_caller_has_no_active_totp(gated_app: F
     relies on this exact response shape."""
     with (
         patch("flip_api.auth.dependencies.verify_access_token") as mock_decode,
-        patch("flip_api.auth.dependencies.is_mfa_enabled") as mock_is_enabled,
         patch("flip_api.auth.dependencies.get_settings") as mock_get_settings,
     ):
         mock_decode.return_value = _payload(user_sub)
+        mock_is_enabled = gated_app.state.idp.is_mfa_enabled
         mock_is_enabled.return_value = False
         mock_get_settings.return_value.ENFORCE_MFA = True
 
@@ -83,10 +91,10 @@ def test_mfa_gated_route_returns_200_when_caller_has_active_totp(gated_app: Fast
     """The complementary case: a valid JWT plus active TOTP passes through."""
     with (
         patch("flip_api.auth.dependencies.verify_access_token") as mock_decode,
-        patch("flip_api.auth.dependencies.is_mfa_enabled") as mock_is_enabled,
         patch("flip_api.auth.dependencies.get_settings") as mock_get_settings,
     ):
         mock_decode.return_value = _payload(user_sub)
+        mock_is_enabled = gated_app.state.idp.is_mfa_enabled
         mock_is_enabled.return_value = True
         mock_get_settings.return_value.ENFORCE_MFA = True
 
@@ -103,9 +111,9 @@ def test_bypass_route_admits_caller_without_totp(gated_app: FastAPI, user_sub: s
     re-enrol."""
     with (
         patch("flip_api.auth.dependencies.verify_access_token") as mock_decode,
-        patch("flip_api.auth.dependencies.is_mfa_enabled") as mock_is_enabled,
     ):
         mock_decode.return_value = _payload(user_sub)
+        mock_is_enabled = gated_app.state.idp.is_mfa_enabled
         # Even with MFA explicitly disabled on the user, the bypass route
         # should not consult is_mfa_enabled at all.
         mock_is_enabled.return_value = False
@@ -122,10 +130,10 @@ def test_mfa_gate_is_skipped_when_enforce_mfa_is_false(gated_app: FastAPI, user_
     routes wired to ``verify_token``. Stag/prod must never see this."""
     with (
         patch("flip_api.auth.dependencies.verify_access_token") as mock_decode,
-        patch("flip_api.auth.dependencies.is_mfa_enabled") as mock_is_enabled,
         patch("flip_api.auth.dependencies.get_settings") as mock_get_settings,
     ):
         mock_decode.return_value = _payload(user_sub)
+        mock_is_enabled = gated_app.state.idp.is_mfa_enabled
         mock_is_enabled.return_value = False
         mock_get_settings.return_value.ENFORCE_MFA = False
 
