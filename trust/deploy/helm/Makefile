@@ -99,9 +99,11 @@ OVERRIDES_FILE ?=
 # duration on a slow cluster — an upgrade that had already applied the corrected pod
 # spec would then report failure, and the operator would read a Helm timeout rather than
 # the wait that actually expired (FLIP#1228). The default is above the ~22m observed on
-# a real trust cluster; the job's own internal budgets (templates/xnat-init-job.yaml)
-# still bound it from below, so raise one of those past this value and this must rise
-# with it.
+# a real trust cluster. The job's own internal budgets (templates/xnat-init-job.yaml)
+# already chain to 40-90 minutes, so THIS is the binding constraint: the Job is killed
+# here long before any of them expires. Raising one of those alone therefore changes
+# nothing about how long a deploy will wait — raise this too, or the extra budget is
+# unreachable.
 HELM_TIMEOUT ?= 30m
 
 # Determine which values files to pass

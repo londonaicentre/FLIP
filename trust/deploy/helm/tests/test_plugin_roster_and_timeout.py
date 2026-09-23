@@ -223,7 +223,58 @@ def test_expected_plugin_jars_ignores_a_release_with_xnat_disabled(monkeypatch: 
         lambda *_a, **_k: (True, '{"xnat": {"enabled": false, "web": {"plugins": {"urls": {"a": "x/a-1.jar"}}}}}'),
     )
 
-    assert check_status.expected_plugin_jars("trust-release", "flip-trust") is None
+    roster = check_status.expected_plugin_jars("trust-release", "flip-trust")
+
+    assert roster.status is check_status.RosterLookup.DISABLED
+
+
+def test_expected_plugin_jars_skips_a_release_with_plugins_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """plugins.enabled=false means no download container and legitimately no jars.
+
+    Comparing anyway FAILs every plugin and sends the operator to the logs of a container
+    that was never created.
+    """
+    monkeypatch.setattr(check_status, "check_command", lambda _cmd: True)
+    monkeypatch.setattr(
+        check_status,
+        "run_command",
+        lambda *_a, **_k: (
+            True,
+            '{"xnat": {"enabled": true, "web": {"plugins": {"enabled": false, "urls": {"a": "x/a-1.jar"}}}}}',
+        ),
+    )
+
+    roster = check_status.expected_plugin_jars("trust-release", "flip-trust")
+
+    assert roster.status is check_status.RosterLookup.DISABLED
+    assert "plugins.enabled" in roster.detail
+
+
+@pytest.mark.parametrize(
+    ("command_ok", "result", "because"),
+    [
+        (True, (False, "Error: release: not found"), "helm errored or timed out"),
+        (True, (True, "   "), "helm returned nothing"),
+        (True, (True, "{not json"), "helm returned unparseable JSON"),
+        (False, (True, "{}"), "helm is not installed"),
+    ],
+)
+def test_a_roster_that_cannot_be_read_is_not_reported_as_disabled(
+    monkeypatch: pytest.MonkeyPatch, command_ok: bool, result: tuple[bool, str], because: str
+) -> None:
+    """UNREADABLE, never DISABLED — otherwise a broken helm silently turns this check off.
+
+    The caller prints DISABLED as INFO, which does not touch the warning counter, so
+    collapsing the two lets ``make status`` exit green with the one check that catches
+    FLIP#1228 never having run.
+    """
+    monkeypatch.setattr(check_status, "check_command", lambda _cmd: command_ok)
+    monkeypatch.setattr(check_status, "run_command", lambda *_a, **_k: result)
+
+    roster = check_status.expected_plugin_jars("trust-release", "flip-trust")
+
+    assert roster.status is check_status.RosterLookup.UNREADABLE, because
+    assert roster.detail, "an unreadable roster must say why, or the operator cannot act on it"
 
 
 def test_expected_plugin_jars_reads_the_live_values_not_the_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -237,7 +288,10 @@ def test_expected_plugin_jars_reads_the_live_values_not_the_checkout(monkeypatch
     def fake_run(args: list[str], **_kwargs: object) -> tuple[bool, str]:
         seen["args"] = args
         return True, (
-            '{"xnat": {"enabled": true, "web": {"plugins": {"urls": {'
+            # `--all` renders chart defaults too, so plugins.enabled is present in real
+            # output; the check mirrors the template's own `and .Values…enabled`, which
+            # treats an absent key as off.
+            '{"xnat": {"enabled": true, "web": {"plugins": {"enabled": true, "urls": {'
             '"container-service": "https://x/container-service-3.8.1-fat.jar",'
             '"dicom-query-retrieve": "https://y/dicom-query-retrieve-3.0.0-xpl.jar",'
             '"broken": "https://z/no-extension"'
@@ -247,12 +301,17 @@ def test_expected_plugin_jars_reads_the_live_values_not_the_checkout(monkeypatch
     monkeypatch.setattr(check_status, "check_command", lambda _cmd: True)
     monkeypatch.setattr(check_status, "run_command", fake_run)
 
-    jars = check_status.expected_plugin_jars("trust-release", "flip-trust")
+    roster = check_status.expected_plugin_jars("trust-release", "flip-trust")
 
-    assert jars == {
+    assert roster.status is check_status.RosterLookup.OK
+    assert roster.jars == {
         "container-service": "container-service-3.8.1-fat.jar",
         "dicom-query-retrieve": "dicom-query-retrieve-3.0.0-xpl.jar",
     }, "a URL with no derivable jar name must be dropped, not compared as an empty filename"
+    assert roster.undrivable == ("broken",), (
+        "a URL the chart's own download-plugins would SystemExit on must be reported, not "
+        "silently dropped — that release cannot start a pod at all"
+    )
     assert seen["args"][:4] == ["helm", "get", "values", "trust-release"]
     assert "--all" in seen["args"], "without --all, chart defaults are absent and every plugin looks unconfigured"
 
@@ -261,7 +320,9 @@ def test_expected_plugin_jars_declines_without_helm(monkeypatch: pytest.MonkeyPa
     """No helm means no live values; skip rather than fall back to the checkout."""
     monkeypatch.setattr(check_status, "check_command", lambda _cmd: False)
 
-    assert check_status.expected_plugin_jars("trust-release", "flip-trust") is None
+    assert check_status.expected_plugin_jars("trust-release", "flip-trust").status is (
+        check_status.RosterLookup.UNREADABLE
+    )
 
 
 # ── The C-STORE smoke ────────────────────────────────────────────────────────────────
@@ -331,3 +392,184 @@ def test_xnat_web_replaces_its_pod_rather_than_surging_a_second_one() -> None:
         "surges a second XNAT onto the same RWO volume and database and the rollout stalls "
         "with the old pod still serving"
     )
+
+
+# ── The check itself: pod selection and the paths that report nothing ────────────────
+
+
+@pytest.fixture
+def reported(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    """Collect ``print_status`` calls instead of printing them."""
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(check_status, "print_status", lambda status, message: calls.append((status, message)))
+    return calls
+
+
+def _roster(**kwargs: object) -> object:
+    """An OK roster asking for one jar, unless overridden."""
+    defaults: dict[str, object] = {
+        "status": check_status.RosterLookup.OK,
+        "jars": {"dicom-query-retrieve": "dicom-query-retrieve-3.0.0-xpl.jar"},
+    }
+    defaults.update(kwargs)
+    return check_status.PluginRoster(**defaults)  # type: ignore[arg-type]
+
+
+def test_every_running_pod_is_checked_so_a_surge_cannot_mask_a_stale_one(
+    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
+) -> None:
+    """Running is not Ready, and the Service may still route to the old pod.
+
+    Taking pods[0] would report the NEW pod's correct jars and PASS while every C-STORE
+    still lands on the stale one — the false confidence FLIP#1228 was made of. The stale
+    pod is deliberately second here, so a first-pod-only check passes this scenario.
+    """
+    monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
+    monkeypatch.setattr(check_status, "kubectl_list", lambda *_a, **_k: ["pod/xnat-new", "pod/xnat-old"])
+
+    listings = {
+        "pod/xnat-new": "dicom-query-retrieve-3.0.0-xpl.jar",
+        "pod/xnat-old": "dicom-query-retrieve-2.3.2-xpl.jar",
+    }
+    monkeypatch.setattr(check_status, "run_command", lambda args, **_k: (True, listings[args[2]]))
+
+    check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
+
+    fails = [message for status, message in reported if status == "FAIL"]
+    assert any("xnat-old" in message and "2.3.2" in message for message in fails), (
+        "the stale second pod was not reported — a surged pod can hide the one still serving"
+    )
+    assert not [message for status, message in reported if status == "PASS"], (
+        "the roster must not PASS while any running pod carries the wrong jars"
+    )
+    assert any(status == "WARN" and "2 xnat-web pods" in message for status, message in reported), (
+        "two running pods means a rollout in progress or stalled, and the operator needs telling"
+    )
+
+
+def test_a_roster_that_could_not_be_read_warns_rather_than_skipping_quietly(
+    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
+) -> None:
+    """INFO does not touch the warning counter, so a broken helm would exit green."""
+    monkeypatch.setattr(
+        check_status,
+        "expected_plugin_jars",
+        lambda *_a: _roster(status=check_status.RosterLookup.UNREADABLE, jars={}, detail="helm timed out"),
+    )
+
+    check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
+
+    assert [status for status, _ in reported] == ["WARN"]
+    assert "helm timed out" in reported[0][1]
+
+
+def test_a_disabled_release_is_skipped_without_a_warning(
+    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
+) -> None:
+    """XNAT off is a legitimate configuration (kind CI), not a degraded run."""
+    monkeypatch.setattr(
+        check_status,
+        "expected_plugin_jars",
+        lambda *_a: _roster(status=check_status.RosterLookup.DISABLED, jars={}, detail="xnat.enabled is false"),
+    )
+
+    check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
+
+    assert [status for status, _ in reported] == ["INFO"]
+
+
+def test_an_undrivable_url_is_reported_rather_than_dropped(
+    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
+) -> None:
+    """The chart's own download container SystemExits on it, so no pod can start."""
+    monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster(undrivable=("broken",)))
+    monkeypatch.setattr(check_status, "kubectl_list", lambda *_a, **_k: ["pod/xnat-1"])
+    monkeypatch.setattr(
+        check_status, "run_command", lambda *_a, **_k: (True, "dicom-query-retrieve-3.0.0-xpl.jar")
+    )
+
+    check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
+
+    assert any(status == "WARN" and "broken" in message for status, message in reported)
+
+
+def test_no_running_pod_warns(monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]) -> None:
+    """Nothing to inspect is unverified, not verified."""
+    monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
+    monkeypatch.setattr(check_status, "kubectl_list", lambda *_a, **_k: [])
+
+    check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
+
+    assert [status for status, _ in reported] == ["WARN"]
+    assert not [message for status, message in reported if status == "PASS"]
+
+
+def test_an_exec_failure_leaves_the_roster_unverified_rather_than_passing(
+    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
+) -> None:
+    """A pod whose plugin dir could not be listed says nothing about its jars."""
+    monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
+    monkeypatch.setattr(check_status, "kubectl_list", lambda *_a, **_k: ["pod/xnat-1"])
+    monkeypatch.setattr(check_status, "run_command", lambda *_a, **_k: (False, "error: unable to upgrade connection"))
+
+    check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
+
+    assert [status for status, _ in reported] == ["WARN"]
+    assert not [message for status, message in reported if status == "PASS"], (
+        "an unlistable pod must not count as a clean one"
+    )
+
+
+def test_a_single_matching_pod_passes(monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]) -> None:
+    """The happy path still reports PASS, naming the jars it matched."""
+    monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
+    monkeypatch.setattr(check_status, "kubectl_list", lambda *_a, **_k: ["pod/xnat-1"])
+    monkeypatch.setattr(
+        check_status, "run_command", lambda *_a, **_k: (True, "dicom-query-retrieve-3.0.0-xpl.jar\nREADME")
+    )
+
+    check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
+
+    assert [status for status, _ in reported] == ["PASS"]
+    assert "dicom-query-retrieve-3.0.0-xpl.jar" in reported[0][1]
+
+
+def test_the_smoke_fails_a_curl_rather_than_reading_an_error_body() -> None:
+    """`curl -sS` exits 0 on a 401/404, and Orthanc's 401 body is empty.
+
+    Without `-f` a rotated credential reports "Orthanc holds no instances — seed the PACS
+    first" against a fully seeded PACS, sending the operator to fix the wrong thing.
+    """
+    script = (CHART_DIR / "scripts" / "smoke-cstore.sh").read_text()
+
+    assert re.search(r"curl -fsS|curl -sSf|curl --fail", script), (
+        "orthanc_curl no longer passes --fail, so an HTTP error is indistinguishable from an "
+        "empty result and is reported as a misleading success"
+    )
+
+
+def test_the_smoke_names_a_reason_for_each_failed_substitution() -> None:
+    """Under `set -euo pipefail` a bare `$(kubectl …)` aborts on kubectl's stderr alone.
+
+    The script's header promises every exit names its reason; a command substitution that
+    dies unguarded breaks that promise exactly where the operator needs it most.
+    """
+    script = (CHART_DIR / "scripts" / "smoke-cstore.sh").read_text()
+    lines = script.splitlines()
+
+    def logical_line_at(index: int) -> str:
+        """Join the statement starting at ``index`` across its backslash continuations."""
+        collected = [lines[index]]
+        while collected[-1].rstrip().endswith("\\") and index + 1 < len(lines):
+            index += 1
+            collected.append(lines[index])
+        return "\n".join(collected)
+
+    for assignment in ("ORTHANC_CREDS=$(", "LOG_MARK=$(", "INSTANCE_ID=$(orthanc_curl"):
+        starts = [i for i, line in enumerate(lines) if line.lstrip().startswith(assignment)]
+        assert starts, f"{assignment}…) has gone — re-check this guard"
+        statement = logical_line_at(starts[0])
+        assert "|| fail" in statement, (
+            f"`{assignment}…)` has no `|| fail` naming its reason, so a failing kubectl or curl "
+            f"kills the script with only its own stderr. Statement was:\n{statement}"
+        )

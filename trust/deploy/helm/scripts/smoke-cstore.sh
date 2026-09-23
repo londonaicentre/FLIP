@@ -106,7 +106,7 @@ orthanc_curl() {
   printf '%s' "$ORTHANC_CREDS" | kubectl exec -i -n "$NAMESPACE" "$XNAT_POD" -- sh -c '
     read -r creds || true
     [ -n "$creds" ] || { echo "no Orthanc credential on stdin" >&2; exit 1; }
-    exec curl -sS --max-time 300 -u "$creds" "$@"
+    exec curl -fsS --max-time 300 -u "$creds" "$@"
   ' -- "$@"
 }
 
@@ -123,24 +123,32 @@ SECRET_NAME=$(orthanc_secret_ref)
 # {"user":"pass"} → user:pass. Orthanc's REST API needs a registered user; the DICOM
 # association it then opens does not, which is why this credential is only about
 # *asking* for the store and says nothing about the transfer's own authentication.
+# Each substitution below names its own failure. Under `set -euo pipefail` a failing
+# kubectl inside `$(…)` otherwise aborts the script on kubectl's stderr alone, with none
+# of the "reason named" this header promises.
 ORTHANC_CREDS=$(kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" \
   -o jsonpath='{.data.orthanc-registered-users}' | base64 -d \
-  | sed -n 's/.*"\([^"]*\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1:\2/p')
+  | sed -n 's/.*"\([^"]*\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1:\2/p') \
+  || fail "could not read ${SECRET_NAME}/orthanc-registered-users — is the Secret present and readable?"
 [ -n "$ORTHANC_CREDS" ] || fail "could not read a user out of ${SECRET_NAME}/orthanc-registered-users"
 
 # ── 1. Mark the receiver log, so only lines this transfer produces are judged ────────
 # A trust that has been running for weeks has old errors in dicom.log; scanning the
 # whole file would fail on history and hide today's result.
 LOG_MARK=$(kubectl exec -n "$NAMESPACE" "$XNAT_POD" -- \
-  sh -c "wc -l < '${DICOM_LOG}' 2>/dev/null || echo 0" | tr -d '[:space:]')
+  sh -c "wc -l < '${DICOM_LOG}' 2>/dev/null || echo 0" | tr -d '[:space:]') \
+  || fail "could not read ${DICOM_LOG} in ${XNAT_POD} — without a mark this smoke cannot tell this transfer's log lines from the pod's history"
 LOG_MARK="${LOG_MARK:-0}"
 info "   ${DICOM_LOG} is ${LOG_MARK} lines before the store"
 
 # ── 2. Pick something to send ────────────────────────────────────────────────────────
 if [ -z "$INSTANCE_ID" ]; then
-  # `since` and `limit` go together: Orthanc rejects either one alone with a 400, and
-  # `curl -sS` (no --fail) would hand that error body on to be mangled into an "id".
-  INSTANCE_ID=$(orthanc_curl "${ORTHANC_URL}/instances?since=0&limit=1" | tr -d '[]" \n' | cut -d, -f1)
+  # `since` and `limit` go together: Orthanc rejects either one alone with a 400. With
+  # `curl -f` that is now a non-zero exit named here, rather than an error body mangled
+  # into an "id" — and the same guard distinguishes a bad credential (401, empty body)
+  # from a genuinely empty PACS, which otherwise both read as "holds no instances".
+  INSTANCE_ID=$(orthanc_curl "${ORTHANC_URL}/instances?since=0&limit=1" | tr -d '[]" \n' | cut -d, -f1) \
+    || fail "could not list Orthanc's instances at ${ORTHANC_URL} — check the credential in ${SECRET_NAME} and that Orthanc is reachable from ${XNAT_POD}"
 fi
 [ -n "$INSTANCE_ID" ] || fail "Orthanc holds no instances — seed the PACS first, or pass INSTANCE_ID=<orthanc instance id>"
 # An Orthanc resource id is 8 dash-separated hex groups. Anything else is an error body
