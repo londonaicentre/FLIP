@@ -39,15 +39,14 @@ fi
 
 STAMP_FILE="${PLUGIN_DIR}/.s3-prefix"
 
-# NOTE: ohif-viewer is intentionally NOT installed. FLIP uses XNAT purely as a
-# DICOM store for FL training and never opens the OHIF viewer, but the plugin's
-# per-session metadata-rebuild event listener is the dominant load on XNAT's
-# Reactor EventBus and materially drives the back-pressure livelock that wedges
-# bulk cohort imports (FLIP#662). It is excluded from the S3 sync below.
+# The plugin families every FLIP XNAT runs — the same roster the CI image build bakes
+# (.github/workflows/docker_build_xnat_web.yml) and the Helm chart downloads
+# (trust/deploy/helm/values.yaml xnat.web.plugins.urls); keep the three in step.
 required_prefixes=(
   "batch-launch-"
   "container-service-"
   "dicom-query-retrieve-"
+  "ohif-viewer-"
 )
 expected_prefixes="$(printf '%s, ' "${required_prefixes[@]}")"
 expected_prefixes="${expected_prefixes%, }"
@@ -122,11 +121,10 @@ else
     echo "🔁 Local plugins were synced from '${synced_prefix:-<unknown>}' but this build needs '${S3_PREFIX}'."
   fi
   echo "📦 Syncing plugins from S3..."
-  # Exclude ohif-viewer: the trailing --exclude wins over --include for matching
-  # keys, so it is neither downloaded nor (with --delete) kept locally. See the
-  # required_prefixes note above (FLIP#662).
+  # Every jar under the version-keyed prefix is the roster; --delete clears versions the prefix
+  # no longer holds.
   aws s3 sync "s3://${S3_BUCKET}/${S3_PREFIX}/" "${PLUGIN_DIR}/" --delete \
-    --exclude "*" --include "*.jar" --exclude "ohif-viewer-*"
+    --exclude "*" --include "*.jar"
   printf '%s\n' "${S3_PREFIX}" > "${STAMP_FILE}"
 fi
 

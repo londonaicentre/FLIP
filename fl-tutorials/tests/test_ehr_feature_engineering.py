@@ -18,41 +18,20 @@ in-process (no dataset download); everything runs on CPU in the flip-utils[full]
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
-from pathlib import Path
-from types import ModuleType
 
 import numpy as np
 import pandas as pd
 import pytest
 import torch
-from tutorial_apps import TUTORIALS_ROOT
+from tutorial_apps import TUTORIALS_ROOT, load_module
 
 NVFLARE_APP_FILES = TUTORIALS_ROOT / "nvflare" / "tabular_classification" / "ehr_risk_prediction" / "app_files"
 FLOWER_APP = TUTORIALS_ROOT / "flower" / "ehr_risk_prediction" / "app"
 
 
-def _load_module(module_name: str, path: Path) -> ModuleType:
-    """Import a loose tutorial script from its file path (the apps are not packages)."""
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    assert spec is not None, f"cannot load {path}"
-    assert spec.loader is not None, f"cannot load {path}"
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    try:
-        spec.loader.exec_module(module)
-    except BaseException:
-        del sys.modules[module_name]
-        raise
-    return module
-
-
-fe = _load_module("ehr_under_test.feature_engineering", NVFLARE_APP_FILES / "feature_engineering.py")
-models = _load_module("ehr_under_test.models", NVFLARE_APP_FILES / "models.py")
+fe = load_module("ehr_under_test.feature_engineering", NVFLARE_APP_FILES / "feature_engineering.py")
+models = load_module("ehr_under_test.models", NVFLARE_APP_FILES / "models.py")
 
 
 @pytest.fixture
@@ -63,7 +42,6 @@ def cohort() -> pd.DataFrame:
     frame = pd.DataFrame(
         {
             "person_id": np.arange(n),
-            "accession_id": [str(i) for i in range(n)],
             "age": rng.integers(20, 90, n).astype(float),
             "is_female": rng.integers(0, 2, n),
             "label": rng.integers(0, 2, n),

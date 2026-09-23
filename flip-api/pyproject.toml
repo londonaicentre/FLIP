@@ -12,7 +12,7 @@
 
 [project]
 name = "flip-api"
-version = "0.6.0"
+version = "0.7.0"
 description = ""
 readme = "README.md"
 authors = [
@@ -122,3 +122,7 @@ exclude = [
 [tool.uv]
 # 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
 exclude-newer = "3 days"
+# Security: minimum versions for transitive packages with open CVEs.
+constraint-dependencies = [
+    "anyio>=4.14.2",  # CVE-2026-63374, CVE-2026-64847; transitive via httpx, starlette, watchfiles
+]

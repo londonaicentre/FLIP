@@ -42,11 +42,10 @@ jobs:
       BUILD_ARGS: |
         --build-arg PG_VERSION=12.2-alpine
     steps:
+      # Default checkout on purpose: no workflow_run trigger here (FLIP#882,
+      # scripts/tests/test_workflow_trust_guards.py).
       - name: Checkout code
         uses: actions/checkout@v5
-        with:
-          repository: ${{ github.event.workflow_run.head_repository.full_name }}
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Determine tags
         id: tags

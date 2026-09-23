@@ -22,13 +22,18 @@ FL_BACKEND ?= nvflare
 TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials sim-tutorial
 # Dataset targets are backend-agnostic: one download per dataset under the shared data root,
 # read by both harnesses (single copy in datasets/), so FL_BACKEND plays no part in them.
-DATASET_TARGETS := download-xray-data download-spleen-data download-spleen-checkpoint \
+DATASET_TARGETS := download-xray-data download-weights \
+	download-spleen-data download-spleen-checkpoint \
 	download-synthea-data upload-spleen-labels download-arkplus-finetuning-data \
 	download-arkplus-eval-data \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
 	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
-	reproduce-spleen-omop \
+	reproduce-spleen-omop build-spleen-canonical verify-spleen-dicom seed-spleen \
 	fetch-cxr-metadata-table build-cxr-omop-tables verify-cxr-omop-tables reproduce-cxr-omop \
+	download-brain-mri-msd-raw download-brain-mri-data convert-brain-mri-to-dicom \
+	create-brain-mri-metadata-table fetch-brain-mri-metadata-table build-brain-mri-omop-tables \
+	verify-brain-mri-omop-tables reproduce-brain-mri-omop build-brain-mri-canonical \
+	verify-brain-mri-dicom seed-brain-mri \
 	download-prostate-data convert-prostate-to-dicom convert-prostate-to-nifti partition-prostate-data \
 	create-prostate-metadata-table fetch-prostate-metadata-table build-prostate-omop-tables \
 	verify-prostate-omop-tables reproduce-prostate-omop build-prostate-canonical package-prostate-dicom
@@ -84,7 +89,7 @@ PYTEST ?= uv run --project ../flip-utils --extra full --group dev pytest
 # tests/datasets/utils/ is the shared contract and runs ONCE, in the first listed project's
 # environment. Any dataset environment can host it; re-running it per project would just repeat the
 # same assertions, and is not what catches the dependency drift above.
-DATASET_TEST_PROJECTS ?= spleen cxr synthea prostate
+DATASET_TEST_PROJECTS ?= spleen cxr synthea brain_mri prostate
 DATASET_UTILS_PROJECT ?= $(firstword $(DATASET_TEST_PROJECTS))
 
 .PHONY: pytest pytest-datasets test unit_test

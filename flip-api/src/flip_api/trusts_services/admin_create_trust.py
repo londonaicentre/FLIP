@@ -76,6 +76,8 @@ def admin_create_trust(
             session=db,
             audit_user_id=token_id,
         )
+    # Deliberately user-facing (#906): these are the hub's own domain exceptions, each carrying a
+    # message register_trust composes for the admin UI — not wrapped library/driver text.
     except (EmptyTrustNameError, EmptyTrustCodeError) as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e

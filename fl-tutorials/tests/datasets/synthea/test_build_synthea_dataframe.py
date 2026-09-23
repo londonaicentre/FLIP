@@ -123,15 +123,14 @@ def tables() -> dict[str, pd.DataFrame]:
 
 EXPECTED = pd.DataFrame(
     [
-        # person_id, accession_id, age, is_female, prediab, obesity, severe, htn, lipid, n_cond, n_visits, label
-        (1, "1", 63, 1, 1, 1, 0, 0, 0, 2, 2, 1),
-        (2, "2", 38, 0, 0, 0, 0, 1, 1, 2, 3, 0),
-        (4, "4", 53, 0, 0, 0, 0, 0, 0, 0, 0, 1),
-        (5, "5", 23, 1, 0, 0, 0, 0, 0, 1, 0, 0),
+        # person_id, age, is_female, prediab, obesity, severe, htn, lipid, n_cond, n_visits, label
+        (1, 63, 1, 1, 1, 0, 0, 0, 2, 2, 1),
+        (2, 38, 0, 0, 0, 0, 1, 1, 2, 3, 0),
+        (4, 53, 0, 0, 0, 0, 0, 0, 0, 0, 1),
+        (5, 23, 1, 0, 0, 0, 0, 0, 1, 0, 0),
     ],
     columns=[
         "person_id",
-        "accession_id",
         "age",
         "is_female",
         "has_prediabetes",
@@ -147,13 +146,10 @@ EXPECTED = pd.DataFrame(
 
 
 def _normalised(frame: pd.DataFrame) -> pd.DataFrame:
-    """Same rows in a comparable shape: ordered by person_id, integer columns as int64, str ids."""
+    """Same rows in a comparable shape: ordered by person_id, every column as int64."""
     out = frame.sort_values("person_id").reset_index(drop=True)
     for column in out.columns:
-        if column == "accession_id":
-            out[column] = out[column].astype(str)
-        else:
-            out[column] = out[column].astype("int64")
+        out[column] = out[column].astype("int64")
     return out
 
 

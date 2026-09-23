@@ -87,6 +87,7 @@ function mountLogin(authState: Partial<AuthStoreState> = {}): VueWrapper {
                 // stubbed, so we provide the values directly.
                 Form: {
                     template:
+                        // pragma: allowlist nextline secret
                         "<form @submit.prevent=\"$emit('submit', { email: 'user@example.com', password: 'Password123!' })\"><slot /></form>",
                     inheritAttrs: false,
                     emits: ["submit"]
@@ -197,7 +198,7 @@ describe("Login page", () => {
 
             expect(authStore.signIn).toHaveBeenCalledWith({
                 username: "user@example.com",
-                password: "Password123!"
+                password: "Password123!"  // pragma: allowlist secret
             });
             expect(mockNewPassword).toHaveBeenCalledTimes(1);
             expect(mockMfaSetup).not.toHaveBeenCalled();

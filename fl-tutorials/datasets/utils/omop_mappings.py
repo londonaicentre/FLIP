@@ -35,6 +35,8 @@ MAPPING_MODALITY = {
 MAPPING_PROCEDURE_TYPE = {
     "ct spleen": 3006580,
     "spleen ct": 3006580,
+    # LOINC 24587-8, the study description the brain MRI set stamps (FLIP#1221): T1w + T1Gd, so "WO and W".
+    "mr brain wo and w contrast iv": 3037128,
 }
 
 MAPPING_ANATOMIC_SITE = {
@@ -44,6 +46,7 @@ MAPPING_ANATOMIC_SITE = {
     "right lung": 4141610,
     "left lung": 4195613,
     "heart": 4217142,
+    "brain": 4133034,  # Brain structure, SNOMED 12738006
 }
 
 MAPPING_DICOM = {

@@ -23,7 +23,7 @@ If a project or a project's model needs to be amended i.e., at the request of a 
 2. Select specific project and navigate to the project page
 3. Click the 'Unstage Project' button
 
-.. figure:: ../assets/flip/unstage-project.gif
+.. figure:: ../assets/generated/gifs/flip/unstage-project.gif
    :align: center
 
    Un-staging a project.
@@ -47,7 +47,7 @@ Approving a project allows the next stage of model training to commence and trig
 
 For example, the below reflects a case where only one Trust is marked as approved:
 
-.. figure:: ../assets/flip/approve-project.gif
+.. figure:: ../assets/generated/gifs/flip/approve-project.gif
    :align: center
 
    Approving a project.
@@ -63,6 +63,7 @@ User Management
 
 The User Management area facilitates:
 
+- Review of access requests submitted from the login page
 - Registration of new users
 - Assignment of a user's role
 - Disabling and re-enabling of user accounts
@@ -70,7 +71,18 @@ The User Management area facilitates:
 
 .. note::
 
-   Roles are **exclusive** — each user holds exactly one role at a time. See :ref:`rbac-roles` for the available roles and the permissions each grants.
+   The Admin Area assigns **one role per user**: selecting a role replaces the one currently held. See :ref:`rbac-roles` for the available roles and the permissions each grants.
+
+Access Requests
+^^^^^^^^^^^^^^^
+
+Prospective users can ask for an account from the login page without holding one (see :ref:`request-access`). Each request records the requester's email address, full name and stated reason, and FLIP emails the platform's administrator address to announce it. The request is stored before that email is attempted, so it survives a mail backend that is unavailable or throttled — the 'Access Requests' queue, not the inbox, is the record to work from.
+
+1. Click 'Access Requests' in the Admin Area's side navigation
+2. Filter by status — 'Pending' (the default), 'Enrolled' or 'Dismissed'
+3. On a pending request, click 'Enroll' to open the registration form pre-filled with the requester's name and email address (you choose the role), or 'Dismiss' to decline it
+
+Enrolling or dismissing a request records which administrator handled it, and the request is retained under its new status rather than deleted.
 
 Register User
 ^^^^^^^^^^^^^
@@ -80,7 +92,7 @@ Register User
 3. Click the 'Register User' button
 4. The user will be emailed a one-time password to use on their :ref:`initial-login`
 
-.. figure:: ../assets/admin/create-user.gif
+.. figure:: ../assets/generated/gifs/admin/create-user.gif
    :align: center
 
    Registering a new user.
@@ -98,7 +110,7 @@ FLIP does not facilitate the deletion of user accounts, but rather enables accou
 
    Disabled accounts may be re-enabled in a similar fashion.
 
-.. figure:: ../assets/admin/user-enable-disable.gif
+.. figure:: ../assets/generated/gifs/admin/user-enable-disable.gif
    :align: center
 
    Enabling a user.
@@ -108,13 +120,13 @@ Manage Role
 
 .. note::
 
-   A user's role may be re-assigned at any time. Each user holds exactly one role.
+   A user's role may be re-assigned at any time. The radio list assigns a single role, replacing the one currently held.
 
 1. Select the user from the user list
 2. Choose the new role from the radio list (``admin``, ``researcher`` or ``viewer``)
 3. Click the 'Save User' button
 
-.. figure:: ../assets/admin/role-assignment.gif
+.. figure:: ../assets/generated/gifs/admin/role-assignment.gif
    :align: center
 
    Re-assigning a user's role.
@@ -130,7 +142,7 @@ Reset Password
 2. Click the '...' button
 3. Click the 'Reset Password' button
 
-.. figure:: ../assets/admin/reset-password.gif
+.. figure:: ../assets/generated/gifs/admin/reset-password.gif
    :align: center
 
    Resetting a user's password.
@@ -146,7 +158,7 @@ Reset User MFA
 2. Click the '...' button
 3. Click the 'Reset MFA' button and confirm
 
-.. figure:: ../assets/admin/reset-mfa.gif
+.. figure:: ../assets/generated/gifs/admin/reset-mfa.gif
    :align: center
 
    Resetting a user's MFA.
@@ -168,7 +180,7 @@ The site banner allows:
 - A link to be provided so that when a user clicks the site banner they will navigate to the specified URL
 
 
-.. figure:: ../assets/admin/site-banner.gif
+.. figure:: ../assets/generated/gifs/admin/site-banner.gif
    :align: center
 
    Editing the site banner.
@@ -190,7 +202,7 @@ Deployment Mode also quiesces federated training so the Central Hub can be redep
 
 This means Deployment Mode can be enabled at any time — even mid-training — ahead of a planned redeploy: enable it, wait for the current run (if any) to reach a terminal status, redeploy, then disable it. The Central Hub deploy command prints a reminder of this workflow (see ``deploy-centralhub`` in the AWS deployment README), and the ``GET /fl/quiesce`` endpoint reports whether the platform is quiesced (``deployment_mode`` plus ``fl_quiesced``, which is true when no net's scheduler is busy).
 
-.. figure:: ../assets/admin/deployment-mode.gif
+.. figure:: ../assets/generated/gifs/admin/deployment-mode.gif
    :align: center
 
    Enabling deployment mode.

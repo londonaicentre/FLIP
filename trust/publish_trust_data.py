@@ -17,11 +17,12 @@
 
 The dataset holds exactly one copy of every artefact, at an unversioned path::
 
-    trust<N>/trust<N>_pgdata.tar          vocab-free pgdata volume (make -C omop-db export-pgdata)
-    trust<N>/trust<N>_orthanc_data.tar    Orthanc storage volume
     omop-csv/<project>/<table>.csv        canonical OMOP tables (+ source/…), one tree per project
     dicom/<project>.tar.gz                the project's DICOM set (orthanc/publish_dicom.py)
     README.md                             the dataset card
+
+A trust is stood up by seeding those two families (FLIP#1101/#1187); there are no volume
+snapshots to publish any more.
 
 A data version is a git *tag* on the dataset, which is what ``trust/.data_version`` pins and what
 every consumer resolves at. So publishing is: upload exactly the files that changed (everything else
@@ -33,7 +34,6 @@ good. The commit and the tag are separate Hub calls, so a failure between them l
 Usage (from ``trust/``; ``make publish-trust-data`` wraps it)::
 
     uv run publish_trust_data.py --version 20261001 \\
-        --pgdata omop-db/dist/trust1_pgdata.tar omop-db/dist/trust2_pgdata.tar \\
         --omop-csv omop-db/data/canonical \\
         --dicom orthanc/dist/dicom/prostate_project.tar.gz \\
         --card README.md --dry-run
@@ -49,13 +49,14 @@ import re
 import sys
 from pathlib import Path
 
-from huggingface_hub import CommitOperationAdd, HfApi
+from huggingface_hub import CommitOperationAdd, CommitOperationDelete, HfApi
+
+CommitOperation = CommitOperationAdd | CommitOperationDelete
 
 HF_TRUST_DATA_REPO = os.environ.get("HF_TRUST_DATA_REPO", "aicentreflip/trust-data")
 
-# The archive names the trusts fetch. A version suffix in a name is the old layout and is refused:
-# the version is the tag, and a suffixed file would be a second copy nobody fetches.
-VOLUME_RE = re.compile(r"^(?P<trust>trust\d+)_(?:pgdata|orthanc_data)\.tar$")
+# A version suffix in a name is the old layout and is refused: the version is the tag, and a
+# suffixed file would be a second copy nobody fetches.
 VERSIONED_RE = re.compile(r"_\d{8}(?=\.tar(?:\.gz)?$)")
 # The shape every published version has had, and what trust/.data_version is expected to hold.
 TAG_RE = re.compile(r"\d{8}")
@@ -66,8 +67,7 @@ def path_in_repo(local: Path, kind: str) -> str:
 
     Args:
         local (Path): The file to upload.
-        kind (str): ``volume`` (a pgdata or Orthanc tarball), ``dicom`` (a project DICOM set) or
-            ``card`` (the README).
+        kind (str): ``dicom`` (a project DICOM set) or ``card`` (the README).
 
     Returns:
         str: The unversioned path in the dataset.
@@ -84,10 +84,7 @@ def path_in_repo(local: Path, kind: str) -> str:
         if not name.endswith(".tar.gz"):
             raise SystemExit(f"❌ {name}: a DICOM set is dicom/<project>.tar.gz (see orthanc/publish_dicom.py)")
         return f"dicom/{name}"
-    match = VOLUME_RE.match(name)
-    if not match:
-        raise SystemExit(f"❌ {name}: a volume is trust<N>_pgdata.tar or trust<N>_orthanc_data.tar")
-    return f"{match['trust']}/{name}"
+    raise SystemExit(f"❌ {name}: unknown artefact kind {kind!r} (dicom or card)")
 
 
 def omop_csv_operations(canonical_dir: Path) -> list[CommitOperationAdd]:
@@ -104,25 +101,44 @@ def omop_csv_operations(canonical_dir: Path) -> list[CommitOperationAdd]:
 
 
 def build_operations(
-    volumes: list[Path], omop_csv_dir: Path | None, dicom: list[Path], card: Path | None
-) -> list[CommitOperationAdd]:
-    """Assemble the single commit's operations; missing local files are refused before anything uploads."""
-    planned: list[tuple[str, Path]] = [(path_in_repo(local, "volume"), local) for local in volumes]
-    planned += [(path_in_repo(local, "dicom"), local) for local in dicom]
+    omop_csv_dir: Path | None,
+    dicom: list[Path],
+    card: Path | None,
+    deletes: list[str] | None = None,
+) -> list[CommitOperation]:
+    """Assemble the single commit's operations; missing local files are refused before anything uploads.
+
+    ``deletes`` are paths in the repo to remove from ``main`` in the same commit — how a DICOM set
+    stops being re-hosted once its project regenerates locally (``dicom/spleen_project.tar.gz``,
+    FLIP#1221). Earlier tags keep the file: a version is never moved.
+    """
+    planned: list[tuple[str, Path]] = [(path_in_repo(local, "dicom"), local) for local in dicom]
     if card is not None:
         planned.append((path_in_repo(card, "card"), card))
     for _, local in planned:
         if not local.is_file():
             raise SystemExit(f"❌ missing local file: {local}")
-    ops = [CommitOperationAdd(path_in_repo=dest, path_or_fileobj=str(local)) for dest, local in planned]
+    ops: list[CommitOperation] = [
+        CommitOperationAdd(path_in_repo=dest, path_or_fileobj=str(local)) for dest, local in planned
+    ]
     if omop_csv_dir is not None:
         ops.extend(omop_csv_operations(omop_csv_dir))
+    for path in deletes or []:
+        if VERSIONED_RE.search(path):
+            raise SystemExit(f"❌ {path}: versioned paths are not on main (a version is a tag) — nothing to delete")
+        ops.append(CommitOperationDelete(path_in_repo=path))
     if not ops:
-        raise SystemExit("❌ nothing to publish — pass at least one of --pgdata/--orthanc/--omop-csv/--dicom/--card")
+        raise SystemExit("❌ nothing to publish — pass at least one of --omop-csv/--dicom/--card/--delete")
     return ops
 
 
-def publish(api: HfApi, version: str, operations: list[CommitOperationAdd], repo: str, dry_run: bool) -> str | None:
+def _describe(op: CommitOperation) -> str:
+    if isinstance(op, CommitOperationDelete):
+        return f"   {op.path_in_repo}  (deleted from main; earlier tags keep it)"
+    return f"   {op.path_in_repo}  <-  {op.path_or_fileobj}"
+
+
+def publish(api: HfApi, version: str, operations: list[CommitOperation], repo: str, dry_run: bool) -> str | None:
     """One commit, then the tag on that commit. Returns the commit id, or None on a dry run.
 
     The commit and the tag are two Hub calls, so a failure between them leaves the new bytes on
@@ -140,7 +156,7 @@ def publish(api: HfApi, version: str, operations: list[CommitOperationAdd], repo
         raise SystemExit(f"❌ tag {version} already exists on {repo} — a version is never moved; pick a new one")
     print(f"📦 {repo} @ {version}: {len(operations)} file(s)")
     for op in operations:
-        print(f"   {op.path_in_repo}  <-  {op.path_or_fileobj}")
+        print(_describe(op))
     if dry_run:
         print("   (dry run — nothing uploaded, nothing tagged)")
         return None
@@ -169,11 +185,16 @@ def publish(api: HfApi, version: str, operations: list[CommitOperationAdd], repo
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--version", required=True, help="the new data-version tag, e.g. 20261001")
-    parser.add_argument("--pgdata", nargs="*", type=Path, default=[], help="trust<N>_pgdata.tar files")
-    parser.add_argument("--orthanc", nargs="*", type=Path, default=[], help="trust<N>_orthanc_data.tar files")
     parser.add_argument("--omop-csv", type=Path, default=None, help="canonical tree: <dir>/<project>/<table>.csv")
     parser.add_argument("--dicom", nargs="*", type=Path, default=[], help="dicom/<project>.tar.gz files")
     parser.add_argument("--card", type=Path, default=None, help="the dataset README.md")
+    parser.add_argument(
+        "--delete",
+        nargs="*",
+        default=[],
+        metavar="PATH_IN_REPO",
+        help="paths to remove from main in the same commit, e.g. dicom/spleen_project.tar.gz (earlier tags keep them)",
+    )
     parser.add_argument("--repo", default=HF_TRUST_DATA_REPO)
     parser.add_argument("--dry-run", action="store_true", help="list the operations; upload and tag nothing")
     parser.add_argument("--allow-any-tag", action="store_true", help="publish a --version that is not a YYYYMMDD date")
@@ -185,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.allow_any_tag and not TAG_RE.fullmatch(args.version):
         raise SystemExit(f"❌ a data version is YYYYMMDD, got {args.version!r} — pass --allow-any-tag to override")
 
-    operations = build_operations(args.pgdata + args.orthanc, args.omop_csv, args.dicom, args.card)
+    operations = build_operations(args.omop_csv, args.dicom, args.card, args.delete)
     publish(HfApi(), args.version, operations, args.repo, args.dry_run)
     return 0
 

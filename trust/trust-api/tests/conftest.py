@@ -19,11 +19,11 @@ _TEST_ENV_DEFAULTS = {
     "CENTRAL_HUB_API_URL": "http://localhost:8000",
     "DATA_ACCESS_API_URL": "http://localhost:8001",
     "IMAGING_API_URL": "http://localhost:8002",
-    "TRUST_API_KEY": "test-key",
-    "TRUST_API_KEY_HEADER": "Authorization",
+    "TRUST_API_KEY": "test-key",  # pragma: allowlist secret
+    "TRUST_API_KEY_HEADER": "Authorization",  # pragma: allowlist secret
     "AES_KEY_BASE64": "dGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGtleTA9PQ==",
-    "TRUST_INTERNAL_SERVICE_KEY": "test-trust-internal-service-key",
-    "TRUST_INTERNAL_SERVICE_KEY_HEADER": "X-Trust-Internal-Service-Key",
+    "TRUST_INTERNAL_SERVICE_KEY": "test-trust-internal-service-key",  # pragma: allowlist secret
+    "TRUST_INTERNAL_SERVICE_KEY_HEADER": "X-Trust-Internal-Service-Key",  # pragma: allowlist secret
 }
 
 for key, value in _TEST_ENV_DEFAULTS.items():

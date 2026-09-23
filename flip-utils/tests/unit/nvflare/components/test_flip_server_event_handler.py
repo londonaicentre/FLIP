@@ -12,7 +12,6 @@
 
 from unittest.mock import MagicMock, Mock, patch
 
-import pytest
 from nvflare.apis.event_type import EventType
 from nvflare.app_common.app_event_type import AppEventType
 
@@ -453,9 +452,13 @@ class TestServerEventHandler:
         # Return None
         engine.get_component.return_value = None
 
-        # This should raise AttributeError since validation_json_generator is None
-        with pytest.raises(AttributeError, match="'NoneType' object has no attribute"):
-            handler.handle_event(FlipEvents.TRAINING_INITIATED, fl_ctx)
+        handler.handle_event(FlipEvents.TRAINING_INITIATED, fl_ctx)
+
+        # The missing component is reported once, and the event is not relayed to the hub
+        # on top of it: the panic already means the run is going down.
+        handler.system_panic.assert_called_once()
+        assert "must have 'handle_evaluation_events' method" in str(handler.system_panic.call_args)
+        flip.update_status.assert_not_called()
 
     def test_handle_event_invalid_persist_cleanup_component(self):
         """Test handle_event when persist_and_cleanup is not correct type"""
@@ -479,8 +482,29 @@ class TestServerEventHandler:
 
         handler.system_panic.assert_called_once()
         assert "must be PersistToS3AndCleanup" in str(handler.system_panic.call_args)
+
+    def test_end_run_missing_persist_cleanup_reports_error(self):
+        """A missing persist-and-cleanup component must still terminate the hub-side model status."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+        handler.system_panic = MagicMock()
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+
+        json_generator = Mock(spec=ValidationJsonGenerator)
+        engine.get_component.side_effect = lambda component_id: (
+            json_generator if component_id == "json_generator" else None
+        )
+
+        handler.handle_event(EventType.END_RUN, fl_ctx)
+
         handler.system_panic.assert_called_once()
-        assert "must be PersistToS3AndCleanup" in str(handler.system_panic.call_args)
+        assert handler.final_status == ModelStatus.ERROR
+        flip.update_status.assert_called_once_with(model_id, ModelStatus.ERROR)
 
     # --- FLIP#754: an evaluation whose every validate task failed must not report success ---
 
@@ -606,9 +630,7 @@ class TestRoundEventRelay:
         from nvflare.app_common.app_constant import AppConstants
 
         # NVFLARE's _current_round is 0-based: prop 2 means round 3 of 5.
-        handler, flip, fl_ctx = self._handler_and_ctx(
-            {AppConstants.CURRENT_ROUND: 2, AppConstants.NUM_ROUNDS: 5}
-        )
+        handler, flip, fl_ctx = self._handler_and_ctx({AppConstants.CURRENT_ROUND: 2, AppConstants.NUM_ROUNDS: 5})
 
         handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)
 
@@ -625,9 +647,7 @@ class TestRoundEventRelay:
         the all-clients-failed round closes with an honest count, not a bare line."""
         from nvflare.app_common.app_constant import AppConstants
 
-        handler, flip, fl_ctx = self._handler_and_ctx(
-            {AppConstants.CURRENT_ROUND: 2, AppConstants.NUM_ROUNDS: 5}
-        )
+        handler, flip, fl_ctx = self._handler_and_ctx({AppConstants.CURRENT_ROUND: 2, AppConstants.NUM_ROUNDS: 5})
 
         handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)
 

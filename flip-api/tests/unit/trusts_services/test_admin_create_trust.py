@@ -45,12 +45,12 @@ def _registered(name: str = "GSTT", slot_name: str = "Trust_007", slot_number: i
             name=name,
             code="GSTT",
             region="London",
-            api_key_hash="hash-api",
+            api_key_hash="hash-api",  # pragma: allowlist secret
             created_at=datetime.now(timezone.utc),
         ),
         fl_kit_slot=FLKitSlot(slot_name=slot_name, slot_number=slot_number),
-        trust_api_key="plain-api",
-        trust_internal_service_key="plain-internal",
+        trust_api_key="plain-api",  # pragma: allowlist secret
+        trust_internal_service_key="plain-internal",  # pragma: allowlist secret
     )
 
 
@@ -72,8 +72,8 @@ def test_admin_create_trust_returns_registered_kit(mock_register, mock_perms, ad
     assert result.name == "GSTT"
     assert result.fl_kit_slot == "Trust_007"
     assert result.fl_kit_slot_number == 7
-    assert result.trust_api_key == "plain-api"
-    assert result.trust_internal_service_key == "plain-internal"
+    assert result.trust_api_key == "plain-api"  # pragma: allowlist secret
+    assert result.trust_internal_service_key == "plain-internal"  # pragma: allowlist secret
     db.rollback.assert_not_called()
     mock_perms.assert_called_once()
 

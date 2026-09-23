@@ -17,7 +17,13 @@ Flower port of the chest-X-ray tutorial that lives at
 `fl-tutorials/nvflare/image_classification/xray_classification`. It scores
 every X-ray against the lesions named in `app/config.json` (Effusion + Edema
 by default, with "Lungs in normal arrangement" as a negative override) using
-a MONAI DenseNet121 trained with multi-label BCE.
+a MONAI DenseNet121 trained with multi-label BCE — from scratch, `pretrained=False`.
+An FL app must never download at run time (FLIP#1206: on a platform-managed estate the FL
+server has no internet route, nor does a trust host behind an NHS firewall, and a run-time
+fetch bypasses the scanned upload path). The NVFLARE tutorial's README records the
+measurement behind dropping the ImageNet initialisation rather than shipping it. Apps
+that do need pretrained weights ship them as an uploaded file; the NVFLARE
+latent-diffusion tutorial shows the pattern (`make weights`).
 
 The cohort query (`query.sql`) is copied verbatim from the NVFLARE tutorial
 and matches the chest-X-ray data seeded into the trust mock OMOP DB
@@ -89,9 +95,13 @@ The dev compose stack (`deploy/compose.development.yml` +
 
 The `DEV_DATAFRAME` CSV must expose chest-X-ray accession IDs with the same
 column shape `query.sql` returns from the trust mock OMOP DB (concept ids
-4215818 / 4196943 / 40481136). DICOMs land in `DEV_IMAGES_DIR` keyed by
-accession number — `flip.get_by_accession_number(..., resource_type=[ResourceType.DICOM])`
-reads them directly when `LOCAL_DEV=true`.
+4215818 / 4196943 / 40481136). The one exception is `person_id`, which
+`query.sql` projects only so the trust can report per-subject age and sex
+distributions: the app never reads it, nothing computes cohort statistics on
+the local-sim path, and the recorded CSV omits it. DICOMs land in
+`DEV_IMAGES_DIR` keyed by accession number —
+`flip.get_by_accession_number(..., resource_type=[ResourceType.DICOM])` reads
+them directly when `LOCAL_DEV=true`.
 
 ### Run on the flwr simulator (no containers)
 
@@ -106,12 +116,16 @@ accepts via `--node-config`. Use it while iterating on app code; use the compose
 before merging, since only that path exercises the deployment wiring (TLS, fl-api submit,
 SuperNode registration).
 
-A raw `flwr run` has three sharp edges in this project — a long-lived SuperLink caches its
+A raw `flwr run` has five sharp edges in this project — a long-lived SuperLink caches its
 environment, the ClientApp's working directory is a snapshot under `~/.flwr/apps/`, and
 `WORKING_DIR` defaults to a container path — which is why the path is a make target rather than
-a command: `sim-tutorial.sh` handles all three, and stops only its *own* stale simulator
-processes (a blanket `pkill -f flower-superlink` would also kill the FLIP dev stack's fl-server,
-whose processes are visible in the host PID namespace). See the
+a command: `sim-tutorial.sh` handles them, and stops only its *own* stale simulator processes
+(a blanket `pkill -f flower-superlink` would also kill the FLIP dev stack's fl-server, whose
+processes are visible in the host PID namespace). Two more edges make it five: `flwr run . local`
+adopts whatever already listens on the local Control API port, so the script refuses to hand the
+run to a SuperLink another checkout left behind; and `flwr run --stream` returns 0 whatever became
+of the run, so the script's exit status is the run's own terminal status as the SuperLink reports
+it. See the
 [3D spleen segmentation README](../3d_spleen_segmentation/README.md) for the details.
 
 ## Hyperparameters
