@@ -27,6 +27,18 @@ variable "instance_type" {
   default = "t3.small"
 }
 
+variable "ami_ssm_parameter" {
+  description = "SSM public parameter resolving the host AMI (stock Ubuntu by default; the Deep Learning Base GPU AMI for a GPU host)"
+  type        = string
+  default     = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
+}
+
+variable "root_volume_size" {
+  description = "Root volume size in GiB"
+  type        = number
+  default     = 100
+}
+
 variable "key_name" {
   type    = string
   default = "~/.ssh/id_rsa"

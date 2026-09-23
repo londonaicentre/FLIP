@@ -227,11 +227,23 @@ export TF_VAR_local_trust_public_ips=$(LOCAL_TRUST_PUBLIC_IPS)
 K8S_TRUST_PUBLIC_IPS ?= []
 export TF_VAR_k8s_trust_public_ips=$(K8S_TRUST_PUBLIC_IPS)
 # Whether Terraform provisions the cloud Trust EC2. false = hub-only deployment
-# (every trust runs on-prem — e.g. the workloads need a GPU the t3 trust host
-# doesn't have). Settable in the env file or CLI; `make full-deploy-hub-only`
-# forces it for its whole chain.
+# (every trust runs on-prem). Settable in the env file or CLI; `make
+# full-deploy-hub-only` forces it for its whole chain.
 DEPLOY_TRUST_EC2 ?= true
 export TF_VAR_deploy_trust_ec2=$(DEPLOY_TRUST_EC2)
+# Cloud Trust host shape. Unset ⇒ variables.tf defaults (t3.xlarge, stock Ubuntu
+# 24.04, 100 GiB). A GPU trust sets e.g. TRUST_INSTANCE_TYPE=g4dn.xlarge and
+# TRUST_AMI_SSM_PARAMETER to the Deep Learning Base GPU AMI's SSM path, then
+# NUM_AVAILABLE_GPUS=1 in its kit so up-trust-ec2 adds the GPU overlay.
+ifneq ($(TRUST_INSTANCE_TYPE),)
+export TF_VAR_trust_instance_type=${TRUST_INSTANCE_TYPE}
+endif
+ifneq ($(TRUST_AMI_SSM_PARAMETER),)
+export TF_VAR_trust_ami_ssm_parameter=${TRUST_AMI_SSM_PARAMETER}
+endif
+ifneq ($(TRUST_ROOT_VOLUME_SIZE),)
+export TF_VAR_trust_root_volume_size=${TRUST_ROOT_VOLUME_SIZE}
+endif
 export TF_VAR_AWS_REGION=${AWS_REGION}
 export TF_VAR_VPC_NAME=${VPC_NAME}
 # DNS availability (FLIP#749): the LZA account has no Route53 hosted zone until

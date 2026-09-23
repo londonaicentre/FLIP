@@ -248,6 +248,12 @@ TRUST_OVERRIDE := $(if $(filter Trust_1,$(FL_KIT_SLOT)),-f deploy/compose_trust-
 GPU_OVERRIDE := $(if $(filter-out 0,$(strip $(NUM_AVAILABLE_GPUS))),-f deploy/compose_trust.$(__DCKR_SUFFIX).gpu.yml,)
 GPU_STATUS_MSG := $(if $(GPU_OVERRIDE),🖥️  GPU passthrough on — fl-client will reserve $(NUM_AVAILABLE_GPUS) NVIDIA GPU(s),⚠️  fl-client starting CPU-only — NUM_AVAILABLE_GPUS=$(or $(strip $(NUM_AVAILABLE_GPUS)),unset). Set it >0 on a GPU host to enable passthrough.)
 
+# EC2 GPU opt-in for up-trust-ec2 (see the comment above that target). 0/unset ⇒
+# CPU-only, the historical behaviour.
+EC2_NUM_GPUS := $(or $(strip $(TRUST_EC2_NUM_GPUS)),0)
+EC2_GPU_OVERRIDE := $(if $(filter-out 0,$(EC2_NUM_GPUS)),-f deploy/compose_trust.$(__DCKR_SUFFIX).gpu.yml,)
+EC2_GPU_STATUS_MSG := $(if $(EC2_GPU_OVERRIDE),🖥️  EC2 GPU trust — overlay on; fl-client reserves $(EC2_NUM_GPUS) NVIDIA GPU(s) (TRUST_EC2_NUM_GPUS),🖥️  EC2 trust runs CPU-only — GPU overlay omitted + NUM_AVAILABLE_GPUS forced to 0. Set TRUST_EC2_NUM_GPUS>0 on a GPU instance.)
+
 # TRUST_NAME (passed to trust-api for display/logging) prefers the kit's
 # registered name, falling back to the assigned slot then the CODE so a
 # not-yet-migrated kit (no TRUST_NAME) still resolves. nvflare's FL-material
@@ -446,8 +452,8 @@ restart-trust: down-trust up-trust
 # EC2 variant — no host-port override, --pull always. Networks and the trust's
 # data are provisioned on the instance by deploy/providers/AWS/site.yml, so the
 # create-networks prerequisite and the ensure-seeded step are intentionally omitted.
-# The EC2 t3.xlarge is GPU-less, so the fl-client is pinned to CPU regardless of
-# the kit's NUM_AVAILABLE_GPUS. Two mechanisms must BOTH be neutralised:
+# The default EC2 host (t3.xlarge) is GPU-less, so the fl-client is pinned to CPU
+# regardless of the kit's NUM_AVAILABLE_GPUS. Two mechanisms must BOTH be neutralised:
 #   1. GPU_OVERRIDE (the docker GPU-passthrough overlay) is omitted — otherwise
 #      `up` fails with "could not select device driver".
 #   2. NUM_AVAILABLE_GPUS is forced to 0 in the env prefix (shell env beats the
@@ -456,8 +462,11 @@ restart-trust: down-trust up-trust
 #      "num_of_gpus specified (1) exceeds available GPUs: 0". Omitting the
 #      overlay alone (mechanism 1) does NOT cover this.
 # Together these defend the deploy against a kit seeded NUM_AVAILABLE_GPUS=1 (the
-# template default). A GPU-equipped EC2 instance would drop the override and add
-# $(GPU_OVERRIDE) back.
+# template default). A GPU EC2 host (TRUST_INSTANCE_TYPE=g4dn.* on the Deep
+# Learning Base GPU AMI) opts in explicitly with TRUST_EC2_NUM_GPUS=<n> — on the
+# command line or in the kit — which then drives both mechanisms: the overlay is
+# applied and NUM_AVAILABLE_GPUS is forced to <n>. Keyed on its own variable, not
+# the kit's NUM_AVAILABLE_GPUS, so existing CPU kits keep deploying unchanged.
 # Deliberately no $(ensure_net_dirs) here: this recipe runs on the operator's
 # workstation against a remote docker context, so a local mkdir cannot touch the
 # EC2 host — the per-net images dirs there are pre-created (ubuntu-owned) by the
@@ -468,8 +477,8 @@ up-trust-ec2: require-xnat-aetitle
 	@echo "🚢 Starting Trust services on EC2 (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	@echo "🖥️  EC2 trust runs CPU-only by design — GPU overlay omitted + NUM_AVAILABLE_GPUS forced to 0 (t3.xlarge has no GPU)."
-	$(TRUST_VARS) NUM_AVAILABLE_GPUS=0 DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always
+	@echo "$(EC2_GPU_STATUS_MSG)"
+	$(TRUST_VARS) NUM_AVAILABLE_GPUS=$(EC2_NUM_GPUS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(EC2_GPU_OVERRIDE) -p $(TRUST_PROJECT) up -d --pull always
 	@echo "🩻 Starting XNAT for $(KIT)..."
 	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)
 
