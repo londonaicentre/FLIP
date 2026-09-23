@@ -10,3 +10,4 @@ A FLIP deployment consists of a **Central Hub** running in AWS and one or more *
    deploy-flip/deploy-central-hub
    deploy-flip/deploy-flip-node-on-prem
    deploy-flip/deploy-flip-node-in-tre
+   deploy-flip/deploy-flip-node-on-aws-ec2
