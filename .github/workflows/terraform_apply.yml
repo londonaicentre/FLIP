@@ -193,6 +193,7 @@ jobs:
           EFS_PROVISION_IMAGE: ${{ vars.EFS_PROVISION_IMAGE }}
           LZA_VPC_NAME: ${{ vars.LZA_VPC_NAME }}
           MANAGE_DNS: ${{ vars.MANAGE_DNS }}
+          RELEASE_WEB_ALIAS: ${{ vars.RELEASE_WEB_ALIAS }}
           ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
           INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}

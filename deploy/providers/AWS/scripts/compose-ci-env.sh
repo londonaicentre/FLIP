@@ -181,6 +181,15 @@ OPTIONAL_KEYS=(
     LZA_VPC_NAME
     MANAGE_DNS
 
+    # Unlike the four above, this one IS for a self-contained account — legacy
+    # prod, on the day the public web name moves to the LZA edge (FLIP#749
+    # change 2b). Optional because absent is the everyday value: the Makefile
+    # defaults it to false, i.e. this account keeps serving the name. It is set
+    # to "true" as a variable on the aws-prod GitHub environment at the cutover,
+    # which makes the drop an audited one-line change with the apply as its
+    # record, rather than a laptop apply that the next CI run reverts.
+    RELEASE_WEB_ALIAS
+
 )
 # Deliberately absent: PRESERVE_VPC. It is a make-level flag read only by
 # `make destroy` (scripts/destroy-selective.sh), never a Terraform input — and CI

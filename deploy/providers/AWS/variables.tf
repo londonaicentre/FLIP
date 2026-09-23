@@ -415,6 +415,12 @@ variable "manage_dns" {
   default     = true
 }
 
+variable "release_web_alias" {
+  description = "Hand the public web name to another estate's CloudFront distribution (FLIP#749 change 2b). CloudFront alternate domain names are unique across every AWS account, and it resolves a request by Host header against them, preferring an EXACT alias over a WILDCARD one — so while this account's distribution still lists flip_alb_subdomain it keeps serving that name no matter where DNS points. Setting this true drops the alias here (and with it the custom viewer certificate, which CloudFront only permits alongside an alias), letting the wildcard on the receiving estate's edge take over. It is the moment of the web cutover, and it is deliberately a separate switch from manage_dns so the drop happens in a chosen window rather than whenever a release reaches prod. Independent of the data: this account keeps its zone, records, certificate and database, so it stays a rollback target — but only after the alias is put back, a CloudFront deployment of minutes, not a DNS revert. Default false everywhere; expected true only on legacy prod, and only once the receiving edge already holds the wildcard."
+  type        = bool
+  default     = false
+}
+
 variable "flip_alb_subdomain" {
   description = "Public canonical subdomain for FLIP. Aliased via Route53 to the CloudFront distribution; CloudFront fronts both the SPA (from S3) and the API (/api/* -> ALB). Name is retained for Terraform-state backwards compatibility - see main.tf:492-494."
   type        = string

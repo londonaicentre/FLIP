@@ -1018,7 +1018,32 @@ revert by flipping `MANAGE_DNS=true` + `make plan`/`apply` once the zone lands:
   (`local.ui_origin`), so uploads, downloads and sign-in work; `make deploy-ui` must generate `window.js` with
   `CENTRAL_HUB_API_URL` pointing at the CloudFront domain.
 - Trusts polling the hub would need the CloudFront domain as `CENTRAL_HUB_API_URL` — fine for WP3 smoke trusts;
-  the real cutover is DNS-only and happens after the zone migrates.
+  the real cutover happens after the zone migrates.
+
+**Handing the public name over (`RELEASE_WEB_ALIAS=true`, FLIP#749 change 2b).** The cutover is *not* DNS-only,
+which is the single most surprising thing about it. CloudFront resolves a request by its `Host` header against
+alternate domain names that are unique across **every** AWS account, and it prefers an **exact** alias over a
+**wildcard** one. So while this account's distribution still lists `app.flip.aicentre.co.uk`, it keeps serving that
+name however the DNS answers — pointing the record at the receiving estate's edge changes nothing for the web.
+Verified 2026-09-23 by resolving the name to the LZA edge's own address: the reply still came from legacy.
+
+`RELEASE_WEB_ALIAS=true` drops the alias here and takes the custom viewer certificate with it, because CloudFront
+permits one only alongside the other. That is the moment the name moves. Order matters:
+
+1. The receiving edge already holds `*.<zone>` plus the `_<alias>` TXT ownership record (the "wildcard method").
+2. DNS points at the receiving edge. This moves anything that is **not** CloudFront — an FL NLB leg moves here.
+3. `RELEASE_WEB_ALIAS=true` on this account. **Now** the web moves.
+
+Set it as a variable on the `aws-prod` GitHub environment rather than applying from a laptop: CI is the only
+applier for the self-contained accounts, so a local apply is reverted by the next run and flagged by the nightly
+drift job in between. It is deliberately a separate switch from `MANAGE_DNS` so the drop lands in a chosen window
+instead of whenever a release reaches production.
+
+**Rollback is not a DNS revert.** This account keeps its zone, records, certificate and data, so it remains a
+rollback target — but only once the alias is back, which means `RELEASE_WEB_ALIAS=false` and an apply, a CloudFront
+deployment measured in minutes. Plan the window with someone able to run that, and do not assume reverting the DNS
+change is enough. `tests/test_web_alias_release.py` guards the invariants; the certificate resource stays gated on
+`MANAGE_DNS` precisely so putting the name back is a re-apply and not a re-issue.
 
 **Fresh-account trap: create a Secrets Manager secret before the first `plan`.** On a
 brand-new workload account `make plan` fails at the very end with

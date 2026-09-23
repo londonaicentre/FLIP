@@ -508,6 +508,15 @@ locals {
   # On LZA the workload distribution is gated off -- the UI origin is the
   # networking account's edge distribution (FLIP#749 WP3).
   ui_origin = var.manage_dns ? "https://${var.flip_alb_subdomain}" : var.lza_managed_network ? "https://${var.lza_web_edge_domain}" : "https://${aws_cloudfront_distribution.flip_ui[0].domain_name}"
+
+  # Whether THIS account's distribution still answers for the public name.
+  # CloudFront resolves a request by Host header against alternate domain names
+  # that are unique across every AWS account, preferring an exact alias over a
+  # wildcard — so this flag, not DNS, is what decides who serves the name while
+  # two estates overlap. The certificate follows it rather than manage_dns: a
+  # custom viewer certificate is only permitted alongside an alias, so dropping
+  # one without the other is rejected. See var.release_web_alias.
+  serves_public_name = var.manage_dns && !var.release_web_alias
 }
 
 # Custom origin-request policy for /api/*. The managed AllViewer policy
@@ -989,8 +998,10 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   # No aliases without DNS (FLIP#749): CloudFront only allows the default
   # viewer cert when no aliases are set, and an alias without a record pointing
   # at it is unreachable anyway. The distribution serves *.cloudfront.net until
-  # MANAGE_DNS flips to true.
-  aliases    = var.manage_dns ? [var.flip_alb_subdomain] : []
+  # MANAGE_DNS flips to true — and gives the name up again when
+  # RELEASE_WEB_ALIAS flips to true, which is how the name moves to another
+  # estate's distribution (see local.serves_public_name).
+  aliases    = local.serves_public_name ? [var.flip_alb_subdomain] : []
   comment    = "flip-ui at ${var.flip_alb_subdomain}"
   web_acl_id = aws_wafv2_web_acl.flip_ui_cloudfront[0].arn
 
@@ -1114,13 +1125,18 @@ resource "aws_cloudfront_distribution" "flip_ui" {
     prefix          = "standard-logs/"
   }
 
+  # Keyed to local.serves_public_name, not manage_dns: CloudFront permits a
+  # custom viewer certificate only while the distribution carries an alias, so
+  # releasing the alias has to take the certificate with it in the same apply.
+  # The certificate resource itself stays — it is gated on manage_dns and is
+  # what makes putting the alias back a single re-apply rather than a re-issue.
   viewer_certificate {
-    acm_certificate_arn            = var.manage_dns ? aws_acm_certificate_validation.flip_cloudfront[0].certificate_arn : null
-    cloudfront_default_certificate = var.manage_dns ? null : true
-    ssl_support_method             = var.manage_dns ? "sni-only" : null
+    acm_certificate_arn            = local.serves_public_name ? aws_acm_certificate_validation.flip_cloudfront[0].certificate_arn : null
+    cloudfront_default_certificate = local.serves_public_name ? null : true
+    ssl_support_method             = local.serves_public_name ? "sni-only" : null
     # AWS forces TLSv1 while the default *.cloudfront.net certificate is in
     # use; pinning TLSv1.2_2021 there would just plan perpetual drift.
-    minimum_protocol_version = var.manage_dns ? "TLSv1.2_2021" : "TLSv1"
+    minimum_protocol_version = local.serves_public_name ? "TLSv1.2_2021" : "TLSv1"
   }
 
   tags = {
