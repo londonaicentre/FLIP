@@ -195,6 +195,21 @@ def _admin_calls(keycloak: FakeKeycloak) -> list[httpx.Request]:
     return [r for r in keycloak.requests if r.url.path.startswith("/admin/")]
 
 
+def _provider_where(
+    keycloak: FakeKeycloak, method: str, path_suffix: str, response: httpx.Response
+) -> KeycloakIdentityProvider:
+    """A provider whose admin ``method`` on a path ending ``path_suffix`` gets ``response``; the rest is the fake."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == method and path.startswith("/admin/") and path.endswith(path_suffix):
+            keycloak.requests.append(request)
+            return response
+        return keycloak.handler(request)
+
+    return KeycloakIdentityProvider(_settings(), transport=httpx.MockTransport(handler))
+
+
 # --- construction and the admin token ----------------------------------------------------------
 
 
@@ -202,6 +217,14 @@ def test_backend_and_target(provider):
     assert provider.backend == "keycloak"
     assert REALM in provider.describe_target()
     assert "http://keycloak:8080" in provider.describe_target()
+
+
+@pytest.mark.parametrize("missing", ["KEYCLOAK_URL", "KEYCLOAK_ADMIN_CLIENT_SECRET"])
+def test_construction_without_the_admin_coordinates_is_refused(missing):
+    settings = _settings()
+    setattr(settings, missing, None)
+    with pytest.raises(ValueError, match="KEYCLOAK_URL and KEYCLOAK_ADMIN_CLIENT_SECRET"):
+        KeycloakIdentityProvider(settings)
 
 
 def test_construction_makes_no_requests(keycloak, provider):
@@ -280,6 +303,24 @@ def test_wrong_admin_secret_is_a_provider_error_not_a_retry_loop(keycloak):
         with pytest.raises(IdentityProviderError):
             provider.list_users()
     sleep.assert_not_called()
+
+
+def test_a_failing_token_endpoint_is_unavailable_not_a_credentials_error(keycloak, provider):
+    """A 5xx from the token endpoint means Keycloak is sick (503 upstream), not that the secret is wrong."""
+    keycloak.token_failures = 1
+    with pytest.raises(IdentityProviderUnavailable, match="HTTP 503"):
+        provider.list_users()
+    assert _admin_calls(keycloak) == []
+
+
+def test_a_server_error_from_the_admin_api_is_a_provider_error(keycloak):
+    keycloak.add_user("a@example.com")
+    provider = _provider_where(keycloak, "GET", "/users", httpx.Response(502, text="Bad Gateway"))
+    with patch("flip_api.auth.identity.keycloak.logger") as logger:
+        with pytest.raises(IdentityProviderError, match="admin request failed") as exc_info:
+            provider.list_users()
+    assert not isinstance(exc_info.value, IdentityProviderUnavailable)
+    assert "HTTP 502" in str(logger.error.call_args)
 
 
 # --- directory ---------------------------------------------------------------------------
@@ -377,6 +418,52 @@ def test_delete_unknown_user_is_not_found(provider):
         provider.delete_user("ghost@example.com")
 
 
+def test_a_user_deleted_between_lookup_and_delete_is_not_found(keycloak):
+    """Two admins deleting at once: the loser's DELETE 404s, which the router treats as already gone."""
+    alice = keycloak.add_user("alice@example.com")
+    provider = _provider_where(keycloak, "DELETE", f"/users/{alice}", httpx.Response(404))
+    with pytest.raises(UserNotFoundError, match="is not registered"):
+        provider.delete_user("alice@example.com")
+
+
+def test_get_user_by_id_of_a_service_account_is_not_found(keycloak, provider):
+    """Service accounts carry no email and are not FLIP users, even when asked for by id."""
+    keycloak.add_service_account()
+    [service_account_id] = keycloak.users
+    with pytest.raises(UserNotFoundError, match="is not registered"):
+        provider.get_user(user_id=service_account_id)
+
+
+# A 4xx other than not-found (e.g. 403 when the admin client lost a realm-management role) must
+# surface as a provider error naming the operation, never as an empty directory or a silent no-op.
+@pytest.mark.parametrize(
+    ("method", "path_suffix", "operation", "message"),
+    [
+        ("GET", "/users", lambda p, _: p.list_users(), "Failed to list users"),
+        ("GET", "/users", lambda p, _: p.get_user(email="alice@example.com"), "Failed to list users"),
+        ("GET", "/users/{alice}", lambda p, alice: p.get_user(user_id=alice), "Failed to get user"),
+        ("GET", "/users", lambda p, _: p.set_enabled("alice@example.com", False), "Failed to look up user"),
+        ("PUT", "/users/{alice}", lambda p, _: p.set_enabled("alice@example.com", False), "Failed to update user"),
+        ("DELETE", "/users/{alice}", lambda p, _: p.delete_user("alice@example.com"), "Failed to delete user"),
+        ("GET", "/credentials", lambda p, _: p.is_mfa_enabled("alice@example.com"), "Failed to fetch MFA state"),
+        ("DELETE", "/credentials/{otp}", lambda p, _: p.reset_mfa("alice@example.com"), "Failed to reset user MFA"),
+        ("POST", "/logout", lambda p, _: p.reset_mfa("alice@example.com"), "Failed to reset user MFA"),
+        ("PUT", "/reset-password", lambda p, _: p.set_password("alice@example.com", "pw"), "Failed to set password"),
+    ],
+)
+def test_a_refused_admin_call_is_a_provider_error_naming_the_operation(
+    keycloak, method, path_suffix, operation, message
+):
+    alice = keycloak.add_user("alice@example.com", otp=True)
+    otp_id = next(c["id"] for c in keycloak.credentials[alice] if c["type"] == "otp")
+    provider = _provider_where(
+        keycloak, method, path_suffix.format(alice=alice, otp=otp_id), httpx.Response(403, json={"error": "Forbidden"})
+    )
+    with pytest.raises(IdentityProviderError, match=message) as exc_info:
+        operation(provider, alice)
+    assert not isinstance(exc_info.value, UserNotFoundError)
+
+
 # --- create_user and the invitation ------------------------------------------------------
 
 
@@ -405,6 +492,24 @@ def test_create_existing_user_raises_already_exists(keycloak, provider):
     keycloak.add_user("new@example.com")
     with pytest.raises(UserAlreadyExistsError, match="already exists"):
         provider.create_user("new@example.com")
+
+
+def test_create_user_refused_by_keycloak_is_a_provider_error(keycloak):
+    provider = _provider_where(keycloak, "POST", "/users", httpx.Response(403, json={"error": "Forbidden"}))
+    with patch("flip_api.auth.identity.keycloak.logger") as logger:
+        with pytest.raises(IdentityProviderError, match="Failed to create user"):
+            provider.create_user("new@example.com")
+    assert "HTTP 403" in str(logger.error.call_args)
+    assert keycloak.action_emails == []
+
+
+def test_create_user_without_a_location_header_is_a_provider_error(keycloak):
+    """The id comes from the Location header; without it there is nothing to hand the registration step."""
+    provider = _provider_where(keycloak, "POST", "/users", httpx.Response(201))
+    with pytest.raises(IdentityProviderError, match="could not get user ID"):
+        provider.create_user("new@example.com")
+    assert keycloak.action_emails == []
+    assert keycloak.password_resets == []
 
 
 def test_create_user_without_smtp_in_dev_hands_out_the_shared_dev_password_as_temporary(keycloak, provider):
@@ -519,6 +624,29 @@ def test_password_grant_failure_carries_keycloaks_description(keycloak):
     transport = httpx.MockTransport(keycloak.handler)
     with pytest.raises(IdentityProviderError, match="Invalid user credentials"):
         password_grant("http://localhost:8180", REALM, "flip-ui", "alice@example.com", "wrong", transport=transport)
+
+
+def test_password_grant_against_an_unreachable_keycloak_is_unavailable():
+    def refuses(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    with pytest.raises(IdentityProviderUnavailable, match="not reachable"):
+        password_grant(
+            "http://localhost:8180", REALM, "flip-ui", "a@example.com", "pw", transport=httpx.MockTransport(refuses)
+        )
+
+
+@pytest.mark.parametrize(
+    "response",
+    [httpx.Response(502, text="<html>Bad Gateway</html>"), httpx.Response(502, json=["not", "an", "object"])],
+    ids=["html-body", "non-object-json"],
+)
+def test_a_grant_failure_without_an_oauth_error_body_names_the_status(response):
+    """A proxy in front of Keycloak answers HTML, not RFC 6749 JSON; the message must still say what happened."""
+    with pytest.raises(IdentityProviderError, match="HTTP 502"):
+        refresh_grant(
+            "http://localhost:8180", REALM, "flip-ui", "refresh-1", transport=httpx.MockTransport(lambda _: response)
+        )
 
 
 def test_refresh_grant_returns_the_new_tokens(keycloak):

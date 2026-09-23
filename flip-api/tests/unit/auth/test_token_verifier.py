@@ -22,6 +22,7 @@ Keycloak; both go through the same code path.
 import time
 from typing import Any
 from unittest.mock import MagicMock, patch
+from urllib.error import URLError
 from uuid import UUID, uuid4
 
 import jwt
@@ -255,6 +256,27 @@ def test_non_uuid_subject_is_rejected(cognito_settings, fetch_jwks, private_pem)
         verify_access_token(_sign(private_pem, _cognito_claims(sub="not-a-uuid")))
     assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert exc_info.value.detail == "Invalid user identifier format"
+
+
+def test_empty_subject_is_rejected(keycloak_settings, fetch_jwks, private_pem):
+    """PyJWT's `require` only checks presence, so an empty `sub` reaches FLIP's own check."""
+    with pytest.raises(HTTPException) as exc_info:
+        verify_access_token(_sign(private_pem, _keycloak_claims(sub="")))
+    assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc_info.value.detail == "Token missing user identifier"
+
+
+def test_unreachable_jwks_endpoint_returns_500_and_names_the_url(keycloak_settings, private_pem):
+    """A down Keycloak is the hub's problem (500), not the bearer's (401) — through PyJWT's real fetch path."""
+    with (
+        patch("jwt.jwks_client.urllib.request.urlopen", side_effect=URLError("connection refused")),
+        patch("flip_api.auth.token_verifier.logger") as logger,
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            verify_access_token(_sign(private_pem, _keycloak_claims()))
+    assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert "connection refused" not in exc_info.value.detail
+    assert KEYCLOAK_JWKS_URL in str(logger.error.call_args)
 
 
 def test_jwks_fetch_failure_returns_500_without_leaking_the_cause(cognito_settings, private_pem):

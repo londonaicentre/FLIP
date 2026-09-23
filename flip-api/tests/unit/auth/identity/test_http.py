@@ -17,7 +17,7 @@ Routers keep the ``except HTTPException`` branches they always had (404 means
 a contract every provider is held to.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -95,6 +95,34 @@ def test_every_directory_method_is_delegated_with_its_arguments(provider, inner)
     inner.filter_enabled_users.assert_called_once_with([user_id])
     inner.set_password.assert_called_once_with("a@b.c", "pw")
     inner.describe_target.assert_called_once_with()
+
+
+def test_the_mfa_backend_hooks_are_delegated_and_translated(provider, inner):
+    """The wrapper overrides the abstract MFA hooks too, so a direct call is held to the same table."""
+    inner._fetch_mfa_enabled.return_value = True
+    assert provider._fetch_mfa_enabled("a@b.c") is True
+    provider._reset_mfa("a@b.c")
+    inner._fetch_mfa_enabled.assert_called_once_with("a@b.c")
+    inner._reset_mfa.assert_called_once_with("a@b.c")
+
+    inner._fetch_mfa_enabled.side_effect = IdentityProviderUnavailable("Keycloak is not reachable")
+    inner._reset_mfa.side_effect = UserNotFoundError("User a@b.c is not registered.")
+    with pytest.raises(HTTPException) as fetch_exc:
+        provider._fetch_mfa_enabled("a@b.c")
+    with pytest.raises(HTTPException) as reset_exc:
+        provider._reset_mfa("a@b.c")
+    assert fetch_exc.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert reset_exc.value.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_a_provider_error_missing_from_the_table_propagates_unchanged(provider, inner):
+    """The table ends with the base class, so this cannot happen today; if an entry is dropped, fail loud, not 200."""
+    error = IdentityProviderError("Failed to list users")
+    inner.list_users.side_effect = error
+    with patch("flip_api.auth.identity.http._STATUS_BY_ERROR", ()):
+        with pytest.raises(IdentityProviderError) as exc_info:
+            provider.list_users()
+    assert exc_info.value is error
 
 
 def test_an_http_exception_from_the_inner_provider_is_not_rewrapped(provider, inner):
