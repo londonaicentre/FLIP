@@ -16,12 +16,10 @@ import pandas as pd
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy.exc import SQLAlchemyError
 
 from data_access_api.main import app
 from data_access_api.routers.schema import StatisticsResponse
-from data_access_api.utils.encryption import PROJECT_ID_CONTEXT
-from tests.conftest import AUTH_HEADERS
+from tests.conftest import AUTH_HEADERS, WRITE_AUTH_HEADERS
 
 client = TestClient(app)
 
@@ -257,36 +255,16 @@ sample_dataframe_query = {
     "query": "SELECT age, gender FROM dummy_table",
 }
 
-# Expected output
-sample_df_dict = {
-    # person_id is what lets the disclosure threshold be applied per subject; a cohort exposing
-    # neither it nor accession_id is refused before any row is released.
-    "person_id": [1, 2, 3],
-    "age": [25, 30, 40],
-    "gender": ["M", "F", "M"],
-}
+# The /cohort/dataframe and /cohort/accession-ids behavioural tests live in
+# tests/routers/test_cohort_snapshot.py: both routes serve ONLY the frozen
+# approved-cohort snapshot (FLIP#857) — the live-SQL serving path they used to
+# have (and the tests that pinned it) is gone. Live SQL now runs only on
+# /cohort (statistics) above and /cohort/snapshot (creation).
 
 
-@patch("data_access_api.routers.cohort.get_settings")
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-@patch("data_access_api.routers.cohort.validate_query")
-def test_get_dataframe_success(mock_validate_query, mock_get_records, mock_decrypt, mock_get_settings):
-    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 2
-    mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.return_value = pd.DataFrame(sample_df_dict)
-
-    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert response.status_code == 200
-    assert response.json() == sample_df_dict
-    mock_decrypt.assert_called_once_with("encrypted-id", context=PROJECT_ID_CONTEXT)
-    mock_validate_query.assert_called_once_with(sample_dataframe_query["query"])
-    # The engine receives what validate_query emitted from the checked AST,
-    # never the caller's raw string.
-    mock_get_records.assert_called_once_with(mock_validate_query.return_value)
-
-
+# The encrypted project id is opened (AES-GCM, ``project_id`` context) before the snapshot is
+# looked up, so a payload that fails to open is answered on the row-level routes regardless of
+# whether a snapshot exists.
 @patch("data_access_api.routers.cohort.decrypt")
 def test_get_dataframe_rejects_a_project_id_that_fails_authentication(mock_decrypt):
     """A tampered or foreign-key project id is the caller's problem: 400 with a reason, not a bare 500."""
@@ -321,123 +299,9 @@ def test_get_dataframe_reports_an_unexpected_decrypt_fault_as_500(mock_decrypt):
     assert response.json()["detail"] == "Failed to decrypt encrypted_project_id (Exception)"
 
 
+@patch("data_access_api.routers.cohort.get_snapshot")
 @patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.validate_query")
-def test_get_dataframe_invalid_query(mock_validate_query, mock_decrypt):
-    mock_decrypt.return_value = "decrypted-id"
-    mock_validate_query.side_effect = HTTPException(status_code=400, detail="Invalid query syntax")
-
-    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Invalid query syntax"
-
-
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_sqlalchemy_error(mock_get_records, mock_decrypt):
-    """Driver text must not reach the caller — the hub relays this detail to the UI."""
-    mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.side_effect = SQLAlchemyError("relation omop.person has 42 rows for patient Bob")
-
-    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert response.status_code == 500
-    assert "Bob" not in response.json()["detail"]
-
-
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_generic_error(mock_get_records, mock_decrypt):
-    """Unexpected exception text must not reach the caller either."""
-    mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.side_effect = RuntimeError("connection string postgres://user:hunter2@omop-db")
-
-    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert response.status_code == 500
-    assert "hunter2" not in response.json()["detail"]
-
-
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_preserves_http_exception_from_get_records(mock_get_records, mock_decrypt):
-    """A categorised 400 from get_records must not be re-wrapped as an opaque 500.
-
-    ``get_records`` deliberately converts driver errors into category-only
-    HTTPExceptions. ``except Exception`` also catches HTTPException, so the
-    route used to swallow that work and re-raise every one of them as a 500
-    whose detail was the *repr of the HTTPException*.
-    """
-    mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.side_effect = HTTPException(status_code=400, detail="Column 'nope' does not exist")
-
-    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Column 'nope' does not exist"
-
-
-@patch("data_access_api.routers.cohort.get_settings")
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_rejects_cohort_below_threshold(mock_get_records, mock_decrypt, mock_get_settings):
-    """Row-level data is withheld for cohorts smaller than COHORT_QUERY_THRESHOLD."""
-    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
-    mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.return_value = pd.DataFrame({"age": range(9), "person_id": range(9)})
-
-    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert response.status_code == 403
-
-
-@patch("data_access_api.routers.cohort.get_settings")
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_below_threshold_does_not_disclose_row_count(
-    mock_get_records, mock_decrypt, mock_get_settings
-):
-    """The refusal must not reveal how many rows matched — 0 and 9 look identical."""
-    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
-    mock_decrypt.return_value = "decrypted-id"
-
-    details = []
-    for row_count in (0, 9):
-        mock_get_records.return_value = pd.DataFrame({"age": range(row_count), "person_id": range(row_count)})
-        response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
-        details.append(response.json()["detail"])
-
-    assert details[0] == details[1]
-    assert "9" not in details[1]
-
-
-@patch("data_access_api.routers.cohort.get_settings")
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_allows_cohort_at_threshold(mock_get_records, mock_decrypt, mock_get_settings):
-    """A cohort exactly at the threshold is released — the gate is not off-by-one."""
-    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
-    mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.return_value = pd.DataFrame({"age": range(10), "person_id": range(10)})
-
-    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert response.status_code == 200
-    assert len(response.json()["age"]) == 10
-
-
-# ---------------------------------------------------------------------------
-# /cohort/accession-ids
-# ---------------------------------------------------------------------------
-
-
-@patch("data_access_api.routers.cohort.get_settings")
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_rejects_a_project_id_that_fails_authentication(
-    mock_get_records, mock_decrypt, mock_get_settings
-):
+def test_get_accession_ids_rejects_a_project_id_that_fails_authentication(mock_decrypt, mock_get_snapshot):
     from cryptography.exceptions import InvalidTag
 
     mock_decrypt.side_effect = InvalidTag()
@@ -446,183 +310,7 @@ def test_get_accession_ids_rejects_a_project_id_that_fails_authentication(
 
     assert response.status_code == 400
     assert "failed authentication" in response.json()["detail"]
-    mock_get_records.assert_not_called()
-
-
-@patch("data_access_api.routers.cohort.get_settings")
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_success(mock_get_records, mock_decrypt, mock_get_settings):
-    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 2
-    mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.return_value = pd.DataFrame({"accession_id": ["ACC1", "ACC2", "ACC3"]})
-
-    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert response.status_code == 200
-    assert response.json() == {"accession_ids": ["ACC1", "ACC2", "ACC3"]}
-    mock_decrypt.assert_called_once_with("encrypted-id", context=PROJECT_ID_CONTEXT)
-    # The caller's query must be wrapped server-side so only accession_id is projected.
-    called_query = mock_get_records.call_args[0][0]
-    assert called_query.startswith("SELECT accession_id FROM (")
-    # What gets wrapped is validate_query's *emitted* SQL, not the caller's raw string — so the
-    # unqualified `dummy_table` arrives pinned to the omop schema.
-    assert "SELECT age, gender FROM omop.dummy_table" in called_query
-
-
-@patch("data_access_api.routers.cohort.get_settings")
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_strips_trailing_semicolon(mock_get_records, mock_decrypt, mock_get_settings):
-    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 1
-    mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.return_value = pd.DataFrame({"accession_id": ["ACC1"]})
-
-    response = client.post(
-        "/cohort/accession-ids",
-        json={"encrypted_project_id": "encrypted-id", "query": "SELECT * FROM cohort;  "},
-        headers=AUTH_HEADERS,
-    )
-
-    assert response.status_code == 200
-    called_query = mock_get_records.call_args[0][0]
-    # No bare semicolon should leak into the wrapped subquery. The table arrives schema-pinned
-    # because the wrapper wraps the emitted SQL, not the caller's raw string.
-    assert "SELECT * FROM omop.cohort)" in called_query
-    assert ";" not in called_query
-
-
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.validate_query")
-def test_get_accession_ids_invalid_query(mock_validate_query, mock_decrypt):
-    mock_decrypt.return_value = "decrypted-id"
-    mock_validate_query.side_effect = HTTPException(status_code=400, detail="Invalid query syntax")
-
-    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Invalid query syntax"
-
-
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_missing_column_propagates_400(mock_get_records, mock_decrypt):
-    """A cohort that does not project ``accession_id`` is refused by ``get_records``, not the router.
-
-    The route wraps the inner query as ``SELECT accession_id FROM (...)``, so Postgres raises
-    ``UndefinedColumn`` during execution and ``get_records`` turns it into a category 400 —
-    there is no DataFrame to inspect afterwards, which is why the router carries no
-    column-presence guard. This mocks the conversion ``get_records`` performs; the real
-    Postgres behaviour it stands in for is pinned by
-    ``tests/integration/test_cohort_endpoint.py::test_accession_ids_missing_column_surfaces_get_records_400``.
-    """
-    mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.side_effect = HTTPException(
-        status_code=400, detail="The column 'accession_id' does not exist."
-    )
-
-    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "The column 'accession_id' does not exist."
-
-
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_propagates_http_exception(mock_get_records, mock_decrypt):
-    """``get_records`` raises HTTPException for things like undefined tables/columns;
-    the wrapping ``except`` clauses must not swallow that into a 500."""
-    mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.side_effect = HTTPException(
-        status_code=400, detail="The table 'omop.bogus' does not exist."
-    )
-
-    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "The table 'omop.bogus' does not exist."
-
-
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_sqlalchemy_error_does_not_leak(mock_get_records, mock_decrypt):
-    """Driver text must not reach the caller: the trust forwards this detail to the hub,
-    which shows it to every project member (FLIP-PT-016)."""
-    mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.side_effect = SQLAlchemyError("relation omop.secret_table row 42")
-
-    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert response.status_code == 500
-    assert response.json()["detail"] == "Query execution failed."
-    assert "secret_table" not in response.text
-
-
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_generic_error_does_not_leak(mock_get_records, mock_decrypt):
-    mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.side_effect = RuntimeError("connection to 10.0.0.5 failed for user svc_omop")
-
-    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert response.status_code == 500
-    assert response.json()["detail"] == "Query execution failed."
-    assert "svc_omop" not in response.text
-
-
-@patch("data_access_api.routers.cohort.get_settings")
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_rejects_cohort_below_threshold(mock_get_records, mock_decrypt, mock_get_settings):
-    """Accession IDs are row-level identifiers and decide whose imaging is pulled into XNAT,
-    so a below-threshold cohort is refused just as it is on /cohort/dataframe."""
-    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
-    mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.return_value = pd.DataFrame({"accession_id": [f"ACC{i}" for i in range(9)]})
-
-    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert response.status_code == 403
-    assert response.json()["detail"] == "Cohort is too small for row-level data to be released."
-    # No identifier may appear in the refusal.
-    assert "ACC" not in response.text
-
-
-@patch("data_access_api.routers.cohort.get_settings")
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_below_threshold_is_indistinguishable_from_zero(
-    mock_get_records, mock_decrypt, mock_get_settings
-):
-    """A zero-row cohort and a below-threshold one must return byte-identical responses,
-    or the refusal itself becomes a row-count oracle."""
-    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
-    mock_decrypt.return_value = "decrypted-id"
-
-    mock_get_records.return_value = pd.DataFrame({"accession_id": []})
-    zero_response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    mock_get_records.return_value = pd.DataFrame({"accession_id": [f"ACC{i}" for i in range(9)]})
-    below_response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert zero_response.status_code == below_response.status_code == 403
-    assert zero_response.text == below_response.text
-
-
-@patch("data_access_api.routers.cohort.get_settings")
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_allows_cohort_at_threshold(mock_get_records, mock_decrypt, mock_get_settings):
-    """Exactly at the threshold is allowed — the gate is `<`, not `<=`."""
-    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
-    mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.return_value = pd.DataFrame({"accession_id": [f"ACC{i}" for i in range(10)]})
-
-    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert response.status_code == 200
-    assert len(response.json()["accession_ids"]) == 10
+    mock_get_snapshot.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -638,6 +326,8 @@ def test_get_accession_ids_allows_cohort_at_threshold(mock_get_records, mock_dec
         ("/cohort", sample_query_input),
         ("/cohort/dataframe", sample_dataframe_query),
         ("/cohort/accession-ids", sample_dataframe_query),
+        ("/cohort/snapshot", sample_dataframe_query),
+        ("/cohort/snapshot/delete", {"encrypted_project_id": "encrypted-id"}),
     ],
 )
 def test_cohort_route_rejects_missing_key(path, payload):
@@ -652,6 +342,8 @@ def test_cohort_route_rejects_missing_key(path, payload):
         ("/cohort", sample_query_input),
         ("/cohort/dataframe", sample_dataframe_query),
         ("/cohort/accession-ids", sample_dataframe_query),
+        ("/cohort/snapshot", sample_dataframe_query),
+        ("/cohort/snapshot/delete", {"encrypted_project_id": "encrypted-id"}),
     ],
 )
 def test_cohort_route_rejects_wrong_key(path, payload):
@@ -666,6 +358,53 @@ def test_health_does_not_require_auth():
     locked down."""
     response = client.get("/health/")
     assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Cohort-admin auth — the snapshot WRITE routes require proof of possessing
+# AES_KEY_BASE64 on top of the trust-internal key (FLIP#857), so a caller that
+# holds only the shared trust-internal key (fl-client) cannot DEFINE or destroy a
+# project's frozen cohort. The read routes must stay reachable with the
+# trust-internal key alone.
+# ---------------------------------------------------------------------------
+
+_WRITE_ROUTES = [
+    ("/cohort/snapshot", sample_dataframe_query),
+    ("/cohort/snapshot/delete", {"encrypted_project_id": "encrypted-id"}),
+]
+
+
+@pytest.mark.parametrize(("path", "payload"), _WRITE_ROUTES)
+def test_write_routes_reject_trust_internal_key_without_cohort_admin_proof(path, payload):
+    """A valid trust-internal key alone (what fl-client holds) is refused with 403 —
+    authenticated but not authorised to define the cohort."""
+    response = client.post(path, json=payload, headers=AUTH_HEADERS)
+    assert response.status_code == 403
+    assert "authorised" in response.json()["detail"].lower()
+
+
+@pytest.mark.parametrize(("path", "payload"), _WRITE_ROUTES)
+def test_write_routes_reject_wrong_cohort_admin_proof(path, payload):
+    """A wrong AES-possession proof is refused with the same fixed 403 as a missing one,
+    so the refusal never reveals whether the proof was absent or merely invalid."""
+    headers = {**AUTH_HEADERS, "X-Cohort-Admin-Key": "not-the-real-proof"}
+    response = client.post(path, json=payload, headers=headers)
+    assert response.status_code == 403
+    assert "authorised" in response.json()["detail"].lower()
+
+
+@pytest.mark.parametrize("path", ["/cohort/dataframe", "/cohort/accession-ids"])
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_snapshot")
+def test_read_routes_do_not_require_cohort_admin_proof(mock_get_snapshot, mock_decrypt, path):
+    """The read routes must NOT gain the cohort-admin gate: the trust-internal key alone must
+    get past auth into the handler (a cohort-admin 403 here would mean fl-client's get_dataframe
+    broke). With no snapshot the handler reaches its own fail-closed 403 — distinct text — which
+    proves auth let the caller through rather than blocking on cohort-admin."""
+    mock_decrypt.return_value = "my_project"
+    mock_get_snapshot.return_value = None
+    response = client.post(path, json=sample_dataframe_query, headers=AUTH_HEADERS)
+    assert "authorised" not in response.json().get("detail", "").lower()
 
 
 # ---------------------------------------------------------------------------
@@ -756,14 +495,28 @@ def test_validate_query_rejects_dml_and_ddl(query: str):
 
 # ---------------------------------------------------------------------------
 # The disclosure threshold counts subjects, not rows
+#
+# The count is taken once, when /cohort/snapshot freezes the cohort (FLIP#857), and stored
+# with the artefact; the row-level routes gate on that frozen count (see
+# test_cohort_snapshot.py). These cases pin how the count itself is taken at creation.
 # ---------------------------------------------------------------------------
 
+_SNAPSHOT_PROJECT_ID = "8b2e9d6e-5a53-4f2e-9c37-2c8f4f0f2d11"
 
+
+def _post_snapshot(mock_decrypt, mock_snapshot_enabled):
+    mock_snapshot_enabled.return_value = True
+    mock_decrypt.return_value = _SNAPSHOT_PROJECT_ID
+    return client.post("/cohort/snapshot", json=sample_dataframe_query, headers=WRITE_AUTH_HEADERS)
+
+
+@patch("data_access_api.routers.cohort.snapshot_enabled")
+@patch("data_access_api.routers.cohort.save_snapshot")
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_rejects_many_rows_from_too_few_subjects(
-    mock_get_records, mock_decrypt, mock_get_settings
+def test_snapshot_rejects_many_rows_from_too_few_subjects(
+    mock_get_records, mock_decrypt, mock_get_settings, mock_save_snapshot, mock_snapshot_enabled
 ):
     """Forty rows covering three people is below a floor of ten.
 
@@ -771,26 +524,27 @@ def test_get_dataframe_rejects_many_rows_from_too_few_subjects(
     revealing that ">=1 patient matched", and forty rows from three patients protects nobody.
     """
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
-    mock_decrypt.return_value = "decrypted-id"
     mock_get_records.return_value = pd.DataFrame({"person_id": [1, 2, 3] * 40, "age": range(120)})
 
-    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
+    response = _post_snapshot(mock_decrypt, mock_snapshot_enabled)
 
     assert response.status_code == 403
+    mock_save_snapshot.assert_not_called()
 
 
+@patch("data_access_api.routers.cohort.snapshot_enabled")
+@patch("data_access_api.routers.cohort.save_snapshot")
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_refuses_a_cohort_whose_subjects_cannot_be_counted(
-    mock_get_records, mock_decrypt, mock_get_settings
+def test_snapshot_refuses_a_cohort_whose_subjects_cannot_be_counted(
+    mock_get_records, mock_decrypt, mock_get_settings, mock_save_snapshot, mock_snapshot_enabled
 ):
-    """No person_id and no accession_id means the floor cannot be applied, so nothing is released."""
+    """No person_id and no accession_id means the floor cannot be applied, so nothing is frozen."""
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
-    mock_decrypt.return_value = "decrypted-id"
     mock_get_records.return_value = pd.DataFrame({"age": range(500)})
 
-    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
+    response = _post_snapshot(mock_decrypt, mock_snapshot_enabled)
 
     # 400, not the 403: this reports the shape of the query, never anything about the data, so it
     # is safe to name the missing column and useless as a membership oracle.
@@ -798,100 +552,115 @@ def test_get_dataframe_refuses_a_cohort_whose_subjects_cannot_be_counted(
     assert "person_id" in response.json()["detail"]
     assert "accession_id" in response.json()["detail"]
     assert "500" not in response.json()["detail"]
+    mock_save_snapshot.assert_not_called()
 
 
+@patch("data_access_api.routers.cohort.snapshot_enabled")
+@patch("data_access_api.routers.cohort.save_snapshot")
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_counts_subjects_not_rows_at_the_boundary(
-    mock_get_records, mock_decrypt, mock_get_settings
+def test_snapshot_counts_subjects_not_rows_at_the_boundary(
+    mock_get_records, mock_decrypt, mock_get_settings, mock_save_snapshot, mock_snapshot_enabled
 ):
-    """Exactly ten distinct people is allowed however many rows they contribute."""
+    """Exactly ten distinct people is frozen however many rows they contribute, and the frozen
+    count is the subject count, not the row count."""
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
-    mock_decrypt.return_value = "decrypted-id"
     mock_get_records.return_value = pd.DataFrame({"person_id": list(range(10)) * 3, "age": range(30)})
+    mock_save_snapshot.side_effect = OSError("store unavailable")  # stop after the gate
 
-    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
+    response = _post_snapshot(mock_decrypt, mock_snapshot_enabled)
 
-    assert response.status_code == 200
+    assert response.status_code == 500
+    assert mock_save_snapshot.call_args.kwargs["subject_count"] == 10
 
 
+@patch("data_access_api.routers.cohort.snapshot_enabled")
+@patch("data_access_api.routers.cohort.save_snapshot")
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_rejects_many_studies_from_too_few_subjects(
-    mock_get_records, mock_decrypt, mock_get_settings, one_subject_per_accession
+def test_snapshot_rejects_many_studies_from_too_few_subjects(
+    mock_get_records,
+    mock_decrypt,
+    mock_get_settings,
+    mock_save_snapshot,
+    mock_snapshot_enabled,
+    one_subject_per_accession,
 ):
     """Thirty studies that resolve to three patients do not clear a floor of ten."""
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
-    mock_decrypt.return_value = "decrypted-id"
     mock_get_records.return_value = pd.DataFrame({"accession_id": [f"ACC{i}" for i in range(30)]})
     one_subject_per_accession.side_effect = None
     one_subject_per_accession.return_value = pd.DataFrame({"subject_count": [3]})
 
-    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
+    response = _post_snapshot(mock_decrypt, mock_snapshot_enabled)
 
     assert response.status_code == 403
+    mock_save_snapshot.assert_not_called()
 
 
+@patch("data_access_api.routers.cohort.snapshot_enabled")
+@patch("data_access_api.routers.cohort.save_snapshot")
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_uncountable_is_indistinguishable_from_below_threshold(
-    mock_get_records, mock_decrypt, mock_get_settings, one_subject_per_accession
+def test_snapshot_zero_and_few_subjects_are_indistinguishable(
+    mock_get_records,
+    mock_decrypt,
+    mock_get_settings,
+    mock_save_snapshot,
+    mock_snapshot_enabled,
+    one_subject_per_accession,
 ):
-    """On this route an unestablished count must look exactly like a small one.
-
-    Unlike /cohort/dataframe there is no separate 400 here: the refusal has to stay byte-identical
-    across a zero cohort, a below-threshold one, and one whose subjects could not be resolved, or
-    the refusal itself becomes the oracle the threshold exists to prevent.
-    """
+    """A cohort resolving to zero subjects and one resolving to three refuse byte-identically."""
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
-    mock_decrypt.return_value = "decrypted-id"
     mock_get_records.return_value = pd.DataFrame({"accession_id": [f"ACC{i}" for i in range(30)]})
     one_subject_per_accession.side_effect = None
 
     responses = []
     for subject_count in (0, 3):
         one_subject_per_accession.return_value = pd.DataFrame({"subject_count": [subject_count]})
-        responses.append(client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS))
+        responses.append(_post_snapshot(mock_decrypt, mock_snapshot_enabled))
 
     assert responses[0].status_code == responses[1].status_code == 403
     assert responses[0].json()["detail"] == responses[1].json()["detail"]
     assert "3" not in responses[1].json()["detail"]
+    mock_save_snapshot.assert_not_called()
 
 
+@patch("data_access_api.routers.cohort.snapshot_enabled")
+@patch("data_access_api.routers.cohort.save_snapshot")
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_counts_a_duplicated_person_id_column_instead_of_failing(
-    mock_get_records, mock_decrypt, mock_get_settings
+def test_snapshot_counts_a_duplicated_person_id_column_instead_of_failing(
+    mock_get_records, mock_decrypt, mock_get_settings, mock_save_snapshot, mock_snapshot_enabled
 ):
     """A projection carrying person_id twice is counted, never a 500.
 
-    ``SELECT *`` over a join that keeps both sides' person_id reaches this route with a duplicated
-    column; ``df["person_id"]`` is then a DataFrame and ``int(...nunique())`` raised a TypeError
-    that surfaced as an opaque 500 at training start. /cohort de-duplicates first, so approval
-    and the imaging pull both succeeded before this failed.
+    ``SELECT *`` over a join that keeps both sides' person_id arrives with a duplicated column;
+    ``df["person_id"]`` is then a DataFrame, and counting it naively raised a TypeError.
     """
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 2
-    mock_decrypt.return_value = "decrypted-id"
     mock_get_records.return_value = pd.DataFrame(
         [[1, 25, 1], [2, 30, 2], [3, 40, 3]], columns=["person_id", "age", "person_id"]
     )
+    mock_save_snapshot.side_effect = OSError("store unavailable")  # stop after the gate
 
-    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
+    _post_snapshot(mock_decrypt, mock_snapshot_enabled)
 
-    assert response.status_code == 200
-    assert response.json() == {"person_id": [1, 2, 3], "age": [25, 30, 40]}
+    assert mock_save_snapshot.call_args.kwargs["subject_count"] == 3
 
 
+@patch("data_access_api.routers.cohort.snapshot_enabled")
+@patch("data_access_api.routers.cohort.save_snapshot")
 @patch("data_access_api.routers.cohort.count_distinct_subjects")
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_refuses_when_the_subject_count_cannot_be_taken(
-    mock_get_records, mock_decrypt, mock_get_settings, mock_count
+def test_snapshot_refuses_when_the_subject_count_cannot_be_taken(
+    mock_get_records, mock_decrypt, mock_get_settings, mock_count, mock_save_snapshot, mock_snapshot_enabled
 ):
     """A failure of the count itself is refused exactly like a small cohort.
 
@@ -900,56 +669,33 @@ def test_get_dataframe_refuses_when_the_subject_count_cannot_be_taken(
     that says why the cohort could not be gated.
     """
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
-    mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.return_value = pd.DataFrame({"accession_id": [f"ACC{i}" for i in range(30)]})
-
-    mock_count.side_effect = RuntimeError("connection reset")
-    failed = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    mock_count.side_effect = None
-    mock_count.return_value = 3
-    small = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
-
-    assert failed.status_code == small.status_code == 403
-    assert failed.json()["detail"] == small.json()["detail"]
-    assert "connection" not in failed.text
-
-
-@patch("data_access_api.routers.cohort.count_distinct_subjects")
-@patch("data_access_api.routers.cohort.get_settings")
-@patch("data_access_api.routers.cohort.decrypt")
-@patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_refuses_when_the_subject_count_cannot_be_taken(
-    mock_get_records, mock_decrypt, mock_get_settings, mock_count
-):
-    """On the accession route a failed count must not separate empty from non-empty cohorts.
-
-    An empty cohort never reaches the database for its count while a non-empty one does, so an
-    unguarded lookup error made the two distinguishable exactly when the lookup was unhealthy:
-    the empty one got the fixed 403 and the other a 400 naming the table (or a 500).
-    """
-    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
-    mock_decrypt.return_value = "decrypted-id"
     mock_get_records.return_value = pd.DataFrame({"accession_id": [f"ACC{i}" for i in range(30)]})
 
     mock_count.side_effect = HTTPException(status_code=400, detail="The table 'image_occurrence' does not exist.")
-    failed = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
+    failed = _post_snapshot(mock_decrypt, mock_snapshot_enabled)
 
-    mock_get_records.return_value = pd.DataFrame({"accession_id": []})
     mock_count.side_effect = None
-    mock_count.return_value = 0
-    empty = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
+    mock_count.return_value = 3
+    small = _post_snapshot(mock_decrypt, mock_snapshot_enabled)
 
-    assert failed.status_code == empty.status_code == 403
-    assert failed.json()["detail"] == empty.json()["detail"]
+    assert failed.status_code == small.status_code == 403
+    assert failed.json()["detail"] == small.json()["detail"]
     assert "image_occurrence" not in failed.text
+    mock_save_snapshot.assert_not_called()
 
 
+@patch("data_access_api.routers.cohort.snapshot_enabled")
+@patch("data_access_api.routers.cohort.save_snapshot")
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_never_counts_more_subjects_than_rows(
-    mock_get_records, mock_decrypt, mock_get_settings, one_subject_per_accession
+def test_snapshot_never_counts_more_subjects_than_rows(
+    mock_get_records,
+    mock_decrypt,
+    mock_get_settings,
+    mock_save_snapshot,
+    mock_snapshot_enabled,
+    one_subject_per_accession,
 ):
     """Three accession numbers cannot clear a floor of ten however many people they resolve to.
 
@@ -958,11 +704,11 @@ def test_get_accession_ids_never_counts_more_subjects_than_rows(
     row check provided.
     """
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
-    mock_decrypt.return_value = "decrypted-id"
     mock_get_records.return_value = pd.DataFrame({"accession_id": ["ACC1", "ACC2", "ACC3"]})
     one_subject_per_accession.side_effect = None
     one_subject_per_accession.return_value = pd.DataFrame({"subject_count": [12]})
 
-    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
+    response = _post_snapshot(mock_decrypt, mock_snapshot_enabled)
 
     assert response.status_code == 403
+    mock_save_snapshot.assert_not_called()

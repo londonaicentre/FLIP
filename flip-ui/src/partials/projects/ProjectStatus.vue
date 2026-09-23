@@ -29,6 +29,7 @@
                 </div>
             </div>
         </div>
+        <CohortSnapshotSummary :can-load="canLoad" />
         <div v-if="canLoad" class="flex flex-col flex-1 min-h-0 text-sm" data-test="project-status-container">
             <Transition name="fade" mode="out-in">
                 <div v-if="!data" class="p-4 space-y-2 transition">
@@ -360,6 +361,8 @@ import AiSkeleton from "@/components/AiSkeleton/AiSkeleton.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
 import { getImagingProjectsStatus, IImagingProjectStatus } from "@/services/project-service";
 import { useSiteDetailsStore } from "@/store/siteDetailsStore";
+
+import CohortSnapshotSummary from "./CohortSnapshotSummary.vue";
 
 interface IImagingProjectStatusProps {
     canLoad: boolean;

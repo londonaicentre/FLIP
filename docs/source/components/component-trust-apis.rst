@@ -188,11 +188,17 @@ Disclosure threshold
 ====================
 
 ``COHORT_QUERY_THRESHOLD`` (default 10) is the Trust's own disclosure floor, set in its kit file. Aggregate
-statistics fold small categories below it, and both row-level routes refuse outright when the live cohort is
-smaller than it — with one fixed message, so a below-threshold cohort is indistinguishable from an empty one.
-The hub can pass a threshold, but only a higher one: the Trust's value is a floor the hub cannot lower.
-Because FLIP stores a cohort only as its SQL and re-runs it at every stage, a project that imported cleanly
-can start refusing later if the data changes.
+statistics fold small categories below it, and both row-level routes refuse outright when the approved
+cohort covers fewer distinct subjects than it — with one fixed message, so a below-threshold cohort is
+indistinguishable from an empty one. The hub can pass a threshold, but only a higher one: the Trust's value is
+a floor the hub cannot lower.
+
+The row-level routes serve only the cohort **frozen at project approval** (`FLIP#857
+<https://github.com/londonaicentre/FLIP/issues/857>`__): approval makes each Trust run the approved query once
+and persist the result, and ``/cohort/dataframe`` and ``/cohort/accession-ids`` serve that snapshot, ignoring
+any SQL the caller sends. The threshold is checked when the snapshot is taken and again, against the frozen
+subject count, on every serve, so a Trust that raises its floor affects already-approved projects, while
+changes to the live OMOP data reach a project only when it is re-approved.
 
 Query cache
 ===========

@@ -180,14 +180,16 @@ make test-trust-data-tools  # Three things: publisher pytest + ruff, shellcheck 
 
 **Generating keys.** The key is minted by `register_trust` (`make register-trusts`), which writes `TRUST_INTERNAL_SERVICE_KEY` into the trust's kit file. Re-register to rotate.
 
+**Cohort-admin gate (write routes, FLIP#857).** The trust-internal key does not distinguish callers, and fl-client legitimately holds it (it reads the frozen cohort via `flip.get_dataframe` and pulls imaging). That is safe for the read routes, but data-access-api's cohort-**defining** writes — `POST /cohort/snapshot` (materialise/replace the frozen artefact everyone then trains on) and `POST /cohort/snapshot/delete` — must not be reachable by researcher training code. They therefore carry a **second** router-level gate on top of the trust-internal key: `authenticate_cohort_admin`, proof of possessing `AES_KEY_BASE64`. trust-api and data-access-api hold that key (they encrypt/decrypt hub payloads with it); fl-client deliberately does not (it is not in fl-client's compose env). The proof is the **SHA-256 of the key**, not the key itself, so it never travels the wire or lands in a log; receivers compare it with `hmac.compare_digest`. A caller with a valid trust-internal key but no proof gets **403** (authenticated, not authorised); the dependency order (trust-internal first) means a caller with neither still gets 401 first. No new secret is minted or distributed — the gate reuses the existing AES-key possession boundary, so kit files, `register_trust`, and compose are unchanged. Header name: `COHORT_ADMIN_KEY_HEADER` (default `X-Cohort-Admin-Key`), configured on both trust-api and data-access-api.
+
 **Per-service code.** The auth check lives in each receiving service's `utils/internal_auth.py`:
 
 - `trust/imaging-api/imaging_api/utils/internal_auth.py` — applied at the router level on every imaging-api router except `/health`.
-- `trust/data-access-api/data_access_api/utils/internal_auth.py` — applied at the router level on `/cohort` (covers `/cohort`, `/cohort/dataframe`, `/cohort/accession-ids`).
+- `trust/data-access-api/data_access_api/utils/internal_auth.py` — `authenticate_internal_service` gates the read router (`/cohort` statistics, `/cohort/dataframe`, `/cohort/accession-ids`); the write router (`/cohort/snapshot`, `/cohort/snapshot/delete`) additionally requires `authenticate_cohort_admin` (the AES-possession proof above).
 
 The senders construct the header inline at call sites:
 
-- `trust-api/trust_api/services/task_handlers.py::trust_internal_headers()` — used on outbound imaging-api and data-access-api calls.
+- `trust-api/trust_api/services/task_handlers.py::trust_internal_headers()` — used on outbound imaging-api and data-access-api calls; `cohort_admin_headers()` in the same module layers the cohort-admin proof on top for the snapshot write.
 - `imaging-api/imaging_api/services_external/data_access.py` — used on the outbound `/cohort/accession-ids` call.
 - The `flip` Python package — lives at [`flip-utils/flip/`](../flip-utils/flip/) in this mono-repo, consumed by both the NVFLARE and Flower fl-client / fl-server images built from `fl-services/`. Wraps every fl-client call to imaging-api (`flip.get_by_accession_number`, etc.) and data-access-api (`flip.get_dataframe`). The package reads `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and forwards it on every request. **User-uploaded training code (`client_app.py`, `server_app.py`, anything under `tutorials/`) does not deal with the header directly** — it calls `flip.*` and the package handles transport-level auth.
 
