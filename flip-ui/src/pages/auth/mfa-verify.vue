@@ -61,6 +61,7 @@ import { Form } from "vee-validate";
 import { onMounted, ref } from "vue";
 import { object, string } from "yup";
 
+import { SignInStep } from "@/auth/provider";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiInput from "@/components/AiInput/AiInput.vue";
 import { routeChange } from "@/router";
@@ -82,8 +83,19 @@ interface IMfaForm {
 }
 
 onMounted(() => {
-    // Only valid while we have an outstanding TOTP code challenge.
-    if (authStore.signInStep !== "CONFIRM_SIGN_IN_WITH_TOTP_CODE") {
+    // Only valid while we have an outstanding TOTP code challenge — which
+    // a backend without an in-app TOTP step never issues.
+    if (!authStore.capabilities.totpChallenge) {
+        Snackbar.show({
+            type: "info",
+            title: "Not available",
+            text: "Two-factor authentication is managed by the identity provider for this deployment."
+        });
+        routeChange.gotoLogin();
+
+        return;
+    }
+    if (authStore.signInStep !== SignInStep.TOTP_CODE) {
         routeChange.gotoLogin();
     }
 });

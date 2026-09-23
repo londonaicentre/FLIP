@@ -78,6 +78,7 @@ import { Form } from "vee-validate";
 import { computed, onMounted, ref } from "vue";
 import { object, string } from "yup";
 
+import { SignInStep } from "@/auth/provider";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiInput from "@/components/AiInput/AiInput.vue";
 import { routeChange } from "@/router";
@@ -93,15 +94,15 @@ const sharedSecret = computed(() => authStore.totpSetup?.sharedSecret ?? null);
 const setupUri = computed(() => authStore.totpSetup?.setupUri ?? null);
 
 // Two code paths share this page:
-//   - Sign-in-chain: Cognito handed Amplify a totpSetupDetails during
-//     signIn/changePassword; the store already has the secret. Submitting
-//     the code calls `confirmSignIn` to close the MFA_SETUP challenge.
+//   - Sign-in-chain: the provider handed out TOTP setup details during
+//     signIn/changePassword (signInStep === TOTP_SETUP); the store already
+//     has the secret. Submitting the code closes the MFA setup challenge.
 //   - Post-auth: the user is already signed in but their MFA preference
 //     is disabled (admin reset, or first-login where pool was still
 //     letting them slip through). We mint a fresh secret via
-//     `setUpTOTP` and commit it with `verifyTOTPSetup` + `updateMFAPreference`.
+//     `beginMfaEnrolment` and commit it with `completeMfaEnrolment`.
 const isSignInChain = computed(
-    () => authStore.signInStep === "CONTINUE_SIGN_IN_WITH_TOTP_SETUP"
+    () => authStore.signInStep === SignInStep.TOTP_SETUP
 );
 
 const schema = object().shape({
@@ -133,6 +134,19 @@ const renderQr = async (uri: string) => {
 };
 
 onMounted(async () => {
+    // Nothing to enrol against a backend that cannot run TOTP setup in-app
+    // (Keycloak keeps that in its own account console).
+    if (!authStore.capabilities.totpEnrolment) {
+        Snackbar.show({
+            type: "info",
+            title: "Not available",
+            text: "Two-factor authentication is managed by the identity provider for this deployment."
+        });
+        routeChange.viewProjects();
+
+        return;
+    }
+
     if (isSignInChain.value) {
         // Sign-in-chain: data already populated by signIn/changePassword.
         if (!setupUri.value) {

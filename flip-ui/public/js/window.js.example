@@ -22,13 +22,20 @@
 // using the env vars from .env.stag / .env.production, and uploaded to S3
 // alongside the built bundle.
 //
-// See .env.development.example for the env vars involved. The generator
-// aborts with a non-zero exit if AWS_COGNITO_USER_POOL_ID or
-// AWS_COGNITO_APP_CLIENT_ID (or their VITE_* equivalents) are unset.
+// See .env.development.example for the env vars involved. AUTH_BACKEND
+// selects the identity provider (FLIP#919): "cognito" (the default when
+// unset) needs AWS_COGNITO_USER_POOL_ID + AWS_COGNITO_APP_CLIENT_ID,
+// "keycloak" needs KEYCLOAK_PUBLIC_URL + KEYCLOAK_REALM + KEYCLOAK_CLIENT_ID.
+// The generator aborts with a non-zero exit if the selected backend's
+// values are unset, and emits the other backend's as empty strings.
 
 window.AWS_BASE_URL            = "https://<host>/api";
+window.AUTH_BACKEND            = "cognito";
 window.AWS_USER_POOL_ID        = "<region>_<pool-id>";
 window.AWS_CLIENT_ID           = "<app-client-id>";
 window.AWS_REGION              = "eu-west-2";
+window.KEYCLOAK_URL            = "";
+window.KEYCLOAK_REALM          = "";
+window.KEYCLOAK_CLIENT_ID      = "";
 window.BLACKLISTED_MODEL_FILES = "";
 window.RELEASE_VERSION         = "";

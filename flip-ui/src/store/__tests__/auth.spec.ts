@@ -11,40 +11,21 @@
  * limitations under the License.
  */
 
-import { confirmResetPassword,
-    confirmSignIn,
-    fetchAuthSession,
-    fetchUserAttributes,
-    getCurrentUser,
-    resetPassword,
-    setUpTOTP,
-    signIn,
-    signOut,
-    updateMFAPreference,
-    verifyTOTPSetup } from "aws-amplify/auth";
 import { createPinia, setActivePinia } from "pinia";
 
+import { makeMockAuthProvider, NO_CAPABILITIES, resetMockAuthProvider } from "@/auth/__tests__/mock-provider";
+import { AuthError, SignInStep } from "@/auth/provider";
 import { getMfaStatus, getUserPermissions } from "@/services/user-service";
 import { useAuthStore } from "@/store/auth";
 import { leaveToLogin, stashPostSignOutNotice } from "@/utils/session-teardown";
 import { Snackbar } from "@/utils/snackbar";
 
-// Amplify auth functions are all called via named imports; mock every
-// symbol the store touches. Individual tests re-arm these via
-// vi.mocked(fn).mockResolvedValue(...) / mockRejectedValue(...).
-vi.mock("aws-amplify/auth", () => ({
-    confirmResetPassword: vi.fn(),
-    confirmSignIn: vi.fn(),
-    fetchAuthSession: vi.fn(),
-    fetchUserAttributes: vi.fn(),
-    getCurrentUser: vi.fn(),
-    resetPassword: vi.fn(),
-    setUpTOTP: vi.fn(),
-    signIn: vi.fn(),
-    signOut: vi.fn(),
-    updateMFAPreference: vi.fn(),
-    verifyTOTPSetup: vi.fn()
-}));
+// The store talks to the identity provider only through the `@/auth`
+// seam; the provider is a bag of spies. Backend specifics (SRP, the
+// UserAlreadyAuthenticated retry, the token race) are the providers' own
+// specs under src/auth/__tests__.
+const provider = vi.hoisted(() => ({ current: null as unknown }));
+vi.mock("@/auth", () => ({ getAuthProvider: () => provider.current }));
 
 vi.mock("@/services/user-service", () => ({
     getMfaStatus: vi.fn(),
@@ -77,33 +58,40 @@ vi.mock("@/utils/snackbar", () => ({
     }
 }));
 
+const IDENTITY = {
+    sub: "id",
+    email: "e@f.com",
+    username: "u"
+};
+
+const STORE_USER = {
+    username: "u",
+    userId: "id",
+    attributes: {
+        sub: "id",
+        email: "e@f.com"
+    },
+    permissions: [] as string[]
+};
+
 describe("authStore", () => {
     let store: ReturnType<typeof useAuthStore>;
+    const auth = makeMockAuthProvider();
 
     beforeEach(() => {
         setActivePinia(createPinia());
         store = useAuthStore();
-        vi.mocked(signIn).mockReset();
-        vi.mocked(confirmSignIn).mockReset();
-        vi.mocked(signOut).mockReset();
-        vi.mocked(getCurrentUser).mockReset();
-        vi.mocked(fetchUserAttributes).mockReset();
-        vi.mocked(setUpTOTP).mockReset();
-        vi.mocked(verifyTOTPSetup).mockReset();
-        vi.mocked(updateMFAPreference).mockReset();
-        vi.mocked(resetPassword).mockReset();
-        vi.mocked(confirmResetPassword).mockReset();
+        resetMockAuthProvider(auth);
+        provider.current = auth;
         vi.mocked(getMfaStatus).mockReset();
         vi.mocked(getUserPermissions).mockReset();
         vi.mocked(leaveToLogin).mockReset();
         vi.mocked(stashPostSignOutNotice).mockReset();
-        vi.mocked(fetchAuthSession).mockReset();
         vi.mocked(Snackbar.error).mockReset();
         vi.mocked(Snackbar.show).mockReset();
-        // Default: tokens are visible immediately so waitForSessionTokens
-        // resolves without triggering the forceRefresh fallback. Tests that
-        // exercise the race re-arm this with mockResolvedValueOnce.
-        vi.mocked(fetchAuthSession).mockResolvedValue({ tokens: { accessToken: { toString: () => "access-token" } as never } } as never);
+        // Default: a signed-in identity is readable. Tests that exercise a
+        // failing hydrate re-arm this.
+        auth.getUser.mockResolvedValue(IDENTITY);
     });
 
     describe("initial state & getters", () => {
@@ -116,31 +104,28 @@ describe("authStore", () => {
 
         it("getUser returns the current user", () => {
             expect(store.getUser).toBeNull();
-            store.user = {
-                username: "u",
-                userId: "id",
-                attributes: {
-                    sub: "s",
-                    email: "e@f.com"
-                },
-                permissions: []
-            };
+            store.user = { ...STORE_USER };
             expect(store.getUser).toEqual(store.user);
+        });
+
+        it("capabilities come from the configured provider", () => {
+            expect(store.capabilities).toBe(auth.capabilities);
+
+            // The provider is a per-page singleton, so the getter is a plain
+            // (cached) computed: a different backend means a fresh store.
+            provider.current = makeMockAuthProvider({
+                backend: "keycloak",
+                capabilities: NO_CAPABILITIES
+            });
+            setActivePinia(createPinia());
+            expect(useAuthStore().capabilities).toEqual(NO_CAPABILITIES);
         });
 
         it("confirmedUser is true once challenges clear AND (env is MFA-off OR TOTP is active)", () => {
             expect(store.confirmedUser).toBe(false);
 
-            store.signInStep = "DONE";
-            store.user = {
-                username: "u",
-                userId: "id",
-                attributes: {
-                    sub: "s",
-                    email: "e@f.com"
-                },
-                permissions: []
-            };
+            store.signInStep = SignInStep.DONE;
+            store.user = { ...STORE_USER };
             // Stag/prod path: mfaRequired=true forces mfaEnabled=true gate.
             store.mfaRequired = true;
             store.mfaEnabled = true;
@@ -162,7 +147,7 @@ describe("authStore", () => {
         it("needsMfaEnrolment is true only when DONE + mfaRequired=true + mfaEnabled=false", () => {
             expect(store.needsMfaEnrolment).toBe(false);
 
-            store.signInStep = "DONE";
+            store.signInStep = SignInStep.DONE;
             store.mfaRequired = true;
             store.mfaEnabled = false;
             expect(store.needsMfaEnrolment).toBe(true);
@@ -183,50 +168,30 @@ describe("authStore", () => {
 
     describe("hydrate", () => {
         it("with mfa enabled, populates user with permissions via backend", async () => {
-            vi.mocked(getCurrentUser).mockResolvedValue({
-                username: "u",
-                userId: "id"
-            } as never);
             vi.mocked(getMfaStatus).mockResolvedValue({
                 enabled: true,
                 required: true
             });
-            vi.mocked(fetchUserAttributes).mockResolvedValue({
-                sub: "s",
-                email: "e@f.com"
-            } as never);
             vi.mocked(getUserPermissions).mockResolvedValue({ permissions: ["CanManageUsers"] });
 
             await store.hydrate();
 
-            expect(store.signInStep).toBe("DONE");
+            expect(store.signInStep).toBe(SignInStep.DONE);
             expect(store.mfaEnabled).toBe(true);
             expect(store.user).toEqual({
-                username: "u",
-                userId: "id",
-                attributes: {
-                    sub: "s",
-                    email: "e@f.com"
-                },
+                ...STORE_USER,
                 permissions: ["CanManageUsers"]
             });
+            // Permissions are keyed on the provider subject, whatever backend issued it.
             expect(getUserPermissions).toHaveBeenCalledWith("id");
             expect(getMfaStatus).toHaveBeenCalledTimes(1);
         });
 
         it("defaults permissions to empty array when backend omits them", async () => {
-            vi.mocked(getCurrentUser).mockResolvedValue({
-                username: "u",
-                userId: "id"
-            } as never);
             vi.mocked(getMfaStatus).mockResolvedValue({
                 enabled: true,
                 required: true
             });
-            vi.mocked(fetchUserAttributes).mockResolvedValue({
-                sub: "s",
-                email: "e@f.com"
-            } as never);
             // getUserPermissions returns an object with no permissions key
             vi.mocked(getUserPermissions).mockResolvedValue({} as never);
 
@@ -236,44 +201,20 @@ describe("authStore", () => {
         });
 
         it("with mfa disabled, skips permissions fetch and leaves permissions empty", async () => {
-            vi.mocked(getCurrentUser).mockResolvedValue({
-                username: "u",
-                userId: "id"
-            } as never);
             vi.mocked(getMfaStatus).mockResolvedValue({
                 enabled: false,
                 required: true
             });
-            vi.mocked(fetchUserAttributes).mockResolvedValue({
-                sub: "s",
-                email: "e@f.com"
-            } as never);
 
             await store.hydrate();
 
-            expect(store.signInStep).toBe("DONE");
+            expect(store.signInStep).toBe(SignInStep.DONE);
             expect(store.mfaEnabled).toBe(false);
-            expect(store.user).toEqual({
-                username: "u",
-                userId: "id",
-                attributes: {
-                    sub: "s",
-                    email: "e@f.com"
-                },
-                permissions: []
-            });
+            expect(store.user).toEqual(STORE_USER);
             expect(getUserPermissions).not.toHaveBeenCalled();
         });
 
-        it("accepts a knownMfaEnabled override and skips the backend call", async () => {
-            vi.mocked(getCurrentUser).mockResolvedValue({
-                username: "u",
-                userId: "id"
-            } as never);
-            vi.mocked(fetchUserAttributes).mockResolvedValue({
-                sub: "s",
-                email: "e@f.com"
-            } as never);
+        it("accepts a known MFA state and skips the backend call", async () => {
             vi.mocked(getUserPermissions).mockResolvedValue({ permissions: [] });
 
             await store.hydrate({
@@ -290,19 +231,11 @@ describe("authStore", () => {
             // Dev bypass: a user who never enrolled TOTP in an environment
             // with ENFORCE_MFA=false still has full API access, so the
             // store should populate real permissions instead of the
-            // attributes-only placeholder reserved for the MFA-blocked case.
-            vi.mocked(getCurrentUser).mockResolvedValue({
-                username: "u",
-                userId: "id"
-            } as never);
+            // identity-only placeholder reserved for the MFA-blocked case.
             vi.mocked(getMfaStatus).mockResolvedValue({
                 enabled: false,
                 required: false
             });
-            vi.mocked(fetchUserAttributes).mockResolvedValue({
-                sub: "s",
-                email: "e@f.com"
-            } as never);
             vi.mocked(getUserPermissions).mockResolvedValue({ permissions: ["CanManageUsers"] });
 
             await store.hydrate();
@@ -312,83 +245,65 @@ describe("authStore", () => {
             expect(store.user?.permissions).toEqual(["CanManageUsers"]);
             expect(getUserPermissions).toHaveBeenCalledWith("id");
         });
+
+        it("propagates a getUser failure (no session) untouched", async () => {
+            auth.getUser.mockRejectedValue(new Error("The user is not authenticated"));
+            vi.mocked(getMfaStatus).mockResolvedValue({
+                enabled: true,
+                required: true
+            });
+
+            await expect(store.hydrate()).rejects.toThrow("not authenticated");
+            expect(store.user).toBeNull();
+        });
     });
 
-    describe("fetchInfo", () => {
-        it("delegates to hydrate", async () => {
-            vi.mocked(getCurrentUser).mockResolvedValue({
-                username: "u",
-                userId: "id"
-            } as never);
+    describe("fetchInfo / finaliseSignIn", () => {
+        it("both delegate to hydrate", async () => {
             vi.mocked(getMfaStatus).mockResolvedValue({
                 enabled: false,
                 required: true
             });
-            vi.mocked(fetchUserAttributes).mockResolvedValue({
-                sub: "s",
-                email: "e@f.com"
-            } as never);
 
             await store.fetchInfo();
-
-            expect(store.signInStep).toBe("DONE");
+            expect(store.signInStep).toBe(SignInStep.DONE);
             expect(store.mfaEnabled).toBe(false);
-        });
-    });
 
-    describe("finaliseSignIn", () => {
-        it("delegates to hydrate", async () => {
-            vi.mocked(getCurrentUser).mockResolvedValue({
-                username: "u",
-                userId: "id"
-            } as never);
             vi.mocked(getMfaStatus).mockResolvedValue({
                 enabled: true,
                 required: true
             });
-            vi.mocked(fetchUserAttributes).mockResolvedValue({
-                sub: "s",
-                email: "e@f.com"
-            } as never);
             vi.mocked(getUserPermissions).mockResolvedValue({ permissions: [] });
 
             await store.finaliseSignIn();
-
-            expect(store.signInStep).toBe("DONE");
             expect(store.mfaEnabled).toBe(true);
+        });
+    });
+
+    describe("hasSession", () => {
+        it("asks the provider", async () => {
+            auth.hasSession.mockResolvedValue(true);
+            await expect(store.hasSession()).resolves.toBe(true);
+
+            auth.hasSession.mockResolvedValue(false);
+            await expect(store.hasSession()).resolves.toBe(false);
         });
     });
 
     describe("signIn", () => {
-        it("resets state then hydrates when Amplify reports isSignedIn", async () => {
+        it("resets state, hands the credentials to the provider, then hydrates on DONE", async () => {
             // Pre-set state that must be cleared before sign-in runs.
             store.user = {
-                username: "stale",
-                userId: "stale",
-                attributes: {
-                    sub: "",
-                    email: ""
-                },
-                permissions: []
+                ...STORE_USER,
+                username: "stale"
             };
-            store.signInStep = "DONE";
+            store.signInStep = SignInStep.DONE;
             store.mfaEnabled = true;
-            vi.mocked(signIn).mockResolvedValue({
-                isSignedIn: true,
-                nextStep: { signInStep: "DONE" }
-            } as never);
-            vi.mocked(getCurrentUser).mockResolvedValue({
-                username: "u",
-                userId: "id"
-            } as never);
+            auth.signIn.mockResolvedValue({ step: SignInStep.DONE });
             vi.mocked(getMfaStatus).mockResolvedValue({
                 enabled: true,
                 required: true
             });
-            vi.mocked(fetchUserAttributes).mockResolvedValue({
-                sub: "s",
-                email: "e@f.com"
-            } as never);
             vi.mocked(getUserPermissions).mockResolvedValue({ permissions: [] });
 
             await store.signIn({
@@ -396,267 +311,78 @@ describe("authStore", () => {
                 password: "p"
             });
 
-            expect(signIn).toHaveBeenCalledWith({
-                username: "u",
-                password: "p",
-                options: { authFlowType: "USER_SRP_AUTH" }
-            });
-            expect(store.signInStep).toBe("DONE");
+            expect(auth.signIn).toHaveBeenCalledWith("u", "p");
+            expect(store.signInStep).toBe(SignInStep.DONE);
             expect(store.mfaEnabled).toBe(true);
             expect(store.user?.username).toBe("u");
         });
 
-        it("captures TOTP setup details when Cognito demands first-time enrolment", async () => {
-            const setupUri = new URL("otpauth://totp/FLIP:u?secret=ABCD");
-            vi.mocked(signIn).mockResolvedValue({
-                isSignedIn: false,
-                nextStep: {
-                    signInStep: "CONTINUE_SIGN_IN_WITH_TOTP_SETUP",
-                    totpSetupDetails: {
-                        sharedSecret: "ABCD",
-                        getSetupUri: vi.fn(() => setupUri)
-                    }
+        it("captures TOTP setup details when the provider demands first-time enrolment", async () => {
+            auth.signIn.mockResolvedValue({
+                step: SignInStep.TOTP_SETUP,
+                totpSetup: {
+                    sharedSecret: "ABCD",  // pragma: allowlist secret
+                    setupUri: "otpauth://totp/FLIP:u?secret=ABCD"
                 }
-            } as never);
+            });
 
             await store.signIn({
                 username: "u",
                 password: "p"
             });
 
-            expect(store.signInStep).toBe("CONTINUE_SIGN_IN_WITH_TOTP_SETUP");
+            expect(store.signInStep).toBe(SignInStep.TOTP_SETUP);
             expect(store.totpSetup).toEqual({
-                sharedSecret: "ABCD",
-                setupUri: setupUri.toString()
+                sharedSecret: "ABCD",  // pragma: allowlist secret
+                setupUri: "otpauth://totp/FLIP:u?secret=ABCD"
             });
             // Did NOT hydrate — we're mid-challenge.
-            expect(getCurrentUser).not.toHaveBeenCalled();
+            expect(auth.getUser).not.toHaveBeenCalled();
         });
 
-        it("returns early for new-password challenge without hydrating", async () => {
-            vi.mocked(signIn).mockResolvedValue({
-                isSignedIn: false,
-                nextStep: { signInStep: "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED" }
-            } as never);
+        it("returns early for the new-password challenge without hydrating", async () => {
+            auth.signIn.mockResolvedValue({ step: SignInStep.NEW_PASSWORD_REQUIRED });
 
             await store.signIn({
                 username: "u",
                 password: "p"
             });
 
-            expect(store.signInStep).toBe("CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED");
-            expect(getCurrentUser).not.toHaveBeenCalled();
+            expect(store.signInStep).toBe(SignInStep.NEW_PASSWORD_REQUIRED);
+            expect(auth.getUser).not.toHaveBeenCalled();
         });
 
-        it("returns early for TOTP-code challenge without hydrating", async () => {
-            vi.mocked(signIn).mockResolvedValue({
-                isSignedIn: false,
-                nextStep: { signInStep: "CONFIRM_SIGN_IN_WITH_TOTP_CODE" }
-            } as never);
+        it("returns early for the TOTP-code challenge without hydrating", async () => {
+            auth.signIn.mockResolvedValue({ step: SignInStep.TOTP_CODE });
 
             await store.signIn({
                 username: "u",
                 password: "p"
             });
 
-            expect(store.signInStep).toBe("CONFIRM_SIGN_IN_WITH_TOTP_CODE");
-            expect(getCurrentUser).not.toHaveBeenCalled();
+            expect(store.signInStep).toBe(SignInStep.TOTP_CODE);
+            expect(auth.getUser).not.toHaveBeenCalled();
         });
 
-        it("tolerates a response with no nextStep", async () => {
-            vi.mocked(signIn).mockResolvedValue({
-                isSignedIn: false,
-                nextStep: undefined
-            } as never);
-
-            await store.signIn({
-                username: "u",
-                password: "p"
-            });
-
-            expect(store.signInStep).toBeNull();
-            expect(getCurrentUser).not.toHaveBeenCalled();
-        });
-
-        it("throws MissingSessionTokensError when forceRefresh fails and no accessToken is available", async () => {
-            // Amplify's forceRefresh can throw on its own (expired refresh
-            // token, Cognito transient failure). The wait helper logs the
-            // throw and the "no accessToken" warn, then throws a typed error
-            // so the caller can surface a real message instead of letting
-            // hydrate proceed unauthenticated and 401 generically.
-            const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-            const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-            vi.mocked(fetchAuthSession)
-                .mockReset()
-                .mockResolvedValueOnce({ tokens: undefined } as never)
-                .mockRejectedValueOnce(new Error("Refresh token expired"));
-            vi.mocked(signIn).mockResolvedValue({
-                isSignedIn: true,
-                nextStep: { signInStep: "DONE" }
-            } as never);
+        it("propagates provider failures (wrong password, missing tokens) without hydrating", async () => {
+            auth.signIn.mockRejectedValue(new AuthError("INVALID_CREDENTIALS", "Invalid user credentials"));
 
             await expect(store.signIn({
                 username: "u",
                 password: "p"
-            })).rejects.toMatchObject({ name: "MissingSessionTokensError" });
+            })).rejects.toMatchObject({ code: "INVALID_CREDENTIALS" });
 
-            // hydrate must not have been attempted — `getCurrentUser` is
-            // hydrate's first Amplify call and would proceed if the wait
-            // helper had silently returned.
-            expect(getCurrentUser).not.toHaveBeenCalled();
-
-            expect(consoleErrorSpy).toHaveBeenCalledWith(
-                "waitForSessionTokens: forceRefresh threw:",
-                expect.objectContaining({ message: "Refresh token expired" })
-            );
-            // Also covers the "still no accessToken after forceRefresh" warn —
-            // the rejected forceRefresh leaves `session.tokens` undefined.
-            expect(consoleWarnSpy).toHaveBeenCalledWith(
-                "waitForSessionTokens: no accessToken after forceRefresh",
-                expect.any(Object)
-            );
-            consoleErrorSpy.mockRestore();
-            consoleWarnSpy.mockRestore();
-        });
-
-        it("forces a session refresh when tokens are not yet visible after signIn", async () => {
-            // Amplify v6 can resolve signIn before fetchAuthSession sees the
-            // cached tokens; this race used to surface as a 401 on the very
-            // first post-signIn backend call. Arm fetchAuthSession to return
-            // empty on the first read, then populated on the forceRefresh
-            // retry, and confirm hydrate still runs to completion.
-            vi.mocked(fetchAuthSession)
-                .mockReset()
-                .mockResolvedValueOnce({ tokens: undefined } as never)
-                .mockResolvedValueOnce({ tokens: { accessToken: { toString: () => "access" } as never } } as never);
-            vi.mocked(signIn).mockResolvedValue({
-                isSignedIn: true,
-                nextStep: { signInStep: "DONE" }
-            } as never);
-            vi.mocked(getCurrentUser).mockResolvedValue({
-                username: "u",
-                userId: "id"
-            } as never);
-            vi.mocked(getMfaStatus).mockResolvedValue({
-                enabled: true,
-                required: true
-            });
-            vi.mocked(fetchUserAttributes).mockResolvedValue({
-                sub: "s",
-                email: "e@f.com"
-            } as never);
-            vi.mocked(getUserPermissions).mockResolvedValue({ permissions: [] });
-
-            await store.signIn({
-                username: "u",
-                password: "p"
-            });
-
-            expect(fetchAuthSession).toHaveBeenCalledTimes(2);
-            expect(fetchAuthSession).toHaveBeenNthCalledWith(2, { forceRefresh: true });
-            expect(store.user?.username).toBe("u");
-        });
-
-        it("signs the stale session out and retries on UserAlreadyAuthenticatedException", async () => {
-            // Amplify v6 throws this when local storage already holds Cognito
-            // tokens — e.g. the user typed credentials in /login while another
-            // tab still has a live session. Recover by signing the stale
-            // session out and retrying once, otherwise the user is stuck on
-            // the login page until they clear storage by hand.
-            const stale = Object.assign(new Error("There is already a signed in user."), { name: "UserAlreadyAuthenticatedException" });
-            vi.mocked(signIn)
-                .mockReset()
-                .mockRejectedValueOnce(stale)
-                .mockResolvedValueOnce({
-                    isSignedIn: true,
-                    nextStep: { signInStep: "DONE" }
-                } as never);
-            vi.mocked(signOut).mockResolvedValue(undefined as never);
-            vi.mocked(getCurrentUser).mockResolvedValue({
-                username: "u",
-                userId: "id"
-            } as never);
-            vi.mocked(getMfaStatus).mockResolvedValue({
-                enabled: true,
-                required: true
-            });
-            vi.mocked(fetchUserAttributes).mockResolvedValue({
-                sub: "s",
-                email: "e@f.com"
-            } as never);
-            vi.mocked(getUserPermissions).mockResolvedValue({ permissions: [] });
-
-            await store.signIn({
-                username: "u",
-                password: "p"
-            });
-
-            expect(signIn).toHaveBeenCalledTimes(2);
-            expect(signOut).toHaveBeenCalledTimes(1);
-            // signOut must run between the two signIn attempts; otherwise the
-            // retry hits the same exception in a loop.
-            const signOutOrder = vi.mocked(signOut).mock.invocationCallOrder[0];
-            const signInOrders = vi.mocked(signIn).mock.invocationCallOrder;
-            expect(signOutOrder).toBeGreaterThan(signInOrders[0]);
-            expect(signOutOrder).toBeLessThan(signInOrders[1]);
-            expect(store.user?.username).toBe("u");
-        });
-
-        it("propagates UserAlreadyAuthenticatedException from the retry without a second retry", async () => {
-            // Single-retry contract: if the post-signOut signIn ALSO throws
-            // UserAlreadyAuthenticatedException (token write hadn't settled,
-            // another tab racing), the store must let the error bubble
-            // instead of retrying again. Two attempts max, no infinite loop.
-            const stale = Object.assign(new Error("There is already a signed in user."), { name: "UserAlreadyAuthenticatedException" });
-            vi.mocked(signIn)
-                .mockReset()
-                .mockRejectedValueOnce(stale)
-                .mockRejectedValueOnce(stale);
-            vi.mocked(signOut).mockResolvedValue(undefined as never);
-
-            await expect(
-                store.signIn({
-                    username: "u",
-                    password: "p"
-                })
-            ).rejects.toMatchObject({ name: "UserAlreadyAuthenticatedException" });
-
-            expect(signIn).toHaveBeenCalledTimes(2);
-            expect(signOut).toHaveBeenCalledTimes(1);
-            // hydrate must not have been attempted — Cognito never accepted
-            // the credentials, so getCurrentUser would 401 generically.
-            expect(getCurrentUser).not.toHaveBeenCalled();
-        });
-
-        it("does not retry on errors other than UserAlreadyAuthenticatedException", async () => {
-            const wrongPassword = Object.assign(new Error("Incorrect username or password."), { name: "NotAuthorizedException" });
-            vi.mocked(signIn).mockReset().mockRejectedValue(wrongPassword);
-
-            await expect(
-                store.signIn({
-                    username: "u",
-                    password: "p"
-                })
-            ).rejects.toThrow("Incorrect username or password.");
-
-            expect(signIn).toHaveBeenCalledTimes(1);
-            expect(signOut).not.toHaveBeenCalled();
+            expect(store.signInStep).toBeNull();
+            expect(auth.getUser).not.toHaveBeenCalled();
         });
 
         it("rethrows post-signIn hydrate failures so Login.vue surfaces them", async () => {
-            // Cognito accepted the creds (isSignedIn=true) but the follow-up
-            // backend call failed. The store must log the underlying error and
-            // rethrow so the login page can tell the user something went wrong
-            // — silently resolving here lets a broken session masquerade as
+            // The provider accepted the creds but the follow-up backend call
+            // failed. The store must log the underlying error and rethrow so
+            // the login page can tell the user something went wrong —
+            // silently resolving here lets a broken session masquerade as
             // success and the next route-guarded call 401s.
-            vi.mocked(signIn).mockResolvedValue({
-                isSignedIn: true,
-                nextStep: { signInStep: "DONE" }
-            } as never);
-            vi.mocked(getCurrentUser).mockResolvedValue({
-                username: "u",
-                userId: "id"
-            } as never);
+            auth.signIn.mockResolvedValue({ step: SignInStep.DONE });
             vi.mocked(getMfaStatus).mockRejectedValue(
                 new Error("Request failed with status code 401")
             );
@@ -680,133 +406,72 @@ describe("authStore", () => {
 
     describe("changePassword", () => {
         it("hydrates after a successful password change", async () => {
-            vi.mocked(confirmSignIn).mockResolvedValue({
-                isSignedIn: true,
-                nextStep: { signInStep: "DONE" }
-            } as never);
-            vi.mocked(getCurrentUser).mockResolvedValue({
-                username: "u",
-                userId: "id"
-            } as never);
+            auth.confirmNewPassword.mockResolvedValue({ step: SignInStep.DONE });
             vi.mocked(getMfaStatus).mockResolvedValue({
                 enabled: false,
                 required: true
             });
-            vi.mocked(fetchUserAttributes).mockResolvedValue({
-                sub: "s",
-                email: "e@f.com"
-            } as never);
 
             await store.changePassword("newPassword123!");
 
-            expect(confirmSignIn).toHaveBeenCalledWith({ challengeResponse: "newPassword123!" });
-            expect(store.signInStep).toBe("DONE");
+            expect(auth.confirmNewPassword).toHaveBeenCalledWith("newPassword123!");
+            expect(store.signInStep).toBe(SignInStep.DONE);
             expect(store.mfaEnabled).toBe(false);
         });
 
         it("captures TOTP setup details when next step is MFA setup", async () => {
-            const setupUri = new URL("otpauth://totp/FLIP:u?secret=XYZ");
-            vi.mocked(confirmSignIn).mockResolvedValue({
-                isSignedIn: false,
-                nextStep: {
-                    signInStep: "CONTINUE_SIGN_IN_WITH_TOTP_SETUP",
-                    totpSetupDetails: {
-                        sharedSecret: "XYZ",
-                        getSetupUri: vi.fn(() => setupUri)
-                    }
+            auth.confirmNewPassword.mockResolvedValue({
+                step: SignInStep.TOTP_SETUP,
+                totpSetup: {
+                    sharedSecret: "XYZ",  // pragma: allowlist secret
+                    setupUri: "otpauth://totp/FLIP:u?secret=XYZ"
                 }
-            } as never);
-
-            await store.changePassword("newPassword123!");
-
-            expect(store.signInStep).toBe("CONTINUE_SIGN_IN_WITH_TOTP_SETUP");
-            expect(store.totpSetup).toEqual({
-                sharedSecret: "XYZ",
-                setupUri: setupUri.toString()
             });
-            expect(getCurrentUser).not.toHaveBeenCalled();
-        });
-
-        it("does nothing special on unknown step + not signed in", async () => {
-            vi.mocked(confirmSignIn).mockResolvedValue({
-                isSignedIn: false,
-                nextStep: { signInStep: "DONE" }
-            } as never);
 
             await store.changePassword("newPassword123!");
 
-            expect(store.signInStep).toBe("DONE");
-            expect(getCurrentUser).not.toHaveBeenCalled();
+            expect(store.signInStep).toBe(SignInStep.TOTP_SETUP);
+            expect(store.totpSetup?.sharedSecret).toBe("XYZ");
+            expect(auth.getUser).not.toHaveBeenCalled();
         });
     });
 
     describe("confirmTotpChallenge", () => {
-        it("returns early when Cognito reports not signed in", async () => {
-            vi.mocked(confirmSignIn).mockResolvedValue({
-                isSignedIn: false,
-                nextStep: undefined
-            } as never);
-
-            await store.confirmTotpChallenge("123456");
-
-            expect(store.signInStep).toBeNull();
-            expect(getCurrentUser).not.toHaveBeenCalled();
-        });
-
-        it("hydrates with known-true MFA when challenge clears", async () => {
-            vi.mocked(confirmSignIn).mockResolvedValue({
-                isSignedIn: true,
-                nextStep: undefined
-            } as never);
-            vi.mocked(getCurrentUser).mockResolvedValue({
-                username: "u",
-                userId: "id"
-            } as never);
-            vi.mocked(fetchUserAttributes).mockResolvedValue({
-                sub: "s",
-                email: "e@f.com"
-            } as never);
+        it("hydrates with known-true MFA when the challenge clears", async () => {
+            auth.confirmTotpChallenge.mockResolvedValue({ step: SignInStep.DONE });
             vi.mocked(getUserPermissions).mockResolvedValue({ permissions: [] });
 
             await store.confirmTotpChallenge("123456");
 
-            // Did NOT call getMfaStatus — hydrate(true) short-circuits it.
+            expect(auth.confirmTotpChallenge).toHaveBeenCalledWith("123456");
+            // Did NOT call getMfaStatus — hydrate({enabled:true}) short-circuits it.
             expect(getMfaStatus).not.toHaveBeenCalled();
-            expect(store.signInStep).toBe("DONE");
+            expect(store.signInStep).toBe(SignInStep.DONE);
             expect(store.mfaEnabled).toBe(true);
         });
 
-        it("swallows post-success hydrate failures and leaves mfaEnabled=null", async () => {
-            vi.mocked(confirmSignIn).mockResolvedValue({
-                isSignedIn: true,
-                nextStep: undefined
-            } as never);
-            vi.mocked(getCurrentUser).mockRejectedValue(new Error("Network Error"));
+        it("propagates a wrong code without touching state", async () => {
+            const mismatch = Object.assign(new Error("Code mismatch"), { name: "CodeMismatchException" });
+            auth.confirmTotpChallenge.mockRejectedValue(mismatch);
+
+            await expect(store.confirmTotpChallenge("000000")).rejects.toBe(mismatch);
+            expect(store.signInStep).toBeNull();
+            expect(auth.getUser).not.toHaveBeenCalled();
+        });
+
+        it("swallows post-success hydrate failures, leaves mfaEnabled=null and notifies the user", async () => {
+            // Without a user-facing signal, a transient hydrate failure right
+            // after a valid TOTP code leaves the user thinking sign-in worked
+            // while every subsequent API call 401s under `mfaEnabled=null`.
+            auth.confirmTotpChallenge.mockResolvedValue({ step: SignInStep.DONE });
+            auth.getUser.mockRejectedValue(new Error("Network Error"));
             const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
             await expect(store.confirmTotpChallenge("123456")).resolves.toBeUndefined();
 
-            expect(store.signInStep).toBe("DONE");
+            expect(store.signInStep).toBe(SignInStep.DONE);
             expect(store.mfaEnabled).toBeNull();
             expect(consoleSpy).toHaveBeenCalled();
-            consoleSpy.mockRestore();
-        });
-
-        it("notifies the user when post-success hydrate fails", async () => {
-            // Without a user-facing signal, a transient hydrate failure right
-            // after a valid TOTP code leaves the user thinking sign-in worked
-            // while every subsequent API call 401s under `mfaEnabled=null`.
-            // A visible snackbar lets them retry the navigation rather than
-            // assuming the app silently broke.
-            vi.mocked(confirmSignIn).mockResolvedValue({
-                isSignedIn: true,
-                nextStep: undefined
-            } as never);
-            vi.mocked(getCurrentUser).mockRejectedValue(new Error("Network Error"));
-            const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-            await store.confirmTotpChallenge("123456");
-
             expect(Snackbar.show).toHaveBeenCalledWith(
                 expect.objectContaining({ type: "warning" })
             );
@@ -815,62 +480,49 @@ describe("authStore", () => {
     });
 
     describe("confirmTotpSetup", () => {
-        it("returns early when Cognito reports not signed in", async () => {
-            vi.mocked(confirmSignIn).mockResolvedValue({
-                isSignedIn: false,
-                nextStep: undefined
-            } as never);
-
-            await store.confirmTotpSetup("123456");
-
-            expect(updateMFAPreference).not.toHaveBeenCalled();
-            expect(store.totpSetup).toBeNull();
-        });
-
-        it("sets MFA preference, clears totpSetup, then hydrates with known-true MFA", async () => {
+        it("clears totpSetup then hydrates with known-true MFA", async () => {
             store.totpSetup = {
                 sharedSecret: "ABC",
                 setupUri: "otpauth://..."
             };
-            vi.mocked(confirmSignIn).mockResolvedValue({
-                isSignedIn: true,
-                nextStep: undefined
-            } as never);
-            vi.mocked(updateMFAPreference).mockResolvedValue(undefined as never);
-            vi.mocked(getCurrentUser).mockResolvedValue({
-                username: "u",
-                userId: "id"
-            } as never);
-            vi.mocked(fetchUserAttributes).mockResolvedValue({
-                sub: "s",
-                email: "e@f.com"
-            } as never);
+            auth.confirmTotpSetup.mockResolvedValue({ step: SignInStep.DONE });
             vi.mocked(getUserPermissions).mockResolvedValue({ permissions: [] });
 
             await store.confirmTotpSetup("123456");
 
-            expect(updateMFAPreference).toHaveBeenCalledWith({ totp: "PREFERRED" });
+            expect(auth.confirmTotpSetup).toHaveBeenCalledWith("123456");
             expect(store.totpSetup).toBeNull();
             expect(store.mfaEnabled).toBe(true);
-            expect(store.signInStep).toBe("DONE");
+            expect(store.signInStep).toBe(SignInStep.DONE);
             expect(getMfaStatus).not.toHaveBeenCalled();
         });
 
-        it("rethrows updateMFAPreference failure and does NOT mark MFA enabled", async () => {
-            // Cognito accepted the verification code but the preference
+        it("keeps the setup secret when the code is rejected so the user can retry against the same QR", async () => {
+            store.totpSetup = {
+                sharedSecret: "ABC",
+                setupUri: "otpauth://..."
+            };
+            const mismatch = Object.assign(new Error("Invalid code"), { name: "CodeMismatchException" });
+            auth.confirmTotpSetup.mockRejectedValue(mismatch);
+
+            await expect(store.confirmTotpSetup("000000")).rejects.toBe(mismatch);
+
+            expect(store.totpSetup?.sharedSecret).toBe("ABC");
+            expect(auth.getUser).not.toHaveBeenCalled();
+        });
+
+        it("on MFA_PREFERENCE_FAILED: clears the secret, resets state, does NOT mark MFA enabled, rethrows", async () => {
+            // The provider accepted the verification code but the preference
             // didn't stick. Painting `mfaEnabled=true` here would let the
             // user into the app where every API call 403s under the
-            // app-gate. The store rethrows so the calling page (mfa-setup
-            // or mfa-verify) keeps the user on the form; the page is
-            // responsible for the user-facing snackbar so we don't
-            // double-notify.
-            vi.mocked(confirmSignIn).mockResolvedValue({
-                isSignedIn: true,
-                nextStep: undefined
-            } as never);
-            vi.mocked(updateMFAPreference).mockRejectedValue(
-                new Error("Cognito boom")
-            );
+            // app-gate. The store rethrows so the calling page (mfa-setup)
+            // keeps the user on the form; the page is responsible for the
+            // user-facing snackbar so we don't double-notify.
+            store.totpSetup = {
+                sharedSecret: "ABC",
+                setupUri: "otpauth://..."
+            };
+            auth.confirmTotpSetup.mockRejectedValue(new AuthError("MFA_PREFERENCE_FAILED", "Cognito boom"));
             const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
             await expect(store.confirmTotpSetup("123456")).rejects.toThrow("Cognito boom");
@@ -880,11 +532,12 @@ describe("authStore", () => {
                 expect.any(Error)
             );
             expect(store.mfaEnabled).toBeNull();
+            expect(store.signInStep).toBe(SignInStep.DONE);
             expect(store.totpSetup).toBeNull();
             // hydrate must not run after a fatal preference failure —
             // forcing a fresh authoritative read happens on the next
             // navigation via the router guard.
-            expect(getCurrentUser).not.toHaveBeenCalled();
+            expect(auth.getUser).not.toHaveBeenCalled();
             expect(getMfaStatus).not.toHaveBeenCalled();
             // Snackbar is the page's job, not the store's.
             expect(Snackbar.error).not.toHaveBeenCalled();
@@ -892,12 +545,8 @@ describe("authStore", () => {
         });
 
         it("swallows hydrate failure and leaves mfaEnabled=null for router guard", async () => {
-            vi.mocked(confirmSignIn).mockResolvedValue({
-                isSignedIn: true,
-                nextStep: undefined
-            } as never);
-            vi.mocked(updateMFAPreference).mockResolvedValue(undefined as never);
-            vi.mocked(getCurrentUser).mockRejectedValue(new Error("Network"));
+            auth.confirmTotpSetup.mockResolvedValue({ step: SignInStep.DONE });
+            auth.getUser.mockRejectedValue(new Error("Network"));
             const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
             await expect(store.confirmTotpSetup("123456")).resolves.toBeUndefined();
@@ -906,138 +555,77 @@ describe("authStore", () => {
                 "Failed to hydrate user post-MFA setup:",
                 expect.any(Error)
             );
-            expect(store.signInStep).toBe("DONE");
+            expect(store.signInStep).toBe(SignInStep.DONE);
             expect(store.mfaEnabled).toBeNull();
             consoleSpy.mockRestore();
         });
     });
 
-    describe("captureTotpSetupDetails", () => {
-        it("uses pendingUsername as the account label, not the sharedSecret", () => {
-            const url = new URL("otpauth://totp/FLIP:u?secret=SEC");
-            const getSetupUri = vi.fn(() => url);
-            store.pendingUsername = "u@e.com";
-            store.captureTotpSetupDetails({
-                totpSetupDetails: {
-                    sharedSecret: "SEC",  // pragma: allowlist secret
-                    getSetupUri
-                }
-            });
-
-            expect(getSetupUri).toHaveBeenCalledWith("FLIP", "u@e.com");
-            expect(store.totpSetup).toEqual({
-                sharedSecret: "SEC",  // pragma: allowlist secret
-                setupUri: url.toString()
-            });
-        });
-
-        it("omits the account label when pendingUsername is null", () => {
-            const url = new URL("otpauth://totp/FLIP?secret=SEC");
-            const getSetupUri = vi.fn(() => url);
-            store.pendingUsername = null;
-            store.captureTotpSetupDetails({
-                totpSetupDetails: {
-                    sharedSecret: "SEC",  // pragma: allowlist secret
-                    getSetupUri
-                }
-            });
-
-            expect(getSetupUri).toHaveBeenCalledWith("FLIP", undefined);
-        });
-
-        it("is a no-op when totpSetupDetails are missing", () => {
-            store.captureTotpSetupDetails({});
-            expect(store.totpSetup).toBeNull();
-
-            store.captureTotpSetupDetails({ totpSetupDetails: undefined });
-            expect(store.totpSetup).toBeNull();
-        });
-    });
-
     describe("beginMfaEnrolment", () => {
-        it("records shared secret and setup URI from Amplify", async () => {
-            const url = new URL("otpauth://totp/FLIP:u?secret=SEC");
-            const getSetupUri = vi.fn(() => url);
-            vi.mocked(setUpTOTP).mockResolvedValue({
+        it("records the secret the provider mints, labelled with the signed-in email", async () => {
+            store.user = { ...STORE_USER };
+            auth.setUpTotp.mockResolvedValue({
                 sharedSecret: "SEC",  // pragma: allowlist secret
-                getSetupUri
-            } as never);
-            store.user = {
-                username: "u",
-                userId: "id",
-                attributes: {
-                    sub: "s",
-                    email: "e@f.com"
-                },
-                permissions: []
-            };
+                setupUri: "otpauth://totp/FLIP:e@f.com?secret=SEC"
+            });
 
             await store.beginMfaEnrolment();
 
-            expect(getSetupUri).toHaveBeenCalledWith("FLIP", "e@f.com");
+            expect(auth.setUpTotp).toHaveBeenCalledWith("e@f.com");
             expect(store.totpSetup).toEqual({
                 sharedSecret: "SEC",  // pragma: allowlist secret
-                setupUri: url.toString()
+                setupUri: "otpauth://totp/FLIP:e@f.com?secret=SEC"
             });
         });
 
-        it("falls back to empty string when Amplify omits sharedSecret", async () => {
-            const url = new URL("otpauth://totp/FLIP:u");
-            vi.mocked(setUpTOTP).mockResolvedValue({
-                sharedSecret: undefined,
-                getSetupUri: vi.fn(() => url)
-            } as never);
-            // No user in the store — appName arg should still be "FLIP" and
-            // email undefined (we just want the call not to crash).
+        it("passes no label when there is no user in the store", async () => {
+            auth.setUpTotp.mockResolvedValue({
+                sharedSecret: "",
+                setupUri: "otpauth://totp/FLIP"
+            });
+
             await store.beginMfaEnrolment();
 
+            expect(auth.setUpTotp).toHaveBeenCalledWith(undefined);
             expect(store.totpSetup?.sharedSecret).toBe("");
         });
     });
 
     describe("completeMfaEnrolment", () => {
-        it("verifies code, sets MFA preference, clears setup, and hydrates known-true", async () => {
+        it("verifies the code, clears setup, and hydrates known-true", async () => {
             store.totpSetup = {
                 sharedSecret: "ABC",
                 setupUri: "otpauth://..."
             };
-            vi.mocked(verifyTOTPSetup).mockResolvedValue(undefined as never);
-            vi.mocked(updateMFAPreference).mockResolvedValue(undefined as never);
-            vi.mocked(getCurrentUser).mockResolvedValue({
-                username: "u",
-                userId: "id"
-            } as never);
-            vi.mocked(fetchUserAttributes).mockResolvedValue({
-                sub: "s",
-                email: "e@f.com"
-            } as never);
+            auth.verifyTotpSetup.mockResolvedValue(undefined);
             vi.mocked(getUserPermissions).mockResolvedValue({ permissions: [] });
 
             await store.completeMfaEnrolment("123456");
 
-            expect(verifyTOTPSetup).toHaveBeenCalledWith({ code: "123456" });
-            expect(updateMFAPreference).toHaveBeenCalledWith({ totp: "PREFERRED" });
+            expect(auth.verifyTotpSetup).toHaveBeenCalledWith("123456");
             expect(store.totpSetup).toBeNull();
             expect(store.mfaEnabled).toBe(true);
-            expect(store.signInStep).toBe("DONE");
+            expect(store.signInStep).toBe(SignInStep.DONE);
         });
 
-        it("propagates verifyTOTPSetup errors (invalid code)", async () => {
-            vi.mocked(verifyTOTPSetup).mockRejectedValue(new Error("Invalid code"));
+        it("propagates verify errors (invalid code) with the secret intact", async () => {
+            store.totpSetup = {
+                sharedSecret: "ABC",
+                setupUri: "otpauth://..."
+            };
+            auth.verifyTotpSetup.mockRejectedValue(new Error("Invalid code"));
 
-            await expect(store.completeMfaEnrolment("000000")).rejects.toThrow(
-                "Invalid code"
-            );
-            expect(updateMFAPreference).not.toHaveBeenCalled();
+            await expect(store.completeMfaEnrolment("000000")).rejects.toThrow("Invalid code");
+            expect(store.totpSetup?.sharedSecret).toBe("ABC");
+            expect(auth.getUser).not.toHaveBeenCalled();
         });
 
-        it("rethrows updateMFAPreference failure and does NOT mark MFA enabled", async () => {
+        it("on MFA_PREFERENCE_FAILED: resets state, does NOT mark MFA enabled, rethrows", async () => {
             // Same reasoning as confirmTotpSetup: TOTP was verified but
             // the preference didn't stick — letting the page navigate to
             // /projects with mfaEnabled=true would 403 every API call
             // under the app-gate. Page handles the snackbar.
-            vi.mocked(verifyTOTPSetup).mockResolvedValue(undefined as never);
-            vi.mocked(updateMFAPreference).mockRejectedValue(new Error("Boom"));
+            auth.verifyTotpSetup.mockRejectedValue(new AuthError("MFA_PREFERENCE_FAILED", "Boom"));
             const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
             await expect(store.completeMfaEnrolment("123456")).rejects.toThrow("Boom");
@@ -1048,15 +636,14 @@ describe("authStore", () => {
             );
             expect(store.mfaEnabled).toBeNull();
             expect(store.totpSetup).toBeNull();
-            expect(getCurrentUser).not.toHaveBeenCalled();
+            expect(auth.getUser).not.toHaveBeenCalled();
             expect(Snackbar.error).not.toHaveBeenCalled();
             consoleSpy.mockRestore();
         });
 
         it("swallows hydrate failure and leaves mfaEnabled=null", async () => {
-            vi.mocked(verifyTOTPSetup).mockResolvedValue(undefined as never);
-            vi.mocked(updateMFAPreference).mockResolvedValue(undefined as never);
-            vi.mocked(getCurrentUser).mockRejectedValue(new Error("Network"));
+            auth.verifyTotpSetup.mockResolvedValue(undefined);
+            auth.getUser.mockRejectedValue(new Error("Network"));
             const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
             await store.completeMfaEnrolment("123456");
@@ -1065,29 +652,20 @@ describe("authStore", () => {
                 "Failed to hydrate user post-MFA enrolment:",
                 expect.any(Error)
             );
-            expect(store.signInStep).toBe("DONE");
+            expect(store.signInStep).toBe(SignInStep.DONE);
             expect(store.mfaEnabled).toBeNull();
             consoleSpy.mockRestore();
         });
     });
 
     describe("signOut", () => {
-        it("calls Amplify global sign-out, resets store, and tears the page down", async () => {
-            vi.mocked(signOut).mockResolvedValue(undefined as never);
-            store.user = {
-                username: "u",
-                userId: "id",
-                attributes: {
-                    sub: "s",
-                    email: "e@f.com"
-                },
-                permissions: []
-            };
-            store.signInStep = "DONE";
+        it("asks the provider for a global sign-out where supported, resets store, and tears the page down", async () => {
+            store.user = { ...STORE_USER };
+            store.signInStep = SignInStep.DONE;
 
             await store.signOut();
 
-            expect(signOut).toHaveBeenCalledWith({ global: true });
+            expect(auth.signOut).toHaveBeenCalledWith({ global: true });
             expect(store.user).toBeNull();
             expect(store.signInStep).toBeNull();
             // A hard navigation, never a router push: a push would leave swrv's
@@ -1099,21 +677,26 @@ describe("authStore", () => {
             expect(Snackbar.error).not.toHaveBeenCalled();
         });
 
-        it("warns the user when GlobalSignOut fails on a real error", async () => {
+        it("asks for a local sign-out when the backend has no global one", async () => {
+            provider.current = makeMockAuthProvider({
+                backend: "keycloak",
+                capabilities: NO_CAPABILITIES
+            });
+
+            await store.signOut();
+
+            expect((provider.current as ReturnType<typeof makeMockAuthProvider>).signOut)
+                .toHaveBeenCalledWith({ global: false });
+            expect(leaveToLogin).toHaveBeenCalledTimes(1);
+        });
+
+        it("warns the user when the server-side sign-out fails on a real error", async () => {
             // Network/server failure means the refresh token may still be
-            // valid in Cognito; the user needs to be told so they can
+            // valid server-side; the user needs to be told so they can
             // close the browser to invalidate any cached storage.
-            vi.mocked(signOut).mockRejectedValue(new Error("network"));
+            auth.signOut.mockRejectedValue(new Error("network"));
             const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-            store.user = {
-                username: "u",
-                userId: "id",
-                attributes: {
-                    sub: "s",
-                    email: "e@f.com"
-                },
-                permissions: []
-            };
+            store.user = { ...STORE_USER };
 
             await store.signOut();
 
@@ -1134,24 +717,15 @@ describe("authStore", () => {
             consoleSpy.mockRestore();
         });
 
-        it("does NOT warn when GlobalSignOut throws NotAuthorizedException via interceptor", async () => {
+        it("does NOT warn on SESSION_ALREADY_ENDED via the interceptor", async () => {
             // The api.ts 401 interceptor calls signOut({ viaInterceptor: true })
-            // with already-invalid tokens; Cognito rejects GlobalSignOut
-            // with NotAuthorizedException as expected. Surfacing any
-            // snackbar here would stack on top of the interceptor's
-            // "Not Authorised" message every time the session expires.
-            const expected = Object.assign(new Error("Access Token has been revoked"), { name: "NotAuthorizedException" });
-            vi.mocked(signOut).mockRejectedValue(expected);
+            // with already-invalid tokens; the provider reports the session
+            // had already ended. Surfacing any notice here would stack on
+            // top of the interceptor's "Not Authorised" message every time
+            // the session expires.
+            auth.signOut.mockRejectedValue(new AuthError("SESSION_ALREADY_ENDED", "Access Token has been revoked"));
             const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-            store.user = {
-                username: "u",
-                userId: "id",
-                attributes: {
-                    sub: "s",
-                    email: "e@f.com"
-                },
-                permissions: []
-            };
+            store.user = { ...STORE_USER };
 
             await store.signOut({ viaInterceptor: true });
 
@@ -1163,24 +737,13 @@ describe("authStore", () => {
             consoleSpy.mockRestore();
         });
 
-        it("informs the user on user-initiated NotAuthorizedException sign-out", async () => {
+        it("informs the user on a user-initiated SESSION_ALREADY_ENDED sign-out", async () => {
             // User clicks "Sign out" but the session is already invalid (e.g.
-            // an admin force-revoked it via the new MFA-reset path). The
-            // current code blanket-suppresses NotAuthorizedException so the
-            // user gets no signal about the remote revocation. For
-            // user-initiated sign-out, show an info-level message either way.
-            const expected = Object.assign(new Error("Access Token has been revoked"), { name: "NotAuthorizedException" });
-            vi.mocked(signOut).mockRejectedValue(expected);
+            // an admin force-revoked it via the MFA-reset path). For
+            // user-initiated sign-out, show an info-level message.
+            auth.signOut.mockRejectedValue(new AuthError("SESSION_ALREADY_ENDED", "Access Token has been revoked"));
             const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-            store.user = {
-                username: "u",
-                userId: "id",
-                attributes: {
-                    sub: "s",
-                    email: "e@f.com"
-                },
-                permissions: []
-            };
+            store.user = { ...STORE_USER };
 
             await store.signOut();
 
@@ -1201,51 +764,54 @@ describe("authStore", () => {
         });
     });
 
-    describe("resetPassword", () => {
-        it("proxies to Amplify resetPassword with web-app metadata", async () => {
-            const amplifyResponse = { isPasswordReset: false } as never;
-            vi.mocked(resetPassword).mockResolvedValue(amplifyResponse);
+    describe("abandonSignIn", () => {
+        it("fires the provider sign-out without awaiting it and swallows its failure", async () => {
+            let rejectSignOut!: (e: Error) => void;
+            auth.signOut.mockImplementationOnce(
+                () => new Promise<void>((_resolve, reject) => { rejectSignOut = reject; })
+            );
 
-            const result = await store.resetPassword("u@e.com");
+            expect(store.abandonSignIn()).toBeUndefined();
+            expect(auth.signOut).toHaveBeenCalledTimes(1);
 
-            expect(resetPassword).toHaveBeenCalledWith({
-                username: "u@e.com",
-                options: { clientMetadata: { source: "web-app" } }
-            });
-            expect(result).toBe(amplifyResponse);
+            rejectSignOut(new Error("nothing to sign out of"));
+            // No unhandled rejection surfaces: the catch is the whole point.
+            await Promise.resolve();
         });
     });
 
-    describe("updateForgottenPassword", () => {
-        it("proxies to Amplify confirmResetPassword with web-app metadata", async () => {
-            const amplifyResponse = undefined as never;
-            vi.mocked(confirmResetPassword).mockResolvedValue(amplifyResponse);
+    describe("resetPassword / updateForgottenPassword", () => {
+        it("resetPassword delegates to the provider", async () => {
+            await store.resetPassword("u@e.com");
 
-            const result = await store.updateForgottenPassword({
+            expect(auth.resetPassword).toHaveBeenCalledWith("u@e.com");
+        });
+
+        it("resetPassword propagates a provider failure so the caller can report it", async () => {
+            auth.resetPassword.mockRejectedValue(new AuthError("UNSUPPORTED"));
+
+            await expect(store.resetPassword("u@e.com")).rejects.toMatchObject({ code: "UNSUPPORTED" });
+        });
+
+        it("updateForgottenPassword delegates to the provider", async () => {
+            await store.updateForgottenPassword({
                 email: "u@e.com",
                 code: "123456",
                 newPassword: "new-pw!"  // pragma: allowlist secret
             });
 
-            expect(confirmResetPassword).toHaveBeenCalledWith({
-                username: "u@e.com",
-                confirmationCode: "123456",
-                newPassword: "new-pw!",  // pragma: allowlist secret
-                options: { clientMetadata: { source: "web-app" } }
+            expect(auth.confirmResetPassword).toHaveBeenCalledWith({
+                email: "u@e.com",
+                code: "123456",
+                newPassword: "new-pw!"  // pragma: allowlist secret
             });
-            expect(result).toBe(amplifyResponse);
         });
     });
 
     describe("hasPermissions", () => {
         it("returns true when user has every required permission", () => {
             store.user = {
-                username: "u",
-                userId: "id",
-                attributes: {
-                    sub: "s",
-                    email: "e@f.com"
-                },
+                ...STORE_USER,
                 permissions: ["CanManageUsers", "CanManageProjects"]
             };
 
@@ -1257,12 +823,7 @@ describe("authStore", () => {
 
         it("returns false when any required permission is missing", () => {
             store.user = {
-                username: "u",
-                userId: "id",
-                attributes: {
-                    sub: "s",
-                    email: "e@f.com"
-                },
+                ...STORE_USER,
                 permissions: ["CanManageUsers"]
             };
 
@@ -1273,15 +834,7 @@ describe("authStore", () => {
         });
 
         it("returns true for an empty permissions list (vacuously satisfied)", () => {
-            store.user = {
-                username: "u",
-                userId: "id",
-                attributes: {
-                    sub: "s",
-                    email: "e@f.com"
-                },
-                permissions: []
-            };
+            store.user = { ...STORE_USER };
 
             expect(store.hasPermissions([])).toBe(true);
         });

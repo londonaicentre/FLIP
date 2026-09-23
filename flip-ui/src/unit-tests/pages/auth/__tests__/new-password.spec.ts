@@ -15,8 +15,15 @@ import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
+import { makeMockAuthProvider, NO_CAPABILITIES } from "@/auth/__tests__/mock-provider";
+import { SignInStep } from "@/auth/provider";
 import NewPassword from "@/pages/auth/new-password.vue";
 import { useAuthStore } from "@/store/auth";
+
+// The page reads the store's `capabilities` getter, which comes from the
+// provider behind the `@/auth` seam.
+const authProvider = vi.hoisted(() => ({ current: null as unknown }));
+vi.mock("@/auth", () => ({ getAuthProvider: () => authProvider.current }));
 
 const mockGotoLogin = vi.fn();
 const mockViewProjects = vi.fn();
@@ -66,7 +73,7 @@ function mountNewPassword(
                     createSpy: vi.fn,
                     initialState: {
                         auth: {
-                            signInStep: "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED",
+                            signInStep: SignInStep.NEW_PASSWORD_REQUIRED,
                             user: null,
                             mfaEnabled: null,
                             mfaRequired: null,
@@ -105,9 +112,26 @@ describe("new-password page", () => {
         mockSnackbarShow.mockReset();
         mockSnackbarError.mockReset();
         mockIsUserUnconfirmedCheck.mockReset();
+        authProvider.current = makeMockAuthProvider();
     });
 
     describe("onBeforeMount guard", () => {
+        test("bounces to login with a notice when the backend has no in-app new-password step", async () => {
+            // Keycloak runs a forced password change as a required action in
+            // its own UI, so this page cannot complete it.
+            authProvider.current = makeMockAuthProvider({
+                backend: "keycloak",
+                capabilities: NO_CAPABILITIES
+            });
+
+            mountNewPassword({}, true);
+            await flushPromises();
+
+            expect(mockGotoLogin).toHaveBeenCalledTimes(1);
+            expect(mockSnackbarShow).toHaveBeenCalledWith(expect.objectContaining({ title: "Not available" }));
+            expect(mockIsUserUnconfirmedCheck).not.toHaveBeenCalled();
+        });
+
         test("renders the password form when the user is in the unconfirmed state", async () => {
             const wrapper = mountNewPassword({}, true);
             await flushPromises();
@@ -126,13 +150,13 @@ describe("new-password page", () => {
     });
 
     describe("submit flow", () => {
-        test("success → CONTINUE_SIGN_IN_WITH_TOTP_SETUP routes to /auth/mfa-setup", async () => {
+        test("success → TOTP_SETUP routes to /auth/mfa-setup", async () => {
             const wrapper = mountNewPassword({}, true);
             await flushPromises();
             const authStore = useAuthStore();
             (authStore.changePassword as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
                 async () => {
-                    authStore.signInStep = "CONTINUE_SIGN_IN_WITH_TOTP_SETUP";
+                    authStore.signInStep = SignInStep.TOTP_SETUP;
                 }
             );
 

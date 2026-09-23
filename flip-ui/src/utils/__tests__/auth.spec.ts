@@ -11,35 +11,20 @@
  * limitations under the License.
  */
 
-import { fetchAuthSession } from "aws-amplify/auth";
 import { createPinia, setActivePinia } from "pinia";
 
+import { makeMockAuthProvider, NO_CAPABILITIES, resetMockAuthProvider } from "@/auth/__tests__/mock-provider";
+import { SignInStep } from "@/auth/provider";
 import router, { routeChange } from "@/router";
-import { type SignInStep, useAuthStore } from "@/store/auth";
-import { authCheck, isUserUnconfirmedCheck, NO_FORCED_SIGNOUT_PATHS } from "@/utils/auth";
+import { type SignInStep as SignInStepType, useAuthStore } from "@/store/auth";
+import { authCheck, handleSessionExpired, isUserUnconfirmedCheck, NO_FORCED_SIGNOUT_PATHS } from "@/utils/auth";
 import { leaveToLogin, stashPostSignOutNotice } from "@/utils/session-teardown";
 import { Snackbar } from "@/utils/snackbar";
 
-vi.mock("aws-amplify/auth", () => ({ fetchAuthSession: vi.fn() }));
-
-// The module eagerly calls Hub.listen at import time; stub the utils to
-// keep the listener registration cheap and side-effect-free. Use
-// vi.hoisted so the shared ref is defined before the mock factory runs
-// (vi.mock is lifted to the top of the module at transform time). Tests
-// below read `capturedListener.fn` to invoke the real callback even
-// after vi.clearAllMocks() wipes mock.calls history.
-const capturedListener = vi.hoisted(() => ({ fn: null as ((data: { payload: { event: string } }) => void) | null }));
-
-vi.mock("aws-amplify/utils", () => ({
-    Hub: {
-        listen: vi.fn(
-            (_channel: string, listener: (data: { payload: { event: string } }) => void) => {
-                capturedListener.fn = listener;
-            }
-        ),
-        dispatch: vi.fn()
-    }
-}));
+// The guard reaches the identity provider only through the store
+// (`hasSession`, `fetchInfo`, `capabilities`); the provider is a bag of spies.
+const authProvider = vi.hoisted(() => ({ current: null as unknown }));
+vi.mock("@/auth", () => ({ getAuthProvider: () => authProvider.current }));
 
 vi.mock("@/router", () => ({
     default: {
@@ -63,8 +48,8 @@ vi.mock("@/utils/snackbar", () => ({
     }
 }));
 
-// Both forced sign-out paths here (the guard's catch and the tokenRefresh_failure
-// listener) end the session by discarding the page (utils/session-teardown.ts). jsdom
+// Both forced sign-out paths here (the guard's catch and the session-expiry
+// handler) end the session by discarding the page (utils/session-teardown.ts). jsdom
 // cannot navigate, so the helper is stubbed; the tests assert it is called instead of
 // a router push, and that the notice is queued for the reload rather than shown.
 vi.mock("@/utils/session-teardown", () => ({
@@ -91,10 +76,23 @@ function route(path: string): { path: string } {
     return { path };
 }
 
+const USER = {
+    username: "u",
+    userId: "id",
+    attributes: {
+        sub: "s",
+        email: "u@e.com"
+    },
+    permissions: [] as string[]
+};
+
+const provider = makeMockAuthProvider();
+
 describe("authCheck", () => {
     beforeEach(() => {
         setActivePinia(createPinia());
-        vi.mocked(fetchAuthSession).mockReset();
+        resetMockAuthProvider(provider);
+        authProvider.current = provider;
         vi.mocked(routeChange.gotoLogin).mockReset();
         vi.mocked(Snackbar.error).mockReset();
         vi.mocked(leaveToLogin).mockReset();
@@ -110,7 +108,7 @@ describe("authCheck", () => {
         await authCheck(route("/auth/login") as never, route("/") as never, next as never);
 
         expect(calls).toEqual([undefined]);
-        expect(fetchAuthSession).not.toHaveBeenCalled();
+        expect(provider.hasSession).not.toHaveBeenCalled();
     });
 
     it("bypasses auth check when VITE_LOCAL=true", async () => {
@@ -120,47 +118,44 @@ describe("authCheck", () => {
         await authCheck(route("/projects") as never, route("/") as never, next as never);
 
         expect(calls).toEqual([undefined]);
-        expect(fetchAuthSession).not.toHaveBeenCalled();
+        expect(provider.hasSession).not.toHaveBeenCalled();
     });
 
-    it("redirects to /auth/login when there is no valid Amplify session", async () => {
-        vi.mocked(fetchAuthSession).mockRejectedValue(new Error("no session"));
+    it("redirects to /auth/login when the provider has no session", async () => {
+        provider.hasSession.mockResolvedValue(false);
         const { next, calls } = makeNext();
         const auth = useAuthStore();
-        auth.user = {
-            username: "u",
-            userId: "id",
-            attributes: {
-                sub: "s",
-                email: "u@e.com"
-            },
-            permissions: []
-        };
-        auth.signInStep = "DONE";
+        auth.user = { ...USER };
+        auth.signInStep = SignInStep.DONE;
 
         await authCheck(route("/projects") as never, route("/") as never, next as never);
 
         expect(auth.user).toBeNull();
         expect(auth.signInStep).toBeNull();
         expect(calls).toEqual(["/auth/login"]);
+        // A clean redirect, not the "you've been signed out" teardown.
+        expect(leaveToLogin).not.toHaveBeenCalled();
+        expect(stashPostSignOutNotice).not.toHaveBeenCalled();
     });
 
-    it("routes new-password challenge users to /auth/new-password", async () => {
-        vi.mocked(fetchAuthSession).mockResolvedValue({} as never);
+    it("routes new-password challenge users to /auth/new-password before asking for a session", async () => {
+        // Mid-challenge there is no session yet; the session check must
+        // not run first and bounce the user to login.
+        provider.hasSession.mockResolvedValue(false);
         const { next, calls } = makeNext();
         const auth = useAuthStore();
-        auth.signInStep = "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED";
+        auth.signInStep = SignInStep.NEW_PASSWORD_REQUIRED;
 
         await authCheck(route("/projects") as never, route("/") as never, next as never);
 
         expect(calls).toEqual(["/auth/new-password"]);
+        expect(provider.hasSession).not.toHaveBeenCalled();
     });
 
     it("routes first-time MFA enrolment (TOTP setup) to /auth/mfa-setup", async () => {
-        vi.mocked(fetchAuthSession).mockResolvedValue({} as never);
         const { next, calls } = makeNext();
         const auth = useAuthStore();
-        auth.signInStep = "CONTINUE_SIGN_IN_WITH_TOTP_SETUP";
+        auth.signInStep = SignInStep.TOTP_SETUP;
 
         await authCheck(route("/projects") as never, route("/") as never, next as never);
 
@@ -168,10 +163,9 @@ describe("authCheck", () => {
     });
 
     it("lets a TOTP-setup-challenge user stay on /auth/mfa-setup without recursing", async () => {
-        vi.mocked(fetchAuthSession).mockResolvedValue({} as never);
         const { next, calls } = makeNext();
         const auth = useAuthStore();
-        auth.signInStep = "CONTINUE_SIGN_IN_WITH_TOTP_SETUP";
+        auth.signInStep = SignInStep.TOTP_SETUP;
 
         await authCheck(route("/auth/mfa-setup") as never, route("/") as never, next as never);
 
@@ -180,10 +174,9 @@ describe("authCheck", () => {
     });
 
     it("routes TOTP-code challenge users to /auth/mfa-verify", async () => {
-        vi.mocked(fetchAuthSession).mockResolvedValue({} as never);
         const { next, calls } = makeNext();
         const auth = useAuthStore();
-        auth.signInStep = "CONFIRM_SIGN_IN_WITH_TOTP_CODE";
+        auth.signInStep = SignInStep.TOTP_CODE;
 
         await authCheck(route("/projects") as never, route("/") as never, next as never);
 
@@ -191,10 +184,9 @@ describe("authCheck", () => {
     });
 
     it("lets a TOTP-code-challenge user stay on /auth/mfa-verify without recursing", async () => {
-        vi.mocked(fetchAuthSession).mockResolvedValue({} as never);
         const { next, calls } = makeNext();
         const auth = useAuthStore();
-        auth.signInStep = "CONFIRM_SIGN_IN_WITH_TOTP_CODE";
+        auth.signInStep = SignInStep.TOTP_CODE;
 
         await authCheck(route("/auth/mfa-verify") as never, route("/") as never, next as never);
 
@@ -202,23 +194,15 @@ describe("authCheck", () => {
     });
 
     it("loads user info when session valid but store empty, then continues", async () => {
-        vi.mocked(fetchAuthSession).mockResolvedValue({} as never);
+        provider.hasSession.mockResolvedValue(true);
         const { next, calls } = makeNext();
         const auth = useAuthStore();
-        // Stub fetchInfo so we avoid exercising the real Amplify chain.
+        // Stub fetchInfo so we avoid exercising the real hydrate chain.
         const fetchInfo = vi.fn(async () => {
-            auth.user = {
-                username: "u",
-                userId: "id",
-                attributes: {
-                    sub: "s",
-                    email: "u@e.com"
-                },
-                permissions: []
-            };
+            auth.user = { ...USER };
             auth.mfaEnabled = true;
             auth.mfaRequired = true;
-            auth.signInStep = "DONE";
+            auth.signInStep = SignInStep.DONE;
         });
         auth.fetchInfo = fetchInfo;
 
@@ -229,21 +213,13 @@ describe("authCheck", () => {
     });
 
     it("bounces MFA-pending user (mfaEnabled=false) to /auth/mfa-setup when env requires MFA", async () => {
-        vi.mocked(fetchAuthSession).mockResolvedValue({} as never);
+        provider.hasSession.mockResolvedValue(true);
         const { next, calls } = makeNext();
         const auth = useAuthStore();
-        auth.user = {
-            username: "u",
-            userId: "id",
-            attributes: {
-                sub: "s",
-                email: "u@e.com"
-            },
-            permissions: []
-        };
+        auth.user = { ...USER };
         auth.mfaEnabled = false;
         auth.mfaRequired = true;
-        auth.signInStep = "DONE";
+        auth.signInStep = SignInStep.DONE;
 
         await authCheck(route("/projects") as never, route("/") as never, next as never);
 
@@ -254,21 +230,33 @@ describe("authCheck", () => {
         // Dev-only case: ENFORCE_MFA=false on the backend propagates to
         // authStore.mfaRequired=false. Users without TOTP get the same
         // router treatment as users who have TOTP — straight to the app.
-        vi.mocked(fetchAuthSession).mockResolvedValue({} as never);
+        provider.hasSession.mockResolvedValue(true);
         const { next, calls } = makeNext();
         const auth = useAuthStore();
-        auth.user = {
-            username: "u",
-            userId: "id",
-            attributes: {
-                sub: "s",
-                email: "u@e.com"
-            },
-            permissions: []
-        };
+        auth.user = { ...USER };
         auth.mfaEnabled = false;
         auth.mfaRequired = false;
-        auth.signInStep = "DONE";
+        auth.signInStep = SignInStep.DONE;
+
+        await authCheck(route("/projects") as never, route("/") as never, next as never);
+
+        expect(calls).toEqual([undefined]);
+    });
+
+    it("does NOT redirect an unenrolled user to /auth/mfa-setup when the backend cannot enrol TOTP in-app", async () => {
+        // Keycloak: MFA is managed in its own console, so the enrolment
+        // page would have nothing to offer.
+        authProvider.current = makeMockAuthProvider({
+            backend: "keycloak",
+            capabilities: NO_CAPABILITIES
+        });
+        (authProvider.current as ReturnType<typeof makeMockAuthProvider>).hasSession.mockResolvedValue(true);
+        const { next, calls } = makeNext();
+        const auth = useAuthStore();
+        auth.user = { ...USER };
+        auth.mfaEnabled = false;
+        auth.mfaRequired = true;
+        auth.signInStep = SignInStep.DONE;
 
         await authCheck(route("/projects") as never, route("/") as never, next as never);
 
@@ -280,21 +268,13 @@ describe("authCheck", () => {
         // user is legitimately on /auth/mfa-setup. The mfaRequired check
         // already short-circuits with a same-path guard, so we should
         // pass through without a redirect.
-        vi.mocked(fetchAuthSession).mockResolvedValue({} as never);
+        provider.hasSession.mockResolvedValue(true);
         const { next, calls } = makeNext();
         const auth = useAuthStore();
-        auth.user = {
-            username: "u",
-            userId: "id",
-            attributes: {
-                sub: "s",
-                email: "u@e.com"
-            },
-            permissions: []
-        };
+        auth.user = { ...USER };
         auth.mfaEnabled = false;
         auth.mfaRequired = true;
-        auth.signInStep = "DONE";
+        auth.signInStep = SignInStep.DONE;
 
         await authCheck(route("/auth/mfa-setup") as never, route("/") as never, next as never);
 
@@ -302,7 +282,7 @@ describe("authCheck", () => {
     });
 
     it("recovers from unexpected errors by resetting state, queuing a notice and tearing the page down", async () => {
-        vi.mocked(fetchAuthSession).mockResolvedValue({} as never);
+        provider.hasSession.mockResolvedValue(true);
         const { next } = makeNext();
         const auth = useAuthStore();
         // Force fetchInfo to blow up so authCheck falls into its outer catch.
@@ -331,11 +311,12 @@ describe("authCheck — Cypress hook (VITE_E2E build flag)", () => {
     // The src code branches at the top of authCheck on isCypressMode(),
     // which reads `import.meta.env.VITE_E2E` and is dead-code-eliminated
     // in non-E2E builds. Stubbing the env var lets unit tests drive the
-    // same paths Cypress E2E exercises without spinning up Amplify.
+    // same paths Cypress E2E exercises without touching a provider.
 
     beforeEach(() => {
         setActivePinia(createPinia());
-        vi.mocked(fetchAuthSession).mockReset();
+        resetMockAuthProvider(provider);
+        authProvider.current = provider;
         window.localStorage.clear();
         vi.stubEnv("VITE_E2E", "true");
     });
@@ -351,17 +332,12 @@ describe("authCheck — Cypress hook (VITE_E2E build flag)", () => {
         await authCheck(route("/projects") as never, route("/") as never, next as never);
 
         expect(calls).toEqual(["/auth/login"]);
-        expect(fetchAuthSession).not.toHaveBeenCalled();
+        expect(provider.hasSession).not.toHaveBeenCalled();
     });
 
     it("populates the auth store from cypress.auth.user and continues", async () => {
         const user = {
-            username: "u",
-            userId: "id",
-            attributes: {
-                sub: "s",
-                email: "u@e.com"
-            },
+            ...USER,
             permissions: ["CanManageProjects"]
         };
         window.localStorage.setItem("cypress.auth.user", JSON.stringify(user));
@@ -371,14 +347,14 @@ describe("authCheck — Cypress hook (VITE_E2E build flag)", () => {
         await authCheck(route("/projects") as never, route("/") as never, next as never);
 
         expect(auth.user).toEqual(user);
-        expect(auth.signInStep).toBe("DONE");
+        expect(auth.signInStep).toBe(SignInStep.DONE);
         expect(calls).toEqual([undefined]);
-        expect(fetchAuthSession).not.toHaveBeenCalled();
+        expect(provider.hasSession).not.toHaveBeenCalled();
     });
 
     it("routes new-password challenge users to /auth/new-password", async () => {
         const auth = useAuthStore();
-        auth.signInStep = "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED";
+        auth.signInStep = SignInStep.NEW_PASSWORD_REQUIRED;
         const { next, calls } = makeNext();
 
         await authCheck(route("/projects") as never, route("/") as never, next as never);
@@ -388,7 +364,7 @@ describe("authCheck — Cypress hook (VITE_E2E build flag)", () => {
 
     it("lets new-password challenge users stay on /auth/new-password without recursing", async () => {
         const auth = useAuthStore();
-        auth.signInStep = "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED";
+        auth.signInStep = SignInStep.NEW_PASSWORD_REQUIRED;
         const { next, calls } = makeNext();
 
         await authCheck(route("/auth/new-password") as never, route("/") as never, next as never);
@@ -398,7 +374,7 @@ describe("authCheck — Cypress hook (VITE_E2E build flag)", () => {
 
     it("routes TOTP-setup challenge to /auth/mfa-setup", async () => {
         const auth = useAuthStore();
-        auth.signInStep = "CONTINUE_SIGN_IN_WITH_TOTP_SETUP";
+        auth.signInStep = SignInStep.TOTP_SETUP;
         const { next, calls } = makeNext();
 
         await authCheck(route("/projects") as never, route("/") as never, next as never);
@@ -408,7 +384,7 @@ describe("authCheck — Cypress hook (VITE_E2E build flag)", () => {
 
     it("routes TOTP-code challenge to /auth/mfa-verify", async () => {
         const auth = useAuthStore();
-        auth.signInStep = "CONFIRM_SIGN_IN_WITH_TOTP_CODE";
+        auth.signInStep = SignInStep.TOTP_CODE;
         const { next, calls } = makeNext();
 
         await authCheck(route("/projects") as never, route("/") as never, next as never);
@@ -440,13 +416,8 @@ describe("authCheck — Cypress hook (VITE_E2E build flag)", () => {
     it("does not overwrite a preloaded auth.user", async () => {
         const auth = useAuthStore();
         auth.user = {
-            username: "preloaded",
-            userId: "p",
-            attributes: {
-                sub: "p",
-                email: "p@e.com"
-            },
-            permissions: []
+            ...USER,
+            username: "preloaded"
         };
         window.localStorage.setItem(
             "cypress.auth.user",
@@ -466,67 +437,93 @@ describe("authCheck — Cypress hook (VITE_E2E build flag)", () => {
     });
 });
 
-describe("__cypressTriggerSessionExpiry", () => {
-    // auth.ts installs this onto `window` at module import time when the
-    // VITE_E2E build flag is set. The session-expired Cypress spec
-    // dispatches the Hub event through it without having to simulate a
-    // Cognito refresh round-trip. We resetModules + stubEnv so the
+describe("Cypress window hooks (VITE_E2E build flag)", () => {
+    // auth.ts installs these onto `window` at module import time when the
+    // VITE_E2E build flag is set. We resetModules + stubEnv so the
     // module-level installer runs under our control.
 
-    it("is a function that dispatches the tokenRefresh_failure Hub event", async () => {
+    type HookedWindow = {
+        __cypressTriggerSessionExpiry?: () => void;
+        __cypressGetAuthUser?: () => Promise<{ token: string | null; user: unknown }>;
+    };
+
+    const hooked = (): HookedWindow => window as unknown as HookedWindow;
+
+    afterEach(() => {
+        vi.unstubAllEnvs();
+        vi.useRealTimers();
+        delete hooked().__cypressTriggerSessionExpiry;
+        delete hooked().__cypressGetAuthUser;
+    });
+
+    it("__cypressTriggerSessionExpiry runs the session-expiry handler", async () => {
         vi.stubEnv("VITE_E2E", "true");
         vi.resetModules();
-
-        // Re-mock aws-amplify/utils for this resetModules scope so the
-        // re-imported auth.ts captures *our* Hub.dispatch reference.
-        const dispatch = vi.fn();
-        vi.doMock("aws-amplify/utils", () => ({
-            Hub: {
-                listen: vi.fn(),
-                dispatch
-            }
-        }));
+        setActivePinia(createPinia());
+        vi.useFakeTimers();
+        router.currentRoute.value.path = "/projects";
 
         await import("@/utils/auth");
-
-        const trigger = (window as unknown as {
-            __cypressTriggerSessionExpiry?: () => void;
-        }).__cypressTriggerSessionExpiry;
+        const trigger = hooked().__cypressTriggerSessionExpiry;
 
         expect(typeof trigger).toBe("function");
 
         trigger?.();
+        vi.advanceTimersByTime(200);
 
-        expect(dispatch).toHaveBeenCalledWith("auth", { event: "tokenRefresh_failure" });
-
-        vi.doUnmock("aws-amplify/utils");
-        vi.unstubAllEnvs();
-        delete (window as unknown as { __cypressTriggerSessionExpiry?: unknown })
-            .__cypressTriggerSessionExpiry;
+        // The re-imported module resolved fresh copies of the (mocked)
+        // teardown helpers; assert through the copy it actually calls.
+        const teardown = await import("@/utils/session-teardown");
+        expect(teardown.leaveToLogin).toHaveBeenCalledTimes(1);
+        expect(teardown.stashPostSignOutNotice).toHaveBeenCalledWith(
+            expect.objectContaining({ title: "You've been signed out" })
+        );
     });
 
-    it("does NOT install the trigger when VITE_E2E is unset", async () => {
+    it("__cypressGetAuthUser returns the provider's token and identity, or a null token when signed out", async () => {
+        vi.stubEnv("VITE_E2E", "true");
+        vi.resetModules();
+        resetMockAuthProvider(provider);
+        authProvider.current = provider;
+
+        await import("@/utils/auth");
+        const getAuthUser = hooked().__cypressGetAuthUser;
+
+        expect(typeof getAuthUser).toBe("function");
+
+        await expect(getAuthUser?.()).resolves.toEqual({
+            token: null,
+            user: null
+        });
+        expect(provider.getUser).not.toHaveBeenCalled();
+
+        provider.getAccessToken.mockResolvedValue("tok");
+        provider.getUser.mockResolvedValue({
+            sub: "s",
+            email: "u@e.com",
+            username: "u"
+        });
+        await expect(getAuthUser?.()).resolves.toEqual({
+            token: "tok",
+            user: {
+                sub: "s",
+                email: "u@e.com",
+                username: "u"
+            }
+        });
+    });
+
+    it("does NOT install the hooks when VITE_E2E is unset", async () => {
         vi.stubEnv("VITE_E2E", "");
         vi.resetModules();
-        vi.doMock("aws-amplify/utils", () => ({
-            Hub: {
-                listen: vi.fn(),
-                dispatch: vi.fn()
-            }
-        }));
         // Make sure we're starting from a clean state.
-        delete (window as unknown as { __cypressTriggerSessionExpiry?: unknown })
-            .__cypressTriggerSessionExpiry;
+        delete hooked().__cypressTriggerSessionExpiry;
+        delete hooked().__cypressGetAuthUser;
 
         await import("@/utils/auth");
 
-        expect(
-            (window as unknown as { __cypressTriggerSessionExpiry?: unknown })
-                .__cypressTriggerSessionExpiry
-        ).toBeUndefined();
-
-        vi.doUnmock("aws-amplify/utils");
-        vi.unstubAllEnvs();
+        expect(hooked().__cypressTriggerSessionExpiry).toBeUndefined();
+        expect(hooked().__cypressGetAuthUser).toBeUndefined();
     });
 });
 
@@ -537,23 +534,15 @@ describe("isUserUnconfirmedCheck", () => {
 
     it("returns true only for the new-password challenge step", async () => {
         const auth = useAuthStore();
-        auth.signInStep = "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED";
+        auth.signInStep = SignInStep.NEW_PASSWORD_REQUIRED;
 
         await expect(isUserUnconfirmedCheck(auth)).resolves.toBe(true);
     });
 
     it("returns false when the user is fully signed in (confirmedUser)", async () => {
         const auth = useAuthStore();
-        auth.user = {
-            username: "u",
-            userId: "id",
-            attributes: {
-                sub: "s",
-                email: "u@e.com"
-            },
-            permissions: []
-        };
-        auth.signInStep = "DONE";
+        auth.user = { ...USER };
+        auth.signInStep = SignInStep.DONE;
         auth.mfaEnabled = true;
 
         await expect(isUserUnconfirmedCheck(auth)).resolves.toBe(false);
@@ -561,7 +550,7 @@ describe("isUserUnconfirmedCheck", () => {
 
     it("returns false during TOTP challenge (not the step this page handles)", async () => {
         const auth = useAuthStore();
-        auth.signInStep = "CONFIRM_SIGN_IN_WITH_TOTP_CODE";
+        auth.signInStep = SignInStep.TOTP_CODE;
 
         await expect(isUserUnconfirmedCheck(auth)).resolves.toBe(false);
     });
@@ -576,23 +565,13 @@ describe("isUserUnconfirmedCheck", () => {
 
     it("returns false for any other step", async () => {
         const auth = useAuthStore();
-        auth.signInStep = "SOME_UNHANDLED_STEP" as unknown as SignInStep;
+        auth.signInStep = "SOME_UNHANDLED_STEP" as unknown as SignInStepType;
 
         await expect(isUserUnconfirmedCheck(auth)).resolves.toBe(false);
     });
 });
 
-describe("Hub listener (tokenRefresh_failure)", () => {
-    type HubListener = (data: { payload: { event: string } }) => void;
-
-    function getListener(): HubListener {
-        if (!capturedListener.fn) {
-            throw new Error("Hub listener was not captured at module load");
-        }
-
-        return capturedListener.fn;
-    }
-
+describe("handleSessionExpired", () => {
     beforeEach(() => {
         setActivePinia(createPinia());
         vi.mocked(routeChange.gotoLogin).mockReset();
@@ -607,19 +586,10 @@ describe("Hub listener (tokenRefresh_failure)", () => {
         vi.useRealTimers();
     });
 
-    it("ignores events other than tokenRefresh_failure", () => {
-        const listener = getListener();
-        listener({ payload: { event: "signIn" } });
-
-        vi.advanceTimersByTime(200);
-        expect(routeChange.gotoLogin).not.toHaveBeenCalled();
-    });
-
     it("no-ops on pre-auth / mid-challenge pages (no forced signout)", () => {
         router.currentRoute.value.path = "/auth/mfa-setup";
-        const listener = getListener();
 
-        listener({ payload: { event: "tokenRefresh_failure" } });
+        handleSessionExpired();
         vi.advanceTimersByTime(200);
 
         expect(leaveToLogin).not.toHaveBeenCalled();
@@ -627,19 +597,10 @@ describe("Hub listener (tokenRefresh_failure)", () => {
     });
 
     it("schedules a teardown with a queued notice on authenticated pages", () => {
-        const listener = getListener();
         const auth = useAuthStore();
-        auth.user = {
-            username: "u",
-            userId: "id",
-            attributes: {
-                sub: "s",
-                email: "u@e.com"
-            },
-            permissions: []
-        };
+        auth.user = { ...USER };
 
-        listener({ payload: { event: "tokenRefresh_failure" } });
+        handleSessionExpired();
         vi.advanceTimersByTime(200);
 
         expect(stashPostSignOutNotice).toHaveBeenCalledWith({
@@ -652,12 +613,10 @@ describe("Hub listener (tokenRefresh_failure)", () => {
         expect(auth.user).toBeNull();
     });
 
-    it("debounces a burst of tokenRefresh_failure events", () => {
-        const listener = getListener();
-
-        listener({ payload: { event: "tokenRefresh_failure" } });
-        listener({ payload: { event: "tokenRefresh_failure" } });
-        listener({ payload: { event: "tokenRefresh_failure" } });
+    it("debounces a burst of expiry signals", () => {
+        handleSessionExpired();
+        handleSessionExpired();
+        handleSessionExpired();
         vi.advanceTimersByTime(200);
 
         // Only the most recent scheduled timeout fires its callback.

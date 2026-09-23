@@ -40,8 +40,8 @@ services:
     volumes:
       - ../flip-ui:/app
       - /app/node_modules
-      - ~/.aws/config:/root/.aws/config:ro
-      - ~/.aws/sso/cache:/root/.aws/sso/cache
+      # No ~/.aws mounts: flip-ui has no AWS SDK; the browser talks to the
+      # identity provider directly, never this container.
     environment:
       # flip-ui reads config at runtime from window.js, which is generated
       # from these canonical names by scripts/generate-window-js.sh (via
@@ -51,8 +51,15 @@ services:
       - NODE_ENV=${NODE_ENV}
       - VITE_LOCAL=${VITE_LOCAL}
       - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
-      - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
-      - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
+      # Identity provider (FLIP#919): unset means keycloak here, as in flip-api;
+      # the generator emits window.AUTH_BACKEND + the KEYCLOAK_* keys the browser
+      # provider reads, and only demands the Cognito ids under AUTH_BACKEND=cognito.
+      - AUTH_BACKEND=${AUTH_BACKEND:-keycloak}
+      - KEYCLOAK_PUBLIC_URL=http://localhost:${KEYCLOAK_PORT:-8180}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM:-flip}
+      - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID:-flip-ui}
+      - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID:-}
+      - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID:-}
       - AWS_REGION=${AWS_REGION}
       - BLACKLISTED_MODEL_FILES=${BLACKLISTED_MODEL_FILES}
     security_opt:

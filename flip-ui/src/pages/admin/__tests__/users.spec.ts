@@ -16,9 +16,17 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nextTick, ref } from "vue";
 
+import { makeMockAuthProvider, NO_CAPABILITIES, resetMockAuthProvider } from "@/auth/__tests__/mock-provider";
 import { IUser } from "@/services/user-service";
 
 import UsersPage from "../users.vue";
+
+// Store actions run for real here (stubActions: false), so the identity
+// provider behind the store's `resetPassword` / `capabilities` is a bag of
+// spies swapped per test.
+const authProvider = vi.hoisted(() => ({ current: null as unknown }));
+vi.mock("@/auth", () => ({ getAuthProvider: () => authProvider.current }));
+const cognitoLike = makeMockAuthProvider();
 
 interface IUserPage {
     data: IUser[];
@@ -97,8 +105,10 @@ vi.mock("@/utils/route-validator", () => ({ canAccessRoute: vi.fn().mockResolved
 const stubs = {
     AiButton: {
         inheritAttrs: false,
-        template: "<button v-bind=\"$attrs\" :disabled='disabled' @click=\"$emit('click', $event)\"><slot /></button>",
-        props: ["disabled"]
+        // `tooltip` is surfaced as a data attribute so a test can read it off the DOM.
+        template: "<button v-bind=\"$attrs\" :disabled='disabled' :data-tooltip='tooltip || undefined' "
+            + "@click=\"$emit('click', $event)\"><slot /></button>",
+        props: ["disabled", "tooltip"]
     },
     AiSkeleton: { template: "<div data-test='skeleton' />" },
     AiPagination: { template: "<div />" },
@@ -191,6 +201,8 @@ const findConfirmModal = (wrapper: ReturnType<typeof mountPage>, contains: strin
     wrapper.findAll("[data-test='confirm-modal']").find(m => m.attributes("data-text")?.includes(contains));
 
 beforeEach(() => {
+    resetMockAuthProvider(cognitoLike);
+    authProvider.current = cognitoLike;
     userPage.value = undefined;
     rolesPage.value = undefined;
     mutateUsers.mockReset();
@@ -418,7 +430,7 @@ describe("admin/users", () => {
         expect(mockSnackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "User not updated" }));
     });
 
-    it("resetPassword closes its dialog and calls authStore.resetPassword", async () => {
+    it("resetPassword closes its dialog, awaits authStore.resetPassword, then reports success", async () => {
         const wrapper = mountPage();
         await nextTick();
         await wrapper.findAll("[data-test='user']")[0].trigger("click");
@@ -431,7 +443,47 @@ describe("admin/users", () => {
         const { useAuthStore } = await import("@/store/auth");
         const authStore = useAuthStore();
         expect(authStore.resetPassword).toHaveBeenCalledWith("alice@example.com");
+        expect(cognitoLike.resetPassword).toHaveBeenCalledWith("alice@example.com");
         expect(mockSnackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Password reset" }));
+        expect(mockSnackbarError).not.toHaveBeenCalled();
+    });
+
+    it("resetPassword reports a failure as a failure instead of a success", async () => {
+        // The success snackbar used to fire before the reset had even been
+        // attempted, so a rejected reset read as done.
+        cognitoLike.resetPassword.mockRejectedValue(new Error("LimitExceededException"));
+        const wrapper = mountPage();
+        await nextTick();
+        await wrapper.findAll("[data-test='user']")[0].trigger("click");
+
+        const cmp = wrapper.findAllComponents({ name: "AiConfirmModal" })
+            .find(c => c.props("confirmationText")?.includes("reset this user's password"))!;
+        await cmp.props("continueAction")();
+        await flushPromises();
+
+        expect(mockSnackbarSuccess).not.toHaveBeenCalled();
+        expect(mockSnackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Password not reset" }));
+    });
+
+    it("Reset Password is enabled with a Cognito-like backend and disabled, with a tooltip, without admin resets", async () => {
+        const enabled = mountPage();
+        await nextTick();
+        await enabled.findAll("[data-test='user']")[0].trigger("click");
+        const enabledBtn = enabled.find("[data-test='reset-password-btn']");
+        expect(enabledBtn.attributes("disabled")).toBeUndefined();
+        expect(enabledBtn.attributes("data-tooltip")).toBeUndefined();
+        enabled.unmount();
+
+        authProvider.current = makeMockAuthProvider({
+            backend: "keycloak",
+            capabilities: NO_CAPABILITIES
+        });
+        const disabled = mountPage();
+        await nextTick();
+        await disabled.findAll("[data-test='user']")[0].trigger("click");
+        const disabledBtn = disabled.find("[data-test='reset-password-btn']");
+        expect(disabledBtn.attributes("disabled")).toBeDefined();
+        expect(disabledBtn.attributes("data-tooltip")).toContain("Keycloak console");
     });
 
     it("resetMfa success shows the success snackbar", async () => {
