@@ -841,28 +841,75 @@ The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs
   load balancer, …) is added without being drawn. A Terraform change of that kind updates
   `TERRAFORM_ADDRESSES` in the script in the same PR, then `make aws-diagram` refreshes the two committed
   copies the AWS README embeds.
+- It needs **network access to huggingface.co** (and `*.hf.co`). The user-guide GIFs are not tracked in git
+  (FLIP#1236): `conf.py` fetches the version pinned in `docs/.gifs_version` from the public dataset
+  `aicentreflip/docs-gifs` into the gitignored `docs/source/assets/generated/gifs/`, verifying every file
+  against the published manifest, and fails loudly if it cannot. A repeat build makes no network request.
+  `FLIP_DOCS_SKIP_GIF_FETCH=1 make -C docs docs` builds text-only offline (the user-guide pages then warn
+  about their missing images). See "Documentation GIFs" below.
+
 
 ## Documentation GIFs
 
-The admin user-action GIFs under `docs/source/assets/admin/` (referenced from
-`docs/source/sys-admin/admin-project-and-user-management.rst`) are
-auto-regenerated on every push to `main` by
-`.github/workflows/regenerate_docs_gifs.yml`. The workflow records the demo
-Cypress specs under `flip-ui/test/cypress/docs/admin/` against a fully mocked
-backend, converts the resulting videos to GIFs with `ffmpeg`, and opens a PR
-against `develop` for human review.
+The animated walkthroughs in the user guides (`docs/source/user-guides/user-common.rst` and
+`docs/source/sys-admin/admin-project-and-user-management.rst`) are Cypress recordings of the UI against a
+fully mocked backend. **They are not tracked in git** (FLIP#1236 — 65 MB that re-recording rewrote on every
+run was 95% of a clone). Instead:
 
-To regenerate locally:
+- `.github/workflows/regenerate_docs_gifs.yml` runs on every push to `develop` that touches `flip-ui/src/**`,
+  the Cypress docs harness (`flip-ui/test/cypress/docs/**`, `cypress.docs.config.ts`,
+  `scripts/videos-to-gifs.sh`) or the workflow itself, or by hand via *Run workflow*: its `record` job mints
+  the version tag, records the demo specs under `flip-ui/test/cypress/docs/<category>/<name>.spec.ts` and
+  converts each video to `docs/source/assets/generated/gifs/<category>/<name>.gif` with `ffmpeg`; its
+  `publish` job — **`develop` only**; a dispatch from a branch records without publishing — publishes that
+  directory to the public Hugging Face dataset
+  [`aicentreflip/docs-gifs`](https://huggingface.co/datasets/aicentreflip/docs-gifs) as **one commit and one
+  tag** `YYYYMMDDTHHMMSSZ-<sha7>` (`docs/scripts/publish_docs_gifs.py`), verifies the tag resolves
+  anonymously, and opens a PR whose only diff is the pin, `docs/.gifs_version`. A later run opens a fresh PR
+  and closes the superseded one.
+- The docs build (`make -C docs docs`, the docs CI job, ReadTheDocs) fetches the pinned tag at build time
+  (`docs/scripts/fetch_docs_gifs.py`, called from `docs/source/conf.py`) — see "Building the documentation".
+- **Review the pin PR in its ReadTheDocs preview** (the `docs/readthedocs.org:londonaicentreflip` check):
+  RTD builds the PR with the new pin, so the pages show the recordings in context. Re-recording is nondeterministic (frame
+  timing plus the animated demo cursor), so every GIF is new bytes even where the UI didn't change — merge if
+  the genuinely-changed clips look right, otherwise close.
+- **Dataset tags are never moved or deleted**, so `stable` and every historical docs version keep resolving the
+  tag they were built with. A re-recording is always a new tag.
+
+### Adding a new GIF
+
+Authoring is two-step, because a PR cannot ship the GIF itself:
+
+1. Add the demo spec `flip-ui/test/cypress/docs/<category>/<name>.spec.ts` (the filename maps 1:1 to the GIF;
+   reuse the functional suite's fixtures and `globalIntercepts`, and layer the cursor overlay from
+   `flip-ui/test/cypress/docs/support/demoCursor.ts` so the recording reads as visible user actions) and the
+   figure `.. figure:: ../assets/generated/gifs/<category>/<name>.gif` in the rst. `make -C docs test` checks
+   the two agree. Until the GIF is published, the docs build warns "image file not readable" for that one
+   figure — expected, and deliberately not fatal.
+2. Once the PR merges to `develop`, the workflow records and publishes everything and opens the pin PR;
+   merging that makes the new figure render.
+
+### Previewing locally
 
 ```bash
 cd flip-ui
-npm run docs:record   # records videos under test/cypress/videos/docs/admin/
-npm run docs:gifs     # ffmpeg → docs/source/assets/admin/*.gif (requires ffmpeg on PATH)
+npm run docs:record   # records videos under test/cypress/videos/
+npm run docs:gifs     # ffmpeg → docs/source/assets/generated/gifs/<category>/*.gif (requires ffmpeg on PATH)
+FLIP_DOCS_SKIP_GIF_FETCH=1 make -C ../docs docs   # build on YOUR recordings, not the pinned ones
 ```
 
-The demo specs reuse the functional suite's fixtures and `globalIntercepts`,
-and layer a CSS cursor overlay (`flip-ui/test/cypress/docs/support/demoCursor.ts`)
-on top so the recorded GIFs read as visible user actions. When adding a new
-admin-area UI flow that should be documented, add one demo spec under
-`flip-ui/test/cypress/docs/admin/<gif-basename>.spec.ts` — the filename maps
-1:1 to the output GIF name.
+Without the skip flag the build restores the pinned bytes over any file that differs — the pin wins.
+
+### Publishing by hand
+
+Rarely needed (the workflow does it), but the same script works from a laptop with an account that can
+write to the dataset:
+
+```bash
+uvx --from 'huggingface_hub>=1.6' hf auth login
+uv run docs/scripts/publish_docs_gifs.py --source-commit "$(git rev-parse origin/develop)" --dry-run
+uv run docs/scripts/publish_docs_gifs.py --source-commit "$(git rev-parse origin/develop)"   # then pin the printed tag
+```
+
+`--gifs-dir` points at a different tree; `FLIP_DOCS_GIFS_REPO` / `FLIP_DOCS_GIFS_REVISION` (e.g. `main`) let a
+build read another dataset or an untagged revision, mirroring `HF_TRUST_DATA_REVISION`.
