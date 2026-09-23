@@ -59,7 +59,21 @@ die() {
 }
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${HERE}/../../.." && pwd)"
+
+# The env file has to land exactly where `deploy/providers/AWS/Makefile` derives it
+# — MAIN_ENV_FILE = ../../../$(ENV_FILE_NAME), i.e. <repo root>/.env.<env>. That
+# include is behind a wildcard guard, so a file written one directory off is
+# skipped *silently*: Terraform then sees an empty input set, and the run fails
+# later, in `make`, complaining about a missing key rather than a missing file.
+# Resolved through git where possible (correct for a worktree, or a script invoked
+# by absolute path) and then *checked* rather than assumed: an unrecognised layout
+# stops the run instead of writing somewhere nothing will read.
+REPO_ROOT="$(git -C "${HERE}" rev-parse --show-toplevel 2>/dev/null || true)"
+[[ -n "${REPO_ROOT}" ]] || REPO_ROOT="$(cd "${HERE}/../../../.." && pwd)"
+if [[ ! -f "${REPO_ROOT}/deploy/providers/AWS/Makefile" ]]; then
+    die "cannot resolve the repository root from ${HERE} (tried '${REPO_ROOT}').
+   The env file must be written where deploy/providers/AWS/Makefile includes it."
+fi
 
 # The mode table. ENV_FILE is the name `deploy/env_mode.mk` derives from the same
 # token (ENV_FILE_NAME); AWS_PROFILE_VALUE is what the Makefile's account guard
@@ -114,16 +128,19 @@ else
     IS_LZA=""
 fi
 
+DEFAULT_OUT_FILE="${REPO_ROOT}/${ENV_FILE}"
+
 # `--print-env` prints the derived target and exits — no values needed. It exists
-# so the table above can be pinned against `deploy/env_mode.mk` by a test
-# (tests/test_ci_env_target.py) instead of by reading the two files side by side.
+# so the table above, and the path the env file is written to, can be pinned
+# against `deploy/env_mode.mk` and the Makefile by a test
+# (tests/test_ci_env_target.py) instead of by reading the files side by side.
 if [[ "${1:-}" == "--print-env" ]]; then
-    printf 'ENV=%s\nENV_FILE_NAME=%s\nAWS_PROFILE=%s\nGH_ENV=%s\n' \
-        "${ENV}" "${ENV_FILE}" "${AWS_PROFILE_VALUE}" "${GH_ENV}"
+    printf 'ENV=%s\nENV_FILE_NAME=%s\nAWS_PROFILE=%s\nGH_ENV=%s\nOUT_FILE=%s\n' \
+        "${ENV}" "${ENV_FILE}" "${AWS_PROFILE_VALUE}" "${GH_ENV}" "${DEFAULT_OUT_FILE}"
     exit 0
 fi
 
-OUT_FILE="${1:-${REPO_ROOT}/${ENV_FILE}}"
+OUT_FILE="${1:-${DEFAULT_OUT_FILE}}"
 
 # Keys required for every `make init` / `make plan` / `make apply`.
 #
