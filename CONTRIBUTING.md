@@ -536,8 +536,9 @@ Makefile target, which runs the same ruff → mypy → pytest sequence as the ot
 ```bash
 cd flip-utils && uv run pytest tests/unit -s -vv
 # or:
-make -C flip-utils unit-test   # ruff --fix + mypy + pytest with coverage
+make -C flip-utils unit-test   # ruff --fix + ruff format --check + mypy + pytest with coverage
 make -C flip-utils mypy        # type check only
+make -C flip-utils format      # apply ruff format (format-check: check only)
 ```
 
 See [`flip-utils/README.md`](flip-utils/README.md) for the FL package's tests, and

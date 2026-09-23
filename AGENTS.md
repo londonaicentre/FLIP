@@ -131,7 +131,7 @@ make unit_test             # All unit tests across all services (from root)
 make integration_test      # flip-api + trust integration tests (from root)
 make tests                 # flip-ui unit + e2e tests, then flip-api test suite (from root)
 make -C fl-tutorials test  # ruff over fl-tutorials/ + the CPU-only transform-chain suite (no GPU/dataset/FL image)
-make -C flip-utils unit-test  # ruff + mypy + pytest for the flip package (not part of root unit_test; CI: unit-tests.yml)
+make -C flip-utils unit-test  # ruff + format check + mypy + pytest for the flip package (not part of root unit_test; CI: unit-tests.yml)
 make e2e_smoke             # End-to-end smoke against a running stack (see below)
 # From a service directory (e.g., flip-api/):
 make test                  # ruff + mypy + pytest (unit + integration)

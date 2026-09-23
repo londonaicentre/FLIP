@@ -219,8 +219,7 @@ class EvaluationModelLocator(ModelLocator):
 
         self.log_error(
             fl_ctx,
-            f"Checkpoint for model '{name}' not found at '{bundled_path}' "
-            f"(LOCAL_DEV; shared-volume fetch skipped).",
+            f"Checkpoint for model '{name}' not found at '{bundled_path}' (LOCAL_DEV; shared-volume fetch skipped).",
             fire_event=True,
         )
         return None

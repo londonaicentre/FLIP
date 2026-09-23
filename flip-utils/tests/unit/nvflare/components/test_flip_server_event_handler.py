@@ -630,9 +630,7 @@ class TestRoundEventRelay:
         from nvflare.app_common.app_constant import AppConstants
 
         # NVFLARE's _current_round is 0-based: prop 2 means round 3 of 5.
-        handler, flip, fl_ctx = self._handler_and_ctx(
-            {AppConstants.CURRENT_ROUND: 2, AppConstants.NUM_ROUNDS: 5}
-        )
+        handler, flip, fl_ctx = self._handler_and_ctx({AppConstants.CURRENT_ROUND: 2, AppConstants.NUM_ROUNDS: 5})
 
         handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)
 
@@ -649,9 +647,7 @@ class TestRoundEventRelay:
         the all-clients-failed round closes with an honest count, not a bare line."""
         from nvflare.app_common.app_constant import AppConstants
 
-        handler, flip, fl_ctx = self._handler_and_ctx(
-            {AppConstants.CURRENT_ROUND: 2, AppConstants.NUM_ROUNDS: 5}
-        )
+        handler, flip, fl_ctx = self._handler_and_ctx({AppConstants.CURRENT_ROUND: 2, AppConstants.NUM_ROUNDS: 5})
 
         handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)
 

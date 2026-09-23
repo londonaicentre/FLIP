@@ -49,6 +49,9 @@ jobs:
             - name: Run linter
               run: uv run ruff check .
 
+            - name: Check formatting
+              run: uv run ruff format --check .
+
             - name: Run mypy
               # Static, so one gate is enough: this job already installs --all-groups --extra full
               # (torch + nvflare + flwr), the same dependency set the heavy job sees.

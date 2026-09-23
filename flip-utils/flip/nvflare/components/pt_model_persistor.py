@@ -102,8 +102,7 @@ class InitialCheckpointPTModelPersistor(PTFileModelPersistor):
 
         self.log_error(
             fl_ctx,
-            f"SERVER_CHECKPOINT '{checkpoint}' not found at '{bundled_path}' "
-            f"(LOCAL_DEV; shared-volume fetch skipped).",
+            f"SERVER_CHECKPOINT '{checkpoint}' not found at '{bundled_path}' (LOCAL_DEV; shared-volume fetch skipped).",
             fire_event=True,
         )
         return None
