@@ -85,7 +85,7 @@ jobs:
           {
             echo "AWS_REGION=eu-west-2"
             echo "AWS_PROFILE="
-            echo "ADMIN_USER_PASSWORD=Smoke-Test-Pa55word!"
+            echo "ADMIN_USER_PASSWORD=Smoke-Test-Pa55word!"  # pragma: allowlist secret
             echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 }}"
             echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}"
             echo "ENV=development"
@@ -131,7 +131,7 @@ jobs:
             --api-url http://localhost:8080/api \
             --keycloak-url http://localhost:8180 \
             --username "$admin_email" \
-            --password 'Smoke-Test-Pa55word!'
+            --password 'Smoke-Test-Pa55word!'  # pragma: allowlist secret
 
       - name: Logs on failure
         if: failure()

@@ -52,6 +52,7 @@ def _settings(env: str = "development") -> MagicMock:
     settings.KEYCLOAK_AUDIENCE = "flip-api"
     settings.KEYCLOAK_ADMIN_CLIENT_ID = "flip-api-admin"
     settings.KEYCLOAK_ADMIN_CLIENT_SECRET = SecretStr("dev-secret")
+    settings.ADMIN_USER_PASSWORD = SecretStr("Shared-Dev-Pa55word!")  # pragma: allowlist secret
     return settings
 
 
@@ -406,23 +407,34 @@ def test_create_existing_user_raises_already_exists(keycloak, provider):
         provider.create_user("new@example.com")
 
 
-def test_create_user_without_smtp_in_dev_sets_a_temporary_password_and_logs_it(keycloak, provider):
-    """Dev has no mail server: the invite that Cognito would have emailed is logged instead."""
+def test_create_user_without_smtp_in_dev_hands_out_the_shared_dev_password_as_temporary(keycloak, provider):
+    """Dev has no mail server: the invite Cognito would have emailed becomes ADMIN_USER_PASSWORD, temporary."""
     keycloak.smtp_configured = False
     with patch("flip_api.auth.identity.keycloak.logger") as logger:
         user_id = provider.create_user("new@example.com")
     [(reset_id, body)] = keycloak.password_resets
     assert reset_id == str(user_id)
-    assert body["temporary"] is True
-    assert body["type"] == "password"
-    assert len(body["value"]) >= 12
+    assert body == {"type": "password", "value": "Shared-Dev-Pa55word!", "temporary": True}  # pragma: allowlist secret
     logged = " ".join(str(call) for call in logger.warning.call_args_list)
     assert "new@example.com" in logged
-    assert body["value"] in logged
+    # Never the password itself: the log names the env var that holds it.
+    assert "Shared-Dev-Pa55word!" not in logged  # pragma: allowlist secret
+    assert "ADMIN_USER_PASSWORD" in logged
 
 
 def test_create_user_without_smtp_outside_dev_only_warns(keycloak):
     provider = KeycloakIdentityProvider(_settings(env="production"), transport=httpx.MockTransport(keycloak.handler))
+    keycloak.smtp_configured = False
+    with patch("flip_api.auth.identity.keycloak.logger") as logger:
+        provider.create_user("new@example.com")
+    assert keycloak.password_resets == []
+    logger.warning.assert_called()
+
+
+def test_create_user_without_smtp_and_without_a_dev_password_only_warns(keycloak):
+    settings = _settings()
+    settings.ADMIN_USER_PASSWORD = None
+    provider = KeycloakIdentityProvider(settings, transport=httpx.MockTransport(keycloak.handler))
     keycloak.smtp_configured = False
     with patch("flip_api.auth.identity.keycloak.logger") as logger:
         provider.create_user("new@example.com")

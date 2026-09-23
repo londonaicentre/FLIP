@@ -321,6 +321,7 @@ or only send to verified destination addresses for testing.
    ``KEYCLOAK_CLIENT_ID``, ``KEYCLOAK_AUDIENCE``, ``KEYCLOAK_ADMIN_CLIENT_ID``
    and ``KEYCLOAK_ADMIN_CLIENT_SECRET`` carry working defaults for the dev
    compose and are read only under that backend). The dev Keycloak has no
-   mail server, so flip-api logs a newly registered user's temporary password
-   instead. Production accepts only ``cognito`` and refuses the dev provider
+   mail server, so a newly registered user is given the shared dev password
+   (``ADMIN_USER_PASSWORD``) as a temporary one instead of an invitation
+   email. Production accepts only ``cognito`` and refuses the dev provider
    at boot.

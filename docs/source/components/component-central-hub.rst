@@ -218,7 +218,8 @@ The application's own emails (access-request notifications, XNAT credentials) go
 ``console`` — log the would-be message, with secret-shaped fields redacted — by default in development, so a
 local stack needs no SES identity. The identity provider sends its own invitations and password-reset codes
 independently of either: Cognito from the user pool in staging and production, whereas the development
-Keycloak has no mail server, so ``flip-api`` logs the temporary password of a newly registered user instead.
+Keycloak has no mail server, so a newly registered user is given the shared dev password
+(``ADMIN_USER_PASSWORD``) as a temporary one instead, and changes it at first sign-in.
 
 ***************
 Further reading

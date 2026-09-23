@@ -39,7 +39,7 @@ export type AuthBackend = "cognito" | "keycloak";
  */
 export const SignInStep = {
     DONE: "DONE",
-    NEW_PASSWORD_REQUIRED: "NEW_PASSWORD_REQUIRED",
+    NEW_PASSWORD_REQUIRED: "NEW_PASSWORD_REQUIRED", // pragma: allowlist secret
     TOTP_SETUP: "TOTP_SETUP",
     TOTP_CODE: "TOTP_CODE"
 } as const;

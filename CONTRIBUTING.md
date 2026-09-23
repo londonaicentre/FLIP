@@ -252,11 +252,12 @@ logs the would-be message (recipient, template name, non-secret payload) instead
 and XNAT-credentials paths work with no SES identity, verified address or templates. Staging and production keep
 `EMAIL_BACKEND=ses` and still require `AWS_SES_ADMIN_EMAIL_ADDRESS` / `AWS_SES_SENDER_EMAIL_ADDRESS`; the setting is
 type-narrowed in `ProdSettings`, so the console backend cannot be selected there. Invitations are the identity
-provider's own, not SES's: under the default Keycloak backend dev has no mail server, so flip-api logs the temporary
-password of a user registered from the Admin Area at WARNING (`[dev] Keycloak has no SMTP: temporary password for
-<email> is …`) — they sign in once, Keycloak's account console (`http://localhost:8180/realms/flip/account`) asks for
-a new password (the UI links there when the sign-in answers "Account is not fully set up"), then they sign in to
-FLIP. Under `AUTH_BACKEND=cognito` the user pool still sends real invite and password-reset emails.
+provider's own, not SES's: under the default Keycloak backend dev has no mail server, so a user registered from the
+Admin Area is given the shared dev password (`ADMIN_USER_PASSWORD`) as a temporary one (flip-api logs that it did,
+never the password) — they sign in once with it, Keycloak's account console
+(`http://localhost:8180/realms/flip/account`) asks for a new password (the UI links there when the sign-in answers
+"Account is not fully set up"), then they sign in to FLIP. Under `AUTH_BACKEND=cognito` the user pool still sends
+real invite and password-reset emails.
 
 **Sign-in in development goes through Keycloak** (FLIP#919). `make up` starts a `keycloak` service that imports the
 dev realm `deploy/keycloak/flip-realm.json` at every boot and keeps no volume. Sign in as any well-known dev identity

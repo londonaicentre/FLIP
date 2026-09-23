@@ -15,7 +15,7 @@ password grant, so the login form is the same under both backends.
 |------|-------|-----|
 | Realm | `flip`, email as username, TOTP-only OTP policy | Mirrors the Cognito pool: no custom attributes, no groups; roles live in the FLIP database |
 | Client `flip-ui` | public, direct access grants on, redirect URIs `http://localhost:44350`–`44359` + `http://localhost:${UI_PORT}`, audience mapper `flip-api` | The browser client. Its redirect URIs double as flip-api's CORS allowlist (`IdentityProvider.allowed_origins`), the role Cognito's callback URLs play elsewhere |
-| Client `flip-api-admin` | confidential, service account with `manage-users view-users query-users view-clients` | What flip-api authenticates to the Admin REST API as; secret = `KEYCLOAK_ADMIN_CLIENT_SECRET` |
+| Client `flip-api-admin` | confidential, service account with `manage-users view-users query-users view-clients` | What flip-api authenticates to the Admin REST API as; its client secret is `KEYCLOAK_ADMIN_CLIENT_SECRET` <!-- pragma: allowlist secret --> |
 | Users | the well-known dev identities from `flip_api/utils/constants.py`, fixed ids, password `${ADMIN_USER_PASSWORD}` | Fixed ids keep the FLIP database's role rows valid across a recreate. Demo-video users are not here: `make demo-users` creates them |
 
 `${VAR}` placeholders resolve from the container's environment, which the compose
@@ -30,9 +30,10 @@ Admin Area since the last import live only in that container and go with it.
 
 The admin console is `http://localhost:${KEYCLOAK_PORT:-8180}/admin` (`admin`/`admin`
 unless `KEYCLOAK_ADMIN_USERNAME` / `KEYCLOAK_ADMIN_PASSWORD` are set). It is where a
-developer completes what the password grant cannot do in-app: set a password for a
-user registered from the Admin Area when the logged temporary one was lost, enrol or
-clear a TOTP credential, or reset a password.
+developer completes what the password grant cannot do in-app: enrol or clear a TOTP
+credential, or reset a password. (A user registered from the Admin Area needs none of
+that: dev has no mail server, so they get `ADMIN_USER_PASSWORD` as a temporary password
+and choose a new one at first sign-in.)
 
 Never load this realm anywhere but a laptop: every credential in it is shared dev
 state, and `ProdSettings` refuses `AUTH_BACKEND=keycloak` at boot.

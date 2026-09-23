@@ -19,7 +19,6 @@ helpers, :func:`password_grant` and :func:`refresh_grant`, give scripts (the
 e2e smoke, the demo recorder) a user token the way the UI obtains one.
 """
 
-import secrets
 import threading
 import time
 from typing import Any
@@ -161,10 +160,12 @@ class KeycloakIdentityProvider(IdentityProvider):
         self._admin_client_id = settings.KEYCLOAK_ADMIN_CLIENT_ID
         self._admin_client_secret = settings.KEYCLOAK_ADMIN_CLIENT_SECRET.get_secret_value()
         # Only a development hub may stand in for the missing mail server by
-        # minting a temporary password (see create_user). ProdSettings cannot
-        # select this backend at all today; the flag is what a future
-        # non-dev Keycloak deployment inherits.
-        self._dev_invites = settings.ENV == "development"
+        # handing a new user the shared dev password as a temporary one (see
+        # create_user). ProdSettings cannot select this backend at all today;
+        # None is what a future non-dev Keycloak deployment inherits.
+        self._dev_temporary_password: str | None = None
+        if settings.ENV == "development" and settings.ADMIN_USER_PASSWORD is not None:
+            self._dev_temporary_password = settings.ADMIN_USER_PASSWORD.get_secret_value()
         self._http = httpx.Client(base_url=self._base_url, timeout=10, transport=transport)
         self._admin_path = f"/admin/realms/{self._realm}"
         self._token: str | None = None
@@ -344,25 +345,26 @@ class KeycloakIdentityProvider(IdentityProvider):
         )
         if response.status_code < 400:
             return
-        if not self._dev_invites:
+        if self._dev_temporary_password is None:
             logger.warning(
                 f"Keycloak could not email the set-password link for {email} (HTTP {response.status_code}); "
                 "set a temporary password in the Keycloak admin console."
             )
             return
-        # Development has no mail server: mint the temporary password Cognito's
-        # invitation would have carried and log it beside the console email.
-        temporary_password = secrets.token_urlsafe(12)
+        # Development has no mail server: stand in for the invitation with the
+        # shared dev password (ADMIN_USER_PASSWORD, already in the env file) as
+        # a temporary one, so nothing secret has to be logged. Keycloak asks
+        # for a new password at the first sign-in.
         reset = self._request(
             "PUT",
             f"users/{user_id}/reset-password",
-            json={"type": "password", "value": temporary_password, "temporary": True},
+            json={"type": "password", "value": self._dev_temporary_password, "temporary": True},
         )
         if reset.status_code >= 400:
             raise IdentityProviderError("User created but the temporary password could not be set")
         logger.warning(
-            f"[dev] Keycloak has no SMTP: temporary password for {email} is {temporary_password} — "
-            "sign in once, Keycloak will ask for a new password."
+            f"[dev] Keycloak has no SMTP: {email} was given the shared dev password (ADMIN_USER_PASSWORD) as a "
+            "temporary one — sign in once, Keycloak will ask for a new password."
         )
 
     def delete_user(self, username: str) -> None:
