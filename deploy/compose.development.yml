@@ -339,7 +339,7 @@ networks:
   #
   # Everything else hub-side stays on `default`: `flip-api`, `fl-api-net-<N>` and flower's
   # one-shot `register-supernode-keys-net-<N>` all reach the FL server there, on its control
-  # ports (`9093`/`9097` for flower, the admin port for nvflare) rather than the client-facing
+  # ports (`8000`/`9097` for flower, the admin port for nvflare) rather than the client-facing
   # Fleet port. Keep it that way. Putting any of them back here would hand every trust's
   # fl-client a route to a hub service it has no business reaching — wider than the documented
   # model (an fl-client holds no hub URL and no hub credential, only TRUST_INTERNAL_SERVICE_KEY)

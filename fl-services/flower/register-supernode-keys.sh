@@ -17,11 +17,11 @@ set -euo pipefail
 mkdir -p ~/.flwr
 cat > ~/.flwr/config.toml <<EOF
 [superlink.local]
-address = "${SUPERLINK_ADDRESS:-superlink:9093}"
+address = "${SUPERLINK_ADDRESS:-superlink:8000}"
 root-certificates = "${SUPERLINK_ROOT_CERTIFICATES:-/certs/ca.crt}"
 EOF
 
-echo "Configured Flower CLI for SuperLink Control API at ${SUPERLINK_ADDRESS:-superlink:9093}"
+echo "Configured Flower CLI for SuperLink Control API at ${SUPERLINK_ADDRESS:-superlink:8000}"
 
 # TRUST_NAMES names each key's node (one per /keys/*.pub, sorted; required); FL_API_ADDRESS is optional.
 # TRUST_NAMES accepts both JSON list (["Trust_1", "Trust_2"]) and comma-separated (Trust_1,Trust_2).

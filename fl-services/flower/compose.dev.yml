@@ -39,7 +39,7 @@ services:
     group_add: &host-gid ["${DOCKER_GID:-1000}"]
     environment:
       - ALLOWED_JOB_FOLDERS=${ALLOWED_JOB_FOLDERS:-xray_classification,3d_spleen_segmentation,3d_spleen_segmentation_evaluation}
-      - SUPERLINK_ADDRESS=${SUPERLINK_ADDRESS:-superlink:9093}
+      - SUPERLINK_ADDRESS=${SUPERLINK_ADDRESS:-superlink:8000}
       - SUPERLINK_HEALTH_ADDRESS=${SUPERLINK_HEALTH_ADDRESS:-superlink:9097}
       - FLOWER_SRC_ROOT=/app/src
       # No BUNDLE_URL_ALLOWED_HOSTS here on purpose: this harness has no hub, so nothing presigns
@@ -84,18 +84,15 @@ services:
     command:
       - --insecure
       # flwr>=1.37 serves the Control API (what `flwr run|ls|stop` and the key registration
-      # talk to) over HTTP from --host/--port, defaulting to 127.0.0.1:8000; the gRPC Control
-      # API on 9093 no longer starts. Bind it to 0.0.0.0:9093 so every SUPERLINK_ADDRESS,
-      # port map and security-group rule written for 9093 stays valid (FLIP#1271).
+      # talk to) over HTTP on --host/--port — port 8000 by default, but bound to loopback
+      # unless told otherwise, so other containers need --host 0.0.0.0.
       - --host
       - 0.0.0.0
-      - --port
-      - "9093"
       - --health-server-address
       - ${SUPERLINK_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9097}
     # No host port published by default; fl-api reaches the SuperLink over the
-    # internal network (superlink:9093). To use the `flwr` CLI from the host,
-    # publish port 9093 by editing this compose file and re-running
+    # internal network (superlink:8000). To use the `flwr` CLI from the host,
+    # publish port 8000 by editing this compose file and re-running
     # `make -C fl-services/flower up`.
     networks:
       - flwr-dev-net
