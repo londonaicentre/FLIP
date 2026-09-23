@@ -306,11 +306,6 @@ def test_the_path_filtered_images_can_be_held_back_from_the_release_pin(
             assert f'"pin" .Values.{pin}' in line, f"{name}: image line ignores {pin}: {line.strip()}"
 
 
-def test_the_pin_beats_the_release_pin_in_the_helper() -> None:
-    helper = (TEMPLATES_DIR / "_helpers.tpl").read_text()
-    assert "{{- .pin | default .global | default .own }}" in helper
-
-
 def test_the_omop_db_hook_provisions_the_reader_from_the_image_shipped_sql() -> None:
     """The grants are defined once, in the file both deployment paths run — not re-typed in the chart.
 

@@ -84,20 +84,15 @@ RELEASE_NAME ?= trust-release
 CHART_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 VALUES_FILE ?= $(CHART_DIR)/values.yaml
 
-# Kit-file env token, derived from PROD the same way trust/Makefile does:
-# PROD=true → production, PROD=stag → stag, otherwise development.
-ifeq ($(PROD),true)
-ENV := production
-else ifeq ($(PROD),stag)
-ENV := stag
-else
-ENV := development
-endif
+# REPO_ROOT is where scripts/site_upgrade.py and the shared make fragments live.
+REPO_ROOT := $(abspath $(CHART_DIR)/../../..)
+# Kit-file env token (ENV) from PROD, derived once for every Makefile that reads PROD —
+# including lza / lza-stag, whose kits are trust/.env.<CODE>.lza-prod / .lza-stag.
+include $(REPO_ROOT)/deploy/env_mode.mk
 SECRETS_FILE := $(wildcard $(CHART_DIR)/values-secrets.yaml)
 OVERRIDES_FILE ?=
 # The trust kit this chart deployment was synced from (trust/.env.<CODE>.<env>), for the
-# release-upgrade path; REPO_ROOT is where scripts/site_upgrade.py lives.
-REPO_ROOT := $(abspath $(CHART_DIR)/../../..)
+# release-upgrade path.
 KIT_FILE := $(REPO_ROOT)/trust/.env.$(KIT).$(ENV)
 
 # Determine which values files to pass
