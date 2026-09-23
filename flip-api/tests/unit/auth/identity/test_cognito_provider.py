@@ -194,6 +194,14 @@ class TestProviderConstruction:
 
         boto3_client_cls.assert_not_called()
 
+    @pytest.mark.parametrize("missing", ["AWS_COGNITO_USER_POOL_ID", "AWS_COGNITO_APP_CLIENT_ID"])
+    def test_construction_without_the_pool_ids_is_refused(self, missing):
+        settings = _settings()
+        setattr(settings, missing, None)
+
+        with pytest.raises(ValueError, match="AWS_COGNITO_USER_POOL_ID and AWS_COGNITO_APP_CLIENT_ID"):
+            CognitoIdentityProvider(settings)
+
     def test_client_is_built_once_with_the_configured_region(self, boto3_client_cls, cognito_client):
         provider = CognitoIdentityProvider(_settings(region="test-west-1"))
 

@@ -81,6 +81,8 @@ class CognitoIdentityProvider(IdentityProvider):
     backend = "cognito"
 
     def __init__(self, settings: DevSettings | ProdSettings) -> None:
+        if settings.AWS_COGNITO_USER_POOL_ID is None or settings.AWS_COGNITO_APP_CLIENT_ID is None:
+            raise ValueError("AUTH_BACKEND=cognito requires AWS_COGNITO_USER_POOL_ID and AWS_COGNITO_APP_CLIENT_ID")
         self._region = settings.AWS_REGION
         self._pool_id = settings.AWS_COGNITO_USER_POOL_ID
         self._app_client_id = settings.AWS_COGNITO_APP_CLIENT_ID

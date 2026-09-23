@@ -56,15 +56,17 @@ class Settings(BaseSettings):
     # verifier applies (auth/token_verifier.py) and the IdentityProvider that
     # lists, creates and disables users (auth/identity/) — so a new provider
     # (another cloud's IdP, an on-prem Keycloak) is a new module plus a
-    # deliberate widening of ProdSettings, never a branch in a router. Same
-    # shape as EMAIL_BACKEND: the subclass decides — DevSettings defaults to
+    # deliberate widening of ProdSettings, never a branch in a router. The
+    # base selects none (so a bare Settings(), built to read ENV, demands no
+    # provider's coordinates); the subclass decides — DevSettings defaults to
     # the local provider, ProdSettings narrows the type to Literal["cognito"]
     # so the dev substitute is a boot-time ValidationError in production.
-    AUTH_BACKEND: Literal["cognito", "keycloak"] = "cognito"
+    AUTH_BACKEND: Literal["cognito", "keycloak"] | None = None
 
-    # Cognito coordinates.
-    AWS_COGNITO_USER_POOL_ID: str
-    AWS_COGNITO_APP_CLIENT_ID: str
+    # Cognito coordinates, required when AUTH_BACKEND=cognito (always, in
+    # production) and absent from a Keycloak dev env file.
+    AWS_COGNITO_USER_POOL_ID: str | None = None
+    AWS_COGNITO_APP_CLIENT_ID: str | None = None
 
     # Keycloak coordinates, read only when AUTH_BACKEND=keycloak. Two URLs
     # because the browser and flip-api reach the same server by different
@@ -244,6 +246,8 @@ class Settings(BaseSettings):
 
     @field_validator(
         "AUTH_BACKEND",
+        "AWS_COGNITO_USER_POOL_ID",
+        "AWS_COGNITO_APP_CLIENT_ID",
         "KEYCLOAK_URL",
         "KEYCLOAK_PUBLIC_URL",
         "KEYCLOAK_REALM",
@@ -270,6 +274,8 @@ class Settings(BaseSettings):
     def check_auth_backend_fields(self) -> "Settings":
         """Require the coordinates of the selected identity provider, naming every missing one."""
         required: tuple[str, ...]
+        if self.AUTH_BACKEND is None:
+            return self
         if self.AUTH_BACKEND == "cognito":
             required = ("AWS_COGNITO_USER_POOL_ID", "AWS_COGNITO_APP_CLIENT_ID")
         else:
