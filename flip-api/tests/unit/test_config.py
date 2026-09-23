@@ -221,3 +221,74 @@ def test_suffix_list_separator_only_values_fall_back_to_default(blank):
 
     assert settings.ALLOWED_MODEL_FILE_EXTENSIONS == Settings().ALLOWED_MODEL_FILE_EXTENSIONS
     assert settings.PICKLESCAN_FILE_SUFFIXES == Settings().PICKLESCAN_FILE_SUFFIXES
+
+
+# --- AUTH_BACKEND: the identity-provider seam (#919) -------------------------------------
+
+_PROD_REQUIRED = {
+    "AWS_SES_ADMIN_EMAIL_ADDRESS": "admin@example.com",
+    "AWS_SES_SENDER_EMAIL_ADDRESS": "sender@example.com",
+}
+
+
+def test_auth_backend_defaults_per_environment_class():
+    """Same shape as EMAIL_BACKEND: the field exists on the base so ProdSettings can narrow it.
+
+    Asserted on the fields, not instances, because a developer's own
+    ``.env.development`` may already pin ``AUTH_BACKEND``.
+    """
+    assert Settings.model_fields["AUTH_BACKEND"].default == "cognito"
+    assert DevSettings.model_fields["AUTH_BACKEND"].default == "cognito"
+    assert ProdSettings.model_fields["AUTH_BACKEND"].default == "cognito"
+
+
+def test_auth_backend_empty_string_falls_back_to_the_per_class_default():
+    """The commented ``# AUTH_BACKEND=`` line in the env example arrives as an empty string."""
+    assert Settings(AUTH_BACKEND="").AUTH_BACKEND == "cognito"
+    assert DevSettings(AUTH_BACKEND="").AUTH_BACKEND == DevSettings.model_fields["AUTH_BACKEND"].default
+
+
+def test_keycloak_backend_is_rejected_in_production():
+    """The local identity provider must be impossible to enable in production (#919)."""
+    with pytest.raises(ValidationError) as exc_info:
+        ProdSettings(AUTH_BACKEND="keycloak", **_PROD_REQUIRED)
+    assert "AUTH_BACKEND" in str(exc_info.value)
+
+
+def test_keycloak_backend_requires_its_urls_and_admin_secret():
+    """A keycloak backend with no Keycloak coordinates fails at boot, naming every missing field."""
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(AUTH_BACKEND="keycloak")
+    message = str(exc_info.value)
+    assert "KEYCLOAK_URL" in message
+    assert "KEYCLOAK_PUBLIC_URL" in message
+    assert "KEYCLOAK_ADMIN_CLIENT_SECRET" in message
+
+
+def test_dev_settings_carry_working_keycloak_defaults():
+    """Dev needs no Keycloak lines in its env file: the defaults match the compose service."""
+    settings = DevSettings(AUTH_BACKEND="keycloak")
+    assert settings.KEYCLOAK_URL == "http://keycloak:8080"
+    assert settings.KEYCLOAK_PUBLIC_URL == "http://localhost:8180"
+    assert settings.KEYCLOAK_REALM == "flip"
+    assert settings.KEYCLOAK_CLIENT_ID == "flip-ui"
+    assert settings.KEYCLOAK_AUDIENCE == "flip-api"
+    assert settings.KEYCLOAK_ADMIN_CLIENT_ID == "flip-api-admin"
+    assert settings.KEYCLOAK_ADMIN_CLIENT_SECRET is not None
+
+
+def test_keycloak_settings_tolerate_empty_strings():
+    """Commented ``# KEYCLOAK_*`` lines in the env example export bare names — fall back per class."""
+    settings = DevSettings(
+        AUTH_BACKEND="keycloak",
+        KEYCLOAK_URL="",
+        KEYCLOAK_PUBLIC_URL="",
+        KEYCLOAK_REALM="",
+        KEYCLOAK_CLIENT_ID="",
+        KEYCLOAK_AUDIENCE="",
+        KEYCLOAK_ADMIN_CLIENT_ID="",
+        KEYCLOAK_ADMIN_CLIENT_SECRET="",
+    )
+    assert settings.KEYCLOAK_URL == "http://keycloak:8080"
+    assert settings.KEYCLOAK_REALM == "flip"
+    assert settings.KEYCLOAK_ADMIN_CLIENT_SECRET is not None

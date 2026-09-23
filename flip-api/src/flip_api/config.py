@@ -14,7 +14,7 @@ import json
 import logging
 from typing import Annotated, Literal
 
-from pydantic import EmailStr, SecretStr, ValidationInfo, field_validator
+from pydantic import EmailStr, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from flip_api.domain.schemas.types import FLBackend
@@ -47,9 +47,40 @@ class Settings(BaseSettings):
     # AWS settings
     AWS_PROFILE: str | None = None
     AWS_REGION: str
+    AWS_SECRET_NAME: str
+
+    # Which identity provider verifies user tokens and holds the user directory
+    # (FLIP#919). "cognito" is AWS Cognito; "keycloak" is the Keycloak container
+    # in deploy/compose.development.yml, which needs no AWS account. The value
+    # selects both halves of the auth seam — the claim rules the generic OIDC
+    # verifier applies (auth/token_verifier.py) and the IdentityProvider that
+    # lists, creates and disables users (auth/identity/) — so a new provider
+    # (another cloud's IdP, an on-prem Keycloak) is a new module plus a
+    # deliberate widening of ProdSettings, never a branch in a router. Same
+    # shape as EMAIL_BACKEND: the subclass decides — DevSettings defaults to
+    # the local provider, ProdSettings narrows the type to Literal["cognito"]
+    # so the dev substitute is a boot-time ValidationError in production.
+    AUTH_BACKEND: Literal["cognito", "keycloak"] = "cognito"
+
+    # Cognito coordinates.
     AWS_COGNITO_USER_POOL_ID: str
     AWS_COGNITO_APP_CLIENT_ID: str
-    AWS_SECRET_NAME: str
+
+    # Keycloak coordinates, read only when AUTH_BACKEND=keycloak. Two URLs
+    # because the browser and flip-api reach the same server by different
+    # routes: KEYCLOAK_PUBLIC_URL is what the UI signs in through and is
+    # therefore the `iss` every token carries (pinned by KC_HOSTNAME in the
+    # compose), while KEYCLOAK_URL is the docker-network address flip-api
+    # uses for the JWKS and the admin REST API. The admin client is a
+    # confidential service-account client with the realm-management roles
+    # the provider needs (see deploy/keycloak/flip-realm.json).
+    KEYCLOAK_URL: str | None = None
+    KEYCLOAK_PUBLIC_URL: str | None = None
+    KEYCLOAK_REALM: str = "flip"
+    KEYCLOAK_CLIENT_ID: str = "flip-ui"
+    KEYCLOAK_AUDIENCE: str = "flip-api"
+    KEYCLOAK_ADMIN_CLIENT_ID: str = "flip-api-admin"
+    KEYCLOAK_ADMIN_CLIENT_SECRET: SecretStr | None = None
 
     # S3 bucket settings
     UPLOADED_MODEL_FILES_BUCKET: str
@@ -211,6 +242,51 @@ class Settings(BaseSettings):
             return cls.model_fields[info.field_name].default  # type: ignore[index]
         return v
 
+    @field_validator(
+        "AUTH_BACKEND",
+        "KEYCLOAK_URL",
+        "KEYCLOAK_PUBLIC_URL",
+        "KEYCLOAK_REALM",
+        "KEYCLOAK_CLIENT_ID",
+        "KEYCLOAK_AUDIENCE",
+        "KEYCLOAK_ADMIN_CLIENT_ID",
+        "KEYCLOAK_ADMIN_CLIENT_SECRET",
+        mode="before",
+    )
+    @classmethod
+    def coerce_empty_auth_setting(cls, v: object, info: ValidationInfo) -> object:
+        """Treat an empty-string auth setting as the per-class field default.
+
+        Same env-file trap as ``coerce_empty_email_backend``: the example env
+        file carries these names commented out, and the Makefile exports the
+        bare name as an empty string. Resolving via ``model_fields`` keeps the
+        dev defaults on DevSettings and the base values elsewhere.
+        """
+        if v is None or v == "":
+            return cls.model_fields[info.field_name].default  # type: ignore[index]
+        return v
+
+    @model_validator(mode="after")
+    def check_auth_backend_fields(self) -> "Settings":
+        """Require the coordinates of the selected identity provider, naming every missing one."""
+        required: tuple[str, ...]
+        if self.AUTH_BACKEND == "cognito":
+            required = ("AWS_COGNITO_USER_POOL_ID", "AWS_COGNITO_APP_CLIENT_ID")
+        else:
+            required = ("KEYCLOAK_URL", "KEYCLOAK_PUBLIC_URL", "KEYCLOAK_ADMIN_CLIENT_SECRET")
+        missing = [name for name in required if getattr(self, name) is None]
+        if missing:
+            raise ValueError(f"AUTH_BACKEND={self.AUTH_BACKEND} requires {', '.join(missing)} to be set")
+        if self.AUTH_BACKEND == "keycloak" and self.ENFORCE_MFA:
+            # The hub-side gate works (Keycloak reports OTP credentials), but the
+            # UI's password-grant sign-in cannot enrol or answer a TOTP challenge,
+            # so every browser user is locked out until ENFORCE_MFA is false.
+            logging.getLogger("uvicorn").warning(
+                "AUTH_BACKEND=keycloak with ENFORCE_MFA=true: the UI cannot complete TOTP over the "
+                "password grant; set ENFORCE_MFA=false for the local Keycloak backend"
+            )
+        return self
+
     @field_validator("LOG_LEVEL", mode="before")
     @classmethod
     def coerce_log_level(cls, v: object) -> object:
@@ -335,6 +411,15 @@ class DevSettings(Settings):
     ENV: Literal["development"] = "development"
     POSTGRES_PASSWORD: str  # in dev, get DB password from env variable
 
+    # Keycloak defaults that match the `keycloak` service in
+    # deploy/compose.development.yml, so a dev env file needs no KEYCLOAK_*
+    # lines at all. The admin-client secret is a dev-only placeholder shared
+    # with the realm import; it protects nothing outside a laptop and
+    # ProdSettings cannot select this backend.
+    KEYCLOAK_URL: str | None = "http://keycloak:8080"
+    KEYCLOAK_PUBLIC_URL: str | None = "http://localhost:8180"
+    KEYCLOAK_ADMIN_CLIENT_SECRET: SecretStr | None = SecretStr("flip-dev-admin-secret")  # pragma: allowlist secret
+
     # Development sends no real email: the console backend logs the would-be
     # message instead (FLIP#919), so no SES identity or verified address is
     # needed to boot. Both address fields keep syntactically-valid defaults so
@@ -379,6 +464,13 @@ class ProdSettings(Settings):
     """
 
     ENV: Literal["production"] = "production"
+
+    # Production authenticates with Cognito only. The Literal narrowing makes
+    # AUTH_BACKEND=keycloak a boot-time ValidationError (same pattern as
+    # EMAIL_BACKEND below), so the local identity provider cannot be enabled
+    # in production by accident (FLIP#919). A deployment on another cloud
+    # widens this deliberately, together with its own provider module.
+    AUTH_BACKEND: Literal["cognito"] = "cognito"
 
     # Production email always goes through SES. The Literal narrowing makes
     # EMAIL_BACKEND=console a boot-time ValidationError (same pattern as ENV
