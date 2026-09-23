@@ -486,7 +486,9 @@ hub ECS deploys pin — see
 for deploys, rollback and the FL quiesce reminder.
 
 A run of an image workflow on a `v*.*.*` tag ref builds **every** image at that commit and pushes
-`:v<X.Y.Z>` (FLIP#1204) — release identity for the sites. For a real release `release.yml`
+`:v<X.Y.Z>` (FLIP#1204) — release identity for the sites — and **only** that tag: the `sha-` tags belong to
+the branch build of the same commit and stay immutable (a second push would swap the image under a
+sha-pinned hub, with a different `FLIP_RELEASE` baked in). For a real release `release.yml`
 **dispatches** the twelve builds at the tag it created (`gh workflow run … --ref v<X.Y.Z>`): the tag is
 pushed with `GITHUB_TOKEN`, and GitHub starts no workflow for an event created that way, so the
 workflows' own `push.tags` trigger only ever fires for a hand-pushed tag (a release candidate).

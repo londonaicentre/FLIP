@@ -93,5 +93,5 @@ def current() -> dict[str, str | bool | None]:
 def reset() -> None:
     """Forget everything, including whether a mismatch was already logged (tests)."""
     global _mismatch_logged  # noqa: PLW0603
-    _status.update(_UNKNOWN)
+    forget()
     _mismatch_logged = False

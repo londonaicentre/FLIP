@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""The ``fl-docker-build-*.yml`` workflows tag and push every FL image at a release tag (FLIP#1204).
+"""The ``fl-docker-build-*.yml`` workflows push every FL image at a release tag, and only there (FLIP#1204).
 
 Usage:
     python3 .github/tests/workflows/test_fl_docker_build.py
@@ -24,74 +24,41 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from image_workflows import FL_DOCKER_BUILD_WORKFLOWS, ReleaseTagContract  # noqa: E402
+from image_workflows import FL_DOCKER_BUILD_WORKFLOWS, ReleaseTagContract, code_text, step_block  # noqa: E402
+
+IMAGES = ("BASE", "SERVER", "CLIENT", "API")
 
 
 class FlDockerBuildReleaseTags(ReleaseTagContract, unittest.TestCase):
+    """The "Determine image tags" step is the one list each image is pushed at; a release run's list is the
+    release tag alone (the sha tags belong to the branch build of the same commit and stay immutable)."""
+
     workflows = FL_DOCKER_BUILD_WORKFLOWS
 
-
-class HandRolledPushes(unittest.TestCase):
-    """The FL workflows build with `docker build -t` and push with explicit `docker push` lines.
-
-    Their "Determine image tags" step computes a tag list that no later step reads, so the
-    `:v<X.Y.Z>` it names was never tagged or pushed — found by the v0.6.1-rc.1204 candidate,
-    which published every service image at the tag and none of the eight FL images. Every image
-    pushed at `sha-$SHORT_SHA` must therefore also be tagged and pushed at the release ref name.
-    """
-
-    FL_WORKFLOWS = FL_DOCKER_BUILD_WORKFLOWS
-    SHA_PUSH = re.compile(r"^\s+docker push (\$REGISTRY/\$ORG/\$\w+):sha-\$SHORT_SHA\s*$", re.MULTILINE)
-
     def test_roster_is_not_empty(self) -> None:
-        assert len(self.FL_WORKFLOWS) == 2, [p.name for p in self.FL_WORKFLOWS]
+        assert len(self.workflows) == 2, [p.name for p in self.workflows]
 
-    def test_every_sha_pushed_image_is_tagged_and_pushed_at_the_release(self) -> None:
-        for wf in self.FL_WORKFLOWS:
-            text = wf.read_text()
-            images = self.SHA_PUSH.findall(text)
+    def test_a_release_run_lists_only_the_release_tag(self) -> None:
+        for wf in self.workflows:
+            step = step_block(code_text(wf), "Determine image tags")
+            branch = re.search(
+                r'if \[\[ "\$\{\{ github\.ref \}\}" == refs/tags/v\* \]\]; then\n(.*?)\n\s*fi\n', step, re.S
+            )
             with self.subTest(workflow=wf.name):
-                assert len(images) == 4, f"{wf.name}: expected 4 sha pushes, found {images}"
-            for image in images:
+                assert branch, f"{wf.name}: no refs/tags/v* branch in the tag step"
+                assigned = [line.strip() for line in branch[1].splitlines()]
+                expected = [f'{i}_TAGS="${{REGISTRY}}/${{ORG}}/${{{i}_IMAGE}}:${{GITHUB_REF_NAME}}"' for i in IMAGES]
+                assert assigned == expected, f"{wf.name}: {assigned}"
+
+    def test_every_image_is_pushed_from_its_tag_list_and_nothing_else_is(self) -> None:
+        for wf in self.workflows:
+            text = code_text(wf)
+            with self.subTest(workflow=wf.name):
+                assert re.findall(r"^\s+docker push (.*)$", text, re.M) == ['"$tag"'] * 4, f"{wf.name}: stray pushes"
+            for image in IMAGES:
                 with self.subTest(workflow=wf.name, image=image):
-                    img = re.escape(image)
-                    tag = re.compile(r"^\s+docker tag [^\n]+ " + img + r":\$\{GITHUB_REF_NAME\}\s*$", re.MULTILINE)
-                    push = re.compile(r"^\s+docker push " + img + r":\$\{GITHUB_REF_NAME\}\s*$", re.MULTILINE)
-                    assert tag.search(text), f"{wf.name}: {image} is never tagged :<release>"
-                    assert push.search(text), f"{wf.name}: {image} is never pushed :<release>"
-
-    def test_release_push_is_gated_on_a_v_tag_ref(self) -> None:
-        """A branch run must not push `:<branch>` — the release lines sit under a refs/tags/v* test."""
-        for wf in self.FL_WORKFLOWS:
-            text = wf.read_text()
-            with self.subTest(workflow=wf.name):
-                gated = re.findall(
-                    r'elif \[\[ "\$\{\{ github\.ref \}\}" == refs/tags/v\* \]\]; then\n\s+docker (?:tag|push) [^\n]*'
-                    r":\$\{GITHUB_REF_NAME\}",
-                    text,
-                )
-                ungated = re.findall(r"^\s+docker (?:tag|push) [^\n]*:\$\{GITHUB_REF_NAME\}", text, re.MULTILINE)
-                assert len(gated) == len(ungated) == 8, f"{wf.name}: {len(gated)} gated of {len(ungated)}"
-
-    def test_a_release_tag_run_never_pushes_the_sha_tags(self) -> None:
-        """The sha tags belong to the branch build of the same commit and stay immutable."""
-        for wf in self.FL_WORKFLOWS:
-            lines = wf.read_text().splitlines()
-            pushes = [
-                i
-                for i, line in enumerate(lines)
-                if re.match(r"\s+docker push \S+:(?:sha-\$SHORT_SHA|\$\{\{ github\.sha \}\})\s*$", line)
-            ]
-            with self.subTest(workflow=wf.name):
-                assert len(pushes) == 8, f"{wf.name}: expected 8 sha pushes, found {len(pushes)}"
-            for i in pushes:
-                guard = next(
-                    line for line in reversed(lines[:i]) if line.strip().startswith(("if ", "elif ", "fi", "else"))
-                )
-                with self.subTest(workflow=wf.name, line=i + 1):
-                    assert guard.strip() == 'if [[ "${{ github.ref }}" != refs/tags/v* ]]; then', (
-                        f"{wf.name}:{i + 1}: {guard.strip()}"
-                    )
+                    assert f"TAGS: ${{{{ steps.tags.outputs.{image.lower()}_tags }}}}" in text, image
+                    assert f'docker tag "$REGISTRY/$ORG/${image}_IMAGE:${{{{ github.sha }}}}" "$tag"' in text, image
 
 
 if __name__ == "__main__":

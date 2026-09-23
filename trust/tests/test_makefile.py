@@ -19,14 +19,13 @@ fails here rather than on a live site.
 
 from __future__ import annotations
 
-import shutil
 import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 
-from make_dry_run import DESTRUCTIVE, KIT, dry_run  # noqa: E402
+from make_dry_run import assert_data_safe, dry_run, kit_with, main  # noqa: E402
 
 
 class UpgradeTrust(unittest.TestCase):
@@ -34,8 +33,7 @@ class UpgradeTrust(unittest.TestCase):
         out = dry_run("upgrade-trust", "TAG=v0.6.0", "YES=1")
         assert "site_upgrade.py plan" in out, out
         assert "_upgrade-trust-apply" in out, out
-        for step in DESTRUCTIVE:
-            assert step not in out, f"{step!r} reached from upgrade-trust:\n{out}"
+        assert_data_safe(out, "upgrade-trust")
 
     def test_apply_phase_names_the_tag_only_via_the_kit(self):
         """The apply sub-make re-includes the kit, so the tag it uses is whatever the resolver wrote."""
@@ -45,8 +43,7 @@ class UpgradeTrust(unittest.TestCase):
         assert " up -d" in out, out
         assert "upgrade-xnat" in out, out
         assert "sha-badcff1" in out, out  # printed from the kit, not from TAG=
-        for step in DESTRUCTIVE:
-            assert step not in out, f"{step!r} reached from _upgrade-trust-apply:\n{out}"
+        assert_data_safe(out, "_upgrade-trust-apply")
 
     def test_apply_phase_honours_a_cpu_only_override(self):
         """upgrade-trust-ec2 passes NUM_AVAILABLE_GPUS=0: it must beat a template kit's 1 (FLIP#1204).
@@ -54,8 +51,7 @@ class UpgradeTrust(unittest.TestCase):
         The EC2 trust is GPU-less; with the kit's value the apply phase adds the GPU overlay and the
         recreated fl-client fails with "could not select device driver nvidia".
         """
-        gpu_kit = KIT.replace("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")
-        assert gpu_kit != KIT, "scratch kit no longer carries NUM_AVAILABLE_GPUS"
+        gpu_kit = kit_with("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")
         assert ".gpu.yml" in dry_run("_upgrade-trust-apply", kit=gpu_kit), "a GPU kit should get the overlay"
         out = dry_run("_upgrade-trust-apply", "NUM_AVAILABLE_GPUS=0", kit=gpu_kit)
         assert ".gpu.yml" not in out, f"the CPU-only override did not drop the GPU overlay:\n{out}"
@@ -68,7 +64,4 @@ class UpgradeTrust(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    if not shutil.which("make"):
-        print("make not installed — skipping", file=sys.stderr)
-        sys.exit(0)
-    unittest.main()
+    main()

@@ -666,7 +666,7 @@ def credentials_used(tmp_path, method: str, endpoint: str) -> list[str]:
     log = tmp_path / "creds.txt"
     used = []
     for line in log.read_text().splitlines() if log.exists() else []:
-        made, url, creds = (line.split(" ", 2) + ["", ""])[:3]
+        made, url, creds = line.split(" ", 2)
         if made == method and url.endswith(endpoint):
             used.append(creds)
     return used

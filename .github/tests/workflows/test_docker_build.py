@@ -28,7 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from image_workflows import DOCKER_BUILD_WORKFLOWS, GITHUB_DIR, WORKFLOWS, ReleaseTagContract  # noqa: E402
+from image_workflows import DOCKER_BUILD_WORKFLOWS, GITHUB_DIR, WORKFLOWS, ReleaseTagContract, code_text  # noqa: E402
 
 
 class DockerBuildReleaseTags(ReleaseTagContract, unittest.TestCase):
@@ -44,7 +44,7 @@ class DockerBuildReleaseTags(ReleaseTagContract, unittest.TestCase):
             r'if \[\[ "\$GH_REF" == refs/tags/v\* \]\]; then\n(?P<body>(?:[^\n]*\n)*?)\s*else\n'
         )
         for wf in self.workflows:
-            text = wf.read_text()
+            text = code_text(wf)
             with self.subTest(workflow=wf.name):
                 branch = release_branch.search(text)
                 assert branch, f"{wf.name}: no refs/tags/v* branch in the tag step"
@@ -71,7 +71,7 @@ class FlipReleaseBuildArg(unittest.TestCase):
 
     def test_the_api_workflows_pass_the_computed_release_to_the_build(self) -> None:
         for name in API_WORKFLOWS:
-            text = (WORKFLOWS / name).read_text()
+            text = code_text(WORKFLOWS / name)
             with self.subTest(workflow=name):
                 assert "FLIP_RELEASE: ${{ steps.tags.outputs.release }}" in text, name
                 assert '--build-arg FLIP_RELEASE="$FLIP_RELEASE"' in text, name

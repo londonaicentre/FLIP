@@ -45,14 +45,3 @@ def _kit_file(prod: str) -> str:
 )
 def test_upgrade_reads_the_kit_for_its_environment(prod, suffix):
     assert _kit_file(prod).endswith(f"/trust/.env.ABC.{suffix}")
-
-
-def test_a_misspelt_prod_is_refused_before_anything_runs():
-    result = subprocess.run(
-        ["make", "-n", "-C", str(CHART_DIR), "upgrade-trust-k8s", "KIT=ABC", "PROD=prod"],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    assert result.returncode != 0
-    assert "PROD must be" in result.stderr

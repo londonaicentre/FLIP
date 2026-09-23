@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from image_workflows import IMAGE_WORKFLOWS, WORKFLOWS  # noqa: E402
+from image_workflows import IMAGE_WORKFLOWS, WORKFLOWS, code_text, step_block  # noqa: E402
 
 RELEASE_WORKFLOW = WORKFLOWS / "release.yml"
 
@@ -40,9 +40,7 @@ class ReleaseDispatchesTheBuilds(unittest.TestCase):
     """
 
     def test_release_dispatches_exactly_the_publishing_image_workflows(self) -> None:
-        text = RELEASE_WORKFLOW.read_text()
-        step = text[text.index("Build every image at the release tag") :]
-        step = step[: step.index("- name:", 10)] if "- name:" in step[10:] else step
+        step = step_block(code_text(RELEASE_WORKFLOW), "Build every image at the release tag")
         roster = re.compile(r"^\s+((?:docker_build_|fl-docker-build-)[A-Za-z0-9_-]+\.yml)", re.MULTILINE)
         dispatched = set(roster.findall(step))
         expected = {wf.name for wf in IMAGE_WORKFLOWS}
@@ -50,28 +48,32 @@ class ReleaseDispatchesTheBuilds(unittest.TestCase):
         assert 'gh workflow run "$wf" --ref "$TAG"' in step
 
     def test_release_job_may_dispatch_workflows(self) -> None:
-        text = RELEASE_WORKFLOW.read_text()
+        text = code_text(RELEASE_WORKFLOW)
         assert re.search(r"^\s+actions: write", text, re.MULTILINE), "release.yml needs actions: write to dispatch"
 
     def test_a_rerun_after_a_partial_failure_still_dispatches_and_releases(self) -> None:
         """A run that pushed the tag and then failed leaves the tag behind; keyed on the tag, every re-run
         would skip the builds and the release and still go green."""
-        text = RELEASE_WORKFLOW.read_text()
+        text = code_text(RELEASE_WORKFLOW)
         assert 'gh release view "${{ steps.version.outputs.tag }}"' in text
         for step in ("Build every image at the release tag", "Prepare release notes", "Create GitHub Release"):
             with self.subTest(step=step):
-                block = text[text.index(f"name: {step}") :].split("- name:", 1)[0]
-                assert "if: steps.release_check.outputs.exists == 'false'" in block, step
-        create_tag = text[text.index("name: Create tag") :].split("- name:", 1)[0]
-        assert "if: steps.tag_check.outputs.exists == 'false'" in create_tag
+                assert "if: steps.release_check.outputs.exists == 'false'" in step_block(text, step), step
+        assert "if: steps.tag_check.outputs.exists == 'false'" in step_block(text, "Create tag")
 
     def test_one_failed_dispatch_does_not_stop_the_rest(self) -> None:
-        text = RELEASE_WORKFLOW.read_text()
-        step = text[text.index("Build every image at the release tag") :].split("- name:", 1)[0]
+        step = step_block(code_text(RELEASE_WORKFLOW), "Build every image at the release tag")
         assert 'if gh workflow run "$wf" --ref "$TAG"; then' in step
         assert 'failed+=("$wf")' in step
         loop_end = step.index("done")
         assert step.index("exit 1") > loop_end, "the failure exit must come after every dispatch was tried"
+
+    def test_release_notes_start_from_the_previous_stable_release(self) -> None:
+        """Release-candidate tags sort above their release (sort -V), so they must not be the notes' start."""
+        step = step_block(code_text(RELEASE_WORKFLOW), "Prepare release notes")
+        prev = next(line for line in step.splitlines() if "PREV_TAG=$(" in line)
+        assert "grep -E '^v[0-9]+\\.[0-9]+\\.[0-9]+$'" in prev, prev
+        assert prev.index("grep -E") < prev.index("sort -V"), prev
 
 
 if __name__ == "__main__":

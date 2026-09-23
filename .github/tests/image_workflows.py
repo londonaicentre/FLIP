@@ -34,6 +34,16 @@ DOCKER_BUILD_WORKFLOWS = [p for p in IMAGE_WORKFLOWS if p.name.startswith("docke
 FL_DOCKER_BUILD_WORKFLOWS = [p for p in IMAGE_WORKFLOWS if p.name.startswith("fl-docker-build-")]
 
 
+def code_text(path: Path) -> str:
+    """The file without its comment lines, so prose that mentions a construct never satisfies a check."""
+    return "\n".join(line for line in path.read_text().splitlines() if not line.lstrip().startswith("#")) + "\n"
+
+
+def step_block(text: str, name: str) -> str:
+    """One workflow step, from its ``- name: <name>`` line to the next step."""
+    return text[text.index(f"- name: {name}") :].split("- name:", 2)[1]
+
+
 # `push:` block carrying a `tags:` list (flow or block style) whose entry is the platform
 # release glob. The flip-utils train tags `flip-utils-v*` and must NOT trigger image builds,
 # so the glob is asserted exactly rather than loosely.
@@ -54,7 +64,7 @@ class ReleaseTagContract:
 
     def test_every_image_workflow_triggers_on_release_tags(self) -> None:
         for wf in self.workflows:
-            text = wf.read_text()
+            text = code_text(wf)
             with self.subTest(workflow=wf.name):
                 # Plain asserts with a short message: an assertRegex/assertIn failure would dump
                 # the whole workflow file, burying the one line that matters.
@@ -64,7 +74,7 @@ class ReleaseTagContract:
     def test_release_tag_never_moves_prod_or_stag(self) -> None:
         """The `:prod` / `:stag` floating tags follow main / develop pushes, never a release tag."""
         for wf in self.workflows:
-            text = wf.read_text()
+            text = code_text(wf)
             with self.subTest(workflow=wf.name):
                 for line in text.splitlines():
                     if "refs/tags/v" in line:
@@ -74,7 +84,7 @@ class ReleaseTagContract:
     def test_workflow_run_gated_builds_let_the_tag_push_through(self) -> None:
         """A tag push has no workflow_run context, so the success gate must admit event_name push."""
         for wf in self.workflows:
-            text = wf.read_text()
+            text = code_text(wf)
             if "workflow_run:" not in text:
                 continue
             with self.subTest(workflow=wf.name):
@@ -83,7 +93,7 @@ class ReleaseTagContract:
     def test_image_workflows_publish_the_tag_for_a_dispatched_run_too(self) -> None:
         """The :v<X.Y.Z> branch must key on the ref alone — a dispatched run's event is not `push`."""
         for wf in self.workflows:
-            text = wf.read_text()
+            text = code_text(wf)
             with self.subTest(workflow=wf.name):
                 assert 'GH_EVENT_NAME" == "push" && "$GH_REF" == refs/tags/v' not in text, (
                     f"{wf.name}: the release-tag branch is gated on event_name == push, so release.yml's dispatch would"

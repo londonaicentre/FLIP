@@ -81,7 +81,7 @@ import trust_kit_lib as tkl  # noqa: E402
 #: A pullable, immutable image tag: a platform release (`v0.6.0`, pre-releases like
 #: `v0.6.1-rc.1` included) or the CI short-sha tag. Deliberately NOT the floating
 #: `prod` / `stag` / `latest`, and not a bare pyproject version (`0.6.0`).
-_RELEASE_TAG = re.compile(r"^v\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?$")
+_RELEASE_TAG = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:[-.]([0-9A-Za-z.-]+))?$")
 _SHA_TAG = re.compile(r"^sha-[0-9a-f]{7}$")
 
 EXIT_NEEDS_TAG = 2
@@ -132,7 +132,7 @@ def _release_order(tag: str) -> tuple | None:
     A release sorts above its own pre-releases, and pre-release identifiers compare numerically
     when both are numbers (``rc.10`` > ``rc.2``). None for anything that is not a release tag.
     """
-    m = re.match(r"^v(\d+)\.(\d+)\.(\d+)(?:[-.]([0-9A-Za-z.-]+))?$", tag)
+    m = _RELEASE_TAG.match(tag)
     if not m:
         return None
     pre = m.group(4)
@@ -333,13 +333,11 @@ def release_for_sha(target: str, repo_root: Path = _REPO_ROOT) -> str | None:
         return None
     try:
         tags = checkout_tags(repo_root)
-        head = _run_git(repo_root, "rev-parse", "HEAD").stdout.strip() if tags else ""
+        if not tags or f"sha-{_run_git(repo_root, 'rev-parse', 'HEAD').stdout.strip()[:7]}" != target:
+            return None
     except CheckoutUnknown:
         return None
-    if not tags or f"sha-{head[:7]}" != target:
-        return None
-    releases = sorted((t for t in tags if _RELEASE_TAG.match(t)), key=lambda t: _release_order(t) or ())
-    return releases[-1] if releases else None
+    return max((t for t in tags if _RELEASE_TAG.match(t)), key=_release_order, default=None)
 
 
 def describe_checkout(repo_root: Path = _REPO_ROOT) -> str:
@@ -417,35 +415,33 @@ def plan(args: argparse.Namespace) -> int:
     if _RELEASE_TAG.match(target):
         try:
             tags = checkout_tags()
-            git_error = None
         except CheckoutUnknown as e:
-            tags, git_error = None, str(e)
-        if git_error is not None and not args.allow_checkout_drift:
-            print(f"❌ git could not say which commit {_REPO_ROOT} is at, so it cannot be checked against {target}:")
-            print(f"     {git_error}")
-            print("   'dubious ownership' means the checkout belongs to another user than the one running this")
-            print("   (typically under sudo) — mark it safe as that user, then re-run:")
-            print(f"     git config --global --add safe.directory {_REPO_ROOT}")
-            print("   Nothing changed. ALLOW_CHECKOUT_DRIFT=1 overrides.")
-            return EXIT_CHECKOUT_MISMATCH
-        if git_error is not None:
-            print(
-                f"   ⚠️  git could not say where this checkout is ({git_error}) — drift allowed (ALLOW_CHECKOUT_DRIFT=1)"
-            )
-        elif tags is None:
-            print(f"   ⚠️  {_REPO_ROOT} is not a git checkout — cannot confirm its files match {target}; continuing")
-        elif target in tags:
-            print(f"   ✓ checkout is at {target}")
-        elif args.allow_checkout_drift:
-            print(f"   ⚠️  checkout is {describe_checkout()}, not {target} — drift allowed (ALLOW_CHECKOUT_DRIFT=1)")
+            if not args.allow_checkout_drift:
+                print(
+                    f"❌ git could not say which commit {_REPO_ROOT} is at, so it cannot be checked against {target}:"
+                )
+                print(f"     {e}")
+                print("   'dubious ownership' means the checkout belongs to another user than the one running this")
+                print("   (typically under sudo) — mark it safe as that user, then re-run:")
+                print(f"     git config --global --add safe.directory {_REPO_ROOT}")
+                print("   Nothing changed. ALLOW_CHECKOUT_DRIFT=1 overrides.")
+                return EXIT_CHECKOUT_MISMATCH
+            print(f"   ⚠️  git could not say where this checkout is ({e}) — drift allowed (ALLOW_CHECKOUT_DRIFT=1)")
         else:
-            print(f"❌ This checkout is {describe_checkout()}, but the target is {target}.")
-            print("   The compose files, Makefiles and XNAT stack that run the images come from the checkout,")
-            print("   not from the images — move it to the release first, then re-run from the new checkout:")
-            print(f"     git -C {_REPO_ROOT} fetch --tags origin && git -C {_REPO_ROOT} checkout {target}")
-            print("   (your kit, FL kit and data directories are untracked and stay in place). Nothing changed.")
-            print("   ALLOW_CHECKOUT_DRIFT=1 overrides, for a deliberate mismatch such as testing a branch.")
-            return EXIT_CHECKOUT_MISMATCH
+            if tags is None:
+                print(f"   ⚠️  {_REPO_ROOT} is not a git checkout — cannot confirm its files match {target}; continuing")
+            elif target in tags:
+                print(f"   ✓ checkout is at {target}")
+            elif args.allow_checkout_drift:
+                print(f"   ⚠️  checkout is {describe_checkout()}, not {target} — drift allowed (ALLOW_CHECKOUT_DRIFT=1)")
+            else:
+                print(f"❌ This checkout is {describe_checkout()}, but the target is {target}.")
+                print("   The compose files, Makefiles and XNAT stack that run the images come from the checkout,")
+                print("   not from the images — move it to the release first, then re-run from the new checkout:")
+                print(f"     git -C {_REPO_ROOT} fetch --tags origin && git -C {_REPO_ROOT} checkout {target}")
+                print("   (your kit, FL kit and data directories are untracked and stay in place). Nothing changed.")
+                print("   ALLOW_CHECKOUT_DRIFT=1 overrides, for a deliberate mismatch such as testing a branch.")
+                return EXIT_CHECKOUT_MISMATCH
 
     if shutil.which("docker") is None:
         print("   ⚠️  docker CLI not found — skipping the registry check; the pull will report a missing image")

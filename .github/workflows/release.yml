@@ -134,7 +134,9 @@ jobs:
                   # `|| true` is load-bearing under `set -o pipefail` — the tag for THIS release
                   # was created by the step above, so when it is the only match grep exits 1.
                   # Empty is a valid answer and is handled below.
-                  PREV_TAG=$(git tag --list 'v*.*.*' | sort -V | grep -v "^${TAG}$" | tail -n1 || true)
+                  # Stable releases only: a release candidate (v<X.Y.Z>-rc.N) sorts above its own
+                  # release under sort -V, and would start the notes at the candidate.
+                  PREV_TAG=$(git tag --list 'v*.*.*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | grep -v "^${TAG}$" | tail -n1 || true)
 
                   API_ARGS=(-X POST
                     -f "tag_name=${TAG}"

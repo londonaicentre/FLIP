@@ -210,7 +210,7 @@ central-hub: create-networks-centralhub
 # compose / pydantic failure deeper in the stack.
 up-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
-	@$(MAKE) onboard-onprem-trust KIT=$(KIT)
+	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) PROD=$(or $(PROD),true)
 
 # Upgrade twin of up-onprem-trust (FLIP#1204): the same readiness-checklist gate, then
@@ -225,7 +225,7 @@ up-onprem-trust:
 # ALLOW_CHECKOUT_DRIFT=1 overrides for a deliberate mismatch (testing a branch).
 upgrade-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
-	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--upgrade
+	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
 	$(MAKE) -C trust upgrade-trust KIT=$(KIT) PROD=$(or $(PROD),true) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
