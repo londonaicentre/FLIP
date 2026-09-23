@@ -164,7 +164,7 @@ Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of 
 
 - **VPC**: 10.0.0.0/16, 2 AZs, public + private subnets
 - **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1). The FL task families serve **both FL backends** (FLIP#566): `FL_BACKEND` switches image/ports/command/env/mounts — NVFLARE (single port `FL_SERVER_PORT`, EFS kit from `fl-flare-participant-kits/<FLARE_KIT_DATE>`) vs Flower (SuperLink 9092 Fleet/9093 Exec/9097 health, TLS + SuperNode auth, creds from `fl-flower-participant-kits/<FLOWER_KIT_DATE>`, shared `fl_jobs` EFS volume, register-supernode-keys one-shot). The NLB listener stays on `FL_SERVER_PORT` for both; only the target-side port changes.
-- **EC2**: Trust host (t3.xlarge, private subnet, SSM-only access)
+- **EC2**: Trust host (t3.xlarge by default, private subnet, SSM-only access). A GPU trust sets `TRUST_INSTANCE_TYPE` / `TRUST_AMI_SSM_PARAMETER` / `TRUST_ROOT_VOLUME_SIZE` (optional CI keys) and `TRUST_EC2_NUM_GPUS` for `up-trust-ec2` — README "GPU Trust EC2"
 - **RDS**: PostgreSQL in private subnets. In production flip-api connects through **RDS Proxy** using **IAM auth** (short-lived per-connection tokens); the proxy uses the RDS-managed master secret to reach the DB, so secret rotation no longer takes flip-api down (FLIP#556). No `rds_iam` Postgres grant is needed.
 - **ALB**: Internal (`internal = true`, private subnets); HTTPS termination for `/api/*` reached via CloudFront VPC origin (no public IP)
 - **NLB**: gRPC for FL server traffic

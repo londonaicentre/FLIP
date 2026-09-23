@@ -160,9 +160,27 @@ variable "k8s_trust_public_ips" {
 }
 
 variable "deploy_trust_ec2" {
-  description = "Whether to provision the cloud Trust EC2 host. Set false (make full-deploy-hub-only / DEPLOY_TRUST_EC2=false) for a hub-only deployment where every trust runs on-prem — e.g. when the workloads need a GPU that the t3 trust instance doesn't have. On-prem trusts join via register-trusts + allow-local-trust-nlb as usual."
+  description = "Whether to provision the cloud Trust EC2 host. Set false (make full-deploy-hub-only / DEPLOY_TRUST_EC2=false) for a hub-only deployment where every trust runs on-prem — e.g. when the workloads need a GPU and the trusts are on-prem anyway (a cloud GPU trust sets trust_instance_type + trust_ami_ssm_parameter instead). On-prem trusts join via register-trusts + allow-local-trust-nlb as usual."
   type        = bool
   default     = true
+}
+
+variable "trust_instance_type" {
+  description = "EC2 instance type of the cloud Trust host (TRUST_INSTANCE_TYPE). Default t3.xlarge is CPU-only; a GPU type (e.g. g4dn.xlarge) needs trust_ami_ssm_parameter pointing at an AMI that ships the NVIDIA driver (>= 580 for the cu130 FL images) and container toolkit, plus NUM_AVAILABLE_GPUS>0 in the trust's kit."
+  type        = string
+  default     = "t3.xlarge"
+}
+
+variable "trust_ami_ssm_parameter" {
+  description = "SSM public parameter that resolves the cloud Trust host's AMI (TRUST_AMI_SSM_PARAMETER). Default is stock Ubuntu 24.04; for a GPU host use the AWS Deep Learning Base OSS Nvidia Driver GPU AMI, /aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-24.04/latest/ami-id."
+  type        = string
+  default     = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
+}
+
+variable "trust_root_volume_size" {
+  description = "Root volume size (GiB) of the cloud Trust host (TRUST_ROOT_VOLUME_SIZE). Grows in place; the GPU FL images (CUDA torch) are larger, so a GPU host wants more than the 100 GiB default."
+  type        = number
+  default     = 100
 }
 
 variable "INTERNAL_SERVICE_KEY_HASH" {

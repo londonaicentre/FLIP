@@ -84,6 +84,37 @@
       # `hosts: trust_ec2` play below is skipped cleanly.
       when: (terraform_output.outputs.TrustEc2InstanceId.value | default('')) | length > 0
 
+# A GPU trust host (TRUST_INSTANCE_TYPE=g4dn.* on the Deep Learning Base GPU AMI)
+# ships the NVIDIA driver + container toolkit baked into the image. The blanket
+# `apt upgrade` below would otherwise move the kernel out from under the driver's
+# modules, so on such a host pin the driver and kernel to what the AMI shipped; a
+# newer driver comes from a newer AMI, not from apt. No-op on a stock-Ubuntu host.
+- name: detect an NVIDIA GPU host (Deep Learning Base GPU AMI)
+  hosts: trust_ec2
+  become: true
+  tasks:
+    - name: probe for nvidia-smi
+      command: nvidia-smi --query-gpu=driver_version --format=csv,noheader
+      register: nvidia_smi_probe
+      changed_when: false
+      failed_when: false
+
+    - name: record whether this trust host has a GPU
+      set_fact:
+        trust_has_gpu: "{{ nvidia_smi_probe.rc == 0 }}"
+
+    - name: hold the NVIDIA driver and kernel packages the AMI shipped
+      shell: |
+        set -o pipefail
+        dpkg-query -W -f='${Package} ${Status}\n' \
+          | awk '$4 == "installed" && $1 ~ /^(nvidia-|libnvidia-|cuda-drivers|linux-(image|headers|modules|aws))/ {print $1}' \
+          | xargs --no-run-if-empty apt-mark hold
+      args:
+        executable: /bin/bash
+      register: gpu_hold
+      changed_when: "'set on hold' in gpu_hold.stdout"
+      when: trust_has_gpu
+
 - name: update packages
   hosts: ec2
   become: true
@@ -115,6 +146,38 @@
     - geerlingguy.docker
   vars:
     docker_users: [ubuntu]
+
+# geerlingguy.docker leaves /etc/docker/daemon.json alone (no daemon options set)
+# but swaps a distro docker.io for docker-ce, so re-assert the nvidia runtime the
+# AMI's container toolkit registered and prove a container can see the GPU — a
+# GPU trust whose fl-client silently falls back to CPU is the failure to catch
+# here, not at training time.
+- name: wire the NVIDIA container runtime into Docker on a GPU trust host
+  hosts: trust_ec2
+  become: true
+  tasks:
+    - name: register the nvidia runtime with Docker
+      command: nvidia-ctk runtime configure --runtime=docker
+      register: nvidia_ctk
+      changed_when: "'Wrote updated config' in nvidia_ctk.stdout"
+      when: trust_has_gpu | default(false)
+
+    - name: restart Docker to pick up the nvidia runtime
+      systemd:
+        name: docker
+        state: restarted
+      when: nvidia_ctk is changed
+
+    - name: check a container can see the GPU
+      command: docker run --rm --gpus all ubuntu:24.04 nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
+      register: gpu_container_check
+      changed_when: false
+      when: trust_has_gpu | default(false)
+
+    - name: report the GPU the fl-client will get
+      debug:
+        msg: "GPU visible in containers: {{ gpu_container_check.stdout }}"
+      when: trust_has_gpu | default(false)
 
 - name: install AWS CLI v2 on Trust EC2 (if missing)
   hosts: trust_ec2

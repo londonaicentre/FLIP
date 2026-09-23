@@ -119,9 +119,9 @@ Trust EC2.
 
 ### Hub-only Deployment (all trusts on-prem)
 
-Use `full-deploy-hub-only` when no trust should run in the cloud — typically because the
-FL workloads need hardware the trust EC2 doesn't have (it's a GPU-less `t3.xlarge`) and
-every trust will run on-prem hosts instead:
+Use `full-deploy-hub-only` when no trust should run in the cloud — typically because every
+trust runs on its own on-prem hardware. (A cloud trust that needs a GPU does not need this:
+see "GPU Trust EC2" below.)
 
 ```bash
 cd deploy/providers/AWS
@@ -157,6 +157,31 @@ Each on-prem trust then joins exactly as in the hybrid flow:
 Multiple on-prem trusts can share one host — give each kit non-colliding ports and data
 directories (see the shipped `trust/.env.*.development.example` kits for a working
 two-trust port allocation).
+
+### GPU Trust EC2
+
+The cloud Trust EC2 defaults to a GPU-less `t3.xlarge` on stock Ubuntu 24.04, and
+`up-trust-ec2` pins its fl-client to CPU. To run a GPU trust in the cloud instead, set the
+host shape in the env file (or on the command line) before `plan`/`apply`:
+
+```bash
+TRUST_INSTANCE_TYPE=g4dn.xlarge                  # T4 16 GB; g5.xlarge for an A10G
+TRUST_AMI_SSM_PARAMETER=/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-24.04/latest/ami-id
+TRUST_ROOT_VOLUME_SIZE=150                       # CUDA torch images are larger
+```
+
+The AMI is AWS's *Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 24.04)*, which ships
+the NVIDIA driver and container toolkit. The FL images are CUDA 13 builds of PyTorch and need
+driver **580 or newer**; recent releases of this AMI ship the 595 branch, but its 2025 releases
+shipped 570, so check `nvidia-smi` on anything launched from a pinned or older image. On such a
+host `site.yml` holds the driver and kernel packages through its `apt upgrade`, re-registers the
+nvidia runtime with Docker, and fails the play if a container cannot see the GPU.
+
+Then opt the trust into the GPU with `TRUST_EC2_NUM_GPUS=<n>` (in the kit or on the
+`deploy-trust` command line): `up-trust-ec2` adds the GPU overlay and sets
+`NUM_AVAILABLE_GPUS=<n>` for the fl-client. It is a separate key on purpose — the kit
+template's `NUM_AVAILABLE_GPUS=1` does not switch an existing CPU trust onto a GPU it lacks.
+Changing the AMI or instance type replaces the host (its data volumes are not preserved).
 
 ### Registering trusts against the ECS hub
 
@@ -1667,7 +1692,7 @@ The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybri
 
 3. **Central Hub SSM bastion** (`aws_instance.ec2_instance`, t3.micro, 10 GB root volume, **private subnet**): Intentional minimal host for ad-hoc `psql` and network diagnostics. It runs no application containers, has no inbound security-group rules, and is reachable only through SSM Session Manager / SSH-over-SSM.
 
-4. **Trust EC2** (cloud model, t3.xlarge, **private subnet**): Hosts trust-related services (automatically provisioned)
+4. **Trust EC2** (cloud model, t3.xlarge by default — see "GPU Trust EC2", **private subnet**): Hosts trust-related services (automatically provisioned)
    - trust-api (polls hub for tasks)
    - imaging-api
    - data-access-api
@@ -1771,7 +1796,7 @@ commit a re-render whose only change is the graphviz that made it.
 - **VPC**: Custom VPC (`10.0.0.0/16` by default) across 2 AZs, with public + private subnets and a single shared NAT Gateway
 - **ECS Fargate cluster**: Runs the Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) as awsvpc tasks in **private subnets**. Task definitions, services, and per-service security groups live in `ecs*.tf` and `iam_ecs.tf`.
 - **Central Hub SSM bastion**: t3.micro instance with a 10 GB root volume in a **private subnet**. It carries only the SSM managed IAM policy and a PostgreSQL client for ad-hoc RDS operations; application workloads run on ECS Fargate.
-- **Trust EC2**: Separate t3.xlarge instance in a **private subnet**, running Trust services via Docker Compose
+- **Trust EC2**: Separate instance (t3.xlarge by default) in a **private subnet**, running Trust services via Docker Compose
   - Deployed using custom Terraform module (`modules/trust_ec2`)
   - Automatic Docker and Docker Compose installation via user_data
   - Automatic Docker network creation for inter-service communication

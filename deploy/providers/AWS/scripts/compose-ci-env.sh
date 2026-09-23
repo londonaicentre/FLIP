@@ -145,6 +145,9 @@ OPTIONAL_KEYS=(
     FLIP_BUCKET_NAME
     JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB
     JOB_RESOURCE_SPEC_NUM_GPUS
+    TRUST_AMI_SSM_PARAMETER
+    TRUST_INSTANCE_TYPE
+    TRUST_ROOT_VOLUME_SIZE
 
     # Empty is meaningful and NOT symmetric with the rest of this list: it is the
     # correct value on stag, which hosts no public Ark+ demo, and a destructive

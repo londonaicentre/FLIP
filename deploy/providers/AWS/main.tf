@@ -1021,10 +1021,12 @@ module "trust_ec2" {
   count  = var.deploy_trust_ec2 ? 1 : 0
   source = "./modules/trust_ec2"
 
-  name_prefix   = "trust"
-  instance_type = "t3.xlarge"
-  key_name      = aws_key_pair.host_key.key_name
-  subnet_id     = element(local.app_subnet_ids, 0)
+  name_prefix       = "trust"
+  instance_type     = var.trust_instance_type
+  ami_ssm_parameter = var.trust_ami_ssm_parameter
+  root_volume_size  = var.trust_root_volume_size
+  key_name          = aws_key_pair.host_key.key_name
+  subnet_id         = element(local.app_subnet_ids, 0)
 
   # use the trust SG, not the central EC2 SG
   security_group_ids = [module.trust_security_group.security_group.id]
