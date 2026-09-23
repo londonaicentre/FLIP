@@ -58,6 +58,7 @@ from typing import Any
 
 import requests
 
+from flip_api.config import get_settings
 from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.utils import constants
@@ -201,15 +202,37 @@ def resolve_model_name(base_name: str, abort_midway: bool) -> str:
 
 
 def _maybe_refresh(headers: dict[str, str]) -> bool:
-    """Refresh the bearer token in-place via Cognito REFRESH_TOKEN_AUTH.
+    """Refresh the bearer token in-place through the configured identity provider.
 
-    Used when the smoke runs token-driven against a remote hub (FLIP_E2E_TOKEN):
-    a long run can outlast the access token's TTL, so a 401 triggers a refresh.
-    Returns True if the token was refreshed.
+    Used when a long run outlasts the access token's TTL, so a 401 triggers a
+    refresh: token-driven runs against a remote hub (FLIP_E2E_TOKEN +
+    FLIP_E2E_REFRESH_TOKEN, Cognito REFRESH_TOKEN_AUTH) and local Keycloak
+    runs, where ``admin_authentication`` leaves the refresh token in
+    FLIP_E2E_REFRESH_TOKEN. Returns True if the token was refreshed.
     """
     refresh = os.environ.get("FLIP_E2E_REFRESH_TOKEN")
+    if not refresh:
+        return False
+
+    settings = get_settings()
+    if settings.AUTH_BACKEND == "keycloak" and settings.KEYCLOAK_PUBLIC_URL:
+        from flip_api.auth.identity.keycloak import refresh_grant
+
+        try:
+            tokens = refresh_grant(
+                settings.KEYCLOAK_PUBLIC_URL, settings.KEYCLOAK_REALM, settings.KEYCLOAK_CLIENT_ID, refresh
+            )
+        except Exception as exc:  # noqa: BLE001 - refresh is best-effort
+            _log(f"  ⚠️  token refresh failed: {exc}")
+            return False
+        headers["authorization"] = "Bearer " + tokens["access_token"]
+        if tokens.get("refresh_token"):
+            os.environ["FLIP_E2E_REFRESH_TOKEN"] = tokens["refresh_token"]
+        _log("  🔄 refreshed access token")
+        return True
+
     client_id = os.environ.get("AWS_COGNITO_APP_CLIENT_ID")
-    if not refresh or not client_id:
+    if not client_id:
         return False
     import boto3
 
@@ -271,7 +294,7 @@ def authenticate() -> dict[str, str]:
     if token:
         _log("🔐 Using FLIP_E2E_TOKEN (pre-supplied bearer token)")
         return {"scheme": "Bearer", "authorization": f"Bearer {token}"}
-    _log("🔐 Authenticating as admin via Cognito…")
+    _log(f"🔐 Authenticating as admin via {get_settings().AUTH_BACKEND}…")
     headers = admin_authentication()
     _log("  ✅ Got auth token")
     return headers

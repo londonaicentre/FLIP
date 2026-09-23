@@ -111,10 +111,17 @@ delete_testing_projects:
 seed_demo_projects:
 	@echo "🌱 Seeding the demo radiology project catalogue..."
 	env DB_HOST=localhost uv run python -m tests.seed_demo_projects $(EXTRA_ARGS)
-# Provision the demo Cognito users for the demo-video recorder. Passwords
-# come from DEMO_RESEARCHER_PASSWORD / DEMO_ADMIN_PASSWORD in the env.
+# Provision the demo users for the demo-video recorder in the configured
+# identity provider (AUTH_BACKEND: the local Keycloak realm or the Cognito pool).
+# Runs inside the flip-api container so the provider is reached exactly as the
+# app reaches it (KEYCLOAK_URL is a docker-network name; ~/.aws is mounted for
+# Cognito). Passwords come from DEMO_RESEARCHER_PASSWORD / DEMO_ADMIN_PASSWORD
+# in the env and are handed to the container per call — the service's explicit
+# environment list does not carry them. `exec` rather than `run`: no orphan
+# removal, so a running FL stack is left alone.
 create_demo_users:
-	uv run python -m flip_api.scripts.create_demo_users
+	$(docker_command) exec -e DEMO_RESEARCHER_PASSWORD -e DEMO_ADMIN_PASSWORD $(service_name) \
+		python -m flip_api.scripts.create_demo_users
 # Record the end-to-end demo video against the running dev stack (Dockerised
 # Cypress segments + off-camera waits + ffmpeg assembly). Args via DEMO_ARGS,
 # e.g. DEMO_ARGS="--skip-xnat" or DEMO_ARGS="--project-id <uuid> --from-segment 4".
