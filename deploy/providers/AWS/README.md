@@ -1034,10 +1034,28 @@ permits one only alongside the other. That is the moment the name moves. Order m
 2. DNS points at the receiving edge. This moves anything that is **not** CloudFront — an FL NLB leg moves here.
 3. `RELEASE_WEB_ALIAS=true` on this account. **Now** the web moves.
 
-Set it as a variable on the `aws-prod` GitHub environment rather than applying from a laptop: CI is the only
-applier for the self-contained accounts, so a local apply is reverted by the next run and flagged by the nightly
-drift job in between. It is deliberately a separate switch from `MANAGE_DNS` so the drop lands in a chosen window
-instead of whenever a release reaches production.
+Set it as a variable on the `aws-prod` (or `aws-stag`) GitHub environment rather than applying from a laptop: CI is
+the only applier for the self-contained accounts, so a local apply is reverted by the next run and flagged by the
+nightly drift job in between. It is deliberately a separate switch from `MANAGE_DNS` so the drop lands in a chosen
+window instead of whenever a release reaches production.
+
+**Staging inverts step 2 and step 3, and it is not optional.** Production gets an overlap window because the
+receiving edge can hold a wildcard while legacy keeps the exact name — both answer, exact wins, and nothing breaks
+until the exact one goes. There is only one wildcard per zone and production has it, so the staging edge has to
+carry `stag.flip.aicentre.co.uk` exactly. CloudFront refuses to attach an alias another distribution already holds
+(`CNAMEAlreadyExists`), so for staging the order is:
+
+1. `RELEASE_WEB_ALIAS=true` on `aws-stag`, applied. **Staging is now down** — nothing serves the name.
+2. The receiving edge attaches the exact alias and DNS moves (one apply in `aicentre-lza-iac`).
+
+Getting that order wrong does not fail gently: the attach fails the whole run, taking any production records in the
+same configuration with it. Staging downtime between the two applies is expected and accepted.
+
+**Staging trusts need reissued kits; production trusts do not.** Both `fl.app.flip` and `fl.stag.flip` resolve to
+the *same* edge NLB — one address, two listeners — so the port in the trust kit is the only thing separating the
+environments: `:8003` is staging, `:8002` is **production**. Legacy staging kits embed `:8002`, which was
+unambiguous when it pointed at legacy staging's own NLB. After the cutover a staging trust on an un-updated kit
+joins the production FL net, and it does so silently, by succeeding.
 
 **Rollback is not a DNS revert.** This account keeps its zone, records, certificate and data, so it remains a
 rollback target — but only once the alias is back, which means `RELEASE_WEB_ALIAS=false` and an apply, a CloudFront
