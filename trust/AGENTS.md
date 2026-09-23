@@ -123,10 +123,14 @@ make tests                     # Run tests on all 3 API services
 make build                     # Build all trust Docker images
 make create-networks           # Create Docker overlay networks
 make ensure-seeded KIT=GSTT [PROJECTS="…"]  # What up-trust runs after compose up: seed unless the markers already say so (#1187)
-make seed KIT=GSTT PROJECTS="spleen_project cxr_project"  # Seed a RUNNING trust unconditionally: OMOP rows + DICOMs by source_trust (#1100)
+make seed KIT=GSTT PROJECTS="cxr_project"  # Seed a RUNNING trust unconditionally: OMOP rows + DICOMs by source_trust (#1100), from the published tag
 make seed-trusts PROJECTS="…"  # Both dev trusts; seed-omop / seed-orthanc for one half; CLEAR=1, DRY_RUN=1 on the PACS half
+make seed-omop KIT=GSTT PROJECTS=brain_mri_project CANONICAL_DIR=/abs/canonical   # local tables instead of the tag (#1221); CLEAN=all = wipe every project first
+make seed-orthanc KIT=GSTT PROJECTS=brain_mri_project DICOM_SOURCE=/abs/dicom TABLES_DIR=/abs/canonical  # a regenerated DICOM tree (spleen, brain_mri: never published)
+                               # …both wrapped by `make -C fl-tutorials seed-spleen|seed-brain-mri KIT=<CODE>`
+make unseed KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911  # take a project OUT (rows by its person ids, studies by its accessions, as those tables name them) — the move off a re-cut project; other projects untouched
 make seed KIT=GSTT SOURCE_TRUST=1  # Override the OMOP partition; defaults to the FL kit slot, which is a convention, not an invariant (see README "Which partition a trust is seeded with")
-make publish-trust-data VERSION=<tag> [OMOP_CSV=… DICOM=… CARD=…]  # ONE commit on aicentreflip/trust-data + ONE tag; then bump trust/.data_version (the single pin, OMOP + Orthanc)
+make publish-trust-data VERSION=<tag> [OMOP_CSV=… DICOM=… CARD=… DELETE=…]  # ONE commit on aicentreflip/trust-data + ONE tag; then bump trust/.data_version (the single pin, OMOP + Orthanc). DELETE= retires a file from main (earlier tags keep it)
 make test-trust-data-tools  # Three things: publisher pytest + ruff, shellcheck over seed_trust.sh, and the seed-marker contract harness (tests/test_seed_marker_contract.sh)
 ```
 
@@ -191,7 +195,9 @@ The senders construct the header inline at call sites:
 
 **Trust data has one path: seeding (FLIP#1101/#1187).** `make up` starts each trust's omop-db and
 Orthanc on empty, pre-created volumes and then runs `make -C trust ensure-seeded`, which loads
-`PROJECTS` (default `cxr_project spleen_project`) from the published canonical tables at the pinned
+`PROJECTS` (default `cxr_project`: one list drives both halves, so it holds only projects the
+dataset publishes a DICOM set for as well as tables — spleen and brain_mri regenerate theirs
+locally since #1221) from the published canonical tables at the pinned
 `trust/.data_version`: OMOP rows via `omop_db_tools.import_tables` (the DICOM vocabulary first,
 skipped if present) and DICOMs via `trust/orthanc/seed_orthanc.py`, both selected by the same
 `source_trust` column, so a trust's OMOP rows and the studies in its PACS agree by construction. Each

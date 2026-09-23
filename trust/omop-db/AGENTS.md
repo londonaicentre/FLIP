@@ -81,7 +81,14 @@ tolerate the DICOM vocab already present in the tarballs):
   (`make -C trust ensure-seeded`, #1187) on the empty database the container initialises; a `.seeded`
   marker beside `db_data` records projects/partition/version so a later `up` skips it and a
   `.data_version` bump re-seeds. `load-dicom-vocab` runs first (skipped when present — its
-  relationship rows have no unique key). `populate` is the same loader with `--clean all`.
+  relationship rows have no unique key). `populate` is the same loader with `--clean all`
+  (`seed-omop CLEAN=all` does the same on a running trust — the one-time move off a re-cut project
+  whose person ids all changed). `seed-omop CANONICAL_DIR=<dir>` loads a local canonical tree
+  instead of fetching the tag (#1221): spleen and brain_mri regenerate their DICOMs locally and are
+  seeded from `make -C fl-tutorials seed-<dataset> KIT=<CODE>`, both halves local, so the marker
+  records `source=<dir>` in place of a version. `unseed-omop` (`import_tables --remove-only`) deletes
+  the listed projects' rows by the person ids in the given tables and loads nothing — the surgical
+  move off a re-cut project (point `HF_TRUST_DATA_REVISION` at the cut the trust holds).
 - **Synthea EHR cohort** (`src/omop_db_tools/synthea_ehr.py`, `make load-synthea-ehr`): the populate
   side of the EHR risk-prediction tutorial. The shipped mock OMOP has NO `condition_occurrence`
   rows, so that tutorial's `query.sql` returns nothing until this loads the public 1k-person

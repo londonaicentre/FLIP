@@ -101,7 +101,7 @@ def test_seed_values_defaults():
     """Defaults: OMOP on, Orthanc off (2 GB of DICOM), the two dev projects, partition = trustNumber."""
     seed = VALUES["trustData"]["seed"]
     assert seed["enabled"] is True and seed["omop"] is True and seed["orthanc"] is False
-    assert seed["projects"] == "cxr_project spleen_project"
+    assert seed["projects"] == "cxr_project"
     assert seed["sourceTrust"] == "" and seed["numTrusts"] == 2
     assert seed["sourceRef"]
     assert "initJob" not in VALUES["omopDb"] and "initJob" not in VALUES["orthanc"]

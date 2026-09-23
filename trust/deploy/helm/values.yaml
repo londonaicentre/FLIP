@@ -40,7 +40,7 @@ flBackend: "nvflare"
 # existing values file pinning the old ones keeps installing and silently stops taking effect —
 # see README "Upgrading: trustData.version replaces the two per-store pins".
 trustData:
-  version: "20260901"
+  version: "20260917"
   hfRepo: "aicentreflip/trust-data"
   # Seeding (FLIP#1187). The trust-seed post-install/post-upgrade hook loads this trust's slice
   # of `projects` from the dataset into the running omop-db (rows, plus the DICOM vocabulary)
@@ -52,11 +52,14 @@ trustData:
   seed:
     enabled: true
     omop: true
-    # Off by default: the two default projects are ~2 GB of DICOM per trust, posted instance by
+    # Off by default: the default project is ~2 GB of DICOM per trust, posted instance by
     # instance (minutes, once — the PVC persists). Enable for a trust whose PACS must hold the
     # mock studies (an imaging pull needs them); CI and API-only clusters leave it off.
     orthanc: false
-    projects: "cxr_project spleen_project"
+    # One list feeds both halves, so it holds only projects the dataset publishes tables AND a
+    # DICOM set for. Since FLIP#1221 that is cxr_project: spleen and brain_mri publish tables
+    # only and regenerate their DICOMs locally, which no in-cluster hook can do.
+    projects: "cxr_project"
     # The dataset partition (source_trust) this trust receives; defaults to trustNumber. The
     # two are separate axes — see trust/README.md "Which partition a trust is seeded with".
     sourceTrust: ""
