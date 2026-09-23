@@ -31,7 +31,7 @@ from imaging_api.routers.schemas import (
     User,
 )
 from imaging_api.routers.users import add_user_to_project
-from imaging_api.services.users import create_user_from_central_hub_user, get_user_profile_by
+from imaging_api.services.users import create_user_from_central_hub_user, get_user_profile_by, issue_invite
 from imaging_api.utils.enums import ProjectPreArchiveSettings
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError, XnatFetchError
 from imaging_api.utils.logger import logger
@@ -671,8 +671,10 @@ def add_central_hub_users_to_project(
         headers (dict[str, str]): XNAT authentication headers
 
     Returns:
-        tuple[list[imaging_api.routers.schemas.CreatedUser], list[imaging_api.routers.schemas.User]]: List of created
-        users and added users.
+        tuple[list[imaging_api.routers.schemas.CreatedUser], list[imaging_api.routers.schemas.User]]: The users to
+        invite (created this run, or existing but never logged in — each with a sealed set-password path) and the
+        users to notify of project access (existing accounts that have logged in before). A user appears in exactly
+        one of the two, so the hub sends either the invite or the added-to-project notice, never both.
     """
     created_users: list[CreatedUser] = []
     added_users: list[User] = []
@@ -692,17 +694,33 @@ def add_central_hub_users_to_project(
         # Check if user already exists on XNAT, check by 'email' key
         try:
             user_profile = get_user_profile_by("email", central_hub_user.email, headers)
-            logger.info("User '%s' already exists on XNAT", user_profile.username)
-
         except NotFoundError:
             logger.info("User not found on XNAT. Creating user...")
             # Create user on XNAT from Central Hub user
             created_user, user_profile = create_user_from_central_hub_user(central_hub_user, headers)
             # Append to list of created users
             created_users.append(created_user)
+            invited = True
+        else:
+            # An account that exists but has never authenticated has no password its owner knows —
+            # the first invite was lost, expired unused, or its token issuance failed after the
+            # account had been created. Re-issue the invite rather than sending the added-to-project
+            # notice, which tells the recipient to log in with credentials they never set.
+            if user_profile.lastSuccessfulLogin is None:
+                logger.info(
+                    "User '%s' already exists on XNAT but has never logged in. Re-issuing the set-password invite...",
+                    user_profile.username,
+                )
+                created_users.append(issue_invite(user_profile, headers))
+                invited = True
+            else:
+                logger.info("User '%s' already exists on XNAT", user_profile.username)
+                invited = False
 
-        # Add user to project
-        if add_user_to_project(user_profile, project_id, headers):
+        # Add user to project. Only a user who was NOT invited this run gets the added-to-project
+        # notice: the invite already names the project, and the notice's "log in with your existing
+        # credentials" is untrue for an account whose password has never been set.
+        if add_user_to_project(user_profile, project_id, headers) and not invited:
             added_users.append(user_profile)
 
     return created_users, added_users

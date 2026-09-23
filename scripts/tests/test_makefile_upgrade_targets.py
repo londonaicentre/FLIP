@@ -12,8 +12,9 @@
 #
 """The site upgrade verbs are data-safe by construction (FLIP#1204).
 
-`make -C trust up-trust` is a first-install verb: its prerequisites re-fetch the mock data
-(`update-omop-data` rm -rf's an unmarked OMOP dir) and `up-xnat` runs `xnat-reset`
+`make -C trust up-trust` is a first-install verb: its `ensure-seeded` step re-seeds OMOP /
+Orthanc whenever the seed markers differ from the kit (a `.data_version` bump replaces the
+listed projects' rows and studies) and `up-xnat` runs `xnat-reset`
 (`sudo rm -rf $XNAT_DATA_DIR`, archive and database). `upgrade-trust` /
 `upgrade-onprem-trust` exist so a live site can move to a release without any of that, and
 this guard dry-runs them (`make -n`) against a scratch kit to prove the recipe they expand
@@ -83,7 +84,16 @@ FL_KIT_SLOT_NUMBER=9
 EXPECTED_TRUST_ID=x
 """
 
-DESTRUCTIVE = ("xnat-reset", "update-omop-data", "update-orthanc-data", "rm -rf", "down-trust")
+DESTRUCTIVE = (
+    "xnat-reset",
+    "ensure-seeded",
+    "seed-omop",
+    "seed-orthanc",
+    "update-omop-data",
+    "update-orthanc-data",
+    "rm -rf",
+    "down-trust",
+)
 
 
 def _dry_run(target: str, *extra: str, subdir: str = "trust") -> str:
@@ -153,9 +163,9 @@ class UpgradeVerbs(unittest.TestCase):
             assert step not in out, f"{step!r} reached from _upgrade-trust-apply:\n{out}"
 
     def test_up_trust_is_still_the_first_install_verb(self):
-        """The guard would be meaningless if up-trust had quietly stopped resetting."""
+        """The guard would be meaningless if up-trust had quietly stopped seeding and resetting."""
         out = _dry_run("up-trust")
-        assert "update-omop-data" in out, out
+        assert "ensure-seeded" in out, out
         assert "up-xnat" in out, out
 
 

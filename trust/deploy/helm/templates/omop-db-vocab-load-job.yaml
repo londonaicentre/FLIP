@@ -126,19 +126,19 @@ spec:
               # failed attempt is replaced by a new pod with a new emptyDir. The
               # skip that saves the download is the probe above.
               aws s3 cp "s3://{{ .Values.omopDb.vocabLoad.s3Bucket }}/vocab/{{ .Values.omopDb.vocabLoad.bundleName }}.zip" /vocab-work/bundle.zip
-          {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
+          {{- if .Values.omopDb.vocabLoad.hostAwsMount.enabled }}
           env:
             - name: AWS_DEFAULT_REGION
               value: {{ default "eu-west-2" .Values.awsRegion | quote }}
             - name: AWS_PROFILE
-              value: {{ .Values.omopDb.initJob.awsProfile | quote }}
+              value: {{ .Values.omopDb.vocabLoad.awsProfile | quote }}
           {{- end }}
           resources:
             {{- toYaml .Values.omopDb.vocabLoad.fetchResources | nindent 12 }}
           volumeMounts:
             - name: vocab-work
               mountPath: /vocab-work
-            {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
+            {{- if .Values.omopDb.vocabLoad.hostAwsMount.enabled }}
             - name: host-aws
               mountPath: /root/.aws
               readOnly: true
@@ -191,10 +191,10 @@ spec:
         - name: vocab-work
           emptyDir:
             sizeLimit: {{ .Values.omopDb.vocabLoad.workDirSize }}
-        {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
+        {{- if .Values.omopDb.vocabLoad.hostAwsMount.enabled }}
         - name: host-aws
           hostPath:
-            path: {{ required "omopDb.initJob.hostAwsMount.hostPath is required when hostAwsMount is enabled — set it to the AWS config dir ON THE NODE (on kind, the path an extraMount maps ~/.aws to), e.g. --set omopDb.initJob.hostAwsMount.hostPath=$HOME/.aws" .Values.omopDb.initJob.hostAwsMount.hostPath | quote }}
+            path: {{ required "omopDb.vocabLoad.hostAwsMount.hostPath is required when hostAwsMount is enabled — set it to the AWS config dir ON THE NODE (on kind, the path an extraMount maps ~/.aws to), e.g. --set omopDb.vocabLoad.hostAwsMount.hostPath=$HOME/.aws" .Values.omopDb.vocabLoad.hostAwsMount.hostPath | quote }}
             type: Directory
         {{- end }}
 {{- end }}

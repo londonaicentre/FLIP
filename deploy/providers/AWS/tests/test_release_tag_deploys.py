@@ -18,7 +18,7 @@ defeat the revision audit trail the guard exists for. The guard's regex is the s
 that decides both, so it is asserted here by running the tag check the way the recipe does.
 
 ``upgrade-trust-ec2`` is the EC2 twin of ``make -C trust upgrade-trust``: it must not chain
-through ``seed-trust-data`` (which ``rm -rf``s the OMOP/Orthanc dirs on the host) or
+through ``seed-trust-data`` (which re-seeds OMOP/Orthanc on the host) or
 ``down-trust-ec2`` — those belong to ``deploy-trust``, the first-install verb.
 """
 
@@ -70,13 +70,14 @@ def test_upgrade_trust_ec2_is_the_data_safe_verb() -> None:
         assert forbidden not in prerequisites, f"upgrade-trust-ec2 must not depend on {forbidden}"
     recipe = _recipe("upgrade-trust-ec2")
     assert "upgrade-trust" in recipe, "upgrade-trust-ec2 must delegate to trust/Makefile's upgrade-trust"
-    for forbidden in ("down-trust-ec2", "up-trust-ec2", "image prune"):
+    for forbidden in ("seed-trust-data", "down-trust-ec2", "up-trust-ec2", "image prune"):
         assert forbidden not in recipe, f"upgrade-trust-ec2 must not run {forbidden}"
 
 
 def test_deploy_trust_still_reseeds_so_the_two_verbs_stay_distinct() -> None:
-    """deploy-trust is the first-install verb; if it ever stops re-seeding, the split above is moot."""
-    text = MAKEFILE.read_text()
-    header = re.search(r"^deploy-trust:([^\n]*)\n", text, re.M)
-    assert header, "deploy-trust target not found"
-    assert "seed-trust-data" in header.group(1)
+    """deploy-trust is the first-install verb; if it ever stops re-seeding, the split above is moot.
+
+    The seed runs in the recipe, between down-trust-ec2 and up-trust-ec2, not as a prerequisite
+    (a prerequisite would run against the still-running omop-db — #1190 review).
+    """
+    assert "seed-trust-data" in _recipe("deploy-trust")

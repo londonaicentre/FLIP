@@ -44,7 +44,7 @@ ENV_VAR_MAP = {
     # (flClient.kitHostPath). A trust holds no FLIP AWS credentials. Falls back to
     # DEFAULT_KIT_HOST_PATH when the kit omits it — see build_values.
     "FL_KIT_DIR": ("flClient.kitHostPath", False),
-    "AICENTRE_BUCKET_NAME": ("omopDb.initJob.s3Bucket", False),
+    "AICENTRE_BUCKET_NAME": ("omopDb.vocabLoad.s3Bucket", False),
     "TRUST_DATA_VERSION": ("trustData.version", False),
     # The release this site runs (FLIP#1204): the kit's Hub-shared DOCKER_TAG is the one
     # pin every FLIP-built image follows (templates/_helpers.tpl flip-trust.imageTag).

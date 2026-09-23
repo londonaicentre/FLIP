@@ -25,6 +25,11 @@ rather than an error:
   and — for a field values.yaml never declares — renders empty, taking the
   Kubernetes default. Two of the four fields have slipped through this block
   twice already.
+* The omop-db postStart hook provisions ``data_analyst_reader`` from the SQL the
+  image ships rather than an inline copy. The inline copy it replaced granted
+  ``pg_read_all_data`` — SELECT on every schema — where Compose grants USAGE on
+  ``omop`` alone, and nothing about the render said so (FLIP#904). A hook that
+  hand-writes the role again would render just as cleanly.
 
 These parse the templates as text for the same reason ``test_chart_secrets.py``
 does: ``helm template`` only reaches the branches its values enable (XNAT is
@@ -32,6 +37,7 @@ disabled in the kind CI values), so a rendered-output check would silently skip
 most of the chart.
 """
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -44,6 +50,22 @@ XNAT_INIT_JOB = TEMPLATES_DIR / "xnat-init-job.yaml"
 OMOP_DB_TEMPLATE = TEMPLATES_DIR / "omop-db.yaml"
 REPO_ROOT = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], cwd=CHART_DIR, text=True).strip())
 CONFIGURE_XNAT = REPO_ROOT / "trust" / "xnat" / "xnat" / "config" / "configure-xnat.sh"
+OMOP_DB_DOCKERFILE = REPO_ROOT / "trust" / "omop-db" / "Dockerfile"
+
+# The hook opens its SQL with the dash form so the shell strips the body's indentation.
+HEREDOC_OPEN = "<<-'EOSQL'"
+HEREDOC_END = "EOSQL"
+
+# Where the omop-db image ships the one definition of the data_analyst_reader grants
+# (trust/omop-db/files/create_readonly_users.sql). The Compose trust runs it from
+# /docker-entrypoint-initdb.d at first initdb; the chart's postStart hook runs this
+# copy on every start, because a PVC restored by the seed-data initContainer skips
+# initdb.d altogether. Both halves of that contract are asserted below: the hook
+# reads the path, and the Dockerfile puts the file there. What the file grants is
+# asserted beside the file, in trust/omop-db/tests/unit — this workflow is
+# path-filtered to the chart and would not run for an edit to the SQL.
+SHARED_READONLY_SQL = "/flip/omop/create_readonly_users.sql"
+GRANT_READ_ALL = re.compile(r"\bGRANT\s+pg_read_all_data\b")
 
 # The activation POST, and the gate that must not precede it. Matched on the calls
 # rather than the surrounding prose — the comments name both endpoints in both orders.
@@ -72,6 +94,35 @@ def _init_container_script() -> str:
     body = text[start:end]
 
     return "\n".join(line for line in body.splitlines() if not line.strip().startswith("#"))
+
+
+def _omop_db_post_start_script() -> str:
+    """Return the omop-db StatefulSet's ``postStart`` hook body with comment lines dropped.
+
+    Bounded by the ``volumeMounts:`` that follows the lifecycle block, so the
+    seed-data initContainer's own script further up is never in the slice.
+
+    Returns:
+        str: The postStart hook script, comments removed.
+    """
+    text = OMOP_DB_TEMPLATE.read_text()
+    start = text.index("\n          lifecycle:")
+    end = text.index("\n          volumeMounts:", start)
+    body = text[start:end]
+
+    return "\n".join(line for line in body.splitlines() if not line.strip().startswith("#"))
+
+
+def _uncommented(path: Path) -> str:
+    """Return a file's text with ``#`` and ``--`` comment lines dropped.
+
+    Args:
+        path (Path): Template or SQL file to read.
+
+    Returns:
+        str: The file's non-comment lines.
+    """
+    return "\n".join(line for line in path.read_text().splitlines() if not line.strip().startswith(("#", "--")))
 
 
 def _probe_fields(template: Path, probe: str) -> dict[str, str]:
@@ -132,7 +183,10 @@ def _values_declares(dotted_path: str) -> bool:
 
         if depth and indent <= parent_indent:
             return False
-        if stripped.split(":")[0] == segments[depth] and (depth == 0 or indent > parent_indent):
+        # The first segment must be a top-level key: a nested key of the same name
+        # elsewhere (e.g. a boolean `orthanc:` flag under another block) must not
+        # anchor the walk.
+        if stripped.split(":")[0] == segments[depth] and (indent == 0 if depth == 0 else indent > parent_indent):
             depth += 1
             parent_indent = indent
             if depth == len(segments):
@@ -255,3 +309,94 @@ def test_the_path_filtered_images_can_be_held_back_from_the_release_pin(
 def test_the_pin_beats_the_release_pin_in_the_helper() -> None:
     helper = (TEMPLATES_DIR / "_helpers.tpl").read_text()
     assert "{{- .pin | default .global | default .own }}" in helper
+
+
+def test_the_omop_db_hook_provisions_the_reader_from_the_image_shipped_sql() -> None:
+    """The grants are defined once, in the file both deployment paths run — not re-typed in the chart.
+
+    Both halves of the contract: the hook ``\\i``-includes the path, and the omop-db
+    Dockerfile is what puts the file there. Either half alone renders cleanly and
+    fails only on the first pod start of a real trust.
+    """
+    script = _omop_db_post_start_script()
+    dockerfile = _uncommented(OMOP_DB_DOCKERFILE)
+
+    assert f"\\i {SHARED_READONLY_SQL}" in script, (
+        "the omop-db postStart hook no longer runs the image's create_readonly_users.sql — if it has gone "
+        "back to an inline definition of data_analyst_reader, that is a second copy of the grants that "
+        "Compose applies, free to drift wider again (FLIP#904)"
+    )
+    ships_it = re.compile(rf"^COPY\s+\./files/create_readonly_users\.sql\s+{re.escape(SHARED_READONLY_SQL)}\s*$", re.M)
+    assert ships_it.search(dockerfile), (
+        f"trust/omop-db/Dockerfile no longer ships create_readonly_users.sql at {SHARED_READONLY_SQL}; the "
+        "hook's \\i would fail on every pod start"
+    )
+
+
+def test_no_chart_template_grants_pg_read_all_data() -> None:
+    """``pg_read_all_data`` is SELECT on every schema, present and future; the reader is scoped to ``omop``."""
+    offenders = {t.name for t in sorted(TEMPLATES_DIR.glob("*.yaml")) if GRANT_READ_ALL.search(_uncommented(t))}
+
+    assert not offenders, (
+        f"{sorted(offenders)} grant pg_read_all_data — that widens a role to every schema in the cluster, "
+        "which is what FLIP#904 removed from the omop-db hook; scope grants to the omop schema via "
+        "omop_readonly_base instead"
+    )
+    # Positive control: the block the guard is about still provisions the role at all.
+    assert "data_analyst_reader" in _omop_db_post_start_script()
+
+
+def test_the_omop_db_hook_gates_on_tcp_and_fails_on_a_sql_error() -> None:
+    """A socket ``pg_isready`` goes green on the init-time server, while initdb.d may still be running.
+
+    The hook now runs the same file initdb.d is running at that moment; a failure
+    there is killed by the kubelet mid-initdb. TCP readiness means the final server.
+    And with psql outside the ``if`` (or without ON_ERROR_STOP) a failed statement
+    exits 0 and the pod goes Ready on a role that never got its grants.
+    """
+    script = _omop_db_post_start_script()
+
+    assert "pg_isready -h 127.0.0.1" in script, "the omop-db hook polls the socket, not TCP — it races initdb.d"
+    assert "-v ON_ERROR_STOP=1" in script, "the omop-db hook runs psql without ON_ERROR_STOP — SQL errors exit 0"
+    assert re.search(r"^\s*if\s+!\s+psql\b", script, re.M), (
+        "psql is not the hook's `if` condition — its exit status is dropped"
+    )
+    assert "${DATA_ACCESS_POSTGRES_PASSWORD}" not in script, (
+        "the password is shell-interpolated into the SQL again — pass it as a psql variable (\\set) so it stays "
+        "off argv and cannot break the statement's quoting"
+    )
+
+
+def test_the_omop_db_hook_heredoc_is_indented_with_tabs() -> None:
+    """``<<-`` strips leading TABS only, so spaces here hide the terminator until a live pod start.
+
+    The SQL sits inside a YAML block scalar, so the body cannot go to column 0 —
+    that would end the scalar. It is indented with a literal tab instead, and the
+    heredoc opened ``<<-'EOSQL'`` so the shell strips exactly that. Convert those
+    tabs to spaces and the manifest stays valid YAML, every other assertion in
+    this file stays green, and the shell simply never matches the terminator: it
+    reads the rest of the script looking for one. Nothing in CI executes the hook
+    — the kind E2E installs with ``omopDb.enabled=false`` — so the first sign
+    would be a trust's first pod start.
+    """
+    lines = _omop_db_post_start_script().splitlines()
+
+    opens = [i for i, line in enumerate(lines) if HEREDOC_OPEN in line]
+    assert len(opens) == 1, (
+        f"expected exactly one {HEREDOC_OPEN!r} in the omop-db postStart hook, found {len(opens)} — "
+        "the plain `<<'EOSQL'` form strips nothing, so the tab-indented body would reach psql with "
+        "its indentation and the terminator would never match"
+    )
+    start = opens[0]
+
+    ends = [i for i in range(start + 1, len(lines)) if lines[i].strip() == HEREDOC_END]
+    assert ends, f"the omop-db heredoc opened at line {start + 1} has no {HEREDOC_END} terminator"
+    end = ends[0]
+
+    for offset, line in enumerate(lines[start + 1 : end + 1], start=start + 2):
+        assert line.lstrip(" ").startswith("\t"), (
+            f"omop-db postStart heredoc line {offset} is not tab-indented: {line!r}. "
+            f"{HEREDOC_OPEN} strips leading tabs and nothing else, so a space-indented line — the "
+            "terminator above all — leaves the heredoc unterminated at runtime while this chart "
+            "still renders as valid YAML"
+        )

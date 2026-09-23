@@ -114,9 +114,10 @@ follow.
      the configure pass re-applied — DICOM receiver, DQR lockdown, PACS registration,
      Container Service backend, dcm2niix command — against the live instance.
 
-   It never runs ``update-omop-data``, ``update-orthanc-data`` or ``xnat-reset``. Those belong to
+   It never runs ``ensure-seeded`` or ``xnat-reset``. Those belong to
    ``make up-onprem-trust`` / ``make -C trust up-trust``, the **first-install** verbs, which
-   re-fetch the mock data and wipe the XNAT archive. Do not use them, or ``restart-trust``, to
+   re-seed the mock projects whenever the seed markers differ from the kit and wipe the XNAT
+   archive. Do not use them, or ``restart-trust``, to
    move a live site.
 
 5. **Verify.** The checklist re-runs at the end of the upgrade. On your host:
@@ -146,8 +147,12 @@ git checkout vX.Y.Z`` first (the verb refuses a release tag from any other check
 
 The resolver pins your kit exactly as on Compose; ``sync-kit`` then regenerates the override
 from it (``global.image.tag``, and the per-image pins below) and re-patches the Secret; then a
-plain ``helm upgrade`` at the new tag. PersistentVolumeClaims survive it, the init hooks
-short-circuit on populated data, and the API deployments roll onto the new images.
+plain ``helm upgrade`` at the new tag. PersistentVolumeClaims survive it, the vocabulary hook
+short-circuits on populated data, and the API deployments roll onto the new images. Unlike
+Compose, the chart's ``trust-seed`` hook is ``post-upgrade`` too: while
+``trustData.seed.enabled`` is on it re-applies the listed mock projects on every upgrade
+(idempotent — only those projects' rows are replaced, Orthanc dedupes), so turn it off in the
+override for a site whose stores hold real data only.
 ``KUBE_CONTEXT`` names the cluster for every ``helm`` / ``kubectl`` call the verb makes
 (default: kubectl's current context — on a workstation with several clusters, name it).
 
@@ -168,7 +173,7 @@ context ``make deploy-trust`` uses:
 
    make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env> [TAG=vX.Y.Z]
 
-``deploy-trust`` remains the first-install verb: its ``seed-trust-data`` prerequisite re-seeds
+``deploy-trust`` remains the first-install verb: its ``seed-trust-data`` step re-seeds
 OMOP and Orthanc on the host and its XNAT step resets the archive.
 
 Rolling back
