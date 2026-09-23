@@ -21,14 +21,13 @@ Usage:
 
 from __future__ import annotations
 
-import shutil
 import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from make_dry_run import DESTRUCTIVE, dry_run  # noqa: E402
+from make_dry_run import assert_data_safe, dry_run, main  # noqa: E402
 
 
 class UpgradeOnpremTrust(unittest.TestCase):
@@ -38,14 +37,10 @@ class UpgradeOnpremTrust(unittest.TestCase):
         assert "site_upgrade.py plan" in out, out
         assert "--tag v0.6.0" in out, out
         assert "--yes" in out, out
-        assert "onboard_onprem_trust.py SCR --upgrade" in out, out  # the gate must not suggest up-onprem-trust
+        assert "onboard_onprem_trust.py SCR --gate" in out, out  # the gate must not suggest up-onprem-trust
         assert "_upgrade-trust-apply" in out, out
-        for step in DESTRUCTIVE:
-            assert step not in out, f"{step!r} reached from upgrade-onprem-trust:\n{out}"
+        assert_data_safe(out, "upgrade-onprem-trust")
 
 
 if __name__ == "__main__":
-    if not shutil.which("make"):
-        print("make not installed — skipping", file=sys.stderr)
-        sys.exit(0)
-    unittest.main()
+    main()

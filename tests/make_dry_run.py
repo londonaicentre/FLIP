@@ -9,9 +9,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""`make -n` a FLIP Makefile target in a scratch copy of the repo's Makefiles (FLIP#1204).
+"""Run a FLIP Makefile target (or ``make -n`` it) in a scratch copy of the repo's Makefiles (FLIP#1204).
 
-Shared by the Makefile tests that sit beside each Makefile (``tests/test_makefile.py``,
+Test support for the Makefile tests that sit beside each Makefile (``tests/test_makefile.py``,
 ``trust/tests/test_makefile.py``, ``trust/xnat/tests/test_makefile.py``): they prove the site
 upgrade verbs expand to a recipe that never names a destructive step. The copy keeps the real
 Makefiles away from a developer's kit files; the scratch kit below stands in for one.
@@ -22,7 +22,9 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
+import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -131,3 +133,24 @@ def dry_run(target: str, *extra: str, subdir: str = "trust", kit: str = KIT) -> 
     result = run_target(target, *extra, subdir=subdir, kit=kit, dry=True)
     assert result.returncode == 0, f"make -n {target} failed:\n{result.stdout}\n{result.stderr}"
     return result.stdout
+
+
+def assert_data_safe(out: str, target: str) -> None:
+    """``out`` (a ``make -n`` recipe) names none of the first-install steps that rewrite a live site."""
+    for step in DESTRUCTIVE:
+        assert step not in out, f"{step!r} reached from {target}:\n{out}"
+
+
+def kit_with(old: str, new: str) -> str:
+    """The scratch kit with one line changed — failing if the line is no longer there to change."""
+    kit = KIT.replace(old, new)
+    assert kit != KIT, f"scratch kit no longer carries {old!r}"
+    return kit
+
+
+def main() -> None:
+    """``unittest.main()`` for a Makefile test run as a script, skipped where make is not installed."""
+    if not shutil.which("make"):
+        print("make not installed — skipping", file=sys.stderr)
+        sys.exit(0)
+    unittest.main(module="__main__")

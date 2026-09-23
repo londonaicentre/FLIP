@@ -80,17 +80,11 @@ jobs:
       # themselves are stdlib-only.
       - name: Install uv
         run: pip install uv
-      - name: Run scripts/ tests
+      # scripts/tests/, plus the repo-level trees that mirror what they test: tests/ for the root
+      # Makefile, .github/tests/ for the workflows and actions. All stdlib-only.
+      - name: Run scripts/, tests/ and .github/tests/
         run: |
-          for test_file in scripts/tests/test_*.py; do
-            echo "== $test_file"
-            python "$test_file" || exit 1
-          done
-      # The repo-level trees that mirror what they test: tests/ for the root Makefile, .github/tests/
-      # for the workflows and actions. Same stdlib-only runner as scripts/tests/.
-      - name: Run tests/ and .github/tests/
-        run: |
-          for test_file in tests/test_*.py $(find .github/tests -name 'test_*.py' | sort); do
+          for test_file in scripts/tests/test_*.py tests/test_*.py $(find .github/tests -name 'test_*.py' | sort); do
             echo "== $test_file"
             python "$test_file" || exit 1
           done
