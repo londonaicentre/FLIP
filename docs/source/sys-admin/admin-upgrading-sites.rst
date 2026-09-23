@@ -90,30 +90,41 @@ follow.
    What it does, in order:
 
    - runs the readiness checklist (``make onboard-onprem-trust``) — the same gate as the first
-     install, now with a *Hub-shared block current* row that asks your running trust-api whether
-     its AES key still matches the hub's, and warns when the kit pins a release behind the hub;
-   - resolves the target: ``TAG=`` if given, else the hub's ``/api/health`` ``version``. It
-     prints ``site <current> → target <release>`` and asks you to confirm (``YES=1`` skips the
-     prompt for a scripted run). A move to an older release is refused unless ``FORCE=1``;
-   - confirms this checkout is at the target release (step 3) before anything else is
-     touched — a ``sha-`` target is never checked, since a CI build has no git tag to be at;
+     install, now with a *Hub-shared block current* row that compares your kit's AES key with
+     the hub's (as your running trust-api last heard it), and warns when the kit pins a release
+     behind the hub. A kit you have just refreshed passes with a warning that trust-api still
+     runs the old key: this upgrade is what recreates it;
+   - resolves the target: ``TAG=`` if given, else the hub's ``/api/health`` ``version``. A hub
+     deployed by the CI Terraform apply reports the ``sha-`` build of its commit; from a
+     checkout at that commit's release tag (step 3) the upgrade targets the release tag
+     instead — the same code, and the tag every image is published at. It prints
+     ``site <current> → target <release>``. A move to an older release — a release's own
+     release candidates included — is refused unless ``FORCE=1``;
+   - confirms this checkout is at the target release (step 3) — a ``sha-`` target is never
+     checked, since a CI build has no git tag to be at. If git cannot read the checkout (for
+     example "dubious ownership" when it belongs to another user and the upgrade runs under
+     ``sudo``), it stops and prints the ``git config --global --add safe.directory`` fix;
    - checks the registry (``docker manifest inspect``) for every image the site pulls — the
      three APIs, Orthanc, ``omop-db``, the three XNAT images and the FL client — at that tag,
      or at the kit's own pin for the ones that have one (``OMOP_DB_TAG``, ``ORTHANC_TAG``,
-     ``XNAT_TAG``), and stops, naming the missing references, before anything is written.
-     Release tags build every image; a ``sha-`` tag only carries the images that commit
-     changed, so ``TAG=sha-…`` is refused whenever one of them was never built at it — hold
-     that one image at its own build if you must move to a ``sha-`` tag: ``FL_TAG=sha-…`` for
-     the FL client (it becomes the kit's ``DOCKER_FL_TAG``), ``OMOP_DB_TAG`` / ``ORTHANC_TAG``
-     / ``XNAT_TAG`` in the kit for the data services;
-   - writes the tag into your kit (``DOCKER_TAG`` and ``DOCKER_FL_TAG``), so the kit always
-     records what is installed;
+     ``XNAT_TAG``), and stops, naming the missing references, before anything is written. A
+     registry it cannot ask (a login, network or rate-limit fault) is reported as that, not
+     as a missing image. Release tags build every image; a ``sha-`` tag only carries the
+     images that commit changed, so ``TAG=sha-…`` is refused whenever one of them was never
+     built at it — hold that one image at its own build if you must move to a ``sha-`` tag:
+     ``FL_TAG=sha-…`` for the FL client (it becomes the kit's ``DOCKER_FL_TAG``),
+     ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` / ``XNAT_TAG`` in the kit for the data services;
+   - asks you to confirm (``YES=1`` skips the prompt for a scripted run), then writes the tag
+     into your kit (``DOCKER_TAG`` and ``DOCKER_FL_TAG``), so the kit always records what is
+     installed;
    - pulls the images and recreates only the containers whose image or configuration changed
      (``docker compose up -d``); OMOP, Orthanc and XNAT data stay on their bind mounts;
-   - upgrades XNAT **in place**: a ``pg_dumpall`` of ``xnat-db`` into ``$XNAT_DATA_DIR/backups/``,
-     the Swarm stack redeployed onto the new image (XNAT migrates its own schema on boot), then
-     the configure pass re-applied — DICOM receiver, DQR lockdown, PACS registration,
-     Container Service backend, dcm2niix command — against the live instance.
+   - upgrades XNAT **in place**: a ``pg_dumpall`` of ``xnat-db`` into ``$XNAT_DATA_DIR/backups/``
+     — only a complete dump is kept, and without one (a failed dump, or no running ``xnat-db``
+     to take it from) the upgrade stops before XNAT is touched — then the Swarm stack
+     redeployed onto the new image (XNAT migrates its own schema on boot), then the configure
+     pass re-applied — DICOM receiver, DQR lockdown, PACS registration, Container Service
+     backend, dcm2niix command — against the live instance.
 
    It never runs ``ensure-seeded`` or ``xnat-reset``. Those belong to
    ``make up-onprem-trust`` / ``make -C trust up-trust``, the **first-install** verbs, which
@@ -121,15 +132,19 @@ follow.
    archive. Do not use them, or ``restart-trust``, to
    move a live site.
 
-5. **Verify.** The checklist re-runs at the end of the upgrade. On your host:
+5. **Verify.** Once the upgrade has finished, on your host:
 
    .. code-block:: bash
 
       curl -s http://127.0.0.1:${TRUST_API_PORT:-8020}/health
-      # {"status":"ok","version":"vX.Y.Z","hub_version":"vX.Y.Z","hub_key_match":true,"dead_tasks":[]}
+      # {"status":"ok","version":"vX.Y.Z","hub_version":"vX.Y.Z","hub_key_match":true,
+      #  "hub_key_fingerprint":"…","dead_tasks":[]}
 
    ``version`` is the build the container was made from; ``hub_version`` is what the hub says
-   about itself; ``hub_key_match: true`` means your kit's AES key is the hub's. On the hub, the
+   about itself; ``hub_key_match: true`` means the AES key trust-api runs with is the hub's.
+   The hub fields are ``null`` until the next accepted heartbeat (a few seconds), and again
+   whenever the hub rejects one. ``make onboard-onprem-trust KIT=<slot>`` re-runs the checklist
+   if you want every row again. On the hub, the
    FLIP admin sees the same versions in *Connection Status → trust drawer*, with an amber
    ``≠ hub`` pill on any container still on another build.
 
@@ -251,10 +266,24 @@ What can go wrong
    The hub is unreachable from this host, or it was built before FLIP#1204 and reports a version
    number rather than an image tag. Pass ``TAG=`` from the release page.
 
-``the hub's AES key differs from this kit's``
+``this kit's AES key differs from the hub's``
    The Hub-shared block is stale. Ask the admin for a refreshed kit (the sequence above) and
    replace the block; the upgrade verb runs the checklist first, so it will not proceed until
-   this is fixed.
+   the kit carries the hub's key. Once it does, the row turns into a warning that trust-api
+   still runs the old key, and the upgrade recreates it.
+
+``Could not ask the registry whether … is published``
+   Not a missing image: the registry refused or did not answer — check ``docker login`` for the
+   registry and this host's route to it, then re-run. Nothing was changed.
+
+``git could not say which commit … is at``
+   git refused to read the checkout — usually "dubious ownership", a checkout owned by another
+   user than the one running the upgrade (typically under ``sudo``). Run the printed
+   ``git config --global --add safe.directory`` as that user and re-run.
+
+``No running …_xnat-db to back up`` / ``The XNAT database dump failed or is incomplete``
+   The upgrade never migrates XNAT without a complete dump. Check the stack
+   (``docker stack ps <stack>``) and re-run; nothing was upgraded.
 
 ``XNAT bind-mount sources … are not all owned by 1001:1001``
    A site installed before the XNAT hardening ran ``xnat-web`` as root, so its archive is
