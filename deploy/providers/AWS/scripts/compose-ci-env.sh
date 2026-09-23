@@ -180,6 +180,10 @@ OPTIONAL_KEYS=(
     EFS_PROVISION_IMAGE
     LZA_VPC_NAME
     MANAGE_DNS
+    # Empty is the intended value wherever no tracking server is hosted: it
+    # disables the MLflow dual-write entirely, leaving flip-api canonical for
+    # status and metrics (FLIP#745). Requiring a value would reject that.
+    MLFLOW_TRACKING_URI
 
 )
 # Deliberately absent: PRESERVE_VPC. It is a make-level flag read only by
