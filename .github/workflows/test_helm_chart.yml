@@ -57,7 +57,8 @@ jobs:
 
       - name: Run sync-kit unit tests
         working-directory: trust/deploy/helm
-        run: uv run --no-project --with pytest --with "pyyaml==6.0.3" pytest tests/ -v
+        # tests/templates renders with helm, pinned in the helm-template job below.
+        run: uv run --no-project --with pytest --with "pyyaml==6.0.3" pytest tests/ -v --ignore=tests/templates
 
   helm-lint:
     name: Helm Lint

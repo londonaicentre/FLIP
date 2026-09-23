@@ -173,9 +173,6 @@ def test_render_override_kit_host_path_ignores_blank_fl_kit_dir():
     assert "\nflClient:\n  kitHostPath: /opt/flip/fl-kit\n" in out
 
 
-if __name__ == "__main__":
-    raise SystemExit(pytest.main([__file__, "-q"]))
-
 
 # ── Helm Secret ownership ────────────────────────────────────────────────
 # The Helm Secret-ownership stamping in sync_k8s_kit.py
