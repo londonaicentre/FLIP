@@ -1465,8 +1465,14 @@ GitHub resolves `--ref` against the workflow file *on that ref*, so until `main`
 carries `terraform_drift.yml` the dispatch returns HTTP 422. That is a known
 precondition, not a broken pipeline, so the job warns and passes instead of
 failing — a permanently red nightly is how a real dispatch failure comes to be
-ignored. Any other dispatch failure still fails hard. It resolves itself at the
-first `develop` → `main` release.
+ignored. It resolves itself at the first `develop` → `main` release.
+
+The step recognises that precondition from an **HTTP 404 alone** when probing for
+the file on `main`. Any other outcome — a 401/403, a rate limit, a 5xx, a network
+failure — fails the job rather than being read as "absent", because assuming
+absence there would skip the production drift run silently and still report
+green. Same fail-closed rule as `resolve-image-tags.sh`: one precise signal means
+absent, everything else stops the run.
 
 ### Recovering an environment's true values
 

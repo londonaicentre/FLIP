@@ -468,6 +468,57 @@ run_case "unknown TF_ENV is rejected" TF_ENV=dev
 expect_rc 1 "exits 1"
 expect_stderr "TF_ENV must be" "explains the valid set"
 
+# 14. THE PRODUCTION-DRIFT PROBE MUST FAIL CLOSED.
+#
+#     terraform_drift.yml's dispatch-prod job asks whether the workflow is on
+#     `main` yet, because it is not until the first develop -> main release and
+#     failing on that would leave the nightly permanently red. The hazard is the
+#     other direction: if every non-zero `gh` exit reads as "not there yet", then
+#     a 401, a rate limit or a 5xx skips the production drift dispatch *and the
+#     job still passes* — the silent stop the job exists to prevent.
+#
+#     Absence must therefore be recognised from an HTTP 404 alone. This is the
+#     same fail-closed rule as resolve-image-tags.sh, and it is asserted here
+#     rather than in a runtime suite because nothing else ever executes this step
+#     outside a nightly production run.
+echo ""
+echo "-- terraform_drift.yml's main-probe fails closed"
+drift_wf="${WORKFLOW_DIR}/terraform_drift.yml"
+if [[ ! -f "${drift_wf}" ]]; then
+    no "terraform_drift.yml exists" "not found at ${drift_wf}"
+else
+    # The probe must keep the status line (-i) rather than discarding output, or
+    # the 404 cannot be distinguished from any other failure.
+    if grep -qE 'gh api -i --silent' "${drift_wf}"; then
+        ok "probes with -i so the HTTP status is readable"
+    else
+        no "probes with -i so the HTTP status is readable" \
+            "without the status line every failure looks like 'absent'"
+    fi
+    # The old form: `if ! gh api … --silent >/dev/null 2>&1` — every error, not
+    # just a 404, becomes "absent". It spanned two lines via a backslash
+    # continuation, so match the discard itself rather than the whole statement.
+    if grep -qE '^[[:space:]]*(if ! )?gh api\b' "${drift_wf}" &&
+        grep -qE '>[[:space:]]*/dev/null[[:space:]]+2>&1' "${drift_wf}"; then
+        no "does not swallow the probe's failure reason" \
+            "an API error would be read as 'not on main yet' and skip production silently"
+    else
+        ok "does not swallow the probe's failure reason"
+    fi
+    # Absence is keyed on 404 specifically, and anything else exits non-zero.
+    if grep -qE '"\$\{http_status\}"[[:space:]]*==[[:space:]]*"404"' "${drift_wf}"; then
+        ok "treats only HTTP 404 as absent"
+    else
+        no "treats only HTTP 404 as absent" "no 404-specific branch found"
+    fi
+    if grep -qE '::error title=Could not check for terraform_drift.yml on main' "${drift_wf}"; then
+        ok "fails loudly on any other probe outcome"
+    else
+        no "fails loudly on any other probe outcome" \
+            "a transient API error must stop the run, not skip production"
+    fi
+fi
+
 echo ""
 echo "==== ${PASS} passed, ${FAIL} failed ===="
 [[ "${FAIL}" -eq 0 ]]
