@@ -50,6 +50,7 @@ from tests.integration.conftest import admin_user, override_verify_token_as
 KEYCLOAK_IMAGE = "quay.io/keycloak/keycloak:26.7.4"  # keep in step with deploy/compose.development.yml
 REALM_FILE = Path(__file__).resolve().parents[3] / "deploy" / "keycloak" / "flip-realm.json"
 SEEDED_PASSWORD = "Round-Trip-Pa55word!"  # pragma: allowlist secret
+CHOSEN_PASSWORD = "Chosen-By-The-User-Pa55!"  # pragma: allowlist secret
 ADMIN_CLIENT_SECRET = "round-trip-admin-secret"  # pragma: allowlist secret
 SEEDED_ADMIN_SUB = UUID("0f1b6a2e-0001-4919-8000-000000000001")  # ADMIN_EMAIL_1's fixed id in the realm file
 
@@ -211,6 +212,34 @@ def test_register_user_creates_a_keycloak_user_and_writes_audit(client: TestClie
     ).first()
     assert audit is not None
     assert audit.modified_by_user_id == admin_id
+
+
+def test_a_registered_user_signs_in_once_their_password_is_set(client: TestClient, session, keycloak_backend):
+    """FLIP keeps a user's name in its own tables, so the realm must not demand one from Keycloak.
+
+    Keycloak's default user profile requires firstName/lastName and, with VERIFY_PROFILE on, refuses the
+    UI's password grant ("Account is not fully set up") for a user without them — which is every user
+    FLIP registers. The realm file makes both optional.
+    """
+    admin_id = admin_user(session)
+    override_verify_token_as(admin_id)
+    email = f"signin-{uuid4().hex[:8]}@example.com"
+    response = client.post(
+        "/api/users",
+        json={
+            "email": email,
+            "name": "New User",
+            "organisation": "Test Hospital",
+            "roles": [str(RoleRef.RESEARCHER.value)],
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    # The account-console step: the user replaces the temporary password with their own, which also
+    # clears the UPDATE_PASSWORD action registration left.
+    build_identity_provider().set_password(email, CHOSEN_PASSWORD)
+    tokens = _sign_in(keycloak_backend, email, CHOSEN_PASSWORD)
+    assert tokens["access_token"]
 
 
 def test_register_user_duplicate_email_returns_400(client: TestClient, session, keycloak_backend):

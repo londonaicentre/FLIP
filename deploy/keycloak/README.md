@@ -17,6 +17,7 @@ password grant, so the login form is the same under both backends.
 | Client `flip-ui` | public, direct access grants on, redirect URIs `http://localhost:44350`–`44359` + `http://localhost:${UI_PORT}`, audience mapper `flip-api` | The browser client. Its redirect URIs double as flip-api's CORS allowlist (`IdentityProvider.allowed_origins`), the role Cognito's callback URLs play elsewhere |
 | Client `flip-api-admin` | confidential, service account with `manage-users view-users query-users view-clients` | What flip-api authenticates to the Admin REST API as; its client secret is `KEYCLOAK_ADMIN_CLIENT_SECRET` <!-- pragma: allowlist secret --> |
 | Users | the well-known dev identities from `flip_api/utils/constants.py`, fixed ids, password `${ADMIN_USER_PASSWORD}` | Fixed ids keep the FLIP database's role rows valid across a recreate. Demo-video users are not here: `make demo-users` creates them |
+| User profile | Keycloak's default declarative profile with `firstName`/`lastName` optional (the `UserProfileProvider` component; its config is a JSON string) | FLIP keeps names in its own database and creates users with an email only. With the default required names, Keycloak's `VERIFY_PROFILE` makes the password grant answer "Account is not fully set up" for every user registered from the Admin Area, even after they set a password |
 
 `${VAR}` placeholders resolve from the container's environment, which the compose
 service sets from the hub env file (`ADMIN_USER_PASSWORD`, `KEYCLOAK_ADMIN_CLIENT_SECRET`,
