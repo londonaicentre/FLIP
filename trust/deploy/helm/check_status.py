@@ -300,6 +300,29 @@ def plugin_jar_name(url: str) -> str | None:
     return name if name.endswith(".jar") else None
 
 
+def _is_build_of(key: str, jar: str) -> bool:
+    """Is ``jar`` a build of the plugin named ``key``?
+
+    A bare ``startswith(f"{key}-")`` is not enough: ``container-service-`` also prefixes
+    ``container-service-extras-1.0.jar``, so a container-service that never downloaded
+    would be reported as *stale* naming the extras jar — pointing the operator at a file
+    they must not touch, and hiding the failed download that is the actual fault. The
+    match therefore requires a digit immediately after ``<key>-``, which is where every
+    plugin in the roster carries its version.
+
+    Args:
+        key: Plugin key from ``xnat.web.plugins.urls``.
+        jar: A filename found in the pod's plugin directory.
+
+    Returns:
+        True if ``jar`` is a versioned build of ``key``.
+    """
+    if not jar.endswith(".jar"):
+        return False
+    prefix = f"{key}-"
+    return jar.startswith(prefix) and jar[len(prefix) : len(prefix) + 1].isdigit()
+
+
 def compare_plugin_roster(
     expected: dict[str, str], found: list[str]
 ) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]]]:
@@ -316,15 +339,24 @@ def compare_plugin_roster(
         because the pod is then running a jar the chart stopped asking for, which is how a
         1.9.x DQR plugin survived on an XNAT 1.10.0 pod and aborted every C-STORE with
         AbstractMethodError (FLIP#1228).
+
+        Only a versioned build of the key itself counts as stale (see ``_is_build_of``),
+        and never a jar the roster expects under another key: a plugin whose name merely
+        starts with another's stays *missing*, which is the diagnosis that sends the
+        operator to the init container's logs where the failed download actually is.
     """
     found_set = set(found)
+    # A jar the roster expects under some other key belongs to that key, and is never this
+    # plugin's stale copy however its name reads. (The loop skips any key whose own jar is
+    # present, so a jar left in here is always another key's.)
+    spoken_for = set(expected.values())
     missing: list[tuple[str, str]] = []
     stale: list[tuple[str, str, str]] = []
 
     for key, jar in sorted(expected.items()):
         if jar in found_set:
             continue
-        others = sorted(f for f in found_set if f.startswith(f"{key}-") and f.endswith(".jar"))
+        others = sorted(f for f in found_set if _is_build_of(key, f) and f not in spoken_for)
         if others:
             stale.append((key, jar, ", ".join(others)))
         else:

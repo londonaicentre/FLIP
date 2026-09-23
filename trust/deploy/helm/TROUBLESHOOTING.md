@@ -556,11 +556,39 @@ from `xnat.web.plugins.urls` on **every pod creation** — there is no PVC holdi
 any pod created from an up-to-date pod spec has the right roster, and a pod with the wrong one
 proves its **spec** is old: no `helm upgrade` has rolled `xnat-web` since the roster changed.
 
-In FLIP#1228 that is precisely what happened. `values.yaml` had carried the corrected roster
-since August, but five consecutive upgrades failed with
-`resource Job/flip-trust/trust-release-flip-trust-xnat-init not ready` because the `xnat-init`
-post-upgrade hook ran longer (~22 min observed) than the then-hardcoded `--timeout 20m`. The
-failure named Helm, so it read as a hook problem rather than as an un-deployed chart.
+In FLIP#1228 that is precisely what happened: `values.yaml` had carried the corrected roster
+since August, and the pod created on 26 Aug still ran `dicom-query-retrieve-2.3.2-xpl.jar` and
+`container-service-3.8.0-fat.jar`.
+
+**Which of the three reasons a spec goes un-rolled is yours is worth establishing before you
+act — they have different fixes.** Note that a failed post-upgrade hook is *not* on the list:
+`xnat-init` is `post-install,post-upgrade` and `deploy` passes neither `--atomic` nor `--wait`,
+so Helm has already applied the Deployment by the time the hook runs and a hook timeout cannot
+by itself keep an old pod spec live.
+
+1. **The upgrade never carried the new URLs** — an older checkout, or an overrides file pinning
+   old versions. The release's own history settles it:
+
+   ```bash
+   helm get values trust-release -n flip-trust --revision <N> --all | grep -A5 urls
+   ```
+
+2. **The rollout stalled.** `xnat-web` is a singleton on a ReadWriteOnce volume; under the
+   default RollingUpdate the new pod is surged *alongside* the old one, is refused the volume on
+   another node and shares one data directory and database on the same, so it never goes Ready
+   and the old pod serves on. The chart now declares `strategy: Recreate` to prevent this, but a
+   release last upgraded before that lands still shows it:
+
+   ```bash
+   kubectl -n flip-trust get rs,pods -l app.kubernetes.io/component=xnat-web
+   # two ReplicaSets with a stuck surge pod = this case
+   ```
+
+3. **The upgrade never completed.** Five consecutive upgrades failed with
+   `resource Job/flip-trust/trust-release-flip-trust-xnat-init not ready`, the `xnat-init` hook
+   running longer (~22 min observed) than the then-hardcoded `--timeout 20m`. That leaves the
+   release `failed` and the operator reading a hook problem rather than an un-deployed chart —
+   and, when case 2 is also in play, it is the stalled rollout the job is really waiting behind.
 
 **Detection.**
 
@@ -577,12 +605,17 @@ make -C trust/deploy/helm status        # FAILs naming both the expected and the
 make -C trust/deploy/helm smoke-cstore  # real C-STORE via the PACS, then reads dicom.log
 ```
 
-**Fix.** Get one `helm upgrade` to complete, with a timeout above the init job's real duration:
+**Fix.** Get one `helm upgrade` to complete, from a checkout that carries both the roster and
+`strategy: Recreate`, with a timeout above the init job's real duration:
 
 ```bash
 kubectl get job -n flip-trust -w    # time one run before choosing a value
 make -C trust/deploy/helm deploy-trust-k8s KIT=<KIT> HELM_TIMEOUT=45m
 ```
+
+The first upgrade onto `Recreate` changes the strategy and replaces the pod in one go. If a
+surge pod from case 2 is still wedged, `kubectl -n flip-trust delete pod <surge pod>` clears it
+so the replacement can take the volume.
 
 `HELM_TIMEOUT` (default `30m`) governs both the Helm hook wait in `deploy` and the `kubectl wait`
 in `xnat-init`. If the hook is genuinely wedged rather than merely slow, deploy with

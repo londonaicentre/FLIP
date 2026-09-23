@@ -9,16 +9,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Guards for the two halves of FLIP#1228: the deploy budget, and the roster check.
+"""Guards for FLIP#1228: the rollout, the deploy budget, and the roster check.
 
-The bug was a correct chart that never reached the cluster. Five upgrades in a row
-applied the corrected plugin roster and then failed their post-upgrade hook on a
-hardcoded ``--timeout 20m``, shorter than the job's real ~22 minutes — so the failure
-named Helm, the operator read it as a hook problem, and the pod kept running jars that
-crash XNAT 1.10.0's importer on every C-STORE while C-ECHO still passed.
+The bug was a correct chart that never reached the cluster. The plugin roster has been
+right since August, yet the running pod kept jars that crash XNAT 1.10.0's importer on
+every C-STORE while C-ECHO still passed — and five upgrades in a row read as a hook
+problem rather than as an un-deployed chart.
 
-Two things therefore have to stay true, and neither is visible in a rendered chart:
+Three things therefore have to stay true, and none is visible in a rendered chart:
 
+* xnat-web is REPLACED on upgrade, not rolled: a singleton on a ReadWriteOnce volume
+  cannot surge a second pod, so under RollingUpdate the rollout stalls and the old pod
+  serves on with the old jars however long the deploy waits;
 * the deploy timeout is ONE knob an operator can raise, not a literal per wait site;
 * the roster check derives its expected filenames from the same URLs the chart
   downloads, so it cannot agree with a stale pod by carrying its own copy of the
@@ -33,6 +35,7 @@ import pytest
 
 CHART_DIR = Path(__file__).resolve().parents[1]
 MAKEFILE = CHART_DIR / "Makefile"
+TEMPLATES_DIR = CHART_DIR / "templates"
 
 _SCRIPT = CHART_DIR / "check_status.py"
 _spec = importlib.util.spec_from_file_location("check_status", _SCRIPT)
@@ -180,13 +183,32 @@ def test_an_absent_plugin_is_missing_not_stale() -> None:
 def test_a_plugin_whose_name_prefixes_another_is_not_mistaken_for_it() -> None:
     """``container-service`` must not claim ``container-service-extras-*`` as its stale copy.
 
-    The prefix match is on ``<key>-``, so a longer plugin name starting with a shorter one
-    would otherwise be reported as the wrong version of it.
+    ``container-service-`` prefixes ``container-service-extras-1.0.jar``, so a bare
+    ``startswith`` reports a container-service that never downloaded as *stale*, naming a
+    jar the operator must not touch and hiding the failed download. The expected jar is
+    deliberately absent here, so the prefix branch really is the one under test.
     """
     expected = {"container-service": "container-service-3.8.1-fat.jar"}
 
-    missing, stale = check_status.compare_plugin_roster(expected, ["container-service-3.8.1-fat.jar"])
-    assert (missing, stale) == ([], [])
+    missing, stale = check_status.compare_plugin_roster(expected, ["container-service-extras-1.0.jar"])
+
+    assert stale == []
+    assert missing == [("container-service", "container-service-3.8.1-fat.jar")]
+
+
+def test_a_jar_another_key_expects_is_never_reported_as_this_plugins_stale_copy() -> None:
+    """Two roster keys, one present jar: it belongs to the key that expects it.
+
+    ``foo-1.jar`` satisfies the digit-after-``<key>-`` rule for key ``foo`` as well, so
+    without the roster's own claim being honoured, ``foo`` would be reported stale against
+    a jar that is simply ``foo-1``'s, up to date and doing its job.
+    """
+    expected = {"foo": "foo-2.0.jar", "foo-1": "foo-1.jar"}
+
+    missing, stale = check_status.compare_plugin_roster(expected, ["foo-1.jar"])
+
+    assert stale == []
+    assert missing == [("foo", "foo-2.0.jar")]
 
 
 # ── Reading the roster from the live release ─────────────────────────────────────────
@@ -269,3 +291,43 @@ def test_the_cstore_smoke_only_judges_lines_this_transfer_wrote() -> None:
     )
     assert "LOG_MARK" in script, reason
     assert "tail -n +" in script, reason
+
+
+def test_the_instance_lookup_sends_since_with_limit() -> None:
+    """Orthanc rejects ``limit`` without ``since`` with a 400.
+
+    ``orthanc_curl`` runs ``curl -sS`` without ``--fail``, so that error body comes back
+    on stdout with exit 0 and is mangled by the same ``tr``/``cut`` into something that
+    looks like an instance id. The store then fails in Orthanc's words rather than the
+    smoke's, and the run reads as a broken receiver rather than a bad listing.
+    """
+    script = (CHART_DIR / "scripts" / "smoke-cstore.sh").read_text()
+
+    listing = re.search(r"/instances\?[^\"'\s]*", script)
+    assert listing, "the smoke no longer lists Orthanc's instances to pick something to send"
+    assert "since=" in listing.group(0), (
+        f"{listing.group(0)} passes limit without since, which Orthanc answers with a 400"
+    )
+
+
+# ── The rollout that has to replace the pod ──────────────────────────────────────────
+
+
+def test_xnat_web_replaces_its_pod_rather_than_surging_a_second_one() -> None:
+    """A singleton on a ReadWriteOnce PVC cannot roll; it has to be replaced.
+
+    Left at the default RollingUpdate, an upgrade surges the new pod ALONGSIDE the old
+    one. The second XNAT is refused the volume on another node and shares one data
+    directory and one database on the same node, so it never goes Ready — the rollout
+    never completes and the old pod serves on with the old plugin jars, which is a
+    corrected roster that never reaches the cluster no matter how long the deploy waits.
+    orthanc.yaml carries the same declaration for the same reason.
+    """
+    spec = (TEMPLATES_DIR / "xnat-web.yaml").read_text()
+    deployment = next(doc for doc in spec.split("\n---") if "kind: Deployment" in doc)
+
+    assert re.search(r"^\s*strategy:\s*$\n\s*type:\s*Recreate\s*$", deployment, re.MULTILINE), (
+        "the xnat-web Deployment no longer declares strategy.type=Recreate, so an upgrade "
+        "surges a second XNAT onto the same RWO volume and database and the rollout stalls "
+        "with the old pod still serving"
+    )

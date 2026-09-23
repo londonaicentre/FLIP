@@ -138,9 +138,20 @@ info "   ${DICOM_LOG} is ${LOG_MARK} lines before the store"
 
 # ── 2. Pick something to send ────────────────────────────────────────────────────────
 if [ -z "$INSTANCE_ID" ]; then
-  INSTANCE_ID=$(orthanc_curl "${ORTHANC_URL}/instances?limit=1" | tr -d '[]" \n' | cut -d, -f1)
+  # `since` and `limit` go together: Orthanc rejects either one alone with a 400, and
+  # `curl -sS` (no --fail) would hand that error body on to be mangled into an "id".
+  INSTANCE_ID=$(orthanc_curl "${ORTHANC_URL}/instances?since=0&limit=1" | tr -d '[]" \n' | cut -d, -f1)
 fi
 [ -n "$INSTANCE_ID" ] || fail "Orthanc holds no instances — seed the PACS first, or pass INSTANCE_ID=<orthanc instance id>"
+# An Orthanc resource id is 8 dash-separated hex groups. Anything else is an error body
+# that survived the tr/cut above; sending it would fail at the store with Orthanc's words
+# rather than these, hiding whether the PACS or the receiver is at fault.
+case "$INSTANCE_ID" in
+  *[!0-9a-f-]*)
+    red "$INSTANCE_ID"
+    fail "Orthanc did not return an instance id — the listing above is what it said instead"
+    ;;
+esac
 info "   storing instance ${INSTANCE_ID} → modality ${ORTHANC_MODALITY}"
 
 # ── 3. The store itself ──────────────────────────────────────────────────────────────
