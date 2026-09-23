@@ -1,0 +1,139 @@
+{
+  "id": "flip",
+  "realm": "flip",
+  "displayName": "FLIP (local development)",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": false,
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyDigits": 6,
+  "otpPolicyPeriod": 30,
+  "accessTokenLifespan": 3600,
+  "ssoSessionIdleTimeout": 432000,
+  "ssoSessionMaxLifespan": 432000,
+  "clients": [
+    {
+      "clientId": "flip-ui",
+      "name": "FLIP UI",
+      "description": "The browser client: username/password sign-in through the OIDC password grant. Redirect URIs double as flip-api's CORS allowlist (IdentityProvider.allowed_origins), the same role Cognito's callback URLs play in stag/prod.",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:44350/*",
+        "http://localhost:44351/*",
+        "http://localhost:44352/*",
+        "http://localhost:44353/*",
+        "http://localhost:44354/*",
+        "http://localhost:44355/*",
+        "http://localhost:44356/*",
+        "http://localhost:44357/*",
+        "http://localhost:44358/*",
+        "http://localhost:44359/*",
+        "http://localhost:${UI_PORT}/*"
+      ],
+      "webOrigins": ["+"],
+      "attributes": {
+        "post.logout.redirect.uris": "+"
+      },
+      "protocolMappers": [
+        {
+          "name": "flip-api audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "flip-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "flip-api-admin",
+      "name": "flip-api admin client",
+      "description": "Service account flip-api uses for the Admin REST API (list/invite/disable users, MFA state). Secret = KEYCLOAK_ADMIN_CLIENT_SECRET.",
+      "enabled": true,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${KEYCLOAK_ADMIN_CLIENT_SECRET}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
+    }
+  ],
+  "users": [
+    {
+      "id": "0f1b6a2e-0001-4919-8000-000000000001",
+      "username": "aicentreflip@gmail.com",
+      "email": "aicentreflip@gmail.com",
+      "firstName": "AI Centre",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{"type": "password", "value": "${ADMIN_USER_PASSWORD}", "temporary": false}]
+    },
+    {
+      "id": "0f1b6a2e-0001-4919-8000-000000000002",
+      "username": "alexandre.triay_bagur@kcl.ac.uk",
+      "email": "alexandre.triay_bagur@kcl.ac.uk",
+      "firstName": "Alexandre",
+      "lastName": "Triay Bagur",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{"type": "password", "value": "${ADMIN_USER_PASSWORD}", "temporary": false}]
+    },
+    {
+      "id": "0f1b6a2e-0001-4919-8000-000000000003",
+      "username": "rafael.dias@kcl.ac.uk",
+      "email": "rafael.dias@kcl.ac.uk",
+      "firstName": "Rafael",
+      "lastName": "Garcia-Dias",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{"type": "password", "value": "${ADMIN_USER_PASSWORD}", "temporary": false}]
+    },
+    {
+      "id": "0f1b6a2e-0001-4919-8000-000000000004",
+      "username": "rafaelagd@gmail.com",
+      "email": "rafaelagd@gmail.com",
+      "firstName": "Rafael",
+      "lastName": "Garcia-Dias",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{"type": "password", "value": "${ADMIN_USER_PASSWORD}", "temporary": false}]
+    },
+    {
+      "id": "0f1b6a2e-0001-4919-8000-000000000005",
+      "username": "triayalex@gmail.com",
+      "email": "triayalex@gmail.com",
+      "firstName": "Alexandre",
+      "lastName": "Triay",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{"type": "password", "value": "${ADMIN_USER_PASSWORD}", "temporary": false}]
+    },
+    {
+      "username": "service-account-flip-api-admin",
+      "enabled": true,
+      "serviceAccountClientId": "flip-api-admin",
+      "clientRoles": {
+        "realm-management": ["manage-users", "view-users", "query-users", "view-clients"]
+      }
+    }
+  ]
+}

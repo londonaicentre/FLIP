@@ -33,6 +33,7 @@ dependencies = [
     "sqlmodel>=0.0.24",
     "boto3-stubs>=1.37.22",
     "pyjwt[crypto]>=2.12.1",
+    "httpx>=0.28.1",  # Keycloak admin REST client (auth/identity/keycloak.py); already a fastapi[standard] transitive
     "cryptography>=46.0.7",
     "python-dotenv>=1.2.2",
     "psycopg2-binary>=2.9.10",

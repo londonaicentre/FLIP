@@ -69,6 +69,59 @@ services:
     networks:
       - default
 
+  # Local identity provider (FLIP#919): what Cognito is in stag/prod. flip-api
+  # verifies its tokens through the same generic OIDC path and administers users
+  # through its REST API (AUTH_BACKEND=keycloak, the dev default). Ephemeral by
+  # design — no volume, the realm is re-imported from deploy/keycloak/flip-realm.json
+  # on every boot, so that file in git is the whole state. `--import-realm` skips a
+  # realm that already exists, which is why a volume would make realm-file edits
+  # silently not apply (`make reset-keycloak` recreates the container).
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.4
+    command: ["start-dev", "--import-realm"]
+    ports:
+      - "${KEYCLOAK_PORT:-8180}:8080"
+    environment:
+      # Admin console login (http://localhost:${KEYCLOAK_PORT}/admin): dev-only.
+      - KC_BOOTSTRAP_ADMIN_USERNAME=${KEYCLOAK_ADMIN_USERNAME:-admin}
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      - KC_HEALTH_ENABLED=true
+      - KC_HTTP_ENABLED=true
+      # Hostname v2, full-URL form: the ONE frontend URL, the one the browser
+      # uses. Every issued token then carries iss=http://localhost:<port>/realms/flip
+      # whether the UI minted it through the published port or a script did, and
+      # that is exactly what flip-api's verifier checks (KEYCLOAK_PUBLIC_URL, same
+      # expression). flip-api reaches the container as http://keycloak:8080 for
+      # JWKS and the admin API, which never look at iss. KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+      # is deliberately NOT set: it would stamp tokens obtained via keycloak:8080
+      # with that host, which the verifier would reject.
+      - KC_HOSTNAME=http://localhost:${KEYCLOAK_PORT:-8180}
+      # Resolved inside the realm file (${...} placeholders): the seeded dev
+      # users' password, the admin client's secret, and the UI origin.
+      - ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD:?ADMIN_USER_PASSWORD must be set in the env file}
+      - KEYCLOAK_ADMIN_CLIENT_SECRET=${KEYCLOAK_ADMIN_CLIENT_SECRET:-flip-dev-admin-secret}
+      - UI_PORT=${UI_PORT:?UI_PORT must be set in the env file}
+    volumes:
+      - ./keycloak/flip-realm.json:/opt/keycloak/data/import/flip-realm.json:ro
+    healthcheck:
+      # The image ships no curl/wget; bash's /dev/tcp against the management port
+      # (9000, enabled by KC_HEALTH_ENABLED) is the documented workaround.
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '"status": "UP"' <&3
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    networks:
+      - default
+
   flip-api:
     platform: linux/x86_64
     # Pull the pre-built GHCR image by default (pull_policy: always); the local
@@ -104,7 +157,14 @@ services:
       # external — compose ignores driver options there (FLIP#959).
       - 127.0.0.1:${API_DEBUG_PORT:-5678}:5678
     depends_on:
-      - flip-db
+      flip-db:
+        condition: service_started
+      # Boot seeding (entrypoint.sh) asks the identity provider for the well-known
+      # users before uvicorn starts, so wait for Keycloak's realm to be importable.
+      # `required: false` keeps `AUTH_BACKEND=cognito` stacks from needing it.
+      keycloak:
+        condition: service_healthy
+        required: false
     volumes:
       - ../flip-api/src/:/app/src/
       - ../flip-api/entrypoint.sh:/app/entrypoint.sh
@@ -170,8 +230,25 @@ services:
       # Also the reason the fl-api's BUNDLE_URL_ALLOWED_HOSTS (compose.development.<backend>.yml)
       # is exactly s3.<region>.amazonaws.com: this endpoint makes the presigned URLs path-style.
       - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
-      - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
-      - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
+      # Identity provider (FLIP#919). Left unset, DevSettings picks the local
+      # Keycloak below and needs no AWS account to sign in; AUTH_BACKEND=cognito
+      # in .env.development selects the dev Cognito pool instead (then the two
+      # AWS_COGNITO_* ids must be set and an SSO session active). Passed
+      # explicitly for the same reason as EMAIL_BACKEND: no env_file here.
+      - AUTH_BACKEND=${AUTH_BACKEND:-}
+      - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID:-}
+      - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID:-}
+      # Keycloak coordinates: the docker-network URL for JWKS + the admin API,
+      # and the browser-facing URL that every token's `iss` carries (pinned by
+      # KC_HOSTNAME on the keycloak service — the two must agree on the port).
+      # The defaults match DevSettings; override only for a second stack.
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_PUBLIC_URL=http://localhost:${KEYCLOAK_PORT:-8180}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM:-}
+      - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID:-}
+      - KEYCLOAK_AUDIENCE=${KEYCLOAK_AUDIENCE:-}
+      - KEYCLOAK_ADMIN_CLIENT_ID=${KEYCLOAK_ADMIN_CLIENT_ID:-}
+      - KEYCLOAK_ADMIN_CLIENT_SECRET=${KEYCLOAK_ADMIN_CLIENT_SECRET:-}
       # Email dispatch. Dev needs no SES: left unset these three reach DevSettings
       # as empty strings, which it coerces to the console backend and the
       # placeholder addresses. They are passed anyway so the documented

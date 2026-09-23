@@ -238,7 +238,7 @@ def test_auth_backend_defaults_per_environment_class():
     ``.env.development`` may already pin ``AUTH_BACKEND``.
     """
     assert Settings.model_fields["AUTH_BACKEND"].default == "cognito"
-    assert DevSettings.model_fields["AUTH_BACKEND"].default == "cognito"
+    assert DevSettings.model_fields["AUTH_BACKEND"].default == "keycloak"
     assert ProdSettings.model_fields["AUTH_BACKEND"].default == "cognito"
 
 

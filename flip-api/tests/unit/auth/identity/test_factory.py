@@ -15,11 +15,13 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import SecretStr
 
 from flip_api.auth.identity import factory
 from flip_api.auth.identity.cognito import CognitoIdentityProvider
 from flip_api.auth.identity.factory import build_identity_provider, get_identity_provider
 from flip_api.auth.identity.http import HttpIdentityProvider
+from flip_api.auth.identity.keycloak import KeycloakIdentityProvider
 
 
 def _settings(backend: str) -> MagicMock:
@@ -42,6 +44,20 @@ def test_cognito_backend_builds_the_cognito_provider():
     provider = build_identity_provider(_settings("cognito"))
     assert isinstance(provider, CognitoIdentityProvider)
     assert provider.backend == "cognito"
+
+
+def test_keycloak_backend_builds_the_keycloak_provider():
+    settings = _settings("keycloak")
+    settings.ENV = "development"
+    settings.KEYCLOAK_URL = "http://keycloak:8080"
+    settings.KEYCLOAK_PUBLIC_URL = "http://localhost:8180"
+    settings.KEYCLOAK_REALM = "flip"
+    settings.KEYCLOAK_CLIENT_ID = "flip-ui"
+    settings.KEYCLOAK_ADMIN_CLIENT_ID = "flip-api-admin"
+    settings.KEYCLOAK_ADMIN_CLIENT_SECRET = SecretStr("dev-secret")
+    provider = build_identity_provider(settings)
+    assert isinstance(provider, KeycloakIdentityProvider)
+    assert provider.backend == "keycloak"
 
 
 def test_unknown_backend_is_a_configuration_error():

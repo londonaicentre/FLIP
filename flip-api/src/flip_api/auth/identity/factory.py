@@ -17,6 +17,7 @@ from functools import lru_cache
 from flip_api.auth.identity.base import IdentityProvider
 from flip_api.auth.identity.cognito import CognitoIdentityProvider
 from flip_api.auth.identity.http import HttpIdentityProvider
+from flip_api.auth.identity.keycloak import KeycloakIdentityProvider
 from flip_api.config import DevSettings, ProdSettings, get_settings
 
 
@@ -30,6 +31,8 @@ def build_identity_provider(settings: DevSettings | ProdSettings | None = None) 
     settings = settings or get_settings()
     if settings.AUTH_BACKEND == "cognito":
         return CognitoIdentityProvider(settings)
+    if settings.AUTH_BACKEND == "keycloak":
+        return KeycloakIdentityProvider(settings)
     raise ValueError(f"Unsupported AUTH_BACKEND: {settings.AUTH_BACKEND!r}")
 
 

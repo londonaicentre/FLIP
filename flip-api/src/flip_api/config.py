@@ -411,6 +411,12 @@ class DevSettings(Settings):
     ENV: Literal["development"] = "development"
     POSTGRES_PASSWORD: str  # in dev, get DB password from env variable
 
+    # Local development authenticates against the Keycloak container by
+    # default (FLIP#919): no AWS account needed to sign in. Set
+    # AUTH_BACKEND=cognito in .env.development to develop against the dev
+    # Cognito pool instead (needs the AWS_COGNITO_* ids and an SSO session).
+    AUTH_BACKEND: Literal["cognito", "keycloak"] = "keycloak"
+
     # Keycloak defaults that match the `keycloak` service in
     # deploy/compose.development.yml, so a dev env file needs no KEYCLOAK_*
     # lines at all. The admin-client secret is a dev-only placeholder shared
