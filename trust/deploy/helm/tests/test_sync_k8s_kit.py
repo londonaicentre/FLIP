@@ -175,3 +175,107 @@ def test_render_override_kit_host_path_ignores_blank_fl_kit_dir():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# ── Helm Secret ownership ────────────────────────────────────────────────
+# The Helm Secret-ownership stamping in sync_k8s_kit.py
+# (FLIP#595) — so a Secret this script creates can be adopted by a subsequent
+# `helm upgrade --install` instead of aborting the release.
+
+
+def test_derive_release_name_strips_chart_suffix():
+    assert sync_k8s_kit.derive_release_name("trust-release-flip-trust-secrets") == "trust-release"
+    assert sync_k8s_kit.derive_release_name("my-trust-flip-trust-secrets") == "my-trust"
+
+
+def test_derive_release_name_without_suffix_is_identity():
+    assert sync_k8s_kit.derive_release_name("some-other-secret") == "some-other-secret"
+
+
+def test_stamp_helm_ownership_issues_label_and_annotate(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sync_k8s_kit.subprocess, "run", lambda args, **kw: calls.append(args) or None)
+    sync_k8s_kit.stamp_helm_ownership("trust-release-flip-trust-secrets", "flip-trust", "trust-release")
+
+    label = next(c for c in calls if c[1] == "label")
+    annotate = next(c for c in calls if c[1] == "annotate")
+    assert "app.kubernetes.io/managed-by=Helm" in label
+    assert "--overwrite" in label and "--overwrite" in annotate
+    assert "meta.helm.sh/release-name=trust-release" in annotate
+    assert "meta.helm.sh/release-namespace=flip-trust" in annotate
+    assert ["-n", "flip-trust"] == label[4:6]  # namespaced
+
+
+def test_kube_context_reaches_every_kubectl_call(monkeypatch):
+    """`make … KUBE_CONTEXT=<ctx>` must act on that cluster, not whichever one kubectl points at."""
+    calls = []
+    monkeypatch.setattr(sync_k8s_kit.subprocess, "run", lambda args, **kw: calls.append(args) or None)
+    monkeypatch.setattr(sync_k8s_kit, "KUBECTL", ["kubectl", "--context", "kind-flip-kch"])
+    sync_k8s_kit.stamp_helm_ownership("trust-release-flip-trust-secrets", "flip-trust", "trust-release")
+    assert calls
+    assert all(c[:3] == ["kubectl", "--context", "kind-flip-kch"] for c in calls)
+
+
+def test_patch_k8s_secret_stamps_ownership_on_create(monkeypatch):
+    """A freshly-created Secret must be stamped Helm-owned (the #595 fix)."""
+    calls = []
+
+    class _Res:
+        returncode = 1  # secret does not yet exist → create path
+
+    def fake_run(args, **kw):
+        calls.append(args)
+        return _Res()
+
+    monkeypatch.setattr(sync_k8s_kit.subprocess, "run", fake_run)
+    sync_k8s_kit.patch_k8s_secret(
+        "trust-release-flip-trust-secrets",
+        "flip-trust",
+        {"trust-api-key": "x"},
+        "trust-release",
+    )
+    verbs = [c[1] for c in calls]
+    assert "create" in verbs  # secret created
+    assert "label" in verbs  # ...then stamped
+    assert "annotate" in verbs
+
+
+def test_patch_k8s_secret_heals_ownership_on_existing(monkeypatch):
+    """An already-present Secret must be merge-patched and (re-)stamped Helm-owned
+    with --overwrite, so a pre-existing unowned Secret becomes adoptable (the #595
+    heal path)."""
+    calls = []
+
+    class _Res:
+        returncode = 0  # secret already exists → patch path
+
+    def fake_run(args, **kw):
+        calls.append(args)
+        return _Res()
+
+    monkeypatch.setattr(sync_k8s_kit.subprocess, "run", fake_run)
+    sync_k8s_kit.patch_k8s_secret(
+        "trust-release-flip-trust-secrets",
+        "flip-trust",
+        {"trust-api-key": "x"},
+        "trust-release",
+    )
+    verbs = [c[1] for c in calls]
+    assert "patch" in verbs  # existing secret merge-patched
+    assert "label" in verbs  # ...then (re-)stamped
+    assert "annotate" in verbs
+    label = next(c for c in calls if c[1] == "label")
+    annotate = next(c for c in calls if c[1] == "annotate")
+    assert "--overwrite" in label and "--overwrite" in annotate
+
+
+def test_stamp_helm_ownership_default_namespace(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sync_k8s_kit.subprocess, "run", lambda args, **kw: calls.append(args) or None)
+    sync_k8s_kit.stamp_helm_ownership("s", "", "rel")
+    annotate = next(c for c in calls if c[1] == "annotate")
+    assert "meta.helm.sh/release-namespace=default" in annotate
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))
