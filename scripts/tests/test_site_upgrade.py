@@ -77,6 +77,15 @@ def _needs_tag(fn, *args) -> str:
     raise AssertionError("NeedsTag not raised")
 
 
+def _raised(exc_type: type[BaseException], fn, *args) -> BaseException:
+    """Call ``fn`` and return the ``exc_type`` it raises (fail if it does not raise)."""
+    try:
+        fn(*args)
+    except exc_type as e:
+        return e
+    raise AssertionError(f"{exc_type.__name__} not raised")
+
+
 class ImageTagShape(unittest.TestCase):
     def test_release_and_sha_tags_are_image_tags(self):
         for tag in ("v0.6.0", "v10.2.13", "v0.6.1-rc.1", "sha-badcff1", "sha-0123abc"):
@@ -99,6 +108,15 @@ class Downgrade(unittest.TestCase):
     def test_same_or_higher_release_is_not(self):
         assert not su.is_downgrade("v0.5.0", "v0.6.0")
         assert not su.is_downgrade("v0.6.0", "v0.6.0")
+
+    def test_a_release_back_to_its_own_pre_release_is_a_downgrade(self):
+        """Semver precedence: v0.7.0-rc.1 < v0.7.0, and pre-release numbers compare as numbers."""
+        assert su.is_downgrade("v0.7.0", "v0.7.0-rc.1")
+        assert su.is_downgrade("v0.7.0-rc.2", "v0.7.0-rc.1")
+        assert su.is_downgrade("v0.7.0-rc.10", "v0.7.0-rc.2")
+        assert not su.is_downgrade("v0.7.0-rc.1", "v0.7.0")
+        assert not su.is_downgrade("v0.7.0-rc.1", "v0.7.0-rc.2")
+        assert not su.is_downgrade("v0.6.0", "v0.7.0-rc.1")
 
     def test_sha_tags_are_never_decidable(self):
         """Two shas have no order; neither does sha→release. Only a release→release move can say."""
@@ -214,34 +232,76 @@ class SiteImages(unittest.TestCase):
         with mock.patch.object(su, "manifest_exists", side_effect=probe):
             assert su.missing_images({}, "sha-badcff1") == ["ghcr.io/londonaicentre/orthanc:sha-badcff1"]
 
-    def test_manifest_probe_is_the_docker_exit_code(self):
-        with mock.patch.object(su.subprocess, "run", return_value=mock.Mock(returncode=0)) as run:
+    def test_manifest_probe_reads_absence_only_from_the_registrys_answer(self):
+        ok = mock.Mock(returncode=0, stdout="{}", stderr="")
+        with mock.patch.object(su.subprocess, "run", return_value=ok) as run:
             assert su.manifest_exists("ghcr.io/x/y:v1")
         assert run.call_args.args[0] == ["docker", "manifest", "inspect", "ghcr.io/x/y:v1"]
-        with mock.patch.object(su.subprocess, "run", return_value=mock.Mock(returncode=1)):
+        absent = mock.Mock(returncode=1, stdout="", stderr="manifest unknown\n")
+        with mock.patch.object(su.subprocess, "run", return_value=absent):
             assert not su.manifest_exists("ghcr.io/x/y:v1")
-        with mock.patch.object(su.subprocess, "run", side_effect=OSError("no docker")):
-            assert not su.manifest_exists("ghcr.io/x/y:v1")
+
+    def test_a_probe_that_fails_for_another_reason_is_not_reported_as_absent(self):
+        """A login, network or rate-limit fault must not send the operator after a different tag."""
+        cases = {
+            "unauthorized": mock.Mock(returncode=1, stdout="", stderr="unauthorized: authentication required"),
+            "rate limit": mock.Mock(returncode=1, stdout="", stderr="toomanyrequests: rate limit exceeded"),
+        }
+        for name, result in cases.items():
+            with self.subTest(case=name), mock.patch.object(su.subprocess, "run", return_value=result):
+                raised = _raised(su.RegistryUnavailable, su.manifest_exists, "ghcr.io/x/y:v1")
+                assert result.stderr in str(raised)
+        for exc in (OSError("no docker"), su.subprocess.TimeoutExpired(["docker"], 60)):
+            with self.subTest(case=type(exc).__name__), mock.patch.object(su.subprocess, "run", side_effect=exc):
+                _raised(su.RegistryUnavailable, su.manifest_exists, "ghcr.io/x/y:v1")
 
 
 class CheckoutTags(unittest.TestCase):
-    """The checkout probe: the tags on HEAD, or None when there is no git checkout to ask."""
+    """The checkout probe: the tags on HEAD, None outside a checkout, an error when git cannot say."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = Path(tmp.name)
+        (self.repo / ".git").mkdir()
 
     def test_lists_every_tag_on_head(self):
         out = mock.Mock(returncode=0, stdout="v0.7.0\nrelease-2026\n")
         with mock.patch.object(su.subprocess, "run", return_value=out) as run:
-            assert su.checkout_tags(Path("/repo")) == ["v0.7.0", "release-2026"]
-        assert run.call_args.args[0] == ["git", "-C", "/repo", "tag", "--points-at", "HEAD"]
+            assert su.checkout_tags(self.repo) == ["v0.7.0", "release-2026"]
+        assert run.call_args.args[0] == ["git", "-C", str(self.repo), "tag", "--points-at", "HEAD"]
 
     def test_an_untagged_head_is_an_empty_list_not_none(self):
         with mock.patch.object(su.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="")):
-            assert su.checkout_tags(Path("/repo")) == []
+            assert su.checkout_tags(self.repo) == []
 
-    def test_no_git_or_no_checkout_is_none(self):
+    def test_a_tree_without_git_is_not_a_checkout(self):
+        """An unpacked archive: nothing to compare, and git is never asked."""
+        with mock.patch.object(su.subprocess, "run", side_effect=AssertionError("must not run git")):
+            assert su.checkout_tags(self.repo / "unpacked") is None
+
+    def test_a_checkout_git_cannot_read_is_an_error_not_a_missing_checkout(self):
+        """'dubious ownership' (a checkout owned by another user, run under sudo) must stop the guard,
+        not pass as "not a checkout" and let an old tree run the new images."""
+        refused = mock.Mock(returncode=128, stdout="", stderr="fatal: detected dubious ownership in repository")
+        with mock.patch.object(su.subprocess, "run", return_value=refused):
+            assert "dubious ownership" in str(_raised(su.CheckoutUnknown, su.checkout_tags, self.repo))
         with mock.patch.object(su.subprocess, "run", side_effect=OSError("no git")):
-            assert su.checkout_tags(Path("/repo")) is None
-        with mock.patch.object(su.subprocess, "run", return_value=mock.Mock(returncode=128, stdout="")):
-            assert su.checkout_tags(Path("/repo")) is None
+            _raised(su.CheckoutUnknown, su.checkout_tags, self.repo)
+
+    def test_release_for_sha_maps_the_hubs_build_of_this_checkouts_release(self):
+        """A CI-applied hub runs sha-<short7> of the release commit; from that commit's tag, target the release."""
+
+        def git(args, **_kw):
+            if args[3:] == ["tag", "--points-at", "HEAD"]:
+                return mock.Mock(returncode=0, stdout="v0.7.0-rc.1\nv0.7.0\nflip-utils-v0.5.0\n", stderr="")
+            return mock.Mock(returncode=0, stdout="23cf33134b8e2f0\n", stderr="")  # pragma: allowlist secret
+
+        with mock.patch.object(su.subprocess, "run", side_effect=git):
+            assert su.release_for_sha("sha-23cf331", self.repo) == "v0.7.0"
+            assert su.release_for_sha("sha-1111111", self.repo) is None  # the hub runs another commit
+            assert su.release_for_sha("v0.7.0", self.repo) is None
+        assert su.release_for_sha("sha-23cf331", self.repo / "unpacked") is None
 
     def test_describe_names_only_platform_releases(self):
         """The repo carries component tags (flip-utils-v0.5.0) and one-offs; an unmatched describe
@@ -431,6 +491,55 @@ class Plan(unittest.TestCase):
             code, out = self._run(kit, "--tag", "v0.7.0", "--yes")
             assert code == 0, out
             assert "not a git checkout" in out
+
+    def test_plan_refuses_a_release_target_when_git_cannot_read_the_checkout(self):
+        self.checkout_tags.side_effect = su.CheckoutUnknown("git tag --points-at HEAD: detected dubious ownership")
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.6.0", fl_tag="v0.6.0")
+            code, out = self._run(kit, "--tag", "v0.7.0", "--yes")
+            assert code == su.EXIT_CHECKOUT_MISMATCH, out
+            assert "dubious ownership" in out
+            assert "safe.directory" in out
+            assert "DOCKER_TAG=v0.6.0" in kit.read_text()
+            code, out = self._run(kit, "--tag", "v0.7.0", "--yes", "--allow-checkout-drift")
+            assert code == 0, out
+            assert "drift allowed" in out
+        self.missing_images.assert_called_once()
+
+    def test_plan_reports_an_unreachable_registry_as_such(self):
+        self.missing_images.side_effect = su.RegistryUnavailable(
+            "ghcr.io/londonaicentre/trust-api:v0.6.0: unauthorized"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp))
+            code, out = self._run(kit, "--tag", "v0.6.0", "--yes")
+            assert code == su.EXIT_MISSING_IMAGES, out
+            assert "Could not ask the registry" in out
+            assert "unauthorized" in out
+            assert "pick a tag" not in out
+            assert "DOCKER_TAG=sha-badcff1" in kit.read_text()
+
+    def test_plan_targets_this_checkouts_release_when_the_hub_runs_its_sha_build(self):
+        self.checkout_tags.return_value = ["v0.7.0"]
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.6.0", fl_tag="v0.6.0")
+            with (
+                mock.patch.object(su, "fetch_hub_version", return_value="sha-23cf331"),
+                mock.patch.object(su, "release_for_sha", return_value="v0.7.0") as mapped,
+            ):
+                code, out = self._run(kit, "--yes")
+            assert code == 0, out
+            assert "target v0.7.0 (the hub runs sha-23cf331, the build of this checkout's v0.7.0)" in out
+            assert "DOCKER_TAG=v0.7.0" in kit.read_text()
+        mapped.assert_called_once_with("sha-23cf331")
+
+    def test_plan_never_remaps_an_explicit_tag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp))
+            with mock.patch.object(su, "release_for_sha", side_effect=AssertionError("TAG= is taken as given")):
+                code, out = self._run(kit, "--tag", "sha-23cf331", "--yes")
+            assert code == 0, out
+            assert "DOCKER_TAG=sha-23cf331" in kit.read_text()
 
     def test_plan_without_a_docker_cli_warns_and_leaves_it_to_the_pull(self):
         with tempfile.TemporaryDirectory() as tmp:

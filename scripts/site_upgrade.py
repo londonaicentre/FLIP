@@ -25,19 +25,23 @@ Everything that decides *what* to move to happens here, before any container is 
    means the hub's release is by construction the latest a site *can* run. A hub that does
    not report a pullable image tag (built before FLIP#1204, or unreachable) makes this
    script stop and ask for ``TAG=`` rather than guess.
-2. **Guards.** The tag must look like an image tag (``v<X.Y.Z>`` or ``sha-<short7>`` — never
-   ``prod``/``stag``, which move under a site); a release→release downgrade needs
-   ``--force``; every image the site pulls must exist at that tag in the registry
-   (``docker manifest inspect``, so a tag that was only ever built for *some* images — every
-   ``sha-`` tag, since each image's CI build is path-filtered — is refused before the kit is
-   rewritten, rather than failing half-way through ``compose pull`` or, worse, letting
-   ``docker stack deploy`` stop a running XNAT task for an image that cannot be pulled); for a
-   release target the **checkout must be at that tag** — the compose files, Makefiles and XNAT
-   stack that run the images come from this git checkout, not from the images, so a site on the
-   v0.6.0 tree pulling v1.0.0 images is an untested pairing (and the verb itself may differ);
+   A hub deployed by the CI Terraform apply runs the ``sha-<short7>`` build of its commit; when
+   this checkout sits on that commit and carries its release tag, the release tag is targeted
+   instead — it names the same code, and every image is published at it.
+2. **Guards**, in this order. The tag must look like an image tag (``v<X.Y.Z>`` or
+   ``sha-<short7>`` — never ``prod``/``stag``, which move under a site); a move to an older
+   release (a release's own pre-releases included) needs ``--force``; for a release target the
+   **checkout must be at that tag** — the compose files, Makefiles and XNAT stack that run the
+   images come from this git checkout, not from the images, so a site on the v0.6.0 tree
+   pulling v1.0.0 images is an untested pairing (and the verb itself may differ);
    ``--allow-checkout-drift`` overrides for a deliberate mismatch such as testing a branch, and
-   ``sha-`` targets are never checked (there is no tag to check out for one); and the operator
-   confirms the printed ``site vA → target vB`` unless ``--yes``.
+   ``sha-`` targets are never checked (there is no tag to check out for one); every image the
+   site pulls must exist at that tag in the registry (``docker manifest inspect``, so a tag
+   that was only ever built for *some* images — every ``sha-`` tag, since each image's CI
+   build is path-filtered — is refused before the kit is rewritten, rather than failing
+   half-way through ``compose pull`` or, worse, letting ``docker stack deploy`` stop a running
+   XNAT task for an image that cannot be pulled); and last, the operator confirms the printed
+   ``site vA → target vB`` unless ``--yes``.
 3. **Pin.** ``DOCKER_TAG`` and ``DOCKER_FL_TAG`` in the kit's Hub-shared block are rewritten
    in place, so the kit always records what is installed. The Makefile then re-includes the
    kit in a sub-make and does the pull / recreate. ``--fl-tag`` pins ``DOCKER_FL_TAG`` apart
@@ -49,10 +53,13 @@ Usage:
         [--tag vX.Y.Z] [--fl-tag vX.Y.Z] [--force] [--yes] [--hub-url URL] [--dry-run] \\
         [--allow-checkout-drift]
 
-Exit codes (the Makefile's contract): 0 pinned; 2 needs ``--tag``; 3 refused downgrade
-(pass ``--force``); 4 not confirmed (pass ``--yes`` for a scripted run); 5 an image is
-missing at the target tag; 6 the checkout is not at the target release
-(``git fetch --tags origin && git checkout <tag>``, then re-run from the new checkout).
+Exit codes (the Makefile's contract): 0 pinned (or, with ``--dry-run``, resolved and checked
+without pinning); 2 no usable target — pass ``--tag`` (also a malformed ``--fl-tag``, or no hub
+URL to ask); 3 refused downgrade (pass ``--force``); 4 not confirmed (pass ``--yes`` for a
+scripted run); 5 an image is missing at the target tag, or the registry could not be asked
+(the message says which); 6 the checkout is not at the target release
+(``git fetch --tags origin && git checkout <tag>``, then re-run from the new checkout), or git
+could not say which commit it is at.
 """
 
 from __future__ import annotations
@@ -119,18 +126,31 @@ def is_image_tag(tag: str | None) -> bool:
     return bool(tag) and (bool(_RELEASE_TAG.match(tag)) or bool(_SHA_TAG.match(tag)))  # type: ignore[arg-type]
 
 
-def _release_numbers(tag: str) -> tuple[int, int, int] | None:
-    m = re.match(r"^v(\d+)\.(\d+)\.(\d+)", tag)
-    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+def _release_order(tag: str) -> tuple | None:
+    """A sort key for a release tag, semver precedence: ``v0.7.0-rc.1 < v0.7.0-rc.2 < v0.7.0``.
+
+    A release sorts above its own pre-releases, and pre-release identifiers compare numerically
+    when both are numbers (``rc.10`` > ``rc.2``). None for anything that is not a release tag.
+    """
+    m = re.match(r"^v(\d+)\.(\d+)\.(\d+)(?:[-.]([0-9A-Za-z.-]+))?$", tag)
+    if not m:
+        return None
+    pre = m.group(4)
+    if pre is None:
+        pre_key: tuple = (1,)
+    else:
+        pre_key = (0, *((0, int(p), "") if p.isdigit() else (1, 0, p) for p in pre.split(".")))
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)), pre_key)
 
 
 def is_downgrade(current: str, target: str) -> bool:
     """Whether ``current → target`` moves a site to an older release.
 
     Only a release→release move is decidable; shas carry no order, so any move involving one
-    is not called a downgrade (the operator chose it explicitly, or the hub runs it).
+    is not called a downgrade (the operator chose it explicitly, or the hub runs it). Moving a
+    release back to one of its own pre-releases is a downgrade.
     """
-    cur, tgt = _release_numbers(current), _release_numbers(target)
+    cur, tgt = _release_order(current), _release_order(target)
     if cur is None or tgt is None:
         return False
     return tgt < cur
@@ -200,24 +220,67 @@ def site_images(kit: dict[str, str], tag: str, fl_tag: str | None = None) -> lis
     return [*refs, f"{registry}{fl_client}:{fl_tag or tag}"]
 
 
+class RegistryUnavailable(Exception):
+    """The registry could not be asked whether an image exists (auth, network, rate limit)."""
+
+
+#: What ``docker manifest inspect`` prints when the registry says the image or tag is absent —
+#: the same list deploy/providers/AWS/scripts/resolve-image-tags.sh treats as "not published".
+_ABSENT_MARKERS = (
+    "manifest unknown",
+    "manifest_unknown",
+    "no such manifest",
+    "not found",
+    "name unknown",
+    "name_unknown",
+)
+
+
 def manifest_exists(ref: str, timeout: float = _MANIFEST_TIMEOUT_SECONDS) -> bool:
-    """``docker manifest inspect`` as an existence probe: the registry's answer, nothing pulled."""
+    """``docker manifest inspect`` as an existence probe: the registry's answer, nothing pulled.
+
+    Raises:
+        RegistryUnavailable: The probe failed without the registry saying the image is absent —
+            reporting that as "not published" would send the operator after a different tag
+            when the fault is a login, the network or a rate limit.
+    """
     try:
         result = subprocess.run(
             ["docker", "manifest", "inspect", ref], capture_output=True, text=True, timeout=timeout, check=False
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired as e:
+        raise RegistryUnavailable(f"{ref}: no answer within {timeout:.0f}s") from e
+    except OSError as e:
+        raise RegistryUnavailable(f"{ref}: could not run docker ({e})") from e
+    if result.returncode == 0:
+        return True
+    output = f"{result.stdout}\n{result.stderr}"
+    if any(marker in output.lower() for marker in _ABSENT_MARKERS):
         return False
-    return result.returncode == 0
+    detail = output.strip() or "(no output)"
+    raise RegistryUnavailable(f"{ref}: docker manifest inspect exited {result.returncode}: {detail}")
 
 
 def missing_images(kit: dict[str, str], tag: str, fl_tag: str | None = None) -> list[str]:
-    """The site's image references that the registry does not serve at ``tag`` / ``fl_tag``."""
+    """The site's image references that the registry does not serve at ``tag`` / ``fl_tag``.
+
+    Raises:
+        RegistryUnavailable: Propagated from :func:`manifest_exists`.
+    """
     return [ref for ref in site_images(kit, tag, fl_tag) if not manifest_exists(ref)]
 
 
-def _git(repo_root: Path, *args: str) -> str | None:
-    """stdout of ``git -C repo_root <args>``, or None when git is missing, it is not a checkout, or the call fails."""
+class CheckoutUnknown(Exception):
+    """This is a git checkout, but git could not say which commit or tags it is at."""
+
+
+def _run_git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """``git -C repo_root <args>``.
+
+    Raises:
+        CheckoutUnknown: git is not installed, timed out, or refused (e.g. "dubious ownership"
+            when a checkout owned by another user is run under sudo) — with git's own message.
+    """
     try:
         result = subprocess.run(
             ["git", "-C", str(repo_root), *args],
@@ -226,9 +289,19 @@ def _git(repo_root: Path, *args: str) -> str | None:
             timeout=_GIT_TIMEOUT_SECONDS,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise CheckoutUnknown(f"git {' '.join(args)}: {e}") from e
+    if result.returncode != 0:
+        raise CheckoutUnknown(f"git {' '.join(args)}: {(result.stderr or result.stdout).strip() or 'failed'}")
+    return result
+
+
+def _git(repo_root: Path, *args: str) -> str | None:
+    """stdout of ``git -C repo_root <args>``, or None when the call fails (for display-only reads)."""
+    try:
+        return _run_git(repo_root, *args).stdout
+    except CheckoutUnknown:
         return None
-    return result.stdout if result.returncode == 0 else None
 
 
 def checkout_tags(repo_root: Path = _REPO_ROOT) -> list[str] | None:
@@ -237,11 +310,36 @@ def checkout_tags(repo_root: Path = _REPO_ROOT) -> list[str] | None:
     Reads the tags the checkout has *fetched*: a release that was cut after the last
     ``git fetch --tags`` is not on HEAD however the tree got there, which is the right answer —
     the fix the caller prints starts with the fetch.
+
+    Raises:
+        CheckoutUnknown: ``repo_root`` is a git checkout but git failed to answer. Only a tree
+            with no ``.git`` at all (an unpacked archive) is "not a checkout".
     """
-    out = _git(repo_root, "tag", "--points-at", "HEAD")
-    if out is None:
+    if not (repo_root / ".git").exists():
         return None
+    out = _run_git(repo_root, "tag", "--points-at", "HEAD").stdout
     return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def release_for_sha(target: str, repo_root: Path = _REPO_ROOT) -> str | None:
+    """The release tag this checkout carries when ``target`` is the ``sha-`` build of its HEAD.
+
+    A hub deployed by the CI Terraform apply runs the ``sha-<short7>`` build of the release
+    commit rather than ``:v<X.Y.Z>``. From a checkout at that commit's release tag the two name
+    the same code, and only the release tag is published for every site image. None when the
+    target is not a sha tag, the checkout is elsewhere, or git cannot say.
+    """
+    if not _SHA_TAG.match(target):
+        return None
+    try:
+        tags = checkout_tags(repo_root)
+        head = _run_git(repo_root, "rev-parse", "HEAD").stdout.strip() if tags else ""
+    except CheckoutUnknown:
+        return None
+    if not tags or f"sha-{head[:7]}" != target:
+        return None
+    releases = sorted((t for t in tags if _RELEASE_TAG.match(t)), key=lambda t: _release_order(t) or ())
+    return releases[-1] if releases else None
 
 
 def describe_checkout(repo_root: Path = _REPO_ROOT) -> str:
@@ -298,6 +396,11 @@ def plan(args: argparse.Namespace) -> int:
         return EXIT_NEEDS_TAG
 
     origin = "from the hub" if source == "hub" else "from TAG="
+    if source == "hub":
+        release = release_for_sha(target)
+        if release:
+            origin = f"the hub runs {target}, the build of this checkout's {release}"
+            target = release
     fl_note = f", FL client {kit.get('DOCKER_FL_TAG', '') or '<unset>'} → {fl_tag}" if fl_tag else ""
     print(f"⬆️  site {current} → target {target} ({origin}{fl_note})")
     if target == current:
@@ -312,8 +415,24 @@ def plan(args: argparse.Namespace) -> int:
     # checkout, so a release target must be run from the tree tagged with it. Checked before the
     # registry: a stale tree is the cheaper thing to fix, and the verb itself may differ there.
     if _RELEASE_TAG.match(target):
-        tags = checkout_tags()
-        if tags is None:
+        try:
+            tags = checkout_tags()
+            git_error = None
+        except CheckoutUnknown as e:
+            tags, git_error = None, str(e)
+        if git_error is not None and not args.allow_checkout_drift:
+            print(f"❌ git could not say which commit {_REPO_ROOT} is at, so it cannot be checked against {target}:")
+            print(f"     {git_error}")
+            print("   'dubious ownership' means the checkout belongs to another user than the one running this")
+            print("   (typically under sudo) — mark it safe as that user, then re-run:")
+            print(f"     git config --global --add safe.directory {_REPO_ROOT}")
+            print("   Nothing changed. ALLOW_CHECKOUT_DRIFT=1 overrides.")
+            return EXIT_CHECKOUT_MISMATCH
+        if git_error is not None:
+            print(
+                f"   ⚠️  git could not say where this checkout is ({git_error}) — drift allowed (ALLOW_CHECKOUT_DRIFT=1)"
+            )
+        elif tags is None:
             print(f"   ⚠️  {_REPO_ROOT} is not a git checkout — cannot confirm its files match {target}; continuing")
         elif target in tags:
             print(f"   ✓ checkout is at {target}")
@@ -331,9 +450,16 @@ def plan(args: argparse.Namespace) -> int:
     if shutil.which("docker") is None:
         print("   ⚠️  docker CLI not found — skipping the registry check; the pull will report a missing image")
     else:
-        missing = missing_images(kit, target, fl_tag)
+        try:
+            missing = missing_images(kit, target, fl_tag)
+        except RegistryUnavailable as e:
+            print(f"❌ Could not ask the registry whether {target} is published:")
+            print(f"     {e}")
+            print("   That is a login, network or rate-limit fault, not a missing image: check `docker login`")
+            print("   for the registry and this host's route to it, then re-run. Nothing changed.")
+            return EXIT_MISSING_IMAGES
         if missing:
-            print(f"❌ {target} is not published for every image this site runs (log in to the registry first):")
+            print(f"❌ {target} is not published for every image this site runs:")
             for ref in missing:
                 print(f"     {ref}")
             print("   A release tag (vX.Y.Z) builds every image; a sha- tag only carries the images that")
