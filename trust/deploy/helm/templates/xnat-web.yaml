@@ -160,7 +160,7 @@ spec:
 {{- end }}
       containers:
         - name: tomcat
-          image: "{{ .Values.xnat.web.image.repository }}:{{ .Values.xnat.web.image.tag }}"
+          image: "{{ .Values.xnat.web.image.repository }}:{{ include "flip-trust.imageTag" (dict "pin" .Values.xnat.image.pin "global" .Values.global.image.tag "own" .Values.xnat.web.image.tag) }}"
           imagePullPolicy: {{ .Values.xnat.web.image.pullPolicy }}
           ports:
             - name: tomcat

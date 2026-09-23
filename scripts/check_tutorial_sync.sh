@@ -31,7 +31,7 @@
 #
 # The pyproject.toml files are intentionally NOT paired: the template
 # pyprojects carry platform-only [tool.uv] tables (flip-utils pinned to the
-# /opt/flip-utils source baked into the FL images, torch pinned to the cu128
+# /opt/flip-utils source baked into the FL images, torch pinned to the cu130
 # index -- FLIP#767) that must not reach the tutorials, whose pyprojects drive
 # workstation venvs where /opt/flip-utils does not exist. Accepted trade-off:
 # dependency-list drift between a tutorial pyproject and its template is no

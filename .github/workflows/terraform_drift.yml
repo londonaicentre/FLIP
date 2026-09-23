@@ -322,6 +322,15 @@ jobs:
   # Deliberately not `continue-on-error`: if the dispatch fails, production drift
   # silently stops being checked, which is the failure this whole arrangement
   # exists to avoid. The staging leg above is a separate job and still reports.
+  #
+  # One exception, handled in the step: `main` does not carry this workflow until
+  # the first develop -> main release, and GitHub resolves `--ref` against the
+  # workflow file on that ref, so the dispatch 422s until then. That is a known
+  # precondition rather than the breakage this job watches for, and failing on it
+  # would leave the nightly run permanently red — which is how a real dispatch
+  # failure comes to be ignored. The probe recognises that precondition from an
+  # HTTP 404 alone; any other failure to answer the question is fatal, so an API
+  # error can never be mistaken for "absent" and skip production silently.
   dispatch-prod:
     name: Dispatch the production drift run on main
     if: github.ref_name != 'main'
@@ -336,5 +345,44 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+
+          # Absence must be recognised from the HTTP status alone. Treating every
+          # non-zero `gh` exit as "not on main yet" makes a transient 5xx, a rate
+          # limit, a network blip or a 401/403 skip the production dispatch while
+          # the job still reports green — the silent stop this job exists to
+          # prevent, and the opposite of what the README promises. Same fail-closed
+          # rule as resolve-image-tags.sh: one precise signal means absent,
+          # everything else stops the run.
+          #
+          # `-i` prints the status line, so the decision is made on GitHub's own
+          # status code rather than on gh's human-readable error text. Note a
+          # missing *ref* also 404s, which is fine: no `main` means nothing to
+          # dispatch to either.
+          status=0
+          gh api -i --silent \
+            "repos/${GH_REPO}/contents/.github/workflows/terraform_drift.yml?ref=main" \
+            >"${RUNNER_TEMP}/probe.out" 2>"${RUNNER_TEMP}/probe.err" || status=$?
+
+          http_status="$(sed -n '1s#^HTTP/[0-9.]* \([0-9]*\).*#\1#p' "${RUNNER_TEMP}/probe.out")"
+
+          if [[ "${status}" -ne 0 && "${http_status}" != "404" ]]; then
+            echo "::error title=Could not check for terraform_drift.yml on main::gh api failed with exit ${status}, HTTP status '${http_status:-unknown}'. Refusing to assume the workflow is absent — that would skip the production drift run silently. $(cat "${RUNNER_TEMP}/probe.err")"
+            exit 1
+          fi
+
+          if [[ "${http_status}" == "404" ]]; then
+            echo "::warning title=Production drift is not being checked::terraform_drift.yml is not on main yet, so the production leg cannot be dispatched. This resolves itself at the first develop -> main release. Staging drift is unaffected and reported separately."
+            {
+              echo "### Production drift not checked"
+              echo
+              echo "\`terraform_drift.yml\` is not on \`main\` yet, so the production leg could not be"
+              echo "dispatched. GitHub resolves \`--ref\` against the workflow file on that ref."
+              echo
+              echo "This resolves itself at the first \`develop\` → \`main\` release. **Production drift"
+              echo "is not being checked until then.** The staging leg is unaffected."
+            } >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
           gh workflow run terraform_drift.yml --ref main
           echo "Dispatched terraform_drift.yml on main — that run checks production."

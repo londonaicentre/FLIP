@@ -25,6 +25,8 @@ on:
       - "trust/seed_trust.sh"
       - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
+      # The Makefile derives the kit env token from PROD through it.
+      - "deploy/env_mode.mk"
   push:
     branches: [develop, main]
     paths:
@@ -33,6 +35,8 @@ on:
       - "trust/seed_trust.sh"
       - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
+      # The Makefile derives the kit env token from PROD through it.
+      - "deploy/env_mode.mk"
   workflow_dispatch:
 
 jobs:
@@ -53,7 +57,8 @@ jobs:
 
       - name: Run sync-kit unit tests
         working-directory: trust/deploy/helm
-        run: uv run --no-project --with pytest --with "pyyaml==6.0.3" pytest tests/ -v
+        # tests/templates renders with helm, pinned in the helm-template job below.
+        run: uv run --no-project --with pytest --with "pyyaml==6.0.3" pytest tests/ -v --ignore=tests/templates
 
   helm-lint:
     name: Helm Lint
@@ -86,6 +91,10 @@ jobs:
       # system python is not guaranteed to carry it.
       - name: Install uv
         run: pip install uv
+
+      - name: Image-tag precedence, rendered (tests/templates/test_helpers.py)
+        working-directory: trust/deploy/helm
+        run: uv run --no-project --with pytest --with "pyyaml==6.0.3" pytest tests/templates -v
 
       - name: Render template (default/nvflare)
         run: helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit > /dev/null

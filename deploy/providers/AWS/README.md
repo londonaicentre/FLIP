@@ -650,8 +650,9 @@ To change it:
 #      stag/prod → services.tf, module "cognito" → callback_urls
 #      dev       → dev/variables.tf, var.cognito_callback_urls
 # 2. Apply — TARGETED at the app client. Never run a full `make apply` on stag/prod for
-#    this: AMI drift in the same plan can force-replace the trust EC2s. Same reasoning
-#    as `apply-fl-kit-slots` above. The apply updates Cognito immediately …
+#    this: it also applies whatever else is pending in the plan, FL task-definition
+#    replacements included. Same reasoning as `apply-fl-kit-slots` above. The apply
+#    updates Cognito immediately …
 make init PROD=stag
 terraform plan -target=module.cognito.aws_cognito_user_pool_client.client -out=cognito.tfplan
 terraform apply cognito.tfplan
@@ -1439,6 +1440,40 @@ rotated. Every `tf-via-pr` step now sets `upload-plan: false`, and
 `preserve-plan` is a *different* input and stays `true` in the apply workflow: it
 keeps the plan on the runner's disk so the FL gate and the apply step can read
 it. That never leaves the job.
+
+### Reading a red Terraform CI run
+
+Two of these are not faults, and both now say so in the run's summary rather than
+only in the log.
+
+**"Apply held — FL infrastructure would be disturbed."** The plan succeeded and
+was deliberately not applied, because it would recreate `fl-server-net-1` /
+`fl-api-net-1` or delete EFS (FLIP#770). The step still exits non-zero — a hold
+means the apply did not happen, and that must not read as green — but the job
+summary names the resources and the remedy. Clear it by enabling deployment mode
+on the hub, waiting until `GET /fl/quiesce` reports deployment mode ON with no
+BUSY net, then re-running `terraform_apply.yml` via `workflow_dispatch` with
+`fl_quiesced: true`. A plain re-run reads the same plan and holds again.
+
+Note this recurs on *every* apply while a piece of out-of-band drift touches the
+FL services — staging currently carries `enable_execute_command: true -> false`
+on all three — so one quiesced apply clears the backlog rather than each push
+needing its own.
+
+**"Production drift is not being checked."** The nightly run fires from the
+default branch and dispatches itself with `--ref main` for the production leg.
+GitHub resolves `--ref` against the workflow file *on that ref*, so until `main`
+carries `terraform_drift.yml` the dispatch returns HTTP 422. That is a known
+precondition, not a broken pipeline, so the job warns and passes instead of
+failing — a permanently red nightly is how a real dispatch failure comes to be
+ignored. It resolves itself at the first `develop` → `main` release.
+
+The step recognises that precondition from an **HTTP 404 alone** when probing for
+the file on `main`. Any other outcome — a 401/403, a rate limit, a 5xx, a network
+failure — fails the job rather than being read as "absent", because assuming
+absence there would skip the production drift run silently and still report
+green. Same fail-closed rule as `resolve-image-tags.sh`: one precise signal means
+absent, everything else stops the run.
 
 ### Recovering an environment's true values
 

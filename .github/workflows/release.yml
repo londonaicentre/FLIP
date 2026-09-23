@@ -29,6 +29,7 @@ jobs:
         runs-on: ubuntu-latest
         permissions: # override top-level read-only default to allow tag/release creation
             contents: write
+            actions: write # dispatch the image builds at the release tag (see the step below)
 
         steps:
             - name: Checkout repository
@@ -60,12 +61,70 @@ jobs:
                   git tag "${{ steps.version.outputs.tag }}"
                   git push origin "${{ steps.version.outputs.tag }}"
 
+            # Everything after the tag keys on the RELEASE not existing, not the tag: a run that
+            # pushed the tag and then failed (a dispatch error, a notes API blip) leaves the tag
+            # behind, and gating on it would make every re-run skip the builds and the release and
+            # still go green. Re-running now dispatches the twelve builds again (each re-publishes
+            # the same :v<X.Y.Z> from the same commit) and creates the release.
+            - name: Check if the release already exists
+              id: release_check
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+                    echo "exists=true" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "exists=false" >> "$GITHUB_OUTPUT"
+                  fi
+
+            # The image workflows listen for a push of refs/tags/v*.*.* (FLIP#1204) — but
+            # GitHub starts no workflow for an event created with the repository's own
+            # GITHUB_TOKEN, which is what the tag push above is (the anti-recursion rule; only
+            # workflow_dispatch and repository_dispatch are exempt). So the twelve builds are
+            # dispatched here explicitly, at the tag, one run each: inside them github.ref is
+            # refs/tags/v<X.Y.Z> and github.sha the tagged commit, exactly as a hand-pushed
+            # tag would present. The roster is every publishing image workflow;
+            # .github/tests/workflows/test_release.py holds it to the set that carries the
+            # tag trigger, so a workflow added without being listed here fails CI.
+            - name: Build every image at the release tag
+              if: steps.release_check.outputs.exists == 'false'
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  TAG: ${{ steps.version.outputs.tag }}
+              run: |
+                  failed=()
+                  for wf in \
+                      docker_build_flip_api.yml \
+                      docker_build_omop_db.yml \
+                      docker_build_orthanc.yml \
+                      docker_build_trust_data_access_api.yml \
+                      docker_build_trust_imaging_api.yml \
+                      docker_build_trust_trust_api.yml \
+                      docker_build_xnat_db.yml \
+                      docker_build_xnat_dcm2niix.yml \
+                      docker_build_xnat_nginx.yml \
+                      docker_build_xnat_web.yml \
+                      fl-docker-build-flower.yml \
+                      fl-docker-build-nvflare.yml; do
+                    # One failed dispatch must not stop the rest: try all twelve, then fail
+                    # naming the ones to re-run (a re-run of this workflow dispatches them all).
+                    if gh workflow run "$wf" --ref "$TAG"; then
+                      echo "dispatched $wf at $TAG"
+                    else
+                      failed+=("$wf")
+                    fi
+                  done
+                  if [[ ${#failed[@]} -gt 0 ]]; then
+                    echo "::error::could not dispatch ${failed[*]} at $TAG — re-run this workflow"
+                    exit 1
+                  fi
+
             # generate_release_notes lets GitHub choose the previous release itself, which is
             # whatever was published most recently — including a flip-utils release cut seconds
             # after ours on the same push. Pin the range to the previous *platform* tag instead,
             # the way release-pypi.yml already does for its own artefact.
             - name: Prepare release notes
-              if: steps.tag_check.outputs.exists == 'false'
+              if: steps.release_check.outputs.exists == 'false'
               id: notes
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -75,7 +134,9 @@ jobs:
                   # `|| true` is load-bearing under `set -o pipefail` — the tag for THIS release
                   # was created by the step above, so when it is the only match grep exits 1.
                   # Empty is a valid answer and is handled below.
-                  PREV_TAG=$(git tag --list 'v*.*.*' | sort -V | grep -v "^${TAG}$" | tail -n1 || true)
+                  # Stable releases only: a release candidate (v<X.Y.Z>-rc.N) sorts above its own
+                  # release under sort -V, and would start the notes at the candidate.
+                  PREV_TAG=$(git tag --list 'v*.*.*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | grep -v "^${TAG}$" | tail -n1 || true)
 
                   API_ARGS=(-X POST
                     -f "tag_name=${TAG}"
@@ -87,13 +148,31 @@ jobs:
                     echo "No previous platform tag found — generating notes from the start."
                   fi
 
-                  gh api "repos/${{ github.repository }}/releases/generate-notes" \
-                    "${API_ARGS[@]}" --jq '.body' > /tmp/release_notes.md
+                  GENERATED=$(gh api "repos/${{ github.repository }}/releases/generate-notes" \
+                    "${API_ARGS[@]}" --jq '.body')
+
+                  # The curated header (Highlights, Breaking Changes, Site upgrade, …) from the
+                  # release-notes template goes ABOVE the generated changelog, the same way
+                  # release-pypi.yml publishes it — the "Site upgrade" section is what trust
+                  # operators act on, so it belongs on the platform release.
+                  # The licence block is stripped by its whole-line delimiters — see
+                  # release-pypi.yml for why an unanchored range would eat every section.
+                  VERSION="${{ steps.version.outputs.version }}"
+                  HEADER=$(sed '/^<!--$/,/^-->$/d' "$GITHUB_WORKSPACE/.github/RELEASE_NOTES_TEMPLATE.md" \
+                    | sed "s/{{PROJECT}}/FLIP/g" \
+                    | sed "s/{{VERSION}}/${VERSION}/g" \
+                    | sed "s/{{TAG}}/${TAG}/g" \
+                    | sed "s/{{PREV_TAG}}/${PREV_TAG:-initial release}/g")
+
+                  {
+                    printf '%s\n\n' "$HEADER"
+                    printf '%s\n' "$GENERATED"
+                  } > /tmp/release_notes.md
 
                   echo "notes_file=/tmp/release_notes.md" >> "$GITHUB_OUTPUT"
 
             - name: Create GitHub Release
-              if: steps.tag_check.outputs.exists == 'false'
+              if: steps.release_check.outputs.exists == 'false'
               uses: softprops/action-gh-release@v3
               with:
                   tag_name: ${{ steps.version.outputs.tag }}

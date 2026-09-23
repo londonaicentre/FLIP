@@ -573,3 +573,29 @@ def test_the_smoke_names_a_reason_for_each_failed_substitution() -> None:
             f"`{assignment}…)` has no `|| fail` naming its reason, so a failing kubectl or curl "
             f"kills the script with only its own stderr. Statement was:\n{statement}"
         )
+
+
+def test_the_smoke_acts_on_the_chosen_cluster() -> None:
+    """A box with several kind clusters must not get whichever kubectl points at.
+
+    The smoke reads a Secret and drives a real transfer, so the wrong cluster costs more
+    than a confusing result. The Makefile passes KUBE_CONTEXT through and every kubectl
+    in the script goes via the array built from it.
+    """
+    script = (CHART_DIR / "scripts" / "smoke-cstore.sh").read_text()
+    makefile = MAKEFILE.read_text()
+
+    assert "KUBE_CONTEXT" in script, "the smoke ignores KUBE_CONTEXT and acts on kubectl's current context"
+    bare = [
+        line
+        for line in script.splitlines()
+        if re.search(r"(?<![\"$\w-])kubectl ", line) and not line.lstrip().startswith("#")
+    ]
+    assert bare == ['  KUBECTL=(kubectl --context "$KUBE_CONTEXT")'] or not bare, (
+        f"these kubectl calls bypass the context-aware $KUBECTL: {bare}"
+    )
+
+    smoke_recipe = makefile[makefile.index("smoke-cstore:") :].split("\n\n")[0]
+    assert "KUBE_CONTEXT" in smoke_recipe, (
+        "make smoke-cstore does not forward KUBE_CONTEXT, so the script cannot honour it"
+    )

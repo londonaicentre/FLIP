@@ -39,6 +39,7 @@
 # Usage:
 #   make -C trust/deploy/helm smoke-cstore
 #   NAMESPACE=flip-trust RELEASE_NAME=trust-release ./scripts/smoke-cstore.sh
+#   KUBE_CONTEXT=kind-flip make -C trust/deploy/helm smoke-cstore   # pick the cluster
 #
 # Exit codes: 0 = the store completed and the receiver logged no importer failure.
 #             1 = anything else (with the reason named).
@@ -47,6 +48,17 @@ set -euo pipefail
 
 NAMESPACE="${NAMESPACE:-flip-trust}"
 RELEASE_NAME="${RELEASE_NAME:-trust-release}"
+# Which cluster to act on, as everywhere else in this chart's tooling. A box running
+# several kind clusters otherwise gets whichever one kubectl currently points at — and
+# this smoke both reads a Secret and drives a transfer, so the wrong one is worth more
+# than a confusing result. Every kubectl below goes through $KUBECTL.
+# (An `if` rather than `[ -n … ] && KUBECTL=…`: under `set -e` that AND-list exits the
+# script whenever the test fails, which is the default case of an unset context.)
+KUBE_CONTEXT="${KUBE_CONTEXT:-}"
+KUBECTL=(kubectl)
+if [ -n "$KUBE_CONTEXT" ]; then
+  KUBECTL=(kubectl --context "$KUBE_CONTEXT")
+fi
 # The modality KEY in ORTHANC__DICOM_MODALITIES, which is not necessarily the AE title
 # (they happen to match in the shipped config).
 ORTHANC_MODALITY="${ORTHANC_MODALITY:-XNAT}"
@@ -75,12 +87,12 @@ pod_for() {
   # $1 = component label. Prefer the release's own pod, fall back to component-only for
   # a pod that predates the instance label.
   local component="$1" pod
-  pod=$(kubectl get pods -n "$NAMESPACE" \
+  pod=$("${KUBECTL[@]}" get pods -n "$NAMESPACE" \
     -l "app.kubernetes.io/instance=${RELEASE_NAME},app.kubernetes.io/component=${component}" \
     --field-selector=status.phase=Running \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
   if [ -z "$pod" ]; then
-    pod=$(kubectl get pods -n "$NAMESPACE" \
+    pod=$("${KUBECTL[@]}" get pods -n "$NAMESPACE" \
       -l "app.kubernetes.io/component=${component}" \
       --field-selector=status.phase=Running \
       -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
@@ -93,7 +105,7 @@ pod_for() {
 # false points every service at an operator-supplied `secrets.existingName`, and a
 # guessed name would fail as "no credential" on a perfectly healthy trust.
 orthanc_secret_ref() {
-  kubectl get deploy -n "$NAMESPACE" \
+  "${KUBECTL[@]}" get deploy -n "$NAMESPACE" \
     -l "app.kubernetes.io/component=orthanc" \
     -o jsonpath='{.items[0].spec.template.spec.containers[0].env[?(@.name=="ORTHANC__REGISTERED_USERS")].valueFrom.secretKeyRef.name}' \
     2>/dev/null || true
@@ -103,7 +115,7 @@ orthanc_secret_ref() {
 # arrives on stdin and is read into a shell variable there: never an argument, so it
 # reaches no process list on the node and no shell history here.
 orthanc_curl() {
-  printf '%s' "$ORTHANC_CREDS" | kubectl exec -i -n "$NAMESPACE" "$XNAT_POD" -- sh -c '
+  printf '%s' "$ORTHANC_CREDS" | "${KUBECTL[@]}" exec -i -n "$NAMESPACE" "$XNAT_POD" -- sh -c '
     read -r creds || true
     [ -n "$creds" ] || { echo "no Orthanc credential on stdin" >&2; exit 1; }
     exec curl -fsS --max-time 300 -u "$creds" "$@"
@@ -126,7 +138,7 @@ SECRET_NAME=$(orthanc_secret_ref)
 # Each substitution below names its own failure. Under `set -euo pipefail` a failing
 # kubectl inside `$(…)` otherwise aborts the script on kubectl's stderr alone, with none
 # of the "reason named" this header promises.
-ORTHANC_CREDS=$(kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" \
+ORTHANC_CREDS=$("${KUBECTL[@]}" get secret "$SECRET_NAME" -n "$NAMESPACE" \
   -o jsonpath='{.data.orthanc-registered-users}' | base64 -d \
   | sed -n 's/.*"\([^"]*\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1:\2/p') \
   || fail "could not read ${SECRET_NAME}/orthanc-registered-users — is the Secret present and readable?"
@@ -135,7 +147,7 @@ ORTHANC_CREDS=$(kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" \
 # ── 1. Mark the receiver log, so only lines this transfer produces are judged ────────
 # A trust that has been running for weeks has old errors in dicom.log; scanning the
 # whole file would fail on history and hide today's result.
-LOG_MARK=$(kubectl exec -n "$NAMESPACE" "$XNAT_POD" -- \
+LOG_MARK=$("${KUBECTL[@]}" exec -n "$NAMESPACE" "$XNAT_POD" -- \
   sh -c "wc -l < '${DICOM_LOG}' 2>/dev/null || echo 0" | tr -d '[:space:]') \
   || fail "could not read ${DICOM_LOG} in ${XNAT_POD} — without a mark this smoke cannot tell this transfer's log lines from the pod's history"
 LOG_MARK="${LOG_MARK:-0}"
@@ -193,7 +205,7 @@ green "✓ store reported success (${INSTANCE_COUNT:-?} instance(s), 0 failed)"
 # answers the association at the network layer and only then hands the object to the
 # importer, so a plugin/core mismatch shows up HERE and nowhere else.
 sleep "$SETTLE_SECONDS"
-NEW_LOG=$(kubectl exec -n "$NAMESPACE" "$XNAT_POD" -- \
+NEW_LOG=$("${KUBECTL[@]}" exec -n "$NAMESPACE" "$XNAT_POD" -- \
   sh -c "tail -n +$((LOG_MARK + 1)) '${DICOM_LOG}' 2>/dev/null || true")
 
 if printf '%s' "$NEW_LOG" | grep -Eq "$FAILURE_PATTERNS"; then

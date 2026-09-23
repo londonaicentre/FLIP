@@ -63,9 +63,13 @@ spec:
       # before this change too. Observed installs complete in 37-69s on a laptop
       # kind cluster and ~22 minutes on a real trust cluster. If a budget here is
       # ever raised past HELM_TIMEOUT (30m by default, trust/deploy/helm/Makefile),
-      # raise that with it or the Job will be killed mid-wait and the hook failure
-      # will name helm rather than the wait — which is exactly how FLIP#1228 hid a
-      # correct chart behind five consecutive "Job not ready" upgrades.
+      # raise that with it: the extra budget is otherwise unreachable, because Helm
+      # stops waiting first and marks the release failed. (It does not stop this Job —
+      # there is no activeDeadlineSeconds here and the delete policy is
+      # before-hook-creation,hook-succeeded, so the Job runs on while the release
+      # already reads as failed.) The hook failure then names helm rather than the wait
+      # that expired — exactly how FLIP#1228 hid a correct chart behind five
+      # consecutive "Job not ready" upgrades.
       initContainers:
         - name: configure-xnat-web
           # Runs the same configure-xnat.sh the Compose deployment runs, from the same image that
@@ -89,7 +93,7 @@ spec:
           # spell it out. An image rebuilt with a different XNAT_ROOT breaks every one of those with
           # or without this line, so a value here would advertise a configurability the chart does not
           # have. If XNAT_ROOT ever needs to move, it moves in all of those places at once.
-          image: "{{ .Values.xnat.web.image.repository }}:{{ .Values.xnat.web.image.tag }}"
+          image: "{{ .Values.xnat.web.image.repository }}:{{ include "flip-trust.imageTag" (dict "pin" .Values.xnat.image.pin "global" .Values.global.image.tag "own" .Values.xnat.web.image.tag) }}"
           imagePullPolicy: {{ .Values.xnat.web.image.pullPolicy }}
           command:
             - /bin/bash

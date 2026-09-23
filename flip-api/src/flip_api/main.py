@@ -103,6 +103,7 @@ from flip_api.user_services import (
 from flip_api.utils.cors import get_cors_allowed_origins
 from flip_api.utils.rate_limiter import limiter
 from flip_api.utils.security_headers import SecurityHeadersMiddleware
+from flip_api.utils.version import build_identity
 
 # Module-level holder for the CORS allowlist. Populated from Cognito at app startup (see
 # `lifespan`). CORSMiddleware stores this list by reference and reads it per-request via
@@ -277,10 +278,15 @@ def root() -> dict[str, str]:
 def health_check() -> dict[str, str]:
     """Health check endpoint to verify the API is running.
 
+    ``version`` names the hub's build (FLIP#1204) — the CI-baked ``FLIP_RELEASE`` image
+    tag, or the pyproject version for a build that carries none. A trust site's
+    ``make upgrade-onprem-trust`` reads it to pick the release the site should run, so it
+    stays on this unauthenticated route, which every trust host can already reach.
+
     Returns:
-        dict[str, str]: ``{"status": "ok", "message": "flip is running"}``.
+        dict[str, str]: ``{"status": "ok", "message": "flip is running", "version": "<build>"}``.
     """
-    return {"status": "ok", "message": "flip is running"}
+    return {"status": "ok", "message": "flip is running", "version": build_identity() or "unknown"}
 
 
 def main() -> None:
