@@ -1024,15 +1024,32 @@ revert by flipping `MANAGE_DNS=true` + `make plan`/`apply` once the zone lands:
 which is the single most surprising thing about it. CloudFront resolves a request by its `Host` header against
 alternate domain names that are unique across **every** AWS account, and it prefers an **exact** alias over a
 **wildcard** one. So while this account's distribution still lists `app.flip.aicentre.co.uk`, it keeps serving that
-name however the DNS answers — pointing the record at the receiving estate's edge changes nothing for the web.
-Verified 2026-09-23 by resolving the name to the LZA edge's own address: the reply still came from legacy.
+name however the DNS answers — pointing the record at the receiving estate's edge changes nothing for the web. To
+see it rather than take it on trust, resolve the name to the receiving edge yourself and note who answers:
+
+```bash
+curl -s --resolve app.flip.aicentre.co.uk:443:<receiving-edge-ip> \
+  https://app.flip.aicentre.co.uk/js/window.js | grep USER_POOL_ID
+```
+
+Read the Cognito pool id, not `/api/health` — both estates report the same release, so the health route cannot
+tell them apart.
 
 `RELEASE_WEB_ALIAS=true` drops the alias here and takes the custom viewer certificate with it, because CloudFront
 permits one only alongside the other. That is the moment the name moves. Order matters:
 
-1. The receiving edge already holds `*.<zone>` plus the `_<alias>` TXT ownership record (the "wildcard method").
-2. DNS points at the receiving edge. This moves anything that is **not** CloudFront — an FL NLB leg moves here.
+1. The receiving edge already holds `*.flip.aicentre.co.uk` — the wildcard in the **parent** zone, not in this
+   account's `app.flip.aicentre.co.uk` child zone — plus the `_<alias>` TXT ownership record (the "wildcard
+   method").
+2. DNS points at the receiving edge, by **re-delegating the child zone at the parent**, not by editing
+   `aws_route53_record.alb`. That record is still this account's while `MANAGE_DNS=true` and still aliases *this*
+   distribution, so repointing it by hand is undone by the next apply and flagged by the drift job meanwhile. This
+   step also moves anything that is **not** CloudFront — an FL NLB leg moves here.
 3. `RELEASE_WEB_ALIAS=true` on this account. **Now** the web moves.
+
+Once the child zone is un-delegated its ACM validation records stop resolving publicly, so a legacy estate parked
+as a rollback target past the certificate's renewal window (ACM begins renewal ~60 days before expiry) will fail
+that renewal. That bounds how long "put the alias back" stays a re-apply rather than a re-issue.
 
 Set it as a variable on the `aws-prod` (or `aws-stag`) GitHub environment rather than applying from a laptop: CI is
 the only applier for the self-contained accounts, so a local apply is reverted by the next run and flagged by the
@@ -1041,18 +1058,21 @@ window instead of whenever a release reaches production.
 
 > [!IMPORTANT]
 > **Release the alias before repointing CI (FLIP#1199).** The alias lives on the *legacy* distribution, so the
-> apply that drops it has to target the legacy account. Once `TF_PROD` on an environment selects an LZA estate
-> (`lza` / `lza-stag`), that environment applies LZA instead and there is **no CI path to the legacy account left**.
-> `RELEASE_WEB_ALIAS=true` would then land on the LZA account, where `manage_dns` is false and the flag is a no-op —
-> so it would look applied, change nothing, and the web would never cut over. Drop the alias while `TF_PROD` still
-> selects the legacy estate (or is unset). Afterwards it takes a manual apply against legacy with its own env file,
-> which is at least no longer fought by CI, since CI has stopped touching that account.
+> apply that drops it has to target the legacy account. FLIP#1199 (PR #1273, **not merged at the time of writing**)
+> adds a `TF_PROD` variable that lets a GitHub environment select an LZA estate; today the estate is derived from
+> the branch and can only be `stag` or `prod`. Once an environment selects an LZA estate there is **no CI path to
+> the legacy account left**, and `RELEASE_WEB_ALIAS=true` would land on the LZA account instead — where the
+> workload distribution is `count = 0` (gated on `lza_managed_network` in `cloudfront.tf`), so the flag can do
+> nothing whatever `MANAGE_DNS` says. It would read as applied, change nothing, and the web would never cut over.
+> Afterwards it takes a manual apply against legacy with its own env file, which is at least no longer fought by
+> CI, since CI has stopped touching that account.
 
 **Staging inverts step 2 and step 3, and it is not optional.** Production gets an overlap window because the
 receiving edge can hold a wildcard while legacy keeps the exact name — both answer, exact wins, and nothing breaks
-until the exact one goes. There is only one wildcard per zone and production has it, so the staging edge has to
-carry `stag.flip.aicentre.co.uk` exactly. CloudFront refuses to attach an alias another distribution already holds
-(`CNAMEAlreadyExists`), so for staging the order is:
+until the exact one goes. CloudFront allows one distribution per alias string, and production's edge already holds
+`*.flip.aicentre.co.uk` — which covers `stag.flip.aicentre.co.uk` too — so the staging edge cannot take that same
+wildcard and must carry the exact name instead. CloudFront refuses to attach an alias another distribution already
+holds (`CNAMEAlreadyExists`), so for staging the order is:
 
 1. `RELEASE_WEB_ALIAS=true` on `aws-stag`, applied. **Staging is now down** — nothing serves the name.
 2. The receiving edge attaches the exact alias and DNS moves (one apply in `aicentre-lza-iac`).
@@ -1069,7 +1089,9 @@ joins the production FL net, and it does so silently, by succeeding.
 **Rollback is not a DNS revert.** This account keeps its zone, records, certificate and data, so it remains a
 rollback target — but only once the alias is back, which means `RELEASE_WEB_ALIAS=false` and an apply, a CloudFront
 deployment measured in minutes. Plan the window with someone able to run that, and do not assume reverting the DNS
-change is enough. `tests/test_web_alias_release.py` guards the invariants; the certificate resource stays gated on
+change is enough. **For staging that is not sufficient on its own**: the receiving edge holds the exact name there
+rather than a wildcard, so re-adding it here fails `CNAMEAlreadyExists` until the receiving side detaches first —
+staging rollback is two applies, in the reverse of the order that took it over. `tests/test_web_alias_release.py` guards the invariants; the certificate resource stays gated on
 `MANAGE_DNS` precisely so putting the name back is a re-apply and not a re-issue.
 
 **Fresh-account trap: create a Secrets Manager secret before the first `plan`.** On a

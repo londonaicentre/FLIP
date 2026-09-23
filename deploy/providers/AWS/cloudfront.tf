@@ -17,7 +17,10 @@
 #
 # Users continue to hit the canonical subdomain
 # (stag.flip.aicentre.co.uk / app.flip.aicentre.co.uk); that A-record
-# (aws_route53_record.alb in main.tf) aliases this CloudFront distribution.
+# (aws_route53_record.alb in main.tf) aliases this CloudFront distribution —
+# until RELEASE_WEB_ALIAS hands the name to another estate's edge, after which
+# the record still points here but this distribution no longer answers for the
+# name and serves only *.cloudfront.net. See local.serves_public_name.
 #
 # CloudFront serves the UI static bundle from S3 (default behavior) and
 # forwards /api/* to the (internal) ALB via aws_cloudfront_vpc_origin —
@@ -507,15 +510,21 @@ locals {
   # distribution references neither the app buckets' CORS nor Cognito.
   # On LZA the workload distribution is gated off -- the UI origin is the
   # networking account's edge distribution (FLIP#749 WP3).
+  #
+  # Deliberately NOT keyed to local.serves_public_name below: after the alias is
+  # released the browser origin is still the public name, the other estate's
+  # edge just serves it. Keying this to the gate would rewrite the Cognito
+  # callback URLs and the bucket CORS to *.cloudfront.net mid-cutover and break
+  # sign-in, with nothing red in Terraform. Guarded in
+  # tests/test_web_alias_release.py.
   ui_origin = var.manage_dns ? "https://${var.flip_alb_subdomain}" : var.lza_managed_network ? "https://${var.lza_web_edge_domain}" : "https://${aws_cloudfront_distribution.flip_ui[0].domain_name}"
 
   # Whether THIS account's distribution still answers for the public name.
-  # CloudFront resolves a request by Host header against alternate domain names
-  # that are unique across every AWS account, preferring an exact alias over a
-  # wildcard — so this flag, not DNS, is what decides who serves the name while
-  # two estates overlap. The certificate follows it rather than manage_dns: a
-  # custom viewer certificate is only permitted alongside an alias, so dropping
-  # one without the other is rejected. See var.release_web_alias.
+  # Alternate domain names are unique across every AWS account and an exact
+  # alias beats a wildcard, so this flag — not DNS — decides who serves the name
+  # while two estates overlap. The viewer certificate follows it rather than
+  # manage_dns: CloudFront permits a custom certificate only alongside an alias.
+  # Runbook: README.md, "Handing the public name over".
   serves_public_name = var.manage_dns && !var.release_web_alias
 }
 

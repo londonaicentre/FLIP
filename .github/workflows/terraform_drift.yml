@@ -163,6 +163,11 @@ jobs:
           EFS_PROVISION_IMAGE: ${{ vars.EFS_PROVISION_IMAGE }}
           LZA_VPC_NAME: ${{ vars.LZA_VPC_NAME }}
           MANAGE_DNS: ${{ vars.MANAGE_DNS }}
+          # NOT one of the LZA keys above: this one is for a self-contained
+          # account, set to "true" on aws-prod (or aws-stag) for the single apply
+          # that hands the public web name to another estate's edge. Unset is the
+          # everyday value — see compose-ci-env.sh and README, "Handing the public
+          # name over".
           RELEASE_WEB_ALIAS: ${{ vars.RELEASE_WEB_ALIAS }}
           ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
