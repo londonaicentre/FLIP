@@ -22,12 +22,12 @@ class TestSimMaxSamples(ArkplusSimCapContract):
     APP_ID = "nvflare_arkplus_fine_tuning"
 
     def test_capped_split_keeps_a_positive_per_lesion_in_train_and_val(self) -> None:
-        """The default cap (64) still gives the label-aware split a positive of every lesion in val."""
+        """The default cap (128) still gives the label-aware split a positive of every lesion in val."""
         module = load_app(self.APP_ID)
         cfg = module.load_config()
         lesions = module.get_lesions(cfg)
 
-        capped = module.cap_dataframe(cohort(rows_per_class=300), 64, CLASS_COLUMNS, ["Yes"], seed=42)
+        capped = module.cap_dataframe(cohort(rows_per_class=300), 128, CLASS_COLUMNS, ["Yes"], seed=42)
         datalist = [
             {
                 "image": row["accession_id"],

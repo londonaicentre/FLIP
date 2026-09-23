@@ -52,7 +52,7 @@ override SITE2_DATAFRAME  := $(call abspath_app,$(SITE2_DATAFRAME))
 # subset; see cap_dataframe in app_files/data_utils.py). The default makes a plain `make sim` a quick
 # smoke test; `make sim MAX_SAMPLES=0` (or empty) scores the full ~470 studies per site. Only the
 # LOCAL_DEV dataframe path reads it — a deployed job's cohort comes from the trust and is never capped.
-MAX_SAMPLES ?= 64
+MAX_SAMPLES ?= 128
 
 # Simulator workspace root, matching job.py's default.
 WORKSPACE ?= /tmp/nvflare/arkplus_multimodel_eval

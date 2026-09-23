@@ -124,7 +124,7 @@ on one GPU, so it's useful for smoke-testing code changes and hyperparameter swe
 
 .. code-block:: bash
 
-   # From the repo root — the defaults (3 rounds, 64 studies per site) are a quick smoke test
+   # From the repo root — the defaults (3 rounds, 128 studies per site) are a quick smoke test
    make -C fl-tutorials download-arkplus-finetuning-data   # one-time
    make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning
 
@@ -138,7 +138,7 @@ Or directly from the tutorial directory:
    cd fl-tutorials/nvflare/image_classification/arkplus_fine_tuning
    make run RAW_CHECKPOINT=/path/to/Ark6_swinLarge768_ep50.pth.tar
    make run NUM_ROUNDS=50   # override the default 3 rounds
-   make run MAX_SAMPLES=0   # train on every study instead of the default 64 per site
+   make run MAX_SAMPLES=0   # train on every study instead of the default 128 per site
 
 ``MAX_SAMPLES`` caps how many studies each simulated site reads, picking a deterministic,
 class-balanced subset so the train/validation split and the per-lesion AUCs still compute. It is a

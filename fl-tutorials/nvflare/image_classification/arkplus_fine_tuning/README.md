@@ -174,7 +174,7 @@ make export NUM_ROUNDS=10 N_CLIENTS=3
 make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning NUM_ROUNDS=10
 ```
 
-`MAX_SAMPLES` (default `64`) caps how many dataframe rows each simulated site reads, so a plain
+`MAX_SAMPLES` (default `128`) caps how many dataframe rows each simulated site reads, so a plain
 `make run`/`make sim` is a quick smoke test of the whole round-trip — a few minutes on a GPU instead
 of the ~1,900 studies per site the full dataset holds. The subset is deterministic and
 class-balanced (`cap_dataframe` in [`app_files/data_utils.py`](app_files/data_utils.py)), so the

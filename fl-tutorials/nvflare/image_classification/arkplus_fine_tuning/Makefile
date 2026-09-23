@@ -41,7 +41,7 @@ N_CLIENTS ?= 2
 # smoke test of the whole round-trip; `make sim MAX_SAMPLES=0` (or empty) trains on the full ~1,900
 # studies per site. Only the LOCAL_DEV dataframe path reads it — a deployed job's cohort comes from
 # the trust and is never capped, and nothing here reaches the exported job config.
-MAX_SAMPLES ?= 64
+MAX_SAMPLES ?= 128
 
 # Simulator workspace + metrics output. WORKSPACE matches job.py's default and is deliberately
 # per-tutorial: `make round-metrics` auto-discovers the log with the most round events under the
