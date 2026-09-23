@@ -650,8 +650,9 @@ To change it:
 #      stag/prod → services.tf, module "cognito" → callback_urls
 #      dev       → dev/variables.tf, var.cognito_callback_urls
 # 2. Apply — TARGETED at the app client. Never run a full `make apply` on stag/prod for
-#    this: AMI drift in the same plan can force-replace the trust EC2s. Same reasoning
-#    as `apply-fl-kit-slots` above. The apply updates Cognito immediately …
+#    this: it also applies whatever else is pending in the plan, FL task-definition
+#    replacements included. Same reasoning as `apply-fl-kit-slots` above. The apply
+#    updates Cognito immediately …
 make init PROD=stag
 terraform plan -target=module.cognito.aws_cognito_user_pool_client.client -out=cognito.tfplan
 terraform apply cognito.tfplan
