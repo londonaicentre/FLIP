@@ -76,6 +76,12 @@ laptop):
 - SSH access from the operator workstation (if remote), or local access.
 - Internet connectivity (to pull Docker images and packages).
 - A writable directory for the FLIP application (default ``/opt/flip``).
+- For GPU training or evaluation: an NVIDIA GPU on NVIDIA driver **580 or newer**, with the
+  `NVIDIA Container Toolkit <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_.
+  The FL images ship PyTorch built for CUDA 13, which bundles its own CUDA runtime, so no CUDA
+  toolkit is needed on the host; check the "Driver Version" reported by ``nvidia-smi``. The
+  playbook installs neither the driver nor the toolkit. A CPU-only host (kit
+  ``NUM_AVAILABLE_GPUS=0``) needs neither.
 
 **Trust data** — the two systems the FLIP node reads. Both must already exist
 and already agree with each other before the node is deployed:
