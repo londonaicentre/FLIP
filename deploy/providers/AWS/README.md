@@ -1580,12 +1580,12 @@ second is a GitHub change:
    not change: the branch policy on `aws-prod` is a property of the pipeline, and
    re-creating an environment to rename it would drop every secret it holds.
 
-| | Account | `TF_PROD` | Env file | `ENV_CLASS` | Profile guard | `LZA_REQUIRED_KEYS` |
-| --- | --- | --- | --- | --- | --- | --- |
-| Legacy staging | `080369786334` | `stag` | `.env.stag` | `stag` | `stag` | no |
-| Legacy production | `046651569599` | `true` | `.env.production` | `prod` | `prod` | no |
-| LZA staging | `863478709690` | `lza-stag` | `.env.lza-stag` | `stag` | `lza-stag` | yes |
-| LZA production | `893493035022` | `lza` | `.env.lza-prod` | `prod` | `lza-prod` | yes |
+| | `TF_PROD` | Env file | `ENV_CLASS` | Profile guard | `LZA_REQUIRED_KEYS` |
+| --- | --- | --- | --- | --- | --- |
+| Legacy staging | `stag` | `.env.stag` | `stag` | `stag` | no |
+| Legacy production | `true` | `.env.production` | `prod` | `prod` | no |
+| LZA staging | `lza-stag` | `.env.lza-stag` | `stag` | `lza-stag` | yes |
+| LZA production | `lza` | `.env.lza-prod` | `prod` | `lza-prod` | yes |
 
 `ENV_CLASS` is `deploy/env_mode.mk`'s derivation, carried per row of
 `compose-ci-env.sh`'s table as well: the workflows pass the class their ref implies
@@ -1602,8 +1602,8 @@ Run these in order **per account**, from a laptop authenticated to that account:
 # 0. The local profile the Makefile's guard expects for this mode: an alias for the
 #    workload account's permission set, in ~/.aws/config. An alias carrying the old
 #    account ID has to be re-created, not edited in place:
-#        [profile lza-stag]  sso_session = <session>  sso_account_id = 863478709690  sso_role_name = FLIPAdminAccess
-#        [profile lza-prod]  sso_session = <session>  sso_account_id = 893493035022  sso_role_name = FLIPAdminAccess
+#        [profile lza-stag]  sso_session = <session>  sso_account_id = <lza-stag-account-id>  sso_role_name = FLIPAdminAccess
+#        [profile lza-prod]  sso_session = <session>  sso_account_id = <lza-prod-account-id>  sso_role_name = FLIPAdminAccess
 
 # 0b. A GitHub OIDC provider must already exist in the account before ci/ can be
 #     planned. ci/ looks it up with `data.aws_iam_openid_connect_provider` — a

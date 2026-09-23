@@ -35,13 +35,13 @@
 
 ## AWS Profiles
 
-| Alias | Environment | Account alias | Account ID |
-| ------- | ------------- | --------- | --------- |
-| `stag` | Staging, self-contained estate (`PROD=stag`) | `flipstag` | `080369786334` (legacy; retiring with the LZA migration) |
-| `prod` | Production, self-contained estate (`PROD=true`) | `flipprod` | `046651569599` (legacy; retiring with the LZA migration) |
-| `lza-stag` | LZA staging (`PROD=lza-stag`; `FLIPAdminAccess` permission set) | staging workload account (provisioning tracked on FLIP#749) | `863478709690` |
-| `lza-prod` | LZA production (`PROD=lza`; `FLIPAdminAccess` permission set) | `FLIPProduction` | `893493035022` |
-| `dev` | Development (the `dev/` root: Cognito + SES; `FlipDeveloperAccess` permission set) | `flipdev` | — |
+| Alias | Environment | Account alias |
+| ------- | ------------- | --------- |
+| `stag` | Staging, self-contained estate (`PROD=stag`) | `flipstag` (legacy; retiring with the LZA migration) |
+| `prod` | Production, self-contained estate (`PROD=true`) | `flipprod` (legacy; retiring with the LZA migration) |
+| `lza-stag` | LZA staging (`PROD=lza-stag`; `FLIPAdminAccess` permission set) | staging workload account (provisioning tracked on FLIP#749) |
+| `lza-prod` | LZA production (`PROD=lza`; `FLIPAdminAccess` permission set) | `FLIPProduction` |
+| `dev` | Development (the `dev/` root: Cognito + SES; `FlipDeveloperAccess` permission set) | `flipdev` |
 
 The last two are where FLIP's estate is being migrated to; the `stag` / `prod` aliases
 the CI workflows default to are the LZA pair once `TF_PROD` is set (`README`,
