@@ -53,6 +53,26 @@ class ReleaseDispatchesTheBuilds(unittest.TestCase):
         text = RELEASE_WORKFLOW.read_text()
         assert re.search(r"^\s+actions: write", text, re.MULTILINE), "release.yml needs actions: write to dispatch"
 
+    def test_a_rerun_after_a_partial_failure_still_dispatches_and_releases(self) -> None:
+        """A run that pushed the tag and then failed leaves the tag behind; keyed on the tag, every re-run
+        would skip the builds and the release and still go green."""
+        text = RELEASE_WORKFLOW.read_text()
+        assert 'gh release view "${{ steps.version.outputs.tag }}"' in text
+        for step in ("Build every image at the release tag", "Prepare release notes", "Create GitHub Release"):
+            with self.subTest(step=step):
+                block = text[text.index(f"name: {step}") :].split("- name:", 1)[0]
+                assert "if: steps.release_check.outputs.exists == 'false'" in block, step
+        create_tag = text[text.index("name: Create tag") :].split("- name:", 1)[0]
+        assert "if: steps.tag_check.outputs.exists == 'false'" in create_tag
+
+    def test_one_failed_dispatch_does_not_stop_the_rest(self) -> None:
+        text = RELEASE_WORKFLOW.read_text()
+        step = text[text.index("Build every image at the release tag") :].split("- name:", 1)[0]
+        assert 'if gh workflow run "$wf" --ref "$TAG"; then' in step
+        assert 'failed+=("$wf")' in step
+        loop_end = step.index("done")
+        assert step.index("exit 1") > loop_end, "the failure exit must come after every dispatch was tried"
+
 
 if __name__ == "__main__":
     unittest.main()

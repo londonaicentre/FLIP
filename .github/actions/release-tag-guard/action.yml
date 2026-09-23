@@ -13,17 +13,18 @@ name: Release tag guard
 description: |
   Refuse to publish release images for a stable v<X.Y.Z> tag whose commit is not on main.
 
-  Every image workflow builds on a push of refs/tags/v*.*.* (FLIP#1204), so the twelve
-  images carry one :v<X.Y.Z> per release. A tag push is not gated by branch protection:
-  anyone with write access can push a v* tag at any commit, and without this step that
-  would publish release-looking images — FLIP_RELEASE baked in, pinnable by a site — from
-  code that was never released. Releases are cut on main by release.yml; this step makes
-  the image builds hold the same line.
+  Every image workflow builds at refs/tags/v*.*.* (FLIP#1204) — dispatched by release.yml for a
+  real release, triggered by the push for a hand-pushed one — so the twelve image workflows
+  publish one :v<X.Y.Z> per release. A tag push is not gated by branch protection: anyone with
+  write access can push a v* tag at any commit, and without this step that would publish
+  release-looking images, pinnable by a site, from code that was never released. Releases are
+  cut on main by release.yml; this step makes the image builds hold the same line.
 
   Pre-release tags (v<X.Y.Z>-rc.N and other -<suffix> forms) are exempt: that is the
   release-candidate path, where an admin tags a release PR head to build every image for
-  staging before the merge to main produces the stable tag. The tag ruleset on v* decides
-  who may create such tags; this step only decides what a stable one must point at.
+  staging before the merge to main produces the stable tag. Who may create v* tags is left to
+  write access (there is no tag ruleset — GitHub cannot exempt the built-in Actions app from
+  one); this step only decides what a stable one must point at.
 
   Ancestry is asked of the API (compare main...<sha>), not the clone: actions/checkout is a
   depth-1 checkout, and a shallow clone cannot answer merge-base questions.

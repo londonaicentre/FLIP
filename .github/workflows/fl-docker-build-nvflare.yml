@@ -15,11 +15,11 @@ name: Build and Push NVFLARE FL Docker Images
 on:
   push:
     branches: [main, develop]
-    # Release builds (FLIP#1204): the v<X.Y.Z> tag that release.yml creates on main rebuilds
-    # the whole NVFLARE image set at the release commit and pushes :v<X.Y.Z>. GitHub does
-    # not apply the paths filter to tag pushes, so a release tags every image, changed or
-    # not — the fl-server a hub deploys and the fl-client a site pins carry the same
-    # nvflare by construction.
+    # Release builds (FLIP#1204): a run at refs/tags/v<X.Y.Z> rebuilds the whole NVFLARE image set
+    # at the release commit and pushes :v<X.Y.Z>, changed or not — the fl-server a hub deploys and
+    # the fl-client a site pins carry the same framework by construction. For a real release that
+    # run is release.yml's workflow_dispatch at the tag (its GITHUB_TOKEN tag push starts no
+    # workflow); this trigger fires for a hand-pushed release candidate (v<X.Y.Z>-rc.N).
     tags: ['v*.*.*']
     paths:
       - "fl-services/nvflare/**"
@@ -144,8 +144,12 @@ jobs:
 
       - name: Push Base Image
         run: |
-          docker push $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }}
-          docker push $REGISTRY/$ORG/$BASE_IMAGE:sha-$SHORT_SHA
+          # A release-tag run publishes only :v<X.Y.Z>: the sha tags belong to the branch build
+          # of the same commit and stay immutable.
+          if [[ "${{ github.ref }}" != refs/tags/v* ]]; then
+            docker push $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }}
+            docker push $REGISTRY/$ORG/$BASE_IMAGE:sha-$SHORT_SHA
+          fi
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker push $REGISTRY/$ORG/$BASE_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -193,8 +197,10 @@ jobs:
 
       - name: Push FL Server Image
         run: |
-          docker push $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }}
-          docker push $REGISTRY/$ORG/$SERVER_IMAGE:sha-$SHORT_SHA
+          if [[ "${{ github.ref }}" != refs/tags/v* ]]; then
+            docker push $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }}
+            docker push $REGISTRY/$ORG/$SERVER_IMAGE:sha-$SHORT_SHA
+          fi
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker push $REGISTRY/$ORG/$SERVER_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -242,8 +248,10 @@ jobs:
 
       - name: Push FL Client Image
         run: |
-          docker push $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }}
-          docker push $REGISTRY/$ORG/$CLIENT_IMAGE:sha-$SHORT_SHA
+          if [[ "${{ github.ref }}" != refs/tags/v* ]]; then
+            docker push $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }}
+            docker push $REGISTRY/$ORG/$CLIENT_IMAGE:sha-$SHORT_SHA
+          fi
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker push $REGISTRY/$ORG/$CLIENT_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -290,8 +298,10 @@ jobs:
 
       - name: Push FL API Image
         run: |
-          docker push $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }}
-          docker push $REGISTRY/$ORG/$API_IMAGE:sha-$SHORT_SHA
+          if [[ "${{ github.ref }}" != refs/tags/v* ]]; then
+            docker push $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }}
+            docker push $REGISTRY/$ORG/$API_IMAGE:sha-$SHORT_SHA
+          fi
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker push $REGISTRY/$ORG/$API_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then

@@ -61,6 +61,22 @@ jobs:
                   git tag "${{ steps.version.outputs.tag }}"
                   git push origin "${{ steps.version.outputs.tag }}"
 
+            # Everything after the tag keys on the RELEASE not existing, not the tag: a run that
+            # pushed the tag and then failed (a dispatch error, a notes API blip) leaves the tag
+            # behind, and gating on it would make every re-run skip the builds and the release and
+            # still go green. Re-running now dispatches the twelve builds again (each re-publishes
+            # the same :v<X.Y.Z> from the same commit) and creates the release.
+            - name: Check if the release already exists
+              id: release_check
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+                    echo "exists=true" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "exists=false" >> "$GITHUB_OUTPUT"
+                  fi
+
             # The image workflows listen for a push of refs/tags/v*.*.* (FLIP#1204) — but
             # GitHub starts no workflow for an event created with the repository's own
             # GITHUB_TOKEN, which is what the tag push above is (the anti-recursion rule; only
@@ -71,11 +87,12 @@ jobs:
             # .github/tests/workflows/test_release.py holds it to the set that carries the
             # tag trigger, so a workflow added without being listed here fails CI.
             - name: Build every image at the release tag
-              if: steps.tag_check.outputs.exists == 'false'
+              if: steps.release_check.outputs.exists == 'false'
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   TAG: ${{ steps.version.outputs.tag }}
               run: |
+                  failed=()
                   for wf in \
                       docker_build_flip_api.yml \
                       docker_build_omop_db.yml \
@@ -89,16 +106,25 @@ jobs:
                       docker_build_xnat_web.yml \
                       fl-docker-build-flower.yml \
                       fl-docker-build-nvflare.yml; do
-                    gh workflow run "$wf" --ref "$TAG"
-                    echo "dispatched $wf at $TAG"
+                    # One failed dispatch must not stop the rest: try all twelve, then fail
+                    # naming the ones to re-run (a re-run of this workflow dispatches them all).
+                    if gh workflow run "$wf" --ref "$TAG"; then
+                      echo "dispatched $wf at $TAG"
+                    else
+                      failed+=("$wf")
+                    fi
                   done
+                  if [[ ${#failed[@]} -gt 0 ]]; then
+                    echo "::error::could not dispatch ${failed[*]} at $TAG — re-run this workflow"
+                    exit 1
+                  fi
 
             # generate_release_notes lets GitHub choose the previous release itself, which is
             # whatever was published most recently — including a flip-utils release cut seconds
             # after ours on the same push. Pin the range to the previous *platform* tag instead,
             # the way release-pypi.yml already does for its own artefact.
             - name: Prepare release notes
-              if: steps.tag_check.outputs.exists == 'false'
+              if: steps.release_check.outputs.exists == 'false'
               id: notes
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -125,9 +151,8 @@ jobs:
 
                   # The curated header (Highlights, Breaking Changes, Site upgrade, …) from the
                   # release-notes template goes ABOVE the generated changelog, the same way
-                  # release-pypi.yml publishes it (FLIP#1204: before this, the template only
-                  # reached the PR preview and the flip-utils release, so the "Site upgrade"
-                  # section trust operators act on never appeared on the platform release).
+                  # release-pypi.yml publishes it — the "Site upgrade" section is what trust
+                  # operators act on, so it belongs on the platform release.
                   # The licence block is stripped by its whole-line delimiters — see
                   # release-pypi.yml for why an unanchored range would eat every section.
                   VERSION="${{ steps.version.outputs.version }}"
@@ -145,7 +170,7 @@ jobs:
                   echo "notes_file=/tmp/release_notes.md" >> "$GITHUB_OUTPUT"
 
             - name: Create GitHub Release
-              if: steps.tag_check.outputs.exists == 'false'
+              if: steps.release_check.outputs.exists == 'false'
               uses: softprops/action-gh-release@v3
               with:
                   tag_name: ${{ steps.version.outputs.tag }}

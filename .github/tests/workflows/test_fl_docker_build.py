@@ -73,6 +73,26 @@ class HandRolledPushes(unittest.TestCase):
                 ungated = re.findall(r"^\s+docker (?:tag|push) [^\n]*:\$\{GITHUB_REF_NAME\}", text, re.MULTILINE)
                 assert len(gated) == len(ungated) == 8, f"{wf.name}: {len(gated)} gated of {len(ungated)}"
 
+    def test_a_release_tag_run_never_pushes_the_sha_tags(self) -> None:
+        """The sha tags belong to the branch build of the same commit and stay immutable."""
+        for wf in self.FL_WORKFLOWS:
+            lines = wf.read_text().splitlines()
+            pushes = [
+                i
+                for i, line in enumerate(lines)
+                if re.match(r"\s+docker push \S+:(?:sha-\$SHORT_SHA|\$\{\{ github\.sha \}\})\s*$", line)
+            ]
+            with self.subTest(workflow=wf.name):
+                assert len(pushes) == 8, f"{wf.name}: expected 8 sha pushes, found {len(pushes)}"
+            for i in pushes:
+                guard = next(
+                    line for line in reversed(lines[:i]) if line.strip().startswith(("if ", "elif ", "fi", "else"))
+                )
+                with self.subTest(workflow=wf.name, line=i + 1):
+                    assert guard.strip() == 'if [[ "${{ github.ref }}" != refs/tags/v* ]]; then', (
+                        f"{wf.name}:{i + 1}: {guard.strip()}"
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()
