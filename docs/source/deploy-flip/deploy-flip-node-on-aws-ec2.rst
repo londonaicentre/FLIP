@@ -84,7 +84,12 @@ Prerequisites
   workstation set up for it: AWS SSO profile, the Session Manager plugin, and
   ``uv sync`` in ``deploy/providers/AWS/`` (which installs Ansible).
 - The hub's SSH key pair at ``~/.ssh/host-aws`` / ``~/.ssh/host-aws.pub``. The
-  trust host is launched with that key pair, and Ansible connects with it.
+  trust host is launched with that key pair, and Ansible connects with it. On a
+  hub applied by CI the public half is the one in the SSM parameter
+  ``/flip/ci/host_aws_public_key``, so the private key on the workstation must be
+  its pair — a different ``host-aws`` fails ``ansible-init`` with ``Permission
+  denied (publickey)``. The play also connects to the hub's SSM bastion, so the key
+  has to open both hosts.
 - An env file for the environment that matches what is deployed. On a hub applied
   by CI, rebuild it from deployed state rather than trusting a local copy:
   ``deploy/providers/AWS/scripts/reconcile_ci_env.py --env stag --profile stag --out .env.stag``.
@@ -112,7 +117,14 @@ environment.
 
    On a hub whose Terraform is applied by CI, a later CI apply uses the GitHub
    environment's values — set ``DEPLOY_TRUST_EC2`` and the ``TRUST_*`` keys there
-   too, or that apply will remove the host again.
+   too, or that apply will remove the host again. Setting them there and letting CI
+   apply is the simpler route: with Deployment Mode on, run
+   ``gh workflow run terraform_apply.yml --ref develop -f fl_quiesced=true`` (``main``
+   for production). The ``fl_quiesced`` input is what gets the apply past its
+   FL-impact check, which otherwise holds any apply that restarts the FL services.
+   Afterwards rebuild the env file from deployed state again: it still says
+   ``DEPLOY_TRUST_EC2=false`` until you do, and ``deploy-trust`` refuses to run
+   while it does.
 
 3. **Provision it.** ``make update-env ssh-config PROD=stag`` writes the SSM-tunnelled
    ``flip-trust`` SSH alias; ``make ansible-init PROD=stag`` then installs Docker
@@ -130,8 +142,19 @@ environment.
       make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." PROD=stag   # repo root
       make register-trusts KIT=<CODE> PROD=stag                     # deploy/providers/AWS
 
-   Leave ``ORTHANC_STORAGE_DIR`` unset in the kit: the host's default
-   (``/opt/flip/orthanc/orthanc-storage``) is the one that is seeded.
+   Then delete ``ORTHANC_STORAGE_DIR``, ``BASE_IMAGES_DOWNLOAD_DIR`` and
+   ``XNAT_DATA_DIR`` from the kit. The template carries workstation-relative paths
+   for a trust that runs where its kit lives; this stack is driven from the
+   workstation through a remote Docker context, so those paths name directories on
+   the workstation, which Docker then creates empty and root-owned on the host.
+   Unset, each falls back to the host's own layout under ``/opt/flip`` — the
+   Orthanc default (``/opt/flip/orthanc/orthanc-storage``) is the one that is seeded.
+
+   Registration claims one of the hub's FL kit slots and fails with *No FL kit
+   slots available* when the pool is used up. Free the slot of a trust that no longer
+   exists with ``make delete-trust NAME="<trust name>" PROD=stag`` (a hard delete:
+   its project links and task history go with it), or grow the pool with
+   ``make add-fl-kits``.
 
 5. **Opt into the GPU** (GPU hosts only) by adding ``TRUST_EC2_NUM_GPUS=1`` to the
    kit. The deploy then adds the GPU overlay and sets ``NUM_AVAILABLE_GPUS`` for
@@ -147,6 +170,14 @@ environment.
    This stages the trust's FL kit, seeds OMOP and Orthanc at the data version
    pinned in ``trust/.data_version``, and starts the stack on the host with
    ``--pull always`` through a Docker context over the SSM tunnel.
+
+   The seed gives the trust the dataset partition numbered like its FL kit slot, and
+   the mock datasets are split into two. A trust registered into slot 3 or higher
+   therefore needs the partition named — ``make deploy-trust KIT=<CODE> PROD=stag
+   SOURCE_TRUST=1`` — and needs its trust network created on the host first, since
+   ``create-networks`` only makes the ones for slots 1 and 2:
+   ``docker --context flip-trust network create --driver overlay --attachable
+   deploy_trust-network-<slot>``.
 
 7. **Unpause FL.** Turn Deployment Mode off.
 
@@ -171,16 +202,29 @@ Verify
 Teardown
 *********
 
-Set ``DEPLOY_TRUST_EC2=false`` and plan/apply again (pausing FL first, as above).
-The host and its volumes are destroyed; the trust's hub registration stays until
-removed by an admin.
+Set ``DEPLOY_TRUST_EC2=false`` and plan/apply again (pausing FL first, as above;
+on a CI-applied hub, set it in the GitHub environment and run the apply
+workflow). The host and its volumes are destroyed; the trust's hub registration
+stays until removed — ``make delete-trust NAME="<trust name>" PROD=stag`` also
+frees its FL kit slot for the next trust.
 
 ***************
 Troubleshooting
 ***************
 
-- **Imaging pull fails with ``QueueFailed`` and Orthanc has 0 studies** — the
-  kit sets a workstation-relative ``ORTHANC_STORAGE_DIR``; remove it and redeploy.
+- **Imaging pull fails with ``QueueFailed`` and Orthanc has 0 studies**, or Orthanc
+  restarts with ``SQLite: Unable to open the database`` — the kit sets a
+  workstation-relative ``ORTHANC_STORAGE_DIR``; remove it (and
+  ``BASE_IMAGES_DOWNLOAD_DIR`` / ``XNAT_DATA_DIR``) and redeploy.
+- **``ansible-init`` or ``deploy-trust``: ``Permission denied (publickey)``** — the
+  workstation's ``~/.ssh/host-aws`` is not the key pair the instances were launched
+  with (see *Prerequisites*).
+- **Containers fail with ``network deploy_trust-network-<N> not found``** — the trust
+  is in slot 3 or higher; create that network on the host (step 6) and run
+  ``make up-trust-ec2 KIT=<CODE> PROD=<env>`` from the repo root to finish, rather
+  than re-seeding with a second ``deploy-trust``.
+- **Seeding stops with ``source_trust <N> is not a partition of the dataset``** —
+  pass ``SOURCE_TRUST=1`` or ``2`` (step 6).
 - **Every task fails with ``Invalid payload: failed authentication``** — the kit's
   ``AES_KEY_BASE64`` no longer matches the hub's. Reconcile the env file from
   deployed state, run ``make sync-trust-kit KIT=<CODE> PROD=<env>`` from the repo
