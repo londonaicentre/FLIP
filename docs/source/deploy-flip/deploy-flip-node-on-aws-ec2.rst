@@ -115,8 +115,8 @@ environment.
    too, or that apply will remove the host again.
 
 3. **Provision it.** ``make update-env ssh-config PROD=stag`` writes the SSM-tunnelled
-   ``flip-trust`` SSH alias; ``make ansible-init PROD=stag`` then installs Docker,
-   the AWS CLI and the CloudWatch agent and creates the trust's directories. On a
+   ``flip-trust`` SSH alias; ``make ansible-init PROD=stag`` then installs Docker
+   (skipped when the image already has the engine and compose plugin), the AWS CLI and the CloudWatch agent and creates the trust's directories. On a
    GPU host the play also holds the NVIDIA driver and kernel packages at the
    versions the AMI shipped, re-registers the NVIDIA runtime with Docker, and
    **fails** unless a container can see the GPU — the check that the

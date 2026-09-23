@@ -139,19 +139,45 @@
         post_reboot_delay: 30
       when: reboot_required_file.stat.exists
 
+# Skip the Docker install when the image already carries a working engine with the
+# compose plugin (the trust stack needs both) — a pre-baked AMI then provisions
+# without reinstalling or re-sourcing Docker. Stock Ubuntu has neither, so the
+# role runs there exactly as before.
 - name: install Docker on Trust EC2, adding ubuntu to docker group
   hosts: trust_ec2
   become: true
-  roles:
-    - geerlingguy.docker
-  vars:
-    docker_users: [ubuntu]
+  tasks:
+    - name: probe for an existing Docker engine and compose plugin
+      shell: docker version --format '{{ "{{" }}.Server.Version{{ "}}" }}' && docker compose version --short
+      register: docker_probe
+      changed_when: false
+      failed_when: false
 
-# geerlingguy.docker leaves /etc/docker/daemon.json alone (no daemon options set)
-# but swaps a distro docker.io for docker-ce, so re-assert the nvidia runtime the
-# AMI's container toolkit registered and prove a container can see the GPU — a
-# GPU trust whose fl-client silently falls back to CPU is the failure to catch
-# here, not at training time.
+    - name: install Docker (geerlingguy.docker)
+      include_role:
+        name: geerlingguy.docker
+      vars:
+        docker_users: [ubuntu]
+      when: docker_probe.rc != 0
+
+    - name: report the preinstalled Docker kept as-is
+      debug:
+        msg: "Docker already present (engine / compose): {{ docker_probe.stdout_lines | join(' / ') }} — install skipped"
+      when: docker_probe.rc == 0
+
+    - name: add ubuntu to the docker group (the role does this when it runs)
+      user:
+        name: ubuntu
+        groups: docker
+        append: true
+      when: docker_probe.rc == 0
+
+# Whether Docker came with the AMI or from the role above (which can swap a
+# distro docker.io for docker-ce), re-assert the nvidia runtime the AMI's
+# container toolkit registered and prove a container can see the GPU — a GPU
+# trust whose fl-client silently falls back to CPU is the failure to catch here,
+# not at training time. The role leaves /etc/docker/daemon.json alone (no daemon
+# options set).
 - name: wire the NVIDIA container runtime into Docker on a GPU trust host
   hosts: trust_ec2
   become: true
