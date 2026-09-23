@@ -95,9 +95,13 @@ The dev compose stack (`deploy/compose.development.yml` +
 
 The `DEV_DATAFRAME` CSV must expose chest-X-ray accession IDs with the same
 column shape `query.sql` returns from the trust mock OMOP DB (concept ids
-4215818 / 4196943 / 40481136). DICOMs land in `DEV_IMAGES_DIR` keyed by
-accession number — `flip.get_by_accession_number(..., resource_type=[ResourceType.DICOM])`
-reads them directly when `LOCAL_DEV=true`.
+4215818 / 4196943 / 40481136). The one exception is `person_id`, which
+`query.sql` projects only so the trust can report per-subject age and sex
+distributions: the app never reads it, nothing computes cohort statistics on
+the local-sim path, and the recorded CSV omits it. DICOMs land in
+`DEV_IMAGES_DIR` keyed by accession number —
+`flip.get_by_accession_number(..., resource_type=[ResourceType.DICOM])` reads
+them directly when `LOCAL_DEV=true`.
 
 ### Run on the flwr simulator (no containers)
 

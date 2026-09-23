@@ -120,7 +120,7 @@ class TestHandleClientMetrics:
         handle_client_metrics(msg, server_round=1, model_id=VALID_MODEL_ID, flip=flip)
 
         assert flip.send_metrics.call_count == 1
-        (_, kwargs), = flip.send_metrics.call_args_list
+        ((_, kwargs),) = flip.send_metrics.call_args_list
         assert kwargs["label"] == "LOSS"
 
     def test_skips_non_numeric_metrics(self):
@@ -130,7 +130,7 @@ class TestHandleClientMetrics:
         handle_client_metrics(msg, server_round=1, model_id=VALID_MODEL_ID, flip=flip)
 
         assert flip.send_metrics.call_count == 1
-        (_, kwargs), = flip.send_metrics.call_args_list
+        ((_, kwargs),) = flip.send_metrics.call_args_list
         assert kwargs["label"] == "LOSS"
 
     def test_parses_per_epoch_x_suffix(self):
@@ -167,7 +167,7 @@ class TestHandleClientMetrics:
 
         handle_client_metrics(msg, server_round=99, model_id=VALID_MODEL_ID, flip=flip)
 
-        (_, kwargs), = flip.send_metrics.call_args_list
+        ((_, kwargs),) = flip.send_metrics.call_args_list
         assert kwargs["label"] == "TRAIN_LOSS"
         assert kwargs["x_value"] == 5.0
         assert kwargs["global_round"] == 99
@@ -195,7 +195,7 @@ class TestHandleClientMetrics:
 
         handle_client_metrics(msg, server_round=7, model_id=VALID_MODEL_ID, flip=flip)
 
-        (_, kwargs), = flip.send_metrics.call_args_list
+        ((_, kwargs),) = flip.send_metrics.call_args_list
         assert kwargs["label"] == "TRAIN_LOSS.X_NAN"
         assert kwargs["x_value"] is None
 
@@ -235,7 +235,7 @@ class TestHandleClientMetrics:
 
         handle_client_metrics(msg, server_round=1, model_id=VALID_MODEL_ID, flip=flip)
 
-        (_, kwargs), = flip.send_metrics.call_args_list
+        ((_, kwargs),) = flip.send_metrics.call_args_list
         assert kwargs["client_name"] == "Trust_5"
 
     def test_site_takes_precedence_over_client_name(self):
@@ -244,7 +244,7 @@ class TestHandleClientMetrics:
 
         handle_client_metrics(msg, server_round=1, model_id=VALID_MODEL_ID, flip=flip)
 
-        (_, kwargs), = flip.send_metrics.call_args_list
+        ((_, kwargs),) = flip.send_metrics.call_args_list
         assert kwargs["client_name"] == "Trust_1"
 
     def test_hub_exception_does_not_break_loop(self):
@@ -308,7 +308,7 @@ class TestHandleClientException:
 
         handle_client_exception(msg, model_id=VALID_MODEL_ID, flip=flip)
 
-        (_, kwargs), = flip.send_handled_exception.call_args_list
+        ((_, kwargs),) = flip.send_handled_exception.call_args_list
         assert kwargs["client_name"] is None
 
     def test_hub_exception_is_swallowed(self):
@@ -347,7 +347,7 @@ class TestHandleClientException:
 
         handle_client_exception(msg, model_id=VALID_MODEL_ID, flip=flip)
 
-        (_, kwargs), = flip.send_handled_exception.call_args_list
+        ((_, kwargs),) = flip.send_handled_exception.call_args_list
         assert kwargs["client_name"] is None
         flip.update_status.assert_called_once_with(VALID_MODEL_ID, ModelStatus.ERROR)
 
@@ -362,7 +362,7 @@ class TestHandleClientException:
 
         handle_client_exception(msg, model_id=VALID_MODEL_ID, flip=flip, site_name="Trust_2")
 
-        (_, kwargs), = flip.send_handled_exception.call_args_list
+        ((_, kwargs),) = flip.send_handled_exception.call_args_list
         assert kwargs["client_name"] == "Trust_2"
 
 

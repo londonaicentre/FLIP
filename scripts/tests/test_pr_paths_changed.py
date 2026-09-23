@@ -132,7 +132,7 @@ def test_pull_request_into_develop_runs_on_a_matching_file() -> None:
 
 
 def test_pull_request_into_develop_skips_when_nothing_matches() -> None:
-    run, _ = gate.decide("pull_request", "develop", ["flip-api/src/x.py", "CLAUDE.md"], GATE_PATHS)
+    run, _ = gate.decide("pull_request", "develop", ["flip-api/src/x.py", "AGENTS.md"], GATE_PATHS)
     assert not run
 
 

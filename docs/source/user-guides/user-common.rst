@@ -45,7 +45,7 @@ Initial Login
 
    MFA enrolment is **mandatory** and cannot be deferred: until it is complete, every page of the application redirects you to the enrolment page — only the sign-in and password pages, the access-request form and the privacy policy and terms of service remain reachable. Keep the authenticator entry — you need a fresh code from it at every subsequent sign-in. If you lose the device, an administrator can reset your MFA so you can enrol again (see :ref:`admin-project-and-user-management`). Local development deployments run with ``ENFORCE_MFA=false``, which skips enrolment and the code prompt; staging and production enforce them by default (``ENFORCE_MFA`` defaults to ``true`` there and is only ever set to ``false`` deliberately, for testing).
 
-.. figure:: ../assets/flip/flip-first-login.gif
+.. figure:: ../assets/generated/gifs/flip/flip-first-login.gif
    :width: 600
    :align: center
 
@@ -55,7 +55,7 @@ Initial Login
 
 On subsequent visits, sign in with your email address and password, then enter the current 6-digit code from your authenticator app, to reach the Projects page.
 
-.. figure:: ../assets/flip/flip-login.gif
+.. figure:: ../assets/generated/gifs/flip/flip-login.gif
    :width: 600
    :align: center
 
@@ -73,7 +73,7 @@ Forgot Password
 4. After you have received the confirmation code be sent by email, enter the confirmation code and a new password
 5. Click the 'Change Password' button
 
-.. figure:: ../assets/flip/forgot-password.gif
+.. figure:: ../assets/generated/gifs/flip/forgot-password.gif
    :width: 600
    :align: center
 
@@ -99,7 +99,7 @@ While signed in, you can change your password at any time from the account menu.
 4. Enter the confirmation code and a new password
 5. Click the 'Change Password' button
 
-.. figure:: ../assets/flip/change-password-user.gif
+.. figure:: ../assets/generated/gifs/flip/change-password-user.gif
    :width: 600
    :align: center
 
@@ -116,7 +116,7 @@ FLIP supports light and dark display modes. Your choice is remembered across ses
 1. Open the account menu in the top right-hand corner
 2. Click 'Dark Mode' to toggle between the light and dark themes
 
-.. figure:: ../assets/flip/dark-mode.gif
+.. figure:: ../assets/generated/gifs/flip/dark-mode.gif
    :width: 600
    :align: center
 
@@ -139,7 +139,7 @@ Create Project
 4. If necessary, enter the email addresses of other FLIP users and click the 'Add' button to enable them to view, edit, and/or contribute to the project
 5. Click the 'Create Project' button
 
-.. figure:: ../assets/flip/create-project.gif
+.. figure:: ../assets/generated/gifs/flip/create-project.gif
    :width: 600
    :align: center
 
@@ -152,7 +152,7 @@ Edit Project
 2. Update the project details, such as project name, description and added users
 3. Click the 'Update Project' button
 
-.. figure:: ../assets/flip/edit-project.gif
+.. figure:: ../assets/generated/gifs/flip/edit-project.gif
    :width: 600
    :align: center
 
@@ -186,7 +186,7 @@ Delete Project
 3. Enter the project name
 4. Click the 'Continue' button
 
-.. figure:: ../assets/flip/delete-project.gif
+.. figure:: ../assets/generated/gifs/flip/delete-project.gif
    :width: 600
    :align: center
 
@@ -199,7 +199,7 @@ All projects which you are able to access are visible on the project list, inclu
 
 Users can apply filters to view only projects based on, for example, the current user, keywords found in the project and/or project description. Every project also carries a type chip — **Imaging + OMOP**, or **OMOP only** for a project created with 'Includes imaging data' turned off — and the toolbar's **Type** control narrows the list to either kind.
 
-.. figure:: ../assets/flip/filter-project.gif
+.. figure:: ../assets/generated/gifs/flip/filter-project.gif
    :width: 600
    :align: center
 
@@ -239,7 +239,7 @@ Create Cohort Query
 3. Click on the 'Run & Save Query' button
 4. View results returned in graphical format
 
-.. figure:: ../assets/flip/cohort-query.gif
+.. figure:: ../assets/generated/gifs/flip/cohort-query.gif
    :width: 600
    :align: center
 
@@ -270,7 +270,7 @@ Staging allows you to select which Trusts will be requested for approval and inc
 
    Once staged, the project details and cohort query are locked from further editing. If a project's details and/or cohort query needs to be amended after staging, you will need to liaise with your local FLIP administrator *un-stage* the project and re-enable editing.
 
-.. figure:: ../assets/flip/stage-project.gif
+.. figure:: ../assets/generated/gifs/flip/stage-project.gif
    :width: 600
    :align: center
 
@@ -292,7 +292,7 @@ Following project approval, a corresponding XNAT project will be generated at ea
 
 To view the progress of the imaging data import at each participating Trust, users can refer to the Imaging Project Status section on the project page.
 
-.. figure:: ../assets/flip/imaging-status.gif
+.. figure:: ../assets/generated/gifs/flip/imaging-status.gif
    :width: 600
    :align: center
 
@@ -305,7 +305,7 @@ To view the progress of the imaging data import at each participating Trust, use
 The counts shown for each Trust are the latest it has reported. If a Trust stops responding — or its XNAT no longer holds the imaging project — its card keeps the last known counts on display, marked **Last known** together with the time they were last confirmed, and shows what went wrong in the card footer: *Trust XNAT not reachable* when the Trust's XNAT did not respond at all, or *Trust XNAT reachable, but project not found* when XNAT answered but the imaging project no longer exists there (for example after the Trust's deployment was reset). The card returns to normal automatically once the Trust reports successfully again.
    Once the reimport cap is reached, failed studies will no longe be reimported. If there are still failures present, please contact an XNAT administrator. Manual intervention may be needed.
 
-.. figure:: ../assets/flip/study-reimport-max.gif
+.. figure:: ../assets/generated/gifs/flip/study-reimport-max.gif
    :width: 600
    :align: center
 
@@ -326,7 +326,7 @@ Create Model
 3. Enter a name and brief description
 4. Click the 'Create Model' button
 
-.. figure:: ../assets/flip/create-model.gif
+.. figure:: ../assets/generated/gifs/flip/create-model.gif
    :width: 600
    :align: center
 
@@ -343,7 +343,7 @@ Edit Model
 2. Click the 'Edit Model' button
 3. Update the model details, such as model name and description
 
-.. figure:: ../assets/flip/edit-model.gif
+.. figure:: ../assets/generated/gifs/flip/edit-model.gif
    :width: 600
    :align: center
 
@@ -364,7 +364,7 @@ Delete Model
 4. Enter the model name
 5. Click the 'Continue' button
 
-.. figure:: ../assets/flip/delete-model.gif
+.. figure:: ../assets/generated/gifs/flip/delete-model.gif
    :width: 600
    :align: center
 
@@ -485,7 +485,7 @@ the status updates when you return.
 
 If model files need to be managed further after uploading, the uploader function allows files to be downloaded, removed and re-uploaded.
 
-.. figure:: ../assets/flip/upload-file.gif
+.. figure:: ../assets/generated/gifs/flip/upload-file.gif
    :width: 600
    :align: center
 
@@ -526,7 +526,7 @@ View Files
 2. Navigate to the Model Files section on the left-hand side of the model page
 3. Click the download icon to view the contents of a file that has been uploaded
 
-.. figure:: ../assets/flip/manage-files.gif
+.. figure:: ../assets/generated/gifs/flip/manage-files.gif
    :width: 600
    :align: center
 
@@ -570,7 +570,7 @@ When model files have been uploaded, you will then need to confirm that the data
 
 On the right-hand side of the page a window will also pop up to provided detailed status updates i.e., with date and time stamps, against each activity. The status messages show the scheduling activities, including queuing, *net* assignment, training in progress and training complete.
 
-.. figure:: ../assets/flip/initiate-training.gif
+.. figure:: ../assets/generated/gifs/flip/initiate-training.gif
    :width: 600
    :align: center
 
@@ -592,7 +592,7 @@ reads **'Abort job'** instead: clicking it removes the job from the queue, marks
 immediately releases the training *net* so the next queued job can start. A stopped model expects no results —
 'Download Results' stays disabled — but it can be initiated for training again.
 
-.. figure:: ../assets/flip/stop-training.gif
+.. figure:: ../assets/generated/gifs/flip/stop-training.gif
    :width: 600
    :align: center
 
@@ -611,7 +611,7 @@ View Results
 2. Click the 'Download Results' button
 3. Open the .zip file downloaded to your local machine to view the results
 
-.. figure:: ../assets/flip/download-results.gif
+.. figure:: ../assets/generated/gifs/flip/download-results.gif
    :width: 600
    :align: center
 
@@ -624,7 +624,7 @@ During the training cycle, any metrics specified by the model developer e.g., lo
 
 Hovering over the graphs at various points will display the values.
 
-.. figure:: ../assets/flip/metrics.gif
+.. figure:: ../assets/generated/gifs/flip/metrics.gif
    :width: 600
    :align: center
 
@@ -648,7 +648,7 @@ The Services column shows one status dot per container. Clicking a Trust row ope
 
 The FL nets card reports the FL client-to-server connectivity for each net — that is, whether each Trust's FL client is connected. No training requests can be sent to a Trust whose FL client is offline.
 
-.. figure:: ../assets/flip/fl-status.gif
+.. figure:: ../assets/generated/gifs/flip/fl-status.gif
    :width: 600
    :align: center
 

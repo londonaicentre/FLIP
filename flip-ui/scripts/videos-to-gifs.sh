@@ -10,12 +10,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Convert each Cypress-recorded demo mp4 into a GIF under docs/source/assets/.
+# Convert each Cypress-recorded demo mp4 into a GIF under docs/source/assets/generated/gifs/.
 # Demo specs live at test/cypress/docs/<category>/<name>.spec.ts and map 1:1 to
-# <name>.gif under docs/source/assets/<category>/ — the spec's folder selects
-# the asset subdirectory, the basename selects the GIF:
-#   test/cypress/docs/admin/reset-mfa.spec.ts    -> docs/source/assets/admin/reset-mfa.gif
-#   test/cypress/docs/flip/create-model.spec.ts  -> docs/source/assets/flip/create-model.gif
+# <name>.gif under docs/source/assets/generated/gifs/<category>/ — the spec's folder
+# selects the subdirectory, the basename selects the GIF:
+#   test/cypress/docs/admin/reset-mfa.spec.ts    -> docs/source/assets/generated/gifs/admin/reset-mfa.gif
+#   test/cypress/docs/flip/create-model.spec.ts  -> docs/source/assets/generated/gifs/flip/create-model.gif
+# The GIFs are not tracked in git (FLIP#1236): generated/ is gitignored, the CI
+# workflow publishes this directory to the aicentreflip/docs-gifs dataset, and the
+# docs build fetches the pinned version into the same directory — so a local
+# recording is previewed with FLIP_DOCS_SKIP_GIF_FETCH=1 make -C docs docs.
 
 set -euo pipefail
 
@@ -25,7 +29,7 @@ repo_root="$(cd "${ui_dir}/.." && pwd)"
 
 specs_root="${ui_dir}/test/cypress/docs"
 videos_root="${ui_dir}/test/cypress/videos"
-assets_root="${repo_root}/docs/source/assets"
+assets_root="${repo_root}/docs/source/assets/generated/gifs"
 
 # ffmpeg crop window isolating the AUT iframe inside the recorded frame.
 # Must stay in lockstep with cypress.docs.config.ts:

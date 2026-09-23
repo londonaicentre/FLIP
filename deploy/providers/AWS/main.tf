@@ -521,6 +521,15 @@ resource "aws_instance" "ec2_instance" {
     http_endpoint = "enabled"
     http_tokens   = "required"
   }
+
+  # The SSM parameter moves with every Canonical release, and ami forces
+  # replacement: without this, each new image replaces the host on the next
+  # apply, unattended ones in CI included, and site.yml is not re-run for it.
+  # Replacing on purpose (the generation marker above, or -replace) still
+  # launches from the current image.
+  lifecycle {
+    ignore_changes = [ami]
+  }
 }
 
 # Application Load Balancer

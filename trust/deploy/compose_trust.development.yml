@@ -43,6 +43,10 @@ services:
       POSTGRES_USER: ${OMOP_POSTGRES_USER}
       POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
       POSTGRES_DB: ${OMOP_POSTGRES_DB}
+      # Read by the image's init script on a FIRST start (empty data dir) to create the
+      # data_analyst_reader role data-access-api connects as; the same kit value that
+      # service receives. Without it the init aborts and the trust has no schema (FLIP#1187).
+      DATA_ACCESS_POSTGRES_PASSWORD: ${DATA_ACCESS_POSTGRES_PASSWORD}
     volumes:
       # OMOP_DATA_DIR decouples the host-side fixture path from TRUST_NAME so a
       # rename of the friendly name (e.g. "Trust_1" → "(Mock) GSTT") doesn't make
@@ -51,7 +55,9 @@ services:
 
   orthanc:
     # Pull from GHCR by default; `make up BUILD=true` rebuilds from build: below.
-    image: ghcr.io/londonaicentre/orthanc:${DOCKER_TAG}
+    # ORTHANC_TAG: the same opt-out as OMOP_DB_TAG above (orthanc's build is
+    # path-filtered, so most sha- tags carry no orthanc image).
+    image: ghcr.io/londonaicentre/orthanc:${ORTHANC_TAG:-${DOCKER_TAG}}
     pull_policy: always
     build:
       context: ./orthanc
@@ -239,6 +245,9 @@ services:
       ENV: development
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
       TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
+      # The fl-client has no health endpoint; its configured image tag is what the health
+      # collector reports for it (FLIP#1204). Same variable the fl-client-net-* overlays use.
+      FL_CLIENT_IMAGE_TAG: ${DOCKER_FL_TAG:-}
       # Dev-on-pull (see `user:` above): import via PYTHONPATH, skip the editable
       # install (UV_NO_SYNC), keep uv's cache + HOME writable.
       HOME: /tmp

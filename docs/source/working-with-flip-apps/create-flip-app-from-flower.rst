@@ -451,8 +451,8 @@ Your own ``pyproject.toml`` drives local runs. Beyond a normal Flower project it
 
    - ``flip-utils`` installs from the source copy shipped inside the FL images at ``/opt/flip-utils`` —
      never from PyPI — so the platform always runs the ``flip-utils`` matching its images.
-   - ``torch``/``torchvision`` come from PyTorch's cu128 wheel index (PyPI's default cu130 wheels
-     require a newer NVIDIA driver than FLIP hosts run).
+   - ``torch``/``torchvision`` come from PyTorch's cu130 wheel index (Torch 2.13 / torchvision 0.28).
+     GPU hosts require NVIDIA driver 580 or newer; upgrade older drivers before deploying these images.
 
    Everything else resolves from PyPI at run time, so trust and hub hosts need outbound HTTPS to PyPI
    and ``download.pytorch.org``. If your app needs a dependency the base template does not declare,

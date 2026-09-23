@@ -75,8 +75,11 @@ make -C fl-services/nvflare provision-2-nets
 make up
 ```
 
-If Swarm is already active, `docker swarm init` reports that and can be skipped. Open `https://localhost` for the UI
-and `http://localhost:8080/api/docs` for the Central Hub API documentation.
+If Swarm is already active, `docker swarm init` reports that and can be skipped. Open
+`http://localhost:<UI_PORT>` for the UI and `http://localhost:8080/api/docs` for the Central Hub API
+documentation. Set `UI_PORT` to a port the dev Cognito client registers as a browser origin
+(44350–44359) or the UI loads but every API call fails CORS — see "Browser-usable UI ports" in
+[deploy/providers/AWS/dev/README.md](deploy/providers/AWS/dev/README.md).
 
 ### Load the OMOP vocabulary
 

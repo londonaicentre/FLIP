@@ -85,18 +85,16 @@ full = [
     # for FL apps that import them.
     "scikit-learn>=1.5.0",
     "timm>=1.0.0",
-    # Pin torch>=2.11,<2.12 (was 2.9.1 via MONAI transitive) so the NVFlare
-    # supernode runs the same torch as the flower one (which pins the same
-    # range). PyPI's torch 2.11.x ships the cu130 build by default, which
-    # needs NVIDIA driver >=580; the [tool.uv] index pin below routes it to
-    # the cu128 build, which matches host driver 575.x.
-    "torch>=2.11.0,<2.12",
-    # torchvision MUST be a direct dep, kept in lock-step with torch (0.26 <-> 2.11).
+    # Pin torch>=2.13,<2.14 (was 2.11 via MONAI transitive) so the NVFlare
+    # supernode runs the same patched torch as the Flower one. PyTorch 2.13's
+    # cu130 build requires NVIDIA driver >=580.
+    "torch>=2.13.0,<2.14",
+    # torchvision MUST be a direct dep, kept in lock-step with torch (0.28 <-> 2.13).
     # timm pulls it in transitively, but [tool.uv.sources] index pins only apply to
     # DIRECT deps — a transitive-only torchvision resolves from PyPI's default build
-    # and mismatches torch's cu128 ABI ("operator torchvision::nms does not exist").
-    # Declaring it here routes it through the pinned cu128 index (-> 0.26.0+cu128).
-    "torchvision>=0.26.0,<0.27",
+    # and mismatches torch's cu130 ABI ("operator torchvision::nms does not exist").
+    # Declaring it here routes it through the pinned cu130 index (-> 0.28.0+cu130).
+    "torchvision>=0.28.0,<0.29",
 ]
 
 [tool.uv]
@@ -105,6 +103,7 @@ exclude-newer = "3 days"
 # Security: minimum versions for transitive packages with open CVEs.
 constraint-dependencies = [
     "aiohttp>=3.14.3",           # CVE-2026-47265, CVE-2026-34993, CVE-2026-34525/16/15/14/13/12, CVE-2026-22815, CVE-2026-21860
+    "anyio>=4.14.2",             # CVE-2026-63374, CVE-2026-64847
     "click>=8.3.3",              # CVE-2026-7246
     "cryptography>=50.0.0",      # CVE-2026-26007, CVE-2026-39892, CVE-2026-34073
     "filelock>=3.20.3",          # CVE-2025-68146, CVE-2026-22701
@@ -116,12 +115,8 @@ constraint-dependencies = [
     "pyjwt>=2.12.0",             # CVE-2026-32597
     "python-dotenv>=1.2.2",      # CVE-2026-28684
     "requests>=2.33.0",          # CVE-2026-25645
-    # setuptools>=83.0.0 (CVE-2026-59890) omitted: torch 2.11.0 declares setuptools<82, and the
-    # torch pin is itself fixed by the cu128 index above, so the floor is unreachable until the
-    # cu130 migration in #826 (torch 2.13.0 drops the ceiling). Dependabot #475 stays open with
-    # #439 for the same reason. Not overridden: the advisory is a MANIFEST.in sdist-exclusion
-    # bypass on macOS APFS/HFS+ and this repo has no MANIFEST.in, no setuptools build backend
-    # outside flip-api (which ships as an image, never an sdist), and no macOS runner.
+    "setuptools>=83.0.0",        # CVE-2026-59890
+    "soupsieve>=2.9.0",          # CVE-2026-85999, CVE-2026-86000
     "urllib3>=2.7.0",            # CVE-2026-44431, CVE-2025-66471/66418
     "werkzeug>=3.1.6",           # CVE-2026-27199, CVE-2026-21860, CVE-2025-66221, CVE-2024-49767/49766
 ]
@@ -134,26 +129,24 @@ constraint-dependencies = [
 # (test_privacy.py) resolvable against the cryptography floor.
 override-dependencies = ["cryptography>=50.0.0"]
 
-# Pull torch from PyTorch's cu128 wheel index instead of PyPI's default cu130
-# build. cu130 needs NVIDIA driver >=580, and would fail at
-# torch.cuda.is_available() on anything older (a known cu130 driver trap).
+# Pull torch from PyTorch's cu130 wheel index so every FL backend uses the
+# security-patched 2.13 line. cu130 needs NVIDIA driver >=580.
 #
 # This line is FLIP's de facto minimum NVIDIA driver, so treat it as a
-# compatibility floor rather than a local convenience. The dev fleet is already
-# mixed -- 575.x and 580.x -- and cu128 runs on both, because a newer driver
-# runs older CUDA. AWS trusts are CPU-only (t3.*), so they do not constrain it;
-# an on-prem trust is operator hardware with no driver floor we can see. Moving
-# to cu130 would silently raise the requirement for every one of them.
+# compatibility floor rather than a local convenience.
+# AWS trusts are CPU-only (t3.*), so they do not constrain it; GPU-backed
+# operators must meet the documented driver floor.
 #
 # Mirrors the --extra-index-url flag in the flower fl-base Dockerfile.
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu128" }
-torchvision = { index = "pytorch-cu128" }
+# macOS uses native CPU/MPS wheels from PyPI; CUDA wheels are Linux/Windows only.
+torch = { index = "pytorch-cu130", marker = "sys_platform != 'darwin'" }
+torchvision = { index = "pytorch-cu130", marker = "sys_platform != 'darwin'" }
 
 [tool.hatch.version]
 path = "flip/__init__.py"

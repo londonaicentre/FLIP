@@ -110,9 +110,7 @@ class TestFlipAnalyticsBridge:
         bridge = FlipAnalyticsBridge()
         bridge.log_exception = MagicMock()  # FLComponent.log_exception needs a real fl_ctx
         ctx, engine, _ = _ctx_with_event_data(_make_analytic_shareable("X", 1.0))
-        with patch(
-            "flip.nvflare.components.flip_analytics_bridge.from_shareable", side_effect=ValueError("bad DXO")
-        ):
+        with patch("flip.nvflare.components.flip_analytics_bridge.from_shareable", side_effect=ValueError("bad DXO")):
             bridge.handle_event(ANALYTIC_EVENT_TYPE, ctx)
         bridge.log_exception.assert_called_once()
         engine.fire_event.assert_not_called()

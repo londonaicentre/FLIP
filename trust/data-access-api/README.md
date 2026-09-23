@@ -216,8 +216,54 @@ hub's response.
 
 ### Row-level data and the disclosure threshold
 
+The threshold counts **distinct subjects, not rows**. The floor exists to stop a response revealing
+that at least one *patient* matched, and rows only stood in for patients while every cohort was one
+row per person. A cohort can now be one row per imaging study, where ten rows may be one patient
+with ten X-rays, and tabular projects (FLIP#1071) changed the grain again. The row count is kept
+as an **upper bound** on the subject count rather than assumed as a consequence of it, so counting
+subjects replaces the row check without ever being weaker than it.
+
+A cohort exposes its subjects one of two ways, resolved by `count_distinct_subjects`:
+
+| Projected column | How subjects are counted |
+|---|---|
+| `person_id` | Counted directly from the dataframe, no database round trip; never more than the row count |
+| `accession_id` | Resolved through `omop.image_occurrence`; the row count remains an upper bound, since nothing in the schema stops one accession number mapping to several people |
+
+A cohort exposing neither cannot be gated and is refused. `/cohort/dataframe` reports that as a
+**400** naming the missing column, which is safe to be specific about because it describes the
+query's shape and never its contents. `/cohort/accession-ids` cannot do the same: its refusal must
+stay byte-identical across a zero cohort, a below-threshold one and an uncountable one, so all
+three return the same 403. Accession numbers that resolve to no imaging study contribute no
+subject, so a query aliasing an unrelated column to that name fails closed.
+
+### Cohort charts
+
+`/cohort` returns its aggregates as **named series** (`{"name": ..., "results": [{"value", "count"}]}`).
+The hub collects whatever names the trusts send and the UI renders them with no fixed list on either
+side, so adding a chart is a trust-side change alone. A trust that omits one is skipped for it, which
+is how a single roster can mix imaging and tabular trusts.
+
+| Chart | Emitted when | Counted in |
+|---|---|---|
+| Counts / Nulls | always | rows, per column |
+| Age Distribution, Sex Distribution | the cohort projects `person_id` | distinct subjects |
+| Modality Distribution | the cohort projects `accession_id` | distinct studies |
+
+Modality is counted in studies rather than people on purpose: it is a property of an imaging study,
+so one patient contributing a CT and an MR is one row in the age and sex charts and two here. The
+concept lookup is a LEFT JOIN falling back to the raw `modality_concept_id`, so a trust missing its
+OMOP vocabulary (FLIP#967) still gets an answer, just an unlabelled one. Every distribution passes
+through `make_other_category`, so buckets below the threshold group into "Other" — and "Other" is
+held to the same floor: it is emitted only when the folded total itself reaches the threshold,
+otherwise dropped, so no sub-threshold count is ever published (a lone small bucket relabelled
+"Other" would be that bucket's exact count).
+
 `/cohort` returns aggregate statistics and suppresses any count below `COHORT_QUERY_THRESHOLD`,
-including a genuine zero, so the response cannot reveal that at least one patient matched.
+including a genuine zero, so the response cannot reveal that at least one patient matched. A cohort
+whose subjects cannot be established is suppressed the same way, rather than raised, so the
+response shape never varies with the cause of a shortfall; the researcher currently sees that as a
+privacy refusal rather than a query-shape problem, which FLIP#1219 tracks.
 
 `/cohort/dataframe` is the training-data path — user FL code reaches it through
 `flip.get_dataframe(...)` — so it necessarily returns row-level records; a model trains on rows.
@@ -264,8 +310,8 @@ not agree on a value.
 
 It must be a **positive integer**; `0` or a negative value is rejected at startup rather than
 accepted. A threshold of `0` would disable every check that reads it in one stroke — both row-level
-gates (`len(df) < 0` is never true, so `/cohort/dataframe` and `/cohort/accession-ids` would release
-a cohort of any size) and the statistics suppression on `/cohort`. Settings are built at import, so
+gates (a subject count is never below `0`, so `/cohort/dataframe` and `/cohort/accession-ids` would
+release a cohort of any size) and the statistics suppression on `/cohort`. Settings are built at import, so
 a bad value stops the service starting instead of leaving it running with no floor. Requiring the
 value to be at least the shipped `10`, rather than merely positive, is tracked in FLIP#870.
 

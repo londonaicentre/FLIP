@@ -31,10 +31,10 @@ SCRIPT = CONFIG_DIR / "configure-xnat.sh"
 # The earlier stub echoed the *configured* AE title back, which made "the configured title reached
 # XNAT" assertions circular — they held even when the script sent something else.
 STUB_CURL = r"""#!/bin/bash
-url=""; data=""; method="GET"; status_only=0; outfile=""
+url=""; data=""; method="GET"; status_only=0; outfile=""; creds=""
 prev=""
 for a in "$@"; do
-  case "$prev" in -d) data="$a";; -X) method="$a";; -o|--output) outfile="$a";; esac
+  case "$prev" in -d) data="$a";; -X) method="$a";; -o|--output) outfile="$a";; -u) creds="$a";; esac
   case "$a" in http*) url="$a";; '%{http_code}') status_only=1;; esac
   prev="$a"
 done
@@ -43,6 +43,7 @@ done
 # (/xapi/users/guest/enabled/false) is otherwise invisible to the tests.
 printf '%s\n' "=== $method $url" >> "$PAYLOADS"
 [ -n "$data" ] && printf '%s\n' "$data" >> "$PAYLOADS"
+[ -n "$CREDS_LOG" ] && printf '%s %s %s\n' "$method" "$url" "$creds" >> "$CREDS_LOG"
 
 edit() {  # edit <state-file> <jq-filter> [args...]
   local f="$1"; shift
@@ -52,6 +53,9 @@ edit() {  # edit <state-file> <jq-filter> [args...]
 status=200
 body='{}'
 case "$url" in
+  *"/xapi/siteConfig/initialized")
+    body="${INITIALIZED_BODY:-true}"
+    ;;
   *"/xapi/pacs/"*"/availability")
     status="${AVAIL_STATUS:-200}"
     body="${AVAIL_BODY:-{\}}"
@@ -91,6 +95,11 @@ esac
 case "${FAIL_ON_URL:-__none__}" in
   __none__) ;;
   *) case "$url" in *"$FAIL_ON_URL"*) status="${FAIL_STATUS:-500}"; body='{"error":"stub failure"}' ;; esac ;;
+esac
+
+# XNAT refuses a password it does not hold (comma-separated list, e.g. the rotated-away initial one).
+case ",${WRONG_LOGINS:-}," in
+  *",${creds#*:},"*) [ -n "$creds" ] && { status=401; body='{"error":"unauthorized"}'; } ;;
 esac
 
 [ -n "$outfile" ] && [ "$outfile" != "/dev/null" ] && printf '%s' "$body" > "$outfile"
@@ -175,6 +184,7 @@ def run_configure(tmp_path, env_overrides=None, pacs_state=None, scp_state=None)
         "PAYLOADS": str(payloads),
         "PACS_STATE": str(pacs_file),
         "SCP_STATE": str(scp_file),
+        "CREDS_LOG": str(tmp_path / "creds.txt"),
         **(env_overrides or {}),
     }
 
@@ -646,3 +656,57 @@ def test_credentials_are_not_echoed_when_a_call_fails(tmp_path):
     assert "<redacted>" in output, "the failing request was echoed without redaction"
     for secret in ("rotated", "initial", "service"):
         assert secret not in output, f"the {secret!r} password reached the configure log"
+
+
+# ── Which admin password XNAT accepts picks the mode (FLIP#1204) ─────────────────────────────
+
+
+def credentials_used(tmp_path, method: str, endpoint: str) -> list[str]:
+    """The ``user:password`` every ``method`` request to ``endpoint`` authenticated with."""
+    log = tmp_path / "creds.txt"
+    used = []
+    for line in log.read_text().splitlines() if log.exists() else []:
+        made, url, creds = line.split(" ", 2)
+        if made == method and url.endswith(endpoint):
+            used.append(creds)
+    return used
+
+
+def test_a_configured_instance_converges_with_the_rotated_password(tmp_path):
+    """upgrade-xnat redeploys onto a live data dir: the initial password is long gone."""
+    code, payloads, output = run_configure(
+        tmp_path, {"WRONG_LOGINS": "initial", "INITIALIZED_BODY": "true"}, pacs_state=MOCK_PACS_REGISTRATION
+    )
+    assert code == 0, output
+    assert "converging" in output
+    made = requests_made(payloads)
+    assert not any(m == "PUT" and u.endswith("/xapi/users/admin") for m, u in made), "rotated a rotated password"
+    assert credentials_used(tmp_path, "POST", "/xapi/siteConfig")[0] == "admin:rotated"  # the activation call
+    assert any(m == "POST" and u.endswith("/xapi/dicomscp") for m, u in made), "receiver not re-applied"
+    assert any(u.endswith("/xapi/dqr/settings") for _, u in made), "DQR lockdown not re-applied"
+
+
+def test_a_migrated_instance_is_activated_with_the_rotated_password(tmp_path):
+    """A 1.9→1.10 migration re-reports initialized=false; the initial password still does not work,
+    so activating with it would 401 and leave XNAT stuck in /setup with no siteUrl."""
+    code, payloads, output = run_configure(
+        tmp_path, {"WRONG_LOGINS": "initial", "INITIALIZED_BODY": "false"}, pacs_state=MOCK_PACS_REGISTRATION
+    )
+    assert code == 0, output
+    assert "migrated" in output
+    assert credentials_used(tmp_path, "POST", "/xapi/siteConfig")[0] == "admin:rotated"  # the activation call
+    assert not any(m == "PUT" and u.endswith("/xapi/users/admin") for m, u in requests_made(payloads))
+
+
+def test_first_boot_activates_with_the_initial_password_and_rotates_it(tmp_path):
+    code, payloads, output = run_configure(tmp_path, pacs_state=MOCK_PACS_REGISTRATION)
+    assert code == 0, output
+    assert credentials_used(tmp_path, "POST", "/xapi/siteConfig")[0] == "admin:initial"  # the activation call
+    assert credentials_used(tmp_path, "PUT", "/xapi/users/admin") == ["admin:initial"]
+
+
+def test_neither_password_working_stops_before_touching_xnat(tmp_path):
+    code, payloads, output = run_configure(tmp_path, {"WRONG_LOGINS": "initial,rotated"})
+    assert code == 1, output
+    assert "neither admin password authenticates" in output
+    assert not any(m in {"POST", "PUT", "DELETE"} for m, _ in requests_made(payloads))

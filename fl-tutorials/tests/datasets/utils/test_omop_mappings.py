@@ -75,6 +75,14 @@ def test_modality_map_covers_the_modalities_the_converters_emit(mappings: Module
     assert mappings.MAPPING_MODALITY["MR"] == 4013636
 
 
+def test_brain_mri_procedure_and_site_are_mapped(mappings: ModuleType) -> None:
+    """The brain MRI converter keys on its StudyDescription (lower-cased) and a brain anatomic site (FLIP#1221):
+    LOINC 24587-8 "MR Brain WO and W contrast IV" and SNOMED 12738006 "Brain structure", both verified present
+    in the vocabulary the dev trusts load."""
+    assert mappings.MAPPING_PROCEDURE_TYPE["mr brain wo and w contrast iv"] == 3037128
+    assert mappings.MAPPING_ANATOMIC_SITE["brain"] == 4133034
+
+
 def test_millimetre_unit_is_the_ucum_concept(mappings: ModuleType) -> None:
     """UCUM millimeter — the unit SliceThickness (0018,0050) is measured in (FLIP#1098)."""
     assert mappings.MILLIMETER_UNIT_CONCEPT_ID == 8588

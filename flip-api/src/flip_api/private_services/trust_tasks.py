@@ -33,9 +33,10 @@ from flip_api.db.models.main_models import Trust, TrustTask
 from flip_api.domain.schemas.private import TaskResultInput, TrustHeartbeatInput, TrustTaskResponse
 from flip_api.domain.schemas.status import TaskStatus, TaskType
 from flip_api.private_services.imaging_notifications import handle_imaging_task_completed
-from flip_api.utils.encryption import encrypt, task_context
+from flip_api.utils.encryption import aes_key_fingerprint, encrypt, task_context
 from flip_api.utils.logger import logger
 from flip_api.utils.rate_limiter import limiter
+from flip_api.utils.version import build_identity
 
 router = APIRouter(tags=["private_services"])
 
@@ -192,6 +193,20 @@ def _submit_task_result(
         )
 
 
+def _key_fingerprint_or_none() -> str | None:
+    """The hub's AES-key fingerprint for the heartbeat reply, or None when the key cannot be loaded.
+
+    Liveness must not depend on the key: a hub whose key material is unreadable already
+    fails every task, and taking the heartbeat down with it would turn one visible fault
+    into every trust showing Offline.
+    """
+    try:
+        return aes_key_fingerprint()
+    except Exception as e:
+        logger.error(f"Could not fingerprint the AES key for the heartbeat reply: {type(e).__name__}: {e}")
+        return None
+
+
 def _record_heartbeat(trust: Trust, db: Session, heartbeat: TrustHeartbeatInput | None = None) -> dict[str, object]:
     """Stamp the trust row with the current UTC time and store any health snapshot.
 
@@ -203,7 +218,12 @@ def _record_heartbeat(trust: Trust, db: Session, heartbeat: TrustHeartbeatInput 
             behavior is unchanged.
 
     Returns:
-        dict[str, object]: ``{trust_id, trust_name, message}``.
+        dict[str, object]: ``{trust_id, trust_name, message, hub_version, aes_key_fingerprint}``.
+        The last two (FLIP#1204) let the trust see whether it is current: ``hub_version``
+        is the build the hub runs — the release a site upgrade defaults to — and
+        ``aes_key_fingerprint`` is a short digest of the hub's key, which the trust
+        compares with its own so a kit whose key was rotated under it is reported from
+        the trust's ``/health`` instead of by every task failing to decrypt.
 
     Raises:
         HTTPException: 500 on any error.
@@ -216,7 +236,12 @@ def _record_heartbeat(trust: Trust, db: Session, heartbeat: TrustHeartbeatInput 
             # Server-stamped: the payload's collected_at is never trusted for staleness.
             trust.services_health_at = datetime.now(timezone.utc)
         db.commit()
-        return {**_trust_identity(trust), "message": "Heartbeat recorded"}
+        return {
+            **_trust_identity(trust),
+            "message": "Heartbeat recorded",
+            "hub_version": build_identity(),
+            "aes_key_fingerprint": _key_fingerprint_or_none(),
+        }
     except Exception as e:
         db.rollback()
         logger.error(f"Error recording heartbeat for trust '{trust.name}': {e}")

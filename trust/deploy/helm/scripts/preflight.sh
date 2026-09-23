@@ -26,6 +26,10 @@ REPO_ROOT="$(git -C "$CHART_DIR" rev-parse --show-toplevel)"
 
 # ── Parameters (injected by Makefile) ────────────────────────────────────────
 HELM_BIN="${HELM:-helm}"
+# The cluster to check. Empty = kubectl's current context, as before; set, every cluster
+# probe below names it, so the checks describe the cluster the deploy will act on.
+KUBE_CONTEXT="${KUBE_CONTEXT:-}"
+kctl() { kubectl ${KUBE_CONTEXT:+--context "$KUBE_CONTEXT"} "$@"; }
 NAMESPACE="${NAMESPACE:-flip-trust}"
 RELEASE_NAME="${RELEASE_NAME:-trust-release}"
 PROD="${PROD:-}"
@@ -135,20 +139,20 @@ else
 fi
 
 if ! command -v aws >/dev/null 2>&1; then
-    warn "aws CLI not found — required for the OMOP/Orthanc seed Jobs (they authenticate via omopDb.initJob.hostAwsMount and orthanc.initJob.hostAwsMount respectively). Not needed for the FL kit, which is staged onto the node with 'make stage-kit'"
+    warn "aws CLI not found — required for the OMOP core-vocabulary load Job when it authenticates via omopDb.vocabLoad.hostAwsMount. Not needed for the mock-data seed (anonymous Hugging Face fetch) nor for the FL kit, which is staged onto the node with 'make stage-kit'"
     hint "Install: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
 else
     AWS_VER="$(aws --version 2>&1 | extract_semver || true)"
     pass "aws CLI ${AWS_VER:-found}"
     # Warn about stale SSO session early. Not for the FL kit — that is staged onto the
-    # node beforehand and the cluster holds no credentials — but the OMOP/Orthanc seed
-    # Jobs read the operator AWS config through a host mount.
+    # node beforehand and the cluster holds no credentials — but the OMOP vocab-load
+    # Job reads the operator AWS config through a host mount.
     if [ "$PROD" = "stag" ] || [ "$PROD" = "true" ]; then
         AWS_PROFILE_CHECK="${AWS_PROFILE:-flipstag}"
         if ! aws sts get-caller-identity --profile "$AWS_PROFILE_CHECK" >/dev/null 2>&1; then
             warn "AWS SSO session not active for profile '${AWS_PROFILE_CHECK}'"
             hint "Login before deploying: aws sso login --profile ${AWS_PROFILE_CHECK}"
-            hint "(Required by the OMOP/Orthanc seed Jobs via omopDb.initJob.hostAwsMount and orthanc.initJob.hostAwsMount)"
+            hint "(Required by the OMOP vocab-load Job via omopDb.vocabLoad.hostAwsMount)"
         else
             pass "AWS SSO session active  (profile: ${AWS_PROFILE_CHECK})"
         fi
@@ -170,22 +174,22 @@ CLUSTER_OK=false
 if [ "$KUBECTL_OK" = "false" ]; then
     warn "Skipping cluster checks — kubectl is not available"
 else
-    CTX="$(kubectl config current-context 2>/dev/null || true)"
+    CTX="${KUBE_CONTEXT:-$(kubectl config current-context 2>/dev/null || true)}"
     if [ -z "$CTX" ]; then
         fail "No active kubectl context"
         hint "List contexts:  kubectl config get-contexts"
-        hint "Set context:    kubectl config use-context <name>"
+        hint "Set context:    kubectl config use-context <name>  (or pass KUBE_CONTEXT=<name>)"
     else
         pass "Active context: ${CTX}"
 
-        if ! kubectl cluster-info >/dev/null 2>&1; then
+        if ! kctl cluster-info >/dev/null 2>&1; then
             fail "Cluster unreachable — check your kubeconfig, VPN/network access, or cloud credentials"
             hint "Diagnose with: kubectl cluster-info"
         else
             # Detect server version (output format changed in kubectl 1.26)
-            SRV_VER="$(kubectl version 2>/dev/null | grep -i 'server' | extract_semver || true)"
+            SRV_VER="$(kctl version 2>/dev/null | grep -i 'server' | extract_semver || true)"
             if [ -z "$SRV_VER" ]; then
-                SRV_VER="$(kubectl version -o json 2>/dev/null \
+                SRV_VER="$(kctl version -o json 2>/dev/null \
                     | python3 -c \
                         'import sys,json; print(json.load(sys.stdin).get("serverVersion",{}).get("gitVersion",""))' \
                         2>/dev/null \
@@ -206,7 +210,7 @@ fi
 
 if [ "$CLUSTER_OK" = "true" ]; then
     # Namespace creation permission
-    if kubectl auth can-i create namespaces >/dev/null 2>&1; then
+    if kctl auth can-i create namespaces >/dev/null 2>&1; then
         pass "RBAC: can create namespaces"
     else
         warn "RBAC: cannot create namespaces — namespace '${NAMESPACE}' must already exist"
@@ -214,7 +218,7 @@ if [ "$CLUSTER_OK" = "true" ]; then
     fi
 
     # Workload permissions in the target namespace
-    if kubectl auth can-i create deployments --namespace "$NAMESPACE" >/dev/null 2>&1; then
+    if kctl auth can-i create deployments --namespace "$NAMESPACE" >/dev/null 2>&1; then
         pass "RBAC: can create deployments in '${NAMESPACE}'"
     else
         warn "RBAC: cannot create deployments in '${NAMESPACE}' — Helm install may fail"
@@ -222,7 +226,7 @@ if [ "$CLUSTER_OK" = "true" ]; then
     fi
 
     # Secrets permission — hard requirement; Helm Secret for the release will fail without it
-    if kubectl auth can-i create secrets --namespace "$NAMESPACE" >/dev/null 2>&1; then
+    if kctl auth can-i create secrets --namespace "$NAMESPACE" >/dev/null 2>&1; then
         pass "RBAC: can create secrets in '${NAMESPACE}'"
     else
         fail "RBAC: cannot create secrets in '${NAMESPACE}' — Helm chart installation will fail"
@@ -230,7 +234,7 @@ if [ "$CLUSTER_OK" = "true" ]; then
     fi
 
     # Default StorageClass — PVCs for XNAT, OMOP, Orthanc need one
-    DEFAULT_SC="$(kubectl get storageclass 2>/dev/null | awk '/\(default\)/{print $1}' | head -1)"
+    DEFAULT_SC="$(kctl get storageclass 2>/dev/null | awk '/\(default\)/{print $1}' | head -1)"
     if [ -n "$DEFAULT_SC" ]; then
         pass "Default StorageClass: ${DEFAULT_SC}"
     else
