@@ -46,10 +46,19 @@ covers `datasets/cxr/omop_convert_cxr.py`, and
 Cross-cutting guards that assert a property across several source files
 (`test_dicom_orientation.py`, `test_flower_min_clients_wiring.py`,
 `test_spleen_inference_config_parity.py`, `test_fl_tutorials_make_targets.py`,
-`test_sim_tutorial_stale_guard.py`, `test_sim_tutorial_exit_status.py`,
-`test_arkplus_sim_max_samples.py` — the Ark+ apps' simulator-only `MAX_SAMPLES` cap, across all three
-`data_utils.py`) stay at the root of `tests/`, because
+`test_sim_tutorial_stale_guard.py`, `test_sim_tutorial_exit_status.py`) stay at the root of `tests/`, because
 no single source path describes what they cover.
+
+Tutorial-app tests that cover one app file mirror its path the same way:
+`tests/nvflare/image_classification/arkplus_fine_tuning/app_files/test_data_utils.py` covers
+`nvflare/image_classification/arkplus_fine_tuning/app_files/data_utils.py`, and likewise for the two
+Ark+ evaluation apps. All three `data_utils.py` carry the same simulator-only `MAX_SAMPLES` cap, so
+their tests subclass one shared contract, `tests/arkplus_sim_cap_contract.py` (a helper module like
+`tutorial_apps.py`, not collected on its own). Because the three test files share a basename, the
+tutorial directory and its `app_files/` carry an `__init__.py`, which makes each module's import name
+start at the tutorial (`arkplus_fine_tuning.app_files.test_data_utils`). `nvflare/` and `image_*/`
+deliberately do **not** carry one: a package named `nvflare` would shadow the real NVFLARE library
+the apps import.
 
 **Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
 the tutorial apps themselves and runs in flip-utils' environment (`flip-utils[full]` — monai,

@@ -65,7 +65,8 @@ the dataframe rows each simulated site reads with `MAX_SAMPLES` (Makefile defaul
 deterministic class-balanced subset — `cap_dataframe` in each app's `data_utils.py`), so a plain
 `make sim` is a few-minute smoke; `MAX_SAMPLES=0` runs the full dataset, and `reproduce-overhead`
 pins it. Only the `LOCAL_DEV` branch of `_load_dataframe` reads it, so a deployed job is never capped
-(`tests/test_arkplus_sim_max_samples.py` pins both halves).
+(each app's `tests/nvflare/.../app_files/test_data_utils.py`, sharing
+`tests/arkplus_sim_cap_contract.py`, pins both halves).
 
 To iterate on the FL images, `make build-fl` builds them locally as `:dev` (see `fl-services/nvflare/README.md`);
 run the stack on them with `make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`.
