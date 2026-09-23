@@ -136,6 +136,8 @@ jobs:
             docker tag $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$BASE_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker tag $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$BASE_IMAGE:stag
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker tag $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$BASE_IMAGE:${GITHUB_REF_NAME}
           fi
 
           echo "✅ Built base image."
@@ -148,6 +150,8 @@ jobs:
             docker push $REGISTRY/$ORG/$BASE_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker push $REGISTRY/$ORG/$BASE_IMAGE:stag
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker push $REGISTRY/$ORG/$BASE_IMAGE:${GITHUB_REF_NAME}
           fi
           echo "✅ Pushed base image."
 
@@ -159,6 +163,8 @@ jobs:
             docker rmi $REGISTRY/$ORG/$BASE_IMAGE:prod || true
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker rmi $REGISTRY/$ORG/$BASE_IMAGE:stag || true
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker rmi $REGISTRY/$ORG/$BASE_IMAGE:${GITHUB_REF_NAME} || true
           fi
           docker system prune -f
           echo "Disk space after base image cleanup:"
@@ -179,6 +185,8 @@ jobs:
             docker tag $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$SERVER_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker tag $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$SERVER_IMAGE:stag
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker tag $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$SERVER_IMAGE:${GITHUB_REF_NAME}
           fi
 
           echo "✅ Built FL Server."
@@ -191,6 +199,8 @@ jobs:
             docker push $REGISTRY/$ORG/$SERVER_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker push $REGISTRY/$ORG/$SERVER_IMAGE:stag
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker push $REGISTRY/$ORG/$SERVER_IMAGE:${GITHUB_REF_NAME}
           fi
           echo "✅ Pushed FL Server."
 
@@ -202,6 +212,8 @@ jobs:
             docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:prod || true
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:stag || true
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:${GITHUB_REF_NAME} || true
           fi
           docker system prune -f
           echo "Disk space after FL Server cleanup:"
@@ -222,6 +234,8 @@ jobs:
             docker tag $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$CLIENT_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker tag $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$CLIENT_IMAGE:stag
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker tag $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$CLIENT_IMAGE:${GITHUB_REF_NAME}
           fi
 
           echo "✅ Built FL Client."
@@ -234,6 +248,8 @@ jobs:
             docker push $REGISTRY/$ORG/$CLIENT_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker push $REGISTRY/$ORG/$CLIENT_IMAGE:stag
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker push $REGISTRY/$ORG/$CLIENT_IMAGE:${GITHUB_REF_NAME}
           fi
           echo "✅ Pushed FL Client."
 
@@ -245,6 +261,8 @@ jobs:
             docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:prod || true
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:stag || true
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:${GITHUB_REF_NAME} || true
           fi
           docker system prune -f
           echo "Disk space after FL Client cleanup:"
@@ -264,6 +282,8 @@ jobs:
             docker tag $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$API_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker tag $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$API_IMAGE:stag
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker tag $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$API_IMAGE:${GITHUB_REF_NAME}
           fi
 
           echo "✅ Built FL API."
@@ -276,6 +296,8 @@ jobs:
             docker push $REGISTRY/$ORG/$API_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker push $REGISTRY/$ORG/$API_IMAGE:stag
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker push $REGISTRY/$ORG/$API_IMAGE:${GITHUB_REF_NAME}
           fi
           echo "✅ Pushed FL API."
 
@@ -287,6 +309,8 @@ jobs:
             docker rmi $REGISTRY/$ORG/$API_IMAGE:prod || true
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             docker rmi $REGISTRY/$ORG/$API_IMAGE:stag || true
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker rmi $REGISTRY/$ORG/$API_IMAGE:${GITHUB_REF_NAME} || true
           fi
           # Clean up the base image
           docker rmi $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} || true
