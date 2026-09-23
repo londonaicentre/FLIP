@@ -34,9 +34,8 @@ WORKDIR /app
 # than a PyPI release (#767). Removing this directory fails the launch of
 # every platform app (each fl-apps template pins it).
 #
-# --extra-index-url points pip at PyTorch's CUDA-12.8 wheel index. Combined with
-# flip-utils' "torch>=2.11,<2.12" pin, pip picks torch 2.11.x+cu128 — the highest
-# torch that runs on the host NVIDIA driver 575.x (cu13 wheels need driver >=580).
+# --extra-index-url points pip at PyTorch's CUDA-13.0 wheel index. Combined with
+# flip-utils' "torch>=2.13,<2.14" pin, pip picks torch 2.13.x+cu130.
 # COPY's default root ownership is deliberate: user-submitted apps execute in
 # this container as the same non-root `app` user that flwr/base runs as, so an
 # app-writable copy could be mutated by app code, poisoning what later runs in
@@ -53,8 +52,9 @@ COPY flip-utils/flip/ /opt/flip-utils/flip/
 # equivalent, forcing the upgrade past flwr's declared ceiling. Safe for the same reason
 # recorded there: flwr only uses cryptography for TLS cert loading in secure aggregation,
 # a stable surface across majors.
-RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "cryptography>=50.0.0" \
-      --extra-index-url https://download.pytorch.org/whl/cu128
+# pip does not apply flip-utils' UV constraints; carry the setuptools security floor here too.
+RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "cryptography>=50.0.0" "setuptools>=83.0.0" \
+      --extra-index-url https://download.pytorch.org/whl/cu130
 
 # Copy register-supernode-keys.sh (used by the secure / central-hub topology to
 # register SuperNode public keys with the SuperLink).

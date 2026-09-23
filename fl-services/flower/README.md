@@ -67,8 +67,7 @@ in the `fl-apps/flower/*` template pyprojects steer the per-run resolution inste
   flip-utils **source** at `/opt/flip-utils` after installing it, and every run builds flip-utils
   from that path. uv never consults PyPI for a name with a source override, so the platform always
   runs the flip-utils matching its images.
-- `torch`/`torchvision` are pinned to PyTorch's cu128 index (PyPI's default cu130 wheels need
-  NVIDIA driver ≥580; FLIP hosts run 575.x).
+- `torch`/`torchvision` are pinned to PyTorch's cu130 index and require NVIDIA driver ≥580.
 
 All other dependencies resolve from PyPI per run, so SuperLink/SuperNode hosts need outbound HTTPS
 to PyPI and `download.pytorch.org`.

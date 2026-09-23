@@ -131,6 +131,8 @@ make unit_test             # All unit tests across all services (from root)
 make integration_test      # flip-api + trust integration tests (from root)
 make tests                 # flip-ui unit + e2e tests, then flip-api test suite (from root)
 make -C fl-tutorials test  # ruff over fl-tutorials/ + the CPU-only transform-chain suite (no GPU/dataset/FL image)
+make -C flip-utils unit-test  # ruff + format check + mypy + pytest for the flip package (not part of root unit_test; CI: unit-tests.yml)
+make -C docs test          # docs GIFs fetcher/publisher suites + rst<->spec wiring guard (no network)
 make e2e_smoke             # End-to-end smoke against a running stack (see below)
 # From a service directory (e.g., flip-api/):
 make test                  # ruff + mypy + pytest (unit + integration)
@@ -418,7 +420,13 @@ PRs to develop/main), `validate_branch_origin.yml` (PRs targeting `main` must or
 release notes on a PR to `main`), `regenerate_docs_gifs.yml` (re-records the docs GIFs from
 Cypress on push to `develop` touching `flip-ui/src/**` or the Cypress docs harness —
 `flip-ui/test/cypress/docs/**`, `cypress.docs.config.ts`, `scripts/videos-to-gifs.sh` — or
-manual dispatch).
+manual dispatch; since FLIP#1236 the GIFs are not in git: a secret-free `record` job hands them to
+a `publish` job in the `flip` environment, gated to `develop` (the environment is the shared CI one
+and adds no isolation — the ref gate is the control), that publishes one immutable tag on the HF dataset
+`aicentreflip/docs-gifs` and opens a one-line `docs/.gifs_version` pin PR, reviewed through its RTD
+preview), `test_docs_scripts.yml` (`make -C docs test`: the fetcher/publisher suites under
+`docs/tests/`, the rst-figure ↔ demo-spec wiring guard, and a static guard over the regenerate
+workflow's token scope, `develop` gate and tag minting).
 
 ### PR path gate: service suites run only for the paths they cover (PRs into develop)
 

@@ -101,9 +101,7 @@ class TestAcceptTrainResult:
         aggregator.accept = MagicMock(return_value=True)
         controller.aggregator = aggregator
 
-        result = DXO(
-            data_kind=DataKind.WEIGHT_DIFF, data={"head.w": 0.25}, meta={"origin": "client"}
-        ).to_shareable()
+        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"head.w": 0.25}, meta={"origin": "client"}).to_shareable()
         result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 2)
 
         accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
@@ -554,9 +552,7 @@ class TestClientResultTelemetry:
         result.set_return_code(ReturnCode.EXECUTION_EXCEPTION)
         result.set_header("exception", "boom")
 
-        with patch.object(
-            NVFlareScatterAndGather, "_accept_train_result", return_value=False
-        ):
+        with patch.object(NVFlareScatterAndGather, "_accept_train_result", return_value=False):
             controller._accept_train_result(client_name="Trust_1", result=result, fl_ctx=_ctx())
 
         controller.flip.send_event.assert_not_called()
