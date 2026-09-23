@@ -79,7 +79,7 @@ creates all of them — the repo-root `make create-networks` forwards to it:
 
 | Network | Created by | Carries |
 | ------- | ---------- | ------- |
-| `${TRUST_NETWORK_NAME}` (`deploy_trust-network-<N>`) | `make -C trust create-networks` (`create-networks-trust-1` / `-2`) | this trust's own services |
+| `${TRUST_NETWORK_NAME}` (`deploy_trust-network-<N>`) | `make -C trust create-networks` (`create-networks-trust-<N>`: slots 1 and 2, plus the kit's own slot when `KIT` is set; `up-trust-ec2` ensures its slot itself) | this trust's own services |
 | `deploy_central-hub-trust-apis-network` | `make -C trust create-networks` (`create-networks-core`) | trust-api ↔ flip-api |
 | `deploy_fl-net-1`, `deploy_fl-net-2` | `make -C trust create-networks` (`create-networks-core`) | fl-client ↔ fl-server (FL data plane) |
 
