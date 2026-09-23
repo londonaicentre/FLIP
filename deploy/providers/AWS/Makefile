@@ -485,7 +485,8 @@ apply-fl-kit-slots: ## Apply only the FL kit-slot SSM parameter — the slot act
 	## review it before it applies. Also targets the flip-api task-role policy so
 	## the first rollout (which adds the ssm:GetParameter read) is self-contained;
 	## a no-op on every later run. Targeted on purpose: never run a full prod
-	## `make apply` for this (AMI drift can force-replace trust EC2s).
+	## `make apply` for this — it also applies whatever else is pending in the
+	## plan, FL task-definition replacements (which kill a running job) included.
 	##
 	## NOT literally one resource: -target applies the target's whole dependency
 	## closure, and the task-role policy references the bucket modules, whose
