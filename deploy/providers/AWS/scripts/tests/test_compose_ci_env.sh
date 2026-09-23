@@ -224,7 +224,11 @@ fi
 #     DOCKER_TAG / DOCKER_FL_TAG so the resolved sha tags from
 #     resolve-image-tags.sh are inherited rather than overridden (hazard A). PROD
 #     is not a manifest key at all — it is the selector, checked separately below.
-for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
+#
+#     deploy_ui.yml composes through the same script (#1186) — it is the file the
+#     UI's window.js is generated from, so it has to be the same file — and is
+#     covered by the same rule.
+for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml deploy_ui.yml; do
     echo ""
     echo "-- ${wf} passes every manifest key through"
     wf_path="${WORKFLOW_DIR}/${wf}"
@@ -264,7 +268,7 @@ done
 echo ""
 echo "-- every workflow reads the mode token in both steps"
 token_offenders=""
-for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
+for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml deploy_ui.yml; do
     wf_path="${WORKFLOW_DIR}/${wf}"
     [[ -f "${wf_path}" ]] || continue
     prod_lines="$(grep -oE '^[[:space:]]+PROD:[[:space:]]+.*$' "${wf_path}" | sed -E 's/^[[:space:]]+PROD:[[:space:]]+//')"
@@ -594,6 +598,88 @@ if grep -q 'TF_VAR_' "${OUT_FILE}"; then
     no "writes no raw TF_VAR_ lines for a legacy environment" "file carries: $(grep 'TF_VAR_' "${OUT_FILE}")"
 else
     ok "writes no raw TF_VAR_ lines for a legacy environment"
+fi
+
+# 15. THE UI PUBLISH (#1186).
+#
+#     deploy_ui.yml publishes flip-ui on merge, and the properties worth pinning
+#     are the ones that make it safe to run unattended: it publishes the same
+#     recipe a human would (so the two cannot drift), it never names the bucket or
+#     the distribution (FLIP#749 renames them — deploy-ui.sh reads the outputs), it
+#     cannot assume the apply role, and it does not cancel a publish halfway
+#     through an `s3 sync --delete`.
+echo ""
+echo "-- the flip-ui publish workflow"
+
+UI_WF="${WORKFLOW_DIR}/deploy_ui.yml"
+if [[ -f "${UI_WF}" ]]; then
+    # The checks below are about what the workflow *does*, and a comment that says
+    # "this runs deploy-ui.sh rather than an `aws s3 sync`" must not read as the
+    # thing it is denying — so comments are stripped first.
+    ui_code="$(grep -vE '^[[:space:]]*#' "${UI_WF}")"
+
+    if grep -q 'scripts/deploy-ui.sh' <<<"${ui_code}" &&
+        ! grep -qE 'aws s3 (sync|cp)|cloudfront create-invalidation' <<<"${ui_code}"; then
+        ok "runs the shared deploy-ui.sh rather than its own copy of the recipe"
+    else
+        no "runs the shared deploy-ui.sh rather than its own copy of the recipe" \
+            "$(grep -nE 'aws s3 |cloudfront create-invalidation|deploy-ui.sh' <<<"${ui_code}" | head -5)"
+    fi
+
+    # A bucket name or a distribution id in the YAML is the failure #749 exists to
+    # prevent: it survives the account move as a name that no longer resolves.
+    if ! grep -qE 's3://|--distribution-id|FlipUiBucketName|CloudfrontDistributionId' <<<"${ui_code}"; then
+        ok "names no bucket and no distribution — both come from Terraform outputs"
+    else
+        no "names no bucket and no distribution" \
+            "$(grep -nE 's3://|--distribution-id|FlipUiBucketName|CloudfrontDistributionId' <<<"${ui_code}")"
+    fi
+
+    # The apply role is pinned to terraform_apply.yml, and its whole safety argument
+    # is that nothing else can assume it.
+    if grep -q 'vars.UI_DEPLOY_ROLE_ARN' <<<"${ui_code}" && ! grep -q 'TF_APPLY_ROLE_ARN' <<<"${ui_code}"; then
+        ok "assumes the bundle publisher's role, never the apply role"
+    else
+        no "assumes the bundle publisher's role, never the apply role" \
+            "$(grep -nE 'ROLE_ARN' <<<"${ui_code}")"
+    fi
+
+    # An interrupted `s3 sync --delete` leaves a bucket matching neither release.
+    if grep -qE '^  cancel-in-progress: false' <<<"${ui_code}"; then
+        ok "never cancels a publish in progress"
+    else
+        no "never cancels a publish in progress" "$(grep -n 'cancel-in-progress' <<<"${ui_code}")"
+    fi
+
+    # The env-file name is asked of compose-ci-env.sh, not spelled out: the two
+    # would otherwise drift silently, and the composed file would be ignored.
+    if grep -q -- '--print-env' <<<"${ui_code}" && ! grep -qE '"?\$?\{?\{? *\.env\.(stag|production|lza)' <<<"${ui_code}"; then
+        ok "resolves the env file through the compose script's --print-env"
+    else
+        no "resolves the env file through the compose script's --print-env" \
+            "$(grep -nE '\-\-print-env|\.env\.(stag|production|lza)' <<<"${ui_code}")"
+    fi
+
+    # The two triggers, and the one thing they must agree on: workflow_run matches
+    # the upstream workflow by NAME, so a rename in terraform_apply.yml silently
+    # turns this into a workflow that never fires.
+    upstream="$(grep -E '^name:' "${WORKFLOW_DIR}/terraform_apply.yml" | sed -E 's/^name:[[:space:]]*//')"
+    if grep -qE "^[[:space:]]+workflows: \[\"${upstream}\"\]" <<<"${ui_code}"; then
+        ok "waits on the apply workflow by its actual name ('${upstream}')"
+    else
+        no "waits on the apply workflow by its actual name" \
+            "terraform_apply.yml is named '${upstream}':" \
+            "$(grep -nA3 'workflow_run:' <<<"${ui_code}")"
+    fi
+
+    if grep -qE '^[[:space:]]+- "flip-ui/\*\*"' <<<"${ui_code}" &&
+        grep -qE '^[[:space:]]+types: \[completed\]' <<<"${ui_code}"; then
+        ok "fires on a flip-ui push and on a completed apply"
+    else
+        no "fires on a flip-ui push and on a completed apply" "$(grep -nE 'flip-ui|types:' <<<"${ui_code}")"
+    fi
+else
+    no "deploy_ui.yml exists" "not found at ${UI_WF}"
 fi
 
 echo ""

@@ -255,6 +255,20 @@ else
     echo "   set TF_PLAN_ROLE_ARN, TF_APPLY_ROLE_ARN"
 fi
 
+# The flip-ui publish workflow assumes its own role (#1186) — it writes one bucket
+# and invalidates one cache, and must not be able to do what an apply can. That
+# role is new in ci/, so an environment whose ci/ state predates it would otherwise
+# fail the read above for the two ARNs that *do* exist: read separately, so a stale
+# ci/ costs the operator one line of advice and not the whole run.
+ui_arn="$(ci_output ui_deploy_role_arn)"
+if [[ -n "${ui_arn}" ]]; then
+    set_gh variable UI_DEPLOY_ROLE_ARN "${ui_arn}"
+    echo "   set UI_DEPLOY_ROLE_ARN"
+else
+    echo "   ⚠️  ci/ has no ui_deploy_role_arn output yet (added with the flip-ui publish workflow)."
+    echo "      Run: make -C ci apply${CI_INIT_SUFFIX} && make -C ci output, then set UI_DEPLOY_ROLE_ARN."
+fi
+
 # ---------------------------------------------------------------------------
 # 3. Everything the workflows dereference
 # ---------------------------------------------------------------------------

@@ -113,12 +113,20 @@ ifeq ($(strip $(FLIP_TFSTATE_BUCKET_NAME)),)
 $(error Set FLIP_TFSTATE_BUCKET_NAME in $(MAIN_ENV_FILE))
 endif
 
+# The UI deploy role's policy has to name the bucket it may write (#1186), and this
+# root is applied before the root that creates that bucket — so the name comes from
+# the env file rather than from a `terraform output` on this side.
+ifeq ($(strip $(FLIP_UI_BUCKET_NAME)),)
+$(error Set FLIP_UI_BUCKET_NAME in $(MAIN_ENV_FILE) — the UI deploy role scopes its S3 write to that bucket)
+endif
+
 export TF_VAR_AWS_REGION = $(AWS_REGION)
 export TF_VAR_environment = $(TF_ENVIRONMENT)
 export TF_VAR_apply_branch = $(APPLY_BRANCH)
 export TF_VAR_drift_branch = $(DRIFT_BRANCH)
 export TF_VAR_github_environment = $(GITHUB_ENVIRONMENT)
 export TF_VAR_state_bucket_name = $(FLIP_TFSTATE_BUCKET_NAME)
+export TF_VAR_ui_bucket_name = $(FLIP_UI_BUCKET_NAME)
 
 .PHONY: init
 init: ## Initialize the CI-roles Terraform root

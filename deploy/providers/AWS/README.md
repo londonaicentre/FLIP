@@ -260,6 +260,40 @@ The UI is served from S3 behind CloudFront at the canonical user-facing subdomai
 
 **Subsequent UI deploys**: just `make deploy-ui PROD=stag|true` — builds the UI from the working tree, regenerates `window.js`, syncs to S3, invalidates CloudFront. No Terraform involved. `deploy-ui` syncs `dist/` to the bucket **root** with `--delete`, so it always excludes the `ark_demo/*` prefix — the real build's `dist/` has no `ark_demo/` output, and without the exclude a routine UI (or `deploy-centralhub`, which calls `deploy-ui` as its last step) deploy would delete the demo SPA on every run. Publishing the demo bundle itself is a separate target — see below.
 
+**On merge it publishes itself** ([`deploy_ui.yml`](../../.github/workflows/deploy_ui.yml), FLIP#1186). The
+section above is the manual path; CI runs the **same** recipe — [`scripts/deploy-ui.sh`](scripts/deploy-ui.sh),
+which `make deploy-ui` delegates to, so the cache-control split, the `ark_demo/*` exclusion and the LZA
+branch that skips invalidation have one definition and cannot drift. Two triggers:
+
+- **a push to `develop`/`main` touching `flip-ui/**`** publishes immediately. Nothing about the
+  deployment changed and the apply workflow never runs for a UI commit, so waiting would mean waiting for
+  a run that does not exist.
+- **the `Terraform Apply` workflow completing** publishes when the commit it applied also touched
+  `flip-ui/**` — the API and the UI changed together, and the UI may call a route that only exists once
+  the apply has run, so it publishes *after* it. A held apply (the FL quiesce gate) is included on
+  purpose: the UI is unaffected by whether the deploy proceeded. A commit that changed only
+  infrastructure publishes no UI at all.
+
+[`scripts/ui-publish-decide.sh`](scripts/ui-publish-decide.sh) makes that split and prints the reason a
+run stood down, which lands in the job summary. Nothing in the workflow names a bucket or a distribution:
+the bucket name and distribution id are read from Terraform outputs, and `window.js` is generated from the
+env file `compose-ci-env.sh` composes from the GitHub environment — so `CENTRAL_HUB_API_URL` is the deployed
+API's URL rather than whatever default the bundle was built with. The publish assumes
+**`UI_DEPLOY_ROLE_ARN`**, a role of its own (`AICentre-FLIPUiDeployRole` in [`ci/`](ci/README.md)) that can
+write one bucket, invalidate one distribution and read the state — deliberately *not* `TF_APPLY_ROLE_ARN`,
+whose OIDC trust is pinned to `terraform_apply.yml` alone so that nothing else can assume it.
+
+**Prerequisite:** that variable must exist on `aws-stag` / `aws-prod`. `scripts/setup-github-environments.sh
+--mode stag|true|lza-stag|lza` sets it from `make -C ci output` along with the rest (and says so if `ci/`
+has not been applied since the role was added).
+
+**Rolling the UI back** is the manual recipe: `make deploy-ui PROD=…` from a checkout of the last good
+commit, or re-run that commit's *Deploy flip-ui* run from the Actions tab. Neither the workflow nor
+`deploy-ui.sh` keeps a previous release, so the UI follows the API — roll the API back with
+`make rollback-centralhub` and republish the matching bundle. A failed publish leaves the previous bundle
+in place and says so in the job's error, rather than half-replacing it: `deploy-ui.sh` uploads and prunes
+in one `s3 sync --delete`, and the workflow never cancels a publish in progress.
+
 ### Ark+ demo SPA bundle (`/ark_demo/*`)
 
 `make deploy-ark-demo PROD=stag|true` builds the demo bundle (`npm run build:demo`, which also
@@ -603,7 +637,9 @@ failure), don't roll back blindly — rollback moves **every** service down one 
 the ones the failed deploy never touched; fix the missing build and re-run the deploy instead.
 
 The deploy ends by publishing the UI (same as `make deploy-ui`), which builds `flip-ui` **from your
-local working tree** — deploy from a clean checkout of the branch you are deploying.
+local working tree** — deploy from a clean checkout of the branch you are deploying. A merge does not
+need this step: [`deploy_ui.yml`](#flip-ui-on-s3--cloudfront) publishes the UI on its own after the
+apply lands, so a manual deploy is for a local branch, a hotfix, or a rollback.
 
 Terraform stays the owner of the task-definition *skeleton* (roles, env wiring, volumes). The
 services track `max(Terraform revision, latest ACTIVE revision)` (see `ecs_services.tf`), so an

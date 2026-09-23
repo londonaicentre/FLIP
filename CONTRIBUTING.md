@@ -716,6 +716,7 @@ Before opening the release PR from `develop` to `main`:
    - [`release.yml`](.github/workflows/release.yml) reads the root `pyproject.toml`, creates the `v<X.Y.Z>` git tag, and publishes the GitHub Release named `Release v<X.Y.Z>` with auto-generated notes.
    - [`release-pypi.yml`](.github/workflows/release-pypi.yml) reads `flip-utils/flip/__init__.py` and, if that version is not yet tagged, lints + tests + builds the package, publishes it to PyPI via OIDC trusted publishing, tags it, and publishes a GitHub Release named `flip-utils v<X.Y.Z>` with the template header, the generated changelog, and the build artifacts attached.
    - Every `docker_build_*.yml` workflow under [`.github/workflows/`](.github/workflows/) rebuilds its service and pushes the `:prod` and `:<sha>` tags to GHCR.
+   - [`deploy_ui.yml`](.github/workflows/deploy_ui.yml) publishes the flip-ui bundle to the production S3 bucket and invalidates CloudFront (FLIP#1186), after the apply it is waiting on. The same thing happens on a merge to `develop`, into staging. No manual step, and it is the reason the UI and the API arrive together rather than in whichever order someone remembered to run them.
 1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that the `:prod` tags on `flip-api`, `trust-api`, `imaging-api`, and `data-access-api` were updated by the latest build. If the package was released, verify it on [PyPI](https://pypi.org/project/flip-utils/).
 
 ### Release notes
@@ -745,6 +746,8 @@ make full-deploy PROD=true
 ```
 
 See [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md) for full deployment instructions. For staging, no release tag is required: merging to `develop` publishes `:stag` images automatically, and `make full-deploy PROD=stag` rolls them out.
+
+The **UI** needs no manual step on a merge to `main` (or `develop`): [`deploy_ui.yml`](.github/workflows/deploy_ui.yml) publishes `flip-ui` to the S3 bucket behind CloudFront as part of the same merge, after the Terraform apply (FLIP#1186). `make full-deploy` / `make deploy-centralhub` still publish it as their last step, which is what a hotfix or a local branch deploy needs. Note that the workflow publishes the **committed** `flip-ui` tree, while the manual targets build your **working tree** — so an uncommitted UI change is deployed only by the command, and will be overwritten by the next automated publish.
 
 ### Hotfixes
 

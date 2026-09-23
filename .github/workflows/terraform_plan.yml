@@ -131,6 +131,13 @@ jobs:
           FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
           ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
           DEMO_ASSETS_BUCKET_NAME: ${{ vars.DEMO_ASSETS_BUCKET_NAME }}
+          # flip-ui's runtime values (#1186). Terraform reads none of them; they
+          # are here because the composed file is the deployment's one env file,
+          # and the UI publish reads the same one rather than keeping a second
+          # list of what an environment's UI points at.
+          CENTRAL_HUB_API_URL: ${{ vars.CENTRAL_HUB_API_URL }}
+          BLACKLISTED_MODEL_FILES: ${{ vars.BLACKLISTED_MODEL_FILES }}
+          RELEASE_VERSION: ${{ vars.RELEASE_VERSION }}
           FL_ADMIN_DIRECTORY: ${{ vars.FL_ADMIN_DIRECTORY }}
           INTERNAL_SERVICE_KEY_HEADER: ${{ vars.INTERNAL_SERVICE_KEY_HEADER }}
           TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}

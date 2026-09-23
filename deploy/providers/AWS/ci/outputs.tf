@@ -26,6 +26,11 @@ output "apply_role_arn" {
   value       = aws_iam_role.terraform_apply.arn
 }
 
+output "ui_deploy_role_arn" {
+  description = "Role ARN for the flip-ui publish. Set as UI_DEPLOY_ROLE_ARN on the GitHub environment."
+  value       = aws_iam_role.ui_deploy.arn
+}
+
 output "account_id" {
   description = "Account these roles were created in — check it against the intended FLIP environment before wiring the ARNs up."
   value       = data.aws_caller_identity.current.account_id
@@ -58,4 +63,9 @@ output "expected_drift_job_workflow_ref" {
 output "expected_apply_job_workflow_ref" {
   description = "The job_workflow_ref claim the apply role requires — exactly this workflow file at exactly this ref."
   value       = local.apply_workflow_ref
+}
+
+output "expected_ui_job_workflow_ref" {
+  description = "The job_workflow_ref claim the UI deploy role requires — deploy_ui.yml at this environment's branch."
+  value       = local.ui_workflow_ref
 }

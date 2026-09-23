@@ -144,14 +144,22 @@ environment and readable only on the branches its deployment branch policy admit
 
 Which account and which mode an environment drives is set by its **`TF_PROD`**
 variable — the `deploy/env_mode.mk` token, one of `stag` | `true` | `lza-stag` |
-`lza` — together with `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN`, the OIDC roles it
-assumes. Repointing an environment at a different AWS account is a change to those
-values, not to any workflow. The full key list, the seeding procedure and the
-per-account bootstrap order are documented with the stack that consumes them:
-`deploy/providers/AWS/README.md` → "Terraform CI: plan on PR, apply on merge" and
-"Repointing CI at the LZA accounts". Seeding is done by
-`deploy/providers/AWS/scripts/setup-github-environments.sh --mode <token>` (repo
-admin, `--dry-run` first, from a machine holding the operator's `.env.<env>` file).
+`lza` — together with `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN` /
+`UI_DEPLOY_ROLE_ARN`, the OIDC roles it assumes. Repointing an environment at a
+different AWS account is a change to those values, not to any workflow. The full
+key list, the seeding procedure and the per-account bootstrap order are documented
+with the stack that consumes them: `deploy/providers/AWS/README.md` → "Terraform
+CI: plan on PR, apply on merge" and "Repointing CI at the LZA accounts". Seeding is
+done by `deploy/providers/AWS/scripts/setup-github-environments.sh --mode <token>`
+(repo admin, `--dry-run` first, from a machine holding the operator's `.env.<env>`
+file).
+
+`UI_DEPLOY_ROLE_ARN` is the only one of the three that is not a Terraform role: the
+flip-ui publish workflow assumes it to write the UI bucket and invalidate its
+distribution (`deploy/providers/AWS/ci/README.md`). It is deliberately separate from
+`TF_APPLY_ROLE_ARN`, whose trust is pinned to the apply workflow alone — one
+workflow, one ref — so no account value is ever reachable from a second workflow
+file.
 
 ## Security Notes
 

@@ -1,0 +1,242 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Publish flip-ui to S3 + CloudFront on merge (FLIP#1186).
+#
+# Until this existed, a merge shipped the API automatically (`terraform_apply.yml`)
+# and the UI only if someone remembered `make deploy-ui` from a laptop — so every
+# automated deploy served a new API under the previous bundle until they did. Two
+# releases did exactly that: #1030 on prod (UI predating the presigned model-file
+# download, which locked Initiate Training) and the v0.6.0 cut (#1184).
+#
+# There is no new recipe here. This runs scripts/deploy-ui.sh — the same file
+# `make deploy-ui` runs — so the cache-control split, the ark_demo/* exclusion and
+# the LZA branch that skips invalidation all have one definition. What this adds is
+# the environment: the bucket name and the distribution id are read from Terraform
+# outputs, never named here (a rename, or the LZA move, must not need a YAML edit),
+# and window.js is generated from the env file `scripts/compose-ci-env.sh` composes
+# from the GitHub environment, so the deployed UI points at the deployed API.
+#
+# Two triggers, divided by scripts/ui-publish-decide.sh:
+#
+#   * a push to develop/main touching flip-ui/** publishes immediately. Nothing
+#     about the deployment changed, and the apply workflow never runs for it.
+#   * the Terraform Apply workflow completing publishes only when the commit it
+#     applied also touched flip-ui/**, i.e. the API and the UI changed together.
+#     The UI may call a route that only exists after the apply, so that commit
+#     publishes *after* it. A held apply (the FL gate) is included on purpose: the
+#     UI is unaffected by whether the deploy proceeded.
+#
+# Not part of the apply workflow, and deliberately not blocked by its FL gate: a
+# UI-only change must not have to wait for a quiesce, and an apply must not be
+# delayed by a UI build.
+
+name: Deploy flip-ui
+
+on:
+  push:
+    branches: [develop, main]
+    paths:
+      - "flip-ui/**"
+      - ".github/workflows/deploy_ui.yml"
+  workflow_run:
+    # The name must match terraform_apply.yml's `name:` exactly.
+    workflows: ["Terraform Apply"]
+    types: [completed]
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancel a publish in progress. `aws s3 sync --delete` prunes the previous
+  # release's hashed bundles as it uploads the new ones, so an interrupted run
+  # leaves a bucket matching neither release.
+  group: deploy-ui-${{ github.event.workflow_run.head_branch || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish flip-ui (${{ github.event.workflow_run.head_branch || github.ref_name }})
+    runs-on: ubuntu-latest
+    # The job checks out the commit the triggering apply ran for, so the
+    # same-repository clause is required here, not optional: `workflow_run` always
+    # fires in the base repository with whatever permissions the job asks for, and
+    # it carries the *triggering* run's head_repository/head_sha. `terraform_apply.yml`
+    # only runs on a push to develop/main, so that pair is always ours — but the
+    # guard is what keeps that true if it ever is not, and
+    # scripts/tests/test_workflow_trust_guards.py checks for it (FLIP#882).
+    if: >-
+      (github.event_name == 'push' ||
+      github.event.workflow_run.head_repository.full_name == github.repository)
+    # The environment whose account this branch deploys into. Same pair as the
+    # apply: develop -> aws-stag, main -> aws-prod.
+    environment: ${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'aws-prod' || 'aws-stag' }}
+    permissions:
+      contents: read
+      id-token: write # mint the OIDC token
+
+    steps:
+      # First, because the decision below is a `git diff`: it needs the checkout it
+      # is deciding about. The ref is the commit the apply ran for, which on a
+      # workflow_run is not the event ref — that is the default branch, and it does
+      # not contain a commit merged to the other of the two long-lived branches.
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # Full history: the decision diffs this commit against its first parent,
+          # and a shallow clone has neither.
+          fetch-depth: 0
+
+      - name: Decide whether this run publishes
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          # `github.event.workflow_run.head_sha` is the merged commit the apply ran
+          # for; on a push it is this commit.
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          BEFORE: ${{ github.event.before }}
+          BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+        run: deploy/providers/AWS/scripts/ui-publish-decide.sh >> "$GITHUB_OUTPUT"
+
+      - name: Skip
+        if: ${{ steps.decide.outputs.run != 'true' }}
+        env:
+          REASON: ${{ steps.decide.outputs.reason }}
+          COMMIT: ${{ steps.decide.outputs.ref }}
+        run: 'echo "Not publishing flip-ui for ${COMMIT}: ${REASON}"'
+
+      - name: Setup Node
+        if: ${{ steps.decide.outputs.run == 'true' }}
+        uses: actions/setup-node@v5
+        with:
+          # Node 24 LTS, matching test_flip_ui.yml: it bundles npm >=11.10, the
+          # version that honours `.npmrc min-release-age`. `npm ci` runs inside
+          # deploy-ui.sh, so the cooldown applies to this build too.
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: flip-ui/package-lock.json
+
+      - name: Configure AWS credentials
+        if: ${{ steps.decide.outputs.run == 'true' }}
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          # The bundle publisher's own role: it can write one bucket, invalidate one
+          # cache and read the state. Not TF_APPLY_ROLE_ARN — that one is pinned to
+          # terraform_apply.yml precisely so a second workflow cannot assume it.
+          role-to-assume: ${{ vars.UI_DEPLOY_ROLE_ARN }}
+          role-session-name: flip-ui-deploy-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Compose the env file
+        if: ${{ steps.decide.outputs.run == 'true' }}
+        env:
+          # The same mode token the apply uses, from the same variable, so the UI
+          # this publishes is the UI of the estate the apply deployed: the script
+          # derives the env file, the profile and the required keys from it, and
+          # window.js is generated from the file it writes.
+          PROD: ${{ vars.TF_PROD || ((github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'true' || 'stag') }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          VPC_NAME: ${{ vars.VPC_NAME }}
+          FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}
+          AICENTRE_BUCKET_NAME: ${{ vars.AICENTRE_BUCKET_NAME }}
+          FLIP_APP_BUNDLES_BUCKET_NAME: ${{ vars.FLIP_APP_BUNDLES_BUCKET_NAME }}
+          FLIP_FL_RESULTS_BUCKET_NAME: ${{ vars.FLIP_FL_RESULTS_BUCKET_NAME }}
+          FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME: ${{ vars.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME }}
+          FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
+          FLIP_BUCKET_NAME: ${{ vars.FLIP_BUCKET_NAME }}
+          API_PORT: ${{ vars.API_PORT }}
+          DB_PORT: ${{ vars.DB_PORT }}
+          UI_PORT: ${{ vars.UI_PORT }}
+          FL_API_PORT: ${{ vars.FL_API_PORT }}
+          FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
+          ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
+          DEMO_ASSETS_BUCKET_NAME: ${{ vars.DEMO_ASSETS_BUCKET_NAME }}
+          # window.js's own values. CENTRAL_HUB_API_URL is the one that matters:
+          # empty means the generated bundle would fall back to a checked-in
+          # default, and generate-window-js.sh refuses to write it — which is the
+          # failure this step exists to surface, before anything is uploaded.
+          CENTRAL_HUB_API_URL: ${{ vars.CENTRAL_HUB_API_URL }}
+          BLACKLISTED_MODEL_FILES: ${{ vars.BLACKLISTED_MODEL_FILES }}
+          RELEASE_VERSION: ${{ vars.RELEASE_VERSION }}
+          FL_ADMIN_DIRECTORY: ${{ vars.FL_ADMIN_DIRECTORY }}
+          INTERNAL_SERVICE_KEY_HEADER: ${{ vars.INTERNAL_SERVICE_KEY_HEADER }}
+          TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}
+          SES_VERIFIED_EMAIL: ${{ vars.SES_VERIFIED_EMAIL }}
+          ALB_SUBDOMAIN: ${{ vars.ALB_SUBDOMAIN }}
+          NLB_SUBDOMAIN: ${{ vars.NLB_SUBDOMAIN }}
+          DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
+          FL_BACKEND: ${{ vars.FL_BACKEND }}
+          FL_KIT_SLOT_NAMES: ${{ vars.FL_KIT_SLOT_NAMES }}
+          FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
+          FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
+          DEPLOY_TRUST_EC2: ${{ vars.DEPLOY_TRUST_EC2 }}
+          LOCAL_TRUST_PUBLIC_IPS: ${{ vars.LOCAL_TRUST_PUBLIC_IPS }}
+          K8S_TRUST_PUBLIC_IPS: ${{ vars.K8S_TRUST_PUBLIC_IPS }}
+          JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
+          JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: ${{ vars.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB }}
+          ACCESS_LOGS_BUCKET_NAME: ${{ vars.ACCESS_LOGS_BUCKET_NAME }}
+          EFS_PROVISION_IMAGE: ${{ vars.EFS_PROVISION_IMAGE }}
+          LZA_VPC_NAME: ${{ vars.LZA_VPC_NAME }}
+          MANAGE_DNS: ${{ vars.MANAGE_DNS }}
+          NETWORKING_INGRESS_CIDRS: ${{ vars.NETWORKING_INGRESS_CIDRS }}
+          LZA_ELB_ACCESS_LOGS_BUCKET: ${{ vars.LZA_ELB_ACCESS_LOGS_BUCKET }}
+          LZA_WEB_EDGE_DOMAIN: ${{ vars.LZA_WEB_EDGE_DOMAIN }}
+          LZA_WEB_EDGE_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_EDGE_DISTRIBUTION_ARN }}
+          ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
+          AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
+          INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
+          INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
+          POSTGRES_DB: ${{ vars.POSTGRES_DB }}
+          POSTGRES_USER: ${{ vars.POSTGRES_USER }}
+        run: deploy/providers/AWS/scripts/compose-ci-env.sh
+
+      - name: Setup Terraform
+        if: ${{ steps.decide.outputs.run == 'true' }}
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "~> 1.13"
+          terraform_wrapper: false
+
+      # Read-only, and the only reason Terraform is here at all: deploy-ui.sh asks
+      # it for FlipUiBucketName, CloudfrontDistributionId and (when the env file has
+      # no copy) the two Cognito ids. Nothing is planned or applied from this job —
+      # the publish role cannot write state, let alone apply.
+      - name: Terraform init
+        if: ${{ steps.decide.outputs.run == 'true' }}
+        working-directory: deploy/providers/AWS
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.FLIP_TFSTATE_BUCKET_NAME }}" \
+            -backend-config="region=${{ vars.AWS_REGION }}"
+
+      - name: Publish the bundle
+        if: ${{ steps.decide.outputs.run == 'true' }}
+        env:
+          # deploy-ui.sh asks the Makefile which mode this is (for the LZA branch
+          # that skips invalidation) rather than re-deriving it.
+          PROD: ${{ vars.TF_PROD || ((github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'true' || 'stag') }}
+        run: |
+          # The env-file name is not re-derived here: compose-ci-env.sh owns the
+          # token -> file table, and --print-env is the read-only way to ask it.
+          env_file="$(PROD="$PROD" deploy/providers/AWS/scripts/compose-ci-env.sh --print-env \
+            | sed -n 's/^OUT_FILE=//p')"
+          if [ -z "$env_file" ]; then
+            echo "::error::could not resolve the env file for PROD=$PROD"
+            exit 1
+          fi
+          deploy/providers/AWS/scripts/deploy-ui.sh \
+            --env-file "$env_file" \
+            --mode "$PROD" || {
+            echo "::error::the flip-ui publish failed — the bucket still holds the previous bundle. Re-run this workflow, or run 'make -C deploy/providers/AWS deploy-ui PROD=$PROD' from this commit as the documented fallback."
+            exit 1
+          }

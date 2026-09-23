@@ -398,7 +398,10 @@ manual dispatch). **Per-backend FL API** — `fl-api-test-flower.yml` / `fl-api-
 (unit tests for each backend's `fl_api/`, push+PR to main/develop). **FL Docker images** —
 `fl-docker-build-flower.yml` / `fl-docker-build-nvflare.yml` (build+push each backend's
 `fl-services/<backend>/**` images on push to main/develop, or manual dispatch; also triggered
-by `flip-utils/**` since the fl-base image bakes it in). **FL app/tutorial consistency guards**
+by `flip-utils/**` since the fl-base image bakes it in). **UI publish** — `deploy_ui.yml`
+(flip-ui → S3 + CloudFront on merge to develop/main, FLIP#1186: it runs the same
+`scripts/deploy-ui.sh` that `make deploy-ui` runs, waits for the apply when a commit changed
+both, and publishes immediately for a UI-only push). **FL app/tutorial consistency guards**
 — `fl-apps-check-required-files.yml` (CI backstop for the `fl-apps-required-files` pre-commit
 hook), `fl-apps-check-tutorial-sync.yml` (now only the NVFLARE Ark+ evaluation pairs in
 `scripts/check_tutorial_sync.sh`; Flower `fl-apps/`/`fl-tutorials/` parity is derived from the
@@ -450,8 +453,10 @@ passes on `develop` or `main`** — they trigger via `workflow_run` and a job-le
 success, so a red test suite never publishes. Path filtering is inherited from the test workflow, so a
 build still only fires when that service changed. (`orthanc` and `xnat_*` keep their direct push
 trigger, having no separate test workflow; `orthanc` runs an in-job auth smoke test instead. `flip-ui`
-is a CI smoke test that never publishes — it is rebuilt locally by `make deploy-ui` and never consumed
-from GHCR; the rest are.) Every publish also pushes an immutable **`sha-<short7>`** tag that
+never publishes to GHCR — no container consumes it — but it is no longer deployed by hand either:
+[`deploy_ui.yml`](.github/workflows/deploy_ui.yml) publishes the bundle to the S3 bucket behind
+CloudFront on merge (FLIP#1186), running `deploy/providers/AWS/scripts/deploy-ui.sh`, the same recipe
+`make deploy-ui` runs. The rest are.) Every publish also pushes an immutable **`sha-<short7>`** tag that
 hub ECS deploys pin — see
 [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS/AGENTS.md#image-tags-deploys-and-the-fl-quiesce)
 for deploys, rollback and the FL quiesce reminder.

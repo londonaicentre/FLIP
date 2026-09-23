@@ -85,6 +85,11 @@ locals {
 
   apply_workflow_ref = "${local.workflow_ref_prefix}/${var.apply_workflow_file}@refs/heads/${var.apply_branch}"
 
+  # The UI publish runs on a push to the same branch that deploys this account
+  # (develop for stag, main for prod), so its claim carries the same ref the apply
+  # role's does — a different file, the same branch.
+  ui_workflow_ref = "${local.workflow_ref_prefix}/${var.ui_workflow_file}@refs/heads/${var.apply_branch}"
+
   # Plan runs from two places, so its allowed set is a list of patterns rather
   # than one exact string.
   #
@@ -108,6 +113,16 @@ locals {
 
   state_arn        = "arn:${data.aws_partition.current.partition}:s3:::${var.state_bucket_name}"
   state_object_arn = "${local.state_arn}/${var.state_key}"
+
+  # The one bucket a UI publish writes, and the distributions it may invalidate.
+  #
+  # The distribution is a wildcard on purpose: its id is created by the FLIP root,
+  # so naming it here would make this bootstrap root depend on the main root's
+  # state — while the ordering runs the other way (these roles have to exist before
+  # an apply can create anything). One or two distributions exist per account and
+  # the only action granted is a cache invalidation.
+  ui_bucket_arn                = "arn:${data.aws_partition.current.partition}:s3:::${var.ui_bucket_name}"
+  cloudfront_distributions_arn = "arn:${data.aws_partition.current.partition}:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/*"
 
   # Native S3 state locking (`use_lockfile = true`, backend.tf) writes a sibling
   # `<key>.tflock` object. An apply role that can write the state but not the lock
@@ -332,6 +347,136 @@ resource "aws_iam_role" "terraform_apply" {
 resource "aws_iam_role_policy_attachment" "apply_power_user" {
   role       = aws_iam_role.terraform_apply.name
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/PowerUserAccess"
+}
+
+############################
+# UI deploy role — the bundle publisher (#1186)
+############################
+
+# Publishing flip-ui shares one thing with an apply: it reads the state, because
+# the bucket name and the distribution id come from the FLIP root's outputs rather
+# than from a name in a workflow (FLIP#749 renames them, and a hard-coded name
+# would publish to the wrong bucket or nowhere). Everything else it does — write
+# objects into one bucket, invalidate one cache — is a small, separate grant, and
+# that is why it is its own role.
+#
+# The apply role could technically do it: PowerUserAccess covers s3:* and
+# cloudfront:*. What the apply role cannot do is be assumed by a *second* workflow
+# file. Its trust is `job_workflow_ref` StringEquals — one file at one ref — and
+# that is precisely the condition that makes an unattended apply on `main` safe
+# (a PR editing the workflow presents `@refs/pull/<n>/merge` and is refused).
+# Admitting deploy_ui.yml there to reuse the permissions would hand the whole of
+# PowerUserAccess, IAM write included, to whatever that workflow later grows into.
+# A role that can publish a static bundle and invalidate its cache is the smaller
+# thing to reason about, and it is what #1186 asked for in the first place.
+data "aws_iam_policy_document" "ui_assume_role" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = [local.oidc_sub]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:job_workflow_ref"
+      values   = [local.ui_workflow_ref]
+    }
+  }
+}
+
+resource "aws_iam_role" "ui_deploy" {
+  name                 = "AICentre-FLIPUiDeployRole"
+  description          = "Role that publishes the flip-ui bundle to S3 from GitHub Actions (FLIP#1186)"
+  assume_role_policy   = data.aws_iam_policy_document.ui_assume_role.json
+  max_session_duration = 3600
+}
+
+data "aws_iam_policy_document" "ui_deploy" {
+  # The two ARNs the publish reads through `terraform output`, so it never needs a
+  # name of its own. Read-only: the Deny below takes state writes off the table
+  # entirely, and nothing here could grant one.
+  #
+  # ReadOnlyAccess would cover this, the way it does for the plan role, but this
+  # role writes to a bucket — keeping its read grant to the state object it
+  # actually opens is the difference between "reads the deployment's state" and
+  # "reads every object in the account".
+  statement {
+    sid    = "ReadStateForOutputs"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:ListBucket",
+    ]
+    resources = [
+      local.state_arn,
+      local.state_object_arn,
+    ]
+  }
+
+  statement {
+    sid    = "ListTheUiBucket"
+    effect = "Allow"
+    actions = [
+      "s3:GetBucketLocation",
+      "s3:ListBucket",
+    ]
+    resources = [local.ui_bucket_arn]
+  }
+
+  # PutObject and DeleteObject together are what `aws s3 sync --delete` needs: the
+  # hashed bundles of the previous release are pruned by the same run that uploads
+  # the new ones. Objects only — the bucket itself is the FLIP root's.
+  statement {
+    sid    = "ReplaceAndPruneBundles"
+    effect = "Allow"
+    actions = [
+      "s3:DeleteObject",
+      "s3:PutObject",
+    ]
+    resources = ["${local.ui_bucket_arn}/*"]
+  }
+
+  # checkov:skip=CKV_AWS_356:the distribution id is created by the FLIP root, so it cannot be named from this root without inverting the bootstrap order — see cloudfront_distributions_arn in locals; the grant is one cache-invalidation action
+  statement {
+    sid    = "InvalidateTheUiCache"
+    effect = "Allow"
+    actions = [
+      "cloudfront:CreateInvalidation",
+      "cloudfront:GetInvalidation",
+    ]
+    resources = [local.cloudfront_distributions_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "ui_deploy" {
+  name   = "flip-ui-deploy"
+  role   = aws_iam_role.ui_deploy.id
+  policy = data.aws_iam_policy_document.ui_deploy.json
+}
+
+# The plan role's Deny, re-used verbatim and for the same reason: nothing here
+# grants a state write, and an operator attaching one more policy later should not
+# be able to turn a static-bundle publisher into something that can corrupt the
+# state every apply then plans against.
+resource "aws_iam_role_policy" "ui_deny_state_writes" {
+  name   = "deny-terraform-state-writes"
+  role   = aws_iam_role.ui_deploy.id
+  policy = data.aws_iam_policy_document.plan_deny_state_writes.json
 }
 
 ############################

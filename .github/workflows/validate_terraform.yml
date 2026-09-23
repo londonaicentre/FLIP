@@ -92,7 +92,9 @@ jobs:
           - test_checkov_lint.sh
           - test_check_fl_plan_impact.sh
           - test_compose_ci_env.sh
+          - test_deploy_ui.sh
           - test_resolve_image_tags.sh
+          - test_ui_publish_decide.sh
     steps:
       - name: Checkout code
         uses: actions/checkout@v5

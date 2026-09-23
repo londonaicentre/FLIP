@@ -104,6 +104,22 @@ variable "drift_workflow_file" {
   default     = "terraform_drift.yml"
 }
 
+variable "ui_workflow_file" {
+  description = "Workflow permitted to assume the UI deploy role (FLIP#1186). It publishes the flip-ui bundle on a push to the apply branch, and needs no more than that."
+  type        = string
+  default     = "deploy_ui.yml"
+}
+
+# The bucket `deploy-ui.sh` syncs into — the FLIP root's aws_s3_bucket.flip_ui,
+# which it prints as the FlipUiBucketName output. Taken from the same env file the
+# root is applied with (the Makefile exports FLIP_UI_BUCKET_NAME), because an IAM
+# policy has to name its resource: a bucket name cannot come from a `terraform
+# output` on this side, since this root is applied before the root that creates it.
+variable "ui_bucket_name" {
+  description = "Name of the S3 bucket holding the flip-ui static assets (the env file's FLIP_UI_BUCKET_NAME)."
+  type        = string
+}
+
 variable "flip_api_secret_name" {
   description = <<-EOT
     Name of the Secrets Manager secret the FLIP root manages

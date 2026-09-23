@@ -1,14 +1,22 @@
 # Terraform CI roles
 
-GitHub Actions OIDC roles for the FLIP Terraform pipeline (FLIP#962). Two roles
-per AWS account:
+GitHub Actions OIDC roles for the FLIP pipeline (FLIP#962). Three roles per AWS account:
 
 | Role | Assumed by | Permissions |
 | --- | --- | --- |
 | `AICentre-FLIPTerraformPlanRole` | PR plans (stag only), nightly drift | `ReadOnlyAccess`, plus an explicit `Deny` on every write to the state bucket |
 | `AICentre-FLIPTerraformApplyRole` | Applies on the environment's branch | `PowerUserAccess`, plus IAM write bounded four ways (below) |
+| `AICentre-FLIPUiDeployRole` | The flip-ui publish (FLIP#1186) | Read the state, write objects in the one UI bucket, invalidate one distribution |
 
-There is also a third object: `AICentre-FLIPTerraformBoundary`, the permissions
+The publish role exists rather than reusing the apply role because the apply role's
+trust is pinned to **one workflow file at one ref** — the condition that makes an
+unattended apply on `main` safe. Widening it to a second file would hand all of
+`PowerUserAccess` (IAM write included) to whatever that file later grows into; a role
+that can publish a static bundle and nothing else is the smaller thing to reason
+about. It carries the same state-write `Deny` as the plan role, so a later policy
+attachment cannot turn it into a state writer either.
+
+There is also a fourth object: `AICentre-FLIPTerraformBoundary`, the permissions
 boundary. It is declared here and *carried* by every IAM role the FLIP root owns
 (`iam_permissions_boundary_name` in `../variables.tf`).
 
@@ -44,14 +52,24 @@ policy the FLIP root attaches to every role it owns, so it comes first there too
 The four-token table above is why the LZA accounts are no longer an exception to
 that ordering.
 
-`make output` prints the two ARNs and the OIDC claims they expect. Put the ARNs
+`make output` prints the three ARNs and the OIDC claims they expect. Put the ARNs
 on the matching GitHub environment (`aws-stag` / `aws-prod`) as the variables
-`TF_PLAN_ROLE_ARN` and `TF_APPLY_ROLE_ARN` — the environment names do not change
-when the account does — and set that environment's `TF_PROD` to the same token you
-applied with, so the workflows compose for the account whose roles you just wrote
-there. `scripts/setup-github-environments.sh --mode <token>` does all three.
+`TF_PLAN_ROLE_ARN`, `TF_APPLY_ROLE_ARN` and `UI_DEPLOY_ROLE_ARN` — the environment
+names do not change when the account does — and set that environment's `TF_PROD` to
+the same token you applied with, so the workflows compose for the account whose roles
+you just wrote there. `scripts/setup-github-environments.sh --mode <token>` does all
+four (`UI_DEPLOY_ROLE_ARN` only if this root has been applied since the role was
+added — see the warning it prints).
 `account_id` is also an output — check it against the intended account before
 wiring anything up.
+
+The UI bucket the publish role may write is taken from `FLIP_UI_BUCKET_NAME` in the
+env file (`TF_VAR_ui_bucket_name`), so renaming the bucket is an env-file change and a
+`make -C ci apply`, not a policy edit. The distribution, by contrast, is granted as
+*any* distribution in the account: it is created by the FLIP root, and naming one here
+would make this bootstrap root depend on the other root's state — the ordering runs the
+other way. One or two exist per account and the only action granted is a cache
+invalidation.
 
 ## The OIDC claims, and the two easy mistakes
 
@@ -75,6 +93,9 @@ So:
 - the apply role requires **exactly** `…/terraform_apply.yml@refs/heads/main`
   (prod) or `@refs/heads/develop` (stag) — a PR editing the apply workflow is
   denied, which is what makes automatic apply on merge safe to switch on;
+- the UI deploy role requires **exactly** `…/deploy_ui.yml@refs/heads/main` (prod)
+  or `@refs/heads/develop` (stag), the same shape and for the same reason — it
+  publishes on a push to those branches and after an apply that ran there;
 - the plan role accepts exactly two shapes, and only the ones a run can actually
   present:
   - `terraform_plan.yml@refs/pull/*/merge` — **staging only**. `terraform_plan.yml`

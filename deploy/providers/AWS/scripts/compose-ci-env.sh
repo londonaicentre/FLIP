@@ -248,6 +248,20 @@ OPTIONAL_KEYS=(
     # configuration. Only stag sets it (to "false", for testing).
     ENFORCE_MFA
 
+    # The flip-ui runtime values (FLIP#1186). Not Terraform inputs at all: they
+    # end up in the `window.js` that deploy-ui generates in place of the
+    # checked-in default, which is why the UI publish reads them from the same
+    # composed file the apply reads — one definition of what an environment's UI
+    # points at, rather than a second list of secrets in a workflow.
+    #
+    # Optional because the *Terraform* runs never wanted them: requiring them
+    # would fail the next apply on develop, until someone set a variable the apply
+    # does not read. The UI job is where a missing CENTRAL_HUB_API_URL has to
+    # fail, and scripts/deploy-ui.sh's generator does exactly that.
+    CENTRAL_HUB_API_URL
+    BLACKLISTED_MODEL_FILES
+    RELEASE_VERSION
+
     # The LZA keys (FLIP#749) are handled per mode below, not here: required on
     # the platform-managed estate, optional (and expected absent) on the
     # self-contained ones.
