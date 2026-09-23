@@ -34,6 +34,7 @@ Usage:
 from __future__ import annotations
 
 import importlib.util
+import io
 import sys
 import tempfile
 from pathlib import Path
@@ -315,6 +316,58 @@ def test_16_hub_shared_current_warns_until_trust_api_can_answer() -> None:
     _assert(unknown.status == mod.Status.WARN, "hub_key_match None (no heartbeat reply yet) -> WARN")
 
 
+HUB_KEY_B64 = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="  # 32 x 0x01  # pragma: allowlist secret
+HUB_KEY_FP = "72cd6e8422c4"  # sha256(32 x 0x01)[:12] — the hub's and trust-api's formula
+
+
+def test_17_hub_shared_current_judges_the_kit_not_the_running_key() -> None:
+    """After a refreshed Hub-shared block, trust-api still runs the old key until the upgrade recreates
+    it; the gate must let that upgrade through (FLIP#1204) and FAIL only a kit that is still stale."""
+    print("▶ hub-shared currency: judged by the kit's key against the hub's fingerprint")
+    _assert(mod.kit_key_fingerprint({"AES_KEY_BASE64": HUB_KEY_B64}) == HUB_KEY_FP, "kit digest = hub formula")
+    _assert(mod.kit_key_fingerprint({"AES_KEY_BASE64": "not base64!"}) is None, "undecodable key -> None")
+    refreshed = {"TRUST_API_PORT": "8020", "DOCKER_TAG": "v0.6.0", "AES_KEY_BASE64": HUB_KEY_B64}
+    pending = _hub_shared_current(
+        refreshed, {"hub_version": "v0.6.0", "hub_key_match": False, "hub_key_fingerprint": HUB_KEY_FP}
+    )
+    _assert(pending.status == mod.Status.WARN, "refreshed kit, old running key -> WARN", pending.detail)
+    _assert("recreates" in pending.detail, "says the upgrade recreates trust-api", pending.detail)
+    stale = {**refreshed, "AES_KEY_BASE64": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}  # pragma: allowlist secret
+    still_stale = _hub_shared_current(
+        stale, {"hub_version": "v0.6.0", "hub_key_match": False, "hub_key_fingerprint": HUB_KEY_FP}
+    )
+    _assert(still_stale.status == mod.Status.FAIL, "kit key differs from the hub's -> FAIL")
+    broken_by_edit = _hub_shared_current(
+        stale, {"hub_version": "v0.6.0", "hub_key_match": True, "hub_key_fingerprint": HUB_KEY_FP}
+    )
+    _assert(broken_by_edit.status == mod.Status.FAIL, "running key fine but the kit now differs -> FAIL")
+    ok = _hub_shared_current(
+        refreshed, {"hub_version": "v0.6.0", "hub_key_match": True, "hub_key_fingerprint": HUB_KEY_FP}
+    )
+    _assert(ok.status == mod.Status.PASS, "kit and running key both match -> PASS", ok.detail)
+
+
+def test_18_upgrade_gate_never_suggests_the_first_install_verb() -> None:
+    """On READY the checklist points at `up-onprem-trust`; as the upgrade's gate that verb would reset XNAT."""
+    print("▶ READY footer: first install names up-onprem-trust, the upgrade gate does not")
+    all_pass = [mod.Check("x", mod.Status.PASS, "")]
+    for argv, expect_first_install in ((["prog", "Trust_9"], True), (["prog", "Trust_9", "--upgrade"], False)):
+        out = io.StringIO()
+        with (
+            mock.patch.object(sys, "argv", argv),
+            mock.patch.object(sys, "stdout", out),
+            mock.patch.object(mod, "fetch_public_ip", return_value="192.0.2.1"),
+            mock.patch.object(mod, "run_checks", return_value=all_pass),
+        ):
+            try:
+                mod.main()
+            except SystemExit as e:
+                _assert(e.code == 0, f"{argv[1:]} READY exits 0")
+        text = out.getvalue()
+        named = "up-onprem-trust" in text.split("Status: READY", 1)[1]
+        _assert(named == expect_first_install, f"{argv[1:]}: footer names up-onprem-trust = {expect_first_install}")
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -335,6 +388,8 @@ def main() -> None:
     test_14_hub_shared_current_flags_a_stale_key()
     test_15_hub_shared_current_passes_and_notes_the_release_gap()
     test_16_hub_shared_current_warns_until_trust_api_can_answer()
+    test_17_hub_shared_current_judges_the_kit_not_the_running_key()
+    test_18_upgrade_gate_never_suggests_the_first_install_verb()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

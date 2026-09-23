@@ -225,7 +225,7 @@ up-onprem-trust:
 # ALLOW_CHECKOUT_DRIFT=1 overrides for a deliberate mismatch (testing a branch).
 upgrade-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
-	@$(MAKE) onboard-onprem-trust KIT=$(KIT)
+	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--upgrade
 	$(MAKE) -C trust upgrade-trust KIT=$(KIT) PROD=$(or $(PROD),true) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
@@ -256,7 +256,7 @@ down-onprem-trust:
 # the operator's behalf because Hub-shared values + FL kit S3 slice both
 # need prod AWS creds the operator doesn't have.
 onboard-onprem-trust:
-	@uv run --no-config scripts/onboard_onprem_trust.py $(KIT)
+	@uv run --no-config scripts/onboard_onprem_trust.py $(KIT) $(ONBOARD_ARGS)
 
 # Stop all containers
 down:

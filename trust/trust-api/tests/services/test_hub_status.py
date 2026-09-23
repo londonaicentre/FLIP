@@ -37,7 +37,7 @@ def own_key():
 
 
 def test_starts_unknown():
-    assert hub_status.current() == {"hub_version": None, "hub_key_match": None}
+    assert hub_status.current() == {"hub_version": None, "hub_key_match": None, "hub_key_fingerprint": None}
 
 
 @pytest.mark.usefixtures("own_key")
@@ -49,13 +49,13 @@ def test_fingerprint_is_a_short_sha256_of_the_raw_key():
 @pytest.mark.usefixtures("own_key")
 def test_records_version_and_a_matching_key():
     hub_status.record({"trust_id": "x", "hub_version": "v0.7.0", "aes_key_fingerprint": FINGERPRINT})
-    assert hub_status.current() == {"hub_version": "v0.7.0", "hub_key_match": True}
+    assert hub_status.current() == {"hub_version": "v0.7.0", "hub_key_match": True, "hub_key_fingerprint": FINGERPRINT}
 
 
 @pytest.mark.usefixtures("own_key")
 def test_records_a_key_mismatch_and_says_so_once(caplog):
-    """A kit whose AES key was rotated under it must be visible from the trust's own /health —
-    today it is only visible as every task failing with a decrypt error (AICP, 2026-09-14)."""
+    """A kit whose AES key was rotated under it must be visible from the trust's own /health,
+    not only as every task failing with a decrypt error."""
     with caplog.at_level("WARNING"):
         hub_status.record({"hub_version": "v0.7.0", "aes_key_fingerprint": "000000000000"})
         hub_status.record({"hub_version": "v0.7.0", "aes_key_fingerprint": "000000000000"})
@@ -67,10 +67,29 @@ def test_records_a_key_mismatch_and_says_so_once(caplog):
 def test_an_older_hub_leaves_both_unknown():
     """Pre-FLIP#1204 hubs reply with the identity block only; that is not a mismatch."""
     hub_status.record({"trust_id": "x", "trust_name": "T"})
-    assert hub_status.current() == {"hub_version": None, "hub_key_match": None}
+    assert hub_status.current() == {"hub_version": None, "hub_key_match": None, "hub_key_fingerprint": None}
 
 
 def test_an_unreadable_own_key_reports_unknown_not_mismatch():
     with patch("trust_api.utils.encryption.get_aes_key", side_effect=ValueError("bad key")):
         hub_status.record({"hub_version": "v0.7.0", "aes_key_fingerprint": FINGERPRINT})
-    assert hub_status.current() == {"hub_version": "v0.7.0", "hub_key_match": None}
+    assert hub_status.current() == {"hub_version": "v0.7.0", "hub_key_match": None, "hub_key_fingerprint": FINGERPRINT}
+
+
+@pytest.mark.usefixtures("own_key")
+def test_a_failed_heartbeat_forgets_what_the_hub_said():
+    """A match recorded before the hub rotated its key must not outlive the heartbeats it rejects."""
+    hub_status.record({"hub_version": "v0.7.0", "aes_key_fingerprint": FINGERPRINT})
+    hub_status.forget()
+    assert hub_status.current() == {"hub_version": None, "hub_key_match": None, "hub_key_fingerprint": None}
+
+
+@pytest.mark.usefixtures("own_key")
+def test_the_mismatch_warning_survives_a_forget_but_re_arms_after_a_match(caplog):
+    with caplog.at_level("WARNING"):
+        hub_status.record({"aes_key_fingerprint": "000000000000"})
+        hub_status.forget()
+        hub_status.record({"aes_key_fingerprint": "000000000000"})
+        hub_status.record({"aes_key_fingerprint": FINGERPRINT})
+        hub_status.record({"aes_key_fingerprint": "000000000000"})
+    assert sum("AES key" in r.message for r in caplog.records) == 2

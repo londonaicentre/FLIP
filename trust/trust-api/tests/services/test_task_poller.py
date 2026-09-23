@@ -167,6 +167,21 @@ async def test_send_heartbeat_records_what_the_hub_says_about_itself():
 
 
 @pytest.mark.asyncio
+async def test_send_heartbeat_forgets_the_hub_status_when_rejected_or_unreachable():
+    """A hub that rotated its key rejects the heartbeat; the last "key matches" must not outlive that."""
+    rejected = AsyncMock()
+    rejected.post.return_value = MagicMock(is_success=False, status_code=401, text="bad key")
+    unreachable = AsyncMock()
+    unreachable.post.side_effect = ConnectionError("refused")
+
+    for client in (rejected, unreachable):
+        with patch("trust_api.services.task_poller.hub_status") as recorder:
+            await _send_heartbeat(client)
+        recorder.forget.assert_called_once_with()
+        recorder.record.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_send_heartbeat_posts_no_body_before_first_collection():
     """Until the health collector has a snapshot, the heartbeat must stay bodyless —
     the exact wire behavior of pre-collector trust-api builds."""

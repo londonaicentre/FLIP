@@ -82,7 +82,8 @@ class Settings(BaseSettings):
     OMOP_DB_HOST: str = "omop-db"
     OMOP_DB_PORT: int = 5432
     # The fl-client image tag this deployment configured (compose: DOCKER_FL_TAG; the K8s
-    # chart: flClient.image.tag). The fl-client has no health endpoint, so this is how its
+    # chart: the tag flip-trust.imageTag resolves for the fl-client — its pin, else
+    # global.image.tag, else flClient.image.tag). The fl-client has no health endpoint, so this is how its
     # build reaches the hub's Connection Status (FLIP#1204). Empty = not reported.
     FL_CLIENT_IMAGE_TAG: str = ""
 

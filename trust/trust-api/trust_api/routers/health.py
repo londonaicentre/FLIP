@@ -32,10 +32,12 @@ async def health_check() -> dict[str, object]:
     Returns:
         dict[str, object]: The service status, its version (the same contract as
         the sibling trust services' /health), any dead background tasks, and what
-        the hub said about itself on the last heartbeat reply — ``hub_version`` (the
-        release a site upgrade defaults to) and ``hub_key_match`` (whether this kit's
-        AES key still matches the hub's; ``None`` until a reply has been seen or when
-        the hub predates FLIP#1204). The on-prem readiness checklist reads both.
+        the hub said about itself on the last accepted heartbeat — ``hub_version`` (the
+        release a site upgrade defaults to), ``hub_key_match`` (whether the AES key this
+        process runs with matches the hub's) and ``hub_key_fingerprint`` (the hub's key
+        digest, so a refreshed kit can be checked before the recreate). All ``None`` until
+        a reply has been seen, after a failed heartbeat, or when the hub predates
+        FLIP#1204. The on-prem readiness checklist reads them.
     """
     dead = dead_background_tasks()
 

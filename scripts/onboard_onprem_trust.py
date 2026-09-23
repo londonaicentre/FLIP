@@ -39,6 +39,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
+import hashlib
 import json
 import os
 import subprocess
@@ -294,18 +297,28 @@ def fetch_local_trust_health(port: str, timeout: float = 3.0) -> dict:
     return body if isinstance(body, dict) else {}
 
 
+def kit_key_fingerprint(kit_vars: dict[str, str]) -> str | None:
+    """The kit's AES key digest, computed as the hub and trust-api do (SHA-256 of the decoded key, 12 hex)."""
+    raw = kit_vars.get("AES_KEY_BASE64", "")
+    try:
+        key = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    return hashlib.sha256(key).hexdigest()[:12] if key else None
+
+
 def check_hub_shared_current(kit_vars: dict[str, str], kit_present: bool) -> Check:
     """Whether the kit's Hub-shared block still matches the hub — asked of the running trust-api.
 
     Every heartbeat reply carries a fingerprint of the hub's AES key and the release the hub
-    runs (FLIP#1204); trust-api compares the key with its own and reports both on ``/health``.
-    A kit whose key was rotated under it (a hub Terraform apply wrote a new key into Secrets
-    Manager while the operator kept the old kit) otherwise surfaces only as every task failing
-    to decrypt. Only a confirmed mismatch FAILs. Everything short of that is a WARN, never a
-    PENDING: a first install has no trust-api to ask yet, and a site built before FLIP#1204
-    runs a trust-api that cannot answer — and the upgrade verb, which runs this checklist as
-    its gate, is exactly what fixes the latter. A kit pinned behind the hub's release is a
-    WARN naming that verb.
+    runs (FLIP#1204); trust-api reports the hub's fingerprint and whether its own running key
+    matches it. The kit is judged by its own key, not the running one: after the operator
+    replaces a stale Hub-shared block, trust-api keeps the old key until it is recreated — and
+    the upgrade this checklist gates is what recreates it, so failing on the running key would
+    lock the fix out. Only a kit whose key differs from the hub's FAILs. With no kit file the
+    row is PENDING; everything else short of a stale kit is a WARN — a first install has no
+    trust-api to ask yet, and a site built before FLIP#1204 runs a trust-api that cannot answer.
+    A kit pinned behind the hub's release is a WARN naming the upgrade verb.
     """
     label = "Hub-shared block current"
     if not kit_present:
@@ -320,19 +333,40 @@ def check_hub_shared_current(kit_vars: dict[str, str], kit_present: bool) -> Che
         )
     key_match = health.get("hub_key_match")
     hub_version = health.get("hub_version")
+    hub_fingerprint = health.get("hub_key_fingerprint")
     if key_match is None:
         return Check(
             label, Status.WARN,
             "not verified — trust-api has not heard back from the hub yet, or predates FLIP#1204 "
             "(upgrading it fixes that)",
         )
-    if key_match is False:
+    stale_hints = [
+        "The Hub-shared block is stale. Ask the FLIP admin for a refreshed kit:",
+        "  make sync-trust-kit KIT=<CODE> PROD=<env>  →  make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>",
+        "then replace ONLY the Hub-shared block in your kit file and re-run the upgrade.",
+    ]
+    kit_fingerprint = kit_key_fingerprint(kit_vars)
+    if isinstance(hub_fingerprint, str) and kit_fingerprint:
+        if kit_fingerprint != hub_fingerprint:
+            return Check(
+                label, Status.FAIL, "this kit's AES key differs from the hub's — every task will fail to decrypt",
+                hints=stale_hints,
+            )
+        if key_match is False:
+            return Check(
+                label, Status.WARN,
+                "the kit carries the hub's AES key; the running trust-api still has the old one "
+                "— the upgrade recreates it",
+            )
+    elif key_match is False:
+        # A trust-api that does not report the hub's digest cannot tell a refreshed kit from a stale one.
         return Check(
-            label, Status.FAIL, "the hub's AES key differs from this kit's — every task will fail to decrypt",
+            label, Status.FAIL,
+            "the hub's AES key differs from the running trust-api's — every task will fail to decrypt",
             hints=[
-                "The Hub-shared block is stale. Ask the FLIP admin for a refreshed kit:",
-                "  make sync-trust-kit KIT=<CODE> PROD=<env>  →  make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>",
-                "then replace ONLY the Hub-shared block in your kit file and re-run the upgrade.",
+                *stale_hints,
+                "If you already replaced it, recreate trust-api from the kit with the verb this gate",
+                "  wraps: make -C trust upgrade-trust KIT=<CODE> PROD=true",
             ],
         )
     pinned = kit_vars.get("DOCKER_TAG", "")
@@ -728,6 +762,11 @@ def main() -> None:
         "kit", nargs="?", default=None,
         help="Slot name (e.g. Trust_2). Defaults to Trust_2 — the conventional on-prem slot.",
     )
+    parser.add_argument(
+        "--upgrade", action="store_true",
+        help="Running as the gate of `make upgrade-onprem-trust`: on READY, say so rather than "
+        "suggest the first-install verb.",
+    )
     args = parser.parse_args()
 
     kit = args.kit or "Trust_2"
@@ -772,10 +811,14 @@ def main() -> None:
         suffix = f", {n_warn} warning{'s' if n_warn != 1 else ''}" if n_warn else ""
         heading(f"Status: READY {Status.PASS.glyph}  ({n_pass}/{len(checks)} pass{suffix})")
         print()
-        print(f"  Bring the stack up:")
-        # sudo -E: the provisioned on-prem login user is deliberately not in the
-        # docker group (root-equivalent), so the stack comes up via sudo.
-        print(f"      {BOLD}sudo -E make up-onprem-trust KIT={kit}{RESET}")
+        if args.upgrade:
+            # The gate of the upgrade verb: never point at up-onprem-trust, which resets XNAT.
+            print("  Proceeding with the upgrade (data-safe: no re-seed, no XNAT reset).")
+        else:
+            print(f"  Bring the stack up:")
+            # sudo -E: the provisioned on-prem login user is deliberately not in the
+            # docker group (root-equivalent), so the stack comes up via sudo.
+            print(f"      {BOLD}sudo -E make up-onprem-trust KIT={kit}{RESET}")
         if n_warn:
             print(f"  {YELLOW}Heads-up:{RESET} review the {YELLOW}⚠️{RESET}  warning(s) above before running in production.")
         print()

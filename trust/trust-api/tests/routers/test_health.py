@@ -69,6 +69,7 @@ async def test_health_reports_what_the_hub_last_said_about_itself(client):
     body = client.get("/health/").json()
     assert body["hub_version"] == "v0.7.0"
     assert body["hub_key_match"] is True
+    assert body["hub_key_fingerprint"] == "abcdef012345"
     hub_status.reset()
 
 

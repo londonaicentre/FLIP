@@ -167,8 +167,12 @@ async def _send_heartbeat(client: httpx.AsyncClient) -> None:
                 f"Heartbeat rejected by hub: HTTP {response.status_code} — "
                 f"{response.text[:200]}"
             )
+            # What the hub said last no longer holds (a hub that rotated its key also stops
+            # accepting this trust), so /health must not keep reporting it as current.
+            hub_status.forget()
     except Exception as e:
         logger.error(f"Error sending heartbeat: {e}")
+        hub_status.forget()
 
 
 _REPORT_MAX_RETRIES = 3

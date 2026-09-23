@@ -17,19 +17,23 @@ The hub embeds two things in every heartbeat reply beside the identity block:
 - ``hub_version`` — the build the hub runs. A site upgrades *to the hub's release*
   (``make upgrade-onprem-trust`` defaults to it), so this is what the on-prem
   readiness checklist compares the kit's ``DOCKER_TAG`` against.
-- ``aes_key_fingerprint`` — a short digest of the hub's AES key. Compared with a digest
-  of this trust's own key: a kit whose key was rotated under it (a hub Terraform apply
-  wrote a new key into Secrets Manager while the operator's kit kept the old one —
-  AICP, 2026-09-14) otherwise shows up only as every task failing to decrypt.
+- ``aes_key_fingerprint`` — a short digest of the hub's AES key (48 bits of a SHA-256 of a
+  random 256-bit key, so it identifies the key without disclosing it). Compared with a digest
+  of this trust's own key: a kit whose key was rotated under it otherwise shows up only as
+  every task failing to decrypt. The hub's digest is kept as well, so the readiness checklist
+  can tell a stale kit from a refreshed kit that trust-api has not been recreated on yet.
 
 Both are optional on the wire — a pre-FLIP#1204 hub sends neither, which is recorded
-as "unknown", never as a mismatch. The poller records; ``/health`` reports.
+as "unknown", never as a mismatch. The status is only as fresh as the last heartbeat the
+hub accepted: a rejected or failed heartbeat forgets it, so a hub that has since rotated
+its key is never reported as a match. The poller records; ``/health`` reports.
 """
 
 from trust_api.utils.encryption import aes_key_fingerprint
 from trust_api.utils.logger import logger
 
-_status: dict[str, str | bool | None] = {"hub_version": None, "hub_key_match": None}
+_UNKNOWN: dict[str, str | bool | None] = {"hub_version": None, "hub_key_match": None, "hub_key_fingerprint": None}
+_status: dict[str, str | bool | None] = dict(_UNKNOWN)
 _mismatch_logged = False
 
 
@@ -47,7 +51,9 @@ def record(body: dict) -> None:
     hub_fingerprint = body.get("aes_key_fingerprint")
     if not isinstance(hub_fingerprint, str):
         _status["hub_key_match"] = None
+        _status["hub_key_fingerprint"] = None
         return
+    _status["hub_key_fingerprint"] = hub_fingerprint
     try:
         own_fingerprint = aes_key_fingerprint()
     except Exception as e:
@@ -70,14 +76,22 @@ def record(body: dict) -> None:
         _mismatch_logged = False
 
 
+def forget() -> None:
+    """Drop what the hub last said — called when a heartbeat is rejected or fails.
+
+    Whether a mismatch was already logged is kept, so a flapping connection does not repeat
+    the warning.
+    """
+    _status.update(_UNKNOWN)
+
+
 def current() -> dict[str, str | bool | None]:
-    """Return a copy of ``{"hub_version", "hub_key_match"}`` as of the last heartbeat reply."""
+    """Return a copy of ``{"hub_version", "hub_key_match", "hub_key_fingerprint"}`` as of the last reply."""
     return dict(_status)
 
 
 def reset() -> None:
-    """Forget everything (tests, and process start)."""
+    """Forget everything, including whether a mismatch was already logged (tests)."""
     global _mismatch_logged  # noqa: PLW0603
-    _status["hub_version"] = None
-    _status["hub_key_match"] = None
+    _status.update(_UNKNOWN)
     _mismatch_logged = False

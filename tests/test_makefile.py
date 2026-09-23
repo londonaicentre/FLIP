@@ -38,6 +38,7 @@ class UpgradeOnpremTrust(unittest.TestCase):
         assert "site_upgrade.py plan" in out, out
         assert "--tag v0.6.0" in out, out
         assert "--yes" in out, out
+        assert "onboard_onprem_trust.py SCR --upgrade" in out, out  # the gate must not suggest up-onprem-trust
         assert "_upgrade-trust-apply" in out, out
         for step in DESTRUCTIVE:
             assert step not in out, f"{step!r} reached from upgrade-onprem-trust:\n{out}"
