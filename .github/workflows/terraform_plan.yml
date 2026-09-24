@@ -67,7 +67,10 @@ jobs:
     # Belt and braces on top of GitHub withholding OIDC and environment secrets
     # from forks: skip explicitly, so a fork PR shows a skipped job rather than a
     # confusing credential failure.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # TF_STAG_DISABLED (repository variable) pauses every staging job while the
+    # aws-stag environment points at an account that has been torn down; see
+    # terraform_apply.yml.
+    if: github.event.pull_request.head.repo.full_name == github.repository && vars.TF_STAG_DISABLED != 'true'
     runs-on: ubuntu-latest
     environment: aws-stag
     permissions:
