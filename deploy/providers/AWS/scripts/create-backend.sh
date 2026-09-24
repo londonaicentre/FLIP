@@ -12,6 +12,9 @@
 # limitations under the License.
 #
 
+# Bootstraps a Terraform state bucket by CLI. Used by the dev/ root only: the
+# stag/prod state buckets are declared by modules/terraform_ci_bootstrap.
+
 set -euo pipefail
 
 REGION="${TFSTATE_REGION:-${AWS_REGION:-eu-west-2}}"

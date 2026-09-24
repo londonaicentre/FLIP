@@ -310,9 +310,12 @@ checkov-lint: ## Static checkov security lint (IAM policy content + promoted pos
 	bash scripts/checkov_lint.sh
 
 .PHONY: create-backend
-create-backend: ## Create Terraform backend S3 bucket - Only run once
-	@echo "🚀 Creating Terraform backend resources..."
-	@TFSTATE_BUCKET_NAME="$(FLIP_TFSTATE_BUCKET_NAME)" TFSTATE_KEY="flip/terraform.tfstate" TFSTATE_REGION="$(AWS_REGION)" ./scripts/create-backend.sh
+create-backend: ## Retired: the state bucket belongs to the Terraform-CI bootstrap
+	@echo "❌ The Terraform state bucket is declared by modules/terraform_ci_bootstrap, with the"
+	@echo "   CI roles and the permissions boundary, and is no longer created from here:"
+	@echo "   - AI Centre accounts: aicentre-iac (self-contained) / aicentre-lza-iac (LZA) apply it."
+	@echo "   - Your own account: deploy/providers/AWS/ci (see ci/README.md)."
+	@exit 1
 
 .PHONY: aws-login
 aws-login: ## Login to AWS SSO (required before terraform operations)
