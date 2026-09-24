@@ -66,6 +66,10 @@ concurrency:
 jobs:
   drift:
     name: Drift (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
+    # TF_STAG_DISABLED pauses the staging leg only; see terraform_apply.yml.
+    # dispatch-prod below does not depend on this job, so production drift still
+    # runs from the develop schedule.
+    if: github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true'
     runs-on: ubuntu-latest
     # No matrix: a run can only reach the one environment its ref is trusted for,
     # so there is exactly one leg. The same `github.ref_name == 'main'` ternary
