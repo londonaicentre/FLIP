@@ -1580,7 +1580,11 @@ AWS_PROFILE=stag LOCK=false make plan \
 #    `overwrite = true` adopts it on the first apply, rewriting the bytes CI has
 #    just read from it — a no-op.
 
-# 2. Create the OIDC roles, from a laptop (see ci/README.md).
+# 2. Create the OIDC roles, from a laptop (see ci/README.md). They trust GitHub's
+#    OIDC identity provider, which ci/ looks up rather than creates, so it must
+#    already exist in the account — AI Centre's legacy accounts get it from
+#    aicentre-iac; anywhere else, declare it in the account's baseline IaC first.
+#    `make -C ci plan` checks and, if it is missing, says what to declare.
 make -C ci init && make -C ci plan && make -C ci apply
 make -C ci init PROD=true && make -C ci plan PROD=true && make -C ci apply PROD=true
 

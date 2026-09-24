@@ -121,3 +121,23 @@ def test_the_retired_make_target_is_gone() -> None:
         "the make target was retired when Terraform took ownership of the parameter; putting it back "
         "gives the parameter a second writer outside state"
     )
+
+
+def test_ci_plan_checks_for_the_oidc_provider_first() -> None:
+    """ci/ looks the provider up rather than declaring it, so a missing one must fail with a useful message.
+
+    Terraform's own error ("no matching OpenID Connect Provider found") says neither why the provider is
+    needed nor who should create it. The preflight says both — but only if ``plan`` still depends on it.
+    """
+    ci_makefile = (AWS_PROVIDER_DIR / "ci" / "Makefile").read_text()
+    plan = re.search(r"^plan:([^#\n]*)", ci_makefile, re.M)
+    assert plan is not None, "ci/Makefile has no plan target"
+    assert "check-oidc-provider" in plan.group(1).split(), (
+        f"`make -C ci plan` must depend on check-oidc-provider: {plan.group(0).strip()}"
+    )
+    main_tf = strip_comments((AWS_PROVIDER_DIR / "ci" / "main.tf").read_text())
+    assert 'data "aws_iam_openid_connect_provider" "github"' in main_tf, "ci/ must look the provider up, not own it"
+    assert 'resource "aws_iam_openid_connect_provider"' not in main_tf, (
+        "ci/ must not declare the provider: it is shared account plumbing, and a destroy of this root would "
+        "delete it from under everything else in the account"
+    )

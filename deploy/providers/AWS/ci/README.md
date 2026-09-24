@@ -127,7 +127,11 @@ name and branch match the pinned `job_workflow_ref` exactly.
   **aicentre-iac** for the self-contained accounts (module
   `flip_github_actions_oidc_role`, which also backs
   `GitHubAction-AssumeRoleWithAction-FLIP`, used by the XNAT image build), and
-  **aicentre-lza-iac** for the LZA workload accounts (`iam_github_oidc.tf`).
+  **aicentre-lza-iac** for the LZA workload accounts (`iam_github_oidc.tf`). In
+  any other account, declare it in that account's own baseline IaC before
+  planning this root. `make plan` runs `check-oidc-provider` first and stops with
+  the resource to declare if it is missing — rather than Terraform's own
+  "no matching OpenID Connect Provider found", which says neither why nor who.
 - These roles are FLIP-scoped and deliberately **not** joined to the LZA
   cross-account chain. The LZA management role trusts `repo:${org}/${repo}:*`
   with `AdministratorAccess`; adding FLIP to it would grant org-wide admin to
