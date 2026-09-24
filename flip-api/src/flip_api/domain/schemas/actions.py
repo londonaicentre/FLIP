@@ -40,7 +40,14 @@ class TrustAuditAction(StrEnum):
     `register_trust` writes REGISTERED, `delete_trust` writes DELETED. The
     audit row is stored in `trusts_audit` with no FK to `trust.id`, so it
     persists past a hard delete.
+
+    OWNER_ADDED / OWNER_REMOVED record changes to who holds authority at a trust
+    (FLIP#1258). They live in this registry rather than the user audit because the
+    event is about a trust's authority, and the question an operator asks later —
+    "who granted this, and when" — is a question about the trust.
     """
 
     REGISTERED = "REGISTERED"
     DELETED = "DELETED"
+    OWNER_ADDED = "OWNER_ADDED"
+    OWNER_REMOVED = "OWNER_REMOVED"
