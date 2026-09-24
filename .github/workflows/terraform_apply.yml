@@ -215,6 +215,12 @@ jobs:
           LZA_ELB_ACCESS_LOGS_BUCKET: ${{ vars.LZA_ELB_ACCESS_LOGS_BUCKET }}
           LZA_WEB_EDGE_DOMAIN: ${{ vars.LZA_WEB_EDGE_DOMAIN }}
           LZA_WEB_EDGE_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_EDGE_DISTRIBUTION_ARN }}
+          # NOT one of the LZA keys above: this one is for a self-contained
+          # account, set to "true" on aws-prod (or aws-stag) for the single apply
+          # that hands the public web name to another estate's edge. Unset is the
+          # everyday value — see compose-ci-env.sh and README, "Handing the public
+          # name over".
+          RELEASE_WEB_ALIAS: ${{ vars.RELEASE_WEB_ALIAS }}
           ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
           INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
