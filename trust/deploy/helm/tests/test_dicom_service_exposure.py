@@ -21,9 +21,12 @@ because there was no chart-native way to do it narrowly.
 The DICOM SCP now gets its own Service (``xnat-web-dicom``), driven by its own
 ``xnat.web.dicomService.type``, so exposing it externally can never expose the web console with
 it. These parse the templates as text for the same reason ``test_chart_secrets.py`` and
-``test_chart_template_invariants.py`` do: ``helm template`` only reaches the branches its values
-enable, and XNAT is disabled in the kind CI values, so a rendered-output check would silently
-skip this file entirely.
+``test_chart_template_invariants.py`` do: **the pytest job that runs this file has no helm**, so a
+rendered-output check here would error rather than assert. (It is not that XNAT is off in the kind
+values — ``helm template --set`` renders XNAT perfectly well; that was the earlier, wrong reason
+given here.) The rendered counterpart lives in ``tests/templates/test_dicom_service_render.py``,
+which the chart workflow's helm-template job runs and which asserts per rendered Service document
+what these can only assert about template text.
 """
 
 import re
@@ -141,6 +144,11 @@ def test_validate_pacs_reachable_uses_dicom_service_type() -> None:
     install with the web console on ClusterIP and DICOM properly exposed via dicomService would
     fail this check for no reason, and the inverse misconfiguration (DICOM stuck on ClusterIP)
     would pass it.
+
+    The partial does also read ``service.type``, in a separate check that refuses an externally
+    exposed web console (see ``test_real_pacs_refuses_an_externally_exposed_web_console``). So
+    this asserts the *reachability* refusals specifically — the ClusterIP one and the NodePort
+    one — rather than the field's absence from the whole partial, which would forbid that check.
     """
     text = HELPERS_TEMPLATE.read_text()
     define_start = text.index('{{- define "flip-trust.validatePacsReachable" -}}')
@@ -148,10 +156,29 @@ def test_validate_pacs_reachable_uses_dicom_service_type() -> None:
     body = text[define_start:define_end]
 
     assert ".Values.xnat.web.dicomService.type" in body
-    assert ".Values.xnat.web.service.type" not in body, (
-        "validatePacsReachable still references the web console's service.type — it must check "
-        "dicomService.type, the field that actually controls DICOM reachability"
+
+    reachability_conditions = [
+        line
+        for line in body.splitlines()
+        if line.lstrip().startswith("{{- if")
+        and ("ClusterIP" in line or "NodePort" in line)
+        and "dicomService" in line
+    ]
+    assert reachability_conditions, (
+        "no reachability condition keys off dicomService.type — the guard is checking the wrong "
+        "field for whether the DICOM receiver is reachable"
     )
+    for line in body.splitlines():
+        stripped = line.lstrip()
+        if not stripped.startswith("{{- if"):
+            continue
+        if ".Values.xnat.web.service.type" in stripped and "dicomService" not in stripped:
+            # The one legitimate use: the web-console exposure refusal, which is about the console
+            # and says so. Anything else is a reachability check reading the wrong field.
+            assert 'ne .Values.xnat.web.service.type "ClusterIP"' in stripped, (
+                f"validatePacsReachable branches on the web console's service.type in {stripped!r} "
+                "— DICOM reachability is controlled by dicomService.type, not this field"
+            )
 
 
 def test_validate_pacs_reachable_rejects_wide_open_ingress_cidr() -> None:
@@ -171,17 +198,52 @@ def test_validate_pacs_reachable_rejects_wide_open_ingress_cidr() -> None:
     assert '"0.0.0.0/0"' in text, (
         "validatePacsReachable has no guard against a wide-open (0.0.0.0/0) DICOM ingress CIDR"
     )
-    assert "fail" in text[text.index('"0.0.0.0/0"'):text.index('"0.0.0.0/0"') + 400], (
-        "the 0.0.0.0/0 check does not appear to fail the render"
-    )
     assert re.search(r'eq \(trim \.\) "0\.0\.0\.0/0"', text), (
         "the 0.0.0.0/0 comparison must trim whitespace first — matched exactly, a trailing space "
         "('0.0.0.0/0 ') walks straight past the guard"
     )
-    assert "0.0.0.0/1" in text[text.index('"0.0.0.0/0"'):text.index('"0.0.0.0/0"') + 1200], (
+
+    # Bind the literal to an actual `fail`, not to one appearing within N characters of it: the
+    # earlier proximity form passed on any chart where the word happened to fall nearby, including
+    # one where the comparison set a variable that nothing ever acted on. Take the span from the
+    # comparison to the end of the partial and require a fail inside it whose message names the
+    # value being refused.
+    comparison_at = text.index('eq (trim .) "0.0.0.0/0"')
+    tail = text[comparison_at:]
+
+    assert "{{- fail (printf" in tail, (
+        "the 0.0.0.0/0 comparison is not followed by a fail — a guard that computes a verdict and "
+        "renders anyway is decorative"
+    )
+    fail_message = tail[tail.index("{{- fail (printf"):]
+    assert "allowedIngressCIDRsWithPorts contains 0.0.0.0/0" in fail_message, (
+        "the fail that follows the 0.0.0.0/0 comparison does not name it — an operator cannot act "
+        "on a refusal that does not say what was refused"
+    )
+    assert "0.0.0.0/1" in fail_message[:1200], (
         "the 0.0.0.0/0 fail message no longer names a case it does not catch. It is an "
         "exact-literal tripwire, not a wide-CIDR validator, and the message must not read as the "
         "latter — an operator would take the render passing as the chart having checked their CIDR."
+    )
+
+
+def test_real_pacs_refuses_an_externally_exposed_web_console() -> None:
+    """A real PACS plus a non-ClusterIP ``xnat.web.service.type`` must fail the render.
+
+    Before the Service split that one field carried both ports, so ``NodePort`` on it was how an
+    operator exposed DICOM. The value survives a `helm upgrade`, where it now exposes the Tomcat
+    console — admin login and archive metadata on a node address — and does nothing for retrieval.
+    Documenting the console as "always ClusterIP" did not make it so; this is the check that does.
+    The rendered proof is in ``tests/templates/test_dicom_service_render.py``.
+    """
+    text = HELPERS_TEMPLATE.read_text()
+    define_start = text.index('{{- define "flip-trust.validatePacsReachable" -}}')
+    body = text[define_start:]
+
+    assert 'if ne .Values.xnat.web.service.type "ClusterIP"' in body, (
+        "validatePacsReachable does not refuse an externally-typed xnat.web.service.type for a "
+        "real PACS — an upgrade of an install that set it to reach DICOM silently moves that "
+        "exposure onto the web console"
     )
 
 

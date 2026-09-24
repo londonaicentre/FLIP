@@ -916,7 +916,9 @@ there; the omop-db image CI asserts every published image carries it.
   exception: the DICOM SCP has its own Service (`xnat-web-dicom`, separate from the web console's
   `xnat-web`), which `xnat.web.dicomService.type: NodePort` (with `xnat.web.dicomNodePort`) or
   `LoadBalancer` exposes so a trust PACS can complete the C-STORE leg of a retrieval — never the web
-  console, which stays on `xnat.web.service.type` (ClusterIP). Off (`ClusterIP`) by default.
+  console, which stays on `xnat.web.service.type` (ClusterIP; with a real `pacs.host` the chart
+  refuses to render any other value, so an upgrade cannot silently carry an old NodePort setting
+  onto the console). Off (`ClusterIP`) by default.
 - **Secrets**: Separate from ConfigMaps; recommend External Secrets Operator
 - **FL clients**: No Central Hub credentials; connect outbound to FL server only
 - **ServiceAccounts**: each stateless service runs under its own ServiceAccount

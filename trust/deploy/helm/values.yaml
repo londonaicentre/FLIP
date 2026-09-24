@@ -713,6 +713,10 @@ xnat:
       pullPolicy: Always
     # Tomcat/web-console only — the DICOM SCP is dicomService above, deliberately never on this
     # Service, so a NodePort/LoadBalancer exposure for DICOM can never expose the web UI with it.
+    # Held at ClusterIP for a real-PACS install (validatePacsReachable refuses anything else): this
+    # field used to be the one that exposed DICOM, so an upgrade of an install that set it to
+    # NodePort for that reason would otherwise put the admin console on a node address instead.
+    # Reach the console with `kubectl port-forward`.
     service:
       port: 8080
       type: ClusterIP
