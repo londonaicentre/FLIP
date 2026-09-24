@@ -26,6 +26,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from sqlmodel import select
 
 from flip_api.db.models.main_models import TrustsAudit
@@ -37,6 +38,7 @@ from flip_api.trusts_services.manage_trust_owners import (
     list_trust_owners,
     remove_trust_owner,
 )
+from tests.integration.conftest import admin_user, override_verify_token_as
 
 
 def _make_owner(session, trust_id):
@@ -205,3 +207,68 @@ def test_owners_list_is_scoped_to_the_trust_asked_about(session, trust_factory):
 
     assert [o.user_id for o in list_trust_owners(trust_id=trust_a.id, db=session, token_id=owner_of_a)] == [owner_of_a]
     assert [o.user_id for o in list_trust_owners(trust_id=trust_b.id, db=session, token_id=owner_of_b)] == [owner_of_b]
+
+
+def test_http_lifecycle_over_the_wire(client: TestClient, session, trust_factory):
+    """POST, GET and DELETE behave as a client sees them.
+
+    The direct-call tests above exercise the logic; this checks the pieces only the HTTP
+    layer supplies — the authentication dependency, the path parameters, and the status
+    codes (201 on create, 204 on delete) a client will branch on.
+    """
+    trust = trust_factory.build()
+    session.add(trust)
+    session.commit()
+    owner_id = _make_owner(session, trust.id)
+    nominee = uuid4()
+    override_verify_token_as(owner_id)
+    url = f"/api/admin/trusts/{trust.id}/owners"
+
+    created = client.post(url, json={"user_id": str(nominee)})
+    assert created.status_code == 201, created.text
+    assert created.json()["user_id"] == str(nominee)
+
+    session.expire_all()
+    listed = client.get(url)
+    assert listed.status_code == 200, listed.text
+    assert {row["user_id"] for row in listed.json()} == {str(owner_id), str(nominee)}
+
+    removed = client.delete(f"{url}/{nominee}")
+    assert removed.status_code == 204, removed.text
+
+    session.expire_all()
+    after = client.get(url)
+    assert {row["user_id"] for row in after.json()} == {str(owner_id)}
+
+
+def test_http_hub_admin_is_refused(client: TestClient, session, trust_factory):
+    """The #1258 invariant holds through the real request path, not just the function."""
+    trust = trust_factory.build()
+    session.add(trust)
+    session.commit()
+    admin_id = admin_user(session)
+    override_verify_token_as(admin_id)
+
+    response = client.post(f"/api/admin/trusts/{trust.id}/owners", json={"user_id": str(admin_id)})
+
+    assert response.status_code == 403
+
+
+def test_http_unknown_trust_is_404(client: TestClient, session):
+    """A trust that does not exist is 404 for any authenticated caller."""
+    override_verify_token_as(uuid4())
+
+    response = client.get(f"/api/admin/trusts/{uuid4()}/owners")
+
+    assert response.status_code == 404
+
+
+def test_http_unauthenticated_is_refused(client: TestClient, session, trust_factory):
+    """Without a token the endpoint does not fall through to the logic."""
+    trust = trust_factory.build()
+    session.add(trust)
+    session.commit()
+
+    response = client.get(f"/api/admin/trusts/{trust.id}/owners")
+
+    assert response.status_code in (401, 403)
