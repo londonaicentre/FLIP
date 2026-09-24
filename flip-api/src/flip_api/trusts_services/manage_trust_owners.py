@@ -34,7 +34,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import Session, col, select
 
-from flip_api.auth.auth_utils import has_trust_permissions
+from flip_api.auth.auth_utils import has_permissions, has_trust_permissions
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust
@@ -79,6 +79,27 @@ def _require_trust(db: Session, trust_id: UUID) -> Trust:
     return trust
 
 
+def _owner_count(db: Session, role_id: UUID, trust_id: UUID, exclude_grant_id: UUID | None = None) -> int:
+    """How many owners the trust has, optionally ignoring one grant.
+
+    ``exclude_grant_id`` answers "how many would remain if this grant went away", which is
+    the question the last-owner rule needs and a plain count cannot express.
+    """
+    statement = select(UserRole).where(col(UserRole.role_id) == role_id).where(col(UserRole.trust_id) == trust_id)
+    if exclude_grant_id is not None:
+        statement = statement.where(col(UserRole.id) != exclude_grant_id)
+    return len(db.exec(statement).all())
+
+
+def _refuse_owner_change(user_id: UUID, trust_id: UUID, reason: str) -> None:
+    """The single refusal for owner management, so both paths answer identically."""
+    logger.error(f"User {user_id} may not manage owners for trust {trust_id}: {reason}")
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Permission required to manage this trust's owners",
+    )
+
+
 def _require_owner_manager(user_id: UUID, trust_id: UUID, db: Session) -> None:
     """Refuse unless the caller may manage owners at THIS trust.
 
@@ -88,14 +109,45 @@ def _require_owner_manager(user_id: UUID, trust_id: UUID, db: Session) -> None:
     of any trust and then approve its projects, which is the hole FLIP#1258 exists to close.
     """
     if not has_trust_permissions(user_id, [PermissionRef.CAN_MANAGE_TRUST_OWNERS], trust_id, db):
-        logger.error(
-            f"User {user_id} may not manage owners for trust {trust_id}: "
-            f"CAN_MANAGE_TRUST_OWNERS is required at that trust, and global grants do not satisfy it"
+        _refuse_owner_change(
+            user_id,
+            trust_id,
+            "CAN_MANAGE_TRUST_OWNERS is required at that trust, and global grants do not satisfy it",
         )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permission required to manage this trust's owners",
+
+
+def _authorize_grant(user_id: UUID, trust_id: UUID, role_id: UUID, db: Session) -> None:
+    """Authorise adding an owner, allowing the bootstrap case a new trust depends on.
+
+    The trust-scoped rule alone cannot start a trust off: a newly registered trust has no
+    ``user_role`` rows, so nobody holds ``CAN_MANAGE_TRUST_OWNERS`` at it and nobody could
+    ever appoint its first owner — the trust would be permanently unable to approve a
+    project. Registration is gated by the hub-wide ``CAN_ACCESS_ADMIN_PANEL``, so the same
+    authority bootstraps the first grant here.
+
+    Deliberately narrower than the permission it replaced: it applies **only while the trust
+    has no owners at all**, so it cannot appoint an owner at a trust that already has one —
+    which is every existing trust after the continuity migration — and it confers no ability
+    to approve. The last-owner guard elsewhere stops an admin manufacturing the condition by
+    emptying a trust first.
+    """
+    if has_trust_permissions(user_id, [PermissionRef.CAN_MANAGE_TRUST_OWNERS], trust_id, db):
+        return
+    if _owner_count(db, role_id, trust_id) == 0 and has_permissions(
+        user_id, [PermissionRef.CAN_ACCESS_ADMIN_PANEL], db
+    ):
+        logger.warning(
+            f"Bootstrapping the first Trust Owner of trust {trust_id} as {user_id} via "
+            f"CAN_ACCESS_ADMIN_PANEL: the trust had no owner, so no one held "
+            f"CAN_MANAGE_TRUST_OWNERS at it"
         )
+        return
+    _refuse_owner_change(
+        user_id,
+        trust_id,
+        "CAN_MANAGE_TRUST_OWNERS is required at that trust, and global grants do not satisfy it "
+        "except to bootstrap a trust that has no owner at all",
+    )
 
 
 @router.get("/{trust_id}/owners", response_model=list[TrustOwner])
@@ -173,8 +225,8 @@ def add_trust_owner(
             this trust's owners; 500 on database error.
     """
     trust = _require_trust(db, trust_id)
-    _require_owner_manager(token_id, trust_id, db)
     role_id = _trust_owner_role_id(db)
+    _authorize_grant(token_id, trust_id, role_id, db)
 
     already = db.exec(
         select(UserRole)
@@ -263,15 +315,7 @@ def remove_trust_owner(
             detail=f"User with ID: {user_id} is not a Trust Owner of this trust",
         )
 
-    remaining = len(
-        db.exec(
-            select(UserRole)
-            .where(col(UserRole.role_id) == role_id)
-            .where(col(UserRole.trust_id) == trust_id)
-            .where(col(UserRole.id) != grant.id)
-        ).all()
-    )
-    if remaining == 0:
+    if _owner_count(db, role_id, trust_id, exclude_grant_id=grant.id) == 0:
         logger.error(
             f"Refusing to remove the last Trust Owner ({user_id}) of trust {trust_id}: "
             f"the trust would be left with nobody able to approve, nominate an owner, or edit its policy"

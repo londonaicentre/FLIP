@@ -107,13 +107,15 @@ def test_hub_admin_cannot_nominate_owners(session, trust_factory):
     This is the property that keeps hub administration and trust authority separate. If it
     regressed, one hub administrator could nominate themselves owner of any trust and then
     approve its projects — exactly the power #1258 removed.
+
+    The trust starts with an owner, which is the state of every existing trust after the
+    continuity migration. The ownerless case is the bootstrap, covered separately.
     """
     trust = trust_factory.build()
     session.add(trust)
     session.commit()
-    admin_id = uuid4()
-    session.add(UserRole(user_id=admin_id, role_id=RoleRef.ADMIN.value))
-    session.commit()
+    _make_owner(session, trust.id)
+    admin_id = admin_user(session)
 
     with pytest.raises(HTTPException) as exc_info:
         add_trust_owner(
@@ -246,6 +248,7 @@ def test_http_hub_admin_is_refused(client: TestClient, session, trust_factory):
     trust = trust_factory.build()
     session.add(trust)
     session.commit()
+    _make_owner(session, trust.id)
     admin_id = admin_user(session)
     override_verify_token_as(admin_id)
 
@@ -272,3 +275,74 @@ def test_http_unauthenticated_is_refused(client: TestClient, session, trust_fact
     response = client.get(f"/api/admin/trusts/{trust.id}/owners")
 
     assert response.status_code in (401, 403)
+
+
+def test_a_new_trust_can_be_bootstrapped_by_a_hub_admin(session, trust_factory):
+    """A freshly registered trust must be able to get its first owner.
+
+    Registration is gated by the hub-wide CAN_ACCESS_ADMIN_PANEL, and it writes no
+    ``user_role`` rows — so immediately after a trust exists, nobody holds
+    CAN_MANAGE_TRUST_OWNERS at it and, under the trust-scoped rule alone, nobody could ever
+    appoint anyone. The trust would be permanently unable to approve a project. This is the
+    bootstrap that closes that hole.
+    """
+    trust = trust_factory.build()  # no owners
+    session.add(trust)
+    session.commit()
+    admin_id = admin_user(session)
+    first_owner = uuid4()
+
+    created = add_trust_owner(
+        trust_id=trust.id, body=AddTrustOwner(user_id=first_owner), db=session, token_id=admin_id
+    )
+
+    assert created.user_id == first_owner
+    assert [o.user_id for o in list_trust_owners(trust_id=trust.id, db=session, token_id=admin_id)] == [first_owner]
+
+
+def test_the_bootstrap_does_not_reopen_the_hub_admin_hole(session, trust_factory):
+    """Once a trust has an owner, the hub admin is refused again (#1258).
+
+    The bootstrap is scoped to a trust with *no* owners. An admin must not be able to
+    appoint a second owner at a trust that already has one, because that would let them
+    install an ally — or themselves — at any existing trust and approve its projects, which
+    is exactly what the trust-scoped rule removed.
+    """
+    trust = trust_factory.build()
+    session.add(trust)
+    session.commit()
+    _make_owner(session, trust.id)  # the trust now has one owner
+    admin_id = admin_user(session)
+
+    with pytest.raises(HTTPException) as exc_info:
+        add_trust_owner(
+            trust_id=trust.id, body=AddTrustOwner(user_id=admin_id), db=session, token_id=admin_id
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+def test_an_admin_cannot_manufacture_the_bootstrap_by_empty_removal(session, trust_factory):
+    """The last-owner guard means an admin cannot empty a trust to re-enter it.
+
+    Without that guard the bootstrap would be a two-step escalation: remove the sole owner,
+    then appoint yourself while the trust has none.
+    """
+    trust = trust_factory.build()
+    session.add(trust)
+    session.commit()
+    owner_id = _make_owner(session, trust.id)
+    admin_id = admin_user(session)
+
+    with pytest.raises(HTTPException) as exc_info:
+        # The admin is not an owner, so this is refused before the guard — assert the guard
+        # separately below via the owner's own attempt.
+        remove_trust_owner(trust_id=trust.id, user_id=owner_id, db=session, token_id=admin_id)
+    assert exc_info.value.status_code == 403
+
+    with pytest.raises(HTTPException) as exc_info:
+        remove_trust_owner(trust_id=trust.id, user_id=owner_id, db=session, token_id=owner_id)
+    assert exc_info.value.status_code == 409  # the guard, and it survives the refusal
+
+    # Still owned, so the bootstrap condition was never reached by the admin.
+    assert [o.user_id for o in list_trust_owners(trust_id=trust.id, db=session, token_id=owner_id)] == [owner_id]
