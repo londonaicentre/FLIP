@@ -47,6 +47,7 @@ instantiates the latent network to compare the regex against real parameter name
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import re
@@ -54,6 +55,7 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import numpy as np
 import pytest
 import torch
 
@@ -96,15 +98,30 @@ def _load_app_module(tutorial: Path, module: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
+    loaded = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = loaded
+
+    # `trainer` imports its flat siblings by bare name (`from debug_samples import ...`), exactly as
+    # the deployed job does — an app dir is copied whole and imported flat. So the app dir goes on
+    # sys.path for the duration, and every bare name the import registered comes back off afterwards:
+    # leaving `models` or `transforms` cached would make the *next* tutorial's import silently resolve
+    # to this one's copy, and the cross-tutorial comparisons here would then compare a file with
+    # itself. (test_autoencoder_offline_backbone.py does the same dance for the same reason.)
+    app_dir = str(tutorial / "app_files")
+    before = set(sys.modules)
+    sys.path.insert(0, app_dir)
     try:
-        spec.loader.exec_module(module)
+        spec.loader.exec_module(loaded)
     except BaseException:
         # Never leave a half-initialised module reachable from the cache.
         del sys.modules[module_name]
         raise
-    return module
+    finally:
+        sys.path.remove(app_dir)
+        for name in set(sys.modules) - before - {module_name}:
+            if "." not in name:
+                sys.modules.pop(name, None)
+    return loaded
 
 
 @pytest.fixture(scope="module")
@@ -570,6 +587,250 @@ def test_debug_samples_reduces_volumes_to_a_mid_slice(tmp_path: Path, monkeypatc
     assert written.exists()
     assert debug_samples._to_2d(volume).shape == (1, 1, 8, 8)
     assert debug_samples._to_2d(volume).max() == 1.0
+
+
+@pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
+def test_debug_plot_interval_ships_configured(tutorial: Path) -> None:
+    """Every tutorial declares ``DEBUG_PLOT_EVERY``, and it is a positive integer."""
+    interval = _config(tutorial)["DEBUG_PLOT_EVERY"]
+    assert isinstance(interval, int)
+    assert not isinstance(interval, bool)
+    assert interval > 0
+
+
+def test_triplanar_is_gated_on_the_debug_flag_and_the_interval() -> None:
+    """``due_for_plot`` fires on step 0 and every Nth after, and never while debugging is off.
+
+    Step 0 matters: it is the only look at an untrained model, and a run that dies early would
+    otherwise leave no figure at all.
+    """
+    debug_samples = _load_app_module(_AUTOENCODER, "debug_samples")
+    on = {"SAVE_DEBUG_SAMPLES": True, "DEBUG_PLOT_EVERY": 100}
+
+    assert [debug_samples.due_for_plot(i, on) for i in (0, 1, 99, 100, 101, 200)] == [
+        True, False, False, True, False, True,
+    ]
+    off = {"SAVE_DEBUG_SAMPLES": False, "DEBUG_PLOT_EVERY": 1}
+    assert not any(debug_samples.due_for_plot(i, off) for i in range(3))
+    # A non-positive interval turns the figures off without disturbing the grids.
+    never = {"SAVE_DEBUG_SAMPLES": True, "DEBUG_PLOT_EVERY": 0}
+    assert not any(debug_samples.due_for_plot(i, never) for i in range(3))
+    # A junk value falls back rather than raising into a training step.
+    assert debug_samples.plot_every({"DEBUG_PLOT_EVERY": "often"}) == debug_samples.DEFAULT_PLOT_EVERY
+
+
+def test_triplanar_gate_and_file_name_count_the_same_step() -> None:
+    """The interval is measured against the *same* step the figure is named after.
+
+    ``due_for_plot`` is a plain modulo, so it is only "every N steps" if it is handed a step that
+    counts across epochs. Handing it the within-epoch batch index instead degrades silently into
+    "once per epoch" whenever an epoch is shorter than the interval — 80 batches against an interval
+    of 100 fires only at index 0 — while the file name still carries the global step, so the output
+    looks like an every-80 cadence that matches no configured value. Nothing raises and no log says
+    so; the only symptom is the wrong number of figures.
+    """
+    tree = ast.parse((_AUTOENCODER / "app_files" / "trainer.py").read_text())
+
+    gates = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Call)
+        and isinstance(node.test.func, ast.Name)
+        and node.test.func.id == "due_for_plot"
+    ]
+    assert len(gates) == 1, "expected exactly one due_for_plot gate in the training loop"
+
+    gate = gates[0]
+    gated_on = gate.test.args[0]
+    assert isinstance(gated_on, ast.Name), "gate on a named step, not an inline expression"
+
+    steps = [
+        keyword.value
+        for node in ast.walk(gate)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "save_triplanar"
+        for keyword in node.keywords
+        if keyword.arg == "step"
+    ]
+    assert len(steps) == 1, "expected one save_triplanar(step=...) under the gate"
+    assert isinstance(steps[0], ast.Name)
+    assert steps[0].id == gated_on.id, (
+        f"gated on {gated_on.id!r} but named the file after {steps[0].id!r}; "
+        "both must be the global step"
+    )
+
+
+def test_triplanar_writes_three_views_of_each_volume(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """One PNG per call, and the three rows are genuinely different cuts.
+
+    Built from a volume that is bright in only one octant, so a figure that took the same slice three
+    times — the mistake that makes this plot useless while looking fine — cannot pass.
+    """
+    debug_samples = _load_app_module(_AUTOENCODER, "debug_samples")
+    monkeypatch.setattr(debug_samples, "debug_dir", lambda: tmp_path)
+
+    volume = torch.zeros(2, 1, 12, 14, 16)
+    volume[..., :6, :7, :8] = 1.0
+    written = debug_samples.save_triplanar(
+        {"input": volume, "reconstruction": volume * 0.5}, "triplanar", {"SAVE_DEBUG_SAMPLES": True}, step=7
+    )
+    assert written is not None
+    assert written.exists()
+    assert list(tmp_path.glob("*.png")) == [written]
+    assert "step0007" in written.name
+
+    single = volume[0, 0]
+    cuts = [debug_samples._central_slice(single, axis, flip) for _, axis, flip in debug_samples._PLANES]
+    assert [c.shape for c in cuts] == [(16, 14), (16, 12), (14, 12)], "each view fixes a different axis"
+
+
+def test_only_the_sagittal_view_is_mirrored() -> None:
+    """Sagittal is flipped left-right; coronal and axial are not.
+
+    After ``Orientationd(axcodes="RAS")`` the array is ``(X, Y, Z)`` with +X right, +Y anterior,
+    +Z superior. The shared ``rot90`` fixes the vertical axis for all three views but not the
+    horizontal one: coronal and axial both put **X** across the page, so they come out with the
+    patient's left on the viewer's left, while sagittal puts **Y** across the page and comes out with
+    the head facing backwards. Only sagittal is corrected, and this pins that asymmetry — a flip
+    applied to all three, or to none, both look plausible in code and wrong on screen.
+
+    Each view gets its own probe volume with a single bright voxel of known anatomy, placed inside
+    that view's central slice, so the assertions are about where anatomy lands on the page rather
+    than about which numpy calls were made.
+    """
+    debug_samples = _load_app_module(_AUTOENCODER, "debug_samples")
+    by_view = {name: (axis, flip) for name, axis, flip in debug_samples._PLANES}
+    assert [by_view[v][1] for v in ("sagittal", "coronal", "axial")] == [True, False, False]
+
+    size, mid, far = 9, 4, 8
+
+    def corner_of(view: str, marker: tuple[int, int, int]) -> tuple[int, int]:
+        volume = torch.zeros(size, size, size)
+        volume[marker] = 1.0
+        rendered = debug_samples._central_slice(volume, *by_view[view])
+        row, column = (int(v) for v in np.argwhere(rendered == 1.0)[0])
+        return row < size // 2, column < size // 2  # (in the top half, in the left half)
+
+    # Sagittal: anterior + superior. Superior belongs at the top, anterior at the LEFT.
+    assert corner_of("sagittal", (mid, far, far)) == (True, True)
+
+    # Coronal: patient-right + superior. Superior at the top, patient-right on the viewer's RIGHT.
+    assert corner_of("coronal", (far, mid, far)) == (True, False)
+
+    # Axial: patient-right + anterior. Anterior at the top, patient-right on the viewer's RIGHT.
+    assert corner_of("axial", (far, far, mid)) == (True, False)
+
+
+def test_triplanar_declines_non_volumetric_input_instead_of_raising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 2-D X-ray tutorial shares this module; a tri-planar cut of a radiograph is meaningless."""
+    debug_samples = _load_app_module(_AUTOENCODER, "debug_samples")
+    monkeypatch.setattr(debug_samples, "debug_dir", lambda: tmp_path)
+
+    assert debug_samples.save_triplanar({"input": torch.zeros(1, 1, 8, 8)}, "t", {"SAVE_DEBUG_SAMPLES": True}) is None
+    disabled = {"SAVE_DEBUG_SAMPLES": False}
+    assert debug_samples.save_triplanar({"input": torch.zeros(1, 1, 4, 4, 4)}, "t", disabled) is None
+    assert list(tmp_path.glob("*.png")) == []
+
+
+def test_foreground_ssim_masks_the_background_and_reads_real_ssim() -> None:
+    """SSIM is scored over foreground only, and is SSIM rather than contrast sensitivity.
+
+    Both halves of this have bitten: ``compute_ssim_and_cs`` returns ``(ssim, cs)`` and the tutorial
+    long reported the second; and on a skull-stripped cohort ~85% of every volume is exactly 0, where
+    any reconstruction agrees, so an unmasked mean mostly measures how much air the scan contains.
+
+    The fixture is a volume with a bright foreground block in a zero background. A degraded copy must
+    score *lower* under the masked metric than under the whole-volume mean — if it does not, the mask
+    is not actually excluding anything.
+    """
+    trainer = _load_app_module(_AUTOENCODER, "trainer")
+    from monai.metrics import compute_ssim_and_cs
+
+    torch.manual_seed(0)
+    images = torch.zeros(1, 1, 32, 32, 32)
+    images[..., 8:24, 8:24, 8:24] = torch.rand(1, 1, 16, 16, 16)
+    degraded = torch.nn.functional.avg_pool3d(images, 5, stride=1, padding=2)
+
+    assert trainer.foreground_ssim(images, images) == pytest.approx(1.0, abs=1e-4)
+
+    whole = compute_ssim_and_cs(
+        degraded, images, spatial_dims=3, data_range=1, kernel_size=[11] * 3, kernel_sigma=[1.5] * 3
+    )[0].mean().item()
+    masked = trainer.foreground_ssim(degraded, images)
+    assert masked < whole, f"masking changed nothing (masked={masked}, whole-volume={whole})"
+
+    # An all-background batch has nothing to score; NaN, not a spurious 1.0.
+    import math
+
+    assert math.isnan(trainer.foreground_ssim(torch.zeros_like(images), torch.zeros_like(images)))
+
+
+def test_foreground_ssim_mask_lines_up_with_the_ssim_map() -> None:
+    """The mask crop matches the valid-convolution shrink, so mask and map are the same grid.
+
+    ``compute_ssim_and_cs`` convolves without padding, so its map is ``kernel_size - 1`` smaller per
+    axis. Cropping the mask by half that on each side is what makes each map voxel correspond to the
+    window centred on it; an off-by-one here would silently score the wrong voxels.
+    """
+    trainer = _load_app_module(_AUTOENCODER, "trainer")
+    from monai.metrics import compute_ssim_and_cs
+
+    images = torch.rand(1, 1, 24, 26, 28)
+    ssim_map = compute_ssim_and_cs(
+        images, images, spatial_dims=3, data_range=1,
+        kernel_size=[trainer.SSIM_KERNEL_SIZE] * 3, kernel_sigma=[trainer.SSIM_KERNEL_SIGMA] * 3,
+    )[0]
+
+    trim = (trainer.SSIM_KERNEL_SIZE - 1) // 2
+    centres = (slice(None), slice(None)) + tuple(slice(trim, size - trim) for size in images.shape[2:])
+    assert images[centres].shape == ssim_map.shape
+
+
+def test_debug_dir_defaults_inside_the_job_and_is_relocatable_by_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default output stays in the app's own directory; ``DEBUG_SAMPLES_DIR`` moves it.
+
+    The default is the production guarantee — a client writes patient-derived images only inside the
+    job workspace the trust agreed to run, never to an operator-chosen path. So the override must be
+    an *environment* variable and not a ``config.json`` key: ``config.json`` is uploaded with the app
+    and read on the trust, where this variable is never set.
+    """
+    debug_samples = _load_app_module(_AUTOENCODER, "debug_samples")
+
+    monkeypatch.delenv(debug_samples.DEBUG_DIR_ENV, raising=False)
+    assert debug_samples.debug_dir() == _AUTOENCODER / "app_files" / debug_samples.DEBUG_DIR_NAME
+
+    monkeypatch.setenv(debug_samples.DEBUG_DIR_ENV, str(tmp_path / "elsewhere"))
+    assert debug_samples.debug_dir() == tmp_path / "elsewhere"
+    assert (tmp_path / "elsewhere").is_dir(), "the override directory is created, not just returned"
+
+    # An empty or whitespace-only value is not a path — fall back rather than writing to the cwd.
+    monkeypatch.setenv(debug_samples.DEBUG_DIR_ENV, "   ")
+    assert debug_samples.debug_dir() == _AUTOENCODER / "app_files" / debug_samples.DEBUG_DIR_NAME
+
+
+@pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
+def test_sim_target_points_debug_output_at_the_gitignored_data_root(tutorial: Path) -> None:
+    """Each ``sim`` target exports ``DEBUG_SAMPLES_DIR`` under ``fl-tutorials/data/``.
+
+    Two things this pins. The variable has to be exported *in the recipe* (like ``DEV_IMAGES_DIR``),
+    because make does not pass an ordinary Makefile variable into a recipe's environment — a
+    definition without the export line would silently do nothing. And the path has to sit under
+    ``fl-tutorials/data/``, the one tree already gitignored, or a local run starts leaving
+    patient-derived PNGs in `git status`.
+    """
+    makefile = (tutorial / "Makefile").read_text(encoding="utf-8")
+    assert re.search(r"^DEBUG_SAMPLES_DIR \?= \$\(FL_TUTORIALS\)/data/debug_samples/", makefile, re.M), (
+        f"{tutorial.name}/Makefile does not default DEBUG_SAMPLES_DIR under fl-tutorials/data/"
+    )
+    assert 'DEBUG_SAMPLES_DIR="$(abspath $(DEBUG_SAMPLES_DIR))"' in makefile, (
+        f"{tutorial.name}/Makefile defines DEBUG_SAMPLES_DIR but never exports it into the sim recipe"
+    )
 
 
 def test_debug_samples_never_raises_into_the_training_loop(monkeypatch: pytest.MonkeyPatch) -> None:

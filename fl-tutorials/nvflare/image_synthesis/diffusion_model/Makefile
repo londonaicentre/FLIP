@@ -14,7 +14,9 @@ APP_DIR := $(CURDIR)
 # Run job.py in the flip-utils environment with the `full` ML extra — the same package set the
 # flare-fl-base FL image installs (`uv sync --extra full`), so a local SimEnv run matches the deployed
 # image. A bare `uv run` would resolve to the repo-root venv, which has no torch/nvflare/monai.
-FLIP_UTILS := $(abspath $(APP_DIR)/../../../../flip-utils)
+REPO_ROOT := $(abspath $(APP_DIR)/../../../..)
+FLIP_UTILS := $(REPO_ROOT)/flip-utils
+FL_TUTORIALS := $(REPO_ROOT)/fl-tutorials
 UV_RUN := uv run --project $(FLIP_UTILS) --extra full
 
 # --- Load app-specific env ---
@@ -32,6 +34,13 @@ endif
 # config.json at submit time and overrides whatever the recipe baked in.
 NUM_ROUNDS ?= 1
 N_CLIENTS ?= 2
+
+# --- Where debug images land (local runs only) ---
+# app_files/debug_samples/ inside the simulator's per-site job workspace is the default and the
+# production behaviour, but under /tmp/nvflare/... it is awkward to find and the next run wipes it.
+# For local runs put it beside the datasets instead, under the same gitignored fl-tutorials/data/.
+# Never set on a trust: config.json travels with the app, this does not.
+DEBUG_SAMPLES_DIR ?= $(FL_TUTORIALS)/data/debug_samples/diffusion_model
 
 .PHONY: run export sim clean
 
@@ -61,6 +70,7 @@ sim:
 	@echo "Running tutorial with: n_clients=$(N_CLIENTS), num_rounds=$(NUM_ROUNDS)"
 	DEV_IMAGES_DIR="$(abspath $(DEV_IMAGES_DIR))" \
 	DEV_DATAFRAME="$(abspath $(DEV_DATAFRAME))" \
+	DEBUG_SAMPLES_DIR="$(abspath $(DEBUG_SAMPLES_DIR))" \
 	$(UV_RUN) python job.py \
 		--n_clients $(N_CLIENTS) \
 		--num_rounds $(NUM_ROUNDS)

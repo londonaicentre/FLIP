@@ -11,6 +11,7 @@
     "BATCH_SIZE": 2,
     "SAVE_DEBUG_SAMPLES": false,
     "DEBUG_SAMPLES_MAX": 8,
+    "DEBUG_PLOT_EVERY": 100,
     "MODALITIES": [
         "FLAIR",
         "T1w",
@@ -35,16 +36,20 @@
                 2
             ],
             "channels": [
-                32,
                 64,
-                64
+                128,
+                256
             ],
             "attention_levels": [
                 false,
                 false,
                 false
             ],
-            "latent_channels": 3
+            "latent_channels": 3,
+            "norm_num_groups": 16,
+            "norm_eps": 1e-06,
+            "with_encoder_nonlocal_attn": false,
+            "with_decoder_nonlocal_attn": false
         },
         "diffusion_model": {
             "in_channels": 3,

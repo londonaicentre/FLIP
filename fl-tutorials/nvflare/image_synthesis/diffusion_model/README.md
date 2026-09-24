@@ -94,6 +94,9 @@ there and not once per epoch.
 The same grid is produced by a `LOCAL_DEV` run without the flag; the flag is what makes it survive
 as a file rather than a logged tensor shape.
 
+`DEBUG_PLOT_EVERY` ships with the shared `debug_samples.py` but is inert here: the tri-planar
+figure needs volumes, and this tutorial is 2-D.
+
 Nothing about this puts an image on the wire. The files are written beside the running training
 script and no code path reads them back, adds them to an `FLModel` or hands them to the metrics
 writer — the Client API's `SummaryWriter` carries scalars only, so it could not take one anyway. An

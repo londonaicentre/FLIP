@@ -28,7 +28,7 @@ The chain is short on purpose:
   ``ResizeWithPadOrCropd`` (the spleen chain) preserves millimetres and pads, which suits
   segmentation; a generative model needs every sample on the same grid, and 96 is divisible by
   ``2**2`` so it survives the autoencoder's two downsamplings exactly (96 -> 48 -> 24).
-* ``ScaleIntensityd`` to [0, 1] — **per volume**, which is the right choice for MR and the wrong one
+* ``NormalizeIntensityd`` (z-score) — **per volume**, which is the right choice for MR and the wrong one
   for CT. MR intensities have no absolute meaning: the same tissue reads differently across scanners
   and sequences, so a fixed window (the spleen chain's ``ScaleIntensityRanged(a_min=-57, a_max=250)``,
   calibrated Hounsfield units) has nothing to calibrate against here.
@@ -65,7 +65,13 @@ def get_brain_mri_transforms(is_validation: bool = False) -> mt.Compose:
         mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
         mt.Orientationd(keys=["image"], axcodes="RAS"),
         mt.Resized(keys=["image"], spatial_size=SPATIAL_SHAPE),
-        mt.ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
+        # Z-score rather than min-max, matching the reference MSD brain-tumour recipe. Min-max
+        # leaves a skull-stripped volume at a standard deviation of ~0.15, because 82% of it is
+        # background pinned at zero — a poorly conditioned input. Normalising gives the brain
+        # unit variance. The background becomes a negative constant rather than exactly zero,
+        # which is why the foreground mask in `trainer.foreground_ssim` keys off the per-volume
+        # minimum instead of a literal zero.
+        mt.NormalizeIntensityd(keys=["image"], channel_wise=True),
     ]
     if not is_validation:
         # Small and shape-only: a generative model learns the intensity distribution it is shown, so

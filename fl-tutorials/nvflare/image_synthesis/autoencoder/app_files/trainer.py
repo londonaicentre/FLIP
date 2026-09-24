@@ -35,11 +35,8 @@ diffusion tutorial consumes as its frozen encoder — see that tutorial's
 """
 
 import argparse
-import hashlib
 import json
 import logging
-import os
-import shutil
 from pathlib import Path
 
 import einops
@@ -47,83 +44,56 @@ import nibabel as nib
 import numpy as np
 import nvflare.client as flare
 import torch
-from debug_samples import save_grid
+from debug_samples import due_for_plot, save_triplanar
 from flip import FLIP
 from flip.constants import ResourceType
+from medicalnet_perceptual import load_medicalnet_perceptual
 from modality import modality_of
 from models import get_model
 from monai.data import DataLoader, Dataset
-from monai.losses import PatchAdversarialLoss, PerceptualLoss
+from monai.losses import PatchAdversarialLoss
 from monai.metrics import compute_ssim_and_cs
 from nvflare.client.tracking import SummaryWriter
 from torch.amp import GradScaler, autocast
-from torchvision.models import SqueezeNet1_1_Weights
 from transforms import get_brain_mri_transforms
 
 logger = logging.getLogger(__name__)
 
 
-# The perceptual loss's backbone. lpips resolves it through torch.hub, which downloads the
-# torchvision checkpoint on first use unless it is already in the hub dir — and an FL app never
-# downloads at run time (FLIP#1206; the user guide's *Model Files* section has the why). So the
-# checkpoint is shipped beside this file (`make weights` in the tutorial dir, then uploaded with
-# the app) and staged into a hub `checkpoints/` layout here. SqueezeNet rather than the AlexNet
-# used before: 5 MB per job to every trust instead of 233. MONAI's own `PerceptualLoss(cache_dir=)`
-# would also call `torch.hub.set_dir`, but not copy the file into the layout torchvision reads,
-# so the staging stays explicit.
-PERCEPTUAL_BACKBONE = "squeeze"
-HUB_CHECKPOINT = "squeezenet1_1-b8a52dc0.pth"
+# The perceptual loss is MedicalNet ResNet-10, a 3-D network, staged offline by
+# `medicalnet_perceptual` — see that module for why MONAI's own `PerceptualLoss(...)` constructor
+# cannot be used here (it builds its backbone through `torch.hub.load`, and FL apps never download
+# at run time, FLIP#1206). Being genuinely 3-D, it scores the whole volume rather than sampled
+# slices, so the 2-D slicing below applies only to the discriminator now.
 
 
-def stage_perceptual_backbone(working_dir: Path) -> Path:
-    """Point torch.hub at ``working_dir/torch_hub`` and put the shipped backbone where it looks.
+def describe(name: str, tensor: torch.Tensor) -> str:
+    """One-line summary of a tensor's finiteness and range, for a failure report."""
+    finite = torch.isfinite(tensor)
+    n_nan = int(torch.isnan(tensor).sum())
+    n_inf = int(torch.isinf(tensor).sum())
+    if bool(finite.any()):
+        lo, hi = tensor[finite].min().item(), tensor[finite].max().item()
+        span = f"finite range [{lo:.4g}, {hi:.4g}]"
+    else:
+        span = "no finite values"
+    return f"{name}: nan={n_nan} inf={n_inf} of {tensor.numel()} elements, {span}"
 
-    Uploads and the bundler are flat, so the checkpoint arrives as ``<app dir>/HUB_CHECKPOINT``;
-    torchvision wants ``<hub dir>/checkpoints/<basename of the weights URL>``. torch.hub reuses a
-    file already there without going online — and without re-checking its hash — so the check
-    happens here instead: the shipped file must be the one torchvision will ask for, and its
-    sha256 must start with the prefix in its name. Anything else raises rather than reaching
-    for the network.
+
+def require_finite(tensors: dict, context: str) -> None:
+    """Raise a report naming every non-finite tensor, rather than a bare "found NaN".
+
+    The run is still fatal — a site that trains on a poisoned tensor is worse than one that stops,
+    and silently zeroing the offending loss hides exactly the instability worth seeing. What this
+    adds is the *evidence*: which tensor went bad, whether it was NaN or inf, and the ranges of the
+    others at the same step. A bare "NaN in reconstruction" cannot distinguish a diverging latent
+    from an overflowing loss, and those want opposite fixes.
     """
-    expected = Path(SqueezeNet1_1_Weights.IMAGENET1K_V1.url).name
-    if expected != HUB_CHECKPOINT:
-        raise RuntimeError(
-            f"torchvision now loads SqueezeNet from {expected}, but this app ships {HUB_CHECKPOINT}: update "
-            "HUB_CHECKPOINT and the tutorial Makefile, re-run `make weights` and re-upload (FLIP#1206)."
-        )
-    shipped = working_dir / HUB_CHECKPOINT
-    if not shipped.is_file():
-        raise FileNotFoundError(
-            f"{HUB_CHECKPOINT} is missing from {working_dir}. FL apps do not download weights at run time "
-            "(FLIP#1206): run `make weights` in the tutorial directory to stage it, and upload it together "
-            "with the other app files."
-        )
-    _verify_hash_prefix(shipped)
-    hub_dir = working_dir / "torch_hub"
-    torch.hub.set_dir(str(hub_dir))
-    target = hub_dir / "checkpoints" / HUB_CHECKPOINT
-    if not target.is_file():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        # Copy beside and rename into place: an interrupted copy must not leave a partial file
-        # under the name torch.hub trusts.
-        partial = target.with_name(target.name + ".part")
-        shutil.copyfile(shipped, partial)
-        os.replace(partial, target)
-    return target
-
-
-def _verify_hash_prefix(path: Path) -> None:
-    """Refuse a shipped checkpoint whose sha256 does not start with the prefix in its filename."""
-    match = torch.hub.HASH_REGEX.search(path.name)
-    if match is None:
-        raise RuntimeError(f"{path.name} carries no sha256 prefix; the shipped backbone must keep torchvision's name")
-    prefix = match.group(1)
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    if not digest.startswith(prefix):
-        raise RuntimeError(
-            f"{path} has sha256 {digest[: len(prefix)]}…, expected {prefix}…: not torchvision's checkpoint. Re-run "
-            "`make weights` and re-upload it (FLIP#1206)."
-        )
+    bad = [name for name, tensor in tensors.items() if not bool(torch.isfinite(tensor).all())]
+    if not bad:
+        return
+    report = "\n  ".join(describe(name, tensor) for name, tensor in tensors.items())
+    raise RuntimeError(f"Non-finite {', '.join(bad)} during {context}:\n  {report}")
 
 
 class KLDivergenceLoss:
@@ -269,6 +239,85 @@ def batch_accumulation_step(batch_size: int) -> int:
     return 1
 
 
+# How often to hand cached CUDA blocks back to the driver. See the training loop for why this is
+# not every iteration.
+CACHE_CLEAR_EVERY = 50
+
+SSIM_KERNEL_SIZE = 11
+SSIM_KERNEL_SIGMA = 1.5
+
+
+def foreground_ssim(
+    reconstruction: torch.Tensor,
+    images: torch.Tensor,
+    kernel_size: int = SSIM_KERNEL_SIZE,
+    kernel_sigma: float = SSIM_KERNEL_SIGMA,
+) -> float:
+    """Mean SSIM between a reconstruction and its input, over the **foreground only**.
+
+    Background is excluded because it would otherwise decide the score. These volumes are
+    skull-stripped, so everything outside the brain is one constant value — roughly 90% of a 96^3
+    grid. Both the input and any reconstruction are near that constant there, SSIM is ~1 over all
+    of it, and the reported number ends up measuring how much air the volume contains rather than
+    how well the brain came back. The unmasked metric on this cohort reads ~0.72 after one round,
+    when the reconstructions are visibly blobs.
+
+    ``data_range`` is derived per volume rather than assumed. It sets SSIM's two stability
+    constants (``c1 = (k1 * data_range)^2``, likewise ``c2``), so a wrong value silently rescales
+    the whole metric. It was hard-coded to 1 while the chain ended in ``ScaleIntensityd(0, 1)``;
+    ``NormalizeIntensityd`` z-scores each volume instead, giving a span nearer 5.5, and each volume
+    gets its own because each is z-scored independently. The callers correspondingly pass the
+    reconstruction **unclamped** — clamping it to [0, 1] flattened every voxel above 1, some 15% of
+    the volume and all of the bright anatomy, to a constant. Together those two stale assumptions
+    scored a *perfect* reconstruction at 0.26 rather than 1.0.
+
+    Two details make the mask exact rather than approximate:
+
+    * ``compute_ssim_and_cs`` returns the **full SSIM map**, not a scalar, so it can be masked at all
+      — but it is a *valid* convolution, so the map is ``kernel_size - 1`` smaller per spatial axis
+      (96 -> 86). The mask is therefore cropped by ``(kernel_size - 1) // 2`` on each side, which
+      lines each map voxel up with the window centred on it.
+    * It returns ``(ssim, contrast_sensitivity)`` **in that order**. Taking the second element gives
+      contrast sensitivity — one factor of SSIM, not SSIM — which reads higher and moves less.
+
+    Args:
+        reconstruction (torch.Tensor): Reconstructed batch, channel-first, on the inputs' own
+            intensity scale — do not clamp or renormalise it before passing it in.
+        images (torch.Tensor): The input batch it is compared against, channel-first.
+        kernel_size (int): Gaussian window size per spatial axis.
+        kernel_sigma (float): Gaussian window sigma per spatial axis.
+
+    Returns:
+        float: Mean SSIM over foreground voxels, or NaN if the batch is entirely background.
+    """
+    spatial_dims = len(images.shape[2:])
+    per_volume = tuple(range(1, images.ndim))
+    # Shape (B, 1, ..., 1), which broadcasts against the SSIM map so each volume is scored on its
+    # own range. Taken from the target, per convention: the reference defines the dynamic range.
+    data_range = images.amax(dim=per_volume, keepdim=True) - images.amin(dim=per_volume, keepdim=True)
+    ssim_map, _ = compute_ssim_and_cs(
+        reconstruction,
+        images,
+        spatial_dims=spatial_dims,
+        data_range=data_range,
+        kernel_size=[kernel_size] * spatial_dims,
+        kernel_sigma=[kernel_sigma] * spatial_dims,
+    )
+
+    trim = (kernel_size - 1) // 2
+    centres = (slice(None), slice(None)) + tuple(slice(trim, size - trim) for size in images.shape[2:])
+    # The background is the volume's minimum, not zero: the transform chain z-scores each volume,
+    # which maps the skull-stripped zeros to a negative constant. An affine map is monotonic, so the
+    # originally-zero background is still exactly the minimum. (Measured against the pre-transform
+    # mask on the shipped cohort: identical bar one voxel in 884,736, a float32 tie.)
+    background = images.amin(dim=per_volume, keepdim=True)
+    foreground = images[centres] > background
+    if not bool(foreground.any()):
+        logger.warning("SSIM: this batch is entirely background; reporting NaN rather than a score over nothing.")
+        return float("nan")
+    return ssim_map[foreground].mean().item()
+
+
 class AutoencoderTrainer:
     """Holds the model, losses, optimizers, and data for autoencoder training.
 
@@ -293,12 +342,11 @@ class AutoencoderTrainer:
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
         # Losses, optimizers etc.
-        stage_perceptual_backbone(working_dir)
         self.losses_ae = {
             "reconstruction_loss": torch.nn.L1Loss(),
             "kld_loss": KLDivergenceLoss(),
             "gan_loss": PatchAdversarialLoss(criterion="least_squares"),
-            "perceptual_loss": PerceptualLoss(2, network_type=PERCEPTUAL_BACKBONE),
+            "perceptual_loss": load_medicalnet_perceptual(working_dir),
         }
 
         # 3-D only tu suppport 2D adversarial / perceptual losses.
@@ -316,16 +364,23 @@ class AutoencoderTrainer:
         }
 
         self.optimizers_ae = {
-            "optimizer_g": torch.optim.Adam(
-                self.model.autoencoder.parameters(), lr=self.params_autoencoder["lr_g"], weight_decay=1e-6, amsgrad=True
+            "optimizer_g": torch.optim.AdamW(
+                self.model.autoencoder.parameters(), lr=self.params_autoencoder["lr_g"], weight_decay=1e-5
             ),
-            "optimizer_d": torch.optim.Adam(
+            "optimizer_d": torch.optim.AdamW(
                 self.model.discriminator.parameters(),
                 lr=self.params_autoencoder["lr_d"],
-                weight_decay=1e-6,
-                amsgrad=True,
+                weight_decay=1e-5,
             ),
         }
+
+        # Exponential decay from LR_G to LR_END over the local epochs of one round, as the reference
+        # MSD recipe does. With LR_END equal to LR_G the gamma is exactly 1 and the schedule is inert
+        # — which is the shipped configuration, so the decay is opt-in by lowering LR_END.
+        epochs = max(1, self.params_autoencoder["epochs"])
+        lr_end = config.get("LR_END", self.params_autoencoder["lr_g"])
+        gamma = (lr_end / self.params_autoencoder["lr_g"]) ** (1.0 / epochs)
+        self.scheduler_g = torch.optim.lr_scheduler.ExponentialLR(self.optimizers_ae["optimizer_g"], gamma=gamma)
 
         # Data loading
         self.flip = FLIP()
@@ -376,22 +431,17 @@ class AutoencoderTrainer:
                 if modality is None:
                     # A sequence this run excludes, not an error: MODALITIES is the cohort filter.
                     continue
-                items.append(
-                    {
-                        "image": str(image),
-                        "accession_id": str(accession_id),
-                        "modality": modality,
-                        "modality_index": modalities.index(modality),
-                    }
-                )
+                items.append({
+                    "image": str(image),
+                    "accession_id": str(accession_id),
+                    "modality": modality,
+                    "modality_index": modalities.index(modality),
+                })
             if items:
                 by_accession[str(accession_id)] = items
 
         found = sum(len(items) for items in by_accession.values())
-        logger.info(
-            f"Found {found} volume(s) across {len(by_accession)} accession(s), "
-            f"modalities {modalities}."
-        )
+        logger.info(f"Found {found} volume(s) across {len(by_accession)} accession(s), modalities {modalities}.")
         if not by_accession:
             raise RuntimeError(
                 f"No volumes matched MODALITIES={modalities}. The cohort's files are named "
@@ -415,15 +465,11 @@ class AutoencoderTrainer:
         :func:`detect_axial_anisotropy` returns True (setting ``self.axial_anisotropy`` first). The
         weight is raised alongside the swap because this network reports much smaller values.
         """
-        if self.axial_anisotropy and self.losses_ae["perceptual_loss"].spatial_dims == 3:
-            # Unreachable while the loss above is built 2-D; kept for a 3-D configuration. Same
-            # shipped backbone as above: radimagenet_resnet50 would be fetched through torch.hub
-            # at first use, which an FL app must never do (FLIP#1206).
-            self.losses_ae["perceptual_loss"] = PerceptualLoss(spatial_dims=2, network_type=PERCEPTUAL_BACKBONE)
-            if self.weights_ae["w_perceptual_loss"] <= 1.0:
-                self.weights_ae["w_perceptual_loss"] = 10
-                # This perceptual loss tends to have very low values.
-            logger.info("Resetting perceptual loss to 2D versions due to axial anisotropy.")
+        if self.axial_anisotropy:
+            # The perceptual loss stays 3-D regardless: MedicalNet has no 2-D counterpart we can
+            # ship offline, and anisotropic spacing degrades its features rather than breaking
+            # them. Only the discriminator falls back to scoring slices.
+            logger.info("Axial anisotropy detected; the 2-D discriminator scores slices, perceptual stays 3-D.")
 
     def make_loaders(self, batch_size: int, shuffle: bool = True) -> tuple[DataLoader, DataLoader]:
         train_loader = DataLoader(self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1)
@@ -471,11 +517,13 @@ class AutoencoderTrainer:
                 )
 
                 # TRAIN GENERATOR
+                self.model.discriminator.requires_grad_(False)
                 with autocast(enabled=True, device_type=self.device.type):
                     reconstruction, z_mu, z_sigma = self.model.autoencoder(images)
-                    if True in torch.isnan(reconstruction):
-                        logger.error("Found NaN in the autoencoder reconstruction; stopping training on site.")
-                        raise RuntimeError("NaN in autoencoder reconstruction during train")
+                    require_finite(
+                        {"reconstruction": reconstruction, "z_mu": z_mu, "z_sigma": z_sigma},
+                        f"the autoencoder forward pass (epoch {epoch + 1}, iteration {ind})",
+                    )
                     kl_loss = self.weights_ae["w_kl_loss"] * self.losses_ae["kld_loss"](z_mu, z_sigma)
                     l1_loss = self.weights_ae["w_reconstruction_loss"] * self.losses_ae["reconstruction_loss"](
                         reconstruction.float(), images.float()
@@ -502,11 +550,20 @@ class AutoencoderTrainer:
                         logits_fake, target_is_real=True, for_discriminator=False
                     )
 
+                    require_finite(
+                        {"l1": l1_loss, "kl": kl_loss, "perceptual": p_loss, "gan": gan_loss},
+                        f"the generator loss (epoch {epoch + 1}, iteration {ind})",
+                    )
+
                     # Loss generator
                     train_g_loss_ = l1_loss + kl_loss + p_loss + gan_loss
+                    # print(
+                    #    f"KL: {kl_loss.item()}, l1: {l1_loss.item()}, "
+                    #    f"perceptual: {p_loss.item()}, gan: {gan_loss.item()}"
+                    # )
 
-                # Scale and backprop
-                scaler_g.scale(train_g_loss_).backward()
+                scaler_g.scale(train_g_loss_ / accumulation_step).backward()
+                self.model.discriminator.requires_grad_(True)
 
                 batch_acc_counter += 1
                 if batch_acc_counter % accumulation_step == 0 or ind == (len(train_loader) - 1):
@@ -514,10 +571,19 @@ class AutoencoderTrainer:
                     scaler_g.update()
                     self.optimizers_ae["optimizer_g"].zero_grad(set_to_none=True)
 
+                global_step = (global_round * epochs + epoch) * len(train_loader) + ind
+                if due_for_plot(global_step, self.config):
+                    save_triplanar(
+                        {"input": images, "reconstruction": reconstruction},
+                        "triplanar",
+                        self.config,
+                        site_name=self.site_name,
+                        step=global_step,
+                    )
+
                 del z_mu, z_sigma, logits_fake
 
                 # TRAIN DISCRIMINATOR
-                self.optimizers_ae["optimizer_d"].zero_grad(set_to_none=True)
                 if self.is_volumetric and self.config["net_config"]["discriminator"]["spatial_dims"] == 2:
                     logits_fake = self.model.discriminator(
                         slice_volume_for_2d(reconstruction.detach(), slice_indices).contiguous().float()
@@ -532,11 +598,12 @@ class AutoencoderTrainer:
                 loss_d_fake = self.losses_ae["gan_loss"](logits_fake, target_is_real=False, for_discriminator=True)
                 loss_d_real = self.losses_ae["gan_loss"](logits_real, target_is_real=True, for_discriminator=True)
                 d_loss = self.weights_ae["w_gan_loss"] * (loss_d_fake + loss_d_real) * 0.5
-                scaler_d.scale(d_loss).backward()
+                scaler_d.scale(d_loss / accumulation_step).backward()
 
                 if batch_acc_counter % accumulation_step == 0 or ind == (len(train_loader) - 1):
                     scaler_d.step(self.optimizers_ae["optimizer_d"])
                     scaler_d.update()
+                    self.optimizers_ae["optimizer_d"].zero_grad(set_to_none=True)
 
                 del logits_real, logits_fake, reconstruction
 
@@ -550,10 +617,8 @@ class AutoencoderTrainer:
 
                 del train_g_loss_, gan_loss, p_loss, l1_loss, kl_loss, d_loss, images
 
-                # Force CUDA cache clearing to prevent memory fragmentation
-                if torch.cuda.is_available():
+                if torch.cuda.is_available() and ind % CACHE_CLEAR_EVERY == 0:
                     torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
 
             # Aggregate at the end
             train_g_loss /= max(1, len(train_loader))
@@ -565,6 +630,7 @@ class AutoencoderTrainer:
 
             # Validation
             val_loss = 0
+            val_ssim = 0.0
             debug_batch: dict[str, torch.Tensor] = {}
             self.model.autoencoder.eval()
             for batch in val_loader:
@@ -575,15 +641,16 @@ class AutoencoderTrainer:
                     if True in torch.isnan(reconstruction):
                         break
                     if not debug_batch:
-                        # Always the FIRST validation batch, so the debug images show the same
-                        # radiographs every epoch and can be watched sharpening (or not) over rounds.
                         debug_batch = {"input": images, "reconstruction": reconstruction}
                     val_loss += (
                         self.weights_ae["w_reconstruction_loss"]
                         * self.losses_ae["reconstruction_loss"](reconstruction.float(), images.float()).item()
                     )
 
+                val_ssim += foreground_ssim(reconstruction.float(), images.float())
+
             val_loss /= max(1, len(val_loader))
+            val_ssim /= max(1, len(val_loader))
             self.model.autoencoder.train()
 
             logger.info(
@@ -591,11 +658,14 @@ class AutoencoderTrainer:
                 f"Total loss G: {train_g_loss}, GAN: {train_g_ganloss} "
                 f"Perceptual: {train_g_percloss}, L1: {train_g_l1loss} "
                 f"KLD: {train_g_klloss} \n"
-                f"Total loss D: {train_d_loss},Validation loss (L1): {val_loss}"
+                f"Total loss D: {train_d_loss},Validation loss (L1): {val_loss}, "
+                f"Validation SSIM (foreground): {val_ssim}"
             )
 
             # Send metrics to FLIP. Labels match the legacy tutorial's series names; the "@epoch"
             # suffix names the x-axis and `step` (cumulative local epoch) is the coordinate.
+            self.scheduler_g.step()
+
             step = global_round * epochs + epoch + 1
             writer.add_scalar("Train loss (G)@epoch", train_g_loss, global_step=step)
             writer.add_scalar("Train loss (D)@epoch", train_d_loss, global_step=step)
@@ -604,11 +674,11 @@ class AutoencoderTrainer:
             writer.add_scalar("Reconstruction loss (G)@epoch", train_g_l1loss, global_step=step)
             writer.add_scalar("GAN loss (G)@epoch", train_g_ganloss, global_step=step)
             writer.add_scalar("Validation loss (L1)@epoch", val_loss, global_step=step)
+            # Foreground-only, so it is comparable with the `val_ssim` the validate task reports and
+            # is not dominated by the ~90% of each volume that is background.
+            writer.add_scalar("Validation SSIM@epoch", val_ssim, global_step=step)
 
-            # Client-local debug images; a no-op unless config.json sets SAVE_DEBUG_SAMPLES.
-            # Reconstructions are the one thing that says whether this is optimising: the L1 curve
-            # falls just as convincingly while the autoencoder learns to emit a plausible blur.
-            save_grid(debug_batch, "reconstruction", self.config, site_name=self.site_name, step=step)
+            save_triplanar(debug_batch, "reconstruction", self.config, site_name=self.site_name, step=step)
 
         return epochs * len(train_loader)
 
@@ -631,7 +701,8 @@ def validate(
             analytics bridge).
 
     Returns:
-        tuple[float, float]: ``(l1_test_loss, ssim_test)`` averaged over the held-out split.
+        tuple[float, float]: ``(l1_test_loss, ssim_test)`` averaged over the held-out split. The
+        SSIM is foreground-only — see :func:`foreground_ssim`.
     """
     reconstruction_loss = torch.nn.L1Loss()
     model.autoencoder.to(device=device)
@@ -648,21 +719,11 @@ def validate(
             reconstruction, _, _ = model.autoencoder(images)
         if not debug_batch:
             debug_batch = {"input": images, "reconstruction": reconstruction}
-        reconstruction = reconstruction.detach().cpu()
-        images = images.detach().cpu()
-        reconstruction_norm = (reconstruction - reconstruction.min()) / (reconstruction.max() - reconstruction.min())
+        reconstruction = reconstruction.detach().cpu().float()
+        images = images.detach().cpu().float()
 
-        _, ssim_metric = compute_ssim_and_cs(
-            reconstruction_norm,
-            images.detach().cpu(),
-            spatial_dims=len(reconstruction.shape[2:]),
-            data_range=1,
-            kernel_size=[11] * len(reconstruction.shape[2:]),
-            kernel_sigma=[1.5] * len(reconstruction.shape[2:]),
-        )
-        l1_loss = reconstruction_loss(reconstruction.float(), images.float())
-        ssim_test += ssim_metric.mean().item()
-        l1_test_loss += l1_loss.item()
+        ssim_test += foreground_ssim(reconstruction, images)
+        l1_test_loss += reconstruction_loss(reconstruction, images).item()
 
     l1_test_loss /= max(1, len(test_loader))
     ssim_test /= max(1, len(test_loader))
@@ -672,9 +733,7 @@ def validate(
     writer.add_scalar("val_l1_loss", l1_test_loss, global_step=0)
     writer.add_scalar("val_ssim", ssim_test, global_step=0)
 
-    # How the AGGREGATED autoencoder reconstructs this site's data — the interesting comparison
-    # against the per-epoch grids above, which are of the purely local model.
-    save_grid(debug_batch, "reconstruction_aggregated", config, site_name=flare.get_site_name())
+    save_triplanar(debug_batch, "reconstruction_aggregated", config, site_name=flare.get_site_name())
 
     return l1_test_loss, ssim_test
 

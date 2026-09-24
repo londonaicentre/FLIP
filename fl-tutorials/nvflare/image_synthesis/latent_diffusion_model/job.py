@@ -22,7 +22,7 @@ single-stage FedAvg job, using :class:`FlipFedAvgRecipe`. It supports two execut
 
 *SimEnv* (default, no flags):
     Runs a local simulation under the NVFLARE simulator. Requires a GPU, the reference dataset
-    (``make -C fl-tutorials download-spleen-data``) and the prepared autoencoder checkpoint
+    (``make -C fl-tutorials download-brain-mri-data``) and the prepared autoencoder checkpoint
     (``make prepare-checkpoint``). FLIP-specific values are injected via environment variables
     (``FLIP_PROJECT_ID``, ``FLIP_QUERY``) rather than CLI flags because SQL queries contain spaces
     that don't survive argparse whitespace-splitting.

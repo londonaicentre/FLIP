@@ -35,6 +35,13 @@ endif
 NUM_ROUNDS ?= 1
 N_CLIENTS ?= 2
 
+# --- Where debug images land (local runs only) ---
+# app_files/debug_samples/ inside the simulator's per-site job workspace is the default and the
+# production behaviour, but under /tmp/nvflare/... it is awkward to find and the next run wipes it.
+# For local runs put it beside the datasets instead, under the same gitignored fl-tutorials/data/.
+# Never set on a trust: config.json travels with the app, this does not.
+DEBUG_SAMPLES_DIR ?= $(FL_TUTORIALS)/data/debug_samples/latent_diffusion_model
+
 # --- Frozen autoencoder checkpoint ---
 # Must match config.json's SERVER_CHECKPOINT and job.py's _CHECKPOINT_NAME.
 PROCESSED_CHECKPOINT ?= app_files/pretrained_autoencoder.pt
@@ -101,6 +108,7 @@ sim:
 	@echo "Running tutorial with: n_clients=$(N_CLIENTS), num_rounds=$(NUM_ROUNDS)"
 	DEV_IMAGES_DIR="$(abspath $(DEV_IMAGES_DIR))" \
 	DEV_DATAFRAME="$(abspath $(DEV_DATAFRAME))" \
+	DEBUG_SAMPLES_DIR="$(abspath $(DEBUG_SAMPLES_DIR))" \
 	$(UV_RUN) python job.py \
 		--n_clients $(N_CLIENTS) \
 		--num_rounds $(NUM_ROUNDS)

@@ -22,7 +22,7 @@ FedAvg job, using :class:`FlipFedAvgRecipe`. It supports two execution modes:
 
 *SimEnv* (default, no flags):
     Runs a local simulation under the NVFLARE simulator. Requires a GPU and the reference dataset
-    (``make -C fl-tutorials download-spleen-data``). FLIP-specific values are injected via
+    (``make -C fl-tutorials download-brain-mri-data``). FLIP-specific values are injected via
     environment variables (``FLIP_PROJECT_ID``, ``FLIP_QUERY``) rather than CLI flags because SQL
     queries contain spaces that don't survive argparse whitespace-splitting.
 

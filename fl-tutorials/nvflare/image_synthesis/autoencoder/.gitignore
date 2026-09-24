@@ -1,7 +1,6 @@
 fl_job/
-# The perceptual loss's backbone and the hub layout it is staged into: produced locally by
-# `make weights` from the shared download, never committed (FLIP#1206).
-app_files/squeezenet1_1-b8a52dc0.pth
-app_files/torch_hub/
+# The perceptual loss's backbone: MedicalNet ResNet-10, staged locally by `make weights` from the
+# shared download and uploaded with the app, never committed (FLIP#1206). 57 MB.
+app_files/medicalnet_resnet*_23datasets-*.pth
 # Client-local debug images (SAVE_DEBUG_SAMPLES); patient-derived, never committed.
 app_files/debug_samples/

@@ -35,17 +35,24 @@ endif
 NUM_ROUNDS ?= 1
 N_CLIENTS ?= 2
 
+# --- Where debug images land (local runs only) ---
+# app_files/debug_samples/ inside the simulator's per-site job workspace is the default and the
+# production behaviour, but under /tmp/nvflare/... it is awkward to find and the next run wipes it.
+# For local runs put it beside the datasets instead, under the same gitignored fl-tutorials/data/.
+# Never set on a trust: config.json travels with the app, this does not.
+DEBUG_SAMPLES_DIR ?= $(FL_TUTORIALS)/data/debug_samples/autoencoder
+
 # --- Shipped weights (FLIP#1206) ---
 # The perceptual loss's SqueezeNet backbone, which lpips would otherwise fetch through
 # torch.hub on first use. FL apps never download at run time, so the tutorial ships it: the
-# download is shared (`make -C fl-tutorials download-weights ARCH=squeezenet1_1`, hash-checked)
+# download is shared (`make -C fl-tutorials download-weights ARCH=medicalnet_resnet50`, hash-checked)
 # and `weights` copies the checkpoint flat into app_files/, which is what gets uploaded with
 # the code and what job.py bundles into every site's custom/ for the simulator and `export`.
 # trainer.py stages it into its torch.hub dir at start-up. Gitignored. The filename must be
 # the one torchvision asks for (trainer.py checks that at run time, and the tests pin it).
 # This tutorial owns it because this is where the perceptual loss is: the diffusion tutorials
 # score in latent/noise space and construct no PerceptualLoss at all.
-HUB_CHECKPOINT := squeezenet1_1-b8a52dc0.pth
+HUB_CHECKPOINT := medicalnet_resnet50_23datasets-ff48a622.pth
 SHARED_CHECKPOINT := $(FL_TUTORIALS)/data/weights/$(HUB_CHECKPOINT)
 
 .PHONY: run export sim clean weights
@@ -56,7 +63,7 @@ app_files/$(HUB_CHECKPOINT): $(SHARED_CHECKPOINT)
 	cp "$<" "$@"
 
 $(SHARED_CHECKPOINT):
-	$(MAKE) --no-print-directory -C $(FL_TUTORIALS)/datasets download-weights ARCH=squeezenet1_1
+	$(MAKE) --no-print-directory -C $(FL_TUTORIALS)/datasets download-weights ARCH=medicalnet_resnet50
 
 # --- Tutorial-harness entrypoint ---
 # The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app
@@ -85,6 +92,7 @@ sim: weights
 	@echo "Running tutorial with: n_clients=$(N_CLIENTS), num_rounds=$(NUM_ROUNDS)"
 	DEV_IMAGES_DIR="$(abspath $(DEV_IMAGES_DIR))" \
 	DEV_DATAFRAME="$(abspath $(DEV_DATAFRAME))" \
+	DEBUG_SAMPLES_DIR="$(abspath $(DEBUG_SAMPLES_DIR))" \
 	$(UV_RUN) python job.py \
 		--n_clients $(N_CLIENTS) \
 		--num_rounds $(NUM_ROUNDS)

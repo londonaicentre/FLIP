@@ -1,7 +1,7 @@
 # Latent Diffusion Model — FLIP tutorial
 
-This tutorial trains a **`DiffusionModelUNet` inside a frozen autoencoder's latent space** on 2-D
-chest X-rays, using the **NVFLARE Client API** (`nvflare.client`). The job is defined entirely in
+This tutorial trains a **`DiffusionModelUNet` inside a frozen autoencoder's latent space** on **3-D
+brain MRI**, **conditioned on the MR sequence**, using the **NVFLARE Client API** (`nvflare.client`). The job is defined entirely in
 Python via `FlipFedAvgRecipe` — no hand-written JSON configs required. The code is entirely based on
 `MONAI` functions.
 
@@ -13,9 +13,9 @@ It is one of three tutorials that between them cover generative image synthesis 
 
 | Tutorial | Trains | Operates on | Needs an uploaded model? |
 | --- | --- | --- | --- |
-| [`autoencoder`](../autoencoder/) | `AutoencoderKL` + `PatchDiscriminator` | images | no |
-| [`diffusion_model`](../diffusion_model/) | `DiffusionModelUNet` | images directly (pixel space) | no |
-| **`latent_diffusion_model`** (this one) | `DiffusionModelUNet` | latents of a frozen autoencoder | **yes** — the autoencoder |
+| [`autoencoder`](../autoencoder/) | `AutoencoderKL` + `PatchDiscriminator` | 3-D brain MRI | no |
+| [`diffusion_model`](../diffusion_model/) | `DiffusionModelUNet` | 2-D chest X-rays, in pixel space | no |
+| **`latent_diffusion_model`** (this one) | `DiffusionModelUNet` | latents of a frozen autoencoder, 3-D brain MRI | **yes** — the autoencoder |
 
 Each is an **independent single-stage job**. This tutorial used to be a single two-stage job that
 trained the autoencoder and then the diffusion model in one run; the two halves are now separate, so
@@ -29,18 +29,58 @@ without the frozen autoencoder or any of the latent machinery.
 
 ## Data
 
-The same chest X-ray cohort and loading path as
-[`xray_classification`](../../image_classification/xray_classification/): DICOM files fetched per
-accession, read through the pinned `PydicomReader` chain in `app_files/transforms.py` (copied from
-that tutorial) and resized to **256×256**, which the autoencoder compresses to a 64×64 latent with 3
-channels.
+The **brain MRI** cohort — MSD Task01_BrainTumour (see
+[`fl-tutorials/datasets/brain_mri/`](../../../datasets/brain_mri/)), the same cohort and the same
+`transforms.py` as the [`autoencoder`](../autoencoder/) tutorial: four co-registered MR sequences per
+study (FLAIR, T1w, T1Gd, T2w), each a single-channel NIfTI, resampled to **96³** and scaled to
+[0, 1]. The autoencoder compresses that to a **24³ latent with 3 channels**.
 
 ```bash
-make -C fl-tutorials download-xray-data
+make -C fl-tutorials download-brain-mri-msd-raw            # 7.6 GB MSD tar, once
+make -C fl-tutorials download-brain-mri-data NUM_CASES=20  # -> data/brain_mri/
 ```
 
 The autoencoder you supply must have been trained on the same kind of image at the same size — in
-practice, by the [`autoencoder`](../autoencoder/) tutorial on the same cohort.
+practice, by the [`autoencoder`](../autoencoder/) tutorial on this cohort.
+
+## Conditioning on the MR sequence
+
+This is the one thing this tutorial does that neither sibling does. The model is **told which
+sequence it is denoising**: the modality is one-hot encoded and fed to the UNet as a length-1
+cross-attention sequence (`app_files/modality.py`). That is what makes a single model able to
+generate a T2w *or* a T1Gd volume on demand, rather than an average of the four.
+
+Two `config.json` knobs control it, and **they must move together**:
+
+```json
+// conditioned on all four sequences (shipped)
+"MODALITIES": ["FLAIR", "T1w", "T1Gd", "T2w"],
+"net_config": { "diffusion_model": { "with_conditioning": true,  "cross_attention_dim": 4 } }
+
+// unconditional, single sequence
+"MODALITIES": ["T1w"],
+"net_config": { "diffusion_model": { "with_conditioning": false, "cross_attention_dim": 0 } }
+```
+
+`MODALITIES` decides which sequences enter the cohort at all; `cross_attention_dim` decides how many
+classes the attention layers are built for. The pairing is pinned by
+`fl-tutorials/tests/test_image_synthesis_config_parity.py`, because each way of getting it wrong
+fails differently and none of them fails helpfully:
+
+| Mistake | What happens |
+|---|---|
+| `cross_attention_dim` > `len(MODALITIES)` | trains happily on dead one-hot columns |
+| `cross_attention_dim` < `len(MODALITIES)` | raises, but only once a real batch reaches the UNet — on a trust, mid-round |
+| `with_conditioning: false` with four modalities | trains an unconditional model on four mixed sequences; the result is a blurred average that reads as slow convergence |
+| `cross_attention_dim` ≠ 0 with `with_conditioning: false` | builds cross-attention layers nothing ever feeds |
+
+**Order is part of the contract, not just membership.** The index into `MODALITIES` *is* the one-hot
+position, so the list here must match the autoencoder tutorial's exactly — same labels, same order.
+Two lists with the same four labels in a different order would train the autoencoder on the same
+pixels but teach this model to call a T2w volume a FLAIR. That too is pinned by a test.
+
+Each file's sequence is read from its filename; see the autoencoder tutorial's *Data* section for how
+that works on both the simulator and the platform.
 
 ## Compatible job type
 
@@ -141,7 +181,8 @@ value is logged, so you can read the derived numbers off a first run and pin the
 
 ## Seeing what it generates (`SAVE_DEBUG_SAMPLES`)
 
-Loss curves are a poor judge of a generative model — the noise-prediction MSE barely separates a model that generates radiographs from one that generates plausible texture. Set
+Loss curves are a poor judge of a generative model — the noise-prediction MSE barely separates a
+model that generates brains from one that generates plausible texture. Set
 
 ```json
 "SAVE_DEBUG_SAMPLES": true,
@@ -149,17 +190,48 @@ Loss curves are a poor judge of a generative model — the noise-prediction MSE 
 ```
 
 in `config.json` and the client writes PNGs to `app_files/debug_samples/` **inside its own job
-workspace** — per client, per run, gitignored.
+workspace** — per client, per run, gitignored. In a simulator run that resolves to
 
-`samples_....png` tiles a batch of generated images, written by the `validate` task.
-Sampling is a full reverse diffusion (one forward pass per training timestep), which is why it runs
-there and not once per epoch.
+```
+/tmp/nvflare/ldm/flip_fedavg/site-<N>/simulate_job/app_site-<N>/custom/debug_samples/
+```
 
-**These samples are also the best check that the frozen autoencoder actually loaded.** Sampling is
-the only thing in this job that runs the autoencoder's *decoder*, and the checkpoint load is
-`strict=False` — so a mismatched or missing checkpoint (see "Two ways this handoff breaks silently"
-above) trains happily, reports a falling loss, and shows up here as noise. If the first round's
-samples are structured at all, the latent space is real.
+because the app directory *is* the job directory; at a trust it is that trust's job workspace. Each
+generated volume is tiled by its **axial mid-slice**, so you get a PNG rather than a NIfTI.
+
+The `validate` task writes one grid. **When conditioning is on it samples one volume per modality,
+in `MODALITIES` order**, so the file is named for them — e.g.
+`samples_FLAIR_T1w_T1Gd_T2w_site-1.png`, four columns, left to right. That is deliberate: a batch of
+samples all drawn under the same condition cannot answer the question conditioning exists to answer,
+which is whether the columns actually differ. Unconditioned, it is one sample and the file is just
+`samples_site-<N>.png`.
+
+Sampling is a full reverse diffusion (one forward pass per training timestep — 1000 by default),
+which is why it runs in `validate` and not once per epoch. Expect it to take minutes, not seconds.
+
+**Once trained, these samples are the best check that the frozen autoencoder actually loaded.**
+Sampling is the only thing in this job that runs the autoencoder's *decoder*, and the checkpoint load
+is `strict=False` — so a mismatched or missing checkpoint (see "Two ways this handoff breaks
+silently" above) trains happily, reports a falling loss, and shows up here as noise.
+
+**Do not use it as a smoke test at one round**, though: at that budget the samples are noise whether
+the checkpoint loaded or not, because the diffusion model has had a few dozen gradient steps and the
+decoder is only as good as the autoencoder run behind it. For a quick check, read the server log
+instead — the persistor line is unambiguous:
+
+```
+InitialCheckpointPTModelPersistor - Loaded backbone into initial global model from
+  .../pretrained_autoencoder.pt (missing=494, unexpected=0 keys).
+```
+
+`unexpected=0` is the half that matters: every key in the checkpoint found a home. `missing` counts
+the keys of the *composite* model that the checkpoint does not carry — the diffusion model's own,
+which it is not supposed to — so a large number there is correct. A non-zero `unexpected`, or a
+`missing` count that approaches the full model, means the names did not line up.
+
+`DEBUG_PLOT_EVERY` ships with the shared `debug_samples.py`. It is unused on this tutorial's
+path — there is no per-iteration input/reconstruction pair to draw — and the sample grid above is
+what this job writes.
 
 Nothing about this puts an image on the wire. The files are written beside the running training
 script and no code path reads them back, adds them to an `FLModel` or hands them to the metrics
@@ -176,30 +248,6 @@ images on that trust's disk, round after round, with no retention policy attache
 per round). These names are load-bearing: with a single local-rounds key, the FL API requires it to be
 called exactly `LOCAL_ROUNDS` and rejects the job otherwise. (The old two-stage job's
 `GLOBAL_ROUNDS_AE`/`GLOBAL_ROUNDS_DM` pairs no longer apply.)
-
-## Shipped weights: the perceptual-loss backbone (`make weights`)
-
-The perceptual loss needs a pretrained backbone, and `lpips` fetches it through `torch.hub` on
-first use. **An FL app must never download at run time** (FLIP#1206): on a platform-managed estate
-the FL server has no internet route, nor does a trust host behind an NHS firewall, so the job
-would hang; and a run-time fetch bypasses the scanned upload path — the file a Trust can inspect
-before training would not be the file that runs. So the backbone travels *with* the app:
-
-```bash
-make weights            # → app_files/squeezenet1_1-b8a52dc0.pth  (gitignored; `make sim` and `make export` run this for you)
-```
-
-That copies torchvision's SqueezeNet checkpoint from the shared download
-(`make -C fl-tutorials download-weights ARCH=squeezenet1_1`, fetched once with torch.hub's own
-sha256-prefix check) into `app_files/`. **Upload it with the other app files** — it is a `.pth`, so
-the platform's picklescan gates it like any checkpoint. At start-up `trainer.py` checks the file is
-the one torchvision will ask for (`SqueezeNet1_1_Weights.IMAGENET1K_V1`) and that its sha256 starts
-with the prefix in its name — torch.hub reuses a file already in its `checkpoints/` dir without
-re-checking it — then copies it into a `torch.hub` dir beside itself and points torch there, so
-`PerceptualLoss(network_type="squeeze")` finds it offline. A missing, renamed or corrupt file
-raises at construction, naming this target, rather than reaching for the network. SqueezeNet
-replaces the AlexNet this tutorial used before: 5 MB per job to every trust instead of 233, same
-LPIPS family.
 
 ## FLIP-specific values
 
@@ -228,7 +276,8 @@ require the checkpoint. Worth inspecting in the export:
 ### Local simulation (requires a GPU + the dataset + the checkpoint)
 
 ```bash
-make -C ../../.. download-xray-data        # once
+make -C ../../.. download-brain-mri-msd-raw   # 7.6 GB, once
+make -C ../../.. download-brain-mri-data      # -> data/brain_mri/
 make prepare-checkpoint RAW_CHECKPOINT=... # see "Getting the autoencoder" above
 make run                                   # delegates to `make sim`
 ```

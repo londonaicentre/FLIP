@@ -9,7 +9,9 @@ gdown
 einops  # 3-D helpers only (slice_volume_for_2d)
 pydicom
 matplotlib
-lpips
-# Needed by lpips / MONAI PerceptualLoss (provides torchvision.ops.nms). Must match the base
-# image's torch (>=2.11, cu128); the authoritative pin lives in flip-utils/pyproject.toml.
+# Needed by debug_samples.py (`torchvision.utils.make_grid`). Must match the base image's torch
+# (>=2.11, cu128); the authoritative pin lives in flip-utils/pyproject.toml. Note this is no longer
+# pulled in for a perceptual loss: that is MedicalNet now (medicalnet_perceptual.py), which loads a
+# shipped checkpoint rather than a hub-backed backbone. `lpips` went with it — it was unused, and an
+# unused hub-backed loss in the spec is exactly what the offline guard (FLIP#1206) exists to stop.
 torchvision>=0.26.0
