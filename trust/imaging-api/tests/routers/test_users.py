@@ -45,7 +45,7 @@ def test_create_user_success(client):
             "/users",
             json={
                 "username": "johndoe",
-                "password": "secret123",
+                "password": "secret123",  # pragma: allowlist secret
                 "email": "john.doe@hospital.nhs.uk",
                 "firstName": "John",
                 "lastName": "Doe",
@@ -62,7 +62,7 @@ def test_create_user_failure(client):
             "/users",
             json={
                 "username": "johndoe",
-                "password": "secret123",
+                "password": "secret123",  # pragma: allowlist secret
                 "email": "john.doe@hospital.nhs.uk",
                 "firstName": "John",
                 "lastName": "Doe",

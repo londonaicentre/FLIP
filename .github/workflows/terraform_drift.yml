@@ -122,7 +122,19 @@ jobs:
       # resolver above through $GITHUB_ENV.
       - name: Compose the Terraform env file
         env:
-          TF_ENV: ${{ github.ref_name == 'main' && 'prod' || 'stag' }}
+          # Which mode this run composes for: the deploy/env_mode.mk token, from
+          # the TF_PROD variable on the environment (stag | true | lza-stag | lza).
+          # Unset keeps the legacy pair — `true` on main, `stag` otherwise. The
+          # script derives the env-file name, the AWS_PROFILE the Makefile's guard
+          # expects and which keys are required, from this one token.
+          PROD: ${{ vars.TF_PROD || (github.ref_name == 'main' && 'true' || 'stag') }}
+          # The class this run is allowed to compose, asserted by the script. The
+          # ref says which class the *branch* deploys; TF_PROD says which estate to
+          # deploy it into, and nothing else checks the two agree. They must:
+          # TF_PROD=stag (or lza-stag) on aws-prod makes the drift job plan the prod
+          # estate with staging's shape — the same silent direction the apply
+          # workflow guards against.
+          EXPECTED_ENV_CLASS: ${{ github.ref_name == 'main' && 'prod' || 'stag' }}
           AWS_REGION: ${{ vars.AWS_REGION }}
           VPC_NAME: ${{ vars.VPC_NAME }}
           FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}
@@ -142,7 +154,6 @@ jobs:
           FL_ADMIN_DIRECTORY: ${{ vars.FL_ADMIN_DIRECTORY }}
           INTERNAL_SERVICE_KEY_HEADER: ${{ vars.INTERNAL_SERVICE_KEY_HEADER }}
           TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}
-          MIN_CLIENTS: ${{ vars.MIN_CLIENTS }}
           SES_VERIFIED_EMAIL: ${{ vars.SES_VERIFIED_EMAIL }}
           ALB_SUBDOMAIN: ${{ vars.ALB_SUBDOMAIN }}
           NLB_SUBDOMAIN: ${{ vars.NLB_SUBDOMAIN }}
@@ -156,13 +167,28 @@ jobs:
           K8S_TRUST_PUBLIC_IPS: ${{ vars.K8S_TRUST_PUBLIC_IPS }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
           JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: ${{ vars.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB }}
+          # The LZA keys (FLIP#749). Required when TF_PROD selects a
+          # platform-managed estate (lza-stag / lza), expected absent on the
+          # legacy tokens — see compose-ci-env.sh, which is the one place that
+          # decides. The last four have no `export TF_VAR_…` line in the Makefile,
+          # so the script writes them into the env file as raw exports. The two
+          # web-edge values are optional on purpose: the edge is built from this
+          # stack's outputs, so they are legitimately empty on a first apply.
+          ACCESS_LOGS_BUCKET_NAME: ${{ vars.ACCESS_LOGS_BUCKET_NAME }}
+          EFS_PROVISION_IMAGE: ${{ vars.EFS_PROVISION_IMAGE }}
+          LZA_VPC_NAME: ${{ vars.LZA_VPC_NAME }}
+          MANAGE_DNS: ${{ vars.MANAGE_DNS }}
+          NETWORKING_INGRESS_CIDRS: ${{ vars.NETWORKING_INGRESS_CIDRS }}
+          LZA_ELB_ACCESS_LOGS_BUCKET: ${{ vars.LZA_ELB_ACCESS_LOGS_BUCKET }}
+          LZA_WEB_EDGE_DOMAIN: ${{ vars.LZA_WEB_EDGE_DOMAIN }}
+          LZA_WEB_EDGE_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_EDGE_DISTRIBUTION_ARN }}
           ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
           INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
           INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
           POSTGRES_DB: ${{ vars.POSTGRES_DB }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
-        run: deploy/providers/AWS/scripts/compose-ci-env.sh ".env.${{ github.ref_name == 'main' && 'production' || 'stag' }}"
+        run: deploy/providers/AWS/scripts/compose-ci-env.sh
 
       - name: Write the EC2 keypair public key
         run: |
@@ -170,8 +196,9 @@ jobs:
           if ! aws ssm get-parameter \
             --name /flip/ci/host_aws_public_key \
             --query Parameter.Value --output text > "$HOME/.ssh/host-aws.pub"; then
-            echo "::error::/flip/ci/host_aws_public_key is missing. Seed it with:" \
-                 "make -C deploy/providers/AWS seed-ci-keypair-param"
+            echo "::error::/flip/ci/host_aws_public_key is missing. It is declared in" \
+                 "deploy/providers/AWS/parameter_store.tf and created by the first" \
+                 "laptop apply of that root in this account."
             exit 1
           fi
           chmod 600 "$HOME/.ssh/host-aws.pub"
@@ -185,7 +212,10 @@ jobs:
       - name: Export the Terraform variables
         working-directory: deploy/providers/AWS
         env:
-          PROD: ${{ github.ref_name == 'main' && 'true' || 'stag' }}
+          # Same token as the compose step above, for the same reason: `make` is
+          # what resolves the env file (env_mode.mk) and the TF_VAR_* mapping, and
+          # it has to be looking at the environment this run composed for.
+          PROD: ${{ vars.TF_PROD || (github.ref_name == 'main' && 'true' || 'stag') }}
         run: make --no-print-directory print-tf-env >> "$GITHUB_ENV"
 
       - name: Terraform init
@@ -315,6 +345,15 @@ jobs:
   # Deliberately not `continue-on-error`: if the dispatch fails, production drift
   # silently stops being checked, which is the failure this whole arrangement
   # exists to avoid. The staging leg above is a separate job and still reports.
+  #
+  # One exception, handled in the step: `main` does not carry this workflow until
+  # the first develop -> main release, and GitHub resolves `--ref` against the
+  # workflow file on that ref, so the dispatch 422s until then. That is a known
+  # precondition rather than the breakage this job watches for, and failing on it
+  # would leave the nightly run permanently red — which is how a real dispatch
+  # failure comes to be ignored. The probe recognises that precondition from an
+  # HTTP 404 alone; any other failure to answer the question is fatal, so an API
+  # error can never be mistaken for "absent" and skip production silently.
   dispatch-prod:
     name: Dispatch the production drift run on main
     if: github.ref_name != 'main'
@@ -329,5 +368,44 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+
+          # Absence must be recognised from the HTTP status alone. Treating every
+          # non-zero `gh` exit as "not on main yet" makes a transient 5xx, a rate
+          # limit, a network blip or a 401/403 skip the production dispatch while
+          # the job still reports green — the silent stop this job exists to
+          # prevent, and the opposite of what the README promises. Same fail-closed
+          # rule as resolve-image-tags.sh: one precise signal means absent,
+          # everything else stops the run.
+          #
+          # `-i` prints the status line, so the decision is made on GitHub's own
+          # status code rather than on gh's human-readable error text. Note a
+          # missing *ref* also 404s, which is fine: no `main` means nothing to
+          # dispatch to either.
+          status=0
+          gh api -i --silent \
+            "repos/${GH_REPO}/contents/.github/workflows/terraform_drift.yml?ref=main" \
+            >"${RUNNER_TEMP}/probe.out" 2>"${RUNNER_TEMP}/probe.err" || status=$?
+
+          http_status="$(sed -n '1s#^HTTP/[0-9.]* \([0-9]*\).*#\1#p' "${RUNNER_TEMP}/probe.out")"
+
+          if [[ "${status}" -ne 0 && "${http_status}" != "404" ]]; then
+            echo "::error title=Could not check for terraform_drift.yml on main::gh api failed with exit ${status}, HTTP status '${http_status:-unknown}'. Refusing to assume the workflow is absent — that would skip the production drift run silently. $(cat "${RUNNER_TEMP}/probe.err")"
+            exit 1
+          fi
+
+          if [[ "${http_status}" == "404" ]]; then
+            echo "::warning title=Production drift is not being checked::terraform_drift.yml is not on main yet, so the production leg cannot be dispatched. This resolves itself at the first develop -> main release. Staging drift is unaffected and reported separately."
+            {
+              echo "### Production drift not checked"
+              echo
+              echo "\`terraform_drift.yml\` is not on \`main\` yet, so the production leg could not be"
+              echo "dispatched. GitHub resolves \`--ref\` against the workflow file on that ref."
+              echo
+              echo "This resolves itself at the first \`develop\` → \`main\` release. **Production drift"
+              echo "is not being checked until then.** The staging leg is unaffected."
+            } >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
           gh workflow run terraform_drift.yml --ref main
           echo "Dispatched terraform_drift.yml on main — that run checks production."

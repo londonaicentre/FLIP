@@ -16,21 +16,15 @@
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock checkov-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
+		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
 		demo-video demo-users seed-demo-projects
 
-ifeq ($(PROD),true)
-MAIN_ENV_FILE=.env.production
-__DCKR_SUFFIX=production
-ENV=production
-else ifeq ($(PROD),stag)
-MAIN_ENV_FILE=.env.stag
-__DCKR_SUFFIX=production
-ENV=stag
-else
-MAIN_ENV_FILE=.env.development
-__DCKR_SUFFIX=development
-ENV=development
-endif
+# What PROD means — ENV, __DCKR_SUFFIX and the env-file name — is derived once in
+# deploy/env_mode.mk, shared with every other Makefile that reads PROD. The kit-file
+# targets here (new-trust, sync-trust-kit[s]) name trust/.env.<CODE>.$(ENV), the same
+# token the AWS Makefile's KIT_ENV_SUFFIX and register-trusts.sh use.
+include deploy/env_mode.mk
+MAIN_ENV_FILE=$(ENV_FILE_NAME)
 
 # Print which environment files are being used
 # Exported so `make -C flip-api` / `-C trust` resolve the SAME env file rather than
@@ -216,8 +210,23 @@ central-hub: create-networks-centralhub
 # compose / pydantic failure deeper in the stack.
 up-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
-	@$(MAKE) onboard-onprem-trust KIT=$(KIT)
+	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) PROD=$(or $(PROD),true)
+
+# Upgrade twin of up-onprem-trust (FLIP#1204): the same readiness-checklist gate, then
+# trust/Makefile's data-safe upgrade-trust — pull the target release, recreate what
+# changed, redeploy XNAT WITHOUT xnat-reset. Never up-trust: that is the first-install
+# verb and wipes the XNAT archive. TAG defaults to the release the hub runs (read from
+# the hub's /health), so a plain `make upgrade-onprem-trust KIT=<slot>` is "catch up
+# with the hub"; FL_TAG= pins the FL client apart (sha- moves only — a release builds every
+# image at one tag); FORCE=1 allows a downgrade, YES=1 skips the confirmation. A release
+# TAG is refused unless this checkout is at that tag — the compose files and this very verb
+# come from the checkout, so `git fetch --tags origin && git checkout vX.Y.Z` comes first;
+# ALLOW_CHECKOUT_DRIFT=1 overrides for a deliberate mismatch (testing a branch).
+upgrade-onprem-trust:
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
+	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
+	$(MAKE) -C trust upgrade-trust KIT=$(KIT) PROD=$(or $(PROD),true) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
 # so an operator doesn't have to remember the -C trust path or PROD value.
@@ -247,7 +256,7 @@ down-onprem-trust:
 # the operator's behalf because Hub-shared values + FL kit S3 slice both
 # need prod AWS creds the operator doesn't have.
 onboard-onprem-trust:
-	@uv run --no-config scripts/onboard_onprem_trust.py $(KIT)
+	@uv run --no-config scripts/onboard_onprem_trust.py $(KIT) $(ONBOARD_ARGS)
 
 # Stop all containers
 down:
@@ -307,8 +316,9 @@ ci:
 # gitignored deploy env files, which contributors don't have.
 checkov-lint:
 	bash deploy/providers/AWS/scripts/checkov_lint.sh
-# Re-render the two committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ from
-# deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copy is rendered at docs
+# Re-render the four committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ — the
+# self-contained pair (central-hub-aws-{network,data}.png) and the LZA pair (-lza-{network,data}) —
+# from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
 # build time instead). Uses the local graphviz when `dot` is installed; the dev hosts have none,
 # so it otherwise runs the identical render in a throwaway python:3.12-slim container. The two
 # paths are not byte-identical: the committed copies are the container render (byte-stable across

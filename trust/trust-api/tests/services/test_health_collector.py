@@ -450,6 +450,26 @@ async def test_collect_once_trust_api_entry_is_static_with_own_version():
 
 
 @pytest.mark.asyncio
+async def test_collect_once_names_the_fl_client_image_when_the_deploy_says_which(monkeypatch):
+    """The fl-client has no health endpoint, so its roster entry is the image tag the deploy
+    configured (compose: DOCKER_FL_TAG; chart: flClient.image.tag) with status `unknown` —
+    an identity, not a liveness probe. It is what lets #803/#973 audit which FL build every
+    site runs without a kit-by-kit inspection (FLIP#1204)."""
+    monkeypatch.setattr(health_collector, "FL_CLIENT_IMAGE_TAG", "sha-abc1234")
+    mock_client = AsyncMock()
+    mock_client.get.return_value = _response(200, {"status": "ok", "successful": True, "pingTime": 5})
+
+    with patch(
+        "trust_api.services.health_collector.asyncio.open_connection",
+        side_effect=ConnectionRefusedError("refused"),
+    ):
+        snapshot = await collect_once(mock_client)
+
+    assert snapshot["services"]["fl-client"] == {"status": "unknown", "version": "sha-abc1234", "response_ms": None}
+    assert set(snapshot["services"].keys()) == ROSTER | {"fl-client"}
+
+
+@pytest.mark.asyncio
 async def test_collect_once_reports_down_omop_via_tcp():
     mock_client = AsyncMock()
     mock_client.get.return_value = _response(200, {"status": "ok", "successful": True, "pingTime": 5})

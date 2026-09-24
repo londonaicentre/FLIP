@@ -322,8 +322,7 @@ class TestHubMirrorStaysInSync:
         hub_values = [
             stmt.value.value
             for stmt in constants_module.body
-            if isinstance(stmt, ast.Assign)
-            and isinstance(stmt.value, ast.Constant)
+            if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Constant)
             for target in stmt.targets
             if isinstance(target, ast.Name) and target.id == "DEFAULT_X_AXIS_LABEL"
         ]

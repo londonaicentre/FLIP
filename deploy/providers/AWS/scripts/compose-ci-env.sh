@@ -37,7 +37,31 @@
 # workflow log through this script.
 #
 # Usage:
-#     TF_ENV=stag|prod scripts/compose-ci-env.sh <output-file>
+#     PROD=stag|true|lza-stag|lza scripts/compose-ci-env.sh [output-file]
+#     PROD=stag|true|lza-stag|lza scripts/compose-ci-env.sh --print-env
+#
+# PROD is the deploy/env_mode.mk token — the same value the GitHub environment
+# carries as the TF_PROD variable. It is the only mode input: from it this script
+# derives which env file the Makefile will `include`, which AWS_PROFILE the
+# Makefile's account guard expects, and which keys are required. One token, one
+# table, no second place for the two to disagree.
+#
+# EXPECTED_ENV_CLASS is the caller's own statement of which *class* this run should
+# be composing, and the workflows pass it from the ref (main -> prod, everything
+# else -> stag; `stag` in terraform_plan.yml, which only ever plans staging). It is
+# required when this runs in CI and ignored on a laptop. One freely settable
+# variable now chooses the account shape, and the dangerous direction is silent:
+# TF_PROD=stag on aws-prod composes a prod-sized plan whose RDS is refreshed as
+# `deletion_protection = false`, `skip_final_snapshot = true` — in an unattended
+# apply on main. The class is not a second token to keep in sync: it is the value
+# env_mode.mk derives as ENV_CLASS, carried per row of the table below and pinned
+# against that file by tests/test_ci_env_target.py, so a mis-set TF_PROD is a red
+# compose step instead of a plan someone has to read closely.
+#
+# The output file defaults to <repo root>/.env.<ENV> — the exact path
+# `deploy/providers/AWS/Makefile` derives through env_mode.mk — so CI cannot
+# compose one file and have make include another. Pass a path to override (the
+# test harness does).
 
 set -euo pipefail
 
@@ -46,14 +70,117 @@ die() {
     exit 1
 }
 
-OUT_FILE="${1:-}"
-[[ -n "${OUT_FILE}" ]] || die "usage: TF_ENV=stag|prod $0 <output-file>"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-TF_ENV="${TF_ENV:-stag}"
-case "${TF_ENV}" in
-    stag | prod) ;;
-    *) die "TF_ENV must be 'stag' or 'prod' (got '${TF_ENV}')" ;;
+# The env file has to land exactly where `deploy/providers/AWS/Makefile` derives it
+# — MAIN_ENV_FILE = ../../../$(ENV_FILE_NAME), i.e. <repo root>/.env.<env>. That
+# include is behind a wildcard guard, so a file written one directory off is
+# skipped *silently*: Terraform then sees an empty input set, and the run fails
+# later, in `make`, complaining about a missing key rather than a missing file.
+# Resolved through git where possible (correct for a worktree, or a script invoked
+# by absolute path) and then *checked* rather than assumed: an unrecognised layout
+# stops the run instead of writing somewhere nothing will read.
+REPO_ROOT="$(git -C "${HERE}" rev-parse --show-toplevel 2>/dev/null || true)"
+[[ -n "${REPO_ROOT}" ]] || REPO_ROOT="$(cd "${HERE}/../../../.." && pwd)"
+if [[ ! -f "${REPO_ROOT}/deploy/providers/AWS/Makefile" ]]; then
+    die "cannot resolve the repository root from ${HERE} (tried '${REPO_ROOT}').
+   The env file must be written where deploy/providers/AWS/Makefile includes it."
+fi
+
+# The mode table. ENV_FILE is the name `deploy/env_mode.mk` derives from the same
+# token (ENV_FILE_NAME); AWS_PROFILE_VALUE is what the Makefile's account guard
+# demands for that ENV (PROD_AWS_PROFILE / STAG_AWS_PROFILE / LZA_AWS_PROFILE /
+# LZA_STAG_AWS_PROFILE); GH_ENV is the GitHub environment holding this
+# environment's values; ENV_CLASS_VALUE is env_mode.mk's ENV_CLASS (prod | stag).
+# The LZA tokens reuse aws-stag / aws-prod: the estate was repointed at the LZA
+# accounts rather than given a third and fourth environment (README, "Repointing
+# CI at the LZA accounts"). tests/test_ci_env_target.py pins ENV, ENV_FILE and
+# ENV_CLASS against a real `make` probe, so this table cannot drift from
+# env_mode.mk silently.
+PROD_TOKEN="${PROD:-}"
+case "${PROD_TOKEN}" in
+    stag)
+        ENV=stag
+        ENV_FILE=.env.stag
+        AWS_PROFILE_VALUE=stag
+        GH_ENV=aws-stag
+        ENV_CLASS_VALUE=stag
+        ;;
+    true)
+        ENV=production
+        ENV_FILE=.env.production
+        AWS_PROFILE_VALUE=prod
+        GH_ENV=aws-prod
+        ENV_CLASS_VALUE=prod
+        ;;
+    lza-stag)
+        ENV=lza-stag
+        ENV_FILE=.env.lza-stag
+        AWS_PROFILE_VALUE=lza-stag
+        GH_ENV=aws-stag
+        ENV_CLASS_VALUE=stag
+        ;;
+    lza)
+        ENV=lza-prod
+        ENV_FILE=.env.lza-prod
+        AWS_PROFILE_VALUE=lza-prod
+        GH_ENV=aws-prod
+        ENV_CLASS_VALUE=prod
+        ;;
+    "")
+        die "PROD is not set. It selects the mode: stag, true, lza-stag or lza.
+   In CI it arrives from the TF_PROD variable on the GitHub environment
+   (${GH_ENV:-aws-stag} / aws-prod); on a laptop pass it explicitly."
+        ;;
+    *)
+        die "PROD must be one of: stag, true, lza-stag, lza (got '${PROD_TOKEN}').
+   Those are the deploy/env_mode.mk tokens; set TF_PROD on the GitHub
+   environment, or PROD on the make command line."
+        ;;
 esac
+
+if [[ "${ENV}" == lza-prod || "${ENV}" == lza-stag ]]; then
+    IS_LZA=1
+else
+    IS_LZA=""
+fi
+
+# The class assertion described in the usage block. It runs before the print-only
+# path on purpose: a mismatched token should fail on the first invocation in a
+# job, not on the one that writes the file.
+if [[ -n "${EXPECTED_ENV_CLASS:-}" ]]; then
+    if [[ "${EXPECTED_ENV_CLASS}" != "${ENV_CLASS_VALUE}" ]]; then
+        die "PROD=${PROD_TOKEN} composes the ${ENV_CLASS_VALUE}-class estate (${ENV_FILE}), but this run expects ${EXPECTED_ENV_CLASS}.
+   In CI the expectation comes from the branch (main -> prod, otherwise stag), so
+   this is TF_PROD naming the wrong estate on the GitHub environment — not a reason
+   to change the branch. Refusing to compose, because the dangerous direction is
+   silent: a stag-grade token on prod plans the prod RDS with
+   deletion_protection = false and skip_final_snapshot = true, unattended.
+   Fix TF_PROD (${GH_ENV} expects one of: stag, true, lza-stag, lza)."
+    fi
+elif [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    die "EXPECTED_ENV_CLASS is not set, and this is running in CI.
+   Every workflow that composes this file passes it from the ref, so add
+       EXPECTED_ENV_CLASS: \${{ github.ref_name == 'main' && 'prod' || 'stag' }}
+   to the step's env (terraform_plan.yml passes the literal 'stag' — it only plans
+   staging). Without it, a mis-set TF_PROD composes the wrong estate in silence,
+   which is the whole point of the assertion; set it to '${ENV_CLASS_VALUE}' if
+   ${PROD_TOKEN} is genuinely the intended mode for this job."
+fi
+
+DEFAULT_OUT_FILE="${REPO_ROOT}/${ENV_FILE}"
+
+# `--print-env` prints the derived target and exits — no values needed. It exists
+# so the table above, and the path the env file is written to, can be pinned
+# against `deploy/env_mode.mk` and the Makefile by a test
+# (tests/test_ci_env_target.py) instead of by reading the files side by side.
+if [[ "${1:-}" == "--print-env" ]]; then
+    printf 'ENV=%s\nENV_FILE_NAME=%s\nAWS_PROFILE=%s\nGH_ENV=%s\nENV_CLASS=%s\nOUT_FILE=%s\n' \
+        "${ENV}" "${ENV_FILE}" "${AWS_PROFILE_VALUE}" "${GH_ENV}" "${ENV_CLASS_VALUE}" "${DEFAULT_OUT_FILE}"
+    exit 0
+fi
+
+OUT_FILE="${1:-${DEFAULT_OUT_FILE}}"
 
 # Keys required for every `make init` / `make plan` / `make apply`.
 #
@@ -96,7 +223,6 @@ REQUIRED_KEYS=(
     FL_API_PORT
     FL_SERVER_PORT
     INTERNAL_SERVICE_KEY_HEADER
-    MIN_CLIENTS
     SES_VERIFIED_EMAIL
     TRUST_API_KEY_HEADER
     # UI_PORT is referenced by no resource in this root (the UI is served from S3
@@ -162,7 +288,84 @@ OPTIONAL_KEYS=(
     # configuration. Only stag sets it (to "false", for testing).
     ENFORCE_MFA
 
+    # The LZA keys (FLIP#749) are handled per mode below, not here: required on
+    # the platform-managed estate, optional (and expected absent) on the
+    # self-contained ones.
 )
+
+# ---------------------------------------------------------------------------
+# The LZA keys (FLIP#749) — required on the platform-managed estate, optional
+# (and expected absent) on the self-contained ones.
+#
+# CI drives both shapes now: FLIP's own stag/prod were repointed at LZA workload
+# accounts (README, "Repointing CI at the LZA accounts"), so the same three
+# workflows must compose a legacy env file and an LZA one. Rather than a second
+# script, the PROD token selects which of these are load-bearing:
+#
+#   ACCESS_LOGS_BUCKET_NAME     — "" derives flip-access-logs-<flip_alb_subdomain>,
+#                                 a bucket the legacy account owns
+#   EFS_PROVISION_IMAGE         — the one-shot EFS-provision utility image; on LZA
+#                                 it must come from the ecr-public/ pull-through
+#                                 cache, because the account has no internet egress
+#   LZA_VPC_NAME                — the accelerator-provisioned VPC's Name tag
+#   MANAGE_DNS                  — false while the account has no Route 53 zone
+#   NETWORKING_INGRESS_CIDRS    — the ingress-VPC CIDRs the estate's edge reaches
+#                                 the internal FL NLB from; empty deletes every
+#                                 rule they feed, so it is not defaultable
+#   LZA_ELB_ACCESS_LOGS_BUCKET  — the LogArchive account's central access-logs
+#                                 bucket (an accelerator guardrail)
+#
+# The two web-edge values are the exception in the other direction: the edge is
+# built *from* this stack's outputs, so on a first apply the domain and ARN are
+# legitimately empty (variables.tf documents the two-phase wiring). Optional, so
+# they compose as omitted rather than as an empty string.
+#
+# On the legacy tokens these are optional for the reason they always were —
+# absent is the legacy value in every case — and are still carried through the
+# workflows, so the drift guard above keeps covering them.
+LZA_REQUIRED_KEYS=(
+    ACCESS_LOGS_BUCKET_NAME
+    EFS_PROVISION_IMAGE
+    LZA_VPC_NAME
+    MANAGE_DNS
+    LZA_ELB_ACCESS_LOGS_BUCKET
+    NETWORKING_INGRESS_CIDRS
+)
+LZA_OPTIONAL_KEYS=(
+    LZA_WEB_EDGE_DOMAIN
+    LZA_WEB_EDGE_DISTRIBUTION_ARN
+)
+
+if [[ -n "${IS_LZA}" ]]; then
+    REQUIRED_KEYS+=("${LZA_REQUIRED_KEYS[@]}")
+    OPTIONAL_KEYS+=("${LZA_OPTIONAL_KEYS[@]}")
+else
+    OPTIONAL_KEYS+=("${LZA_REQUIRED_KEYS[@]}" "${LZA_OPTIONAL_KEYS[@]}")
+fi
+
+# The LZA inputs with no `export TF_VAR_…` line of their own in the Makefile: the
+# env file is included as make syntax, so writing them as `export TF_VAR_<name>=…`
+# is what carries them to Terraform — and to `make print-tf-env`, which greps the
+# recipe's environment. Left of the colon is the manifest/GitHub key, right of it
+# the Terraform variable. Data rather than two lists so the emit loop and the
+# manifest cannot drift.
+LZA_RAW_TF_VARS=(
+    "NETWORKING_INGRESS_CIDRS:networking_ingress_cidrs"
+    "LZA_ELB_ACCESS_LOGS_BUCKET:lza_elb_access_logs_bucket"
+    "LZA_WEB_EDGE_DOMAIN:lza_web_edge_domain"
+    "LZA_WEB_EDGE_DISTRIBUTION_ARN:lza_web_edge_distribution_arn"
+)
+
+# Those keys are emitted through the raw loop instead of the plain `KEY=value`
+# form below, so they are skipped there: one key, one line in the file.
+is_raw_tf_var() {
+    local key="$1" pair
+    for pair in "${LZA_RAW_TF_VARS[@]}"; do
+        [[ "${pair%%:*}" == "${key}" ]] && return 0
+    done
+    return 1
+}
+
 # Deliberately absent: PRESERVE_VPC. It is a make-level flag read only by
 # `make destroy` (scripts/destroy-selective.sh), never a Terraform input — and CI
 # has no destroy path, by design.
@@ -180,7 +383,7 @@ case "${FL_BACKEND:-}" in
         OPTIONAL_KEYS+=(FLARE_KIT_DATE)
         ;;
     "")
-        die "FL_BACKEND is not set — it selects which kit date is required. Set it in the ${TF_ENV} GitHub environment."
+        die "FL_BACKEND is not set — it selects which kit date is required. Set it in the ${GH_ENV} GitHub environment."
         ;;
     *)
         die "FL_BACKEND must be 'nvflare' or 'flower' (got '${FL_BACKEND}')"
@@ -189,8 +392,9 @@ esac
 
 # AWS_PROFILE is *not* a stored value, and in CI it does not name a profile at
 # all. It exists solely to satisfy the Makefile's account guard, which refuses to
-# parse unless AWS_PROFILE equals PROD_AWS_PROFILE / STAG_AWS_PROFILE — a guard
-# written for laptops, where the profile really is how you choose an account.
+# parse unless AWS_PROFILE equals PROD_AWS_PROFILE / STAG_AWS_PROFILE /
+# LZA_AWS_PROFILE / LZA_STAG_AWS_PROFILE — a guard written for laptops, where the
+# profile really is how you choose an account.
 #
 # On a runner the account comes from the OIDC role that
 # aws-actions/configure-aws-credentials has already assumed into AWS_ACCESS_KEY_ID
@@ -198,10 +402,9 @@ esac
 # one if it were. The value never leaves the Makefile either: `make print-tf-env`
 # emits only `TF_VAR_*` lines, so AWS_PROFILE does not reach the terraform steps.
 #
-# Deriving it from TF_ENV rather than storing it is still what stops a mis-set
-# GitHub variable from pointing a stag run's Makefile at the prod branch of that
-# guard — which is the only decision the value drives.
-AWS_PROFILE_VALUE="${TF_ENV}"
+# Deriving it from the PROD token (the table at the top) rather than storing it is
+# still what stops a mis-set GitHub variable from pointing a stag run's Makefile
+# at the prod branch of that guard — which is the only decision the value drives.
 
 # ---------------------------------------------------------------------------
 # Validation
@@ -259,7 +462,7 @@ for key in "${OPTIONAL_KEYS[@]}"; do
 done
 
 if ((${#missing[@]} > 0)) || ((${#placeholder[@]} > 0)) || ((${#malformed[@]} > 0)); then
-    echo "❌ Cannot compose ${OUT_FILE} for the '${TF_ENV}' environment." >&2
+    echo "❌ Cannot compose ${OUT_FILE} for the '${ENV}' environment (PROD=${PROD_TOKEN})." >&2
     ((${#missing[@]} > 0)) && {
         echo "" >&2
         echo "   Missing or empty (${#missing[@]}):" >&2
@@ -278,8 +481,8 @@ if ((${#missing[@]} > 0)) || ((${#placeholder[@]} > 0)) || ((${#malformed[@]} > 
     cat >&2 <<EOF
 
    Each name above must exist as a secret or variable on the GitHub environment
-   'aws-${TF_ENV}', with the same value as the matching key in the operator's
-   .env.${TF_ENV/prod/production} file. See deploy/providers/AWS/README.md,
+   '${GH_ENV}', with the same value as the matching key in the operator's
+   ${ENV_FILE} file. See deploy/providers/AWS/README.md,
    "Terraform CI: plan on PR, apply on merge" > "Where the values come from".
 EOF
     exit 1
@@ -303,7 +506,7 @@ trap 'rm -f "${emit_to}"' EXIT
 
 {
     echo "# Generated by deploy/providers/AWS/scripts/compose-ci-env.sh — do not edit."
-    echo "# Environment: ${TF_ENV}. Values come from the GitHub environment 'aws-${TF_ENV}'."
+    echo "# Environment: ${ENV} (PROD=${PROD_TOKEN}). Values come from the GitHub environment '${GH_ENV}'."
     echo "AWS_PROFILE=${AWS_PROFILE_VALUE}"
 } >"${emit_to}"
 
@@ -311,7 +514,23 @@ written=0
 for key in "${REQUIRED_KEYS[@]}" "${OPTIONAL_KEYS[@]}"; do
     value="${!key:-}"
     [[ -n "${value}" ]] || continue
+    # Emitted through the raw TF_VAR_ loop below instead.
+    is_raw_tf_var "${key}" && continue
     printf '%s=%s\n' "${key}" "$(escape_for_make "${value}")" >>"${emit_to}"
+    written=$((written + 1))
+done
+
+# The LZA inputs the Makefile has no `export TF_VAR_…` line for. `include` reads
+# the file as make syntax, so an `export TF_VAR_x=…` line here is a make variable
+# that is exported to every recipe — which is exactly how the operator's own
+# .env.lza-prod carries them (`variables.tf` documents the raw-export form), and
+# what makes `make print-tf-env` see them.
+for pair in "${LZA_RAW_TF_VARS[@]}"; do
+    key="${pair%%:*}"
+    tf_var="${pair##*:}"
+    value="${!key:-}"
+    [[ -n "${value}" ]] || continue
+    printf 'export TF_VAR_%s=%s\n' "${tf_var}" "$(escape_for_make "${value}")" >>"${emit_to}"
     written=$((written + 1))
 done
 
@@ -319,4 +538,4 @@ done
 # credentials, and a runner's workspace is world-readable by default.
 install -m 600 "${emit_to}" "${OUT_FILE}"
 
-echo "✅ Composed ${OUT_FILE} for '${TF_ENV}' — ${written} keys (${#REQUIRED_KEYS[@]} required, plus AWS_PROFILE)."
+echo "✅ Composed ${OUT_FILE} for '${ENV}' (PROD=${PROD_TOKEN}) — ${written} keys (${#REQUIRED_KEYS[@]} required, plus AWS_PROFILE)."

@@ -112,6 +112,16 @@ metadata:
     app.kubernetes.io/component: xnat-web
 spec:
   replicas: 1
+  # Recreate, for the same reason orthanc.yaml uses it: this is a singleton on a
+  # ReadWriteOnce PVC. Under the default RollingUpdate the new pod is surged ALONGSIDE the
+  # old one, and a second XNAT cannot come up — it is refused the volume when scheduled to
+  # another node, and shares one data directory and one database when scheduled to the
+  # same. The surge pod then never goes Ready, the rollout never completes, and the old
+  # pod serves on with the old plugin jars while `xnat-init` talks to it and grinds
+  # through its internal budgets. Terminating first costs a restart's downtime on a
+  # service that cannot run two copies anyway.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "flip-trust.selectorLabels" . | nindent 6 }}
@@ -172,7 +182,7 @@ spec:
 {{- end }}
       containers:
         - name: tomcat
-          image: "{{ .Values.xnat.web.image.repository }}:{{ .Values.xnat.web.image.tag }}"
+          image: "{{ .Values.xnat.web.image.repository }}:{{ include "flip-trust.imageTag" (dict "pin" .Values.xnat.image.pin "global" .Values.global.image.tag "own" .Values.xnat.web.image.tag) }}"
           imagePullPolicy: {{ .Values.xnat.web.image.pullPolicy }}
           ports:
             - name: tomcat

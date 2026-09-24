@@ -43,6 +43,11 @@ services:
       - XNAT_HOME=${XNAT_HOME}
       - XNAT_ROOT=${XNAT_ROOT}
       - XNAT_EMAIL=${XNAT_EMAIL}
+      # Site branding for the enclave XNAT login page. TRUST_NAME comes from the trust kit
+      # (exported by trust/xnat/Makefile); configure-xnat.sh turns it into the site description
+      # ("Welcome to FLIP's XNAT at <trust>"). XNAT_SITE_DESCRIPTION overrides the whole string.
+      - TRUST_NAME=${TRUST_NAME:-}
+      - XNAT_SITE_DESCRIPTION=${XNAT_SITE_DESCRIPTION:-}
       - XNAT_ADMIN_USER=${XNAT_ADMIN_USER}
       - XNAT_ADMIN_INITIAL_PASSWORD=${XNAT_ADMIN_INITIAL_PASSWORD}
       - XNAT_ADMIN_PASSWORD=${XNAT_ADMIN_PASSWORD}
@@ -129,6 +134,12 @@ services:
       replicas: 1
       restart_policy:
         condition: any
+      # An in-place upgrade (make upgrade-xnat) replaces xnat-web alongside this service; until
+      # the new xnat-web task is up its name does not resolve and nginx exits with `host not
+      # found in upstream "xnat-web"`. restart_policy retries it, and `continue` keeps Swarm's
+      # default (pause) from stopping the whole update on that first failed start (FLIP#1204).
+      update_config:
+        failure_action: continue
       placement:
         constraints: [node.role == manager]
     security_opt:

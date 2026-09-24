@@ -86,6 +86,21 @@ class TestCORSConfiguration:
         assert "access-control-allow-origin" not in {k.lower() for k in response.headers.keys()}
 
 
+class TestHealth:
+    """`GET /api/health` names the hub's build so a site can pick the release it should run (FLIP#1204)."""
+
+    def test_health_reports_the_baked_release(self, monkeypatch):
+        monkeypatch.setenv("FLIP_RELEASE", "v9.9.9")
+        body = TestClient(app).get("/api/health").json()
+        assert body["status"] == "ok"
+        assert body["version"] == "v9.9.9"
+
+    def test_health_falls_back_to_the_pyproject_version(self, monkeypatch):
+        monkeypatch.delenv("FLIP_RELEASE", raising=False)
+        body = TestClient(app).get("/api/health").json()
+        assert body["version"] == importlib.import_module("flip_api.utils.version").service_version()
+
+
 class TestDocsGating:
     """Swagger UI / OpenAPI / ReDoc must be disabled in production environments."""
 

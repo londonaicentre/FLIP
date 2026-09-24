@@ -115,9 +115,8 @@ def edit_project_endpoint(
         raise
 
     except Exception as e:
-        error_message = f"Error editing project {project_id}: {str(e)}"
-        logger.error(error_message)
+        logger.exception(f"Error editing project {project_id}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=error_message,
-        )
+            detail="Internal server error",
+        ) from e

@@ -36,7 +36,7 @@ import logging
 import math
 from typing import TYPE_CHECKING
 
-from flip import FLIP
+from flip import FLIP, FLIPBase
 from flip.constants.flip_constants import ModelStatus
 from flip.schemas import split_x_label
 
@@ -55,7 +55,7 @@ def handle_client_metrics(
     msg: Message,
     server_round: int,
     model_id: str,
-    flip: FLIP = FLIP(),
+    flip: FLIPBase = FLIP(),
 ) -> None:
     """Forward per-client metrics from a Flower reply Message to the Central Hub.
 
@@ -133,7 +133,7 @@ def handle_client_metrics(
 def handle_client_exception(
     msg: Message,
     model_id: str,
-    flip: FLIP = FLIP(),
+    flip: FLIPBase = FLIP(),
     site_name: str | None = None,
 ) -> None:
     """Forward a crashed-client reply to the Central Hub and mark the run ERROR.

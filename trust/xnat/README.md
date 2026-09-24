@@ -71,13 +71,20 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
 
   The base file defines the three services (`xnat-web`, `xnat-db`, `xnat-nginx`). The development overlay adds host bind-mounts for hot-reload and resource limits sized for dev machines. The production overlay mounts persistent data volumes under `/opt/flip/xnat/`.
 - Two XNAT instances are deployed as separate Swarm stacks (`xnat1`, `xnat2`), one per trust
-- **Every redeploy is a fresh install.** `up-xnat` blocks on `down-xnat` and then runs `xnat-reset`,
-  which `rm -rf`s `XNAT_DATA_DIR` and recreates it — in development *and* in staging/production
-  (local Docker context or remote-over-ssh alike). So `configure-xnat.sh` always runs against a
-  brand-new instance and re-applies the full site configuration; its `initialized=true`
-  short-circuit is there for a re-run against a *live* instance, not for an upgrade. If an in-place
-  upgrade of a persistent XNAT is ever supported outside this tooling, that short-circuit would skip
-  re-applying site config (`siteUrl`, DQR access control) and would need revisiting.
+- **`up-xnat` is a fresh install; `upgrade-xnat` is the in-place upgrade (FLIP#1204).** `up-xnat`
+  blocks on `down-xnat` and then runs `xnat-reset`, which `rm -rf`s `XNAT_DATA_DIR` and recreates
+  it — in development *and* in staging/production (local Docker context or remote-over-ssh alike).
+  Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> PROD=<env>` (driven
+  by `make -C trust upgrade-trust`) keeps the data dir: it takes a `pg_dumpall` of `xnat-db` into
+  `$XNAT_DATA_DIR/backups/`, refuses to proceed unless the `xnat-data/` tree is owned by the
+  container uid (1001 — an archive written by a pre-hardening root `xnat-web` needs one
+  `chown -R` first), redeploys the stack onto the kit's `XNAT_TAG` (XNAT migrates its own schema on
+  boot; migrations are forward-only, hence the dump), then re-runs `configure-xnat.sh`, which
+  *converges* a configured instance — picked by which admin password XNAT accepts, since a
+  1.9→1.10 migration empties `siteUrl` and the instance re-reports itself uninitialised — re-applying
+  `siteUrl`, the DICOM receiver, the DQR lockdown, the PACS registration and the Container Service
+  backend, and skipping only the first-boot admin password rotation (the service account is
+  re-requested and an existing one left as-is).
 
 ## Setup
 
@@ -175,6 +182,17 @@ In development (when `PROD` is not set), `make up` also mounts the local `xnat/p
 > volume configuration.
 
 If successful, you will be able to log in to XNAT with the service account credentials (specified in the trust's kit file, `trust/.env.<CODE>.<env>`) and see the registered PACS in the DICOM Query-Retrieve plugin.
+
+### Invite links and `aliasTokenTimeout`
+
+FLIP never emails an XNAT password. When a project is approved, imaging-api creates each new user with a random,
+undisclosed password and asks XNAT for an *alias token* on their behalf (`GET /data/services/tokens/issue/user/<name>`,
+which needs the service account's `Administrator` role); the hub emails the resulting host-less set-password path. The
+link's unused lifetime is XNAT's `aliasTokenTimeout` site setting (Site Administration → Security → User Logins /
+Session Controls → Alias Token Timeout; 48 hours by default) — `configure-xnat.sh` leaves it at the site default. Setting
+a password through the link invalidates it. Raising the timeout lengthens every invite link in flight, so treat it as a
+security setting. An account whose link expired unused is re-invited on the next project approval that includes the
+user (imaging-api re-issues a token for any existing account with no successful login), so no manual reset is needed.
 
 ## PACS configuration
 
@@ -281,7 +299,7 @@ The following table lists the plugin versions for the XNAT version `1.10.0` used
 | DICOM Query-Retrieve Plugin     | 3.0.0                       | Yes       | **Must upgrade** from 2.2.0 — rebuilt on JDK 21 + `dcm4che5`, plus a thread-leakage fix |
 | Container Service Plugin        | 3.8.1 (JDK 8 build)         | Yes       | **Must upgrade** from 3.7.3 — 3.8.x is the only column the compatibility matrix ticks for 1.10.0 |
 | Batch Launch Plugin             | 0.9.0 (JDK 8 build)         | Yes       | None — the matrix keeps BLP 0.9.0 for 1.10.0 |
-| OHIF Viewer Plugin              | 3.8.0 available; n/a here   | No        | None — deliberately not installed (FLIP#662) |
+| OHIF Viewer Plugin              | 3.8.0 (`-fat` build)        | Yes       | **Install** — 3.8.0 is the plugin's XNAT 1.10 release; it ships in every deployment mode (Swarm image, dev cache, Helm chart) |
 
 Not applicable to FLIP, but released alongside 1.10.0: **Distributed Events 2.0.0** (only needed for
 load-balanced multi-node XNAT — each FLIP trust runs a single node) and **MFA 1.6.0** (FLIP does not
@@ -298,21 +316,25 @@ use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a servic
 > were confirmed unchanged on a live 3.0.0 instance during the dev-stack smoke test.
 >
 > The DQR thread-leakage fix is also worth attention: it is plausibly related to the bulk-import
-> wedging investigated in FLIP#662 (worked around here with the raised heap in `.env` and by
-> excluding the OHIF viewer). Re-test a large cohort pull on 1.10 + DQR 3.0.0 before assuming those
-> workarounds are still needed.
+> wedging investigated in FLIP#662. What holds that wedge at bay is the directArchive JMS
+> build-concurrency cap baked in by `make-xnat-config.sh` plus the raised heap in `.env`; both stay
+> in place on 1.10. Re-test a large cohort pull (thousands of studies) on 1.10 + DQR 3.0.0 before
+> assuming either is no longer needed.
 
 **Staying on 1.9 instead?** Upstream also shipped **XNAT 1.9.3.4** (urgent fixes for JDK 8
 deployments) and **DQR 2.3.2** (the thread-leak fix alone, JDK 8). That is the lower-risk path to the
 DQR fix if this 1.10 upgrade stalls.
 
-The `xnat-1.10.0/` artifact set (WAR + DQR 3.0.0 + Container Service 3.8.1 + Batch Launch 0.9.0) is
-uploaded and CI-verified. All three upgraded artifacts are public downloads, no account needed:
+The `xnat-1.10.0/` artifact set (WAR + DQR 3.0.0 + Container Service 3.8.1 + Batch Launch 0.9.0 +
+OHIF viewer 3.8.0) is uploaded and CI-verified. All four upgraded artifacts are public downloads, no
+account needed:
 the WAR from `https://api.bitbucket.org/2.0/repositories/xnatdev/xnat-web/downloads/xnat-web-1.10.0.war`,
 DQR from
 `https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar`
-(the same repo also carries `2.3.2`/`2.4.0` for the JDK 8 fallback), and CS from
-`https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar`.
+(the same repo also carries `2.3.2`/`2.4.0` for the JDK 8 fallback), CS from
+`https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar`,
+and the viewer from `https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.8.0-fat.jar` (the
+same URL the Helm chart downloads at pod start).
 Local builds skip S3 when the files already sit in `xnat/build-artifacts/` and `xnat/plugins/`.
 
 ### Adding or updating a plugin
@@ -361,7 +383,7 @@ The development overlay (`docker-compose-stack.development.yml`) sets these cons
 
 - **Missing plugins or an S3/AWS error before startup** — confirm `FLIP_ARTIFACTS_BUCKET_NAME`, renew the selected AWS
   SSO session, then run `make -C trust/xnat xnat-plugins-download` from the repository root. The command must find the
-  batch-launch, container-service, and DICOM Query-Retrieve plugin families before startup can continue.
+  batch-launch, container-service, DICOM Query-Retrieve and OHIF viewer plugin families before startup can continue.
 
 - **XNAT serves its login page but configuration reports plugin-route 404s** — inspect
   `configure-xnat-<stack>.log` in the container. Once the plugin cache is repaired, rerun the individual Trust with

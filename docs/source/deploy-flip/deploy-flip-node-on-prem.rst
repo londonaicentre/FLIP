@@ -76,6 +76,12 @@ laptop):
 - SSH access from the operator workstation (if remote), or local access.
 - Internet connectivity (to pull Docker images and packages).
 - A writable directory for the FLIP application (default ``/opt/flip``).
+- For GPU training or evaluation: an NVIDIA GPU on NVIDIA driver **580 or newer**, with the
+  `NVIDIA Container Toolkit <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_.
+  The FL images ship PyTorch built for CUDA 13, which bundles its own CUDA runtime, so no CUDA
+  toolkit is needed on the host; check the "Driver Version" reported by ``nvidia-smi``. The
+  playbook installs neither the driver nor the toolkit. A CPU-only host (kit
+  ``NUM_AVAILABLE_GPUS=0``) needs neither.
 
 **Trust data** — the two systems the FLIP node reads. Both must already exist
 and already agree with each other before the node is deployed:
@@ -107,7 +113,11 @@ pull runs.
 
 **Central Hub deployed in AWS** — required so the trust can resolve the hub
 URL, fetch the FL participant kit from S3, and so the operator can update the
-NLB security group with the trust's public IP. See :doc:`deploy-central-hub`.
+FL load balancer's security group with the trust's public IP
+(:doc:`deploy-central-hub-aws`; on a Landing Zone Accelerator estate the FL
+entry point is the networking account's edge instead, see
+:doc:`deploy-central-hub-aws-lza`). See :doc:`deploy-central-hub` for the
+shared prerequisites.
 
 ************************************
 Recommended end-to-end (hybrid) flow
@@ -219,8 +229,11 @@ encrypted channel — it contains a plaintext API key, AES encryption key, and
 an FL TLS private key.
 
 **4. Extract, configure, and start (trust operator).** Extract the tarball,
-copy the kit into the checkout, edit **only** the Host-local profile, then
-bring the stack up:
+copy the kit into the checkout — a checkout at the **release the hub runs**
+(``git fetch --tags origin && git checkout v<X.Y.Z>``; the admin tells you which,
+and the hub's ``/api/health`` reports it), never a branch tip, because the
+compose files and Makefiles that run the images come from it — edit **only**
+the Host-local profile, then bring the stack up:
 
 .. code-block:: shell
 
@@ -298,7 +311,15 @@ Hub-shared block from the admin's local env file — credentials are preserved:
 
    make sync-trust-kit KIT=<CODE> PROD=true
 
-Re-transmit the refreshed kit to the operator over the same encrypted channel.
+Re-transmit the refreshed kit to the operator over the same encrypted channel. The
+operator replaces only the Hub-shared block and re-applies it with
+``sudo -E make upgrade-onprem-trust KIT=<slot> YES=1`` — not ``up-onprem-trust``, which
+is the first-install verb and resets XNAT.
+
+**Upgrading to a release (later).** Sites move between releases with
+``sudo -E make upgrade-onprem-trust KIT=<slot>`` — the operator's command, defaulting to
+the release the hub runs. See :doc:`/sys-admin/admin-upgrading-sites` for the runbook,
+including when the admin has to re-issue kits first.
 
 ***********************
 Trust authentication

@@ -16,6 +16,7 @@ Identity comes from ``Depends(authenticate_trust)``, which returns the resolved
 ``Trust`` row. Routes are key-only (no ``{trust_name}`` segment).
 """
 
+import hashlib
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -269,6 +270,48 @@ def test_heartbeat_updates_timestamp_and_returns_identity(mock_auth, mock_trust)
     assert data["trust_name"] == TRUST_NAME
     assert mock_trust.last_heartbeat is not None
     assert mock_db.commit.called
+
+    app.dependency_overrides.pop(get_session, None)
+
+
+def test_heartbeat_reply_names_the_hub_build_and_its_key(mock_auth, mock_trust, monkeypatch):
+    """The reply carries what a site needs to know it is current (FLIP#1204): the hub's
+    build (the release a `make upgrade-onprem-trust` should default to) and a fingerprint
+    of the hub's AES key, so a trust re-keyed under a stale kit learns it from its own
+    /health rather than from every task failing to decrypt."""
+    mock_db = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_db
+    monkeypatch.setenv("FLIP_RELEASE", "v9.9.9")
+    key = b"\x01" * 32
+    expected_fingerprint = hashlib.sha256(key).hexdigest()[:12]
+
+    with patch("flip_api.utils.encryption.get_aes_key", return_value=key):
+        response = client.post("/api/trust/heartbeat")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["hub_version"] == "v9.9.9"
+    assert data["aes_key_fingerprint"] == expected_fingerprint
+    assert len(data["aes_key_fingerprint"]) == 12
+
+    app.dependency_overrides.pop(get_session, None)
+
+
+def test_heartbeat_survives_an_unloadable_hub_key(mock_auth, mock_trust, caplog):
+    """Liveness must not depend on the key: an unreadable key already fails every task, and failing
+    the heartbeat too would show every trust Offline. The reply goes out without a fingerprint."""
+    mock_db = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    with patch("flip_api.utils.encryption.get_aes_key", side_effect=ValueError("AES key must be 32 bytes")):
+        response = client.post("/api/trust/heartbeat")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["aes_key_fingerprint"] is None
+    assert data["trust_id"] == str(mock_trust.id)
+    assert mock_trust.last_heartbeat is not None
+    assert any("fingerprint the AES key" in r.message for r in caplog.records)
 
     app.dependency_overrides.pop(get_session, None)
 

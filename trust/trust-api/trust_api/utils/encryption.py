@@ -29,7 +29,7 @@ which add entries and change nothing on the wire.
 
 The **context** is not carried in the envelope: both sides derive it from what they
 already know (``task:<task_type>`` for a task payload, ``project_id`` for the project id
-handed to FL clients, ``xnat_password`` for the credential a trust returns). It is bound
+handed to FL clients, ``xnat_setup_path`` for the set-password link a trust returns). It is bound
 into the authentication tag, so a payload sealed for one purpose does not verify when
 presented for another — a task payload cannot be re-targeted at a different handler by
 rewriting the unauthenticated ``task_type`` beside it.
@@ -41,6 +41,7 @@ payloads with a peer on the other (the roll-out is a flag day; see ``deploy/READ
 
 import base64
 import binascii
+import hashlib
 import json
 import os
 from typing import Any
@@ -83,13 +84,24 @@ def get_aes_key() -> bytes:
     return _aes_key_cache
 
 
+#: Hex chars of the key fingerprint the hub sends in its heartbeat reply (FLIP#1204); this trust
+#: digests its own decoded key the same way to detect a kit whose key was rotated under it.
+#: 48 bits of a SHA-256 over a 256-bit random key discloses nothing usable.
+_KEY_FINGERPRINT_CHARS = 12
+
+
+def aes_key_fingerprint() -> str:
+    """Short SHA-256 fingerprint of the raw shared key — the hub computes the identical digest."""
+    return hashlib.sha256(get_aes_key()).hexdigest()[:_KEY_FINGERPRINT_CHARS]
+
+
 #: Key id of the platform-wide shared key (``AES_KEY_BASE64``).
 SHARED_KID = "shared"
 
 #: Context labels (see the module docstring). Producer and consumer must pass the same one, and a
 #: mismatch fails closed as an opaque ``InvalidTag``, so call sites use these rather than literals.
 PROJECT_ID_CONTEXT = "project_id"
-XNAT_PASSWORD_CONTEXT = "xnat_password"  # pragma: allowlist secret — a context label, not a credential
+XNAT_SETUP_PATH_CONTEXT = "xnat_setup_path"  # the XNAT set-password link imaging-api returns (FLIP-PT-079)
 
 
 def task_context(task_type: str) -> str:

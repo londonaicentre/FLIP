@@ -19,6 +19,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.5 C-MOVE Testing from the DCMTK Pod](#25-c-move-testing-from-the-dcmtk-pod)
    - [2.6 Checking DICOM Connectivity](#26-checking-dicom-connectivity)
    - [2.6a Exposing the DICOM Receiver to an External PACS (dicomService)](#26a-exposing-the-dicom-receiver-to-an-external-pacs-dicomservice)
+   - [2.7 C-ECHO Passes, C-STORE Aborts (`AbstractMethodError` in dicom.log)](#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog)
 3. [OMOP Data Issues](#3-omop-data-issues)
 4. [Trust Registration and Heartbeat](#4-trust-registration-and-heartbeat)
 5. [XNAT HTTPS Issues](#5-xnat-https-issues)
@@ -559,6 +560,110 @@ NetworkPolicy is scoped to it specifically.
 
 ---
 
+### 2.7 C-ECHO Passes, C-STORE Aborts (`AbstractMethodError` in dicom.log)
+
+**Symptom.** `echoscu` succeeds against the XNAT receiver, the release is `deployed`, the
+`xnat-web` pod is `Ready` and its web UI answers — but every real transfer ends with
+*Peer aborted Association*, and nothing lands in the prearchive.
+
+C-ECHO completes inside the DICOM association layer and never reaches XNAT's importer, so it
+cannot see this class of fault. The first object of a C-STORE does reach it, and if a plugin
+was compiled against a different XNAT core than the one running, the JVM throws
+`AbstractMethodError` from `GradualDicomImporter.customProcessing` and drops the association:
+
+```bash
+xnat_pod=$(kubectl get pods -n flip-trust -l app.kubernetes.io/component=xnat-web \
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n flip-trust "$xnat_pod" -- \
+  grep -E 'AbstractMethodError|unable to read DICOM object null' /data/xnat/home/logs/dicom.log
+```
+
+**Cause.** The running pod's plugin jars are older than the chart's roster. XNAT 1.10.0 needs
+DQR 3.0.0 and Container Service 3.8.x; the 1.9.x DQR (`dicom-query-retrieve-2.3.2-xpl.jar`)
+implements the `ArchiveProcessor.process(...)` signature of the older core.
+
+The pod is where the drift lives, not the values file. `templates/xnat-web.yaml` mounts an
+**emptyDir** at `/data/xnat/home/plugins` and the `download-plugins` init container refills it
+from `xnat.web.plugins.urls` on **every pod creation** — there is no PVC holding stale jars. So
+any pod created from an up-to-date pod spec has the right roster, and a pod with the wrong one
+proves its **spec** is old: no `helm upgrade` has rolled `xnat-web` since the roster changed.
+
+In FLIP#1228 that is precisely what happened: `values.yaml` had carried the corrected roster
+since August, and the pod created on 26 Aug still ran `dicom-query-retrieve-2.3.2-xpl.jar` and
+`container-service-3.8.0-fat.jar`.
+
+**Which of the three reasons a spec goes un-rolled is yours is worth establishing before you
+act — they have different fixes.** Note that a failed post-upgrade hook is *not* on the list:
+`xnat-init` is `post-install,post-upgrade` and `deploy` passes neither `--atomic` nor `--wait`,
+so Helm has already applied the Deployment by the time the hook runs and a hook timeout cannot
+by itself keep an old pod spec live.
+
+1. **The upgrade never carried the new URLs** — an older checkout, or an overrides file pinning
+   old versions. The release's own history settles it:
+
+   ```bash
+   helm get values trust-release -n flip-trust --revision <N> --all | grep -A5 urls
+   ```
+
+2. **The rollout stalled.** `xnat-web` is a singleton on a ReadWriteOnce volume; under the
+   default RollingUpdate the new pod is surged *alongside* the old one, is refused the volume on
+   another node and shares one data directory and database on the same, so it never goes Ready
+   and the old pod serves on. The chart now declares `strategy: Recreate` to prevent this, but a
+   release last upgraded before that lands still shows it:
+
+   ```bash
+   kubectl -n flip-trust get rs,pods -l app.kubernetes.io/component=xnat-web
+   # two ReplicaSets with a stuck surge pod = this case
+   ```
+
+3. **The upgrade never completed.** Five consecutive upgrades failed with
+   `resource Job/flip-trust/trust-release-flip-trust-xnat-init not ready`, the `xnat-init` hook
+   running longer (~22 min observed) than the then-hardcoded `--timeout 20m`. That leaves the
+   release `failed` and the operator reading a hook problem rather than an un-deployed chart —
+   and, when case 2 is also in play, it is the stalled rollout the job is really waiting behind.
+
+**Detection.**
+
+```bash
+# The one-liner: what the pod actually carries
+kubectl exec -n flip-trust "$xnat_pod" -- ls -la /data/xnat/home/plugins
+# expect dicom-query-retrieve-3.0.0-xpl.jar and container-service-3.8.1-fat.jar,
+# and NO 2.3.2-xpl / 3.8.0-fat
+
+# The same comparison, automated against the release's own values
+make -C trust/deploy/helm status        # FAILs naming both the expected and the found version
+
+# Exercise the path the roster is on, rather than just the socket
+make -C trust/deploy/helm smoke-cstore  # real C-STORE via the PACS, then reads dicom.log
+```
+
+**Fix.** Get one `helm upgrade` to complete, from a checkout that carries both the roster and
+`strategy: Recreate`, with a timeout above the init job's real duration:
+
+```bash
+kubectl get job -n flip-trust -w    # time one run before choosing a value
+make -C trust/deploy/helm deploy-trust-k8s KIT=<KIT> HELM_TIMEOUT=45m
+```
+
+The first upgrade onto `Recreate` changes the strategy and replaces the pod in one go. If a
+surge pod from case 2 is still wedged, `kubectl -n flip-trust delete pod <surge pod>` clears it
+so the replacement can take the volume.
+
+`HELM_TIMEOUT` (default `30m`) governs both the Helm hook wait in `deploy` and the `kubectl wait`
+in `xnat-init`. If the hook is genuinely wedged rather than merely slow, deploy with
+`--set xnat.initJob.enabled=false` and then run `make -C trust/deploy/helm xnat-init` on its own,
+where its logs are readable directly.
+
+Then confirm the pod rolled and re-test:
+
+```bash
+kubectl exec -n flip-trust "$xnat_pod" -- ls -la /data/xnat/home/plugins   # mtime = today
+kubectl exec -n flip-trust "$xnat_pod" -- curl -sf -u <admin> localhost:8080/xapi/dqr/settings
+make -C trust/deploy/helm smoke-cstore
+```
+
+---
+
 ## 3. OMOP Data Issues
 
 ### Check OMOP DB Status
@@ -594,8 +699,11 @@ password) and lacks the database-level `search_path`. The omop-db postStart
 hook's old `IF NOT EXISTS` guard skipped both, so the role's password never
 matched `DATA_ACCESS_POSTGRES_PASSWORD` from the chart Secret.
 
-**Fix:** The chart's `omop-db.yaml` postStart hook now `ALTER ROLE`s the
-password unconditionally and sets the `search_path` on every container start.
+**Fix:** The chart's `omop-db.yaml` postStart hook now provisions the role from
+the image's `/flip/omop/create_readonly_users.sql` (the same file Compose runs
+at first initdb — README, "omop-db roles"), then `ALTER ROLE`s the password
+unconditionally and sets the `search_path`, on every container start. It
+reports into the container log: `kubectl logs <omop-db-pod> | grep postStart`.
 On a live cluster (without restarting omop-db):
 
 ```bash
@@ -609,27 +717,50 @@ kubectl rollout restart deployment/trust-release-flip-trust-data-access-api -n f
 
 ### Rebuilding OMOP Data
 
-If the OMOP data is missing (e.g., new deployment), the init job handles
-restoration automatically. Manual trigger:
+The mock OMOP rows (and, with `trustData.seed.orthanc: true`, the DICOM studies) are
+loaded by the `trust-seed` hook — a post-install/post-upgrade Job that fetches the
+canonical per-project tables from Hugging Face anonymously and installs its loaders from
+FLIP at `trustData.seed.sourceRef` (FLIP#1187). No init Job, no S3 snapshot and no AWS
+credentials are involved. A fresh PVC is seeded on install; to re-seed (a data version
+bump, a changed project list) just upgrade, and the hook runs again — it replaces only the
+listed projects' rows and dedupes studies on `SOPInstanceUID`, so the licensed vocabulary
+and any other project's rows survive:
 
 ```bash
-kubectl delete job -n flip-trust trust-release-flip-trust-omop-db-init
 helm upgrade trust-release trust/deploy/helm -n flip-trust \
   -f trust/deploy/helm/values.yaml \
   --set imageTag=stag \
-  --set omopDb.initJob.run=true
+  --set trustData.version=<data-version tag> \
+  --set trustData.seed.projects="cxr_project"
 ```
 
-If S3 auth fails (wrong AWS profile):
+If the hook fails, its Job is kept (`hook-delete-policy: before-hook-creation,hook-succeeded`)
+so the logs are readable:
 
 ```bash
-# Check what profile the omop-db pod is using
-kubectl exec -n flip-trust trust-release-flip-trust-omop-db-0 -- \
-  bash -c 'aws sts get-caller-identity --profile flipstag 2>/dev/null || echo "No valid AWS session"
-
-# The init job mounts ~/.aws from the host and uses AWS_PROFILE=flipstag
-# Ensure your k3s host has a valid session: aws sso login --profile flipstag
+kubectl get jobs -n flip-trust | grep trust-seed
+kubectl logs -n flip-trust job/trust-release-flip-trust-trust-seed
 ```
+
+The usual causes are egress (the Job needs `huggingface.co`, `github.com` /
+`raw.githubusercontent.com` and PyPI — see NETWORK-POLICY.md) or a `trustData.seed.sourceRef`
+that names a FLIP ref whose loaders do not match these images.
+
+**Cohorts come back empty and the vocabulary looks loaded.** A Job killed partway through the
+DICOM vocabulary load — OOM, an evicted pod, a cancelled upgrade — can leave the database
+holding an incomplete vocabulary that still reports itself loaded: the loader's "already
+loaded" signal is one scaffolding concept, committed before the concepts and relationships it
+precedes. Every later upgrade then skips the load, including the Job's own `backoffLimit`
+retries. Reload over it for one upgrade:
+
+```bash
+helm upgrade trust-release trust/deploy/helm -n flip-trust \
+  -f trust/deploy/helm/values.yaml \
+  --set trustData.seed.forceDicomVocab=true
+```
+
+Then put it back — it reloads unconditionally, and `concept_relationship` carries no unique
+key, so leaving it on duplicates those rows on every upgrade.
 
 ---
 
@@ -729,6 +860,8 @@ machine and in `trust/deploy/helm/scripts/`. Key scripts:
 | Script | Purpose |
 |--------|---------|
 | `sync_k8s_kit.py` | Sync a registered trust kit into the cluster (Secret + override) |
+| `smoke-cstore.sh` | Drive a real C-STORE through the PACS and read XNAT's receiver log (§2.7) |
+| `check_status.py` | Full deployment smoke, including the plugin-roster comparison (§2.7) |
 
 ### Available Tools on DCMTK Pod
 
@@ -965,7 +1098,7 @@ command: ["/bin/sh", "-c", ". /opt/nvflare/startup/start.sh && wait"]
 ### 7.7 AWS Credentials Expired in K8s Secret
 
 **Symptom:** fl-client pod logs show `AccessDenied` when trying to download
-participant kit from S3. Trust's omop-db-init job also fails with S3 errors.
+participant kit from S3. The omop-db vocab-load Job (the chart's only AWS-bearing Job) also fails with S3 errors.
 
 **Root Cause:** The K8s Secret `aws-credentials` (mounted by init containers)
 contains stale AWS SSO credentials. SSO sessions expire after 12-24 hours.
@@ -1025,7 +1158,7 @@ aws ecs update-service --cluster flip-cluster --service fl-server-net-1 \
 task fails with `CannotPullContainerError`.
 
 **Root Cause:** The NVFLARE container images are hosted in a private ECR
-repository (account `080369786334` in `eu-west-2`). The K8s cluster or ECS
+repository (the `<ecr-account-id>` account in `eu-west-2`). The K8s cluster or ECS
 task execution role lacks permissions to pull from this repository.
 
 **Fix (K8s):** Create an `imagePullSecret` with ECR credentials:
@@ -1033,7 +1166,7 @@ task execution role lacks permissions to pull from this repository.
 # Generate ECR auth token
 ecr_password=$(aws ecr get-login-password --profile flipstag --region eu-west-2)
 kubectl create secret docker-registry ecr-cred \
-  --docker-server=080369786334.dkr.ecr.eu-west-2.amazonaws.com \
+  --docker-server=<ecr-account-id>.dkr.ecr.eu-west-2.amazonaws.com \
   --docker-username=AWS \
   --docker-password="$ecr_password" \
   -n flip-trust
@@ -1055,7 +1188,7 @@ flClient:
     "ecr:BatchGetImage",
     "ecr:BatchCheckLayerAvailability"
   ],
-  "Resource": "arn:aws:ecr:eu-west-2:080369786334:repository/*"
+  "Resource": "arn:aws:ecr:eu-west-2:<ecr-account-id>:repository/*"
 }
 ```
 

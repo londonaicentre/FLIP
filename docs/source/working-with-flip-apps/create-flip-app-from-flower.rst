@@ -451,8 +451,8 @@ Your own ``pyproject.toml`` drives local runs. Beyond a normal Flower project it
 
    - ``flip-utils`` installs from the source copy shipped inside the FL images at ``/opt/flip-utils`` —
      never from PyPI — so the platform always runs the ``flip-utils`` matching its images.
-   - ``torch``/``torchvision`` come from PyTorch's cu128 wheel index (PyPI's default cu130 wheels
-     require a newer NVIDIA driver than FLIP hosts run).
+   - ``torch``/``torchvision`` come from PyTorch's cu130 wheel index (Torch 2.13 / torchvision 0.28).
+     GPU hosts require NVIDIA driver 580 or newer; upgrade older drivers before deploying these images.
 
    Everything else resolves from PyPI at run time, so trust and hub hosts need outbound HTTPS to PyPI
    and ``download.pytorch.org``. If your app needs a dependency the base template does not declare,
@@ -497,14 +497,14 @@ Local testing before upload
 
 Two local paths are supported, and the app code is identical on both because site identity comes from the Flower ``Context`` rather than the environment (see the ``client_identity`` note above). ``LOCAL_DEV`` mode (the ``flip-utils`` default outside the platform) makes ``get_dataframe`` read a CSV and ``get_by_accession_number`` read a directory, named by ``DEV_DATAFRAME`` and ``DEV_IMAGES_DIR``; both paths point them at the tutorial's dataset under ``fl-tutorials/data/``.
 
-**Fast inner loop: the flwr simulator.** ``make sim-tutorial`` runs ``flwr run`` in-process — no SuperLink, no SuperNodes, no FL API, no Docker — so a code change is one re-run away:
+**Fast inner loop: the flwr simulator.** ``make sim-tutorial`` runs ``flwr run`` against a local SuperLink flwr starts itself — no SuperLink container, no SuperNodes, no FL API, no Docker — so a code change is one re-run away:
 
 .. code-block:: bash
 
    make -C fl-tutorials download-spleen-data FL_BACKEND=flower   # reference dataset into fl-tutorials/data/
    make -C fl-tutorials sim-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower
 
-The wrapper (``fl-tutorials/flower/sim-tutorial.sh``) sets the dev-data variables per tutorial, derives the simulator's site count from ``flip-min-clients`` and passes it as ``num-partitions``, and supplies the one run-config value the platform's submit step would otherwise inject — ``flip-job-dir``, pointed at the downloaded checkpoint — so the ``evaluation`` tutorial runs unchanged too. Under the simulator every ``ClientApp`` sees the same shared cohort, so the tutorials call ``partition_cohort`` (also in ``flip.flower.identity``) to take their own disjoint slice; on the platform that is a no-op, because each trust's data-access-api already serves only its own rows.
+The wrapper (``fl-tutorials/flower/sim-tutorial.sh``) sets the dev-data variables per tutorial, derives the simulator's site count from ``flip-min-clients`` and passes it as ``num-partitions``, and supplies the one run-config value the platform's submit step would otherwise inject — ``flip-job-dir``, pointed at the downloaded checkpoint — so the ``evaluation`` tutorial runs unchanged too. Its exit status is the run's terminal status as the SuperLink reports it (``flwr run`` alone returns 0 whatever became of the run), and it refuses to start against a local SuperLink another checkout left listening on the Control API port, which would otherwise execute the app in that checkout's environment (naming the pid and command line where ``ss`` can see them). Under the simulator every ``ClientApp`` sees the same shared cohort, so the tutorials call ``partition_cohort`` (also in ``flip.flower.identity``) to take their own disjoint slice; on the platform that is a no-op, because each trust's data-access-api already serves only its own rows.
 
 **Full-fidelity check: the compose stack.** ``fl-services/flower`` runs a SuperLink, two SuperNodes and an FL API in containers, with the dev data bind-mounted, and exercises what the simulator cannot: TLS, the FL API submit path and SuperNode registration. Run it once before uploading:
 

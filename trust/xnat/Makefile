@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build up down up-xnat down-xnat xnat-shell xnat-stack-down clean \
+.PHONY: build up down up-xnat down-xnat upgrade-xnat xnat-backup xnat-shell xnat-stack-down clean \
 	xnat-war-download xnat-plugins-download xnat-reset xnat-configure \
 	create-xnat-network test unit_test local_test
 
@@ -57,13 +57,10 @@ export XNAT_TAG
 # file. The XNAT swarm stack name and overlay network are derived from the
 # assigned slot NUMBER (not the CODE), so XNAT co-resides on the same
 # deploy_trust-network-<N> as the slot-numbered trust core services.
-ifeq ($(PROD),true)
-ENV := production
-else ifeq ($(PROD),stag)
-ENV := stag
-else
-ENV := development
-endif
+# ENV (the kit suffix) and IS_DEPLOYED (non-empty for every PROD value except
+# unset — the LZA pair takes the stag/prod paths and stack files below, with its
+# own kit suffix) come from the shared table in ../../deploy/env_mode.mk.
+include ../../deploy/env_mode.mk
 KIT_FILE := $(if $(wildcard ../.env.$(KIT).$(ENV)),../.env.$(KIT).$(ENV),../.env.$(KIT))
 -include $(KIT_FILE)
 # Kit-file values must reach the shell env, not just Make vars. docker stack
@@ -134,7 +131,7 @@ PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 # bind-mount it directly without a separate `${XNAT_PATH}/` prefix. Both
 # this recipe and the compose stacks read the same exported var so the
 # dirs Make creates and the dirs compose mounts stay in lockstep.
-XNAT_DATA_DIR ?= $(if $(filter true stag,$(PROD)),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM))
+XNAT_DATA_DIR ?= $(if $(IS_DEPLOYED),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM))
 XNAT_DATA_DIR := $(abspath $(XNAT_DATA_DIR))
 export XNAT_DATA_DIR
 
@@ -173,7 +170,11 @@ XNAT_DIR_OWNER := $(XNAT_CONTAINER_UID):$(XNAT_CONTAINER_GID)
 # The bind-mount sources xnat-reset provisions. xnat-db-data is stag/prod-only:
 # the development stack gives xnat-db no persistent bind mount.
 XNAT_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive build cache) \
-                  $(if $(filter true stag,$(PROD)),$(XNAT_DATA_DIR)/xnat-db-data)
+                  $(if $(IS_DEPLOYED),$(XNAT_DATA_DIR)/xnat-db-data)
+# The subset xnat-web itself writes — what upgrade-xnat checks on a LIVE site. xnat-db-data
+# is excluded there: Postgres's entrypoint re-owns it to its own uid on first boot, so on
+# a running site it is legitimately not 1001 and the reset-time check does not apply.
+XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive build cache)
 
 # Verify every bind-mount source is owned by the container uid, and fail naming
 # the exact remedy when it is not. Fatal rather than a warning because the
@@ -196,6 +197,8 @@ XNAT_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive bu
 # the local branches, `ssh <ctx>` on the remote-swarm one, where the paths live
 # on the trust host and an operator pasting a bare `sudo chown` would either get
 # "no such file or directory" or chown a same-named path on their own machine.
+# $(3), optional, is how many sources $(1) stats — every entry of $(XNAT_DATA_DIRS) by
+# default; upgrade-xnat passes the count of $(XNAT_WEB_DATA_DIRS), the subset it checks.
 #
 # stat's stderr is deliberately not discarded. A stat that fails for a reason
 # other than a missing directory — an unreadable parent, or a non-GNU stat that
@@ -204,7 +207,7 @@ XNAT_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive bu
 # and still fires the guard, now with stat naming the path it could not read.
 define check_xnat_dir_owner
 	owned="$$($(1) | grep -cx '$(XNAT_DIR_OWNER)' || true)"; \
-	if [ "$$owned" != "$(words $(XNAT_DATA_DIRS))" ]; then \
+	if [ "$$owned" != "$(or $(3),$(words $(XNAT_DATA_DIRS)))" ]; then \
 		echo "❌  XNAT bind-mount sources under $(XNAT_DATA_DIR) are not all owned by $(XNAT_DIR_OWNER)."; \
 		echo "    xnat-web runs as uid $(XNAT_CONTAINER_UID) and cannot write them, so DICOM"; \
 		echo "    retrieval fails with the PACS reporting 'Peer aborted Association' and XNAT"; \
@@ -221,10 +224,7 @@ export XNAT_PATH=$(realpath .)
 # xnat/plugins over the image, so only development needs the host-side plugin cache (and the S3
 # bucket and AWS credentials that populate it). Production bakes plugins into the image, and a
 # trust host has neither FLIP_ARTIFACTS_BUCKET_NAME nor a reason to reach S3 for them.
-ifeq ($(PROD),true)
-STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.production.yml
-XNAT_PLUGINS_FROM_HOST =
-else ifeq ($(PROD),stag)
+ifneq ($(IS_DEPLOYED),)
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.production.yml
 XNAT_PLUGINS_FROM_HOST =
 else
@@ -411,9 +411,13 @@ down-xnat:
 # the stack had deployed — so it was never configured (FLIP#1210). The unprefixed stack is the
 # one that loses: its name is a suffix of the prefixed one. `xnat-stack-down` already matched
 # on the namespace label; these two complete the set.
-# $(1) is the stack name. Prints the container id(s), one per line, like `docker ps -q`.
+# $(1) is the stack name, $(2) the service (xnat-web, xnat-db). Prints the container id(s), one
+# per line, like `docker ps -q`.
+define xnat_service_container_ids
+docker ps -q --filter "label=com.docker.stack.namespace=$(1)" --filter "label=com.docker.swarm.service.name=$(1)_$(2)"
+endef
 define xnat_web_container_ids
-docker ps -q --filter "label=com.docker.stack.namespace=$(1)" --filter "label=com.docker.swarm.service.name=$(1)_xnat-web"
+$(call xnat_service_container_ids,$(1),xnat-web)
 endef
 
 # Refuse to `docker exec` into more than one container. Two ids can only be two tasks of the
@@ -427,6 +431,71 @@ define require_one_xnat_web_container
 		exit 1;; \
 	esac
 endef
+
+# ── Release upgrade (FLIP#1204) ───────────────────────────────────────────
+# Move a LIVE XNAT to the kit's XNAT_TAG with its data in place: back up the database,
+# redeploy the stack (Swarm rolls each service onto the new image; the bind-mounted
+# archive and xnat-db-data stay put; XNAT migrates its schema on boot), then re-run the
+# configure pass, which converges an already-initialised instance (receiver, DQR, PACS,
+# Container Service, dcm2niix). Everything up-xnat does EXCEPT xnat-reset — that rm -rf
+# is why up-xnat can never be the upgrade verb.
+#
+# The ownership check is what turns a pre-1.10 site's upgrade into a loud, one-line fix
+# rather than a boot loop: xnat-web is non-root (uid 1001) since the hardening, and an
+# archive written by an older root-running xnat-web is unreadable to it.
+# XNAT_TAG ?= DOCKER_TAG, so the tag comes from the kit that upgrade-trust just rewrote.
+upgrade-xnat: create-xnat-network
+	$(require_kit)
+	$(require_xnat_passwords)
+	@echo "⬆️  Upgrading XNAT stack $(XNAT_STACK) to $(XNAT_TAG) (data dir $(XNAT_DATA_DIR) kept)..."
+	@# Check the directories where they are: on the trust host over ssh when the swarm is remote
+	@# (upgrade-trust-ec2 runs this from the admin workstation), locally otherwise — the same
+	@# split the first-install reset target makes.
+	@xnat_ctx="$$(docker context show)"; \
+	xnat_endpoint="$$(docker context inspect "$$xnat_ctx" --format '{{.Endpoints.docker.Host}}' 2>/dev/null)"; \
+	case "$$xnat_endpoint" in \
+		ssh://*) $(call check_xnat_dir_owner,ssh "$$xnat_ctx" "stat -c '%u:%g' $(XNAT_WEB_DATA_DIRS)",ssh $$xnat_ctx,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
+		*) $(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
+	esac
+	$(MAKE) xnat-backup KIT=$(KIT)
+	XNAT_PATH=${XNAT_PATH} \
+	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
+	XNAT_WEB_PORT=$(XNAT_WEB_PORT_EFFECTIVE) \
+	XNAT_AETITLE=$(XNAT_AETITLE_EFFECTIVE) \
+	PACS_UI_PORT=$(PACS_UI_PORT_EFFECTIVE) \
+	DOCKER_NETWORK_NAME=$(XNAT_NETWORK) \
+	docker stack deploy --with-registry-auth --resolve-image "$(XNAT_RESOLVE_IMAGE)" --detach=false ${STACK_FILES} $(XNAT_STACK)
+	$(MAKE) xnat-configure XNAT_PROJECT=$(XNAT_STACK)
+
+# pg_dumpall of the running xnat-db into $(XNAT_DATA_DIR)/backups/ — the rollback path for an
+# XNAT upgrade, whose schema migrations are forward-only, so no running xnat-db is a refusal, not
+# a skip. The dump is compressed inside the db container under pipefail, and the host pipeline
+# runs under bash + pipefail too, so pg_dumpall's own failure fails the recipe instead of leaving
+# gzip a valid stream. One throwaway container writes it into the (root- or 1001-owned) data dir
+# without sudo and keeps it only when it decompresses to pg_dumpall's completion trailer. The db
+# is found by the swarm labels, like xnat-web (FLIP#1210).
+xnat-backup: SHELL := /bin/bash
+xnat-backup:
+	$(require_kit)
+	@set -o pipefail; \
+	db=$$($(call xnat_service_container_ids,$(XNAT_STACK),xnat-db) | head -1); \
+	if [ -z "$$db" ]; then \
+	  echo "❌ No running $(XNAT_STACK)_xnat-db to back up — refusing to upgrade XNAT without a dump."; \
+	  echo "   Check the stack: docker stack ps $(XNAT_STACK)"; \
+	  exit 1; \
+	fi; \
+	dump="backups/xnat-db-$$(date +%Y%m%d-%H%M%S).sql.gz"; \
+	echo "💾 Backing up the XNAT database to $(XNAT_DATA_DIR)/$$dump ..."; \
+	if docker exec "$$db" sh -c 'set -o pipefail; pg_dumpall -U postgres | gzip -c' \
+	     | docker run --rm -i -v "$(XNAT_DATA_DIR):/x" alpine:3.20 sh -c "set -o pipefail; \
+	         mkdir -p /x/backups && cat > /x/$$dump \
+	         && zcat /x/$$dump | tail -n 5 | grep -q 'PostgreSQL database cluster dump complete' \
+	         && ls -l /x/$$dump"; then \
+	  exit 0; \
+	fi; \
+	docker run --rm -v "$(XNAT_DATA_DIR):/x" alpine:3.20 rm -f "/x/$$dump"; \
+	echo "❌ The XNAT database dump failed or is incomplete — no backup was kept, and nothing was upgraded."; \
+	exit 1
 
 # Get a shell in the running xnat-web container for the selected trust.
 xnat-shell:
@@ -533,7 +602,7 @@ xnat-reset:
 	fi
 	@set -e; \
 	echo "Deleting previous XNAT data and creating new directories for $(KIT) ..."; \
-	if [ "$(PROD)" = "true" ] || [ "$(PROD)" = "stag" ]; then \
+	if [ -n "$(IS_DEPLOYED)" ]; then \
 		echo "  📍 Using prod data dir: $(XNAT_DATA_DIR)/"; \
 		xnat_ctx="$$(docker context show)"; \
 		xnat_endpoint="$$(docker context inspect "$$xnat_ctx" --format '{{.Endpoints.docker.Host}}' 2>/dev/null)"; \

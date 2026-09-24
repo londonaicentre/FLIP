@@ -15,38 +15,58 @@
 
 ## :sparkles: Highlights
 
-- **FL frameworks move to current GA releases** — NVFLARE 2.8.0 → 2.9.0 (#1174, via the 2.8.1 interim in #1046) and Flower → 1.36.0 (#1175).
-- **Real Trust PACS support** (#994) — XNAT's DICOM receiver and web UI get separate host ports (`XNAT_PORT` / `XNAT_WEB_PORT`), the upstream PACS is configured per trust (`PACS_HOST` / `PACS_AETITLE` / `PACS_QR_PORT`, retrieval throttle, extended-negotiation flag), and imaging-api reads the PACS id from XNAT instead of assuming 1.
-- **Trust data: one copy, versions as tags** (#1101) — `aicentreflip/trust-data` holds every artefact once at an unversioned path; a data version is a git tag pinned by the single `trust/.data_version`. The new seed pipeline (`make -C trust seed-trusts PROJECTS=…`) loads any published project into a running trust by `source_trust`. OMOP mock-data generation is reproducible in-tree and gated against the published export (#1097), with the dataset tooling consolidated under `fl-tutorials/datasets/` (#1070).
-- **Terraform runs in CI** (#1082) — OIDC-authenticated plan on every PR touching `deploy/providers/AWS/**`, apply on merge (`develop` → stag, `main` → prod), nightly drift detection, plus a checkov security lint (#1057) and LZA-aligned CloudWatch retention (#1156).
-- **Per-trust FL privacy policy** (#853) — each trust enforces its own NVFLARE site-side `privacy.json`.
-- **Tabular-only projects** (#1129) — a project can opt out of the imaging stage (`has_imaging`), so EHR-only cohorts skip XNAT entirely.
-- **UI** — one Models page with a project filter and unified tables (#1014); consistent per-trust colours and sorted metrics plots (#1012); dependency scoping enforced in CI and Mirage no longer shipped (#1061).
-- **Dev experience** — a second dev hub on one host via `FLIP_INSTANCE` (#958); 13 local-setup blockers fixed across macOS, non-interactive runs and the K8s trust chart (#1010); the published FL images run with any host UID (#1172); SES is out of dev deployments (#1083).
+- **Sites can be upgraded to a named release** (#1204, via #1205 and #1285) — every image is built at the `v*` tag, and each deployment path gains a data-safe upgrade verb: `upgrade-onprem-trust`, `upgrade-trust-k8s`, `upgrade-trust-ec2` and `upgrade-xnat`. A registry preflight refuses a tag whose images are not all published, the XNAT database is dumped before the stack moves, and a `v*` target is refused unless the checkout is at that tag. **This is the first release that carries the verb** — a site on v0.7.0 or earlier gets it by checking out the tag first.
+- **Trust data has one path: seeding** (#1190) — `make up` starts each trust's omop-db and Orthanc on empty volumes and seeds them from the published canonical tables at the version pinned in `trust/.data_version`. The pgdata and Orthanc volume snapshots are retired.
+- **The cohort disclosure floor counts patients, not rows** (#1197) — `COHORT_QUERY_THRESHOLD` now resolves distinct subjects via `person_id`, or through `omop.image_occurrence` when only `accession_id` is present. Ten X-rays from one patient no longer read as ten subjects. A cohort exposing neither column is refused. Cohort modality distribution ships alongside it.
+- **The docs GIFs leave git** (#1236, via #1238) — each recording is published to the `aicentreflip/docs-gifs` Hugging Face dataset under an immutable tag and fetched at docs-build time, with `docs/.gifs_version` as the one pin; the repository stops carrying binary churn.
+- **PyTorch 2.13** across the FL images and tutorials (#439, #475, via #1268), which also restores tutorial simulation on macOS.
+- **A brain MRI tutorial dataset** from MSD Task01_BrainTumour (#1221, via #1224) — tables-only publish with deterministic DICOM generated locally, and plastimatch out of the spleen chain.
+- **`AGENTS.md` is the single agent-instruction file** (#1251) — all nine `CLAUDE.md` copies are gone, at every level, as file or symlink.
+- **flip-utils is type- and format-gated like every other service** (#1247, via #1248) — mypy and `ruff format --check` in both `make -C flip-utils unit-test` and CI, with the 58 accumulated errors cleared.
 
 ## :warning: Breaking Changes
 
-- **Merging to `main` now applies production infrastructure** (#1082). The previous "don't `make apply` for prod" rule is superseded; the FL quiesce gate holds any apply that would replace `fl-server-net-1` / `fl-api-net-1` until re-dispatched with `fl_quiesced: true`.
-- **Trust-data layout** (#1101): the per-service `trust/omop-db/.data_version` and `trust/orthanc/.data_version` pins are replaced by one `trust/.data_version`, and the versioned filenames (`trust<N>_pgdata_<v>.tar`, `omop-csv/<v>/`) are no longer read — every consumer fetches `resolve/<tag>/<unversioned path>`. Trust hosts must run this release's scripts before the legacy files are removed from the dataset.
-- **XNAT ports** (#994): `XNAT_PORT` is now the DICOM SCP receiver port only; the host-published web UI port is the new `XNAT_WEB_PORT`, and the two must differ. Trust kit files need both.
-- **Flower apps require `config.json`** (#991, #1056): the hub no longer guesses a job type; a missing `config.json` fails loudly instead of defaulting to `standard`. Flower also needs `.toml` in `ALLOWED_MODEL_FILE_EXTENSIONS`.
-- **FL client image scope** (#954): each fl-client mounts only its own net's slice of the images tree; training code paths are unchanged, but host directories must be pre-created writable per net.
-- **NVFLARE 2.9.0** (#1174) carries upstream breaking changes for custom jobs; see the tutorial and template updates in that PR.
-- **Database migration** (#1129): flip-api adds the `has_imaging` column via Alembic; it runs at boot.
+- **A cohort that passed the disclosure threshold before may now be refused** (#1197). The floor counts distinct subjects rather than rows, so a cohort of ten studies belonging to three patients now falls below a threshold of 10. Both row-level routes are gated — `/cohort/dataframe` and `/cohort/accession-ids` — and the cohort is re-evaluated live on every call, so an imported project can begin refusing later. A cohort resolving neither `person_id` nor `accession_id` is refused outright.
+- **Trust volumes are seeded, not restored** (#1190). The pgdata and Orthanc volume-snapshot path is gone; `make up` seeds from the canonical tables at `trust/.data_version`. A trust carrying data from the old path keeps it — seeding is marker-guarded — but the snapshot tooling it came from no longer exists.
+- **The docs GIFs are no longer in the repository** (#1238). A docs build fetches them from the Hugging Face dataset at the tag in `docs/.gifs_version`; a build with no network reaches the fetcher, not a local file. Anything referencing the old in-tree GIF paths needs updating.
+- **`CLAUDE.md` is gone and must not be reintroduced** (#1251). Claude Code reads `AGENTS.md` only from v2.1.277 onward, only where no CLAUDE-named file exists in the project, and not at all on Bedrock, Vertex or Foundry — so a personal `CLAUDE.md` anywhere at or above the checkout silently suppresses every `AGENTS.md` in the tree. Personal instructions belong in `~/.claude/`.
+- **PyTorch moves to 2.13** (#1268). The FL images rebuild on it; uploaded app code pinned to an older torch, or relying on a removed API, needs re-testing before it runs on this release.
+- **EC2 hosts no longer replace themselves on AMI drift** (#1282). The Ubuntu AMI data source is now ignored for changes, so a new upstream AMI stops silently destroying and recreating the bastion and trust hosts on the next apply — and equally, those hosts no longer pick up a new base image by themselves. Replacing one is now a deliberate act.
+
+## :arrows_counterclockwise: Site upgrade
+
+<!-- The prompt to trust operators (FLIP#1204). Sites upgrade on their own schedule and to the
+     release their hub runs; this section is how they learn what this release asks of them. -->
+
+<!-- Fill the first three lines in for EVERY release; they are not boilerplate. "Ordering" is where a
+     flag-day is announced: a payload-cipher change or an FL-framework bump means hub AND sites in one
+     Deployment-Mode window, and a site left behind fails every task until it moves. -->
+
+- **Required:** no, if you are already on v0.7.0 — nothing in this release changes the hub↔site payload contract, so upgrade at your convenience. **Yes, and as a flag day, if you are on v0.6.x or earlier**: you cross v0.7.0's AES-256-GCM change on the way here, and that has no CBC fallback.
+- **Ordering:** hub first, sites at their own pace — *unless* you are coming from v0.6.x, in which case hub and sites move together in one Deployment-Mode window and a site left behind answers every task `Invalid payload: failed authentication`.
+- **Refreshed kit needed:** no — the Hub-shared block is unchanged. (If the hub's AES key or FL kit date changed with your hub deploy, re-sync: `make sync-trust-kit KIT=<CODE> PROD=<env>` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>`.)
+- **Operator command**, on the trust host, from your FLIP checkout:
+  ```bash
+  git fetch --tags origin && git checkout {{TAG}}        # the compose files and the verb come from the checkout, not the images
+  sudo -E make upgrade-onprem-trust KIT=<slot>           # defaults to the release the hub runs; TAG={{TAG}} pins it before the hub moves
+  ```
+  Kubernetes: `make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> PROD=<env> TAG={{TAG}}`; EC2: `make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env> TAG={{TAG}}` — both from a checkout at {{TAG}}. Runbook: *docs → System administrators → Upgrading a site*. Sites on v0.7.0 or earlier do not have the command until they check out the tag; this is the first release whose images are published at a `v*` tag.
 
 ## :seedling: New Features
 
-- Real Trust PACS configuration and DQR (#994); tabular-only projects (#1129); per-trust FL privacy policy (#853).
-- Seed pipeline and tag-versioned trust data (#1101); reproducible OMOP mock-data provenance (#1097); shared `fl-tutorials/datasets/` tree (#1070).
-- One Models page (#1014); torch.jit-free MAP bundle form (#1020); second dev hub (#958); SES removed from dev (#1083); CloudWatch retention aligned with the LZA baseline (#1156).
-- Terraform plan/apply/drift in CI (#1082) with checkov lint (#1057).
+- Repeatable site upgrades: `v*`-tagged images, the per-path upgrade verbs, registry preflight, the XNAT pre-upgrade dump and the upgrade runbook (#1205, #1285).
+- Trust seeding from the canonical dataset at bring-up, versioned by `trust/.data_version` (#1190).
+- Per-subject cohort disclosure accounting and cohort modality distribution (#1197).
+- The brain MRI tutorial dataset with a deterministic NIfTI→DICOM writer and tables-only publish (#1224); a sim-only `MAX_SAMPLES` cap for the three Ark+ tutorials (#1279).
+- Docs GIFs published to a Hugging Face dataset and pinned by `docs/.gifs_version` (#1238, #1275).
+- Local UI ports pre-registered as browser origins on the dev estate, so a second checkout's UI can sign in (#1227, via #1229).
 
 ## :bug: Bug Fixes
 
-- **Security**: any authenticated user could read any user's full profile (#943); `callback_urls` is the live CORS allowlist and prod included localhost (#1088); cloud trust EC2 kit fetch — KMS grant, silent no-op and cross-trust key exposure (#1009); the app bundle is now an allowlist, shipping only the app folders plus the backend's root file (#1008).
-- **Trust / imaging**: cohort downloads cached server-side and each FL client scoped to its own net (#954); XNAT dcm2niix pinned to a stale build that silently dropped slices (#981); imaging import status going stale after a failed refresh (#1023); dcm2niix command mismatch mis-reported as a missing plugin (#1094); XNAT bind mounts provisioned as the container uid (#1096); fl-client kit volume ignoring `flBackend` (#1000); soft-deleting a project no longer tries to delete trust imaging (#964).
-- **FL / images**: published NVFLARE images crash-looped unless the host UID was 1000 (#1172); `FLIP_Session` narrowing its NVFLARE base signature (#1034); single-trust hang and job-type guessing (#991); spleen downloader picking cases lexicographically (#1062); spleen enrichment no longer depends on a private repo (#955); `.data_version` path after the datasets move (#1103).
-- **Hub / UI**: first login after MFA enrolment failing for up to 60 s (#1016); metrics plot colours (#1012); flip-ui dependency scoping (#1061) and the typecheck regression (#1076); trust-api `.dockerignore` (#1004); local dev setup blockers (#1010); Ark+ demo re-capture (#1029).
+- **AWS / infrastructure**: a new upstream Ubuntu AMI silently replacing the bastion and trust EC2 hosts on the next apply (#1281, via #1282); a held Terraform apply and the not-yet-on-main drift dispatch giving no legible reason (#1161, via #1162).
+- **FL / tutorials**: PyTorch 2.13 restoring tutorial simulation on macOS (#1268).
+- **Dependencies**: anyio floored at >=4.14.2 across the seven uv projects that lock it, clearing 15 Dependabot alerts (#1264); soupsieve floored at >=2.9.0 in flip-utils, clearing two ReDoS alerts (#1267).
+- **CI**: flip-utils' unenforced mypy config, which had accumulated 58 errors, and an ungated `ruff format` (#1248).
 
 ## :file_folder: PRs merged in this release
 

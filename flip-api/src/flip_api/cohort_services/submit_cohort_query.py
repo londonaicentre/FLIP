@@ -270,7 +270,10 @@ def submit_cohort_query(
         try:
             parsed_query = validate_query(query_row.query)
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            # Deliberately user-facing (#906): validate_query composes every ValueError message itself
+            # (the sqlglot parse error is wrapped, never echoed), so str(e) is the hub's own validation
+            # text, which the UI surfaces to the researcher.
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
         # Imaging projects need an accession_id output column (the trusts' accession-ids route
         # selects it by name). Fast feedback only — see projection_lacks_accession_id.

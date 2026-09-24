@@ -12,7 +12,7 @@
 
 [project]
 name = "imaging-api"
-version = "0.6.0"
+version = "0.8.0"
 description = "flip Trust Imaging API"
 readme = "README.md"
 authors = [
@@ -52,6 +52,7 @@ dev = [
 # 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
 exclude-newer = "3 days"
 constraint-dependencies = [
+    "anyio>=4.14.2",  # CVE-2026-63374, CVE-2026-64847; transitive via httpx, starlette, watchfiles
     "python-dotenv>=1.2.2",  # GHSA: symlink-following file overwrite; transitive via pydantic-settings
 ]
 

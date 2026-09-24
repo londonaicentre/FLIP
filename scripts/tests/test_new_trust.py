@@ -61,7 +61,7 @@ def _temp_repo() -> Path:
     (root / "trust" / ".env.example").write_text(
         "# Host-local profile\n"
         "OMOP_DB_PORT=5436\n"
-        "ORTHANC_PASSWORD=mock-orthanc-pw\n"
+        "ORTHANC_PASSWORD=mock-orthanc-pw\n"  # pragma: allowlist secret
         "TRUST_API_KEY=<run-make-register-trust>\n"
     )
     return root
@@ -92,6 +92,7 @@ def test_scaffolds_kit_with_identity_and_defaults() -> None:
         _assert("TRUST_REGION=London" in content, "TRUST_REGION injected")
         _assert("TRUST_HOST=" not in content, "TRUST_HOST not written to kit (delivery is command-driven)")
         _assert("OMOP_DB_PORT=5436" in content, "host-local default from template carried over")
+        # pragma: allowlist nextline secret
         _assert("ORTHANC_PASSWORD=mock-orthanc-pw" in content, "mock-stack cred from template carried over")
         _assert("TRUST_API_KEY=<run-make-register-trust>" in content, "managed placeholder preserved")
         _assert((target.stat().st_mode & 0o777) == 0o600, "kit file chmod 600")
@@ -125,12 +126,27 @@ def test_region_optional() -> None:
         shutil.rmtree(root)
 
 
+def test_lza_envs_name_the_kit_and_hint_the_prod_flag() -> None:
+    print("▶ LZA envs scaffold .env.<CODE>.lza-{prod,stag} and hint the PROD flag that reads them back")
+    for env, prod_flag in (("lza-stag", "lza-stag"), ("lza-prod", "lza")):
+        root = _temp_repo()
+        try:
+            res = _run(root, "--code", "LZA", "--name", "LZA Trust", "--env", env)
+            target = root / "trust" / f".env.LZA.{env}"
+            _assert(res.returncode == 0, f"--env {env}: exit 0", res.stderr)
+            _assert(target.exists(), f"--env {env}: kit scaffolded at .env.<CODE>.{env}")
+            _assert(f"PROD={prod_flag}" in res.stdout, f"--env {env}: next-step hint says PROD={prod_flag}", res.stdout)
+        finally:
+            shutil.rmtree(root)
+
+
 def main() -> None:
     if not NEW_TRUST.is_file():
         sys.exit(f"❌ {NEW_TRUST} not found")
     test_scaffolds_kit_with_identity_and_defaults()
     test_refuses_to_overwrite()
     test_region_optional()
+    test_lza_envs_name_the_kit_and_hint_the_prod_flag()
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
     sys.exit(0 if FAIL == 0 else 1)

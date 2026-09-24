@@ -39,7 +39,6 @@
     "USE_AMP": true,
     "AMP_DTYPE": "float16",
     "REQUIRE_ARKPLUS_IMPORT": true,
-    "INPUT_SIZE": 768,
-    "LOAD_BACKBONE_ONLY": true
+    "INPUT_SIZE": 768
   }
 }

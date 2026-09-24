@@ -17,6 +17,11 @@ services:
 
   fl-client-net-1:
     image: ghcr.io/londonaicentre/${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    # A site must come back after a daemon restart or host reboot without an operator's
+    # `up`: omop-db / orthanc / observability already carry `always`; the APIs and the
+    # fl-client did not, which is how AICP sat half-dead for weeks (FLIP#1204).
+    # unless-stopped rather than always so an explicit `docker stop` is still honoured.
+    restart: unless-stopped
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -72,7 +77,6 @@ services:
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
       - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
       - LOCAL_DEV=false
-      - MIN_CLIENTS=${MIN_CLIENTS}
       - IMAGES_DIR=/app/data/images
       # FL clients intentionally do not have access to Central Hub API credentials.
       # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.
@@ -116,7 +120,6 @@ services:
   #     - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
   #     - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
   #     - LOCAL_DEV=false
-  #     - MIN_CLIENTS=${MIN_CLIENTS}
   #     - IMAGES_DIR=/app/data/images
   #     # FL clients intentionally do not have access to Central Hub API credentials.
   #     # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.

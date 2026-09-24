@@ -111,7 +111,7 @@ Some tutorial files are kept as byte-identical copies of another file, and two g
   too, or drift on the new path goes uncaught.
 
 `pyproject.toml` files are deliberately **not** paired — the template's `[tool.uv]` tables pin
-`flip-utils` to the in-image `/opt/flip-utils` source and torch to the cu128 index, neither of which
+`flip-utils` to the in-image `/opt/flip-utils` source and torch to the cu130 index, neither of which
 apply to a tutorial's workstation venv.
 
 ## Where to look next
@@ -120,5 +120,5 @@ apply to a tutorial's workstation venv.
   with datasets and Makefile targets).
 - [`docs/source/working-with-flip-apps.rst`](../docs/source/working-with-flip-apps.rst) — the guides
   for adapting or building an app to upload to FLIP.
-- `flip-api/CLAUDE.md` and the root `CLAUDE.md` (`FL_APP_BASE_DIR`) — how flip-api discovers,
+- `flip-api/AGENTS.md` and the root `AGENTS.md` (`FL_APP_BASE_DIR`) — how flip-api discovers,
   validates and bundles these templates at runtime.

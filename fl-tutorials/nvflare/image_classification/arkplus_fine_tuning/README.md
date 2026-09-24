@@ -50,8 +50,9 @@ row are treated as negative. Labels come from the per-site dataframe (see Datase
 
 NVFLARE's persistor loads `models.get_model` from [`app_files/models.py`](app_files/models.py).
 `get_model()` builds an `ArkSwinTransformer` (in [`app_files/arkplus_flat_models.py`](app_files/arkplus_flat_models.py))
-sized from the `ARKPLUS` block, loads the backbone from the checkpoint with `LOAD_BACKBONE_ONLY=true`
-(the heads start fresh), and wraps it in `ArkPlusNVFlareWrapper` (which adapts Ark+'s
+sized from the `ARKPLUS` block, loads the backbone-only checkpoint that `make prepare-checkpoint` derives
+from the raw Ark6 file (`preprocess_checkpoints.py` strips `omni_heads.*` unconditionally, so the heads
+start fresh), and wraps it in `ArkPlusNVFlareWrapper` (which adapts Ark+'s
 `model(images, head_id) -> (features, logits)` to the `model(images) -> logits` interface, and exposes
 `forward_with_features` for the teacher/student loop). The trainer freezes every parameter that is not
 under `ark_model.omni_heads`, so only the classifier head trains.
@@ -83,7 +84,11 @@ round 0.
 
 Training settings live in [`app_files/config.json`](app_files/config.json): `GLOBAL_ROUNDS`,
 `LOCAL_ROUNDS`, `LR_START`/`LR_END`, `VAL_SPLIT`/`SPLIT_SEED`, `BATCH_SIZE`, plus the `LESIONS`
-and `ARKPLUS` blocks.
+and `ARKPLUS` blocks. The shipped file sets `GLOBAL_ROUNDS: 50` and `LOCAL_ROUNDS: 5` (local epochs
+per round); the staging validation in
+[`ARKPLUS_EXPERIMENTS_GUIDE.md`](../../ARKPLUS_EXPERIMENTS_GUIDE.md) ran a reduced
+`GLOBAL_ROUNDS: 5` × `LOCAL_ROUNDS: 2`. On the platform `GLOBAL_ROUNDS` sets the round count; the local
+simulator takes its round count from `NUM_ROUNDS` instead (see [How to run](#how-to-run)).
 
 ## Dataset setup
 
@@ -169,6 +174,23 @@ make export NUM_ROUNDS=10 N_CLIENTS=3
 make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning NUM_ROUNDS=10
 ```
 
+`MAX_SAMPLES` (default `128`) caps how many dataframe rows each simulated site reads, so a plain
+`make run`/`make sim` is a quick smoke test of the whole round-trip — a few minutes on a GPU instead
+of the ~1,900 studies per site the full dataset holds. The subset is deterministic and
+class-balanced (`cap_dataframe` in [`app_files/data_utils.py`](app_files/data_utils.py)), so the
+label-aware train/val split and the per-lesion AUCs still compute. `MAX_SAMPLES=0` (or empty) reads
+the full dataset:
+
+```bash
+make run MAX_SAMPLES=0                                                 # full dataset, 3 rounds
+make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning MAX_SAMPLES=0 NUM_ROUNDS=50
+```
+
+The cap is simulator-only: only the `LOCAL_DEV` dataframe path reads it, it never reaches the exported
+job config, and a deployed job trains on whatever cohort the trust's data-access-api returns. The
+number of local epochs per round is not a sim knob — the simulator uses `LOCAL_ROUNDS` from
+`config.json`, exactly as a deployed job does.
+
 or pass the flags directly using the recipe syntax (the Makefile's `uv` environment — flip-utils with
 the `full` extra — matches the deployed FL image; a bare `uv run` resolves to an env without
 torch/nvflare):
@@ -192,7 +214,7 @@ a deployed run — and writes the same artefacts (`rounds.tsv`, `summary.md`, a 
 `round_metrics/` in this directory:
 
 ```bash
-make run NUM_ROUNDS=50            # full-length local replica (GPU, hours; smoke-test with the default 3 first)
+make run NUM_ROUNDS=50 MAX_SAMPLES=0   # full-length, full-dataset replica (GPU, hours; smoke-test with the defaults first)
 make round-metrics                # -> round_metrics/simulator-<workspace>-<timestamp>/
 make round-metrics COMPARE=/path/to/platform/rounds.tsv   # adds a platform − simulator overhead table
 ```
@@ -213,7 +235,8 @@ local training. Knobs: `WORKSPACE` (simulator workspace parsed for logs; default
 
 For a collaborating site reproducing the baseline (no FLIP hub or AWS access needed), a single
 target chains the whole experiment — download the HF tutorial data (~6.3 GB) and the Ark+
-checkpoint if missing, run the full-length simulator replica, extract the metrics, and pack
+checkpoint if missing, run the full-length simulator replica on the full dataset (`MAX_SAMPLES=0`),
+extract the metrics, and pack
 everything to send back:
 
 ```bash

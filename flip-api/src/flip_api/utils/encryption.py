@@ -29,7 +29,7 @@ which add entries and change nothing on the wire.
 
 The **context** is not carried in the envelope: both sides derive it from what they
 already know (``task:<task_type>`` for a task payload, ``project_id`` for the project id
-handed to FL clients, ``xnat_password`` for the credential a trust returns). It is bound
+handed to FL clients, ``xnat_setup_path`` for the set-password link a trust returns). It is bound
 into the authentication tag, so a payload sealed for one purpose does not verify when
 presented for another — a task payload cannot be re-targeted at a different handler by
 rewriting the unauthenticated ``task_type`` beside it.
@@ -41,6 +41,7 @@ payloads with a peer on the other (the roll-out is a flag day; see ``deploy/READ
 
 import base64
 import binascii
+import hashlib
 import json
 import os
 from typing import Any
@@ -87,13 +88,25 @@ def get_aes_key() -> bytes:
     return _aes_key_cache
 
 
+#: Hex chars of the key fingerprint carried in the heartbeat reply (FLIP#1204). 48 bits of a
+#: SHA-256 over a 256-bit random key discloses nothing usable, and the route is API-key
+#: authenticated; it exists so a trust can tell a stale kit from a working one before a
+#: task fails to decrypt. trust-api computes the same digest over its own decoded key.
+_KEY_FINGERPRINT_CHARS = 12
+
+
+def aes_key_fingerprint() -> str:
+    """Short SHA-256 fingerprint of the raw shared key, for the trust heartbeat reply."""
+    return hashlib.sha256(get_aes_key()).hexdigest()[:_KEY_FINGERPRINT_CHARS]
+
+
 #: Key id of the platform-wide shared key (``AES_KEY_BASE64``).
 SHARED_KID = "shared"
 
 #: Context labels (see the module docstring). Producer and consumer must pass the same one, and a
 #: mismatch fails closed as an opaque ``InvalidTag``, so call sites use these rather than literals.
 PROJECT_ID_CONTEXT = "project_id"
-XNAT_PASSWORD_CONTEXT = "xnat_password"  # pragma: allowlist secret — a context label, not a credential
+XNAT_SETUP_PATH_CONTEXT = "xnat_setup_path"  # the XNAT set-password link imaging-api returns (FLIP-PT-079)
 
 
 def task_context(task_type: str) -> str:
