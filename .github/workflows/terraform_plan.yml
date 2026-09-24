@@ -180,15 +180,17 @@ jobs:
       # `count`, so a runner without this file plans a replacement of
       # flip-keypair and host-aws — which ripples into aws_instance.ec2_instance.
       # The bytes come from SSM rather than a checked-in file so they cannot drift
-      # from what is actually in state; `make seed-ci-keypair-param` publishes them.
+      # from what is actually in state; Terraform itself declares the parameter
+      # (aws_ssm_parameter.ci_host_aws_public_key in parameter_store.tf).
       - name: Write the EC2 keypair public key
         run: |
           mkdir -p "$HOME/.ssh"
           if ! aws ssm get-parameter \
             --name /flip/ci/host_aws_public_key \
             --query Parameter.Value --output text > "$HOME/.ssh/host-aws.pub"; then
-            echo "::error::/flip/ci/host_aws_public_key is missing. Seed it with:" \
-                 "make -C deploy/providers/AWS seed-ci-keypair-param"
+            echo "::error::/flip/ci/host_aws_public_key is missing. It is declared in" \
+                 "deploy/providers/AWS/parameter_store.tf and created by the first" \
+                 "laptop apply of that root in this account."
             exit 1
           fi
           chmod 600 "$HOME/.ssh/host-aws.pub"
