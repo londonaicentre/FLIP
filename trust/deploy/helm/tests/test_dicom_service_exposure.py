@@ -32,6 +32,7 @@ from pathlib import Path
 CHART_DIR = Path(__file__).resolve().parents[1]
 TEMPLATES_DIR = CHART_DIR / "templates"
 XNAT_WEB_TEMPLATE = TEMPLATES_DIR / "xnat-web.yaml"
+ORTHANC_TEMPLATE = TEMPLATES_DIR / "orthanc.yaml"
 HELPERS_TEMPLATE = TEMPLATES_DIR / "_helpers.tpl"
 NETWORK_POLICY_TEMPLATE = TEMPLATES_DIR / "network-policy.yaml"
 VALUES_FILE = CHART_DIR / "values.yaml"
@@ -160,6 +161,10 @@ def test_validate_pacs_reachable_rejects_wide_open_ingress_cidr() -> None:
     found live on a real trust (the chart offered no narrower option at the time), directly
     contradicting NETWORK-POLICY.md's own "scope to the PACS itself, never the whole trust
     network" guidance. This must be caught before it can happen again.
+
+    The check is an exact-literal tripwire, not a CIDR validator — Helm cannot evaluate a CIDR, so
+    0.0.0.0/1 and ::/0 deliberately pass it. What it must not do is pretend otherwise, hence the
+    assertions on the fail message below.
     """
     text = HELPERS_TEMPLATE.read_text()
 
@@ -168,6 +173,15 @@ def test_validate_pacs_reachable_rejects_wide_open_ingress_cidr() -> None:
     )
     assert "fail" in text[text.index('"0.0.0.0/0"'):text.index('"0.0.0.0/0"') + 400], (
         "the 0.0.0.0/0 check does not appear to fail the render"
+    )
+    assert re.search(r'eq \(trim \.\) "0\.0\.0\.0/0"', text), (
+        "the 0.0.0.0/0 comparison must trim whitespace first — matched exactly, a trailing space "
+        "('0.0.0.0/0 ') walks straight past the guard"
+    )
+    assert "0.0.0.0/1" in text[text.index('"0.0.0.0/0"'):text.index('"0.0.0.0/0"') + 1200], (
+        "the 0.0.0.0/0 fail message no longer names a case it does not catch. It is an "
+        "exact-literal tripwire, not a wide-CIDR validator, and the message must not read as the "
+        "latter — an operator would take the render passing as the chart having checked their CIDR."
     )
 
 
@@ -187,4 +201,71 @@ def test_values_yaml_declares_dicom_service_with_clusterip_default() -> None:
 
     assert re.search(r"dicomService:\s*\n\s*type:\s*ClusterIP", text), (
         "values.yaml must declare xnat.web.dicomService.type defaulting to ClusterIP"
+    )
+
+
+def _orthanc_xnat_modality() -> tuple[str, str]:
+    """Pull the host and port out of Orthanc's ``ORTHANC__DICOM_MODALITIES`` XNAT entry.
+
+    Returns:
+        tuple[str, str]: ``(host, port_expression)`` — the host as the literal Service name it
+        dials, and the port left as its raw template expression so a caller can compare it against
+        the Service the chart actually renders.
+    """
+    orthanc = ORTHANC_TEMPLATE.read_text()
+    modality = re.search(r'"XNAT":\s*\{.*?"Host":\s*"([^"]+)".*?"Port":\s*(\{\{.*?\}\})', orthanc)
+    assert modality, "could not find the XNAT entry in orthanc.yaml's ORTHANC__DICOM_MODALITIES"
+
+    return modality.group(1), modality.group(2)
+
+
+def test_orthanc_modality_dials_the_service_carrying_dicom_scp() -> None:
+    """Orthanc's XNAT modality must resolve to a Service that actually carries ``dicom-scp``.
+
+    Splitting the DICOM SCP onto ``xnat-web-dicom`` takes the DICOM port off ``xnat-web``, so the
+    C-STORE destination XNAT hands the PACS has to move with it. Nothing else in this file would
+    notice if it did not: every Service above can be shaped exactly right while Orthanc dials one
+    carrying only ``tomcat``, which breaks image retrieval on every default K8s install and the
+    ``smoke-cstore`` target that drives a C-STORE through this same modality entry.
+    """
+    host, _ = _orthanc_xnat_modality()
+    services = _service_blocks()
+
+    assert host in services, (
+        f"orthanc.yaml's XNAT modality dials Service {host!r}, which the chart never renders — the "
+        f"C-STORE destination must be one of {sorted(services)}"
+    )
+    assert "name: dicom-scp" in services[host], (
+        f"orthanc.yaml's XNAT modality dials Service {host!r}, which does not carry the dicom-scp "
+        "port. The DICOM SCP is on xnat-web-dicom; after the split xnat-web carries tomcat only, so "
+        "a C-STORE aimed there never reaches XNAT."
+    )
+
+
+def test_orthanc_modality_port_matches_the_dicom_scp_port() -> None:
+    """The modality's port and the Service's ``port:`` must be the same expression, not two literals.
+
+    Both sides read ``xnat.web.dicomPort``; asserting they agree keeps a future edit to one of them
+    from silently aiming C-STORE at a port the receiver is not listening on.
+    """
+    _, modality_port = _orthanc_xnat_modality()
+    dicom = _service_blocks()["xnat-web-dicom"]
+    service_port = re.search(r"^\s*- port:\s*(\{\{.*?\}\})\s*$", dicom, re.MULTILINE)
+
+    assert service_port, "xnat-web-dicom declares no templated port: for its dicom-scp port"
+
+    def rendered_value(expression: str) -> str:
+        """Reduce a sprig expression to the value it renders, ignoring output formatting.
+
+        ``| quote`` changes how the value is emitted, not what it is, so it is dropped on both
+        sides — comparing the raw strings would flag a difference that does not exist.
+        """
+        parts = [part.strip() for part in expression.strip("{} \t").split("|")]
+
+        return "|".join(part for part in parts if part not in {"quote", "squote"})
+
+    assert rendered_value(modality_port) == rendered_value(service_port.group(1)), (
+        f"orthanc.yaml dials port {rendered_value(modality_port)} but xnat-web-dicom listens on "
+        f"{rendered_value(service_port.group(1))} — the C-STORE destination must be the port that "
+        "Service exposes"
     )

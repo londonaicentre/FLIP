@@ -552,11 +552,13 @@ the "queries succeed, retrievals silently time out" bug this chart's checks exis
 (FLIP#993).
 
 **Never scope the ingress NetworkPolicy to `0.0.0.0/0`.** `networkPolicies.allowedIngressCIDRsWithPorts`
-must name the PACS's own address, not the whole internet — `validatePacsReachable` fails the render
-if it finds `0.0.0.0/0` there. If you do not yet know the PACS's real source IP, leave DICOM on
-`ClusterIP` (which correctly fails the render with a clear message) rather than opening the port
-wide as a stopgap; a real PACS destination should not be told to send DICOM to a port before its
-NetworkPolicy is scoped to it specifically.
+must name the PACS's own address, not the whole internet. `validatePacsReachable` fails the render
+when it sees that literal (whitespace aside), which is a tripwire rather than a CIDR validator —
+Helm cannot evaluate a CIDR, so `0.0.0.0/1`, `::/0` and any other prefix that still reaches the
+PACS render clean, and the rule in this paragraph is what rules those out. If you do not yet know
+the PACS's real source IP, leave DICOM on `ClusterIP` (which correctly fails the render with a clear
+message) rather than opening the port wide as a stopgap; a real PACS destination should not be told
+to send DICOM to a port before its NetworkPolicy is scoped to it specifically.
 
 ---
 

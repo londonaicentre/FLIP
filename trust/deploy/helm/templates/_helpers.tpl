@@ -176,6 +176,15 @@ reaches the pod, and `externalTrafficPolicy: Local` is gated on the same pair (x
 so kube-proxy SNATs the source address and the ingress CIDR cannot match even if a packet did
 arrive. That is the same queries-succeed / retrievals-time-out failure, reached through the one
 combination the other refusals leave open.
+
+The wide-open-CIDR check at the end of this partial is a tripwire, not a CIDR validator: Go
+templates cannot evaluate a CIDR, so it compares each entry against the exact literal 0.0.0.0/0
+(whitespace trimmed) and nothing else. 0.0.0.0/1, ::/0 and any other prefix that still reaches the
+PACS pass it. It is here because the one live install this was found on used that literal, and
+catching the honest form of the mistake is worth more than claiming a completeness it does not
+have — the fail message says as much, so an operator reading it is not misled into thinking the
+chart has validated their CIDR. The rule that forbids a wide scope is NETWORK-POLICY.md's, and it
+binds whether or not this check can see it.
 */}}
 {{- define "flip-trust.validatePacsReachable" -}}
 {{- if and .Values.xnat.enabled .Values.xnat.web.enabled (ne .Values.pacs.host "orthanc") }}
@@ -188,12 +197,14 @@ combination the other refusals leave open.
 {{- if and (ne .Values.xnat.web.dicomService.type "ClusterIP") .Values.networkPolicies.enabled }}
 {{- $wideOpen := false }}
 {{- range .Values.networkPolicies.allowedIngressCIDRsWithPorts }}
-{{- if has "0.0.0.0/0" (.cidrs | default list) }}
+{{- range .cidrs | default list }}
+{{- if eq (trim .) "0.0.0.0/0" }}
 {{- $wideOpen = true }}
 {{- end }}
 {{- end }}
+{{- end }}
 {{- if $wideOpen }}
-{{- fail (printf "pacs.host is %s and networkPolicies.allowedIngressCIDRsWithPorts contains 0.0.0.0/0 — that opens the DICOM port to the entire internet rather than the PACS itself, which NETWORK-POLICY.md explicitly says never to do. Scope the CIDR to the PACS's actual source address." .Values.pacs.host) }}
+{{- fail (printf "pacs.host is %s and networkPolicies.allowedIngressCIDRsWithPorts contains 0.0.0.0/0 for the DICOM port — that opens it to the entire internet rather than the PACS itself, which NETWORK-POLICY.md explicitly says never to do. Scope the CIDR to the PACS's actual source address. (This check matches the literal 0.0.0.0/0 only, whitespace aside: Helm cannot evaluate a CIDR, so 0.0.0.0/1, ::/0 and any other prefix that still reaches the PACS are not caught here — the rule against a wide scope is what forbids them, not this check.)" .Values.pacs.host) }}
 {{- end }}
 {{- end }}
 {{- end }}

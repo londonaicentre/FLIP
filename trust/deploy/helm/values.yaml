@@ -935,7 +935,10 @@ networkPolicies:
   # The only intended use is the DICOM C-STORE return leg: FLIP retrieves by pull, so after XNAT
   # issues C-MOVE the PACS opens a new association back to XNAT. That is inbound, and without an
   # allowance here it is dropped — queries succeed and retrievals silently time out (FLIP#993).
-  # Scope this to the PACS itself, not the whole trust network.
+  # Scope this to the PACS itself, not the whole trust network. validatePacsReachable fails the
+  # render if it sees the literal 0.0.0.0/0 here — a tripwire, not a CIDR validator: Helm cannot
+  # evaluate a CIDR, so 0.0.0.0/1, ::/0 and anything else that still reaches the PACS pass it, and
+  # the rule in this comment is what forbids them.
   # Each entry: cidrs (list of CIDR strings) + port (int) + optional protocol (default TCP).
   allowedIngressCIDRsWithPorts: []
   # - cidrs:
