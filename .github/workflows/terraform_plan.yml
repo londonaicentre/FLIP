@@ -108,7 +108,19 @@ jobs:
       # header, and `make print-tf-env` below.
       - name: Compose the Terraform env file
         env:
-          TF_ENV: stag
+          # Which mode this run composes for: the deploy/env_mode.mk token, taken
+          # from the TF_PROD variable on the environment (stag | true | lza-stag |
+          # lza). Unset keeps the legacy staging value, so a repository that has
+          # not set it behaves exactly as before. The script derives the env-file
+          # name, the AWS_PROFILE the Makefile's guard expects, and which keys are
+          # required — one token, one table.
+          PROD: ${{ vars.TF_PROD || 'stag' }}
+          # The class this run is allowed to compose, asserted by the script: this
+          # workflow declares `environment: aws-stag` unconditionally, so a TF_PROD
+          # on aws-stag naming a prod-grade estate (true / lza) is a mis-set
+          # variable, and the plan it would produce is one nobody asked for. Literal
+          # rather than ref-derived: plans are staging-only by construction.
+          EXPECTED_ENV_CLASS: stag
           AWS_REGION: ${{ vars.AWS_REGION }}
           VPC_NAME: ${{ vars.VPC_NAME }}
           FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}
@@ -141,21 +153,28 @@ jobs:
           K8S_TRUST_PUBLIC_IPS: ${{ vars.K8S_TRUST_PUBLIC_IPS }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
           JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: ${{ vars.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB }}
-          # Optional LZA keys (FLIP#749). Expected to be unset in the aws-stag /
-          # aws-prod environments — a platform-managed estate is applied from a
-          # laptop, and unset is the legacy value for all five. Passed through so
-          # compose-ci-env.sh's manifest stays the one place the mapping lives.
+          # The LZA keys (FLIP#749). Required when TF_PROD selects a
+          # platform-managed estate (lza-stag / lza), expected absent on the
+          # legacy tokens — see compose-ci-env.sh, which is the one place that
+          # decides. The last four have no `export TF_VAR_…` line in the Makefile,
+          # so the script writes them into the env file as raw exports. The two
+          # web-edge values are optional on purpose: the edge is built from this
+          # stack's outputs, so they are legitimately empty on a first apply.
           ACCESS_LOGS_BUCKET_NAME: ${{ vars.ACCESS_LOGS_BUCKET_NAME }}
           EFS_PROVISION_IMAGE: ${{ vars.EFS_PROVISION_IMAGE }}
           LZA_VPC_NAME: ${{ vars.LZA_VPC_NAME }}
           MANAGE_DNS: ${{ vars.MANAGE_DNS }}
+          NETWORKING_INGRESS_CIDRS: ${{ vars.NETWORKING_INGRESS_CIDRS }}
+          LZA_ELB_ACCESS_LOGS_BUCKET: ${{ vars.LZA_ELB_ACCESS_LOGS_BUCKET }}
+          LZA_WEB_EDGE_DOMAIN: ${{ vars.LZA_WEB_EDGE_DOMAIN }}
+          LZA_WEB_EDGE_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_EDGE_DISTRIBUTION_ARN }}
           ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
           INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
           INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
           POSTGRES_DB: ${{ vars.POSTGRES_DB }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
-        run: deploy/providers/AWS/scripts/compose-ci-env.sh .env.stag
+        run: deploy/providers/AWS/scripts/compose-ci-env.sh
 
       # aws_key_pair.public_key is ForceNew and neither keypair is behind a
       # `count`, so a runner without this file plans a replacement of
@@ -186,6 +205,11 @@ jobs:
       # rather than re-deriving them here and drifting from a laptop plan.
       - name: Export the Terraform variables
         working-directory: deploy/providers/AWS
+        env:
+          # Same token as the compose step above, for the same reason: `make` is
+          # what resolves the env file (env_mode.mk) and the TF_VAR_* mapping, and
+          # it has to be looking at the environment this run composed for.
+          PROD: ${{ vars.TF_PROD || 'stag' }}
         run: make --no-print-directory print-tf-env >> "$GITHUB_ENV"
 
       - name: Terraform plan

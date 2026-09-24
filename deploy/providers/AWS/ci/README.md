@@ -20,9 +20,17 @@ only manager of its own permissions, or a bad apply locks the pipeline out of th
 apply that would fix it.
 
 ```bash
-make init && make plan && make apply                          # stag
-make init PROD=true && make plan PROD=true && make apply PROD=true   # prod
+# PROD is the deploy/env_mode.mk token, shared with the workflows (TF_PROD) and
+# with scripts/compose-ci-env.sh. It selects the account, the env file, and the
+# profile the guard below demands.
+make init && make plan && make apply                                     # stag  (.env.stag)
+make init PROD=true && make plan PROD=true && make apply PROD=true       # prod  (.env.production)
+make init PROD=lza-stag && make plan PROD=lza-stag && make apply PROD=lza-stag   # LZA staging  (.env.lza-stag)
+make init PROD=lza && make plan PROD=lza && make apply PROD=lza          # LZA prod (.env.lza-prod)
 ```
+
+There is no default beyond `stag`: a token the table does not know is an error, not
+a silent fall-through to staging.
 
 **Order matters when the boundary is introduced or renamed.** `iam:PutRolePolicy`
 and `iam:AttachRolePolicy` are conditioned on the *target role's current*
@@ -31,12 +39,19 @@ by the pipeline. Terraform gets this right on its own — `aws_iam_role_policy`
 depends on the role, so `PutRolePermissionsBoundary` runs first — but it means the
 first apply after this change must be run somewhere it can be watched, and that
 `make -C ci apply` has to land in each account **before** an apply that creates a
-new role there.
+new role there. That includes a brand-new account: this root declares the boundary
+policy the FLIP root attaches to every role it owns, so it comes first there too.
+The four-token table above is why the LZA accounts are no longer an exception to
+that ordering.
 
 `make output` prints the two ARNs and the OIDC claims they expect. Put the ARNs
 on the matching GitHub environment (`aws-stag` / `aws-prod`) as the variables
-`TF_PLAN_ROLE_ARN` and `TF_APPLY_ROLE_ARN`. `account_id` is also an output —
-check it against the intended account before wiring anything up.
+`TF_PLAN_ROLE_ARN` and `TF_APPLY_ROLE_ARN` — the environment names do not change
+when the account does — and set that environment's `TF_PROD` to the same token you
+applied with, so the workflows compose for the account whose roles you just wrote
+there. `scripts/setup-github-environments.sh --mode <token>` does all three.
+`account_id` is also an output — check it against the intended account before
+wiring anything up.
 
 ## The OIDC claims, and the two easy mistakes
 
@@ -126,14 +141,25 @@ name and branch match the pinned `job_workflow_ref` exactly.
   Manager in one region — so a `GetObject` on those buckets fails at the KMS step.
   It is worth being precise in both directions: the read surface is wider than
   four secrets, and narrower than "every S3 object".
-- For the LZA cutover (#749): apply this root into the new account and repoint
-  `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN` / `FLIP_TFSTATE_BUCKET_NAME` on the
-  GitHub environment. No workflow change — no account ID or ARN is hard-coded in
-  workflow YAML. Two *scripts* do default the state bucket to
-  `flip-terraform-state-<env>`, which the cutover keeps; if a new account ever
-  uses another name, override it (`CI_STATE_BUCKET=` for
+- For the LZA cutover (#749): apply this root into the new account (`make -C ci init
+  PROD=lza-stag …` / `PROD=lza`), then repoint the GitHub environment — `TF_PROD`,
+  `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN` / `FLIP_TFSTATE_BUCKET_NAME`, and every
+  account-scoped value. No workflow change: no account ID or ARN is hard-coded in
+  workflow YAML, and the mode is a variable. The step-by-step order, including what
+  has to exist in the account before this root can be applied at all, is in
+  `../README.md`, "Repointing CI at the LZA accounts". Two *scripts* do default the
+  state bucket to `flip-terraform-state-<env>`, which the cutover keeps; if a new
+  account ever uses another name, override it (`CI_STATE_BUCKET=` for
   `scripts/setup-github-environments.sh`, `--bucket` for
   `scripts/reconcile_ci_env.py`).
+- The boundary is attached on every mode whose applies run through this root, and
+  detached on the LZA modes until this root has been applied there. This root
+  declares `AICentre-FLIPTerraformBoundary`, and a name that resolves to nothing
+  fails every role update with `NoSuchEntity` — so while either LZA account is
+  still changed by laptop applies, the main root's Makefile blanks the variable on
+  `PROD=lza` / `PROD=lza-stag` (`export TF_VAR_iam_permissions_boundary_name ?=`).
+  Applying this root in those accounts first is what retires the exception; an env
+  file can set the variable explicitly on any mode in the meantime.
 
 ## The plan role reads one secret, on purpose
 
@@ -187,7 +213,7 @@ FLIP root means adding its name to `var.managed_role_names` and re-applying this
 root from a laptop *first* — deliberate coupling, so a human is in the loop on
 every new principal the pipeline can hand to a service.
 
-**Re-apply this root after pulling a change to it** — `make -C ci apply` for
-stag, `make -C ci apply PROD=true` for prod. The roles are not managed by the
-pipeline they authorise, so a policy change here reaches AWS only when an
-operator applies it from a laptop.
+**Re-apply this root after pulling a change to it** — `make -C ci apply` for stag,
+`PROD=true` for legacy prod, `PROD=lza-stag` / `PROD=lza` for the LZA accounts. The
+roles are not managed by the pipeline they authorise, so a policy change here
+reaches AWS only when an operator applies it from a laptop.
