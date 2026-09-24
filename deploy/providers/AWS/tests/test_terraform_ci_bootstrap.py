@@ -315,11 +315,11 @@ def test_the_module_owns_no_provider_backend_or_oidc_provider() -> None:
 
 
 def test_the_aws_provider_constraint_spans_both_platform_locks() -> None:
-    """aicentre-iac locks 6.39 and FLIP 6.66; a major version is a deliberate bump."""
+    """6.22 brings blocked_encryption_types; FLIP locks 6.66; a major version is a deliberate bump."""
     terraform = _module_block("terraform")
     providers = _parse(_block(terraform, "required_providers"), raw=True)[0]
     aws = _arguments(providers["aws"].strip()[1:-1])
-    assert aws == {"source": '"hashicorp/aws"', "version": '">= 6.0, < 7.0"'}
+    assert aws == {"source": '"hashicorp/aws"', "version": '">= 6.22, < 7.0"'}
     assert _arguments(terraform)["required_version"] == '">= 1.13.1"'
 
 
@@ -353,6 +353,17 @@ def test_the_trust_policies_pin_the_environment_and_the_apply_ref() -> None:
 def test_the_state_bucket_cannot_be_destroyed() -> None:
     lifecycle = _arguments(_block(_module_block('resource "aws_s3_bucket" "state"'), "lifecycle"))
     assert lifecycle == {"prevent_destroy": "true"}
+
+
+def test_the_state_bucket_encrypts_and_refuses_customer_keys() -> None:
+    """SSE-C is blocked explicitly: the live buckets block it, and older providers plan its removal when unset."""
+    rule = _block(_module_block('resource "aws_s3_bucket_server_side_encryption_configuration" "state"'), "rule")
+    assert _arguments(rule) == {
+        "bucket_key_enabled": _normalise('var.state_bucket_sse_algorithm == "aws:kms"'),
+        "blocked_encryption_types": '["SSE-C"]',
+    }
+    default = _arguments(_block(rule, "apply_server_side_encryption_by_default"))
+    assert default == {"sse_algorithm": "var.state_bucket_sse_algorithm"}
 
 
 def test_the_state_bucket_blocks_all_public_access() -> None:
@@ -394,7 +405,7 @@ def test_the_state_write_restriction_renders_only_when_switched_on() -> None:
         {"test": '"ArnNotLike"', "variable": '"aws:PrincipalArn"', "values": "local.state_writer_arn_patterns"}
     ]
     assert _module_locals()["state_writer_arn_patterns"] == (
-        "concat([aws_iam_role.terraform_apply.arn],var.state_writer_principal_arns)"
+        "concat([local.apply_role_arn],var.state_writer_principal_arns)"
     )
 
     restrict = _module_block('variable "restrict_state_writes"')
@@ -405,10 +416,7 @@ def test_the_apply_role_cannot_escalate_itself() -> None:
     statement = _statement('data "aws_iam_policy_document" "apply_iam"', "NoSelfEscalation")
     arguments = _arguments(statement)
     assert arguments["effect"] == '"Deny"'
-    assert sorted(_list(arguments["resources"])) == [
-        "aws_iam_role.terraform_apply.arn",
-        "aws_iam_role.terraform_plan.arn",
-    ]
+    assert sorted(_list(arguments["resources"])) == ["local.apply_role_arn", "local.plan_role_arn"]
     assert set(_list(arguments["actions"])) == {
         '"iam:AttachRolePolicy"',
         '"iam:DeleteRole"',
@@ -427,7 +435,7 @@ def test_the_apply_role_cannot_rewrite_its_boundary() -> None:
     statement = _statement('data "aws_iam_policy_document" "apply_iam"', "NoBoundaryTampering")
     arguments = _arguments(statement)
     assert arguments["effect"] == '"Deny"'
-    assert arguments["resources"] == "[aws_iam_policy.apply_boundary.arn]"
+    assert arguments["resources"] == "[local.permissions_boundary_arn]"
     assert set(_list(arguments["actions"])) == {
         '"iam:CreatePolicyVersion"',
         '"iam:DeletePolicy"',
@@ -447,8 +455,42 @@ def test_new_roles_must_carry_the_boundary() -> None:
         assert {
             "test": '"StringEquals"',
             "variable": '"iam:PermissionsBoundary"',
-            "values": "[aws_iam_policy.apply_boundary.arn]",
+            "values": "[local.permissions_boundary_arn]",
         } in conditions, sid
+
+
+_RESOURCE_ATTRIBUTE = re.compile(r"(?<![\w.])aws_\w+\.\w+\.\w+")
+
+
+def test_no_policy_document_depends_on_a_resource() -> None:
+    """Composed ARNs, never resource attributes: a reference makes the document unknown until apply.
+
+    Whenever the referenced role or policy has any pending change — a caller's ``default_tags`` is
+    enough — a plan shows the whole document as "known after apply", hiding from review whether the
+    trust or permission policy changed. The locals the documents use are held to the same rule.
+    """
+    for header, body in _module_blocks():
+        if header.startswith('data "aws_iam_policy_document"'):
+            assert not _RESOURCE_ATTRIBUTE.findall(_normalise(body)), header
+    for name, value in _module_locals().items():
+        assert not _RESOURCE_ATTRIBUTE.findall(value), f"local.{name}"
+
+
+def test_the_composed_arns_name_the_objects_the_module_creates() -> None:
+    """Same account, same partition, same name variable, default path — or a Deny misses its target."""
+    prefix = '"arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}'
+    locals_ = _module_locals()
+    assert locals_["plan_role_arn"] == prefix + ':role/${var.plan_role_name}"'
+    assert locals_["apply_role_arn"] == prefix + ':role/${var.apply_role_name}"'
+    assert locals_["permissions_boundary_arn"] == prefix + ':policy/${var.permissions_boundary_name}"'
+    for header, name in (
+        ('resource "aws_iam_role" "terraform_plan"', "var.plan_role_name"),
+        ('resource "aws_iam_role" "terraform_apply"', "var.apply_role_name"),
+        ('resource "aws_iam_policy" "apply_boundary"', "var.permissions_boundary_name"),
+    ):
+        arguments = _arguments(_module_block(header))
+        assert arguments["name"] == name, header
+        assert "path" not in arguments, f"{header} sets a path the composed ARN does not carry"
 
 
 def test_the_plan_role_cannot_write_state() -> None:
