@@ -9,12 +9,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Client-local debug images for the image-synthesis tutorials.
+"""Figures for the image-synthesis tutorials: debug images during training, loss curves after it.
 
-A generative model is the one kind of model whose scalars barely tell you whether it is working: an
-autoencoder's L1 falls steadily while it learns to emit a blur, and a diffusion model's MSE on
-predicted noise is almost uninformative about sample quality. This module writes the pixels
-themselves, so a local tutorial run can be judged by looking at it.
+Two halves that are always read together, so they live together.
+
+**The training half** writes the pixels themselves. A generative model is the one kind of model
+whose scalars barely tell you whether it is working: an autoencoder's L1 falls steadily while it
+learns to emit a blur, and a diffusion model's MSE on predicted noise is almost uninformative about
+sample quality. ``save_grid`` and ``save_triplanar`` are called from ``trainer.py`` during a run.
+
+**The analysis half** recovers the numbers behind those images from a finished (or running)
+simulator log, and is run by hand on the host — ``python app_files/plot_utils.py``. The pairing is
+the point: a reconstruction that stops improving looks identical whether the model has converged or
+whether the discriminator has started to dominate the generator, and only the scalars tell those
+apart. Conversely a loss curve cannot tell you the model has settled on a plausible silhouette with
+no anatomy inside it, and the tri-planar figures show that at a glance.
 
 **Nothing here puts an image on the wire.** The files are written beside the running training script
 — i.e. inside that client's own job workspace — and no code path reads them back, adds them to an
@@ -26,10 +35,24 @@ by the same rules as any other data egress, not something a training run can do 
 Off by default, and enabled per job by ``SAVE_DEBUG_SAMPLES`` in ``config.json``. Treat it as a
 local-development instrument: leaving it on at a trust accumulates patient-derived reconstructions
 on that trust's disk, round after round, with no retention policy attached.
+
+The analysis half is **inert at a trust**: it runs only under ``__main__``, reads simulator paths
+that do not exist there, and is never imported by ``trainer.py``. It ships regardless, because this
+module does — worth knowing when reviewing what an app bundle contains.
+
+Usage of the analysis half::
+
+    python app_files/plot_utils.py
+    python app_files/plot_utils.py --workspace /tmp/nvflare/<tutorial>/flip_fedavg
+    python app_files/plot_utils.py --out-dir <dir>       # default: $DEBUG_SAMPLES_DIR
 """
 
+from __future__ import annotations
+
+import argparse
 import logging
 import os
+import re
 from pathlib import Path
 
 import numpy as np
@@ -344,3 +367,256 @@ def save_triplanar(
     except Exception as err:
         logger.warning(f"[DEBUG] Could not write tri-planar figure {name!r}: {err}")
         return None
+
+
+# --------------------------------------------------------------------------------------------
+# Analysis half: loss curves from a simulator log. Host-side only — see the module docstring.
+# --------------------------------------------------------------------------------------------
+
+#: Where ``make sim`` puts this tutorial's simulator workspace. Derived from the directory this file
+#: sits in rather than hard-coded, so the same module is correct in every tutorial that ships it.
+DEFAULT_WORKSPACE = Path("/tmp/nvflare") / Path(__file__).resolve().parent.parent.name / "flip_fedavg"
+
+#: Log lines arrive as ``<timestamp> - <logger> - INFO - <message>``. Splitting the message off is
+#: what stops the timestamp's own colons ("20:10:04") being read as data. A line that does *not*
+#: match is a continuation of the message above it — the per-epoch summary is logged as one
+#: multi-line string, so its numbers live on unprefixed lines — and is parsed whole.
+_MESSAGE_RE = re.compile(r" - (?:DEBUG|INFO|WARNING|ERROR|CRITICAL) - (?P<message>.*)$")
+
+#: One ``name: number`` pair inside a message. Deliberately generic: every tutorial here logs its
+#: losses in that shape but with different names, and hard-coding one tutorial's names is what made
+#: the previous version of this dead weight in the other two. The name charset excludes quotes,
+#: commas and hyphens, which is what keeps a name from bridging across ``a: 1, b: 2`` or reaching
+#: back into the logger prefix; ``nan``/``inf`` are accepted as values so a run that broke still
+#: plots up to the point it broke.
+_PAIR_RE = re.compile(
+    r"(?P<name>[A-Za-z][\w ()]*?)\s*:\s*(?P<value>[-+]?(?:\d+\.?\d*(?:[eE][-+]?\d+)?|nan|inf))\b"
+)
+
+#: Fixed colours for the names this tree logs today, so two sites' figures can be read side by side
+#: and successive runs stay comparable. Anything unrecognised is assigned from _PALETTE in sorted
+#: order, which is deterministic for a given set of names.
+COLOURS = {
+    "l1": "#4ea1ff",
+    "perceptual": "#ffd166",
+    "gan": "#ff6b6b",
+    "KL": "#9b7bff",
+    "Total loss D": "#7bffb0",
+    "Total loss DM": "#4ea1ff",
+    "Validation loss (L1)": "#4ea1ff",
+    "Validation SSIM (foreground)": "#ff9f4e",
+    "Validation DM": "#ff9f4e",
+    # The per-epoch aggregates, coloured to match the per-iteration term each one totals.
+    "L1": "#4ea1ff",
+    "Perceptual": "#ffd166",
+    "GAN": "#ff6b6b",
+    "KLD": "#9b7bff",
+    "Total loss G": "#eeeeee",
+}
+_PALETTE = ("#4ea1ff", "#ffd166", "#ff6b6b", "#9b7bff", "#7bffb0", "#ff9f4e", "#59d4d4", "#d98cc4")
+
+#: Smoothing for the per-iteration panel, which is unreadable raw at BATCH_SIZE 2.
+EMA_ALPHA = 0.02
+
+#: A series needs at least this many points to be worth an axis; it also filters out the stray
+#: ``name: number`` pairs that appear once in a startup banner.
+MIN_POINTS = 2
+
+#: Series logged at the same cadence share a length. Anything within this fraction of the longest
+#: series is treated as per-iteration; the rest is per-epoch. A tutorial that logs only per-epoch
+#: (the two diffusion ones) therefore yields a single panel rather than an empty one.
+#:
+#: The same ratio is then applied *within* the per-epoch band, which is what keeps incidental
+#: ``name: number`` pairs out of the figure. A log is full of them — ``localhost: 34953``,
+#: ``PID: 1005143``, ``train size: 30`` — and they are not distinguishable from a metric by name or
+#: by value. They are distinguishable by cadence: a metric is logged once per iteration or once per
+#: epoch, so it appears as many times as there were iterations or epochs, while a startup line
+#: appears once or twice however long the run goes on.
+DENSE_RATIO = 0.9
+
+
+def _ema(values: list[float], alpha: float = EMA_ALPHA) -> list[float]:
+    """Exponential moving average, skipping non-finite points rather than propagating them."""
+    out: list[float] = []
+    acc = next((v for v in values if v == v and abs(v) != float("inf")), 0.0)
+    for value in values:
+        if value == value and abs(value) != float("inf"):
+            acc = alpha * value + (1 - alpha) * acc
+        out.append(acc)
+    return out
+
+
+def parse_log(path: Path) -> dict[str, list[float]]:
+    """Return every ``name: number`` series found in one site's ``log.txt``, in order of appearance.
+
+    Args:
+        path (Path): The site's ``log.txt``.
+
+    Returns:
+        dict[str, list[float]]: Series name to its values, longest series first.
+    """
+    series: dict[str, list[float]] = {}
+    with path.open(errors="replace") as handle:
+        for line in handle:
+            prefixed = _MESSAGE_RE.search(line)
+            message = prefixed.group("message") if prefixed else line
+            for match in _PAIR_RE.finditer(message):
+                series.setdefault(match.group("name"), []).append(float(match.group("value")))
+    return dict(sorted(series.items(), key=lambda item: -len(item[1])))
+
+
+def split_by_cadence(series: dict[str, list[float]]) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
+    """Split series into per-iteration and per-epoch groups by how often each was logged.
+
+    Args:
+        series (dict[str, list[float]]): Output of :func:`parse_log`.
+
+    Returns:
+        tuple: ``(dense, sparse)``; ``sparse`` is empty when everything shares one cadence.
+    """
+    usable = {name: values for name, values in series.items() if len(values) >= MIN_POINTS}
+    if not usable:
+        return {}, {}
+    longest = max(len(values) for values in usable.values())
+    dense = {n: v for n, v in usable.items() if len(v) >= longest * DENSE_RATIO}
+
+    remainder = {n: v for n, v in usable.items() if len(v) < longest * DENSE_RATIO}
+    if not remainder:
+        return dense, {}
+    epoch_cadence = max(len(values) for values in remainder.values())
+    sparse = {n: v for n, v in remainder.items() if len(v) >= epoch_cadence * DENSE_RATIO}
+    return dense, sparse
+
+
+def _colour_for(name: str, index: int) -> str:
+    return COLOURS.get(name, _PALETTE[index % len(_PALETTE)])
+
+
+def _style(axis, title: str) -> None:
+    """Apply the shared dark styling to one axis."""
+    axis.set_facecolor("#111111")
+    axis.set_title(title, color="#eeeeee")
+    axis.tick_params(colors="#bbbbbb")
+    axis.grid(True, color="#333333", linewidth=0.5)
+    for spine in axis.spines.values():
+        spine.set_color("#444444")
+    axis.xaxis.label.set_color("#bbbbbb")
+    axis.yaxis.label.set_color("#bbbbbb")
+
+
+def _legend(axis, handles=None, labels=None) -> None:
+    """Legend outside the axes on the right, so it cannot sit on top of the curves.
+
+    The generic parser finds however many series a tutorial logs — eight for the autoencoder's
+    per-epoch panel — which is more than fits inside the plot area.
+    """
+    axis.legend(
+        *([handles, labels] if handles is not None else []),
+        loc="upper left",
+        bbox_to_anchor=(1.12, 1.0),
+        fontsize=8,
+        facecolor="#1c1c1c",
+        edgecolor="#444444",
+        labelcolor="#eeeeee",
+    )
+
+
+def plot_site(site: str, series: dict[str, list[float]], out_dir: Path) -> Path:
+    """Write the loss figure for one site and return its path.
+
+    The per-iteration panel is log-scaled when every value is positive: the terms routinely span two
+    decades, and on a linear axis the smallest of them — usually the one that is misweighted, which
+    is exactly what you are looking for — is a flat line on the floor.
+
+    Args:
+        site (str): Site name, used in the title and filename.
+        series (dict[str, list[float]]): Output of :func:`parse_log`.
+        out_dir (Path): Directory to write into; created if absent.
+
+    Returns:
+        Path: The figure written.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    dense, sparse = split_by_cadence(series)
+    panels = [p for p in (dense, sparse) if p]
+    figure, axes = plt.subplots(len(panels), 1, figsize=(13, 4 * len(panels)), facecolor="#111111", squeeze=False)
+
+    for axis, panel in zip(axes.flatten(), panels, strict=True):
+        is_dense = panel is dense
+        # SSIM is bounded [0, 1] where the losses are not, so it gets its own axis or it flattens
+        # every other series against the top of the plot.
+        twin_names = [n for n in panel if "SSIM" in n] if not is_dense else []
+        twin = axis.twinx() if twin_names else None
+
+        for index, (name, values) in enumerate(panel.items()):
+            colour = _colour_for(name, index)
+            target = twin if name in twin_names else axis
+            if is_dense:
+                target.plot(values, color=colour, alpha=0.15, linewidth=0.6)
+                target.plot(_ema(values), color=colour, linewidth=1.8, label=name)
+            else:
+                steps = range(1, len(values) + 1)
+                target.plot(steps, values, color=colour, marker="o", markersize=3, label=name)
+
+        # Log y whenever everything is positive. The terms routinely span two or three decades, and
+        # on a linear axis the smallest of them — usually the misweighted one, which is exactly what
+        # you are looking for — is a flat line on the floor. On the per-epoch panel the first epoch
+        # is several times any later one, so a linear axis spends most of its height on it.
+        plotted = [values for name, values in panel.items() if name not in twin_names]
+        finite = [v for values in plotted for v in values if v == v and abs(v) != float("inf")]
+        if finite and min(finite) > 0:
+            axis.set_yscale("log")
+        axis.set_xlabel("training iteration" if is_dense else "local epoch")
+        axis.set_ylabel("weighted contribution to $\\mathcal{L}_G$" if is_dense else "loss")
+        _style(axis, f"{site} — {'per-iteration loss terms' if is_dense else 'per-epoch summary'}")
+
+        if twin is not None:
+            twin.set_ylabel(" / ".join(twin_names), color=COLOURS.get(twin_names[0], _PALETTE[5]))
+            twin.tick_params(axis="y", colors=COLOURS.get(twin_names[0], _PALETTE[5]))
+            for spine in twin.spines.values():
+                spine.set_color("#444444")
+            handles, labels = axis.get_legend_handles_labels()
+            extra_handles, extra_labels = twin.get_legend_handles_labels()
+            _legend(axis, handles + extra_handles, labels + extra_labels)
+        else:
+            _legend(axis)
+
+    figure.tight_layout()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    destination = out_dir / f"losses_{site}.png"
+    figure.savefig(destination, dpi=110, facecolor=figure.get_facecolor())
+    plt.close(figure)
+    return destination
+
+
+def main() -> None:
+    """Plot every site's losses from a simulator workspace. Host-side entry point."""
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE, help="simulator workspace root")
+    parser.add_argument("--out-dir", type=Path, default=None, help="defaults to $DEBUG_SAMPLES_DIR, else ./")
+    args = parser.parse_args()
+
+    out_dir = args.out_dir or Path(os.environ.get(DEBUG_DIR_ENV, "."))
+
+    logs = sorted(args.workspace.glob("site-*/log.txt"))
+    if not logs:
+        raise SystemExit(f"no site logs under {args.workspace} — pass --workspace")
+
+    for log in logs:
+        site = log.parent.name
+        series = parse_log(log)
+        dense, sparse = split_by_cadence(series)
+        if not dense and not sparse:
+            print(f"{site}: no scalar lines yet, skipping")
+            continue
+        destination = plot_site(site, series, out_dir)
+        counts = ", ".join(f"{name} x{len(values)}" for name, values in list(dense.items())[:4])
+        print(f"{site}: {counts} -> {destination}")
+
+
+if __name__ == "__main__":
+    main()

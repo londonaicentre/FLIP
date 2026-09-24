@@ -56,7 +56,7 @@ from pathlib import Path
 import numpy as np
 import nvflare.client as flare
 import torch
-from debug_samples import samples_enabled, save_grid
+from plot_utils import samples_enabled, save_grid
 from flip import FLIP
 from flip.constants import FlipConstants, ResourceType
 from latent_utils import build_inferer

@@ -44,7 +44,7 @@ import nibabel as nib
 import numpy as np
 import nvflare.client as flare
 import torch
-from debug_samples import due_for_plot, save_triplanar
+from plot_utils import due_for_plot, save_triplanar
 from flip import FLIP
 from flip.constants import ResourceType
 from medicalnet_perceptual import load_medicalnet_perceptual

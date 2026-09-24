@@ -101,7 +101,7 @@ def _load_app_module(tutorial: Path, module: str) -> ModuleType:
     loaded = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = loaded
 
-    # `trainer` imports its flat siblings by bare name (`from debug_samples import ...`), exactly as
+    # `trainer` imports its flat siblings by bare name (`from plot_utils import ...`), exactly as
     # the deployed job does — an app dir is copied whole and imported flat. So the app dir goes on
     # sys.path for the duration, and every bare name the import registered comes back off afterwards:
     # leaving `models` or `transforms` cached would make the *next* tutorial's import silently resolve
@@ -516,19 +516,19 @@ def test_debug_samples_ship_disabled(tutorial: Path) -> None:
 def test_debug_sample_output_is_gitignored(tutorial: Path) -> None:
     """The debug output directory is gitignored, so a local run cannot stage clinical images."""
     ignored = (tutorial / ".gitignore").read_text().split()
-    debug_samples = _load_app_module(tutorial, "debug_samples")
-    assert f"app_files/{debug_samples.DEBUG_DIR_NAME}/" in ignored
+    plot_utils = _load_app_module(tutorial, "plot_utils")
+    assert f"app_files/{plot_utils.DEBUG_DIR_NAME}/" in ignored
 
 
-def test_debug_samples_helper_is_identical_across_tutorials() -> None:
-    """All three copies of ``debug_samples.py`` are byte-identical.
+def test_plot_utils_helper_is_identical_across_tutorials() -> None:
+    """All three copies of ``plot_utils.py`` are byte-identical.
 
     Duplicated for the same reason ``transforms.py`` is: ``app_files/`` is the per-model upload unit,
     so a shared module would not survive the bundle. Pin them to each other so a fix to one (or a
     change to what the images are normalised against) cannot silently apply to only one tutorial.
     """
-    contents = {t.name: (t / "app_files" / "debug_samples.py").read_bytes() for t in _ALL_TUTORIALS}
-    assert len(set(contents.values())) == 1, f"debug_samples.py differs between {sorted(contents)}"
+    contents = {t.name: (t / "app_files" / "plot_utils.py").read_bytes() for t in _ALL_TUTORIALS}
+    assert len(set(contents.values())) == 1, f"plot_utils.py differs between {sorted(contents)}"
 
 
 def test_debug_samples_writes_nothing_when_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -537,12 +537,12 @@ def test_debug_samples_writes_nothing_when_disabled(tmp_path: Path, monkeypatch:
     The off path is the one that runs at a trust, so it is the one worth pinning: a regression that
     made saving unconditional would deposit reconstructions on every client of every real run.
     """
-    debug_samples = _load_app_module(_AUTOENCODER, "debug_samples")
-    monkeypatch.setattr(debug_samples, "debug_dir", lambda: tmp_path)
+    plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
+    monkeypatch.setattr(plot_utils, "debug_dir", lambda: tmp_path)
     batch = torch.zeros(2, 1, 8, 8)
 
-    assert debug_samples.save_grid({"input": batch}, "recon", {"SAVE_DEBUG_SAMPLES": False}) is None
-    assert debug_samples.save_grid({"input": batch}, "recon", {}) is None
+    assert plot_utils.save_grid({"input": batch}, "recon", {"SAVE_DEBUG_SAMPLES": False}) is None
+    assert plot_utils.save_grid({"input": batch}, "recon", {}) is None
     assert not list(tmp_path.iterdir())
 
 
@@ -550,11 +550,11 @@ def test_debug_samples_writes_one_png_per_call_when_enabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Enabled, ``save_grid`` writes a single PNG tiling the batches it was given."""
-    debug_samples = _load_app_module(_AUTOENCODER, "debug_samples")
-    monkeypatch.setattr(debug_samples, "debug_dir", lambda: tmp_path)
+    plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
+    monkeypatch.setattr(plot_utils, "debug_dir", lambda: tmp_path)
     config = {"SAVE_DEBUG_SAMPLES": True, "DEBUG_SAMPLES_MAX": 2}
 
-    written = debug_samples.save_grid(
+    written = plot_utils.save_grid(
         {"input": torch.rand(4, 1, 8, 8), "reconstruction": torch.rand(4, 1, 8, 8)},
         "recon",
         config,
@@ -576,17 +576,17 @@ def test_debug_samples_reduces_volumes_to_a_mid_slice(tmp_path: Path, monkeypatc
     ``make_grid`` cannot tile a volume, so a port that switched ``spatial_dims`` to 3 would otherwise
     lose its debug images to a swallowed exception at exactly the moment they are most useful.
     """
-    debug_samples = _load_app_module(_AUTOENCODER, "debug_samples")
-    monkeypatch.setattr(debug_samples, "debug_dir", lambda: tmp_path)
+    plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
+    monkeypatch.setattr(plot_utils, "debug_dir", lambda: tmp_path)
 
     volume = torch.zeros(1, 1, 8, 8, 5)
     volume[..., 2] = 1.0  # only the mid-slice is bright
-    written = debug_samples.save_grid({"input": volume}, "recon", {"SAVE_DEBUG_SAMPLES": True})
+    written = plot_utils.save_grid({"input": volume}, "recon", {"SAVE_DEBUG_SAMPLES": True})
 
     assert written is not None
     assert written.exists()
-    assert debug_samples._to_2d(volume).shape == (1, 1, 8, 8)
-    assert debug_samples._to_2d(volume).max() == 1.0
+    assert plot_utils._to_2d(volume).shape == (1, 1, 8, 8)
+    assert plot_utils._to_2d(volume).max() == 1.0
 
 
 @pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
@@ -604,19 +604,19 @@ def test_triplanar_is_gated_on_the_debug_flag_and_the_interval() -> None:
     Step 0 matters: it is the only look at an untrained model, and a run that dies early would
     otherwise leave no figure at all.
     """
-    debug_samples = _load_app_module(_AUTOENCODER, "debug_samples")
+    plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
     on = {"SAVE_DEBUG_SAMPLES": True, "DEBUG_PLOT_EVERY": 100}
 
-    assert [debug_samples.due_for_plot(i, on) for i in (0, 1, 99, 100, 101, 200)] == [
+    assert [plot_utils.due_for_plot(i, on) for i in (0, 1, 99, 100, 101, 200)] == [
         True, False, False, True, False, True,
     ]
     off = {"SAVE_DEBUG_SAMPLES": False, "DEBUG_PLOT_EVERY": 1}
-    assert not any(debug_samples.due_for_plot(i, off) for i in range(3))
+    assert not any(plot_utils.due_for_plot(i, off) for i in range(3))
     # A non-positive interval turns the figures off without disturbing the grids.
     never = {"SAVE_DEBUG_SAMPLES": True, "DEBUG_PLOT_EVERY": 0}
-    assert not any(debug_samples.due_for_plot(i, never) for i in range(3))
+    assert not any(plot_utils.due_for_plot(i, never) for i in range(3))
     # A junk value falls back rather than raising into a training step.
-    assert debug_samples.plot_every({"DEBUG_PLOT_EVERY": "often"}) == debug_samples.DEFAULT_PLOT_EVERY
+    assert plot_utils.plot_every({"DEBUG_PLOT_EVERY": "often"}) == plot_utils.DEFAULT_PLOT_EVERY
 
 
 def test_triplanar_gate_and_file_name_count_the_same_step() -> None:
@@ -668,12 +668,12 @@ def test_triplanar_writes_three_views_of_each_volume(tmp_path: Path, monkeypatch
     Built from a volume that is bright in only one octant, so a figure that took the same slice three
     times — the mistake that makes this plot useless while looking fine — cannot pass.
     """
-    debug_samples = _load_app_module(_AUTOENCODER, "debug_samples")
-    monkeypatch.setattr(debug_samples, "debug_dir", lambda: tmp_path)
+    plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
+    monkeypatch.setattr(plot_utils, "debug_dir", lambda: tmp_path)
 
     volume = torch.zeros(2, 1, 12, 14, 16)
     volume[..., :6, :7, :8] = 1.0
-    written = debug_samples.save_triplanar(
+    written = plot_utils.save_triplanar(
         {"input": volume, "reconstruction": volume * 0.5}, "triplanar", {"SAVE_DEBUG_SAMPLES": True}, step=7
     )
     assert written is not None
@@ -682,7 +682,7 @@ def test_triplanar_writes_three_views_of_each_volume(tmp_path: Path, monkeypatch
     assert "step0007" in written.name
 
     single = volume[0, 0]
-    cuts = [debug_samples._central_slice(single, axis, flip) for _, axis, flip in debug_samples._PLANES]
+    cuts = [plot_utils._central_slice(single, axis, flip) for _, axis, flip in plot_utils._PLANES]
     assert [c.shape for c in cuts] == [(16, 14), (16, 12), (14, 12)], "each view fixes a different axis"
 
 
@@ -700,8 +700,8 @@ def test_only_the_sagittal_view_is_mirrored() -> None:
     that view's central slice, so the assertions are about where anatomy lands on the page rather
     than about which numpy calls were made.
     """
-    debug_samples = _load_app_module(_AUTOENCODER, "debug_samples")
-    by_view = {name: (axis, flip) for name, axis, flip in debug_samples._PLANES}
+    plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
+    by_view = {name: (axis, flip) for name, axis, flip in plot_utils._PLANES}
     assert [by_view[v][1] for v in ("sagittal", "coronal", "axial")] == [True, False, False]
 
     size, mid, far = 9, 4, 8
@@ -709,7 +709,7 @@ def test_only_the_sagittal_view_is_mirrored() -> None:
     def corner_of(view: str, marker: tuple[int, int, int]) -> tuple[int, int]:
         volume = torch.zeros(size, size, size)
         volume[marker] = 1.0
-        rendered = debug_samples._central_slice(volume, *by_view[view])
+        rendered = plot_utils._central_slice(volume, *by_view[view])
         row, column = (int(v) for v in np.argwhere(rendered == 1.0)[0])
         return row < size // 2, column < size // 2  # (in the top half, in the left half)
 
@@ -727,12 +727,12 @@ def test_triplanar_declines_non_volumetric_input_instead_of_raising(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The 2-D X-ray tutorial shares this module; a tri-planar cut of a radiograph is meaningless."""
-    debug_samples = _load_app_module(_AUTOENCODER, "debug_samples")
-    monkeypatch.setattr(debug_samples, "debug_dir", lambda: tmp_path)
+    plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
+    monkeypatch.setattr(plot_utils, "debug_dir", lambda: tmp_path)
 
-    assert debug_samples.save_triplanar({"input": torch.zeros(1, 1, 8, 8)}, "t", {"SAVE_DEBUG_SAMPLES": True}) is None
+    assert plot_utils.save_triplanar({"input": torch.zeros(1, 1, 8, 8)}, "t", {"SAVE_DEBUG_SAMPLES": True}) is None
     disabled = {"SAVE_DEBUG_SAMPLES": False}
-    assert debug_samples.save_triplanar({"input": torch.zeros(1, 1, 4, 4, 4)}, "t", disabled) is None
+    assert plot_utils.save_triplanar({"input": torch.zeros(1, 1, 4, 4, 4)}, "t", disabled) is None
     assert list(tmp_path.glob("*.png")) == []
 
 
@@ -800,18 +800,18 @@ def test_debug_dir_defaults_inside_the_job_and_is_relocatable_by_env(
     an *environment* variable and not a ``config.json`` key: ``config.json`` is uploaded with the app
     and read on the trust, where this variable is never set.
     """
-    debug_samples = _load_app_module(_AUTOENCODER, "debug_samples")
+    plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
 
-    monkeypatch.delenv(debug_samples.DEBUG_DIR_ENV, raising=False)
-    assert debug_samples.debug_dir() == _AUTOENCODER / "app_files" / debug_samples.DEBUG_DIR_NAME
+    monkeypatch.delenv(plot_utils.DEBUG_DIR_ENV, raising=False)
+    assert plot_utils.debug_dir() == _AUTOENCODER / "app_files" / plot_utils.DEBUG_DIR_NAME
 
-    monkeypatch.setenv(debug_samples.DEBUG_DIR_ENV, str(tmp_path / "elsewhere"))
-    assert debug_samples.debug_dir() == tmp_path / "elsewhere"
+    monkeypatch.setenv(plot_utils.DEBUG_DIR_ENV, str(tmp_path / "elsewhere"))
+    assert plot_utils.debug_dir() == tmp_path / "elsewhere"
     assert (tmp_path / "elsewhere").is_dir(), "the override directory is created, not just returned"
 
     # An empty or whitespace-only value is not a path — fall back rather than writing to the cwd.
-    monkeypatch.setenv(debug_samples.DEBUG_DIR_ENV, "   ")
-    assert debug_samples.debug_dir() == _AUTOENCODER / "app_files" / debug_samples.DEBUG_DIR_NAME
+    monkeypatch.setenv(plot_utils.DEBUG_DIR_ENV, "   ")
+    assert plot_utils.debug_dir() == _AUTOENCODER / "app_files" / plot_utils.DEBUG_DIR_NAME
 
 
 @pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
@@ -839,7 +839,7 @@ def test_debug_samples_never_raises_into_the_training_loop(monkeypatch: pytest.M
     Debug output is an instrument, not part of the job: an unwritable workspace must not fail a
     federated round that has already done its training.
     """
-    debug_samples = _load_app_module(_AUTOENCODER, "debug_samples")
-    monkeypatch.setattr(debug_samples, "debug_dir", lambda: (_ for _ in ()).throw(OSError("read-only")))
+    plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
+    monkeypatch.setattr(plot_utils, "debug_dir", lambda: (_ for _ in ()).throw(OSError("read-only")))
 
-    assert debug_samples.save_grid({"input": torch.rand(1, 1, 8, 8)}, "recon", {"SAVE_DEBUG_SAMPLES": True}) is None
+    assert plot_utils.save_grid({"input": torch.rand(1, 1, 8, 8)}, "recon", {"SAVE_DEBUG_SAMPLES": True}) is None
