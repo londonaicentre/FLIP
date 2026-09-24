@@ -15,7 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
 from sqlmodel import Session
 
-from flip_api.auth.auth_utils import has_permissions
+from flip_api.auth.auth_utils import has_trust_permissions
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Projects
@@ -65,16 +65,51 @@ def approve_project_endpoint(
     """
     logger.debug(f"Attempting to approve project: {project_id} by user: {user_id}")
 
-    # 1. Check user permissions
-    if not has_permissions(user_id, [PermissionRef.CAN_APPROVE_PROJECTS], db):
-        logger.error(f"User {user_id} does not have permission to approve project {project_id}.")
+    # Schema validation
+    trust_ids = payload.trusts
+
+    # 1. Check user permissions — per trust, not platform-wide (FLIP#1258).
+    #
+    # Approval is the site's decision to expose ITS OWN patients' data to a project, so the
+    # authority has to sit with the site. This previously accepted a single global
+    # CAN_APPROVE_PROJECTS grant, which meant a Central Hub administrator could approve on
+    # behalf of every trust in the federation — the hub deciding what each site releases.
+    # A trust-scoped CAN_APPROVE_FOR_TRUST at each named trust is now required instead, and
+    # `has_trust_permissions` ignores global grants, so hub-wide Admin confers nothing here.
+    #
+    # All-or-nothing: one unauthorised trust in the list refuses the whole call. A partial
+    # approval would be worse than a refusal — the caller gets a success for a request that
+    # was only partly carried out, and some sites are approved by someone with no authority
+    # over them. `approve_project` commits the set in a single transaction for the same reason.
+    #
+    # The empty case is handled explicitly because this reads as "deny if any named trust is
+    # unauthorised", and that is vacuously satisfied by an empty list — a request naming no
+    # trusts would be authorised by anyone and would then approve nothing while reporting
+    # success. Same fail-open shape as `has_permissions([])`; refused here for the same reason.
+    if not trust_ids:
+        logger.error(f"Approval of project {project_id} by user {user_id} named no trusts.")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"User with ID: {user_id} was unable to approve this project",
         )
 
-    # Schema validation
-    trust_ids = payload.trusts
+    unauthorised = [
+        trust_id
+        for trust_id in trust_ids
+        if not has_trust_permissions(user_id, [PermissionRef.CAN_APPROVE_FOR_TRUST], trust_id, db)
+    ]
+    if unauthorised:
+        # The detail names no trust: which trusts a user lacks authority over is not the
+        # caller's business, and echoing the list would let one probe the federation's
+        # role assignments. The trusts go to the hub's log instead.
+        logger.error(
+            f"User {user_id} may not approve project {project_id} for trust(s) {unauthorised}: "
+            f"CAN_APPROVE_FOR_TRUST is required at each trust, and global grants do not satisfy it"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User with ID: {user_id} was unable to approve this project",
+        )
 
     project_approval = IProjectApproval(
         project_id=project_id,

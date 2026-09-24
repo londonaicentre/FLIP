@@ -55,8 +55,13 @@ def mock_get_session():
 
 @pytest.fixture
 def mock_has_permissions():
+    """The route now authorises against the trust named in the body (FLIP#1258).
+
+    Fixture kept as ``has_permissions`` for the existing call sites; the seam under it is
+    the trust-scoped check, so every existing test runs against the real contract.
+    """
     with mock.patch(
-        "flip_api.trusts_services.start_project_imaging_creation.has_permissions"
+        "flip_api.trusts_services.start_project_imaging_creation.has_trust_permissions"
     ) as mock_has_permissions:
         mock_has_permissions.return_value = True
         yield mock_has_permissions

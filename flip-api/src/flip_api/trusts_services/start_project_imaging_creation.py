@@ -16,7 +16,7 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request, status
 from sqlmodel import Session
 
-from flip_api.auth.auth_utils import has_permissions
+from flip_api.auth.auth_utils import has_trust_permissions
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import TrustTask
@@ -66,8 +66,18 @@ async def start_project_imaging_creation(
         dict[str, str]: Success message indicating the task has been queued.
     """
     try:
-        # Permissions check
-        if not has_permissions(user_id, [PermissionRef.CAN_APPROVE_PROJECTS], db):
+        # Permissions check — scoped to THIS trust (FLIP#1258).
+        #
+        # Reached via the approval fan-out, but also directly: a global CAN_APPROVE_PROJECTS
+        # here would let a hub administrator create XNAT projects and queue imaging pulls at a
+        # trust that never approved the project, bypassing the site-scoped check on the
+        # approval endpoint itself. The trust is named in the body, so the authority is checked
+        # against it.
+        if not has_trust_permissions(user_id, [PermissionRef.CAN_APPROVE_FOR_TRUST], trust.id, db):
+            logger.error(
+                f"User {user_id} may not start imaging creation for project {project_id} at trust {trust.id}: "
+                f"CAN_APPROVE_FOR_TRUST is required at that trust, and global grants do not satisfy it"
+            )
             raise HTTPException(
                 status_code=403,
                 detail=f"User with ID: {user_id} was unable to start XNAT project creation",
