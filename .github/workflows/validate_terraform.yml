@@ -93,6 +93,7 @@ jobs:
           - test_check_fl_plan_impact.sh
           - test_compose_ci_env.sh
           - test_resolve_image_tags.sh
+          - test_setup_github_environments.sh
     steps:
       - name: Checkout code
         uses: actions/checkout@v5

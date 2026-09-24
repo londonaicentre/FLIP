@@ -27,7 +27,7 @@ FLIP/
 │   ├── xnat/           # Mocked XNAT medical-imaging archive
 │   ├── observability/  # Grafana + Loki monitoring stack (alloy/grafana/loki)
 │   └── deploy/         # The trust node in its shapes (#1213): compose_trust.*.yml (Compose on a host) plus the two below
-│       ├── helm/       # The same stack as Helm chart `flip-trust` for Kubernetes. Holds no AWS credentials and never fetches the FL participant kit: stage it onto the node first with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then deploy with `flClient.kitHostPath` pointing at it (required whenever flClient.enabled). On the AWS side the EC2 equivalent is `make stage-fl-kit KIT=<CODE>`, which re-stages for the trust's REGISTERED slot after `register-trusts`
+│       ├── helm/       # The same stack as Helm chart `flip-trust` for Kubernetes. Holds no AWS credentials and never fetches the FL participant kit: stage it onto the node first with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then deploy with `flClient.kitHostPath` pointing at it (required whenever flClient.enabled). On the AWS side the EC2 equivalent is `make stage-fl-kit KIT=<CODE>`, which re-stages for the trust's REGISTERED slot after `register-trusts`. Deploys carry one wait budget, `HELM_TIMEOUT` (default `30m`), covering both the `xnat-init` Helm hook in `deploy` and the `kubectl wait` in `xnat-init` — set below the job's real duration it fails *after* Helm has applied the new spec, so the error names helm rather than the wait that expired (FLIP#1228). `xnat-web` is `strategy: Recreate` for a related reason: a singleton on a ReadWriteOnce volume cannot surge a second pod, so under the default RollingUpdate the rollout stalls and the old pod keeps serving the old plugin jars however long the deploy waits. Verify the DICOM path with `make -C trust/deploy/helm status` (compares the running xnat-web pod's plugin jars against `xnat.web.plugins.urls`) and `smoke-cstore` (a real C-STORE through the mocked PACS, then greps the receiver's `dicom.log`) — a C-ECHO never reaches XNAT's importer and passes while every store aborts
 │       └── ansible/    # onprem.yml — provisions a site-owned Ubuntu host for the compose stack; the on-prem twin of deploy/providers/AWS/site.yml, still driven by `make -C deploy/providers/AWS provision-local-trust` (needs the hub env file — the known exception to "providers = Terraform only")
 ├── deploy/             # Central Hub Docker Compose files (dev/prod, flower/nvflare); FL network provisioning now lives under fl-services/<backend>/, not here
 │   └── providers/      # Infrastructure provisioning ONLY (Terraform per cloud); node shapes live under trust/deploy/
@@ -469,7 +469,11 @@ Two guards make the unattended apply safe (`resolve-image-tags.sh` pins this com
 `check-fl-plan-impact.sh` holds any apply that would kill an in-flight training run), and Terraform
 inputs reach CI through `deploy/providers/AWS/scripts/compose-ci-env.sh` — so **adding an `export TF_VAR_…` line means
 also updating that script's manifest, all three workflow `env:` blocks, and both GitHub
-environments**. Full detail: [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS/AGENTS.md#terraform-ci-flip962).
+environments**. Which account and which mode a run targets is the `TF_PROD` variable on the
+GitHub environment — the `deploy/env_mode.mk` token (`stag` | `true` | `lza-stag` | `lza`), which
+selects the env file, the AWS profile and the required key set — so repointing an estate at another
+AWS account is a value change, never a workflow edit (FLIP#1199, "Repointing CI at the LZA
+accounts"). Full detail: [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS/AGENTS.md#terraform-ci-flip962).
 
 ### Docker image builds: gated on tests, manual trigger for branches
 

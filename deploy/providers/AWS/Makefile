@@ -120,16 +120,23 @@ endif
 
 # IAM permissions boundary (FLIP#1082): the boundary policy is owned by the ci/
 # root, which exists to fence the GitHub OIDC apply role and is applied only in
-# the accounts whose applies run through that pipeline. The LZA workload accounts
-# are applied by hand under the platform's admin permission set and never receive
-# ci/, so the policy does not exist there and attaching it fails every role
-# update with NoSuchEntity. Detach it on the LZA modes unless the env file says
-# otherwise — variables.tf documents "" as the correct value for an account where
-# ci/ has never been applied. Re-attach (drop this default) the day LZA applies
-# move to CI and ci/ is applied there first.
+# the accounts whose applies run through that pipeline. Detached on the LZA modes
+# for now: ci/ has not been applied in either of those accounts yet, they are
+# still changed by laptop applies, and attaching a name that does not resolve
+# fails every one of those role updates with NoSuchEntity — which is the failure
+# this default was added for during the FLIP#749 bring-up. variables.tf documents
+# "" as the value for an account where ci/ has never been applied, and an env file
+# that sets the variable itself still wins: `?=` only supplies the default.
 ifneq ($(IS_LZA),)
 export TF_VAR_iam_permissions_boundary_name ?=
 endif
+
+# Re-attaching it — deleting the block above — is a follow-up, and it is *ordered*
+# after the thing it depends on: first `make -C ci apply PROD=lza-stag` /
+# `PROD=lza` in both accounts (README, "Repointing CI at the LZA accounts",
+# step 3), then drop the block and flip tests/test_iam_permissions_boundary.py to
+# assert that no mode detaches it. Re-attaching here would break every manual
+# LZA apply in the window before that step runs.
 
 # Kit-file env suffix — the ENV token from env_mode.mk (.production / .stag /
 # .lza-prod / .lza-stag): selects the trust kit file trust/.env.<KIT>.<suffix> for
@@ -241,6 +248,14 @@ export TF_VAR_VPC_NAME=${VPC_NAME}
 # behaviour unchanged.
 MANAGE_DNS ?= true
 export TF_VAR_manage_dns=$(MANAGE_DNS)
+# Handing the public web name to another estate's CloudFront (FLIP#749 change
+# 2b). Separate from MANAGE_DNS on purpose: this account keeps its zone,
+# records and certificate, it just stops claiming the name so the receiving
+# edge's wildcard can win. Being its own switch is what lets the drop happen in
+# a chosen window instead of whenever a release reaches prod. Unset ⇒ false,
+# i.e. this account keeps serving the name — behaviour unchanged.
+RELEASE_WEB_ALIAS ?= false
+export TF_VAR_release_web_alias=$(RELEASE_WEB_ALIAS)
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
@@ -361,39 +376,6 @@ init: ## Initialize Terraform configuration
 .PHONY: print-tf-env
 print-tf-env: ## Print the resolved TF_VAR_* environment as KEY=value lines (for CI)
 	@env | grep '^TF_VAR_' | sort
-
-# Publish the EC2 keypair public key to SSM so CI can reproduce it.
-#
-# main.tf reads both aws_key_pair public keys with file(): `flip_keypair` from
-# `${var.flip_keypair}.pub` and `host_key` from `var.ec2_public_key_path` — both
-# resolve to ~/.ssh/host-aws.pub, and neither is behind a `count`. A runner
-# without that file plans a replacement of both keypairs, and because
-# `public_key` is ForceNew that ripples into aws_instance.ec2_instance.
-#
-# The bytes come from *state*, not from the operator's ~/.ssh, so what CI writes
-# is what Terraform already believes — a laptop file that has drifted (a
-# regenerated key, a different machine) would otherwise plan a replacement from
-# CI just as reliably.
-.PHONY: seed-ci-keypair-param
-seed-ci-keypair-param: ## Publish the aws_key_pair public key from state to SSM (for Terraform CI)
-	@set -eu; \
-	echo "🔑 Reading the keypair public key from state..."; \
-	state="$$($(_TF) state pull)"; \
-	host_key="$$(printf '%s' "$$state" | jq -r '.resources[] | select(.type=="aws_key_pair" and .name=="host_key") | .instances[0].attributes.public_key // empty')"; \
-	flip_key="$$(printf '%s' "$$state" | jq -r '.resources[] | select(.type=="aws_key_pair" and .name=="flip_keypair") | .instances[0].attributes.public_key // empty')"; \
-	if [ -z "$$host_key" ]; then \
-		echo "❌ aws_key_pair.host_key is not in state — run 'make plan' first, or check AWS_PROFILE=$(AWS_PROFILE)"; exit 1; \
-	fi; \
-	if [ -n "$$flip_key" ] && [ "$$flip_key" != "$$host_key" ]; then \
-		echo "❌ aws_key_pair.flip_keypair and .host_key hold different public keys."; \
-		echo "   Both are read from ~/.ssh/host-aws.pub, so CI can only supply one file."; \
-		echo "   Reconcile them from a laptop before enabling Terraform CI."; exit 1; \
-	fi; \
-	$(_AWS_ENV) aws ssm put-parameter \
-		--name /flip/ci/host_aws_public_key \
-		--description "EC2 keypair public key, read by the Terraform CI workflows (FLIP#962)" \
-		--type String --overwrite --value "$$host_key" >/dev/null; \
-	echo "✅ Published /flip/ci/host_aws_public_key to the $(AWS_PROFILE) account."
 
 .PHONY: import-persistent
 import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prevent replacement

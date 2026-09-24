@@ -52,11 +52,14 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
-# Looked up, never declared. The provider already exists in both FLIP accounts
-# (it backs GitHubAction-AssumeRoleWithAction-FLIP, used by the XNAT image build).
-# Declaring it as a `resource` would fail with EntityAlreadyExists on first apply,
-# and — worse — a later `terraform destroy` of this root would delete a provider
-# other workflows depend on.
+# Looked up, never declared. An account holds one provider per issuer URL, shared
+# by anything GitHub-driven in it, so it belongs to whatever owns the account's
+# baseline IAM: declared here it would fail with EntityAlreadyExists where one
+# exists, and a later `terraform destroy` of this root would delete a provider
+# other workflows depend on. `make plan` checks for it first and, if it is
+# missing, says who should declare it (see check-oidc-provider in the Makefile).
+# At AI Centre that is aicentre-iac for the self-contained accounts and
+# aicentre-lza-iac for the LZA ones.
 data "aws_iam_openid_connect_provider" "github" {
   url = "https://token.actions.githubusercontent.com"
 }

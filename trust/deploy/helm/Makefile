@@ -95,6 +95,22 @@ OVERRIDES_FILE ?=
 # release-upgrade path.
 KIT_FILE := $(REPO_ROOT)/trust/.env.$(KIT).$(ENV)
 
+# One budget governs every wait this Makefile performs on the XNAT init job, because
+# there is only one job and two ways of waiting for it: `deploy` waits on it as a
+# post-upgrade Helm hook, `xnat-init` waits on it directly with kubectl. Those used to
+# carry two different hardcoded literals (20m and 15m), both below the job's real
+# duration on a slow cluster — an upgrade that had already applied the corrected pod
+# spec would then report failure, and the operator would read a Helm timeout rather than
+# the wait that actually expired (FLIP#1228). The default is above the ~22m observed on
+# a real trust cluster. The job's own internal budgets (templates/xnat-init-job.yaml)
+# already chain to 40-90 minutes, so THIS is what bounds a deploy in practice — but it
+# bounds the WAIT, not the Job: the hook sets no activeDeadlineSeconds and its delete
+# policy is before-hook-creation,hook-succeeded, so when this expires Helm stops waiting
+# and marks the release failed while the Job carries on running in the cluster. Raising
+# one of those internal budgets alone therefore changes nothing about how long a deploy
+# waits — raise this too, or the extra budget is unreachable.
+HELM_TIMEOUT ?= 30m
+
 # Determine which values files to pass
 VALUES_OPTS := -f $(VALUES_FILE)
 ifneq ($(strip $(SECRETS_FILE)),)
@@ -125,7 +141,7 @@ ifneq ($(strip $(TAG)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit patch-kit-secrets xnat-init stage-kit preflight template-egress-variants
+.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit patch-kit-secrets xnat-init stage-kit preflight template-egress-variants smoke-cstore
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -191,7 +207,7 @@ deploy: preflight ## Deploy the Helm chart to the cluster
 	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
-		--timeout 20m \
+		--timeout $(HELM_TIMEOUT) \
 		$(VALUES_OPTS)
 
 undeploy: ## Remove the Helm release from the cluster
@@ -218,6 +234,14 @@ endif
 
 undeploy-trust-k8s: undeploy ## Remove trust services from K8s (alias for undeploy)
 	@true
+
+smoke-cstore: ## Send a real C-STORE through the PACS and read XNAT's receiver log (FLIP#1228)
+	## `make status` compares the pod's plugin jars against the values; this drives the
+	## path those jars are on. Both are needed: a roster can match while the importer is
+	## broken for some other reason, and a C-ECHO can pass while every store aborts.
+	## Requires a seeded Orthanc (it stores an instance the PACS already holds).
+	@NAMESPACE=$(NAMESPACE) RELEASE_NAME=$(RELEASE_NAME) KUBE_CONTEXT=$(KUBE_CONTEXT) \
+		$(CHART_DIR)/scripts/smoke-cstore.sh
 
 # Move a deployed Kubernetes trust to a release, data intact (FLIP#1204). A plain
 # `helm upgrade` with the pin set: PVCs survive it, the init hooks short-circuit on
@@ -315,12 +339,12 @@ xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is
 		--set xnat.initJob.enabled=true \
 		| $(KUBECTL) apply -n $(NAMESPACE) -f - \
 		--selector app.kubernetes.io/component=xnat-init
-	@echo "⏳  Waiting for xnat-init job to complete (timeout 15m)..."
+	@echo "⏳  Waiting for xnat-init job to complete (timeout $(HELM_TIMEOUT))..."
 	@$(KUBECTL) wait job \
 		--selector app.kubernetes.io/component=xnat-init \
 		--for=condition=complete \
 		--namespace $(NAMESPACE) \
-		--timeout=15m && \
+		--timeout=$(HELM_TIMEOUT) && \
 	echo "✅  XNAT init complete." || \
 	(echo "❌  XNAT init failed — check logs:"; \
 	 $(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \

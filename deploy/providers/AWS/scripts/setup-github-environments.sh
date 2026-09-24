@@ -20,6 +20,14 @@
 # are piped to `gh` on stdin, never passed as an argument, so they appear neither
 # in this script's output nor in the process table.
 #
+# --mode takes the deploy/env_mode.mk PROD token — stag | true | lza-stag | lza —
+# the same value the workflow is given as its TF_PROD variable. It selects the
+# GitHub environment (aws-stag / aws-prod), the local AWS profile those roles are
+# reached through, the state bucket, and which keys the manifest requires. The
+# environment *names* do not change with it: a repointed estate reuses aws-stag /
+# aws-prod, which is what keeps one CI pipeline covering both the self-contained
+# and the platform-managed accounts (README, "Repointing CI at the LZA accounts").
+#
 # The secret-vs-variable split is not hard-coded here. It is read out of
 # .github/workflows/terraform_plan.yml, because that workflow is what actually
 # dereferences them: a key the workflow reads as `secrets.X` but that was stored
@@ -30,8 +38,9 @@
 # Idempotent: re-running updates values in place.
 #
 # Usage:
-#     scripts/setup-github-environments.sh --env stag --env-file ../../../.env.stag
-#     scripts/setup-github-environments.sh --env prod --env-file ../../../.env.production --dry-run
+#     scripts/setup-github-environments.sh --mode stag --env-file ../../../.env.stag
+#     scripts/setup-github-environments.sh --mode lza-stag --env-file ../../../.env.lza-stag --dry-run
+#     scripts/setup-github-environments.sh --mode true --env-file ../../../.env.production
 
 set -euo pipefail
 
@@ -41,22 +50,29 @@ die() {
 }
 
 REPO="${REPO:-londonaicentre/FLIP}"
-TF_ENV=""
+MODE=""
 ENV_FILE=""
 DRY_RUN=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --env) TF_ENV="$2"; shift 2 ;;
+        --mode) MODE="$2"; shift 2 ;;
         --env-file) ENV_FILE="$2"; shift 2 ;;
         --repo) REPO="$2"; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
+        --env) die "--env is now --mode. Pass the deploy/env_mode.mk PROD token: stag | true | lza-stag | lza" ;;
         *) die "unknown argument: $1" ;;
     esac
 done
 
-[[ -n "${TF_ENV}" ]] || die "usage: $0 --env stag|prod --env-file <path> [--dry-run]"
-case "${TF_ENV}" in stag | prod) ;; *) die "--env must be 'stag' or 'prod'" ;; esac
+[[ -n "${MODE}" ]] || die "usage: $0 --mode stag|true|lza-stag|lza --env-file <path> [--dry-run]"
+case "${MODE}" in
+    stag) ENV=stag; IS_LZA=0 ;;
+    true) ENV=prod; IS_LZA=0 ;;
+    lza-stag) ENV=stag; IS_LZA=1 ;;
+    lza) ENV=prod; IS_LZA=1 ;;
+    *) die "--mode must be one of stag, true, lza-stag, lza (got '${MODE}')" ;;
+esac
 [[ -n "${ENV_FILE}" && -f "${ENV_FILE}" ]] || die "--env-file must point at an existing file (got '${ENV_FILE}')"
 command -v gh >/dev/null || die "gh CLI is required"
 
@@ -66,10 +82,25 @@ REPO_ROOT="$(cd "${AWS_DIR}/../../.." && pwd)"
 PLAN_WORKFLOW="${REPO_ROOT}/.github/workflows/terraform_plan.yml"
 [[ -f "${PLAN_WORKFLOW}" ]] || die "cannot find ${PLAN_WORKFLOW} — the secret/variable split is read from it"
 
-GH_ENV="aws-${TF_ENV}"
-# Matches the Makefile's PROD_AWS_PROFILE / STAG_AWS_PROFILE convention; override
-# if your local profile names differ.
-AWS_PROFILE_FOR_ENV="${AWS_PROFILE_FOR_ENV:-${TF_ENV}}"
+GH_ENV="aws-${ENV}"
+# The profile the CI roles in this mode are reached through. Matches the
+# Makefile's PROD_AWS_PROFILE / STAG_AWS_PROFILE / LZA_AWS_PROFILE /
+# LZA_STAG_AWS_PROFILE convention; override with AWS_PROFILE_FOR_ENV if your
+# local profile names differ.
+case "${MODE}" in
+    stag) PROFILE_DEFAULT="${STAG_AWS_PROFILE:-stag}" ;;
+    true) PROFILE_DEFAULT="${PROD_AWS_PROFILE:-prod}" ;;
+    lza-stag) PROFILE_DEFAULT="${LZA_STAG_AWS_PROFILE:-lza-stag}" ;;
+    lza) PROFILE_DEFAULT="${LZA_AWS_PROFILE:-lza-prod}" ;;
+esac
+AWS_PROFILE_FOR_ENV="${AWS_PROFILE_FOR_ENV:-${PROFILE_DEFAULT}}"
+
+# `ci/` is one working directory re-pointed between accounts by `make -C ci init`,
+# so every hint that tells the operator to run it has to name this mode — the
+# default is stag, and a prod or LZA operator following a stag hint would read the
+# wrong account's role ARNs.
+CI_INIT_SUFFIX=""
+[[ "${MODE}" == "stag" ]] || CI_INIT_SUFFIX=" PROD=${MODE}"
 
 # Set one secret or variable, with the value on stdin.
 #
@@ -107,16 +138,22 @@ set_gh() {
 # ever fires from the default branch). It no longer is: the develop-scheduled run
 # dispatches terraform_drift.yml onto `main` and the production leg runs there.
 # See .github/workflows/terraform_drift.yml.
-echo "🔧 ${GH_ENV} on ${REPO}"
+#
+# The environment names are deliberately NOT part of the mode. Repointing an
+# estate at another AWS account keeps aws-stag / aws-prod and changes their
+# values: the branch policy above is a property of the *pipeline*, not of the
+# account, and re-creating the environments to rename them would drop every
+# secret they hold.
+echo "🔧 ${GH_ENV} on ${REPO} (mode ${MODE})"
 if ((DRY_RUN)); then
     echo "   [dry-run] create environment ${GH_ENV}"
-    if [[ "${TF_ENV}" == "prod" ]]; then
+    if [[ "${ENV}" == "prod" ]]; then
         echo "   [dry-run] branch policy: main only"
     else
         echo "   [dry-run] branch policy: none (PR plans must be able to run)"
     fi
 else
-    if [[ "${TF_ENV}" == "prod" ]]; then
+    if [[ "${ENV}" == "prod" ]]; then
         gh api -X PUT "repos/${REPO}/environments/${GH_ENV}" \
             --input - >/dev/null <<'JSON'
 {"deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}
@@ -153,8 +190,16 @@ JSON
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Role ARNs, straight from the CI Terraform root
+# 2. The mode, then the role ARNs, straight from the CI Terraform root
 # ---------------------------------------------------------------------------
+
+# Which mode the workflows should run in — the value terraform_plan.yml /
+# terraform_apply.yml / terraform_drift.yml read as `vars.TF_PROD` and pass to
+# compose-ci-env.sh as PROD. Set here rather than by hand so the environments this
+# script populates and the mode it was invoked with cannot disagree; rollback is
+# re-running this with the other mode's token.
+set_gh variable TF_PROD "${MODE}"
+echo "   set TF_PROD=${MODE}"
 
 # terraform needs to be told which account to talk to, and told to ignore any
 # static AWS_* left in the shell — same reasoning as the Makefile's `_TF`, where
@@ -170,15 +215,18 @@ ci_output() {
 }
 
 # ci/ is a single working directory re-pointed between accounts by `make -C ci
-# init [PROD=true]`. If it is currently initialised for the *other* environment,
+# init [PROD=<mode>]`. If it is currently initialised for the *other* environment,
 # `terraform output` happily returns that account's ARNs — and writing those into
 # this environment would point stag's workflows at prod's roles, or the reverse.
 # The backend bucket records which account the working directory is bound to.
 # The state bucket name is the same in both FLIP accounts today, and the LZA
 # cutover (#749) keeps the naming — but it is a default, not an assumption:
 # override CI_STATE_BUCKET if an account ever uses another name.
-CI_STATE_BUCKET="${CI_STATE_BUCKET:-flip-terraform-state-${TF_ENV}}"
-CI_BACKEND_STATE="${AWS_DIR}/ci/.terraform/terraform.tfstate"
+CI_STATE_BUCKET="${CI_STATE_BUCKET:-flip-terraform-state-${ENV}}"
+# Overridable so scripts/tests/test_setup_github_environments.sh can point it at a
+# seeded state file instead of the working directory's, and so an operator in a
+# second checkout can name the one they actually initialised.
+CI_BACKEND_STATE="${CI_BACKEND_STATE:-${AWS_DIR}/ci/.terraform/terraform.tfstate}"
 
 # A fresh checkout has no ci/.terraform at all. The grep below then exits 2, and
 # under `set -o pipefail` that killed the whole script — silently, because grep's
@@ -186,7 +234,7 @@ CI_BACKEND_STATE="${AWS_DIR}/ci/.terraform/terraform.tfstate"
 # operator is told which command to run.
 [[ -f "${CI_BACKEND_STATE}" ]] || die "ci/ has not been initialised in this checkout (${CI_BACKEND_STATE} is missing).
    The role ARNs are read from its state. Run:
-       make -C ci init$([[ "${TF_ENV}" == prod ]] && echo ' PROD=true')"
+       make -C ci init${CI_INIT_SUFFIX}"
 
 ci_backend_bucket="$(
     grep -o '"bucket": *"[^"]*"' "${CI_BACKEND_STATE}" |
@@ -195,14 +243,14 @@ ci_backend_bucket="$(
 if [[ -n "${ci_backend_bucket}" && "${ci_backend_bucket}" != "${CI_STATE_BUCKET}" ]]; then
     die "ci/ is initialised for '${ci_backend_bucket}', not '${CI_STATE_BUCKET}'.
    Reading role ARNs now would wire ${GH_ENV} to the wrong account's roles. Run:
-       make -C ci init$([[ "${TF_ENV}" == prod ]] && echo ' PROD=true')"
+       make -C ci init${CI_INIT_SUFFIX}"
 fi
 
 plan_arn="$(ci_output plan_role_arn)"
 apply_arn="$(ci_output apply_role_arn)"
 if [[ -z "${plan_arn}" || -z "${apply_arn}" ]]; then
-    echo "   ⚠️  Could not read the role ARNs from ci/ state — is it initialised for ${TF_ENV}?"
-    echo "      Run: make -C ci init$([[ "${TF_ENV}" == prod ]] && echo ' PROD=true') && make -C ci output"
+    echo "   ⚠️  Could not read the role ARNs from ci/ state — is it initialised for ${MODE}?"
+    echo "      Run: make -C ci init${CI_INIT_SUFFIX} && make -C ci output"
     echo "      Then set TF_PLAN_ROLE_ARN / TF_APPLY_ROLE_ARN by hand."
 else
     set_gh variable TF_PLAN_ROLE_ARN "${plan_arn}"
@@ -252,7 +300,7 @@ set_one() {
         # public-access block, OAC and /ark_demo/* behaviour on it being
         # non-empty, so seeding prod without it destroys all four on the next
         # apply. Same asymmetry as keys_expected_empty() in reconcile_ci_env.py.
-        if [[ "${key}" == "DEMO_ASSETS_BUCKET_NAME" && "${TF_ENV}" == "prod" ]]; then
+        if [[ "${key}" == "DEMO_ASSETS_BUCKET_NAME" && "${ENV}" == "prod" ]]; then
             MISSING+=("${key}")
             return 0
         fi
@@ -269,12 +317,23 @@ set_one() {
 
 # Which keys are load-bearing comes from compose-ci-env.sh, the thing that
 # actually rejects a missing one — so this warns about what will break the run,
-# not about every key the local file happens not to carry.
+# not about every key the local file happens not to carry. That script holds two
+# lists, not one: the keys every mode needs, and the LZA keys that only the two
+# platform-managed modes require (the self-contained ones legitimately leave them
+# out). Both are read here, the second only when this mode is an LZA one.
 mapfile -t REQUIRED_KEYS < <(
     sed -n '/^REQUIRED_KEYS=(/,/^)/p' "${HERE}/compose-ci-env.sh" |
         grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*$' | sed -E 's/^[[:space:]]+//'
 )
 ((${#REQUIRED_KEYS[@]} > 0)) || die "could not read REQUIRED_KEYS from compose-ci-env.sh"
+if ((IS_LZA)); then
+    mapfile -t LZA_KEYS < <(
+        sed -n '/^LZA_REQUIRED_KEYS=(/,/^)/p' "${HERE}/compose-ci-env.sh" |
+            grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*$' | sed -E 's/^[[:space:]]+//'
+    )
+    ((${#LZA_KEYS[@]} > 0)) || die "could not read LZA_REQUIRED_KEYS from compose-ci-env.sh"
+    REQUIRED_KEYS+=("${LZA_KEYS[@]}")
+fi
 
 SET=()
 MISSING=()
@@ -293,7 +352,7 @@ if ((${#MISSING[@]} > 0)); then
     echo "   ⚠️  REQUIRED but absent from ${ENV_FILE} — the workflow will fail without these:"
     printf '      - %s\n' "${MISSING[@]}"
     echo ""
-    echo "      scripts/reconcile_ci_env.py --env ${TF_ENV} --profile ${TF_ENV} --compare ${ENV_FILE}"
+    echo "      scripts/reconcile_ci_env.py --env ${ENV} --profile ${AWS_PROFILE_FOR_ENV} --compare ${ENV_FILE}"
     echo "      recovers most of them from the deployed infrastructure."
 fi
 # Not `((DRY_RUN)) && echo …` as the last statement: on a real run `((0))` is
