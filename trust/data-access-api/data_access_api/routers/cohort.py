@@ -10,13 +10,22 @@
 # limitations under the License.
 #
 
+import datetime
 from typing import Any
 
 from cryptography.exceptions import InvalidTag
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 
-from data_access_api.config import get_settings
+from data_access_api.config import get_policy, get_settings
+from data_access_api.policy import (
+    ACTION_COHORT_ACCESSION_IDS,
+    ACTION_COHORT_DATAFRAME,
+    ACTION_COHORT_STATISTICS,
+    Decision,
+    decide,
+    subject_attributes,
+)
 from data_access_api.routers.schema import (
     AccessionIdsResponse,
     CohortQueryInput,
@@ -46,6 +55,36 @@ _UNCOUNTABLE_SUBJECTS_DETAIL = (
 )
 
 
+def _evaluate(action: str, project_id: str | None) -> Decision:
+    """Ask the trust's governance policy about one cohort operation (FLIP#1259).
+
+    The single decision point for this router. Returns the decision rather than raising,
+    because each route owns its own refusal text and status code — and those must not
+    change. In particular the caller must keep answering ``_BELOW_THRESHOLD_DETAIL``:
+    naming the rule in the HTTP body would turn the refusal into a probe for the trust's
+    configuration, and on the row-level routes into a row-count oracle.
+    """
+    return decide(
+        subject_attributes(),
+        {"project_id": project_id},
+        action,
+        policy=get_policy(),
+        configured_threshold=get_settings().COHORT_QUERY_THRESHOLD,
+    )
+
+
+def _log_denial(decision: Decision, project_id: str | None, what: str) -> None:
+    """Record an attributable denial (FLIP#1259 AC 6).
+
+    ``rule_id`` goes to the log, never to the caller. This is the only place a denial
+    becomes traceable to the rule that caused it, so it carries the project too.
+    """
+    logger.warning(
+        f"Policy denied {what} for project {project_id or '<none>'}: "
+        f"rule_id={decision.rule_id} reason={decision.reason}"
+    )
+
+
 # Create Router
 def _open_project_id(encrypted_project_id: str) -> str:
     """Open the hub-sealed project id the FL client forwards, or answer 400 with the reason.
@@ -68,6 +107,25 @@ def _open_project_id(encrypted_project_id: str) -> str:
         # Not the caller's payload. Name the type so an empty exception message never yields a blank reason.
         logger.exception(f"Failed to decrypt encrypted_project_id ({type(e).__name__}): {e}")
         raise HTTPException(status_code=500, detail=f"Failed to decrypt encrypted_project_id ({type(e).__name__})")
+
+
+def _project_id_for_policy(encrypted_project_id: str) -> str | None:
+    """Open the project id for a policy decision on ``/cohort``, or return ``None``.
+
+    ``/cohort`` does not otherwise need the project id, so opening the envelope here would
+    introduce a 400 this route has never returned — a visible behaviour change for trusts
+    running no policy at all. It is therefore opened only when a rule could actually use
+    it: some rule names projects for this action.
+
+    A policy that cannot be applied must not fail open, so a project-scoped rule with an
+    unopenable envelope still raises the 400 from ``_open_project_id``. When no rule is
+    project-scoped, ``None`` is correct rather than merely convenient: no rule can match on
+    a project, so the decision does not depend on the value.
+    """
+    policy = get_policy()
+    if policy is None or not policy.scopes_projects(ACTION_COHORT_STATISTICS):
+        return None
+    return _open_project_id(encrypted_project_id)
 
 
 router = APIRouter(prefix="/cohort", tags=["Cohort"], dependencies=[Depends(authenticate_internal_service)])
@@ -100,7 +158,28 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     """
     logger.info("Received cohort query")
 
-    minimum_cohort_size = get_settings().COHORT_QUERY_THRESHOLD
+    # The project id is only opened when a configured policy could actually use it. With no
+    # policy this route must behave exactly as before, and decrypting unconditionally would
+    # add a 400 failure mode (tampered/foreign envelope) that /cohort never had — a
+    # behaviour change for every trust that has not adopted a policy.
+    decision = _evaluate(ACTION_COHORT_STATISTICS, _project_id_for_policy(query_input.encrypted_project_id))
+    if not decision.permit:
+        _log_denial(decision, None, "cohort statistics")
+        # Suppressed, not refused. A policy denial must be indistinguishable from a
+        # below-threshold cohort on this route, whose contract is that a shortfall comes
+        # back as a zero-count response rather than an HTTP error (issue #519) — an error
+        # here would tell the caller a policy exists. Shape matches the suppression branch
+        # in services.cohort.get_statistics exactly.
+        return StatisticsResponse(
+            query_id=query_input.query_id,
+            trust_id=query_input.trust_id,
+            record_count=0,
+            created=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
+            data=[],
+            suppressed=True,
+        )
+
+    minimum_cohort_size = decision.effective_threshold
     logger.info(f"Minimum cohort size needed to return statistics: {minimum_cohort_size}")
 
     # On the original implementation get_records was invoked within get_statistics. However, to better handle
@@ -180,6 +259,14 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
 
     logger.info(f"Received DataFrame query for project {project_id}")
 
+    decision = _evaluate(ACTION_COHORT_DATAFRAME, project_id)
+    if not decision.permit:
+        _log_denial(decision, project_id, "row-level data")
+        # Same fixed text as a below-threshold refusal, deliberately: a distinct message
+        # for "policy denied" would confirm the project exists and reveal that a rule
+        # covers it, and would separate a denied cohort from an empty one.
+        raise HTTPException(status_code=403, detail=_BELOW_THRESHOLD_DETAIL)
+
     safe_query = validate_query(query_input.query)
 
     try:
@@ -205,7 +292,7 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
     # ran the de-duplicated route first.
     df = df.loc[:, ~df.columns.duplicated()]
 
-    minimum_cohort_size = get_settings().COHORT_QUERY_THRESHOLD
+    minimum_cohort_size = decision.effective_threshold
     # Only the count is guarded, not get_records above: its categorised 400s echo identifiers the
     # operator typed and are a useful diagnostic. A count that cannot be taken is refused exactly
     # as a small cohort is, so the refusal never says why.
@@ -279,6 +366,12 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
 
     logger.info(f"Received accession-ids query for project {project_id}")
 
+    decision = _evaluate(ACTION_COHORT_ACCESSION_IDS, project_id)
+    if not decision.permit:
+        _log_denial(decision, project_id, "accession IDs")
+        # Byte-identical to the below-threshold refusal, as on /cohort/dataframe.
+        raise HTTPException(status_code=403, detail=_BELOW_THRESHOLD_DETAIL)
+
     # validate_query returns the caller's SQL re-emitted from its parsed AST,
     # which breaks any injection taint chain and strips trailing semicolons so
     # the inner query composes cleanly inside the outer SELECT subquery.
@@ -302,7 +395,7 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
         logger.exception("Accession-ids query failed unexpectedly")
         raise HTTPException(status_code=500, detail="Query execution failed.")
 
-    minimum_cohort_size = get_settings().COHORT_QUERY_THRESHOLD
+    minimum_cohort_size = decision.effective_threshold
     # The wrapper above projects accession_id and nothing else, so the count always resolves
     # through omop.image_occurrence. An accession number that belongs to no imaging study
     # contributes no subject, so a cohort aliasing some unrelated column to that name is refused

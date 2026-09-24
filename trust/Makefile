@@ -14,7 +14,7 @@
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
-	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle
+	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance
 # PROD selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
 # runs the production compose) and the kit-file env token (ENV: stag stays distinct,
 # so a stag kit is .env.<CODE>.stag, never confused with .env.<CODE>.production; the
@@ -437,6 +437,24 @@ up-trust: require-xnat-aetitle create-networks
 	$(MAKE) ensure-seeded KIT=$(KIT) PROD=$(PROD)
 	@echo "🩻 Starting XNAT for $(KIT)..."
 	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)
+
+# Validate the trust's governance document (FLIP#1259) WITHOUT starting anything.
+# The services fail closed on an invalid policy, so an operator editing rules wants the
+# error here rather than from a container that refuses to come back up. Runs the real
+# loader — the same code path the service uses at startup — so this cannot drift from
+# what is actually enforced.
+check-governance:
+	$(require_kit_file)
+ifeq ($(strip $(ACCESS_POLICY_FILE)),)
+	@echo "ℹ️  No ACCESS_POLICY_FILE set in trust/$(KIT_FILE) — no governance document to check."
+	@echo "   Platform defaults apply: COHORT_QUERY_THRESHOLD=$(or $(COHORT_QUERY_THRESHOLD),10) and FL_SITE_PRIVACY_* only."
+	@echo "   To adopt one, copy trust/governance.example.toml and point ACCESS_POLICY_FILE at it."
+else
+	@echo "🔍 Validating $(ACCESS_POLICY_FILE) (KIT=$(KIT), floor COHORT_QUERY_THRESHOLD=$(or $(COHORT_QUERY_THRESHOLD),10))..."
+	@cd data-access-api && ACCESS_POLICY_FILE="$(abspath $(ACCESS_POLICY_FILE))" \
+	    COHORT_QUERY_THRESHOLD="$(or $(COHORT_QUERY_THRESHOLD),10)" \
+	    PYTHONPATH=. uv run python scripts/check_governance.py
+endif
 
 down-trust:
 	$(require_kit)
