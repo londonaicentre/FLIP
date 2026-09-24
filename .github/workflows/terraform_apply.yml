@@ -152,7 +152,22 @@ jobs:
       # `vars` here would override the resolved values and reintroduce hazard A.
       - name: Compose the Terraform env file
         env:
-          TF_ENV: ${{ github.ref_name == 'main' && 'prod' || 'stag' }}
+          # Which mode this run composes for: the deploy/env_mode.mk token, from
+          # the TF_PROD variable on the environment (stag | true | lza-stag | lza).
+          # Unset keeps the legacy pair — `true` on main, `stag` otherwise — so a
+          # repository that has not set it behaves exactly as before, and a
+          # repointed estate only has to set one variable. The script derives the
+          # env-file name, the AWS_PROFILE the Makefile's guard expects and which
+          # keys are required, from this one token.
+          PROD: ${{ vars.TF_PROD || (github.ref_name == 'main' && 'true' || 'stag') }}
+          # The class this run is allowed to compose, asserted by the script. The
+          # ref says which class the *branch* deploys; TF_PROD says which estate to
+          # deploy it into, and nothing else checks the two agree. They must:
+          # TF_PROD=stag (or lza-stag) on aws-prod composes a prod-sized plan whose
+          # RDS is refreshed as deletion_protection = false, skip_final_snapshot =
+          # true — then applies it unattended on main. With this, that is a red
+          # compose step instead of a plan someone has to read closely.
+          EXPECTED_ENV_CLASS: ${{ github.ref_name == 'main' && 'prod' || 'stag' }}
           AWS_REGION: ${{ vars.AWS_REGION }}
           VPC_NAME: ${{ vars.VPC_NAME }}
           FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}
@@ -185,14 +200,21 @@ jobs:
           K8S_TRUST_PUBLIC_IPS: ${{ vars.K8S_TRUST_PUBLIC_IPS }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
           JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: ${{ vars.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB }}
-          # Optional LZA keys (FLIP#749). Expected to be unset in the aws-stag /
-          # aws-prod environments — a platform-managed estate is applied from a
-          # laptop, and unset is the legacy value for all five. Passed through so
-          # compose-ci-env.sh's manifest stays the one place the mapping lives.
+          # The LZA keys (FLIP#749). Required when TF_PROD selects a
+          # platform-managed estate (lza-stag / lza), expected absent on the
+          # legacy tokens — see compose-ci-env.sh, which is the one place that
+          # decides. The last four have no `export TF_VAR_…` line in the Makefile,
+          # so the script writes them into the env file as raw exports. The two
+          # web-edge values are optional on purpose: the edge is built from this
+          # stack's outputs, so they are legitimately empty on a first apply.
           ACCESS_LOGS_BUCKET_NAME: ${{ vars.ACCESS_LOGS_BUCKET_NAME }}
           EFS_PROVISION_IMAGE: ${{ vars.EFS_PROVISION_IMAGE }}
           LZA_VPC_NAME: ${{ vars.LZA_VPC_NAME }}
           MANAGE_DNS: ${{ vars.MANAGE_DNS }}
+          NETWORKING_INGRESS_CIDRS: ${{ vars.NETWORKING_INGRESS_CIDRS }}
+          LZA_ELB_ACCESS_LOGS_BUCKET: ${{ vars.LZA_ELB_ACCESS_LOGS_BUCKET }}
+          LZA_WEB_EDGE_DOMAIN: ${{ vars.LZA_WEB_EDGE_DOMAIN }}
+          LZA_WEB_EDGE_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_EDGE_DISTRIBUTION_ARN }}
           # NOT one of the LZA keys above: this one is for a self-contained
           # account, set to "true" on aws-prod (or aws-stag) for the single apply
           # that hands the public web name to another estate's edge. Unset is the
@@ -205,9 +227,7 @@ jobs:
           INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
           POSTGRES_DB: ${{ vars.POSTGRES_DB }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
-        run: |
-          deploy/providers/AWS/scripts/compose-ci-env.sh \
-            ".env.${{ github.ref_name == 'main' && 'production' || 'stag' }}"
+        run: deploy/providers/AWS/scripts/compose-ci-env.sh
 
       - name: Write the EC2 keypair public key
         run: |
@@ -230,7 +250,10 @@ jobs:
       - name: Export the Terraform variables
         working-directory: deploy/providers/AWS
         env:
-          PROD: ${{ github.ref_name == 'main' && 'true' || 'stag' }}
+          # Same token as the compose step above, for the same reason: `make` is
+          # what resolves the env file (env_mode.mk) and the TF_VAR_* mapping, and
+          # it has to be looking at the environment this run composed for.
+          PROD: ${{ vars.TF_PROD || (github.ref_name == 'main' && 'true' || 'stag') }}
         run: make --no-print-directory print-tf-env >> "$GITHUB_ENV"
 
       # Plan first and apply *that file*, never `apply -auto-approve` against a

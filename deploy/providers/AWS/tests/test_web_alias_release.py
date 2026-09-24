@@ -262,7 +262,9 @@ def test_release_web_alias_is_optional_not_required() -> None:
     destructive; this one's default is the safe direction, so making it required would fail
     every ordinary plan until both GitHub environments set it.
     """
-    optional = re.search(r"OPTIONAL_KEYS=\((.*?)\n\)", COMPOSE_CI_ENV.read_text(), re.S)
+    optional = re.search(r"^OPTIONAL_KEYS=\((.*?)\n\)", COMPOSE_CI_ENV.read_text(), re.S | re.M)
+    # Anchored: LZA_OPTIONAL_KEYS=( contains the same substring, and the key must be in
+    # the mode-independent array — it is not an LZA key.
     assert optional is not None, "OPTIONAL_KEYS array not found in compose-ci-env.sh"
     assert re.search(r"^\s*RELEASE_WEB_ALIAS\s*$", strip_comments(optional.group(1)), re.M), (
         "RELEASE_WEB_ALIAS must be a member of OPTIONAL_KEYS — absent means false, which is "

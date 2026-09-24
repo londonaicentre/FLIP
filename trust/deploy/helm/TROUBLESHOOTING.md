@@ -1126,7 +1126,7 @@ aws ecs update-service --cluster flip-cluster --service fl-server-net-1 \
 task fails with `CannotPullContainerError`.
 
 **Root Cause:** The NVFLARE container images are hosted in a private ECR
-repository (account `080369786334` in `eu-west-2`). The K8s cluster or ECS
+repository (the `<ecr-account-id>` account in `eu-west-2`). The K8s cluster or ECS
 task execution role lacks permissions to pull from this repository.
 
 **Fix (K8s):** Create an `imagePullSecret` with ECR credentials:
@@ -1134,7 +1134,7 @@ task execution role lacks permissions to pull from this repository.
 # Generate ECR auth token
 ecr_password=$(aws ecr get-login-password --profile flipstag --region eu-west-2)
 kubectl create secret docker-registry ecr-cred \
-  --docker-server=080369786334.dkr.ecr.eu-west-2.amazonaws.com \
+  --docker-server=<ecr-account-id>.dkr.ecr.eu-west-2.amazonaws.com \
   --docker-username=AWS \
   --docker-password="$ecr_password" \
   -n flip-trust
@@ -1156,7 +1156,7 @@ flClient:
     "ecr:BatchGetImage",
     "ecr:BatchCheckLayerAvailability"
   ],
-  "Resource": "arn:aws:ecr:eu-west-2:080369786334:repository/*"
+  "Resource": "arn:aws:ecr:eu-west-2:<ecr-account-id>:repository/*"
 }
 ```
 
