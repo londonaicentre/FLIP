@@ -75,6 +75,12 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
       sse_algorithm = var.state_bucket_sse_algorithm
     }
     bucket_key_enabled = var.state_bucket_sse_algorithm == "aws:kms"
+
+    # Rejects uploads that bring their own key (SSE-C): state encrypted with a key
+    # only the uploader holds is state nobody else can read back. Explicit because
+    # the provider treats an unset value differently across versions — before
+    # 6.66 it plans the live block's REMOVAL — and S3 now blocks SSE-C by default.
+    blocked_encryption_types = ["SSE-C"]
   }
 }
 
@@ -119,7 +125,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "state" {
 # a Deny on object writes does not touch.
 locals {
   state_writer_arn_patterns = concat(
-    [aws_iam_role.terraform_apply.arn],
+    [local.apply_role_arn],
     var.state_writer_principal_arns,
   )
 }

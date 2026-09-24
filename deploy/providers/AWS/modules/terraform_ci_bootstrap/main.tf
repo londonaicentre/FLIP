@@ -112,4 +112,14 @@ locals {
     for name in var.attachable_managed_policies :
     "arn:${data.aws_partition.current.partition}:iam::aws:policy/${name}"
   ]
+
+  # The CI roles' and the boundary's own ARNs, composed rather than read from the
+  # resources. A policy document that references a resource attribute becomes
+  # "known after apply" whenever that resource has ANY pending change — even a tag
+  # added by a caller's provider default_tags — and a plan then shows the whole
+  # document as unknown, so a reviewer cannot see that it is unchanged. Composed,
+  # the documents render at plan time. Default IAM path "/" throughout.
+  plan_role_arn            = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.plan_role_name}"
+  apply_role_arn           = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.apply_role_name}"
+  permissions_boundary_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${var.permissions_boundary_name}"
 }

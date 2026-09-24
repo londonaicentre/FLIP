@@ -123,7 +123,7 @@ data "aws_iam_policy_document" "apply_iam" {
     condition {
       test     = "StringEquals"
       variable = "iam:PermissionsBoundary"
-      values   = [aws_iam_policy.apply_boundary.arn]
+      values   = [local.permissions_boundary_arn]
     }
   }
 
@@ -140,7 +140,7 @@ data "aws_iam_policy_document" "apply_iam" {
     condition {
       test     = "StringEquals"
       variable = "iam:PermissionsBoundary"
-      values   = [aws_iam_policy.apply_boundary.arn]
+      values   = [local.permissions_boundary_arn]
     }
 
     condition {
@@ -162,7 +162,7 @@ data "aws_iam_policy_document" "apply_iam" {
     condition {
       test     = "StringEquals"
       variable = "iam:PermissionsBoundary"
-      values   = [aws_iam_policy.apply_boundary.arn]
+      values   = [local.permissions_boundary_arn]
     }
   }
 
@@ -236,8 +236,8 @@ data "aws_iam_policy_document" "apply_iam" {
       "iam:UpdateRole",
     ]
     resources = [
-      aws_iam_role.terraform_apply.arn,
-      aws_iam_role.terraform_plan.arn,
+      local.apply_role_arn,
+      local.plan_role_arn,
     ]
   }
 
@@ -254,7 +254,7 @@ data "aws_iam_policy_document" "apply_iam" {
       "iam:DeletePolicyVersion",
       "iam:SetDefaultPolicyVersion",
     ]
-    resources = [aws_iam_policy.apply_boundary.arn]
+    resources = [local.permissions_boundary_arn]
   }
 }
 

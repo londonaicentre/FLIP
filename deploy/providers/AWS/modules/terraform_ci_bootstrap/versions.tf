@@ -14,7 +14,8 @@
 
 # No provider block and no backend: the caller supplies both. The platform
 # repositories pass a provider aliased into the FLIP account; ../../ci configures
-# its own. >= 6.0 because data.aws_region's `region` attribute arrives there; < 7.0
+# its own. >= 6.22 because blocked_encryption_types (state_bucket.tf) first appears
+# there (data.aws_region's `region` needs 6.0); < 7.0
 # because a major version is a deliberate bump, not something a platform init
 # should pick up unannounced. Spans aicentre-iac's lock (6.39) and FLIP's (6.66).
 terraform {
@@ -23,7 +24,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 6.0, < 7.0"
+      version = ">= 6.22, < 7.0"
     }
   }
 }
