@@ -119,11 +119,19 @@ name and branch match the pinned `job_workflow_ref` exactly.
 
 ## Notes
 
-- The OIDC provider is looked up with `data`, never declared. It already exists
-  in both FLIP accounts (it backs `GitHubAction-AssumeRoleWithAction-FLIP`, used
-  by the XNAT image build). A `resource` would fail with `EntityAlreadyExists`,
-  and a later `destroy` of this root would delete a provider other workflows
-  depend on.
+- The OIDC provider is looked up with `data`, never declared here. An account
+  holds one provider per issuer URL and it is shared by anything GitHub-driven in
+  that account, so a `resource` would fail with `EntityAlreadyExists` where one
+  exists, and a later `destroy` of this root would delete a provider other
+  workflows depend on. It is declared by the platform repository for each estate:
+  **aicentre-iac** for the self-contained accounts (module
+  `flip_github_actions_oidc_role`, which also backs
+  `GitHubAction-AssumeRoleWithAction-FLIP`, used by the XNAT image build), and
+  **aicentre-lza-iac** for the LZA workload accounts (`iam_github_oidc.tf`). In
+  any other account, declare it in that account's own baseline IaC before
+  planning this root. `make plan` runs `check-oidc-provider` first and stops with
+  the resource to declare if it is missing — rather than Terraform's own
+  "no matching OpenID Connect Provider found", which says neither why nor who.
 - These roles are FLIP-scoped and deliberately **not** joined to the LZA
   cross-account chain. The LZA management role trusts `repo:${org}/${repo}:*`
   with `AdministratorAccess`; adding FLIP to it would grant org-wide admin to

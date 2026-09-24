@@ -229,8 +229,9 @@ jobs:
           if ! aws ssm get-parameter \
             --name /flip/ci/host_aws_public_key \
             --query Parameter.Value --output text > "$HOME/.ssh/host-aws.pub"; then
-            echo "::error::/flip/ci/host_aws_public_key is missing. Seed it with:" \
-                 "make -C deploy/providers/AWS seed-ci-keypair-param"
+            echo "::error::/flip/ci/host_aws_public_key is missing. It is declared in" \
+                 "deploy/providers/AWS/parameter_store.tf and created by the first" \
+                 "laptop apply of that root in this account."
             exit 1
           fi
           chmod 600 "$HOME/.ssh/host-aws.pub"

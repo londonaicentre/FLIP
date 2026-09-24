@@ -1573,14 +1573,18 @@ AWS_PROFILE=stag LOCK=false make plan \
 ### One-time setup
 
 ```bash
-# 1. Publish the EC2 keypair public key so CI reproduces it byte for byte.
-#    Read from state, not from ~/.ssh: a laptop key that has drifted would make
-#    CI plan a replacement of both aws_key_pair resources — and because
-#    public_key is ForceNew, that ripples into aws_instance.ec2_instance.
-make seed-ci-keypair-param                 # stag
-make seed-ci-keypair-param PROD=true       # prod
+# 1. Nothing to publish by hand: /flip/ci/host_aws_public_key, the EC2 keypair
+#    public key CI writes to ~/.ssh before planning, is declared in
+#    parameter_store.tf and created by the main root's own apply. In these two
+#    accounts it already existed from the retired seed-ci-keypair-param target;
+#    `overwrite = true` adopts it on the first apply, rewriting the bytes CI has
+#    just read from it — a no-op.
 
-# 2. Create the OIDC roles, from a laptop (see ci/README.md).
+# 2. Create the OIDC roles, from a laptop (see ci/README.md). They trust GitHub's
+#    OIDC identity provider, which ci/ looks up rather than creates, so it must
+#    already exist in the account — AI Centre's legacy accounts get it from
+#    aicentre-iac; anywhere else, declare it in the account's baseline IaC first.
+#    `make -C ci plan` checks and, if it is missing, says what to declare.
 make -C ci init && make -C ci plan && make -C ci apply
 make -C ci init PROD=true && make -C ci plan PROD=true && make -C ci apply PROD=true
 
@@ -1604,11 +1608,15 @@ straight to GitHub.
 Two layers move when FLIP's CI is pointed at a different AWS account, and only the
 second is a GitHub change:
 
-1. **Per-account AWS bootstrap.** The plan and apply roles, the state bucket, the
-   ECR pull-through cache and the `/flip/ci/host_aws_public_key` parameter are
-   resources *in the target account*, created once by a human with admin access
-   there. Until they exist the workflows have an ARN to assume and nothing to
-   assume it with — `AssumeRole` fails before Terraform starts.
+1. **Per-account AWS bootstrap.** The GitHub OIDC provider, the plan and apply
+   roles, the state bucket, the ECR pull-through cache and the
+   `/flip/ci/host_aws_public_key` parameter are resources *in the target
+   account*, and all but the state bucket are declared in Terraform: the OIDC
+   provider by the platform repository, the roles by `ci/`, the parameter by the
+   main root. What stays manual is running those applies once, from a laptop with
+   admin access there — CI cannot create the roles it would need in order to
+   create them. Until they exist the workflows have an ARN to assume and nothing
+   to assume it with — `AssumeRole` fails before Terraform starts.
 2. **The GitHub environment's values.** Repointing rewrites `TF_PROD`,
    `TF_PLAN_ROLE_ARN`, `TF_APPLY_ROLE_ARN` and every account-scoped value (bucket
    names, the ECR registry host, the web-edge domain). The environment *names* do
@@ -1640,27 +1648,27 @@ Run these in order **per account**, from a laptop authenticated to that account:
 #        [profile lza-stag]  sso_session = <session>  sso_account_id = <lza-stag-account-id>  sso_role_name = FLIPAdminAccess
 #        [profile lza-prod]  sso_session = <session>  sso_account_id = <lza-prod-account-id>  sso_role_name = FLIPAdminAccess
 
-# 0b. A GitHub OIDC provider must already exist in the account before ci/ can be
-#     planned. ci/ looks it up with `data.aws_iam_openid_connect_provider` — a
-#     `resource` would fail with EntityAlreadyExists and a later destroy would
-#     delete a provider other workflows share — so in a fresh account the plan
-#     stops with "no matching OpenID Connect Provider found". Once per account:
-aws iam create-open-id-connect-provider \
-  --url https://token.actions.githubusercontent.com \
-  --client-id-list sts.amazonaws.com \
-  --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
-#     AWS now trusts GitHub's certificate chain through its own root CAs, so the
-#     thumbprint no longer decides whether the provider works — but the API still
-#     requires the argument, and the value above is the long-standing one.
+# 0b. A GitHub OIDC provider must exist in the account before ci/ can be planned.
+#     ci/ looks it up with `data.aws_iam_openid_connect_provider` rather than
+#     declaring it: an account holds one provider per issuer URL, shared by
+#     anything GitHub-driven there, so it is platform plumbing — and declared in
+#     this root, a destroy of FLIP's CI would delete it from under everything
+#     else. The platform repository declares it instead, as aicentre-iac does for
+#     the self-contained accounts:
+#         aicentre-lza-iac, iam_github_oidc.tf — one per FLIP workload account
+#     Merge that first; in an account without one, the ci/ plan stops with
+#     "no matching OpenID Connect Provider found". Nothing to run here.
 
 # 1. The state bucket (idempotent; the name comes from the env file).
 make create-backend PROD=lza-stag
 
-# 2. The EC2 keypair public key CI reproduces byte for byte — read from state, and
-#    from the *new* account. A laptop key that has drifted, or one belonging to the
-#    old account, plans a keypair replacement that ripples into the bastion
-#    ("One-time setup" step 1 has the reasoning).
-make seed-ci-keypair-param PROD=lza-stag
+# 2. /flip/ci/host_aws_public_key — the EC2 keypair public key CI reproduces byte
+#    for byte — is declared in parameter_store.tf, so the first laptop apply of the
+#    main root in this account creates it. CI cannot plan until it exists, so that
+#    apply comes before the environment is repointed. The keypair itself must
+#    come from THIS account's key: a laptop file that has drifted, or that belongs
+#    to the old account, plans a keypair replacement that ripples into the
+#    bastion, and the parameter would then publish the wrong key.
 
 # 3. The CI roles and the permissions-boundary policy. This root declares both the
 #    OIDC trust policies the three workflows assume and `AICentre-FLIPTerraformBoundary`

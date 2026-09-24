@@ -128,8 +128,41 @@ init: ## Initialize the CI-roles Terraform root
 		-backend-config="region=$(AWS_REGION)" \
 		-reconfigure
 
+# The roles trust GitHub's OIDC identity provider, which this root looks up rather
+# than declares: an account holds one provider per issuer URL, shared by anything
+# GitHub-driven in it, so it belongs to whatever owns the account's baseline IAM —
+# and declared here, a destroy of FLIP's CI would delete it from under everything
+# else. Terraform's own error when it is missing ("no matching OpenID Connect
+# Provider found") says nothing about why or who, so check first and say both.
+.PHONY: check-oidc-provider
+check-oidc-provider: ## Fail early, and say what to do, if the account has no GitHub OIDC provider
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; \
+	if ! arns=$$(AWS_PROFILE=$(AWS_PROFILE) aws iam list-open-id-connect-providers \
+		--query 'OpenIDConnectProviderList[].Arn' --output text 2>&1); then \
+		echo "❌ Could not list the OIDC providers in the $(AWS_PROFILE) account, so cannot tell"; \
+		echo "   whether one exists — an expired SSO session is the usual cause:"; \
+		echo "   $$arns" | tail -1; \
+		exit 1; \
+	fi; \
+	if ! printf '%s\n' "$$arns" | tr '\t' '\n' | grep -q 'oidc-provider/token.actions.githubusercontent.com$$'; then \
+		echo "❌ No GitHub Actions OIDC identity provider in the $(AWS_PROFILE) account."; \
+		echo "   The CI roles trust it, and this root deliberately does not create it: it is"; \
+		echo "   account-level plumbing shared by anything GitHub-driven in the account, so it"; \
+		echo "   belongs with the account's baseline IAM, where FLIP's CI cannot delete it."; \
+		echo "   - AI Centre accounts: declared by aicentre-iac (self-contained) or"; \
+		echo "     aicentre-lza-iac (LZA) — merge and apply that first."; \
+		echo "   - Any other account: declare it in your own baseline IaC, e.g."; \
+		echo "       resource \"aws_iam_openid_connect_provider\" \"github\" {"; \
+		echo "         url            = \"https://token.actions.githubusercontent.com\""; \
+		echo "         client_id_list = [\"sts.amazonaws.com\"]"; \
+		echo "       }"; \
+		echo "     or, once: aws iam create-open-id-connect-provider \\"; \
+		echo "       --url https://token.actions.githubusercontent.com --client-id-list sts.amazonaws.com"; \
+		exit 1; \
+	fi
+
 .PHONY: plan
-plan: ## Plan the CI roles
+plan: check-oidc-provider ## Plan the CI roles
 	@echo "📋 Planning CI roles for '$(TF_ENVIRONMENT)'..."
 	@$(_TF) plan -out=plan.tfplan
 
