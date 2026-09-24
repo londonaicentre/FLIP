@@ -248,6 +248,14 @@ export TF_VAR_VPC_NAME=${VPC_NAME}
 # behaviour unchanged.
 MANAGE_DNS ?= true
 export TF_VAR_manage_dns=$(MANAGE_DNS)
+# Handing the public web name to another estate's CloudFront (FLIP#749 change
+# 2b). Separate from MANAGE_DNS on purpose: this account keeps its zone,
+# records and certificate, it just stops claiming the name so the receiving
+# edge's wildcard can win. Being its own switch is what lets the drop happen in
+# a chosen window instead of whenever a release reaches prod. Unset ⇒ false,
+# i.e. this account keeps serving the name — behaviour unchanged.
+RELEASE_WEB_ALIAS ?= false
+export TF_VAR_release_web_alias=$(RELEASE_WEB_ALIAS)
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}

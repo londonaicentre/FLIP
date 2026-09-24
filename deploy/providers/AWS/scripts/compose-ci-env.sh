@@ -288,6 +288,19 @@ OPTIONAL_KEYS=(
     # configuration. Only stag sets it (to "false", for testing).
     ENFORCE_MFA
 
+    # Not an LZA key, and optional in both modes. It is for a self-contained
+    # account — legacy prod or legacy stag — on the day the public web name moves
+    # to the LZA edge (FLIP#749 changes 2b and 3). Absent is the everyday value:
+    # the Makefile defaults it to false, i.e. this account keeps serving the name.
+    # It is set to "true" on the aws-prod or aws-stag GitHub environment for the
+    # cutover, which makes the drop an audited one-line change with the apply as
+    # its record rather than a laptop apply the next CI run reverts. It must be
+    # set while TF_PROD still selects the legacy estate: once an environment is
+    # repointed at LZA there is no CI path to the account holding the alias. The
+    # staging order is the reverse of production's and takes a planned outage —
+    # README, "Handing the public name over".
+    RELEASE_WEB_ALIAS
+
     # The LZA keys (FLIP#749) are handled per mode below, not here: required on
     # the platform-managed estate, optional (and expected absent) on the
     # self-contained ones.
