@@ -33,7 +33,7 @@
 #     `environment: aws-prod` and read the production secrets. And it is what
 #     makes the OIDC side work at all — the plan role's trust policy matches
 #     `terraform_drift.yml@refs/heads/<drift_branch>`, which is `main` for prod
-#     (ci/variables.tf, `drift_branch`).
+#     (modules/terraform_ci_bootstrap, `drift_branch`).
 #   * Checking out `github.sha` on a develop-scheduled prod run would also have
 #     compared develop's HCL against production's state and reported every
 #     unreleased change as drift. Running the prod leg on `main` fixes that by

@@ -12,76 +12,64 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-variable "AWS_REGION" {
-  description = "AWS region for the provider. The IAM resources here are global; this only selects the endpoint."
+# Required. terraform.tfvars.example lists them with placeholder values.
+
+variable "aws_region" {
+  description = "AWS region for the provider and the state bucket. The IAM resources are global."
   type        = string
 }
 
-variable "environment" {
-  description = "Which FLIP environment's account this root is being applied to."
-  type        = string
+variable "allowed_account_ids" {
+  description = "The account this bootstrap is for. Terraform refuses to run against any other."
+  type        = list(string)
 
   validation {
-    condition     = contains(["stag", "prod"], var.environment)
-    error_message = "environment must be 'stag' or 'prod'."
+    condition     = length(var.allowed_account_ids) > 0
+    error_message = "allowed_account_ids must name the account this bootstrap is for."
   }
 }
 
 variable "github_org" {
   description = "GitHub organisation owning the repository whose workflows may assume these roles."
   type        = string
-  default     = "londonaicentre"
 }
 
 variable "github_repo" {
   description = "GitHub repository whose workflows may assume these roles."
   type        = string
-  default     = "FLIP"
 }
 
-# The GitHub environment a job must declare to reach this account's secrets. It
-# is also what the OIDC `sub` claim carries, so it is half of the trust policy:
-# a job that does not declare it gets a token these roles will not accept.
+variable "environment" {
+  description = "stag or prod. Only staging's plan role accepts pull-request merge refs."
+  type        = string
+}
+
 variable "github_environment" {
-  description = "GitHub Actions environment name holding this account's Terraform inputs (aws-stag / aws-prod)."
+  description = "GitHub Actions environment the jobs declare (e.g. aws-stag / aws-prod). Half of the OIDC trust policy."
   type        = string
 }
 
-# The branch an apply is allowed to run from. Enforced twice, on purpose:
-# here via the job_workflow_ref claim (IAM-side, cannot be edited by a PR), and
-# in GitHub via the environment's deployment branch policy (platform-side, stops
-# the job before it ever mints a token).
 variable "apply_branch" {
-  description = "Branch whose pushes may assume the apply role (develop for stag, main for prod)."
+  description = "Branch whose pushes may assume the apply role (e.g. develop for stag, main for prod)."
   type        = string
 }
 
-# The branch the *drift* workflow is loaded from, which is NOT `apply_branch`.
-#
-# GitHub only ever fires a `schedule` from the repository's default branch, so a
-# scheduled job presents `terraform_drift.yml@refs/heads/<default branch>`
-# whatever environment it targets. Deriving this from `apply_branch` is how the
-# prod drift job silently stopped being able to assume anything: it presented
-# `@refs/heads/develop` against a policy trusting `@refs/heads/main` only.
-#
-# Production sets this to `main` for a different reason than apply does: the
-# nightly run on the default branch re-dispatches terraform_drift.yml onto
-# `main` (see the workflow), so that `aws-prod` need not admit the default
-# branch in its deployment branch policy. The two values coincide; the reasons
-# do not, which is why this is its own variable.
+variable "state_bucket_name" {
+  description = "S3 bucket for the Terraform state — the FLIP root's and, after `make migrate-state`, this root's own."
+  type        = string
+}
+
+# Optional. Defaults are the module's; see ../modules/terraform_ci_bootstrap/variables.tf
+# for what each one does.
+
 variable "drift_branch" {
   description = "Branch the drift workflow is loaded from (the repo default branch, unless the job is re-dispatched)."
   type        = string
   default     = "develop"
 }
 
-variable "state_bucket_name" {
-  description = "S3 bucket holding this environment's Terraform state."
-  type        = string
-}
-
 variable "state_key" {
-  description = "Object key of the main Terraform state this CI role plans and applies."
+  description = "Object key of the FLIP root's Terraform state."
   type        = string
   default     = "flip/terraform.tfstate"
 }
@@ -105,72 +93,95 @@ variable "drift_workflow_file" {
 }
 
 variable "flip_api_secret_name" {
-  description = <<-EOT
-    Name of the Secrets Manager secret the FLIP root manages
-    (module.flip_api_secret in ../main.tf). The plan role needs an explicit read
-    grant on it — see plan_read_flip_api_secret in main.tf. Kept as a variable
-    rather than hardcoded so the coupling to the other root stays visible, and so
-    a renamed secret is a one-line change here rather than a silent plan failure.
-  EOT
+  description = "Name of the Secrets Manager secret the FLIP root manages, which the plan role may read."
   type        = string
   default     = "FLIP_API"
 }
 
-# Every IAM role the FLIP root manages, by literal name. All of them are named
-# rather than generated, which is what makes it possible to scope the escalation
-# primitives — iam:PassRole and iam:UpdateAssumeRolePolicy — to a list instead of
-# granting them on "*".
-#
-# Adding a role to the FLIP root therefore means adding it here and re-applying
-# this root from a laptop first, or the apply that creates it cannot pass or
-# re-trust it. That coupling is deliberate: it puts a human in the loop on every
-# new principal the pipeline can hand to a service.
 variable "managed_role_names" {
   description = "Names of the IAM roles the FLIP root owns, which an apply may pass and re-trust."
   type        = list(string)
   default = [
-    # iam_ecs.tf
     "ecs-task-execution-role",
     "ecs-flip-api-task-role",
     "ecs-fl-api-task-role",
     "ecs-fl-server-task-role",
-    # rds_proxy.tf
     "flip-rds-proxy-role",
-    # security.tf
     "flip-sg-drift-lambda-role",
-    # main.tf, via terraform-aws-modules/iam//modules/iam-assumable-role
     "ec2-role",
     "trust-ec2-role",
   ]
 }
 
-# The only AWS-managed policies the FLIP root attaches to anything. Bound to
-# iam:AttachRolePolicy as an iam:PolicyARN condition, so an apply cannot attach
-# AdministratorAccess (or anything else) to a role it has just created.
 variable "attachable_managed_policies" {
   description = "AWS-managed policy names (path included) an apply may attach to a role."
   type        = list(string)
   default = [
-    "service-role/AmazonECSTaskExecutionRolePolicy", # iam_ecs.tf, execution role
-    "AmazonSSMManagedInstanceCore",                  # main.tf, both EC2 roles
-    "CloudWatchAgentServerPolicy",                   # main.tf, trust EC2 role
+    "service-role/AmazonECSTaskExecutionRolePolicy",
+    "AmazonSSMManagedInstanceCore",
+    "CloudWatchAgentServerPolicy",
   ]
 }
 
-# The permissions boundary every role an apply creates must carry. Declared in
-# this root (laptop-applied) and referenced by name from the FLIP root, which
-# sets it on each of its roles — see `iam_permissions_boundary_name` there.
 variable "permissions_boundary_name" {
-  description = "Name of the managed policy used as the permissions boundary on roles the pipeline creates."
+  description = "Name of the permissions-boundary policy. The FLIP root's iam_permissions_boundary_name must match it."
   type        = string
   default     = "AICentre-FLIPTerraformBoundary"
 }
 
+variable "plan_role_name" {
+  description = "Name of the read-only plan role."
+  type        = string
+  default     = "AICentre-FLIPTerraformPlanRole"
+}
+
+variable "apply_role_name" {
+  description = "Name of the apply role. The Makefile's APPLY_ROLE_NAME must match it."
+  type        = string
+  default     = "AICentre-FLIPTerraformApplyRole"
+}
+
 variable "tags" {
-  description = "Tags applied to every resource in this root."
+  description = "Tags applied to everything this root creates."
   type        = map(string)
   default = {
     ManagedBy = "terraform"
     Component = "terraform-ci"
   }
+}
+
+variable "manage_state_bucket" {
+  description = "Create and harden the state bucket. Set false only if something else already manages it."
+  type        = bool
+  default     = true
+}
+
+variable "state_bucket_sse_algorithm" {
+  description = "Default encryption for the state bucket: AES256 (SSE-S3), or aws:kms with the AWS-managed aws/s3 key."
+  type        = string
+  default     = "AES256"
+}
+
+variable "state_noncurrent_versions_retained" {
+  description = "How many previous versions of each state object to keep."
+  type        = number
+  default     = 5
+}
+
+variable "state_noncurrent_version_days" {
+  description = "How many days a previous state version is kept before it may expire."
+  type        = number
+  default     = 90
+}
+
+variable "restrict_state_writes" {
+  description = "Deny state-object writes to every principal except the apply role and state_writer_principal_arns."
+  type        = bool
+  default     = false
+}
+
+variable "state_writer_principal_arns" {
+  description = "Extra principals (aws:PrincipalArn patterns) allowed to write state when restrict_state_writes is on."
+  type        = list(string)
+  default     = []
 }
