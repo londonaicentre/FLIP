@@ -116,12 +116,14 @@ variable "POSTGRES_DB" {
 
 # Permissions boundary attached to every IAM role this root owns.
 #
-# The policy itself is declared in ci/ — the root the pipeline does not apply —
-# and the CI apply role may only create a role, or write an inline policy onto
-# one, when that role carries this boundary (ci/main.tf, apply_iam). Set the name
-# to "" to detach it, which is only correct in an account where ci/ has never
-# been applied: an automated apply into an account whose roles have no boundary
-# is denied, loudly, on the first CreateRole.
+# The policy itself is declared by modules/terraform_ci_bootstrap — instantiated
+# by the platform repositories (aicentre-iac, aicentre-lza-iac), or by ci/ in an
+# account you bootstrap yourself; never by this root — and the CI apply role may
+# only create a role, or write an inline policy onto one, when that role carries
+# this boundary (apply_iam in the module). Set the name to "" to detach it, which
+# is only correct in an account where the bootstrap has never been applied: an
+# automated apply into an account whose roles have no boundary is denied, loudly,
+# on the first CreateRole.
 variable "iam_permissions_boundary_name" {
   description = "Managed-policy name used as the permissions boundary on this root's IAM roles; \"\" disables it."
   type        = string

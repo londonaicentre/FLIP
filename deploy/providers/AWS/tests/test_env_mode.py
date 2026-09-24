@@ -17,9 +17,10 @@
 Every Makefile that reads ``PROD`` — root, this provider, trust, trust/xnat, the Helm
 chart, both fl-services — includes this file instead of carrying its own ``ifeq`` chain, so a
 new PROD value is added in exactly one place. This pins the table itself; the
-per-Makefile probes (``test_trust_makefile_lza_modes.py``, ``test_lza_iam_boundary.py``)
+per-Makefile probes (``test_trust_makefile_lza_modes.py``, ``test_iam_permissions_boundary.py``)
 check the wiring.
 """
+
 import subprocess
 from pathlib import Path
 
