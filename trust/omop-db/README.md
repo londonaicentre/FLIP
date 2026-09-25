@@ -88,8 +88,8 @@ credentials:
 
 ```sh
 make -C trust seed-omop KIT=GSTT PROJECTS="spleen_project cxr_project"   # OMOP rows only
-make -C trust seed KIT=GSTT PROJECTS="spleen_project cxr_project"        # + this trust's DICOMs into Orthanc
-make -C trust seed-trusts PROJECTS="spleen_project cxr_project"          # both dev trusts
+make -C trust seed KIT=GSTT PROJECTS="cxr_project"                       # + this trust's DICOMs into Orthanc
+make -C trust seed-trusts PROJECTS="cxr_project"                         # both dev trusts
 ```
 
 What it does: fetches the canonical CSVs at the pinned data version
@@ -264,7 +264,18 @@ an `OMOP_DB_PORT_TRUST_<N>` in `.env.build` — `make populate NUM_TRUSTS=3
 PARTITION=modulo` fails fast until they exist (and `modulo` implies
 regenerating the matching imaging data). `populate` and `seed-omop` are the
 same loader (`omop_db_tools.import_tables`): `populate` passes `--clean all`
-(empty build databases), `seed-omop` uses the default `--clean projects`.
+(empty build databases), `seed-omop` uses the default `--clean projects`
+(`CLEAN=all` overrides — the one-time move off a re-cut project whose person
+ids all changed, e.g. spleen at the FLIP#1221 cut, since `projects` deletes by
+the *new* ids and would leave the old rows behind). `seed-omop` fetches the
+published tables at the pinned tag (`fetch-dataset --projects $(PROJECTS)`);
+`CANONICAL_DIR=<dir>` loads a local canonical tree (`<dir>/<project>/<table>.csv`,
+what `omop_db_tools.dataset build` writes) instead, which is how a project is
+proven on a running trust before its data version is tagged
+(`make -C fl-tutorials seed-brain-mri KIT=<CODE>`, FLIP#1221). `unseed-omop`
+(`import_tables --remove-only`) is the surgical reverse: it deletes the listed
+projects' rows by the person ids in the given tables — point it at the cut the
+trust actually holds, e.g. `HF_TRUST_DATA_REVISION=20260911` — and loads nothing.
 
 ### Publishing the image and the canonical tables
 

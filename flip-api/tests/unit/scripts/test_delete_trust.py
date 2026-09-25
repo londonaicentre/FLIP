@@ -135,6 +135,41 @@ def test_delete_one_trust_happy_path_cascades_dependents_and_frees_slot():
     session.commit.assert_called_once()
 
 
+def test_delete_one_trust_clears_trust_scoped_role_grants():
+    """A trust carrying a Trust Owner grant must hard-delete cleanly.
+
+    ``user_role.trust_id`` (FLIP#1260) references ``trust.id`` and declares no
+    ``ON DELETE CASCADE``, so a grant row left behind makes the Trust delete fail
+    with an ``IntegrityError``. Clearing it here — rather than by a cascade —
+    matches every other trust-referencing table in this script.
+
+    The scoping matters as much as the deletion: a TRUST_OWNER row for *another*
+    trust, and every global grant (``trust_id IS NULL``), must survive.
+    """
+    from sqlalchemy.dialects import postgresql
+
+    from flip_api.db.models.user_models import UserRole
+
+    trust = _make_trust("GSTT")
+    session = _make_session(trust=trust, slot=None)
+
+    result = delete_one_trust("GSTT", session)
+
+    assert UserRole in dict(_DEPENDENT_TABLES)
+    assert "user_role" in result["dependent_rows_deleted"]
+
+    statements = [call.args[0] for call in session.execute.call_args_list]
+    grant_delete = next(s for s in statements if "user_role" in str(s.compile(dialect=postgresql.dialect())))
+
+    compiled = grant_delete.compile(dialect=postgresql.dialect())
+    assert "DELETE FROM user_role" in str(compiled)
+    assert "user_role.trust_id" in str(compiled)
+    assert trust.id in compiled.params.values(), (
+        "the user_role delete must be scoped to the trust being removed — an "
+        "unscoped delete would take every trust's grants with it"
+    )
+
+
 def test_delete_one_trust_proceeds_when_no_slot_is_assigned():
     """A trust without an FL kit slot assignment still gets cleanly removed —
     `freed_fl_kit_slot` is None in the returned payload.

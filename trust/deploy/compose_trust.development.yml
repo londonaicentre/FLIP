@@ -55,7 +55,9 @@ services:
 
   orthanc:
     # Pull from GHCR by default; `make up BUILD=true` rebuilds from build: below.
-    image: ghcr.io/londonaicentre/orthanc:${DOCKER_TAG}
+    # ORTHANC_TAG: the same opt-out as OMOP_DB_TAG above (orthanc's build is
+    # path-filtered, so most sha- tags carry no orthanc image).
+    image: ghcr.io/londonaicentre/orthanc:${ORTHANC_TAG:-${DOCKER_TAG}}
     pull_policy: always
     build:
       context: ./orthanc
@@ -243,6 +245,9 @@ services:
       ENV: development
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
       TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
+      # The fl-client has no health endpoint; its configured image tag is what the health
+      # collector reports for it (FLIP#1204). Same variable the fl-client-net-* overlays use.
+      FL_CLIENT_IMAGE_TAG: ${DOCKER_FL_TAG:-}
       # Dev-on-pull (see `user:` above): import via PYTHONPATH, skip the editable
       # install (UV_NO_SYNC), keep uv's cache + HOME writable.
       HOME: /tmp

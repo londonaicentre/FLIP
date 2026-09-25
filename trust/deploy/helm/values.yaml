@@ -12,6 +12,17 @@
 # ---------------------------------------------------------------------------
 # Global trust-wide configuration
 # ---------------------------------------------------------------------------
+global:
+  image:
+    # The release this site runs (FLIP#1204): one pin for every FLIP-built image — trust-api,
+    # imaging-api, data-access-api, the fl-client, omop-db, orthanc and the three XNAT images.
+    # `make upgrade-trust-k8s KIT=<CODE> TAG=vX.Y.Z` sets it; `sync-kit` fills it from the kit's
+    # DOCKER_TAG. Empty = each service's own image.tag below applies (the mutable `stag`, which
+    # moves under a site on every develop merge). Observability images and xnat-dcm2niix carry
+    # upstream versions of their own and never follow it. omop-db, orthanc and the XNAT trio can
+    # be held back from it with their `image.pin` (the kit's OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG).
+    tag: ""
+
 trustName: "Trust_1"
 trustNumber: 1
 environment: production
@@ -40,7 +51,7 @@ flBackend: "nvflare"
 # existing values file pinning the old ones keeps installing and silently stops taking effect —
 # see README "Upgrading: trustData.version replaces the two per-store pins".
 trustData:
-  version: "20260901"
+  version: "20260917"
   hfRepo: "aicentreflip/trust-data"
   # Seeding (FLIP#1187). The trust-seed post-install/post-upgrade hook loads this trust's slice
   # of `projects` from the dataset into the running omop-db (rows, plus the DICOM vocabulary)
@@ -52,11 +63,14 @@ trustData:
   seed:
     enabled: true
     omop: true
-    # Off by default: the two default projects are ~2 GB of DICOM per trust, posted instance by
+    # Off by default: the default project is ~2 GB of DICOM per trust, posted instance by
     # instance (minutes, once — the PVC persists). Enable for a trust whose PACS must hold the
     # mock studies (an imaging pull needs them); CI and API-only clusters leave it off.
     orthanc: false
-    projects: "cxr_project spleen_project"
+    # One list feeds both halves, so it holds only projects the dataset publishes tables AND a
+    # DICOM set for. Since FLIP#1221 that is cxr_project: spleen and brain_mri publish tables
+    # only and regenerate their DICOMs locally, which no in-cluster hook can do.
+    projects: "cxr_project"
     # The dataset partition (source_trust) this trust receives; defaults to trustNumber. The
     # two are separate axes — see trust/README.md "Which partition a trust is seeded with".
     sourceTrust: ""
@@ -402,6 +416,12 @@ flClient:
   image:
     repository: ghcr.io/londonaicentre
     tag: stag
+    # Beats global.image.tag for the FL client alone — the compose stack's DOCKER_FL_TAG.
+    # sync-kit fills it from the kit only when DOCKER_FL_TAG names an immutable image
+    # (vX.Y.Z / sha-…); a dev kit's local `dev` or the floating `stag` leaves the client
+    # on the release pin. The FL images' builds are path-filtered like orthanc's, so a
+    # sha- move usually needs it (`make upgrade-trust-k8s … FL_TAG=`); a release never does.
+    pin: ""
     pullPolicy: Always
   nvflare:
     # Site-enforced privacy policy (FLIP#851): rendered into /app/local/privacy.json
@@ -473,6 +493,9 @@ omopDb:
     # own /flip/omop/load_core_vocab.sh, which only exists in CI-published
     # (vocab-free, FLIP#842) images.
     tag: stag
+    # Beats global.image.tag for this one image (the kit's OMOP_DB_TAG): omop-db only
+    # rebuilds when trust/omop-db/** changes, so most sha- tags carry no omop-db image.
+    pin: ""
     pullPolicy: Always
   persistence:
     enabled: true
@@ -620,6 +643,9 @@ orthanc:
   image:
     repository: ghcr.io/londonaicentre/orthanc
     tag: stag
+    # Beats global.image.tag for this one image (the kit's ORTHANC_TAG): orthanc only
+    # rebuilds when trust/orthanc/** changes, so most sha- tags carry no orthanc image.
+    pin: ""
     pullPolicy: Always
   replicas: 1
   service:
@@ -651,6 +677,10 @@ orthanc:
 # ---------------------------------------------------------------------------
 xnat:
   enabled: true
+  image:
+    # Beats global.image.tag for xnat-web, xnat-db and xnat-nginx together (the kit's
+    # XNAT_TAG, the same role it plays for the compose stack in trust/xnat/Makefile).
+    pin: ""
   initJob:
     enabled: true
   web:
@@ -663,17 +693,30 @@ xnat:
     # that leg (FLIP#993).
     dicomAet: XNAT
     dicomPort: 8104
-    # Fixed NodePort for the DICOM receiver, used with service.type: NodePort. Required when the
-    # PACS is outside the cluster: after XNAT issues C-MOVE the PACS opens a *new* association back
-    # to XNAT to C-STORE the studies, so that port must be reachable. Leave empty for the mocked
-    # Orthanc, which reaches the receiver over the cluster network.
+    # Fixed NodePort for the DICOM receiver, used with dicomService.type: NodePort. Required when
+    # the PACS is outside the cluster: after XNAT issues C-MOVE the PACS opens a *new* association
+    # back to XNAT to C-STORE the studies, so that port must be reachable. Leave empty for the
+    # mocked Orthanc, which reaches the receiver over the cluster network.
     # Must be inside the API server's --service-node-port-range (default 30000-32767), or the range
     # widened to admit the DICOM port. Set it equal to dicomPort so one number is true end to end.
     dicomNodePort: ""
+    # The DICOM SCP gets its own Service, separate from the web-UI `service` below — so exposing it
+    # externally (NodePort or LoadBalancer) never also exposes the Tomcat/web console. ClusterIP
+    # (default) is only valid for the mocked Orthanc PACS (see validatePacsReachable); a real PACS
+    # needs NodePort (with dicomNodePort set, subject to the node-port-range constraint above) or
+    # LoadBalancer — the only two options that reach a PACS outside the cluster.
+    dicomService:
+      type: ClusterIP
     image:
       repository: ghcr.io/londonaicentre/xnat-web
       tag: stag
       pullPolicy: Always
+    # Tomcat/web-console only — the DICOM SCP is dicomService above, deliberately never on this
+    # Service, so a NodePort/LoadBalancer exposure for DICOM can never expose the web UI with it.
+    # Held at ClusterIP for a real-PACS install (validatePacsReachable refuses anything else): this
+    # field used to be the one that exposed DICOM, so an upgrade of an install that set it to
+    # NodePort for that reason would otherwise put the admin console on a node address instead.
+    # Reach the console with `kubectl port-forward`.
     service:
       port: 8080
       type: ClusterIP
@@ -713,6 +756,11 @@ xnat:
       #   https://wiki.xnat.org/container-service/container-service-compatibility-matrix
       # and OHIF viewer 3.8.0 is the plugin's XNAT 1.10 release:
       #   https://wiki.xnat.org/xnat-ohif-viewer
+      # Convention, relied on by `make status`: each key is the jar's basename up to the
+      # version, so the filename reads `<key>-<version>...jar`. The roster check pairs a
+      # key with the jars on the pod by exactly that shape; a key spelled otherwise still
+      # deploys fine, but a version skew under it reports as a missing download rather
+      # than a stale jar, sending the operator to init-container logs that are clean.
       urls:
         container-service: "https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar"
         dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar"
@@ -891,7 +939,10 @@ networkPolicies:
   # The only intended use is the DICOM C-STORE return leg: FLIP retrieves by pull, so after XNAT
   # issues C-MOVE the PACS opens a new association back to XNAT. That is inbound, and without an
   # allowance here it is dropped — queries succeed and retrievals silently time out (FLIP#993).
-  # Scope this to the PACS itself, not the whole trust network.
+  # Scope this to the PACS itself, not the whole trust network. validatePacsReachable fails the
+  # render if it sees the literal 0.0.0.0/0 here — a tripwire, not a CIDR validator: Helm cannot
+  # evaluate a CIDR, so 0.0.0.0/1, ::/0 and anything else that still reaches the PACS pass it, and
+  # the rule in this comment is what forbids them.
   # Each entry: cidrs (list of CIDR strings) + port (int) + optional protocol (default TCP).
   allowedIngressCIDRsWithPorts: []
   # - cidrs:

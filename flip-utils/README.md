@@ -205,7 +205,9 @@ drives a FLIP recipe on the NVFLARE simulator (SimEnv) from the flip-utils venv.
 ### Unit Tests
 
 ```bash
-make unit-test
+make unit-test        # ruff --fix, ruff format --check, then mypy, then pytest with coverage
+make mypy             # type check only
+make format           # apply ruff format (make format-check only checks)
 # or
 uv run pytest -s -vv
 ```
@@ -279,7 +281,7 @@ make -C fl-services/nvflare provision NET_NUMBER=3
 ### Running a Network
 
 From ``fl-services/nvflare/`` (the per-backend Makefile that owns these targets — the
-``flip-utils/`` directory itself only ships ``unit-test``):
+``flip-utils/`` directory itself only ships ``lint``, ``mypy`` and ``unit-test``):
 
 ```bash
 make build                # Build the :dev FL images (flare-fl-{base,server,client,api})
@@ -333,7 +335,9 @@ means edits take effect immediately without a rebuild. A new job type needs no S
 
 | Command | Description |
 | --------- | ------------- |
-| `make unit-test` | Run pytest unit tests for flip python package |
+| `make unit-test` | Run ruff (lint + format check), mypy and the pytest unit tests for the flip python package |
+| `make mypy` | Type-check the flip python package only |
+| `make format` / `make format-check` | Apply / check ruff formatting for the flip python package |
 
 #### Running tutorials (from the repo root)
 

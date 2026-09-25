@@ -119,6 +119,30 @@ def test_render_override_omits_vocab_load_without_bucket():
     assert "s3Bucket" not in out
 
 
+def test_render_override_holds_pinned_images_back_from_the_release():
+    """The kit's OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG opt-outs reach the chart as `image.pin`,
+    beside the global.image.tag the kit's DOCKER_TAG sets; a kit without them emits none."""
+    kit = {**_FL_KIT, "DOCKER_TAG": "sha-badcff1", "OMOP_DB_TAG": "latest", "XNAT_TAG": "v0.6.0"}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
+    assert "\nglobal:\n  image:\n    tag: sha-badcff1\n" in out
+    assert "\nomopDb:\n  image:\n    pin: latest\n" in out
+    assert "\nxnat:\n  image:\n    pin: v0.6.0\n" in out
+    assert "orthanc:" not in out
+    plain = sync_k8s_kit.render_override({**_FL_KIT, "DOCKER_TAG": "v0.6.0"}, "Trust_K8s", "eu-west-2")
+    assert "pin:" not in plain
+
+
+def test_render_override_pins_the_fl_client_to_an_immutable_docker_fl_tag():
+    """One flClient block (a second top-level key would be a YAML duplicate): kitHostPath and,
+    when the kit's DOCKER_FL_TAG is a release or sha- tag, image.pin. `dev` / `stag` emit none."""
+    out = sync_k8s_kit.render_override({**_FL_KIT, "DOCKER_FL_TAG": "sha-03fdb61"}, "Trust_K8s", "eu-west-2")
+    assert out.count("\nflClient:\n") == 1
+    assert "\nflClient:\n  kitHostPath: /opt/flip/fl-kit\n  image:\n    pin: sha-03fdb61\n" in out
+    for tag in ("dev", "stag"):
+        out = sync_k8s_kit.render_override({**_FL_KIT, "DOCKER_FL_TAG": tag}, "Trust_K8s", "eu-west-2")
+        assert "pin:" not in out, tag
+
+
 def test_render_override_sets_kit_host_path_from_kit():
     """flClient.kitHostPath comes from the kit's FL_KIT_DIR. It is `required` in the
     chart, so an override that omits it (or nests it wrong) fails the render — and one
@@ -147,6 +171,107 @@ def test_render_override_kit_host_path_ignores_blank_fl_kit_dir():
     kit = {**_FL_KIT, "FL_KIT_DIR": "   "}
     out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
     assert "\nflClient:\n  kitHostPath: /opt/flip/fl-kit\n" in out
+
+
+
+# ── Helm Secret ownership ────────────────────────────────────────────────
+# The Helm Secret-ownership stamping in sync_k8s_kit.py
+# (FLIP#595) — so a Secret this script creates can be adopted by a subsequent
+# `helm upgrade --install` instead of aborting the release.
+
+
+def test_derive_release_name_strips_chart_suffix():
+    assert sync_k8s_kit.derive_release_name("trust-release-flip-trust-secrets") == "trust-release"
+    assert sync_k8s_kit.derive_release_name("my-trust-flip-trust-secrets") == "my-trust"
+
+
+def test_derive_release_name_without_suffix_is_identity():
+    assert sync_k8s_kit.derive_release_name("some-other-secret") == "some-other-secret"
+
+
+def test_stamp_helm_ownership_issues_label_and_annotate(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sync_k8s_kit.subprocess, "run", lambda args, **kw: calls.append(args) or None)
+    sync_k8s_kit.stamp_helm_ownership("trust-release-flip-trust-secrets", "flip-trust", "trust-release")
+
+    label = next(c for c in calls if c[1] == "label")
+    annotate = next(c for c in calls if c[1] == "annotate")
+    assert "app.kubernetes.io/managed-by=Helm" in label
+    assert "--overwrite" in label and "--overwrite" in annotate
+    assert "meta.helm.sh/release-name=trust-release" in annotate
+    assert "meta.helm.sh/release-namespace=flip-trust" in annotate
+    assert ["-n", "flip-trust"] == label[4:6]  # namespaced
+
+
+def test_kube_context_reaches_every_kubectl_call(monkeypatch):
+    """`make … KUBE_CONTEXT=<ctx>` must act on that cluster, not whichever one kubectl points at."""
+    calls = []
+    monkeypatch.setattr(sync_k8s_kit.subprocess, "run", lambda args, **kw: calls.append(args) or None)
+    monkeypatch.setattr(sync_k8s_kit, "KUBECTL", ["kubectl", "--context", "kind-flip-kch"])
+    sync_k8s_kit.stamp_helm_ownership("trust-release-flip-trust-secrets", "flip-trust", "trust-release")
+    assert calls
+    assert all(c[:3] == ["kubectl", "--context", "kind-flip-kch"] for c in calls)
+
+
+def test_patch_k8s_secret_stamps_ownership_on_create(monkeypatch):
+    """A freshly-created Secret must be stamped Helm-owned (the #595 fix)."""
+    calls = []
+
+    class _Res:
+        returncode = 1  # secret does not yet exist → create path
+
+    def fake_run(args, **kw):
+        calls.append(args)
+        return _Res()
+
+    monkeypatch.setattr(sync_k8s_kit.subprocess, "run", fake_run)
+    sync_k8s_kit.patch_k8s_secret(
+        "trust-release-flip-trust-secrets",
+        "flip-trust",
+        {"trust-api-key": "x"},
+        "trust-release",
+    )
+    verbs = [c[1] for c in calls]
+    assert "create" in verbs  # secret created
+    assert "label" in verbs  # ...then stamped
+    assert "annotate" in verbs
+
+
+def test_patch_k8s_secret_heals_ownership_on_existing(monkeypatch):
+    """An already-present Secret must be merge-patched and (re-)stamped Helm-owned
+    with --overwrite, so a pre-existing unowned Secret becomes adoptable (the #595
+    heal path)."""
+    calls = []
+
+    class _Res:
+        returncode = 0  # secret already exists → patch path
+
+    def fake_run(args, **kw):
+        calls.append(args)
+        return _Res()
+
+    monkeypatch.setattr(sync_k8s_kit.subprocess, "run", fake_run)
+    sync_k8s_kit.patch_k8s_secret(
+        "trust-release-flip-trust-secrets",
+        "flip-trust",
+        {"trust-api-key": "x"},
+        "trust-release",
+    )
+    verbs = [c[1] for c in calls]
+    assert "patch" in verbs  # existing secret merge-patched
+    assert "label" in verbs  # ...then (re-)stamped
+    assert "annotate" in verbs
+    label = next(c for c in calls if c[1] == "label")
+    annotate = next(c for c in calls if c[1] == "annotate")
+    assert "--overwrite" in label and "--overwrite" in annotate
+
+
+def test_stamp_helm_ownership_default_namespace(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sync_k8s_kit.subprocess, "run", lambda args, **kw: calls.append(args) or None)
+    sync_k8s_kit.stamp_helm_ownership("s", "", "rel")
+    annotate = next(c for c in calls if c[1] == "annotate")
+    assert "meta.helm.sh/release-namespace=default" in annotate
 
 
 if __name__ == "__main__":

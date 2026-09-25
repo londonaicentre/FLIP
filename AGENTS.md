@@ -16,7 +16,7 @@ FLIP/
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
 ├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (all Client-API), fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
-├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*,tabular_classification}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,ehr_risk_prediction} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion, EHR risk prediction (tabular/OMOP-only, Synthea open data → `make -C trust load-synthea-ehr`). Shared dataset tooling in fl-tutorials/datasets/ (download/derive/enrich, single copy for both backends — the download-*-data + upload-spleen-labels targets), outputs in the shared gitignored fl-tutorials/data/. fl-tutorials/datasets/utils/ holds the OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, the per-project surrogate-key blocks (omop_ids.py) and the one verification gate (verify_omop_tables.py --project <name>). fl-tutorials/datasets/arkplus/ downloads the Ark+ chest X-ray splits (TRAIN + HOLD-OUT) backing the three Ark+ tutorials; fl-tutorials/datasets/xrays_mini_300/ downloads the reference x-ray dataset backing xray_classification (both backends). spleen carries the full chain (`convert-spleen-to-dicom`, `create-spleen-metadata-table`, `build-spleen-omop-tables`, plus the reproducible-path/verification targets); cxr carries the OMOP conversion only (`reproduce-cxr-omop`) because image generation lives in the private londonaicentre/xraycat. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
+├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*,tabular_classification}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,ehr_risk_prediction} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion, EHR risk prediction (tabular/OMOP-only, Synthea open data → `make -C trust load-synthea-ehr`). Shared dataset tooling in fl-tutorials/datasets/ (download/derive/enrich, single copy for both backends — the download-*-data + upload-spleen-labels targets), outputs in the shared gitignored fl-tutorials/data/. fl-tutorials/datasets/utils/ holds the OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, the per-project surrogate-key blocks (omop_ids.py), the one verification gate (verify_omop_tables.py --project <name>) and, since #1221, the deterministic NIfTI→DICOM writer + synthetic identities (dicom_writer.py, synthetic_identity.py) the converters share. fl-tutorials/datasets/arkplus/ downloads the Ark+ chest X-ray splits (TRAIN + HOLD-OUT) backing the three Ark+ tutorials; fl-tutorials/datasets/xrays_mini_300/ downloads the reference x-ray dataset backing xray_classification (both backends). spleen and brain_mri carry the full chain from a public MSD download (`convert-<dataset>-to-dicom`, `create-<dataset>-metadata-table`, `build-<dataset>-omop-tables`, `build-<dataset>-canonical`, `verify-<dataset>-dicom`, `seed-<dataset> KIT=`, plus the reproducible-path/verification targets); their DICOM sets are regenerated locally and never published (only the OMOP tables + metadata table go to HF). cxr carries the OMOP conversion only (`reproduce-cxr-omop`) because image generation lives in the private londonaicentre/xraycat. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
 ├── map-apps/           # MONAI Application Package (MAP) templates for packaging FLIP-trained models for clinical deployment: map-apps/{classification,segmentation} (DICOM SR / DICOM SEG output templates) + map-apps/tests/
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
@@ -27,7 +27,7 @@ FLIP/
 │   ├── xnat/           # Mocked XNAT medical-imaging archive
 │   ├── observability/  # Grafana + Loki monitoring stack (alloy/grafana/loki)
 │   └── deploy/         # The trust node in its shapes (#1213): compose_trust.*.yml (Compose on a host) plus the two below
-│       ├── helm/       # The same stack as Helm chart `flip-trust` for Kubernetes. Holds no AWS credentials and never fetches the FL participant kit: stage it onto the node first with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then deploy with `flClient.kitHostPath` pointing at it (required whenever flClient.enabled). On the AWS side the EC2 equivalent is `make stage-fl-kit KIT=<CODE>`, which re-stages for the trust's REGISTERED slot after `register-trusts`
+│       ├── helm/       # The same stack as Helm chart `flip-trust` for Kubernetes. Holds no AWS credentials and never fetches the FL participant kit: stage it onto the node first with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then deploy with `flClient.kitHostPath` pointing at it (required whenever flClient.enabled). On the AWS side the EC2 equivalent is `make stage-fl-kit KIT=<CODE>`, which re-stages for the trust's REGISTERED slot after `register-trusts`. Deploys carry one wait budget, `HELM_TIMEOUT` (default `30m`), covering both the `xnat-init` Helm hook in `deploy` and the `kubectl wait` in `xnat-init` — set below the job's real duration it fails *after* Helm has applied the new spec, so the error names helm rather than the wait that expired (FLIP#1228). `xnat-web` is `strategy: Recreate` for a related reason: a singleton on a ReadWriteOnce volume cannot surge a second pod, so under the default RollingUpdate the rollout stalls and the old pod keeps serving the old plugin jars however long the deploy waits. Verify the DICOM path with `make -C trust/deploy/helm status` (compares the running xnat-web pod's plugin jars against `xnat.web.plugins.urls`) and `smoke-cstore` (a real C-STORE through the mocked PACS, then greps the receiver's `dicom.log`) — a C-ECHO never reaches XNAT's importer and passes while every store aborts
 │       └── ansible/    # onprem.yml — provisions a site-owned Ubuntu host for the compose stack; the on-prem twin of deploy/providers/AWS/site.yml, still driven by `make -C deploy/providers/AWS provision-local-trust` (needs the hub env file — the known exception to "providers = Terraform only")
 ├── deploy/             # Central Hub Docker Compose files (dev/prod, flower/nvflare); FL network provisioning now lives under fl-services/<backend>/, not here
 │   └── providers/      # Infrastructure provisioning ONLY (Terraform per cloud); node shapes live under trust/deploy/
@@ -131,6 +131,8 @@ make unit_test             # All unit tests across all services (from root)
 make integration_test      # flip-api + trust integration tests (from root)
 make tests                 # flip-ui unit + e2e tests, then flip-api test suite (from root)
 make -C fl-tutorials test  # ruff over fl-tutorials/ + the CPU-only transform-chain suite (no GPU/dataset/FL image)
+make -C flip-utils unit-test  # ruff + format check + mypy + pytest for the flip package (not part of root unit_test; CI: unit-tests.yml)
+make -C docs test          # docs GIFs fetcher/publisher suites + rst<->spec wiring guard (no network)
 make e2e_smoke             # End-to-end smoke against a running stack (see below)
 # From a service directory (e.g., flip-api/):
 make test                  # ruff + mypy + pytest (unit + integration)
@@ -213,8 +215,10 @@ make -C flip-api create_testing_projects   # Create test projects
 make -C flip-api delete_testing_projects   # Clean up test data
 make seed-demo-projects                    # Curated radiology catalogue in honest lifecycle states
                                            # (EXTRA_ARGS="--cleanup" removes it again)
-make -C trust seed-trusts PROJECTS="spleen_project cxr_project"   # Seed the RUNNING dev trusts with datasets (#1100)
+make -C trust seed-trusts PROJECTS="cxr_project"   # Seed the RUNNING dev trusts with a published DICOM set (#1100)
 make -C trust seed KIT=GSTT PROJECTS="…"   # one trust; seed-omop / seed-orthanc for one half
+make -C fl-tutorials seed-spleen KIT=GSTT      # spleen / brain_mri: DICOMs regenerate locally (#1221), so their
+make -C fl-tutorials seed-brain-mri KIT=GSTT   # seeding runs from fl-tutorials (CANONICAL_DIR / DICOM_SOURCE / TABLES_DIR)
 ```
 
 **Trust data has one path — seeding (FLIP#1101/#1187).** `make up` starts each trust's omop-db and
@@ -271,6 +275,30 @@ make -C trust down-trust-ec2 KIT=<CODE>       # Stop trust services + XNAT on an
 make -C trust debug-<SVC>          # Debug mode for one trust-internal service directly (SVC one of data-access-api, imaging-api, trust-api — what root `make debug` forwards to)
 make -C trust debug-<SVC>-off      # Stop it
 ```
+
+### Site release upgrades (FLIP#1204)
+
+```bash
+make upgrade-onprem-trust KIT=<slot> [TAG=vX.Y.Z] [FL_TAG=…] [FORCE=1] [YES=1] [ALLOW_CHECKOUT_DRIFT=1]  # operator: readiness checklist → data-safe upgrade; a release TAG is refused unless the checkout is at that tag (exit 6) — `git fetch --tags origin && git checkout vX.Y.Z` first
+make -C trust upgrade-trust KIT=<CODE> PROD=<env> [TAG=…]                # the verb itself (pull, recreate, XNAT in place)
+make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> TAG=… [KUBE_CONTEXT=…]  # Helm: sync-kit → global.image.tag
+make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env>      # EC2 twin (no re-seed)
+make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=vX.Y.Z       # hub; the guard takes sha-<short7> or vX.Y.Z
+```
+
+A release (`v*.*.*` git tag from `release.yml`) rebuilds **every** image unfiltered and pushes `:vX.Y.Z`;
+the four API images bake `FLIP_RELEASE` so `/health` names the build. `TAG` defaults to the release the
+hub reports on `/api/health` — never "latest on GitHub" (a v0.6.0 site would pull an nvflare-2.9 client
+against a 2.8 server). The resolver refuses (exit 5) a tag any site image was never built at — every
+`sha-` build is path-filtered, so most `sha-` tags lack orthanc / omop-db / xnat-* / the FL client; the
+opt-outs are `FL_TAG=` and the kit's `OMOP_DB_TAG` / `ORTHANC_TAG` / `XNAT_TAG` (on Helm:
+`flClient|omopDb|orthanc|xnat.image.pin`, which beat `global.image.tag`). `up-trust` / `up-onprem-trust` / `restart-trust` / `deploy-trust` stay the
+**first-install** verbs: they run `ensure-seeded` (re-seeds on a data-version bump) and `xnat-reset`, so never use them to move a live site.
+The heartbeat reply carries `hub_version` + an AES-key fingerprint; trust-api's `/health` reports
+`hub_version` / `hub_key_match` / `hub_key_fingerprint` (forgotten when a heartbeat fails), and the onboarding
+checklist's *Hub-shared block current* row judges the KIT's key against that fingerprint — a refreshed kit on a
+not-yet-recreated trust-api is a WARN the upgrade clears, not a FAIL that blocks it.
+Runbook: `docs/source/sys-admin/admin-upgrading-sites.rst`.
 
 ## Workflow Requirements
 
@@ -357,7 +385,7 @@ Cross-cutting keys and URLs live here. The rest are documented where they are co
 `PICKLESCAN_*`, `BANDIT_TIMEOUT_SECONDS`, `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE`, DB auth) in
 [`flip-api/AGENTS.md`](flip-api/AGENTS.md#hub-environment-variables).
 
-- `PROD` — `true` (production), `stag` (staging), `lza` / `lza-stag` (production / staging on an AWS Landing Zone Accelerator estate, FLIP#749 — meaningful for `deploy/providers/AWS` targets, the FL-kit upload targets under `fl-services/<backend>/`, and the kit-file targets here (`new-trust`, `sync-trust-kit[s]`), which must name `trust/.env.<CODE>.lza-prod` / `.lza-stag` the way the AWS side reads them back; select the root `.env.lza-prod` / `.env.lza-stag` and the platform-managed-network Terraform path, see `deploy/providers/AWS/README.md` "Deploying onto an LZA estate"), unset (development). What each value means is derived **once**, in `deploy/env_mode.mk` (`ENV` — the token in `.env.$(ENV)` and `trust/.env.<CODE>.$(ENV)` — plus `ENV_FILE_NAME`, `__DCKR_SUFFIX`, `ENV_CLASS` = `prod|stag`, `IS_LZA`, `IS_DEPLOYED`), included at the top of every Makefile that reads `PROD` — root, `deploy/providers/AWS`, `trust`, `trust/xnat`, `fl-services/{nvflare,flower}` — so a new value is added in one place and the scripts those Makefiles drive (`register-trusts.sh`, `add_fl_kits.sh`) receive the derived token rather than re-mapping `PROD`; a misspelt `PROD` fails at parse time instead of falling through to the development shape (`deploy/providers/AWS/tests/test_env_mode.py` pins the table)
+- `PROD` — `true` (production), `stag` (staging), `lza` / `lza-stag` (production / staging on an AWS Landing Zone Accelerator estate, FLIP#749 — meaningful for `deploy/providers/AWS` targets, the FL-kit upload targets under `fl-services/<backend>/`, and the kit-file targets here (`new-trust`, `sync-trust-kit[s]`), which must name `trust/.env.<CODE>.lza-prod` / `.lza-stag` the way the AWS side reads them back; select the root `.env.lza-prod` / `.env.lza-stag` and the platform-managed-network Terraform path, see `deploy/providers/AWS/README.md` "Deploying onto an LZA estate"), unset (development). What each value means is derived **once**, in `deploy/env_mode.mk` (`ENV` — the token in `.env.$(ENV)` and `trust/.env.<CODE>.$(ENV)` — plus `ENV_FILE_NAME`, `__DCKR_SUFFIX`, `ENV_CLASS` = `prod|stag`, `IS_LZA`, `IS_DEPLOYED`), included at the top of every Makefile that reads `PROD` — root, `deploy/providers/AWS`, `trust`, `trust/xnat`, `trust/deploy/helm`, `fl-services/{nvflare,flower}` — so a new value is added in one place and the scripts those Makefiles drive (`register-trusts.sh`, `add_fl_kits.sh`) receive the derived token rather than re-mapping `PROD`; a misspelt `PROD` fails at parse time instead of falling through to the development shape (`deploy/providers/AWS/tests/test_env_mode.py` pins the table)
 - `AES_KEY_BASE64` — the platform-wide key for the hub↔trust payload envelope: AES-256-GCM since FLIP#1179 (base64 of `{"v":1,"kid":"shared","iv","ct"}`; version, kid and a caller-supplied *context* — `task:<task_type>`, `project_id`, `xnat_setup_path` — bound into the tag, so every `encrypt`/`decrypt` call site passes the same `context=` and a payload sealed for one purpose does not open for another), with **no compatibility for the pre-#1179 CBC format**, so a hub and every trust registered to it upgrade across that change together (Deployment Mode → quiesce → redeploy hub + trusts). Must be byte-identical on the hub and every trust container that decrypts (trust-api, imaging-api, data-access-api) and decode to exactly 32 bytes — every `get_aes_key()` refuses a 16- or 24-byte key rather than silently running AES-128/192; a mismatch fails closed as `Invalid payload: failed authentication` on every task (imaging-api / data-access-api answer the FL client with a 400). On stag/prod the hub's copy is what the CI Terraform apply wrote into Secrets Manager from the GitHub environment — reconcile the operator env file from deployed state (`deploy/providers/AWS/scripts/reconcile_ci_env.py`), never the other way round. Per-trust keys are the FLIP#845 follow-up.
 - A remote trust operator only needs their kit file (`trust/.env.<KIT>`) — no hub `.env.<env>` needed on trust hosts.
   See `trust/README.md` for the standalone-operator quick-start.
@@ -384,7 +412,8 @@ GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml` (per
 `test_trust_data_access_api.yml`, `test_trust_imaging_api.yml`, `test_trust_trust_api.yml`,
 `test_trust_omop_db.yml`, `test_trust_xnat.yml`, plus `test_trust_data_tools.yml` for the
 orthanc/omop-db data-publishing scripts and `test_trust_kit_scripts.yml` for `scripts/**` +
-the compose files' container-identity contract), `fl-tutorials-tests.yml`, `test_map_apps.yml`,
+the compose files' container-identity contract, plus the repo-level `tests/` (root Makefile) and
+`.github/tests/` (workflows and actions) trees), `fl-tutorials-tests.yml`, `test_map_apps.yml`,
 `docker_build_*.yml` (per-service GHCR publish; the application images and
 `docker_build_omop_db.yml` are gated on that service's test workflow, while
 `docker_build_orthanc.yml` and `docker_build_xnat_{db,dcm2niix,nginx,web}.yml` publish
@@ -415,7 +444,13 @@ PRs to develop/main), `validate_branch_origin.yml` (PRs targeting `main` must or
 release notes on a PR to `main`), `regenerate_docs_gifs.yml` (re-records the docs GIFs from
 Cypress on push to `develop` touching `flip-ui/src/**` or the Cypress docs harness —
 `flip-ui/test/cypress/docs/**`, `cypress.docs.config.ts`, `scripts/videos-to-gifs.sh` — or
-manual dispatch).
+manual dispatch; since FLIP#1236 the GIFs are not in git: a secret-free `record` job hands them to
+a `publish` job in the `flip` environment, gated to `develop` (the environment is the shared CI one
+and adds no isolation — the ref gate is the control), that publishes one immutable tag on the HF dataset
+`aicentreflip/docs-gifs` and opens a one-line `docs/.gifs_version` pin PR, reviewed through its RTD
+preview), `test_docs_scripts.yml` (`make -C docs test`: the fetcher/publisher suites under
+`docs/tests/`, the rst-figure ↔ demo-spec wiring guard, and a static guard over the regenerate
+workflow's token scope, `develop` gate and tag minting).
 
 ### PR path gate: service suites run only for the paths they cover (PRs into develop)
 
@@ -434,7 +469,11 @@ Two guards make the unattended apply safe (`resolve-image-tags.sh` pins this com
 `check-fl-plan-impact.sh` holds any apply that would kill an in-flight training run), and Terraform
 inputs reach CI through `deploy/providers/AWS/scripts/compose-ci-env.sh` — so **adding an `export TF_VAR_…` line means
 also updating that script's manifest, all three workflow `env:` blocks, and both GitHub
-environments**. Full detail: [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS/AGENTS.md#terraform-ci-flip962).
+environments**. Which account and which mode a run targets is the `TF_PROD` variable on the
+GitHub environment — the `deploy/env_mode.mk` token (`stag` | `true` | `lza-stag` | `lza`), which
+selects the env file, the AWS profile and the required key set — so repointing an estate at another
+AWS account is a value change, never a workflow edit (FLIP#1199, "Repointing CI at the LZA
+accounts"). Full detail: [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS/AGENTS.md#terraform-ci-flip962).
 
 ### Docker image builds: gated on tests, manual trigger for branches
 
@@ -449,6 +488,19 @@ from GHCR; the rest are.) Every publish also pushes an immutable **`sha-<short7>
 hub ECS deploys pin — see
 [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS/AGENTS.md#image-tags-deploys-and-the-fl-quiesce)
 for deploys, rollback and the FL quiesce reminder.
+
+A run of an image workflow on a `v*.*.*` tag ref builds **every** image at that commit and pushes
+`:v<X.Y.Z>` (FLIP#1204) — release identity for the sites — and **only** that tag: the `sha-` tags belong to
+the branch build of the same commit and stay immutable (a second push would swap the image under a
+sha-pinned hub, with a different `FLIP_RELEASE` baked in). For a real release `release.yml`
+**dispatches** the twelve builds at the tag it created (`gh workflow run … --ref v<X.Y.Z>`): the tag is
+pushed with `GITHUB_TOKEN`, and GitHub starts no workflow for an event created that way, so the
+workflows' own `push.tags` trigger only ever fires for a hand-pushed tag (a release candidate).
+`.github/tests/workflows/test_release.py` pins the dispatch roster to the publishing workflows. Every
+image workflow runs `.github/actions/release-tag-guard` first: a **stable** `v<X.Y.Z>` whose commit is
+not on `main` fails the build, pre-release `v<X.Y.Z>-rc.N` tags pass (the release-candidate path,
+CONTRIBUTING "Testing a release candidate"). Who may create `v*` tags is left to write access by
+decision (no tag ruleset — GitHub cannot exempt the built-in Actions app from one).
 
 Branch pushes do NOT build images. If you pin a branch-named tag in a compose file for prod testing,
 trigger the build manually (`workflow_dispatch` bypasses the test gate) and wait for green before

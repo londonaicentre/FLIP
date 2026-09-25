@@ -120,16 +120,23 @@ endif
 
 # IAM permissions boundary (FLIP#1082): the boundary policy is owned by the ci/
 # root, which exists to fence the GitHub OIDC apply role and is applied only in
-# the accounts whose applies run through that pipeline. The LZA workload accounts
-# are applied by hand under the platform's admin permission set and never receive
-# ci/, so the policy does not exist there and attaching it fails every role
-# update with NoSuchEntity. Detach it on the LZA modes unless the env file says
-# otherwise — variables.tf documents "" as the correct value for an account where
-# ci/ has never been applied. Re-attach (drop this default) the day LZA applies
-# move to CI and ci/ is applied there first.
+# the accounts whose applies run through that pipeline. Detached on the LZA modes
+# for now: ci/ has not been applied in either of those accounts yet, they are
+# still changed by laptop applies, and attaching a name that does not resolve
+# fails every one of those role updates with NoSuchEntity — which is the failure
+# this default was added for during the FLIP#749 bring-up. variables.tf documents
+# "" as the value for an account where ci/ has never been applied, and an env file
+# that sets the variable itself still wins: `?=` only supplies the default.
 ifneq ($(IS_LZA),)
 export TF_VAR_iam_permissions_boundary_name ?=
 endif
+
+# Re-attaching it — deleting the block above — is a follow-up, and it is *ordered*
+# after the thing it depends on: first `make -C ci apply PROD=lza-stag` /
+# `PROD=lza` in both accounts (README, "Repointing CI at the LZA accounts",
+# step 3), then drop the block and flip tests/test_iam_permissions_boundary.py to
+# assert that no mode detaches it. Re-attaching here would break every manual
+# LZA apply in the window before that step runs.
 
 # Kit-file env suffix — the ENV token from env_mode.mk (.production / .stag /
 # .lza-prod / .lza-stag): selects the trust kit file trust/.env.<KIT>.<suffix> for
@@ -241,6 +248,14 @@ export TF_VAR_VPC_NAME=${VPC_NAME}
 # behaviour unchanged.
 MANAGE_DNS ?= true
 export TF_VAR_manage_dns=$(MANAGE_DNS)
+# Handing the public web name to another estate's CloudFront (FLIP#749 change
+# 2b). Separate from MANAGE_DNS on purpose: this account keeps its zone,
+# records and certificate, it just stops claiming the name so the receiving
+# edge's wildcard can win. Being its own switch is what lets the drop happen in
+# a chosen window instead of whenever a release reaches prod. Unset ⇒ false,
+# i.e. this account keeps serving the name — behaviour unchanged.
+RELEASE_WEB_ALIAS ?= false
+export TF_VAR_release_web_alias=$(RELEASE_WEB_ALIAS)
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
@@ -269,6 +284,9 @@ CENTRALHUB_ECS_SERVICES = flip-api fl-api-net-1 fl-server-net-1
 # recorded commit and rollback-centralhub can repoint at the previous revision. The
 # env-file tags (DOCKER_TAG / DOCKER_FL_TAG) remain the bootstrap-only defaults Terraform
 # bakes into a (re)created task-definition family — day-to-day deploys never touch them.
+# Since FLIP#1204 a release also publishes `:v<X.Y.Z>` on every image (built at the release
+# commit, no path filter), so `make deploy-centralhub PROD=true TAG=v<X.Y.Z>` deploys the
+# same tag the trust sites pin — one release identity across hub and sites.
 # Production-grade estates (legacy prod and PROD=lza, FLIP#749) track origin/main;
 # the staging ones (stag and PROD=lza-stag) origin/develop.
 DEPLOY_GIT_REF := $(if $(filter prod,$(ENV_CLASS)),origin/main,origin/develop)
@@ -358,39 +376,6 @@ init: ## Initialize Terraform configuration
 .PHONY: print-tf-env
 print-tf-env: ## Print the resolved TF_VAR_* environment as KEY=value lines (for CI)
 	@env | grep '^TF_VAR_' | sort
-
-# Publish the EC2 keypair public key to SSM so CI can reproduce it.
-#
-# main.tf reads both aws_key_pair public keys with file(): `flip_keypair` from
-# `${var.flip_keypair}.pub` and `host_key` from `var.ec2_public_key_path` — both
-# resolve to ~/.ssh/host-aws.pub, and neither is behind a `count`. A runner
-# without that file plans a replacement of both keypairs, and because
-# `public_key` is ForceNew that ripples into aws_instance.ec2_instance.
-#
-# The bytes come from *state*, not from the operator's ~/.ssh, so what CI writes
-# is what Terraform already believes — a laptop file that has drifted (a
-# regenerated key, a different machine) would otherwise plan a replacement from
-# CI just as reliably.
-.PHONY: seed-ci-keypair-param
-seed-ci-keypair-param: ## Publish the aws_key_pair public key from state to SSM (for Terraform CI)
-	@set -eu; \
-	echo "🔑 Reading the keypair public key from state..."; \
-	state="$$($(_TF) state pull)"; \
-	host_key="$$(printf '%s' "$$state" | jq -r '.resources[] | select(.type=="aws_key_pair" and .name=="host_key") | .instances[0].attributes.public_key // empty')"; \
-	flip_key="$$(printf '%s' "$$state" | jq -r '.resources[] | select(.type=="aws_key_pair" and .name=="flip_keypair") | .instances[0].attributes.public_key // empty')"; \
-	if [ -z "$$host_key" ]; then \
-		echo "❌ aws_key_pair.host_key is not in state — run 'make plan' first, or check AWS_PROFILE=$(AWS_PROFILE)"; exit 1; \
-	fi; \
-	if [ -n "$$flip_key" ] && [ "$$flip_key" != "$$host_key" ]; then \
-		echo "❌ aws_key_pair.flip_keypair and .host_key hold different public keys."; \
-		echo "   Both are read from ~/.ssh/host-aws.pub, so CI can only supply one file."; \
-		echo "   Reconcile them from a laptop before enabling Terraform CI."; exit 1; \
-	fi; \
-	$(_AWS_ENV) aws ssm put-parameter \
-		--name /flip/ci/host_aws_public_key \
-		--description "EC2 keypair public key, read by the Terraform CI workflows (FLIP#962)" \
-		--type String --overwrite --value "$$host_key" >/dev/null; \
-	echo "✅ Published /flip/ci/host_aws_public_key to the $(AWS_PROFILE) account."
 
 .PHONY: import-persistent
 import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prevent replacement
@@ -485,7 +470,8 @@ apply-fl-kit-slots: ## Apply only the FL kit-slot SSM parameter — the slot act
 	## review it before it applies. Also targets the flip-api task-role policy so
 	## the first rollout (which adds the ssm:GetParameter read) is self-contained;
 	## a no-op on every later run. Targeted on purpose: never run a full prod
-	## `make apply` for this (AMI drift can force-replace trust EC2s).
+	## `make apply` for this — it also applies whatever else is pending in the
+	## plan, FL task-definition replacements (which kill a running job) included.
 	##
 	## NOT literally one resource: -target applies the target's whole dependency
 	## closure, and the task-role policy references the bucket modules, whose
@@ -725,9 +711,9 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  sha=$$(git rev-parse $(DEPLOY_GIT_REF)) || { echo "❌ Cannot resolve $(DEPLOY_GIT_REF)"; exit 1; }; \
 	  TAG="sha-$$(printf '%s' "$$sha" | cut -c1-7)"; \
 	fi; \
-	printf '%s' "$$TAG" | grep -Eq '^sha-[0-9a-f]{7}$$' || { \
-	  echo "❌ TAG '$$TAG' is not an immutable sha-<short7> tag (sha- followed by 7 hex chars)."; \
-	  echo "   deploy-centralhub only deploys CI-published sha tags — a mutable tag here would"; \
+	printf '%s' "$$TAG" | grep -Eq '^(sha-[0-9a-f]{7}|v[0-9]+\.[0-9]+\.[0-9]+)$$' || { \
+	  echo "❌ TAG '$$TAG' is not an immutable tag: sha-<short7> (7 hex chars) or a release v<X.Y.Z>."; \
+	  echo "   deploy-centralhub only deploys CI-published immutable tags — a mutable tag here would"; \
 	  echo "   defeat the revision audit trail. Omit TAG= to deploy the tip of $(DEPLOY_GIT_REF)."; \
 	  exit 1; }; \
 	echo "🚀 Deploying Central Hub ECS services in $(ECS_CLUSTER) at $$TAG..."; \
@@ -1103,6 +1089,24 @@ deploy-trust: check-trust-ec2-enabled ssh-config update-env stage-fl-kit ## Depl
 	@echo "🚀 Deploying Trust services..."
 	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../ up-trust-ec2 KIT=$(KIT) PROD=${PROD}
 	@echo "✅ Trust deployment complete!"
+
+# Move the EC2 trust to a release, data intact (FLIP#1204). deploy-trust above is the
+# FIRST-INSTALL verb: its seed-trust-data step (run while the stack is down) re-seeds
+# OMOP/Orthanc on the host and its up-trust-ec2 runs xnat-reset over ssh. This target has none of that —
+# it drives trust/Makefile's upgrade-trust through the same ssh docker context (pull the
+# target tag, recreate what changed, redeploy XNAT without reset, converge its config).
+# TAG defaults to the release the hub runs; FORCE=1 allows a downgrade; YES=1 skips the
+# confirmation. The kit file read is this workstation's trust/.env.<KIT>.<env>, exactly as
+# deploy-trust evaluates compose here against the remote daemon. NUM_AVAILABLE_GPUS=0 pins the
+# fl-client to CPU as up-trust-ec2 does (the t3.xlarge has no GPU): on the command line it beats
+# a template kit's 1, dropping the GPU overlay and reaching compose's env over the --env-file.
+.PHONY: upgrade-trust-ec2
+upgrade-trust-ec2: check-trust-ec2-enabled ssh-config ## Move the EC2 trust to a release tag without re-seeding data (FLIP#1204)
+	@echo "👷 Create docker context if not exists, pointing to flip-trust to ssh://flip-trust"
+	@docker context create flip-trust --docker "host=ssh://flip-trust" || echo "   Context 'flip-trust' already exists"
+	@echo "⬆️  Upgrading Trust services on EC2 (KIT=$(KIT))..."
+	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../trust upgrade-trust KIT=$(KIT) PROD=${PROD} TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT) NUM_AVAILABLE_GPUS=0
+	@echo "✅ Trust upgrade complete!"
 
 .PHONY: provision-local-trust
 provision-local-trust: ## Provision the on-prem (local) trust host: install Docker + deps, stage the FL kit

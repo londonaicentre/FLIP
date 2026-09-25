@@ -150,6 +150,14 @@ holds **exactly one copy of every artefact at an unversioned path**, one pair pe
 omop-csv/<project>/*.csv       omop-csv/<project>/source/…        dicom/<project>.tar.gz
 ```
 
+Not every project has a `dicom/` set. A project cut from open data — `spleen_project` and
+`brain_mri_project`, both from the Medical Segmentation Decathlon — publishes only its tables and
+the metadata table they were built from; its DICOMs are regenerated locally by a deterministic
+converter (`fl-tutorials/datasets/`, FLIP#1221) and seeded from that tree
+(`make -C fl-tutorials seed-<dataset> KIT=<CODE>`, which drives `seed-omop … CANONICAL_DIR=` and
+`seed-orthanc … DICOM_SOURCE= TABLES_DIR=` here). `cxr_project` and `prostate_project` still ship
+one, which is why the default `PROJECTS` a bring-up seeds is `cxr_project` alone.
+
 A trust is stood up by **seeding** those into its running omop-db and Orthanc (`up-trust` does it,
 see below); there are no volume snapshots to download. A **data version is a git tag on that
 dataset**, and [`.data_version`](.data_version) in this directory pins one — a single pin for OMOP
@@ -169,7 +177,11 @@ uv run orthanc/publish_dicom.py --project … --revision main --out orthanc/dist
 make publish-trust-data VERSION=20261001 DRY_RUN=1 \
   OMOP_CSV=omop-db/data/canonical DICOM=orthanc/dist/dicom/<project>.tar.gz [CARD=…]
 make publish-trust-data VERSION=20261001 …            # for real; then set .data_version to 20261001
+make publish-trust-data VERSION=20261001 OMOP_CSV=… DELETE=dicom/spleen_project.tar.gz   # retire a re-hosted set
 ```
+
+`DELETE=<path in repo>` removes a file from `main` in the same commit (earlier tags keep it) — how
+`dicom/spleen_project.tar.gz` went when spleen moved to local regeneration.
 
 (`hf auth login` with write access to the dataset is needed.) Bumping `.data_version` is what
 moves a checkout: the next `up-trust` (its `ensure-seeded` step) re-seeds the trust's projects at
@@ -179,7 +191,8 @@ every seed/enrichment run reads at the new tag.
 ### Seeding at bring-up
 
 `up-trust` starts omop-db and Orthanc on empty, pre-created volumes and then runs
-`ensure-seeded`, which loads `PROJECTS` (default `cxr_project spleen_project`) from the dataset at
+`ensure-seeded`, which loads `PROJECTS` (default `cxr_project` — the projects that publish a DICOM
+set, see above) from the dataset at
 the pinned version. Each half leaves a marker beside its store — `<omop dir>/../.seeded` and
 `<orthanc parent>/.<storage dir>.seeded` — recording projects, partition and version; a marker
 that matches means nothing to do, so a second `up` fetches and uploads nothing and the seeded
@@ -189,7 +202,7 @@ takes seconds. The DICOM vocabulary is loaded with the rows; the licensed core v
 the separate credentialed `make -C trust/omop-db load-omop-vocab` step.
 
 ```sh
-make -C trust ensure-seeded KIT=GSTT PROJECTS="spleen_project cxr_project"   # what up-trust runs; safe to repeat
+make -C trust ensure-seeded KIT=GSTT PROJECTS="cxr_project"                   # what up-trust runs; safe to repeat
 make -C trust seed KIT=GSTT PROJECTS="prostate_project"                       # add a project, unconditionally
 ```
 
@@ -228,7 +241,7 @@ To seed the whole shipped dev roster in one go — `seed KIT=GSTT` then `seed KI
 projects, same partition-by-slot default:
 
 ```sh
-make -C trust seed-trusts PROJECTS="spleen_project cxr_project"
+make -C trust seed-trusts PROJECTS="cxr_project"
 ```
 
 `seed` itself is just `seed-omop` + `seed-orthanc`; run either half alone with
@@ -237,6 +250,23 @@ make -C trust seed-trusts PROJECTS="spleen_project cxr_project"
 `SOURCE_TRUST` moves only the partition. The trust's volumes, ports and the `.seeded` marker stay
 keyed to its kit slot, which is why it exists as its own variable rather than an override of
 `TRUST_NUM`.
+
+### Unseeding, and moving off a re-cut project
+
+`make -C trust unseed KIT=<CODE> PROJECTS="…"` takes the listed projects *out* of a running trust —
+OMOP rows by the person ids and PACS studies by the accessions the tables at
+`HF_TRUST_DATA_REVISION` (or `CANONICAL_DIR=` / `TABLES_DIR=`) name — and loads nothing; every other
+project stays. It exists for a project whose identities were re-cut (spleen at the FLIP#1221 tag:
+every person id, accession and UID changed), where `seed-omop`'s default `--clean projects` would
+delete by the *new* ids and leave the old rows beside them:
+
+```sh
+make -C trust unseed KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911   # the cut the trust holds
+make -C fl-tutorials seed-spleen KIT=GSTT                                              # the new cut, from the local tree
+```
+
+`seed-omop CLEAN=all` is the blunt alternative (every project's rows go first); `populate` on the
+build stack is the same loader with that mode.
 
 ## OMOP Database
 
@@ -287,17 +317,55 @@ need only your trust's kit file (`trust/.env.<CODE>.<env>`).
    `ORTHANC_STORAGE_DIR` at real data therefore gets the mock projects loaded
    alongside it on first bring-up; there is no switch to turn the seed off yet.
 
+   `up-trust` is the **first-install** verb on every path, on-prem included: its
+   XNAT step runs `xnat-reset`, which wipes the XNAT archive and database, and its
+   `ensure-seeded` step re-seeds the listed projects whenever the seed markers
+   differ from the kit (a `.data_version` bump or changed `PROJECTS`). A real
+   on-prem operator runs `up-trust` **once**; every later move to a release goes
+   through `upgrade-trust` (below), never `up-trust` or `restart-trust`.
+
+### Upgrading to a release (FLIP#1204)
+
+```bash
+git fetch --tags origin && git checkout vX.Y.Z              # the checkout first: compose files + this verb come from it
+sudo -E make upgrade-onprem-trust KIT=<slot>              # → the release the hub runs
+sudo -E make upgrade-onprem-trust KIT=<slot> TAG=vX.Y.Z   # → a named release
+```
+
+Runs the readiness checklist, resolves the target (the hub's `/api/health`
+`version`, or `TAG=`), refuses a release tag unless this checkout is at it
+(`ALLOW_CHECKOUT_DRIFT=1` overrides — testing a branch), asks you to confirm
+`site <current> → target <release>`,
+writes the tag into your kit's Hub-shared block, pulls, recreates what changed,
+and upgrades XNAT in place (database dump first, no reset); it never runs
+`ensure-seeded`, so the OMOP / Orthanc stores are left as they are. Before the kit is touched
+it asks the registry for every image at the target and refuses a tag any of them was
+never built at (each `sha-` build is path-filtered; a release tag builds them all —
+for a `sha-` move, `FL_TAG=` holds the FL client at its own build and `OMOP_DB_TAG` /
+`ORTHANC_TAG` / `XNAT_TAG` in the kit do the same for the data services).
+`FORCE=1` allows a downgrade, `YES=1` skips the prompt. The full runbook — ordering, refreshed kits,
+Kubernetes and EC2 variants, rollback — is
+`docs/source/sys-admin/admin-upgrading-sites.rst`.
+
 ### Refreshing shared values (when the hub admin rotates an AES key etc.)
 
 When the hub admin rotates a shared value (AES key, FL backend, image tag),
 they will run `make sync-trust-kit KIT=<CODE> PROD=true` on their side. That
 produces an updated kit file with the new Hub-shared block; credentials are
 preserved. The updated file is transmitted to you using the same out-of-band
-channel. Replace your local copy and restart the stack:
+channel. Replace **only the Hub-shared block** in your local copy (your
+Host-local profile and Trust-local credentials stay yours), then re-apply:
 
 ```bash
-make -C trust restart-trust KIT=<CODE> PROD=true
+sudo -E make upgrade-onprem-trust KIT=<slot> YES=1
 ```
+
+That recreates only the containers whose configuration changed and leaves the
+data alone. `restart-trust` would also work for the API containers but re-runs
+`up-trust`'s XNAT reset — don't. A stale block is what the checklist's
+*Hub-shared block current* row detects: trust-api compares its AES key with the
+hub's on every heartbeat and reports the mismatch on its `/health`, so a rotated
+key shows up there before it shows up as every task failing to decrypt.
 
 ## Integration tests (cohort-query end-to-end)
 

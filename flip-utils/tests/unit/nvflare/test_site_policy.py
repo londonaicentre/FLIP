@@ -134,9 +134,12 @@ class TestBuildPolicyJson:
 
     def test_integral_percentile_serialises_as_int(self):
         policy = parse_env({"FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_PERCENTILE": "25"})
-        assert json.loads(json.dumps(build_policy_json(policy)))["scopes"][0]["task_result_filters"][0]["args"][
-            "percentile"
-        ] == 25
+        assert (
+            json.loads(json.dumps(build_policy_json(policy)))["scopes"][0]["task_result_filters"][0]["args"][
+                "percentile"
+            ]
+            == 25
+        )
 
 
 class TestRender:
@@ -167,9 +170,9 @@ class TestRender:
         out_path = tmp_path / "privacy.json"
         out_path.write_text('{"scopes": [], "default_scope": "old"}')
 
-        assert render(
-            {"FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_PERCENTILE": "20"}, out_path
-        ) == "written"
+        assert (
+            render({"FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_PERCENTILE": "20"}, out_path) == "written"
+        )
         doc = json.loads(out_path.read_text())
         assert doc["scopes"][0]["task_result_filters"][0]["args"]["percentile"] == 20
 

@@ -49,6 +49,17 @@ Cross-cutting guards that assert a property across several source files
 `test_sim_tutorial_stale_guard.py`, `test_sim_tutorial_exit_status.py`) stay at the root of `tests/`, because
 no single source path describes what they cover.
 
+Tutorial-app tests that cover one app file mirror its path the same way:
+`tests/nvflare/image_classification/arkplus_fine_tuning/app_files/test_data_utils.py` covers
+`nvflare/image_classification/arkplus_fine_tuning/app_files/data_utils.py`, and likewise for the two
+Ark+ evaluation apps. All three `data_utils.py` carry the same simulator-only `MAX_SAMPLES` cap, so
+their tests subclass one shared contract, `tests/arkplus_sim_cap_contract.py` (a helper module like
+`tutorial_apps.py`, not collected on its own). Because the three test files share a basename, the
+tutorial directory and its `app_files/` carry an `__init__.py`, which makes each module's import name
+start at the tutorial (`arkplus_fine_tuning.app_files.test_data_utils`). `nvflare/` and `image_*/`
+deliberately do **not** carry one: a package named `nvflare` would shadow the real NVFLARE library
+the apps import.
+
 **Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
 the tutorial apps themselves and runs in flip-utils' environment (`flip-utils[full]` — monai,
 pydicom, torch, timm, sklearn), which is what the FL images give those apps at runtime — see
@@ -58,7 +69,7 @@ never runs on an FL image — it has no business pulling `pandera`/`sqlglot` (ne
 the OMOP tables that tooling generates) into flip-utils' runtime environment.
 
 Those tests run against **each dataset's own uv project**, one pytest invocation per project
-(`DATASET_TEST_PROJECTS` in `fl-tutorials/Makefile`, currently `spleen cxr synthea`), each declaring
+(`DATASET_TEST_PROJECTS` in `fl-tutorials/Makefile`, currently `spleen cxr synthea brain_mri`), each declaring
 what that dataset's tooling actually needs. `make -C fl-tutorials pytest-datasets` runs them all.
 
 The split is not just tidiness: it is the only thing in CI that checks a dataset's

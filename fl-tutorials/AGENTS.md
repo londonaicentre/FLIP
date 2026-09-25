@@ -60,6 +60,14 @@ matches a worktree nested under it), so the fix is to stop the named pid (or run
 an `ss` that cannot probe the port counts as taken, never as free. The tabular EHR tutorial maps
 `DEV_DATAFRAME` only (`fl-tutorials/data/synthea/dataframe.csv`, from `download-synthea-data`).
 
+The three NVFLARE Ark+ tutorials (`arkplus_fine_tuning` and the two `arkplus_*_evaluation` apps) cap
+the dataframe rows each simulated site reads with `MAX_SAMPLES` (Makefile default `128`, a
+deterministic class-balanced subset — `cap_dataframe` in each app's `data_utils.py`), so a plain
+`make sim` is a few-minute smoke; `MAX_SAMPLES=0` runs the full dataset, and `reproduce-overhead`
+pins it. Only the `LOCAL_DEV` branch of `_load_dataframe` reads it, so a deployed job is never capped
+(each app's `tests/nvflare/.../app_files/test_data_utils.py`, sharing
+`tests/arkplus_sim_cap_contract.py`, pins both halves).
+
 To iterate on the FL images, `make build-fl` builds them locally as `:dev` (see `fl-services/nvflare/README.md`);
 run the stack on them with `make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`.
 
@@ -70,24 +78,33 @@ verified against the published export by one shared gate
 
 ```bash
 make -C fl-tutorials reproduce-spleen-omop          # fetch -> build -> verify, chained
+make -C fl-tutorials reproduce-brain-mri-omop       # same three for brain_mri_project
 make -C fl-tutorials reproduce-cxr-omop             # same three for cxr_project
 make -C fl-tutorials fetch-spleen-metadata-table    # or step by step: pinned metadata table
 make -C fl-tutorials build-spleen-omop-tables       # -> omop/<trust>/spleen_project/*.csv
 make -C fl-tutorials verify-spleen-omop-tables      # diff against the published export
-make -C fl-tutorials convert-spleen-to-dicom        # spleen-only full regeneration (workstation/root)
-make -C fl-tutorials create-spleen-metadata-table   # spleen-only full regeneration
+make -C fl-tutorials convert-spleen-to-dicom        # full regeneration: NIfTI -> DICOM (deterministic, no root)
+make -C fl-tutorials create-spleen-metadata-table   # full regeneration: DICOM -> metadata table
+make -C fl-tutorials build-spleen-canonical         # the source_trust form that gets published/seeded
+make -C fl-tutorials verify-spleen-dicom            # regenerated DICOMs <-> canonical tables, both ways
+make -C fl-tutorials seed-spleen KIT=GSTT           # both halves of a RUNNING dev trust from the local tree
+make -C fl-tutorials download-brain-mri-msd-raw     # brain_mri: the same chain, targets convert-brain-mri-to-dicom
+                                                    # ... build-brain-mri-canonical verify-brain-mri-dicom seed-brain-mri KIT=
 ```
 
-**Scope differs per dataset, and it is not an oversight.** Spleen carries the whole chain from the
-public MSD download. **cxr carries only the OMOP conversion** — the synthetic chest X-rays, their
-DICOM write and their metadata extraction live in the private `londonaicentre/xraycat` repo, so the
-in-tree provenance chain starts at the published metadata table. Neither regeneration path
-reproduces the published export byte-for-byte anyway (spleen re-synthesises patient identities on
-every run), which is why the gate's fixed input is the published metadata table rather than the
-images.
+**Scope differs per dataset, and it is not an oversight.** Spleen and brain_mri carry the whole
+chain from a public MSD download; since #1221 their DICOM sets are **regenerated locally and never
+published** (MSD is open data) — the converters are deterministic (`datasets/utils/dicom_writer.py`,
+every UID and identity a function of the case id), so the regenerated tree reproduces byte-for-byte
+and only the OMOP tables + `source/dicom_metadata.csv` go to `aicentreflip/trust-data`; a trust is
+seeded from the local tree (`seed-<dataset> KIT=`, both halves local, which also lets a pull be proven
+before a data version is tagged). **cxr carries only the OMOP conversion** — the synthetic chest X-rays,
+their DICOM write and their metadata extraction live in the private `londonaicentre/xraycat` repo, so
+the in-tree provenance chain starts at the published metadata table and its DICOM set is still
+re-hosted (`dicom/cxr_project.tar.gz`).
 
-See `fl-tutorials/datasets/README.md` ("OMOP mock-data generation") for both chains, the shared
-contract in `datasets/utils/`, and the `download-spleen-msd-raw` regeneration-path first step.
+See `fl-tutorials/datasets/README.md` ("OMOP mock-data generation") for all three chains, the shared
+contract in `datasets/utils/`, and the `download-<dataset>-msd-raw` regeneration-path first step.
 
 ## End-to-end on the platform
 

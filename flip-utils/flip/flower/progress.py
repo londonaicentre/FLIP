@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Literal
 
-from flip import FLIP
+from flip import FLIPBase
 from flip.flower.metrics import _resolve_site_name, handle_client_exception, handle_client_metrics
 from flip.schemas import FLLogEvent
 
@@ -120,7 +120,7 @@ class RoundTelemetry:
         return len(dispatched) if dispatched is not None else None
 
     def forward_replies(
-        self, replies: list[Message], phase: Phase, server_round: int, model_id: str, flip: FLIP
+        self, replies: list[Message], phase: Phase, server_round: int, model_id: str, flip: FLIPBase
     ) -> int:
         """Forward every reply's metrics, exception and round event to the hub.
 
@@ -177,7 +177,7 @@ def _serialized_size_bytes(msg: Message) -> int | None:
         return None
 
 
-def report_round_started(flip: FLIP, model_id: str, server_round: int, total_rounds: int | None) -> None:
+def report_round_started(flip: FLIPBase, model_id: str, server_round: int, total_rounds: int | None) -> None:
     """Report that the server dispatched the global model for a round.
 
     Args:
@@ -197,7 +197,7 @@ def report_round_started(flip: FLIP, model_id: str, server_round: int, total_rou
         logger.exception("Failed to report round %d start", server_round)
 
 
-def report_client_result(msg: Message, server_round: int, model_id: str, flip: FLIP) -> bool:
+def report_client_result(msg: Message, server_round: int, model_id: str, flip: FLIPBase) -> bool:
     """Report one received client reply; returns whether the reply was healthy.
 
     The boolean feeds the strategy's returned-count, so a telemetry failure on
@@ -238,7 +238,7 @@ def report_client_result(msg: Message, server_round: int, model_id: str, flip: F
 
 
 def report_round_aggregated(
-    flip: FLIP, model_id: str, server_round: int, returned: int | None, expected: int | None
+    flip: FLIPBase, model_id: str, server_round: int, returned: int | None, expected: int | None
 ) -> None:
     """Report that a round's replies were aggregated.
 

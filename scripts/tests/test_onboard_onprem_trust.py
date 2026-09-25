@@ -34,6 +34,7 @@ Usage:
 from __future__ import annotations
 
 import importlib.util
+import io
 import sys
 import tempfile
 from pathlib import Path
@@ -267,6 +268,131 @@ def test_13_gpu_explicit_one_unchanged() -> None:
     _assert(ok.status == mod.Status.PASS, "1 host GPU -> PASS", ok.detail)
 
 
+HUB_KEY_B64 = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="  # 32 x 0x01  # pragma: allowlist secret
+HUB_KEY_FP = "72cd6e8422c4"  # sha256(32 x 0x01)[:12] — the hub's and trust-api's formula
+STALE_KEY_B64 = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="  # 32 x 0x02  # pragma: allowlist secret
+
+
+def _hub_shared_current(kit_vars: dict, health):
+    """Run check_hub_shared_current with trust-api's /health answering ``health`` (a dict, or an exception)."""
+    if isinstance(health, BaseException):
+        patched = mock.patch.object(mod, "fetch_local_trust_health", side_effect=health)
+    else:
+        patched = mock.patch.object(mod, "fetch_local_trust_health", return_value=health)
+    with patched:
+        return mod.check_hub_shared_current(kit_vars, True)
+
+
+def test_14_hub_shared_current_flags_a_stale_key() -> None:
+    """trust-api says its key no longer matches the hub's -> FAIL naming the refreshed-kit fix (FLIP#1204)."""
+    print("▶ hub-shared currency: stale AES key -> FAIL")
+    kit = {"TRUST_API_PORT": "8020", "DOCKER_TAG": "v0.6.0", "AES_KEY_BASE64": STALE_KEY_B64}
+    result = _hub_shared_current(
+        kit, {"hub_version": "v0.6.0", "hub_key_match": False, "hub_key_fingerprint": HUB_KEY_FP}
+    )
+    _assert(result.status == mod.Status.FAIL, "status is FAIL")
+    _assert(any("sync-trust-kit" in h for h in result.hints), "hint names the admin-side re-sync")
+
+
+def test_15_hub_shared_current_passes_and_notes_the_release_gap() -> None:
+    """Key matches: PASS. Kit pinned behind the hub: WARN naming upgrade-onprem-trust, never FAIL
+    (the upgrade verb runs this checklist first, so a FAIL here would make it un-runnable)."""
+    print("▶ hub-shared currency: key matches -> PASS; kit behind the hub -> WARN")
+    kit = {"TRUST_API_PORT": "8020", "DOCKER_TAG": "v0.6.0", "AES_KEY_BASE64": HUB_KEY_B64}
+    matched = {"hub_key_match": True, "hub_key_fingerprint": HUB_KEY_FP}
+    ok = _hub_shared_current(kit, {"version": "v0.6.0", "hub_version": "v0.6.0", **matched})
+    _assert(ok.status == mod.Status.PASS, "matching key + same release -> PASS")
+    behind = _hub_shared_current(
+        {**kit, "DOCKER_TAG": "v0.5.0"}, {"version": "v0.5.0", "hub_version": "v0.6.0", **matched}
+    )
+    _assert(behind.status == mod.Status.WARN, "kit behind the hub -> WARN (not blocking)")
+    _assert(any("upgrade-onprem-trust" in h for h in behind.hints), "hint names the upgrade verb")
+
+
+def test_16_hub_shared_current_warns_until_trust_api_can_answer() -> None:
+    """First install (trust-api not running) or a pre-FLIP#1204 trust-api -> WARN, never FAIL or PENDING:
+    the upgrade verb runs this checklist as its gate, and is exactly what gives the site a trust-api that
+    can answer — a PENDING here would make an old site un-upgradeable."""
+    print("▶ hub-shared currency: trust-api unreachable / pre-FLIP#1204 -> WARN")
+    kit = {"TRUST_API_PORT": "8020", "DOCKER_TAG": "v0.6.0"}
+    down = _hub_shared_current(kit, ConnectionRefusedError("refused"))
+    _assert(down.status == mod.Status.WARN, "unreachable trust-api -> WARN")
+    old = _hub_shared_current(kit, {"version": "0.5.0"})
+    _assert(old.status == mod.Status.WARN, "trust-api without hub_key_match -> WARN")
+    unknown = _hub_shared_current(kit, {"version": "v0.6.0", "hub_version": None, "hub_key_match": None})
+    _assert(unknown.status == mod.Status.WARN, "hub_key_match None (no heartbeat reply yet) -> WARN")
+
+
+def test_17_hub_shared_current_judges_the_kit_not_the_running_key() -> None:
+    """After a refreshed Hub-shared block, trust-api still runs the old key until the upgrade recreates
+    it; the gate must let that upgrade through (FLIP#1204) and FAIL only a kit that is still stale."""
+    print("▶ hub-shared currency: judged by the kit's key against the hub's fingerprint")
+    _assert(mod.kit_key_fingerprint({"AES_KEY_BASE64": HUB_KEY_B64}) == HUB_KEY_FP, "kit digest = hub formula")
+    _assert(mod.kit_key_fingerprint({"AES_KEY_BASE64": "not base64!"}) is None, "undecodable key -> None")
+    refreshed = {"TRUST_API_PORT": "8020", "DOCKER_TAG": "v0.6.0", "AES_KEY_BASE64": HUB_KEY_B64}
+    pending = _hub_shared_current(
+        refreshed, {"hub_version": "v0.6.0", "hub_key_match": False, "hub_key_fingerprint": HUB_KEY_FP}
+    )
+    _assert(pending.status == mod.Status.WARN, "refreshed kit, old running key -> WARN", pending.detail)
+    _assert("recreates" in pending.detail, "says the upgrade recreates trust-api", pending.detail)
+    stale = {**refreshed, "AES_KEY_BASE64": STALE_KEY_B64}
+    still_stale = _hub_shared_current(
+        stale, {"hub_version": "v0.6.0", "hub_key_match": False, "hub_key_fingerprint": HUB_KEY_FP}
+    )
+    _assert(still_stale.status == mod.Status.FAIL, "kit key differs from the hub's -> FAIL")
+    broken_by_edit = _hub_shared_current(
+        stale, {"hub_version": "v0.6.0", "hub_key_match": True, "hub_key_fingerprint": HUB_KEY_FP}
+    )
+    _assert(broken_by_edit.status == mod.Status.FAIL, "running key fine but the kit now differs -> FAIL")
+    ok = _hub_shared_current(
+        refreshed, {"hub_version": "v0.6.0", "hub_key_match": True, "hub_key_fingerprint": HUB_KEY_FP}
+    )
+    _assert(ok.status == mod.Status.PASS, "kit and running key both match -> PASS", ok.detail)
+    damaged = _hub_shared_current(
+        {**refreshed, "AES_KEY_BASE64": "not base64!"},
+        {"hub_version": "v0.6.0", "hub_key_match": True, "hub_key_fingerprint": HUB_KEY_FP},
+    )
+    _assert(damaged.status == mod.Status.FAIL, "undecodable kit key -> FAIL", damaged.detail)
+    _assert("not a valid base64" in damaged.detail, "says the key is damaged, not stale", damaged.detail)
+
+
+def test_18_a_gate_never_suggests_a_command() -> None:
+    """Standalone, READY names `up-onprem-trust`; as a verb's gate it would name the wrong command (the
+    upgrade: up-onprem-trust resets XNAT) or the one already running (the first install)."""
+    print("▶ READY footer: standalone names up-onprem-trust, a gate does not")
+    all_pass = [mod.Check("x", mod.Status.PASS, "")]
+    for argv, expect_first_install in ((["prog", "Trust_9"], True), (["prog", "Trust_9", "--gate"], False)):
+        out = io.StringIO()
+        with (
+            mock.patch.object(sys, "argv", argv),
+            mock.patch.object(sys, "stdout", out),
+            mock.patch.object(mod, "fetch_public_ip", return_value="192.0.2.1"),
+            mock.patch.object(mod, "run_checks", return_value=all_pass),
+        ):
+            try:
+                mod.main()
+            except SystemExit as e:
+                _assert(e.code == 0, f"{argv[1:]} READY exits 0")
+        text = out.getvalue()
+        named = "up-onprem-trust" in text.split("Status: READY", 1)[1]
+        _assert(named == expect_first_install, f"{argv[1:]}: footer names up-onprem-trust = {expect_first_install}")
+
+
+def test_19_hub_on_its_release_sha_build_is_not_behind() -> None:
+    """A CI-applied hub reports the sha build of its release commit; from that release's checkout the
+    kit pinning the release is current, not "behind"."""
+    print("▶ hub-shared currency: hub on sha-<release commit> vs a kit on that release -> PASS")
+    kit = {"TRUST_API_PORT": "8020", "DOCKER_TAG": "v0.7.0", "AES_KEY_BASE64": HUB_KEY_B64}
+    health = {"hub_version": "sha-23cf331", "hub_key_match": True, "hub_key_fingerprint": HUB_KEY_FP}
+    with mock.patch.object(mod.site_upgrade, "release_for_sha", return_value="v0.7.0") as mapped:
+        ok = _hub_shared_current(kit, health)
+    _assert(ok.status == mod.Status.PASS, "sha of the kit's release -> PASS", ok.detail)
+    _assert(mapped.call_args.args == ("sha-23cf331",), "asks the checkout about the hub's sha")
+    with mock.patch.object(mod.site_upgrade, "release_for_sha", return_value=None):
+        other = _hub_shared_current(kit, health)
+    _assert(other.status == mod.Status.WARN, "an unrelated sha is still reported", other.detail)
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -284,6 +410,12 @@ def main() -> None:
     test_11_gpu_unset_on_flower_is_cpu_only()
     test_12_gpu_explicit_zero_is_cpu_only_pass()
     test_13_gpu_explicit_one_unchanged()
+    test_14_hub_shared_current_flags_a_stale_key()
+    test_15_hub_shared_current_passes_and_notes_the_release_gap()
+    test_16_hub_shared_current_warns_until_trust_api_can_answer()
+    test_17_hub_shared_current_judges_the_kit_not_the_running_key()
+    test_18_a_gate_never_suggests_a_command()
+    test_19_hub_on_its_release_sha_build_is_not_behind()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

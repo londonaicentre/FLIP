@@ -415,6 +415,12 @@ variable "manage_dns" {
   default     = true
 }
 
+variable "release_web_alias" {
+  description = "Drop flip_alb_subdomain from this account's CloudFront distribution so another estate's edge can serve it (FLIP#749 change 2b). Alternate domain names are unique across every AWS account and an exact alias beats a wildcard, so while this distribution lists the name it serves it wherever DNS points — this flag, not DNS, is the web cutover. Setting it true also drops the custom viewer certificate, which CloudFront permits only alongside an alias. Separate from manage_dns so the drop lands in a chosen window; this account keeps its zone, records and certificate, so false plus a re-apply is the rollback. Runbook: README.md, 'Handing the public name over'."
+  type        = bool
+  default     = false
+}
+
 variable "flip_alb_subdomain" {
   description = "Public canonical subdomain for FLIP. Aliased via Route53 to the CloudFront distribution; CloudFront fronts both the SPA (from S3) and the API (/api/* -> ALB). Name is retained for Terraform-state backwards compatibility - see main.tf:492-494."
   type        = string
