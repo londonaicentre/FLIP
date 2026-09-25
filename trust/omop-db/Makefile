@@ -133,12 +133,36 @@ PROJECTS ?= cxr_project spleen_project
 SEED_DATA_DIR = $(or $(OMOP_DATA_DIR_TRUST_$(TRUST_INDEX)),volumes/Trust_$(TRUST_INDEX)/db_data)
 SEED_MARKER = $(dir $(SEED_DATA_DIR)).seeded
 
-seed-omop: fetch-dataset load-dicom-vocab
+# CANONICAL_DIR=<dir> loads from a local canonical tree (<dir>/<project>/<table>.csv, what
+# `omop_db_tools.dataset build` writes) instead of fetching the published tag — how a project
+# is proven on a running trust BEFORE its data version is tagged (FLIP#1221). The marker then
+# records source=<dir> in place of version=, since no published revision produced those rows.
+CANONICAL_DIR ?=
+SEED_DATA_SOURCE = $(or $(CANONICAL_DIR),data/canonical)
+SEED_PROVENANCE = $(if $(CANONICAL_DIR),source=$(CANONICAL_DIR),version=$(HF_TRUST_DATA_REVISION))
+# CLEAN=projects (default) removes only these projects' rows, by their own person_ids, before
+# loading; CLEAN=all wipes every project first — needed once to move a trust off a re-cut project
+# whose person_ids all changed (spleen at the FLIP#1221 cut), since the old rows carry ids the new
+# person.csv no longer names and `projects` would leave them behind beside the new ones.
+CLEAN ?= projects
+# load-dicom-vocab is unconditional: it fetches the free DICOM vocabulary, not the trust-data
+# tag, so a CANONICAL_DIR seed needs it just as much (#1187).
+seed-omop: $(if $(CANONICAL_DIR),,fetch-dataset) load-dicom-vocab
 	OMOP_DB_PORT=$(OMOP_DB_PORT) uv run python -m omop_db_tools.import_tables \
 		--trust-index $(SOURCE_TRUST) --num-trusts $(NUM_TRUSTS) --partition $(PARTITION) \
-		--clean projects --projects $(PROJECTS) --data-dir data/canonical
-	@mkdir -p $(dir $(SEED_MARKER)) && printf 'projects=%s\nsource_trust=%s\nversion=%s\n' "$(PROJECTS)" "$(SOURCE_TRUST)" "$(HF_TRUST_DATA_REVISION)" > $(SEED_MARKER)
+		--clean $(CLEAN) --projects $(PROJECTS) --data-dir $(SEED_DATA_SOURCE)
+	@mkdir -p $(dir $(SEED_MARKER)) && printf 'projects=%s\nsource_trust=%s\n%s\n' "$(PROJECTS)" "$(SOURCE_TRUST)" "$(SEED_PROVENANCE)" > $(SEED_MARKER)
 	@echo "✅ Seeded trust $(TRUST_INDEX) on port $(OMOP_DB_PORT) with: $(PROJECTS) (source_trust $(SOURCE_TRUST); marker: $(SEED_MARKER))"
+
+# Unseed: take the listed projects' rows OUT of a running trust, as the tables at
+# HF_TRUST_DATA_REVISION describe them (or CANONICAL_DIR=), and load nothing. The move off a
+# re-cut project whose person ids all changed — e.g. `make unseed-omop PROJECTS=spleen_project
+# HF_TRUST_DATA_REVISION=20260911` removes the pre-FLIP#1221 spleen cut, then `seed-omop` loads
+# the new one — without `CLEAN=all`'s wipe of every other project. Marker left as is.
+unseed-omop: $(if $(CANONICAL_DIR),,fetch-dataset)
+	OMOP_DB_PORT=$(OMOP_DB_PORT) uv run python -m omop_db_tools.import_tables \
+		--trust-index $(SOURCE_TRUST) --remove-only --projects $(PROJECTS) --data-dir $(SEED_DATA_SOURCE)
+	@echo "✅ Unseeded $(PROJECTS) from trust $(TRUST_INDEX) on port $(OMOP_DB_PORT) ($(SEED_PROVENANCE))"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Image build + populate pipeline (standalone; see README "Building the image")
@@ -263,8 +287,11 @@ fetch-vocab-dicom:
 		mv "data/$(VOCAB_DICOM_BUNDLE).zip.tmp" "data/$(VOCAB_DICOM_BUNDLE).zip"; \
 	fi
 
+# --projects $(PROJECTS): fetch what seed-omop is about to load, not the default pair — a
+# non-default project (brain_mri_project, prostate_project) otherwise fails validate_data_dir
+# on a table that was never fetched.
 fetch-dataset:
-	uv run python -m omop_db_tools.dataset fetch --revision $(HF_TRUST_DATA_REVISION) --dest data/canonical
+	uv run python -m omop_db_tools.dataset fetch --revision $(HF_TRUST_DATA_REVISION) --dest data/canonical --projects $(PROJECTS)
 
 # Every fan-out below is `$(addprefix …,$(shell seq 1 $(NUM_TRUSTS)))`. `$(shell)`
 # is expanded at parse time and make never fails on its exit status, so a

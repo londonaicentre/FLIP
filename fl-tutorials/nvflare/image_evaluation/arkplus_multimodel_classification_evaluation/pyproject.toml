@@ -12,7 +12,7 @@ dependencies = [
     "scikit-learn>=1.6.1",
     "scipy>=1.15.2",
     "timm>=1.0.15",
-    "torch>=2.6.0",
+    "torch>=2.13.0,<2.14",
 ]
 
 [tool.uv]

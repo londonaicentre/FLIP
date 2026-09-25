@@ -17,7 +17,6 @@ This module provides the FLIP() factory function that returns the appropriate
 FLIP implementation based on job type and environment.
 """
 
-
 from flip.constants.flip_constants import FlipConstants
 from flip.constants.job_types import JobType, JobTypeStr
 from flip.core.base import FLIPBase

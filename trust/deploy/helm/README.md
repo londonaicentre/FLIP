@@ -42,10 +42,26 @@ server; no inbound ports are exposed from the K8s cluster.
 > [kstatus](https://github.com/kubernetes-sigs/cli-utils/tree/master/pkg/kstatus),
 > which is stricter than Helm 3's readiness check — an install that Helm 3 called
 > ready can now block until the workloads genuinely settle, and time out if they
-> never do. `make deploy` does **not** pass `--wait` (it relies on `--timeout 20m`
-> alone), so this only bites if you add `--wait` to your own `helm upgrade`
-> invocation; if you do, size `--timeout` for the slowest service to become ready
-> rather than for the API call to return.
+> never do. `make deploy` does **not** pass `--wait` (it relies on
+> `--timeout $(HELM_TIMEOUT)` alone), so this only bites if you add `--wait` to your
+> own `helm upgrade` invocation; if you do, size `--timeout` for the slowest service
+> to become ready rather than for the API call to return.
+
+> **`HELM_TIMEOUT` (default `30m`).** The one budget for every wait on the `xnat-init`
+> job — `make deploy` waits on it as a post-upgrade Helm hook, `make xnat-init` waits on
+> it directly with `kubectl wait`, and both read this variable. Raise it per site rather
+> than editing the Makefile:
+>
+> ```bash
+> make deploy-trust-k8s KIT=<KIT> HELM_TIMEOUT=45m
+> ```
+>
+> Set it below the job's real duration and the upgrade reports
+> `resource Job/... not ready` *after* it has already applied the new pod spec, so the
+> failure names Helm and not the wait that expired. That is how a corrected plugin roster
+> sat un-deployed across five consecutive upgrades in FLIP#1228 — see
+> [TROUBLESHOOTING §2.7](TROUBLESHOOTING.md#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog).
+> Time one run (`kubectl get job -n flip-trust -w`) before choosing a value.
 
 ## Quickstart
 
@@ -214,6 +230,26 @@ A `401 "API key is missing"` means the API-key **header** is mismatched — the
 chart default `TRUST_API_KEY_HEADER` is `Authorization` (the platform default);
 override it only if your hub uses a different header.
 
+### 6a. Verify the DICOM ingest path
+
+Polling green does not mean imaging works: the two share no code. Run both checks —
+neither implies the other.
+
+```bash
+make -C trust/deploy/helm status         # includes the plugin-roster comparison below
+make -C trust/deploy/helm smoke-cstore   # a real C-STORE, then reads XNAT's receiver log
+```
+
+`status` lists `/data/xnat/home/plugins` in the running `xnat-web` pod and compares it
+against the release's own `xnat.web.plugins.urls`, failing with both versions named when
+they disagree. They disagree when the **pod spec** is older than the values — the plugins
+live in an emptyDir refilled by an init container on every pod creation, so a mismatch
+means no upgrade has rolled `xnat-web` since the roster changed. A plugin built for a
+different XNAT core aborts every C-STORE in the importer, which is why `smoke-cstore`
+stores a real object through the PACS and then greps the receiver's `dicom.log` rather
+than trusting a C-ECHO: C-ECHO never reaches the importer and passes throughout. See
+[TROUBLESHOOTING §2.7](TROUBLESHOOTING.md#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog).
+
 ### 7. (FL training only) Open the FL-server NLB
 
 Polling needs nothing more. For FL *training*, the K8s node's FL client must
@@ -269,11 +305,11 @@ PVCs explicitly if you want a clean slate.
 | `imagePullSecrets` | `[]` | Registry credentials for private images |
 | `namespace.create` | `true` | Whether to create the namespace |
 | `namespace.name` | `""` | Namespace name (defaults to release namespace) |
-| `trustData.version` | `20260901` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
+| `trustData.version` | `20260917` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
 | `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the seed fetches from |
 | `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc |
 | `trustData.seed.omop` / `.orthanc` | `true` / `false` | Which stores to seed. Orthanc is off by default: ~2 GB of DICOM per trust, posted over REST (minutes, once) |
-| `trustData.seed.projects` | `cxr_project spleen_project` | Published projects to load (`omop-csv/<project>/` + `dicom/<project>.tar.gz`) |
+| `trustData.seed.projects` | `cxr_project` | Published projects to load (`omop-csv/<project>/` + `dicom/<project>.tar.gz`). One list for both halves, so only projects the dataset carries both for; spleen and brain_mri publish tables only since FLIP#1221 and regenerate their DICOMs locally, which no in-cluster hook can do |
 | `trustData.seed.sourceTrust` | `""` (= `trustNumber`) | The dataset partition (`source_trust`) this trust receives |
 | `trustData.seed.sourceRef` | `develop` | FLIP git ref the seed tools are installed from at run time — match the ref your images were built from (`main` for `:prod`) |
 | `trustData.seed.dicomVocabBundle` | `vocab_dicom_paulnagy_20260109` | The Apache-licensed DICOM vocabulary bundle loaded before the rows |
@@ -569,7 +605,10 @@ flClient:
 ```
 
 Requires the [NVIDIA GPU Operator](https://github.com/NVIDIA/gpu-operator) to be
-installed in the cluster.
+installed in the cluster, with an NVIDIA driver of **580 or newer** on the GPU nodes: the FL
+images ship PyTorch built for CUDA 13. The operator installs the driver itself, so pin its
+`driver.version` to a 580+ release (or, with `driver.enabled=false`, pre-install one on the
+node).
 
 ### Autoscaling
 
@@ -874,8 +913,12 @@ there; the omop-db image CI asserts every published image carries it.
 - **NetworkPolicies**: Default-deny-ingress, allow-intra-namespace, allow-egress
   to Central Hub and FL server only (audit and threat model: [NETWORK-POLICY.md](NETWORK-POLICY.md))
 - **No LoadBalancer or NodePort** for application services (all ClusterIP), with one opt-in
-  exception: `xnat.web.dicomNodePort` with `service.type: NodePort` exposes XNAT's DICOM SCP
-  receiver so a trust PACS can complete the C-STORE leg of a retrieval. Off by default.
+  exception: the DICOM SCP has its own Service (`xnat-web-dicom`, separate from the web console's
+  `xnat-web`), which `xnat.web.dicomService.type: NodePort` (with `xnat.web.dicomNodePort`) or
+  `LoadBalancer` exposes so a trust PACS can complete the C-STORE leg of a retrieval — never the web
+  console, which stays on `xnat.web.service.type` (ClusterIP; with a real `pacs.host` the chart
+  refuses to render any other value, so an upgrade cannot silently carry an old NodePort setting
+  onto the console). Off (`ClusterIP`) by default.
 - **Secrets**: Separate from ConfigMaps; recommend External Secrets Operator
 - **FL clients**: No Central Hub credentials; connect outbound to FL server only
 - **ServiceAccounts**: each stateless service runs under its own ServiceAccount

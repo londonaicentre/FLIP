@@ -22,7 +22,7 @@ UV_RUN := uv run --project $(FLIP_UTILS) --extra full
 # make comment inside the `export` directive and silently un-export every variable listed after it.
 ifneq ("$(wildcard .env.app)","")
 include ./.env.app
-export $(shell sed -e '/^[[:space:]]*#/d' -e 's/=.*//' ./.env.app)
+export $(shell sed -e '/^[[:space:]]*\#/d' -e 's/=.*//' ./.env.app)
 endif
 
 # --- Local-run knobs ---

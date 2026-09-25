@@ -98,7 +98,7 @@ const qa = (sel: string): HTMLElement[] => Array.from(document.body.querySelecto
 
 let wrapper: VueWrapper | null = null;
 
-const mountDrawer = async (trust: ITrustResponse | null, show = true) => {
+const mountDrawer = async (trust: ITrustResponse | null, show = true, hubVersion: string | null = null) => {
     wrapper = mount(TrustDetailDrawer, {
         attachTo: document.body,
         global: {
@@ -117,7 +117,8 @@ const mountDrawer = async (trust: ITrustResponse | null, show = true) => {
             // The page derives once per refresh and passes the row on; mirror that
             // so the spec exercises the same shape production uses.
             trust: trust ? deriveTrust(trust) : null,
-            show
+            show,
+            hubVersion
         }
     });
     await flushPromises();
@@ -183,6 +184,38 @@ describe("TrustDetailDrawer", () => {
         // omop has no version: em dash for version, latency shown.
         expect(meta(rows[4])).toContain("—");
         expect(meta(rows[4])).toContain("1400 ms");
+    });
+
+    it("flags a FLIP service whose build differs from the hub's release (FLIP#1204)", async () => {
+        // Builds report the image tag they were made from (v<X.Y.Z> or sha-<short7>); a site
+        // that has fallen behind the hub is what `make upgrade-onprem-trust` exists to fix, and
+        // this pill is how an admin sees it without opening every kit.
+        const trust = degradedTrust();
+        trust.services!["trust-api"].version = "v0.5.0";
+        trust.services!["imaging-api"].version = "v0.6.0";
+        trust.services!["data-access-api"].version = "sha-badcff1";
+        await mountDrawer(trust, true, "v0.6.0");
+        const rows = qa("[data-test='container-row']");
+        const drift = (row: HTMLElement) => row.querySelector("[data-test='version-drift']");
+
+        expect(drift(rows[0])?.textContent?.trim()).toBe("≠ hub v0.6.0");  // trust-api v0.5.0
+        expect(drift(rows[2])).toBeNull();                                  // imaging-api matches
+        expect(drift(rows[1])?.textContent?.trim()).toBe("≠ hub v0.6.0");  // data-access-api on a sha
+        expect(drift(rows[3])).toBeNull();                                  // XNAT versions its own way
+    });
+
+    it("never flags drift when the hub's release is unknown or a version is not an image tag", async () => {
+        const trust = degradedTrust();
+        trust.services!["trust-api"].version = "0.3.0";  // a pyproject number, pre-FLIP#1204 build
+        await mountDrawer(trust, true, "v0.6.0");
+        expect(qa("[data-test='version-drift']")).toHaveLength(0);
+
+        wrapper?.unmount();
+        document.body.replaceChildren();
+        const behind = degradedTrust();
+        behind.services!["trust-api"].version = "v0.5.0";
+        await mountDrawer(behind, true, null);
+        expect(qa("[data-test='version-drift']")).toHaveLength(0);
     });
 
     it("tints each container icon by its status", async () => {

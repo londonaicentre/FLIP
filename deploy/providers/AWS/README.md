@@ -650,8 +650,9 @@ To change it:
 #      stag/prod → services.tf, module "cognito" → callback_urls
 #      dev       → dev/variables.tf, var.cognito_callback_urls
 # 2. Apply — TARGETED at the app client. Never run a full `make apply` on stag/prod for
-#    this: AMI drift in the same plan can force-replace the trust EC2s. Same reasoning
-#    as `apply-fl-kit-slots` above. The apply updates Cognito immediately …
+#    this: it also applies whatever else is pending in the plan, FL task-definition
+#    replacements included. Same reasoning as `apply-fl-kit-slots` above. The apply
+#    updates Cognito immediately …
 make init PROD=stag
 terraform plan -target=module.cognito.aws_cognito_user_pool_client.client -out=cognito.tfplan
 terraform apply cognito.tfplan
@@ -857,7 +858,7 @@ fixed per account by design.
 | `TF_VAR_lza_managed_network` | `true` — the platform-managed-network toggle, orthogonal to `environment` (see below) |
 | Trust kit suffix | `trust/.env.<CODE>.lza-prod` — a separate namespace so legacy prod kits are never overwritten |
 | `deploy-centralhub` git ref | `origin/main` (same as legacy prod) |
-| `TF_VAR_iam_permissions_boundary_name` | `""` (both LZA modes) — the `AICentre-FLIPTerraformBoundary` policy is declared by the `ci/` root, which exists to fence the GitHub OIDC apply role and is applied only in the accounts whose applies run through that pipeline. LZA applies are manual, `ci/` has never been applied there, and attaching a name that does not resolve fails every role update with `NoSuchEntity`. The env file can still set the variable to re-attach a boundary. Unattended LZA applies, and the boundary with them, are [FLIP#1199](https://github.com/londonaicentre/FLIP/issues/1199) |
+| `TF_VAR_iam_permissions_boundary_name` | The `AICentre-FLIPTerraformBoundary` default — the policy is declared by the `ci/` root, which exists to fence the GitHub OIDC apply role. **Blanked on the two LZA modes** (`PROD=lza` / `PROD=lza-stag`): that root has not been applied in those accounts yet and both estates are still changed by laptop applies, where an attach whose name resolves to nothing fails every role update with `NoSuchEntity`. An env file that sets the variable itself wins on any mode — `?=` only supplies the default, so re-attaching one account by hand is a one-line change. Re-attaching both in code is a follow-up, ordered after `make -C ci apply` has run there: see "Repointing CI at the LZA accounts" ([FLIP#1199](https://github.com/londonaicentre/FLIP/issues/1199)) |
 
 **Platform-managed vs FLIP-managed.** The LZA account's network is owned by the accelerator pipeline
 ([londonaicentre/lza](https://github.com/londonaicentre/lza)) and VPC-layer creation is SCP-denied in-account, so with
@@ -1017,7 +1018,81 @@ revert by flipping `MANAGE_DNS=true` + `make plan`/`apply` once the zone lands:
   (`local.ui_origin`), so uploads, downloads and sign-in work; `make deploy-ui` must generate `window.js` with
   `CENTRAL_HUB_API_URL` pointing at the CloudFront domain.
 - Trusts polling the hub would need the CloudFront domain as `CENTRAL_HUB_API_URL` — fine for WP3 smoke trusts;
-  the real cutover is DNS-only and happens after the zone migrates.
+  the real cutover happens after the zone migrates.
+
+**Handing the public name over (`RELEASE_WEB_ALIAS=true`, FLIP#749 change 2b).** The cutover is *not* DNS-only,
+which is the single most surprising thing about it. CloudFront resolves a request by its `Host` header against
+alternate domain names that are unique across **every** AWS account, and it prefers an **exact** alias over a
+**wildcard** one. So while this account's distribution still lists `app.flip.aicentre.co.uk`, it keeps serving that
+name however the DNS answers — pointing the record at the receiving estate's edge changes nothing for the web. To
+see it rather than take it on trust, resolve the name to the receiving edge yourself and note who answers:
+
+```bash
+curl -s --resolve app.flip.aicentre.co.uk:443:<receiving-edge-ip> \
+  https://app.flip.aicentre.co.uk/js/window.js | grep USER_POOL_ID
+```
+
+Read the Cognito pool id, not `/api/health` — both estates report the same release, so the health route cannot
+tell them apart.
+
+`RELEASE_WEB_ALIAS=true` drops the alias here and takes the custom viewer certificate with it, because CloudFront
+permits one only alongside the other. That is the moment the name moves. Order matters:
+
+1. The receiving edge already holds `*.flip.aicentre.co.uk` — the wildcard in the **parent** zone, not in this
+   account's `app.flip.aicentre.co.uk` child zone — plus the `_<alias>` TXT ownership record (the "wildcard
+   method").
+2. DNS points at the receiving edge, by **re-delegating the child zone at the parent**, not by editing
+   `aws_route53_record.alb`. That record is still this account's while `MANAGE_DNS=true` and still aliases *this*
+   distribution, so repointing it by hand is undone by the next apply and flagged by the drift job meanwhile. This
+   step also moves anything that is **not** CloudFront — an FL NLB leg moves here.
+3. `RELEASE_WEB_ALIAS=true` on this account. **Now** the web moves.
+
+Once the child zone is un-delegated its ACM validation records stop resolving publicly, so a legacy estate parked
+as a rollback target past the certificate's renewal window (ACM begins renewal ~60 days before expiry) will fail
+that renewal. That bounds how long "put the alias back" stays a re-apply rather than a re-issue.
+
+Set it as a variable on the `aws-prod` (or `aws-stag`) GitHub environment rather than applying from a laptop: CI is
+the only applier for the self-contained accounts, so a local apply is reverted by the next run and flagged by the
+nightly drift job in between. It is deliberately a separate switch from `MANAGE_DNS` so the drop lands in a chosen
+window instead of whenever a release reaches production.
+
+> [!IMPORTANT]
+> **Release the alias before repointing CI.** The alias lives on the *legacy* distribution, so the apply that drops
+> it has to target the legacy account. `TF_PROD` on a GitHub environment selects the estate that environment
+> applies (see "Repointing CI at the LZA accounts" below); unset, it falls back to the legacy pair. Once
+> `TF_PROD` names an LZA estate there is **no CI path to the legacy account left**, and `RELEASE_WEB_ALIAS=true`
+> would land on the LZA account instead — where the
+> workload distribution is `count = 0` (gated on `lza_managed_network` in `cloudfront.tf`), so the flag can do
+> nothing whatever `MANAGE_DNS` says. It would read as applied, change nothing, and the web would never cut over.
+> Afterwards it takes a manual apply against legacy with its own env file, which is at least no longer fought by
+> CI, since CI has stopped touching that account.
+
+**Staging inverts step 2 and step 3, and it is not optional.** Production gets an overlap window because the
+receiving edge can hold a wildcard while legacy keeps the exact name — both answer, exact wins, and nothing breaks
+until the exact one goes. CloudFront allows one distribution per alias string, and production's edge already holds
+`*.flip.aicentre.co.uk` — which covers `stag.flip.aicentre.co.uk` too — so the staging edge cannot take that same
+wildcard and must carry the exact name instead. CloudFront refuses to attach an alias another distribution already
+holds (`CNAMEAlreadyExists`), so for staging the order is:
+
+1. `RELEASE_WEB_ALIAS=true` on `aws-stag`, applied. **Staging is now down** — nothing serves the name.
+2. The receiving edge attaches the exact alias and DNS moves (one apply in `aicentre-lza-iac`).
+
+Getting that order wrong does not fail gently: the attach fails the whole run, taking any production records in the
+same configuration with it. Staging downtime between the two applies is expected and accepted.
+
+**Staging trusts need reissued kits; production trusts do not.** Both `fl.app.flip` and `fl.stag.flip` resolve to
+the *same* edge NLB — one address, two listeners — so the port in the trust kit is the only thing separating the
+environments: `:8003` is staging, `:8002` is **production**. Legacy staging kits embed `:8002`, which was
+unambiguous when it pointed at legacy staging's own NLB. After the cutover a staging trust on an un-updated kit
+joins the production FL net, and it does so silently, by succeeding.
+
+**Rollback is not a DNS revert.** This account keeps its zone, records, certificate and data, so it remains a
+rollback target — but only once the alias is back, which means `RELEASE_WEB_ALIAS=false` and an apply, a CloudFront
+deployment measured in minutes. Plan the window with someone able to run that, and do not assume reverting the DNS
+change is enough. **For staging that is not sufficient on its own**: the receiving edge holds the exact name there
+rather than a wildcard, so re-adding it here fails `CNAMEAlreadyExists` until the receiving side detaches first —
+staging rollback is two applies, in the reverse of the order that took it over. `tests/test_web_alias_release.py` guards the invariants; the certificate resource stays gated on
+`MANAGE_DNS` precisely so putting the name back is a re-apply and not a re-issue.
 
 **Fresh-account trap: create a Secrets Manager secret before the first `plan`.** On a
 brand-new workload account `make plan` fails at the very end with
@@ -1328,8 +1403,10 @@ change; it catches HCL errors without credentials and is the fast gate.
 The Makefile is the only definition of how env values map onto Terraform inputs,
 and CI does not duplicate it. Each workflow:
 
-1. composes `.env.stag` / `.env.production` from GitHub environment secrets and
-   variables (`scripts/compose-ci-env.sh`),
+1. composes the mode's env file from GitHub environment secrets and variables
+   (`scripts/compose-ci-env.sh`) — `.env.stag` / `.env.production` on the
+   self-contained accounts, `.env.lza-stag` / `.env.lza-prod` on
+   platform-managed ones, selected by the `TF_PROD` variable,
 2. writes `~/.ssh/host-aws.pub` from SSM (see below),
 3. runs `make print-tf-env >> "$GITHUB_ENV"` to hand the resolved `TF_VAR_*` to
    Terraform.
@@ -1343,6 +1420,10 @@ environment. There is no automatic link between them. What catches a slip:
 - `scripts/tests/test_compose_ci_env.sh` cross-checks the key manifest against
   the Makefile's `export TF_VAR_…` lines *and* against all three workflows, so
   adding a Terraform input without wiring it through fails in the PR;
+- `tests/test_ci_env_target.py` runs the compose script for each `PROD` token and
+  compares the env file it names, and the profile it exports, against what
+  `deploy/env_mode.mk` and the Makefile's account guard derive for that same
+  token — so the two tables cannot drift apart silently;
 - a value that has merely drifted (not gone missing) shows up as an unexpected
   plan diff — compare against a laptop `AWS_PROFILE=stag make plan` on the same
   commit when a CI plan looks wrong.
@@ -1368,17 +1449,30 @@ would have collapsed "merged to `main`" into "merged to `develop`" for the
 production secrets. The drift job reaches them by being dispatched onto `main`
 instead.
 
-Each holds `TF_PLAN_ROLE_ARN` and `TF_APPLY_ROLE_ARN` (from `make -C ci output`)
-alongside the Terraform inputs. Stored as environment *secrets*:
-`ADMIN_USER_PASSWORD`, `AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY`,
+Each holds `TF_PLAN_ROLE_ARN` and `TF_APPLY_ROLE_ARN` (from `make -C ci output`),
+the mode variable `TF_PROD`, and the Terraform inputs. Stored as environment
+*secrets*: `ADMIN_USER_PASSWORD`, `AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY`,
 `INTERNAL_SERVICE_KEY_HASH`. Everything else is a variable, including
 `POSTGRES_DB` / `POSTGRES_USER` — they are configuration rather than credentials
 and are rendered in the clear into the public plan comment either way
-(`variables.tf` explains the decision). The authoritative list is `REQUIRED_KEYS`
-/ `OPTIONAL_KEYS` in `scripts/compose-ci-env.sh`.
+(`variables.tf` explains the decision). The authoritative lists are
+`REQUIRED_KEYS` / `OPTIONAL_KEYS` in `scripts/compose-ci-env.sh`, plus
+`LZA_REQUIRED_KEYS` when `TF_PROD` selects a platform-managed estate.
 
-`AWS_PROFILE` is deliberately *not* stored: it is derived from the target
-environment, so a mis-set variable cannot point a stag run at the prod account.
+**`TF_PROD` is the one variable that changes what a run *is***: the
+`deploy/env_mode.mk` token (`stag` | `true` | `lza-stag` | `lza`) that selects the
+env file, the `AWS_PROFILE` the Makefile's guard expects, and which keys are
+required. Left unset, each workflow falls back to the legacy pair — `true` on
+`main`, `stag` otherwise — so a repository that has not adopted it behaves exactly
+as before. Nothing else in a workflow names an account: the account identity is
+the `TF_*_ROLE_ARN` values and this token, which is why moving an estate to another
+AWS account is a value change rather than a workflow edit. Ordering:
+"Repointing CI at the LZA accounts" below.
+
+`AWS_PROFILE` is deliberately *not* stored: it is derived from `TF_PROD` (the
+profile the Makefile's account guard demands for that mode), so a mis-set variable
+cannot point a stag run at the prod account. `tests/test_ci_env_target.py` runs
+the derivation against the Makefile's own guard for all four tokens.
 
 **Know what this exposes — this is a recorded decision, not an oversight.** The
 plan job declares `environment: aws-stag`, because that is the only way a workflow
@@ -1439,6 +1533,40 @@ rotated. Every `tf-via-pr` step now sets `upload-plan: false`, and
 `preserve-plan` is a *different* input and stays `true` in the apply workflow: it
 keeps the plan on the runner's disk so the FL gate and the apply step can read
 it. That never leaves the job.
+
+### Reading a red Terraform CI run
+
+Two of these are not faults, and both now say so in the run's summary rather than
+only in the log.
+
+**"Apply held — FL infrastructure would be disturbed."** The plan succeeded and
+was deliberately not applied, because it would recreate `fl-server-net-1` /
+`fl-api-net-1` or delete EFS (FLIP#770). The step still exits non-zero — a hold
+means the apply did not happen, and that must not read as green — but the job
+summary names the resources and the remedy. Clear it by enabling deployment mode
+on the hub, waiting until `GET /fl/quiesce` reports deployment mode ON with no
+BUSY net, then re-running `terraform_apply.yml` via `workflow_dispatch` with
+`fl_quiesced: true`. A plain re-run reads the same plan and holds again.
+
+Note this recurs on *every* apply while a piece of out-of-band drift touches the
+FL services — staging currently carries `enable_execute_command: true -> false`
+on all three — so one quiesced apply clears the backlog rather than each push
+needing its own.
+
+**"Production drift is not being checked."** The nightly run fires from the
+default branch and dispatches itself with `--ref main` for the production leg.
+GitHub resolves `--ref` against the workflow file *on that ref*, so until `main`
+carries `terraform_drift.yml` the dispatch returns HTTP 422. That is a known
+precondition, not a broken pipeline, so the job warns and passes instead of
+failing — a permanently red nightly is how a real dispatch failure comes to be
+ignored. It resolves itself at the first `develop` → `main` release.
+
+The step recognises that precondition from an **HTTP 404 alone** when probing for
+the file on `main`. Any other outcome — a 401/403, a rate limit, a 5xx, a network
+failure — fails the job rather than being read as "absent", because assuming
+absence there would skip the production drift run silently and still report
+green. Same fail-closed rule as `resolve-image-tags.sh`: one precise signal means
+absent, everything else stops the run.
 
 ### Recovering an environment's true values
 
@@ -1519,14 +1647,18 @@ AWS_PROFILE=stag LOCK=false make plan \
 ### One-time setup
 
 ```bash
-# 1. Publish the EC2 keypair public key so CI reproduces it byte for byte.
-#    Read from state, not from ~/.ssh: a laptop key that has drifted would make
-#    CI plan a replacement of both aws_key_pair resources — and because
-#    public_key is ForceNew, that ripples into aws_instance.ec2_instance.
-make seed-ci-keypair-param                 # stag
-make seed-ci-keypair-param PROD=true       # prod
+# 1. Nothing to publish by hand: /flip/ci/host_aws_public_key, the EC2 keypair
+#    public key CI writes to ~/.ssh before planning, is declared in
+#    parameter_store.tf and created by the main root's own apply. In these two
+#    accounts it already existed from the retired seed-ci-keypair-param target;
+#    `overwrite = true` adopts it on the first apply, rewriting the bytes CI has
+#    just read from it — a no-op.
 
-# 2. Create the OIDC roles, from a laptop (see ci/README.md).
+# 2. Create the OIDC roles, from a laptop (see ci/README.md). They trust GitHub's
+#    OIDC identity provider, which ci/ looks up rather than creates, so it must
+#    already exist in the account — AI Centre's legacy accounts get it from
+#    aicentre-iac; anywhere else, declare it in the account's baseline IaC first.
+#    `make -C ci plan` checks and, if it is missing, says what to declare.
 make -C ci init && make -C ci plan && make -C ci apply
 make -C ci init PROD=true && make -C ci plan PROD=true && make -C ci apply PROD=true
 
@@ -1534,13 +1666,142 @@ make -C ci init PROD=true && make -C ci plan PROD=true && make -C ci apply PROD=
 #    Reads the secret-vs-variable split out of terraform_plan.yml, so it cannot
 #    disagree with what the workflows dereference, and refuses to run when ci/ is
 #    initialised for the other account (which would wire in the wrong role ARNs).
-bash scripts/setup-github-environments.sh --env stag --env-file ../../../.env.stag --dry-run
-bash scripts/setup-github-environments.sh --env stag --env-file ../../../.env.stag
-bash scripts/setup-github-environments.sh --env prod --env-file ../../../.env.production
+#    --mode is the same PROD token the workflows read as TF_PROD, and this script
+#    sets that variable: it is what selects the env file, the profile and the keys
+#    the run requires. See "Repointing CI at the LZA accounts" for the LZA pair.
+bash scripts/setup-github-environments.sh --mode stag --env-file ../../../.env.stag --dry-run
+bash scripts/setup-github-environments.sh --mode stag --env-file ../../../.env.stag
+bash scripts/setup-github-environments.sh --mode true --env-file ../../../.env.production
 ```
 
 Requires repo admin. It prints key names only — values go from the local env file
 straight to GitHub.
+
+### Repointing CI at the LZA accounts
+
+Two layers move when FLIP's CI is pointed at a different AWS account, and only the
+second is a GitHub change:
+
+1. **Per-account AWS bootstrap.** The GitHub OIDC provider, the plan and apply
+   roles, the state bucket, the ECR pull-through cache and the
+   `/flip/ci/host_aws_public_key` parameter are resources *in the target
+   account*, and all but the state bucket are declared in Terraform: the OIDC
+   provider by the platform repository, the roles by `ci/`, the parameter by the
+   main root. What stays manual is running those applies once, from a laptop with
+   admin access there — CI cannot create the roles it would need in order to
+   create them. Until they exist the workflows have an ARN to assume and nothing
+   to assume it with — `AssumeRole` fails before Terraform starts.
+2. **The GitHub environment's values.** Repointing rewrites `TF_PROD`,
+   `TF_PLAN_ROLE_ARN`, `TF_APPLY_ROLE_ARN` and every account-scoped value (bucket
+   names, the ECR registry host, the web-edge domain). The environment *names* do
+   not change: the branch policy on `aws-prod` is a property of the pipeline, and
+   re-creating an environment to rename it would drop every secret it holds.
+
+| | `TF_PROD` | Env file | `ENV_CLASS` | Profile guard | `LZA_REQUIRED_KEYS` |
+| --- | --- | --- | --- | --- | --- |
+| Legacy staging | `stag` | `.env.stag` | `stag` | `stag` | no |
+| Legacy production | `true` | `.env.production` | `prod` | `prod` | no |
+| LZA staging | `lza-stag` | `.env.lza-stag` | `stag` | `lza-stag` | yes |
+| LZA production | `lza` | `.env.lza-prod` | `prod` | `lza-prod` | yes |
+
+`ENV_CLASS` is `deploy/env_mode.mk`'s derivation, carried per row of
+`compose-ci-env.sh`'s table as well: the workflows pass the class their ref implies
+as `EXPECTED_ENV_CLASS` (`main` → `prod`, otherwise `stag`; `stag` in
+`terraform_plan.yml`, which only ever plans staging) and the script refuses to
+compose when the two disagree. That is what keeps a mis-set `TF_PROD` from quietly
+planning the prod estate with staging's shape — the prod RDS then reads
+`deletion_protection = false` and `skip_final_snapshot = true` — in an unattended
+apply on `main`.
+
+Run these in order **per account**, from a laptop authenticated to that account:
+
+```bash
+# 0. The local profile the Makefile's guard expects for this mode: an alias for the
+#    workload account's permission set, in ~/.aws/config. An alias carrying the old
+#    account ID has to be re-created, not edited in place:
+#        [profile lza-stag]  sso_session = <session>  sso_account_id = <lza-stag-account-id>  sso_role_name = FLIPAdminAccess
+#        [profile lza-prod]  sso_session = <session>  sso_account_id = <lza-prod-account-id>  sso_role_name = FLIPAdminAccess
+
+# 0b. A GitHub OIDC provider must exist in the account before ci/ can be planned.
+#     ci/ looks it up with `data.aws_iam_openid_connect_provider` rather than
+#     declaring it: an account holds one provider per issuer URL, shared by
+#     anything GitHub-driven there, so it is platform plumbing — and declared in
+#     this root, a destroy of FLIP's CI would delete it from under everything
+#     else. The platform repository declares it instead, as aicentre-iac does for
+#     the self-contained accounts:
+#         aicentre-lza-iac, iam_github_oidc.tf — one per FLIP workload account
+#     Merge that first; in an account without one, the ci/ plan stops with
+#     "no matching OpenID Connect Provider found". Nothing to run here.
+
+# 1. The state bucket (idempotent; the name comes from the env file).
+make create-backend PROD=lza-stag
+
+# 2. /flip/ci/host_aws_public_key — the EC2 keypair public key CI reproduces byte
+#    for byte — is declared in parameter_store.tf, so the first laptop apply of the
+#    main root in this account creates it. CI cannot plan until it exists, so that
+#    apply comes before the environment is repointed. The keypair itself must
+#    come from THIS account's key: a laptop file that has drifted, or that belongs
+#    to the old account, plans a keypair replacement that ripples into the
+#    bastion, and the parameter would then publish the wrong key.
+
+# 3. The CI roles and the permissions-boundary policy. This root declares both the
+#    OIDC trust policies the three workflows assume and `AICentre-FLIPTerraformBoundary`
+#    — the boundary every role in the main root is created under — so it comes
+#    *before* any main-root apply in a new account, not after.
+make -C ci init PROD=lza-stag && make -C ci plan PROD=lza-stag && make -C ci apply PROD=lza-stag
+#    Once this has run in BOTH LZA accounts, the main root can start attaching the
+#    boundary there: delete the `ifneq ($(IS_LZA),)` block in the Makefile and flip
+#    tests/test_iam_permissions_boundary.py (its docstring names the two tests). Left
+#    in place deliberately until then — `make plan/apply PROD=lza|lza-stag` from a
+#    laptop, which is still how both estates change, would otherwise fail every role
+#    update with NoSuchEntity.
+
+# 4. The GitHub environment: creates it if absent, sets TF_PROD, reads the two role
+#    ARNs out of ci/ state (and refuses if ci/ is initialised for another account),
+#    then writes every key the workflows dereference from the env file.
+bash scripts/setup-github-environments.sh --mode lza-stag --env-file ../../../.env.lza-stag --dry-run
+bash scripts/setup-github-environments.sh --mode lza-stag --env-file ../../../.env.lza-stag
+```
+
+Then push a change under `deploy/providers/AWS/**` and read the plan before letting an
+apply run:
+
+- `compose-ci-env.sh` composes `.env.lza-stag` and fails naming any missing
+  `LZA_REQUIRED_KEYS` entry — the run stops there rather than planning a destructive
+  diff from an empty string. `LZA_WEB_EDGE_DOMAIN` /
+  `LZA_WEB_EDGE_DISTRIBUTION_ARN` are optional on purpose: the edge is built from
+  this stack's outputs, so they stay empty until it exists.
+- The first plan is against an **empty** account, so it creates everything and there
+  is no drift to compare against yet. Read it for shape — the network discovered
+  rather than created, no `must be replaced` on the buckets — not for a diff.
+- `check-fl-plan-impact.sh` still holds any apply that would touch `fl-server-net-1`
+  or delete an EFS resource. On an empty account there is nothing to replace, so it
+  passes; from the second apply onward it behaves as on any other estate.
+- Every name in `.env.lza-stag` is reused from the legacy estate
+  (`flip-terraform-state-stag`, `flipstag-*`, `flip-access-logs-*`) — bucket names
+  are globally unique, and reusing them works **only because the legacy accounts are
+  being emptied and closed**. If the two estates have to coexist, each of those names
+  needs changing in the env file *and* on the environment, `FLIP_TFSTATE_BUCKET_NAME`
+  / `CI_STATE_BUCKET` included, or the first apply stops on
+  `BucketAlreadyExists`/`AlreadyExists`.
+
+**Rollback is `TF_PROD`.** Setting it back to the legacy token (with the
+account-scoped values put back) returns the pipeline to the old estate; the
+workflows take effect on their next run, and no code changes either way. Record the
+legacy values *before* overwriting them: variables can be read back
+(`gh variable list --env aws-stag`), secrets cannot — `gh secret list` shows names
+only, so their values have to come from the operator's `.env.stag` /
+`.env.production`.
+
+**Two things the Terraform pipeline does not cover.** `docker_build_xnat_web.yml`
+assumes the older, over-broad role `GitHubAction-AssumeRoleWithAction-FLIP`
+(trusting `repo:londonaicentre/FLIP:*`, created outside this repository) through
+three **repository-level** variables — `AWS_ROLE_TO_ASSUME`,
+`AWS_ROLE_SESSION_NAME`, `AWS_REGION` — rather than through an environment. If it
+is to keep working in the new account, that role and those three variables have to
+follow. It is recorded as a known finding in FLIP#962 and predates this pipeline;
+the migration is the opportunity to retire it. The `ci/` roles are additive and do
+not depend on it.
 
 ### What an automated apply will not do
 

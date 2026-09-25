@@ -91,9 +91,7 @@ class TestReconstructFullModelForEval:
         """On the train task it is byte-for-byte the parent: round 0 caches + passes through, later
         rounds merge the head."""
         f = ReconstructFullModelForEval()
-        cached = f.process_dxo(
-            _dxo({"backbone.0": 5, "omni_heads.0.weight": 1}), _shareable(0), _task_ctx("train")
-        )
+        cached = f.process_dxo(_dxo({"backbone.0": 5, "omni_heads.0.weight": 1}), _shareable(0), _task_ctx("train"))
         assert cached is None  # round 0: cached and passed through unchanged
         out = f.process_dxo(_dxo({"omni_heads.0.weight": 9}), _shareable(1), _task_ctx("train"))
         assert out.data == {"backbone.0": 5, "omni_heads.0.weight": 9}
@@ -127,9 +125,7 @@ class TestReconstructFullModelForEval:
         onto the cache still yields exactly that full model."""
         f = ReconstructFullModelForEval()
         f.process_dxo(_dxo({"backbone.0": 5, "omni_heads.0.weight": 1}), _shareable(0), _task_ctx("train"))
-        out = f.process_dxo(
-            _dxo({"backbone.0": 5, "omni_heads.0.weight": 9}), _shareable(None), _task_ctx("validate")
-        )
+        out = f.process_dxo(_dxo({"backbone.0": 5, "omni_heads.0.weight": 9}), _shareable(None), _task_ctx("validate"))
         assert out.data == {"backbone.0": 5, "omni_heads.0.weight": 9}
 
     def test_reconstructed_dict_is_a_copy_not_the_retained_state(self):
