@@ -15,16 +15,16 @@
 
 ## :sparkles: Highlights
 
-- **The web cutover to the LZA estate becomes a switch you choose, not a DNS change** (#749, via #1296) — `RELEASE_WEB_ALIAS` drops the public web name from an account's CloudFront distribution so another estate's edge can serve it. CloudFront picks a distribution by `Host` header and prefers an exact alias over a wildcard, so pointing DNS at the new edge moves nothing for the web on its own; this flag is the moment it moves. **Off everywhere by default** — nothing changes until it is set on a GitHub environment.
-- **Terraform CI can drive the LZA workload accounts** (#1199, via #1273) — `aws-stag` / `aws-prod` select the estate they apply with a `TF_PROD` variable (`stag`, `true`, `lza-stag` or `lza`) and fall back to the self-contained pair when it is unset, which is where they stay for now.
-- **The CI keypair parameter is declared, and `ci/` explains a missing OIDC provider** (#1199, via #1299) — `/flip/ci/host_aws_public_key` becomes a Terraform resource instead of a make target, and `make -C ci plan` stops with who should declare the account's GitHub OIDC provider rather than Terraform's bare "no matching OpenID Connect Provider found".
-- **XNAT on Kubernetes trusts accepts DICOM again** (#1228, via #1231) — `xnat-web` could not roll onto its single-attach volume, so an upgraded pod never went Ready and the old one kept serving plugin jars built for a different XNAT core, aborting every C-STORE while C-ECHO still passed.
-- **Cohort query plots use the width they are given** (#1293, via #1294).
+- **Approving a project becomes the participating site's decision rather than the hub's** (#1298) — approving a project for a named trust now requires `CAN_APPROVE_FOR_TRUST` *at that trust*. The platform-wide administrator role does not carry it, so a hub administrator can no longer approve on every site's behalf, and each trust named in the call has to authorise it or the approval is refused in full. Who approved is recorded with the approval.
+- **A trust can state its runtime access policy as a document** (#1297) — an optional governance file (`ACCESS_POLICY_FILE`, or the document inline as `ACCESS_POLICY`) states the cohort threshold, permit/deny rules over each cohort operation, and the site-privacy policy as data instead of settings compiled into the services. It can only tighten a trust's posture, an operation no rule mentions keeps its current behaviour, and the hub never writes it. Validate before applying: `make -C trust check-governance KIT=<CODE>`.
+- **Trust-scoped roles** (#1266) — the `TRUST_OWNER` role and the authorisation behind it: `user_role` gains a trust dimension, so a permission can be held *at a trust* and not only platform-wide. Existing deployments grant the role to the administrators of each trust, and the Trust control panel shows who owns one.
+- **XNAT trusts can point at a real Trust PACS** (#1234) — the DICOM SCP gets a Service of its own, separate from the web UI, with a fixed node port or a load balancer for a PACS outside the cluster, and the chart refuses to render a real-PACS install that would expose the console in order to reach it.
+- **The published tutorials and the platform path become release gates** (#1306) — neither can run in CI (no hosted runner has a GPU, and the smoke test needs a full stack), so the GPU tutorial suite on both backends and `make e2e_smoke` are ticked in the *Release checks* section of this file and in the pre-release checklist.
 
 ## :warning: Breaking Changes
 
-- **`make seed-ci-keypair-param` is gone** (#1299). The parameter it published is now `aws_ssm_parameter.ci_host_aws_public_key` in the main root: in a new account the first laptop apply creates it; in an account that already has it, the first apply adopts it (`overwrite = true`, rewriting the bytes CI has just read — a no-op).
-- **On Kubernetes trusts, upgrading restarts XNAT rather than rolling it** (#1231). `xnat-web` now uses the `Recreate` strategy — a singleton on a `ReadWriteOnce` volume cannot roll — so XNAT is unavailable while the new pod starts. Upgrade outside an image pull.
+- **Approval no longer works from a platform-wide grant alone** (#1298). A single `CAN_APPROVE_PROJECTS` on the seeded Admin role used to approve a project for every trust; from this release the call requires `CAN_APPROVE_FOR_TRUST` at *each* trust it names, and a platform-wide grant does not satisfy it. Existing deployments are migrated: the administrators of each trust are granted ownership of it, so the people who approved before still can — for their own trust. A trust with no owner cannot be approved for until one is named.
+- **DICOM exposure moves to its own Service on Helm trusts** (#1234). `xnat-web.service` used to be what exposed DICOM; it is now held at `ClusterIP`, so a DICOM exposure can never publish the Tomcat console with it. An install that set it to `NodePort` to reach a real PACS must move to `dicomService.type` (with `dicomNodePort`) or `LoadBalancer`, and reach the console with `kubectl port-forward`. The chart fails that render (`validatePacsReachable`) rather than reverting the exposure quietly.
 
 ## :arrows_counterclockwise: Site upgrade
 
@@ -35,9 +35,9 @@
      flag-day is announced: a payload-cipher change or an FL-framework bump means hub AND sites in one
      Deployment-Mode window, and a site left behind fails every task until it moves. -->
 
-- **Required:** no, if you are on v0.7.0 or later — nothing in this release changes the hub↔site payload contract. **Recommended for Kubernetes trusts** whose XNAT refuses C-STORE while C-ECHO passes (#1231). **Yes, and as a flag day, if you are on v0.6.x or earlier**: you cross v0.7.0's AES-256-GCM change on the way here, and that has no CBC fallback.
+- **Required:** no, if you are on v0.7.0 or later — nothing in this release changes the hub↔site payload contract, and the governance document is optional: with none configured the platform defaults apply exactly as before. **Recommended for Kubernetes trusts**, which can now reach a real PACS (#1234). **Yes, and as a flag day, if you are on v0.6.x or earlier**: you cross v0.7.0's AES-256-GCM change on the way here, and that has no CBC fallback.
 - **Ordering:** hub first, sites at their own pace — *unless* you are coming from v0.6.x, in which case hub and sites move together in one Deployment-Mode window and a site left behind answers every task `Invalid payload: failed authentication`.
-- **Refreshed kit needed:** no — the Hub-shared block is unchanged. (If the hub's AES key or FL kit date changed with your hub deploy, re-sync: `make sync-trust-kit KIT=<CODE> PROD=<env>` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>`.)
+- **Refreshed kit needed:** no — the Hub-shared block is unchanged. A governance document, if you adopt one, is yours to own: copy `trust/governance.example.toml`, point `ACCESS_POLICY_FILE` at it from your own kit file, and validate it with `make -C trust check-governance KIT=<CODE>` before `make -C trust up-trust KIT=<CODE>`. (If the hub's AES key or FL kit date changed with your hub deploy, re-sync: `make sync-trust-kit KIT=<CODE> PROD=<env>` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>`.)
 - **Operator command**, on the trust host, from your FLIP checkout:
   ```bash
   git fetch --tags origin && git checkout {{TAG}}        # the compose files and the verb come from the checkout, not the images
@@ -47,14 +47,17 @@
 
 ## :seedling: New Features
 
-- The public web alias released on a switch of its own, `RELEASE_WEB_ALIAS`, carried through the CI manifest and all three Terraform workflows (#1296).
-- Terraform CI for the LZA workload accounts, with the estate selected by `TF_PROD` and a class check refusing a prod-grade estate on a staging ref (#1273).
-- The CI keypair parameter declared in Terraform, and a `check-oidc-provider` preflight on `make -C ci plan` (#1299).
-- Cohort query plots in a responsive auto-fill grid instead of a fixed two-column layout (#1294).
+- Approval asked of each participating trust, and recorded with the user who gave it — `CAN_APPROVE_FOR_TRUST` at every named trust, refused in full when one is missing (#1298).
+- `TRUST_OWNER`, trust-scoped permissions, and the Trust Owner row in the Trust control panel (#1266).
+- The optional trust governance document, with `[disclosure]`, `[access]` and `[fl_privacy]` sections, and a `make -C trust check-governance` target that runs the service's own loader rather than a second implementation (#1297).
+- `Release checks` in this file and in the pre-release checklist: the tutorial suite on both backends, then `make e2e_smoke` (#1306).
+- A DICOM service of its own on Helm trusts, a network policy for the PACS hop, and a fixed node port option (#1234).
 
 ## :bug: Bug Fixes
 
-- **Kubernetes trusts**: XNAT aborting every C-STORE because `xnat-web` could not roll onto its `ReadWriteOnce` volume and kept serving stale DQR / Container Service plugin jars; the chart now recreates the pod, and a Helm timeout keeps a slow `xnat-init` hook from leaving the release failed (#1228, via #1231).
+<!-- Update this section if a fix lands before the cut. -->
+
+- No user-facing bug fixes in this release.
 
 ## :file_folder: PRs merged in this release
 
