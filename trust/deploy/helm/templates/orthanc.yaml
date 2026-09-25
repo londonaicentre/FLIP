@@ -22,8 +22,12 @@ metadata:
 data:
   # Orthanc configuration is built from values; users may supply additional
   # configuration via extra config maps in the future.
+  # The XNAT DICOM modality must name the Service that actually carries the DICOM SCP port
+  # (xnat-web-dicom, port dicom-scp) — not the web-console Service, which carries tomcat only and
+  # never a DICOM port. Pointing this at xnat-web sends every C-STORE to a port that Service does
+  # not have, which breaks image retrieval on every default K8s install and the C-STORE smoke test.
   ORTHANC__DICOM_MODALITIES: |
-    {"XNAT": {"AET": {{ .Values.xnat.web.dicomAet | default "XNAT" | quote }}, "Host": "xnat-web", "Port": {{ .Values.xnat.web.dicomPort | default 8104 | quote }}}}
+    {"XNAT": {"AET": {{ .Values.xnat.web.dicomAet | default "XNAT" | quote }}, "Host": "xnat-web-dicom", "Port": {{ .Values.xnat.web.dicomPort | default 8104 | quote }}}}
 ---
 apiVersion: v1
 kind: Service

@@ -92,8 +92,11 @@ jobs:
       - name: Install uv
         run: pip install uv
 
-      - name: Image-tag precedence, rendered (tests/templates/test_helpers.py)
+      - name: Rendered-chart tests (tests/templates/)
         working-directory: trust/deploy/helm
+        # Everything under tests/templates asserts `helm template` output rather than template
+        # text: image-tag precedence (test_helpers.py) and the web/DICOM Service split parsed per
+        # rendered Service document (test_dicom_service_render.py, FLIP#993).
         run: uv run --no-project --with pytest --with "pyyaml==6.0.3" pytest tests/templates -v
 
       - name: Render template (default/nvflare)
@@ -169,7 +172,7 @@ jobs:
         run: |
           helm template trust-release trust/deploy/helm/ \
             --set flClient.kitHostPath=/opt/flip/fl-kit \
-            --set xnat.web.service.type=NodePort \
+            --set xnat.web.dicomService.type=NodePort \
             --set xnat.web.dicomNodePort=8104 \
             --set xnat.web.dicomAet=FLIPXNAT \
             --set pacs.host=10.0.0.10 \
@@ -271,20 +274,43 @@ jobs:
             echo "::error::a real PACS on ClusterIP rendered successfully with networkPolicies.enabled=false — the reachability guard is gated on NetworkPolicy again"
             exit 1
           fi
-          if ! grep -q "xnat.web.service.type is ClusterIP" /tmp/nopolicy.err; then
+          if ! grep -q "xnat.web.dicomService.type is ClusterIP" /tmp/nopolicy.err; then
             echo "::error::render failed for some other reason than the ClusterIP reachability guard:"
             cat /tmp/nopolicy.err
             exit 1
           fi
           # And the LoadBalancer allowance must keep rendering, or on-prem MetalLB trusts break.
+          # Asserted per Service rather than grepped: the whole-document grep this used to be
+          # (output to /dev/null, in fact) could not tell a LoadBalancer on the DICOM Service from
+          # one on the web console. tests/templates/test_dicom_service_render.py carries the
+          # exhaustive per-document version; this keeps the shape assertion beside the render.
           helm template trust-release trust/deploy/helm/ \
             --set flClient.kitHostPath=/opt/flip/fl-kit \
-            --set xnat.web.service.type=LoadBalancer \
+            --set xnat.web.dicomService.type=LoadBalancer \
             --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
             --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
             --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' \
             --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
-            --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' > /dev/null
+            --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' > /tmp/lb-pacs.yaml
+          uv run --no-project --with "pyyaml==6.0.3" python - /tmp/lb-pacs.yaml <<'PY'
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1]))
+                  if isinstance(d, dict) and d.get("kind") == "Service"]
+          svcs = {d["metadata"]["name"]: d["spec"] for d in docs}
+          dicom, web = svcs.get("xnat-web-dicom"), svcs.get("xnat-web")
+          if dicom is None or web is None:
+              sys.exit(f"::error::expected both xnat-web and xnat-web-dicom, got {sorted(svcs)}")
+          if dicom["type"] != "LoadBalancer":
+              sys.exit(f"::error::xnat-web-dicom is {dicom['type']}, not LoadBalancer")
+          if dicom.get("externalTrafficPolicy") != "Local":
+              sys.exit("::error::the LoadBalancer DICOM Service lost externalTrafficPolicy: Local — "
+                       "kube-proxy will SNAT the PACS's address and the ingress CIDR cannot match")
+          if web["type"] != "ClusterIP":
+              sys.exit(f"::error::the web console rendered as {web['type']} — exposing DICOM must "
+                       "never expose the console with it")
+          if any(p.get("name") == "dicom-scp" for p in web.get("ports", [])):
+              sys.exit("::error::the web console Service carries the dicom-scp port")
+          PY
 
       # The other half of the conjunction xnat-web.yaml gates the NodePort pin and
       # externalTrafficPolicy on. NodePort with dicomNodePort left at its empty default satisfies
@@ -296,7 +322,7 @@ jobs:
         run: |
           if helm template trust-release trust/deploy/helm/ \
             --set flClient.kitHostPath=/opt/flip/fl-kit \
-               --set xnat.web.service.type=NodePort \
+               --set xnat.web.dicomService.type=NodePort \
                --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
                --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
                --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' \
@@ -312,6 +338,37 @@ jobs:
             cat /tmp/nonodeport.err
             exit 1
           fi
+
+      # A real trust was found running its DICOM ingress NetworkPolicy scoped to 0.0.0.0/0 (the
+      # whole internet) rather than the PACS itself, because there was previously no chart-native
+      # LoadBalancer path and no guard against this specific mistake. Assert both the refusal and
+      # its message, and that a properly-scoped CIDR keeps rendering — this must be a render-time
+      # failure, not a runtime one, or the same mistake ships again silently.
+      - name: Render template (real PACS with a wide-open ingress CIDR is refused)
+        run: |
+          if helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+               --set xnat.web.dicomService.type=LoadBalancer \
+               --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
+               --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=0.0.0.0/0' \
+               --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' \
+               --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+               --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' > /dev/null 2> /tmp/wideopen.err; then
+            echo "::error::a real PACS with allowedIngressCIDRsWithPorts=0.0.0.0/0 rendered successfully — the whole internet can reach the DICOM port"
+            exit 1
+          fi
+          if ! grep -q "contains 0.0.0.0/0" /tmp/wideopen.err; then
+            echo "::error::render failed for some other reason than the wide-open-CIDR guard:"
+            cat /tmp/wideopen.err
+            exit 1
+          fi
+          # And a properly-scoped CIDR on the same LoadBalancer configuration must keep rendering.
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+            --set xnat.web.dicomService.type=LoadBalancer \
+            --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
+            --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+            --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' \
+            --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+            --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' > /dev/null
 
       # Default-deny must survive: the ingress allowance is the one inbound path into a trust, so a
       # chart that opened it without being asked would silently widen every existing deployment.

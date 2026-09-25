@@ -913,8 +913,12 @@ there; the omop-db image CI asserts every published image carries it.
 - **NetworkPolicies**: Default-deny-ingress, allow-intra-namespace, allow-egress
   to Central Hub and FL server only (audit and threat model: [NETWORK-POLICY.md](NETWORK-POLICY.md))
 - **No LoadBalancer or NodePort** for application services (all ClusterIP), with one opt-in
-  exception: `xnat.web.dicomNodePort` with `service.type: NodePort` exposes XNAT's DICOM SCP
-  receiver so a trust PACS can complete the C-STORE leg of a retrieval. Off by default.
+  exception: the DICOM SCP has its own Service (`xnat-web-dicom`, separate from the web console's
+  `xnat-web`), which `xnat.web.dicomService.type: NodePort` (with `xnat.web.dicomNodePort`) or
+  `LoadBalancer` exposes so a trust PACS can complete the C-STORE leg of a retrieval — never the web
+  console, which stays on `xnat.web.service.type` (ClusterIP; with a real `pacs.host` the chart
+  refuses to render any other value, so an upgrade cannot silently carry an old NodePort setting
+  onto the console). Off (`ClusterIP`) by default.
 - **Secrets**: Separate from ConfigMaps; recommend External Secrets Operator
 - **FL clients**: No Central Hub credentials; connect outbound to FL server only
 - **ServiceAccounts**: each stateless service runs under its own ServiceAccount
