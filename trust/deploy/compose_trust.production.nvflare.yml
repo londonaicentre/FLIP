@@ -75,7 +75,7 @@ services:
       # The governance document, read-only — a site must not rewrite its own privacy
       # policy. Mounted whether or not one is configured; the env var below is what
       # decides if it is read (compose needs a valid source path either way).
-      - ${ACCESS_POLICY_FILE:-../governance.example.toml}:/app/governance.toml:ro
+      - ${ACCESS_POLICY_FILE:-./governance.example.toml}:/app/governance.toml:ro
     environment:
       - NET_ID=net-1
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}

@@ -14,7 +14,7 @@
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
-	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance
+	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance
 # PROD selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
 # runs the production compose) and the kit-file env token (ENV: stag stays distinct,
 # so a stag kit is .env.<CODE>.stag, never confused with .env.<CODE>.production; the
@@ -441,20 +441,80 @@ up-trust: require-xnat-aetitle create-networks
 # Validate the trust's governance document (FLIP#1259) WITHOUT starting anything.
 # The services fail closed on an invalid policy, so an operator editing rules wants the
 # error here rather than from a container that refuses to come back up. Runs the real
-# loader — the same code path the service uses at startup — so this cannot drift from
+# loaders — the same code paths the services use at startup — so this cannot drift from
 # what is actually enforced.
+#
+# Both halves and both sources. The [disclosure]/[access] sections go through
+# data-access-api's loader, which accepts EITHER ACCESS_POLICY_FILE or the inline
+# ACCESS_POLICY — branching on the file alone reported an inline kit as having no document
+# at all, so its rules skipped validation entirely. [fl_privacy] goes through the
+# fl-client's own site_policy module, because it used to pass here and then fail closed
+# from a container that would not restart (as `[site-privacy] FATAL`).
+#
+# [fl_privacy] cannot be stated inline: the fl-client reads the document from
+# ACCESS_POLICY_FILE only, so check_governance.py refuses an inline document that carries
+# the section rather than let the fl-client ignore it silently.
 check-governance:
 	$(require_kit_file)
-ifeq ($(strip $(ACCESS_POLICY_FILE)),)
-	@echo "ℹ️  No ACCESS_POLICY_FILE set in trust/$(KIT_FILE) — no governance document to check."
+ifeq ($(strip $(ACCESS_POLICY_FILE)$(ACCESS_POLICY)),)
+	@echo "ℹ️  No ACCESS_POLICY_FILE or ACCESS_POLICY set in trust/$(KIT_FILE) — no governance document to check."
 	@echo "   Platform defaults apply: COHORT_QUERY_THRESHOLD=$(or $(COHORT_QUERY_THRESHOLD),10) and FL_SITE_PRIVACY_* only."
 	@echo "   To adopt one, copy trust/governance.example.toml and point ACCESS_POLICY_FILE at it."
 else
-	@echo "🔍 Validating $(ACCESS_POLICY_FILE) (KIT=$(KIT), floor COHORT_QUERY_THRESHOLD=$(or $(COHORT_QUERY_THRESHOLD),10))..."
-	@cd data-access-api && ACCESS_POLICY_FILE="$(abspath $(ACCESS_POLICY_FILE))" \
+	@echo "🔍 Validating the [disclosure]/[access] half (KIT=$(KIT), floor COHORT_QUERY_THRESHOLD=$(or $(COHORT_QUERY_THRESHOLD),10))..."
+	@cd data-access-api && \
+	    ACCESS_POLICY_FILE="$(if $(strip $(ACCESS_POLICY_FILE)),$(abspath $(ACCESS_POLICY_FILE)),)" \
+	    ACCESS_POLICY="$(ACCESS_POLICY)" \
 	    COHORT_QUERY_THRESHOLD="$(or $(COHORT_QUERY_THRESHOLD),10)" \
 	    PYTHONPATH=. uv run python scripts/check_governance.py
+	@echo "🔍 Validating the [fl_privacy] half with the fl-client's own loader..."
+	@cd ../flip-utils && \
+	    ACCESS_POLICY_FILE="$(if $(strip $(ACCESS_POLICY_FILE)),$(abspath $(ACCESS_POLICY_FILE)),)" \
+	    FL_SITE_PRIVACY_POLICY="$(FL_SITE_PRIVACY_POLICY)" \
+	    FL_SITE_PRIVACY_PERCENTILE="$(FL_SITE_PRIVACY_PERCENTILE)" \
+	    FL_SITE_PRIVACY_GAMMA="$(FL_SITE_PRIVACY_GAMMA)" \
+	    uv run python -m flip.nvflare.site_policy --check /app/local/privacy.json
 endif
+
+# Re-apply a changed governance document to a LIVE trust (FLIP#1259), touching no data.
+#
+# Deliberately NOT up-trust, and not restart-trust: up-trust is the first-install verb,
+# whose up-xnat step runs xnat-reset (wiping the XNAT archive and database) and whose
+# ensure-seeded step can replace the data volumes. A policy edit has no business going
+# anywhere near either.
+#
+# Only the two services that actually read the document are recreated — data-access-api
+# and the fl-clients; trust-api and imaging-api never open it. Each reads it at container
+# start, so a restart is what applies it.
+#
+# --force-recreate, not a plain `up -d`: compose decides whether to recreate from the
+# service *config*, and an edited document changes the contents of a mounted file, not the
+# config. A plain `up -d` answers "up to date" and leaves the previous policy in memory —
+# the trust would keep enforcing the rules the operator has just replaced, which is the
+# one failure this feature cannot tolerate.
+#
+# Validated first (check-governance is a prerequisite), so a document the services would
+# refuse never reaches them. Interrupts any job the fl-clients are running: apply between
+# runs.
+reload-governance: check-governance
+	$(require_kit_file)
+	$(check_slot_not_taken)
+	@echo "♻️  Re-applying the governance document to $(KIT)'s enforcing services (no data is touched)..."
+	$(ensure_net_dirs)
+	@clients=$$(${DOCKER_COMPOSE_CMD} config --services 2>/dev/null | grep -x 'fl-client-net-[0-9]*' | tr '\n' ' '); \
+	  if [ -z "$$clients" ]; then \
+	    echo "❌ Could not resolve this deployment's fl-client services from the composed config,"; \
+	    echo "   so the [fl_privacy] half would not be re-applied — refusing to half-apply a policy."; \
+	    echo "   Check the stack resolves: docker compose --env-file $(KIT_FILE) --project-directory . \\"; \
+	    echo "       -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) config --services"; \
+	    exit 1; \
+	  fi; \
+	  echo "   recreating: data-access-api $$clients"; \
+	  $(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) \
+	    up -d --no-deps --force-recreate data-access-api $$clients
+	@echo "✅ data-access-api and the fl-clients restarted against the current document."
+	@echo "   Confirm which source each is using: the data-access-api startup line names"
+	@echo "   ACCESS_POLICY/ACCESS_POLICY_FILE, and the fl-client logs '[site-privacy] ...'."
 
 down-trust:
 	$(require_kit)

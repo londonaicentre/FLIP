@@ -66,9 +66,17 @@ spec:
         {{- include "flip-trust.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: fl-client
         flip/network: {{ .Values.flClient.netId }}
-      {{- if .Values.flClient.gpu.enabled }}
+      {{- if or .Values.flClient.gpu.enabled .Values.governance.document }}
       annotations:
+        {{- if .Values.flClient.gpu.enabled }}
         nvidia.com/gpu: {{ .Values.flClient.gpu.count | quote }}
+        {{- end }}
+        {{- if .Values.governance.document }}
+        # Editing the governance document must roll this pod: a ConfigMap content change
+        # restarts nothing by itself, and the client reads the document once, at container
+        # start (python -m flip.nvflare.site_policy, in the command below).
+        checksum/governance: {{ include (print $.Template.BasePath "/governance-configmap.yaml") . | sha256sum }}
+        {{- end }}
       {{- end }}
     spec:
       enableServiceLinks: false
@@ -214,6 +222,18 @@ spec:
           env:
             - name: UPLOADED_FEDERATED_DATA_BUCKET
               value: {{ .Values.uploadedFederatedDataBucket | default "" | quote }}
+            {{- if .Values.governance.document }}
+            # The trust's governance document (FLIP#1259), mounted read-only below. This
+            # file is the only way to reach the client's [fl_privacy] section, and it wins
+            # over the FL_SITE_PRIVACY_* vars below (the client logs which source it used).
+            # Carried on BOTH backends: the Flower client has no site-policy hook today, but
+            # the deployment shape must not differ by backend — a document present in the
+            # release and silently absent from one pod's spec is the failure this wiring
+            # exists to prevent. The [disclosure]/[access] halves are data-access-api's,
+            # wired on that pod's own template.
+            - name: ACCESS_POLICY_FILE
+              value: /app/governance.toml
+            {{- end }}
             {{- if eq .Values.flBackend "nvflare" }}
             # Keep policy values in the pod template, rather than only the ConfigMap,
             # so a Helm value change triggers a Deployment rollout.
@@ -266,6 +286,16 @@ spec:
             - name: fl-client-kit
               mountPath: /keys
               subPath: keys
+          {{- end }}
+          {{- if .Values.governance.document }}
+            - name: governance
+              mountPath: /app/governance.toml
+              # subPath, not a directory mount: /app and /app/local are the client's own
+              # tree (the kit and the code live there) and a volume mounted over either
+              # would hide them. Read-only — a site must not be able to rewrite its own
+              # privacy policy.
+              subPath: governance.toml
+              readOnly: true
           {{- end }}
           resources:
             {{- toYaml .Values.flClient.resources | nindent 12 }}
@@ -331,4 +361,11 @@ spec:
           hostPath:
             path: {{ required "flClient.kitHostPath is required when flClient.enabled — the absolute path ON THE NODE holding this trust's provisioned FL participant kit. Stage it with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then --set flClient.kitHostPath=/opt/flip/fl-kit (stage-kit's default KIT_DEST, and the kit file's FL_KIT_DIR)" .Values.flClient.kitHostPath | quote }}
             type: Directory
+        {{- if .Values.governance.document }}
+        - name: governance
+          configMap:
+            # Operator-owned; the pod template above carries a checksum of it, so editing
+            # the document rolls this pod rather than leaving the old policy in force.
+            name: {{ include "flip-trust.fullname" . }}-governance
+        {{- end }}
 {{- end }}

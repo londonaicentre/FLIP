@@ -142,17 +142,30 @@ adopt one rule without enumerating everything).
 
 Validation is strict and fails closed. An unknown key, a misspelt action, or a threshold below the
 kit's floor stops the service at startup rather than being ignored — a silently-dropped access rule
-is worse than no rule, because the operator believes it is in force. Validate before applying:
+is worse than no rule, because the operator believes it is in force. `check-governance` runs both
+halves through the loaders the services themselves use (data-access-api's for
+`[disclosure]`/`[access]`, the fl-client's own site-policy module for `[fl_privacy]`), so it cannot
+disagree with what the containers enforce — and the fl-client half can no longer pass here and then
+fail closed from a container that will not restart. Validate, then apply:
 
 ```sh
 make -C trust check-governance KIT=<CODE>
+make -C trust reload-governance KIT=<CODE>
 ```
 
-Apply with `make -C trust up-trust KIT=<CODE>` (and `up-fl-clients-kit KIT=<CODE>` for the
-`[fl_privacy]` section). The document is mounted read-only — a service can never rewrite its own
-policy — and is operator-owned: the hub cannot set, read, or override it. A denied request is
-answered with the same fixed refusal as a below-threshold cohort, so a caller cannot use it to probe
-the trust's configuration; the rule id that caused the denial goes to the trust's own log.
+`reload-governance` is how an edit is applied: it recreates exactly the two services that read the
+document — data-access-api and the fl-clients — and touches no data. **Do not apply a policy change
+with `up-trust` or `restart-trust`**: both are first-install verbs, and on a live trust either can
+destroy data — `up-trust`'s XNAT step runs `xnat-reset`, wiping the XNAT archive and database, and
+its seeding step can replace the data volumes. Recreating the fl-clients does interrupt any job they
+are running, so apply between runs.
+
+The document is mounted read-only — a service can never rewrite its own policy — and is
+operator-owned: the hub cannot set, read, or override it. On Kubernetes the chart carries the same
+document as its `governance.document` value, mounted read-only into the same two pods (see
+[deploy/helm/README.md](deploy/helm/README.md)). A denied request is answered with the same fixed
+refusal as a below-threshold cohort, so a caller cannot use it to probe the trust's configuration;
+the rule id that caused the denial goes to the trust's own log.
 
 ### 3. Start the trust against the hub
 

@@ -212,7 +212,7 @@ services:
       # its own policy. When ACCESS_POLICY_FILE is unset the example is mounted but the
       # env var above is empty, so nothing reads it: compose needs a valid source path
       # here whether or not a policy is configured.
-      - ${ACCESS_POLICY_FILE:-../governance.example.toml}:/app/governance.toml:ro
+      - ${ACCESS_POLICY_FILE:-./governance.example.toml}:/app/governance.toml:ro
 
   trust-api:
     # Pull from GHCR by default; local trust_api/ bind-mount overlays it for live

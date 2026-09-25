@@ -1,8 +1,16 @@
 # Trust governance policy — worked example (FLIP#1259)
 #
-# Copy to governance.<CODE>.toml, edit, point ACCESS_POLICY_FILE at it in your kit
-# file, validate with `make -C trust check-governance KIT=<CODE>`, then apply with
-# `make -C trust up-trust KIT=<CODE>`.
+# Copy to trust/governance.<CODE>.toml, edit, point ACCESS_POLICY_FILE at it in your kit
+# file as ./governance.<CODE>.toml (a host path — compose resolves it against trust/), then:
+#
+#   make -C trust check-governance KIT=<CODE>    # validates both halves of this document
+#   make -C trust reload-governance KIT=<CODE>   # recreates the two services that read it
+#
+# reload-governance touches no data: it recreates data-access-api and the fl-clients, the
+# only two services that open this file, and nothing else. Do NOT apply a policy edit with
+# `up-trust` or `restart-trust` instead — both are first-install verbs, and applying either
+# to a live trust can destroy its data: up-trust's XNAT step runs xnat-reset (wiping the
+# XNAT archive and database) and its seeding step can replace the data volumes.
 #
 # This file is OPTIONAL. With no policy configured the platform defaults apply and
 # behaviour is unchanged — COHORT_QUERY_THRESHOLD and FL_SITE_PRIVACY_* remain the

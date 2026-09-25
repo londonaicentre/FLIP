@@ -162,9 +162,10 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     # policy this route must behave exactly as before, and decrypting unconditionally would
     # add a 400 failure mode (tampered/foreign envelope) that /cohort never had — a
     # behaviour change for every trust that has not adopted a policy.
-    decision = _evaluate(ACTION_COHORT_STATISTICS, _project_id_for_policy(query_input.encrypted_project_id))
+    project_id = _project_id_for_policy(query_input.encrypted_project_id)
+    decision = _evaluate(ACTION_COHORT_STATISTICS, project_id)
     if not decision.permit:
-        _log_denial(decision, None, "cohort statistics")
+        _log_denial(decision, project_id, "cohort statistics")
         # Suppressed, not refused. A policy denial must be indistinguishable from a
         # below-threshold cohort on this route, whose contract is that a shortfall comes
         # back as a zero-count response rather than an HTTP error (issue #519) — an error

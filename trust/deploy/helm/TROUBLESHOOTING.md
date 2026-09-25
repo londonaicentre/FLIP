@@ -34,6 +34,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [7.8 EFS Sync Permission Issues (Root vs UID 1001)](#78-efs-sync-permission-issues-root-vs-uid-1001)
    - [7.9 Container Image Pull from Private ECR](#79-container-image-pull-from-private-ecr)
    - [7.10 gRPC Async Connect Fails on Kernel 7 (Ubuntu 26.04)](#710-grpc-async-connect-fails-on-kernel-7-ubuntu-2604)
+8. [Trust Governance Policy (FLIP#1259)](#8-trust-governance-policy-flip1259)
 
 ---
 
@@ -1226,6 +1227,60 @@ kit (e.g., `/opt/flip/k8s-fl-client-kits/Trust_K8s/startup/`):
 | `GRPC_POLL_STRATEGY` (`epoll1`, `poll`, `none`, `poll_cv2`) | None work |
 | `GRPC_DNS_RESOLVER=native` | No improvement |
 | `channel.channel_ready()` explicit wait | Works locally, but **not needed** — the `agrpc` scheme alone suffices |
+
+---
+
+## 8. Trust Governance Policy (FLIP#1259)
+
+The trust's governance document is carried by the chart as `governance.document`, rendered into the
+`<release>-flip-trust-governance` ConfigMap and mounted **read-only** at `/app/governance.toml` in
+both the `data-access-api` and the fl-client pods, with `ACCESS_POLICY_FILE` pointing at it. An
+empty value means no document at all: nothing is mounted and the platform defaults apply.
+
+**Symptom A — a service will not start after a policy edit.** `data-access-api` crash-loops, or the
+NVFLARE fl-client never gets as far as `STARTING CLIENT`. Both fail closed on an invalid document,
+so the reason is in the container log rather than in any Helm output:
+
+```bash
+kubectl logs -n flip-trust deploy/<release>-flip-trust-data-access-api --tail=20
+kubectl logs -n flip-trust deploy/<release>-flip-trust-fl-client-<netId> --tail=20
+# the fl-client half prints: [site-privacy] FATAL: <what is wrong, and where>
+```
+
+The usual causes are a key or section the format does not define, a misspelt action, a
+`min_cohort_size` below the kit's floor, or `gamma <= 0` / `percentile` outside `[0, 100]`. These are
+deliberately not ignored — a silently-dropped access rule is worse than no rule, because the operator
+believes it is in force. Validate before the next upgrade:
+
+```bash
+make -C trust check-governance KIT=<CODE>   # both halves, through the services' own loaders
+```
+
+**Symptom B — the document is right but the pods behave as if it were not there.** Look at what the
+pods actually hold before anything else:
+
+```bash
+kubectl get configmap <release>-flip-trust-governance -n flip-trust \
+  -o jsonpath='{.data.governance\.toml}' | head -5
+kubectl exec -n flip-trust deploy/<release>-flip-trust-data-access-api -- env | grep ACCESS_POLICY_FILE
+kubectl exec -n flip-trust deploy/<release>-flip-trust-data-access-api -- cat /app/governance.toml | head -5
+```
+
+- **`ACCESS_POLICY_FILE` is unset** → `governance.document` was empty in the values Helm actually
+  used. It is a top-level key, and a values file the upgrade did not include leaves the release on
+  the platform defaults with no error at all — `helm get values <release> -n flip-trust` settles it.
+  Note that `--set governance.document=...` passes the *string* of a path, not the document: use
+  `--set-file governance.document=<file>`.
+- **The ConfigMap changed but the pods did not** → the pods were not rolled. Editing the ConfigMap by
+  hand (`kubectl edit configmap`) restarts nothing; the chart's `checksum/governance` annotation only
+  rolls the pods when the release is upgraded. Re-run the upgrade, or roll them yourself:
+  `kubectl rollout restart deployment/<release>-flip-trust-data-access-api` (and the fl-client).
+- **The mount is missing from the pod spec entirely** → the release predates this wiring (FLIP#1259),
+  or was deployed with an empty `governance.document`. `helm get manifest <release> -n flip-trust |
+  grep -A3 ACCESS_POLICY_FILE` shows what the release itself carries.
+
+`kubectl exec ... -- cat /app/governance.toml` is the check that settles a dispute: it is the file
+the services actually parse, so it is the policy actually enforced.
 
 ---
 

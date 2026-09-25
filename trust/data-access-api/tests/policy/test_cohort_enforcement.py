@@ -283,3 +283,46 @@ def test_statistics_opens_the_envelope_when_a_rule_scopes_projects(
     assert response.json()["suppressed"] is True
     mock_decrypt.assert_called_once()
     mock_get_records.assert_not_called()
+
+
+@patch("data_access_api.routers.cohort.get_records")
+@patch("data_access_api.routers.cohort.get_policy")
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt", return_value="p-denied")
+def test_statistics_denial_logs_the_project_it_blocked(
+    mock_decrypt, mock_get_settings, mock_get_policy, mock_get_records, caplog
+):
+    """A statistics denial names the project in the log, as the row-level routes already do.
+
+    This route suppresses rather than refuses, so the log is the only place the denial is
+    visible at all — and an unattributable ``<none>`` line cannot be tied back to the
+    project that was blocked, which is the first question an operator asks afterwards.
+    """
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 5
+    mock_get_policy.return_value = _policy(
+        """
+        [[access.rule]]
+        id = "stats-allowlist"
+        action = "cohort.statistics"
+        effect = "permit"
+        projects = ["p-other"]
+        """
+    )
+
+    with caplog.at_level("WARNING"):
+        response = client.post(
+            "/cohort",
+            json={
+                "encrypted_project_id": "sealed",
+                "query_id": "q1",
+                "query_name": "q",
+                "query": "SELECT 1",
+                "trust_id": "t1",
+            },
+            headers=AUTH_HEADERS,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["suppressed"] is True
+    assert "Policy denied cohort statistics for project p-denied" in caplog.text
+    assert "<none>" not in caplog.text
