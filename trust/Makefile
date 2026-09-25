@@ -503,11 +503,14 @@ _upgrade-trust-apply:
 # Together these defend the deploy against a kit seeded NUM_AVAILABLE_GPUS=1 (the
 # template default). A GPU-equipped EC2 instance would drop the override and add
 # $(GPU_OVERRIDE) back.
+# Its own slot's overlay network is ensured first (a prerequisite, so it runs on the same
+# remote context): create-networks, which deploy-trust runs, only covers the dev roster's
+# slots 1 and 2 when no KIT is in scope (FLIP#1277).
 # Deliberately no $(ensure_net_dirs) here: this recipe runs on the operator's
 # workstation against a remote docker context, so a local mkdir cannot touch the
 # EC2 host — the per-net images dirs there are pre-created (ubuntu-owned) by the
 # AWS provisioning playbook (deploy/providers/AWS/site.yml).
-up-trust-ec2: require-xnat-aetitle
+up-trust-ec2: require-xnat-aetitle $(if $(TRUST_NUM),create-networks-trust-$(TRUST_NUM))
 	$(require_kit_file)
 	$(check_slot_not_taken)
 	@echo "🚢 Starting Trust services on EC2 (KIT=$(KIT))..."
@@ -793,13 +796,14 @@ create-networks-core:
 # Overlay, not bridge: XNAT attaches from a swarm stack, so these cannot use the
 # ensure_bridge_network macro. Prefixed like every other per-instance network — a trust
 # number alone does not isolate them, since a second hub hands out slot 1 again.
-create-networks-trust-1:
-	@{ docker network inspect $(INSTANCE_PREFIX)deploy_trust-network-1 >/dev/null 2>&1 || docker network create --driver overlay --attachable $(INSTANCE_PREFIX)deploy_trust-network-1; }
+# One rule for every slot (`create-networks-trust-<N>`): the FL kit slot pool grows past the
+# dev roster's two on stag/prod, and a trust in slot 3+ would otherwise start with no network
+# to attach to (FLIP#1277).
+create-networks-trust-%:
+	@{ docker network inspect $(INSTANCE_PREFIX)deploy_trust-network-$* >/dev/null 2>&1 || docker network create --driver overlay --attachable $(INSTANCE_PREFIX)deploy_trust-network-$*; }
 
-create-networks-trust-2:
-	@{ docker network inspect $(INSTANCE_PREFIX)deploy_trust-network-2 >/dev/null 2>&1 || docker network create --driver overlay --attachable $(INSTANCE_PREFIX)deploy_trust-network-2; }
-
-create-networks: create-networks-core create-networks-trust-1 create-networks-trust-2
+# Slots 1 and 2 always (the dev roster), plus the kit's own slot when a KIT is in scope.
+create-networks: create-networks-core create-networks-trust-1 create-networks-trust-2 $(if $(TRUST_NUM),create-networks-trust-$(TRUST_NUM))
 
 # Every network here carries the instance prefix, so an instance owns all of them and
 # removing them is unconditional. (Before the trust networks were prefixed they were
@@ -808,7 +812,7 @@ create-networks: create-networks-core create-networks-trust-1 create-networks-tr
 remove-networks:
 	@echo "🗑️  Removing all trust networks..."
 	@docker network rm $(INSTANCE_PREFIX)deploy_central-hub-trust-apis-network $(INSTANCE_PREFIX)deploy_fl-net-1 $(INSTANCE_PREFIX)deploy_fl-net-2 2>/dev/null || true
-	@docker network rm $(INSTANCE_PREFIX)deploy_trust-network-1 $(INSTANCE_PREFIX)deploy_trust-network-2 2>/dev/null || true
+	@docker network rm $(INSTANCE_PREFIX)deploy_trust-network-1 $(INSTANCE_PREFIX)deploy_trust-network-2 $(if $(filter-out 1 2,$(TRUST_NUM)),$(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM)) 2>/dev/null || true
 	@echo "✅ Trust networks removed!"
 
 recreate-networks: remove-networks create-networks
