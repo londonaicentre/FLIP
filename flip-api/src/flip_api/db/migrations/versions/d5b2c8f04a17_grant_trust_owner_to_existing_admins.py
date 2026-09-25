@@ -24,6 +24,15 @@ container start, and the seeders are idempotent by construction. A seeded grant 
 re-created on the next deploy after an operator revoked it, which silently defeats the
 whole point of storing it per trust — so this runs exactly once, and a revocation sticks.
 
+The ``Trust Owner`` role itself is created here, immediately before the backfill. Nothing
+else has created it at that point on a live deployment — migrations run before the seeders
+(``entrypoint.sh`` applies Alembic, then seeds), and no earlier revision inserts it — so
+resolving it by name would match nothing and the backfill would silently grant nothing. The
+row carries the same id and description as ``db/seed/roles.py``, which reconciles by id and
+compares those two fields, so the seeder finds it unchanged on the next start and a fresh
+install is a no-op either way. Downgrade deliberately leaves it: from the next boot it is
+the seeder's row, and dropping it would only orphan the grant table's FK target.
+
 Scope, deliberately:
 
 * Trusts are those that exist NOW. A trust registered later does not inherit any admin
@@ -63,6 +72,19 @@ down_revision: str | None = "c3a7f1eb9402"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+
+# The `Trust Owner` role, so the backfill below has a role to resolve. Same id and
+# description as `db/seed/roles.py` (the seeder reconciles on both, by id) — spelled out
+# rather than imported for the same reason as the audit actions below.
+_INSERT_TRUST_OWNER_ROLE = (
+    "INSERT INTO roles (id, name, description, created_at, updated_at) VALUES ("
+    "'8a3d6f14-9b52-4e07-a6c8-1d4f7b2e9053', 'Trust Owner', "
+    "'Governs a single participating trust: nominates that trust''s owners, decides its "
+    "project approvals, and sets its governance policy. Always held with a trust_id — "
+    "authority stops at the trust boundary.', "
+    "now(), now()) "
+    "ON CONFLICT DO NOTHING"
+)
 
 # Every user with a global Admin grant, made a Trust Owner of every existing trust.
 #
@@ -124,6 +146,10 @@ def upgrade() -> None:
     # audit row — not worth it for two labels that are inert once nothing writes them.
     for member in _NEW_AUDIT_ACTIONS:
         connection.execute(sa.text(f"ALTER TYPE trustauditaction ADD VALUE IF NOT EXISTS '{member}'"))
+
+    # Then the role the backfill resolves by name — absent on a live deployment at this
+    # point, because the seeders have not run yet. See the module docstring.
+    connection.execute(sa.text(_INSERT_TRUST_OWNER_ROLE))
 
     result = connection.execute(sa.text(_GRANT_TRUST_OWNER_TO_ADMINS))
     if result.rowcount:

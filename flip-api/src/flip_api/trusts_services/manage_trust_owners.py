@@ -36,12 +36,14 @@ from sqlmodel import Session, col, select
 
 from flip_api.auth.auth_utils import has_permissions, has_trust_permissions
 from flip_api.auth.dependencies import verify_token
+from flip_api.config import get_settings
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust
 from flip_api.db.models.user_models import PermissionRef, Role, UserProfile, UserRole
 from flip_api.domain.schemas.actions import TrustAuditAction
 from flip_api.domain.schemas.trusts import AddTrustOwner, TrustOwner
 from flip_api.trusts_services.utils.audit_helper import audit_trust_action
+from flip_api.utils.cognito_helpers import get_username
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/admin/trusts", tags=["trusts_services"])
@@ -63,14 +65,27 @@ def _trust_owner_role_id(db: Session) -> UUID:
     return role_id
 
 
-def _require_trust(db: Session, trust_id: UUID) -> Trust:
+def _require_trust(db: Session, trust_id: UUID, *, lock: bool = False) -> Trust:
     """The trust, or 404 — checked before any permission question about it.
 
     A caller able to manage owners at one trust must not learn which trust ids exist
     elsewhere in the federation, and a 404 for a trust they do hold authority over is not
     reachable: the permission check needs the row to have passed this gate first.
+
+    ``lock=True`` takes a row lock on the trust (``SELECT ... FOR UPDATE``) held for the rest
+    of the transaction. The mutating paths need it: the last-owner rule is a count followed by
+    a write, and two concurrent removals at a two-owner trust would each see the other's row
+    as the one remaining owner and both commit — stranding the trust with nobody able to
+    approve, nominate a replacement, or edit its policy. Serialising every owner change for a
+    trust on its own row makes the second transaction re-read the count after the first has
+    committed, so the guard sees the state it is deciding about. The order is the same on both
+    mutating paths (trust first, then ``user_role``), so they cannot deadlock against each
+    other; the list endpoint stays a plain read and takes no lock.
     """
-    trust = db.get(Trust, trust_id)
+    statement = select(Trust).where(col(Trust.id) == trust_id)
+    if lock:
+        statement = statement.with_for_update()
+    trust = db.exec(statement).first()
     if trust is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -150,6 +165,32 @@ def _authorize_grant(user_id: UUID, trust_id: UUID, role_id: UUID, db: Session) 
     )
 
 
+def _require_existing_user(user_id: UUID) -> None:
+    """Refuse a nominee Cognito does not know — 404, or 503 if Cognito could not be read.
+
+    Cognito is the source of truth for user identity (there is no local users table), so an
+    unchecked ``user_id`` makes a mistyped UUID a *phantom* owner: the grant exists, so the
+    ``_owner_count == 0`` bootstrap exemption closes and the hub admin is refused, while the
+    last-owner rule refuses to remove them — the trust is stranded until someone edits the
+    database. The same contract as ``set_user_roles``: a genuinely unknown user is 404, and a
+    transient Cognito read failure is 503 rather than a 404 that would misreport it as absent.
+    """
+    try:
+        get_username(str(user_id), get_settings().AWS_COGNITO_USER_POOL_ID)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_404_NOT_FOUND:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with ID {user_id} not found",
+            ) from exc
+        if exc.status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Could not verify user existence in Cognito; please try again.",
+            ) from exc
+        raise
+
+
 @router.get("/{trust_id}/owners", response_model=list[TrustOwner])
 def list_trust_owners(
     trust_id: UUID = Path(..., description="ID of the trust"),
@@ -158,24 +199,26 @@ def list_trust_owners(
 ) -> list[TrustOwner]:
     """List the users who hold authority at a trust.
 
-    Readable by any authenticated user: knowing which organisation's staff speak for a
-    named trust is operational information a researcher needs (it is how they know who to
-    contact about a stalled project), and it is the same class of benign directory data the
-    trust list itself already exposes. No secret is disclosed — a user id and their own
-    profile's name/organisation, nothing about permissions held.
+    Authorized like the two write paths it belongs with: ``CAN_MANAGE_TRUST_OWNERS`` **at
+    this trust**, not any authenticated caller. The list names the individuals who can
+    approve for a site — it is a governance surface rather than directory data, and a caller
+    with no authority at the trust has no need to enumerate it. The trust-scoped check also
+    keeps the federation's ownership topology out of reach of an unrelated account.
 
     Args:
         trust_id (UUID): ID of the trust.
         db (Session): Database session.
-        token_id (UUID): Authenticated user ID.
+        token_id (UUID): Authenticated user ID, used for the trust-scoped permission check.
 
     Returns:
         list[TrustOwner]: Current owners, ordered by name for a stable UI list.
 
     Raises:
-        HTTPException: 404 if the trust does not exist.
+        HTTPException: 404 if the trust does not exist; 403 if the caller may not manage
+            this trust's owners.
     """
     _require_trust(db, trust_id)
+    _require_owner_manager(token_id, trust_id, db)
     role_id = _trust_owner_role_id(db)
 
     rows = db.exec(
@@ -221,10 +264,11 @@ def add_trust_owner(
         TrustOwner: The nominated owner.
 
     Raises:
-        HTTPException: 404 if the trust does not exist; 403 if the caller may not manage
-            this trust's owners; 500 on database error.
+        HTTPException: 404 if the trust does not exist or the nominee is unknown to Cognito;
+            403 if the caller may not manage this trust's owners; 503 if Cognito could not be
+            reached to verify the nominee; 500 on database error.
     """
-    trust = _require_trust(db, trust_id)
+    trust = _require_trust(db, trust_id, lock=True)
     role_id = _trust_owner_role_id(db)
     _authorize_grant(token_id, trust_id, role_id, db)
 
@@ -236,6 +280,10 @@ def add_trust_owner(
     ).first()
 
     if already is None:
+        # Only a grant being CREATED needs the nominee to exist; re-nominating an existing
+        # owner stays the idempotent no-op below, so a Cognito outage cannot turn a retry
+        # into an error on a grant that is already in place.
+        _require_existing_user(body.user_id)
         try:
             db.add(UserRole(user_id=body.user_id, role_id=role_id, trust_id=trust_id))
             audit_trust_action(
@@ -299,7 +347,7 @@ def remove_trust_owner(
             not manage this trust's owners; 409 if this is the trust's last owner; 500 on
             database error.
     """
-    trust = _require_trust(db, trust_id)
+    trust = _require_trust(db, trust_id, lock=True)
     _require_owner_manager(token_id, trust_id, db)
     role_id = _trust_owner_role_id(db)
 

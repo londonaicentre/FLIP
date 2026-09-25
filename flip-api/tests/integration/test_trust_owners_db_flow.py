@@ -22,8 +22,9 @@ made by SQL: the scope predicate on ``user_role.trust_id`` and the count that de
 whether a removal would strand the trust.
 """
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+import boto3
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -49,13 +50,28 @@ def _make_owner(session, trust_id):
     return user_id
 
 
-def test_add_then_list_round_trip(session, trust_factory):
+def _cognito_sub(pool_id: str, email: str) -> UUID:
+    """Pre-seed a user in the moto pool and return its ``sub``.
+
+    Nominating an owner validates the nominee against Cognito — the source of truth for user
+    identity — so a nomination that should succeed needs a real pool row behind it.
+    """
+    cognito = boto3.client("cognito-idp")
+    response = cognito.admin_create_user(
+        UserPoolId=pool_id,
+        Username=email,
+        UserAttributes=[{"Name": "email", "Value": email}, {"Name": "email_verified", "Value": "true"}],
+    )
+    return UUID(next(attr["Value"] for attr in response["User"]["Attributes"] if attr["Name"] == "sub"))
+
+
+def test_add_then_list_round_trip(session, trust_factory, cognito_user_pool):
     """A nominated owner appears in the list, and the grant is audited."""
     trust = trust_factory.build()
     session.add(trust)
     session.commit()
     owner_id = _make_owner(session, trust.id)
-    nominee = uuid4()
+    nominee = _cognito_sub(cognito_user_pool["pool_id"], "nominee@example.com")
 
     created = add_trust_owner(trust_id=trust.id, body=AddTrustOwner(user_id=nominee), db=session, token_id=owner_id)
 
@@ -65,6 +81,29 @@ def test_add_then_list_round_trip(session, trust_factory):
 
     audits = session.exec(select(TrustsAudit).where(TrustsAudit.trust_id == trust.id)).all()
     assert [a.action for a in audits] == [TrustAuditAction.OWNER_ADDED]
+
+
+def test_nominating_a_user_cognito_does_not_know_is_404(session, trust_factory, cognito_user_pool):
+    """An unverifiable nominee is refused rather than stored as a phantom owner.
+
+    A grant for a ``sub`` that does not exist is not a harmless placeholder: it closes the
+    ownerless bootstrap so the hub admin is refused, and the last-owner rule refuses to remove
+    it — the trust is stranded until someone edits the database. Cognito is the source of truth
+    for identity, so it is asked before the row is written.
+    """
+    trust = trust_factory.build()
+    session.add(trust)
+    session.commit()
+    owner_id = _make_owner(session, trust.id)
+
+    with pytest.raises(HTTPException) as exc_info:
+        add_trust_owner(
+            trust_id=trust.id, body=AddTrustOwner(user_id=uuid4()), db=session, token_id=owner_id
+        )
+
+    assert exc_info.value.status_code == 404
+    # Nothing was written: a refusal must not leave the phantom it refused behind.
+    assert [o.user_id for o in list_trust_owners(trust_id=trust.id, db=session, token_id=owner_id)] == [owner_id]
 
 
 def test_holder_without_a_profile_row_is_still_listed(session, trust_factory):
@@ -86,7 +125,12 @@ def test_holder_without_a_profile_row_is_still_listed(session, trust_factory):
 
 
 def test_adding_an_existing_owner_is_idempotent(session, trust_factory):
-    """Re-nominating an owner returns them rather than erroring or duplicating."""
+    """Re-nominating an owner returns them rather than erroring or duplicating.
+
+    Also pins where the Cognito check sits: this ``owner_id`` holds a grant but has no pool
+    row, and the call still succeeds. Only a grant being *created* is validated, so a retry
+    against an existing grant cannot fail on a Cognito read it does not need.
+    """
     trust = trust_factory.build()
     session.add(trust)
     session.commit()
@@ -99,6 +143,25 @@ def test_adding_an_existing_owner_is_idempotent(session, trust_factory):
         select(UserRole).where(UserRole.user_id == owner_id, UserRole.trust_id == trust.id)
     ).all()
     assert len(grants) == 1, "a repeat nomination must not create a second grant"
+
+
+def test_listing_owners_requires_authority_at_the_trust(session, trust_factory):
+    """The list is gated like the writes it belongs with, not readable by any authenticated user.
+
+    It names the individuals who can approve for a site, so a caller with no authority at the
+    trust — here a hub Admin, who deliberately holds no trust-scoped permission — is refused
+    rather than handed the federation's ownership topology.
+    """
+    trust = trust_factory.build()
+    session.add(trust)
+    session.commit()
+    _make_owner(session, trust.id)
+    admin_id = admin_user(session)
+
+    with pytest.raises(HTTPException) as exc_info:
+        list_trust_owners(trust_id=trust.id, db=session, token_id=admin_id)
+
+    assert exc_info.value.status_code == 403
 
 
 def test_hub_admin_cannot_nominate_owners(session, trust_factory):
@@ -211,18 +274,18 @@ def test_owners_list_is_scoped_to_the_trust_asked_about(session, trust_factory):
     assert [o.user_id for o in list_trust_owners(trust_id=trust_b.id, db=session, token_id=owner_of_b)] == [owner_of_b]
 
 
-def test_http_lifecycle_over_the_wire(client: TestClient, session, trust_factory):
+def test_http_lifecycle_over_the_wire(client: TestClient, session, trust_factory, cognito_user_pool):
     """POST, GET and DELETE behave as a client sees them.
 
     The direct-call tests above exercise the logic; this checks the pieces only the HTTP
-    layer supplies — the authentication dependency, the path parameters, and the status
-    codes (201 on create, 204 on delete) a client will branch on.
+    layer supplies — the authentication dependency, the path parameters, the Cognito
+    nominee check, and the status codes (201 on create, 204 on delete) a client branches on.
     """
     trust = trust_factory.build()
     session.add(trust)
     session.commit()
     owner_id = _make_owner(session, trust.id)
-    nominee = uuid4()
+    nominee = _cognito_sub(cognito_user_pool["pool_id"], "over.the.wire@example.com")
     override_verify_token_as(owner_id)
     url = f"/api/admin/trusts/{trust.id}/owners"
 
@@ -277,7 +340,46 @@ def test_http_unauthenticated_is_refused(client: TestClient, session, trust_fact
     assert response.status_code in (401, 403)
 
 
-def test_a_new_trust_can_be_bootstrapped_by_a_hub_admin(session, trust_factory):
+def test_owner_mutations_take_the_trust_lock(session, trust_factory, monkeypatch):
+    """Both mutating paths lock the trust before counting owners; the read does not.
+
+    The last-owner rule is a count followed by a write, so the guard alone does not close the
+    race: two concurrent removals at a two-owner trust each see the other's row survive and
+    both commit, leaving the trust with nobody able to approve. Serialising on the trust row
+    is what makes the second transaction re-count after the first commits, so it is pinned at
+    the call that fetches the trust — the one place both endpoints share.
+    """
+    from flip_api.trusts_services import manage_trust_owners as module
+
+    locks: list[bool] = []
+    real_require_trust = module._require_trust
+
+    def _spy(db, trust_id, *, lock=False):
+        locks.append(lock)
+        return real_require_trust(db, trust_id, lock=lock)
+
+    monkeypatch.setattr(module, "_require_trust", _spy)
+
+    trust = trust_factory.build()
+    session.add(trust)
+    session.commit()
+    incumbent = _make_owner(session, trust.id)
+    successor = _make_owner(session, trust.id)
+
+    locks.clear()
+    remove_trust_owner(trust_id=trust.id, user_id=incumbent, db=session, token_id=successor)
+    assert locks == [True], "remove_trust_owner must lock the trust before counting its owners"
+
+    locks.clear()
+    add_trust_owner(trust_id=trust.id, body=AddTrustOwner(user_id=successor), db=session, token_id=successor)
+    assert locks == [True], "add_trust_owner must lock the trust before asking whether it has one"
+
+    locks.clear()
+    list_trust_owners(trust_id=trust.id, db=session, token_id=successor)
+    assert locks == [False], "the read path must stay unlocked"
+
+
+def test_a_new_trust_can_be_bootstrapped_by_a_hub_admin(session, trust_factory, cognito_user_pool):
     """A freshly registered trust must be able to get its first owner.
 
     Registration is gated by the hub-wide CAN_ACCESS_ADMIN_PANEL, and it writes no
@@ -290,14 +392,18 @@ def test_a_new_trust_can_be_bootstrapped_by_a_hub_admin(session, trust_factory):
     session.add(trust)
     session.commit()
     admin_id = admin_user(session)
-    first_owner = uuid4()
+    first_owner = _cognito_sub(cognito_user_pool["pool_id"], "first.owner@example.com")
 
     created = add_trust_owner(
         trust_id=trust.id, body=AddTrustOwner(user_id=first_owner), db=session, token_id=admin_id
     )
 
     assert created.user_id == first_owner
-    assert [o.user_id for o in list_trust_owners(trust_id=trust.id, db=session, token_id=admin_id)] == [first_owner]
+    # Read back as the owner the bootstrap just created: the hub admin who made the grant
+    # holds no trust-scoped permission, so the list refuses them (asserted separately).
+    assert [o.user_id for o in list_trust_owners(trust_id=trust.id, db=session, token_id=first_owner)] == [
+        first_owner
+    ]
 
 
 def test_the_bootstrap_does_not_reopen_the_hub_admin_hole(session, trust_factory):
