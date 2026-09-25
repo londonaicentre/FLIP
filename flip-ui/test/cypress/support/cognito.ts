@@ -11,10 +11,10 @@
  * limitations under the License.
  */
 
-// cy.login writes a fully-formed AmplifyUser into the `cypress.auth.user`
-// localStorage key. The auth route guard in src/utils/auth.ts checks for this
-// when running under Cypress and populates the auth store directly, bypassing
-// Amplify v6's `fetchAuthSession()` / `fetchUserAttributes()` round-trip.
+// cy.login writes a fully-formed AuthenticatedUser (src/store/auth.ts) into the
+// `cypress.auth.user` localStorage key. The auth route guard in src/utils/auth.ts
+// checks for this when running under Cypress and populates the auth store
+// directly, bypassing the identity provider's session / identity round-trip.
 //
 // Going through the live Amplify flow would require simulating Cognito's SRP
 // handshake, which a static fixture can't do — so the production flow uses

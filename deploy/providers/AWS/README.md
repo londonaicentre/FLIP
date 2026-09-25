@@ -621,10 +621,15 @@ the image back — re-run `make plan` after any `make deploy-centralhub`.
 
 The Cognito app client's `callback_urls` **is** this environment's browser CORS allowlist. The UI
 signs in with `USER_SRP_AUTH`, so Cognito never redirects to these URLs; flip-api reads them back
-instead — `get_cors_allowed_origins()` (`flip_api/utils/cors.py`) calls `describe_user_pool_client`,
-normalizes each entry to `scheme://host[:port]`, and `CORSMiddleware` serves that list with
+instead — the Cognito identity provider's `allowed_origins()` (`flip_api/auth/identity/cognito.py`) calls
+`describe_user_pool_client`, `flip_api/utils/cors.py` normalizes each entry to `scheme://host[:port]`, and
+`CORSMiddleware` serves that list with
 `allow_credentials=true`. Every browser origin that must call the API has to be listed, and removing
 one silently blocks that origin — in the browser only, with nothing red in CI or in the ECS console.
+This applies to Cognito-backed environments (stag/prod, and dev under `AUTH_BACKEND=cognito`); the
+default dev stack authenticates against Keycloak and derives the same allowlist from the realm's `flip-ui`
+client redirect URIs (`deploy/keycloak/flip-realm.json`, `IdentityProvider.allowed_origins()`), so a local
+UI port is registered there, not here.
 
 The value is set per Terraform root: `module "cognito"` in `services.tf` for stag/prod,
 `var.cognito_callback_urls` in `dev/variables.tf` for the dev account. **Deleting the argument does

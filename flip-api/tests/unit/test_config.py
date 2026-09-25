@@ -23,6 +23,14 @@ from pydantic import ValidationError
 
 from flip_api.config import DevSettings, ProdSettings, Settings
 
+# What a ProdSettings needs beyond the env file the suite runs with.
+_PROD_REQUIRED = {
+    "AWS_SES_ADMIN_EMAIL_ADDRESS": "admin@example.com",
+    "AWS_SES_SENDER_EMAIL_ADDRESS": "sender@example.com",
+    "AWS_COGNITO_USER_POOL_ID": "eu-west-2_TESTPOOL",
+    "AWS_COGNITO_APP_CLIENT_ID": "test-app-client-id",
+}
+
 
 def test_allowed_extensions_default():
     settings = Settings()
@@ -169,11 +177,7 @@ def test_production_settings_resolve_to_the_ses_backend(monkeypatch):
     """
     monkeypatch.delenv("EMAIL_BACKEND", raising=False)
 
-    settings = ProdSettings(
-        ENV="production",
-        AWS_SES_ADMIN_EMAIL_ADDRESS="admin@example.com",
-        AWS_SES_SENDER_EMAIL_ADDRESS="sender@example.com",
-    )
+    settings = ProdSettings(ENV="production", **_PROD_REQUIRED)
 
     assert settings.EMAIL_BACKEND == "ses"
 
@@ -221,3 +225,101 @@ def test_suffix_list_separator_only_values_fall_back_to_default(blank):
 
     assert settings.ALLOWED_MODEL_FILE_EXTENSIONS == Settings().ALLOWED_MODEL_FILE_EXTENSIONS
     assert settings.PICKLESCAN_FILE_SUFFIXES == Settings().PICKLESCAN_FILE_SUFFIXES
+
+
+# --- AUTH_BACKEND: the identity-provider seam (#919) -------------------------------------
+
+def test_auth_backend_defaults_per_environment_class():
+    """The base selects no provider (so it demands no coordinates); each environment class picks one.
+
+    Asserted on the fields, not instances, because a developer's own
+    ``.env.development`` may already pin ``AUTH_BACKEND``.
+    """
+    assert Settings.model_fields["AUTH_BACKEND"].default is None
+    assert DevSettings.model_fields["AUTH_BACKEND"].default == "keycloak"
+    assert ProdSettings.model_fields["AUTH_BACKEND"].default == "cognito"
+
+
+def test_auth_backend_empty_string_falls_back_to_the_per_class_default():
+    """The commented ``# AUTH_BACKEND=`` line in the env example arrives as an empty string."""
+    assert Settings(AUTH_BACKEND="").AUTH_BACKEND is None
+    assert DevSettings(AUTH_BACKEND="").AUTH_BACKEND == DevSettings.model_fields["AUTH_BACKEND"].default
+
+
+def test_keycloak_backend_is_rejected_in_production():
+    """The local identity provider must be impossible to enable in production (#919)."""
+    with pytest.raises(ValidationError) as exc_info:
+        ProdSettings(AUTH_BACKEND="keycloak", **_PROD_REQUIRED)
+    assert "AUTH_BACKEND" in str(exc_info.value)
+
+
+def test_keycloak_backend_requires_its_urls_and_admin_secret():
+    """A keycloak backend with no Keycloak coordinates fails at boot, naming every missing field."""
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(AUTH_BACKEND="keycloak")
+    message = str(exc_info.value)
+    assert "KEYCLOAK_URL" in message
+    assert "KEYCLOAK_PUBLIC_URL" in message
+    assert "KEYCLOAK_ADMIN_CLIENT_SECRET" in message
+
+
+def test_dev_settings_carry_working_keycloak_defaults():
+    """Dev needs no Keycloak lines in its env file: the defaults match the compose service."""
+    settings = DevSettings(AUTH_BACKEND="keycloak")
+    assert settings.KEYCLOAK_URL == "http://keycloak:8080"
+    assert settings.KEYCLOAK_PUBLIC_URL == "http://localhost:8180"
+    assert settings.KEYCLOAK_REALM == "flip"
+    assert settings.KEYCLOAK_CLIENT_ID == "flip-ui"
+    assert settings.KEYCLOAK_AUDIENCE == "flip-api"
+    assert settings.KEYCLOAK_ADMIN_CLIENT_ID == "flip-api-admin"
+    assert settings.KEYCLOAK_ADMIN_CLIENT_SECRET is not None
+
+
+def test_keycloak_settings_tolerate_empty_strings():
+    """Commented ``# KEYCLOAK_*`` lines in the env example export bare names — fall back per class."""
+    settings = DevSettings(
+        AUTH_BACKEND="keycloak",
+        KEYCLOAK_URL="",
+        KEYCLOAK_PUBLIC_URL="",
+        KEYCLOAK_REALM="",
+        KEYCLOAK_CLIENT_ID="",
+        KEYCLOAK_AUDIENCE="",
+        KEYCLOAK_ADMIN_CLIENT_ID="",
+        KEYCLOAK_ADMIN_CLIENT_SECRET="",
+    )
+    assert settings.KEYCLOAK_URL == "http://keycloak:8080"
+    assert settings.KEYCLOAK_REALM == "flip"
+    assert settings.KEYCLOAK_ADMIN_CLIENT_SECRET is not None
+
+
+# --- the Cognito ids: required by the cognito backend only ---------------------------------
+
+
+def test_the_base_settings_build_without_cognito_ids():
+    """``config.py`` builds a bare ``Settings()`` to read ``ENV`` before choosing a class; a fresh env has no ids."""
+    settings = Settings(AWS_COGNITO_USER_POOL_ID="", AWS_COGNITO_APP_CLIENT_ID="")
+    assert settings.AWS_COGNITO_USER_POOL_ID is None
+    assert settings.AWS_COGNITO_APP_CLIENT_ID is None
+
+
+def test_keycloak_development_needs_no_cognito_ids():
+    """The example env file comments the ids out; the Makefile exports the bare names as empty strings."""
+    settings = DevSettings(AUTH_BACKEND="keycloak", AWS_COGNITO_USER_POOL_ID="", AWS_COGNITO_APP_CLIENT_ID="")
+    assert settings.AWS_COGNITO_USER_POOL_ID is None
+
+
+def test_cognito_development_requires_both_ids():
+    """An empty id is a missing id: without this the hub boots and fails at the first sign-in instead."""
+    with pytest.raises(ValidationError) as exc_info:
+        DevSettings(AUTH_BACKEND="cognito", AWS_COGNITO_USER_POOL_ID="", AWS_COGNITO_APP_CLIENT_ID="")
+    message = str(exc_info.value)
+    assert "AWS_COGNITO_USER_POOL_ID" in message
+    assert "AWS_COGNITO_APP_CLIENT_ID" in message
+
+
+def test_production_requires_the_cognito_ids():
+    """Production is Cognito-only, so a deploy without the pool ids fails at boot, naming them."""
+    blanked = {**_PROD_REQUIRED, "AWS_COGNITO_USER_POOL_ID": "", "AWS_COGNITO_APP_CLIENT_ID": ""}
+    with pytest.raises(ValidationError) as exc_info:
+        ProdSettings(ENV="production", **blanked)
+    assert "AWS_COGNITO_USER_POOL_ID" in str(exc_info.value)

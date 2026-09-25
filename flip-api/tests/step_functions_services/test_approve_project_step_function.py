@@ -244,3 +244,30 @@ def test_approve_project_reports_the_permission_refusal_whether_or_not_the_proje
 
     assert statuses == [403, 403]
     assert mock_start_imaging.await_count == 0
+
+
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+@patch(
+    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    new_callable=AsyncMock,
+)
+def test_approve_project_hands_the_identity_provider_to_the_imaging_fan_out(
+    mock_start_imaging,
+    mock_approve_project,
+    project_id,
+    request_body,
+    mock_trusts,
+    fake_idp,
+):
+    """The fan-out calls the imaging route as a plain function, so its ``Depends()`` default is never
+    resolved: the endpoint must resolve the provider once and hand it down. Left out, every
+    CREATE_IMAGING task fails with ``'Depends'`` and the image pull sits at 0/0 (seen on the dev stack)."""
+    mock_approve_project.return_value = mock_trusts
+
+    response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
+
+    assert response.status_code == 200
+    assert response.json()["trusts"]["succeeded"] == 2
+    assert mock_start_imaging.await_count == 2
+    for call in mock_start_imaging.await_args_list:
+        assert call.kwargs["idp"] is fake_idp

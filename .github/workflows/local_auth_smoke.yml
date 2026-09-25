@@ -1,0 +1,144 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# The AWS-free startup path of FLIP#919: boot the hub (flip-db, keycloak, flip-api)
+# from the dev compose with no AWS credentials, then sign in through the local
+# Keycloak and reach the hub as the seeded admin (flip-api/tests/local_auth_smoke.py).
+# S3 is still AWS-backed, so this is the hub + login half of the ticket's "start
+# from a fresh checkout without AWS" criterion; the trusts and the full workflow
+# follow with the S3 and XNAT slices.
+name: Local auth smoke (Keycloak, no AWS)
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "flip-api/**"
+      # flip-api's image build copies the fl-apps/ tree.
+      - "fl-apps/**"
+      - "deploy/compose.development.yml"
+      - "deploy/keycloak/**"
+      - "deploy/instance.mk"
+      - "deploy/env_mode.mk"
+      - "deploy/fl_backend.mk"
+      - ".env.development.example"
+      - "Makefile"
+      - ".github/workflows/local_auth_smoke.yml"
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  # Gate for pull requests into develop (pr_paths_changed.yml; PRs into main always
+  # run everything). The list is the push `paths:` filter above, verbatim —
+  # scripts/tests/test_pr_paths_changed.py fails when the two drift.
+  changes:
+    uses: ./.github/workflows/pr_paths_changed.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      paths: |
+        flip-api/**
+        fl-apps/**
+        deploy/compose.development.yml
+        deploy/keycloak/**
+        deploy/instance.mk
+        deploy/env_mode.mk
+        deploy/fl_backend.mk
+        .env.development.example
+        Makefile
+        .github/workflows/local_auth_smoke.yml
+
+  smoke:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    environment: flip
+    timeout-minutes: 25
+    env:
+      COMPOSE: docker compose -p deploy -f deploy/compose.development.yml
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Environment file (no AWS)
+        # The example is the documented starting point; AUTH_BACKEND is unset there,
+        # which already means keycloak in development. AWS_REGION only satisfies the
+        # S3-endpoint guard in the compose (nothing here reaches AWS); the Cognito ids
+        # stay commented out. UID/GID are make expressions in the example, so the shell
+        # values are appended for docker compose, which reads the file as dotenv.
+        # (detect-secrets attributes a block scalar's findings to this line: the
+        # fixed dev password below is the allowlisted one.)
+        run: | # pragma: allowlist secret
+          cp .env.development.example .env.development
+          {
+            echo "AWS_REGION=eu-west-2"
+            echo "AWS_PROFILE="
+            echo "ADMIN_USER_PASSWORD=Smoke-Test-Pa55word!"  # pragma: allowlist secret
+            echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 }}"
+            echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}"
+            echo "ENV=development"
+            echo "UID=$(id -u)"
+            echo "GID=$(id -g)"
+          } >> .env.development
+          # The dev compose bind-mounts ~/.aws/config and ~/.aws/sso/cache into flip-api
+          # for the S3 client. They don't exist on a runner, and docker would create the
+          # config path as a root-owned directory where a file is expected.
+          mkdir -p ~/.aws/sso/cache && touch ~/.aws/config
+
+      - name: Hub networks
+        # flip-api joins the hub network and the hub↔trust-API network (both bridge);
+        # the swarm-only trust overlays are not needed for a hub-only boot.
+        run: |
+          make create-networks-centralhub
+          make -C trust create-networks-core
+
+      - name: Build flip-api from this checkout
+        # Not the GHCR image: a dependency change in pyproject/uv.lock lives in the image
+        # layer, and this job must test the branch. No registry login needed.
+        run: $COMPOSE --env-file .env.development build flip-api
+
+      - name: Start flip-db, keycloak and flip-api
+        run: $COMPOSE --env-file .env.development up -d --no-build flip-db keycloak flip-api
+
+      - name: Wait for the hub
+        run: |
+          for _ in $(seq 1 90); do
+            if curl -fsS http://localhost:8080/api/health >/dev/null; then
+              echo "hub is up"; exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::flip-api never became healthy"
+          $COMPOSE --env-file .env.development logs --no-color --tail=200
+          exit 1
+
+      - name: Login smoke
+        run: |
+          admin_email=$(sed -n 's/^ADMIN_EMAIL_1 = "\(.*\)"$/\1/p' flip-api/src/flip_api/utils/constants.py)
+          python3 flip-api/tests/local_auth_smoke.py \
+            --api-url http://localhost:8080/api \
+            --keycloak-url http://localhost:8180 \
+            --username "$admin_email" \
+            --password 'Smoke-Test-Pa55word!'  # pragma: allowlist secret
+
+      - name: Logs on failure
+        if: failure()
+        run: $COMPOSE --env-file .env.development logs --no-color --tail=300
+
+      - name: Tear down
+        if: always()
+        run: $COMPOSE --env-file .env.development down -v --remove-orphans

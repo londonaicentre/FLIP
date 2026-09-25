@@ -68,7 +68,9 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
   `uv sync`, `uv run --project` or `uv lock` run by hand is unguarded, so keep your uv current rather
   than relying on the check to catch you. (The `uv-lock` pre-commit hook is not a gap here — it pins its
   own uv and runs `uv lock --check`, which verifies and never rewrites.)
-- The AWS CLI configured for SSO access to the development environment
+- The AWS CLI configured for SSO access to the development environment — `make up` needs it for the
+  development S3 buckets, not to sign in: the local identity provider is Keycloak (see
+  [Environment variables](#environment-variables)), and `make central-hub` boots the hub with no AWS account
 - [act](https://github.com/nektos/act) if you want to run GitHub Actions locally
 - **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:
   ```bash
@@ -235,7 +237,8 @@ For the full local stack, replace every placeholder in these minimum groups befo
 | Group | Required development values |
 | --- | --- |
 | AWS session | `AWS_PROFILE`, `AWS_REGION` |
-| Central Hub auth | `AWS_COGNITO_USER_POOL_ID`, `AWS_COGNITO_APP_CLIENT_ID`, `ADMIN_USER_PASSWORD` |
+| Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it; the dev Cognito pool's seed admin logs in with it). Leave `AUTH_BACKEND` unset: dev defaults to `keycloak`, the identity-provider container in `deploy/compose.development.yml`, so no AWS account is needed to sign in |
+| Cognito (optional) | `AUTH_BACKEND=cognito` plus `AWS_COGNITO_USER_POOL_ID` and `AWS_COGNITO_APP_CLIENT_ID` — only to develop against the dev Cognito pool, with an AWS SSO session. Staging and production accept no other value |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Runtime S3 | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME`, `FLIP_APP_BUNDLES_BUCKET_NAME`, `AICENTRE_BUCKET_NAME` |
 | XNAT artifacts | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins) |
@@ -248,8 +251,27 @@ can use the shared development values. Other deployers should create their own r
 logs the would-be message (recipient, template name, non-secret payload) instead of calling SES — so the access-request
 and XNAT-credentials paths work with no SES identity, verified address or templates. Staging and production keep
 `EMAIL_BACKEND=ses` and still require `AWS_SES_ADMIN_EMAIL_ADDRESS` / `AWS_SES_SENDER_EMAIL_ADDRESS`; the setting is
-type-narrowed in `ProdSettings`, so the console backend cannot be selected there. Note Cognito still sends real invite
-and password-reset emails in dev — those come from the user pool, not SES.
+type-narrowed in `ProdSettings`, so the console backend cannot be selected there. Invitations are the identity
+provider's own, not SES's: under the default Keycloak backend dev has no mail server, so a user registered from the
+Admin Area is given the shared dev password (`ADMIN_USER_PASSWORD`) as a temporary one (flip-api logs that it did,
+never the password) — they sign in once with it, Keycloak's account console
+(`http://localhost:8180/realms/flip/account`) asks for a new password (the UI links there when the sign-in answers
+"Account is not fully set up"), then they sign in to FLIP. Under `AUTH_BACKEND=cognito` the user pool still sends
+real invite and password-reset emails.
+
+**Sign-in in development goes through Keycloak** (FLIP#919). `make up` starts a `keycloak` service that imports the
+dev realm `deploy/keycloak/flip-realm.json` at every boot and keeps no volume. Sign in as any well-known dev identity
+from `flip-api/src/flip_api/utils/constants.py` (e.g. `aicentreflip@gmail.com`) with `ADMIN_USER_PASSWORD`; roles are
+granted by flip-api's boot seed as before. Keycloak's admin console is `http://localhost:8180/admin` (`admin`/`admin`
+unless `KEYCLOAK_ADMIN_USERNAME` / `KEYCLOAK_ADMIN_PASSWORD` are set; `KEYCLOAK_PORT` moves the host port). After
+editing the realm run `make reset-keycloak` — the import skips a realm that already exists. Not available in-app under
+Keycloak, because the browser uses the OIDC password grant, which has no equivalent: TOTP enrolment/challenge (keep
+`ENFORCE_MFA=false`, which the dev compose sets — `true` only logs a warning and locks browser users out),
+forgot-password, and the admin "Reset password" button; use the Keycloak console for those. Everything else —
+register, roles, enable/disable, MFA reset from the admin screen, projects, cohorts, uploads — works the same. Scripts
+that sign in (`make e2e_smoke`, `make -C flip-api create_testing_projects`, `make seed-demo-projects`, `make demo-users`,
+the demo recorder) go through the configured provider, so they need no AWS session either. Details:
+[`deploy/keycloak/README.md`](deploy/keycloak/README.md).
 
 Trusts are registered on the **running hub** with `make register-trusts` (shipped dev roster) or
 `make register-trust KIT=<CODE>` (one trust), which inserts each `trust` row (with its
@@ -286,7 +308,9 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 ### Setting up AWS access
 
-Some services (e.g. `flip-api`) interact with AWS via `boto3`. You will need AWS credentials configured locally.
+Some services (e.g. `flip-api`) interact with AWS via `boto3` — in development that is S3 (model-file uploads,
+FL results, app bundles), which `make up` needs credentials for. Signing in does not: the hub alone boots and
+authenticates against the local Keycloak with no AWS account (`make central-hub`).
 
 Configure AWS SSO:
 
@@ -606,7 +630,7 @@ filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 A test belongs in `tests/integration/` **if and only if it touches a real backing service**. Examples of "real backing service":
 
 - A real Postgres (via the `session` fixture or Testcontainers)
-- A real AWS service (S3, Cognito, SES)
+- A real AWS service (S3, Cognito, SES) or a real identity provider (Keycloak under Testcontainers)
 - A running sibling API (trust-api, data-access-api, etc.) reachable over HTTP
 - A real Orthanc / XNAT / OMOP fixture
 
@@ -631,7 +655,7 @@ Two trees sit outside any service and have their own home. `fl-tutorials/tests/`
 
 `flip-api/tests/integration/` boots a throwaway `postgres:16-alpine` container per pytest session via [testcontainers-python](https://github.com/testcontainers/testcontainers-python) (`tests/integration/conftest.py`). The fixture builds the schema by running the **Alembic migrations** (`alembic upgrade head`) — the same DDL dev/prod apply at boot — then seeds permissions / roles / role-permissions once, and truncates per-test tables between tests. Both the existing `session` fixture and FastAPI's `Depends(get_session)` are rewired at the throwaway DB, so a new test only needs to request `session` (raw SQL access) and/or `client` (`TestClient` against the same DB) — no per-test setup required.
 
-CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) are out of scope for this fixture and are skip-marked at the file level until ticket B2 lands.
+CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) run against moto's in-process fake through the session-scoped `aws_mock` fixture (`test_cognito_round_trips.py`, `test_s3_round_trips.py`, `test_ses_round_trips.py`), and `test_keycloak_round_trips.py` boots the pinned Keycloak image under Testcontainers with the committed dev realm (`deploy/keycloak/flip-realm.json`), so the Keycloak provider runs end-to-end — a real register and delete, and a token from Keycloak's password grant through `verify_token`. The AWS-free boot path itself is proven by `.github/workflows/local_auth_smoke.yml`, which starts flip-db, keycloak and flip-api from the dev compose on a runner with no AWS credentials and runs `flip-api/tests/local_auth_smoke.py` to sign in as the seeded admin.
 
 ##### flip-api: database migrations (Alembic)
 
@@ -840,6 +864,9 @@ To create projects in various pipeline stages (`unstaged`, `staged`, `approved`)
 ```bash
 make -C flip-api create_testing_projects
 ```
+
+The script signs in through the configured identity provider: the local Keycloak needs no AWS session,
+`AUTH_BACKEND=cognito` does.
 
 To clean up the test data:
 

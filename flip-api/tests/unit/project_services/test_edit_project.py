@@ -18,6 +18,7 @@ from fastapi import FastAPI, status
 from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
+from flip_api.auth.identity import get_identity_provider
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Projects
 from flip_api.project_services.edit_project import router as edit_project_router
@@ -27,9 +28,15 @@ TEST_PROJECT_ID = uuid.uuid4()
 
 
 @pytest.fixture
-def app_fixture() -> FastAPI:
+def app_fixture(fake_idp) -> FastAPI:
+    """A private app carrying just this router, with the identity-provider double installed.
+
+    ``fake_idp`` overrides the dependency on the production app; this app is
+    built fresh per test, so the override is repeated here.
+    """
     app = FastAPI()
     app.include_router(edit_project_router)
+    app.dependency_overrides[get_identity_provider] = lambda: fake_idp
     return app
 
 
@@ -44,21 +51,13 @@ def mock_edit_payload():
 
 
 @pytest.fixture
-def mock_get_user_pool_id():
-    with patch("flip_api.project_services.edit_project.get_user_pool_id", return_value="mock_user_pool_id"):
-        yield
-
-
-@pytest.fixture
-def mock_filter_enabled_users():
-    with patch(
-        "flip_api.project_services.edit_project.filter_enabled_users", return_value=[uuid.uuid4(), uuid.uuid4()]
-    ):
-        yield
+def mock_filter_enabled_users(fake_idp):
+    fake_idp.filter_enabled_users.return_value = [uuid.uuid4(), uuid.uuid4()]
+    return fake_idp.filter_enabled_users
 
 
 def test_edit_project_success(
-    client: TestClient, app_fixture: FastAPI, mock_edit_payload, mock_get_user_pool_id, mock_filter_enabled_users
+    client: TestClient, app_fixture: FastAPI, mock_edit_payload, mock_filter_enabled_users
 ):
     mock_db_session = MagicMock()
     # Simulate an existing project
@@ -154,7 +153,7 @@ def test_edit_project_staged(client: TestClient, app_fixture: FastAPI, mock_edit
 
 
 def test_edit_project_db_commit_value_error(
-    client: TestClient, app_fixture: FastAPI, mock_edit_payload, mock_get_user_pool_id, mock_filter_enabled_users
+    client: TestClient, app_fixture: FastAPI, mock_edit_payload, mock_filter_enabled_users
 ):
     mock_db_session = MagicMock()
     mock_project_instance = Projects(id=TEST_PROJECT_ID, name="Old Name", description="Old Desc")
@@ -179,7 +178,7 @@ def test_edit_project_db_commit_value_error(
 
 
 def test_edit_project_db_commit_generic_exception(
-    client: TestClient, app_fixture: FastAPI, mock_edit_payload, mock_get_user_pool_id, mock_filter_enabled_users
+    client: TestClient, app_fixture: FastAPI, mock_edit_payload, mock_filter_enabled_users
 ):
     mock_db_session = MagicMock()
     mock_project_instance = Projects(id=TEST_PROJECT_ID, name="Old Name", description="Old Desc")
@@ -204,7 +203,7 @@ def test_edit_project_db_commit_generic_exception(
 
 
 def test_edit_project_ignores_has_imaging(
-    client: TestClient, app_fixture: FastAPI, mock_get_user_pool_id, mock_filter_enabled_users
+    client: TestClient, app_fixture: FastAPI, mock_filter_enabled_users
 ):
     """FLIP#1071: has_imaging is creation-time only — an edit carrying it is accepted but the flag stays put."""
     mock_db_session = MagicMock()
@@ -223,5 +222,56 @@ def test_edit_project_ignores_has_imaging(
     assert response.status_code == status.HTTP_200_OK
     assert mock_project_instance.has_imaging is True
     assert response.json()["has_imaging"] is True
+
+    app_fixture.dependency_overrides = {}
+
+
+def test_edit_project_filters_users_through_identity_provider(
+    client: TestClient, app_fixture: FastAPI, fake_idp
+):
+    """The requested collaborators are narrowed to existing, enabled users by the identity provider."""
+    requested = [uuid.uuid4(), uuid.uuid4()]
+    kept = [requested[0]]
+    fake_idp.filter_enabled_users.return_value = kept
+
+    mock_db_session = MagicMock()
+    mock_project_instance = Projects(id=TEST_PROJECT_ID, name="Old Name", description="Old Desc")
+    mock_db_session.get.return_value = mock_project_instance
+
+    app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
+    app_fixture.dependency_overrides[verify_token] = lambda: uuid.uuid4()
+
+    with (
+        patch("flip_api.project_services.edit_project.can_modify_project", return_value=True),
+        patch("flip_api.project_services.edit_project.edit_project_service") as mock_edit_service,
+    ):
+        response = client.put(
+            f"/projects/{str(TEST_PROJECT_ID)}",
+            json={"name": "New Name", "description": "New Desc", "users": [str(u) for u in requested]},
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    fake_idp.filter_enabled_users.assert_called_once_with(requested)
+    mock_edit_service.assert_called_once()
+    assert mock_edit_service.call_args.kwargs["payload"].users == kept
+
+    app_fixture.dependency_overrides = {}
+
+
+def test_edit_project_skips_identity_provider_when_no_users_given(
+    client: TestClient, app_fixture: FastAPI, mock_edit_payload, fake_idp
+):
+    """An edit without a ``users`` list never consults the identity provider."""
+    mock_db_session = MagicMock()
+    mock_db_session.get.return_value = Projects(id=TEST_PROJECT_ID, name="Old Name", description="Old Desc")
+
+    app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
+    app_fixture.dependency_overrides[verify_token] = lambda: uuid.uuid4()
+
+    with patch("flip_api.project_services.edit_project.can_modify_project", return_value=True):
+        response = client.put(f"/projects/{str(TEST_PROJECT_ID)}", json=mock_edit_payload)
+
+    assert response.status_code == status.HTTP_200_OK
+    fake_idp.filter_enabled_users.assert_not_called()
 
     app_fixture.dependency_overrides = {}

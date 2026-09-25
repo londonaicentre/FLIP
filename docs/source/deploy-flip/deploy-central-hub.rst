@@ -316,4 +316,12 @@ or only send to verified destination addresses for testing.
 
    In development neither is needed: flip-api defaults to
    ``EMAIL_BACKEND=console``, which logs the would-be email instead of calling
-   SES.
+   SES, and to ``AUTH_BACKEND=keycloak``, a local Keycloak container in place
+   of Cognito (``KEYCLOAK_URL``, ``KEYCLOAK_PUBLIC_URL``, ``KEYCLOAK_REALM``,
+   ``KEYCLOAK_CLIENT_ID``, ``KEYCLOAK_AUDIENCE``, ``KEYCLOAK_ADMIN_CLIENT_ID``
+   and ``KEYCLOAK_ADMIN_CLIENT_SECRET`` carry working defaults for the dev
+   compose and are read only under that backend). The dev Keycloak has no
+   mail server, so a newly registered user is given the shared dev password
+   (``ADMIN_USER_PASSWORD``) as a temporary one instead of an invitation
+   email. Production accepts only ``cognito`` and refuses the dev provider
+   at boot.

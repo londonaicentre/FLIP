@@ -10,15 +10,17 @@
 # limitations under the License.
 #
 
-from fastapi import HTTPException, status
 from sqlmodel import Session, select
 
-from flip_api.config import get_settings
+from flip_api.auth.identity import (
+    IdentityProvider,
+    IdentityProviderError,
+    InvalidIdentifierError,
+    UserNotFoundError,
+    build_identity_provider,
+)
 from flip_api.db.models.user_models import RoleRef, UserProfile, UserRole
 from flip_api.db.seed.seed_logger import logger
-from flip_api.utils.cognito_helpers import (
-    get_user_by_email_or_id,
-)
 from flip_api.utils.constants import (
     ADMIN_EMAIL_1,
     ADMIN_EMAIL_2,
@@ -36,50 +38,48 @@ MAIN_USER_PROFILES = {
     RESEARCHER_EMAIL: ("Rafael Garcia-Dias", "King's College London"),
     VIEWER_EMAIL: ("Alexandre Triay", "London AI Centre"),
     # Demo-video identities (flip_api/scripts/create_demo_users.py). Seeding
-    # skips them with a warning when they don't exist in Cognito, so stacks
-    # that never run the demo are unaffected.
+    # skips them with a warning when they don't exist in the identity
+    # provider, so stacks that never run the demo are unaffected.
     DEMO_RESEARCHER_EMAIL: ("Demo Researcher", "London AI Centre"),
     DEMO_ADMIN_EMAIL: ("Demo Admin", "London AI Centre"),
 }
 
 
 def ensure_user_and_role(
+    idp: IdentityProvider,
     email: str,
     role_ref: RoleRef,
     session: Session,
     name: str,
     organisation: str,
 ) -> None:
-    """Look up the Cognito user for ``email`` and seed their FLIP profile/role.
+    """Look up the identity-provider user for ``email`` and seed their FLIP profile/role.
 
-    Cognito is the source of truth for user identity, so this function does
-    not create an auth user locally. It stores FLIP-owned profile fields in
-    ``user_profile`` and ensures the ``user_role`` grant exists for the
-    Cognito sub corresponding to the given email.
+    The identity provider is the source of truth for user identity, so this
+    function does not create an auth user locally. It stores FLIP-owned
+    profile fields in ``user_profile`` and ensures the ``user_role`` grant
+    exists for the provider sub corresponding to the given email.
 
     Args:
-        email (str): The user's email, used to look up the corresponding Cognito user.
+        idp (IdentityProvider): The configured identity provider.
+        email (str): The user's email, used to look up the corresponding provider user.
         role_ref (RoleRef): The role to assign to the user if they don't already have it.
         session (Session): The SQLModel session used for DB reads and writes.
         name (str): The user's seeded display name.
         organisation (str): The user's seeded organisation.
     """
-    user_pool_id = get_settings().AWS_COGNITO_USER_POOL_ID
-
-    # 1️⃣ Try to get the user from Cognito
+    # 1️⃣ Try to get the user from the identity provider
     try:
-        cognito_user = get_user_by_email_or_id(user_pool_id=user_pool_id, email=email)
-    except HTTPException as exc:
-        if exc.status_code == status.HTTP_404_NOT_FOUND:
-            logger.warning(
-                "Skipping seed user %s with role %s because the user does not exist in Cognito.",
-                email,
-                role_ref.name,
-            )
-            return
-        raise
-    user_id = cognito_user.id
-    logger.debug(f"Found Cognito user {email} with sub {user_id}")
+        user = idp.get_user(email=email)
+    except UserNotFoundError:
+        logger.warning(
+            "Skipping seed user %s with role %s because the user does not exist in the identity provider.",
+            email,
+            role_ref.name,
+        )
+        return
+    user_id = user.id
+    logger.debug(f"Found identity-provider user {email} with sub {user_id}")
 
     profile = session.get(UserProfile, user_id)
     if profile is None:
@@ -112,41 +112,44 @@ def ensure_user_and_role(
 
 
 def _ensure_user_and_role_resilient(
+    idp: IdentityProvider,
     email: str,
     role_ref: RoleRef,
     session: Session,
     name: str,
     organisation: str,
 ) -> None:
-    """Run ``ensure_user_and_role`` but tolerate transient Cognito-side HTTP failures.
+    """Run ``ensure_user_and_role`` but tolerate transient provider-side failures.
 
-    Seeding now reads from Cognito on every boot. A 5xx blip mid-deploy would
-    otherwise couple flip-api liveness to Cognito read availability — log the skip
-    loudly and continue with the remaining users instead.
+    Seeding reads from the identity provider on every boot. A blip mid-deploy
+    would otherwise couple flip-api liveness to the provider's read
+    availability — log the skip loudly and continue with the remaining users
+    instead.
 
-    Definitive 4xx failures (e.g. 400 "no email/id provided", 403 if a future
-    auth gate is added) still propagate: those are config / programming errors
-    that should fail boot loudly rather than producing a platform with quietly
-    missing grants.
+    Definitive failures (``InvalidIdentifierError``: a malformed well-known
+    email) still propagate: those are config / programming errors that should
+    fail boot loudly rather than producing a platform with quietly missing
+    grants.
 
     Args:
-        email (str): The user's email used to look up the corresponding Cognito user.
+        idp (IdentityProvider): The configured identity provider.
+        email (str): The user's email used to look up the corresponding provider user.
         role_ref (RoleRef): The role to grant if missing.
         session (Session): The SQLModel session used for DB reads and writes.
         name (str): The user's seeded display name.
         organisation (str): The user's seeded organisation.
     """
     try:
-        ensure_user_and_role(email, role_ref, session, name, organisation)
-    except HTTPException as exc:
-        if exc.status_code < status.HTTP_500_INTERNAL_SERVER_ERROR:
-            raise
+        ensure_user_and_role(idp, email, role_ref, session, name, organisation)
+    except InvalidIdentifierError:
+        raise
+    except IdentityProviderError as exc:
         logger.warning(
-            "Skipping seed for %s with role %s due to Cognito read failure (status=%s); "
+            "Skipping seed for %s with role %s due to an identity-provider read failure (%s); "
             "platform will boot without this grant — investigate if it persists.",
             email,
             role_ref.name,
-            exc.status_code,
+            exc,
         )
 
 
@@ -154,36 +157,42 @@ def seed_main_users(session: Session) -> None:
     """
     Seed role grants for the well-known admin/researcher/viewer emails.
 
-    Resolves each email to its Cognito sub and ensures the corresponding
-    ``user_role`` row exists. No local users-table state is created.
+    Resolves each email to its identity-provider sub and ensures the
+    corresponding ``user_role`` row exists. No local users-table state is created.
 
     Args:
         session (Session): The SQLModel session used for DB reads and writes.
     """
     logger.debug("Seeding main users...")
 
+    # One raw provider for the whole seed: this runs in the entrypoint before
+    # uvicorn, outside FastAPI, so there is no dependency to inject.
+    idp = build_identity_provider()
+
     # Ensure the Admin role grant for each well-known admin email.
-    _ensure_user_and_role_resilient(ADMIN_EMAIL_1, RoleRef.ADMIN, session, *MAIN_USER_PROFILES[ADMIN_EMAIL_1])
-    _ensure_user_and_role_resilient(ADMIN_EMAIL_2, RoleRef.ADMIN, session, *MAIN_USER_PROFILES[ADMIN_EMAIL_2])
-    _ensure_user_and_role_resilient(ADMIN_EMAIL_3, RoleRef.ADMIN, session, *MAIN_USER_PROFILES[ADMIN_EMAIL_3])
+    _ensure_user_and_role_resilient(idp, ADMIN_EMAIL_1, RoleRef.ADMIN, session, *MAIN_USER_PROFILES[ADMIN_EMAIL_1])
+    _ensure_user_and_role_resilient(idp, ADMIN_EMAIL_2, RoleRef.ADMIN, session, *MAIN_USER_PROFILES[ADMIN_EMAIL_2])
+    _ensure_user_and_role_resilient(idp, ADMIN_EMAIL_3, RoleRef.ADMIN, session, *MAIN_USER_PROFILES[ADMIN_EMAIL_3])
 
     # Ensure the Researcher role grant.
     _ensure_user_and_role_resilient(
-        RESEARCHER_EMAIL, RoleRef.RESEARCHER, session, *MAIN_USER_PROFILES[RESEARCHER_EMAIL]
+        idp, RESEARCHER_EMAIL, RoleRef.RESEARCHER, session, *MAIN_USER_PROFILES[RESEARCHER_EMAIL]
     )
 
     # Ensure the Viewer role grant.
-    _ensure_user_and_role_resilient(VIEWER_EMAIL, RoleRef.VIEWER, session, *MAIN_USER_PROFILES[VIEWER_EMAIL])
+    _ensure_user_and_role_resilient(idp, VIEWER_EMAIL, RoleRef.VIEWER, session, *MAIN_USER_PROFILES[VIEWER_EMAIL])
 
     # Demo-video identities — no-ops (with a warning) until the users are
-    # provisioned in Cognito via flip_api/scripts/create_demo_users.py.
-    # Deliberately on the same universal every-boot path as the grants above
-    # (no env gate needed): the grant only materialises if the demo user
-    # exists in that environment's Cognito pool, which only the dev-stack
-    # provisioning script creates.
+    # provisioned via flip_api/scripts/create_demo_users.py. Deliberately on
+    # the same universal every-boot path as the grants above (no env gate
+    # needed): the grant only materialises if the demo user exists in that
+    # environment's identity provider, which only the dev-stack provisioning
+    # script creates.
     _ensure_user_and_role_resilient(
-        DEMO_RESEARCHER_EMAIL, RoleRef.RESEARCHER, session, *MAIN_USER_PROFILES[DEMO_RESEARCHER_EMAIL]
+        idp, DEMO_RESEARCHER_EMAIL, RoleRef.RESEARCHER, session, *MAIN_USER_PROFILES[DEMO_RESEARCHER_EMAIL]
     )
-    _ensure_user_and_role_resilient(DEMO_ADMIN_EMAIL, RoleRef.ADMIN, session, *MAIN_USER_PROFILES[DEMO_ADMIN_EMAIL])
+    _ensure_user_and_role_resilient(
+        idp, DEMO_ADMIN_EMAIL, RoleRef.ADMIN, session, *MAIN_USER_PROFILES[DEMO_ADMIN_EMAIL]
+    )
 
     logger.info("✅ Finished seeding main users.")

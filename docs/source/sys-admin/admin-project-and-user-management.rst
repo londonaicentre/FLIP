@@ -165,7 +165,7 @@ Reset User MFA
 
 .. warning::
 
-  You cannot use this flow to recover **your own** MFA — the Admin Area requires an authenticated session, which you cannot obtain without your authenticator. If you are an administrator who has lost access to your TOTP device, see the "Cognito MFA Administration" section in ``deploy/README.md`` for the AWS CLI self-recovery runbook.
+  You cannot use this flow to recover **your own** MFA — the Admin Area requires an authenticated session, which you cannot obtain without your authenticator. If you are an administrator who has lost access to your TOTP device, see the "Cognito MFA Administration" section in ``deploy/README.md`` for the AWS CLI self-recovery runbook (local Keycloak stacks: clear the OTP credential in the Keycloak admin console).
 
 Site Banner
 ===========

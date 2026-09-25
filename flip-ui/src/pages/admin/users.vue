@@ -309,6 +309,8 @@
                                         data-test="reset-password-btn"
                                         error
                                         block
+                                        :disabled="!authStore.capabilities.adminResetPassword"
+                                        :tooltip="resetPasswordTooltip"
                                         @click="dialogResetPassword = true;"
                                     >
                                         Reset Password
@@ -637,16 +639,29 @@ const updateUserState = async (disabled: boolean) => {
     }
 };
 
-const resetPassword = () => {
-    if (selectedUser.value) {
-        dialogResetPassword.value = false;
+// Reset is a Cognito ForgotPassword on the user's behalf; a backend without
+// that (Keycloak) disables the button and says where to go instead. The
+// tooltip sits on AiButton's wrapper, so it still shows on the disabled button.
+const resetPasswordTooltip = authStore.capabilities.adminResetPassword
+    ? ""
+    : "Not available with the Keycloak dev backend — use the Keycloak console";
 
-        authStore.resetPassword(selectedUser.value?.email);
+const resetPassword = async () => {
+    if (!selectedUser.value) return;
+    dialogResetPassword.value = false;
 
+    try {
+        await authStore.resetPassword(selectedUser.value.email);
         Snackbar.success({
             text: "The user's password has been reset.",
             title: "Password reset"
         });
+    } catch {
+        Snackbar.error({
+            text: "There was an error resetting the password, please try again.",
+            title: "Password not reset"
+        });
+        errorStore.setError();
     }
 };
 

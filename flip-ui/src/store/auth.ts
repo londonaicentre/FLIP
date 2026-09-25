@@ -11,23 +11,23 @@
  * limitations under the License.
  */
 
-import { confirmResetPassword,
-    confirmSignIn,
-    fetchAuthSession,
-    fetchUserAttributes,
-    getCurrentUser,
-    resetPassword,
-    setUpTOTP,
-    signIn,
-    signOut,
-    updateMFAPreference,
-    verifyTOTPSetup } from "aws-amplify/auth";
 import { defineStore } from "pinia";
 
+import { getAuthProvider } from "@/auth";
+import { AuthCapabilities,
+    AuthError,
+    AuthUser,
+    SignInResult,
+    SignInStep,
+    TotpSetupDetails } from "@/auth/provider";
 import { IChangePassword } from "@/interfaces/auth/interfaces";
 import { getMfaStatus, getUserPermissions } from "@/services/user-service";
 import { leaveToLogin, stashPostSignOutNotice } from "@/utils/session-teardown";
 import { Snackbar } from "@/utils/snackbar";
+
+// The step names are provider-neutral (FLIP#919) and owned by the auth seam;
+// re-exported so `import { SignInStep } from "@/store/auth"` keeps working.
+export { SignInStep };
 
 /**
  * Available User Permissions
@@ -48,7 +48,11 @@ type Attributes = {
     email: string;
 };
 
-type AmplifyUser = {
+// The signed-in user as the rest of the app (and the Cypress
+// `cypress.auth.user` fixture) sees it. The shape predates the provider
+// seam and is kept: `userId` is the provider subject, `attributes` the
+// display identity, `permissions` what flip-api grants.
+export type AuthenticatedUser = {
     username: string;
     userId: string;
     attributes: Attributes;
@@ -60,23 +64,10 @@ type UserCredentials = {
     password: string;
 };
 
-// DONE means Cognito's challenge chain is cleared — it does NOT imply the
-// app-gate will let the user through (`mfaEnabled` decides that).
-export type SignInStep =
-    | "DONE"
-    | "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED"
-    | "CONTINUE_SIGN_IN_WITH_TOTP_SETUP"
-    | "CONFIRM_SIGN_IN_WITH_TOTP_CODE";
-
-// `setupUri` is an `otpauth://` URL for QR rendering; `sharedSecret` is the
-// base32 secret users can type manually.
-type TotpSetupDetails = {
-    sharedSecret: string;
-    setupUri: string;
-};
-
 type AuthState = {
-    user: AmplifyUser | null;
+    user: AuthenticatedUser | null;
+    // DONE means the provider's challenge chain is cleared — it does NOT
+    // imply the app-gate will let the user through (`mfaEnabled` decides that).
     signInStep: SignInStep | null;
     totpSetup: TotpSetupDetails | null;
     // null = not yet known (store hydration in progress or sign-in incomplete)
@@ -86,79 +77,17 @@ type AuthState = {
     // populated the router guard uses it to skip the /auth/mfa-setup
     // redirect in dev environments where MFA is not required.
     mfaRequired: boolean | null;
-    // Username captured at sign-in, used as the account label when building
-    // the TOTP setup URI before `user` is populated (challenge chain step).
-    pendingUsername: string | null;
 };
 
-const buildUserWithPermissions = async (
-    base: Pick<AmplifyUser, "username" | "userId">
-): Promise<AmplifyUser> => {
-    const [attributes, permsRes] = await Promise.all([
-        fetchUserAttributes() as Promise<Attributes>,
-        getUserPermissions(base.userId)
-    ]);
-
-    return {
-        ...base,
-        attributes,
-        permissions: permsRes.permissions ?? []
-    };
-};
-
-// Amplify v6 can resolve `signIn({isSignedIn: true})` a beat before
-// `fetchAuthSession()` sees the cached tokens (the token-orchestrator
-// write and the session-reader read don't share a barrier on every
-// platform). When that happens, the very next backend request from
-// `hydrate()` goes out without an `Authorization` header and 401s,
-// which Login.vue surfaces as "There was a problem logging you in".
-// Pause until either the tokens appear or a forceRefresh produces
-// them, so callers can assume `hydrate()` sees a real session.
-//
-// Throws if no accessToken can be obtained — the caller's catch handler
-// can then surface a real error to the user instead of silently
-// proceeding to hydrate which will 401.
-class MissingSessionTokensError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = "MissingSessionTokensError";
-    }
-}
-
-const waitForSessionTokens = async (): Promise<void> => {
-    let session = await fetchAuthSession();
-    if (session.tokens?.accessToken) return;
-    try {
-        session = await fetchAuthSession({ forceRefresh: true });
-    } catch (e) {
-        console.error("waitForSessionTokens: forceRefresh threw:", e);
-    }
-    if (!session.tokens?.accessToken) {
-        // Log what Amplify *thinks* the session is so DevTools can
-        // distinguish "no session at all" (bad storage / misconfigured
-        // client) from "session exists but tokens are empty"
-        // (token-refresh issue), then throw so the caller surfaces it.
-        console.warn(
-            "waitForSessionTokens: no accessToken after forceRefresh",
-            {
-                userSub: session.userSub,
-                hasCredentials: !!session.credentials
-            }
-        );
-        throw new MissingSessionTokensError(
-            "Authenticated but no session tokens — local storage may be blocked or your session has expired."
-        );
-    }
-};
-
-// Shape of Amplify's `nextStep` when Cognito chains into MFA_SETUP.
-type AmplifyTotpNextStep = {
-    totpSetupDetails?: {
-        sharedSecret: string;
-        getSetupUri: (appName: string, username?: string) => URL;
-    };
-};
-
+const toStoreUser = (identity: AuthUser, permissions: string[]): AuthenticatedUser => ({
+    username: identity.username,
+    userId: identity.sub,
+    attributes: {
+        sub: identity.sub,
+        email: identity.email
+    },
+    permissions
+});
 
 export const useAuthStore = defineStore("auth", {
     state: (): AuthState => ({
@@ -166,8 +95,7 @@ export const useAuthStore = defineStore("auth", {
         signInStep: null,
         totpSetup: null,
         mfaEnabled: null,
-        mfaRequired: null,
-        pendingUsername: null
+        mfaRequired: null
     }),
 
     getters: {
@@ -177,17 +105,20 @@ export const useAuthStore = defineStore("auth", {
         // `mfaRequired === false` covers the dev bypass; stag/prod have
         // mfaRequired=true and still need mfaEnabled=true.
         confirmedUser: (state) =>
-            state.signInStep === "DONE" &&
+            state.signInStep === SignInStep.DONE &&
             !!state.user &&
             (state.mfaRequired === false || state.mfaEnabled === true),
-        // True only when Cognito challenges are cleared AND the backend
+        // True only when the provider's challenges are cleared AND the backend
         // demands MFA AND the user hasn't enrolled yet — the one state
         // where the router routes them to the enrolment page. In dev
         // (mfaRequired=false) this always returns false.
         needsMfaEnrolment: (state) =>
-            state.signInStep === "DONE" &&
+            state.signInStep === SignInStep.DONE &&
             state.mfaRequired === true &&
-            state.mfaEnabled === false
+            state.mfaEnabled === false,
+        // What the configured backend can do; pages guard their flows on
+        // these rather than on the backend's name.
+        capabilities: (): AuthCapabilities => getAuthProvider().capabilities
     },
     actions: {
         // Load user + MFA state into the store. When the MFA state is
@@ -197,33 +128,25 @@ export const useAuthStore = defineStore("auth", {
         // know both values, so the shortcut now takes an object rather
         // than a bare boolean.
         async hydrate(knownMfaState?: { enabled: boolean; required: boolean }) {
-            const [{ username, userId }, mfaState] = await Promise.all([
-                getCurrentUser(),
+            const [identity, mfaState] = await Promise.all([
+                getAuthProvider().getUser(),
                 knownMfaState !== undefined
                     ? Promise.resolve(knownMfaState)
                     : getMfaStatus()
             ]);
-            this.signInStep = "DONE";
+            this.signInStep = SignInStep.DONE;
             this.mfaEnabled = mfaState.enabled;
             this.mfaRequired = mfaState.required;
             // Fetch permissions whenever the user has full API access —
             // i.e. MFA is active OR this environment doesn't require it.
-            // The attributes-only branch is reserved for the "MFA
+            // The identity-only branch is reserved for the "MFA
             // required but not yet enrolled" case, where the permissions
             // endpoint would 403 under the app-layer gate.
             if (mfaState.enabled || !mfaState.required) {
-                this.user = await buildUserWithPermissions({
-                    username,
-                    userId
-                });
+                const permsRes = await getUserPermissions(identity.sub);
+                this.user = toStoreUser(identity, permsRes.permissions ?? []);
             } else {
-                const attributes = (await fetchUserAttributes()) as Attributes;
-                this.user = {
-                    username,
-                    userId,
-                    attributes,
-                    permissions: []
-                };
+                this.user = toStoreUser(identity, []);
             }
         },
 
@@ -235,125 +158,89 @@ export const useAuthStore = defineStore("auth", {
             await this.hydrate();
         },
 
+        // True when the provider holds a usable session — the router
+        // guard's and Login.vue's question. Never throws.
+        async hasSession(): Promise<boolean> {
+            return getAuthProvider().hasSession();
+        },
+
+        // Record where the provider left the challenge chain and, once it
+        // is cleared, load the user. Shared by signIn and changePassword.
+        async applySignInResult(result: SignInResult) {
+            this.signInStep = result.step;
+
+            if (result.step === SignInStep.TOTP_SETUP) {
+                this.totpSetup = result.totpSetup;
+
+                return;
+            }
+            if (result.step !== SignInStep.DONE) {
+                return;
+            }
+
+            try {
+                await this.hydrate();
+            } catch (e) {
+                // hydrate rolls up any getUser / getMfaStatus failure
+                // after the provider has already accepted the
+                // credentials. Log the underlying error (AxiosError
+                // status, SDK class name, message, response body) so
+                // DevTools surfaces the real cause instead of
+                // Login.vue's generic "problem logging you in"
+                // snackbar swallowing it.
+                type AxiosErrorLike = {
+                    response?: { status?: number; data?: unknown; headers?: unknown };
+                    config?: { url?: string; headers?: unknown };
+                    name?: string;
+                };
+                const ax = e as AxiosErrorLike;
+                console.error("Post-signIn hydrate failed:", e, {
+                    name: ax.name,
+                    status: ax.response?.status,
+                    responseBody: ax.response?.data,
+                    requestUrl: ax.config?.url,
+                    requestHadAuth: Boolean(
+                        (ax.config?.headers as Record<string, unknown> | undefined)
+                            ?.Authorization
+                    )
+                });
+                throw e;
+            }
+        },
+
         async signIn(details: UserCredentials) {
             this.user = null;
             this.signInStep = null;
             this.totpSetup = null;
             this.mfaEnabled = null;
             this.mfaRequired = null;
-            this.pendingUsername = details.username;
 
-            // USER_SRP_AUTH so the browser sends an SRP proof rather
-            // than the plaintext password — any TLS terminator, WAF, or
-            // proxy that captures request bodies on the InitiateAuth
-            // call cannot recover credentials. Amplify v6's default is
-            // SRP; we set authFlowType explicitly to make the choice
-            // visible at the call site rather than implicit in the
-            // Amplify default.
-            const credentials = {
-                username: details.username,
-                password: details.password,
-                options: { authFlowType: "USER_SRP_AUTH" as const }
-            };
-            // Amplify throws UserAlreadyAuthenticatedException when storage
-            // already holds tokens — e.g. credentials typed at /login while
-            // another tab still has a live session. Sign the stale session
-            // out and retry once so the user isn't stuck behind a generic
-            // "problem logging you in" snackbar.
-            let out;
-            try {
-                out = await signIn(credentials);
-            } catch (e) {
-                if ((e as Error).name !== "UserAlreadyAuthenticatedException") throw e;
-                await signOut();
-                out = await signIn(credentials);
-            }
-
-            const step = out.nextStep?.signInStep as SignInStep | undefined;
-            if (step) {
-                this.signInStep = step;
-            }
-
-            if (step === "CONTINUE_SIGN_IN_WITH_TOTP_SETUP") {
-                this.captureTotpSetupDetails(out.nextStep);
-
-                return;
-            }
-
-            if (
-                step === "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED" ||
-                step === "CONFIRM_SIGN_IN_WITH_TOTP_CODE"
-            ) {
-                return;
-            }
-
-            if (out.isSignedIn) {
-                await waitForSessionTokens();
-                try {
-                    await this.hydrate();
-                } catch (e) {
-                    // hydrate rolls up any getCurrentUser / getMfaStatus
-                    // failure after Cognito has already accepted the
-                    // credentials. Log the underlying error (AxiosError
-                    // status, Amplify class name, message, response
-                    // body) so DevTools surfaces the real cause instead
-                    // of Login.vue's generic "problem logging you in"
-                    // snackbar swallowing it.
-                    type AxiosErrorLike = {
-                        response?: { status?: number; data?: unknown; headers?: unknown };
-                        config?: { url?: string; headers?: unknown };
-                        name?: string;
-                    };
-                    const ax = e as AxiosErrorLike;
-                    console.error("Post-signIn hydrate failed:", e, {
-                        name: ax.name,
-                        status: ax.response?.status,
-                        responseBody: ax.response?.data,
-                        requestUrl: ax.config?.url,
-                        requestHadAuth: Boolean(
-                            (ax.config?.headers as Record<string, unknown> | undefined)
-                                ?.Authorization
-                        )
-                    });
-                    throw e;
-                }
-            }
+            const result = await getAuthProvider().signIn(details.username, details.password);
+            await this.applySignInResult(result);
         },
 
         async changePassword(newPassword: string) {
-            const out = await confirmSignIn({ challengeResponse: newPassword });
+            const result = await getAuthProvider().confirmNewPassword(newPassword);
+            await this.applySignInResult(result);
+        },
 
-            const step = out.nextStep?.signInStep as SignInStep | undefined;
-            if (step) {
-                this.signInStep = step;
-            }
-
-            if (step === "CONTINUE_SIGN_IN_WITH_TOTP_SETUP") {
-                this.captureTotpSetupDetails(out.nextStep);
+        async confirmTotpChallenge(code: string) {
+            const result = await getAuthProvider().confirmTotpChallenge(code);
+            if (result.step !== SignInStep.DONE) {
+                await this.applySignInResult(result);
 
                 return;
             }
 
-            if (out.isSignedIn) {
-                await waitForSessionTokens();
-                await this.hydrate();
-            }
-        },
-
-        async confirmTotpChallenge(code: string) {
-            const out = await confirmSignIn({ challengeResponse: code });
-            if (!out.isSignedIn) return;
-
-            // Cognito only issues CONFIRM_SIGN_IN_WITH_TOTP_CODE to users
-            // whose MFA preference is already active, so once the challenge
-            // clears we know MFA is on — skip the backend round-trip.
+            // Cognito only issues the TOTP-code challenge to users whose MFA
+            // preference is already active, so once the challenge clears we
+            // know MFA is on — skip the backend round-trip.
             // As with confirmTotpSetup/completeMfaEnrolment, post-success
             // hydrate failures (network blip, backend unreachable) are
             // logged but non-fatal: the router guard will re-fetch on the
             // next navigation. Without this, a valid code + transient
             // hydrate failure surfaces to the user as "Sign-in failed:
             // Network Error" — misleadingly blaming the code.
-            await waitForSessionTokens();
             try {
                 await this.hydrate({
                     enabled: true,
@@ -361,7 +248,7 @@ export const useAuthStore = defineStore("auth", {
                 });
             } catch (e) {
                 console.error("Failed to hydrate user post-TOTP-challenge:", e);
-                this.signInStep = "DONE";
+                this.signInStep = SignInStep.DONE;
                 this.mfaEnabled = null;
                 // Surface the partial-success state. Without this, the user
                 // sees a clean form submission and assumes sign-in worked,
@@ -375,50 +262,39 @@ export const useAuthStore = defineStore("auth", {
             }
         },
 
-        // Cognito's MFA_SETUP challenge verifies the software token but does
-        // not flip the user's MFA preference; without an explicit
-        // `updateMFAPreference` the backend's /users/me/mfa/status still
-        // reads an empty UserMFASettingList and the router guard bounces
-        // the user back to enrol with a fresh secret.
-        //
-        // Once `confirmSignIn` resolves with `isSignedIn=true` the code was
-        // already accepted by Cognito — any subsequent failure is a
-        // post-success cleanup issue, not a code mismatch.
-        //
-        // updateMFAPreference failure is treated as fatal-to-enrolment and
-        // re-thrown: Cognito has the verified token but the preference
-        // didn't stick, so the user is *not* MFA-enabled despite a clean
-        // confirmSignIn. Painting `mfaEnabled=true` would let them into
-        // the app where every API call 403s under the app-gate. We reset
-        // state and re-throw so the page does not navigate to /projects
-        // on a half-failed enrolment; the page is responsible for the
-        // user-facing snackbar (mfa-setup.vue's submit catch).
+        // Sign-in-chain enrolment. The provider verifies the code AND records
+        // TOTP as the preferred MFA; a failure of the second half comes back
+        // as `MFA_PREFERENCE_FAILED` — the code was accepted (so the setup
+        // secret is spent and must not be re-rendered as a QR) but the user
+        // is *not* MFA-enabled. Reset state so the next navigation re-fetches
+        // authoritative status, then rethrow so the calling page's catch
+        // surfaces the error and skips the navigate-to-/projects success
+        // path. The page (mfa-setup.vue) shows the user-facing snackbar; we
+        // don't double-notify here. A wrong code rejects before any of that
+        // and leaves the secret in place for a retry.
         // hydrate failure on its own is non-fatal — the router guard will
         // re-fetch on the next navigation.
         async confirmTotpSetup(code: string) {
-            const out = await confirmSignIn({ challengeResponse: code });
-            if (!out.isSignedIn) return;
-
-            await waitForSessionTokens();
+            let result: SignInResult;
+            try {
+                result = await getAuthProvider().confirmTotpSetup(code);
+            } catch (e) {
+                if (e instanceof AuthError && e.code === "MFA_PREFERENCE_FAILED") {
+                    console.error("Failed to set MFA preference post-setup:", e);
+                    this.totpSetup = null;
+                    this.signInStep = SignInStep.DONE;
+                    this.mfaEnabled = null;
+                }
+                throw e;
+            }
             // Clear the setup secret regardless of what happens below —
-            // it has been used (Cognito accepted the code) and must not
+            // it has been used (the provider accepted the code) and must not
             // be re-rendered as a QR.
             this.totpSetup = null;
-            try {
-                await updateMFAPreference({ totp: "PREFERRED" });
-            } catch (e) {
-                // Cognito accepted the verification code but the
-                // preference didn't stick — the user is *not* MFA-enabled
-                // despite a clean confirmSignIn. Reset state so the next
-                // navigation re-fetches authoritative status, then rethrow
-                // so the calling page's catch surfaces the error and
-                // skips the navigate-to-/projects success path. The page
-                // (mfa-setup.vue) shows the user-facing snackbar; we
-                // don't double-notify here.
-                console.error("Failed to set MFA preference post-setup:", e);
-                this.signInStep = "DONE";
-                this.mfaEnabled = null;
-                throw e;
+            if (result.step !== SignInStep.DONE) {
+                await this.applySignInResult(result);
+
+                return;
             }
             try {
                 await this.hydrate({
@@ -430,58 +306,33 @@ export const useAuthStore = defineStore("auth", {
                 // Leave `mfaEnabled=null` so the router guard re-fetches
                 // the authoritative backend state on the next navigation
                 // (via `fetchInfo()` at utils/auth.ts).
-                this.signInStep = "DONE";
+                this.signInStep = SignInStep.DONE;
                 this.mfaEnabled = null;
-            }
-        },
-
-        captureTotpSetupDetails(nextStep: unknown) {
-            const details = (nextStep as AmplifyTotpNextStep).totpSetupDetails;
-            if (details) {
-                // Use the login username (email) as the authenticator's
-                // account label. Passing `sharedSecret` here would leak
-                // the secret into the label the user sees in their app.
-                // `pendingUsername` may be null for callers that didn't
-                // route through signIn — fall back to omitting the label.
-                const accountLabel = this.pendingUsername ?? undefined;
-                this.totpSetup = {
-                    sharedSecret: details.sharedSecret,
-                    setupUri: details.getSetupUri("FLIP", accountLabel).toString()
-                };
             }
         },
 
         async beginMfaEnrolment() {
-            const details = await setUpTOTP();
-            this.totpSetup = {
-                sharedSecret: details.sharedSecret ?? "",
-                setupUri: details.getSetupUri("FLIP", this.user?.attributes.email).toString()
-            };
+            this.totpSetup = await getAuthProvider().setUpTotp(this.user?.attributes.email);
         },
 
+        // Post-auth enrolment: same contract as confirmTotpSetup (see there)
+        // — a wrong code rejects with the secret intact, MFA_PREFERENCE_FAILED
+        // means the code was accepted but the user is not MFA-enabled.
         async completeMfaEnrolment(code: string) {
-            // `verifyTOTPSetup` is the code-mismatch site: if the user's
-            // code is wrong this throws and the caller shows "Invalid
-            // code". Everything after is post-success cleanup.
-            //
-            // updateMFAPreference failure is fatal: see confirmTotpSetup
-            // for the reasoning (Cognito has the verified token but the
-            // preference didn't stick — a `mfaEnabled=true` shortcut
-            // would 403 every subsequent API call). Surface, rethrow.
-            await verifyTOTPSetup({ code });
+            try {
+                await getAuthProvider().verifyTotpSetup(code);
+            } catch (e) {
+                if (e instanceof AuthError && e.code === "MFA_PREFERENCE_FAILED") {
+                    console.error("Failed to set MFA preference post-enrolment:", e);
+                    this.totpSetup = null;
+                    this.signInStep = SignInStep.DONE;
+                    this.mfaEnabled = null;
+                }
+                throw e;
+            }
             // Setup secret was just used; clear before further work so a
             // post-success failure can't leave it lingering for re-render.
             this.totpSetup = null;
-            try {
-                await updateMFAPreference({ totp: "PREFERRED" });
-            } catch (e) {
-                // See confirmTotpSetup: rethrow so the page can keep the
-                // user on the form. Snackbar is the page's job.
-                console.error("Failed to set MFA preference post-enrolment:", e);
-                this.signInStep = "DONE";
-                this.mfaEnabled = null;
-                throw e;
-            }
             try {
                 await this.hydrate({
                     enabled: true,
@@ -491,7 +342,7 @@ export const useAuthStore = defineStore("auth", {
                 console.error("Failed to hydrate user post-MFA enrolment:", e);
                 // See confirmTotpSetup: leave mfaEnabled=null so the
                 // router guard converges on the real backend state.
-                this.signInStep = "DONE";
+                this.signInStep = SignInStep.DONE;
                 this.mfaEnabled = null;
             }
         },
@@ -500,17 +351,19 @@ export const useAuthStore = defineStore("auth", {
         // path the interceptor already shows its own "Not Authorised"
         // snackbar, so we suppress sign-out feedback to avoid stacking
         // notifications. User-initiated sign-out (from MainLayout) leaves
-        // it false: NotAuthorizedException then surfaces an info-level
+        // it false: SESSION_ALREADY_ENDED then surfaces an info-level
         // notice so a session that was force-revoked remotely (e.g. by an
         // admin via MFA reset) doesn't disappear silently.
         async signOut(opts: { viaInterceptor?: boolean } = {}) {
             const { viaInterceptor = false } = opts;
+            const provider = getAuthProvider();
             let serverSideSignOutFailed = false;
             let sessionAlreadyEnded = false;
             try {
-                // global:true calls Cognito's GlobalSignOut, which invalidates
-                // all tokens (including the refresh token) for this user session.
-                await signOut({ global: true });
+                // A global sign-out revokes every session of the user
+                // server-side (Cognito's GlobalSignOut, refresh token
+                // included) where the backend supports it.
+                await provider.signOut({ global: provider.capabilities.globalSignOut });
             } catch (error) {
                 // Local state is wiped regardless so the user can't keep
                 // using the app from this tab. But the server-side
@@ -518,13 +371,12 @@ export const useAuthStore = defineStore("auth", {
                 // anything with access to where it was stored (XSS
                 // payload, hostile extension), so warn the user — except
                 // when the failure is just "tokens were already invalid"
-                // (NotAuthorizedException). For interceptor-driven sign-
+                // (SESSION_ALREADY_ENDED). For interceptor-driven sign-
                 // out that case stays silent; for user-clicked sign-out
                 // we still want to inform them rather than silently mask
                 // a remote revocation.
                 console.error("Sign out error:", error);
-                const name = (error as { name?: string }).name;
-                if (name === "NotAuthorizedException") {
+                if (error instanceof AuthError && error.code === "SESSION_ALREADY_ENDED") {
                     sessionAlreadyEnded = true;
                 } else {
                     serverSideSignOutFailed = true;
@@ -554,24 +406,25 @@ export const useAuthStore = defineStore("auth", {
             leaveToLogin();
         },
 
-        async resetPassword(email: string) {
-            const response = await resetPassword({
-                username: email,
-                options: { clientMetadata: { source: "web-app" } }
-            });
+        // Leave a half-finished sign-in (mid-challenge "Back to log in").
+        // Fire-and-forget: the provider's sign-out can hang on a
+        // challenge-only session, and the caller tears the page down
+        // regardless, so nothing waits on it and nothing to sign out of
+        // is fine.
+        abandonSignIn(): void {
+            getAuthProvider().signOut().catch(() => { /* no-op: nothing to sign out of is fine */ });
+        },
 
-            return response;
+        async resetPassword(email: string) {
+            await getAuthProvider().resetPassword(email);
         },
 
         async updateForgottenPassword({ email, code, newPassword }: IChangePassword) {
-            const response = await confirmResetPassword({
-                username: email,
-                confirmationCode: code,
-                newPassword,
-                options: { clientMetadata: { source: "web-app" } }
+            await getAuthProvider().confirmResetPassword({
+                email,
+                code,
+                newPassword
             });
-
-            return response;
         },
 
         hasPermissions(permissions: UserPermissions[]) {

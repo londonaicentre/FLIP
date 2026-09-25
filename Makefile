@@ -17,7 +17,7 @@
 		sync-trust-kit sync-trust-kits lock checkov-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
-		demo-video demo-users seed-demo-projects
+		demo-video demo-users seed-demo-projects reset-keycloak
 
 # What PROD means — ENV, __DCKR_SUFFIX and the env-file name — is derived once in
 # deploy/env_mode.mk, shared with every other Makefile that reads PROD. The kit-file
@@ -480,6 +480,17 @@ demo-video:
 demo-users:
 	$(MAKE) -C flip-api create_demo_users
 
+# Recreate the dev identity provider from deploy/keycloak/flip-realm.json. The
+# keycloak service keeps no volume and `--import-realm` skips a realm that
+# already exists, so an edit to the realm file only applies to a fresh
+# container: this removes it and the next `make up`/`make central-hub` (or the
+# `up -d keycloak` here) re-imports. Users registered from the Admin Area
+# since the last import are lost with it — they live only in that container.
+reset-keycloak:
+	@echo "🔁 Recreating the keycloak service from deploy/keycloak/flip-realm.json..."
+	$(DOCKER_COMMAND) rm -sf keycloak
+	$(DOCKER_COMMAND) up -d keycloak
+
 # Pre-populate the platform with a curated catalogue of radiology projects in
 # honest lifecycle states (no fabricated metrics/results). Cleanup:
 # make seed-demo-projects EXTRA_ARGS="--cleanup"
@@ -616,6 +627,8 @@ check-aws-access:
 	fi
 	@if ! aws sts get-caller-identity >/dev/null 2>&1; then \
 		echo "❌ ERROR: AWS is not accessible. Check credentials, profile, and network access."; \
+		echo "   (S3 still needs AWS for the full stack. Sign-in does not: 'make central-hub' boots"; \
+		echo "    the hub against the local Keycloak with no AWS account — see AUTH_BACKEND in .env.development.example.)"; \
 		exit 1; \
 	fi
 	@echo "✅ AWS access confirmed."

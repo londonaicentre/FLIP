@@ -31,7 +31,7 @@ assertions.
 import os
 from collections.abc import Generator
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
 import boto3
@@ -218,14 +218,16 @@ def _override_get_session(integration_engine):
 def _stub_cors_lookup():
     """Neutralise FastAPI lifespan side-effects for integration tests.
 
-    ``TestClient.__enter__`` runs the production lifespan, which (a) hits
-    Cognito to build the CORS allowlist and (b) starts APScheduler. Cognito
-    has no creds in CI; the scheduler is a module-level singleton and a
-    second ``start()`` raises ``SchedulerAlreadyRunningError``. Both are
-    irrelevant for these tests, so stub them.
+    ``TestClient.__enter__`` runs the production lifespan, which (a) asks
+    the identity provider for the CORS allowlist and (b) starts APScheduler.
+    The provider has no creds in CI; the scheduler is a module-level
+    singleton and a second ``start()`` raises ``SchedulerAlreadyRunningError``.
+    Both are irrelevant for these tests, so stub them.
     """
+    provider = MagicMock()
+    provider.allowed_origins.return_value = []
     with (
-        patch("flip_api.main.get_cors_allowed_origins", return_value=[]),
+        patch("flip_api.main.build_identity_provider", return_value=provider),
         patch("flip_api.main.start_scheduler"),
     ):
         yield
@@ -320,17 +322,19 @@ def cognito_user_pool(aws_mock, monkeypatch) -> Generator[dict[str, str], None, 
     """Create a moto user pool + app client and rebind ``Settings`` at them.
 
     Cognito IDs in ``Settings`` are environment-specific (a real prod pool
-    ID); production-code helpers in ``utils/cognito_helpers.py`` read those
-    IDs at call time via ``get_settings()``. Patching the module-level
-    ``_settings`` singleton is sufficient — pydantic-settings doesn't
-    re-read the env, so a ``monkeypatch.setattr`` sticks for the test and
-    is rolled back automatically afterwards.
+    ID); the Cognito provider (``auth/identity/cognito.py``) reads them when
+    it is built. Patching the module-level ``_settings`` singleton is
+    sufficient — pydantic-settings doesn't re-read the env, so a
+    ``monkeypatch.setattr`` sticks for the test and is rolled back
+    automatically afterwards.
 
-    The ``_cognito_client`` lru_cache is also cleared so the next call
-    reaches into moto with the freshly-pinned pool ID rather than serving
-    a stale client built before the override.
+    The process-wide provider cache is cleared (on both sides) so the next
+    request builds a Cognito provider against the freshly-pinned pool ID
+    rather than serving one built before the override. ``AUTH_BACKEND`` is
+    pinned to cognito so the suite keeps exercising this provider whatever
+    the developer's env file says.
     """
-    from flip_api.utils.cognito_helpers import _cognito_client
+    from flip_api.auth.identity.factory import _cached_provider
 
     cognito = boto3.client("cognito-idp")
     pool = cognito.create_user_pool(PoolName="b2-pool")
@@ -344,11 +348,12 @@ def cognito_user_pool(aws_mock, monkeypatch) -> Generator[dict[str, str], None, 
     client_id = client_resp["UserPoolClient"]["ClientId"]
 
     settings = get_settings()
+    monkeypatch.setattr(settings, "AUTH_BACKEND", "cognito")
     monkeypatch.setattr(settings, "AWS_COGNITO_USER_POOL_ID", pool_id)
     monkeypatch.setattr(settings, "AWS_COGNITO_APP_CLIENT_ID", client_id)
-    _cognito_client.cache_clear()
+    _cached_provider.cache_clear()
     yield {"pool_id": pool_id, "client_id": client_id}
-    _cognito_client.cache_clear()
+    _cached_provider.cache_clear()
 
 
 @pytest.fixture

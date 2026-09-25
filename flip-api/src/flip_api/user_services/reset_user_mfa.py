@@ -18,9 +18,9 @@ from sqlmodel import Session
 
 from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
+from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef, UsersAudit
-from flip_api.utils.cognito_helpers import get_user_pool_id, get_username, reset_user_mfa
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/users", tags=["user_services"])
@@ -32,6 +32,7 @@ def reset_mfa_for_user(
     request: Request,
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
+    idp: IdentityProvider = Depends(get_identity_provider),
 ) -> dict[str, Any]:
     """
     Reset a user's TOTP MFA preference and revoke their active sessions.
@@ -67,10 +68,9 @@ def reset_mfa_for_user(
                 detail=f"User with ID: {token_id} was unable to manage users",
             )
 
-        user_pool_id = get_user_pool_id(request)
-        username = get_username(str(user_id), user_pool_id)
+        username = idp.get_username(user_id)
 
-        reset_user_mfa(username, user_pool_id)
+        idp.reset_mfa(username)
 
         # Cognito mutation succeeded; record the audit row. If the audit
         # commit fails, the security-relevant Cognito state has already

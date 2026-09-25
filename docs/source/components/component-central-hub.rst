@@ -22,10 +22,10 @@ flip-ui
 =======
 
 A Vue 3 single-page application (Vite, TypeScript, Pinia). It talks to ``flip-api`` through one Axios client
-whose base URL is injected per environment at ``window.js`` render time, attaching the user's Cognito access
-token to every request and signing the user out on a 401. In development it runs as a Vite dev server
-container; in a deployed hub it is static assets in an S3 bucket served through CloudFront — there
-is no UI container there.
+whose base URL is injected per environment at ``window.js`` render time, attaching the user's access token
+from the identity provider to every request and signing the user out on a 401. In development it runs as a
+Vite dev server container; in a deployed hub it is static assets in an S3 bucket served through CloudFront —
+there is no UI container there.
 
 flip-api
 ========
@@ -105,8 +105,9 @@ half-ready hub:
    scheduler row per net;
 4. start the API server.
 
-When FastAPI starts it extends the browser CORS allowlist from the Cognito app client's callback URLs and
-starts the background scheduler below.
+When FastAPI starts it extends the browser CORS allowlist from the origins the identity provider registers
+(the Cognito app client's callback URLs; the Keycloak client's redirect URIs in development) and starts the
+background scheduler below.
 
 ********************
 Background scheduler
@@ -180,13 +181,16 @@ such credential; anything a client needs the hub to know goes through the server
 Authentication and authorisation
 ********************************
 
-Users authenticate with **Cognito**. ``flip-api`` verifies each access token's RS256 signature against the
-pool's JWKS, checks its expiry, issuer, ``token_use`` (ID tokens are rejected) and ``client_id``, and then —
-unless ``ENFORCE_MFA`` is switched off for local development — confirms the user has TOTP enrolled, so an
-administrator's MFA reset takes effect immediately rather than at the next token. Authorisation is
-role-based: roles and permissions are seeded rows, a user's roles are keyed by their Cognito identity, and
-per-resource checks decide who may see or change a project, model or cohort query. The matrix is on
-:ref:`rbac-roles`.
+Users authenticate with an **OIDC identity provider** selected by ``AUTH_BACKEND``: AWS Cognito in staging
+and production (the only value the production settings accept), Keycloak in local development. ``flip-api``
+verifies each access token with one generic verifier and a per-provider rule set: the RS256 signature against
+the provider's JWKS, expiry, issuer, the token type (ID tokens are rejected) and the audience or client id. It
+then — unless ``ENFORCE_MFA`` is switched off for local development — confirms the user has TOTP enrolled, so
+an administrator's MFA reset takes effect immediately rather than at the next token. User administration
+(invite, enable, disable, delete, MFA state) goes through the same provider seam, so a hub on another cloud
+adds a provider module rather than touching the routers. Authorisation is role-based: roles and permissions
+are seeded rows, a user's roles are keyed by their identity-provider subject, and per-resource checks decide
+who may see or change a project, model or cohort query. The matrix is on :ref:`rbac-roles`.
 
 Three further keys exist, each for one hop: the per-Trust API key (Trust → hub, above), the hub's internal
 service key (FL server → hub, above) and the per-Trust internal service key that never reaches the hub at
@@ -212,8 +216,10 @@ Email
 The application's own emails (access-request notifications, XNAT credentials) go through
 ``send_templated_email``, which dispatches on ``EMAIL_BACKEND``: ``ses`` in staging and production,
 ``console`` — log the would-be message, with secret-shaped fields redacted — by default in development, so a
-local stack needs no SES identity. Cognito sends its own invitations and password-reset codes independently
-of either.
+local stack needs no SES identity. The identity provider sends its own invitations and password-reset codes
+independently of either: Cognito from the user pool in staging and production, whereas the development
+Keycloak has no mail server, so a newly registered user is given the shared dev password
+(``ADMIN_USER_PASSWORD``) as a temporary one instead, and changes it at first sign-in.
 
 ***************
 Further reading
