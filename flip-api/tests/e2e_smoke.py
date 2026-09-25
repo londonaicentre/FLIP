@@ -431,6 +431,42 @@ def wait_for_trusts_responded(
     )
 
 
+def current_user_id(client: requests.Session, headers: dict[str, str]) -> str:
+    """The authenticated caller's own user id (``GET /users/me``)."""
+    return _ensure_ok(_get(client, "/users/me", headers), "read own profile").json()["id"]
+
+
+def ensure_trust_owners(client: requests.Session, headers: dict[str, str], trusts: list[dict[str, Any]]) -> None:
+    """Give every listed trust an owner, using the caller's own admin authority.
+
+    Approving a project is a site decision (FLIP#1258): ``CAN_APPROVE_FOR_TRUST`` is required
+    *at each trust named in the payload*, and no role carries it platform-wide. On a fresh
+    stack nobody holds it anywhere — ``register-trusts.sh`` writes no ``user_role`` rows, and
+    the continuity migration covers only trusts that existed when it ran — so the approve step
+    below would 403 on every newly stood-up dev/stag stack, and on a trust registered after
+    the upgrade. The bootstrap exemption in ``POST /admin/trusts/{id}/owners`` exists for
+    precisely that case: a hub admin may appoint a trust's *first* owner while it has none.
+
+    Idempotent in both directions. On a trust the caller already owns — every trust on a
+    deployment the continuity migration has been applied to, since it grants admins ownership —
+    the POST returns the existing grant. A 403 means the trust has an owner the caller is not,
+    which is a governance fact rather than a bootstrap failure, so it is reported and left
+    alone: the approve step is where that surfaces, with the trust named.
+    """
+    caller = current_user_id(client, headers)
+    for trust in trusts:
+        label = trust.get("code") or trust["name"]
+        response = _post(client, f"/admin/trusts/{trust['id']}/owners", {"user_id": caller}, headers)
+        if response.status_code < 300:
+            _log(f"  👤 {label}: approval authority held at the site")
+        elif response.status_code == 403:
+            _log(f"  ⚠️  {label}: owned by someone else — approve will 403 unless they act for it")
+        else:
+            raise SmokeFailure(
+                f"bootstrapping a Trust Owner for {label} failed with HTTP {response.status_code}: {response.text}"
+            )
+
+
 def stage_and_approve(
     client: requests.Session, headers: dict[str, str], project_id: str, trusts_selection: str | None = None
 ) -> list[dict[str, Any]]:
@@ -442,6 +478,11 @@ def stage_and_approve(
     trusts = select_trusts(trusts, trusts_selection)
     if trusts_selection:
         _log(f"  🎯 --trusts selection: {[t.get('code') or t['name'] for t in trusts]}")
+
+    # Before the cohort wait: a site with no owner cannot approve, and that is true of every
+    # trust on a fresh stack. See ``ensure_trust_owners``.
+    _log("🔑 Ensuring each trust has an owner (approval is a site decision, FLIP#1258)")
+    ensure_trust_owners(client, headers, trusts)
 
     wait_for_trusts_responded(
         client, headers, project_id, required_trust_ids={str(t["id"]) for t in trusts}

@@ -629,6 +629,13 @@ def main(argv: list[str] | None = None) -> int:
         client, headers, project_id, timeout_s=args.cohort_timeout, required_trust_ids=required_trust_ids
     )
 
+    # Off-camera: give each trust an owner before segment 2 approves. Approving is a site
+    # decision (FLIP#1258), so the admin in segment 2 needs CAN_APPROVE_FOR_TRUST at every
+    # trust; a freshly registered trust has no owner, and the continuity migration only
+    # covers trusts that existed at upgrade time. See ``ensure_trust_owners``.
+    _log("🔑 Ensuring each trust has an owner (approval is a site decision, FLIP#1258)")
+    e2e_smoke.ensure_trust_owners(client, headers, trusts)
+
     # ── Segment 2: admin checks connection status, stages + approves ──────
     if args.from_segment <= 2:
         run_segment(

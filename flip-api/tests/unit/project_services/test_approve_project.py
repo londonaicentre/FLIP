@@ -50,9 +50,9 @@ def mock_staged_project():
 @patch("flip_api.project_services.approve_project.logger")
 @patch("flip_api.project_services.approve_project.get_trusts")
 @patch("flip_api.project_services.approve_project.approve_project", return_value=True)
-@patch("flip_api.project_services.approve_project.has_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=True)
 def test_approve_project_endpoint_success(
-    mock_has_permissions,
+    mock_has_trust_permissions,
     mock_approve_project,  # This is the approve_project function
     mock_get_trusts,  # This is the get_trusts function
     mock_logger,
@@ -75,7 +75,12 @@ def test_approve_project_endpoint_success(
     )
 
     # Assert
-    mock_has_permissions.assert_called_once_with(TEST_USER_ID, [PermissionRef.CAN_APPROVE_PROJECTS], mock_db_session)
+    # Authority is checked against EACH trust named in the payload, never once globally.
+    assert mock_has_trust_permissions.call_count == len(TEST_TRUST_IDS)
+    assert [call.args[2] for call in mock_has_trust_permissions.call_args_list] == TEST_TRUST_IDS
+    for call in mock_has_trust_permissions.call_args_list:
+        assert call.args[0] == TEST_USER_ID
+        assert call.args[1] == [PermissionRef.CAN_APPROVE_FOR_TRUST]
 
     mock_db_session.get.assert_called_once_with(Projects, TEST_PROJECT_ID)
     mock_approve_project.assert_called_once()
@@ -85,10 +90,10 @@ def test_approve_project_endpoint_success(
 
 
 @patch("flip_api.project_services.approve_project.logger")
-@patch("flip_api.project_services.approve_project.has_permissions")
-def test_approve_project_endpoint_no_permission(mock_has_permissions, mock_logger, mock_db_session, mock_payload):
+@patch("flip_api.project_services.approve_project.has_trust_permissions")
+def test_approve_project_endpoint_no_permission(mock_has_trust_permissions, mock_logger, mock_db_session, mock_payload):
     # Arrange
-    mock_has_permissions.return_value = False
+    mock_has_trust_permissions.return_value = False
 
     # Act & Assert
     with pytest.raises(HTTPException) as exc_info:
@@ -101,16 +106,130 @@ def test_approve_project_endpoint_no_permission(mock_has_permissions, mock_logge
 
     assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
     assert f"User with ID: {TEST_USER_ID} was unable to approve this project" == exc_info.value.detail
-    mock_has_permissions.assert_called_once_with(TEST_USER_ID, [PermissionRef.CAN_APPROVE_PROJECTS], mock_db_session)
-    mock_logger.error.assert_called_once_with(
-        f"User {TEST_USER_ID} does not have permission to approve project {TEST_PROJECT_ID}."
-    )
+    # Every trust was checked, and every check asked for the TRUST-SCOPED permission — the
+    # global CAN_APPROVE_PROJECTS is no longer consulted anywhere on this path.
+    assert mock_has_trust_permissions.call_count == len(TEST_TRUST_IDS)
+    assert [call.args[2] for call in mock_has_trust_permissions.call_args_list] == TEST_TRUST_IDS
+    for call in mock_has_trust_permissions.call_args_list:
+        assert call.args[0] == TEST_USER_ID
+        assert call.args[1] == [PermissionRef.CAN_APPROVE_FOR_TRUST]
+    # The response body names no trust; which trusts the caller lacks authority over is
+    # federation topology, and echoing it would make this endpoint a role-probe.
+    for trust_id in TEST_TRUST_IDS:
+        assert str(trust_id) not in str(exc_info.value.detail)
+    mock_logger.error.assert_called_once()
+    assert "CAN_APPROVE_FOR_TRUST" in mock_logger.error.call_args.args[0]
 
 
 @patch("flip_api.project_services.approve_project.logger")
-@patch("flip_api.project_services.approve_project.has_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.get_trusts")
+@patch("flip_api.project_services.approve_project.approve_project", return_value=True)
+@patch("flip_api.project_services.approve_project.has_trust_permissions")
+def test_partial_authority_approves_nothing(
+    mock_has_trust_permissions,
+    mock_approve_project,
+    mock_get_trusts,
+    mock_logger,
+    mock_db_session,
+    mock_payload,
+    mock_staged_project,
+):
+    """Authority at SOME of the named trusts is not enough — the call must approve none.
+
+    This is the load-bearing property of site-scoped approval and the reason the check is
+    done for the whole list before anything is written. If a partial list were approved,
+    the caller would receive a success for a request only partly carried out, and the
+    trusts they hold no authority over would have been approved anyway — by someone else's
+    signature. `approve_project` commits the set in one transaction, so the refusal has to
+    happen before it is reached.
+    """
+    mock_db_session.get.return_value = mock_staged_project
+    # Authority over the first trust only.
+    mock_has_trust_permissions.side_effect = [True, False]
+
+    with pytest.raises(HTTPException) as exc_info:
+        approve_project_endpoint(
+            project_id=TEST_PROJECT_ID,
+            payload=mock_payload,
+            user_id=TEST_USER_ID,
+            db=mock_db_session,
+        )
+
+    assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+    # Nothing was written, and the refusal came before the approval transaction.
+    mock_approve_project.assert_not_called()
+    mock_get_trusts.assert_not_called()
+
+
+@patch("flip_api.project_services.approve_project.logger")
+@patch("flip_api.project_services.approve_project.get_trusts")
+@patch("flip_api.project_services.approve_project.approve_project", return_value=True)
+@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=True)
+def test_every_named_trust_is_authorised_at_that_trust(
+    mock_has_trust_permissions,
+    mock_approve_project,
+    mock_get_trusts,
+    mock_logger,
+    mock_db_session,
+    mock_payload,
+    mock_staged_project,
+):
+    """The trust id passed to the check must be the payload's, one call each.
+
+    Guards the failure mode where a loop variable or the project id is passed by mistake:
+    the endpoint would then ask about the wrong trust and could grant authority over a
+    trust the caller holds none for.
+    """
+    mock_db_session.get.return_value = mock_staged_project
+    mock_get_trusts.return_value = []
+
+    approve_project_endpoint(
+        project_id=TEST_PROJECT_ID,
+        payload=mock_payload,
+        user_id=TEST_USER_ID,
+        db=mock_db_session,
+    )
+
+    assert [call.args[2] for call in mock_has_trust_permissions.call_args_list] == TEST_TRUST_IDS
+
+
+@patch("flip_api.project_services.approve_project.logger")
+@patch("flip_api.project_services.approve_project.get_trusts")
+@patch("flip_api.project_services.approve_project.approve_project", return_value=True)
+def test_empty_trust_list_denies_rather_than_fails_open(
+    mock_approve_project,
+    mock_get_trusts,
+    mock_logger,
+    mock_db_session,
+    mock_staged_project,
+):
+    """An empty payload must NOT be treated as "no trust needs authorising".
+
+    `all()` over an empty sequence is True, and any implementation that reads as "deny if
+    any named trust is unauthorised" passes vacuously here. The endpoint is therefore
+    written to require authority at every named trust, and an empty list has none to
+    satisfy — the same fail-open trap that `has_permissions([])` has.
+    """
+    mock_db_session.get.return_value = mock_staged_project
+    empty_payload = MagicMock(spec=ApproveProjectBodyPayload)
+    empty_payload.trusts = []
+
+    with pytest.raises(HTTPException) as exc_info:
+        approve_project_endpoint(
+            project_id=TEST_PROJECT_ID,
+            payload=empty_payload,
+            user_id=TEST_USER_ID,
+            db=mock_db_session,
+        )
+
+    assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+    mock_approve_project.assert_not_called()
+
+
+@patch("flip_api.project_services.approve_project.logger")
+@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=True)
 def test_approve_project_endpoint_project_not_found(
-    mock_has_permissions,  # Patched with return_value=True
+    mock_has_trust_permissions,  # Patched with return_value=True
     mock_logger,
     mock_db_session,
     mock_payload,
@@ -134,9 +253,9 @@ def test_approve_project_endpoint_project_not_found(
 
 
 @patch("flip_api.project_services.approve_project.logger")
-@patch("flip_api.project_services.approve_project.has_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=True)
 def test_approve_project_endpoint_project_not_staged(
-    mock_has_permissions,
+    mock_has_trust_permissions,
     mock_logger,
     mock_db_session,
     mock_payload,
@@ -163,9 +282,9 @@ def test_approve_project_endpoint_project_not_staged(
 @patch("flip_api.project_services.approve_project.logger")
 @patch("flip_api.project_services.approve_project.get_trusts")
 @patch("flip_api.project_services.approve_project.approve_project")
-@patch("flip_api.project_services.approve_project.has_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=True)
 def test_approve_project_endpoint_commit_status_fails(
-    mock_has_permissions,
+    mock_has_trust_permissions,
     mock_approve_project,  # This is the approve_project function
     mock_get_trusts,  # This is the get_trusts function
     mock_logger,
@@ -196,9 +315,9 @@ def test_approve_project_endpoint_commit_status_fails(
 @patch("flip_api.project_services.approve_project.logger")
 @patch("flip_api.project_services.approve_project.get_trusts")
 @patch("flip_api.project_services.approve_project.approve_project", return_value=True)
-@patch("flip_api.project_services.approve_project.has_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=True)
 def test_approve_project_endpoint_fetch_trusts_exec_fails(
-    mock_has_permissions,
+    mock_has_trust_permissions,
     mock_approve_project,  # This is the approve_project function
     mock_get_trusts,  # This is the get_trusts function
     mock_logger,

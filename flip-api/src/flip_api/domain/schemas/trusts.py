@@ -10,6 +10,8 @@
 # limitations under the License.
 #
 
+from uuid import UUID
+
 from pydantic import BaseModel, Field
 
 from flip_api.domain.schemas.types import TrimStr
@@ -17,3 +19,22 @@ from flip_api.domain.schemas.types import TrimStr
 
 class UpdateTrustStatusSchema(BaseModel):
     fl_client_endpoint: TrimStr = Field(..., description="'fl_client_endpoint' is required")
+
+
+class TrustOwner(BaseModel):
+    """One holder of trust authority at a trust (FLIP#1258).
+
+    ``name`` and ``organisation`` come from the user's own profile and are UNTRUSTED
+    content — rendered via Vue ``{{ }}`` interpolation, which escapes by default. Treat
+    them like ``UserProfile`` fields if they are ever exported or rendered as HTML.
+    """
+
+    user_id: UUID
+    name: str = ""
+    organisation: str = ""
+
+
+class AddTrustOwner(BaseModel):
+    """Body of ``POST /admin/trusts/{trust_id}/owners`` — which user to make an owner."""
+
+    user_id: UUID = Field(..., description="Cognito sub of the user to become a Trust Owner")

@@ -95,7 +95,8 @@ async def approve_project_step_function_endpoint(
         # FLIP#1071: read the project's kind before approval commits, so the fan-out decision below
         # needs no post-commit round-trip (a DB blip there would report "failed to approve" on a
         # project that IS approved). Deliberately NOT a 404 here: this route only authenticates
-        # (verify_token) — CAN_APPROVE_PROJECTS is checked inside approve_project_endpoint — so
+        # (verify_token) — CAN_APPROVE_FOR_TRUST is checked per trust inside
+        # approve_project_endpoint — so
         # refusing a missing row first would tell a caller without that permission whether a project
         # exists (404) or not (403). A missing row falls through to approve_project_endpoint, which
         # checks the permission before it 404s, and never reaches the fan-out either way.
