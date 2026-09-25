@@ -281,7 +281,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115.11" },
-    { name = "flwr", specifier = ">=1.36.0" },
+    { name = "flwr", specifier = ">=1.38.0" },
     { name = "pydantic", specifier = ">=2.11.0" },
     { name = "pydantic-settings", specifier = ">=2.11.0" },
     { name = "tomlkit", specifier = ">=0.14.0" },
@@ -302,7 +302,7 @@ dev = [
 
 [[package]]
 name = "flwr"
-version = "1.36.0"
+version = "1.38.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "alembic" },
@@ -330,9 +330,9 @@ dependencies = [
     { name = "uv" },
     { name = "uvicorn", extra = ["standard"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/87/90/00a44e2c351c40b4c0db633de89e06de715cb70ecd343fc40186a1411671/flwr-1.36.0.tar.gz", hash = "sha256:e3bba2725541edd249cb1ec955f25f54452fd8d9745acfecc2a84b87b8785506", size = 650032, upload-time = "2026-09-01T13:43:56.024Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/32/ae/0a794117ef13bdf9bba93f721cfde464c24fe042b885269ec006fecde987/flwr-1.38.0.tar.gz", hash = "sha256:26c9c34139e0176e64d2a880e63d6277f984c1cb9e86c3676ecc9836b7b47508", size = 683703, upload-time = "2026-09-22T16:16:53.234Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5e/5f/2c5787bb3d5b49e046e794f403d818a721a9d27faf4a5bb7f5cb55d52570/flwr-1.36.0-py3-none-any.whl", hash = "sha256:09627ef5cb3cec390e66be7f0a694df72c096ff6a009fdb154275b474aef51cc", size = 1146013, upload-time = "2026-09-01T13:43:54.596Z" },
+    { url = "https://files.pythonhosted.org/packages/52/f2/27e4cab1b06d49e56f266d564910a71cd6baffe5f386dfa321621a28b6e6/flwr-1.38.0-py3-none-any.whl", hash = "sha256:8874af1fb0319dd418d8ce637e427f7c95497eb0f9984d8df1671888f7bb47f0", size = 1188776, upload-time = "2026-09-22T16:16:54.659Z" },
 ]
 
 [[package]]
