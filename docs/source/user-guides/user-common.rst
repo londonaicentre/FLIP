@@ -570,6 +570,8 @@ When model files have been uploaded, you will then need to confirm that the data
 
 On the right-hand side of the page a window will also pop up to provided detailed status updates i.e., with date and time stamps, against each activity. The status messages show the scheduling activities, including queuing, *net* assignment, training in progress and training complete.
 
+If the training run fails before it can report anything itself — an error at import time in your app is the usual cause — the platform notices within about a minute: the model moves to ``ERROR`` and a ``Training failed`` entry appears in the same feed, leading with the reported cause and followed by the end of the run's own log, so the failing file and line can be read here without help from the platform team. How that works, and where the full log is when the entry says it could not be retrieved, is described on the :ref:`FL nets component page <flip-fl-nets>`.
+
 .. figure:: ../assets/generated/gifs/flip/initiate-training.gif
    :width: 600
    :align: center

@@ -99,12 +99,19 @@ class IJobResponse(BaseModel):
     trust_ids: list[UUID]
 
 
+# Cap on the ``status_details`` headline, matching fl-api-flower's own bound on what it sends.
+MAX_STATUS_DETAILS_CHARS = 500
+# `flwr ls` writes this literal for a run with nothing to say; an adapter that passes it
+# through must not put "N/A" in the activity feed as though it were a cause.
+_NO_STATUS_DETAILS = "N/A"
+
+
 class IJobMetaData(BaseModel):
     """Job metadata as returned by an FL-API adapter's ``GET /list_jobs``.
 
     The shared job-metadata contract (GitHub issue #490). flip-api correlates
     ``model_id`` <-> ``job_id`` in its own ``fl_job`` table, so the contract carries
-    only ``job_id`` + ``status``.
+    ``job_id`` + ``status``, plus the optional ``status_details`` one-liner below.
 
     ``job_id`` is the backend-assigned identifier, treated as an opaque string the hub never
     parses: a UUID-like string for NVFLARE, a stringified integer run-id for Flower. It is
@@ -115,6 +122,32 @@ class IJobMetaData(BaseModel):
 
     job_id: str
     status: FLJobStatus
+    # The backend's own one-line explanation of ``status``, when it has one. Optional and
+    # defaulted so an FL API predating the field still validates -- and so the hub reads it
+    # the same way on both backends: Flower fills it from `flwr ls`'s `status-details` (for a
+    # failed run, the ServerApp's exception message, prefixed `ServerApp failed with
+    # exception:`), NVFLARE has no equivalent native field and always leaves it None. Never
+    # load-bearing: it is diagnostic text for the activity feed, never an input to a status
+    # decision.
+    status_details: str | None = None
+
+    @field_validator("status_details", mode="before")
+    @classmethod
+    def normalise_status_details(cls, value: object) -> str | None:
+        """Hold the headline to the shape the feed expects, whichever adapter sent it.
+
+        The Flower adapter already collapses whitespace, drops flwr's literal ``"N/A"`` and
+        bounds the text at ``MAX_STATUS_DETAILS_CHARS``; the hub stores it into a UI-visible
+        row, so it applies the same three rules again rather than trusting every adapter,
+        present and future, to. (Secret masking stays adapter-side: the adapter is the one
+        that knows what its container holds.)
+        """
+        if not isinstance(value, str):
+            return None
+        collapsed = " ".join(value.split())
+        if not collapsed or collapsed == _NO_STATUS_DETAILS:
+            return None
+        return collapsed[:MAX_STATUS_DETAILS_CHARS]
 
 
 class IRequiredTrainingInformation(BaseModel):

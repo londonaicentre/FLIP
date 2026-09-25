@@ -258,3 +258,19 @@ Auth, email, and the model-file upload/scan pipeline. The cross-cutting keys
 - `PICKLESCAN_FILE_SUFFIXES` / `PICKLESCAN_TIMEOUT_SECONDS` — which uploads get a structural picklescan before promotion (default `.pt .pth .pkl .pickle`) and the wall-clock cap per scan (default 120s). Dangerous globals mark the file `INFECTED` and delete the object; a scan that errors or times out fails closed to `ERROR`. Signature-based AV (GuardDuty Malware Protection for S3) is tracked separately in FLIP#838.
 - `BANDIT_TIMEOUT_SECONDS` — wall-clock cap (default 60s) on the non-blocking Bandit pass over `.py` uploads (FLIP#877, GHSA-8465). Unlike `PICKLESCAN_TIMEOUT_SECONDS` a timeout here just means no findings are recorded (fail-open, never `ERROR`) — Bandit is advisory only and never gates promotion. Findings land on `UploadedFiles.bandit_findings` (`[]` = scanned clean, `NULL` = never scanned) and surface in the UI as an amber indicator. `bandit` is a dependency baked into the `flip-api` image, not the mounted `src/`: under the dev pull-by-default sourcing above, running without `BUILD=true` after picking up this dependency serves an image with no `bandit` binary, so every upload silently records `NULL` findings while the UI and docs still claim a scan ran.
 - `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE` — how often (minutes, default 1) the sweep re-checks uploads left `SCANNING` by an app restart mid-scan.
+- `SCHEDULER_FL_JOB_RECONCILE_RATE` / `FL_JOB_UNLISTED_GRACE_MINUTES` / `FLOWER_RUN_LOG_MAX_CHARS` — how often
+  (minutes, default 1) the hub asks each net's FL API whether an in-flight job has failed, how long (default 30 min)
+  a job may go unlisted by its backend before it is treated as dead (SuperLink run state is in-memory, so a restart
+  forgets every run), and the cap (default 8000 chars) on the run-log tail `fl-api-flower`'s `GET /run_logs/{run_id}`
+  returns. Nothing reports a run that dies *after* submission (an ImportError at ServerApp module scope, say) — the
+  model would otherwise sit at `INITIATED` forever — so the sweep (`flip_api/fl_services/reconcile_failed_jobs.py`)
+  polls for it, moves the model to `ERROR` and stores the log tail on the activity feed. `FAILED`, out-of-band
+  `STOPPED` (the job still `IN_PROGRESS` — the platform's own Stop dequeues the job before stopping the run, so
+  the two are distinguishable) and unlisted-past-grace act; `FINISHED` is left to the run's own `RESULTS_UPLOADED`
+  callback (logged past the grace), and `UNKNOWN` (an unmapped native status — the shared #490 contract's sixth
+  value, never guessed into FAILED) is a no-op, logged. A retried model's dead older job only frees its net; a
+  model already terminal whose job/net release never committed is released without a poll. The hub validates
+  only the `/list_jobs` entry it asked about, so one foreign entry cannot block a net. Covers the server side of
+  a run only — a ClientApp / fl-client executor dying at a trust logs at that trust (FLIP#1001). `flwr log`
+  exits 0 with empty stdout on an unknown run or a SuperLink deadline; `fl-api-flower` turns those into 404/502
+  rather than a 200-empty the hub would misreport as "could not be retrieved".
