@@ -481,8 +481,10 @@ accounts"). Full detail: [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS
 `trust_data_access_api`, `omop_db`) auto-publish to GHCR only after their service's test workflow
 passes on `develop` or `main`** — they trigger via `workflow_run` and a job-level `if` gates on
 success, so a red test suite never publishes. Path filtering is inherited from the test workflow, so a
-build still only fires when that service changed. (`orthanc` and `xnat_*` keep their direct push
-trigger, having no separate test workflow; `orthanc` runs an in-job auth smoke test instead. `flip-ui`
+build still only fires when that service changed. (`orthanc`, `xnat_*` and `monailabel` keep their direct push
+trigger, having no separate test workflow; `orthanc` runs an in-job auth smoke test instead, and
+`monailabel` an in-job import smoke after reclaiming runner disk — its image is ~10.4 GB against
+ubuntu-latest's ~14 GB free. `flip-ui`
 is a CI smoke test that never publishes — it is rebuilt locally by `make deploy-ui` and never consumed
 from GHCR; the rest are.) Every publish also pushes an immutable **`sha-<short7>`** tag that
 hub ECS deploys pin — see
