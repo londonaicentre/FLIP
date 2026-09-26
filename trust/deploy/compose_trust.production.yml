@@ -166,6 +166,18 @@ services:
       # kit file to release less. The `:-10` keeps an unset variable from arriving as an
       # empty string, which pydantic would reject against `int`.
       COHORT_QUERY_THRESHOLD: ${COHORT_QUERY_THRESHOLD:-10}
+      # The trust's governance document (FLIP#1259). Optional: unset means the platform
+      # defaults apply and only COHORT_QUERY_THRESHOLD above is in force. Points at the
+      # read-only mount below, not the host path, since the service resolves it inside
+      # the container. Policy may only tighten — a document that lowers the threshold is
+      # rejected and the service refuses to start.
+      ACCESS_POLICY_FILE: ${ACCESS_POLICY_FILE:+/app/governance.toml}
+      ACCESS_POLICY: ${ACCESS_POLICY:-}
+    volumes:
+      # Read-only: the service must never be able to rewrite its own policy. When
+      # ACCESS_POLICY_FILE is unset the example is mounted but the env var above is
+      # empty, so nothing reads it — compose needs a valid source path either way.
+      - ${ACCESS_POLICY_FILE:-./governance.example.toml}:/app/governance.toml:ro
 
   trust-api:
     image: ghcr.io/londonaicentre/trust-api:${DOCKER_TAG}

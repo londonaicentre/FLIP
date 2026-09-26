@@ -173,6 +173,62 @@ def test_render_override_kit_host_path_ignores_blank_fl_kit_dir():
     assert "\nflClient:\n  kitHostPath: /opt/flip/fl-kit\n" in out
 
 
+def test_render_override_embeds_the_governance_document(tmp_path):
+    """The kit's ACCESS_POLICY_FILE names a path on the deploy host; the chart needs the
+    document ITSELF (it is rendered into a ConfigMap and mounted read-only — a host path
+    means nothing inside a pod). Relative paths resolve against the trust tree, which is
+    what the Compose stack's --project-directory trust does for its own mount of the same
+    file. Anchored on the block scalar's indentation, because the nesting is the meaning:
+    a document emitted a level deeper would still be readable YAML and would silently
+    become an empty string."""
+    (tmp_path / "policies").mkdir()
+    (tmp_path / "policies" / "governance.Trust_K8s.toml").write_text(
+        "[disclosure]\nmin_cohort_size = 25\n\n[fl_privacy]\npolicy = \"percentile\"\n"
+    )
+    kit = {**_FL_KIT, "ACCESS_POLICY_FILE": "policies/governance.Trust_K8s.toml"}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2", trust_dir=tmp_path)
+
+    assert (
+        "\ngovernance:\n  document: |\n"
+        '    [disclosure]\n    min_cohort_size = 25\n\n    [fl_privacy]\n    policy = "percentile"\n'
+    ) in out
+
+
+def test_render_override_accepts_an_absolute_governance_path(tmp_path):
+    """An operator who pointed ACCESS_POLICY_FILE at an absolute path gets that file —
+    resolving it against the trust tree would append a relative path to it and read
+    something else entirely."""
+    document = tmp_path / "governance.toml"
+    document.write_text("[access.rule]\nid = \"x\"\n")
+    kit = {**_FL_KIT, "ACCESS_POLICY_FILE": str(document)}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2", trust_dir=tmp_path / "elsewhere")
+
+    assert '\n    id = "x"\n' in out
+
+
+def test_render_override_fails_loudly_on_an_unreadable_governance_document(tmp_path):
+    """A document named but not readable must stop the sync, not be skipped: the release
+    would otherwise install clean, mount nothing, and enforce the platform defaults the
+    operator believes their rules replaced — the silent-ignore defect this whole feature
+    exists to remove."""
+    kit = {**_FL_KIT, "ACCESS_POLICY_FILE": "governance.Missing.toml"}
+
+    with pytest.raises(sync_k8s_kit.GovernanceDocumentError) as excinfo:
+        sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2", trust_dir=tmp_path)
+
+    assert "ACCESS_POLICY_FILE" in str(excinfo.value)
+    assert "governance.Missing.toml" in str(excinfo.value)
+
+
+def test_render_override_omits_governance_without_the_kit_variable():
+    """No ACCESS_POLICY_FILE in the kit ⇒ no governance block, leaving the chart's empty
+    default in place (an unconditional `document:` would deploy the empty string as a
+    document and mount a file the services then refuse to parse)."""
+    out = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
+
+    assert "governance" not in out
+    assert "document:" not in out
+
 
 # ── Helm Secret ownership ────────────────────────────────────────────────
 # The Helm Secret-ownership stamping in sync_k8s_kit.py

@@ -33,9 +33,11 @@ This script reads that kit file and:
      infrastructure secrets (XNAT / OMOP / S3) created by the chart untouched.
   2. Writes a Helm values override (``k8s-trust-<CODE>.yaml``) carrying the
      non-secret, deployment-specific settings the chart needs: the hub URL,
-     FL backend, AWS region, the fl-client kit S3 bucket, and the FL kit slot
+     FL backend, AWS region, the fl-client kit S3 bucket, the FL kit slot
      (so the NVFLARE kit path resolves to the slot the hub assigned, not the
-     cosmetic trust name).
+     cosmetic trust name) and — when the kit names one — the trust's governance
+     document (FLIP#1259), read from its ``ACCESS_POLICY_FILE`` and embedded
+     whole (a path on the deploy host means nothing inside a pod).
 
 The plaintext keys are never written to disk — they go straight from the kit
 file into the Kubernetes Secret over kubectl's TLS channel. The generated
@@ -112,6 +114,10 @@ KUBECTL: list[str] = ["kubectl"]
 
 #: An immutable, pullable image tag — a release or a CI sha tag (scripts/site_upgrade.py).
 IMMUTABLE_IMAGE_TAG = re.compile(r"^(?:v\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?|sha-[0-9a-f]{7})$")
+
+
+class GovernanceDocumentError(RuntimeError):
+    """The governance document the kit names at ``ACCESS_POLICY_FILE`` could not be read."""
 
 
 def _kubectl_ns(namespace: str) -> list[str]:
@@ -195,8 +201,23 @@ def build_secret_entries(kit: dict[str, str]) -> dict[str, str]:
     return entries
 
 
-def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
-    """Render the Helm values override (no secrets) from kit settings."""
+def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: Path | None = None) -> str:
+    """Render the Helm values override (no secrets) from kit settings.
+
+    Args:
+        kit: The trust's kit file as a mapping.
+        code: Trust CODE, used in the generated comments.
+        aws_region: AWS region for the S3-backed Jobs.
+        trust_dir: Directory a relative ``ACCESS_POLICY_FILE`` resolves against — the trust
+            tree, which is what Compose's ``--project-directory trust`` does for its own
+            mount of the same file. Only consulted when the kit names a document.
+
+    Returns:
+        str: The override file's contents.
+
+    Raises:
+        GovernanceDocumentError: If the kit names an ``ACCESS_POLICY_FILE`` that cannot be read.
+    """
     trust_name = kit.get("TRUST_NAME", code)
     slot = kit.get("FL_KIT_SLOT", "").strip()
     slot_number = kit.get("FL_KIT_SLOT_NUMBER", "").strip()
@@ -324,6 +345,29 @@ def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
             f"    - port: {fl_port}  # fl-client → fl-server gRPC (FL_SERVER_PORT)",
             "      protocol: TCP",
         ]
+
+    # The trust's governance document (FLIP#1259). The kit names a *path* — the same
+    # ACCESS_POLICY_FILE the Compose stack mounts — but a path on the deploy host means
+    # nothing inside a pod, so what travels is the document itself, which the chart renders
+    # into a read-only ConfigMap both the data-access-api and the fl-client pods mount. A
+    # relative path resolves against the trust tree, as Compose's --project-directory trust
+    # resolves its own mount. Unreadable is a hard error rather than an omission: the release
+    # would otherwise install clean and quietly keep the platform defaults the operator
+    # believes their rules replaced.
+    policy_ref = kit.get("ACCESS_POLICY_FILE", "").strip()
+    if policy_ref:
+        policy_path = Path(policy_ref)
+        if not policy_path.is_absolute():
+            policy_path = ((trust_dir or Path("trust")) / policy_path).resolve()
+        try:
+            document = policy_path.read_text()
+        except OSError as e:
+            raise GovernanceDocumentError(
+                f"ACCESS_POLICY_FILE={policy_ref!r} (resolved to {policy_path}) could not be read: {e}"
+            ) from None
+        lines += ["", f"# The governance document itself, read from {policy_ref}:", "governance:", "  document: |"]
+        lines += [f"    {line}" if line.strip() else "" for line in document.splitlines()]
+
     lines.append("")
     return "\n".join(lines)
 
@@ -383,7 +427,15 @@ def main(code: str, env: str, namespace: str, secret_name: str,
     if write_override:
         output_dir.mkdir(parents=True, exist_ok=True)
         override_path = output_dir / rel_override
-        override_path.write_text(render_override(kit, code, aws_region))
+        try:
+            override = render_override(kit, code, aws_region, trust_dir=repo_root / "trust")
+        except GovernanceDocumentError as e:
+            print(f"❌ {e}")
+            print("   A relative ACCESS_POLICY_FILE resolves against trust/, as the Compose stack's")
+            print("   --project-directory trust does; an absolute path is used as given. Fix the path,")
+            print("   or unset ACCESS_POLICY_FILE in the kit to deploy with no governance document.")
+            sys.exit(1)
+        override_path.write_text(override)
         print(f"  ✓ Wrote values override: {override_path}")
         print()
     else:

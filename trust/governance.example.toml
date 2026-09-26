@@ -1,0 +1,79 @@
+# Trust governance policy — worked example (FLIP#1259)
+#
+# Copy to trust/governance.<CODE>.toml, edit, point ACCESS_POLICY_FILE at it in your kit
+# file as ./governance.<CODE>.toml (a host path — compose resolves it against trust/), then:
+#
+#   make -C trust check-governance KIT=<CODE>    # validates both halves of this document
+#   make -C trust reload-governance KIT=<CODE>   # recreates the two services that read it
+#
+# reload-governance touches no data: it recreates data-access-api and the fl-clients, the
+# only two services that open this file, and nothing else. Do NOT apply a policy edit with
+# `up-trust` or `restart-trust` instead — both are first-install verbs, and applying either
+# to a live trust can destroy its data: up-trust's XNAT step runs xnat-reset (wiping the
+# XNAT archive and database) and its seeding step can replace the data volumes.
+#
+# This file is OPTIONAL. With no policy configured the platform defaults apply and
+# behaviour is unchanged — COHORT_QUERY_THRESHOLD and FL_SITE_PRIVACY_* remain the
+# only controls. Everything here can only make the trust's posture tighter.
+#
+# Validation is strict on purpose: an unknown key, a misspelt action, or a threshold
+# below the configured floor stops the service at startup rather than being ignored.
+# A silently-ignored access rule is worse than no rule, because the operator believes
+# it is in force.
+
+
+# ── Disclosure ────────────────────────────────────────────────────────────────
+# Trust-wide minimum cohort size. May RAISE the COHORT_QUERY_THRESHOLD set in the kit
+# file; a value below it is rejected (FLIP#870). Omit the section to keep the kit value.
+[disclosure]
+min_cohort_size = 25
+
+
+# ── Access ────────────────────────────────────────────────────────────────────
+# Rules over project + operation. Evaluated in document order, first match wins.
+#
+# Actions:
+#   cohort.statistics     aggregate statistics (/cohort)
+#   cohort.dataframe      row-level training data (/cohort/dataframe)
+#   cohort.accession_ids  imaging pointers for the PACS pull (/cohort/accession-ids)
+#
+# An action NO rule mentions keeps its existing behaviour — that is what makes partial
+# adoption possible. Once any rule names an action, a request for it that matches no
+# rule is denied.
+#
+# Rules cannot be written over users: the site plane authenticates callers with a
+# shared per-trust secret and no user identity reaches these services. "Two approvers
+# for paediatric data" is an approval-time concept and belongs with project approval,
+# not here.
+
+# Forbid raw row-level export entirely, for every project. The trust still contributes
+# to federated training through the FL client; it simply never hands out rows.
+[[access.rule]]
+id = "no-raw-export"
+action = "cohort.dataframe"
+effect = "deny"
+
+# Permit the imaging pull, but only for these projects, and only for cohorts of 50+.
+# min_cohort_size here raises the floor for this rule alone, above the 25 set above.
+[[access.rule]]
+id = "imaging-approved-projects"
+action = "cohort.accession_ids"
+effect = "permit"
+projects = [
+    "3f1c9a70-5e42-4d8b-9c31-7a2e6b4f8d15",
+    "9b7e2d48-1a36-4c92-8f05-6d3b1e7a4c28",
+]
+min_cohort_size = 50
+
+
+# ── FL privacy ────────────────────────────────────────────────────────────────
+# Read by the fl-client (flip.nvflare.site_policy), not by data-access-api. Mirrors the
+# FL_SITE_PRIVACY_* environment variables; when both are set this section wins and the
+# fl-client logs a warning at startup naming which source it used.
+#
+# The site filter runs BEFORE any filter the researcher's app configures and a job
+# cannot opt out or select a weaker scope.
+[fl_privacy]
+policy = "percentile"
+percentile = 10
+gamma = 0.01

@@ -16,6 +16,8 @@ from typing import Literal
 from pydantic import PositiveInt, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from data_access_api.policy import Policy, load_policy
+
 # The shipped disclosure floor. Referenced by both the field default and the empty-string
 # coercion validator below, so the two cannot drift apart.
 DEFAULT_COHORT_QUERY_THRESHOLD = 10
@@ -74,6 +76,16 @@ class Settings(BaseSettings):
             return DEFAULT_COHORT_QUERY_THRESHOLD
         return v
 
+    # Trust governance policy (FLIP#1259). The trust states its runtime access rules in a
+    # TOML document instead of having them compiled into this service. Exactly one source
+    # may be set; both is an error rather than a silent precedence rule. Unset means the
+    # platform defaults apply, which is today's behaviour byte for byte.
+    #
+    # Operator-owned (Host-local profile in the kit file), never hub-set: a hub admin able
+    # to write a trust's policy would defeat the purpose of having one.
+    ACCESS_POLICY_FILE: str = ""
+    ACCESS_POLICY: str = ""
+
     CACHE_TTL_DAYS: int = 60  # Number of days before cached query results expire
     CACHE_MAX_RESULT_ROWS: PositiveInt = 50_000  # Max rows per cached result; larger results skip caching
     CACHE_MAX_ENTRIES: PositiveInt = 64  # Max number of cached query results
@@ -123,3 +135,30 @@ def get_settings() -> Settings:
         Settings: An instance of the Settings class containing configuration values.
     """
     return _settings  # type: ignore
+
+
+# Eager load the governance policy once, at import, so an invalid document stops the
+# service at startup rather than at the first cohort query (FLIP#1259, AC 5). Same
+# fail-closed stance as the fl-client's site-policy renderer (#851): a policy that
+# cannot be understood must not leave the service running under the weaker built-in
+# defaults, because the operator believes their rules are in force.
+#
+# Not wrapped in try/except on purpose. AccessPolicyError propagating out of import is
+# exactly the desired behaviour — uvicorn exits non-zero and the container restarts and
+# fails again, loudly, instead of serving data under a policy nobody validated.
+_policy = load_policy(
+    inline=_settings.ACCESS_POLICY,
+    path=_settings.ACCESS_POLICY_FILE,
+    floor=_settings.COHORT_QUERY_THRESHOLD,
+)
+
+
+def get_policy() -> Policy | None:
+    """
+    Get the loaded trust governance policy.
+
+    Returns:
+        Policy | None: The validated policy, or ``None`` when the trust has configured
+        none — in which case the platform defaults apply and behaviour is unchanged.
+    """
+    return _policy

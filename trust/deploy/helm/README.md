@@ -301,6 +301,7 @@ PVCs explicitly if you want a clean slate.
 | `environment` | `production` | Deployment environment (production, stag, dev) |
 | `logLevel` | `INFO` | Log level for all services |
 | `flBackend` | `nvflare` | FL backend: `nvflare` or `flower` |
+| `governance.document` | `""` | The trust's governance policy document — the TOML itself, not a path (FLIP#1259). Empty = no document: the platform defaults apply and nothing is mounted. See [Trust governance policy](#trust-governance-policy-flip1259) |
 | `awsRegion` | `eu-west-2` | AWS region for S3 access |
 | `imagePullSecrets` | `[]` | Registry credentials for private images |
 | `namespace.create` | `true` | Whether to create the namespace |
@@ -377,6 +378,58 @@ loaded first so their imaging concepts resolve.
 | `secrets.create` | `false` | Whether the chart creates a Secret resource |
 | `secrets.existingName` | `flip-trust-secrets` | Name of existing Secret |
 | `secrets.data.*` | `""` | Secret key-value pairs (base64 encoded) |
+
+### Trust governance policy (FLIP#1259)
+
+A trust can state its whole runtime access policy in one optional TOML document instead of in the
+individual settings above. Three sections, each read by the service that enforces it:
+
+| Section | Read by | Effect |
+| ------- | ------- | ------ |
+| `[disclosure]` | data-access-api | `min_cohort_size` — may RAISE the kit's `COHORT_QUERY_THRESHOLD`, never lower it |
+| `[access]` | data-access-api | permit/deny rules over project + operation (`cohort.statistics`, `cohort.dataframe`, `cohort.accession_ids`) |
+| `[fl_privacy]` | fl-client (NVFLARE) | the site update-privacy filter — wins over `FL_SITE_PRIVACY_*`, and the client logs which source it used |
+
+The document is **optional and additive**. Left empty — the default — the platform defaults apply
+exactly as before: no ConfigMap, no volume, no mount, no env var, and a default install's pod specs
+are the ones they were before this value existed. [`../../governance.example.toml`](../../governance.example.toml)
+is a worked example of every section.
+
+**How it reaches the pods.** The value is the document *itself*, not a path — a path on the deploy
+host means nothing inside a pod. The chart renders it into a ConfigMap
+(`<release>-flip-trust-governance`) and mounts it **read-only** at `/app/governance.toml` in both
+the `data-access-api` and the fl-client pods, with `ACCESS_POLICY_FILE` pointing at that path. The
+same filename is what the Compose stack mounts, so one document reads identically on either
+deployment shape; the file is operator-owned, and the hub can neither set nor read it. Both pod
+templates carry a `checksum/governance` annotation of the rendered ConfigMap, so editing the
+document rolls the pods — a ConfigMap content change restarts nothing by itself.
+
+**To deploy one:**
+
+```sh
+# 1. Validate first: the services fail closed, so find a typo here rather than in a container that
+#    then refuses to come back up. Covers both halves, through the loaders the services themselves
+#    run ([disclosure]/[access] via data-access-api, [fl_privacy] via the fl-client's site_policy).
+make -C trust check-governance KIT=<CODE>
+
+# 2. Carry the document in your own values override, then upgrade. --set-file reads the file's
+#    contents into the value; a values override with a `governance:` block works too.
+helm upgrade --install trust-release ./trust/deploy/helm/ -n flip-trust \
+  --set-file governance.document=trust/governance.<CODE>.toml
+```
+
+`make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` carries it as well: the kit's
+`ACCESS_POLICY_FILE` (a path resolved against `trust/` — the same base Compose's
+`--project-directory trust` resolves its own mount against) is read and embedded as
+`governance.document` in the generated `k8s-trust-<CODE>.yaml`. A document the sync cannot read
+fails the sync by name, rather than deploying a release that quietly keeps the platform defaults the
+operator believes their rules replaced.
+
+Only a tighter policy is accepted: an unknown section or key, a misspelt action, or a
+`min_cohort_size` below the kit's floor stops the service at startup rather than being ignored. On a
+running trust that reads as a `data-access-api` pod that will not come back up, and as a crash-looping
+NVFLARE client whose log carries `[site-privacy] FATAL: ...` — see
+[TROUBLESHOOTING §8](TROUBLESHOOTING.md#8-trust-governance-policy-flip1259).
 
 ### Service-Specific Settings
 

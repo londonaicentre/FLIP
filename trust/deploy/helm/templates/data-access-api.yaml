@@ -51,6 +51,14 @@ spec:
       app.kubernetes.io/component: data-access-api
   template:
     metadata:
+      {{- if .Values.governance.document }}
+      annotations:
+        # Editing the governance document must roll this pod: a ConfigMap content change
+        # restarts nothing by itself, so without this hash data-access-api would keep
+        # serving the rules it read at container start. (templates/fl-client.yaml keeps
+        # FL_SITE_PRIVACY_* in the pod template for the same reason.)
+        checksum/governance: {{ include (print $.Template.BasePath "/governance-configmap.yaml") . | sha256sum }}
+      {{- end }}
       labels:
         {{- include "flip-trust.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: data-access-api
@@ -101,6 +109,23 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: trust-internal-service-key
+            {{- if .Values.governance.document }}
+            # The trust's governance document (FLIP#1259), mounted read-only below. Present
+            # only when governance.document is set: unset leaves this service on the
+            # platform defaults (COHORT_QUERY_THRESHOLD) exactly as it was before the feature.
+            - name: ACCESS_POLICY_FILE
+              value: /app/governance.toml
+            {{- end }}
+          {{- if .Values.governance.document }}
+          volumeMounts:
+            - name: governance
+              mountPath: /app/governance.toml
+              # subPath, not a directory mount: /app is the service's own tree, and a
+              # volume mounted over it would hide the code. Read-only because a service
+              # must never be able to rewrite its own policy.
+              subPath: governance.toml
+              readOnly: true
+          {{- end }}
           resources:
             {{- toYaml .Values.dataAccessApi.resources | nindent 12 }}
           livenessProbe:
@@ -117,6 +142,14 @@ spec:
             initialDelaySeconds: {{ .Values.dataAccessApi.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.dataAccessApi.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.dataAccessApi.probes.readiness.timeoutSeconds }}
+      {{- if .Values.governance.document }}
+      # /app/governance.toml is the filename the Compose stack mounts, so one document
+      # means the same thing on either deployment shape.
+      volumes:
+        - name: governance
+          configMap:
+            name: {{ include "flip-trust.fullname" . }}-governance
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service

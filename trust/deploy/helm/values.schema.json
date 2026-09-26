@@ -33,6 +33,17 @@
       "enum": ["nvflare", "flower"],
       "description": "FL backend selection"
     },
+    "governance": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "document": {
+          "type": "string",
+          "default": "",
+          "description": "The trust's governance policy document (TOML, FLIP#1259), carried inline and mounted read-only at /app/governance.toml in the data-access-api and fl-client pods. Empty (the default) = no document configured: the platform defaults apply and no ConfigMap, mount or env var is rendered"
+        }
+      }
+    },
     "namespace": {
       "type": "object",
       "additionalProperties": true,

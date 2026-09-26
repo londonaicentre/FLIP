@@ -41,6 +41,38 @@ uploadedFederatedDataBucket: ""
 # Supported values: "nvflare" | "flower"
 flBackend: "nvflare"
 
+# ---------------------------------------------------------------------------
+# Trust governance policy (FLIP#1259)
+# ---------------------------------------------------------------------------
+# This trust's own governance document, carried here as the TOML *document itself* (not a
+# path — a path on the deploy host means nothing inside a pod). Both services that enforce
+# a site policy read it: data-access-api reads [disclosure] and [access], the fl-client
+# reads [fl_privacy] (which wins over FL_SITE_PRIVACY_*, and the client logs the source it
+# used).
+#
+# Setting it is OPT-IN. Empty — the default — means the platform defaults apply exactly as
+# before (COHORT_QUERY_THRESHOLD and FL_SITE_PRIVACY_* only): no ConfigMap, no volume, no
+# mount, no env var, no checksum annotation — an install without it deploys the same
+# workloads it did before this value existed.
+#
+# Operator-owned: the hub can neither set nor read it. A policy can only TIGHTEN what the
+# platform allows — a document that lowers the cohort floor, names an unknown section/key,
+# or describes an invalid filter stops the service at startup rather than being ignored,
+# because a silently-ignored access rule is worse than no rule: the operator believes it is
+# in force.
+#
+# Put it in your own values override (or inline), then `helm upgrade`:
+#   --set-file governance.document=trust/governance.<CODE>.toml
+# Validate before deploying — both halves, through the services' own loaders:
+#   make -C trust check-governance KIT=<CODE>
+# (`make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` embeds the document from
+# the kit's ACCESS_POLICY_FILE for you, so a trust that already set it there needs no flag.)
+# The chart stores it in an operator-owned ConfigMap, mounts it read-only at
+# /app/governance.toml in the data-access-api and fl-client pods, and rolls them when the
+# document changes. See deploy/helm/README.md, "Trust governance policy".
+governance:
+  document: ""
+
 # Mock trust data (the public aicentreflip/trust-data dataset on Hugging Face). One value
 # covers both stores: a data version is a git TAG on that dataset (FLIP pins it in
 # trust/.data_version) and every artefact — the canonical OMOP tables omop-csv/<project>/

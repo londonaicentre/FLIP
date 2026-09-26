@@ -118,6 +118,55 @@ this env, leaving the rest of each trust stack up); the fl-client log then shows
 `[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-nets.rst`
 ("Site-enforced privacy policy").
 
+#### Trust governance policy (optional)
+
+The two controls above are the trust's runtime access policy, and both are single settings compiled
+into the services. A trust that wants to state them together — or to vary a rule by project — can
+write a governance document instead and point `ACCESS_POLICY_FILE` at it from the kit file. Start
+from [`governance.example.toml`](governance.example.toml), which is a worked example of every
+section.
+
+One file, three sections, each read by the service that enforces it:
+
+| Section | Read by | Replaces |
+|---|---|---|
+| `[disclosure]` | data-access-api | `COHORT_QUERY_THRESHOLD` (may raise it, never lower it) |
+| `[access]` | data-access-api | nothing — new: permit/deny rules over project + operation |
+| `[fl_privacy]` | fl-client | `FL_SITE_PRIVACY_*` (wins when both are set; the log names the source) |
+
+The document is **optional and additive**. Unset means the platform defaults apply and behaviour is
+exactly as before — the two variables above stay the only controls, so no existing trust has to
+change anything. Nothing here can weaken a trust's posture: `min_cohort_size` may only raise the
+threshold, and an action no rule mentions keeps its existing behaviour (which is what lets a trust
+adopt one rule without enumerating everything).
+
+Validation is strict and fails closed. An unknown key, a misspelt action, or a threshold below the
+kit's floor stops the service at startup rather than being ignored — a silently-dropped access rule
+is worse than no rule, because the operator believes it is in force. `check-governance` runs both
+halves through the loaders the services themselves use (data-access-api's for
+`[disclosure]`/`[access]`, the fl-client's own site-policy module for `[fl_privacy]`), so it cannot
+disagree with what the containers enforce — and the fl-client half can no longer pass here and then
+fail closed from a container that will not restart. Validate, then apply:
+
+```sh
+make -C trust check-governance KIT=<CODE>
+make -C trust reload-governance KIT=<CODE>
+```
+
+`reload-governance` is how an edit is applied: it recreates exactly the two services that read the
+document — data-access-api and the fl-clients — and touches no data. **Do not apply a policy change
+with `up-trust` or `restart-trust`**: both are first-install verbs, and on a live trust either can
+destroy data — `up-trust`'s XNAT step runs `xnat-reset`, wiping the XNAT archive and database, and
+its seeding step can replace the data volumes. Recreating the fl-clients does interrupt any job they
+are running, so apply between runs.
+
+The document is mounted read-only — a service can never rewrite its own policy — and is
+operator-owned: the hub cannot set, read, or override it. On Kubernetes the chart carries the same
+document as its `governance.document` value, mounted read-only into the same two pods (see
+[deploy/helm/README.md](deploy/helm/README.md)). A denied request is answered with the same fixed
+refusal as a below-threshold cohort, so a caller cannot use it to probe the trust's configuration;
+the rule id that caused the denial goes to the trust's own log.
+
 ### 3. Start the trust against the hub
 
 ```sh

@@ -72,6 +72,10 @@ services:
       - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/local:/app/local
       - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/startup:/app/startup
       - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/transfer:/app/transfer
+      # The governance document, read-only — a site must not rewrite its own privacy
+      # policy. Mounted whether or not one is configured; the env var below is what
+      # decides if it is read (compose needs a valid source path either way).
+      - ${ACCESS_POLICY_FILE:-./governance.example.toml}:/app/governance.toml:ro
     environment:
       - NET_ID=net-1
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
@@ -93,6 +97,10 @@ services:
       - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
       - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
       - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
+      # The trust's governance document (FLIP#1259). Its [fl_privacy] section is the same
+      # filter as the three variables above and WINS over them when both are set (the
+      # entrypoint logs which source it used). Unset = the variables above decide.
+      - ACCESS_POLICY_FILE=${ACCESS_POLICY_FILE:+/app/governance.toml}
     shm_size: '8gb'
     # GPU passthrough via compose_trust.production.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
 

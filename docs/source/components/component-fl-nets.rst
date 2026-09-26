@@ -492,6 +492,34 @@ Semantics — verified against NVFLARE 2.9.0:
   Flower backend; the app-level review of uploaded training code remains the control there (Flower parity is
   tracked in `FLIP#852 <https://github.com/londonaicentre/FLIP/issues/852>`__).
 
+Trust governance document (per trust)
+=====================================
+
+A trust can also state its policy as a **governance document** (``trust/governance.<CODE>.toml``,
+`FLIP#1259 <https://github.com/londonaicentre/FLIP/issues/1259>`__) and point ``ACCESS_POLICY_FILE``
+at it: one file, whose ``[fl_privacy]`` section is this renderer's input — it wins over
+``FL_SITE_PRIVACY_*`` when both are set, and the fl-client's log names the source it used — and
+whose ``[disclosure]``/``[access]`` sections carry ``COHORT_QUERY_THRESHOLD`` (which they may raise
+but never lower) and permit/deny rules over project and operation, enforced by ``data-access-api``
+(see :doc:`component-trust-apis`). The document is optional, and can only tighten a trust's posture:
+with none configured the settings above remain the only controls and behaviour is unchanged.
+``trust/governance.example.toml`` is a worked example of every key.
+
+``[fl_privacy]`` has no inline source — the renderer reads ``ACCESS_POLICY_FILE`` and nothing else —
+so an inline ``ACCESS_POLICY`` document that declares the section is refused by
+``make -C trust check-governance`` rather than applied without it. Validate and apply an edit to a
+live trust:
+
+.. code-block:: sh
+
+   make -C trust check-governance KIT=<CODE>    # both halves, through the services' own loaders
+   make -C trust reload-governance KIT=<CODE>   # recreates data-access-api + the fl-clients only
+
+``reload-governance`` touches no data. Deliberately not ``up-trust`` or ``restart-trust``: both are
+first-install verbs, and on a live trust their XNAT step runs ``xnat-reset`` (wiping the XNAT archive
+and database) while their seeding step can replace the data volumes. Recreating the fl-clients does
+interrupt any job they are running, so apply between runs.
+
 Flower: local differential privacy
 ==================================
 
