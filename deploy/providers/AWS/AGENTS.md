@@ -140,6 +140,12 @@ Things worth knowing before touching any of it:
   admitting the default branch would hand the production secrets to every workflow
   merged to develop. The nightly drift run reaches prod by dispatching itself onto
   `main` rather than by widening the policy.
+- **`TF_STAG_DISABLED=true` (repository variable) pauses the staging leg** of plan,
+  apply and drift, so a develop merge cannot rebuild a staging estate that has been
+  torn down; production never reads it. Set while the legacy staging account is
+  gone and `aws-stag` has not yet been repointed at LZA staging (`TF_PROD=lza-stag`);
+  delete it when the repoint lands. `.github/tests/workflows/test_terraform_stag_pause.py`
+  pins the three guards.
 - **Every IAM role this root owns carries a permissions boundary**
   (`var.iam_permissions_boundary_name`, the policy declared in `ci/`). The CI apply
   role may only create a role, or write an inline policy onto one, when the role

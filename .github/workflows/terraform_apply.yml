@@ -67,6 +67,12 @@ concurrency:
 jobs:
   apply:
     name: Apply (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
+    # Setting the repository variable TF_STAG_DISABLED=true pauses the staging
+    # leg of plan, apply and drift, so a develop merge cannot rebuild a staging
+    # estate that was torn down on purpose. It is a repository variable rather
+    # than an aws-stag one because a job-level `if` is evaluated before the job's
+    # environment is loaded. Production (main) never reads it.
+    if: github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true'
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'aws-prod' || 'aws-stag' }}
     permissions:

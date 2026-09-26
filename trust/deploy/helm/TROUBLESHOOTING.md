@@ -18,6 +18,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
    - [2.5 C-MOVE Testing from the DCMTK Pod](#25-c-move-testing-from-the-dcmtk-pod)
    - [2.6 Checking DICOM Connectivity](#26-checking-dicom-connectivity)
+   - [2.6a Exposing the DICOM Receiver to an External PACS (dicomService)](#26a-exposing-the-dicom-receiver-to-an-external-pacs-dicomservice)
    - [2.7 C-ECHO Passes, C-STORE Aborts (`AbstractMethodError` in dicom.log)](#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog)
 3. [OMOP Data Issues](#3-omop-data-issues)
 4. [Trust Registration and Heartbeat](#4-trust-registration-and-heartbeat)
@@ -448,12 +449,14 @@ dcmtk_pod=$(kubectl get pods -n flip-trust -l run=dcmtk -o jsonpath='{.items[0].
 # C-ECHO to Orthanc
 kubectl exec -n flip-trust "$dcmtk_pod" -- echoscu orthanc 4242
 
-# C-ECHO to XNAT (DICOM SCP on port 8104)
-kubectl exec -n flip-trust "$dcmtk_pod" -- echoscu xnat-web 8104
+# C-ECHO to XNAT (DICOM SCP on port 8104 — the xnat-web-dicom Service, not xnat-web,
+# which carries the web console only)
+kubectl exec -n flip-trust "$dcmtk_pod" -- echoscu xnat-web-dicom 8104
 ```
 
 Both should respond successfully. If C-ECHO to XNAT fails, the SCP receiver
-is not running correctly.
+is not running correctly. Aiming it at `xnat-web` instead fails on a perfectly
+healthy trust: that Service carries `tomcat` only.
 
 #### Manual C-FIND (find studies on Orthanc)
 
@@ -499,7 +502,7 @@ through the Helm values named in each cell.
 
 | Service | AE title | Host | Port | Purpose |
 |---------|----------|------|------|---------|
-| XNAT SCP receiver | `XNAT` (`xnat.web.dicomAet`) | xnat-web (`pacs.host` dials it back) | 8104 (`xnat.web.dicomPort`) | Receives the C-STORE the PACS opens after a C-MOVE |
+| XNAT SCP receiver | `XNAT` (`xnat.web.dicomAet`) | xnat-web-dicom (`pacs.host` dials it back) | 8104 (`xnat.web.dicomPort`) | Receives the C-STORE the PACS opens after a C-MOVE |
 | PACS | `ORTHANC` (`pacs.aeTitle`) | orthanc (`pacs.host`) | 4242 (`pacs.qrPort`) | Serves C-FIND and C-MOVE |
 | DQR calling AE | same as the SCP receiver | — | — | The AE XNAT presents when it queries the PACS |
 
@@ -525,6 +528,76 @@ rest are fixed by `configure-xnat.sh`):
 If missing or wrong, recreate it via the REST API (see §2.2 — prefer the API
 over direct DB inserts: XNAT binds the SCP listener and caches receiver config
 at the service layer, so DB-only changes need a restart to take effect).
+
+### 2.6a Exposing the DICOM Receiver to an External PACS (`dicomService`)
+
+A real PACS is outside the cluster, so the DICOM SCP needs its own externally-reachable Service —
+`xnat-web-dicom`, controlled by `xnat.web.dicomService.type`, entirely separate from the web
+console's `xnat-web` Service (`xnat.web.service.type`, which stays `ClusterIP` — with a real
+`pacs.host` the chart refuses to render anything else, see below). This split exists so
+exposing DICOM externally never also exposes the web console: an earlier trust install worked
+around the lack of it with a hand-created `kubectl apply`'d Service outside Helm, which then had
+no record anywhere in the chart and could have been silently deleted by an unrelated cleanup.
+
+**Choosing `dicomService.type`:**
+
+| Type | When | Requires |
+|---|---|---|
+| `ClusterIP` (default) | Mocked Orthanc PACS only, reachable over the cluster network | Nothing — `validatePacsReachable` fails the render if a real `pacs.host` is combined with this |
+| `NodePort` | A real PACS, and 8104 (or your chosen port) falls inside the API server's `--service-node-port-range` (default 30000-32767) | `xnat.web.dicomNodePort` set (equal to `xnat.web.dicomPort` so one number is true end to end); the PACS dials the node's address on that port |
+| `LoadBalancer` | A real PACS, and you cannot change the API server's NodePort range (e.g. no access to restart it) — this was exactly the case that produced the ad hoc Service above | A cluster LoadBalancer implementation (e.g. k3s's built-in ServiceLB) |
+
+Both external types render `externalTrafficPolicy: Local` automatically — do not be tempted to
+drop this to get past a `pending` LoadBalancer or an unreachable NodePort during setup. Under the
+default `Cluster` policy, kube-proxy SNATs the PACS's connection to the node's own address before
+it reaches the pod, which breaks the ingress NetworkPolicy CIDR match below and reproduces exactly
+the "queries succeed, retrievals silently time out" bug this chart's checks exist to catch
+(FLIP#993).
+
+Two limits on `Local` are worth knowing before relying on it:
+
+- **It preserves the source address only on a pass-through load balancer** (MetalLB in L2 mode, an
+  AWS NLB). A proxying load balancer terminates the connection and SNATs regardless, so the PACS's
+  real address never reaches the pod and an ingress rule scoped to the PACS CIDR will never match.
+  Scope the rule to the proxy's own address in that case, and confirm what your LB does before
+  assuming the CIDR is what is wrong.
+- **It is only safe while `xnat-web` is a single pod**, which it is here — `replicas: 1` on a
+  ReadWriteOnce PVC, as on `gstt-dgx`. `Local` means only nodes running the pod answer; on a
+  multi-replica Deployment it would blackhole traffic arriving at any other node.
+
+**Upgrading an install that set `xnat.web.service.type` to reach DICOM.** Before the split, that
+single field carried both ports, so exposing DICOM meant setting it to `NodePort`. Carrying that
+value across the upgrade no longer exposes DICOM — it exposes the **Tomcat web console** on a node
+address, since the DICOM port has moved to `xnat-web-dicom`. With a real `pacs.host` the chart now
+refuses to render that combination and says so; move the value to `xnat.web.dicomService.type` and
+return `xnat.web.service.type` to `ClusterIP`. Reach the console with `kubectl port-forward`.
+
+**Retiring an interim hand-made Service.** A trust that worked around the missing split by
+`kubectl apply`-ing its own Service and NetworkPolicy (the `flip-trust` install did: `svc/xnat-web-dicom-external`
+and `np/…-allow-ingress-cidrs`) must **delete those objects by hand after this chart version takes
+over**. They were created outside Helm, so no release owns them and `helm upgrade` will neither
+adopt nor remove them; left in place they shadow the chart's own objects with a second,
+unmanaged ingress path that no longer matches the chart's NetworkPolicy:
+
+```bash
+kubectl delete svc xnat-web-dicom-external -n flip-trust --ignore-not-found
+kubectl delete networkpolicy <release>-allow-ingress-cidrs -n flip-trust --ignore-not-found
+```
+
+Verify the chart's own objects are the only ones left before cutting the PACS over:
+
+```bash
+kubectl get svc,networkpolicy -n flip-trust -o name | grep -iE 'dicom|ingress'
+```
+
+**Never scope the ingress NetworkPolicy to `0.0.0.0/0`.** `networkPolicies.allowedIngressCIDRsWithPorts`
+must name the PACS's own address, not the whole internet. `validatePacsReachable` fails the render
+when it sees that literal (whitespace aside), which is a tripwire rather than a CIDR validator —
+Helm cannot evaluate a CIDR, so `0.0.0.0/1`, `::/0` and any other prefix that still reaches the
+PACS render clean, and the rule in this paragraph is what rules those out. If you do not yet know
+the PACS's real source IP, leave DICOM on `ClusterIP` (which correctly fails the render with a clear
+message) rather than opening the port wide as a stopgap; a real PACS destination should not be told
+to send DICOM to a port before its NetworkPolicy is scoped to it specifically.
 
 ---
 
@@ -1244,7 +1317,7 @@ kubectl exec -n flip-trust trust-release-flip-trust-omop-db-0 -- \
 # 3. DICOM connectivity
 DCMTK_POD=$(kubectl get pods -n flip-trust -l run=dcmtk -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -n flip-trust "$DCMTK_POD" -- echoscu orthanc 4242
-kubectl exec -n flip-trust "$DCMTK_POD" -- echoscu xnat-web 8104
+kubectl exec -n flip-trust "$DCMTK_POD" -- echoscu xnat-web-dicom 8104
 
 # 4. XNAT queue
 kubectl exec -n flip-trust trust-release-flip-trust-xnat-db-0 -- \
