@@ -66,12 +66,15 @@ def get_user_role_data(
     Returns:
         list[IUser]: List of IUser objects with roles.
     """
-    # Fetch roles for users
+    # Fetch roles for users. Global grants only (FLIP#1260): this feeds the admin user
+    # list, which shows platform roles. A Trust Owner grant belongs to the trust that
+    # made it and is surfaced in the Trust control panel, not here.
     user_ids = [user.id for user in users]
     statement = (
         select(col(UserRole.user_id), Role)
         .join(Role, col(Role.id) == col(UserRole.role_id))
         .where(col(UserRole.user_id).in_(user_ids))
+        .where(col(UserRole.trust_id).is_(None))
     )
     role_results = session.exec(statement).all()
     profiles = session.exec(select(UserProfile).where(col(UserProfile.user_id).in_(user_ids))).all()

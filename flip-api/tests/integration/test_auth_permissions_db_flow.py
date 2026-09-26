@@ -18,7 +18,8 @@ the Cognito ``sub`` (Cognito is the source of truth for user identity; there is 
 users table). ``get_user_permissions``
 traverses the same join family (read-only, hydrating the Permission rows themselves) and
 feeds ``GET /users/{id}/permissions``. ``has_role`` is the smaller existence check used to
-404 users with no roles.
+404 users with no roles. ``has_trust_permissions`` (FLIP#1260) answers trust-scoped
+authority through the same join family with ``user_role.trust_id`` pinned.
 
 Mocked-Session unit tests can't catch a join-column rename, an FK drift, or the seed
 contract drifting away from ``PermissionRef`` / ``RoleRef`` — these can.
@@ -26,8 +27,10 @@ contract drifting away from ``PermissionRef`` / ``RoleRef`` — these can.
 
 from uuid import uuid4
 
-from flip_api.auth.auth_utils import has_permissions
+from flip_api.auth.auth_utils import has_permissions, has_trust_permissions
+from flip_api.db.models.main_models import Trust
 from flip_api.db.models.user_models import (
+    TRUST_SCOPED_PERMISSIONS,
     PermissionRef,
     RolePermission,
     RoleRef,
@@ -36,14 +39,76 @@ from flip_api.db.models.user_models import (
 from flip_api.user_services.retrieve_user_permissions import get_user_permissions, has_role
 
 
-def test_has_permissions_returns_true_when_admin_role_grants_every_permission(session):
-    """An Admin user should pass every ``PermissionRef`` check — Admin is seeded with all of them."""
+def test_has_permissions_true_when_admin_holds_every_global_permission(session):
+    """An Admin user passes every GLOBAL ``PermissionRef`` check — Admin is seeded with all of them.
+
+    Trust-scoped permissions are the deliberate exception (FLIP#1260): they are
+    withheld from Admin, so asking for the full enum — which includes them — must fail.
+    """
     user_id = uuid4()
     session.add(UserRole(user_id=user_id, role_id=RoleRef.ADMIN.value))
     session.commit()
 
-    # All permissions, in one call — proves the ALL-required semantics, not just any-one.
-    assert has_permissions(user_id, list(PermissionRef), session) is True
+    global_permissions = [p for p in PermissionRef if p.value not in TRUST_SCOPED_PERMISSIONS]
+    # All of them, in one call — proves the ALL-required semantics, not just any-one.
+    assert has_permissions(user_id, global_permissions, session) is True
+
+    # The full enum now includes the trust-scoped permissions Admin must not hold.
+    assert has_permissions(user_id, list(PermissionRef), session) is False
+
+
+def test_has_permissions_false_when_admin_requests_trust_scoped_permission(session):
+    """Each trust-scoped permission is denied for Admin — the FLIP#1260 invariant.
+
+    Hub-wide administration is not trust authority: if the seeder ever leaks one of
+    these onto Admin, every hub admin gains approval rights over every trust — the
+    hole #1258 exists to close.
+    """
+    user_id = uuid4()
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.ADMIN.value))
+    session.commit()
+
+    trust_scoped = [p for p in PermissionRef if p.value in TRUST_SCOPED_PERMISSIONS]
+    assert trust_scoped, "TRUST_SCOPED_PERMISSIONS must reference PermissionRef members"
+    for permission in trust_scoped:
+        assert has_permissions(user_id, [permission], session) is False
+
+
+def test_has_trust_permissions_true_only_at_the_granted_trust(session):
+    """A trust-scoped Trust Owner grant answers at that trust and nowhere else (FLIP#1260)."""
+    user_id = uuid4()
+    trust = Trust(name="Trust Owner Flow A")
+    session.add(trust)
+    session.flush()  # allocate trust.id before the FK row references it
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.TRUST_OWNER.value, trust_id=trust.id))
+    session.commit()
+
+    assert has_trust_permissions(user_id, [PermissionRef.CAN_APPROVE_FOR_TRUST], trust.id, session) is True
+
+    other_trust = Trust(name="Trust Owner Flow B")
+    session.add(other_trust)
+    session.flush()
+    assert (
+        has_trust_permissions(user_id, [PermissionRef.CAN_APPROVE_FOR_TRUST], other_trust.id, session)
+        is False
+    )
+
+
+def test_has_trust_permissions_ignores_global_admin_grant(session):
+    """A platform-wide Admin grant must NOT satisfy a trust-scoped check (FLIP#1258, #1260).
+
+    The seeder grants Admin every global permission; if this check ever considered
+    ``trust_id IS NULL`` rows, every hub admin would hold approval authority over
+    every trust. The unit suite pins the logic with mocks — this pins it against
+    the real joins.
+    """
+    user_id = uuid4()
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.ADMIN.value))
+    trust = Trust(name="Unrelated Trust")
+    session.add(trust)
+    session.commit()
+
+    assert has_trust_permissions(user_id, [PermissionRef.CAN_APPROVE_FOR_TRUST], trust.id, session) is False
 
 
 def test_has_permissions_returns_false_when_researcher_lacks_admin_only_permission(session):
@@ -103,7 +168,10 @@ def test_get_user_permissions_returns_permission_rows_for_researcher(session):
 
 
 def test_get_user_permissions_returns_admin_permissions_deduped(session):
-    """Admin + Researcher in combination must dedupe — CAN_CREATE_PROJECTS appears once, not twice."""
+    """Admin + Researcher in combination must dedupe — CAN_CREATE_PROJECTS appears once, not twice.
+
+    Admin's set is every GLOBAL permission; the trust-scoped ones are withheld (FLIP#1260).
+    """
     user_id = uuid4()
     session.add_all(
         [
@@ -117,7 +185,8 @@ def test_get_user_permissions_returns_admin_permissions_deduped(session):
     names = [p.permission_name for p in perms]
 
     assert len(names) == len(set(names)), "Duplicates leak when role permissions overlap"
-    assert set(names) == {p.name for p in PermissionRef}
+    expected = {p.name for p in PermissionRef if p.value not in TRUST_SCOPED_PERMISSIONS}
+    assert set(names) == expected
 
 
 def test_get_user_permissions_returns_empty_for_user_without_roles(session):
@@ -145,20 +214,23 @@ def test_has_role_false_when_user_has_no_roles(session):
 def test_role_permission_seed_contract(session):
     """Full seed-contract check across every role in ``RoleRef``.
 
-    Three failure modes are caught here:
+    Four failure modes are caught here:
 
     * a new ``PermissionRef`` value is added but ``seed_role_permissions`` is not updated to
       grant it to Admin (Admin auth on that perm silently fails in prod);
     * a perm is pulled from a role's grant list (the role loses access without anyone noticing);
-    * a perm leaks onto Viewer (read-only role escalates).
+    * a perm leaks onto Viewer (read-only role escalates);
+    * a TRUST-SCOPED perm leaks onto Admin (FLIP#1260: hub-wide admin is not trust authority —
+      every hub admin would gain approval rights over every trust).
 
     Expected map mirrors the docstring on ``seed_role_permissions``. If you change the seed,
     update this map in the same commit — that's the point of the contract.
     """
     expected_by_role = {
-        RoleRef.ADMIN.value: {p.value for p in PermissionRef},
+        RoleRef.ADMIN.value: {p.value for p in PermissionRef if p.value not in TRUST_SCOPED_PERMISSIONS},
         RoleRef.RESEARCHER.value: {PermissionRef.CAN_CREATE_PROJECTS.value},
         RoleRef.VIEWER.value: set(),
+        RoleRef.TRUST_OWNER.value: set(TRUST_SCOPED_PERMISSIONS),
     }
 
     rows = session.exec(RolePermission.__table__.select()).all()

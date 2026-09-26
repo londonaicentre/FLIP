@@ -19,7 +19,7 @@ from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
 from flip_api.config import get_settings
 from flip_api.db.database import get_session
-from flip_api.db.models.user_models import PermissionRef, Role, UserRole, UsersAudit
+from flip_api.db.models.user_models import PermissionRef, Role, RoleRef, UserRole, UsersAudit
 from flip_api.domain.interfaces.user import IRoles
 from flip_api.utils.cognito_helpers import get_username
 from flip_api.utils.logger import logger
@@ -90,6 +90,17 @@ def set_user_roles(
 
         user_roles_ids = roles_data.roles
 
+        # Trust Owner is trust-scoped (FLIP#1260) and cannot be granted here: this endpoint
+        # writes global grants (trust_id IS NULL), and a global Trust Owner row would confer
+        # authority at no trust while muddying the "global vs scoped" invariant. It is granted
+        # against a specific trust through the Trust control panel.
+        if RoleRef.TRUST_OWNER.value in user_roles_ids:
+            logger.error(f"User {token_id} attempted to grant Trust Owner globally to user {user_id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Trust Owner is granted per-trust, not as a platform role.",
+            )
+
         # Validate the requested role IDs against the Role table.
         role_ids_from_db = db.exec(select(Role.id)).all()
         role_ids: list[UUID] = [r for r in role_ids_from_db if r is not None]
@@ -101,7 +112,11 @@ def set_user_roles(
         # audit. A failure between the delete and the insert previously
         # left the user with no roles silently; consolidating into one
         # commit means either everything lands or nothing does.
-        db.execute(delete(UserRole).where(col(UserRole.user_id) == user_id))
+        #
+        # Scoped to global grants only (trust_id IS NULL). Trust-scoped roles
+        # (FLIP#1260) are owned by the trust that granted them and must not be
+        # revoked as a side effect of a hub admin editing platform roles.
+        db.execute(delete(UserRole).where(col(UserRole.user_id) == user_id).where(col(UserRole.trust_id).is_(None)))
         db.add_all([UserRole(user_id=user_id, role_id=role_id) for role_id in user_roles_ids])
         db.add(
             UsersAudit(
