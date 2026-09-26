@@ -12,6 +12,7 @@
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import create_engine, make_url
 
 from data_access_api.config import Settings
 
@@ -65,3 +66,26 @@ def test_cohort_query_threshold_rejects_non_positive(value):
     """
     with pytest.raises(ValidationError):
         Settings(COHORT_QUERY_THRESHOLD=value)
+
+
+def test_omop_database_url_names_the_psycopg2_driver():
+    """A bare ``postgresql://`` lets SQLAlchemy choose the driver, and 2.1 chooses psycopg3.
+
+    This service depends on psycopg2-binary, so the choice is spelled out rather than inferred:
+    with the bare scheme the engine fails on ``ModuleNotFoundError: No module named 'psycopg'``.
+    The lock still pins SQLAlchemy 2.0.x, so nothing fails today — naming the driver is what
+    keeps the next lock bump from turning into a service that cannot reach the database.
+    """
+    url = Settings().OMOP_DATABASE_URL.get_secret_value()
+
+    assert url.startswith("postgresql+psycopg2://")
+    # create_engine imports the driver's DBAPI, so a mismatched pair fails here too.
+    assert create_engine(url).dialect.driver == "psycopg2"
+
+
+@pytest.mark.parametrize("password", ["p@ss/word:with@specials", "colon:only", "slash/slash"])
+def test_omop_database_url_escapes_the_operator_password(password):
+    """The password is operator-set and lands in a URL, so the URL-breaking characters are escaped."""
+    url = Settings(DATA_ACCESS_POSTGRES_PASSWORD=password).OMOP_DATABASE_URL.get_secret_value()
+
+    assert make_url(url).password == password

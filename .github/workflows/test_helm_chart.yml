@@ -23,6 +23,10 @@ on:
       # The procedure the trust-seed hook fetches and runs; tests/test_trust_seed_job.py
       # asserts the Job's env against it.
       - "trust/seed_trust.sh"
+      # The seed tools that same hook installs from that ref and runs (TOOLS_SPEC's
+      # `#subdirectory=trust/omop-db`), so a change here breaks the kind E2E job without
+      # touching the chart — as the SQLAlchemy 2.1 driver default did (#1309).
+      - "trust/omop-db/**"
       - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
       # The Makefile derives the kit env token from PROD through it.
@@ -33,6 +37,7 @@ on:
       - "trust/deploy/helm/**"
       - "trust/xnat/xnat/config/configure-xnat.sh"
       - "trust/seed_trust.sh"
+      - "trust/omop-db/**"
       - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
       # The Makefile derives the kit env token from PROD through it.
