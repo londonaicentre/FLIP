@@ -408,7 +408,7 @@ Your own ``pyproject.toml`` drives local runs. Beyond a normal Flower project it
    version = "1.0.0"
    dependencies = [
        # flip-utils is deliberately NOT declared — see the note under "Starting point"
-       "flwr[simulation]>=1.36.0",
+       "flwr[simulation]>=1.38.0",
        # ... your model-framework deps (monai, torch, nibabel, ...)
    ]
 

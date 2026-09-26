@@ -17,7 +17,7 @@
 # analogue of compose.production.flower.yml's register-supernode-keys-net-1
 # service. The script (/scripts/register-supernode-keys.sh, baked into the
 # SuperLink image) reads the per-slot keys from EFS, registers each with the
-# SuperLink over the Exec API, and maps the resulting node_ids on the fl-api.
+# SuperLink over the Control API, and maps the resulting node_ids on the fl-api.
 # TRUST_NAMES carries FL_KIT_SLOT_NAMES: the identity being labelled is the
 # per-slot SuperNode key, so trusts admin-created later (bound to a slot via
 # FLKitSlot.assigned_to_trust_id) still get their node_id mapped.
@@ -39,7 +39,7 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
       entryPoint = ["/bin/bash", "/scripts/register-supernode-keys.sh"]
 
       environment = [
-        { name = "SUPERLINK_ADDRESS", value = "${local.service_discovery_names.fl_server}:${local.flower_superlink_exec_port}" },
+        { name = "SUPERLINK_ADDRESS", value = "${local.service_discovery_names.fl_server}:${local.flower_superlink_control_port}" },
         { name = "FL_API_ADDRESS", value = "http://${local.service_discovery_names.fl_api}:${local.api_container_port}" },
         { name = "TRUST_NAMES", value = var.FL_KIT_SLOT_NAMES },
       ]
@@ -95,7 +95,7 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
 # Runs the one-shot after both FL services exist, waiting for them to be
 # stable first (compose expresses this as depends_on fl-server started +
 # fl-api healthy). Runs with the fl-api SG so the Flower control-plane SG
-# rules in ecs_sg.tf cover its SuperLink Exec (9093) call, and the fl-api's
+# rules in ecs_sg.tf cover its SuperLink Control API (8000) call, and the fl-api's
 # VPC HTTP rule covers FL_API_ADDRESS. Re-run on key rotation by bumping
 # FLOWER_KIT_DATE (retriggers via the provisioning task's arn) or tainting.
 resource "null_resource" "flower_register_supernode_keys" {

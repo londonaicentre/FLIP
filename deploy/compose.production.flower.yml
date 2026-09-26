@@ -13,7 +13,7 @@
 # ROLE (FLIP#936): Flower overlay of the local prod-image harness (see the note in
 # compose.production.yml) — not a deployment target. The canonical production equivalent is the Flower
 # branch of the ECS task definitions (deploy/providers/AWS/ecs_tasks.tf with fl_backend=flower, FLIP#566),
-# which mirrors this overlay: SuperLink 9092/9093/9097, TLS + SuperNode-auth command flags, and the
+# which mirrors this overlay: SuperLink 9092/8000/9097, TLS + SuperNode-auth command flags, and the
 # register-supernode-keys one-shot (ecs_flower.tf).
 
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
@@ -41,7 +41,7 @@ services:
       # `:?` mirrors flip-api's guard so a missing region fails at `up`, not at the first run.
       - BUNDLE_URL_ALLOWED_HOSTS=s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       # Use the internal hostnames and ports for the server since the API is within the same Docker network
-      - SUPERLINK_ADDRESS=fl-server-net-1:9093
+      - SUPERLINK_ADDRESS=fl-server-net-1:8000
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app/src
@@ -89,6 +89,10 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
+      # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only unless --host says
+      # otherwise; fl-api and the key registration reach it over the compose network.
+      - --host
+      - 0.0.0.0
       - --health-server-address
       - 0.0.0.0:9097
     ports:
@@ -106,7 +110,7 @@ services:
   register-supernode-keys-net-1:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     environment:
-      - SUPERLINK_ADDRESS=fl-server-net-1:9093
+      - SUPERLINK_ADDRESS=fl-server-net-1:8000
       # Service name (`fl-api-net-1`), which is the only name that resolves: with no
       # container_name the container is named by the compose project, and the old
       # `flip-fl-api-net-1` spelling is not a DNS name in any harness. Getting this wrong

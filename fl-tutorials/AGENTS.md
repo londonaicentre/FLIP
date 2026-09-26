@@ -52,7 +52,7 @@ checkpoint: `sim-tutorial.sh` passes `--run-config` pointing `flip-job-dir` at
 runs unchanged app code too. The wrapper's exit status is the **run's** — it reads the run id off
 the stream and asks the SuperLink (`flwr ls`) for the terminal status, because `flwr run --stream`
 returns 0 whatever became of the run — and it refuses to start while a local SuperLink it did not
-start still listens on `127.0.0.1:${FLWR_LOCAL_CONTROL_API_PORT:-39093}` (#1249): `flwr run . local`
+start still listens on `127.0.0.1:${FLWR_LOCAL_SUPERLINK_HTTP_API_PORT:-39091}` (#1249): `flwr run . local`
 reuses whatever is there, so a SuperLink another worktree left behind would run the app in *that*
 checkout's environment with nothing in the output saying so. The stale-process cleanup deliberately
 spares other checkouts (it matches this checkout's `flip-utils/` venv path, so the main checkout never

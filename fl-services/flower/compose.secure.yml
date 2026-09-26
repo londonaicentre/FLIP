@@ -35,7 +35,7 @@ services:
     group_add: &host-gid ["${DOCKER_GID:-1000}"]
     environment:
       - ALLOWED_JOB_FOLDERS=${ALLOWED_JOB_FOLDERS:-xray_classification,3d_spleen_segmentation,3d_spleen_segmentation_evaluation}
-      - SUPERLINK_ADDRESS=${SUPERLINK_ADDRESS:-superlink:9093}
+      - SUPERLINK_ADDRESS=${SUPERLINK_ADDRESS:-superlink:8000}
       - SUPERLINK_ROOT_CERTIFICATES=${SUPERLINK_ROOT_CERTIFICATES:-/certs/ca.crt}
       - SUPERLINK_HEALTH_ADDRESS=${SUPERLINK_HEALTH_ADDRESS:-superlink:9097}
       - FLOWER_SRC_ROOT=/app/src
@@ -85,6 +85,10 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
+      # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only unless --host says
+      # otherwise (see compose.dev.yml).
+      - --host
+      - 0.0.0.0
       - --health-server-address
       - ${SUPERLINK_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9097}
     networks:
@@ -92,7 +96,7 @@ services:
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys:
-    image: flwr/base:1.36.0-py3.12-ubuntu24.04
+    image: flwr/base:1.38.0-py3.12-ubuntu24.04
     environment:
       - FL_API_ADDRESS=${FL_API_ADDRESS:-http://fl-api:8000}
       - TRUST_NAMES=${TRUST_NAMES:-Trust_1,Trust_2}
