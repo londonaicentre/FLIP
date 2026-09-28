@@ -17,15 +17,33 @@ from flip_api.domain.interfaces.fl import IJobMetaData
 from flip_api.domain.schemas.status import FLJobStatus
 
 
-def test_fl_job_status_has_exactly_five_contract_values():
-    assert {s.value for s in FLJobStatus} == {"PENDING", "RUNNING", "FINISHED", "FAILED", "STOPPED"}
+def test_fl_job_status_has_exactly_six_contract_values():
+    assert {s.value for s in FLJobStatus} == {"PENDING", "RUNNING", "FINISHED", "FAILED", "STOPPED", "UNKNOWN"}
 
 
-def test_job_metadata_has_exactly_job_id_and_status():
-    assert set(IJobMetaData.model_fields) == {"job_id", "status"}
+def test_job_metadata_has_exactly_the_contract_fields():
+    # Pinned deliberately: the contract is implemented independently by two FL API adapters,
+    # so a field added on one side and not the other is invisible until it matters. Adding a
+    # field here means adding it to both adapters' JobMetadata in the same PR.
+    assert set(IJobMetaData.model_fields) == {"job_id", "status", "status_details"}
 
 
-@pytest.mark.parametrize("job_status", ["PENDING", "RUNNING", "FINISHED", "FAILED", "STOPPED"])
+def test_status_details_is_optional_and_defaults_to_none():
+    # Optional so an FL API image predating the field still validates against a newer hub —
+    # unlike the UNKNOWN status value, this half of the contract is deploy-order-safe in both
+    # directions (the hub also ignores extra fields, so a newer FL API is safe too).
+    job = IJobMetaData.model_validate({"job_id": "abc", "status": "FAILED"})
+    assert job.status_details is None
+
+
+def test_status_details_is_carried_through_when_present():
+    job = IJobMetaData.model_validate(
+        {"job_id": "abc", "status": "FAILED", "status_details": "ServerApp failed with exception: boom"}
+    )
+    assert job.status_details == "ServerApp failed with exception: boom"
+
+
+@pytest.mark.parametrize("job_status", ["PENDING", "RUNNING", "FINISHED", "FAILED", "STOPPED", "UNKNOWN"])
 def test_job_metadata_accepts_every_contract_status(job_status):
     job = IJobMetaData.model_validate({"job_id": "abc", "status": job_status})
     assert job.status == FLJobStatus(job_status)
@@ -40,3 +58,30 @@ def test_job_metadata_ignores_extra_fields():
     job = IJobMetaData.model_validate({"job_id": "abc", "status": "RUNNING", "job_name": "legacy"})
     assert job.job_id == "abc"
     assert not hasattr(job, "job_name")
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # flwr's literal for "nothing to say" -- normalised away by the Flower adapter, and
+        # again here in case an adapter does not.
+        ("N/A", None),
+        ("", None),
+        ("   \n ", None),
+        # Whitespace collapsed to one line: the field leads the feed row as a headline.
+        ("ServerApp failed with exception:\n   boom  \t here", "ServerApp failed with exception: boom here"),
+    ],
+)
+def test_status_details_is_normalised_on_the_hub_too(raw, expected):
+    job = IJobMetaData.model_validate({"job_id": "abc", "status": "FAILED", "status_details": raw})
+
+    assert job.status_details == expected
+
+
+def test_status_details_is_bounded_on_the_hub_too():
+    # The Flower adapter caps it at 500 chars; the hub stores it into a UI-visible row, so
+    # it re-applies the bound rather than trusting every adapter (present and future) to.
+    job = IJobMetaData.model_validate({"job_id": "abc", "status": "FAILED", "status_details": "x" * 900})
+
+    assert job.status_details is not None
+    assert len(job.status_details) == 500

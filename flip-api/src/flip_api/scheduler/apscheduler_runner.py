@@ -14,6 +14,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from flip_api.config import get_settings
 from flip_api.file_services.services.malware_scan_service import reconcile_scanning_files_scheduled_task
+from flip_api.fl_services.reconcile_failed_jobs import reconcile_failed_fl_jobs_scheduled_task
 from flip_api.fl_services.run_jobs import run_jobs_scheduled_task
 from flip_api.fl_services.services.fl_service import keep_fl_api_session_alive
 from flip_api.private_services.stale_task_recovery import recover_stale_tasks_scheduled_task
@@ -50,6 +51,11 @@ scheduler.add_job(
     reconcile_scanning_files_scheduled_task,
     "interval",
     minutes=get_settings().SCHEDULER_MALWARE_SCAN_RECONCILE_RATE,
+)
+scheduler.add_job(
+    reconcile_failed_fl_jobs_scheduled_task,
+    "interval",
+    minutes=get_settings().SCHEDULER_FL_JOB_RECONCILE_RATE,
 )
 
 

@@ -49,21 +49,42 @@ def reset_node_mapping():
     app_module._node_trust_mapping.clear()
 
 
+class RecordedCommands(list):
+    """The argv lists handed to ``subprocess.run``, plus the keyword arguments of each call.
+
+    A plain list of argv keeps the existing ``commands == [[...]]`` assertions working;
+    ``kwargs`` is there for the tests that care how a command was run (its ``timeout``,
+    its decoding), which a bare argv comparison cannot see.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.kwargs: list[dict] = []
+
+
 @pytest.fixture
 def mock_flwr_run(monkeypatch):
+    # Returns the list of argv lists the app handed to subprocess.run, so a test can
+    # assert on the command it built as well as on the response.
     def _mock(*, returncode=0, stdout="", stderr="", exception=None, by_command=None):
+        commands = RecordedCommands()
+
         if exception is not None:
 
-            def _raise(*_args, **_kwargs):
+            def _raise(command=None, *_args, **_kwargs):
+                commands.append(command)
+                commands.kwargs.append(_kwargs)
                 raise exception
 
             monkeypatch.setattr(app_module.subprocess, "run", _raise)
-            return
+            return commands
 
         if by_command is not None:
             # by_command: {flwr_subcommand: {"returncode": int, "stdout": str, "stderr": str}}
             # e.g. {"stop": {...}, "list": {...}}. command is ["flwr", "<subcommand>", ...].
             def _dispatch(command, *_args, **_kwargs):
+                commands.append(command)
+                commands.kwargs.append(_kwargs)
                 subcommand = command[1] if len(command) > 1 else ""
                 spec = by_command.get(subcommand, {})
                 return subprocess.CompletedProcess(
@@ -74,18 +95,20 @@ def mock_flwr_run(monkeypatch):
                 )
 
             monkeypatch.setattr(app_module.subprocess, "run", _dispatch)
-            return
+            return commands
 
-        monkeypatch.setattr(
-            app_module.subprocess,
-            "run",
-            lambda *_args, **_kwargs: subprocess.CompletedProcess(
-                args=[],
+        def _fixed(command=None, *_args, **_kwargs):
+            commands.append(command)
+            commands.kwargs.append(_kwargs)
+            return subprocess.CompletedProcess(
+                args=command or [],
                 returncode=returncode,
                 stdout=stdout,
                 stderr=stderr,
-            ),
-        )
+            )
+
+        monkeypatch.setattr(app_module.subprocess, "run", _fixed)
+        return commands
 
     return _mock
 
