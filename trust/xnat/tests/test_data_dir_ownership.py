@@ -67,6 +67,9 @@ MAKEFILE = XNAT_DIR / "Makefile"
 DOCKERFILE = XNAT_DIR / "xnat" / "Dockerfile"
 AWS_PLAYBOOK = REPO_ROOT / "deploy" / "providers" / "AWS" / "site.yml"
 LOCAL_PLAYBOOK = XNAT_DIR.parent / "deploy" / "ansible" / "onprem.yml"
+# Both plays compose this role; it is the one place the XNAT bind-mount dirs are provisioned.
+DIRS_ROLE = "flip_trust_dirs"
+DIRS_ROLE_TASKS = XNAT_DIR.parent / "deploy" / "ansible" / "roles" / DIRS_ROLE / "tasks" / "main.yml"
 
 # Long enough for a `make -n` parse; short enough that a hang fails the suite
 # rather than wedging CI.
@@ -110,6 +113,11 @@ class TestUidIsConsistent:
         assert _make_var("XNAT_CONTAINER_GID") == _make_var("XNAT_CONTAINER_UID")
 
     @pytest.mark.parametrize("playbook", [AWS_PLAYBOOK, LOCAL_PLAYBOOK], ids=["aws", "on-prem"])
+    def test_playbooks_compose_the_shared_dirs_role(self, playbook: Path) -> None:
+        """Both plays must still get their XNAT bind mounts from the one shared role."""
+        assert DIRS_ROLE in playbook.read_text(), f"{playbook.name} no longer composes the {DIRS_ROLE} role"
+
+    @pytest.mark.parametrize("playbook", [DIRS_ROLE_TASKS], ids=["shared-role"])
     def test_playbooks_provision_the_same_uid(self, playbook: Path) -> None:
         uid = _make_var("XNAT_CONTAINER_UID")
         text = playbook.read_text()
@@ -125,10 +133,10 @@ class TestUidIsConsistent:
         assert task, f"no XNAT bind-mount directory task in {playbook}"
         assert re.search(rf'owner:\s*"{uid}"', task.group(0)), (
             f"{playbook.name} provisions the XNAT bind mounts as a different uid than "
-            f"trust/xnat/Makefile ({uid}). All three provisioning paths must agree on the "
-            "uid. They deliberately do not share directories — both playbooks provision "
-            "/opt/flip/xnat while the Makefile resolves the per-slot XNAT_DATA_DIR — so the "
-            "uid is the whole of what this pins."
+            f"trust/xnat/Makefile ({uid}). Every provisioning path must agree on the "
+            "uid. They deliberately do not share directories — the shared role (composed by "
+            "both playbooks) provisions /opt/flip/xnat while the Makefile resolves the "
+            "per-slot XNAT_DATA_DIR — so the uid is the whole of what this pins."
         )
 
 

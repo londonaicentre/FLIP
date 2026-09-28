@@ -1,0 +1,30 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+---
+omop_dir: /opt/flip/omop
+# The env's own bucket (passed by the Makefile as AICENTRE_BUCKET_NAME) —
+# the instance role has no cross-account read on other envs' buckets.
+omop_vocab_s3_bucket: "{{ vocab_s3_bucket | default('flipdev-aicentre', true) }}"
+vocab_core_bundle: vocab_aicentre_core_20240916
+# Supplied by `make seed-trust-data` as the env's own DOCKER_TAG. The fallback
+# only applies to a hand-run playbook: the container is a throwaway Postgres
+# server over an already-seeded volume, so the tag matters little here —
+# 'stag' is simply the safer accident than the production image.
+omop_db_image: "ghcr.io/londonaicentre/omop-db:{{ omop_db_tag | default('stag', true) }}"
+vocab_load_port: "15499"
+# Superuser credentials of the seeded cluster — the kit's OMOP_POSTGRES_*
+# values, passed as extra-vars by the Makefile seed-trust-data target.
+omop_vocab_pg_user: "{{ omop_postgres_user | default('postgres', true) }}"
+omop_vocab_pg_db: "{{ omop_postgres_db | default('trustomopdb', true) }}"
+# The loader and constraints script, from the repo's trust/omop-db/files tree,
+# resolved from this role's own location.
+omop_db_files_dir: "{{ role_path }}/../../../../omop-db/files"

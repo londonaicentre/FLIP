@@ -1,0 +1,26 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+---
+# The repo's trust/observability tree, resolved from this role's own location so
+# the play can live anywhere (deploy/providers/AWS/site.yml runs it too).
+observability_src_dir: "{{ role_path }}/../../../../observability"
+# What the production compose mounts by default (OBSERVABILITY_CONFIG_DIR).
+observability_dest_dir: /opt/flip/config/observability
+flip_owner: ubuntu
+flip_group: ubuntu
+# The files the Loki / Alloy / Grafana containers read, relative to both dirs.
+observability_config_files:
+  - alloy/config.alloy
+  - loki/loki-config.yml
+  - grafana/provisioning/datasources/loki.yml
+  - grafana/provisioning/dashboards/dashboards.yml
+  - grafana/provisioning/dashboards/trust-apis.json
