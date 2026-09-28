@@ -301,6 +301,11 @@ OPTIONAL_KEYS=(
     # README, "Handing the public name over".
     RELEASE_WEB_ALIAS
 
+    # Empty is the intended value wherever no tracking server is hosted: it
+    # disables the MLflow dual-write entirely, leaving flip-api canonical for
+    # status and metrics (FLIP#745). Requiring a value would reject that.
+    MLFLOW_TRACKING_URI
+
     # The LZA keys (FLIP#749) are handled per mode below, not here: required on
     # the platform-managed estate, optional (and expected absent) on the
     # self-contained ones.

@@ -55,6 +55,22 @@ one download serves both backends; generated runs stay in gitignored per-backend
 the pre-release gate, run for both backends before a release is published: see
 [*Pre-release checklist*](../CONTRIBUTING.md#pre-release-checklist).
 
+## Plot tutorial metrics in MLflow
+
+Tutorial runs can mirror their metrics to the dev-stack MLflow server (FLIP#745), giving loss/accuracy curves per
+simulated client and round. Start the server, then export the tracking URI before running:
+
+```bash
+make mlflow                                       # MLflow UI on http://localhost:5000 (loopback only)
+export MLFLOW_TRACKING_URI=http://localhost:5000  # the simulator runs on the host, not on the stack network
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
+```
+
+Each run appears as an MLflow experiment (`flip/<project id>`) with one metric series per simulated client. The
+mirror is best-effort and off by default: with `MLFLOW_TRACKING_URI` unset the simulator behaves exactly as before.
+The same server collects the real dev-stack training runs, so simulator and federated runs are comparable side by
+side. See [the MLflow component guide](../docs/source/components/component-mlflow.rst) for the full integration.
+
 ## Check the sources without a GPU
 
 The tutorial sources also carry a **CPU-only** check that needs none of the above — no GPU, no dataset, no FL image —

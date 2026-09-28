@@ -132,6 +132,9 @@ services:
       # getuser() caller working without mounting the host's passwd file (FLIP#1171).
       - USER=flip
       - LOGNAME=flip
+      # MLflow dual-write (FLIP#745): the flip package mirrors metrics/status to
+      # MLflow, reached over `default` (hub-internal). Empty => sink disabled.
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
     # Run as the HOST user's uid, with the image's gid (FLIP#1171). The bind mounts
     # below — the provisioned NVFLARE kit and the operator's 0600 AWS SSO token — are
     # owned by whoever ran `make provision` and `aws sso login`, so only a matching
@@ -199,6 +202,8 @@ services:
       # getuser() caller working without mounting the host's passwd file (FLIP#1171).
       - USER=flip
       - LOGNAME=flip
+      # MLflow dual-write (FLIP#745): see fl-server-net-1.
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
     # Run as the HOST user's uid, with the image's gid (FLIP#1171). The bind mounts
     # below — the provisioned NVFLARE kit and the operator's 0600 AWS SSO token — are
     # owned by whoever ran `make provision` and `aws sso login`, so only a matching
