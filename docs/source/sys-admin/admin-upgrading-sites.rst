@@ -197,7 +197,9 @@ context ``make deploy-trust`` uses:
    make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env> [TAG=vX.Y.Z]
 
 ``deploy-trust`` remains the first-install verb: its ``seed-trust-data`` step re-seeds
-OMOP and Orthanc on the host and its XNAT step resets the archive.
+OMOP and Orthanc on the host and its XNAT step resets the archive. The upgrade gives the FL
+client the same GPUs ``deploy-trust`` does: none, unless the trust opted in with
+``TRUST_EC2_NUM_GPUS`` (:doc:`/deploy-flip/deploy-flip-node-on-aws-ec2`).
 
 Rolling back
 ============

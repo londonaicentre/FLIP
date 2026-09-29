@@ -227,11 +227,23 @@ export TF_VAR_local_trust_public_ips=$(LOCAL_TRUST_PUBLIC_IPS)
 K8S_TRUST_PUBLIC_IPS ?= []
 export TF_VAR_k8s_trust_public_ips=$(K8S_TRUST_PUBLIC_IPS)
 # Whether Terraform provisions the cloud Trust EC2. false = hub-only deployment
-# (every trust runs on-prem — e.g. the workloads need a GPU the t3 trust host
-# doesn't have). Settable in the env file or CLI; `make full-deploy-hub-only`
-# forces it for its whole chain.
+# (every trust runs on-prem). Settable in the env file or CLI; `make
+# full-deploy-hub-only` forces it for its whole chain.
 DEPLOY_TRUST_EC2 ?= true
 export TF_VAR_deploy_trust_ec2=$(DEPLOY_TRUST_EC2)
+# Cloud Trust host shape. Unset ⇒ variables.tf defaults (t3.xlarge, stock Ubuntu
+# 24.04, 100 GiB). A GPU trust sets e.g. TRUST_INSTANCE_TYPE=g4dn.xlarge and
+# TRUST_AMI_SSM_PARAMETER to the Deep Learning Base GPU AMI's SSM path, then
+# TRUST_EC2_NUM_GPUS=1 in its kit so up-trust-ec2 adds the GPU overlay.
+ifneq ($(TRUST_INSTANCE_TYPE),)
+export TF_VAR_trust_instance_type=${TRUST_INSTANCE_TYPE}
+endif
+ifneq ($(TRUST_AMI_SSM_PARAMETER),)
+export TF_VAR_trust_ami_ssm_parameter=${TRUST_AMI_SSM_PARAMETER}
+endif
+ifneq ($(TRUST_ROOT_VOLUME_SIZE),)
+export TF_VAR_trust_root_volume_size=${TRUST_ROOT_VOLUME_SIZE}
+endif
 export TF_VAR_AWS_REGION=${AWS_REGION}
 export TF_VAR_VPC_NAME=${VPC_NAME}
 # DNS availability (FLIP#749): the LZA account has no Route53 hosted zone until
@@ -1090,15 +1102,27 @@ deploy-trust: check-trust-ec2-enabled ssh-config update-env stage-fl-kit ## Depl
 # target tag, recreate what changed, redeploy XNAT without reset, converge its config).
 # TAG defaults to the release the hub runs; FORCE=1 allows a downgrade; YES=1 skips the
 # confirmation. The kit file read is this workstation's trust/.env.<KIT>.<env>, exactly as
-# deploy-trust evaluates compose here against the remote daemon. NUM_AVAILABLE_GPUS=0 pins the
-# fl-client to CPU as up-trust-ec2 does (the t3.xlarge has no GPU): on the command line it beats
-# a template kit's 1, dropping the GPU overlay and reaching compose's env over the --env-file.
+# deploy-trust evaluates compose here against the remote daemon. NUM_AVAILABLE_GPUS=$(EC2_NUM_GPUS)
+# gives the fl-client the GPUs up-trust-ec2 would: 0 (CPU) unless the trust opted in with
+# TRUST_EC2_NUM_GPUS. On the command line it beats a template kit's NUM_AVAILABLE_GPUS=1, so the
+# GPU overlay follows the opt-in rather than the kit, and it reaches compose's env over the
+# --env-file.
+#
+# EC2_NUM_GPUS resolves TRUST_EC2_NUM_GPUS the way trust/Makefile's EC2_NUM_GPUS does for
+# up-trust-ec2 — command line, then the kit, then the environment, else 0 — because upgrade-trust
+# keys its overlay on NUM_AVAILABLE_GPUS and never reads the opt-in itself.
+TRUST_EC2_NUM_GPUS_KIT := $(shell sed -n 's/^TRUST_EC2_NUM_GPUS=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+ifeq ($(origin TRUST_EC2_NUM_GPUS),command line)
+EC2_NUM_GPUS := $(or $(strip $(TRUST_EC2_NUM_GPUS)),0)
+else
+EC2_NUM_GPUS := $(or $(strip $(TRUST_EC2_NUM_GPUS_KIT)),$(strip $(TRUST_EC2_NUM_GPUS)),0)
+endif
 .PHONY: upgrade-trust-ec2
 upgrade-trust-ec2: check-trust-ec2-enabled ssh-config ## Move the EC2 trust to a release tag without re-seeding data (FLIP#1204)
 	@echo "👷 Create docker context if not exists, pointing to flip-trust to ssh://flip-trust"
 	@docker context create flip-trust --docker "host=ssh://flip-trust" || echo "   Context 'flip-trust' already exists"
-	@echo "⬆️  Upgrading Trust services on EC2 (KIT=$(KIT))..."
-	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../trust upgrade-trust KIT=$(KIT) PROD=${PROD} TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT) NUM_AVAILABLE_GPUS=0
+	@echo "⬆️  Upgrading Trust services on EC2 (KIT=$(KIT), $(EC2_NUM_GPUS) GPU(s) for the fl-client)..."
+	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../trust upgrade-trust KIT=$(KIT) PROD=${PROD} TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT) NUM_AVAILABLE_GPUS=$(EC2_NUM_GPUS)
 	@echo "✅ Trust upgrade complete!"
 
 .PHONY: provision-local-trust

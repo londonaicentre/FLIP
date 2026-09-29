@@ -156,6 +156,9 @@ jobs:
           K8S_TRUST_PUBLIC_IPS: ${{ vars.K8S_TRUST_PUBLIC_IPS }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
           JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: ${{ vars.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB }}
+          TRUST_INSTANCE_TYPE: ${{ vars.TRUST_INSTANCE_TYPE }}
+          TRUST_AMI_SSM_PARAMETER: ${{ vars.TRUST_AMI_SSM_PARAMETER }}
+          TRUST_ROOT_VOLUME_SIZE: ${{ vars.TRUST_ROOT_VOLUME_SIZE }}
           # The LZA keys (FLIP#749). Required when TF_PROD selects a
           # platform-managed estate (lza-stag / lza), expected absent on the
           # legacy tokens — see compose-ci-env.sh, which is the one place that
