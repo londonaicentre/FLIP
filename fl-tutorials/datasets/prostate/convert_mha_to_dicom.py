@@ -1,0 +1,261 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Converts PI-CAI .mha scans to DICOM series with correct per-slice headers
+# (PatientID, StudyInstanceUID, SeriesInstanceUID, ImagePositionPatient,
+# ImageOrientationPatient, PixelSpacing, SliceThickness) so they can be pulled
+# into a trust's PACS (Orthanc) like any other DICOM study.
+#
+# Adapted from picai_prep (https://github.com/DIAGNijmegen/picai_prep), which
+# converts DICOM -> MHA via SimpleITK and reads its archive as
+# <patient_id>/<patient_id>_<study_id>_<modality>.mha. This script runs that
+# conversion in reverse.
+
+import argparse
+import csv
+import os
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import date
+from pathlib import Path
+
+import SimpleITK as sitk
+from pydicom.uid import generate_uid
+from synthetic_identity import STUDY_DESCRIPTION, birth_date, patient_name, referring_physician_name
+from tqdm import tqdm
+
+MODALITY_DESCRIPTIONS = {"t2w": "T2 Weighted", "adc": "ADC Map", "hbv": "High B-Value DWI"}
+
+# Every generated UID (study, series, frame-of-reference, and per-slice SOP instance) is
+# `UID_PREFIX` followed by a SHA-512 digest of stable identifiers — never the machine clock or
+# Python's per-process-salted hash(). pydicom's generate_uid(entropy_srcs=...) does the hashing:
+# passing entropy_srcs makes it deterministic (the docstring's own example shows two calls with
+# the same entropy_srcs returning the same UID), and it independently hashes each call's inputs
+# rather than nesting one UID's digits inside another's, so distinct entropy_srcs (a different
+# modality, a different literal tag, a different slice index — see write_dicom_series) give
+# UIDs that cannot equal each other by construction of the entropy, with SHA-512 collision odds
+# between them. That makes re-converting the same study, on any machine, on any day, produce
+# byte-identical UIDs, so re-ingesting it into PACS updates the existing study and series instead
+# of minting a duplicate — at every UID level, not just StudyInstanceUID.
+UID_PREFIX = "1.2.826.0.1.3680043.2.1125."
+
+# Fixed per-modality UID component, folded into the entropy_srcs below instead of the raw
+# modality string. The five PI-CAI modality codes are a small, closed set, so hashing the literal
+# string is already effectively collision-free via SHA-512 — but passing the assigned digit
+# keeps modality identity a fixed lookup rather than something several call sites re-derive by
+# hashing, and raising on an unrecognised modality (instead of silently omitting it from the
+# entropy) surfaces a new modality immediately rather than shipping it unmapped.
+MODALITY_UID_COMPONENT = {
+    "t2w": "1",
+    "adc": "2",
+    "hbv": "3",
+    "sag": "4",  # Sagittal T2W — PI-CAI ships this for some studies alongside axial t2w.
+    "cor": "5",  # Coronal T2W — likewise.
+}
+
+# What PI-CAI anonymised away — patient name, birth date, referring physician, study description —
+# is synthesised per study, deterministically from the PI-CAI ids (synthetic_identity.py), for the
+# same reason spleen and cxr synthesise a patient population: a study without those tags is not
+# what a hospital PACS hands over, and the trusts' imaging-api refuses to import one.
+#
+# Acquisition metadata PI-CAI leaves in the .mha headers (written by its anonymisation script).
+# The marksheet carries no scanner columns, so these headers are the dataset's only per-study
+# record of which scanner acquired a scan — carry them into the DICOM instead of dropping them.
+PRESERVED_SOURCE_TAGS = (
+    "0008|0070",  # Manufacturer
+    "0008|1090",  # Manufacturer's Model Name
+    "0010|0040",  # Patient's Sex
+    "0010|1010",  # Patient's Age
+    "0012|0062",  # Patient Identity Removed
+)
+
+
+def load_centers(marksheet_path: Path) -> dict[tuple[str, str], str]:
+    """Map each ``(patient_id, study_id)`` to the center that acquired it.
+
+    The acquiring center is the one piece of provenance PI-CAI keeps in the marksheet rather than
+    the ``.mha`` headers, and it is what a per-site partition keys on. Carrying it into
+    ClinicalTrialSiteID means the contributing center travels with the study into PACS and XNAT,
+    so downstream steps read it off the DICOM instead of re-joining the marksheet.
+
+    Args:
+        marksheet_path: ``clinical_information/marksheet.csv`` from the PI-CAI labels archive.
+
+    Returns:
+        dict[tuple[str, str], str]: ``(patient_id, study_id) -> center``. Empty if the marksheet is
+        absent, which leaves InstitutionName unset rather than failing the conversion.
+    """
+    if not marksheet_path.is_file():
+        print(f"⚠️  {marksheet_path} not found — converting without InstitutionName.")
+        return {}
+    with open(marksheet_path, newline="") as handle:
+        return {(row["patient_id"], row["study_id"]): row["center"] for row in csv.DictReader(handle)}
+
+
+def _age_in_years(patient_age: str) -> int | None:
+    """PatientAge (0010,1010) as whole years — ``"073Y"`` → 73 — or ``None`` when absent or not in years."""
+    if len(patient_age) == 4 and patient_age.endswith("Y") and patient_age[:3].isdigit():
+        return int(patient_age[:3])
+    return None
+
+
+def write_dicom_series(
+    image: sitk.Image, out_dir: Path, patient_id: str, study_id: str, modality: str, center: str = ""
+) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # Read the source metadata *before* casting: sitk.Cast returns a new image with an empty
+    # metadata dictionary, so anything read after this line would silently come back missing.
+    source_tags = {tag: image.GetMetaData(tag) for tag in PRESERVED_SOURCE_TAGS if image.HasMetaDataKey(tag)}
+    # PI-CAI writes the acquisition date as YYYY-MM-DD; DICOM DA wants YYYYMMDD. Without this
+    # every study is stamped with the date it happened to be converted.
+    source_study_date = image.GetMetaData("0008|0020").replace("-", "") if image.HasMetaDataKey("0008|0020") else ""
+    image = sitk.Cast(image, sitk.sitkInt16)
+
+    modification_date = time.strftime("%Y%m%d")
+    modification_time = time.strftime("%H%M%S")
+    if modality not in MODALITY_UID_COMPONENT:
+        raise ValueError(f"Unrecognised modality {modality!r}; add it to MODALITY_UID_COMPONENT")
+    modality_component = MODALITY_UID_COMPONENT[modality]
+    study_uid = generate_uid(prefix=UID_PREFIX, entropy_srcs=[patient_id, study_id])
+    series_uid = generate_uid(prefix=UID_PREFIX, entropy_srcs=[patient_id, study_id, modality_component])
+    # A distinct trailing literal ("frame-of-reference" here; "instance" + slice index below) is
+    # what keeps this from ever equalling a SOPInstanceUID of the same series — each is an
+    # independent SHA-512 digest of its own entropy_srcs, not a suffix of series_uid, so there is
+    # no shared branch for two different UID *kinds* to collide on.
+    frame_of_reference_uid = generate_uid(
+        prefix=UID_PREFIX, entropy_srcs=[patient_id, study_id, modality_component, "frame-of-reference"]
+    )
+
+    direction = image.GetDirection()
+    orientation = "\\".join(
+        str(v) for v in (direction[0], direction[3], direction[6], direction[1], direction[4], direction[7])
+    )
+    spacing = image.GetSpacing()
+
+    series_tag_values = {
+        "0008|0050": f"{patient_id}_{study_id}",
+        "0008|0060": "MR",
+        "0008|0020": source_study_date or modification_date,
+        "0008|0030": modification_time,
+        "0008|103e": MODALITY_DESCRIPTIONS.get(modality, modality.upper()),
+        "0010|0020": patient_id,
+        "0020|000d": study_uid,
+        "0020|0010": study_id,
+        "0020|000e": series_uid,
+        # SeriesNumber: the modality's fixed digit (t2w 1, adc 2, hbv 3 …). Left unset, GDCM writes
+        # the tag present-but-EMPTY on every instance, the defect that makes MONAI Deploy's loader
+        # drop a series (see trust/orthanc/publish_dicom.py --fill-empty-numbers for the spleen
+        # data, which had to be patched after the fact). Set it at the source instead.
+        "0020|0011": modality_component,
+        "0020|0052": frame_of_reference_uid,
+        "0020|0037": orientation,
+        "0028|0030": f"{spacing[1]}\\{spacing[0]}",
+        "0018|0050": str(spacing[2]),
+    }
+    series_tag_values.update(source_tags)
+    series_tag_values.setdefault("0010|0040", "M")  # a prostate cohort; PI-CAI's headers carry it anyway
+    # The synthetic identity (see the module header): per patient for the name and birth date, so a
+    # patient's two studies agree; per study for the referrer.
+    series_tag_values["0010|0010"] = patient_name(patient_id)
+    series_tag_values["0008|0090"] = referring_physician_name(patient_id, study_id)
+    series_tag_values["0008|1030"] = STUDY_DESCRIPTION
+    age_years = _age_in_years(source_tags.get("0010|1010", ""))
+    if source_study_date and age_years is not None:
+        study_date = time.strptime(source_study_date, "%Y%m%d")
+        dob = birth_date(date(study_date.tm_year, study_date.tm_mon, study_date.tm_mday), age_years, patient_id)
+        series_tag_values["0010|0030"] = dob.strftime("%Y%m%d")
+    if center:
+        # ClinicalTrialSiteID, NOT InstitutionName (0008,0080). PI-CAI's `center` is a
+        # contributing cohort, not the institution that owns the scanner: the 1500 public cases come
+        # from 11 sites across these 3 centers, PCNN is a regional network (Prostaat Centrum
+        # Noord-Nederland) whose studies span 6 scanner models and both vendors, and ZGT is a
+        # hospital group. InstitutionName is defined as where the equipment is located, so it would
+        # be a false claim for those two. The 0012 group is the research/de-identification family
+        # the .mha headers already use (0012|0062, Patient Identity Removed).
+        series_tag_values["0012|0030"] = center  # Clinical Trial Site ID
+
+    writer = sitk.ImageFileWriter()
+    writer.KeepOriginalImageUIDOn()
+
+    for i in range(image.GetDepth()):
+        image_slice = image[:, :, i]
+        for tag, value in series_tag_values.items():
+            image_slice.SetMetaData(tag, value)
+        # SOPInstanceUID (0008|0018): left unset, GDCM mints a fresh one per write — the same
+        # non-determinism bug as the study/series UIDs above, just one level down. Setting it
+        # explicitly here, before Execute(), is what writer.KeepOriginalImageUIDOn() (above)
+        # preserves: without it, the tag GDCM finds in the slice's metadata is the one we set,
+        # not a random one of its own. The slice index is part of the entropy, so every instance
+        # in a series gets its own deterministic, collision-free UID.
+        instance_entropy = [patient_id, study_id, modality_component, "instance", str(i)]
+        image_slice.SetMetaData("0008|0018", generate_uid(prefix=UID_PREFIX, entropy_srcs=instance_entropy))
+        image_slice.SetMetaData("0008|0012", modification_date)
+        image_slice.SetMetaData("0008|0013", modification_time)
+        image_slice.SetMetaData("0020|0013", str(i))
+        image_slice.SetMetaData("0020|0032", "\\".join(str(v) for v in image.TransformIndexToPhysicalPoint((0, 0, i))))
+        writer.SetFileName(str(out_dir / f"{i:04d}.dcm"))
+        writer.Execute(image_slice)
+
+
+def _convert_one(mha_path: Path, output_dir: Path, centers: dict[tuple[str, str], str]) -> None:
+    patient_id, study_id, modality = mha_path.stem.rsplit("_", 2)
+    series_dir = output_dir / patient_id / study_id / modality
+    image = sitk.ReadImage(str(mha_path))
+    write_dicom_series(image, series_dir, patient_id, study_id, modality, centers.get((patient_id, study_id), ""))
+
+
+def convert_archive(
+    input_dir: Path, output_dir: Path, workers: int, marksheet_path: Path, modalities: list[str] | None = None
+) -> None:
+    """Convert every ``.mha`` under ``input_dir`` (optionally only some modalities) to a DICOM series.
+
+    Args:
+        input_dir: The PI-CAI ``images/`` tree, ``<patient>/<patient>_<study>_<modality>.mha``.
+        output_dir: Root of the DICOM tree, ``<patient>/<study>/<modality>/<i>.dcm``.
+        workers: Process pool size.
+        marksheet_path: ``clinical_information/marksheet.csv`` (for ClinicalTrialSiteID).
+        modalities: Keep only these modality suffixes (e.g. ``["t2w", "adc", "hbv"]``); ``None`` converts all.
+    """
+    mha_paths = sorted(input_dir.rglob("*.mha"))
+    if modalities is not None:
+        unknown = sorted(set(modalities) - set(MODALITY_UID_COMPONENT))
+        if unknown:
+            raise ValueError(f"Unrecognised modalities {unknown}; known: {sorted(MODALITY_UID_COMPONENT)}")
+        mha_paths = [p for p in mha_paths if p.stem.rsplit("_", 1)[-1] in modalities]
+    centers = load_centers(marksheet_path)
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_convert_one, mha_path, output_dir, centers) for mha_path in mha_paths]
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Converting to DICOM", unit="scan"):
+            future.result()
+
+
+if __name__ == "__main__":
+    # fl-tutorials/data/prostate — see download_data.py's default_data_dir comment.
+    default_data_dir = Path(__file__).parent.parent.parent / "data" / "prostate"
+    parser = argparse.ArgumentParser(description="Convert PI-CAI .mha scans to DICOM series")
+    parser.add_argument("--input", type=Path, default=default_data_dir / "images")
+    parser.add_argument("--output", type=Path, default=default_data_dir / "dicom")
+    parser.add_argument("--workers", type=int, default=os.cpu_count())
+    parser.add_argument(
+        "--marksheet",
+        type=Path,
+        default=default_data_dir / "clinical_information" / "marksheet.csv",
+        help="Marksheet supplying the acquiring center, written to ClinicalTrialSiteID (0012,0030).",
+    )
+    parser.add_argument(
+        "--modalities",
+        nargs="+",
+        default=None,
+        help="Convert only these modalities (e.g. t2w adc hbv — the axial series the tutorial reads; sag/cor are "
+        "unused and double the bytes). Default: every .mha found.",
+    )
+    args = parser.parse_args()
+    convert_archive(args.input, args.output, args.workers, args.marksheet, args.modalities)

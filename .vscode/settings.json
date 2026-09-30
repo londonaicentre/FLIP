@@ -88,5 +88,7 @@
     },
     // deactivate pylance error checking
     "python.analysis.typeCheckingMode": "off",
+    "python-envs.defaultEnvManager": "ms-python.python:venv",
+    "python-envs.defaultPackageManager": "ms-python.python:pip",
     // deactivate mypy missing library stubs errors
 }
