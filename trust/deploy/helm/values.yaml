@@ -726,6 +726,13 @@ xnat:
   web:
     enabled: true
     adminUser: "admin"
+    # Base URL a *browser* uses to reach this XNAT. Leave empty to fall back to
+    # http://127.0.0.1:<service.port>, which is right for a kubectl port-forward onto the service
+    # port. The OHIF viewer builds its DICOMweb roots from siteUrl and fetches them from the
+    # user's machine, so a URL that does not reach XNAT from there (an in-cluster name, or the
+    # 127.0.0.1 default when XNAT is fronted by an ingress) makes every whole-slide tile fail and
+    # the viewport render black with nothing in the XNAT logs. Set this to the URL people open.
+    siteUrl: ""
     # DICOM SCP (Service Class Provider) configuration.
     # XNAT binds this port, registers it on its dicomscp receiver, and advertises it as the C-MOVE
     # destination. DQR matches that destination against a registered receiver by exact AE title and

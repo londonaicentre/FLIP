@@ -14,6 +14,7 @@
 
 """Unit tests for the demo-video recorder's credential fallback, app-file listing and tutorial copy."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -166,5 +167,9 @@ def test_resuming_an_ehr_project_under_the_default_xray_profile_is_refused(monke
 def test_resuming_an_imaging_project_under_the_ehr_profile_is_refused(monkeypatch: pytest.MonkeyPatch):
     """The inverse would skip the imaging wait and upload the EHR app onto an imaging project."""
     _stub_project_has_imaging(monkeypatch, True)
-    with pytest.raises(SmokeFailure, match=r"has_imaging=true.*tabular-only study.*pass --app spleen / xray"):
+    # The remedy names every imaging profile, so derive the list rather than pin today's roster.
+    imaging_apps = " / ".join(sorted(name for name, profile in APPS.items() if profile.get("has_imaging", True)))
+    with pytest.raises(
+        SmokeFailure, match=rf"has_imaging=true.*tabular-only study.*pass --app {re.escape(imaging_apps)}"
+    ):
         check_reused_project_matches_profile(requests.Session(), {}, "proj-1", "ehr", APPS["ehr"])

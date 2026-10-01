@@ -288,8 +288,8 @@ fetch-vocab-dicom:
 	fi
 
 # --projects $(PROJECTS): fetch what seed-omop is about to load, not the default pair — a
-# non-default project (brain_mri_project, prostate_project) otherwise fails validate_data_dir
-# on a table that was never fetched.
+# non-default project published for the seed pipeline alone (brain_mri_project, prostate_project,
+# pathology_project) otherwise fails validate_data_dir on a table that was never fetched.
 fetch-dataset:
 	uv run python -m omop_db_tools.dataset fetch --revision $(HF_TRUST_DATA_REVISION) --dest data/canonical --projects $(PROJECTS)
 
