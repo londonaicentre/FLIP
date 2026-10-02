@@ -27,7 +27,7 @@
 #   * Declaring an environment also changes the OIDC `sub` claim to
 #     `repo:ORG/REPO:environment:aws-stag`, which carries no ref. What keeps a PR
 #     from assuming the *apply* role is the `job_workflow_ref` condition in
-#     deploy/providers/AWS/ci/main.tf, not the ref in `sub`.
+#     deploy/providers/AWS/modules/terraform_ci_bootstrap, not the ref in `sub`.
 #
 # The image tags are resolved, not read from configuration. `vars.DOCKER_TAG` is
 # the mutable `:stag`, while an apply writes the immutable `sha-<short7>` pin

@@ -145,7 +145,11 @@ environment and readable only on the branches its deployment branch policy admit
 Which account and which mode an environment drives is set by its **`TF_PROD`**
 variable — the `deploy/env_mode.mk` token, one of `stag` | `true` | `lza-stag` |
 `lza` — together with `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN`, the OIDC roles it
-assumes. Repointing an environment at a different AWS account is a change to those
+assumes. Those roles are not created by FLIP's pipeline: they come from the
+`deploy/providers/AWS/modules/terraform_ci_bootstrap` module, which the platform
+repositories (`aicentre-iac`, `aicentre-lza-iac`) apply in each account — or, in an
+account you own, `deploy/providers/AWS/ci`. The seeding script reads both ARNs from
+IAM, after checking the roles trust this repository's environment. Repointing an environment at a different AWS account is a change to those
 values, not to any workflow. Because that variable alone decides the estate's
 shape, the workflows also state the **class** their branch implies
 (`EXPECTED_ENV_CLASS`: `main` → `prod`, otherwise `stag`; `stag` in

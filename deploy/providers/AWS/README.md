@@ -483,8 +483,10 @@ export PROD=stag    # or: export PROD=true
 make github-login
 make aws-login
 
-# 2. Bootstrap the Terraform backend bucket once, if needed
-make create-backend
+# 2. Nothing to run: the Terraform state bucket, with the CI roles and the
+#    permissions boundary, comes from modules/terraform_ci_bootstrap — applied by
+#    the platform repositories in AI Centre's accounts, or by ci/ in your own
+#    (see ci/README.md). It must exist before `make init`.
 
 # 3. Initialize Terraform (uses the configured S3 backend)
 make init
@@ -858,7 +860,7 @@ fixed per account by design.
 | `TF_VAR_lza_managed_network` | `true` — the platform-managed-network toggle, orthogonal to `environment` (see below) |
 | Trust kit suffix | `trust/.env.<CODE>.lza-prod` — a separate namespace so legacy prod kits are never overwritten |
 | `deploy-centralhub` git ref | `origin/main` (same as legacy prod) |
-| `TF_VAR_iam_permissions_boundary_name` | **`AICentre-WorkloadRoleBoundary` on the two LZA modes** — the platform's boundary ([londonaicentre/lza#51](https://github.com/londonaicentre/lza/pull/51)), deployed by the accelerator to every workload account. An LZA SCP denies creating a role, or attaching or writing a policy onto one, unless the role carries it, so no other value works there. The self-contained modes keep the `AICentre-FLIPTerraformBoundary` default declared by the `ci/` root. An env file that sets the variable itself wins on any mode — `?=` only supplies the default ([FLIP#1280](https://github.com/londonaicentre/FLIP/issues/1280)) |
+| `TF_VAR_iam_permissions_boundary_name` | **`AICentre-WorkloadRoleBoundary` on the two LZA modes** — the platform's boundary ([londonaicentre/lza#51](https://github.com/londonaicentre/lza/pull/51)), deployed by the accelerator to every workload account. An LZA SCP denies creating a role, or attaching or writing a policy onto one, unless the role carries it, so no other value works there. The self-contained modes keep the `AICentre-FLIPTerraformBoundary` default declared by `modules/terraform_ci_bootstrap`. An env file that sets the variable itself wins on any mode — `?=` only supplies the default ([FLIP#1280](https://github.com/londonaicentre/FLIP/issues/1280)) |
 
 **Platform-managed vs FLIP-managed.** The LZA account's network is owned by the accelerator pipeline
 ([londonaicentre/lza](https://github.com/londonaicentre/lza)) and VPC-layer creation is SCP-denied in-account, so with
@@ -910,12 +912,15 @@ bucket yet) and `local.ui_origin` is a placeholder. Once the edge stack is up, s
 bucket CORS + Cognito URLs at the edge domain. This ordering is why the two variables deliberately carry no
 "required-when-LZA" validation — it would hard-fail the legitimate first apply.
 
-**Prerequisites (provisioned out-of-band in each LZA account, not Terraform-managed here).** Every
-`PROD=lza*` account needs these three before its first `plan`; the commands below are the ones the
-FLIPStaging bring-up used (2026-09-01), with `PROD`/profile swapped per environment.
+**Prerequisites (provisioned outside this root in each LZA account).** Every `PROD=lza*` account needs
+these three before its first `plan`; the commands below are the ones the FLIPStaging bring-up used
+(2026-09-01), with `PROD`/profile swapped per environment.
 
-- TF state bucket (`flip-terraform-state-lza`, or `-lza-stag`; versioned, SSE-KMS, public access blocked):
-  `make create-backend PROD=lza` — idempotent, reads the bucket name from the env file.
+- TF state bucket (`flip-terraform-state-lza`, or `-lza-stag`) — declared by `aicentre-lza-iac`'s instantiation of
+  [`modules/terraform_ci_bootstrap`](modules/terraform_ci_bootstrap/README.md), together with the CI roles and the
+  permissions boundary. Versioned, public access blocked, a TLS-only bucket policy and a bounded version history;
+  encrypted with SSE-S3 by default, and on LZA production with SSE-KMS under the AWS-managed `aws/s3` key (no CMK).
+  Nothing to run from here.
 - ECR **pull-through cache rules** — the account has no internet egress, so images come from in-account mirrors over
   the central `ecr.api`/`ecr.dkr` endpoints: prefix `ghcr/` mirroring `ghcr.io` (upstream auth via a read-only GHCR
   PAT in the `ecr-pullthroughcache/ghcr` Secrets Manager secret) and the credential-less `ecr-public/` prefix
@@ -1398,6 +1403,31 @@ reporting every unreleased develop change as drift.
 `validate_terraform.yml` still runs `fmt`/`validate` with `-backend=false` on every
 change; it catches HCL errors without credentials and is the fast gate.
 
+### Where the CI identity comes from
+
+The plan and apply roles, the `AICentre-FLIPTerraformBoundary` permissions
+boundary and the Terraform state bucket are declared by
+[`modules/terraform_ci_bootstrap`](modules/terraform_ci_bootstrap/README.md). This
+root never manages them — the pipeline must not set its own ceiling, and an apply
+that broke its own roles would lock CI out of the apply that fixes them.
+
+The module lives in this public repository, rather than in a platform repository,
+so that what FLIP's CI may do is public knowledge: anyone deploying FLIP can read
+exactly which AWS services, roles and data its plan and apply roles reach, and
+instantiate the same least-privilege set in their own account.
+
+- **AI Centre's LZA accounts**: the platform repository, `aicentre-lza-iac`,
+  instantiates the module per account, pinned to a FLIP commit SHA, through its
+  own reviewed pipeline, with the platform's own permissions boundary
+  (`create_permissions_boundary = false`, `AICentre-WorkloadRoleBoundary`). It
+  also owns each account's GitHub OIDC provider. A FLIP change to the module
+  therefore reaches AWS only when that repository bumps the pinned SHA; a change
+  the FLIP root depends on (a new entry in `managed_role_names` or
+  `apply_service_prefixes`, say) has to land there first.
+- **Your own account**: [`ci/`](ci/README.md) wraps the same module for a laptop
+  apply, with local state first and then `make migrate-state` into the bucket it
+  created.
+
 ### Where the values come from
 
 The Makefile is the only definition of how env values map onto Terraform inputs,
@@ -1449,7 +1479,9 @@ would have collapsed "merged to `main`" into "merged to `develop`" for the
 production secrets. The drift job reaches them by being dispatched onto `main`
 instead.
 
-Each holds `TF_PLAN_ROLE_ARN` and `TF_APPLY_ROLE_ARN` (from `make -C ci output`),
+Each holds `TF_PLAN_ROLE_ARN` and `TF_APPLY_ROLE_ARN` (the roles described in
+"Where the CI identity comes from" below, read from IAM by
+`scripts/setup-github-environments.sh`),
 the mode variable `TF_PROD`, and the Terraform inputs. Stored as environment
 *secrets*: `ADMIN_USER_PASSWORD`, `AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY`,
 `INTERNAL_SERVICE_KEY_HASH`. Everything else is a variable, including
@@ -1654,18 +1686,19 @@ AWS_PROFILE=stag LOCK=false make plan \
 #    `overwrite = true` adopts it on the first apply, rewriting the bytes CI has
 #    just read from it — a no-op.
 
-# 2. Create the OIDC roles, from a laptop (see ci/README.md). They trust GitHub's
-#    OIDC identity provider, which ci/ looks up rather than creates, so it must
-#    already exist in the account — AI Centre's legacy accounts get it from
-#    aicentre-iac; anywhere else, declare it in the account's baseline IaC first.
-#    `make -C ci plan` checks and, if it is missing, says what to declare.
-make -C ci init && make -C ci plan && make -C ci apply
-make -C ci init PROD=true && make -C ci plan PROD=true && make -C ci apply PROD=true
+# 2. The CI roles, the boundary and the state bucket come from
+#    modules/terraform_ci_bootstrap; the OIDC provider from the account's own
+#    baseline IaC. In an account of your own, apply ci/
+#    (see ci/README.md); in AI Centre's LZA accounts the platform repository,
+#    aicentre-lza-iac, applies it and there is nothing to run here.
 
 # 3. Create and populate the two GitHub environments. Run --dry-run first.
 #    Reads the secret-vs-variable split out of terraform_plan.yml, so it cannot
-#    disagree with what the workflows dereference, and refuses to run when ci/ is
-#    initialised for the other account (which would wire in the wrong role ARNs).
+#    disagree with what the workflows dereference. Before writing anything it
+#    checks, under the mode's profile, that the env file's state bucket is in that
+#    account, that both roles exist there and trust this repository's environment
+#    (and, for apply, the mode's branch), and that the boundary exists; the role
+#    ARNs it writes are read from IAM.
 #    --mode is the same PROD token the workflows read as TF_PROD, and this script
 #    sets that variable: it is what selects the env file, the profile and the keys
 #    the run requires. See "Repointing CI at the LZA accounts" for the LZA pair.
@@ -1683,14 +1716,12 @@ Two layers move when FLIP's CI is pointed at a different AWS account, and only t
 second is a GitHub change:
 
 1. **Per-account AWS bootstrap.** The GitHub OIDC provider, the plan and apply
-   roles, the state bucket, the ECR pull-through cache and the
-   `/flip/ci/host_aws_public_key` parameter are resources *in the target
-   account*, and all but the state bucket are declared in Terraform: the OIDC
-   provider by the platform repository, the roles by `ci/`, the parameter by the
-   main root. What stays manual is running those applies once, from a laptop with
-   admin access there — CI cannot create the roles it would need in order to
-   create them. Until they exist the workflows have an ARN to assume and nothing
-   to assume it with — `AssumeRole` fails before Terraform starts.
+   roles, the permissions boundary, the state bucket, the ECR pull-through cache
+   and the `/flip/ci/host_aws_public_key` parameter are resources *in the target
+   account*. The first four are the platform repository's (`aicentre-lza-iac`,
+   through `modules/terraform_ci_bootstrap`), the parameter is the main root's.
+   Until the roles exist the workflows have an ARN to assume and nothing to
+   assume it with — `AssumeRole` fails before Terraform starts.
 2. **The GitHub environment's values.** Repointing rewrites `TF_PROD`,
    `TF_PLAN_ROLE_ARN`, `TF_APPLY_ROLE_ARN` and every account-scoped value (bucket
    names, the ECR registry host, the web-edge domain). The environment *names* do
@@ -1722,19 +1753,12 @@ Run these in order **per account**, from a laptop authenticated to that account:
 #        [profile lza-stag]  sso_session = <session>  sso_account_id = <lza-stag-account-id>  sso_role_name = FLIPAdminAccess
 #        [profile lza-prod]  sso_session = <session>  sso_account_id = <lza-prod-account-id>  sso_role_name = FLIPAdminAccess
 
-# 0b. A GitHub OIDC provider must exist in the account before ci/ can be planned.
-#     ci/ looks it up with `data.aws_iam_openid_connect_provider` rather than
-#     declaring it: an account holds one provider per issuer URL, shared by
-#     anything GitHub-driven there, so it is platform plumbing — and declared in
-#     this root, a destroy of FLIP's CI would delete it from under everything
-#     else. The platform repository declares it instead, as aicentre-iac does for
-#     the self-contained accounts:
-#         aicentre-lza-iac, iam_github_oidc.tf — one per FLIP workload account
-#     Merge that first; in an account without one, the ci/ plan stops with
-#     "no matching OpenID Connect Provider found". Nothing to run here.
-
-# 1. The state bucket (idempotent; the name comes from the env file).
-make create-backend PROD=lza-stag
+# 1. The platform repository applies the OIDC provider, the state bucket and the CI
+#    roles: aicentre-lza-iac, one instantiation of modules/terraform_ci_bootstrap per
+#    FLIP workload account, pinned to a FLIP commit SHA, with the platform's own
+#    permissions boundary (AICentre-WorkloadRoleBoundary, londonaicentre/lza#51)
+#    rather than FLIP's. Nothing to run here — but it comes first: the roles are what
+#    CI assumes, and the bucket holds the main root's state.
 
 # 2. /flip/ci/host_aws_public_key — the EC2 keypair public key CI reproduces byte
 #    for byte — is declared in parameter_store.tf, so the first laptop apply of the
@@ -1744,15 +1768,11 @@ make create-backend PROD=lza-stag
 #    to the old account, plans a keypair replacement that ripples into the
 #    bastion, and the parameter would then publish the wrong key.
 
-# 3. The CI roles. NOT this repo's ci/ root on LZA: the platform owns the boundary
-#    (AICentre-WorkloadRoleBoundary, londonaicentre/lza#51, already the LZA default in
-#    the Makefile) and creates the plan and apply roles from its own repo, and an LZA
-#    SCP denies the roles ci/ would create by hand. Confirm both roles and the GitHub
-#    OIDC provider exist in this account before step 4.
-
-# 4. The GitHub environment: creates it if absent, sets TF_PROD, reads the two role
-#    ARNs out of ci/ state (and refuses if ci/ is initialised for another account),
-#    then writes every key the workflows dereference from the env file.
+# 3. The GitHub environment: verifies the account first (the env file's state
+#    bucket is in it; both roles exist and trust aws-stag / aws-prod and the mode's
+#    branch; the boundary exists) and stops before any GitHub write if not. Then it
+#    creates the environment if absent, sets TF_PROD and the two role ARNs read
+#    from IAM, and writes every key the workflows dereference from the env file.
 bash scripts/setup-github-environments.sh --mode lza-stag --env-file ../../../.env.lza-stag --dry-run
 bash scripts/setup-github-environments.sh --mode lza-stag --env-file ../../../.env.lza-stag
 ```
@@ -1776,7 +1796,7 @@ apply run:
   are globally unique, and reusing them works **only because the legacy accounts are
   being emptied and closed**. If the two estates have to coexist, each of those names
   needs changing in the env file *and* on the environment, `FLIP_TFSTATE_BUCKET_NAME`
-  / `CI_STATE_BUCKET` included, or the first apply stops on
+  included, or the first apply stops on
   `BucketAlreadyExists`/`AlreadyExists`.
 
 **Rollback is `TF_PROD`.** Setting it back to the legacy token (with the
@@ -1794,8 +1814,8 @@ three **repository-level** variables — `AWS_ROLE_TO_ASSUME`,
 `AWS_ROLE_SESSION_NAME`, `AWS_REGION` — rather than through an environment. If it
 is to keep working in the new account, that role and those three variables have to
 follow. It is recorded as a known finding in FLIP#962 and predates this pipeline;
-the migration is the opportunity to retire it. The `ci/` roles are additive and do
-not depend on it.
+the migration is the opportunity to retire it. The bootstrap's roles are additive
+and do not depend on it.
 
 ### What an automated apply will not do
 
@@ -1872,9 +1892,9 @@ The pipeline is additive — the laptop workflow is unchanged and remains the
 recovery path.
 
 - **CI is wedged / the role is broken.** `AWS_PROFILE=stag make init plan apply`
-  as before. The CI roles live in their own state (`flip/ci/terraform.tfstate`)
-  and are applied only from a laptop, so a bad main-state apply cannot lock CI
-  out of the apply that would fix it.
+  as before. The CI roles are owned by the platform repositories, outside this
+  root's state, so a bad main-state apply cannot lock CI out of the apply that
+  would fix it; a broken role is fixed there.
 - **A plan is stuck on the state lock.** PR plans run with `-lock=false` and never
   take it. An apply does; `make force-unlock LOCK_ID=<id>` releases it.
 - **An apply must not run.** Disable `terraform_apply.yml` in the Actions tab, or

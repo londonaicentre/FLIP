@@ -30,8 +30,8 @@
 | `parameter_store.tf` | SSM Parameter Store entries |
 | `backend.tf` | S3 backend with S3 native locking (`use_lockfile`) |
 | `variables.tf` | All Terraform variables with defaults |
-| `modules/` | Reusable child modules: `cognito` (user pool + client + domain + seed users), `flip_s3_bucket` (one bucket per tenant with per-caller CORS methods), `secgroup` (security group with egress managed entirely inline), `ses` (sender identity + transactional email templates), `trust_ec2` (the Trust EC2 host) |
-| `ci/` | Separate root (`flip/ci/terraform.tfstate`): the GitHub Actions OIDC plan/apply roles. Applied from a laptop only — see `ci/README.md` |
+| `modules/` | Reusable child modules: `cognito` (user pool + client + domain + seed users), `flip_s3_bucket` (one bucket per tenant with per-caller CORS methods), `secgroup` (security group with egress managed entirely inline), `ses` (sender identity + transactional email templates), `trust_ec2` (the Trust EC2 host), `terraform_ci_bootstrap` (the CI plan/apply roles, the permissions boundary and the state bucket — NOT used by this root; see below) |
+| `ci/` | Adopters' wrapper root around `modules/terraform_ci_bootstrap`, for an account you own: tfvars-driven, local state then `make migrate-state`. Never run in AI Centre's accounts — see `ci/README.md` |
 
 ## AWS Profiles
 
@@ -77,8 +77,8 @@ make apply-fl-kit-slots                       # Targeted plan/apply of the /flip
 make destroy                                  # Selective destroy (preserves Cognito, Secrets, S3)
 make aws-login                                # AWS SSO login
 make print-tf-env                             # Print resolved TF_VAR_* as KEY=value (consumed by the CI workflows)
-make -C ci init/plan/apply                    # GitHub Actions OIDC roles (laptop only — see ci/README.md)
-make -C ci check-oidc-provider               # Does the account have GitHub's OIDC provider? (plan runs it first)
+make -C ci init/plan/apply/migrate-state      # Adopters only: CI bootstrap in your own account (see ci/README.md); AI Centre's accounts are the platform repos'
+make -C ci check-oidc-provider               # Does the account have GitHub's OIDC provider? (plan runs it, and check-not-managed-elsewhere, first)
 make checkov-lint                             # Static checkov security lint (IAM policy content + promoted posture checks) — CI counterpart is the Checkov Security Lint job in validate_terraform.yml (FLIP#1052, FLIP#1058); suppress deliberate breadth/posture in-code with `# checkov:skip=<ID>:<rationale>`. NB this Makefile's parse-time env guard needs the deploy env file — the REPO-ROOT `make checkov-lint` (or `bash deploy/providers/AWS/scripts/checkov_lint.sh`) runs env-free
 uv run --no-project --with pytest --with jinja2 --with click --with diagrams pytest tests/   # Credential-free static checks over the stack's artefacts (rendered templates, deploy scripts, and Terraform source itself — incl. the Cognito `callback_urls` = browser CORS allowlist invariants). CI counterpart: the AWS deploy tests job in validate_terraform.yml (which also installs graphviz first, so the render smoke test in test_architecture_diagram.py runs instead of skipping). Deps named explicitly rather than `uv sync`d: the dev group pulls ansible-core + pyqt5, the tests need four packages (`diagrams` is imported at module level by architecture/central_hub.py, so it's required for collection even without graphviz installed)
 ```
@@ -147,18 +147,27 @@ Things worth knowing before touching any of it:
   delete it when the repoint lands. `.github/tests/workflows/test_terraform_stag_pause.py`
   pins the three guards.
 - **Every IAM role this root owns carries a permissions boundary**
-  (`var.iam_permissions_boundary_name`, the policy declared in `ci/`). The CI apply
-  role may only create a role, or write an inline policy onto one, when the role
-  carries it — which is what keeps `PowerUserAccess` + IAM write from being
-  administrator-equivalent. Adding a role means adding its literal name to
-  `var.managed_role_names` in `ci/variables.tf` and re-applying `ci/` from a laptop
-  first, or the apply cannot pass or re-trust it. **The LZA modes use the
+  (`var.iam_permissions_boundary_name`, the policy declared by
+  `modules/terraform_ci_bootstrap`). The CI apply role may only create a role, or
+  write an inline policy onto one, when the role carries it. **The LZA modes use the
   platform's boundary instead**: the Makefile defaults the variable to
   `AICentre-WorkloadRoleBoundary` there (londonaicentre/lza#51), which the
   accelerator deploys to every workload account and an LZA SCP requires on every
-  role — a role change without it is denied, from a laptop or from CI. `ci/` is
-  not applied on LZA; the platform owns the boundary and the CI roles.
-  `tests/test_iam_permissions_boundary.py` pins both defaults (FLIP#1199, FLIP#1280).
+  role — a role change without it is denied, from a laptop or from CI. An env file
+  can still set the variable on any mode; `tests/test_iam_permissions_boundary.py`
+  pins both defaults (FLIP#1199, FLIP#1280).
+- **The CI identity is not this root's.** The plan/apply roles, the boundary (outside
+  LZA) and the state bucket come from `modules/terraform_ci_bootstrap`, which a
+  platform repository (`aicentre-lza-iac` for AI Centre) instantiates per account,
+  **pinned to a FLIP commit SHA**. The module is a published interface: renaming an
+  input, changing a default, a resource address or the boundary's description
+  (ForceNew, attached to every FLIP role) breaks those callers or their imports —
+  `tests/test_terraform_ci_bootstrap.py` pins them. Adding a role to this root means
+  adding its literal name to `managed_role_names` in the module; adding a resource
+  from an AWS service this root does not use yet means adding the service to
+  `apply_service_prefixes`. Either way, merge that, have the platform repository bump
+  its pinned SHA and apply **before** the FLIP change that needs it, or the apply is
+  denied.
 - **The pytest suite under `tests/` runs in CI** as the `AWS deploy tests` job in
   `validate_terraform.yml`. The root `make unit_test` does not reach this directory
   and this directory's Makefile has no `test` target, so
@@ -171,8 +180,10 @@ Things worth knowing before touching any of it:
   as `TF_PROD`, and the script sets that variable along with the two role ARNs. It
   derives the secret-vs-variable split from `terraform_plan.yml` rather than
   hard-coding it — a key stored as a variable but read as `secrets.X` resolves to
-  empty and fails the run pointing at the wrong cause — and refuses when `ci/` is
-  initialised for the other account.
+  empty and fails the run pointing at the wrong cause. Before any GitHub write it
+  verifies the account under the mode's profile (state bucket owner, both roles
+  and their `sub` / apply `job_workflow_ref`, the boundary) and reads the role ARNs
+  from IAM; any mismatch stops it.
 - **Never seed a GitHub environment from a laptop `.env` file without checking it.**
   `scripts/reconcile_ci_env.py --env <e> --compare <file>` rebuilds the Terraform
   inputs from deployed state and reports drift (secrets shown as digests, never

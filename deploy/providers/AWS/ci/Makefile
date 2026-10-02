@@ -9,124 +9,46 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# GitHub Actions OIDC roles for the Terraform pipeline (FLIP#962).
+# Terraform-CI bootstrap for an account you own (see README.md). Applied from a
+# laptop, never by CI: the roles CI assumes must not be managed by CI, or a bad
+# apply locks the pipeline out of the apply that would fix it.
 #
-# Applied from a laptop, never by CI. That is the design, not an oversight: the
-# roles CI assumes must not be managed by CI, or a bad apply locks the pipeline
-# out of the apply that would fix it. See backend.tf.
+#     make init && make plan && make apply     # first run, local state
+#     make migrate-state                       # then move the state into the bucket
 #
-#     make init && make plan && make apply             # stag account
-#     make init PROD=true && make plan PROD=true ...   # prod account
+# One tfvars file per account; TFVARS selects it. Credentials are whatever the
+# AWS CLI resolves (AWS_PROFILE, SSO), and the provider's allowed_account_ids is
+# the guard against the wrong account.
 
-# DRIFT_BRANCH is the branch terraform_drift.yml is *loaded from*, and is a
-# separate axis from APPLY_BRANCH even where the two happen to agree.
-#
-#   stag  develop — the schedule fires on the repository default branch.
-#   prod  main    — the scheduled run on the default branch re-dispatches the
-#                   workflow onto main (`gh workflow run … --ref main`), so the
-#                   aws-prod environment does not have to admit develop and hand
-#                   the production secrets to every workflow on it.
-#
-# Deriving this from APPLY_BRANCH is what left the production drift job unable to
-# assume the plan role: it presented `terraform_drift.yml@refs/heads/develop`
-# against a policy trusting `@refs/heads/main`.
-#
-# PROD is deploy/env_mode.mk's token, so this root speaks the same language as the
-# rest of the repository. The four values, and what each selects here:
-#
-#   PROD      profile    env file            env class  branches        GitHub env
-#   stag      stag       .env.stag           stag       develop         aws-stag
-#   true      prod       .env.production     prod       main            aws-prod
-#   lza-stag  lza-stag   .env.lza-stag       stag       develop         aws-stag
-#   lza       lza-prod   .env.lza-prod       prod       main            aws-prod
-#
-# The LZA pair shares the two GitHub environments with the legacy pair: FLIP's
-# estate was repointed at the LZA accounts rather than given new environment
-# names, so `github_environment` — half of the OIDC trust policy — is unchanged
-# and only the account, the env file and the local profile differ (see
-# ../README.md, "Repointing CI at the LZA accounts"). The env class is what the
-# rest of the root branches on, which is why PROD=lza is prod-grade.
-ifeq ($(strip $(PROD)),)
-PROD = stag
-endif
+TFVARS ?= terraform.tfvars
 
-ifeq ($(PROD),stag)
-MAIN_ENV_FILE = ../../../../.env.stag
-TF_ENVIRONMENT = stag
-APPLY_BRANCH = develop
-DRIFT_BRANCH = develop
-GITHUB_ENVIRONMENT = aws-stag
-EXPECTED_AWS_PROFILE = $(STAG_AWS_PROFILE)
-else ifeq ($(PROD),true)
-MAIN_ENV_FILE = ../../../../.env.production
-TF_ENVIRONMENT = prod
-APPLY_BRANCH = main
-DRIFT_BRANCH = main
-GITHUB_ENVIRONMENT = aws-prod
-EXPECTED_AWS_PROFILE = $(PROD_AWS_PROFILE)
-else ifeq ($(PROD),lza-stag)
-MAIN_ENV_FILE = ../../../../.env.lza-stag
-TF_ENVIRONMENT = stag
-APPLY_BRANCH = develop
-DRIFT_BRANCH = develop
-GITHUB_ENVIRONMENT = aws-stag
-EXPECTED_AWS_PROFILE = $(LZA_STAG_AWS_PROFILE)
-else ifeq ($(PROD),lza)
-MAIN_ENV_FILE = ../../../../.env.lza-prod
-TF_ENVIRONMENT = prod
-APPLY_BRANCH = main
-DRIFT_BRANCH = main
-GITHUB_ENVIRONMENT = aws-prod
-EXPECTED_AWS_PROFILE = $(LZA_AWS_PROFILE)
-else
-$(error PROD must be unset, stag, true, lza or lza-stag — got '$(PROD)')
-endif
+# Read from the tfvars file, so the backend and the preflights use the same values
+# Terraform does. Each can be overridden on the command line.
+_tfvar = $(shell sed -n 's/^[[:space:]]*$(1)[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' $(TFVARS) 2>/dev/null | head -1)
+STATE_BUCKET ?= $(call _tfvar,state_bucket_name)
+STATE_REGION ?= $(call _tfvar,aws_region)
+APPLY_ROLE_NAME ?= $(or $(call _tfvar,apply_role_name),AICentre-FLIPTerraformApplyRole)
 
-ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
-include $(MAIN_ENV_FILE)
-export $(shell sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(MAIN_ENV_FILE))
-endif
+# Static AWS_* env vars take priority over the SSO chain in both the CLI and the
+# Go SDK, and a stale or empty one produces InvalidClientTokenId errors.
+_UNSET_STATIC := unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
+_TF := $(_UNSET_STATIC); terraform
+_ACCOUNT_LABEL := $(if $(AWS_PROFILE),the $(AWS_PROFILE) account,the current credentials' account)
 
-# Same credential hygiene as the parent root: static AWS_* env vars take priority
-# over the SSO chain in the AWS Go SDK and produce InvalidClientTokenId errors
-# when .env carries empty or literal-quoted values for the omop-db init job.
-_TF := unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; terraform
-
-# One profile knob per account, named exactly as the root Makefile names them, so
-# an operator sets the same variable in both roots. Defaults are the short local
-# aliases of ~/.aws/config (README, "AWS profile aliases").
-PROD_AWS_PROFILE ?= prod
-STAG_AWS_PROFILE ?= stag
-LZA_AWS_PROFILE ?= lza-prod
-LZA_STAG_AWS_PROFILE ?= lza-stag
-
-# Refuse to create prod's roles in the stag account, or the reverse. Profile name
-# is the guard because make cannot cheaply read the account ID — the `account_id`
-# output exists so the result can be checked after the fact. EXPECTED_AWS_PROFILE
-# is set in the token table above, per mode, so this file has one place that knows
-# which account a PROD value means and the guard cannot drift from the env file.
-ifneq ($(AWS_PROFILE),$(EXPECTED_AWS_PROFILE))
-$(error For the $(TF_ENVIRONMENT) CI roles (PROD=$(PROD)), AWS_PROFILE must be '$(EXPECTED_AWS_PROFILE)' — override via the matching *_AWS_PROFILE variable)
-endif
-
-ifeq ($(strip $(FLIP_TFSTATE_BUCKET_NAME)),)
-$(error Set FLIP_TFSTATE_BUCKET_NAME in $(MAIN_ENV_FILE))
-endif
-
-export TF_VAR_AWS_REGION = $(AWS_REGION)
-export TF_VAR_environment = $(TF_ENVIRONMENT)
-export TF_VAR_apply_branch = $(APPLY_BRANCH)
-export TF_VAR_drift_branch = $(DRIFT_BRANCH)
-export TF_VAR_github_environment = $(GITHUB_ENVIRONMENT)
-export TF_VAR_state_bucket_name = $(FLIP_TFSTATE_BUCKET_NAME)
+.PHONY: check-tfvars
+check-tfvars:
+	@if [ ! -f "$(TFVARS)" ]; then \
+		echo "❌ $(TFVARS) not found — copy terraform.tfvars.example and fill it in."; \
+		exit 1; \
+	fi
 
 .PHONY: init
-init: ## Initialize the CI-roles Terraform root
-	@echo "🔧 Initializing CI roles for '$(TF_ENVIRONMENT)' (profile $(AWS_PROFILE))..."
-	@$(_TF) init \
-		-backend-config="bucket=$(FLIP_TFSTATE_BUCKET_NAME)" \
-		-backend-config="region=$(AWS_REGION)" \
-		-reconfigure
+init: check-tfvars ## Initialise (local state until migrate-state has run)
+	@if [ -f backend.tf ]; then \
+		$(_TF) init -backend-config="bucket=$(STATE_BUCKET)" -backend-config="region=$(STATE_REGION)"; \
+	else \
+		$(_TF) init; \
+	fi
 
 # The roles trust GitHub's OIDC identity provider, which this root looks up rather
 # than declares: an account holds one provider per issuer URL, shared by anything
@@ -136,21 +58,21 @@ init: ## Initialize the CI-roles Terraform root
 # Provider found") says nothing about why or who, so check first and say both.
 .PHONY: check-oidc-provider
 check-oidc-provider: ## Fail early, and say what to do, if the account has no GitHub OIDC provider
-	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; \
-	if ! arns=$$(AWS_PROFILE=$(AWS_PROFILE) aws iam list-open-id-connect-providers \
+	@$(_UNSET_STATIC); \
+	if ! arns=$$(aws iam list-open-id-connect-providers \
 		--query 'OpenIDConnectProviderList[].Arn' --output text 2>&1); then \
-		echo "❌ Could not list the OIDC providers in the $(AWS_PROFILE) account, so cannot tell"; \
+		echo "❌ Could not list the OIDC providers in $(_ACCOUNT_LABEL), so cannot tell"; \
 		echo "   whether one exists — an expired SSO session is the usual cause:"; \
 		echo "   $$arns" | tail -1; \
 		exit 1; \
 	fi; \
 	if ! printf '%s\n' "$$arns" | tr '\t' '\n' | grep -q 'oidc-provider/token.actions.githubusercontent.com$$'; then \
-		echo "❌ No GitHub Actions OIDC identity provider in the $(AWS_PROFILE) account."; \
+		echo "❌ No GitHub Actions OIDC identity provider in $(_ACCOUNT_LABEL)."; \
 		echo "   The CI roles trust it, and this root deliberately does not create it: it is"; \
 		echo "   account-level plumbing shared by anything GitHub-driven in the account, so it"; \
 		echo "   belongs with the account's baseline IAM, where FLIP's CI cannot delete it."; \
-		echo "   - AI Centre accounts: declared by aicentre-iac (self-contained) or"; \
-		echo "     aicentre-lza-iac (LZA) — merge and apply that first."; \
+		echo "   - AI Centre accounts are owned by aicentre-iac / aicentre-lza-iac, which also"; \
+		echo "     bootstrap FLIP's CI there — this root must not be run in them."; \
 		echo "   - Any other account: declare it in your own baseline IaC, e.g."; \
 		echo "       resource \"aws_iam_openid_connect_provider\" \"github\" {"; \
 		echo "         url            = \"https://token.actions.githubusercontent.com\""; \
@@ -161,28 +83,82 @@ check-oidc-provider: ## Fail early, and say what to do, if the account has no Gi
 		exit 1; \
 	fi
 
+# An empty state here and an apply role already in the account means something
+# else owns the bootstrap — a platform repository, or an earlier copy of this root
+# whose state is elsewhere. Creating it again would fail on EntityAlreadyExists at
+# best, and at worst give the same roles two owners that undo each other.
+.PHONY: check-not-managed-elsewhere
+check-not-managed-elsewhere: ## Refuse to create roles that already exist in the account
+	@$(_UNSET_STATIC); \
+	if ! resources=$$(terraform state list 2>&1); then \
+		case "$$resources" in \
+			*"No state file was found"*) resources="" ;; \
+			*) echo "❌ Could not read this root's state — run 'make init' first:"; \
+			   echo "   $$resources" | head -3; \
+			   exit 1 ;; \
+		esac; \
+	fi; \
+	if [ -n "$$resources" ]; then exit 0; fi; \
+	if out=$$(aws iam get-role --role-name "$(APPLY_ROLE_NAME)" --query Role.RoleName --output text 2>&1); then \
+		echo "❌ $(APPLY_ROLE_NAME) already exists in $(_ACCOUNT_LABEL), but this root's state is empty."; \
+		echo "   The bootstrap is managed elsewhere — at AI Centre by aicentre-iac / aicentre-lza-iac."; \
+		echo "   If it is genuinely yours, import the existing objects (README.md, \"Roles that already"; \
+		echo "   exist\") or point this root at the state that already holds them."; \
+		exit 1; \
+	fi; \
+	case "$$out" in \
+		*NoSuchEntity*) ;; \
+		*) echo "❌ Could not check whether $(APPLY_ROLE_NAME) exists in $(_ACCOUNT_LABEL):"; \
+		   echo "   $$out" | tail -1; \
+		   exit 1 ;; \
+	esac
+
 .PHONY: plan
-plan: check-oidc-provider ## Plan the CI roles
-	@echo "📋 Planning CI roles for '$(TF_ENVIRONMENT)'..."
-	@$(_TF) plan -out=plan.tfplan
+plan: check-tfvars check-oidc-provider check-not-managed-elsewhere ## Plan the bootstrap
+	@$(_TF) plan -var-file="$(TFVARS)" -out=plan.tfplan
 
 .PHONY: apply
-apply: ## Apply the CI roles
-	@echo "🛠️  Applying CI roles for '$(TF_ENVIRONMENT)'..."
+apply: ## Apply the saved plan
 	@$(_TF) apply plan.tfplan
 	@echo ""
-	@echo "Wire these into the GitHub environment '$(GITHUB_ENVIRONMENT)' as variables:"
+	@echo "Wire plan_role_arn / apply_role_arn into the GitHub environment as"
+	@echo "TF_PLAN_ROLE_ARN / TF_APPLY_ROLE_ARN:"
 	@$(_TF) output
+	@if [ ! -f backend.tf ]; then \
+		echo ""; \
+		echo "State is still local (terraform.tfstate). Run 'make migrate-state' to move it"; \
+		echo "into $(STATE_BUCKET)."; \
+	fi
 
 .PHONY: output
 output: ## Print the role ARNs and the OIDC claims they expect
 	@$(_TF) output
 
+.PHONY: migrate-state
+migrate-state: check-tfvars ## Move local state into the state bucket the first apply created
+	@if [ -f backend.tf ]; then \
+		echo "❌ backend.tf already exists — the state has been migrated. 'make init' reattaches it."; \
+		exit 1; \
+	fi
+	@if [ -z "$(STATE_BUCKET)" ] || [ -z "$(STATE_REGION)" ]; then \
+		echo "❌ state_bucket_name / aws_region not found in $(TFVARS) (or set STATE_BUCKET= STATE_REGION=)."; \
+		exit 1; \
+	fi
+	cp backend.s3.tf.example backend.tf
+	$(_TF) init -migrate-state \
+		-backend-config="bucket=$(STATE_BUCKET)" \
+		-backend-config="region=$(STATE_REGION)"
+	$(_TF) state list
+	@echo ""
+	@echo "✅ State is now in s3://$(STATE_BUCKET)/flip/ci/terraform.tfstate."
+	@echo "   Check the list above matches what was applied, then delete the local copies:"
+	@echo "       rm terraform.tfstate terraform.tfstate.backup"
+
 .PHONY: help
 help: ## Show this help message
-	@echo "FLIP Terraform CI roles:"
+	@echo "Terraform-CI bootstrap (TFVARS=$(TFVARS)):"
 	@echo ""
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(firstword $(MAKEFILE_LIST)) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-28s\033[0m %s\n", $$1, $$2}'
 
 .DEFAULT_GOAL := help

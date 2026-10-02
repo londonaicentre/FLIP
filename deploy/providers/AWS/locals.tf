@@ -26,11 +26,13 @@ locals {
 
   # Permissions boundary carried by every IAM role in this root (FLIP#962).
   #
-  # Composed rather than looked up: the policy lives in the ci/ root, the two
-  # roots share no state, and a `data "aws_iam_policy"` here would make every
-  # plan fail in an account where ci/ has not been applied yet — including the
-  # `terraform validate` a contributor runs with no credentials at all.
-  # `make -C ci output permissions_boundary_arn` prints the ARN to compare.
+  # Composed rather than looked up: the policy is declared by
+  # modules/terraform_ci_bootstrap, which the platform repositories (or ci/, for
+  # an account you bootstrap yourself) apply with their own state, and a
+  # `data "aws_iam_policy"` here would make every plan fail in an account where
+  # the bootstrap has not been applied yet — including the `terraform validate` a
+  # contributor runs with no credentials at all. The module's
+  # permissions_boundary_arn output is the ARN to compare.
   iam_permissions_boundary_arn = (
     var.iam_permissions_boundary_name == ""
     ? null

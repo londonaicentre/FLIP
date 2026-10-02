@@ -116,14 +116,16 @@ variable "POSTGRES_DB" {
 
 # Permissions boundary attached to every IAM role this root owns.
 #
-# The default policy is declared in ci/ — the root the pipeline does not apply —
-# and the CI apply role may only create a role, or write an inline policy onto
-# one, when that role carries this boundary (ci/main.tf, apply_iam). The LZA
-# modes override it with the platform's AICentre-WorkloadRoleBoundary (Makefile),
-# which an LZA SCP requires on every workload role. Set the name to "" to detach
-# it, which is only correct in a self-contained account where ci/ has never been
-# applied: an automated apply into an account whose roles have no boundary is
-# denied, loudly, on the first CreateRole.
+# The default policy is declared by modules/terraform_ci_bootstrap — instantiated
+# by a platform repository, or by ci/ in an account you bootstrap yourself; never
+# by this root — and the CI apply role may only create a role, or write an inline
+# policy onto one, when that role carries this boundary (apply_iam in the
+# module). The LZA modes override it with the platform's
+# AICentre-WorkloadRoleBoundary (Makefile), which an LZA SCP requires on every
+# workload role. Set the name to "" to detach it, which is only correct in a
+# self-contained account where the bootstrap has never been applied: an automated
+# apply into an account whose roles have no boundary is denied, loudly, on the
+# first CreateRole.
 variable "iam_permissions_boundary_name" {
   description = "Managed-policy name used as the permissions boundary on this root's IAM roles; \"\" disables it."
   type        = string

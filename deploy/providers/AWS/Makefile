@@ -119,14 +119,15 @@ export TF_VAR_lza_vpc_name=$(LZA_VPC_NAME)
 endif
 
 # IAM permissions boundary (FLIP#1082, FLIP#1280). The self-contained modes take
-# the variables.tf default, AICentre-FLIPTerraformBoundary, declared by the ci/
-# root. The LZA modes take the platform's AICentre-WorkloadRoleBoundary instead
+# the variables.tf default, AICentre-FLIPTerraformBoundary, declared by
+# modules/terraform_ci_bootstrap (through ci/ or a platform repository). The LZA
+# modes take the platform's AICentre-WorkloadRoleBoundary instead
 # (londonaicentre/lza#51): the accelerator deploys it to every workload account,
 # and an LZA SCP denies creating a role, or attaching or writing a policy onto
 # one, unless the role carries it. So on LZA it is not a choice — without it every
-# role change is denied, from a laptop or from CI. ci/ is not applied there: the
-# platform owns the boundary, and the CI roles with it. An env file that sets the
-# variable still wins: `?=` only supplies the default.
+# role change is denied, from a laptop or from CI. There the platform instantiates
+# the bootstrap module with its own boundary rather than FLIP's. An env file that
+# sets the variable still wins: `?=` only supplies the default.
 ifneq ($(IS_LZA),)
 export TF_VAR_iam_permissions_boundary_name ?= AICentre-WorkloadRoleBoundary
 endif
