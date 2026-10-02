@@ -235,6 +235,14 @@ TRUST_NUM := $(FL_KIT_SLOT_NUMBER)
 # the default stack's compose projects (`trust1`, `trust2`) — adopting or clobbering another
 # hub's trust rather than standing up their own. Unset FLIP_INSTANCE leaves `trust<N>`.
 TRUST_PROJECT := $(INSTANCE_PREFIX)trust$(TRUST_NUM)
+# The approved-cohort membership store (FLIP#857): ONE resolved host path, handed to compose in
+# TRUST_VARS so the directory $(ensure_snapshot_dir) prepares is the one compose mounts. The
+# production default is absolute, like the OMOP and Orthanc dirs, so it names the same place on a
+# remote DOCKER_CONTEXT (EC2), and per slot like the images dir, so trusts sharing a host never
+# share a store (records are keyed by project alone). data-access-api runs as uid 1000 in the
+# production image and as the host user under the dev compose, so that is who must own it.
+COHORT_SNAPSHOT_DIR_HOST := $(or $(COHORT_SNAPSHOT_STORAGE_DIR),$(if $(filter production,$(__DCKR_SUFFIX)),/opt/flip/cohort-snapshots/trust-$(TRUST_NUM),./data-access-api/.snapshots/Trust_$(TRUST_NUM)))
+COHORT_SNAPSHOT_OWNER := $(if $(filter production,$(__DCKR_SUFFIX)),1000:1000,$(shell id -u):$(shell id -g))
 # Dev only: expose this trust's APIs on the host. The override binds a single
 # fixed host-port set, so only the trust assigned slot Trust_1 claims it.
 TRUST_OVERRIDE := $(if $(filter Trust_1,$(FL_KIT_SLOT)),-f deploy/compose_trust-1_override.yml,)
@@ -259,6 +267,7 @@ GPU_STATUS_MSG := $(if $(GPU_OVERRIDE),🖥️  GPU passthrough on — fl-client
 TRUST_VARS = \
 	TRUST_NETWORK_NAME=$(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM) \
 	TRUST_NUMBER=$(TRUST_NUM) \
+	COHORT_SNAPSHOT_STORAGE_DIR="$(COHORT_SNAPSHOT_DIR_HOST)" \
 	TRUST_NAME="$(or $(TRUST_NAME),$(FL_KIT_SLOT),$(KIT))"
 
 # Non-KIT targets such as `make build` do not load a trust kit, but Docker
@@ -266,6 +275,7 @@ TRUST_VARS = \
 TRUST_BUILD_VARS = \
 	BASE_IMAGES_DOWNLOAD_DIR=$(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/trust) \
 	ORTHANC_STORAGE_DIR=$(or $(ORTHANC_STORAGE_DIR),./orthanc/orthanc-storage-trust1) \
+	COHORT_SNAPSHOT_STORAGE_DIR=$(or $(COHORT_SNAPSHOT_STORAGE_DIR),./data-access-api/.snapshots/trust) \
 	FL_KIT_SLOT=$(or $(FL_KIT_SLOT),Trust_1) \
 	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),1)
 
@@ -290,6 +300,31 @@ define ensure_data_dirs
 	    echo "❌ $$pacs must be owned by uid 999 (Orthanc) and is $$(stat -c '%u:%g' "$$pacs")"; \
 	    echo "   Fix: sudo chown 999:999 $$pacs"; exit 1; }; \
 	fi
+endef
+
+# Prepare the membership store before compose would create it root-owned (the non-root
+# data-access-api then fails every freeze and refuses every row-level request). An absolute path is
+# prepared by a throwaway container on the DOCKER HOST, so it works without sudo and over a remote
+# DOCKER_CONTEXT, where a local mkdir would touch the wrong machine — unless it is local and already
+# owned right (the provisioning playbooks create it), so a host without registry access still comes
+# up. A relative path is local by construction (compose resolves it on this machine), so mkdir it
+# here and fix the owner if needed.
+define ensure_snapshot_dir
+	@dir="$(COHORT_SNAPSHOT_DIR_HOST)"; owner="$(COHORT_SNAPSHOT_OWNER)"; \
+	case "$$dir" in \
+	  /*) name="$$(basename "$$dir")"; \
+	      if [ -z "$$DOCKER_CONTEXT" ] && [ "$$(stat -c '%u:%g' "$$dir" 2>/dev/null)" = "$$owner" ]; then exit 0; fi; \
+	      docker run --rm -v "$$(dirname "$$dir")":/parent alpine:3.20 \
+	        sh -c "mkdir -p /parent/$$name && chown $$owner /parent/$$name && chmod 0750 /parent/$$name" || { \
+	        echo "❌ could not prepare the cohort membership store $$dir (owner $$owner) on the docker host"; exit 1; } ;; \
+	  *) mkdir -p "$$dir" || { echo "❌ cannot create $$dir"; exit 1; }; \
+	     if [ "$$(stat -c '%u:%g' "$$dir")" != "$$owner" ]; then \
+	       chown "$$owner" "$$dir" 2>/dev/null || \
+	       docker run --rm -v "$$(cd "$$dir" && pwd)":/d alpine:3.20 chown "$$owner" /d || { \
+	         echo "❌ $$dir must be owned by $$owner (data-access-api) and is $$(stat -c '%u:%g' "$$dir")"; \
+	         echo "   Fix: sudo chown $$owner $$dir"; exit 1; }; \
+	     fi ;; \
+	esac
 endef
 
 # Guard: any KIT-selected target needs KIT set (it derives the project name,
@@ -433,6 +468,7 @@ up-trust: require-xnat-aetitle create-networks
 	$(refuse_remote_governance)
 	$(call ensure_data_dirs,$(OMOP_DATA_ABS),$(ORTHANC_STORAGE_ABS))
 	$(ensure_net_dirs)
+	$(ensure_snapshot_dir)
 	@echo "$(GPU_STATUS_MSG)"
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
 	$(MAKE) ensure-seeded KIT=$(KIT) PROD=$(PROD)
@@ -632,6 +668,8 @@ _upgrade-trust-apply:
 	$(check_slot_not_taken)
 	@echo "⬆️  Upgrading trust services (KIT=$(KIT)) to $(DOCKER_TAG) (FL client $(DOCKER_FL_TAG))..."
 	@echo "$(GPU_STATUS_MSG)"
+	# A site upgrading from before the membership store (FLIP#857) has no directory for it yet.
+	$(ensure_snapshot_dir)
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) pull
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d
 	@echo "🩻 Upgrading XNAT for $(KIT) in place (no reset)..."
@@ -665,6 +703,7 @@ up-trust-ec2: require-xnat-aetitle
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	@echo "🖥️  EC2 trust runs CPU-only by design — GPU overlay omitted + NUM_AVAILABLE_GPUS forced to 0 (t3.xlarge has no GPU)."
+	$(ensure_snapshot_dir)
 	$(TRUST_VARS) NUM_AVAILABLE_GPUS=0 DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always
 	@echo "🩻 Starting XNAT for $(KIT)..."
 	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)

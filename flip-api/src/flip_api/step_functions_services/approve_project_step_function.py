@@ -24,7 +24,7 @@ from flip_api.domain.interfaces.trust import ITrust
 from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
 from flip_api.domain.schemas.status import ProjectStatus
 from flip_api.project_services.approve_project import approve_project_endpoint
-from flip_api.trusts_services.start_project_imaging_creation import queue_imaging_creation
+from flip_api.trusts_services.start_project_imaging_creation import queue_cohort_snapshot, queue_imaging_creation
 from flip_api.utils.logger import logger
 from flip_api.utils.project_manager import get_project_by_id
 
@@ -61,6 +61,27 @@ async def process_trust(
         return {"trust": trust.name, "success": False, "message": str(e)}
 
 
+def freeze_trust_cohort(project_id: UUID, trust: ITrust, db: Session) -> dict[str, Any]:
+    """
+    Freeze the approved cohort at a single trust of a project created without imaging (FLIP#857, FLIP#1071).
+
+    Args:
+        project_id (UUID): The ID of the project.
+        trust (ITrust): The trust to process (one element of the list returned by ``approve_project_endpoint``).
+        db (Session): The database session.
+
+    Returns:
+        dict[str, Any]: A dictionary containing the result of queuing the trust's cohort snapshot.
+    """
+    try:
+        queue_cohort_snapshot(project_id=project_id, trust=trust, db=db)
+        return {"trust": trust.name, "success": True, "message": "Cohort snapshot queued (project has no imaging)"}
+
+    except Exception as e:
+        logger.exception(f"Error freezing the cohort at trust {trust.name}: {str(e)}")
+        return {"trust": trust.name, "success": False, "message": str(e)}
+
+
 @router.post("/project/{project_id}/approve", response_model=dict[str, Any])
 async def approve_project_step_function_endpoint(
     project_id: UUID,
@@ -74,7 +95,8 @@ async def approve_project_step_function_endpoint(
     Records trust decisions on a project and starts image creation on every trust they activate — on the call that
     approves the project every trust approved so far, on a later call the trusts it newly approved (FLIP#1258) —
     unless the project was created without imaging (``has_imaging=False``, FLIP#1071), in which case the imaging
-    stage is skipped. Decisions that activate no trust dispatch nothing.
+    stage is skipped. Every trust it activates freezes the approved cohort either way (FLIP#857). Decisions that
+    activate no trust dispatch nothing.
 
     This mimics the AWS Step Functions workflow defined in approveProject.yml
 
@@ -128,8 +150,9 @@ async def approve_project_step_function_endpoint(
         # place the hub decides what it dispatches for a tabular-only project. The project is
         # approved above exactly as before; what changes is that no CREATE_IMAGING task is queued, so
         # no trust creates an XNAT project or calls the accession-ids route — the flag is never sent
-        # to a trust. An empty result set then reports zero trusts processed through the one response
-        # contract below.
+        # to a trust. Each trust still freezes the approved cohort (FLIP#857): training reads it
+        # through /cohort/dataframe, which serves only the frozen members. Either way the per-trust results
+        # report through the one response contract below.
         if has_imaging:
             logger.info(f"Processing {len(trusts)} trusts for project {project_id}")
             # Execute trust processing in parallel
@@ -137,8 +160,11 @@ async def approve_project_step_function_endpoint(
             start_image_results = await asyncio.gather(*trust_tasks)
             message = "Project approval workflow completed"
         else:
-            logger.info(f"Project {project_id} has no imaging: skipping the imaging fan-out to {len(trusts)} trust(s)")
-            start_image_results = []
+            logger.info(
+                f"Project {project_id} has no imaging: skipping the imaging fan-out to {len(trusts)} trust(s), "
+                "freezing the cohort at each"
+            )
+            start_image_results = [freeze_trust_cohort(project_id, trust, db) for trust in trusts]
             message = "Project approved; imaging stage skipped (project has no imaging)"
 
         # Check if any trust processing failed

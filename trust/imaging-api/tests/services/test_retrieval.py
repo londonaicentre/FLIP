@@ -11,7 +11,7 @@
 #
 
 from datetime import datetime
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -26,6 +26,9 @@ from imaging_api.services.retrieval import (
 )
 from imaging_api.utils.encryption import PROJECT_ID_CONTEXT
 from imaging_api.utils.exceptions import CohortBelowThresholdError, NotFoundError
+
+# What the XNAT project stores as secondary_ID: the hub project id the approved cohort is keyed on.
+HUB_PROJECT_ID = "8b2e9d6e-5a53-4f2e-9c37-2c8f4f0f2d11"
 
 
 @pytest.fixture
@@ -76,7 +79,7 @@ async def test_retrieve_images_success(
     mock_queue,
     headers,
 ):
-    mock_get_project.return_value = MagicMock()
+    mock_get_project.return_value = MagicMock(secondary_ID=HUB_PROJECT_ID)
     mock_encrypt.return_value = "encrypted_id"
     mock_get_accession_ids.return_value = ["ACC1", "ACC2"]
     mock_query.side_effect = [
@@ -91,7 +94,9 @@ async def test_retrieve_images_success(
     result = await retrieve_images_for_project("proj1", "SELECT *", headers)
     assert result is True
     mock_queue.assert_called_once()
-    mock_encrypt.assert_called_once_with(ANY, context=PROJECT_ID_CONTEXT)
+    # The approved cohort is keyed on the HUB project id (the XNAT project's secondary_ID); the
+    # XNAT-minted id would match no membership and every pull would be refused.
+    mock_encrypt.assert_called_once_with(HUB_PROJECT_ID, context=PROJECT_ID_CONTEXT)
 
 
 @pytest.mark.asyncio
@@ -127,6 +132,7 @@ async def test_retrieve_images_below_threshold_queues_nothing(
     mock_query,
     mock_queue,
     headers,
+    caplog,
 ):
     """A below-threshold cohort is a settled outcome, not a crash.
 
@@ -136,29 +142,68 @@ async def test_retrieve_images_below_threshold_queues_nothing(
     """
     mock_get_project.return_value = MagicMock()
     mock_encrypt.return_value = "encrypted_id"
-    mock_get_accession_ids.side_effect = CohortBelowThresholdError("cohort below minimum size")
+    mock_get_accession_ids.side_effect = CohortBelowThresholdError(
+        "refused", detail="No approved cohort snapshot exists for this project."
+    )
 
-    result = await retrieve_images_for_project("proj1", "SELECT *", headers)
+    with caplog.at_level("WARNING"):
+        result = await retrieve_images_for_project("proj1", "SELECT *", headers)
 
     assert result is False
+    # The log names the actual reason, not a blanket "below minimum size".
+    assert "No approved cohort snapshot exists" in caplog.text
     mock_query.assert_not_called()
     mock_queue.assert_not_called()
 
 
+@patch("imaging_api.services.retrieval.get_project")
 @pytest.mark.asyncio
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
 @patch("imaging_api.services.retrieval.encrypt")
-async def test_get_import_status_below_threshold_raises_403(mock_encrypt, mock_get_accession_ids, headers):
+async def test_get_import_status_below_threshold_raises_403(
+    mock_encrypt, mock_get_accession_ids, mock_get_project, headers
+):
     """The status path has a caller waiting, so the refusal must reach it as a 403 with a
     readable reason — trust-api relays this detail to the hub for the per-trust status."""
     mock_encrypt.return_value = "encrypted_id"
-    mock_get_accession_ids.side_effect = CohortBelowThresholdError("cohort below minimum size")
+    mock_get_project.return_value = MagicMock(secondary_ID=HUB_PROJECT_ID)
+    for reason in (
+        "Cohort is too small for row-level data to be released.",
+        "No approved cohort snapshot exists for this project.",
+    ):
+        mock_get_accession_ids.side_effect = CohortBelowThresholdError("refused", detail=reason)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_import_status("proj1", "SELECT *", headers)
+
+        assert exc_info.value.status_code == 403
+        # The two refusals stay distinguishable: a missing approved cohort is not a small one.
+        assert reason in exc_info.value.detail
+    mock_encrypt.assert_called_with(HUB_PROJECT_ID, context=PROJECT_ID_CONTEXT)
+
+
+@patch("imaging_api.services.retrieval.get_project")
+@pytest.mark.asyncio
+async def test_get_import_status_for_a_missing_xnat_project_is_a_404(mock_get_project, headers):
+    mock_get_project.side_effect = NotFoundError("Project proj1 not found")
 
     with pytest.raises(HTTPException) as exc_info:
         await get_import_status("proj1", "SELECT *", headers)
 
-    assert exc_info.value.status_code == 403
-    assert "below the trust's minimum size" in exc_info.value.detail
+    assert exc_info.value.status_code == 404
+    assert "Project proj1 not found" in exc_info.value.detail
+
+
+@patch("imaging_api.services.retrieval.get_project")
+@pytest.mark.asyncio
+async def test_get_import_status_reports_an_unreadable_xnat_project_as_a_named_500(mock_get_project, headers):
+    mock_get_project.side_effect = RuntimeError("connection reset")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_import_status("proj1", "SELECT *", headers)
+
+    assert exc_info.value.status_code == 500
+    assert "RuntimeError" in exc_info.value.detail
 
 
 @pytest.mark.asyncio
@@ -392,6 +437,7 @@ def _mock_get_session(direct_archive=None, executed=None, queued=None):
     )
 
 
+@patch("imaging_api.services.retrieval.get_project")
 @pytest.mark.asyncio
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
@@ -400,6 +446,7 @@ async def test_get_import_status_all_successful(
     mock_encrypt,
     mock_get_accession_ids,
     mock_get_experiments,
+    mock_get_project,
     headers,
 ):
     mock_encrypt.return_value = "encrypted_id"
@@ -435,6 +482,7 @@ async def test_get_import_status_all_successful(
     assert status.queue_failed == []
 
 
+@patch("imaging_api.services.retrieval.get_project")
 @pytest.mark.asyncio
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
@@ -443,6 +491,7 @@ async def test_get_import_status_mixed(
     mock_encrypt,
     mock_get_accession_ids,
     mock_get_experiments,
+    mock_get_project,
     headers,
 ):
     mock_encrypt.return_value = "encrypted_id"
@@ -488,6 +537,7 @@ async def test_get_import_status_mixed(
     assert status.queue_failed == ["ACC_UNKNOWN"]
 
 
+@patch("imaging_api.services.retrieval.get_project")
 @pytest.mark.asyncio
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
@@ -496,6 +546,7 @@ async def test_get_import_status_no_experiments(
     mock_encrypt,
     mock_get_accession_ids,
     mock_get_experiments,
+    mock_get_project,
     headers,
 ):
     mock_encrypt.return_value = "encrypted_id"
@@ -531,6 +582,7 @@ def _direct_archive(accession_number: str, status: str) -> DirectArchiveSession:
     )
 
 
+@patch("imaging_api.services.retrieval.get_project")
 @pytest.mark.asyncio
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
@@ -539,6 +591,7 @@ async def test_get_import_status_executed_failed_is_failed(
     mock_encrypt,
     mock_get_accession_ids,
     mock_get_experiments,
+    mock_get_project,
     headers,
 ):
     """A PACS retrieval that errored (executed status FAILED) is `failed`, not `processing`."""
@@ -555,6 +608,7 @@ async def test_get_import_status_executed_failed_is_failed(
     assert status.queue_failed == []
 
 
+@patch("imaging_api.services.retrieval.get_project")
 @pytest.mark.asyncio
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
@@ -563,6 +617,7 @@ async def test_get_import_status_direct_archive_error_is_failed(
     mock_encrypt,
     mock_get_accession_ids,
     mock_get_experiments,
+    mock_get_project,
     headers,
 ):
     """A directArchive build that errored (status ERROR) is `failed`, not `queue_failed`/`processing`."""
@@ -581,6 +636,7 @@ async def test_get_import_status_direct_archive_error_is_failed(
     assert status.queue_failed == []
 
 
+@patch("imaging_api.services.retrieval.get_project")
 @pytest.mark.asyncio
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
@@ -589,6 +645,7 @@ async def test_get_import_status_direct_archive_error_overrides_received(
     mock_encrypt,
     mock_get_accession_ids,
     mock_get_experiments,
+    mock_get_project,
     headers,
 ):
     """A study whose transfer RECEIVED but whose directArchive build then errored is `failed`.
@@ -611,6 +668,7 @@ async def test_get_import_status_direct_archive_error_overrides_received(
     assert status.processing == []
 
 
+@patch("imaging_api.services.retrieval.get_project")
 @pytest.mark.asyncio
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
@@ -619,6 +677,7 @@ async def test_get_import_status_direct_archive_receiving_is_processing(
     mock_encrypt,
     mock_get_accession_ids,
     mock_get_experiments,
+    mock_get_project,
     headers,
 ):
     """A directArchive build still in progress (RECEIVING) is `processing`, not `failed`/`queue_failed`."""
@@ -637,6 +696,7 @@ async def test_get_import_status_direct_archive_receiving_is_processing(
     assert status.queue_failed == []
 
 
+@patch("imaging_api.services.retrieval.get_project")
 @pytest.mark.asyncio
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
@@ -645,6 +705,7 @@ async def test_get_import_status_direct_archive_error_without_name_falls_back_to
     mock_encrypt,
     mock_get_accession_ids,
     mock_get_experiments,
+    mock_get_project,
     headers,
 ):
     """A directArchive ERROR whose `name` is NULL is still attributed via its folder_name.
@@ -674,6 +735,7 @@ async def test_get_import_status_direct_archive_error_without_name_falls_back_to
     assert status.queue_failed == []
 
 
+@patch("imaging_api.services.retrieval.get_project")
 @pytest.mark.asyncio
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
@@ -682,6 +744,7 @@ async def test_get_import_status_failed_precedes_queued(
     mock_encrypt,
     mock_get_accession_ids,
     mock_get_experiments,
+    mock_get_project,
     headers,
 ):
     """A terminal-failed accession that also has a (re-)queued row is reported `failed`, not `queued`."""
@@ -706,6 +769,7 @@ async def test_get_import_status_failed_precedes_queued(
     assert status.queued == []
 
 
+@patch("imaging_api.services.retrieval.get_project")
 @pytest.mark.asyncio
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
@@ -714,6 +778,7 @@ async def test_get_import_status_experiment_present_beats_stale_direct_archive_e
     mock_encrypt,
     mock_get_accession_ids,
     mock_get_experiments,
+    mock_get_project,
     headers,
 ):
     """`successful` (archived as an experiment) wins over a stale directArchive ERROR for the same accession."""

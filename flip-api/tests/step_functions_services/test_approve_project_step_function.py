@@ -12,14 +12,15 @@
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from flip_api.domain.interfaces.project import IProjectQuery, IProjectResponse
 from flip_api.domain.interfaces.trust import ITrust
-from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.domain.schemas.status import ProjectStatus, TaskType
 from flip_api.main import app
 from flip_api.step_functions_services.approve_project_step_function import (
     get_session,
@@ -179,6 +180,39 @@ def test_approve_project_with_failure_in_trust(
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+def test_a_late_trust_approval_freezes_that_trusts_cohort_before_its_imaging(
+    mock_approve_project, project_id, mock_trusts, override_dependencies, fake_idp
+):
+    """A trust approving an already-APPROVED project starts only itself (FLIP#1258), through the real fan-out.
+
+    That fan-out must queue the late trust's own cohort snapshot (FLIP#857) ahead of its imaging: the row-level
+    routes serve only the frozen snapshot, so a trust joining without one would refuse its imaging and training.
+    """
+    mock_session, _ = override_dependencies
+    early_trust, late_trust = mock_trusts
+    mock_approve_project.return_value = [late_trust]
+    project = IProjectResponse(
+        id=UUID(project_id),
+        name="Approved earlier",
+        query=IProjectQuery(id=uuid4(), name="Cohort", query="SELECT person_id FROM omop.person"),
+        owner_id=uuid4(),
+        status=ProjectStatus.APPROVED,
+    )
+    fan_out = "flip_api.trusts_services.start_project_imaging_creation"
+    with (
+        patch(f"{fan_out}.get_project", return_value=project),
+        patch(f"{fan_out}.get_approved_trusts_for_project", return_value=[early_trust, late_trust]),
+        patch(f"{fan_out}.get_users_with_access", return_value=[]),
+    ):
+        response = client.post(f"/api/step/project/{project_id}/approve", json={"trusts": [str(late_trust.id)]})
+
+    assert response.status_code == 200
+    assert response.json()["trusts"] == {"processed": 1, "succeeded": 1, "failed": 0}
+    queued = [(call.args[0].task_type, call.args[0].trust_id) for call in mock_session.add.call_args_list]
+    assert queued == [(TaskType.PERSIST_COHORT, late_trust.id), (TaskType.CREATE_IMAGING, late_trust.id)]
+
+
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 def test_approve_project_unexpected_exception_returns_generic_detail(
     mock_approve_project,
     project_id,
@@ -218,14 +252,25 @@ def test_a_call_that_starts_no_trust_dispatches_no_imaging_and_reports_the_real_
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+@patch("flip_api.step_functions_services.approve_project_step_function.queue_cohort_snapshot")
 @patch(
     "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_skips_imaging_fan_out_when_project_has_no_imaging(
-    mock_start_imaging, mock_approve_project, project_id, request_body, mock_trusts, mock_project_row
+    mock_start_imaging,
+    mock_freeze_cohort,
+    mock_approve_project,
+    project_id,
+    request_body,
+    mock_trusts,
+    mock_project_row,
 ):
-    """A tabular-only project is approved but no CREATE_IMAGING task is dispatched to any trust (FLIP#1071)."""
+    """A tabular-only project is approved but no CREATE_IMAGING task is dispatched to any trust (FLIP#1071).
+
+    Each trust still freezes the approved cohort (FLIP#857): training reads it through /cohort/dataframe, which
+    serves only the frozen members, so a tabular project without a frozen membership could never train.
+    """
     mock_approve_project.return_value = mock_trusts
     mock_project_row.return_value = SimpleNamespace(has_imaging=False)
 
@@ -234,12 +279,32 @@ def test_approve_project_skips_imaging_fan_out_when_project_has_no_imaging(
     assert response.status_code == 200
     data = response.json()
     assert data["successful"] is True
-    assert data["trusts"] == {"processed": 0, "succeeded": 0, "failed": 0}
-    assert data["details"] == []
+    assert data["trusts"] == {"processed": 2, "succeeded": 2, "failed": 0}
+    assert [detail["trust"] for detail in data["details"]] == ["Trust 1", "Trust 2"]
     assert "no imaging" in data["message"]
     assert data["projectStatus"] == "APPROVED"
     mock_approve_project.assert_called_once()  # the project still becomes APPROVED
     assert mock_start_imaging.await_count == 0
+    assert [call.kwargs["trust"] for call in mock_freeze_cohort.call_args_list] == mock_trusts
+
+
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+@patch("flip_api.step_functions_services.approve_project_step_function.queue_cohort_snapshot")
+def test_a_trust_whose_cohort_cannot_be_frozen_is_reported_as_failed(
+    mock_freeze_cohort, mock_approve_project, project_id, request_body, mock_trusts, mock_project_row
+):
+    """A tabular-only project's snapshot dispatch reports per trust, as imaging does, so a failure is not silent."""
+    mock_approve_project.return_value = mock_trusts
+    mock_project_row.return_value = SimpleNamespace(has_imaging=False)
+    mock_freeze_cohort.side_effect = [None, HTTPException(status_code=500, detail="Internal server error")]
+
+    response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["successful"] is False
+    assert data["trusts"] == {"processed": 2, "succeeded": 1, "failed": 1}
+    assert [detail["success"] for detail in data["details"]] == [True, False]
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")

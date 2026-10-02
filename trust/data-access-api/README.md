@@ -67,6 +67,8 @@ Key environment variables. Most come from the trust kit file — template at [`.
 | `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Required on every `/cohort` request. |
+| `COHORT_SNAPSHOT_DIR` | Container path of the approved-cohort membership store (the compose files fix it to `/snapshots` and bind-mount the kit's host-side `COHORT_SNAPSHOT_STORAGE_DIR` there). Empty = store disabled, so row-level routes refuse every project — fail-closed. |
+| `SNAPSHOT_MAX_BYTES` | Hard cap on one serialized membership record (default 512 MiB). An over-cap cohort is refused, never truncated. |
 | `COHORT_QUERY_THRESHOLD` | The trust's minimum cohort size in distinct subjects (default `10`; see below) |
 | `ACCESS_POLICY_FILE` | Optional path to the trust's governance document (FLIP#1259, see below). Unset = platform defaults |
 | `CACHE_TTL_DAYS` | Age (days, default `60`) at which a cached result is treated as expired and dropped on the next lookup |
@@ -77,12 +79,71 @@ Key environment variables. Most come from the trust kit file — template at [`.
 
 Executed cohort SQL is memoised in an **in-process, per-container** dictionary
 (`services/query_cache.py`), keyed by a SHA-256 of the whitespace-normalised, lower-cased query plus
-its bound parameters. FLIP stores a cohort only as SQL and re-runs it at every stage — statistics,
-dataframe, accession ids — so the same query arrives repeatedly; the cache spares OMOP the repeat
-scan. It holds DataFrames in memory and is copied in and out, is not shared between replicas, and is
+its bound parameters. The statistics route receives the same cohort SQL repeatedly, and the
+subject count resolves accession numbers through `omop.image_occurrence`; the cache spares OMOP the
+repeat scan. (The row-level routes never execute the caller's SQL — they run the query of record
+frozen below — and snapshot creation and both row-level routes, including their `image_occurrence`
+lookups, deliberately bypass the cache.) It holds DataFrames in memory and is copied in and out, is not shared between replicas, and is
 lost on restart, which is why all three bounds above exist. Note it is a *result* cache with no
 invalidation hook: within `CACHE_TTL_DAYS`, a query re-run after the underlying OMOP rows change can
 return the earlier result.
+
+## Approved-cohort snapshots (FLIP#857)
+
+At project approval, trust-api forwards a `POST /cohort/snapshot` request: the approved query
+of record is validated and executed **once**, and its **membership** is persisted as
+`COHORT_SNAPSHOT_DIR/<hub-project-uuid>/membership.json` — the raw SQL of record plus the distinct
+`person_id` and/or `accession_id` values it returned, with the row/subject counts and column names
+at approval (written with atomic directory renames, so a reader never sees a half-written record).
+No clinical values are stored: the record is a small, human-readable file an operator can open,
+diff and audit, and the attribute data stays in OMOP under the trust's existing governance.
+
+From then on the two row-level routes serve **only** that membership, keyed on the encrypted hub
+project id; the SQL the caller supplies is ignored (hash-compared against the query of record and
+logged when it differs). Consequences:
+
+- `/cohort/dataframe` re-runs the query of record against live OMOP (uncached) and keeps only the
+  rows whose `person_id` / `accession_id` are in the frozen sets — every frozen column a row has a
+  value in must hold a member, and at least one must — so the cohort **can shrink but never grow**: a patient removed from OMOP (an opt-out, a
+  correction) drops out on the next fetch, while neither a new patient nor a new study of an
+  approved patient can enter;
+- `/cohort/accession-ids` never runs the cohort SQL: it serves the frozen accession ids that still
+  resolve through `omop.image_occurrence` (uncached), so the imaging status poll costs two lookups on
+  that table — sequential scans today, since the OMOP DDL has no index on `accession_id` — and a
+  study removed from OMOP drops out on the next poll;
+- researcher FL code calling `flip.get_dataframe(...)` cannot choose the SQL executed against
+  OMOP — the arbitrary-SQL exposure on `/cohort/dataframe` is closed;
+- a project with no membership record is refused outright (fixed generic detail);
+- a cohort frozen with no `accession_id` column returns an **empty** accession list — a
+  tabular/OMOP-only project legitimately has no imaging to pull;
+- freezing is once per project: a repeated `/cohort/snapshot` (the hub re-queues one whose result it
+  never received, or re-checks a frozen trust with `include_frozen`) returns the frozen record's facts
+  without re-running the query, so it cannot re-admit patients. There is no way to replace a membership:
+  only a project with no record (never frozen, deleted, or lost with the store) is frozen afresh. The
+  store is write-once at the filesystem level (a single rename the kernel refuses over an existing
+  record), and a record that is present but unreadable answers 500 rather than being frozen over;
+- the governance policy is asked at freeze time as for `cohort.statistics` — the freeze reports the
+  same counts to the hub — so a project denied statistics is not frozen, and a policy
+  `min_cohort_size` raise applies to the freeze as it does to the statistics route;
+- a row is served when each frozen column it has a value in holds a member and at least one does,
+  so a member's row whose LEFT-JOINed `accession_id` is NULL is served as it was counted; a cohort that
+  froze no accession value at all is treated as tabular;
+- `POST /cohort/snapshot/delete` removes the record (the FLIP#997 teardown hook);
+- both write routes (`/cohort/snapshot`, `/cohort/snapshot/delete`) require **cohort-admin** auth
+  (AES-key possession) on top of the trust-internal key, so researcher FL code cannot define or
+  destroy the frozen cohort — see [Authentication](#authentication).
+
+Because values are read live, a training run is not bit-identical across rounds if OMOP changes
+mid-run: rows can disappear, and an approved patient's attributes can be corrected. That is the
+accepted cost of keeping patient data out of the snapshot store.
+
+The disclosure threshold below is enforced at snapshot creation (nothing is persisted for a
+below-threshold cohort, nor for one exposing neither `person_id` nor `accession_id`, which has no
+membership to freeze — that is a 400 naming the column) and **re-counted on every row-level
+fetch** against the live threshold, so a cohort that shrinks below the floor stops being served and
+an operator raising their floor takes effect on already-approved projects. Snapshot creation reads
+OMOP (and counts its subjects) with the query cache bypassed, so it freezes the live cohort, never a
+result cached at submission.
 
 ## Authentication
 
@@ -93,12 +154,25 @@ running unrestricted queries against OMOP, every route under `/cohort` requires 
 against its own copy of the same per-trust key with a constant-time compare. `/health` stays
 unauthenticated so liveness probes keep working.
 
-Callers in this repo: trust-api (`/cohort`) and imaging-api (`/cohort/accession-ids`). The fl-client
+Callers in this repo: trust-api (`/cohort`, and `/cohort/snapshot` when the hub approves a project)
+and imaging-api (`/cohort/accession-ids`). The fl-client
 container calls `/cohort/dataframe` indirectly: user training code calls `flip.get_dataframe(...)`
 from the [`flip` Python package](https://github.com/londonaicentre/FLIP/tree/develop/flip-utils/flip)
 (consumed by both NVFLARE and Flower fl-client / fl-server images), and that package reads
 `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and adds the header to its HTTP request. Tutorials
 and user-uploaded `client_app.py` / `server_app.py` do not deal with the header directly.
+
+**Cohort-admin gate on the write routes (FLIP#857).** Because fl-client legitimately holds the
+trust-internal key, that key alone cannot separate "may read the approved cohort" from "may
+DEFINE it". The cohort router is therefore split: `authenticate_internal_service` gates the read
+routes (`/cohort`, `/cohort/dataframe`, `/cohort/accession-ids`), while the snapshot **write**
+routes (`/cohort/snapshot`, `/cohort/snapshot/delete`) additionally require `authenticate_cohort_admin`
+— proof of possessing `AES_KEY_BASE64`, sent as the **SHA-256 of the key** (never the key itself)
+in `COHORT_ADMIN_KEY_HEADER` (default `X-Cohort-Admin-Key`) and constant-time compared. trust-api
+holds the AES key and sends the proof when it forwards an approval-time snapshot; fl-client has no
+AES key, so researcher FL code cannot rewrite or delete a project's frozen cohort. A caller with a
+valid trust-internal key but no/invalid proof is refused **403**. No new secret is provisioned — the
+gate reuses the existing AES-key possession boundary, so kit files and `register_trust` are unchanged.
 
 Each trust has a distinct key. A trust's `TRUST_INTERNAL_SERVICE_KEY` is minted by `register_trust`
 (`make register-trusts`) and written into that trust's kit file (`trust/.env.<CODE>.<env>`), which
@@ -232,15 +306,19 @@ A cohort exposes its subjects one of two ways, resolved by `count_distinct_subje
 | `person_id` | Counted directly from the dataframe, no database round trip; never more than the row count |
 | `accession_id` | Resolved through `omop.image_occurrence`; the row count remains an upper bound, since nothing in the schema stops one accession number mapping to several people |
 
-A cohort exposing neither cannot be gated and is refused. `/cohort/dataframe` reports that as a
-**400** naming the missing column, which is safe to be specific about because it describes the
-query's shape and never its contents. `/cohort/accession-ids` cannot do the same: its refusal must
-stay byte-identical across a zero cohort, a below-threshold one and an uncountable one, so all
-three return the same 403. Accession numbers that resolve to no imaging study contribute no
-subject, so a query aliasing an unrelated column to that name fails closed — and they are never
-returned either: `/cohort/accession-ids` releases only the values the floor counted
-(`keep_imaging_accessions`), so a cohort cannot ride person data out under the alias alongside real
-accessions that clear the floor.
+The count is taken at snapshot creation (`/cohort/snapshot`) and again on every row-level fetch,
+over what that fetch would release (a tabular project's empty accession list is gated on the
+approval-time count). A cohort exposing neither column cannot be gated and is refused
+at creation, as a **400** naming the missing column — safe to be specific about because it describes
+the query's shape and never its contents — so no uncountable cohort is ever approved and the
+row-level routes' refusal stays byte-identical across a zero cohort and a below-threshold one. A
+failure of the count itself is treated as a count of zero (refused as below threshold).
+
+Accession numbers that resolve to no imaging study contribute no subject, so a query aliasing an
+unrelated column to that name fails closed — and they are never returned either:
+`/cohort/accession-ids` releases only the frozen values that resolve through `omop.image_occurrence`
+(`keep_imaging_accessions`), gated on the subjects behind those alone, so a cohort cannot ride
+person data out under the alias alongside real accessions that clear the floor.
 
 ### Governance document (FLIP#1259)
 
@@ -249,11 +327,15 @@ named by `ACCESS_POLICY_FILE` (worked example: [`../governance.example.toml`](..
 operator guide: [`../README.md`](../README.md#trust-governance-policy-optional)). The service loads it
 once, at import, and refuses to start on an invalid one (`data_access_api/policy/loader.py`); it logs
 one `[governance] policy ACTIVE from … sha256=…` line (or `[governance] no policy configured`) at
-startup. Each route calls `validate_query` first and then the pure `policy.decide`: any matching deny
+startup. Each route asks the pure `policy.decide` (`/cohort` after `validate_query`; the two
+row-level routes, which ignore the caller's SQL, before reading the frozen membership; `/cohort/snapshot`
+as `cohort.statistics`, since it reports the same counts, before reading the frozen record): any matching deny
 denies, otherwise the strictest matching permit sets the threshold, otherwise — for a route the
 document mentions — the request is denied. A denial answers exactly as a below-threshold cohort does
-(the fixed 403, or a suppressed `/cohort` response) and never runs the query; the rule id goes to the
-log only.
+(the fixed 403, or a suppressed `/cohort` response) and never runs the query;
+the rule id goes to the log only. The decision is taken live on every call, so a rule added after
+approval applies to an already-frozen cohort. `/cohort/snapshot` has no action of its own: it is
+decided as `cohort.statistics` and freezes at that decision's threshold.
 
 ### Cohort charts
 
@@ -296,8 +378,8 @@ legitimately select `*`, so a column filter would break every FL app while a cal
 alias around it. Column-level minimisation belongs in the cohort query a project submits and in
 project approval, not at this layer.
 
-`/cohort/accession-ids` is the minimal-disclosure endpoint: it wraps the caller's validated query
-so only the `accession_id` column can cross the boundary. It applies the same threshold and the
+`/cohort/accession-ids` is the minimal-disclosure endpoint: it returns only accession ids from the
+frozen membership, so no other column can cross the boundary. It applies the same threshold and the
 same fixed refusal text, because accession IDs are still row-level identifiers — and they are the
 pointer set into the imaging data, deciding whose studies get pulled into XNAT where project
 members view them. Releasing them for a cohort of three is the disclosure the threshold exists to
@@ -308,12 +390,12 @@ The trust applies that check itself rather than relying on the hub. The hub does
 on it would be exactly the "assume the hub filtered first" this layering rejects, and the hub's own
 `start_project_imaging_creation` endpoint does not re-check staging.
 
-**Both row-level gates evaluate the cohort as it is now, not as it was at approval.** FLIP has no
-frozen approved-cohort artefact: the cohort query is a SQL string that is re-run against live OMOP
-at every stage — including by the imaging status poll roughly every 10 seconds while a user has the
-project page open. A project can therefore import cleanly and later start refusing if its cohort
-shrinks below the threshold. That is the correct behaviour for a disclosure control, but it means
-the gate is not a one-time approval-time check; see FLIP#857 for the underlying design gap.
+**Both row-level gates evaluate the approved membership as it stands in OMOP now** (FLIP#857 — see
+[Approved-cohort snapshots](#approved-cohort-snapshots-flip857)). The cohort cannot grow after
+approval, but it can shrink, and a cohort that shrinks below the floor starts refusing. The imaging
+status poll (roughly every 10 seconds while a user has the project page open) never re-runs the
+cohort SQL. The threshold *value* is read live, so an operator raising their floor does bite
+already-approved projects.
 
 When `/cohort/accession-ids` refuses, imaging-api translates the 403 into a
 `CohortBelowThresholdError` rather than a generic transport failure, so the initial pull logs a

@@ -40,7 +40,7 @@ class XnatFetchError(Exception):
 
 
 class CohortBelowThresholdError(Exception):
-    """Exception raised when data-access-api refuses a cohort as below the disclosure threshold.
+    """Exception raised when data-access-api refuses to release a cohort's accession IDs.
 
     A typed alternative to the generic ``RuntimeError`` that ``get_accession_ids`` raises for
     transport failures, so callers can tell a deliberate policy refusal (HTTP 403) apart from
@@ -48,11 +48,14 @@ class CohortBelowThresholdError(Exception):
     call should be retried and surfaced as an error, whereas a below-threshold cohort is a
     settled answer — nothing to import, and retrying cannot change it.
 
-    A plain ``Exception`` subclass (no custom ``__init__``) so ``str(err)`` renders the raised
-    message verbatim, matching ``XnatFetchError`` above.
+    Two refusals arrive this way: the cohort is below the trust's disclosure threshold, or the
+    project has no approved-cohort membership (FLIP#857). ``detail`` carries data-access-api's own
+    fixed text so callers can report which; ``str(err)`` still renders the raised message verbatim.
     """
 
-    pass
+    def __init__(self, message: str, detail: str = "") -> None:
+        super().__init__(message)
+        self.detail = detail
 
 
 class InternalServerError(Exception):

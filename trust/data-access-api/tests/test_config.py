@@ -150,3 +150,9 @@ def test_no_document_means_no_policy(reload_config):
     config = reload_config(ACCESS_POLICY_FILE="")
 
     assert config.get_policy() is None
+
+
+@pytest.mark.parametrize("value", ["", None])
+def test_snapshot_max_bytes_coerces_empty_to_default(value):
+    """A commented-out kit-file entry arrives empty and must fall back to the shipped cap."""
+    assert Settings(SNAPSHOT_MAX_BYTES=value).SNAPSHOT_MAX_BYTES == Settings().SNAPSHOT_MAX_BYTES

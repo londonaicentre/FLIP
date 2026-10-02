@@ -917,6 +917,13 @@ To clean up the test data:
 make -C flip-api delete_testing_projects
 ```
 
+Projects approved before FLIP#857 have no frozen cohort membership, so every trust refuses their row-level data.
+Freeze it for all of them from the running dev stack (`EXTRA_ARGS="--dry-run"` previews):
+
+```bash
+make -C flip-api backfill_cohort_snapshots
+```
+
 These are also available as VS Code tasks via **Terminal > Run Task** — look for `Create testing projects` and
 `Delete testing projects`.
 

@@ -114,6 +114,13 @@ delete_testing_projects:
 seed_demo_projects:
 	@echo "🌱 Seeding the demo radiology project catalogue..."
 	env DB_HOST=localhost uv run python -m tests.seed_demo_projects $(EXTRA_ARGS)
+# Queue the approval-time cohort freeze (FLIP#857) at every approved trust of every APPROVED
+# project that has no snapshot record — projects approved before the feature are refused at
+# the trusts until they have one. Runs in the already-running flip-api container (exec, never
+# recreated). Preview with EXTRA_ARGS="--dry-run".
+backfill_cohort_snapshots:
+	@echo "🧊 Queuing missing cohort snapshots..."
+	$(docker_command) exec $(service_name) python -m flip_api.scripts.backfill_cohort_snapshots $(EXTRA_ARGS)
 # Provision the demo users for the demo-video recorder in the configured
 # identity provider (AUTH_BACKEND: the local Keycloak realm or the Cognito pool).
 # Runs inside the flip-api container so the provider is reached exactly as the

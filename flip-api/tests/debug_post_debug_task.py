@@ -17,6 +17,7 @@ from sqlmodel import Session, col, delete, select
 
 from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import (
+    CohortSnapshotStatus,
     FLJob,
     FLLogs,
     FLMetrics,
@@ -113,6 +114,20 @@ def delete_xnat_project_status(session: Session, project_ids: list[str]) -> bool
         return True
     except Exception as e:
         print(f"  ❌ Error deleting XNAT project status: {e}")
+        return False
+
+
+def delete_cohort_snapshot_status(session: Session, project_ids: list[str]) -> bool:
+    """Delete the cohort snapshot records for the projects"""
+    try:
+        result = session.execute(
+            delete(CohortSnapshotStatus).where(col(CohortSnapshotStatus.project_id).in_(project_ids))
+        )
+        deleted_count = result.rowcount if hasattr(result, "rowcount") else 0
+        print(f"  ✅ Deleted {deleted_count} cohort snapshot records")
+        return True
+    except Exception as e:
+        print(f"  ❌ Error deleting cohort snapshot records: {e}")
         return False
 
 
@@ -257,6 +272,7 @@ def delete_project_data_in_order(session: Session, project_ids: list[str]) -> bo
         ("Project User Access", delete_project_user_access),
         ("Project Trust Intersect", delete_project_trust_intersect),
         ("XNAT Project Status", delete_xnat_project_status),
+        ("Cohort Snapshot Status", delete_cohort_snapshot_status),
         ("Model", delete_projects_models),
         ("Projects", delete_projects),
     ]

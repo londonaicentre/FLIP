@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column
+from sqlalchemy import Column, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlmodel import Field, Relationship, SQLModel
@@ -418,3 +418,38 @@ class XNATProjectStatus(SQLModel, table=True):
     query_at_creation: UUID | None = Field(default=None)
     last_reimport: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
     reimport_count: int = Field(default=0)
+
+
+# One audit row per (project, trust); the snapshot upsert conflicts on it.
+COHORT_SNAPSHOT_STATUS_UNIQUE = "uq_cohort_snapshot_status_project_trust"
+
+
+class CohortSnapshotStatus(SQLModel, table=True):
+    """The hub's per-trust record of the cohort membership frozen at approval (FLIP#857).
+
+    Aggregates only — the hub never sees a row of the cohort. Written by the PERSIST_COHORT
+    task's post-processing from the trust's snapshot response; one row per (project, trust),
+    enforced by a unique constraint and updated in place when the snapshot is re-queued. The row holds the
+    approval-time facts: the frozen membership bounds what the project trains on at that trust
+    (it can shrink as patients opt out, never grow), so ``row_count`` is an upper bound, not
+    the live count. ``approved_record_count`` is the count the project was staged/approved on
+    (from the aggregated cohort statistics); a mismatch with ``row_count`` means the live cohort
+    drifted between submission and approval, and is logged as a warning when the row is
+    written — surfaced, never silently adopted.
+    """
+
+    __tablename__ = "cohort_snapshot_status"  # type: ignore
+    __table_args__ = (UniqueConstraint("project_id", "trust_id", name=COHORT_SNAPSHOT_STATUS_UNIQUE),)
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    project_id: UUID = Field(foreign_key="projects.id")
+    trust_id: UUID = Field(foreign_key="trust.id")
+    # Which Queries row was frozen — the missing link #857 calls out.
+    query_id: UUID | None = Field(default=None)
+    row_count: int = Field()
+    approved_record_count: int | None = Field(default=None)
+    # False = the frozen cohort holds no accession id (no accession_id column, or NULL on every row):
+    # there is no imaging to pull.
+    has_accessions: bool = Field(default=False)
+    query_hash: str | None = Field(default=None)
+    snapshot_at: datetime = Field()
+    created_at: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]

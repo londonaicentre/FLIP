@@ -338,8 +338,9 @@ schema pin inside ``validate_query`` is kept as a barrier in its own right eithe
 
 Row-level results are additionally gated on the Trust's ``COHORT_QUERY_THRESHOLD`` (default 10): a
 cohort smaller than the threshold is refused with a fixed message, identical to the one a cohort of
-zero produces, so the refusal itself discloses nothing. The threshold is evaluated against the live
-cohort on every call rather than frozen at approval. :doc:`/security` covers the full set of controls
+zero produces, so the refusal itself discloses nothing. The threshold is evaluated on every call
+against the approved membership as it stands in OMOP now: the cohort is frozen at approval and can
+shrink, never grow. :doc:`/security` covers the full set of controls
 around the clinical data boundary.
 
 .. _omop-dev-instance:

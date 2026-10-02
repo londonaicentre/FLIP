@@ -117,26 +117,27 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
     """
     # Check if project exists
     try:
-        get_project(project_id, headers)
+        project = get_project(project_id, headers)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Get accession IDs from data access API. The endpoint projects the cohort
-    # query to the accession_id column server-side, so no other columns are
-    # transmitted across the trust boundary.
-    encrypted_project_id = encrypt(project_id, context=PROJECT_ID_CONTEXT)
+    # Get accession IDs from data access API — the frozen approved-cohort pointer set
+    # (FLIP#857), keyed on the HUB project id. XNAT projects mint their own uuid and stash
+    # the hub id in secondary_ID, so that is what data-access-api's snapshot store is
+    # keyed on; sending the XNAT id would never match a snapshot.
+    encrypted_project_id = encrypt(project.secondary_ID, context=PROJECT_ID_CONTEXT)
     try:
         accession_ids: list[str] = await get_accession_ids(encrypted_project_id, query)
-    except CohortBelowThresholdError:
+    except CohortBelowThresholdError as e:
         # A settled outcome, not a failure to retry: the trust will not release identifiers
-        # for a cohort this small, so there is nothing to import. Logged rather than raised
+        # for this cohort now, so there is nothing to import. Logged rather than raised
         # because this runs as a background task — the create-project response has already
         # been sent, so an exception here would only reach the server log as a traceback.
         logger.warning(
-            f"Not importing images for project {project_id}: the cohort is below the trust's "
-            "minimum size, so the Data Access API withheld its accession IDs."
+            f"Not importing images for project {project_id}: the Data Access API withheld its "
+            f"accession IDs — {e.detail or 'no reason given'}"
         )
         return False
 
@@ -225,29 +226,40 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
         ImportStatus: An object containing the status of study imports.
 
     Raises:
-        HTTPException: 403 if the cohort has fallen below the trust's ``COHORT_QUERY_THRESHOLD``
-            so its accession IDs cannot be released — note the cohort query is re-run against
-            live OMOP on every status check, so a project that imported cleanly can start
-            refusing later if its cohort shrinks (see FLIP#857). Otherwise, if the request
-            cannot be processed.
+        HTTPException: 403 if the trust refuses to release the cohort's accession IDs (below its
+            ``COHORT_QUERY_THRESHOLD``, or no approved-cohort membership), with data-access-api's
+            reason. 500 if the XNAT project cannot be read. Otherwise, if the request cannot be
+            processed.
     """
-    # Encrypt project ID to send to the data access API
-    encrypted_project_id = encrypt(project_id, context=PROJECT_ID_CONTEXT)
+    # Resolve the HUB project id: data-access-api serves the frozen approved-cohort
+    # snapshot (FLIP#857) keyed on it, and the XNAT project stores it as secondary_ID.
+    try:
+        project = get_project(project_id, headers)
+    except NotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Could not read XNAT project {project_id} for its import status")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not read the XNAT project ({type(e).__name__}).",
+        )
+    encrypted_project_id = encrypt(project.secondary_ID, context=PROJECT_ID_CONTEXT)
 
-    # Get accession IDs from data access API (server-side projection — no other
-    # cohort columns leave the trust).
+    # Get accession IDs from data access API — the approved cohort's pointer set; the query
+    # travels only as an advisory field (data-access-api ignores it), so the status poll never
+    # runs cohort SQL.
     try:
         accession_ids: list[str] = await get_accession_ids(encrypted_project_id, query)
     except CohortBelowThresholdError as e:
         # Unlike the import path, this one has a caller waiting on a response, so surface the
         # reason: trust-api relays this detail to the hub, and without it the per-trust status
         # shows only a raw transport error for what is actually a policy decision.
+        # data-access-api's detail is one of its fixed refusal texts, so relaying it tells a
+        # missing approved cohort apart from a small one without revealing anything more.
+        reason = e.detail or "The trust refused to release the cohort's accession IDs."
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Cohort is below the trust's minimum size, so its accession IDs cannot be "
-                "released and import status cannot be reported."
-            ),
+            detail=f"{reason} Import status cannot be reported.",
         ) from e
 
     # Fetches a list of XNAT experiments associated with a given XNAT project.
