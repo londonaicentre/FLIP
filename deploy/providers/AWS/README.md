@@ -818,6 +818,23 @@ See [`dev/README.md`](./dev/README.md) for the first-time setup workflow (the de
 
 ### Deploying onto an LZA estate (PROD=lza)
 
+> [!IMPORTANT]
+> **This estate is applied by CI, not from a laptop.** `terraform_plan.yml` plans LZA staging on every PR
+> touching `deploy/providers/AWS/**`, `terraform_apply.yml` applies `PROD=lza-stag` on push to `develop`,
+> and `terraform_drift.yml` plans nightly — all through OIDC, with no long-lived keys. See
+> [Repointing CI at the LZA accounts](#repointing-ci-at-the-lza-accounts) for how an environment is pointed
+> at an account, and [Terraform CI](#terraform-ci-flip962) for the pipeline itself.
+>
+> **Staging is on LZA; production is still being repointed.** `aws-stag` carries `TF_PROD=lza-stag`, so a
+> merge to `develop` applies to the LZA staging account. `aws-prod` has no `TF_PROD` yet, so a merge to
+> `main` still applies to **legacy production** — the LZA production repoint is in progress and is tracked on
+> [FLIP#1199](https://github.com/londonaicentre/FLIP/issues/1199).
+>
+> The `make init` / `make plan` / `make apply PROD=lza` runbook below is therefore **break-glass**: read it
+> for what the mode does and what the account must provide, and run it by hand only under the conditions in
+> [Break-glass](#break-glass). A laptop apply against a CI-applied account is reverted by the next CI run and
+> shows up as drift in between.
+
 This Terraform root supports **two deployment modes**, both permanently:
 
 | Mode | Selected by | Network | Ingress |
@@ -1131,8 +1148,21 @@ IP) — and the parent domain's DNS host delegates the subdomain to the zone's f
 servers. The FL name (`fl.app.flip.example.org`) is the same shape aliasing the edge NLB. The
 concrete cutover runbook stays in the private platform repos.
 
-**State of the LZA path** (tracked on #749):
+**State of the LZA path** (tracked on #749 and, for the CI legs, [#1199](https://github.com/londonaicentre/FLIP/issues/1199)):
 
+- **LZA staging is CI-applied** (since 2026-10-05). `aws-stag` carries `TF_PROD=lza-stag` and the LZA staging
+  plan/apply/drift roles, so PR plans, `develop` applies and the nightly drift run all target the LZA staging
+  account, with both apply guards intact (`resolve-image-tags.sh` sha pinning and the
+  `check-fl-plan-impact.sh` FL-quiesce hold). `TF_STAG_DISABLED` was deleted at the repoint.
+- **LZA production is not repointed yet.** `aws-prod` still holds the legacy production account and no
+  `TF_PROD`, so a merge to `main` applies to legacy prod and the `main` drift leg reports on legacy prod.
+  Until that changes, LZA production is reached only by a break-glass apply on the `lza-prod` profile. The
+  repoint order (verify the account bootstrap, create `/flip/ci/host_aws_public_key`, reconcile the stale
+  `aws-prod` variables, release the public web alias, then `setup-github-environments.sh --mode lza`) is in
+  [Repointing CI at the LZA accounts](#repointing-ci-at-the-lza-accounts).
+- **No LZA-production plan on release PRs.** `terraform_plan.yml` is staging-only by construction, so a PR
+  into `main` gets a staging diff, not a production one; the nightly `main` drift run is the only production
+  plan anyone reads.
 - **Multi-AZ has landed platform-side** (verified against the live account 2026-08-24): both AZs carry an
   `-app-*`, a `-data-*` and a `-tgw-*` subnet, which clears the earlier single-AZ constraints — the live
   `flip-db-subnet-group` spans both AZs, and the TGW attachment now rides `tgw-a` **and** `tgw-b`, so traffic
@@ -1894,12 +1924,40 @@ since any image-tag change updates the task definition.
 ### Break-glass
 
 The pipeline is additive — the laptop workflow is unchanged and remains the
-recovery path.
+recovery path, for the legacy **and** the LZA accounts. Use the profile and `PROD`
+token of the estate you mean (see
+[Repointing CI at the LZA accounts](#repointing-ci-at-the-lza-accounts) for the
+full mode table):
 
-- **CI is wedged / the role is broken.** `AWS_PROFILE=stag make init plan apply`
-  as before. The CI roles are owned by the platform repositories, outside this
-  root's state, so a bad main-state apply cannot lock CI out of the apply that
-  would fix it; a broken role is fixed there.
+| Estate | Break-glass command |
+| --- | --- |
+| Legacy staging | `AWS_PROFILE=stag make init plan apply` |
+| Legacy production | `AWS_PROFILE=prod make init plan apply PROD=true` |
+| LZA staging | `AWS_PROFILE=lza-stag make init plan apply PROD=lza-stag` |
+| LZA production | `AWS_PROFILE=lza-prod make init plan apply PROD=lza` |
+
+Each needs that estate's env file (`.env.stag` / `.env.production` / `.env.lza-stag`
+/ `.env.lza-prod`) present locally; the Makefile's guard refuses to run on a
+mismatched `AWS_PROFILE`.
+
+**A laptop apply is only ever a recovery action on a CI-applied account.** Both
+staging estates and legacy production are applied by CI, so a hand-run there is
+reverted by the next run and reported by the nightly drift job meanwhile. Run one
+only when:
+
+- **CI is wedged / the role is broken.** The CI roles are owned by the platform
+  repositories, outside this root's state, so a bad main-state apply cannot lock CI
+  out of the apply that would fix it; a broken role is fixed there.
+- **The change must not go through CI at all** — the targeted one-offs the repoint
+  runbook calls for, such as creating `/flip/ci/host_aws_public_key` in a new LZA
+  account before CI can plan there, or an apply against legacy production after
+  `TF_PROD` has moved `aws-prod` to LZA and no CI path back exists.
+- **LZA production, until it is repointed.** It has no CI leg yet, so
+  `AWS_PROFILE=lza-prod make apply PROD=lza` is currently the only way to apply it.
+  Announce it, and expect the repoint to make it break-glass like the rest.
+
+Two more pipeline-level escapes:
+
 - **A plan is stuck on the state lock.** PR plans run with `-lock=false` and never
   take it. An apply does; `make force-unlock LOCK_ID=<id>` releases it.
 - **An apply must not run.** Disable `terraform_apply.yml` in the Actions tab, or
