@@ -68,8 +68,9 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
   `uv sync`, `uv run --project` or `uv lock` run by hand is unguarded, so keep your uv current rather
   than relying on the check to catch you. (The `uv-lock` pre-commit hook is not a gap here — it pins its
   own uv and runs `uv lock --check`, which verifies and never rewrites.)
-- The AWS CLI configured for SSO access to the development environment — only the two example Trusts need
-  it (`make up` fetches their XNAT artifacts and OMOP vocabulary from AWS buckets). The hub reaches no AWS
+- The XNAT plugins for the two example Trusts. AI Centre developers fill the cache from the development bucket with
+  the AWS CLI and an SSO profile; everyone else downloads the four public upstream jars once (see
+  [Trust artifacts that cannot be redistributed](#trust-artifacts-that-cannot-be-redistributed)). The hub reaches no AWS
   service: sign-in is the local Keycloak and object storage the local RustFS container (see
   [Environment variables](#environment-variables)), so `make central-hub` and `make up-no-trust` boot with no
   AWS account
@@ -242,8 +243,10 @@ For the full local stack, replace every placeholder in these minimum groups befo
 | Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it). Development signs in through Keycloak, the identity-provider container in `deploy/compose.development.yml`, and nothing else: there is no `AUTH_BACKEND` to set (flip-api pins `keycloak` in development and `cognito` in staging/production) and no AWS account needed to sign in |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Object store | Nothing: `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME` and `FLIP_APP_BUNDLES_BUCKET_NAME` ship with working names, created in the local store at `make up` |
-| FL kits (AWS) | `AICENTRE_BUCKET_NAME` — the participant kits, read by `make stage-fl-kit`; the two shipped dev kits are provisioned in-tree and never fetch it |
-| XNAT artifacts (AWS) | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins) |
+| XNAT artifacts | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins). Without bucket access, provision the plugins by hand and set any non-placeholder name (see [Trust artifacts that cannot be redistributed](#trust-artifacts-that-cannot-be-redistributed)) |
+
+`AICENTRE_BUCKET_NAME` is not in that list: the two shipped dev kits are provisioned in-tree and never fetch it (see
+[What still needs AWS in development](#what-still-needs-aws-in-development)).
 
 **Object storage needs no configuration in development** (FLIP#1291). `make up` starts `object-store`, an S3-compatible
 [RustFS](https://github.com/rustfs/rustfs) container whose data directory is `./object-store/` (gitignored): a
@@ -264,9 +267,52 @@ the public endpoint is unset there, so every audience signs against the one endp
 **The dev hub mounts nothing from `~/.aws` and reaches no AWS service** — sign-in (Keycloak), email (console) and
 object storage (RustFS) are all local. The AWS-backed *targets* — `deploy/providers/AWS`, FL kit uploads, the
 Trusts' artifact fetches — read `AWS_PROFILE` as before and are guarded by `make check-aws-access`, which `make up`
-no longer runs. Authorised FLIP developers can use the shared development values for the two artifact buckets; other
-deployers should create their own resources with the
+no longer runs. Authorised FLIP developers can use the shared development values for the artifact buckets; other
+developers fetch the artifacts from their upstream sources (below), and deployers create their own resources with the
 [Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
+
+#### What still needs AWS in development
+
+| Capability | Needs | Without AWS |
+| --- | --- | --- |
+| Hub: sign-in, email, model files, FL bundles, training, results | Nothing | Keycloak, the console email backend and RustFS are local |
+| First `make up` of the example Trusts (XNAT plugin cache) | `FLIP_ARTIFACTS_BUCKET_NAME` + AWS CLI, until the cache is filled | Hand-provision the four plugin jars once — [below](#trust-artifacts-that-cannot-be-redistributed) |
+| Building the XNAT images locally (`make -C trust/xnat build`) | The WAR from the same bucket | Download the WAR into `trust/xnat/xnat/build-artifacts/`; most developers pull the published `xnat-*` images and never build |
+| OMOP core vocabulary (`make -C trust/omop-db load-omop-vocab`, optional) | `VOCAB_S3_BUCKET` + AWS CLI | Build the bundle from OHDSI Athena under your own licences. `make up` never loads it: seeding loads the public DICOM vocabulary, so the shipped tutorials run, but cohort queries that join `omop.concept` for other vocabularies return nothing |
+| Participant kits for remote or EC2 Trusts (`make -C deploy/providers/AWS stage-fl-kit`, the `upload-kits-to-s3` / `upload-creds-to-s3` targets in `fl-services/<backend>/`) | `AICENTRE_BUCKET_NAME` | Not needed on one host: the two dev kits are provisioned in-tree |
+| Testing SES or Cognito themselves | A staging environment | Not testable in development: flip-api pins `EMAIL_BACKEND=console` and `AUTH_BACKEND=keycloak` there |
+| `deploy/providers/AWS` (Terraform, EC2 Trusts, hub deploys) | AWS credentials | — |
+
+#### Trust artifacts that cannot be redistributed
+
+The XNAT WAR and plugins and the OMOP core vocabulary are third-party artifacts that FLIP does not republish. The
+organisation buckets are a mirror for AI Centre developers; everyone else fetches the same files from upstream once.
+
+**XNAT plugins** (needed for the first `make up`). Download the roster for `XNAT_VERSION` (1.10.0; the versions and
+why each is pinned are in [`trust/xnat/README.md`](trust/xnat/README.md#plugin-compatibility)) into
+`trust/xnat/xnat/plugins/` (gitignored), then record that the cache matches this XNAT version:
+
+```bash
+cd trust/xnat/xnat/plugins
+curl -fLO https://api.bitbucket.org/2.0/repositories/xnatx/xnatx-batch-launch-plugin/downloads/batch-launch-0.9.0-xpl.jar
+curl -fLO https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar
+curl -fLO https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar
+curl -fLO https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.8.0-fat.jar
+echo 'xnat-1.10.0/plugins' > .s3-prefix
+```
+
+These are the same URLs the Helm chart downloads at pod start (`xnat.web.plugins.urls` in
+`trust/deploy/helm/values.yaml`). With a complete, stamped cache `make up` skips S3 entirely; it still rejects an unset
+or placeholder `FLIP_ARTIFACTS_BUCKET_NAME` before checking the cache, so set it to any other value (e.g. `none`) until
+FLIP#1292 separates the fetch from bring-up.
+
+**XNAT WAR** (only for `make -C trust/xnat build`): download
+`https://api.bitbucket.org/2.0/repositories/xnatdev/xnat-web/downloads/xnat-web-1.10.0.war` into
+`trust/xnat/xnat/build-artifacts/`.
+
+**OMOP core vocabulary** (optional): request an export from [OHDSI Athena](https://athena.ohdsi.org/) under your own
+licences (UK editions via NHS TRUD) and load it as described in
+[`trust/omop-db/README.md`](trust/omop-db/README.md#the-core-vocabulary-bundle).
 
 **Email needs no configuration in development** (FLIP#919). flip-api defaults to `EMAIL_BACKEND=console` in dev, which
 logs the would-be message (recipient, template name, non-secret payload) instead of calling SES — so the access-request
@@ -331,9 +377,10 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 Some services (e.g. `flip-api`) interact with AWS via `boto3` in staging and production. In development none
 of them does: sign-in is the local Keycloak, email the console backend and object storage the local RustFS
-container, so the hub needs no AWS credentials (FLIP#919, FLIP#1291). AWS SSO is needed only for the two
-example Trusts' XNAT-artifact and OMOP-vocabulary fetches, FL kit uploads and the `deploy/providers/AWS`
-targets, which `make check-aws-access` guards.
+container, so the hub needs no AWS credentials (FLIP#919, FLIP#1291). AWS SSO is needed only for filling the
+example Trusts' artifact caches from the organisation buckets (which external developers replace with the upstream
+downloads, see [Trust artifacts that cannot be redistributed](#trust-artifacts-that-cannot-be-redistributed)), FL kit
+uploads and the `deploy/providers/AWS` targets, which `make check-aws-access` guards.
 
 Configure AWS SSO:
 

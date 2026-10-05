@@ -248,8 +248,10 @@ roster, and keying the whole set by version lets branches on different XNAT vers
 `make build` download the set for the `XNAT_VERSION` in `.env` and bake it into the Docker image.
 
 Development additionally bind-mounts the gitignored `xnat/plugins/` directory over the image's plugins. Therefore a
-fresh checkout must set `FLIP_ARTIFACTS_BUCKET_NAME` to a real bucket (the shipped `<your-...>` placeholder is
-rejected) and have AWS access for its first start. `make up` runs `xnat-plugins-download` before stopping any existing
+fresh checkout must either set `FLIP_ARTIFACTS_BUCKET_NAME` to a real bucket (the shipped `<your-...>` placeholder is
+rejected) and have AWS access for its first start, or provision the jars by hand from their public upstream URLs (listed
+below and in [CONTRIBUTING](../../CONTRIBUTING.md#trust-artifacts-that-cannot-be-redistributed)) and stamp the cache
+with `echo 'xnat-<version>/plugins' > xnat/plugins/.s3-prefix`. `make up` runs `xnat-plugins-download` before stopping any existing
 XNAT: a complete cache stamped with the current versioned S3 prefix skips AWS, while a missing or mismatched cache is
 downloaded and revalidated. A failed download leaves the currently running XNAT untouched.
 

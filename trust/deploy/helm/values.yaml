@@ -588,8 +588,8 @@ omopDb:
   # on another environment's bucket. `make -C trust/deploy/helm
   # sync-kit KIT=<CODE> PROD=<env>` writes this from the kit's
   # AICENTRE_BUCKET_NAME, so check that the kit carries the right one (it is not
-  # a hub-managed key — a kit scaffolded from trust/.env.example ships the dev
-  # bucket).
+  # a hub-managed key — a kit scaffolded from trust/.env.example ships it commented
+  # out, so the release loads no core vocabulary until it is set).
   #
   # The AWS *credentials* live on this block too (vocabLoad.awsProfile /
   # vocabLoad.hostAwsMount, below): this is the chart's only AWS-bearing Job now
