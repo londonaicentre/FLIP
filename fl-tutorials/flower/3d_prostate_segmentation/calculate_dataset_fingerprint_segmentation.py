@@ -389,6 +389,7 @@ class ExperimentPlanner:
         output_folder: str,
         dataloader: Any,
         num_channels: int = 1,
+        num_output_channels: int = 3,
         gpu_memory_target_in_gb: float = 8,
         preprocessor_name: str = "DefaultPreprocessor",
         plans_name: str = "nnUNetPlans",
@@ -404,6 +405,10 @@ class ExperimentPlanner:
         self.output_folder = output_folder
         self.dataloader = dataloader
         self.num_channels = num_channels
+        # Output channels of the planned network (whole gland, PZ, TZ) — the VRAM estimate's
+        # segmentation-head width. Upstream nnU-Net passes the label count here; passing the case
+        # count (len(self.dataloader)) inflated the estimate and shrank the planned patch.
+        self.num_output_channels = num_output_channels
         self.suppress_transpose = suppress_transpose
         self.resnet = resnet
 
@@ -874,7 +879,7 @@ class ExperimentPlanner:
             estimate = self.static_estimate_vram_usage(
                 patch_size,
                 num_input_channels,
-                len(self.dataloader),
+                self.num_output_channels,
                 architecture_kwargs["network_class_name"],
                 architecture_kwargs["arch_kwargs"],
                 architecture_kwargs["_kw_requires_import"],
@@ -966,7 +971,7 @@ class ExperimentPlanner:
                 estimate = self.static_estimate_vram_usage(
                     patch_size,
                     num_input_channels,
-                    len(self.dataloader),
+                    self.num_output_channels,
                     architecture_kwargs["network_class_name"],
                     architecture_kwargs["arch_kwargs"],
                     architecture_kwargs["_kw_requires_import"],
@@ -1360,6 +1365,7 @@ def run_fingerprint_extractor() -> None:
         output_folder=str(args.output_dir),
         dataloader=dataloader,
         num_channels=1,
+        num_output_channels=3,
         gpu_memory_target_in_gb=args.gpu_memory_GB,
     )
     ret = planner.plan_experiment()
