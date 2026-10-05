@@ -1869,6 +1869,29 @@ or service), or deletes any EFS resource, the job **holds** and names what it
 found. Everything else — VPC, IAM, S3, SSM, CloudFront, ALB, and a plain
 `flip-api` roll — applies unattended.
 
+**It will warn — but not hold — when the plan touches the LZA FL ingress**
+(FLIP#1199). The internal FL NLB (`module.fl_server_internal_nlb`, its static
+per-subnet private IPs and its listeners), its security group, the two
+internal-NLB ingress rules, and the `/flip/networking/*` SSM handoff parameters
+(`aws_ssm_parameter.lza_*`) are the workload half of a cross-repo contract: the
+networking account (`aicentre-lza-iac`) reads those parameters and registers those
+IPs as targets on the edge NLB's FL listener and the web relay target group.
+Change one side alone and FL ingress breaks in a way no plan in this repo can see.
+So the gate emits a GitHub **warning annotation plus a job summary** naming the
+changed addresses and the required order:
+
+- **Adding or widening** ingress (new IP, new subnet, new listener/port) — apply
+  FLIP first, then point the networking account at the new values.
+- **Removing or replacing** ingress (dropped IP/subnet, NLB replacement, port
+  change) — update the networking account off the old values **first**, or the
+  edge targets something that no longer exists.
+
+The exit code is unchanged: ordering is a question for a human, not a correctness
+failure, and holding would wedge every LZA ingress PR behind a quiesce that has
+nothing to do with the change. Legacy (non-LZA) estates never see it — those
+addresses are `count = 0` without `lza_managed_network`. Confirm the handoff
+afterwards with `aws ssm get-parameters-by-path --path /flip/networking --recursive`.
+
 When it holds:
 
 1. Enable deployment mode on the hub (pauses FL job pickup; queued jobs hold, the

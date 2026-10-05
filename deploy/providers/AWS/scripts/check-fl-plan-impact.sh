@@ -38,6 +38,12 @@
 #     0  no watched resource changes — safe to apply unattended
 #     1  a watched resource changes — hold for an operator
 #     2  usage or parse error (never treated as "safe")
+#
+# Separately, and never affecting the exit code, the script emits an ADVISORY
+# warning when the plan touches the LZA FL ingress (the internal NLB, its static
+# private IPs, its listeners, or the /flip/networking/* handoff parameters). Those
+# are half of a cross-repo contract with the networking account; see
+# WATCHED_LZA_INGRESS_PREFIXES below (FLIP#1199).
 
 set -euo pipefail
 
@@ -80,6 +86,31 @@ WATCHED_EFS_TYPES=(
     "aws_efs_mount_target"
 )
 
+# ADVISORY (never a hold). The LZA FL ingress is half of a two-repo contract: the
+# workload account owns the internal NLB, its static per-subnet private IPs, its
+# listeners, and the /flip/networking/* SSM parameters; the networking account
+# (aicentre-lza-iac) reads those parameters and registers those IPs as targets on
+# the edge NLB and the web relay. Change one side without the other and FL ingress
+# breaks in a way no plan here can see — which is the failure that opened FLIP#1199.
+#
+# This is an ordering question for a human, not a correctness failure, so it warns
+# and leaves the exit code alone. Holding would wedge every LZA ingress PR behind a
+# quiesce that has nothing to do with the change.
+#
+# Matched by ADDRESS PREFIX, not type+name, and only on addresses that exist solely
+# under `lza_managed_network`. That is what keeps legacy mode silent: in legacy the
+# NLB module, its security group and the SSM handoff parameters are all `count = 0`,
+# so they never appear in a plan. The shared target groups
+# (aws_lb_target_group.ecs_fl_server_tcp / .ecs_flip_api) are deliberately absent —
+# they are created in both modes, so watching them would warn on every legacy apply.
+WATCHED_LZA_INGRESS_PREFIXES=(
+    "module.fl_server_internal_nlb"
+    "module.fl_internal_nlb_security_group"
+    "aws_ssm_parameter.lza_"
+    "aws_security_group_rule.ecs_fl_server_ingress_internal_nlb"
+    "aws_security_group_rule.ecs_flip_api_ingress_internal_nlb"
+)
+
 # `no-op` and `read` are not changes. Everything else is: create, update, delete,
 # and the two orderings of a replace (["delete","create"] / ["create","delete"]).
 ACTION_FILTER='(.change.actions | any(. != "no-op" and . != "read"))'
@@ -102,6 +133,11 @@ for wtype in "${WATCHED_EFS_TYPES[@]}"; do
     efs_selector+="${efs_selector:+ or }(.type == \"${wtype}\")"
 done
 
+lza_selector=""
+for prefix in "${WATCHED_LZA_INGRESS_PREFIXES[@]}"; do
+    lza_selector+="${lza_selector:+ or }(.address | startswith(\"${prefix}\"))"
+done
+
 # Guard the input: a plan JSON with no resource_changes key is a different document
 # than we think it is (a state file, a truncated download, `terraform show` without
 # -json). Treating that as "nothing changes" would auto-apply on a parse failure.
@@ -119,13 +155,70 @@ efs_hits="$(jq_hits ".resource_changes[]
     | select(.change.actions | any(. == \"delete\"))
     | \"\\(.change.actions | join(\"+\"))\\t\\(.address)\"")"
 
+lza_hits="$(jq_hits ".resource_changes[]
+    | select(${lza_selector})
+    | select(${ACTION_FILTER})
+    | \"\\(.change.actions | join(\"+\"))\\t\\(.address)\"")"
+
 total_changes="$(jq "[.resource_changes[] | select(${ACTION_FILTER})] | length" "${PLAN_JSON}")"
+
+# Advisory only — emitted on every path, never consulted for the exit code.
+emit_lza_ingress_advisory() {
+    [[ -n "${lza_hits}" ]] || return 0
+
+    echo "⚠️  This plan changes the LZA FL ingress — the networking account must be updated too." >&2
+    echo "" >&2
+    while IFS=$'\t' read -r action address; do
+        printf '     %-16s %s\n' "${action}" "${address}" >&2
+    done <<<"${lza_hits}"
+    cat >&2 <<'EOF'
+
+   The edge lives in the networking account (aicentre-lza-iac): it reads
+   /flip/networking/* and registers this NLB's static private IPs as targets on the
+   edge NLB's FL listener and the web relay target group. Order matters:
+     * ADDING or widening ingress (new IP, new subnet, new listener/port):
+       apply FLIP first, then update the networking account to the new values.
+     * REMOVING or replacing ingress (dropped IP/subnet, NLB replacement, port
+       change): update the networking account to stop depending on the old values
+       FIRST, otherwise the edge targets a resource that no longer exists.
+   Confirm the handoff parameters afterwards:
+     aws ssm get-parameters-by-path --path /flip/networking --recursive
+
+   This is advisory — the apply is NOT held by it.
+EOF
+
+    if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+        {
+            echo "### ⚠️ LZA FL ingress changed — update the networking account"
+            echo
+            echo "This plan touches the workload side of the cross-repo ingress contract."
+            echo "It is **advisory**: the apply was not held by this."
+            echo
+            echo "| Action | Resource |"
+            echo "| --- | --- |"
+            while IFS=$'\t' read -r action address; do
+                echo "| \`${action}\` | \`${address}\` |"
+            done <<<"${lza_hits}"
+            echo
+            echo "**Order:** when *adding* ingress, apply FLIP first then update"
+            echo "\`aicentre-lza-iac\`; when *removing or replacing* it, update"
+            echo "\`aicentre-lza-iac\` off the old values **first**."
+        } >>"${GITHUB_STEP_SUMMARY}"
+    fi
+
+    if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+        echo "::warning title=LZA FL ingress changed — networking account must follow::This plan changes the internal FL NLB, its static private IPs, its listeners or the /flip/networking/* handoff parameters. The networking account (aicentre-lza-iac) edge must be updated in the right order — adding ingress: FLIP first; removing or replacing it: networking account first. Advisory only; the apply was not held by this. See the job summary."
+    fi
+}
 
 if [[ -z "${ecs_hits}" && -z "${efs_hits}" ]]; then
     echo "✅ No FL-disruptive resource changes in ${PLAN_JSON} (${total_changes} resource change(s) total)."
     echo "   Safe to apply without quiescing FL."
+    emit_lza_ingress_advisory
     exit 0
 fi
+
+emit_lza_ingress_advisory
 
 echo "🛑 This plan would disturb FL infrastructure — holding." >&2
 echo "" >&2
