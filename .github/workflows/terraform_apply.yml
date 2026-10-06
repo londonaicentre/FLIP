@@ -36,6 +36,30 @@
 # and holds again, forever. Dispatching from any other branch fails closed: the
 # apply role's trust policy pins job_workflow_ref to this file at
 # refs/heads/{develop,main}.
+#
+# Release applies (FLIP#1283). release.yml dispatches this workflow on
+# refs/heads/main with `release_tag: v<X.Y.Z>` once the twelve image builds it
+# fired at the tag have gone green, and the tag is forwarded to the resolver as
+# RELEASE_TAG. Three consequences worth stating plainly:
+#
+#   * A release workflow can now trigger a production apply. It is still this
+#     file running on refs/heads/main under the aws-prod environment, so the OIDC
+#     trust policy, branch protection and environment rules are unchanged — what
+#     is new is the trigger, not the authority.
+#   * The ref is refs/heads/main and not the tag precisely because of that trust
+#     policy: a dispatch at refs/tags/v<X.Y.Z> presents job_workflow_ref at the
+#     tag and fails to assume the role.
+#   * The release dispatch and the ordinary push apply of the same commit share
+#     the concurrency group `tf-apply-main` with cancel-in-progress: false, so
+#     they serialise rather than race, and the release one — fired after a wait
+#     the length of an image build — applies second. That is the order that
+#     matters: the push apply pins `sha-<short7>`, the release apply pins
+#     `v<X.Y.Z>@sha256:…` over it.
+#
+# A release apply that changes the FL task-definition tag trips hazard B's gate
+# and holds for an operator's `fl_quiesced: true` re-dispatch, exactly as any
+# other FL-affecting apply does. That is deliberate: a platform release is an
+# attended event, and the gate is not weakened for it.
 
 name: Terraform Apply
 
@@ -54,6 +78,14 @@ on:
           reach GET /fl/quiesce, so nothing verifies it.
         type: boolean
         default: false
+      release_tag:
+        description: >-
+          Pin this release (v<X.Y.Z>) instead of the commit's sha image. Set by
+          release.yml once the release builds are green; leave empty for an
+          ordinary operator re-run. Fails closed if the release images are not
+          published — see scripts/resolve-image-tags.sh.
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -87,6 +119,27 @@ jobs:
           # Full history: the image-wait decision below diffs this push against
           # its predecessor, which a shallow clone cannot reach.
           fetch-depth: 0
+
+      # Validated here as well as in the resolver, because the two reject
+      # different things: the resolver only ever sees the string, while the
+      # estate check below is this workflow's own invariant. `release_tag` is a
+      # free-text dispatch input, so a typo would otherwise reach the resolver as
+      # "the release image is absent" and read as a failed build.
+      - name: Validate the release tag
+        if: ${{ inputs.release_tag != '' }}
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+            { echo "::error::release_tag must be a stable release tag v<X>.<Y>.<Z> (got '${RELEASE_TAG}')"; exit 1; }
+          # The estate is chosen by the ref — develop → stag, main → prod — and a
+          # release is a main/prod event by definition. A release_tag on develop
+          # would pin a production release into staging from a branch whose code
+          # is not in it.
+          [[ "${GITHUB_REF_NAME}" == "main" ]] ||
+            { echo "::error::release_tag is only valid on main (prod); got ref ${GITHUB_REF_NAME}"; exit 1; }
+          echo "Pinning release ${RELEASE_TAG}."
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
@@ -146,6 +199,9 @@ jobs:
       - name: Resolve the image tags to pin
         env:
           GIT_SHA: ${{ github.sha }}
+          # Empty on every path but a release dispatch, which is exactly the
+          # pre-FLIP#1283 sha behaviour — see scripts/resolve-image-tags.sh.
+          RELEASE_TAG: ${{ inputs.release_tag }}
           DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
           FALLBACK_DOCKER_TAG: ${{ vars.DOCKER_TAG }}
           FALLBACK_DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}

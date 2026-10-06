@@ -87,11 +87,17 @@ jobs:
             # .github/tests/workflows/test_release.py holds it to the set that carries the
             # tag trigger, so a workflow added without being listed here fails CI.
             - name: Build every image at the release tag
+              id: dispatch
               if: steps.release_check.outputs.exists == 'false'
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   TAG: ${{ steps.version.outputs.tag }}
               run: |
+                  # The instant before the first dispatch, so the wait step can tell our runs
+                  # from a previous release attempt's runs on the same commit (a re-run after a
+                  # failed notes step dispatches all twelve again).
+                  echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+                  dispatched=()
                   failed=()
                   for wf in \
                       docker_build_flip_api.yml \
@@ -110,14 +116,86 @@ jobs:
                     # naming the ones to re-run (a re-run of this workflow dispatches them all).
                     if gh workflow run "$wf" --ref "$TAG"; then
                       echo "dispatched $wf at $TAG"
+                      dispatched+=("$wf")
                     else
                       failed+=("$wf")
                     fi
                   done
+                  echo "workflows=${dispatched[*]}" >> "$GITHUB_OUTPUT"
                   if [[ ${#failed[@]} -gt 0 ]]; then
                     echo "::error::could not dispatch ${failed[*]} at $TAG — re-run this workflow"
                     exit 1
                   fi
+
+            # The release apply below pins `:v<X.Y.Z>` and fails closed if it is absent
+            # (resolve-image-tags.sh, FLIP#1283), so the dispatch must not be fired until those
+            # images exist. Waiting here rather than inside the apply also keeps the ~30 min of
+            # build time off the `tf-apply-main` concurrency group, which an apply would hold
+            # for the whole wait.
+            #
+            # The runs are found by (workflow, headSha, createdAt >= this run's dispatch), not by
+            # id: `gh workflow run` returns nothing to key on, and the runs appear asynchronously
+            # — a workflow with no run yet is still pending, not missing. Only a *concluded*
+            # non-success is a failure; anything still queued or running keeps the poll going
+            # until the budget expires, and an expiry is a hard failure, never a silent skip.
+            - name: Wait for the release builds to go green
+              if: steps.release_check.outputs.exists == 'false'
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  TAG: ${{ steps.version.outputs.tag }}
+                  HEAD_SHA: ${{ github.sha }}
+                  WORKFLOWS: ${{ steps.dispatch.outputs.workflows }}
+                  STARTED_AT: ${{ steps.dispatch.outputs.started_at }}
+                  # xnat-web is the long pole at ~30 min; the budget is generous because the
+                  # cost of expiring early is a red release whose images are in fact fine.
+                  BUILD_WAIT_SECONDS: ${{ vars.RELEASE_BUILD_WAIT_SECONDS || 5400 }}
+                  BUILD_POLL_SECONDS: ${{ vars.RELEASE_BUILD_POLL_SECONDS || 30 }}
+              run: |
+                  set -euo pipefail
+                  read -r -a pending <<< "$WORKFLOWS"
+                  [[ ${#pending[@]} -gt 0 ]] || { echo "::error::no builds were dispatched"; exit 1; }
+                  [[ "$BUILD_POLL_SECONDS" -ge 1 ]] || BUILD_POLL_SECONDS=1
+                  deadline=$(( SECONDS + BUILD_WAIT_SECONDS ))
+                  red=()
+                  while :; do
+                    still=()
+                    for wf in "${pending[@]}"; do
+                      run=$(gh run list --workflow "$wf" --commit "$HEAD_SHA" --limit 20 \
+                        --json databaseId,status,conclusion,createdAt,url \
+                        --jq "[.[] | select(.createdAt >= \"$STARTED_AT\")] | first // empty")
+                      if [[ -z "$run" ]]; then
+                        still+=("$wf"); continue
+                      fi
+                      status=$(jq -r '.status' <<< "$run")
+                      if [[ "$status" != "completed" ]]; then
+                        still+=("$wf"); continue
+                      fi
+                      conclusion=$(jq -r '.conclusion' <<< "$run")
+                      url=$(jq -r '.url' <<< "$run")
+                      if [[ "$conclusion" == "success" ]]; then
+                        echo "✅ $wf — $url"
+                      else
+                        echo "❌ $wf — $conclusion — $url"
+                        red+=("$wf ($conclusion) $url")
+                      fi
+                    done
+                    pending=("${still[@]}")
+                    if [[ ${#pending[@]} -eq 0 ]]; then
+                      break
+                    fi
+                    if [[ $SECONDS -ge $deadline ]]; then
+                      echo "::error::timed out after ${BUILD_WAIT_SECONDS}s waiting for ${pending[*]} at $TAG — production was NOT re-pinned to $TAG; re-run this workflow once they finish"
+                      exit 1
+                    fi
+                    echo "⏳ waiting on ${#pending[@]}: ${pending[*]}"
+                    sleep "$BUILD_POLL_SECONDS"
+                  done
+                  if [[ ${#red[@]} -gt 0 ]]; then
+                    printf '::error::release build failed: %s\n' "${red[@]}"
+                    echo "::error::production was NOT re-pinned to $TAG — fix and re-run this workflow"
+                    exit 1
+                  fi
+                  echo "every dispatched build at $TAG is green"
 
             # generate_release_notes lets GitHub choose the previous release itself, which is
             # whatever was published most recently — including a flip-utils release cut seconds
@@ -178,3 +256,29 @@ jobs:
                   tag_name: ${{ steps.version.outputs.tag }}
                   name: "Release ${{ steps.version.outputs.tag }}"
                   body_path: ${{ steps.notes.outputs.notes_file }}
+
+            # A release can now trigger a production apply. The ref is refs/heads/main and must
+            # stay there: the apply role's trust policy pins job_workflow_ref to
+            # terraform_apply.yml@refs/heads/{develop,main}, so dispatching at refs/tags/v<X.Y.Z>
+            # — the intuitive choice, since the images are built there — fails OIDC with an
+            # unhelpful "not authorized to perform sts:AssumeRoleWithWebIdentity".
+            #
+            # This bypasses terraform_apply.yml's `deploy/providers/AWS/**` path filter, which is
+            # the point: a release that touches no infrastructure otherwise never re-pins the hub
+            # and keeps reporting `sha-<short7>` (FLIP#1283).
+            #
+            # Ordering against the push-triggered apply of this same commit: both land in the
+            # concurrency group `tf-apply-main` with cancel-in-progress: false, so this dispatch
+            # queues behind the in-flight push apply rather than racing it, and applies second.
+            # Second is the correct order — the push apply pins `sha-<short7>`, this one pins
+            # `v<X.Y.Z>@sha256:…` on top. In practice the push apply is long finished: the wait
+            # above has just spent the builds' lifetime.
+            - name: Dispatch the production Terraform apply at the release tag
+              if: steps.release_check.outputs.exists == 'false'
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  TAG: ${{ steps.version.outputs.tag }}
+              run: |
+                  set -euo pipefail
+                  gh workflow run terraform_apply.yml --ref refs/heads/main -f release_tag="$TAG"
+                  echo "dispatched terraform_apply.yml on refs/heads/main with release_tag=$TAG"

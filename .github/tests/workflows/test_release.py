@@ -9,7 +9,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""``release.yml`` dispatches every image workflow at the release tag it creates (FLIP#1204).
+"""``release.yml`` dispatches every image workflow at the release tag it creates (FLIP#1204),
+waits for them, then dispatches the production apply with that tag (FLIP#1283).
 
 Usage:
     python3 .github/tests/workflows/test_release.py
@@ -74,6 +75,147 @@ class ReleaseDispatchesTheBuilds(unittest.TestCase):
         prev = next(line for line in step.splitlines() if "PREV_TAG=$(" in line)
         assert "grep -E '^v[0-9]+\\.[0-9]+\\.[0-9]+$'" in prev, prev
         assert prev.index("grep -E") < prev.index("sort -V"), prev
+
+
+class ReleaseWaitsThenDispatchesTheApply(unittest.TestCase):
+    """The release re-pins production, and only after its own builds are green (FLIP#1283).
+
+    The hub bakes FLIP_RELEASE at build time, so only the ``:v<X.Y.Z>`` images name the release.
+    They exist only once the twelve dispatches above conclude, and the resolver fails closed when
+    told a release tag it cannot find — so waiting is what makes the dispatch safe, and the ref it
+    is dispatched at is what makes the apply's OIDC work. Both are read as text here.
+    """
+
+    def setUp(self) -> None:
+        self.text = code_text(RELEASE_WORKFLOW)
+
+    def test_the_dispatch_step_records_what_the_wait_step_must_wait_for(self) -> None:
+        """One roster, not two: the wait reads the dispatch step's output."""
+        build = step_block(self.text, "Build every image at the release tag")
+        assert 'dispatched+=("$wf")' in build
+        assert 'echo "workflows=${dispatched[*]}" >> "$GITHUB_OUTPUT"' in build
+        assert "started_at=" in build, "the wait needs a cut-off to ignore a previous attempt's runs"
+        wait = step_block(self.text, "Wait for the release builds to go green")
+        assert "steps.dispatch.outputs.workflows" in wait
+        assert "steps.dispatch.outputs.started_at" in wait
+
+    def test_the_wait_is_bounded_and_a_timeout_fails_the_release(self) -> None:
+        """An unbounded wait hangs the job; a timeout that passed would dispatch an apply whose
+        release images do not exist, and the resolver would then stop production's apply."""
+        wait = step_block(self.text, "Wait for the release builds to go green")
+        assert "BUILD_WAIT_SECONDS" in wait
+        assert "deadline=" in wait
+        assert "$SECONDS -ge $deadline" in wait
+        timeout = next(line for line in wait.splitlines() if "timed out" in line)
+        assert "::error::" in timeout, timeout
+        assert wait.count("exit 1") >= 2, "both the timeout and a red build must fail the job"
+
+    def test_a_red_build_is_a_red_release(self) -> None:
+        wait = step_block(self.text, "Wait for the release builds to go green")
+        assert 'conclusion" == "success"' in wait, "only a concluded success may clear a workflow"
+        assert "red+=(" in wait
+
+    def test_the_apply_is_dispatched_on_main_never_at_the_tag(self) -> None:
+        """The apply role's trust policy pins job_workflow_ref to refs/heads/{develop,main}; a
+        dispatch at refs/tags/v<X.Y.Z> cannot assume it. This is the likely regression."""
+        step = step_block(self.text, "Dispatch the production Terraform apply at the release tag")
+        assert 'gh workflow run terraform_apply.yml --ref refs/heads/main -f release_tag="$TAG"' in step
+        assert "--ref refs/tags" not in step
+        assert '--ref "$TAG"' not in step
+
+    def test_the_apply_is_dispatched_only_after_the_wait(self) -> None:
+        order = [
+            self.text.index("- name: Build every image at the release tag"),
+            self.text.index("- name: Wait for the release builds to go green"),
+            self.text.index("- name: Dispatch the production Terraform apply at the release tag"),
+        ]
+        assert order == sorted(order), "dispatch → wait → apply is the whole point of the ordering"
+
+    def test_the_new_steps_are_skipped_when_the_release_already_exists(self) -> None:
+        """Same re-run contract as the builds: keyed on the release, not the tag."""
+        for step in (
+            "Wait for the release builds to go green",
+            "Dispatch the production Terraform apply at the release tag",
+        ):
+            with self.subTest(step=step):
+                assert "if: steps.release_check.outputs.exists == 'false'" in step_block(self.text, step)
+
+
+class ReleaseKeepsMinimalPermissions(unittest.TestCase):
+    """Dispatching a production apply needs `actions: write` and nothing more."""
+
+    def test_the_workflow_default_is_read_only(self) -> None:
+        text = code_text(RELEASE_WORKFLOW)
+        top = text[text.index("permissions:") :].split("jobs:")[0]
+        assert top.strip() == "permissions:\n  contents: read", top
+
+    def test_the_job_grants_only_contents_write_and_actions_write(self) -> None:
+        text = code_text(RELEASE_WORKFLOW)
+        job = text[text.index("jobs:") :]
+        block = re.search(r"^        permissions:[^\n]*\n(?P<body>(?:            [^\n]*\n)+)", job, re.MULTILINE)
+        assert block, "the release job must declare its own permissions"
+        granted = {
+            line.split(":")[0].strip(): line.split(":")[1].split("#")[0].strip()
+            for line in block["body"].splitlines()
+            if line.strip()
+        }
+        assert granted == {"contents": "write", "actions": "write"}, granted
+
+
+class TerraformApplyTakesTheReleaseTag(unittest.TestCase):
+    """terraform_apply.yml must accept, validate and forward `release_tag` (FLIP#1283)."""
+
+    def setUp(self) -> None:
+        self.text = code_text(WORKFLOWS / "terraform_apply.yml")
+
+    def test_the_dispatch_input_exists_and_defaults_to_empty(self) -> None:
+        """Empty is the ordinary value: a push-triggered apply must take the sha path unchanged."""
+        inputs = self.text[self.text.index("workflow_dispatch:") :].split("permissions:")[0]
+        assert "release_tag:" in inputs
+        block = inputs[inputs.index("release_tag:") :]
+        assert "type: string" in block
+        assert 'default: ""' in block
+
+    def test_the_fl_quiesce_input_and_gate_are_untouched(self) -> None:
+        assert "fl_quiesced:" in self.text
+        gate = step_block(self.text, "Check the plan for FL impact")
+        assert "scripts/check-fl-plan-impact.sh tfplan.json" in gate
+        assert "if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.fl_quiesced) }}" in gate
+
+    def test_the_release_tag_is_validated(self) -> None:
+        step = step_block(self.text, "Validate the release tag")
+        assert r"^v[0-9]+\.[0-9]+\.[0-9]+$" in step, step
+        assert "if: ${{ inputs.release_tag != '' }}" in step
+        # A release is a main/prod event; which estate is applied is chosen by the ref.
+        assert 'GITHUB_REF_NAME}" == "main"' in step
+
+    def test_the_release_tag_is_forwarded_to_the_resolver(self) -> None:
+        step = step_block(self.text, "Resolve the image tags to pin")
+        assert "RELEASE_TAG: ${{ inputs.release_tag }}" in step
+        assert "deploy/providers/AWS/scripts/resolve-image-tags.sh" in step
+
+    def test_the_sha_path_is_still_what_a_push_resolves(self) -> None:
+        """GIT_SHA stays the resolver's input; release_tag is additive, not a replacement."""
+        step = step_block(self.text, "Resolve the image tags to pin")
+        assert "GIT_SHA: ${{ github.sha }}" in step
+
+    def test_the_apply_still_serialises_on_one_concurrency_group(self) -> None:
+        """The push apply and the release dispatch of the same commit share `tf-apply-main`, and
+        cancel-in-progress: false makes the later (release) one queue rather than race."""
+        block = self.text[self.text.index("concurrency:") :].split("jobs:")[0]
+        assert "group: tf-apply-${{ github.ref_name }}" in block
+        assert "cancel-in-progress: false" in block
+
+    def test_the_apply_job_permissions_stay_minimal(self) -> None:
+        job = self.text[self.text.index("  apply:") :]
+        block = re.search(r"^    permissions:\n(?P<body>(?:      [^\n]*\n)+)", job, re.MULTILINE)
+        assert block, "the apply job must declare its own permissions"
+        granted = {
+            line.split(":")[0].strip(): line.split(":")[1].split("#")[0].strip()
+            for line in block["body"].splitlines()
+            if line.strip()
+        }
+        assert granted == {"contents": "read", "id-token": "write", "packages": "read"}, granted
 
 
 if __name__ == "__main__":
