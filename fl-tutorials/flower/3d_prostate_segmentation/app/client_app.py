@@ -19,7 +19,7 @@ One round, from a client's point of view:
    (``flip.get_by_accession_number``); pick the T2-weighted series and its two enrichment masks.
 2. Build the network from the shipped nnU-Net plan (``models.get_model``) and load the global weights.
 3. Run ``local-epochs`` of ``train_helpers.train_seg`` — nnU-Net's recipe: whole-volume augmentation,
-   patch tiling, deep-supervised Dice + cross-entropy, SGD with polynomial decay.
+   patch tiling, deep-supervised Dice + binary cross-entropy, SGD with polynomial decay.
 4. Reply with the updated weights and the metrics; the fl-server forwards them to the Central Hub on
    this client's behalf (clients hold no hub credential). Per-epoch points use the
    ``<label>[@<x_label>][.x_<V>]`` key grammar of ``flip.flower.metrics`` (FLIP#148).
@@ -180,6 +180,16 @@ def train(msg: Message, context: Context) -> Message:
         # Per-epoch points: "@epoch" names the x-axis and ".x_<N>" is the coordinate (the cumulative
         # epoch count), so the fl-server forwards one Hub point per epoch (FLIP#148).
         cumulative_epoch = global_round * local_epochs + epoch + 1
+        log(
+            INFO,
+            "Epoch %d/%d (round %d): train_loss %.4f, val_loss %.4f, val_dice_mean %.4f",
+            epoch + 1,
+            local_epochs,
+            global_round + 1,
+            epoch_values["train_loss"],
+            epoch_values["val_loss"],
+            epoch_values["val_dice_mean"],
+        )
         for key, value in epoch_values.items():
             per_epoch_metrics[f"{key}@epoch.x_{cumulative_epoch}"] = value
             history[key].append(value)

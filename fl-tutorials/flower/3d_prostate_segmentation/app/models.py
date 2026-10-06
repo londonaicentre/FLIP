@@ -20,12 +20,16 @@ the **one** place that turns it into a ``torch.nn.Module``: the ServerApp calls 
 create the initial global weights and every ClientApp calls the same zero-argument factory before
 loading the weights it receives, so the two can never disagree about the architecture.
 
-The network class is MONAI's ``DynUNet`` — the nnU-Net topology, re-implemented in MONAI — rather
-than nnU-Net's own ``PlainConvUNet``: the FL images carry MONAI but not ``nnunetv2``, and an app
-must not install packages at run time. The mapping from the plan's ``arch_kwargs`` to ``DynUNet``'s
-constructor is spelled out in ``build_dynunet_from_plan``; anything the plan asks for that DynUNet
-cannot express raises rather than being silently approximated, because a topology mismatch between
-sites is exactly what makes weight aggregation impossible (see the README's "nnU-Net plans").
+The network class is ``NnUNetDynUNet``, a small subclass of MONAI's ``DynUNet``, rather than
+nnU-Net's own ``PlainConvUNet``: the FL images carry MONAI but not ``nnunetv2``, and an app must not
+install packages at run time. Stock ``DynUNet`` is not quite nnU-Net's network — it drops the conv
+biases, gives each decoder stage the kernel of the stage below it, and returns its deep-supervision
+heads upsampled to full resolution — so the subclass undoes all three, and with the same weights it
+computes exactly what ``PlainConvUNet`` does (``tests/test_prostate_model.py`` pins it bit for bit
+when ``nnunetv2`` is installed). The mapping from the plan's ``arch_kwargs`` is spelled out in
+``build_dynunet_from_plan``; anything the plan asks for that DynUNet cannot express raises rather
+than being silently approximated, because a topology mismatch between sites is exactly what makes
+weight aggregation impossible (see the README's "nnU-Net plans").
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+from monai.networks.blocks.dynunet_block import UnetUpBlock
 from monai.networks.nets import DynUNet
 from torch import nn
 
@@ -75,14 +80,64 @@ def _configuration(plan: dict[str, Any], name: str = CONFIGURATION) -> dict[str,
         raise KeyError(f"plan has no configuration {name!r}: {sorted(plan.get('configurations', {}))}") from err
 
 
+class NnUNetDynUNet(DynUNet):
+    """``DynUNet`` made to compute exactly what nnU-Net's ``PlainConvUNet`` computes.
+
+    Same constructor as ``DynUNet`` plus ``conv_bias``. Three departures from stock ``DynUNet``, each
+    restoring nnU-Net's behaviour:
+
+    * **Conv biases.** ``UnetBasicBlock`` builds its convolutions with ``bias=False``; nnU-Net's plans
+      ask for ``conv_bias: true``. The missing biases are added (zero-initialised, as nnU-Net's
+      ``InitWeights_He`` leaves them) and the transposed convolutions get theirs via ``trans_bias``.
+    * **Decoder kernels.** nnU-Net's decoder stage at a resolution uses that resolution's encoder
+      kernel; stock ``DynUNet`` uses the kernel of the stage one level deeper (``kernel_size[1:]``),
+      which on a thick-slice plan turns an in-plane ``(1, 3, 3)`` stage into a ``(3, 3, 3)`` one.
+    * **Deep-supervision outputs.** In training mode with deep supervision on, the net returns a list
+      — full resolution first, every auxiliary head at its own resolution — the way nnU-Net does,
+      instead of stock ``DynUNet``'s heads interpolated to full resolution and stacked. The loss then
+      sees each head against a target resized to it (``train_seg``'s ``_build_ds_targets``), as in
+      nnU-Net. Evaluation mode returns the single full-resolution output, unchanged.
+
+    Every parameter maps one-to-one onto ``PlainConvUNet``'s, so the parameter count is nnU-Net's.
+    """
+
+    def __init__(self, *args: Any, conv_bias: bool = True, **kwargs: Any) -> None:
+        super().__init__(*args, trans_bias=conv_bias, **kwargs)
+        if conv_bias:
+            for module in self.modules():
+                if isinstance(module, nn.Conv3d) and module.bias is None:
+                    module.bias = nn.Parameter(torch.zeros(module.out_channels))
+
+    def get_upsamples(self) -> nn.ModuleList:
+        """The decoder, with each stage's kernel taken from its own resolution's encoder stage."""
+        inp, out = self.filters[1:][::-1], self.filters[:-1][::-1]
+        strides, kernel_size = self.strides[1:][::-1], self.kernel_size[:-1][::-1]
+        return self.get_module_list(
+            inp,
+            out,
+            kernel_size,
+            strides,
+            UnetUpBlock,  # type: ignore[arg-type]
+            self.upsample_kernel_size[::-1],
+            trans_bias=self.trans_bias,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor | list[torch.Tensor]:
+        out = self.output_block(self.skip_layers(x))
+        if self.training and self.deep_supervision:
+            # The skip layers fill self.heads during the pass, highest resolution first.
+            return [out, *self.heads]
+        return out
+
+
 def build_dynunet_from_plan(
     plan: dict[str, Any],
     *,
     in_channels: int = IN_CHANNELS,
     out_channels: int = OUT_CHANNELS,
     deep_supervision: bool = True,
-) -> DynUNet:
-    """Instantiate a ``DynUNet`` with the topology the plan's ``3d_fullres`` architecture describes.
+) -> NnUNetDynUNet:
+    """Instantiate an ``NnUNetDynUNet`` with the topology the plan's ``3d_fullres`` architecture describes.
 
     The plan's ``kernel_sizes`` / ``strides`` are per stage in nnU-Net's transposed ``(z, y, x)``
     order; the training loop feeds the network ``(B, C, z, y, x)`` tensors (``train_helpers.train_seg``
@@ -92,11 +147,11 @@ def build_dynunet_from_plan(
 
     * ``kernel_sizes`` → ``kernel_size``; ``strides`` → ``strides``; ``strides[1:]`` →
       ``upsample_kernel_size`` (a transposed conv undoes each pooling step).
-    * ``features_per_stage`` → ``filters``.
+    * ``features_per_stage`` → ``filters``; ``conv_bias`` → ``conv_bias``.
     * ``norm_op`` (``InstanceNorm3d`` + its kwargs) → ``norm_name=("instance", {...})``; ``nonlin``
       (``LeakyReLU``) → ``act_name=("leakyrelu", {...})``.
     * ``n_stages - 2`` → ``deep_supr_num``: nnU-Net supervises every decoder resolution but the
-      lowest, i.e. ``n_stages - 1`` outputs; DynUNet returns ``1 + deep_supr_num``.
+      lowest, i.e. ``n_stages - 1`` outputs; the net returns ``1 + deep_supr_num``.
 
     Args:
         plan: A parsed plan (``load_plan``).
@@ -146,7 +201,7 @@ def build_dynunet_from_plan(
     norm_kwargs = dict(arch.get("norm_op_kwargs") or {})
     nonlin_kwargs = {"inplace": True, "negative_slope": 0.01, **dict(arch.get("nonlin_kwargs") or {})}
 
-    return DynUNet(
+    return NnUNetDynUNet(
         spatial_dims=3,
         in_channels=in_channels,
         out_channels=out_channels,
@@ -159,6 +214,7 @@ def build_dynunet_from_plan(
         deep_supervision=deep_supervision,
         deep_supr_num=n_stages - 2,
         res_block=False,
+        conv_bias=bool(arch.get("conv_bias", True)),
     )
 
 
@@ -195,9 +251,10 @@ def split_deep_supervision_outputs(
     """Normalise a network output to nnU-Net's list-of-outputs convention, full resolution first.
 
     ``train_helpers.train_seg`` was written against nnU-Net, whose network returns a *list* of
-    outputs when deep supervision is on. DynUNet returns them stacked along dim 1 instead — a
-    ``(B, 1 + deep_supr_num, C, *spatial)`` tensor whose every head is already interpolated to full
-    resolution — so this is the whole adapter: unbind it. Head 0 is the network's real output.
+    outputs when deep supervision is on — as ``NnUNetDynUNet`` does, so a list passes through. A
+    stock ``DynUNet`` stacks them along dim 1 instead (a ``(B, 1 + deep_supr_num, C, *spatial)``
+    tensor, every head interpolated to full resolution), which is unbound; a single output is
+    wrapped. Head 0 is the network's real output.
 
     Args:
         logits: Whatever the network returned.

@@ -26,7 +26,6 @@ import pandas as pd
 import torch
 from batchgenerators.utilities.file_and_folder_operations import load_json
 from monai.data import PatchIterd, list_data_collate
-from monai.losses import DiceCELoss
 from monai.transforms import (
     Compose,
     RandAxisFlipd,
@@ -45,6 +44,7 @@ from torch.utils.data import ConcatDataset, DataLoader
 
 from app.dataset import PicaiDataset
 from app.preprocess import build_case_transform
+from app.task import DiceBCELoss
 from app.train_helpers import (
     init_logger,
     possible_patch_size,
@@ -384,11 +384,7 @@ def train_loop():
 
     early_stopping = EarlyStopping(patience=config.get("patience", 50), verbose=False)
 
-    criterion = DiceCELoss(
-        include_background=True,
-        sigmoid=True,
-        to_onehot_y=False,
-    )
+    criterion = DiceBCELoss()
 
     if config.get("deep_supervision", True):
         criterion = DeepSupervisionWrapper(criterion, ds_loss_weights)

@@ -112,10 +112,90 @@ def test_mini_plan_builds_the_planned_topology(prostate_app: dict[str, ModuleTyp
 
     x = torch.zeros(1, 1, 4, 16, 16)  # (B, C, z, y, x) — the order train_seg feeds
     net.train()
-    stacked = net(x)
-    assert stacked.shape == (1, 2, 3, 4, 16, 16), "train mode + DS: (B, 1 + deep_supr_num, C, *spatial)"
+    outputs = net(x)
+    # train mode + DS: nnU-Net's list, full resolution first, each head at its own resolution
+    assert [tuple(o.shape) for o in outputs] == [(1, 3, 4, 16, 16), (1, 3, 4, 8, 8)]
     net.eval()
     assert net(x).shape == (1, 3, 4, 16, 16)
+
+
+def test_decoder_kernels_and_biases_follow_nnunet(prostate_app: dict[str, ModuleType]) -> None:
+    """Stock DynUNet shifts the decoder kernels a level and drops the conv biases; the subclass must not."""
+    net = prostate_app["models"].build_dynunet_from_plan(MINI_PLAN)
+    kernels = MINI_ARCH["arch_kwargs"]["kernel_sizes"]
+    # upsamples run deepest first; the one producing resolution r convolves with encoder stage r's kernel
+    decoder = [list(up.conv_block.conv1.conv.kernel_size) for up in net.upsamples]
+    assert decoder == kernels[:-1][::-1]
+    convs = [m for m in net.modules() if isinstance(m, (torch.nn.Conv3d, torch.nn.ConvTranspose3d))]
+    assert all(m.bias is not None for m in convs), "the plan's conv_bias: true reaches every convolution"
+
+    plan = json.loads(json.dumps(MINI_PLAN))
+    plan["configurations"]["3d_fullres"]["architecture"]["arch_kwargs"]["conv_bias"] = False
+    no_bias = prostate_app["models"].build_dynunet_from_plan(plan)
+    assert all(
+        m.bias is None for m in no_bias.modules() if isinstance(m, torch.nn.Conv3d) and m.kernel_size != (1, 1, 1)
+    )
+
+
+def test_network_is_nnunets_plain_conv_unet(prostate_app: dict[str, ModuleType]) -> None:
+    """With PlainConvUNet's weights copied in, the app's network computes the same outputs, bit for bit.
+
+    Needs nnU-Net's network package, which the FL images (and this suite's environment) do not carry:
+    run it with the tutorial's planning group (``uv sync --group planning``).
+    """
+    unet = pytest.importorskip("dynamic_network_architectures.architectures.unet")
+    models = prostate_app["models"]
+    arch = MINI_ARCH["arch_kwargs"]
+    n = arch["n_stages"]
+    torch.manual_seed(0)
+    ref = unet.PlainConvUNet(
+        input_channels=1,
+        n_stages=n,
+        features_per_stage=arch["features_per_stage"],
+        conv_op=torch.nn.Conv3d,
+        kernel_sizes=arch["kernel_sizes"],
+        strides=arch["strides"],
+        n_conv_per_stage=arch["n_conv_per_stage"],
+        num_classes=3,
+        n_conv_per_stage_decoder=arch["n_conv_per_stage_decoder"],
+        conv_bias=True,
+        norm_op=torch.nn.InstanceNorm3d,
+        norm_op_kwargs=arch["norm_op_kwargs"],
+        nonlin=torch.nn.LeakyReLU,
+        nonlin_kwargs={"inplace": True},
+        deep_supervision=True,
+    )
+    net = models.build_dynunet_from_plan(MINI_PLAN)
+    assert sum(p.numel() for p in net.parameters()) == sum(p.numel() for p in ref.parameters())
+
+    def block(r, d):  # StackedConvBlocks <-> UnetBasicBlock
+        return [
+            (r.convs[0].conv, d.conv1.conv),
+            (r.convs[0].norm, d.norm1),
+            (r.convs[1].conv, d.conv2.conv),
+            (r.convs[1].norm, d.norm2),
+        ]
+
+    pairs = []
+    for r, d in zip([ref.encoder.stages[s][0] for s in range(n)], [net.input_block, *net.downsamples, net.bottleneck]):
+        pairs += block(r, d)
+    for s in range(n - 1):  # decoder stage s (deepest first) <-> upsamples[s]
+        pairs += [(ref.decoder.transpconvs[s], net.upsamples[s].transp_conv.conv)]
+        pairs += block(ref.decoder.stages[s], net.upsamples[s].conv_block)
+    pairs.append((ref.decoder.seg_layers[-1], net.output_block.conv.conv))
+    for i in range(n - 2):  # head i sits at resolution i + 1 = decoder stage n - 3 - i
+        pairs.append((ref.decoder.seg_layers[n - 3 - i], net.deep_supervision_heads[i].conv.conv))
+    with torch.no_grad():
+        for r, d in pairs:
+            d.weight.copy_(r.weight)
+            d.bias.copy_(r.bias)
+    assert len({id(p) for _, d in pairs for p in d.parameters(recurse=False)}) == len(list(net.parameters()))
+
+    x = torch.randn(2, 1, 4, 16, 16)
+    ref.train(), net.train()
+    with torch.no_grad():
+        for a, b in zip(ref(x), net(x), strict=True):
+            assert torch.equal(a, b)
 
 
 def test_deep_supervision_toggle_keeps_the_state_dict(prostate_app: dict[str, ModuleType]) -> None:
@@ -169,6 +249,23 @@ def test_missing_plan_names_the_command(prostate_app: dict[str, ModuleType], tmp
         prostate_app["models"].load_plan(tmp_path / "nope.json")
 
 
+@pytest.mark.parametrize("depth", [3, 4, 9])
+def test_every_patch_has_the_planned_size(prostate_app: dict[str, ModuleType], depth: int) -> None:
+    """A volume shallower than the patch is zero-padded up to it, never tiled into a smaller patch.
+
+    PatchIterd alone shrinks the patch to the volume, and a depth the network's pooling cannot divide
+    breaks the skip connections — what a 24-slice plan did to every study under 24 slices.
+    """
+    iterate = prostate_app["preprocess"].build_patch_iter((16, 16, 4))
+    volume = {"image": torch.ones(1, 16, 16, depth), "mask": torch.ones(3, 16, 16, depth)}
+    patches = [patch for patch, _ in iterate(volume)]
+    assert len(patches) == -(-depth // 4)
+    assert {tuple(p["image"].shape) for p in patches} == {(1, 16, 16, 4)}
+    assert {tuple(p["mask"].shape) for p in patches} == {(3, 16, 16, 4)}
+    if depth < 4:
+        assert int((patches[0]["image"] == 0).all(dim=(0, 1, 2)).sum()) == 4 - depth, "zero-padded, not wrapped"
+
+
 def test_plan_geometry_reverses_the_plan_axes(prostate_app: dict[str, ModuleType]) -> None:
     geometry = prostate_app["task"].plan_geometry(MINI_PLAN)
     assert geometry.target_spacing == (0.5, 0.5, 3.0)  # (x, y, z) for the MONAI loader
@@ -176,6 +273,29 @@ def test_plan_geometry_reverses_the_plan_axes(prostate_app: dict[str, ModuleType
     assert geometry.patch_size_zyx == (4, 16, 16)  # the sliding-window ROI, network order
     assert geometry.crop_size == (384, 384)  # 383 padded up to even, both in-plane axes
     assert (geometry.image_mean, geometry.image_std) == (300.0, 150.0)
+
+
+def test_criterion_penalises_predicting_gland_everywhere(prostate_app: dict[str, ModuleType]) -> None:
+    """The background counts: marking every voxel as gland must cost more than marking none.
+
+    MONAI's DiceCELoss(sigmoid=True) scored these overlapping channels with a softmax CE that ignores
+    every all-zero (background) voxel, so "gland everywhere" was the cheaper answer — and the network
+    learned it. The criterion's BCE is per channel and sees the background.
+    """
+    task = prostate_app["task"]
+    criterion = task.build_criterion({"deep_supervision": False}, num_outputs=1)
+    target = torch.zeros(1, 3, 4, 16, 16)
+    target[:, 0, :, 6:10, 6:10] = 1  # a small gland: whole gland and TZ, the rest background
+    target[:, 2, :, 6:10, 6:10] = 1
+    everywhere = criterion(torch.full_like(target, 5.0), target)
+    nowhere = criterion(torch.full_like(target, -5.0), target)
+    right = criterion(target * 10 - 5, target)
+    assert right < nowhere < everywhere
+
+    logits = torch.randn(2, 3, 4, 16, 16)
+    expected = task.DiceLoss(include_background=True, sigmoid=True)(logits, target.expand(2, -1, -1, -1, -1))
+    expected = expected + torch.nn.functional.binary_cross_entropy_with_logits(logits, target.expand(2, -1, -1, -1, -1))
+    assert criterion(logits, target.expand(2, -1, -1, -1, -1)).item() == pytest.approx(expected.item())
 
 
 def test_deep_supervision_loss_renormalises_over_the_outputs_present(prostate_app: dict[str, ModuleType]) -> None:

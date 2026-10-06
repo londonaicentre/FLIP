@@ -23,7 +23,6 @@ import pandas as pd
 import torch
 from batchgenerators.utilities.file_and_folder_operations import load_json
 from monai.data import PatchIterd, list_data_collate
-from monai.losses import DiceCELoss
 from monai.transforms import Compose
 from monai.utils import set_determinism
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
@@ -31,6 +30,7 @@ from torch.utils.data import ConcatDataset, DataLoader
 
 from app.dataset import AXCODES, IMAGE_KEY, PicaiDataset
 from app.preprocess import build_case_transform
+from app.task import DiceBCELoss
 from app.train_helpers import (
     generate_predictions,
     inference_func,
@@ -188,7 +188,7 @@ def infer_loop():
         collate_fn=list_data_collate,
     )
 
-    criterion = DiceCELoss(include_background=True, sigmoid=True, to_onehot_y=False)
+    criterion = DiceBCELoss()
 
     LOGGER.info("Running inference (metrics)...")
     test_metrics = inference_func(

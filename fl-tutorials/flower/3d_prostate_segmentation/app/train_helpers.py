@@ -289,7 +289,7 @@ def train_seg(
         include_background=True, reduction="mean_batch"
     )
 
-    train_bar = tqdm(train_loader, total=len(train_loader))
+    train_bar = tqdm(train_loader, total=len(train_loader), disable=None)
     for batch in train_bar:
         image, mask = batch["image"], batch["mask"]
         if dual_scan:
@@ -375,7 +375,7 @@ def train_seg(
     val_dice_metric = DiceMetric(include_background=True, reduction="mean")
     val_dice_metric_batch = DiceMetric(include_background=True, reduction="mean_batch")
 
-    val_bar = tqdm(val_loader, total=len(val_loader))
+    val_bar = tqdm(val_loader, total=len(val_loader), disable=None)
     for batch in val_bar:
         image, mask = batch["image"], batch["mask"]
         if dual_scan:

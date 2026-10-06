@@ -22,7 +22,7 @@
 DATA_ROOT ?= ../../data/prostate
 PLAN_SITES ?= $(DATA_ROOT)/sites/ZGT $(DATA_ROOT)/sites/PCNN $(DATA_ROOT)/sites/RUMC
 PLAN_MODALITY ?= t2w
-PLAN_GPU_MEMORY_GB ?= 8
+PLAN_GPU_MEMORY_GB ?= 24
 PLAN_PROCESSES ?= 8
 PLAN_OUT := configs
 

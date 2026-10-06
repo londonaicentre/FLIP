@@ -9,6 +9,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable, Iterator
+from typing import Any
+
 from monai.data import PatchIterd
 from monai.transforms import (
     CenterSpatialCropd,
@@ -76,16 +79,26 @@ def build_augmentations() -> Compose:
     ])
 
 
-def build_patch_iter(patch_size: tuple[int, int, int]) -> PatchIterd:
+def build_patch_iter(patch_size: tuple[int, int, int]) -> Callable[[dict], Iterator[tuple[dict, Any]]]:
     """Tile a preprocessed volume into the plan's training patches — nnU-Net trains on patches, not volumes.
 
-    ``mode="wrap"`` pads the last, partial tile with voxels wrapped from the volume's start, so every
-    voxel is covered exactly once and the grid never drops the edge.
+    A volume smaller than the patch along an axis is first zero-padded up to it, as nnU-Net pads an
+    image smaller than its patch: ``PatchIterd`` would otherwise shrink the patch to the volume (a
+    21-slice study under a 24-slice patch), and a patch the network's pooling cannot divide breaks
+    the skip connections. Then ``mode="wrap"`` pads the last, partial tile with voxels wrapped from
+    the volume's start, so every voxel is covered exactly once and the grid never drops the edge.
 
     Args:
         patch_size: (x, y, z) patch, the plan's ``patch_size`` reversed (``task.PlanGeometry.patch_size``).
 
     Returns:
-        PatchIterd: Yields ``(patch dict, coord)`` pairs over a `{"image", "mask"}` dict.
+        A callable yielding ``(patch dict, coord)`` pairs over a `{"image", "mask"}` dict, every patch
+        exactly ``patch_size``.
     """
-    return PatchIterd(keys=KEYS, patch_size=patch_size, start_pos=(0, 0, 0), mode="wrap")
+    pad = SpatialPadd(keys=KEYS, spatial_size=patch_size)
+    tiles = PatchIterd(keys=KEYS, patch_size=patch_size, start_pos=(0, 0, 0), mode="wrap")
+
+    def iterate(data: dict) -> Iterator[tuple[dict, Any]]:
+        return tiles(pad(data))
+
+    return iterate

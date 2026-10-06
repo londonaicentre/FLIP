@@ -29,7 +29,7 @@ from typing import Any
 import torch
 from einops import rearrange
 from monai.inferers import SlidingWindowInferer
-from monai.losses import DiceCELoss
+from monai.losses import DiceLoss
 from monai.metrics import DiceMetric
 from torch import nn
 from torch.optim.lr_scheduler import PolynomialLR
@@ -101,7 +101,7 @@ class DeepSupervisionLoss(nn.Module):
     """Weighted sum of one loss per network output — nnU-Net's ``DeepSupervisionWrapper``, in ten lines.
 
     The weights are renormalised over the outputs actually present in the call: in evaluation mode
-    DynUNet returns a single output, and without renormalising, that output's loss would be scaled by
+    the network returns a single output, and without renormalising, that output's loss would be scaled by
     the first weight (about 0.5) and read lower than the same prediction scored in training.
     """
 
@@ -120,8 +120,29 @@ class DeepSupervisionLoss(nn.Module):
         return sum((w / total) * self.loss(p, t) for w, p, t in zip(weights, preds, targets, strict=True))
 
 
+class DiceBCELoss(nn.Module):
+    """Sigmoid soft Dice plus per-channel binary cross-entropy — nnU-Net's ``DC_and_BCE_loss`` for regions.
+
+    The three label channels overlap (PZ ∪ TZ = whole gland), so each is its own binary problem and
+    both terms treat it so. MONAI's ``DiceCELoss(sigmoid=True)`` does not: ``sigmoid`` reaches only
+    its Dice term, and with more than one channel its CE term is a softmax ``CrossEntropyLoss`` over
+    the channels, which is blind to every voxel where all three targets are 0 — the whole background.
+    Trained with it, a network can mark the entire volume as gland at no CE cost, and did.
+
+    Both terms are averaged (Dice per sample and channel, BCE per voxel) and summed with equal weight.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.dice = DiceLoss(include_background=True, sigmoid=True)
+        self.bce = nn.BCEWithLogitsLoss()
+
+    def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return self.dice(logits, target) + self.bce(logits, target)
+
+
 def build_criterion(conf: dict[str, Any], num_outputs: int) -> nn.Module:
-    """``DiceCELoss`` over the three overlapping label channels, wrapped for deep supervision.
+    """``DiceBCELoss`` over the three overlapping label channels, wrapped for deep supervision.
 
     Sigmoid, not softmax: whole gland, PZ and TZ overlap (PZ ∪ TZ = whole gland), so each channel is
     its own binary problem.
@@ -130,7 +151,7 @@ def build_criterion(conf: dict[str, Any], num_outputs: int) -> nn.Module:
         conf: The ``TRAIN`` block of ``config.json``; reads ``deep_supervision``.
         num_outputs: How many outputs the network returns in training mode (``1 + deep_supr_num``).
     """
-    loss = DiceCELoss(include_background=True, sigmoid=True, to_onehot_y=False)
+    loss = DiceBCELoss()
     if conf.get("deep_supervision", True):
         return DeepSupervisionLoss(loss, deep_supervision_weights(num_outputs))
     return loss

@@ -30,7 +30,7 @@ the [spleen tutorial](../3d_spleen_segmentation/README.md) in two ways worth lea
   selects the requested series from the XNAT export layout rather than assuming one image per
   study. See [Data on the platform](#data-on-the-platform).
 
-The training recipe is nnU-Net's (deep-supervised Dice + cross-entropy, SGD with polynomial decay,
+The training recipe is nnU-Net's (deep-supervised Dice + binary cross-entropy, SGD with polynomial decay,
 patch-based training with nnU-Net's augmentations), ported from the standalone trainer this tutorial
 grew out of — see [Where the reference trainer went](#where-the-reference-trainer-went).
 
@@ -181,19 +181,13 @@ Record the route, cohort, budget and date here whenever the plan is regenerated.
 ### From the plan to a MONAI network
 
 The platform's FL images carry MONAI but not `nnunetv2`, and an app must not install packages at run
-time, so `app/models.py` builds MONAI's `DynUNet` — the nnU-Net topology re-implemented in MONAI —
-from the plan's `arch_kwargs`: `kernel_sizes` → `kernel_size`, `strides` → `strides` (and
-`strides[1:]` → `upsample_kernel_size`), `features_per_stage` → `filters`, instance norm and leaky
-ReLU as planned, and `n_stages - 2` → `deep_supr_num` (nnU-Net supervises every decoder resolution but
-the lowest). A plan DynUNet cannot build faithfully — a residual encoder, a stage with other than
-two convolutions — raises rather than being approximated. Two consequences of the swap are
-deliberate:
-
-- DynUNet returns its deep-supervision heads already interpolated to full resolution, stacked along
-  one dimension, where nnU-Net returns a list at decreasing resolutions; `split_deep_supervision_outputs`
-  is the whole adapter, and `train_seg`'s target resizing becomes a pass-through.
-- The deep-supervision loss weights (`1/2^i`) are renormalised over the outputs actually present, so
-  an evaluation-mode pass (one output) is scored on the same scale as training.
+time, so `app/models.py` builds the network with MONAI instead: `NnUNetDynUNet`, a subclass of
+MONAI's `DynUNet`, from the plan's `arch_kwargs` — `kernel_sizes` → `kernel_size`, `strides` →
+`strides` (and `strides[1:]` → `upsample_kernel_size`), `features_per_stage` → `filters`,
+`conv_bias` → `conv_bias`, instance norm and leaky ReLU as planned, and `n_stages - 2` →
+`deep_supr_num` (nnU-Net supervises every decoder resolution but the lowest). A plan DynUNet cannot
+build faithfully — a residual encoder, a stage with other than two convolutions — raises rather than
+being approximated.
 
 ## Metrics and best-model selection
 
@@ -221,7 +215,7 @@ norm has only floating-point tensors, so every array is privatised.
 | standalone | federated app |
 | --- | --- |
 | `nnunet_train.py` plan reading (`PlansManager`, `possible_patch_size`) | `task.plan_geometry` |
-| `network.build_network_architecture` (nnU-Net `PlainConvUNet`) | `models.build_dynunet_from_plan` (MONAI `DynUNet`) |
+| `network.build_network_architecture` (nnU-Net `PlainConvUNet`) | `models.build_dynunet_from_plan` (`NnUNetDynUNet`, the same network on MONAI's `DynUNet`) |
 | `nnunetv2` `DeepSupervisionWrapper` | `task.DeepSupervisionLoss` |
 | `build_augmentations`, `PatchIterd(..., mode="wrap")` | `preprocess.build_augmentations`, `preprocess.build_patch_iter` |
 | SGD + `PolynomialLR` over `epochs` | `task.build_optimizer`, `task.build_scheduler` (decay spans `rounds × local-epochs`) |
