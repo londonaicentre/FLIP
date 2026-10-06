@@ -281,9 +281,7 @@ def test_fetch_names_the_upstream_url_of_a_file_missing_from_artifacts_dir(tmp_p
     upstream, manifest = _make_upstream(tmp_path)
     (upstream / FIXTURE_PLUGINS[0]).unlink()
 
-    result = _run(
-        "fetch", "plugin", tmp_path / "cache", _env(tmp_path, manifest, NO_CURL, ARTIFACTS_DIR=str(upstream))
-    )
+    result = _run("fetch", "plugin", tmp_path / "cache", _env(tmp_path, manifest, NO_CURL, ARTIFACTS_DIR=str(upstream)))
 
     assert result.returncode != 0
     assert f"https://example.invalid/dl/{FIXTURE_PLUGINS[0]}" in result.stderr
