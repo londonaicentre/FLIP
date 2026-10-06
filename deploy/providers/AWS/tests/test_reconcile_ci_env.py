@@ -250,6 +250,21 @@ class TestSplitImage:
     def test_empty_image_is_safe(self):
         assert rce.split_image("") == ("", "")
 
+    def test_release_digest_pin_comes_back_whole(self):
+        # A release apply pins `:v<X.Y.Z>@sha256:…` (FLIP#1283). The tag part is
+        # the whole `v<X.Y.Z>@sha256:…` string, because that is what Terraform
+        # has to re-emit to keep the pin: reporting only `v1.2.3` would silently
+        # un-pin the digest on the next apply.
+        assert rce.split_image(
+            "ghcr.io/londonaicentre/flip-api:v1.2.3@sha256:" + "a" * 64
+        ) == ("ghcr.io/londonaicentre/", "v1.2.3@sha256:" + "a" * 64)
+
+    def test_untagged_reference_yields_no_tag(self):
+        # The only colon here is the registry port, and there is none at all in
+        # the first form — neither carries a tag to reuse.
+        assert rce.split_image("ghcr.io/londonaicentre/flip-api") == ("", "")
+        assert rce.split_image("registry.example:5000/flip-api") == ("", "")
+
 
 class TestContainerHelpers:
     def test_env_of_flattens_the_name_value_pairs(self, state):

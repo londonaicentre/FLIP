@@ -173,12 +173,23 @@ def first_port(container: dict) -> str:
 
 
 def split_image(image: str) -> tuple[str, str]:
-    """`ghcr.io/org/name:tag` -> ('ghcr.io/org/', 'tag'). Digest refs yield no tag."""
-    if not image or "@" in image:
+    """`ghcr.io/org/name:tag` -> ('ghcr.io/org/', 'tag').
+
+    A release apply pins `ghcr.io/org/name:v<X.Y.Z>@sha256:…` (FLIP#1283): the
+    tag part comes back whole, digest included, because that whole string is what
+    Terraform must re-emit to keep the pin. A digest-ONLY reference has no tag to
+    report and yields none.
+    """
+    if not image:
         return "", ""
-    repo, _, tag = image.rpartition(":")
+    name, _, digest = image.partition("@")
+    if digest and ":" not in name.rsplit("/", 1)[-1]:
+        return "", ""
+    repo, sep, tag = name.rpartition(":")
+    if not sep or "/" in tag:
+        return "", ""
     prefix = repo.rsplit("/", 1)[0] + "/" if "/" in repo else ""
-    return prefix, tag
+    return prefix, f"{tag}@{digest}" if digest else tag
 
 
 def live_image_tag(service: str, container: str, cluster: str, profile: str, region: str) -> str:

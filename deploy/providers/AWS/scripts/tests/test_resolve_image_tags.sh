@@ -48,11 +48,25 @@ mkdir -p "${MOCKBIN}"
 cat >"${MOCKBIN}/docker" <<'MOCK_DOCKER'
 #!/usr/bin/env bash
 if [[ "$1" == "manifest" && "$2" == "inspect" ]]; then
+    verbose=""
+    if [[ "$3" == "--verbose" ]]; then
+        verbose=1
+        shift
+    fi
     if [[ -s "${FIXTURE_DIR}/docker-error" ]]; then
         cat "${FIXTURE_DIR}/docker-error" >&2
         exit 1
     fi
     if grep -Fxq "$3" "${FIXTURE_DIR}/published" 2>/dev/null; then
+        if [[ -n "${verbose}" ]]; then
+            # `--verbose` is what the resolver uses to turn a release tag into
+            # the digest it pins. A per-run fixture lets a case assert the exact
+            # digest, or hand back a malformed one.
+            digest="sha256:$(printf 'a%.0s' {1..64})"
+            [[ -s "${FIXTURE_DIR}/digest" ]] && digest="$(cat "${FIXTURE_DIR}/digest")"
+            printf '[{"Ref":"%s","Descriptor":{"digest":"%s"}}]\n' "$3" "${digest}"
+            exit 0
+        fi
         echo '{"schemaVersion":2}'
         exit 0
     fi
@@ -149,6 +163,7 @@ fixture() {
     : >"${FIXTURE_DIR}/aws-exit"
     : >"${FIXTURE_DIR}/aws-failure-reason"
     : >"${FIXTURE_DIR}/docker-error"
+    : >"${FIXTURE_DIR}/digest"
     export FIXTURE_DIR
 }
 
@@ -489,6 +504,168 @@ if [[ "${rc}" -ne 0 && "${out}" == *"RESOLVE_SHA_TAG"* ]]; then
     ok "rejects an unknown RESOLVE_SHA_TAG"
 else
     no "rejects an unknown RESOLVE_SHA_TAG" "exit ${rc}: ${out}"
+fi
+
+# ---------------------------------------------------------------------------
+# RELEASE_TAG — the release-aware path (FLIP#1283). Everything below is new
+# behaviour that only engages when RELEASE_TAG is set; case 25 is the guard that
+# the unset path is still exactly what it was.
+# ---------------------------------------------------------------------------
+
+DIGEST="sha256:1111111111111111111111111111111111111111111111111111111111111111"
+FL_DIGEST="sha256:2222222222222222222222222222222222222222222222222222222222222222"
+
+# 19. RELEASE SET AND PUBLISHED. Pin the DIGEST the release tag resolves to,
+#     carrying the release name with it: `:v<X.Y.Z>` is republished by design, so
+#     a bare tag pin would let a re-run change what production pulls with no
+#     apply (FLIP#751), while `v<X.Y.Z>@sha256:…` keeps the name legible and the
+#     content fixed.
+fixture "ghcr.io/londonaicentre/flip-api:v1.2.3
+ghcr.io/londonaicentre/flare-fl-server:v1.2.3" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+printf '%s' "${DIGEST}" >"${FIXTURE_DIR}/digest"
+run_resolve "RELEASE_TAG present — pinned by digest" RELEASE_TAG=v1.2.3
+expect_rc 0 "exits 0"
+expect_tag DOCKER_TAG "v1.2.3@${DIGEST}"
+expect_tag DOCKER_FL_TAG "v1.2.3@${DIGEST}"
+
+# ...and the sha tag must not win even when it is also published — the whole
+# point is that the release build, not the branch build, is what gets deployed.
+fixture "ghcr.io/londonaicentre/flip-api:v1.2.3
+ghcr.io/londonaicentre/flip-api:${SHA_TAG}
+ghcr.io/londonaicentre/flare-fl-server:v1.2.3
+ghcr.io/londonaicentre/flare-fl-server:${SHA_TAG}" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+printf '%s' "${DIGEST}" >"${FIXTURE_DIR}/digest"
+run_resolve "the release tag beats a published sha tag" RELEASE_TAG=v1.2.3
+expect_tag DOCKER_TAG "v1.2.3@${DIGEST}"
+if [[ "${STDOUT}" == *"${SHA_TAG}"* ]]; then
+    no "never pins the sha build when a release was named" "stdout: ${STDOUT}"
+else
+    ok "never pins the sha build when a release was named"
+fi
+
+# 20. RELEASE SET AND MISSING. Fail closed. Every fallback is wrong here: the
+#     caller only sets RELEASE_TAG once the release builds concluded, so absence
+#     is a fault, and falling back would leave the environment on the PREVIOUS
+#     release while reporting success — a silent no-op release.
+fixture "ghcr.io/londonaicentre/flip-api:${SHA_TAG}" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+run_resolve "RELEASE_TAG absent from the registry is fatal" RELEASE_TAG=v9.9.9
+if [[ "${RC}" -ne 0 ]]; then
+    ok "exits non-zero when the release image is missing"
+else
+    no "exits non-zero when the release image is missing" "exit ${RC}, stdout: ${STDOUT}"
+fi
+if [[ -n "${STDOUT}" ]]; then
+    no "emits no tag at all on a missing release" "stdout: ${STDOUT}"
+else
+    ok "emits no tag at all on a missing release"
+fi
+if [[ "${STDERR}" == *"v9.9.9"* && "${STDERR}" == *"not published"* && "${STDERR}" == *"re-run"* ]]; then
+    ok "the error names the release and what to re-run"
+else
+    no "the error names the release and what to re-run" "stderr: ${STDERR}"
+fi
+
+# 21. A malformed RELEASE_TAG is rejected by name. Letting it through would
+#     produce "release image absent", which reads as a failed build and sends
+#     someone to re-run one that was fine.
+for bad in v1.2 1.2.3 v1.2.3-rc1 latest; do
+    fixture "" "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+        "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+    run_resolve "malformed RELEASE_TAG '${bad}' is rejected" RELEASE_TAG="${bad}"
+    if [[ "${RC}" -ne 0 && "${STDERR}" == *"RELEASE_TAG"* ]]; then
+        ok "rejects RELEASE_TAG='${bad}'"
+    else
+        no "rejects RELEASE_TAG='${bad}'" "exit ${RC}, stderr: ${STDERR}"
+    fi
+done
+
+# 22. A registry that answers with something other than a positive absence is
+#     still fatal on the release path — same fail-closed rule as the sha probe,
+#     and here an outage read as "absent" would stop a release rather than
+#     mis-deploy it, but the message must still be the honest one.
+fixture "ghcr.io/londonaicentre/flip-api:v1.2.3" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+printf 'unauthorized: authentication required' >"${FIXTURE_DIR}/docker-error"
+run_resolve "a registry error on the release probe is fatal" RELEASE_TAG=v1.2.3
+if [[ "${RC}" -ne 0 && "${STDERR}" == *"without reporting the image as absent"* ]]; then
+    ok "a registry error is not read as a missing release"
+else
+    no "a registry error is not read as a missing release" "exit ${RC}, stderr: ${STDERR}"
+fi
+
+# 23. The release tag exists but the registry returns no usable digest. Pinning
+#     the bare tag instead would quietly reintroduce the mutability this path
+#     exists to remove, so it must stop.
+fixture "ghcr.io/londonaicentre/flip-api:v1.2.3
+ghcr.io/londonaicentre/flare-fl-server:v1.2.3" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+printf 'sha256:not-a-digest' >"${FIXTURE_DIR}/digest"
+run_resolve "an unusable digest is fatal, never a tag pin" RELEASE_TAG=v1.2.3
+if [[ "${RC}" -ne 0 && "${STDERR}" == *"no usable digest"* ]]; then
+    ok "refuses to fall back to a mutable tag pin"
+else
+    no "refuses to fall back to a mutable tag pin" "exit ${RC}, stderr: ${STDERR}"
+fi
+
+# 24. PLAN / DRIFT WITH A DIGEST-PINNED SERVICE. Once a release apply has written
+#     `repo:v<X.Y.Z>@sha256:…`, plan and drift must read that reference back
+#     WHOLE. Returning just `v1.2.3` would un-pin the digest on the next
+#     infrastructure-only apply; returning nothing would report a permanent,
+#     unclearable diff (and hold every apply on the FL gate) and leave
+#     rollback-centralhub without a reference point.
+fixture "" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:v1.2.3@${DIGEST}" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:v1.2.3@${FL_DIGEST}"
+run_resolve "plan reads a digest-pinned service" RESOLVE_SHA_TAG=false
+expect_rc 0 "exits 0"
+expect_tag DOCKER_TAG "v1.2.3@${DIGEST}"
+expect_tag DOCKER_FL_TAG "v1.2.3@${FL_DIGEST}"
+
+# ...and the same on an apply where nothing new was published: the running
+# digest pin is reused rather than discarded.
+fixture "" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:v1.2.3@${DIGEST}" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:v1.2.3@${FL_DIGEST}"
+run_resolve "an infra-only apply keeps the digest pin"
+expect_rc 0 "exits 0"
+expect_tag DOCKER_TAG "v1.2.3@${DIGEST}"
+
+# ...while a BARE digest reference still yields nothing: ecs_tasks.tf builds
+# `"${registry}<image>:${tag}"`, so there is no tag string that can express it,
+# and inventing one would mint an unpullable reference. (Case 6 covers the
+# short-digest form; this is the well-formed one.)
+fixture "" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api@${DIGEST}" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+run_resolve "a bare digest reference has no tag to reuse" RESOLVE_SHA_TAG=false
+expect_rc 0 "exits 0"
+expect_tag DOCKER_TAG "stag"
+
+# 25. SHIPS DARK. With RELEASE_TAG unset — and explicitly set to the empty string,
+#     which is what an unset workflow_dispatch input expands to — the output is
+#     exactly what it was before FLIP#1283.
+fixture "ghcr.io/londonaicentre/flip-api:${SHA_TAG}
+ghcr.io/londonaicentre/flip-api:v1.2.3" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+run_resolve "RELEASE_TAG unset — unchanged behaviour"
+BASELINE="${STDOUT}"
+expect_tag DOCKER_TAG "${SHA_TAG}"
+expect_tag DOCKER_FL_TAG "sha-8888888"
+run_resolve "RELEASE_TAG empty is the same as unset" RELEASE_TAG=
+if [[ "${RC}" -eq 0 && "${STDOUT}" == "${BASELINE}" ]]; then
+    ok "an empty RELEASE_TAG takes the pre-FLIP#1283 path byte for byte"
+else
+    no "an empty RELEASE_TAG takes the pre-FLIP#1283 path byte for byte" \
+        "exit ${RC}" "got: ${STDOUT}" "want: ${BASELINE}"
 fi
 
 echo ""

@@ -683,6 +683,9 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	## FL job pickup) and wait for any running job to finish; GET /fl/quiesce reports both.
 	## On prod (PROD=true) the reminder also asks for interactive confirmation; stag proceeds
 	## without prompting so scripted staging deploys stay non-interactive.
+	## A release apply pins `repo:v<X.Y.Z>@sha256:…` (FLIP#1283) — the release name is still
+	## there to swap TAG onto, so the digest is stripped and the deploy proceeds; only a
+	## digest-ONLY reference (no tag at all) has nothing to replace and is refused.
 	@set -e; \
 	export AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION); \
 	echo "⚠️  FL quiesce reminder (FLIP#770): replacing fl-server-net-1 kills any in-flight"; \
@@ -721,10 +724,16 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  image=$$(printf '%s' "$$td_json" | jq -r --arg name "$$service" \
 	    '.taskDefinition.containerDefinitions[] | select(.name == $$name).image'); \
 	  [ -n "$$image" ] || { echo "❌ $$service: no container named '$$service' in $$current_td"; exit 1; }; \
+	  base_image="$$image"; \
 	  case "$$image" in \
-	  *@*) echo "❌ $$service: digest-pinned image '$$image' — cannot swap a tag onto it"; exit 1;; \
+	  *@*) \
+	    base_image="$${image%@*}"; \
+	    case "$$base_image" in \
+	    *:*) ;; \
+	    *) echo "❌ $$service: digest-only image '$$image' — cannot swap a tag onto it"; exit 1;; \
+	    esac;; \
 	  esac; \
-	  new_image="$${image%:*}:$$TAG"; \
+	  new_image="$${base_image%:*}:$$TAG"; \
 	  case "$$new_image" in \
 	  ghcr.io/*) \
 	    repo=$${new_image#ghcr.io/}; repo=$${repo%:*}; \
