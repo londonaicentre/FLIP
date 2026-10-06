@@ -104,6 +104,16 @@ GHCR login from `~/.docker/config.json`.
 | `deploy/compose_trust-1_override.yml` | Dev trust-1 host-port bindings |
 | `.env.<CODE>.<env>` | Per-trust kit file, e.g. `.env.GSTT.development`, `.env.<CODE>.production` (TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID, host-local ports/dirs, **FL_KIT_DIR** — root of the FL participant kit, default `/opt/flip/fl-kit` matching the Ansible-staged EC2 path); gitignored. Templates: per-trust dev examples `.env.GSTT.development.example` / `.env.KCH.development.example`; the generic scaffold base `.env.example`, consumed by `make new-trust`. Same kit-file schema everywhere — `make -C trust up-trust KIT=<CODE> PROD=<env>` is the only dispatch |
 
+On Kubernetes the trust's per-trust keys reach the cluster twice: `patch-kit-secrets`
+patches them into the chart Secret (field manager `kubectl-patch`) and the chart templates
+the same keys from the generated `values-secrets.yaml`. Helm 4 applies server-side, so the
+two must agree or `helm upgrade` is refused with `conflict with "kubectl-patch"`, a
+refusal that protects the live credentials. `sync_k8s_kit.align_values_secrets` keeps them
+in step; never pass `--force-conflicts` or `--take-ownership` to work around it, and never
+server-side-apply a subset of that Secret (it prunes the keys it does not list).
+`PROD` → kit-file token comes from `deploy/env_mode.mk` for the chart Makefile, the
+preflight script and `sync_k8s_kit.py` alike (`lza` → `.lza-prod`, `lza-stag` → `.lza-stag`).
+
 ## Commands (from `trust/`)
 
 ```bash
