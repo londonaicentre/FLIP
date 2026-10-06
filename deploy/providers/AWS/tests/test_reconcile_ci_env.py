@@ -255,9 +255,10 @@ class TestSplitImage:
         # the whole `v<X.Y.Z>@sha256:…` string, because that is what Terraform
         # has to re-emit to keep the pin: reporting only `v1.2.3` would silently
         # un-pin the digest on the next apply.
-        assert rce.split_image(
-            "ghcr.io/londonaicentre/flip-api:v1.2.3@sha256:" + "a" * 64
-        ) == ("ghcr.io/londonaicentre/", "v1.2.3@sha256:" + "a" * 64)
+        assert rce.split_image("ghcr.io/londonaicentre/flip-api:v1.2.3@sha256:" + "a" * 64) == (
+            "ghcr.io/londonaicentre/",
+            "v1.2.3@sha256:" + "a" * 64,
+        )
 
     def test_untagged_reference_yields_no_tag(self):
         # The only colon here is the registry port, and there is none at all in
