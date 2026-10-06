@@ -634,9 +634,9 @@ def main(
             # `upgrade` conflicts on them (server-side apply) — see align_values_secrets.
             realigned = align_values_secrets(output_dir / VALUES_SECRETS_NAME, entries)
             if realigned:
-                # Count only: the slot names come from the secrets mapping, so logging them
-                # trips clear-text-logging analysis even though no value is printed.
-                print(f"  ✓ Realigned {len(realigned)} slot(s) in {VALUES_SECRETS_NAME}")
+                # Static message on purpose: CodeQL's clear-text-logging query treats anything
+                # derived from the secrets mapping, or a name containing "secret", as sensitive.
+                print("  ✓ Realigned the kit-owned slots in values-secrets.yaml")  # pragma: allowlist secret
                 print("    (so the next `helm upgrade` applies the same values and raises no SSA conflict)")
             print()
         else:
