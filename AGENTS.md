@@ -273,6 +273,7 @@ make generate-internal-service-key    # Generate fl-server-to-hub key
 Per-trust lifecycle, run from `trust/` (KIT handling differs per target: `down-fl-clients` loops over every registered kit; `down-fl-clients-kit` and `down-trust-ec2` require `KIT=<CODE>`; the `debug-*` targets default to the first dev kit when KIT is omitted):
 
 ```bash
+make -C trust prepare-artifacts        # Download the dev XNAT plugins from upstream, checksum-pinned in trust/xnat/artifacts.manifest (no AWS; ARTIFACTS_DIR=<dir> offline). `make up` only checks the cache (#1292)
 make -C trust down-fl-clients          # Stop + remove FL client containers for every registered kit, rest of the stack stays up
 make -C trust down-fl-clients-kit KIT=<CODE>  # Same, one kit
 make -C trust down-trust-ec2 KIT=<CODE>       # Stop trust services + XNAT on an EC2-hosted trust

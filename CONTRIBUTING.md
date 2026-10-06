@@ -68,11 +68,10 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
   `uv sync`, `uv run --project` or `uv lock` run by hand is unguarded, so keep your uv current rather
   than relying on the check to catch you. (The `uv-lock` pre-commit hook is not a gap here — it pins its
   own uv and runs `uv lock --check`, which verifies and never rewrites.)
-- The AWS CLI configured for SSO access to the development environment — only the two example Trusts need
-  it (`make up` fetches their XNAT artifacts and OMOP vocabulary from AWS buckets). The hub reaches no AWS
-  service: sign-in is the local Keycloak and object storage the local RustFS container (see
-  [Environment variables](#environment-variables)), so `make central-hub` and `make up-no-trust` boot with no
-  AWS account
+- No AWS account for `make up`: sign-in is the local Keycloak, object storage the local RustFS container (see
+  [Environment variables](#environment-variables)), and the two example Trusts' XNAT plugins are public upstream
+  downloads that `make -C trust prepare-artifacts` fetches once, checksum-verified. The AWS CLI with SSO is only for
+  the AWS-backed targets: the optional OMOP vocabulary load, FL kit uploads and `deploy/providers/AWS`
 - [act](https://github.com/nektos/act) if you want to run GitHub Actions locally
 - **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:
   ```bash
@@ -243,7 +242,7 @@ For the full local stack, replace every placeholder in these minimum groups befo
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Object store | Nothing: `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME` and `FLIP_APP_BUNDLES_BUCKET_NAME` ship with working names, created in the local store at `make up` |
 | FL kits (AWS) | `AICENTRE_BUCKET_NAME` — the participant kits, read by `make stage-fl-kit`; the two shipped dev kits are provisioned in-tree and never fetch it |
-| XNAT artifacts (AWS) | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins) |
+| XNAT plugins | Nothing to set. Run `make -C trust prepare-artifacts` once before the first `make up`: it downloads the plugins from their public upstream URLs, checksum-verified, with no AWS access (see [`trust/xnat/README.md`](trust/xnat/README.md#plugins)) |
 
 **Object storage needs no configuration in development** (FLIP#1291). `make up` starts `object-store`, an S3-compatible
 [RustFS](https://github.com/rustfs/rustfs) container whose data directory is `./object-store/` (gitignored): a
@@ -262,10 +261,10 @@ the dev stack holds. Staging and production are unchanged: real S3 buckets, the 
 the public endpoint is unset there, so every audience signs against the one endpoint.
 
 **The dev hub mounts nothing from `~/.aws` and reaches no AWS service** — sign-in (Keycloak), email (console) and
-object storage (RustFS) are all local. The AWS-backed *targets* — `deploy/providers/AWS`, FL kit uploads, the
-Trusts' artifact fetches — read `AWS_PROFILE` as before and are guarded by `make check-aws-access`, which `make up`
-no longer runs. Authorised FLIP developers can use the shared development values for the two artifact buckets; other
-deployers should create their own resources with the
+object storage (RustFS) are all local, and so are the Trusts' XNAT plugins once `make -C trust prepare-artifacts` has
+downloaded them from upstream. The AWS-backed *targets* — `deploy/providers/AWS`, FL kit uploads, the optional OMOP
+vocabulary fetch — read `AWS_PROFILE` as before and are guarded by `make check-aws-access`, which `make up` no longer
+runs. Authorised FLIP developers can use the shared development values for those; other deployers should create their own resources with the
 [Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
 
 **Email needs no configuration in development** (FLIP#919). flip-api defaults to `EMAIL_BACKEND=console` in dev, which
@@ -331,9 +330,9 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 Some services (e.g. `flip-api`) interact with AWS via `boto3` in staging and production. In development none
 of them does: sign-in is the local Keycloak, email the console backend and object storage the local RustFS
-container, so the hub needs no AWS credentials (FLIP#919, FLIP#1291). AWS SSO is needed only for the two
-example Trusts' XNAT-artifact and OMOP-vocabulary fetches, FL kit uploads and the `deploy/providers/AWS`
-targets, which `make check-aws-access` guards.
+container, so the hub needs no AWS credentials (FLIP#919, FLIP#1291), and the example Trusts' XNAT plugins
+are public upstream downloads (FLIP#1292). AWS SSO is needed only for the optional OMOP vocabulary fetch, FL kit
+uploads and the `deploy/providers/AWS` targets, which `make check-aws-access` guards.
 
 Configure AWS SSO:
 
