@@ -103,14 +103,12 @@ def decide(evidence: dict) -> Verdict:
     if store_failed is None:
         return Verdict(
             False,
-            "Orthanc's store report had no FailedInstancesCount — cannot tell whether the "
-            "transfer succeeded",
+            "Orthanc's store report had no FailedInstancesCount — cannot tell whether the transfer succeeded",
         )
     if store_failed != 0:
         return Verdict(
             False,
-            f"Orthanc reports {store_failed} failed instance(s) — the receiver rejected or "
-            "aborted the transfer",
+            f"Orthanc reports {store_failed} failed instance(s) — the receiver rejected or aborted the transfer",
         )
 
     # 2. The regression signature always wins, even over a prearchive file: a partially-imported
@@ -170,8 +168,7 @@ def decide(evidence: dict) -> Verdict:
 
     return Verdict(
         False,
-        "no receiver-side evidence of the transfer: no new prearchive object and no receiver "
-        "log activity",
+        "no receiver-side evidence of the transfer: no new prearchive object and no receiver log activity",
         notes=[stored],
         remedy=_NO_EVIDENCE_REMEDY,
     )

@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Secret field ownership under Helm 4's server-side apply (FLIP#1360).
+"""Secret field ownership under Helm 4's server-side apply (FLIP#1366).
 
 `patch-kit-secrets` writes the kit's per-trust keys into the chart's Secret with field
 manager ``kubectl-patch``. Helm 4 applies the release server-side, so an upgrade that would
@@ -54,7 +54,7 @@ secrets:
     trust-api-key: "stale-api"
     trust-internal-service-key: "stale-internal"
     trust-internal-service-key-header: "X-Trust-Internal-Service-Key"
-    xnat-admin-password: "untouched-xnat"
+    xnat-admin-password: untouched-xnat
     orthanc-registered-users: "{\\"admin\\": \\"untouched-orthanc\\"}"
 """
 
@@ -99,7 +99,7 @@ def test_slots_the_kit_does_not_own_are_left_exactly_as_they_were(tmp_path):
     sync_k8s_kit.align_values_secrets(path, PATCHED)
 
     slots = _slots(path)
-    assert slots["xnat-admin-password"] == "untouched-xnat"
+    assert slots["xnat-admin-password"] == "untouched-xnat"  # pragma: allowlist secret
     assert "untouched-orthanc" in slots["orthanc-registered-users"]
     assert "# openssl rand -base64 32" in path.read_text()
 
@@ -118,7 +118,7 @@ def test_a_missing_slot_is_added_rather_than_left_for_the_chart_to_omit(tmp_path
     assert set(KIT_OWNED_KEYS) <= set(aligned)
     slots = _slots(path)
     assert slots["trust-api-key"] == "live-api"
-    assert slots["xnat-admin-password"] == "keep"
+    assert slots["xnat-admin-password"] == "keep"  # pragma: allowlist secret
 
 
 def test_already_aligned_values_are_a_no_op(tmp_path):

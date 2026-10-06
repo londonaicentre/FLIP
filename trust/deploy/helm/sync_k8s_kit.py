@@ -293,11 +293,11 @@ def patch_k8s_secret(secret_name: str, namespace: str, entries: dict[str, str], 
 #: The generated Helm secrets values file, alongside the chart. It is the OTHER writer of
 #: the same Secret keys (scripts/generate_values.py renders it from the kit), which is what
 #: makes `align_values_secrets` necessary — see its docstring.
-VALUES_SECRETS_NAME = "values-secrets.yaml"
+VALUES_SECRETS_NAME = "values-secrets.yaml"  # pragma: allowlist secret
 
 
 def align_values_secrets(path: Path, entries: dict[str, str]) -> list[str]:
-    """Write the kit's per-trust secrets into ``values-secrets.yaml`` as well (FLIP#1360).
+    """Write the kit's per-trust secrets into ``values-secrets.yaml`` as well (FLIP#1366).
 
     Helm 4 applies the release server-side, and SSA raises a conflict when an apply would
     *change* a field another manager owns. `patch-kit-secrets` writes
@@ -634,7 +634,9 @@ def main(
             # `upgrade` conflicts on them (server-side apply) — see align_values_secrets.
             realigned = align_values_secrets(output_dir / VALUES_SECRETS_NAME, entries)
             if realigned:
-                print(f"  ✓ Realigned {VALUES_SECRETS_NAME} slots: {', '.join(sorted(realigned))}")
+                # Count only: the slot names come from the secrets mapping, so logging them
+                # trips clear-text-logging analysis even though no value is printed.
+                print(f"  ✓ Realigned {len(realigned)} slot(s) in {VALUES_SECRETS_NAME}")
                 print("    (so the next `helm upgrade` applies the same values and raises no SSA conflict)")
             print()
         else:
