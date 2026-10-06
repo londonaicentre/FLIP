@@ -139,8 +139,19 @@ Things worth knowing before touching any of it:
   It is ignored when `RESOLVE_SHA_TAG=false` (plan, drift). `active_tag()` reads a
   running `repo:tag@sha256:…` back whole, so an infrastructure-only apply keeps the
   pin; a bare `repo@sha256:…` still yields no tag, since Terraform interpolates
-  `repo:<tag>`. Nothing sets `RELEASE_TAG` yet: `release.yml` dispatching
-  `terraform_apply.yml` after the release builds are green is PR 2 of FLIP#1283.
+  `repo:<tag>`. `RELEASE_TAG` is set by exactly one caller: `release.yml`, which
+  after creating the `v<X.Y.Z>` tag dispatches the twelve image builds at it, waits
+  for them to conclude green (bounded by `RELEASE_BUILD_WAIT_SECONDS`, default
+  5400s), and only then dispatches `terraform_apply.yml` on **`refs/heads/main`**
+  with `release_tag: v<X.Y.Z>`. The ref is not negotiable: the apply role's trust
+  policy pins `job_workflow_ref` to `terraform_apply.yml@refs/heads/{develop,main}`,
+  so a dispatch at the tag cannot assume it. The wait is what makes the fail-closed
+  probe safe, since asking for a release whose builds have not finished makes the
+  resolver refuse and stops production's apply. `terraform_apply.yml` validates the
+  input (`^v\d+\.\d+\.\d+$`, `main` only, because the ref chooses the estate) before
+  forwarding it. The push apply of the same commit pins the sha and the release
+  dispatch pins the release on top; they serialise on the `tf-apply-main`
+  concurrency group (`cancel-in-progress: false`) rather than racing.
 - **An apply holds if the plan touches FL** (`scripts/check-fl-plan-impact.sh`):
   `fl-server-net-1` / `fl-api-net-1` task definitions or services, or any EFS
   deletion. `flip-api` is deliberately not watched. The hub cannot be asked
