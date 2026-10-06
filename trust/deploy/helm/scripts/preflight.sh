@@ -36,10 +36,23 @@ PROD="${PROD:-}"
 KIT="${KIT:-}"
 OVERRIDES_FILE="${OVERRIDES_FILE:-}"
 
-# Resolve env suffix (same logic as the Makefile)
-if   [ "$PROD" = "true" ]; then ENV_SUFFIX="production"
-elif [ "$PROD" = "stag"  ]; then ENV_SUFFIX="stag"
-else                              ENV_SUFFIX="development"
+# The kit-file env token. The Makefile derives it from deploy/env_mode.mk — the single
+# source of truth for what PROD means — and injects it as ENV, so there is one mapping
+# rather than two that can drift. The fallback below is for a direct `bash preflight.sh`
+# and MUST stay in step with env_mode.mk; it is what the test suite pins.
+ENV_SUFFIX="${ENV:-}"
+if [ -z "$ENV_SUFFIX" ]; then
+    case "$PROD" in
+        true)     ENV_SUFFIX="production" ;;
+        stag)     ENV_SUFFIX="stag" ;;
+        lza)      ENV_SUFFIX="lza-prod" ;;
+        lza-stag) ENV_SUFFIX="lza-stag" ;;
+        "")       ENV_SUFFIX="development" ;;
+        *)
+            printf "  ✖  PROD='%s' is not a deployment mode — unset, stag, true, lza or lza-stag\n" "$PROD"
+            exit 1
+            ;;
+    esac
 fi
 
 # ── Colour support ─────────────────────────────────────────────────────────────
@@ -147,7 +160,10 @@ else
     # Warn about stale SSO session early. Not for the FL kit — that is staged onto the
     # node beforehand and the cluster holds no credentials — but the OMOP vocab-load
     # Job reads the operator AWS config through a host mount.
-    if [ "$PROD" = "stag" ] || [ "$PROD" = "true" ]; then
+    # Every deployed environment, not just the legacy pair: an LZA site reads its
+    # vocabulary bundle from its own bucket the same way (deploy/env_mode.mk's
+    # DEPLOYED_PROD_VALUES).
+    if [ -n "$PROD" ]; then
         AWS_PROFILE_CHECK="${AWS_PROFILE:-flipstag}"
         if ! aws sts get-caller-identity --profile "$AWS_PROFILE_CHECK" >/dev/null 2>&1; then
             warn "AWS SSO session not active for profile '${AWS_PROFILE_CHECK}'"

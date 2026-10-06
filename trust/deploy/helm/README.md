@@ -203,6 +203,14 @@ Run it on its own to check a host before deploying:
 make -C trust/deploy/helm preflight KIT=<CODE> PROD=stag
 ```
 
+`PROD` takes the platform's five tokens — unset (development), `stag`, `true`,
+`lza`, `lza-stag` — and the Makefile resolves the kit-file suffix through
+`deploy/env_mode.mk`, the single source of truth (`lza` → `trust/.env.<CODE>.lza-prod`,
+`lza-stag` → `.lza-stag`). That resolved token is injected into `scripts/preflight.sh`,
+so the checklist looks for the kit an LZA site actually has; the script keeps a matching
+fallback map for a direct `bash scripts/preflight.sh`, and refuses a `PROD` neither
+knows rather than quietly reading a `development` kit.
+
 Equivalent raw Helm for the install step:
 
 ```bash
@@ -216,6 +224,41 @@ helm upgrade --install trust-release ./trust/deploy/helm/ \
 `sync-kit` stamps a newly created Secret with Helm ownership metadata so the
 first install can adopt it. It also regenerates the FL-server egress port from
 the kit on every run, so upgrades do not lose the fl-client gRPC allowance.
+
+#### Secret field ownership under Helm 4 (server-side apply)
+
+Helm 4 applies the release **server-side**, so the API server tracks which manager owns
+each field. `patch-kit-secrets` writes the kit's three per-trust keys
+(`aes-key-base64`, `trust-api-key`, `trust-internal-service-key`) into the chart's Secret
+with `kubectl patch`, i.e. under field manager `kubectl-patch`, while the chart itself
+templates those same keys from `values-secrets.yaml`. When the two **disagree**, the next
+`make deploy` is refused:
+
+```
+Error: UPGRADE FAILED: conflict occurred while applying object flip-trust/trust-release-flip-trust-secrets
+/v1, Kind=Secret: Apply failed with 3 conflicts: conflict with "kubectl-patch" using v1: .data.trust-api-key
+```
+
+That refusal is a **safety property, not a defect** — the release stays on its last working
+revision instead of overwriting live trust credentials — so the chart tooling removes the
+disagreement rather than silencing it: `sync-kit` and `patch-kit-secrets` now realign the
+matching `values-secrets.yaml` slots with exactly what they patched, which makes helm's
+apply a no-op on those fields. Nothing else in the file is touched (the hand-filled XNAT /
+Orthanc slots, the comments and the `0600` mode all survive), and the kit remains the single
+source of truth for the per-trust keys.
+
+Three fixes that look right and are not:
+
+| Approach | Why not |
+|---|---|
+| `helm upgrade --force-conflicts` / `--take-ownership` | Hands ownership back by **overwriting the live keys with whatever `values-secrets.yaml` holds** — a stale value, or none at all, since `templates/secrets.yaml` omits an empty slot. A routine redeploy would silently revert the trust's API key and the trust would poll the hub with a dead credential. |
+| `kubectl patch --field-manager=helm` | Does not help: a patch is an *Update* operation, a different `managedFields` entry from helm's *Apply*, so the same conflict is simply re-reported as `conflict with "helm"` (verified on Helm 4.3 / Kubernetes 1.37). |
+| `kubectl apply --server-side --field-manager=helm` of the three keys | Worse: a **partial** apply prunes every key that manager owns and did not list, emptying the XNAT / OMOP / Orthanc slots out of the same Secret (verified). |
+
+If you hit the conflict on a deployment that predates this change, re-run
+`make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> PROD=<env>` once — it realigns the
+values file with the live keys — then redeploy. Helm 3 never applies server-side and is
+unaffected either way; the chart needs no version switch.
 
 ### 6. Verify the trust is polling
 

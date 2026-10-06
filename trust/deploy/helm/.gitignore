@@ -1,1 +1,3 @@
 /k8s-trust-*.yaml
+# Site-local merged override (sync-kit output + operator overrides + flClient off)
+/values-override.*.yaml

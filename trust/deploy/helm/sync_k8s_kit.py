@@ -290,6 +290,84 @@ def patch_k8s_secret(secret_name: str, namespace: str, entries: dict[str, str], 
     print("    Plaintext values went straight to Kubernetes — not persisted to disk.")
 
 
+#: The generated Helm secrets values file, alongside the chart. It is the OTHER writer of
+#: the same Secret keys (scripts/generate_values.py renders it from the kit), which is what
+#: makes `align_values_secrets` necessary — see its docstring.
+VALUES_SECRETS_NAME = "values-secrets.yaml"
+
+
+def align_values_secrets(path: Path, entries: dict[str, str]) -> list[str]:
+    """Write the kit's per-trust secrets into ``values-secrets.yaml`` as well (FLIP#1360).
+
+    Helm 4 applies the release server-side, and SSA raises a conflict when an apply would
+    *change* a field another manager owns. `patch-kit-secrets` writes
+    ``.data.{aes-key-base64,trust-api-key,trust-internal-service-key}`` with field manager
+    ``kubectl-patch``; the chart templates those same keys from ``values-secrets.yaml``. So
+    the next ``helm upgrade`` dies with::
+
+        Apply failed with 3 conflicts: conflict with "kubectl-patch" using v1: .data.trust-api-key
+
+    — but only when the two disagree. That conflict is therefore not noise: it is the API
+    server reporting that the cluster's live keys and the chart's rendered keys have drifted,
+    and the release stays on its last working revision rather than overwriting live
+    credentials. The fix is to remove the *disagreement*, not to silence the report:
+
+    * ``--force-conflicts`` on the upgrade would hand ownership back by overwriting the live
+      keys with whatever ``values-secrets.yaml`` holds — a stale value, or none at all, since
+      ``templates/secrets.yaml`` omits an empty slot. A redeploy would silently revert the
+      trust's API key and the trust would poll the hub with a dead credential.
+    * Re-patching with ``--field-manager=helm`` does NOT help: the patch is an *Update*
+      operation, a different managedFields entry from helm's *Apply*, so the conflict is
+      merely re-reported as ``conflict with "helm"`` (verified against Helm 4.3 on Kubernetes
+      1.37).
+    * ``kubectl apply --server-side`` of the three keys as ``helm`` is worse still: a partial
+      apply prunes every key that manager owns and did not list, emptying the XNAT/OMOP/
+      Orthanc slots out of the same Secret (also verified).
+
+    Keeping the generated values file in step with what we just patched means helm's apply
+    is a no-op on those fields, so SSA raises nothing, the kit stays the single source of
+    truth, and no redeploy can revert a key. Only the slots the kit owns are touched; every
+    other slot, comment and the file's 0600 mode are preserved.
+
+    Args:
+        path: Path to ``values-secrets.yaml``. A missing file is not an error — the chart
+            then renders ``secrets.create: false`` and manages no Secret of its own.
+        entries: Secret key -> plaintext value, as patched into the cluster.
+
+    Returns:
+        list[str]: The Secret key NAMES realigned (never values), for the operator log.
+    """
+    if not path.exists():
+        return []
+    lines = path.read_text().splitlines()
+    aligned: list[str] = []
+    for secret_key, value in entries.items():
+        pattern = re.compile(rf"^(\s*){re.escape(secret_key)}:\s.*$")
+        for i, line in enumerate(lines):
+            match = pattern.match(line)
+            if match:
+                replacement = f'{match.group(1)}{secret_key}: "{value}"'
+                if line != replacement:
+                    lines[i] = replacement
+                    aligned.append(secret_key)
+                break
+        else:
+            # The slot is absent (an older generated file, or a kit that did not carry the
+            # key when it was generated). Add it under secrets.data rather than leaving the
+            # chart to render a Secret without it.
+            try:
+                data_at = next(i for i, line in enumerate(lines) if re.match(r"^\s{2}data:\s*$", line))
+            except StopIteration:
+                continue
+            lines.insert(data_at + 1, f'    {secret_key}: "{value}"')
+            aligned.append(secret_key)
+
+    if aligned:
+        # Rewrite in place (the file is already 0600 and gitignored); never widen the mode.
+        path.write_text("\n".join(lines) + "\n")
+    return aligned
+
+
 def build_secret_entries(kit: dict[str, str]) -> dict[str, str]:
     """Pick the per-trust secret keys the kit carries with real values."""
     entries: dict[str, str] = {}
@@ -552,6 +630,12 @@ def main(
         if ns_present:
             print("🔐 Patching per-trust secrets into the Kubernetes Secret…")
             patch_k8s_secret(secret_name, namespace, entries, release_name)
+            # Keep the chart's own view of these keys identical, or the next Helm 4
+            # `upgrade` conflicts on them (server-side apply) — see align_values_secrets.
+            realigned = align_values_secrets(output_dir / VALUES_SECRETS_NAME, entries)
+            if realigned:
+                print(f"  ✓ Realigned {VALUES_SECRETS_NAME} slots: {', '.join(sorted(realigned))}")
+                print("    (so the next `helm upgrade` applies the same values and raises no SSA conflict)")
             print()
         else:
             print(f"ⓘ  Namespace '{namespace}' not found — skipping Secret patch.")
@@ -638,10 +722,21 @@ if __name__ == "__main__":
     if args.kube_context:
         KUBECTL += ["--context", args.kube_context]
 
-    # Resolve env suffix the same way the rest of the tooling does.
+    # Resolve env suffix the same way the rest of the tooling does (deploy/env_mode.mk).
+    # The LZA estates get their own kit tokens, so a PROD the map does not know must fail
+    # rather than fall through to a `development` kit that does not exist.
     if args.env is None:
         prod = os.environ.get("PROD", "")
-        env_suffix = "production" if prod == "true" else "stag" if prod == "stag" else "development"
+        env_by_prod = {
+            "": "development",
+            "stag": "stag",
+            "true": "production",
+            "lza": "lza-prod",
+            "lza-stag": "lza-stag",
+        }
+        if prod not in env_by_prod:
+            sys.exit(f"❌ PROD={prod!r} is not a deployment mode — unset, stag, true, lza or lza-stag")
+        env_suffix = env_by_prod[prod]
     else:
         env_suffix = args.env
 
