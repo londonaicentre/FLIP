@@ -253,7 +253,7 @@ endif
 undeploy-trust-k8s: undeploy ## Remove trust services from K8s (alias for undeploy)
 	@true
 
-smoke-cstore: ## Send a real C-STORE through the PACS and verify XNAT received it (FLIP#1228)
+smoke-cstore: ## Send a real C-STORE through the PACS and read XNAT's receiver log (FLIP#1228)
 	## `make status` compares the pod's plugin jars against the values; this drives the
 	## path those jars are on. Both are needed: a roster can match while the importer is
 	## broken for some other reason, and a C-ECHO can pass while every store aborts.

@@ -678,7 +678,7 @@ kubectl exec -n flip-trust "$xnat_pod" -- ls -la /data/xnat/home/plugins
 make -C trust/deploy/helm status        # FAILs naming both the expected and the found version
 
 # Exercise the path the roster is on, rather than just the socket
-make -C trust/deploy/helm smoke-cstore  # real C-STORE via the PACS, then checks XNAT's prearchive
+make -C trust/deploy/helm smoke-cstore  # real C-STORE via the PACS, then reads dicom.log
 ```
 
 **Fix.** Get one `helm upgrade` to complete, from a checkout that carries both the roster and
@@ -705,26 +705,6 @@ kubectl exec -n flip-trust "$xnat_pod" -- ls -la /data/xnat/home/plugins   # mti
 kubectl exec -n flip-trust "$xnat_pod" -- curl -sf -u <admin> localhost:8080/xapi/dqr/settings
 make -C trust/deploy/helm smoke-cstore
 ```
-
-**What `smoke-cstore` judges.** Success is Orthanc reporting `0` failed instances **and** a
-new DICOM object appearing in XNAT's prearchive (`/data/xnat/prearchive`) for the UID that
-was just sent — polled for up to `PREARCHIVE_TIMEOUT` seconds, matched on `SOPInstanceUID`,
-else `StudyInstanceUID`, else (last resort, reported as such) arrival time against the
-*receiver's own* clock. It used to require `dicom.log` to gain lines instead, which this
-deployment never writes — the file stays 0 bytes while every store imports correctly, so a
-healthy path failed with "dicom.log gained no lines". `dicom.log` growth is now an extra
-positive signal where the logger is active, never a requirement. The importer signatures
-(`AbstractMethodError`, `NoSuchMethodError`, `unable to read DICOM object null`) still fail
-the run outright, read from both `dicom.log` and the `xnat-web` container log.
-
-Knobs: `INSTANCE_ID=<orthanc id>` (send a known instance), `PREARCHIVE_DIR`,
-`PREARCHIVE_TIMEOUT` (default 90s), `PREARCHIVE_INTERVAL`, `SETTLE_SECONDS`, `DICOM_LOG`,
-`KUBE_CONTEXT`. The verdict itself is `scripts/cstore_verdict.py`, unit-tested in
-`tests/test_cstore_verdict.py` with no cluster.
-
-A failing run that names *no new prearchive object and no receiver log activity* means the
-association went somewhere that is not this XNAT — check the SCP receiver Orthanc dialled
-(§2.1) before suspecting the plugins.
 
 ---
 
@@ -946,8 +926,7 @@ machine and in `trust/deploy/helm/scripts/`. Key scripts:
 | Script | Purpose |
 |--------|---------|
 | `sync_k8s_kit.py` | Sync a registered trust kit into the cluster (Secret + override) |
-| `smoke-cstore.sh` | Drive a real C-STORE through the PACS and verify XNAT received it (§2.7) |
-| `cstore_verdict.py` | The smoke's verdict logic, unit-tested without a cluster (§2.7) |
+| `smoke-cstore.sh` | Drive a real C-STORE through the PACS and read XNAT's receiver log (§2.7) |
 | `check_status.py` | Full deployment smoke, including the plugin-roster comparison (§2.7) |
 
 ### Available Tools on DCMTK Pod
