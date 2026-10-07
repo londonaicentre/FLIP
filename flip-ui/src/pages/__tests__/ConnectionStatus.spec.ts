@@ -26,13 +26,16 @@ import ConnectionStatus from "../ConnectionStatus.vue";
 const { swrvCalls } = vi.hoisted(() => ({ swrvCalls: [] as unknown[][] }));
 
 const mockSwrvData = ref<ITrustResponse[] | undefined>(undefined);
+// The page's second SWRV subscription (FLIP#1204): the hub's own /health, for the
+// "Hub <release>" figure in the header. Keyed separately so the two never share data.
+const mockHubHealth = ref<{ status: string; version?: string } | undefined>(undefined);
 
 vi.mock("swrv", () => ({
     default: (...args: unknown[]) => {
         swrvCalls.push(args);
 
         return {
-            data: mockSwrvData,
+            data: args[0] === "hub-health" ? mockHubHealth : mockSwrvData,
             mutate: vi.fn(),
             error: ref(null)
         };
@@ -66,9 +69,10 @@ const stubs = {
     // here we only assert the page wires `trust`/`show` and reacts to `close`.
     TrustDetailDrawer: {
         name: "TrustDetailDrawer",
-        props: ["trust", "show"],
+        props: ["trust", "show", "hubVersion"],
         emits: ["close"],
-        template: "<div data-test='trust-detail-drawer' :data-show='show' :data-trust-id='trust?.id ?? \"\"' />"
+        template: "<div data-test='trust-detail-drawer' :data-show='show' :data-trust-id='trust?.id ?? \"\"'"
+            + " :data-hub-version='hubVersion ?? \"\"' />"
     },
     "icon-ph-list-bullets-duotone": { template: "<span />" },
     "icon-ph-share-network-duotone": { template: "<span />" }
@@ -174,10 +178,39 @@ const codesInOrder = (wrapper: ReturnType<typeof mountPage>): string[] =>
 
 beforeEach(() => {
     mockSwrvData.value = undefined;
+    mockHubHealth.value = undefined;
     swrvCalls.length = 0;
 });
 
 describe("ConnectionStatus", () => {
+    it("shows the hub's release beside the federation count, and an em dash until it is known", async () => {
+        // FLIP#1204: a site upgrades to the release its hub runs, so the page names it where the
+        // per-trust versions (drawer) can be compared against it.
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        expect(wrapper.find("[data-test='hub-version']").text()).toContain("—");
+
+        mockHubHealth.value = {
+            status: "ok",
+            version: "v0.6.0"
+        };
+        await wrapper.vm.$nextTick();
+        expect(wrapper.find("[data-test='hub-version']").text()).toBe("Hub v0.6.0");
+        expect(swrvCalls.some(call => call[0] === "hub-health")).toBe(true);
+    });
+
+    it("hands the hub's release to the drawer so it can flag drifting trust versions", async () => {
+        mockSwrvData.value = fixture;
+        mockHubHealth.value = {
+            status: "ok",
+            version: "v0.6.0"
+        };
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        expect(wrapper.find("[data-test='trust-detail-drawer']").attributes("data-hub-version")).toBe("v0.6.0");
+    });
+
     it("defaults to severity-first sort so failing trusts surface on load", async () => {
         // Alphabetical and severity order DIFFER here: Acme is online, Zebra is
         // offline — severity-first must put Zebra on top despite its name.

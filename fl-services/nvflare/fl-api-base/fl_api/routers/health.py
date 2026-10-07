@@ -14,6 +14,8 @@
 
 from fastapi import APIRouter
 
+from fl_api.utils.version import build_identity
+
 router = APIRouter()
 
 
@@ -31,9 +33,10 @@ def index() -> dict[str, str]:
 @router.get("/health/")
 def health() -> dict[str, str]:
     """
-    Updates of whether the FL API service is healthy.
+    Updates of whether the FL API service is healthy, and which build it runs.
 
     Returns:
-        dict[str, str]: A dictionary containing the health status of the service.
+        dict[str, str]: The health status of the service and its build identity — the baked
+        ``FLIP_RELEASE`` image tag, or the pyproject version for a build that carries none.
     """
-    return {"status": "This service is healthy ✅"}
+    return {"status": "This service is healthy ✅", "version": build_identity() or "unknown"}

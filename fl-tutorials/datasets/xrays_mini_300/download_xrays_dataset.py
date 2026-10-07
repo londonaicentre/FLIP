@@ -20,7 +20,7 @@ REPO_ID = "aicentreflip/flip-fl-base-test-data"
 REPO_SUBDIR = "flip-fl-base-test-data/xrays_mini_300"
 
 
-def download_xrays_dataset(cache_dir, output_dir, repo_id=REPO_ID):
+def download_xrays_dataset(cache_dir: str, output_dir: str, repo_id: str = REPO_ID) -> None:
     """
     Downloads the x-ray reference dataset from Hugging Face and normalises it into the layout the FL tutorial
     harnesses read (accession-resources/, dataframe.csv).
@@ -44,19 +44,13 @@ def download_xrays_dataset(cache_dir, output_dir, repo_id=REPO_ID):
     os.makedirs(output_dir)
 
     shutil.copytree(os.path.join(src_dir, "accession-resources"), os.path.join(output_dir, "accession-resources"))
-    shutil.copy(
-        os.path.join(src_dir, "sample_get_dataframe_response.csv"), os.path.join(output_dir, "dataframe.csv")
-    )
+    shutil.copy(os.path.join(src_dir, "sample_get_dataframe_response.csv"), os.path.join(output_dir, "dataframe.csv"))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--cache-dir", required=True, help="directory to fetch the raw Hugging Face snapshot into."
-    )
-    parser.add_argument(
-        "--output-dir", required=True, help="target directory for the normalised dataset (gitignored)."
-    )
+    parser.add_argument("--cache-dir", required=True, help="directory to fetch the raw Hugging Face snapshot into.")
+    parser.add_argument("--output-dir", required=True, help="target directory for the normalised dataset (gitignored).")
     parser.add_argument("--repo-id", default=REPO_ID, help="Hugging Face dataset repo id.")
     args = parser.parse_args()
 

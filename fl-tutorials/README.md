@@ -51,7 +51,9 @@ takes `download-synthea-data`.
 The simulator requires Docker, and GPU-backed examples require the NVIDIA Container Toolkit. Dataset tooling is
 shared across backends in [`datasets/`](datasets/) and downloads land in the shared gitignored `data/` root, so
 one download serves both backends; generated runs stay in gitignored per-backend output directories. Run
-`make -C fl-tutorials run-all-tutorials` only when you intentionally want the full, heavyweight suite.
+`make -C fl-tutorials run-all-tutorials` only when you intentionally want the full, heavyweight suite — it is also
+the pre-release gate, run for both backends before a release is published: see
+[*Pre-release checklist*](../CONTRIBUTING.md#pre-release-checklist).
 
 ## Check the sources without a GPU
 
@@ -68,6 +70,9 @@ make -C fl-tutorials lint              # ruff only
 It pins what each app's preprocessing chain actually feeds its model against the raw DICOM `PixelData` — see
 [`tests/README.md`](tests/README.md) for what it does and does not cover, and for why the suites run in
 different environments.
+
+It does not run the tutorials themselves: real training is what `run-all-tutorials` covers, on a GPU host, for both
+backends before a release is published. The record of that run is the *Release checks* section of the release notes.
 
 For network provisioning and standalone service operation, use the
 [`fl-services/nvflare/`](../fl-services/nvflare/README.md) or

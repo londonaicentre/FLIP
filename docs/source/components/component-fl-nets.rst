@@ -492,6 +492,42 @@ Semantics — verified against NVFLARE 2.9.0:
   Flower backend; the app-level review of uploaded training code remains the control there (Flower parity is
   tracked in `FLIP#852 <https://github.com/londonaicentre/FLIP/issues/852>`__).
 
+Trust governance document (per trust)
+=====================================
+
+A trust can also state its policy as a **governance document** (``trust/governance.<CODE>.toml``,
+`FLIP#1259 <https://github.com/londonaicentre/FLIP/issues/1259>`__) and point ``ACCESS_POLICY_FILE``
+at it. Its ``[fl_privacy.nvflare]`` section is this renderer's other input, an **alternative** to
+``FL_SITE_PRIVACY_*`` rather than an override: setting the filter in both stops the fl-client, since a
+document able to override the kit could also weaken it. Its ``[disclosure]``/``[access]`` sections
+carry ``COHORT_QUERY_THRESHOLD`` (which they may raise but never lower) and permit/deny rules over
+project and operation, enforced by ``data-access-api`` (see :doc:`component-trust-apis`). The document
+is optional, and can only tighten a trust's posture: with none configured the settings above remain
+the only controls and behaviour is unchanged. ``trust/governance.example.toml`` is a worked example of
+every key.
+
+The section is nested under the backend because ``percentile`` and ``gamma`` are NVFLARE's
+``PercentilePrivacy`` parameters. ``[fl_privacy.flower]`` is refused until Flower has a site-side hook
+(FLIP#852), and ``make -C trust check-governance`` fails a site privacy section on a Flower trust
+rather than report it active.
+
+The fl-client never mounts the whole document: researcher code runs inside the client as the same
+user, and would read every access rule. A one-shot init step in the client's own image
+(``fl-governance-init`` in Compose, the ``governance-extract`` init container on Kubernetes) runs
+``python -m flip.nvflare.site_policy --extract`` and hands the client the ``[fl_privacy]`` table
+alone. An invalid document fails that step, and the client does not start. Validate and apply an
+edit to a live trust:
+
+.. code-block:: sh
+
+   make -C trust check-governance KIT=<CODE>    # both halves, through the services' own loaders
+   make -C trust reload-governance KIT=<CODE>   # recreates data-access-api (+ the NVFLARE clients) only
+
+``reload-governance`` touches no data. Deliberately not ``up-trust`` or ``restart-trust``: both are
+first-install verbs, and on a live trust their XNAT step runs ``xnat-reset`` (wiping the XNAT archive
+and database) while their seeding step can replace the data volumes. Recreating the fl-clients does
+interrupt any job they are running, so apply between runs.
+
 Flower: local differential privacy
 ==================================
 

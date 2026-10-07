@@ -113,11 +113,13 @@ def test_get_user_permissions_no_permissions(mock_db_session_with_exec, user_id)
     mock_session.exec.assert_called_once()
 
 
+@patch("flip_api.user_services.retrieve_user_permissions.get_trust_admin_of", return_value=None)
 @patch("flip_api.user_services.retrieve_user_permissions.get_user_permissions")
 @patch("flip_api.user_services.retrieve_user_permissions.has_role")
 def test_retrieve_user_permissions_success(
     mock_has_role,
     mock_get_permissions,
+    mock_get_trust_admin_of,
     mock_db_session_with_exec,
     mock_logger,
     user_id,
@@ -136,6 +138,8 @@ def test_retrieve_user_permissions_success(
 
     assert isinstance(response, UserPermissionsResponse)
     assert response.permissions == [to_pascal_case(perm) for perm in sample_permissions]
+    assert response.trust_admin_of is None
+    mock_get_trust_admin_of.assert_called_once_with(user_id, mock_session)
     mock_has_role.assert_called_once_with(user_id, mock_session)
     assert mock_get_permissions.call_count == 1
     mock_get_permissions.assert_any_call(user_id, mock_session)

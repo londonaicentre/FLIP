@@ -1,0 +1,10 @@
+{
+    "permissions": [
+        "CanCreateProjects"
+    ],
+    "trustAdminOf": {
+        "id": "53ca8126-5551-41a8-bd0a-587956c859d5",
+        "code": "UCLH",
+        "name": "UCLH"
+    }
+}

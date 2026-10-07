@@ -39,4 +39,7 @@ JOIN omop.concept site ON site.concept_id = io.anatomic_site_concept_id
 LEFT JOIN clinical c ON c.visit_occurrence_id = io.visit_occurrence_id
 WHERE io.anatomic_site_concept_id = 4165732 -- Prostatic structure
   AND io.modality_concept_id = 4013636      -- Magnetic resonance imaging
+-- ORDER BY is load-bearing: the query is re-run at every platform stage (approval, image pull,
+-- training), and without a deterministic order a LIMIT could hand each stage a different subset.
+ORDER BY io.image_occurrence_id
 LIMIT 1000

@@ -85,8 +85,10 @@ Within that estate:
 Identity and access
 *******************
 
-**Authentication is layered.** Sign-in uses AWS Cognito with the SRP password protocol,
-which never transmits the password itself. Access tokens are verified on every request:
+**Authentication is layered.** In every deployed environment sign-in uses AWS Cognito with
+the SRP password protocol, which never transmits the password itself; the local development
+backend (Keycloak) uses the OIDC password grant on loopback only and is refused by the
+production configuration at boot. Access tokens are verified on every request:
 the signature algorithm is pinned, the issuer and audience are checked, and ID tokens
 presented in place of access tokens are rejected.
 
@@ -197,16 +199,17 @@ full reasoning, so it does not need re-deciding the next time this class of find
 submitted, the net's FL API downloads the bundled app server-side from presigned S3 URLs
 handed to it by the Central Hub API. The FL API authenticates no caller of its own — it
 trusts its position on the hub's internal network — so that download is guarded as a
-server-side request forgery surface: URLs must be https on the default port, may not name
-a private, loopback or link-local address as an IP literal in any spelling, and a DNS name
-is resolved with every answer held to the same check, failing closed if it cannot be
-resolved. Above those checks sits an explicit host allow-list, ``BUNDLE_URL_ALLOWED_HOSTS``,
-consulted before any name is resolved: every deployment derives it from its AWS region as
-the regional S3 endpoint the hub presigns against (``s3.<region>.amazonaws.com``), so the
-FL API will fetch from that one host and nothing else. The allow-list is the control that
-matters — the range check on resolved addresses cannot, on its own, close a DNS-rebinding
-race between the check and the fetch — and an FL API started without it logs a warning
-naming what that leaves open.
+server-side request forgery surface: URLs may never name a private, loopback or link-local
+address as an IP literal in any spelling, and an explicit origin allow-list,
+``BUNDLE_URL_ALLOWED_ORIGINS``, is consulted before any name is resolved: every deployment
+derives it from the object store the hub presigns against — on AWS the regional S3 endpoint
+(``https://s3.<region>.amazonaws.com``), in local development the RustFS container in the
+dev compose — so the FL API will fetch from that one origin and nothing else. Without a
+list the URL must be https on the default port and a DNS name is resolved with every answer
+held to the same range check, failing closed if it cannot be resolved. The allow-list is the
+control that matters — the range check on resolved addresses cannot, on its own, close a
+DNS-rebinding race between the check and the fetch — and an FL API started without it logs
+a warning naming what that leaves open.
 
 **FL traffic is mutually authenticated.** Both supported backends — NVIDIA FLARE and
 Flower — run over TLS with per-participant certificates issued during network

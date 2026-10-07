@@ -57,9 +57,7 @@ def _db_with_trust_rows(rows: list[Trust]) -> MagicMock:
     exercise the same candidate set the production query yields.
     """
     db = MagicMock(spec=Session)
-    db.exec.return_value.all.return_value = [
-        t for t in rows if t.api_key_hash is not None
-    ]
+    db.exec.return_value.all.return_value = [t for t in rows if t.api_key_hash is not None]
     db.get.return_value = None  # default: cache-hit path treated as stale
     return db
 
@@ -89,9 +87,7 @@ class TestAuthenticateTrust:
         assert result.name == TRUST_NAME
 
     def test_invalid_api_key_returns_401(self):
-        db = _db_with_trust_rows(
-            [Trust(id=uuid4(), name=TRUST_NAME, api_key_hash=VALID_TEST_KEY_HASH)]
-        )
+        db = _db_with_trust_rows([Trust(id=uuid4(), name=TRUST_NAME, api_key_hash=VALID_TEST_KEY_HASH)])
         with pytest.raises(HTTPException) as exc_info:
             authenticate_trust(api_key=WRONG_TEST_KEY, db=db)
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
@@ -515,8 +511,10 @@ class TestCanModifyModel:
         mock_model.owner_id = uuid4()  # Not the caller — proves the project path is used
         db.exec.return_value.first.return_value = mock_model
 
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False), \
-             patch(PATCH_CAN_MODIFY_PROJECT, return_value=True) as mock_cmp:
+        with (
+            patch(PATCH_HAS_PERMISSIONS, return_value=False),
+            patch(PATCH_CAN_MODIFY_PROJECT, return_value=True) as mock_cmp,
+        ):
             result = can_modify_model(user_id, model_id, db)
 
         assert result is True
@@ -533,9 +531,11 @@ class TestCanModifyModel:
         mock_model.owner_id = user_id
         db.exec.return_value.first.return_value = mock_model
 
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False), \
-             patch(PATCH_CAN_MODIFY_PROJECT, return_value=False), \
-             patch(PATCH_CAN_CONTRIBUTE_TO_PROJECT, return_value=True) as mock_contrib:
+        with (
+            patch(PATCH_HAS_PERMISSIONS, return_value=False),
+            patch(PATCH_CAN_MODIFY_PROJECT, return_value=False),
+            patch(PATCH_CAN_CONTRIBUTE_TO_PROJECT, return_value=True) as mock_contrib,
+        ):
             result = can_modify_model(user_id, model_id, db)
 
         assert result is True
@@ -552,9 +552,11 @@ class TestCanModifyModel:
         mock_model.owner_id = uuid4()  # Different user owns the model
         db.exec.return_value.first.return_value = mock_model
 
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False), \
-             patch(PATCH_CAN_MODIFY_PROJECT, return_value=False), \
-             patch(PATCH_CAN_CONTRIBUTE_TO_PROJECT, return_value=True) as mock_contrib:
+        with (
+            patch(PATCH_HAS_PERMISSIONS, return_value=False),
+            patch(PATCH_CAN_MODIFY_PROJECT, return_value=False),
+            patch(PATCH_CAN_CONTRIBUTE_TO_PROJECT, return_value=True) as mock_contrib,
+        ):
             result = can_modify_model(user_id, model_id, db)
 
         assert result is False
@@ -573,9 +575,11 @@ class TestCanModifyModel:
         mock_model.owner_id = user_id
         db.exec.return_value.first.return_value = mock_model
 
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False), \
-             patch(PATCH_CAN_MODIFY_PROJECT, return_value=False), \
-             patch(PATCH_CAN_CONTRIBUTE_TO_PROJECT, return_value=False):
+        with (
+            patch(PATCH_HAS_PERMISSIONS, return_value=False),
+            patch(PATCH_CAN_MODIFY_PROJECT, return_value=False),
+            patch(PATCH_CAN_CONTRIBUTE_TO_PROJECT, return_value=False),
+        ):
             result = can_modify_model(user_id, model_id, db)
 
         assert result is False

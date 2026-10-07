@@ -10,11 +10,11 @@
 # limitations under the License.
 #
 
-"""Real-Cognito round-trips for ``flip_api.utils.cognito_helpers`` + user_services.
+"""Real-Cognito round-trips for the Cognito identity provider + user_services.
 
 Replaces the all-mocked unit tests for register/delete/update/list users.
 moto's ``cognito-idp`` provider intercepts the boto3 calls that
-``cognito_helpers`` makes, so the production code path runs end-to-end:
+``auth/identity/cognito.py`` makes, so the production code path runs end-to-end:
 ``register_user`` actually creates a user in the moto pool and an audit row
 in the Postgres test container; ``delete_user`` actually removes the Cognito
 user, drops role grants, and writes audit; ``update_user`` flips the
@@ -49,9 +49,7 @@ def _admin_create_user(pool_id: str, email: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_register_user_creates_user_in_pool_and_writes_audit(
-    client: TestClient, session, cognito_user_pool
-):
+def test_register_user_creates_user_in_pool_and_writes_audit(client: TestClient, session, cognito_user_pool):
     """Happy path: endpoint creates a Cognito user AND writes a 'Registered user' audit row."""
     admin_id = admin_user(session)
     override_verify_token_as(admin_id)
@@ -72,10 +70,7 @@ def test_register_user_creates_user_in_pool_and_writes_audit(
 
     cognito = boto3.client("cognito-idp")
     pool_users = cognito.list_users(UserPoolId=cognito_user_pool["pool_id"])["Users"]
-    pool_subs = {
-        next(a["Value"] for a in u["Attributes"] if a["Name"] == "sub")
-        for u in pool_users
-    }
+    pool_subs = {next(a["Value"] for a in u["Attributes"] if a["Name"] == "sub") for u in pool_users}
     assert str(new_user_id) in pool_subs
 
     audit = session.exec(
@@ -85,9 +80,7 @@ def test_register_user_creates_user_in_pool_and_writes_audit(
     assert audit.modified_by_user_id == admin_id
 
 
-def test_register_user_duplicate_email_returns_400(
-    client: TestClient, session, cognito_user_pool
-):
+def test_register_user_duplicate_email_returns_400(client: TestClient, session, cognito_user_pool):
     """Cognito's ``UsernameExistsException`` must surface as 400, not 500."""
     admin_id = admin_user(session)
     override_verify_token_as(admin_id)
@@ -132,9 +125,7 @@ def test_register_user_403_for_non_admin(client: TestClient, session, cognito_us
 # ---------------------------------------------------------------------------
 
 
-def test_delete_user_removes_user_from_pool_and_drops_role_grants(
-    client: TestClient, session, cognito_user_pool
-):
+def test_delete_user_removes_user_from_pool_and_drops_role_grants(client: TestClient, session, cognito_user_pool):
     """Endpoint must remove the user from Cognito, drop user_role rows, and write audit."""
     admin_id = admin_user(session)
     override_verify_token_as(admin_id)
@@ -148,10 +139,7 @@ def test_delete_user_removes_user_from_pool_and_drops_role_grants(
 
     cognito = boto3.client("cognito-idp")
     remaining = cognito.list_users(UserPoolId=cognito_user_pool["pool_id"])["Users"]
-    remaining_subs = {
-        next(a["Value"] for a in u["Attributes"] if a["Name"] == "sub")
-        for u in remaining
-    }
+    remaining_subs = {next(a["Value"] for a in u["Attributes"] if a["Name"] == "sub") for u in remaining}
     assert sub not in remaining_subs
 
     leftover_roles = session.exec(select(UserRole).where(UserRole.user_id == UUID(sub))).all()
@@ -169,9 +157,7 @@ def test_delete_user_removes_user_from_pool_and_drops_role_grants(
 # ---------------------------------------------------------------------------
 
 
-def test_update_user_toggles_enabled_flag_in_pool(
-    client: TestClient, session, cognito_user_pool
-):
+def test_update_user_toggles_enabled_flag_in_pool(client: TestClient, session, cognito_user_pool):
     """``disabled=True`` must call admin_disable_user; pool reflects the change."""
     admin_id = admin_user(session)
     override_verify_token_as(admin_id)
@@ -200,9 +186,7 @@ def test_update_user_404_for_unknown_user(client: TestClient, session, cognito_u
     assert response.status_code == 404, response.text
 
 
-def test_update_user_queues_xnat_profile_task(
-    client: TestClient, session, cognito_user_pool, trust_factory
-):
+def test_update_user_queues_xnat_profile_task(client: TestClient, session, cognito_user_pool, trust_factory):
     """Production code queues a ``TrustTask`` per trust on every user update."""
     admin_id = admin_user(session)
     override_verify_token_as(admin_id)

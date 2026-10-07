@@ -10,21 +10,44 @@
 # limitations under the License.
 #
 
+import os
+
 import boto3
 from botocore.exceptions import ProfileNotFound
 
+from flip_api.auth.identity.keycloak import password_grant
 from flip_api.config import get_settings
 from flip_api.utils.constants import ADMIN_EMAIL_1 as ADMIN_EMAIL
 
 
 def admin_authentication():
     """
-    Authenticate as an admin user.
+    Authenticate as an admin user through the configured identity provider.
+
+    Returns the request headers for the hub. Under ``AUTH_BACKEND=keycloak``
+    this is the same OIDC password grant the UI uses, against the public URL
+    (so the token's ``iss`` is the one flip-api verifies); the refresh token
+    is left in ``FLIP_E2E_REFRESH_TOKEN`` for the smoke's ``_maybe_refresh``.
+    Under cognito it is the IAM-gated admin flow, which needs AWS credentials.
     """
+    settings = get_settings()
+    if settings.AUTH_BACKEND == "keycloak":
+        assert settings.KEYCLOAK_PUBLIC_URL is not None
+        assert settings.ADMIN_USER_PASSWORD is not None
+        tokens = password_grant(
+            settings.KEYCLOAK_PUBLIC_URL,
+            settings.KEYCLOAK_REALM,
+            settings.KEYCLOAK_CLIENT_ID,
+            ADMIN_EMAIL,
+            settings.ADMIN_USER_PASSWORD.get_secret_value(),
+        )
+        os.environ.setdefault("FLIP_E2E_REFRESH_TOKEN", tokens.get("refresh_token", ""))
+        return {"scheme": "Bearer", "authorization": "Bearer " + tokens["access_token"]}
+
     # Build a client using an explicit profile when available.
     # This avoids surprises when pytest runs in a different environment.
-    region = get_settings().AWS_REGION
-    profile = get_settings().AWS_PROFILE
+    region = settings.AWS_REGION
+    profile = settings.AWS_PROFILE
 
     try:
         session = boto3.Session(profile_name=profile)  # loads ~/.aws/config
@@ -48,7 +71,28 @@ def admin_authentication():
 
     except client.exceptions.InvalidParameterException as e:
         if "USER_PASSWORD_AUTH" in str(e):
-            # If USER_PASSWORD_AUTH is not enabled, try ADMIN_INITIATE_AUTH
+            # USER_PASSWORD_AUTH is not enabled on the app client. Try the choice-based USER_AUTH
+            # flow next (ALLOW_USER_AUTH, answered with the password): it is a client-side flow,
+            # so it works with any AWS credentials — a developer's SSO role has no
+            # cognito-idp:AdminInitiateAuth, which the ADMIN_NO_SRP_AUTH fallback below needs.
+            try:
+                response = client.initiate_auth(
+                    ClientId=get_settings().AWS_COGNITO_APP_CLIENT_ID,
+                    AuthFlow="USER_AUTH",
+                    AuthParameters={
+                        "USERNAME": ADMIN_EMAIL,
+                        "PREFERRED_CHALLENGE": "PASSWORD",
+                        "PASSWORD": get_settings().ADMIN_USER_PASSWORD.get_secret_value(),
+                    },
+                )
+                if "AuthenticationResult" in response:
+                    return {
+                        "scheme": "Bearer",
+                        "authorization": "Bearer " + response["AuthenticationResult"]["AccessToken"],
+                    }
+            except client.exceptions.InvalidParameterException:
+                pass  # USER_AUTH not enabled either; fall through to the admin flow
+            # Last resort: ADMIN_INITIATE_AUTH (needs cognito-idp:AdminInitiateAuth on the caller)
             response = client.admin_initiate_auth(
                 UserPoolId=get_settings().AWS_COGNITO_USER_POOL_ID,
                 ClientId=get_settings().AWS_COGNITO_APP_CLIENT_ID,

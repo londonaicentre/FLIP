@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import os
 import tomllib
 from functools import lru_cache
 from pathlib import Path
@@ -45,6 +46,8 @@ async def health_check() -> dict[str, str | None]:
     Health check endpoint for the Data Access API
 
     Returns:
-        dict[str, str | None]: The status of the service and its installed package version.
+        dict[str, str | None]: The status of the service and the build it runs — the
+        CI-baked ``FLIP_RELEASE`` image tag (v<X.Y.Z> or sha-<short7>, FLIP#1204), or the
+        pyproject version for a local build that carries none.
     """
-    return {"status": "ok", "version": _service_version()}
+    return {"status": "ok", "version": os.environ.get("FLIP_RELEASE") or _service_version()}

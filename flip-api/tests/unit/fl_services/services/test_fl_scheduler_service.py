@@ -95,9 +95,7 @@ def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
         # Net reports nvflare so the nvflare bundler (patched to raise) is the path taken.
         mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
         with (
-            patch(
-                "flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model"
-            ) as mock_release,
+            patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model") as mock_release,
             pytest.raises(Exception, match="bundle failed"),
         ):
             fl_scheduler_service.prepare_and_start_training(
@@ -528,9 +526,7 @@ def test_check_for_queued_jobs_preserves_a_newer_valid_retry_when_retiring_an_in
     mock_revert.assert_called_once()
 
 
-def test_check_for_queued_jobs_commits_the_retirement_before_any_bookkeeping(
-    fake_session, scheduler_id, model_id
-):
+def test_check_for_queued_jobs_commits_the_retirement_before_any_bookkeeping(fake_session, scheduler_id, model_id):
     """The retirement must be durable before anything that can roll the session back runs.
 
     On the valid-retry branch update_model_status is deliberately skipped, so add_log used to be
@@ -613,6 +609,7 @@ def test_get_required_training_details_no_query(fake_session, model_id):
 
 
 # get_slot_names_by_trust_ids — added in the connection-status PR.
+
 
 def test_get_slot_names_by_trust_ids_empty_input_returns_empty(fake_session):
     """An empty input is a "no trusts to resolve" sentinel — return {} without
@@ -709,9 +706,7 @@ class TestLogQueuePositions:
 
     def test_second_of_two_queued_jobs_gets_position_two(self, fake_session):
         first, second = _queued_job(), _queued_job()
-        fake_session.exec.side_effect = _exec_returning(
-            [first, second], [_position_details(first.id, 1)]
-        )
+        fake_session.exec.side_effect = _exec_returning([first, second], [_position_details(first.id, 1)])
         with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
             fl_scheduler_service.log_queue_positions(fake_session)
         mock_add_log.assert_called_once_with(

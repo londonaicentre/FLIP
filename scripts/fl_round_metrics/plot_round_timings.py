@@ -125,10 +125,15 @@ def main() -> None:
     for ax, metric in zip(axes, order):
         sub = long[long["metric"] == metric]
         sns.boxplot(
-            data=sub, y="seconds", color=SERIES,
-            width=0.4, linewidth=1.1, fliersize=0,
+            data=sub,
+            y="seconds",
+            color=SERIES,
+            width=0.4,
+            linewidth=1.1,
+            fliersize=0,
             boxprops={"alpha": 0.35, "edgecolor": SERIES},
-            whiskerprops={"color": SERIES}, capprops={"color": SERIES},
+            whiskerprops={"color": SERIES},
+            capprops={"color": SERIES},
             medianprops={"color": SERIES, "linewidth": 1.6},
             ax=ax,
         )
@@ -136,8 +141,13 @@ def main() -> None:
 
         median = sub["seconds"].median()
         ax.annotate(
-            f"median {median:.3g}s", (0, median), xytext=(0, 9),
-            textcoords="offset points", ha="center", fontsize=8.5, color=INK,
+            f"median {median:.3g}s",
+            (0, median),
+            xytext=(0, 9),
+            textcoords="offset points",
+            ha="center",
+            fontsize=8.5,
+            color=INK,
         )
 
         ax.set_title(metric, fontsize=10.5, color=INK)
@@ -156,8 +166,12 @@ def main() -> None:
         if top["round_duration_s"] > 2 * durations["round_duration_s"].median():
             axes[order.index("Round duration")].annotate(
                 f"round {int(top['round'])}: {top['round_duration_s']:.0f}s",
-                (0, top["round_duration_s"]), xytext=(8, -3),
-                textcoords="offset points", ha="left", fontsize=8.5, color=INK_2,
+                (0, top["round_duration_s"]),
+                xytext=(8, -3),
+                textcoords="offset points",
+                ha="left",
+                fontsize=8.5,
+                color=INK_2,
             )
 
     # An aborted run (no round ever finished) leaves end_ms all-NaN, so both the span and
@@ -167,8 +181,7 @@ def main() -> None:
     started_txt = f"started {started:%Y-%m-%d %H:%M} {args.time_label}" if pd.notna(started) else "started n/a"
     span_txt = f"span {span_s / 3600:.1f} h" if pd.notna(span_s) else "span n/a"
     context = (
-        f"{len(df)} rounds | backend: {args.backend} | "
-        f"{started_txt} | rounds 0–{int(df['round'].max())} {span_txt}"
+        f"{len(df)} rounds | backend: {args.backend} | {started_txt} | rounds 0–{int(df['round'].max())} {span_txt}"
     )
     fig.suptitle(
         f"Per-round timing — {title_subject(args.model_id)}", fontsize=12, color=INK, x=0.06, y=0.985, ha="left"

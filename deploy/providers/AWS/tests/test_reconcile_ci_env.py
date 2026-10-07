@@ -283,12 +283,7 @@ class TestRedaction:
 class TestEnvFileParsing:
     def test_reads_keys_and_keeps_values_verbatim(self, tmp_path):
         f = tmp_path / ".env"
-        f.write_text(
-            '# comment\n'
-            'FL_KIT_SLOT_NAMES=["Trust_1", "Trust_2"]\n'
-            "EMPTY=\n"
-            "not a variable line\n"
-        )
+        f.write_text('# comment\nFL_KIT_SLOT_NAMES=["Trust_1", "Trust_2"]\nEMPTY=\nnot a variable line\n')
         parsed = rce.read_env_file(str(f))
         # The HCL list literal must survive intact — it is handed to Terraform
         # as a list, not a string.

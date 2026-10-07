@@ -470,12 +470,16 @@ def configure_server(
         # ScatterAndGather close every round on the first (fastest) trust's update, silently
         # dropping all slower trusts' contributions (observed live: a 2-trust 20-round job
         # aggregated 20/20 updates from one trust and 0 from the other).
-        if "args" in workflow and "num_rounds" in workflow["args"] and not isinstance(
-            workflow["args"]["num_rounds"], str
+        if (
+            "args" in workflow
+            and "num_rounds" in workflow["args"]
+            and not isinstance(workflow["args"]["num_rounds"], str)
         ):
             workflow["args"]["num_rounds"] = global_rounds
-        if "args" in workflow and "min_clients" in workflow["args"] and not isinstance(
-            workflow["args"]["min_clients"], str
+        if (
+            "args" in workflow
+            and "min_clients" in workflow["args"]
+            and not isinstance(workflow["args"]["min_clients"], str)
         ):
             workflow["args"]["min_clients"] = len(trusts)
 
@@ -540,9 +544,7 @@ def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
         # NVFLARE's GPUResourceManager reads the requirement via num_gpu_key="num_of_gpus"
         # (app_common/resource_managers/gpu_resource_manager.py) and RAISES if it's absent — so
         # the key must be "num_of_gpus", not "num_gpus", or the job fails to schedule.
-        resource_spec = {
-            trust: {"num_of_gpus": num_gpus, "mem_per_gpu_in_GiB": mem_per_gpu_in_gib} for trust in trusts
-        }
+        resource_spec = {trust: {"num_of_gpus": num_gpus, "mem_per_gpu_in_GiB": mem_per_gpu_in_gib} for trust in trusts}
     else:
         resource_spec = {}
 

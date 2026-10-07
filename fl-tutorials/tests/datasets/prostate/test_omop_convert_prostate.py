@@ -69,13 +69,27 @@ def write_sources(root: Path) -> tuple[Path, Path]:
             for j, modality in enumerate(MODALITIES):
                 writer.writerow(
                     {
-                        "patient_id": patient, "study_id": study, "modality": modality, "PatientID": patient,
-                        "PatientSex": "M", "PatientAge": f"{age.zfill(3)}Y", "StudyDate": date,
-                        "StudyInstanceUID": f"1.2.{i}", "SeriesInstanceUID": f"1.2.{i}.{j}",
-                        "SeriesDescription": modality, "AccessionNumber": f"{patient}_{study}", "Modality": "MR",
-                        "Manufacturer": "SIEMENS", "ManufacturerModelName": "Skyra", "SliceThickness": "3.0",
-                        "Rows": "640", "Columns": "640", "PixelSpacing": "0.5\\0.5", "ClinicalTrialSiteID": center,
-                        "NumberOfInstances": "31", "source_trust": SOURCE_TRUST[center],
+                        "patient_id": patient,
+                        "study_id": study,
+                        "modality": modality,
+                        "PatientID": patient,
+                        "PatientSex": "M",
+                        "PatientAge": f"{age.zfill(3)}Y",
+                        "StudyDate": date,
+                        "StudyInstanceUID": f"1.2.{i}",
+                        "SeriesInstanceUID": f"1.2.{i}.{j}",
+                        "SeriesDescription": modality,
+                        "AccessionNumber": f"{patient}_{study}",
+                        "Modality": "MR",
+                        "Manufacturer": "SIEMENS",
+                        "ManufacturerModelName": "Skyra",
+                        "SliceThickness": "3.0",
+                        "Rows": "640",
+                        "Columns": "640",
+                        "PixelSpacing": "0.5\\0.5",
+                        "ClinicalTrialSiteID": center,
+                        "NumberOfInstances": "31",
+                        "source_trust": SOURCE_TRUST[center],
                     }  # fmt: skip
                 )
     marksheet = root / "marksheet.csv"
@@ -85,10 +99,20 @@ def write_sources(root: Path) -> tuple[Path, Path]:
         for patient, study, date, age, psa, psad, vol, pirads, isup, cspca, center in STUDIES:
             writer.writerow(
                 {
-                    "patient_id": patient, "study_id": study, "mri_date": f"{date[:4]}-{date[4:6]}-{date[6:]}",
-                    "patient_age": age, "psa": psa, "psad": psad, "prostate_volume": vol, "histopath_type": "MRBx",
-                    "lesion_PIRADS": pirads, "lesion_GS": "", "lesion_ISUP": "", "case_ISUP": isup,
-                    "case_csPCa": cspca, "center": center,
+                    "patient_id": patient,
+                    "study_id": study,
+                    "mri_date": f"{date[:4]}-{date[4:6]}-{date[6:]}",
+                    "patient_age": age,
+                    "psa": psa,
+                    "psad": psad,
+                    "prostate_volume": vol,
+                    "histopath_type": "MRBx",
+                    "lesion_PIRADS": pirads,
+                    "lesion_GS": "",
+                    "lesion_ISUP": "",
+                    "case_ISUP": isup,
+                    "case_csPCa": cspca,
+                    "center": center,
                 }  # fmt: skip
             )
     return metadata, marksheet

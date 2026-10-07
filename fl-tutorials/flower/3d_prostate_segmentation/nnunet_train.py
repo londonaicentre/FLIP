@@ -9,6 +9,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# REFERENCE ONLY — the standalone (non-federated) nnU-Net trainer this tutorial's ClientApp was ported
+# from. It is kept for comparison and is not runnable on the platform: it needs nnunetv2 (`uv sync
+# --group planning`) and reads site folders, not a FLIP cohort. The federated version is app/client_app.py.
 # Adapted from
 # https://github.com/yoviny/MambaX-Net/blob/main/mambax_net/training/nnunet_train.py
 
@@ -23,7 +26,6 @@ import pandas as pd
 import torch
 from batchgenerators.utilities.file_and_folder_operations import load_json
 from monai.data import PatchIterd, list_data_collate
-from monai.losses import DiceCELoss
 from monai.transforms import (
     Compose,
     RandAxisFlipd,
@@ -40,17 +42,18 @@ from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
 from torch.optim.lr_scheduler import PolynomialLR
 from torch.utils.data import ConcatDataset, DataLoader
 
-from dataset import PicaiDataset
-from network import (
-    build_network_architecture,
-    set_deep_supervision_enabled,
-)
-from preprocess import build_case_transform
-from train_helpers import (
+from app.dataset import PicaiDataset
+from app.preprocess import build_case_transform
+from app.task import DiceBCELoss
+from app.train_helpers import (
     init_logger,
     possible_patch_size,
     seed_torch,
     train_seg,
+)
+from network import (
+    build_network_architecture,
+    set_deep_supervision_enabled,
 )
 
 SEED = 42
@@ -181,34 +184,36 @@ def build_augmentations() -> Compose:
     Returns:
         Compose: Operates on a `{"image", "mask"}` dict.
     """
-    return Compose([
-        RandAxisFlipd(prob=0.1, keys=["image", "mask"]),
-        RandRotate90d(prob=0.2, keys=["image", "mask"]),
-        RandGaussianNoised(keys=["image"], prob=0.45),
-        RandShiftIntensityd(keys=["image"], offsets=(10, 20), prob=0.15),
-        RandZoomd(
-            prob=0.25,
-            min_zoom=0.8,
-            max_zoom=1.2,
-            keep_size=True,
-            keys=["image", "mask"],
-        ),
-        RandGaussianSmoothd(
-            keys=["image"],
-            sigma_x=(0.25, 1.5),
-            sigma_y=(0.25, 1.5),
-            sigma_z=(0.25, 1.5),
-            approx="erf",
-            prob=0.15,
-        ),
-        RandCoarseDropoutd(
-            keys=["image"],
-            holes=8,
-            max_holes=15,
-            spatial_size=(30, 30, 5),
-            prob=0.15,
-        ),
-    ])
+    return Compose(
+        [
+            RandAxisFlipd(prob=0.1, keys=["image", "mask"]),
+            RandRotate90d(prob=0.2, keys=["image", "mask"]),
+            RandGaussianNoised(keys=["image"], prob=0.45),
+            RandShiftIntensityd(keys=["image"], offsets=(10, 20), prob=0.15),
+            RandZoomd(
+                prob=0.25,
+                min_zoom=0.8,
+                max_zoom=1.2,
+                keep_size=True,
+                keys=["image", "mask"],
+            ),
+            RandGaussianSmoothd(
+                keys=["image"],
+                sigma_x=(0.25, 1.5),
+                sigma_y=(0.25, 1.5),
+                sigma_z=(0.25, 1.5),
+                approx="erf",
+                prob=0.15,
+            ),
+            RandCoarseDropoutd(
+                keys=["image"],
+                holes=8,
+                max_holes=15,
+                spatial_size=(30, 30, 5),
+                prob=0.15,
+            ),
+        ]
+    )
 
 
 def train_loop():
@@ -381,11 +386,7 @@ def train_loop():
 
     early_stopping = EarlyStopping(patience=config.get("patience", 50), verbose=False)
 
-    criterion = DiceCELoss(
-        include_background=True,
-        sigmoid=True,
-        to_onehot_y=False,
-    )
+    criterion = DiceBCELoss()
 
     if config.get("deep_supervision", True):
         criterion = DeepSupervisionWrapper(criterion, ds_loss_weights)

@@ -63,9 +63,7 @@ def http_get(url: str, request_id: str | None = None, timeout: float | None = No
             raise
 
 
-def http_post(
-    url: str, request_id: str | None = None, data: dict | None = None, timeout: float | None = None
-) -> Any:
+def http_post(url: str, request_id: str | None = None, data: dict | None = None, timeout: float | None = None) -> Any:
     """Perform an HTTP POST request to the specified URL with optional request ID for tracing.
 
     Args:

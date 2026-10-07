@@ -719,9 +719,7 @@ class TestConfigureServer:
 
         modified_config = mock_write_config.call_args[0][0]
         injected_paths = {
-            f.get("path")
-            for b in modified_config.get("task_data_filters", [])
-            for f in b.get("filters", [])
+            f.get("path") for b in modified_config.get("task_data_filters", []) for f in b.get("filters", [])
         }
         assert "flip.nvflare.components.TrimBroadcastVars" not in injected_paths
         assert "flip.nvflare.components.TrimEvalBroadcastVars" not in injected_paths
@@ -837,9 +835,7 @@ class TestConfigureServer:
                 aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
             )
 
-    def test_configure_server_evaluation_recipe_config(
-        self, mock_isfile, mock_read_config, mock_write_config
-    ):
+    def test_configure_server_evaluation_recipe_config(self, mock_isfile, mock_read_config, mock_write_config):
         """The recipe-generated ``evaluation`` server config has no aggregator component and
         workflows without ``participating_clients``/``ignore_result_error`` (GlobalModelEval discovers
         clients at runtime). The generic assembly must still set model_id/global_rounds/min_clients and

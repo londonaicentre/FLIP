@@ -10,27 +10,11 @@
 # limitations under the License.
 #
 
-data/
+.flwr/
 .venv/
 uv.lock
-# nnU-Net fingerprint/plans files are generated per-run by calculate_dataset_fingerprint_segmentation.py
-# and stay untracked; train_config.json is checked-in source, not an artefact.
-configs/*
-!configs/train_config.json
+# `make plan` scratch: the fingerprint + plan the planner writes. The plan that ships is the copy
+# committed as app/nnUNetPlans_segmentation.json.
+configs/
 cache/
-.neuralmind
-
-# Local training run outputs (nnunet_train.py --site-dir)
-logs/
-model_weights/
-checkpoints/
-runs/
-predictions/
-
-# Throwaway upstream-parity checks (not part of the fl-tutorials test suite)
-test_upstream_parity.py
-.pytest_cache/
-
-# Per-run metrics artefacts written by inference_func
 *_bootstrap.csv
-test_resample_roundtrip.py

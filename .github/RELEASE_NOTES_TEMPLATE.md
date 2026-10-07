@@ -15,39 +15,63 @@
 
 ## :sparkles: Highlights
 
-- **Authenticated encryption for every hub↔trust payload** (#1180) — AES-256-GCM in a versioned, key-id'd envelope, with the payload's purpose bound into the authentication tag, replacing unauthenticated AES-CBC. A tampered payload, a wrong key or a re-targeted task now fails closed instead of decrypting to plausible plaintext. **There is no CBC fallback** — see Breaking Changes.
-- **LZA-managed AWS estates** (#749, via #979, #1182, #1192) — `PROD=lza` / `PROD=lza-stag` deployment modes for Landing Zone Accelerator workload accounts, the web leg served from the internal NLB with static targets (no relay Lambda), and an LZA variant of the Central Hub diagrams and deploy pages.
-- **The trust node, in its shapes** (#1213, via #1214) — the Helm chart and the on-prem Ansible play move under `trust/deploy/` beside the compose files, leaving `deploy/providers/` as infrastructure provisioning only.
-- **OHIF viewer ships as a default XNAT plugin** (#1243, via #1244) in every deployment mode — compose, EC2, on-prem and Kubernetes — with the plugin roster pinned across `ensure_plugins.sh` and the Helm chart.
-- **FL apps are offline by contract** (#1206, #1208, via #1207, #1209) — nothing under `fl-apps/` or a tutorial's app directory may fetch weights at run time, weights ship as scanned uploads staged by `make -C fl-tutorials download-weights`, and every `torch.load` is pinned to `weights_only=True`. An AST guard in CI enforces both.
-- **Flower tutorials run on the flwr simulator** (#1159) with app code identical to the platform's — `make -C fl-tutorials sim-tutorial TUTORIAL=… FL_BACKEND=flower`, no containers, site identity from the run config.
-- **Federated EHR risk prediction** (#1068) — a T2DM MLP over OMOP tabular data on Synthea open data, on both backends, exercising the tabular-only (no-imaging) project path end to end.
-- **XNAT invites, not emailed passwords** (PT-079, via #977) — new trust users get a set-password link instead of a credential in an email, with enclave branding on the templates.
-- **September security review landed** (#1202) — enforcing CSP, an authenticated `GET /api/trust/health`, a real `BUNDLE_URL_ALLOWED_HOSTS` with resolved bundle hosts, a sign-out that discards the page's cache, a fork-PR image-build guard and a narrowed omop-db grant.
-- **CI proportional to the change** (#1223, #1254) — the service suites run only for the paths they cover on PRs into `develop`, with the full suite on PRs into `main`; and detect-secrets can now actually fail the build (#1215, via #1216).
+- **A trust can write its own access rules** (#1297) — an optional governance document, one TOML file per trust (`trust/governance.<CODE>.toml`, worked example `trust/governance.example.toml`), named by `ACCESS_POLICY_FILE` in the kit. `[disclosure]` can raise the trust's cohort floor above `COHORT_QUERY_THRESHOLD` (never lower it); `[access]` permits or denies an operation per project; `[fl_privacy.nvflare]` sets the NVFLARE client's site privacy filter. The document is operator-owned and mounted read-only: the Central Hub cannot set, read or override it. With no document, nothing changes.
+- **Site upgrades say when a newer release exists** (#1332) — the upgrade verbs name a more recent platform release and its date. If the Central Hub already runs it, the operator can stop and move to it; if not, the verb only warns, because a site must not run ahead of the Central Hub.
 
 ## :warning: Breaking Changes
 
-- **AES-256-GCM is a flag day** (#1180). There is no compatibility with the pre-#1179 CBC format, so the hub and **every** trust registered to it must upgrade together: enable Deployment Mode, wait for FL to quiesce, then redeploy the hub and all trust services. `AES_KEY_BASE64` must decode to exactly **32 bytes** — a 16- or 24-byte key is now rejected rather than silently running AES-128/192 — and any mismatch surfaces as `Invalid payload: failed authentication` on every task.
-- **`MIN_CLIENTS` is removed** (#1230, via #1233 and #1235). The FL quorum is a property of a job, not of the federation: fl-api already writes the project's trust count into every job. Delete the line from kit and env files — a leftover is ignored. On stag/prod, dropping it from the fl-server task definitions is a task-definition revision, so the Terraform apply trips the FL quiesce gate (#770).
-- **Trust deployment paths moved** (#1214): `deploy/providers/kubernetes/` → `trust/deploy/helm/`, and `deploy/providers/local/site_local_trust.yml` → `trust/deploy/ansible/onprem.yml`. The `make` verbs (`deploy-trust-k8s`, `provision-local-trust`) are unchanged; anything referencing the old paths directly — operator scripts, CI filters, local checkouts — needs updating.
-- **`GET /api/trust/health` now requires authentication** (#1202). It previously returned every trust's id, name and online flag to any anonymous caller behind CloudFront. No FLIP consumer changes: the UI already polls it beside the authenticated `/trust`.
-- **flip-ui's Content-Security-Policy is enforcing, not report-only** (#417, via #1202), and gains `base-uri 'none'` + `form-action 'self'`. A deployment that relied on report-only tolerance will now see violations blocked.
-- **FL apps may not download at run time** (#1206, #1208). `pretrained=True`, torchvision weight enums, `torch.hub.load`, `from_pretrained("org/x")`, `load_state_dict_from_url`, MONAI bundle downloads and any `torch.load` without `weights_only=True` fail the guard inside `fl-apps/` and `fl-tutorials/**/app*/`. Operator-provided app templates need the same treatment; weights ship as uploaded files instead.
+None. A trust without a governance document behaves as on v0.10.0, and nothing in this release changes the hub↔site contract.
+
+## :arrows_counterclockwise: Site upgrade
+
+<!-- The prompt to trust operators (FLIP#1204). Sites upgrade on their own schedule and to the
+     release their hub runs; this section is how they learn what this release asks of them. -->
+
+<!-- Fill the first three lines in for EVERY release; they are not boilerplate. "Ordering" is where a
+     flag-day is announced: a payload-cipher change or an FL-framework bump means hub AND sites in one
+     Deployment-Mode window, and a site left behind fails every task until it moves. -->
+
+- **Required:** no, if you are on v0.7.0 or later. Upgrade to adopt a governance document (#1297). **Yes, and as a flag day, if you are on v0.6.x or earlier**: you cross v0.7.0's AES-256-GCM change on the way here, and that has no CBC fallback.
+- **Ordering:** sites at their own pace, before or after the hub — the Central Hub is unchanged in this release. From v0.6.x, hub and sites move together in one Deployment-Mode window.
+- **Refreshed kit needed:** no — the Hub-shared block is unchanged.
+- **Adopting a governance document** (optional, after the upgrade): write `trust/governance.<CODE>.toml`, set `ACCESS_POLICY_FILE` in the kit, check it with `make -C trust check-governance KIT=<CODE>`, and apply it with `make -C trust reload-governance KIT=<CODE>` — never `up-trust` / `restart-trust`, which are first-install verbs. `[fl_privacy.nvflare]` and `FL_SITE_PRIVACY_*` together are refused: use one. On Kubernetes, `sync-kit` validates the document and embeds it in the release (`trust/deploy/helm/README.md`). An EC2 trust driven over a remote Docker endpoint refuses a document in this release.
+- **Operator command**, on the trust host, from your FLIP checkout:
+  ```bash
+  git fetch --tags origin && git checkout {{TAG}}        # the compose files and the verb come from the checkout, not the images
+  sudo -E make upgrade-onprem-trust KIT=<slot>           # defaults to the release the hub runs; TAG={{TAG}} pins it before the hub moves
+  ```
+  Kubernetes: `make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> PROD=<env> TAG={{TAG}}`; EC2: `make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env> TAG={{TAG}}` — both from a checkout at {{TAG}}. Runbook: *docs → System administrators → Upgrading a site*. Sites on v0.7.0 or earlier do not have the command until they check out the tag.
 
 ## :seedling: New Features
 
-- LZA deployment modes and the internal-NLB web edge (#979, #1182); trust deployment layout under `trust/deploy/` (#1214); the OHIF viewer as a default XNAT plugin (#1244); XNAT set-password invites with enclave branding (#977).
-- Flower simulator parity for the tutorials (#1159); the federated EHR T2DM risk-prediction tutorial on both backends (#1068); hash-checked, offline weight staging via `make -C fl-tutorials download-weights` (#1207, #1209).
-- The project page's three cards fill the viewport (#1169).
-- Path-gated service test suites on PRs into `develop` (#1223, #1254) and enforced repo-wide secret scanning (#1216).
+- The trust governance document (#1297): `[disclosure] min_cohort_size`, `[access]` permit/deny rules over project (UUID) and operation — any matching deny denies, otherwise the strictest matching permit applies, and an action the document names but no rule matches is denied — and `[fl_privacy.nvflare]` for the NVFLARE site privacy filter. A denial is answered like a below-threshold cohort, so it reveals nothing about the policy; the rule id goes to the trust's own log. Invalid documents stop the service at startup. `[fl_privacy.flower]` is refused, since nothing enforces it on Flower yet.
+- `make -C trust check-governance` validates a document with the same loader the service uses, and `make -C trust reload-governance` applies an edited one to a live trust without touching its data; data-access-api logs one `[governance] … sha256=…` line at startup, which the reload checks (#1297).
+- The site-upgrade verbs name a newer platform release and its date, and offer it when the Central Hub already runs it. GitHub is advisory: a host that cannot reach it prints one line and carries on (#1332).
 
 ## :bug: Bug Fixes
 
-- **Security**: blind SSRF into the admin-authenticated XNAT API via `accession_id` (#1137); the September hardening set in #1202 — enforcing CSP (#417), authenticated trust health, the session cache surviving sign-out into the next account's tab (#995), bundle hosts resolved and held to the allow-list (#905), a fork-PR image-build guard (#882), an exception-text sweep (#906) and a narrowed omop-db read grant (#904); run-directory checkpoints loaded with `weights_only=True` (#1245, via #1246).
-- **Trust / imaging**: multi-series cohorts queued and counted each study once per row instead of once per series (#1124); a rotated `xnat-db` password never reaching an already-initialised volume (#1072); `xnat-web` located by swarm label rather than a name substring (#1210, via #1211).
-- **FL / tutorials**: the latent-diffusion tutorial aborting when a finished controller answered a sibling's round (#1178); the Flower simulator returning 0 whatever became of the run, and silently reusing a SuperLink left behind by another checkout (#1249, via #1250); `MIN_CLIENTS` rendering as `""` on a fresh clone (#1230, via #1233).
-- **CI**: imaging-api's env-file step that nothing read (#1255).
+<!-- Update this section if a fix lands before the cut. -->
+
+- The Helm chart ships only the chart. It had no `.helmignore`, so each release record carried the chart's tests, scripts and any local caches, and a stray cache could push the record past the 1 MiB Secret limit (`Too long`) and fail the upgrade (#1339).
+
+## :white_check_mark: Release checks
+
+<!-- The gates that cannot run in CI: no GitHub-hosted runner has a GPU, and both the suite and the smoke test need real hardware and a full stack. Tick these on the release branch before the tag is cut — this section is the record that the published examples and the platform path were run, and it is shared by both release trains. See *Pre-release checklist* in CONTRIBUTING.md. -->
+
+Tutorial suite, on a GPU host:
+
+- [ ] NVFLARE — `make -C fl-tutorials run-all-tutorials`
+- [ ] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`
+- [ ] Host and date recorded: <!-- e.g. "RTX 5090 workstation, 24 September 2026" -->
+
+Not run for v0.11.0: the release was cut the same day as its last changes merged, and the suite takes several hours per backend.
+
+Full-platform smoke test, against a running deployment:
+
+- [x] NVFLARE — `make e2e_smoke`
+- [x] Flower — `make e2e_smoke FL_BACKEND=flower`
+
+Both passed on 29 September 2026 on the dev stack on an RTX 5090 workstation, against one trust (`--trusts GSTT`), with the hub, the trust services and the FL images (`sha-968a60d`) all at the release commit: create project, cohort query, trust approval, image pull, training, results uploaded and downloaded. Flower reused the NVFLARE run's project.
 
 ## :file_folder: PRs merged in this release
 

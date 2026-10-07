@@ -204,9 +204,7 @@ def validate_dm(
                 noise = torch.randn(
                     [images.shape[0]] + [model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape
                 ).to(device)
-                timesteps = torch.randint(
-                    0, scheduler.num_train_timesteps, (images.shape[0],), device=device
-                ).long()
+                timesteps = torch.randint(0, scheduler.num_train_timesteps, (images.shape[0],), device=device).long()
                 logger.info(f"Sizes: images = {images.shape}, noise = {noise.shape}")
                 noise_pred = inferer(
                     inputs=images,

@@ -27,11 +27,12 @@ from fl_api.utils.exception_handlers import (
 )
 from fl_api.utils.logger import logger
 from fl_api.utils.validation import warn_if_bundle_url_allow_list_empty
+from fl_api.utils.version import build_identity
 
 app = FastAPI(
     title="FLIP FL API (FLARE)",
     description="FL API for FLARE deployment runtime.",
-    version="0.1.0",
+    version=build_identity() or "unknown",
     docs_url="/docs",
     redoc_url="/redoc",
 )

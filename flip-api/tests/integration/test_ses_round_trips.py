@@ -56,9 +56,7 @@ from flip_api.utils.encryption import XNAT_SETUP_PATH_CONTEXT, encrypt
 # ---------------------------------------------------------------------------
 
 
-def test_request_access_dispatches_templated_email_to_admin(
-    client: TestClient, ses_send_email_recorder
-):
+def test_request_access_dispatches_templated_email_to_admin(client: TestClient, ses_send_email_recorder):
     """Access-request endpoint sends one templated email to the admin."""
     response = client.post(
         "/api/users/access",
@@ -180,9 +178,7 @@ def test_handle_imaging_task_sends_one_email_per_user_and_persists_status(
     assert statuses[0].retrieve_image_status == XNATImageStatus.CREATED
 
 
-def test_handle_imaging_task_idempotent_on_status_row(
-    session, ses_send_email_recorder, trust_factory, project_factory
-):
+def test_handle_imaging_task_idempotent_on_status_row(session, ses_send_email_recorder, trust_factory, project_factory):
     """Re-running for the same trust+project must not double-insert the status row.
 
     Locks in the explicit "skip if already exists from a prior attempt"

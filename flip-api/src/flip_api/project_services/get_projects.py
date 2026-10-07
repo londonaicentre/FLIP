@@ -203,9 +203,7 @@ def _load_latest_query_per_project(
         .order_by(col(Queries.project_id), col(Queries.created).desc())
     ).all()
 
-    latest_per_project: dict[
-        UUID, tuple[UUID, str, str, datetime | None, str | None, list[UUID]]
-    ] = {}
+    latest_per_project: dict[UUID, tuple[UUID, str, str, datetime | None, str | None, list[UUID]]] = {}
     for qid, pid, qname, qsql, qcreated, qcreated_by, persisted_queried in queries_rows:
         if pid is not None and pid not in latest_per_project:
             latest_per_project[pid] = (qid, qname, qsql, qcreated, qcreated_by, persisted_queried)
@@ -222,8 +220,9 @@ def _load_latest_query_per_project(
     responded_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
     rows_by_query: dict[UUID, list[tuple[UUID | None, str | None]]] = {qid: [] for qid in query_ids}
     pair_rows = session.exec(
-        select(QueryResult.query_id, QueryResult.trust_id, QueryResult.data)
-        .where(col(QueryResult.query_id).in_(query_ids))
+        select(QueryResult.query_id, QueryResult.trust_id, QueryResult.data).where(
+            col(QueryResult.query_id).in_(query_ids)
+        )
     ).all()
     for qid, tid, data in pair_rows:
         if qid is None:
@@ -244,8 +243,7 @@ def _load_latest_query_per_project(
     pending_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
     cancelled_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
     task_rows = session.exec(
-        select(TrustTask.query_id, TrustTask.trust_id, TrustTask.status)
-        .where(
+        select(TrustTask.query_id, TrustTask.trust_id, TrustTask.status).where(
             col(TrustTask.query_id).in_(query_ids),
             col(TrustTask.status).in_([TaskStatus.PENDING, TaskStatus.CANCELLED]),
         )
@@ -253,11 +251,7 @@ def _load_latest_query_per_project(
     for qid, tid, task_status in task_rows:
         if qid is None or tid is None:
             continue
-        bucket = (
-            pending_trust_ids_by_query
-            if task_status == TaskStatus.PENDING
-            else cancelled_trust_ids_by_query
-        )
+        bucket = pending_trust_ids_by_query if task_status == TaskStatus.PENDING else cancelled_trust_ids_by_query
         if tid not in bucket.setdefault(qid, []):
             bucket[qid].append(tid)
 

@@ -367,10 +367,19 @@ def test_queue_image_import_request_mismatched_count(mock_get_project, mock_post
     # Return only 1 response for 2 requested studies
     mock_post.return_value = MagicMock(
         status_code=200,
-        text=json.dumps([
-            {"id": 1, "pacsId": 1, "status": "QUEUED", "accessionNumber": "ACC1",
-             "queuedTime": 100, "created": 100, "priority": 1},
-        ]),
+        text=json.dumps(
+            [
+                {
+                    "id": 1,
+                    "pacsId": 1,
+                    "status": "QUEUED",
+                    "accessionNumber": "ACC1",
+                    "queuedTime": 100,
+                    "created": 100,
+                    "priority": 1,
+                },
+            ]
+        ),
     )
 
     studies = [
@@ -394,10 +403,24 @@ def test_queue_image_import_request_partial_failure(mock_get_project, mock_post,
     mock_check_pacs.return_value = None
 
     payload = [
-        {"id": 1, "pacsId": 1, "status": "QUEUED", "accessionNumber": "ACC1",
-         "queuedTime": 100, "created": 100, "priority": 1},
-        {"id": 2, "pacsId": 1, "status": "FAILED", "accessionNumber": "ACC2",
-         "queuedTime": 101, "created": 101, "priority": 1},
+        {
+            "id": 1,
+            "pacsId": 1,
+            "status": "QUEUED",
+            "accessionNumber": "ACC1",
+            "queuedTime": 100,
+            "created": 100,
+            "priority": 1,
+        },
+        {
+            "id": 2,
+            "pacsId": 1,
+            "status": "FAILED",
+            "accessionNumber": "ACC2",
+            "queuedTime": 101,
+            "created": 101,
+            "priority": 1,
+        },
     ]
     mock_post.return_value = MagicMock(status_code=200, text=json.dumps(payload))
 

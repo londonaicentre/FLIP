@@ -19,6 +19,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from flip_api.domain.interfaces.trust import ITrust
+from flip_api.domain.schemas.status import ProjectStatus
 from flip_api.main import app
 from flip_api.step_functions_services.approve_project_step_function import (
     get_session,
@@ -84,7 +85,7 @@ def mock_project_row(mock_project):
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_success(
@@ -103,6 +104,7 @@ def test_approve_project_success(
     data = response.json()
 
     assert data["projectId"] == project_id
+    assert data["projectStatus"] == "APPROVED"
     assert data["successful"] is True
     assert data["trusts"]["processed"] == 2
     assert data["trusts"]["failed"] == 0
@@ -113,8 +115,39 @@ def test_approve_project_success(
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+def test_approve_project_passes_the_declined_trusts_to_the_decision_step(
+    mock_approve_project,
+    project_id,
+):
+    """The step function must hand the whole body on: rebuilding it from `trusts` alone would drop every decline
+    while the UI reported them recorded."""
+    mock_approve_project.return_value = []
+
+    response = client.post(
+        f"/api/step/project/{project_id}/approve",
+        json={"trusts": [str(trust_id_1)], "declined": [str(trust_id_2)]},
+    )
+
+    assert response.status_code == 200
+    payload = mock_approve_project.call_args.kwargs["payload"]
+    assert (payload.trusts, payload.declined) == ([trust_id_1], [trust_id_2])
+
+
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+def test_approve_project_rejects_a_trust_both_approved_and_declined(mock_approve_project, project_id):
+    response = client.post(
+        f"/api/step/project/{project_id}/approve",
+        json={"trusts": [str(trust_id_1)], "declined": [str(trust_id_1)]},
+    )
+
+    assert response.status_code == 422
+    assert "both approved and declined" in response.text
+    mock_approve_project.assert_not_called()
+
+
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_with_failure_in_trust(
@@ -161,26 +194,32 @@ def test_approve_project_unexpected_exception_returns_generic_detail(
     assert "db-host" not in response.json()["detail"]
 
 
+@pytest.mark.parametrize("status_after", [ProjectStatus.STAGED, ProjectStatus.APPROVED])
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
-def test_approve_project_with_empty_trusts(
+def test_a_call_that_starts_no_trust_dispatches_no_imaging_and_reports_the_real_status(
     mock_approve_project,
     project_id,
     request_body,
-    mock_trusts,
+    mock_project_row,
+    status_after,
 ):
+    """No trusts back from the decision step → nothing to start. The project may still be STAGED (nothing approved
+    yet), or already APPROVED (a late decline, or a re-sent approval), so the status is read back, not assumed."""
     mock_approve_project.return_value = []
+    mock_project_row.return_value.status = status_after
 
     response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
 
     assert response.status_code == 200
     data = response.json()
 
-    assert data["message"] == "Project approved but no trusts to process"
+    assert data["message"] == "Trust decisions recorded; nothing to start"
+    assert data["projectStatus"] == status_after
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_skips_imaging_fan_out_when_project_has_no_imaging(
@@ -198,13 +237,14 @@ def test_approve_project_skips_imaging_fan_out_when_project_has_no_imaging(
     assert data["trusts"] == {"processed": 0, "succeeded": 0, "failed": 0}
     assert data["details"] == []
     assert "no imaging" in data["message"]
+    assert data["projectStatus"] == "APPROVED"
     mock_approve_project.assert_called_once()  # the project still becomes APPROVED
     assert mock_start_imaging.await_count == 0
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_leaves_a_missing_row_to_the_authorised_approval_path(
@@ -228,7 +268,7 @@ def test_approve_project_leaves_a_missing_row_to_the_authorised_approval_path(
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_reports_the_permission_refusal_whether_or_not_the_project_exists(
@@ -244,3 +284,30 @@ def test_approve_project_reports_the_permission_refusal_whether_or_not_the_proje
 
     assert statuses == [403, 403]
     assert mock_start_imaging.await_count == 0
+
+
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+@patch(
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
+    new_callable=AsyncMock,
+)
+def test_approve_project_hands_the_identity_provider_to_the_imaging_fan_out(
+    mock_start_imaging,
+    mock_approve_project,
+    project_id,
+    request_body,
+    mock_trusts,
+    fake_idp,
+):
+    """The fan-out calls ``queue_imaging_creation``, a plain function with no ``Depends()`` of its own: the
+    endpoint must resolve the provider once and hand it down. Left out, every CREATE_IMAGING task fails and
+    the image pull sits at 0/0 (seen on the dev stack)."""
+    mock_approve_project.return_value = mock_trusts
+
+    response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
+
+    assert response.status_code == 200
+    assert response.json()["trusts"]["succeeded"] == 2
+    assert mock_start_imaging.await_count == 2
+    for call in mock_start_imaging.await_args_list:
+        assert call.kwargs["idp"] is fake_idp

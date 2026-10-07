@@ -36,7 +36,9 @@ SEED_SCRIPT = AWS_PROVIDER_DIR.parents[2] / "trust" / "seed_trust.sh"
 def test_the_seed_procedure_honours_the_variable():
     """The one procedure all three surfaces run: without this the chart and the play cannot reach --force."""
     script = SEED_SCRIPT.read_text()
-    assert 'if [ "${FORCE_DICOM_VOCAB:-}" = "1" ]; then VOCAB_MODE=--force; else VOCAB_MODE=--skip-if-loaded; fi' in script
+    assert (
+        'if [ "${FORCE_DICOM_VOCAB:-}" = "1" ]; then VOCAB_MODE=--force; else VOCAB_MODE=--skip-if-loaded; fi'
+    ) in script
     assert 'load_dicom_vocab --vocab-dir "${VOCAB}" "${VOCAB_MODE}"' in script
 
 

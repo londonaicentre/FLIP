@@ -107,9 +107,7 @@ def stage_project_endpoint(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=error_msg,
         )
-    logger.debug(
-        f"Project {project_id} has query with {len(project_data.query.queried_trust_ids)} trusts queried."
-    )
+    logger.debug(f"Project {project_id} has query with {len(project_data.query.queried_trust_ids)} trusts queried.")
 
     # Four guards, each catching a distinct way an operator could end up
     # staging on a trust they don't have a usable cohort for. The UI already

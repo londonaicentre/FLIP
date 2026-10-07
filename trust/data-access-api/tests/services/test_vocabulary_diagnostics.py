@@ -146,9 +146,7 @@ def test_response_is_identical_whether_or_not_the_vocabulary_is_loaded(
     with patch("data_access_api.services.cohort.engine", _engine_returning((1,))):
         with_vocabulary = get_statistics(pd.DataFrame(), query_input, threshold=10)
 
-    assert without_vocabulary.model_dump(exclude={"created"}) == with_vocabulary.model_dump(
-        exclude={"created"}
-    )
+    assert without_vocabulary.model_dump(exclude={"created"}) == with_vocabulary.model_dump(exclude={"created"})
     assert without_vocabulary.record_count == 0
     assert without_vocabulary.suppressed is True
 

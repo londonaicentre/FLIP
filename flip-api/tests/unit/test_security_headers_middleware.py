@@ -90,6 +90,7 @@ def test_security_headers_csp_on_html_response():
     @app.get("/html")
     async def html_route():
         from fastapi.responses import HTMLResponse
+
         return HTMLResponse("<html><body><h1>Test</h1></body></html>")
 
     client = TestClient(app)
@@ -114,9 +115,11 @@ def test_security_headers_no_csp_on_docs_routes():
     app.add_middleware(SecurityHeadersMiddleware)
 
     for path in ("/api/docs", "/api/redoc", "/api/openapi.json", "/api/docs/oauth2-redirect"):
+
         @app.get(path)
         async def docs_route():
             from fastapi.responses import HTMLResponse
+
             return HTMLResponse("<html></html>")
 
         client = TestClient(app)
@@ -130,5 +133,4 @@ def test_security_headers_no_csp_on_docs_routes():
         assert "x-content-type-options" in response.headers
         assert "referrer-policy" in response.headers
         # CSP should NOT be present on docs routes
-        assert "content-security-policy" not in response.headers, \
-            f"CSP unexpectedly present on {path}"
+        assert "content-security-policy" not in response.headers, f"CSP unexpectedly present on {path}"

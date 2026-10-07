@@ -289,9 +289,7 @@ def download_file(url: str, destination_path: str, headers: dict[str, str]) -> s
     try:
         os.makedirs(parent_dir, exist_ok=True)
     except OSError as e:
-        raise LocalStorageError(
-            f"Cannot create parent directory {parent_dir!r} for downloaded file: {e}"
-        ) from e
+        raise LocalStorageError(f"Cannot create parent directory {parent_dir!r} for downloaded file: {e}") from e
 
     try:
         with open(destination_path, "wb") as file:
@@ -300,9 +298,7 @@ def download_file(url: str, destination_path: str, headers: dict[str, str]) -> s
     except OSError as e:
         # Permission denied, disk full, bind mount stale, etc. These are all
         # trust-host problems — not "the remote URL is missing".
-        raise LocalStorageError(
-            f"Failed to write downloaded file to {destination_path!r}: {e}"
-        ) from e
+        raise LocalStorageError(f"Failed to write downloaded file to {destination_path!r}: {e}") from e
 
     return destination_path
 

@@ -10,6 +10,7 @@ System administration
    sys-admin/admin-project-and-user-management
    sys-admin/admin-user-roles
    sys-admin/admin-platform-support
+   sys-admin/admin-upgrading-sites
 
 .. seealso::
 

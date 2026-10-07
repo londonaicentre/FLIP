@@ -49,9 +49,7 @@ def _get_rds_client() -> Any:
             # Re-check inside the lock: another thread may have built it while
             # this one waited (double-checked locking).
             if _rds_client is None:
-                _rds_client = boto3.session.Session().client(
-                    service_name="rds", region_name=get_settings().AWS_REGION
-                )
+                _rds_client = boto3.session.Session().client(service_name="rds", region_name=get_settings().AWS_REGION)
     return _rds_client
 
 
@@ -139,7 +137,9 @@ def _build_engine() -> Engine:
     # would leave as a literal '+', corrupting the password). safe="" keeps '/'
     # encoded, which the default quote(safe="/") would not.
     encoded_password = quote(stt.POSTGRES_PASSWORD.strip(), safe="")
-    db_url = f"postgresql+psycopg2://{stt.POSTGRES_USER}:{encoded_password}@{stt.DB_HOST}:{stt.DB_PORT}/{stt.POSTGRES_DB}"
+    db_url = (
+        f"postgresql+psycopg2://{stt.POSTGRES_USER}:{encoded_password}@{stt.DB_HOST}:{stt.DB_PORT}/{stt.POSTGRES_DB}"
+    )
     return create_engine(db_url, echo=False)
 
 

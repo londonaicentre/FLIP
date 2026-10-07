@@ -251,9 +251,7 @@ async def test_data_access_api_unreachable_reports_error_to_hub(monkeypatch, stu
 async def test_sql_injection_attempt_rejected(stub_hub_received):
     """Multi-statement payloads (e.g. trailing ``DROP``) are filtered by data-access-api's
     validate_query. trust-api forwards the failure to the hub so the chip resolves to "errored"."""
-    result = await handle_cohort_query(
-        _payload("SELECT * FROM omop.image_occurrence; DROP TABLE omop.person")
-    )
+    result = await handle_cohort_query(_payload("SELECT * FROM omop.image_occurrence; DROP TABLE omop.person"))
 
     assert result["success"] is False
     # The AST-based validate_query enforces a single-statement invariant before any DDL/

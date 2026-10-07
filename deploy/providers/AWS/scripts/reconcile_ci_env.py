@@ -191,17 +191,36 @@ def live_image_tag(service: str, container: str, cluster: str, profile: str, reg
     reading state here would hand CI the mutable tag and undo the FLIP#751 pin.
     """
     task_def = aws(
-        ["ecs", "describe-services", "--cluster", cluster, "--services", service,
-         "--query", "services[0].taskDefinition", "--output", "text"],
-        profile, region,
+        [
+            "ecs",
+            "describe-services",
+            "--cluster",
+            cluster,
+            "--services",
+            service,
+            "--query",
+            "services[0].taskDefinition",
+            "--output",
+            "text",
+        ],
+        profile,
+        region,
     )
     if not task_def or task_def == "None":
         return ""
     image = aws(
-        ["ecs", "describe-task-definition", "--task-definition", task_def,
-         "--query", f"taskDefinition.containerDefinitions[?name=='{container}'].image | [0]",
-         "--output", "text"],
-        profile, region,
+        [
+            "ecs",
+            "describe-task-definition",
+            "--task-definition",
+            task_def,
+            "--query",
+            f"taskDefinition.containerDefinitions[?name=='{container}'].image | [0]",
+            "--output",
+            "text",
+        ],
+        profile,
+        region,
     )
     return split_image(image)[1] if image and image != "None" else ""
 
@@ -209,9 +228,9 @@ def live_image_tag(service: str, container: str, cluster: str, profile: str, reg
 def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tuple[dict, dict]:
     """Return (values, sources) for every key the CI env file needs."""
     raw = subprocess.run(
-        ["aws", "s3", "cp", f"s3://{bucket}/flip/terraform.tfstate", "-",
-         "--profile", profile, "--region", region],
-        capture_output=True, text=True,
+        ["aws", "s3", "cp", f"s3://{bucket}/flip/terraform.tfstate", "-", "--profile", profile, "--region", region],
+        capture_output=True,
+        text=True,
     )
     if raw.returncode != 0:
         die(f"could not read s3://{bucket}/flip/terraform.tfstate — {raw.stderr.strip().splitlines()[-1:] or ''}")
@@ -236,15 +255,31 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         return st.attrs("aws_ssm_parameter", ssm_name).get("value", "").removeprefix("s3://").split("/")[0]
 
     secret = json.loads(
-        aws(["secretsmanager", "get-secret-value", "--secret-id", "FLIP_API",
-             "--query", "SecretString", "--output", "text"], profile, region) or "{}"
+        aws(
+            [
+                "secretsmanager",
+                "get-secret-value",
+                "--secret-id",
+                "FLIP_API",
+                "--query",
+                "SecretString",
+                "--output",
+                "text",
+            ],
+            profile,
+            region,
+        )
+        or "{}"
     )
 
     # Live, not state: the kit-slot list is grown by `make apply-fl-kit-slots`,
     # which is a targeted apply — state and the parameter can legitimately differ
     # between full applies.
-    slots = aws(["ssm", "get-parameter", "--name", "/flip/fl_kit_slot_names",
-                 "--query", "Parameter.Value", "--output", "text"], profile, region)
+    slots = aws(
+        ["ssm", "get-parameter", "--name", "/flip/fl_kit_slot_names", "--query", "Parameter.Value", "--output", "text"],
+        profile,
+        region,
+    )
 
     trust_ips = st.instance_keys("aws_security_group_rule", "local_trust_fl_server_nlb")
     k8s_ips = st.instance_keys("aws_security_group_rule", "k8s_trust_fl_server_nlb")
@@ -392,9 +427,7 @@ def main() -> None:
     if args.compare:
         existing = read_env_file(args.compare)
         drift = [
-            (k, existing.get(k), values[k])
-            for k in sorted(values)
-            if values[k] and existing.get(k, "") != values[k]
+            (k, existing.get(k), values[k]) for k in sorted(values) if values[k] and existing.get(k, "") != values[k]
         ]
         print(f"\n📋 Compared against {args.compare}: {len(drift)} difference(s)")
         for k, was, now in drift:

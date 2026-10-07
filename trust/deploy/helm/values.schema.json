@@ -33,6 +33,22 @@
       "enum": ["nvflare", "flower"],
       "description": "FL backend selection"
     },
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "document": {
+          "type": "string",
+          "default": "",
+          "description": "The trust's governance policy document (TOML, FLIP#1259), carried inline. data-access-api mounts it read-only at /app/governance.toml; on NVFLARE the fl-client receives only its [fl_privacy.nvflare] section, extracted by an init container. Empty (the default) = no document: the platform defaults apply and no ConfigMap, mount or env var is rendered. Written by sync-kit from the kit's ACCESS_POLICY_FILE"
+        },
+        "flPrivacyChecksum": {
+          "type": "string",
+          "default": "",
+          "description": "sha256 of the fl-client's extracted section, written by sync-kit, so only an edit to that section rolls the fl-client. Empty = the whole document's checksum is used"
+        }
+      }
+    },
     "namespace": {
       "type": "object",
       "additionalProperties": true,
@@ -188,6 +204,7 @@
       "additionalProperties": true,
       "properties": {
         "enabled": { "type": "boolean" },
+        "cohortQueryThreshold": { "type": "integer", "minimum": 1 },
         "replicas": { "type": "integer", "minimum": 1 },
         "resources": {
           "type": "object",

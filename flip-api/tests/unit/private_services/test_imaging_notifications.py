@@ -31,12 +31,14 @@ def _make_task(created_users, added_users=None, project_id=PROJECT_ID):
     task = MagicMock()
     task.trust_id = TRUST_ID
     task.payload = json.dumps({"project_id": project_id})
-    task.result = json.dumps({
-        "ID": IMAGING_PROJECT_ID,
-        "name": "Test Imaging Project",
-        "created_users": created_users,
-        "added_users": added_users or [],
-    })
+    task.result = json.dumps(
+        {
+            "ID": IMAGING_PROJECT_ID,
+            "name": "Test Imaging Project",
+            "created_users": created_users,
+            "added_users": added_users or [],
+        }
+    )
     return task
 
 
@@ -216,9 +218,11 @@ def test_single_recipient_rejection_does_not_raise(mock_send_email, mock_decrypt
     ``retry_count``, raising would re-send every sweep indefinitely with the
     task never reaching a terminal state.
     """
-    task = _make_task([
-        {"username": "user1", "encrypted_setup_path": "enc1", "email": "typo@test.com"},
-    ])
+    task = _make_task(
+        [
+            {"username": "user1", "encrypted_setup_path": "enc1", "email": "typo@test.com"},
+        ]
+    )
 
     mock_db = MagicMock()
     query_result = MagicMock()
@@ -242,9 +246,11 @@ def test_single_recipient_systemic_failure_raises(mock_send_email, mock_decrypt,
     This is the pair that pins the semantics — same one-recipient shape, and
     the outcome is decided by the exception type rather than the count.
     """
-    task = _make_task([
-        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
-    ])
+    task = _make_task(
+        [
+            {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
+        ]
+    )
 
     mock_db = MagicMock()
     query_result = MagicMock()

@@ -32,6 +32,7 @@ from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_service
 from flip_api.utils.encryption import PROJECT_ID_CONTEXT
 from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
+from flip_api.utils.s3_client import PresignAudience
 
 
 @pytest.fixture
@@ -683,9 +684,7 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
     mock_verify.return_value = None
 
     if job_type == "invalid":
-        with pytest.raises(
-            fl_service.UnknownJobTypeError, match=f"Unknown job_type in config.json: {job_type}"
-        ):
+        with pytest.raises(fl_service.UnknownJobTypeError, match=f"Unknown job_type in config.json: {job_type}"):
             _ = fl_service.bundle_nvflare_application(model_id)
     else:
         dest_bucket_s3_path = fl_service.bundle_nvflare_application(model_id)
@@ -883,9 +882,7 @@ def test_bundle_flower_application_file_wrong_job_type_in_config(
     mock_verify.return_value = None
 
     if job_type == "invalid":
-        with pytest.raises(
-            fl_service.UnknownJobTypeError, match=f"Unknown job_type in config.json: {job_type}"
-        ):
+        with pytest.raises(fl_service.UnknownJobTypeError, match=f"Unknown job_type in config.json: {job_type}"):
             _ = fl_service.bundle_flower_application(model_id)
     else:
         dest_bucket_s3_path = fl_service.bundle_flower_application(model_id)
@@ -1048,8 +1045,9 @@ def test_get_bundle_urls_success(mock_s3, mocked_settings, model_id):
 
     assert urls == ["https://dest/file1.csv", "https://dest/file2.csv"]
     mock_client.list_objects.assert_called_once_with(expected_s3_path)
-    mock_client.get_presigned_url.assert_any_call(files[0])
-    mock_client.get_presigned_url.assert_any_call(files[1])
+    # The fl-api fetches bundles over the docker network, so the URLs are signed for the internal endpoint.
+    mock_client.get_presigned_url.assert_any_call(files[0], audience=PresignAudience.INTERNAL)
+    mock_client.get_presigned_url.assert_any_call(files[1], audience=PresignAudience.INTERNAL)
 
 
 @patch("flip_api.fl_services.services.fl_service.S3Client")
@@ -1091,7 +1089,7 @@ def test_get_bundle_urls_presign_failure(mock_s3, mocked_settings, model_id):
 
     # list called once, presign attempted (it will stop on first exception)
     mock_client.list_objects.assert_called_once()
-    mock_client.get_presigned_url.assert_called_once_with(files[0])
+    mock_client.get_presigned_url.assert_called_once_with(files[0], audience=PresignAudience.INTERNAL)
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
@@ -1719,9 +1717,7 @@ def test_bundle_flower_application_clears_existing_dest(
 
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
-def test_bundle_flower_application_missing_config_json_is_rejected(
-    mock_s3, mock_required, mocked_settings, model_id
-):
+def test_bundle_flower_application_missing_config_json_is_rejected(mock_s3, mock_required, mocked_settings, model_id):
     """config.json is a required Flower file, so a submission without one never reaches a Trust.
 
     Without it the bundler cannot know the job type, and silently defaulting to ``standard`` would

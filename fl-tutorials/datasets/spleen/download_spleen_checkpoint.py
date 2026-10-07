@@ -26,7 +26,7 @@ REPO_ID = "aicentreflip/flip-fl-base-test-data"
 REPO_CHECKPOINT_SUBDIR = "flip-fl-base-test-data/checkpoints"
 
 
-def download_spleen_checkpoint(cache_dir, checkpoint_dir, repo_id=REPO_ID):
+def download_spleen_checkpoint(cache_dir: str, checkpoint_dir: str, repo_id: str = REPO_ID) -> None:
     """Download the evaluation-tutorial checkpoint and place it as ``model.pt``.
 
     Args:
@@ -51,6 +51,4 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint-dir", required=True, help="directory the checkpoint is copied into as model.pt.")
     parser.add_argument("--repo-id", default=REPO_ID, help="Hugging Face dataset repo to pull from.")
     args = parser.parse_args()
-    download_spleen_checkpoint(
-        cache_dir=args.cache_dir, checkpoint_dir=args.checkpoint_dir, repo_id=args.repo_id
-    )
+    download_spleen_checkpoint(cache_dir=args.cache_dir, checkpoint_dir=args.checkpoint_dir, repo_id=args.repo_id)

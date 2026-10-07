@@ -14,10 +14,21 @@
 
 
 import { createTestingPinia } from "@pinia/testing";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, test, vi } from "vitest";
 
 import AiHeader from "../AiHeader.vue";
+
+const mockGetTrustDecisions = vi.fn();
+
+vi.mock("@/services/trust-service", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/services/trust-service")>();
+
+    return {
+        ...actual,
+        getTrustDecisions: (...args: unknown[]) => mockGetTrustDecisions(...args)
+    };
+});
 
 // Local stubs override the global `router-link: true` in test/setup.ts so the
 // slot children (logos, nav labels, active indicator, mobile menu items) get
@@ -40,8 +51,15 @@ function mountHeader(options: {
     permissions?: string[];
     deploymentMode?: boolean;
     isDark?: boolean;
+    trustAdminOf?: { id: string; code: string; name: string } | null;
 } = {}) {
-    const { currentPage = "/projects", permissions = [], deploymentMode = false, isDark = false } = options;
+    const {
+        currentPage = "/projects",
+        permissions = [],
+        deploymentMode = false,
+        isDark = false,
+        trustAdminOf = null
+    } = options;
 
     return mount(AiHeader, {
         props: {
@@ -55,7 +73,12 @@ function mountHeader(options: {
                 createSpy: vi.fn,
                 stubActions: false,
                 initialState: {
-                    auth: { user: { permissions } },
+                    auth: {
+                        user: {
+                            permissions,
+                            trustAdminOf
+                        }
+                    },
                     siteDetails: { deploymentMode }
                 }
             })],
@@ -132,6 +155,35 @@ describe("AiHeader", () => {
         // Active item gets the underline indicator span; siblings don't.
         const currentLink = navLinks.find(l => l.text() === "Connection Status")!;
         expect(currentLink.find("span[aria-hidden='true']").exists()).toBe(true);
+    });
+
+    it("adds My Trust, with the count awaiting a decision, for a Trust Admin (FLIP#1258)", async () => {
+        mockGetTrustDecisions.mockResolvedValue([
+            { status: "PENDING" },
+            { status: "PENDING" },
+            { status: "APPROVED" }
+        ]);
+        const component = mountHeader({
+            trustAdminOf: {
+                id: "dta",
+                code: "DTA",
+                name: "Decision Trust A"
+            }
+        });
+        await flushPromises();
+
+        const navLinks = component.find("[data-test='top-nav']").findAll("a");
+        expect(navLinks.map(l => l.attributes("data-to"))).toContain("/my-trust");
+        expect(component.find("[data-test='top-nav'] [data-test='nav-badge']").text()).toBe("2");
+        expect(mockGetTrustDecisions).toHaveBeenCalledWith("dta");
+    });
+
+    it("has no My Trust item for anyone who is not a Trust Admin", () => {
+        const component = mountHeader();
+
+        const navLinks = component.find("[data-test='top-nav']").findAll("a");
+        expect(navLinks.map(l => l.attributes("data-to"))).not.toContain("/my-trust");
+        expect(mockGetTrustDecisions).not.toHaveBeenCalled();
     });
 
     it("hides the Admin nav item when the user lacks CanAccessAdminPanel", () => {

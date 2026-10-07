@@ -25,6 +25,8 @@ import { useAuthStore } from "@/store/auth";
  *   - Researcher  — has `CanCreateProjects` (no `CanManageProjects`; per-project
  *                   access is enforced server-side on writes).
  *   - Viewer      — has neither.
+ *   - Trust Admin — a Researcher who can also read projects staged at their trust (FLIP#1258); on those they are
+ *                   not on, they are read-only (see `readsOnlyAsTrustAdmin`).
  */
 export function usePermissions(): {
     isAdmin: ComputedRef<boolean>;
@@ -37,15 +39,28 @@ export function usePermissions(): {
      * project ownership / membership.
      */
     isViewer: ComputedRef<boolean>;
+    /**
+     * True when the user sees this project only as a Trust Admin of a trust it is staged at — they neither own
+     * it nor are a member, and cannot manage every project. The API refuses them every write there.
+     */
+    readsOnlyAsTrustAdmin: (project?: { ownerId?: string; users?: { id: string }[] } | null) => boolean;
 } {
     const authStore = useAuthStore();
     const isAdmin = computed(() => authStore.hasPermissions(["CanAccessAdminPanel"]));
     const canCreateProjects = computed(() => authStore.hasPermissions(["CanCreateProjects"]));
     const isViewer = computed(() => !canCreateProjects.value);
 
+    const readsOnlyAsTrustAdmin = (project?: { ownerId?: string; users?: { id: string }[] } | null): boolean => {
+        if (!authStore.trustAdminOf || !project || authStore.hasPermissions(["CanManageProjects"])) return false;
+        const me = authStore.user?.userId;
+
+        return project.ownerId !== me && !(project.users ?? []).some(u => u.id === me);
+    };
+
     return {
         isAdmin,
         canCreateProjects,
-        isViewer
+        isViewer,
+        readsOnlyAsTrustAdmin
     };
 }

@@ -23,12 +23,12 @@ const approvedTrusts: IProjectTrust[] = [
     {
         name: "University College London Hospitals",
         id: "SOMEIDFORUCLH",
-        approved: true
+        status: "APPROVED"
     },
     {
         name: "Guy's and St Thomas'",
         id: "SOMEIDFORKINGS",
-        approved: true
+        status: "APPROVED"
     }
 ];
 
@@ -36,22 +36,22 @@ const trustsToStage: IProjectTrust[] = [
     {
         name: "Kings College Hospital",
         id: "SOMEIDFORKCH",
-        approved: false
+        status: "PENDING"
     },
     {
         name: "University College London Hospitals",
         id: "SOMEIDFORUCLH",
-        approved: false
+        status: "PENDING"
     },
     {
         name: "Guy's and St Thomas'",
         id: "SOMEIDFORKINGS",
-        approved: false
+        status: "PENDING"
     },
     {
         name: "Leeds Teaching Hospitals",
         id: "SOMEIDFORLEEDS",
-        approved: false
+        status: "PENDING"
     }
 ];
 

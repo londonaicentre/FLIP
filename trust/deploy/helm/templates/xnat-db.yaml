@@ -74,7 +74,7 @@ spec:
       {{- end }}
       containers:
         - name: postgres
-          image: "{{ .Values.xnat.db.image.repository }}:{{ .Values.xnat.db.image.tag }}"
+          image: "{{ .Values.xnat.db.image.repository }}:{{ include "flip-trust.imageTag" (dict "pin" .Values.xnat.image.pin "global" .Values.global.image.tag "own" .Values.xnat.db.image.tag) }}"
           imagePullPolicy: {{ .Values.xnat.db.image.pullPolicy }}
           ports:
             - name: postgres

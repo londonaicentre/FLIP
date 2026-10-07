@@ -1,0 +1,23 @@
+# Helm stores the packaged chart in every release record, a Secret capped at 1 MiB. Ship only
+# what a release renders from: Chart.yaml, the values files, templates/ and the config/ files
+# the templates read with .Files.Get. Everything else here is for operators and CI.
+.git/
+.gitignore
+.helmignore
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+*.py
+tests/
+ci/
+scripts/
+Makefile
+*.md
+values-override.yaml
+values-secrets.yaml.example
+k8s-trust-*.yaml
+*.tgz
+.DS_Store
+.vscode/

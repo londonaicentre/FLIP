@@ -37,8 +37,8 @@ def test_the_snapshot_restore_is_gone_from_every_template():
     """No template downloads or untars a trust<N>_pgdata / _orthanc_data volume any more."""
     for template in TEMPLATES.glob("*.yaml"):
         text = template.read_text()
-        assert "_pgdata" not in text and "_orthanc_data" not in text, template.name
-        assert "restore-data" not in text and "seed-data" not in text, template.name
+        for gone in ("_pgdata", "_orthanc_data", "restore-data", "seed-data"):
+            assert gone not in text, f"{template.name}: {gone}"
     assert not (TEMPLATES / "omop-db-init-job.yaml").exists()
     assert not (TEMPLATES / "orthanc-init-job.yaml").exists()
 
@@ -72,7 +72,16 @@ def test_seed_job_runs_the_shared_script_at_a_pinned_ref():
     assert "raw.githubusercontent.com/londonaicentre/FLIP/${FLIP_REF}/trust/seed_trust.sh" in text
     assert "exec bash /work/seed_trust.sh" in text
     assert 'required "trustData.seed.sourceRef is required' in text
-    for env in ("TRUST_DATA_VERSION", "SOURCE_TRUST", "NUM_TRUSTS", "PROJECTS", "SEED_OMOP", "SEED_ORTHANC", "ORTHANC_URL", "WORK_DIR"):
+    for env in (
+        "TRUST_DATA_VERSION",
+        "SOURCE_TRUST",
+        "NUM_TRUSTS",
+        "PROJECTS",
+        "SEED_OMOP",
+        "SEED_ORTHANC",
+        "ORTHANC_URL",
+        "WORK_DIR",
+    ):
         assert f"- name: {env}\n" in text, env
 
 
@@ -83,7 +92,9 @@ def test_the_half_loaded_vocabulary_can_be_reloaded_from_the_chart():
     assert "- name: FORCE_DICOM_VOCAB\n" in SEED_JOB.read_text()
     assert VALUES["trustData"]["seed"]["forceDicomVocab"] is False
     script = (CHART_DIR.parents[2] / "trust" / "seed_trust.sh").read_text()
-    assert 'if [ "${FORCE_DICOM_VOCAB:-}" = "1" ]; then VOCAB_MODE=--force; else VOCAB_MODE=--skip-if-loaded; fi' in script
+    assert (
+        'if [ "${FORCE_DICOM_VOCAB:-}" = "1" ]; then VOCAB_MODE=--force; else VOCAB_MODE=--skip-if-loaded; fi'
+    ) in script
 
 
 def test_the_shared_script_installs_the_repository_loaders_without_git():
@@ -91,25 +102,44 @@ def test_the_shared_script_installs_the_repository_loaders_without_git():
     script = (CHART_DIR.parents[2] / "trust" / "seed_trust.sh").read_text()
     assert "https://github.com/londonaicentre/FLIP/archive/${FLIP_REF}.tar.gz#subdirectory=trust/omop-db" in script
     assert "raw.githubusercontent.com/londonaicentre/FLIP/${FLIP_REF}/trust/orthanc/seed_orthanc.py" in script
-    assert "omop_db_tools.load_dicom_vocab --vocab-dir" in script and "--skip-if-loaded" in script
+    assert "omop_db_tools.load_dicom_vocab --vocab-dir" in script
+    assert "--skip-if-loaded" in script
     assert "--force" in script  # the escape hatch; see test_the_half_loaded_vocabulary_can_be_reloaded_from_the_chart
-    assert "--clean projects" in script and "--clean all" not in script
+    assert "--clean projects" in script
+    assert "--clean all" not in script
     assert "git+" not in script
+
+
+def test_the_shared_script_applies_the_repository_dependency_cooldown():
+    """seed_trust.sh installs with no lock, so it must apply the pyprojects' exclude-newer itself.
+
+    Otherwise a dependency release reaches every seeding trust the day it ships (FLIP#1313).
+    """
+    repo = CHART_DIR.parents[2]
+    script = (repo / "trust" / "seed_trust.sh").read_text()
+    cooldown = re.search(r'^exclude-newer = "(.+)"$', (repo / "trust" / "omop-db" / "pyproject.toml").read_text(), re.M)
+    assert cooldown, "trust/omop-db/pyproject.toml lost its [tool.uv] exclude-newer"
+    assert f'export UV_EXCLUDE_NEWER="${{UV_EXCLUDE_NEWER:-{cooldown.group(1)}}}"' in script
 
 
 def test_seed_values_defaults():
     """Defaults: OMOP on, Orthanc off (2 GB of DICOM), the two dev projects, partition = trustNumber."""
     seed = VALUES["trustData"]["seed"]
-    assert seed["enabled"] is True and seed["omop"] is True and seed["orthanc"] is False
+    assert seed["enabled"] is True
+    assert seed["omop"] is True
+    assert seed["orthanc"] is False
     assert seed["projects"] == "cxr_project"
-    assert seed["sourceTrust"] == "" and seed["numTrusts"] == 2
+    assert seed["sourceTrust"] == ""
+    assert seed["numTrusts"] == 2
     assert seed["sourceRef"]
-    assert "initJob" not in VALUES["omopDb"] and "initJob" not in VALUES["orthanc"]
+    assert "initJob" not in VALUES["omopDb"]
+    assert "initJob" not in VALUES["orthanc"]
 
 
 def test_vocab_load_credentials_live_under_vocab_load():
     """The vocab-load Job borrowed omopDb.initJob's AWS keys; with initJob gone they are its own."""
     text = VOCAB_JOB.read_text()
     assert ".Values.omopDb.initJob" not in text
-    assert ".Values.omopDb.vocabLoad.hostAwsMount" in text and ".Values.omopDb.vocabLoad.awsProfile" in text
-    assert "hostAwsMount" in VALUES["omopDb"]["vocabLoad"] and "awsProfile" in VALUES["omopDb"]["vocabLoad"]
+    for key in ("hostAwsMount", "awsProfile"):
+        assert f".Values.omopDb.vocabLoad.{key}" in text, key
+        assert key in VALUES["omopDb"]["vocabLoad"], key

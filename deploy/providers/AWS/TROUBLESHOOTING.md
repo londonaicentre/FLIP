@@ -148,7 +148,7 @@ Then retry `make deploy-trust`. Verify with `df -h /` (should show ~100 GB).
 **Fix**:
 
 ```bash
-aws sso login --profile FlipDeveloperAccess-080369786334 --use-device-code
+aws sso login --profile FlipDeveloperAccess-<account-id> --use-device-code
 ```
 
 Use `--use-device-code` for headless/SSH environments.

@@ -39,6 +39,7 @@ from flip_api.config import Settings
 from flip_api.utils.s3_client import (
     _MULTIPART_OVERHEAD_BUFFER_BYTES,
     MAX_PRESIGNED_URL_TTL_SECONDS,
+    PresignAudience,
     S3Client,
 )
 from tests.unit._log_policy import _FAKE_SIGNED_URL, _assert_logs_have_no_presigned_url
@@ -57,9 +58,58 @@ def s3_client_with_mock_boto():
         mock_boto.return_value = boto_instance
         with patch(
             "flip_api.utils.s3_client.get_settings",
-            return_value=MagicMock(AWS_REGION="us-east-1"),
+            return_value=_settings(),
         ):
             yield S3Client(), boto_instance
+
+
+def _settings(**overrides):
+    """Settings double: production shape (no public endpoint) unless overridden."""
+    values = {"AWS_REGION": "us-east-1", "S3_PUBLIC_ENDPOINT_URL": None}
+    values.update(overrides)
+    return MagicMock(**values)
+
+
+def test_client_is_a_vanilla_boto3_client(s3_client_with_mock_boto):
+    """Endpoint and credentials come from boto3's own env and chain — never an endpoint_url or key here."""
+    with patch("flip_api.utils.s3_client.boto3.client") as mock_boto:
+        with patch("flip_api.utils.s3_client.get_settings", return_value=_settings()):
+            S3Client()
+    mock_boto.assert_called_once_with("s3", region_name="us-east-1")
+
+
+def test_browser_presigns_use_the_public_endpoint_and_internal_ones_do_not():
+    """SigV4 signs the host: a URL the browser or the host opens must be signed for the published port,
+    one the fl-api fetches over the docker network for the service name (#1291)."""
+    internal, public = MagicMock(name="internal"), MagicMock(name="public")
+    with patch("flip_api.utils.s3_client.boto3.client", side_effect=[internal, public]) as mock_boto:
+        with patch(
+            "flip_api.utils.s3_client.get_settings",
+            return_value=_settings(S3_PUBLIC_ENDPOINT_URL="http://localhost:9000"),
+        ):
+            client = S3Client()
+            client.get_presigned_url("s3://bucket/key", audience=PresignAudience.INTERNAL)
+            internal.generate_presigned_url.assert_called_once()
+            public.generate_presigned_url.assert_not_called()
+
+            client.get_presigned_url("s3://bucket/key", audience=PresignAudience.BROWSER)
+            client.get_put_presigned_post("s3://bucket/key", max_bytes=10)
+    assert mock_boto.call_args_list[1].kwargs == {"region_name": "us-east-1", "endpoint_url": "http://localhost:9000"}
+    public.generate_presigned_url.assert_called_once()
+    public.generate_presigned_post.assert_called_once()
+    internal.generate_presigned_post.assert_not_called()
+
+
+def test_presign_audiences_share_one_client_without_a_public_endpoint(s3_client_with_mock_boto):
+    """Production: no public endpoint, so both audiences sign against the one client — no second boto3 client."""
+    client, boto_instance = s3_client_with_mock_boto
+    with patch("flip_api.utils.s3_client.boto3.client") as mock_boto:
+        client.get_presigned_url("s3://bucket/key", audience=PresignAudience.BROWSER)
+        client.get_presigned_url("s3://bucket/key", audience=PresignAudience.INTERNAL)
+        client.get_put_presigned_post("s3://bucket/key", max_bytes=10)
+    mock_boto.assert_not_called()
+    assert boto_instance.generate_presigned_url.call_count == 2
+    boto_instance.generate_presigned_post.assert_called_once()
 
 
 def test_get_put_presigned_post_passes_size_cap_into_conditions(s3_client_with_mock_boto):
@@ -114,9 +164,7 @@ def test_get_put_presigned_post_without_content_type_keeps_size_cap(s3_client_wi
     expected_cap = 4096 + _MULTIPART_OVERHEAD_BUFFER_BYTES
     assert ["content-length-range", 0, expected_cap] in kwargs["Conditions"]
     # No Content-Type lock when the caller didn't supply one.
-    assert all(
-        not (isinstance(c, dict) and "Content-Type" in c) for c in kwargs["Conditions"]
-    )
+    assert all(not (isinstance(c, dict) and "Content-Type" in c) for c in kwargs["Conditions"])
     assert "Content-Type" not in kwargs["Fields"]
 
 
@@ -208,9 +256,7 @@ def test_get_put_presigned_post_at_ceiling_passes_through(s3_client_with_mock_bo
     s3, boto_instance = s3_client_with_mock_boto
     boto_instance.generate_presigned_post.return_value = {"url": "https://example/", "fields": {}}
 
-    s3.get_put_presigned_post(
-        "s3://test-bucket/key", max_bytes=1024, expiration=MAX_PRESIGNED_URL_TTL_SECONDS
-    )
+    s3.get_put_presigned_post("s3://test-bucket/key", max_bytes=1024, expiration=MAX_PRESIGNED_URL_TTL_SECONDS)
 
     kwargs = boto_instance.generate_presigned_post.call_args.kwargs
     assert kwargs["ExpiresIn"] == MAX_PRESIGNED_URL_TTL_SECONDS
@@ -266,12 +312,13 @@ def test_get_presigned_url_passes_response_content_disposition(s3_client_with_mo
 
     s3.get_presigned_url(
         "s3://example/models/123/weights.bin",
+        audience=PresignAudience.BROWSER,
         expiration=600,
-        response_content_disposition="attachment; filename=\"weights.bin\"",
+        response_content_disposition='attachment; filename="weights.bin"',
     )
 
     kwargs = boto_instance.generate_presigned_url.call_args.kwargs
-    assert kwargs["Params"]["ResponseContentDisposition"] == "attachment; filename=\"weights.bin\""
+    assert kwargs["Params"]["ResponseContentDisposition"] == 'attachment; filename="weights.bin"'
     assert kwargs["Params"]["Bucket"] == "example"
     assert kwargs["Params"]["Key"] == "models/123/weights.bin"
     assert kwargs["ExpiresIn"] == 600
@@ -284,7 +331,7 @@ def test_get_presigned_url_omits_response_content_disposition_when_not_given(s3_
     s3, boto_instance = s3_client_with_mock_boto
     boto_instance.generate_presigned_url.return_value = "https://example.s3.amazonaws.com/signed"
 
-    s3.get_presigned_url("s3://example/results/123/metrics.json")
+    s3.get_presigned_url("s3://example/results/123/metrics.json", audience=PresignAudience.BROWSER)
 
     kwargs = boto_instance.generate_presigned_url.call_args.kwargs
     assert "ResponseContentDisposition" not in kwargs["Params"]
@@ -295,7 +342,7 @@ def test_get_presigned_url_caps_ttl_at_security_ceiling(s3_client_with_mock_boto
     s3, boto_instance = s3_client_with_mock_boto
     boto_instance.generate_presigned_url.return_value = "https://example.s3.amazonaws.com/signed"
 
-    s3.get_presigned_url("s3://test-bucket/key", expiration=3600)
+    s3.get_presigned_url("s3://test-bucket/key", audience=PresignAudience.BROWSER, expiration=3600)
 
     kwargs = boto_instance.generate_presigned_url.call_args.kwargs
     assert kwargs["ExpiresIn"] == MAX_PRESIGNED_URL_TTL_SECONDS
@@ -310,7 +357,7 @@ def test_get_presigned_url_default_ttl_is_ceiling_without_warning(caplog, s3_cli
     s3, boto_instance = s3_client_with_mock_boto
     boto_instance.generate_presigned_url.return_value = "https://example.s3.amazonaws.com/signed"
 
-    s3.get_presigned_url("s3://test-bucket/key")
+    s3.get_presigned_url("s3://test-bucket/key", audience=PresignAudience.BROWSER)
 
     kwargs = boto_instance.generate_presigned_url.call_args.kwargs
     assert kwargs["ExpiresIn"] == MAX_PRESIGNED_URL_TTL_SECONDS
@@ -323,7 +370,9 @@ def test_get_presigned_url_at_ceiling_passes_through(s3_client_with_mock_boto):
     s3, boto_instance = s3_client_with_mock_boto
     boto_instance.generate_presigned_url.return_value = "https://example.s3.amazonaws.com/signed"
 
-    s3.get_presigned_url("s3://test-bucket/key", expiration=MAX_PRESIGNED_URL_TTL_SECONDS)
+    s3.get_presigned_url(
+        "s3://test-bucket/key", audience=PresignAudience.BROWSER, expiration=MAX_PRESIGNED_URL_TTL_SECONDS
+    )
 
     kwargs = boto_instance.generate_presigned_url.call_args.kwargs
     assert kwargs["ExpiresIn"] == MAX_PRESIGNED_URL_TTL_SECONDS
@@ -335,7 +384,7 @@ def test_get_presigned_url_logs_warning_when_clamped(caplog, s3_client_with_mock
     s3, boto_instance = s3_client_with_mock_boto
     boto_instance.generate_presigned_url.return_value = "https://example.s3.amazonaws.com/signed"
 
-    s3.get_presigned_url("s3://test-bucket/key", expiration=3600)
+    s3.get_presigned_url("s3://test-bucket/key", audience=PresignAudience.BROWSER, expiration=3600)
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert any("3600" in r.getMessage() and "1800" in r.getMessage() for r in warnings), (
@@ -349,7 +398,7 @@ def test_get_presigned_url_does_not_warn_at_or_below_ceiling(caplog, s3_client_w
     s3, boto_instance = s3_client_with_mock_boto
     boto_instance.generate_presigned_url.return_value = "https://example.s3.amazonaws.com/signed"
 
-    s3.get_presigned_url("s3://test-bucket/key", expiration=300)
+    s3.get_presigned_url("s3://test-bucket/key", audience=PresignAudience.BROWSER, expiration=300)
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert not warnings, f"Did not expect a warning for in-policy TTL: {[r.getMessage() for r in warnings]}"
@@ -428,9 +477,7 @@ def test_copy_object_if_match_raises_precondition_error(s3_client_with_mock_boto
 
 def test_copy_object_if_match_wraps_other_failures(s3_client_with_mock_boto):
     s3, boto_instance = s3_client_with_mock_boto
-    boto_instance.copy.side_effect = ClientError(
-        {"Error": {"Code": "AccessDenied", "Message": "denied"}}, "CopyObject"
-    )
+    boto_instance.copy.side_effect = ClientError({"Error": {"Code": "AccessDenied", "Message": "denied"}}, "CopyObject")
     with pytest.raises(Exception, match="Unable to copy object"):
         s3.copy_object_if_match("s3://bucket/uploaded/k", "s3://bucket/scanned/k", '"etag"')
 
@@ -441,9 +488,7 @@ def test_delete_object_if_match_sends_the_precondition(s3_client_with_mock_boto)
     on the previous object's scan verdict."""
     s3, boto_instance = s3_client_with_mock_boto
     s3.delete_object_if_match("s3://bucket/uploaded/k", '"etag"')
-    boto_instance.delete_object.assert_called_once_with(
-        Bucket="bucket", Key="uploaded/k", IfMatch='"etag"'
-    )
+    boto_instance.delete_object.assert_called_once_with(Bucket="bucket", Key="uploaded/k", IfMatch='"etag"')
 
 
 def test_delete_object_if_match_raises_precondition_error(s3_client_with_mock_boto):

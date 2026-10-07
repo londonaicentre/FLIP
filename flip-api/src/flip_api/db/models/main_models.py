@@ -22,12 +22,14 @@ from sqlmodel import Field, Relationship, SQLModel
 from flip_api.domain.schemas.actions import ModelAuditAction, ProjectAuditAction, TrustAuditAction
 from flip_api.domain.schemas.file import FileUploadStatus
 from flip_api.domain.schemas.status import (
+    DecisionMaker,
     JobStatus,
     ModelStatus,
     NetStatus,
     ProjectStatus,
     TaskStatus,
     TaskType,
+    TrustApprovalStatus,
     TrustIntersectStatus,
     XNATImageStatus,
 )
@@ -180,8 +182,14 @@ class ProjectTrustIntersect(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     project_id: UUID | None = Field(default=None, foreign_key="projects.id", index=True)
     trust_id: UUID | None = Field(default=None, foreign_key="trust.id", index=True)
-    approved: bool = Field()
-    approved_at: datetime | None = Field(default=None)
+    status: TrustApprovalStatus = Field(default=TrustApprovalStatus.PENDING)
+    # Who made the current decision, and when. Both NULL while PENDING. `decided_by` is also NULL on
+    # approvals made before decisions were attributed (FLIP#1318): the approver was never recorded.
+    decided_by: UUID | None = Field(default=None)
+    decided_at: datetime | None = Field(default=None)
+    # HUB when the hub admin decided (the trust had no Trust Admin), SITE when the trust's own Trust Admin did
+    # (FLIP#1258). NULL while PENDING.
+    decided_as: DecisionMaker | None = Field(default=None)
 
 
 class Projects(SQLModel, table=True):
@@ -205,6 +213,9 @@ class ProjectsAudit(SQLModel, table=True):
     project_id: UUID | None = Field(default=None, foreign_key="projects.id", index=True)
     action: ProjectAuditAction = Field()
     user_id: UUID = Field()
+    # The trust a per-trust decision (APPROVE_TRUST / DECLINE_TRUST) was made for; NULL on
+    # project-wide actions. No foreign key, so the record outlives a deleted trust.
+    trust_id: UUID | None = Field(default=None)
     audit_date: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
 
 
@@ -325,6 +336,9 @@ class TrustsAudit(SQLModel, table=True):
     trust_name: str = Field()
     action: TrustAuditAction = Field()
     modified_by_user_id: UUID | None = Field(default=None)
+    # The user an ADMIN_ADDED / ADMIN_REMOVED row is about (the new or former Trust Admin); NULL on registry
+    # events. modified_by_user_id stays the admin who made the change.
+    subject_user_id: UUID | None = Field(default=None)
     audit_date: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
 
 
@@ -391,9 +405,7 @@ class UploadedFiles(SQLModel, table=True):
     # row that predates this column). Never gates promotion: unlike the
     # picklescan verdict above, this never turns into an INFECTED/ERROR
     # status. Purely a signal for whoever next opens the model's file list.
-    bandit_findings: list[dict] | None = Field(
-        default=None, sa_column=Column("bandit_findings", JSONB, nullable=True)
-    )
+    bandit_findings: list[dict] | None = Field(default=None, sa_column=Column("bandit_findings", JSONB, nullable=True))
 
 
 class XNATProjectStatus(SQLModel, table=True):

@@ -17,6 +17,11 @@ services:
 
   fl-client-net-1:
     image: ghcr.io/londonaicentre/${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    # A site must come back after a daemon restart or host reboot without an operator's
+    # `up`: omop-db / orthanc / observability already carry `always`; the APIs and the
+    # fl-client did not, which is how AICP sat half-dead for weeks (FLIP#1204).
+    # unless-stopped rather than always so an explicit `docker stop` is still honoured.
+    restart: unless-stopped
     security_opt:
       - no-new-privileges:true
     cap_drop:

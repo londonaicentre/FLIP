@@ -18,7 +18,7 @@ Standalone FastAPI service for Flower deployment runtime.
 
 ## Endpoints
 
-- `GET /health`
+- `GET /health` — liveness, and `version`: the baked `FLIP_RELEASE` image tag, or the pyproject version for a local build
 - `POST /register_node`
 - `GET /check_server_status`
 - `GET /check_client_status?targets=<name>&targets=<name>`
@@ -88,33 +88,39 @@ Set these environment variables in the FL API container:
 
 - `SUPERLINK_HEALTH_ADDRESS` (example: `superlink:9097`) — for server status checks
 
-## Bundle-fetch host allow-list (`BUNDLE_URL_ALLOWED_HOSTS`)
+## Bundle-fetch origin allow-list (`BUNDLE_URL_ALLOWED_ORIGINS`)
 
 `/upload_app/{model_id}` fetches every `bundle_urls` entry **server-side**, and the FL API
 authenticates no caller of its own — so an unchecked URL is a blind SSRF from anything that can
 reach the API (a compromised trust container, an SSM port-forward). `validate_bundle_url` in
 [`fl_api/utils/validation.py`](./fl_api/utils/validation.py) guards the fetch in layers:
 
-1. **`BUNDLE_URL_ALLOWED_HOSTS` — the primary control.** A comma-separated list of the only hosts a
-   bundle may be fetched from, matched exactly (case-insensitive, trailing root label ignored; no
-   suffix or wildcard form — a suffix would admit any bucket in the region). It is checked *before*
-   the name is resolved, so an off-list name never causes a DNS query — the resolver query itself
-   is the out-of-band signal of a blind SSRF. **Every hub deployment sets it, derived from
-   `AWS_REGION`, not by hand:** flip-api pins `AWS_ENDPOINT_URL_S3=https://s3.<AWS_REGION>.amazonaws.com`
-   in every environment, which makes boto3 presign *path-style* URLs — bucket in the path, host
-   exactly `s3.<AWS_REGION>.amazonaws.com` — so that host is the value, set in
-   `deploy/compose.{development,production}.<backend>.yml` and, on ECS, in
-   `deploy/providers/AWS/locals.tf` from the same local as flip-api's endpoint (a static test in
-   `deploy/providers/AWS/tests/` holds both fl-api task families to it). Moving the presign
-   endpoint without the allow-list 400s every bundle download, i.e. every training run.
-2. **Resolve-and-recheck — defence in depth.** https only, port 443 only, no private / loopback /
-   link-local / reserved IP literal in any spelling (FLIP#893), and a DNS name is resolved with
-   every returned address, both families, held to the same range check — failing closed on a
-   resolver error (FLIP#905). This is a resolve-then-fetch pair: the fetch resolves the name again
-   through `requests`, so a DNS-rebinding attacker answering public to the check and private to
-   the fetch wins that race. Pinning the connection to the checked address would need a custom
-   transport and is deliberately not built; with the allow-list set only the object-store host is
-   ever resolved, so the residual is moot. Redirects are refused on the fetch itself.
+1. **`BUNDLE_URL_ALLOWED_ORIGINS` — the primary control.** A comma-separated list of the only
+   origins a bundle may be fetched from, each a bare `scheme://host[:port]` matched exactly as a
+   (scheme, host, port) triple (host case-insensitive, trailing root label ignored, a missing port
+   is the scheme's default; no suffix or wildcard form — a suffix would admit any bucket in the
+   region). A malformed entry fails the boot. It is checked *before* any name is resolved, so an
+   off-list origin never causes a DNS query — the resolver query itself is the out-of-band signal
+   of a blind SSRF — and a listed origin is operator-declared, so it is not resolved either (the
+   dev compose store resolves to a private docker address by design). **Every hub deployment sets
+   it from the object store the hub presigns against, not by hand:** on AWS, flip-api pins
+   `AWS_ENDPOINT_URL_S3=https://s3.<AWS_REGION>.amazonaws.com`, which makes boto3 presign
+   *path-style* URLs — bucket in the path, host exactly `s3.<AWS_REGION>.amazonaws.com` — so
+   `https://s3.<AWS_REGION>.amazonaws.com` is the value, set in
+   `deploy/compose.production.<backend>.yml` and, on ECS, in `deploy/providers/AWS/locals.tf` from
+   the same local as flip-api's endpoint (a static test in `deploy/providers/AWS/tests/` holds both
+   fl-api task families to it); the dev compose lists its RustFS service, `http://object-store:9000`
+   (FLIP#1291). Moving the presign endpoint without the allow-list 400s every bundle download, i.e.
+   every training run.
+2. **Without a list: https on 443 plus resolve-and-recheck — defence in depth.** Always: no
+   private / loopback / link-local / reserved IP literal in any spelling (FLIP#893) and no
+   `localhost`, listed or not. With the list empty the URL must also be https on the default port,
+   and a DNS name is resolved with every returned address, both families, held to the same range
+   check — failing closed on a resolver error (FLIP#905). This is a resolve-then-fetch pair: the
+   fetch resolves the name again through `requests`, so a DNS-rebinding attacker answering public
+   to the check and private to the fetch wins that race. Pinning the connection to the checked
+   address would need a custom transport and is deliberately not built; the allow-list is the
+   control that matters. Redirects are refused on the fetch itself.
 
 **Empty is loud, not fatal.** The standalone harness in [`../compose.dev.yml`](../compose.dev.yml)
 has no hub and leaves the variable unset — nothing presigns bundle URLs for it — and the API logs a

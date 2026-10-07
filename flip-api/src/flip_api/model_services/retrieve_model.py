@@ -161,9 +161,7 @@ def retrieve_model(
         # the tracked audit dates. Cheap; the raw SQL was already opinionated
         # enough without forcing more aggregates into it.
         model_row = db.exec(select(Model.creation_timestamp).where(Model.id == model_id)).first()
-        creation_timestamp = (
-            model_row.isoformat(timespec="milliseconds") if model_row else None
-        )
+        creation_timestamp = model_row.isoformat(timespec="milliseconds") if model_row else None
 
         audit_rows = db.exec(
             select(ModelsAudit.action, ModelsAudit.audit_date)

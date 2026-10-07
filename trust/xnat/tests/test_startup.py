@@ -136,9 +136,7 @@ def test_plugin_sync_asks_s3_for_every_jar_in_the_prefix(tmp_path: Path) -> None
     plugin_dir = tmp_path / "plugins"
     template = _write_jar(tmp_path / "template.jar")
     argv_log = tmp_path / "aws-argv"
-    record_then_sync = f'printf "%s\\n" "$@" > "{argv_log}"; ' + _aws_stub_writing_jars(
-        template, REQUIRED_PLUGIN_NAMES
-    )
+    record_then_sync = f'printf "%s\\n" "$@" > "{argv_log}"; ' + _aws_stub_writing_jars(template, REQUIRED_PLUGIN_NAMES)
 
     result = _run_plugin_check(plugin_dir, _plugin_env(tmp_path, record_then_sync))
 
@@ -157,9 +155,7 @@ def _script_plugin_families() -> list[str]:
         Family names, each a ``required_prefixes`` entry with its trailing hyphen removed so it
         is directly comparable with a chart key.
     """
-    block = re.search(
-        r"^required_prefixes=\(\n(.*?)^\)", ENSURE_PLUGINS.read_text(), re.DOTALL | re.MULTILINE
-    )
+    block = re.search(r"^required_prefixes=\(\n(.*?)^\)", ENSURE_PLUGINS.read_text(), re.DOTALL | re.MULTILINE)
     assert block is not None, f"no required_prefixes=( ... ) array in {ENSURE_PLUGINS}"
     return [prefix.rstrip("-") for prefix in re.findall(r'"([^"]+)"', block.group(1))]
 
@@ -235,9 +231,7 @@ def test_plugin_check_resyncs_a_cache_holding_a_truncated_jar(tmp_path: Path) ->
 
 def test_plugin_check_rejects_a_corrupt_download(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "plugins"
-    corrupt = 'dest="$4"; mkdir -p "$dest"; ' + "; ".join(
-        f': > "$dest/{name}"' for name in REQUIRED_PLUGIN_NAMES
-    )
+    corrupt = 'dest="$4"; mkdir -p "$dest"; ' + "; ".join(f': > "$dest/{name}"' for name in REQUIRED_PLUGIN_NAMES)
 
     result = _run_plugin_check(plugin_dir, _plugin_env(tmp_path, corrupt))
 
@@ -311,9 +305,7 @@ def test_readiness_fails_with_endpoint_and_status_on_timeout(tmp_path: Path) -> 
 def test_readiness_probe_authenticates_against_the_plugin_route(tmp_path: Path) -> None:
     """The gate is only meaningful authenticated — unauthenticated XNAT 401s whatever the plugin state."""
     argv_log = tmp_path / "curl-argv"
-    result = _run_readiness(
-        _readiness_env(tmp_path, f'printf "%s\\n" "$*" >> "{argv_log}"; printf "200"')
-    )
+    result = _run_readiness(_readiness_env(tmp_path, f'printf "%s\\n" "$*" >> "{argv_log}"; printf "200"'))
 
     assert result.returncode == 0, result.stderr
     recorded = argv_log.read_text()
@@ -353,13 +345,15 @@ def test_readiness_reaches_the_rotated_password_on_the_first_rejection(tmp_path:
     """
     argv_log = tmp_path / "curl-argv"
     curl_body = (
-        f'printf "%s\\n" "$*" >> "{argv_log}"; '
-        'case "$*" in *admin:rotated*) printf "200" ;; *) printf "401" ;; esac'
+        f'printf "%s\\n" "$*" >> "{argv_log}"; case "$*" in *admin:rotated*) printf "200" ;; *) printf "401" ;; esac'
     )
 
     result = _run_readiness(
         _readiness_env(
-            tmp_path, curl_body, initial_password="initial", rotated_password="rotated"  # pragma: allowlist secret
+            tmp_path,
+            curl_body,
+            initial_password="initial",  # pragma: allowlist secret
+            rotated_password="rotated",  # pragma: allowlist secret
         )
     )
 
@@ -386,7 +380,10 @@ def test_readiness_forgives_a_transient_rejection_during_boot(tmp_path: Path) ->
 
     result = _run_readiness(
         _readiness_env(
-            tmp_path, curl_body, initial_password="initial", rotated_password="rotated"  # pragma: allowlist secret
+            tmp_path,
+            curl_body,
+            initial_password="initial",  # pragma: allowlist secret
+            rotated_password="rotated",  # pragma: allowlist secret
         )
     )
 
@@ -803,9 +800,7 @@ def test_up_loops_succeed_when_every_trust_starts(tmp_path: Path) -> None:
     """Positive control: the abort assertion only means something if the loop can pass."""
     trust_dir = _kit_tree(tmp_path)
 
-    status, calls = _run_up_loop(
-        REPO_ROOT / "trust" / "xnat" / "Makefile", trust_dir / "xnat", tmp_path, child_exit=0
-    )
+    status, calls = _run_up_loop(REPO_ROOT / "trust" / "xnat" / "Makefile", trust_dir / "xnat", tmp_path, child_exit=0)
 
     assert status == 0
     assert calls == 2, "both fixture kits should have been started"
@@ -904,9 +899,7 @@ def _docker_stub(
     return _make_env({**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FLIP_INSTANCE": ""})
 
 
-def _run_kit_target(
-    makefile: Path, target: str, cwd: Path, env: dict[str, str]
-) -> subprocess.CompletedProcess[str]:
+def _run_kit_target(makefile: Path, target: str, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """Run one KIT-selected target against the fixture tree, with docker stubbed out."""
     return subprocess.run(
         ["make", "-f", str(makefile), target, "KIT=AAA", "FL_BACKEND=nvflare"],
@@ -920,9 +913,7 @@ def _run_kit_target(
 
 
 @pytest.mark.parametrize("target", SLOT_GUARDED_TARGETS)
-def test_slot_guard_refuses_every_kit_target_when_another_kit_holds_the_project(
-    tmp_path: Path, target: str
-) -> None:
+def test_slot_guard_refuses_every_kit_target_when_another_kit_holds_the_project(tmp_path: Path, target: str) -> None:
     """A slot held by a different kit must stop every target that drives that compose project.
 
     Guarding only `up-trust` left `restart-trust` (which reaches `down-trust` first) able to run
@@ -951,9 +942,7 @@ def test_slot_guard_allows_the_same_kit_from_another_checkout(tmp_path: Path) ->
     to keep working, which is why the comparison is by kit-file basename.
     """
     trust_dir = _kit_tree(tmp_path)
-    env = _docker_stub(
-        tmp_path, container_ids="c0ffeec0ffee", environment_file=SAME_KIT_OTHER_CHECKOUT
-    )
+    env = _docker_stub(tmp_path, container_ids="c0ffeec0ffee", environment_file=SAME_KIT_OTHER_CHECKOUT)
 
     result = _run_kit_target(REPO_ROOT / "trust" / "Makefile", "down-fl-clients-kit", trust_dir, env)
 
@@ -1033,9 +1022,7 @@ def test_xnat_network_guard_refuses_a_trust_on_a_different_instance(tmp_path: Pa
     )
     env["FLIP_INSTANCE"] = "b"
 
-    result = _run_kit_target(
-        REPO_ROOT / "trust" / "xnat" / "Makefile", "create-xnat-network", trust_dir / "xnat", env
-    )
+    result = _run_kit_target(REPO_ROOT / "trust" / "xnat" / "Makefile", "create-xnat-network", trust_dir / "xnat", env)
 
     combined = result.stdout + result.stderr
     assert result.returncode != 0, f"XNAT attached to a network the trust is not on\n{combined}"
@@ -1059,9 +1046,7 @@ def test_xnat_network_guard_ignores_another_instances_trust(tmp_path: Path) -> N
     )
     env["FLIP_INSTANCE"] = "b"
 
-    result = _run_kit_target(
-        REPO_ROOT / "trust" / "xnat" / "Makefile", "create-xnat-network", trust_dir / "xnat", env
-    )
+    result = _run_kit_target(REPO_ROOT / "trust" / "xnat" / "Makefile", "create-xnat-network", trust_dir / "xnat", env)
 
     combined = result.stdout + result.stderr
     assert result.returncode == 0, f"guard judged instance b against the default instance\n{combined}"
@@ -1078,9 +1063,7 @@ def test_xnat_network_guard_passes_when_the_trust_is_on_the_same_network(tmp_pat
     )
     env["FLIP_INSTANCE"] = "b"
 
-    result = _run_kit_target(
-        REPO_ROOT / "trust" / "xnat" / "Makefile", "create-xnat-network", trust_dir / "xnat", env
-    )
+    result = _run_kit_target(REPO_ROOT / "trust" / "xnat" / "Makefile", "create-xnat-network", trust_dir / "xnat", env)
 
     combined = result.stdout + result.stderr
     assert result.returncode == 0, combined
@@ -1096,9 +1079,7 @@ def test_xnat_network_guard_passes_when_the_trust_is_on_the_same_network(tmp_pat
         ("/opt/kits/../kits", "/opt/kits"),
     ],
 )
-def test_abs_or_relative_to_only_joins_relative_values(
-    tmp_path: Path, value: str, expected: str
-) -> None:
+def test_abs_or_relative_to_only_joins_relative_values(tmp_path: Path, value: str, expected: str) -> None:
     """An already-absolute path must pass through, not be welded onto the base.
 
     `$(abspath)` only normalises the string it is handed, so joining unconditionally turned

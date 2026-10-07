@@ -16,7 +16,7 @@ from uuid import uuid4
 import pytest
 from sqlmodel import Session
 
-from flip_api.db.models.user_models import PermissionRef, RolePermission
+from flip_api.db.models.user_models import TRUST_SCOPED_PERMISSIONS, PermissionRef, RolePermission, RoleRef
 from flip_api.db.seed.role_permissions import _grant_permissions, seed_role_permissions
 
 
@@ -75,19 +75,24 @@ def test_grant_permissions_with_empty_list_still_commits(mock_session):
     mock_session.commit.assert_called_once()
 
 
+def _seeded_roles(mock_session, **role_ids):
+    """Stub the by-id role lookups: ``_seeded_roles(s, ADMIN=id)`` seeds Admin only."""
+    rows = {RoleRef[name].value: MagicMock(id=role_id) for name, role_id in role_ids.items()}
+    mock_session.get.side_effect = lambda model, key: rows.get(key)
+
+
 def test_seed_role_permissions_grants_admin_all_and_researcher_create_only(mock_session):
     """Admin gets every permission; Researcher gets CAN_CREATE_PROJECTS only (see issue #358)."""
     admin_role_id = uuid4()
     researcher_role_id = uuid4()
     admin_perms = [MagicMock(id=uuid4()), MagicMock(id=uuid4()), MagicMock(id=uuid4())]
 
+    _seeded_roles(mock_session, ADMIN=admin_role_id, RESEARCHER=researcher_role_id)
     mock_session.exec.side_effect = [
-        _exec_result(first=admin_role_id),
         _exec_result(all_=admin_perms),
         _exec_result(first=None),
         _exec_result(first=None),
         _exec_result(first=None),
-        _exec_result(first=researcher_role_id),
         _exec_result(first=None),
     ]
 
@@ -106,15 +111,55 @@ def test_seed_role_permissions_grants_admin_all_and_researcher_create_only(mock_
     assert PermissionRef.CAN_MANAGE_PROJECTS.value not in {rp.permission_id for rp in researcher_added}
 
 
+def test_seed_role_permissions_withholds_trust_scoped_permissions_from_admin(mock_session):
+    """Admin must NOT receive trust-scoped permissions (FLIP#1260).
+
+    The Admin grant is a blanket "every permission in the table", so a trust-scoped
+    permission added to the enum would otherwise be handed to every hub administrator —
+    giving them approval authority over every trust's data, the hole FLIP#1258 closes.
+    This pins the filter that keeps them out.
+    """
+    admin_role_id = uuid4()
+    ordinary = MagicMock(id=PermissionRef.CAN_CREATE_PROJECTS.value)
+    trust_scoped = [MagicMock(id=pid) for pid in sorted(TRUST_SCOPED_PERMISSIONS)]
+
+    _seeded_roles(mock_session, ADMIN=admin_role_id)
+    mock_session.exec.side_effect = [
+        _exec_result(all_=[ordinary, *trust_scoped]),
+        _exec_result(first=None),
+    ]
+
+    seed_role_permissions(mock_session)
+
+    granted = {c.args[0].permission_id for c in mock_session.add.call_args_list}
+    assert granted == {PermissionRef.CAN_CREATE_PROJECTS.value}
+    assert not (granted & TRUST_SCOPED_PERMISSIONS)
+
+
+def test_seed_role_permissions_grants_trust_scoped_permissions_to_trust_admin(mock_session):
+    """Trust Admin receives exactly the trust-scoped permissions.
+
+    The grant is global in ``role_permission`` (that table has no trust dimension); what
+    binds the authority to one trust is ``user_role.trust_id`` on the user's own grant.
+    """
+    trust_admin_role_id = uuid4()
+
+    _seeded_roles(mock_session, TRUST_ADMIN=trust_admin_role_id)
+    mock_session.exec.side_effect = [_exec_result(first=None) for _ in TRUST_SCOPED_PERMISSIONS]
+
+    seed_role_permissions(mock_session)
+
+    added = [c.args[0] for c in mock_session.add.call_args_list]
+    assert {rp.permission_id for rp in added} == set(TRUST_SCOPED_PERMISSIONS)
+    assert all(rp.role_id == trust_admin_role_id for rp in added)
+
+
 def test_seed_role_permissions_logs_when_admin_role_missing(mock_session, caplog):
     """Missing Admin role logs a debug message and skips the admin grant."""
     researcher_role_id = uuid4()
 
-    mock_session.exec.side_effect = [
-        _exec_result(first=None),
-        _exec_result(first=researcher_role_id),
-        _exec_result(first=None),
-    ]
+    _seeded_roles(mock_session, RESEARCHER=researcher_role_id)
+    mock_session.exec.side_effect = [_exec_result(first=None)]
 
     with caplog.at_level("DEBUG", logger="uvicorn"):
         seed_role_permissions(mock_session)
@@ -129,11 +174,8 @@ def test_seed_role_permissions_logs_when_researcher_role_missing(mock_session, c
     """Missing Researcher role logs a debug message and skips the researcher grant."""
     admin_role_id = uuid4()
 
-    mock_session.exec.side_effect = [
-        _exec_result(first=admin_role_id),
-        _exec_result(all_=[]),
-        _exec_result(first=None),
-    ]
+    _seeded_roles(mock_session, ADMIN=admin_role_id)
+    mock_session.exec.side_effect = [_exec_result(all_=[])]
 
     with caplog.at_level("DEBUG", logger="uvicorn"):
         seed_role_permissions(mock_session)
@@ -145,10 +187,7 @@ def test_seed_role_permissions_logs_when_researcher_role_missing(mock_session, c
 def test_seed_role_permissions_no_roles_still_logs_completion(mock_session, caplog):
     """With neither Admin nor Researcher roles seeded, the function logs both
     debug warnings and still emits the final info message."""
-    mock_session.exec.side_effect = [
-        _exec_result(first=None),
-        _exec_result(first=None),
-    ]
+    _seeded_roles(mock_session)
 
     with caplog.at_level("DEBUG", logger="uvicorn"):
         seed_role_permissions(mock_session)
@@ -156,5 +195,6 @@ def test_seed_role_permissions_no_roles_still_logs_completion(mock_session, capl
     messages = [rec.message for rec in caplog.records]
     assert any("Admin role not found" in m for m in messages)
     assert any("Researcher role not found" in m for m in messages)
+    assert any("Trust Admin role not found" in m for m in messages)
     assert any("Role permissions seeded successfully." in m for m in messages)
     mock_session.add.assert_not_called()

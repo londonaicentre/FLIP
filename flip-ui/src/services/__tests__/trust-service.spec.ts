@@ -14,7 +14,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { _http } from "@/services/api";
-import { getTrusts, getTrustStatuses } from "@/services/trust-service";
+import { getTrustDecisions, getTrusts, getTrustStatuses } from "@/services/trust-service";
 
 vi.mock("@/services/api", () => ({
     _http: {
@@ -115,6 +115,28 @@ describe("trust-service", () => {
             vi.mocked(_http.get).mockRejectedValue(new Error("Network Error"));
 
             await expect(getTrustStatuses()).rejects.toThrow("Network Error");
+        });
+    });
+
+    describe("getTrustDecisions", () => {
+        it("GETs one trust's decisions and returns the array (FLIP#1258)", async () => {
+            const decisions = [{
+                projectId: "p1",
+                status: "PENDING"
+            }];
+            vi.mocked(_http.get).mockResolvedValue({ data: decisions } as never);
+
+            const result = await getTrustDecisions("t-1");
+
+            expect(_http.get).toHaveBeenCalledWith("/trust/t-1/decisions");
+            expect(result).toEqual(decisions);
+        });
+
+        it("returns [] when the backend body is not an array", async () => {
+            // My Trust filters this list into its two sections; a non-array body would throw there.
+            vi.mocked(_http.get).mockResolvedValue({ data: { error: "oops" } } as never);
+
+            expect(await getTrustDecisions("t-1")).toEqual([]);
         });
     });
 });

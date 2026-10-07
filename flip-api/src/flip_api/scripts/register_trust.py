@@ -12,8 +12,9 @@
 
 """Register a single trust on the hub and emit its kit (deploy-time CLI).
 
-Invoked once per trust by the deploy Makefile's ``register-trust-<n>`` targets
-(dev: ``docker compose exec``; prod: a one-off ECS task). The trust's
+Invoked once per trust by the root Makefile's ``register-trust KIT=<CODE>`` target
+(dev: ``docker compose exec``) and by ``deploy/providers/AWS/scripts/register-trusts.sh``
+(stag/prod: a one-off ECS task). The trust's
 name / code / region are passed as arguments — the hub carries no trust list
 of its own; the deploy tooling decides what to register.
 

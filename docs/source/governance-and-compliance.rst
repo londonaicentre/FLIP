@@ -29,10 +29,12 @@ participate.
 
 When a research project is staged, each trust whose data it proposes to use decides
 whether to take part. That decision is taken **offline**, between the project and the
-trust's information governance function; its outcome is then recorded in FLIP by a Central
-Hub administrator against that specific project–trust pairing, timestamped, with the
-approving administrator recorded in the project's audit trail (see
-:ref:`admin-project-and-user-management`). A trust that declines is simply not included:
+trust's information governance function; its outcome is then recorded in FLIP against that
+specific project–trust pairing, timestamped, with the decider recorded in the project's audit
+trail (see :ref:`admin-project-and-user-management`). By default a Central Hub administrator
+records it. A trust that wants to record its own decisions has a **Trust Admin**: while it has
+one, only its Trust Admins can approve or decline for it, and the hub cannot (see
+:ref:`trust-admin-guide`). A trust that declines is simply not included:
 the project proceeds with the trusts that approved it. The declining trust will already
 have answered the project's cohort query — that runs at every registered trust when the
 query is submitted, before staging, and returns only the aggregate statistics described
@@ -446,8 +448,8 @@ Objective A — Managing risk
      - Shared
      - The per-project, per-trust approval gate places the decision with the
        organisation that carries the risk; the Central Hub records the outcome per
-       project–trust pairing, timestamped, with the approver in the project's audit
-       trail.
+       project–trust pairing — approved or declined — timestamped, with the hub user
+       who recorded it on the record and in the project's audit trail.
      - The gate is a hub-side record of the trust's decision, not a control on the
        trust's own deployment; what the trust enforces locally is the query
        validation and row-level suppression under E3.b.

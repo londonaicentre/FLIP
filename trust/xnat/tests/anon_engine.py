@@ -205,11 +205,13 @@ def _assign(dataset: Dataset, tag: int, value: str) -> None:
     dataset.add_new(tag, vr, value)
 
 
-_UID_TAGS = frozenset({
-    0x00080018,  # SOP Instance UID
-    0x0020000D,  # Study Instance UID
-    0x0020000E,  # Series Instance UID
-})
+_UID_TAGS = frozenset(
+    {
+        0x00080018,  # SOP Instance UID
+        0x0020000D,  # Study Instance UID
+        0x0020000E,  # Series Instance UID
+    }
+)
 
 
 def _is_uid_tag(tag: int) -> bool:

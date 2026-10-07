@@ -77,10 +77,12 @@ path = "model_path"
 checkpoint = "model.pt"
 """
 
-    mock_requests_get({
-        f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
-        f"https://example.com/{model_id}/app/config.toml": config_content,
-    })
+    mock_requests_get(
+        {
+            f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
+            f"https://example.com/{model_id}/app/config.toml": config_content,
+        }
+    )
 
     body = UploadAppRequest(
         project_id="project-123",
@@ -125,10 +127,12 @@ checkpoint = "model.pt"
 accuracy = true
 """
 
-    mock_requests_get({
-        f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
-        f"https://example.com/{model_id}/app/config.toml": config_content,
-    })
+    mock_requests_get(
+        {
+            f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
+            f"https://example.com/{model_id}/app/config.toml": config_content,
+        }
+    )
 
     body = UploadAppRequest(
         project_id="project-123",
@@ -265,10 +269,12 @@ publisher = "test"
 num_server_rounds = 3
 """
 
-    mock_requests_get({
-        f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
-        f"https://example.com/{model_id}/model.pt": b"fake model weights",
-    })
+    mock_requests_get(
+        {
+            f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
+            f"https://example.com/{model_id}/model.pt": b"fake model weights",
+        }
+    )
 
     body = UploadAppRequest(
         project_id="project-123",
@@ -306,10 +312,12 @@ num_server_rounds = 3
 path = "model_path"
 """
 
-    mock_requests_get({
-        f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
-        f"https://example.com/{model_id}/app/config.toml": app_config_content,
-    })
+    mock_requests_get(
+        {
+            f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
+            f"https://example.com/{model_id}/app/config.toml": app_config_content,
+        }
+    )
 
     body = UploadAppRequest(
         project_id="project-123",
@@ -339,9 +347,11 @@ def test_upload_app_download_failure(client, upload_dir, mock_requests_get):
     model_id = str(uuid4())
 
     # Mock only one URL, making the second fail
-    mock_requests_get({
-        f"https://example.com/{model_id}/pyproject.toml": b"content",
-    })
+    mock_requests_get(
+        {
+            f"https://example.com/{model_id}/pyproject.toml": b"content",
+        }
+    )
 
     body = UploadAppRequest(
         project_id="project-123",
@@ -375,9 +385,11 @@ publisher = "test"
 num_server_rounds = 3
 """
 
-    mock_requests_get({
-        f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
-    })
+    mock_requests_get(
+        {
+            f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
+        }
+    )
 
     body = UploadAppRequest(
         project_id="project-123",
@@ -439,8 +451,8 @@ def test_upload_app_rejects_non_https_bundle_url(client, upload_dir):
 
 
 def test_upload_app_rejects_disallowed_bundle_host(client, upload_dir, monkeypatch):
-    """When BUNDLE_URL_ALLOWED_HOSTS is set, off-origin bundle URLs are rejected."""
-    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", "objectstore.internal")
+    """When BUNDLE_URL_ALLOWED_ORIGINS is set, off-origin bundle URLs are rejected."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "https://objectstore.internal")
     model_id = str(uuid4())
     body = UploadAppRequest(
         project_id="p",
@@ -490,3 +502,10 @@ def test_startup_reports_empty_bundle_allow_list(monkeypatch):
     with TestClient(app_module.app):
         pass
     assert calls == [True]
+
+
+def test_startup_refuses_a_malformed_bundle_allow_list(monkeypatch):
+    """A BUNDLE_URL_ALLOWED_ORIGINS entry that is not a bare origin fails the boot, not the first fetch (#1291)."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "s3.eu-west-2.amazonaws.com")
+    with pytest.raises(ValueError, match="not a bare scheme://host"), TestClient(app_module.app):
+        pass

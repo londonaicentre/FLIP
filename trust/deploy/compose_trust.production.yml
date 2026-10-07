@@ -50,8 +50,11 @@ services:
     volumes:
       - ${OMOP_DATA_DIR:-/opt/flip/omop/db_data}:/var/lib/postgresql/data
 
+  # ORTHANC_TAG: the same opt-out as OMOP_DB_TAG above — orthanc's CI build is
+  # path-filtered to trust/orthanc/**, so a sha- tag of a commit that did not touch
+  # it has no orthanc image at all (release tags build every image, FLIP#1204).
   orthanc:
-    image: ghcr.io/londonaicentre/orthanc:${DOCKER_TAG}
+    image: ghcr.io/londonaicentre/orthanc:${ORTHANC_TAG:-${DOCKER_TAG}}
     restart: always
     ports:
       - "${PACS_UI_PORT}:8042"
@@ -81,6 +84,11 @@ services:
 
   imaging-api:
     image: ghcr.io/londonaicentre/imaging-api:${DOCKER_TAG}
+    # A site must come back after a daemon restart or host reboot without an operator's
+    # `up`: omop-db / orthanc / observability already carry `always`; the APIs and the
+    # fl-client did not, which is how AICP sat half-dead for weeks (FLIP#1204).
+    # unless-stopped rather than always so an explicit `docker stop` is still honoured.
+    restart: unless-stopped
     # Override the default CMD so that the production image uses uvicorn directly
     # instead of `fastapi dev --reload-exclude` (which fails on older fastapi CLI versions).
     # The entrypoint.sh fix (uvicorn for non-debug mode) will remove the need for this
@@ -131,6 +139,11 @@ services:
 
   data-access-api:
     image: ghcr.io/londonaicentre/data-access-api:${DOCKER_TAG}
+    # A site must come back after a daemon restart or host reboot without an operator's
+    # `up`: omop-db / orthanc / observability already carry `always`; the APIs and the
+    # fl-client did not, which is how AICP sat half-dead for weeks (FLIP#1204).
+    # unless-stopped rather than always so an explicit `docker stop` is still honoured.
+    restart: unless-stopped
     ports:
       - "${DATA_ACCESS_API_PORT}:8000"
     security_opt:
@@ -153,9 +166,28 @@ services:
       # kit file to release less. The `:-10` keeps an unset variable from arriving as an
       # empty string, which pydantic would reject against `int`.
       COHORT_QUERY_THRESHOLD: ${COHORT_QUERY_THRESHOLD:-10}
+      # The trust's governance document (FLIP#1259). Optional: unset means the platform
+      # defaults apply and only COHORT_QUERY_THRESHOLD above is in force. Points at the
+      # read-only mount below, not the host path, since the service resolves it inside
+      # the container. Policy may only tighten — a document that lowers the threshold is
+      # rejected and the service refuses to start.
+      ACCESS_POLICY_FILE: ${ACCESS_POLICY_FILE:+/app/governance.toml}
+    volumes:
+      # The governance document, read-only — the service must never be able to rewrite its
+      # own policy. When ACCESS_POLICY_FILE is unset, /dev/null is mounted and the env var
+      # above is empty, so nothing reads it. /dev/null rather than a file in the checkout
+      # because it exists on every Docker host: a relative default resolves on the machine
+      # running compose, and over a remote DOCKER_CONTEXT the daemon would create an empty
+      # root-owned directory at that path on the trust host.
+      - ${ACCESS_POLICY_FILE:-/dev/null}:/app/governance.toml:ro
 
   trust-api:
     image: ghcr.io/londonaicentre/trust-api:${DOCKER_TAG}
+    # A site must come back after a daemon restart or host reboot without an operator's
+    # `up`: omop-db / orthanc / observability already carry `always`; the APIs and the
+    # fl-client did not, which is how AICP sat half-dead for weeks (FLIP#1204).
+    # unless-stopped rather than always so an explicit `docker stop` is still honoured.
+    restart: unless-stopped
     # Port exposed on host for SSM port forwarding (swagger docs debugging).
     # Security group blocks all inbound — only reachable via SSM tunnel.
     ports:
@@ -178,6 +210,10 @@ services:
       ENV: production
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
       TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
+      # The fl-client has no health endpoint; its configured image tag is what the health
+      # collector reports for it, so the hub's Connection Status names the FL build this
+      # site runs (FLIP#1204). Same variable the fl-client-net-* overlays pin the image to.
+      FL_CLIENT_IMAGE_TAG: ${DOCKER_FL_TAG:-}
 
   # --- Observability infrastructure ---
 

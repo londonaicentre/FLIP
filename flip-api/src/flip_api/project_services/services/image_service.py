@@ -28,7 +28,13 @@ from flip_api.domain.interfaces.project import (
     IUpdateXnatProfile,
 )
 from flip_api.domain.schemas.projects import ImagingProject, XnatProjectStatusInfo
-from flip_api.domain.schemas.status import ImagingConnectionState, TaskStatus, TaskType, XNATImageStatus
+from flip_api.domain.schemas.status import (
+    ImagingConnectionState,
+    TaskStatus,
+    TaskType,
+    TrustApprovalStatus,
+    XNATImageStatus,
+)
 from flip_api.trusts_services.services.trust import get_trusts
 from flip_api.utils.logger import logger
 
@@ -123,7 +129,7 @@ def get_imaging_projects(project_id: UUID, db: Session) -> list[ImagingProject]:
                 & (col(XNATProjectStatus.project_id) == project_id),
             )
             .where(col(ProjectTrustIntersect.project_id) == project_id)
-            .where(ProjectTrustIntersect.approved == True)  # noqa: E712
+            .where(col(ProjectTrustIntersect.status) == TrustApprovalStatus.APPROVED)
         )
         results = db.exec(statement).all()
         logger.debug(f"Imaging projects fetched for project_id {project_id}: {results}")
@@ -452,10 +458,12 @@ def get_imaging_project_statuses(
                 task = TrustTask(
                     trust_id=row_project.trust_id,
                     task_type=TaskType.GET_IMAGING_STATUS,
-                    payload=json.dumps({
-                        "imaging_project_id": str(row_project.xnat_project_id),
-                        "encoded_query": encoded_query,
-                    }),
+                    payload=json.dumps(
+                        {
+                            "imaging_project_id": str(row_project.xnat_project_id),
+                            "encoded_query": encoded_query,
+                        }
+                    ),
                 )
                 db.add(task)
 
@@ -572,10 +580,12 @@ def reimport_failed_studies(
             task = TrustTask(
                 trust_id=query.trust_id,
                 task_type=TaskType.REIMPORT_STUDIES,
-                payload=json.dumps({
-                    "imaging_project_id": str(query.xnat_project_id),
-                    "encoded_query": encoded_query,
-                }),
+                payload=json.dumps(
+                    {
+                        "imaging_project_id": str(query.xnat_project_id),
+                        "encoded_query": encoded_query,
+                    }
+                ),
             )
             db.add(task)
 
