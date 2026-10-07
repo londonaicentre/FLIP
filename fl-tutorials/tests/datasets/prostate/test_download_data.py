@@ -21,6 +21,7 @@ name. The server is faked: a stub session whose ``get`` returns canned responses
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -215,3 +216,59 @@ def test_unknown_total_is_accepted_as_sent(
     download_data.download("https://example/main.zip", dest)
 
     assert dest.read_bytes() == BODY
+
+
+def test_folds_are_fetched_concurrently_and_marked_individually(
+    download_data: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """download_images runs the pending folds in parallel, skips done ones, and marks each on its own."""
+    import threading
+    import zipfile
+
+    (tmp_path / "images").mkdir()
+    (tmp_path / "images" / ".fold1.done").touch()
+    in_flight, peak, lock = 0, 0, threading.Lock()
+    started = threading.Barrier(3, timeout=10)
+
+    def fake_download(url: str, dest: Path, position: int | None = None) -> None:
+        nonlocal in_flight, peak
+        with lock:
+            in_flight += 1
+            peak = max(peak, in_flight)
+        started.wait()  # all three folds must be in flight at once for this to pass
+        with zipfile.ZipFile(dest, "w") as zf:
+            fold = re.search(r"fold(\d)", url).group(1)  # disjoint patients per fold, as in the real set
+            zf.writestr(f"patient{fold}/scan.mha", b"x")
+        with lock:
+            in_flight -= 1
+
+    monkeypatch.setattr(download_data, "download", fake_download)
+
+    download_data.download_images(tmp_path, ["0", "1", "2", "3"], workers=3)
+
+    assert peak == 3
+    assert sorted(p.name for p in (tmp_path / "images").glob(".fold*.done")) == [
+        ".fold0.done",
+        ".fold1.done",
+        ".fold2.done",
+        ".fold3.done",
+    ]
+    assert not list(tmp_path.glob("*.zip")), "each zip is removed after its own extraction"
+
+
+def test_a_failed_fold_is_reported_not_skipped(
+    download_data: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fake_download(url: str, dest: Path, position: int | None = None) -> None:
+        if "fold1" in url:
+            raise download_data.IncompleteDownload("fold 1 short")
+        import zipfile
+
+        with zipfile.ZipFile(dest, "w") as zf:
+            zf.writestr("p/scan.mha", b"x")
+
+    monkeypatch.setattr(download_data, "download", fake_download)
+    with pytest.raises(download_data.IncompleteDownload, match="fold 1 short"):
+        download_data.download_images(tmp_path, ["0", "1"], workers=2)
+    assert (tmp_path / "images" / ".fold0.done").exists()
+    assert not (tmp_path / "images" / ".fold1.done").exists()

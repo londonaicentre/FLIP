@@ -67,9 +67,10 @@ plus the acquiring `center`: `RUMC`, `PCNN`, or `ZGT`). Labels and marksheet all
 same `picai_labels` archive, so one download covers all three. Re-running the download skips
 folds/labels/zonal labels/clinical info already downloaded (marked by a `.done` file dropped in
 `images/`/`labels/`/`zonal_labels/`/`clinical_information/` after a successful extract).
-A fold that was interrupted resumes from its `.part` file rather than restarting, a connection that
-goes quiet for two minutes is abandoned and retried, and a zip is only accepted once its size matches
-what Zenodo announced.
+The folds are fetched three at a time (`DOWNLOAD_WORKERS=N` to change it — Zenodo caps each connection at
+5–8 MB/s, and three add up); a fold that was interrupted resumes from its `.part` file rather than
+restarting, a connection that goes quiet for two minutes is abandoned and retried, and a zip is only
+accepted once its size matches what Zenodo announced.
 
 `convert_mha_to_dicom.py` is adapted from [picai_prep](https://github.com/DIAGNijmegen/picai_prep),
 which converts DICOM to `.mha` via SimpleITK; it runs that conversion in reverse, writing one
