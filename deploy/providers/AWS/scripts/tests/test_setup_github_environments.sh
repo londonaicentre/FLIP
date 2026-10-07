@@ -160,7 +160,7 @@ run_case() {
         STUB_BUCKET="flip-terraform-state-stag" \
         STUB_SUB="${STAG_SUB}" \
         STUB_APPLY_REF="${STAG_REF}" \
-        "${overrides[@]}" \
+        ${overrides[@]+"${overrides[@]}"} \
         bash "${SCRIPT}" "$@" 2>"${TEST_ROOT}/err")"
     RC=$?
     STDERR="$(cat "${TEST_ROOT}/err")"
