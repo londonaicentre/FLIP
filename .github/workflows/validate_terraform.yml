@@ -96,6 +96,7 @@ jobs:
           - test_add_fl_kits.sh
           - test_checkov_lint.sh
           - test_check_fl_plan_impact.sh
+          - test_tflint_lint.sh
           - test_compose_ci_env.sh
           - test_resolve_image_tags.sh
           - test_setup_github_environments.sh
@@ -169,3 +170,29 @@ jobs:
 
       - name: Run checkov lint
         run: bash deploy/providers/AWS/scripts/checkov_lint.sh
+
+  # Static tflint lint: the bundled terraform ruleset (recommended preset) plus
+  # the AWS ruleset, configured in deploy/providers/AWS/.tflint.hcl. Catches what
+  # validate accepts — a variable nothing reads, a module with no provider
+  # version constraint, an AWS argument value the API would reject. Every
+  # directory with .tf files is linted on its own, so a module is checked even
+  # where no root calls it. No credentials, no init, no plan. Like checkov-lint,
+  # the script certifies itself against a canary fixture first. GITHUB_TOKEN
+  # only lifts the anonymous rate limit on the plugin download.
+  tflint-lint:
+    name: TFLint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          # Keep in sync with TFLINT_VERSION in scripts/tflint_lint.sh.
+          tflint_version: v0.64.0
+
+      - name: Run tflint lint
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash deploy/providers/AWS/scripts/tflint_lint.sh
