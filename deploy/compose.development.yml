@@ -121,9 +121,10 @@ services:
       timeout: 5s
       retries: 30
       # A fresh container builds its schema on first boot (start-dev keeps it in the
-      # container), which took 176s on a loaded host: longer than 20s + 30 x 5s, so
-      # `make up` gave up on a Keycloak that was seconds from ready (FLIP#1384). Probes
-      # failing inside start_period don't count, and the first passing one ends it.
+      # container), which can take ~3 min on a loaded host — past 20s + 30 x 5s, which
+      # fails flip-api's service_healthy dependency (FLIP#1384). Probes failing inside
+      # start_period don't count and the first passing one ends it, so a fast host waits
+      # no longer.
       start_period: 300s
     security_opt:
       - no-new-privileges:true

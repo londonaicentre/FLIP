@@ -51,11 +51,9 @@ KIT_FILE := $(if $(wildcard .env.$(KIT).$(ENV)),.env.$(KIT).$(ENV),.env.$(KIT))
 MAIN_ENV_FILE ?= .env.development
 ifeq ($(ENV),development)
 -include ../$(MAIN_ENV_FILE)
-# DOCKER_FL_REGISTRY is deliberately not in this list: ../deploy/fl_backend.mk defaults it to
-# DOCKER_REGISTRY with `?=` and exports it. Exporting it here first, while the hub env leaves it
-# unset, would DEFINE it as empty, the default would never apply, and a direct
-# `make -C trust up-trust` would pull `flare-fl-client:stag` with no registry (FLIP#1384) — the
-# trap the root Makefile's env export already avoids.
+# DOCKER_FL_REGISTRY is deliberately absent: ../deploy/fl_backend.mk defaults it with `?=
+# $(DOCKER_REGISTRY)` and exports it. Exported here first while unset, it is defined as empty, the
+# default never applies and the FL images lose their registry (FLIP#1384).
 export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER FL_BACKEND \
        FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY \
        DOCKER_FL_TAG NLB_SUBDOMAIN FL_SERVER_PORT

@@ -182,32 +182,56 @@ xnat_curl() {
 # stay bare curl rather than xnat_curl. They carry xnat_curl's deadlines even so, and `|| true` so a
 # timeout reaches the checks below instead of ending the script under set -e with no output: the
 # wall-clock wait above proves XNAT serves the login page, not that an authenticated route answers.)
-# On a first boot it serves that page before its database initialisation finishes, and until then
-# both passwords get 401 (FLIP#1384). So the probe pair is retried a few times before giving up. The
-# cap is a count, not a deadline: each round is up to two failed logins, and XNAT locks the account
-# after about 20, so a genuinely wrong password must fail well short of that.
-ADMIN_PASSWORD_ROTATED=false
+#
+# On a first boot XNAT serves that login page before its database initialisation finishes, and until
+# then both passwords get 401 (FLIP#1384), so the probes are retried a few times. The cap is a count,
+# not a deadline: a genuinely wrong password costs one failed login per probe, XNAT locks the account
+# after about 20, and a run must fail well short of that. Hence the 1-8 bound below and a single probe
+# per round when the two passwords are the same (the dev kits). The Helm xnat-init Job sets one
+# attempt: Kubernetes restarts the failed container, which is its retry.
 auth_attempts="${XNAT_AUTH_PROBE_ATTEMPTS:-6}"
 auth_wait="${XNAT_AUTH_PROBE_WAIT_SECONDS:-20}"
+if ! [[ "$auth_attempts" =~ ^[1-8]$ ]]; then
+  echo "ERROR: XNAT_AUTH_PROBE_ATTEMPTS must be a whole number from 1 to 8 (each attempt can be a" \
+    "failed admin login, and XNAT locks the account after about 20), got '${auth_attempts}'" >&2
+  exit 1
+fi
+if ! [[ "$auth_wait" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: XNAT_AUTH_PROBE_WAIT_SECONDS must be a whole number of seconds, got '${auth_wait}'" >&2
+  exit 1
+fi
+ADMIN_PASSWORD_ROTATED=false
 for ((attempt = 1; ; attempt++)); do
   init_pw_status=$(curl -s --connect-timeout 5 --max-time 15 -o /dev/null -w '%{http_code}' \
     -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
     "$XNAT_URL/xapi/siteConfig/initialized") || true
   [[ "${init_pw_status}" == "200" ]] && break
-  rotated_probe=$(curl -s --connect-timeout 5 --max-time 15 -w '\n%{http_code}' \
-    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
-    "$XNAT_URL/xapi/siteConfig/initialized") || true
-  rotated_status="${rotated_probe##*$'\n'}"
-  initialized="${rotated_probe%$'\n'*}"
-  [[ "${rotated_status}" == "200" ]] && break
+  if [[ "${XNAT_ADMIN_PASSWORD}" == "${XNAT_ADMIN_INITIAL_PASSWORD}" ]]; then
+    rotated_status="${init_pw_status}"
+  else
+    rotated_probe=$(curl -s --connect-timeout 5 --max-time 15 -w '\n%{http_code}' \
+      -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+      "$XNAT_URL/xapi/siteConfig/initialized") || true
+    rotated_status="${rotated_probe##*$'\n'}"
+    initialized="${rotated_probe%$'\n'*}"
+    [[ "${rotated_status}" == "200" ]] && break
+  fi
+  statuses="initial: HTTP ${init_pw_status:-000}, configured: HTTP ${rotated_status:-000}"
   if [[ "$attempt" -ge "$auth_attempts" ]]; then
-    echo "ERROR: neither admin password authenticates (initial: HTTP ${init_pw_status:-000}," \
-      "configured: HTTP ${rotated_status:-000}) after ${attempt} attempts." >&2
-    echo "  Check XNAT_ADMIN_PASSWORD in the kit against this XNAT's admin account." >&2
+    echo "ERROR: neither admin password authenticates (${statuses}) after ${attempt} attempt(s)." >&2
+    case "${init_pw_status:-000} ${rotated_status:-000}" in
+      *401*)
+        echo "  Check XNAT_ADMIN_PASSWORD in the kit against this XNAT's admin account. After about" \
+          "20 failed logins XNAT locks the account and rejects even the right password." >&2 ;;
+      "000 000")
+        echo "  Nothing answered at $XNAT_URL — check that the xnat-web container is running and reachable." >&2 ;;
+      *5??*)
+        echo "  XNAT returned a server error — check the xnat-web logs." >&2 ;;
+    esac
     exit 1
   fi
-  echo "Neither admin password authenticates yet (XNAT may still be initialising its database)" \
-    "— retrying in ${auth_wait}s (attempt ${attempt}/${auth_attempts})."
+  echo "Neither admin password authenticates yet (${statuses}); XNAT may still be initialising its" \
+    "database. Retrying in ${auth_wait}s (attempt ${attempt}/${auth_attempts})."
   sleep "$auth_wait"
 done
 if [[ "${init_pw_status}" != "200" ]]; then

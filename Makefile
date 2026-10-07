@@ -192,10 +192,11 @@ _ensure-fl-jobs-dir:
 # Fail fast (NVFLARE) when the per-net startup kits are missing — delegated to
 # scripts/check-fl-provisioned.sh (see that script for the why/how). Net IDs
 # come from NET_ENDPOINTS (same source as _ensure-fl-jobs-dir); the check is a no-op
-# for non-NVFLARE backends.
+# for non-NVFLARE backends. In development it also checks that the NVFLARE FL API can read its
+# admin key through the host group (FL_API_KEY_GID, FLIP#1384).
 _check-fl-provisioned:
 	@FL_BACKEND='$(FL_BACKEND)' NET_ENDPOINTS='$(NET_ENDPOINTS)' FL_PROVISIONED_DIR='$(FL_PROVISIONED_DIR)' \
-		scripts/check-fl-provisioned.sh
+		FL_API_KEY_GID='$(if $(filter development,$(ENV)),$(DOCKER_GID))' scripts/check-fl-provisioned.sh
 
 # Minimal $(MAKE) up
 up-no-trust: generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned

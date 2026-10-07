@@ -177,16 +177,16 @@ class DevelopmentFlRegistry(unittest.TestCase):
     HUB_ENV = "DOCKER_REGISTRY=ghcr.io/londonaicentre/\nDOCKER_TAG=stag\nDOCKER_FL_TAG=stag\nFL_BACKEND=nvflare\n"
     DEV_KIT = KIT.split("# ── Hub-shared")[0] + "# ── Hub-shared (managed) ──\n# DOCKER_FL_REGISTRY=\n"
 
-    def fl_registry(self, *extra: str) -> str:
-        """DOCKER_FL_REGISTRY as trust/Makefile resolves it for a development kit."""
+    def fl_registry(self, *extra: str, hub_env: str = HUB_ENV) -> str:
+        """DOCKER_FL_REGISTRY as trust/Makefile exports it to its recipes (what compose reads)."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for rel in ("deploy/env_mode.mk", "deploy/fl_backend.mk", "deploy/instance.mk", "trust/Makefile"):
                 (root / rel).parent.mkdir(parents=True, exist_ok=True)
                 (root / rel).write_text((Path(__file__).resolve().parents[2] / rel).read_text())
-            (root / ".env.development").write_text(self.HUB_ENV)
+            (root / ".env.development").write_text(hub_env)
             (root / "trust" / ".env.SCR.development").write_text(self.DEV_KIT)
-            # The caller's DOCKER_*/PROD/MAKEFLAGS would beat the scratch env files.
+            # The caller's DOCKER_*/PROD/MAKEFLAGS would pre-empt the scratch env files.
             dropped = {"PROD", "MAKEFLAGS"}
             env = {k: v for k, v in os.environ.items() if not k.startswith("DOCKER_") and k not in dropped}
             out = subprocess.run(
@@ -196,7 +196,7 @@ class DevelopmentFlRegistry(unittest.TestCase):
                     "-C",
                     str(root / "trust"),
                     "--eval",
-                    "fl-registry: ; @echo [$(DOCKER_FL_REGISTRY)]",
+                    "fl-registry: ; @echo [$$DOCKER_FL_REGISTRY]",
                     "fl-registry",
                     "KIT=SCR",
                     *extra,
@@ -211,6 +211,9 @@ class DevelopmentFlRegistry(unittest.TestCase):
 
     def test_fl_registry_defaults_to_the_hub_registry(self):
         assert self.fl_registry() == "[ghcr.io/londonaicentre/]"
+
+    def test_a_hub_env_fl_registry_wins_over_the_default(self):
+        assert self.fl_registry(hub_env=self.HUB_ENV + "DOCKER_FL_REGISTRY=localhost:5000/\n") == "[localhost:5000/]"
 
     def test_an_explicit_empty_fl_registry_still_selects_local_images(self):
         assert self.fl_registry("DOCKER_FL_REGISTRY=") == "[]"
