@@ -14,13 +14,28 @@
 
 
 
+import useSWRV from "swrv";
 import { computed, ComputedRef } from "vue";
 
 import { IAIHeaderProps } from "@/components/AiHeader/AiHeader.vue";
+import { getTrustDecisions } from "@/services/trust-service";
 import { useAuthStore } from "@/store/auth";
 
 export default function useNavigation(props: IAIHeaderProps): ComputedRef {
     const authStore = useAuthStore();
+
+    // A Trust Admin's count of projects awaiting their decision (FLIP#1258). A null key fetches nothing, so
+    // nobody else pays for it; the My Trust page shares the key, so the two stay in step.
+    const { data: trustDecisions } = useSWRV(
+        () => (authStore.trustAdminOf ? `/trust/${authStore.trustAdminOf.id}/decisions` : null),
+        () => getTrustDecisions(authStore.trustAdminOf!.id),
+        {
+            dedupingInterval: 5_000,
+            shouldRetryOnError: false,
+            refreshInterval: 60_000
+        }
+    );
+    const pendingCount = computed(() => (trustDecisions.value ?? []).filter(d => d.status === "PENDING").length);
 
     return computed(() => [
         {
@@ -42,6 +57,13 @@ export default function useNavigation(props: IAIHeaderProps): ComputedRef {
             href: "/connectionstatus",
             current: props.currentPage === "/connectionstatus",
             canAccess: true
+        },
+        {
+            name: "My Trust",
+            href: "/my-trust",
+            current: props.currentPage === "/my-trust",
+            canAccess: !!authStore.trustAdminOf,
+            badge: pendingCount.value
         },
         {
             name: "Admin",

@@ -50,6 +50,14 @@ resource "aws_instance" "trust_host" {
     http_put_response_hop_limit = 2
   }
 
+  # The SSM parameter moves with every Canonical release, and ami forces
+  # replacement: without this, each new image replaces the host on the next
+  # apply, and delete_on_termination takes the trust's data with it. Replacing
+  # on purpose (-replace) still launches from the current image.
+  lifecycle {
+    ignore_changes = [ami]
+  }
+
   tags = {
     Name = "trust-host-${var.name_prefix}"
   }

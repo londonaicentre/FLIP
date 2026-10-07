@@ -34,10 +34,12 @@ def test_assign_revoke_lists_user_roles_round_trip(session):
     assert admin_role_id is not None
     assert researcher_role_id is not None
 
-    session.add_all([
-        UserRole(user_id=user_id, role_id=admin_role_id),
-        UserRole(user_id=user_id, role_id=researcher_role_id),
-    ])
+    session.add_all(
+        [
+            UserRole(user_id=user_id, role_id=admin_role_id),
+            UserRole(user_id=user_id, role_id=researcher_role_id),
+        ]
+    )
     session.commit()
 
     after_assign = session.exec(select(UserRole.role_id).where(UserRole.user_id == user_id)).all()
@@ -62,9 +64,7 @@ def test_user_role_join_returns_role_metadata(session):
     session.commit()
 
     row = session.exec(
-        select(Role.name)
-        .join(UserRole, col(UserRole.role_id) == Role.id)
-        .where(UserRole.user_id == user_id)
+        select(Role.name).join(UserRole, col(UserRole.role_id) == Role.id).where(UserRole.user_id == user_id)
     ).first()
     assert row == "Admin"
 

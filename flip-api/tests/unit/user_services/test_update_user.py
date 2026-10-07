@@ -19,11 +19,12 @@ from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.models.user_models import UsersAudit
-from flip_api.domain.schemas.users import Disabled
 from flip_api.main import app  # Ensure your FastAPI app includes the /users router
 from flip_api.user_services.update_user import get_session
 
 client = TestClient(app)
+
+USERNAME = "testuser@example.com"
 
 # -------------------
 # Fixtures & Mocks
@@ -58,29 +59,26 @@ def override_dependencies(mock_session, caller_id):
 # -------------------
 class TestUpdateUser:
     @patch("flip_api.user_services.update_user.update_xnat_user_profile")
-    @patch("flip_api.user_services.update_user.update_user")
-    @patch("flip_api.user_services.update_user.get_username")
     @patch("flip_api.user_services.update_user.has_permissions")
     def test_update_user_disable_writes_audit(
         self,
         mock_has_permissions,
-        mock_get_username,
-        mock_update_user,
         mock_update_xnat,
+        fake_idp,
         sample_user_id,
         mock_session,
         caller_id,
     ):
-        """Disable branch: Cognito + XNAT mutate, then a 'Disabled user' audit row is written."""
+        """Disable branch: identity provider + XNAT mutate, then a 'Disabled user' audit row is written."""
         mock_has_permissions.return_value = True
-        mock_get_username.return_value = "testuser@example.com"
-        mock_update_user.return_value = Disabled(disabled=True)
+        fake_idp.get_username.return_value = USERNAME
 
         response = client.put(f"/api/users/{sample_user_id}", json={"disabled": True})
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json() == {"disabled": True}
-        mock_update_user.assert_called_once()
+        fake_idp.get_username.assert_called_once_with(sample_user_id)
+        fake_idp.set_enabled.assert_called_once_with(USERNAME, False)
         mock_update_xnat.assert_called_once()
 
         # Audit row was written with the correct action + actor.
@@ -93,47 +91,45 @@ class TestUpdateUser:
         mock_session.commit.assert_called_once()
 
     @patch("flip_api.user_services.update_user.update_xnat_user_profile")
-    @patch("flip_api.user_services.update_user.update_user")
-    @patch("flip_api.user_services.update_user.get_username")
     @patch("flip_api.user_services.update_user.has_permissions")
     def test_update_user_enable_writes_audit(
         self,
         mock_has_permissions,
-        mock_get_username,
-        mock_update_user,
         mock_update_xnat,
+        fake_idp,
         sample_user_id,
         mock_session,
         caller_id,
     ):
         """Enable branch: action string is 'Enabled user'."""
         mock_has_permissions.return_value = True
-        mock_get_username.return_value = "testuser@example.com"
-        mock_update_user.return_value = Disabled(disabled=False)
+        fake_idp.get_username.return_value = USERNAME
 
         response = client.put(f"/api/users/{sample_user_id}", json={"disabled": False})
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json() == {"disabled": False}
+        fake_idp.set_enabled.assert_called_once_with(USERNAME, True)
         mock_session.add.assert_called_once()
         audit_row = mock_session.add.call_args[0][0]
         assert audit_row.action == "Enabled user"
 
     @patch("flip_api.user_services.update_user.has_permissions")
-    def test_update_user_forbidden(self, mock_has_permissions, sample_user_id):
+    def test_update_user_forbidden(self, mock_has_permissions, fake_idp, sample_user_id):
         mock_has_permissions.return_value = False
 
         response = client.put(f"/api/users/{sample_user_id}", json={"disabled": True})
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
         assert "unable to manage users" in response.json()["detail"]
+        fake_idp.get_username.assert_not_called()
+        fake_idp.set_enabled.assert_not_called()
 
-    @patch("flip_api.user_services.update_user.get_username")
     @patch("flip_api.user_services.update_user.has_permissions")
-    def test_update_user_not_found(self, mock_has_permissions, mock_get_username, sample_user_id):
-        """If the Cognito sub is gone, get_username raises 404 and that propagates unchanged."""
+    def test_update_user_not_found(self, mock_has_permissions, fake_idp, sample_user_id):
+        """If the sub is gone, get_username raises 404 and that propagates unchanged."""
         mock_has_permissions.return_value = True
-        mock_get_username.side_effect = HTTPException(
+        fake_idp.get_username.side_effect = HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"User with ID {sample_user_id} is not registered.",
         )
@@ -142,12 +138,13 @@ class TestUpdateUser:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert "is not registered" in response.json()["detail"]
+        fake_idp.set_enabled.assert_not_called()
 
-    @patch("flip_api.user_services.update_user.get_username", side_effect=Exception("Unexpected error"))
     @patch("flip_api.user_services.update_user.has_permissions")
-    def test_update_user_exception(self, mock_has_permissions, mock_get_username, sample_user_id):
+    def test_update_user_exception(self, mock_has_permissions, fake_idp, sample_user_id):
         """Catch-all returns a generic detail; raw exception text is not leaked."""
         mock_has_permissions.return_value = True
+        fake_idp.get_username.side_effect = Exception("Unexpected error")
 
         response = client.put(f"/api/users/{sample_user_id}", json={"disabled": True})
 
@@ -157,29 +154,25 @@ class TestUpdateUser:
         assert "Unexpected error" not in response.json()["detail"]
 
     @patch("flip_api.user_services.update_user.update_xnat_user_profile")
-    @patch("flip_api.user_services.update_user.update_user")
-    @patch("flip_api.user_services.update_user.get_username")
     @patch("flip_api.user_services.update_user.has_permissions")
-    def test_xnat_failure_after_cognito_succeeds_surfaces_partial_state(
+    def test_xnat_failure_after_provider_succeeds_surfaces_partial_state(
         self,
         mock_has_permissions,
-        mock_get_username,
-        mock_update_user,
         mock_update_xnat,
+        fake_idp,
         sample_user_id,
         mock_session,
     ):
-        """Cognito mutated successfully; the XNAT profile update then raised.
+        """The identity provider mutated successfully; the XNAT profile update then raised.
 
-        The Cognito state has changed but XNAT and the audit row haven't —
+        The provider-side state has changed but XNAT and the audit row haven't —
         the response detail must name the partial state explicitly so the
         operator can reconcile, instead of surfacing a generic
         "Failed to update user" that's indistinguishable from "nothing
         happened".
         """
         mock_has_permissions.return_value = True
-        mock_get_username.return_value = "testuser@example.com"
-        mock_update_user.return_value = Disabled(disabled=True)
+        fake_idp.get_username.return_value = USERNAME
         mock_update_xnat.side_effect = Exception("XNAT queue write failed")
 
         with patch("flip_api.user_services.update_user.logger") as mock_logger:
@@ -187,35 +180,32 @@ class TestUpdateUser:
 
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         detail = response.json()["detail"].lower()
-        assert "cognito" in detail
+        assert "identity-provider" in detail
         assert "xnat" in detail
         assert "partially" in detail or "verify" in detail
+        fake_idp.set_enabled.assert_called_once_with(USERNAME, False)
         # Audit row was NOT written — XNAT failed before that step.
         mock_session.add.assert_not_called()
         mock_logger.exception.assert_called()
 
     @patch("flip_api.user_services.update_user.update_xnat_user_profile")
-    @patch("flip_api.user_services.update_user.update_user")
-    @patch("flip_api.user_services.update_user.get_username")
     @patch("flip_api.user_services.update_user.has_permissions")
-    def test_audit_commit_failure_after_cognito_succeeds_surfaces_500(
+    def test_audit_commit_failure_after_provider_succeeds_surfaces_500(
         self,
         mock_has_permissions,
-        mock_get_username,
-        mock_update_user,
         mock_update_xnat,
+        fake_idp,
         sample_user_id,
         mock_session,
     ):
-        """Cognito + XNAT mutated successfully; the audit-row commit then failed.
+        """Identity provider + XNAT mutated successfully; the audit-row commit then failed.
 
         The user-visible state has changed, so 500 is the right signal — but
         the detail must not echo SQLAlchemy text and the failure must be
         logged at exception level for forensic reconciliation.
         """
         mock_has_permissions.return_value = True
-        mock_get_username.return_value = "testuser@example.com"
-        mock_update_user.return_value = Disabled(disabled=True)
+        fake_idp.get_username.return_value = USERNAME
         mock_session.commit.side_effect = Exception("DB unavailable")
 
         with patch("flip_api.user_services.update_user.logger") as mock_logger:

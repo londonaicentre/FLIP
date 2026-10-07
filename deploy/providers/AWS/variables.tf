@@ -116,12 +116,16 @@ variable "POSTGRES_DB" {
 
 # Permissions boundary attached to every IAM role this root owns.
 #
-# The policy itself is declared in ci/ — the root the pipeline does not apply —
-# and the CI apply role may only create a role, or write an inline policy onto
-# one, when that role carries this boundary (ci/main.tf, apply_iam). Set the name
-# to "" to detach it, which is only correct in an account where ci/ has never
-# been applied: an automated apply into an account whose roles have no boundary
-# is denied, loudly, on the first CreateRole.
+# The default policy is declared by modules/terraform_ci_bootstrap — instantiated
+# by a platform repository, or by ci/ in an account you bootstrap yourself; never
+# by this root — and the CI apply role may only create a role, or write an inline
+# policy onto one, when that role carries this boundary (apply_iam in the
+# module). The LZA modes override it with the platform's
+# AICentre-WorkloadRoleBoundary (Makefile), which an LZA SCP requires on every
+# workload role. Set the name to "" to detach it, which is only correct in a
+# self-contained account where the bootstrap has never been applied: an automated
+# apply into an account whose roles have no boundary is denied, loudly, on the
+# first CreateRole.
 variable "iam_permissions_boundary_name" {
   description = "Managed-policy name used as the permissions boundary on this root's IAM roles; \"\" disables it."
   type        = string
@@ -413,6 +417,12 @@ variable "manage_dns" {
   description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (first LZA bring-up, before the zone moves in the platform DNS migration — FLIP#749) skips the zone lookup, every Route53 record, and both DNS-validated ACM certs: CloudFront then serves on its default *.cloudfront.net domain with the default viewer certificate (allowed only when no aliases are set), and the CloudFront→ALB origin leg falls back to plain HTTP over the private VPC-origin ENI, because an ALB HTTPS listener needs an ISSUED certificate and issuance needs DNS validation (legacy; on LZA the same gating applies to the internal NLB's web listener — TCP until a cert can be ISSUED, then TLS). Legacy prod/stag keep the default true."
   type        = bool
   default     = true
+}
+
+variable "release_web_alias" {
+  description = "Drop flip_alb_subdomain from this account's CloudFront distribution so another estate's edge can serve it (FLIP#749 change 2b). Alternate domain names are unique across every AWS account and an exact alias beats a wildcard, so while this distribution lists the name it serves it wherever DNS points — this flag, not DNS, is the web cutover. Setting it true also drops the custom viewer certificate, which CloudFront permits only alongside an alias. Separate from manage_dns so the drop lands in a chosen window; this account keeps its zone, records and certificate, so false plus a re-apply is the rollback. Runbook: README.md, 'Handing the public name over'."
+  type        = bool
+  default     = false
 }
 
 variable "flip_alb_subdomain" {

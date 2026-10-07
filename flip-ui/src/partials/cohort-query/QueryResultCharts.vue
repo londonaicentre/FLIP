@@ -19,12 +19,15 @@
         >
             <AiLoader v-if="!results || submitting" class="py-8" />
             <div v-else-if="results.trustsResults.length">
-                <div class="h-full gap-4 space-y-4 columns-1 lg:columns-2">
+                <div
+                    data-test="chart-grid"
+                    class="grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,420px),1fr))]"
+                >
                     <div
                         v-for="chartResults in results.trustsResults"
                         :key="chartResults.name"
                         data-test="chart-card"
-                        class="relative grow aspect-[4/3] max-h-[500px] overflow-hidden bg-white
+                        class="relative aspect-[4/3] overflow-hidden bg-white
                         border border-gray-200 rounded-xl dark:bg-dark-canvas dark:border-dark-border"
                     >
                         <div class="h-full p-4">

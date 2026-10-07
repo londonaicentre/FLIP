@@ -60,6 +60,9 @@ RUN apt-get update \
     && dcm2niix --version | grep -qF "${DCM2NIIX_VERSION}"
 
 # The Container Service invokes `dcm2niix ... -o /output /input` directly (see
-# dcm2niix_command.json) — no ENTRYPOINT, and the image keeps the root default
-# user to match the previous image's output-file ownership on the build mount.
+# dcm2niix_command.json) — no ENTRYPOINT. It runs as xnat-web's uid
+# (XNAT_CONTAINER_UID in trust/xnat/Makefile), so its output on the build bind
+# mount carries the one owner everything else under xnat-data has, and a service
+# the Container Service can hand arbitrary host mounts does not also run as root.
+USER 1001:1001
 CMD ["dcm2niix", "--version"]

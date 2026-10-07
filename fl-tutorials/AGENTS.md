@@ -16,14 +16,15 @@ built on the templates in `fl-apps/`; the images they run on are built from
 | `tests/` | CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering `fl-apps/flower` |
 
 ```bash
-make -C fl-tutorials test   # ruff over fl-tutorials/ + the CPU-only suite (no GPU/dataset/FL image)
+make -C fl-tutorials test   # ruff + both CPU-only pytest suites (tutorial-app + per-dataset;
+                            # no GPU, no dataset download, no FL image — a first-run uv sync
+                            # per project still resolves wheels)
 ```
 
 ## Running the tutorials
 
-The NVFLARE tutorials live in `fl-tutorials/` and are all **Client-API** apps (the legacy Executor
-tutorials, templates and their Docker `testing/` harness are removed; the pre-rename `*_client_api`
-job-type names survive only as accepted aliases for models created before the rename). Each tutorial carries a `.env.app` and a `job.py` driving a FLIP recipe;
+The NVFLARE tutorials live in `fl-tutorials/` and are all **Client-API** apps (the `*_client_api`
+job-type names are accepted aliases for models created under those names). Each tutorial carries a `.env.app` and a `job.py` driving a FLIP recipe;
 `make run` delegates to `make sim`, which runs the NVFLARE simulator (SimEnv) in the flip-utils venv
 with the `full` ML extra (needs a GPU; per-tutorial `make export` builds the full job config with no
 GPU). From the repo root:
@@ -52,7 +53,7 @@ checkpoint: `sim-tutorial.sh` passes `--run-config` pointing `flip-job-dir` at
 runs unchanged app code too. The wrapper's exit status is the **run's** — it reads the run id off
 the stream and asks the SuperLink (`flwr ls`) for the terminal status, because `flwr run --stream`
 returns 0 whatever became of the run — and it refuses to start while a local SuperLink it did not
-start still listens on `127.0.0.1:${FLWR_LOCAL_CONTROL_API_PORT:-39093}` (#1249): `flwr run . local`
+start still listens on `127.0.0.1:${FLWR_LOCAL_SUPERLINK_HTTP_API_PORT:-39091}` (#1249): `flwr run . local`
 reuses whatever is there, so a SuperLink another worktree left behind would run the app in *that*
 checkout's environment with nothing in the output saying so. The stale-process cleanup deliberately
 spares other checkouts (it matches this checkout's `flip-utils/` venv path, so the main checkout never
@@ -93,7 +94,7 @@ make -C fl-tutorials download-brain-mri-msd-raw     # brain_mri: the same chain,
 ```
 
 **Scope differs per dataset, and it is not an oversight.** Spleen and brain_mri carry the whole
-chain from a public MSD download; since #1221 their DICOM sets are **regenerated locally and never
+chain from a public MSD download; their DICOM sets are **regenerated locally and never
 published** (MSD is open data) — the converters are deterministic (`datasets/utils/dicom_writer.py`,
 every UID and identity a function of the case id), so the regenerated tree reproduces byte-for-byte
 and only the OMOP tables + `source/dicom_metadata.csv` go to `aicentreflip/trust-data`; a trust is

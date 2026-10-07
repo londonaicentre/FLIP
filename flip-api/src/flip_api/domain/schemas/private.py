@@ -153,15 +153,6 @@ class TrainingLog(BaseModel):
         return self
 
 
-class ProjectApprovalBody(BaseModel):
-    trusts: list[UUID] = Field(..., description="List of Trust IDs to be approved for the project.")
-
-
-class ProjectApproval(BaseModel):
-    project_id: UUID = Field(..., description="Project ID to be approved.")
-    trust_ids: list[UUID] = Field(..., description="List of Trust IDs to be approved for the project.")
-
-
 class TrustSpecificData(BaseModel):  # Parsed from query_result.data JSON string
     record_count: int
     data: list[OmopData]

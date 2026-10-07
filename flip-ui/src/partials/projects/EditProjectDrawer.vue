@@ -132,16 +132,19 @@
                                                     Convert DICOMs to NIfTI
                                                 </label>
                                                 <p class="text-xs text-gray-500 dark:text-gray-300 mb-1">
-                                                    Automatically convert DICOM scans to NIfTI format when images are imported from PACS into XNAT.
+                                                    Automatically convert DICOM scans to NIfTI format when images are
+                                                    imported from PACS into XNAT.
                                                 </p>
                                                 <p class="text-xs text-gray-500 dark:text-gray-300 mb-1">
-                                                    When enabled, NIfTI files can be requested using the ResourceType parameter.
+                                                    When enabled, NIfTI files can be requested using the ResourceType
+                                                    parameter.
                                                 </p>
                                                 <p class="text-xs text-gray-500 dark:text-gray-300 mb-1">
                                                     Disable this if you will be working with DICOM files directly.
                                                 </p>
                                                 <p class="text-xs italic text-gray-400 dark:text-gray-300 mb-2">
-                                                    This option is set when the project is created and cannot be changed.
+                                                    This option is set when the project is created and cannot be
+                                                    changed.
                                                 </p>
                                                 <AiSwitch
                                                     name="dicom_to_nifti"

@@ -18,95 +18,65 @@ from fastapi import HTTPException, status
 
 from flip_api.user_services.mfa_status import get_own_mfa_status
 
+USERNAME = "user@example.com"
+
 
 @pytest.fixture
 def token_id():
     return uuid.uuid4()
 
 
-def test_returns_enabled_true_when_totp_active(mock_request, token_id):
-    """Caller with SOFTWARE_TOKEN_MFA in their settings list gets enabled=True."""
-    user_pool_id = "test-user-pool-id"
-    username = "user@example.com"
+def test_returns_enabled_true_when_totp_active(fake_idp, mock_request, token_id):
+    """Caller with an active TOTP device gets enabled=True."""
+    fake_idp.get_username.return_value = USERNAME
+    fake_idp.is_mfa_enabled.return_value = True
 
-    with (
-        patch("flip_api.user_services.mfa_status.get_user_pool_id") as mock_get_pool,
-        patch("flip_api.user_services.mfa_status.get_username") as mock_get_username,
-        patch("flip_api.user_services.mfa_status.is_mfa_enabled") as mock_is_enabled,
-        patch("flip_api.user_services.mfa_status.get_settings") as mock_get_settings,
-    ):
-        mock_get_pool.return_value = user_pool_id
-        mock_get_username.return_value = username
-        mock_is_enabled.return_value = True
+    with patch("flip_api.user_services.mfa_status.get_settings") as mock_get_settings:
         mock_get_settings.return_value.ENFORCE_MFA = True
 
-        result = get_own_mfa_status(mock_request, token_id)
+        result = get_own_mfa_status(mock_request, token_id, idp=fake_idp)
 
         assert result == {"enabled": True, "required": True}
-        mock_get_username.assert_called_once_with(str(token_id), user_pool_id)
-        mock_is_enabled.assert_called_once_with(username, user_pool_id)
+        fake_idp.get_username.assert_called_once_with(token_id)
+        fake_idp.is_mfa_enabled.assert_called_once_with(USERNAME)
 
 
-def test_returns_enabled_false_when_totp_not_active(mock_request, token_id):
+def test_returns_enabled_false_when_totp_not_active(fake_idp, mock_request, token_id):
     """Post-reset or first-invite user sees enabled=False, which is the cue to enrol."""
-    user_pool_id = "test-user-pool-id"
-    username = "user@example.com"
+    fake_idp.get_username.return_value = USERNAME
+    fake_idp.is_mfa_enabled.return_value = False
 
-    with (
-        patch("flip_api.user_services.mfa_status.get_user_pool_id") as mock_get_pool,
-        patch("flip_api.user_services.mfa_status.get_username") as mock_get_username,
-        patch("flip_api.user_services.mfa_status.is_mfa_enabled") as mock_is_enabled,
-        patch("flip_api.user_services.mfa_status.get_settings") as mock_get_settings,
-    ):
-        mock_get_pool.return_value = user_pool_id
-        mock_get_username.return_value = username
-        mock_is_enabled.return_value = False
+    with patch("flip_api.user_services.mfa_status.get_settings") as mock_get_settings:
         mock_get_settings.return_value.ENFORCE_MFA = True
 
-        result = get_own_mfa_status(mock_request, token_id)
+        result = get_own_mfa_status(mock_request, token_id, idp=fake_idp)
 
         assert result == {"enabled": False, "required": True}
 
 
-def test_required_false_signals_dev_bypass_to_ui(mock_request, token_id):
+def test_required_false_signals_dev_bypass_to_ui(fake_idp, mock_request, token_id):
     """ENFORCE_MFA=False flips the `required` flag so the UI knows it can
     skip the /auth/mfa-setup redirect — independent of whether the user
     happens to have TOTP already enabled."""
-    user_pool_id = "test-user-pool-id"
-    username = "user@example.com"
+    fake_idp.get_username.return_value = USERNAME
+    fake_idp.is_mfa_enabled.return_value = False
 
-    with (
-        patch("flip_api.user_services.mfa_status.get_user_pool_id") as mock_get_pool,
-        patch("flip_api.user_services.mfa_status.get_username") as mock_get_username,
-        patch("flip_api.user_services.mfa_status.is_mfa_enabled") as mock_is_enabled,
-        patch("flip_api.user_services.mfa_status.get_settings") as mock_get_settings,
-    ):
-        mock_get_pool.return_value = user_pool_id
-        mock_get_username.return_value = username
-        mock_is_enabled.return_value = False
+    with patch("flip_api.user_services.mfa_status.get_settings") as mock_get_settings:
         mock_get_settings.return_value.ENFORCE_MFA = False
 
-        result = get_own_mfa_status(mock_request, token_id)
+        result = get_own_mfa_status(mock_request, token_id, idp=fake_idp)
 
         assert result == {"enabled": False, "required": False}
 
 
-def test_raises_404_when_cognito_user_missing(mock_request, token_id):
-    """A valid JWT whose sub has no matching Cognito user bubbles get_username's 404."""
-    user_pool_id = "test-user-pool-id"
+def test_raises_404_when_identity_user_missing(fake_idp, mock_request, token_id):
+    """A valid JWT whose sub has no matching identity-provider user bubbles get_username's 404."""
+    fake_idp.get_username.side_effect = HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND, detail="User not registered"
+    )
 
-    with (
-        patch("flip_api.user_services.mfa_status.get_user_pool_id") as mock_get_pool,
-        patch("flip_api.user_services.mfa_status.get_username") as mock_get_username,
-        patch("flip_api.user_services.mfa_status.is_mfa_enabled") as mock_is_enabled,
-    ):
-        mock_get_pool.return_value = user_pool_id
-        mock_get_username.side_effect = HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not registered"
-        )
+    with pytest.raises(HTTPException) as exc_info:
+        get_own_mfa_status(mock_request, token_id, idp=fake_idp)
 
-        with pytest.raises(HTTPException) as exc_info:
-            get_own_mfa_status(mock_request, token_id)
-
-        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
-        mock_is_enabled.assert_not_called()
+    assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+    fake_idp.is_mfa_enabled.assert_not_called()

@@ -29,6 +29,9 @@ on:
       # line make cannot read stops the suite before a test runs, and its values land in the
       # environment Settings reads. The KCH twin exists but no Makefile reads it.
       - "trust/.env.GSTT.development.example"
+      # tests/test_check_governance_script.py runs the shipped example document through the
+      # service's own governance loader, so the suite consumes this file as an input too.
+      - "trust/governance.example.toml"
   pull_request:
     branches: [main, develop]
 
@@ -55,6 +58,7 @@ jobs:
         .github/actions/setup-trust-test-env/**
         .env.development.example
         trust/.env.GSTT.development.example
+        trust/governance.example.toml
 
   data-access-api:
     needs: changes

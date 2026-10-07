@@ -18,10 +18,12 @@ FLIP_EVALUATOR for the DECAF chest X-ray primary evaluation task.
 from __future__ import annotations
 
 import json
+import logging
 import os
-from collections.abc import Sequence
+from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import monai.transforms as mt
 import numpy as np
@@ -57,12 +59,12 @@ class RepeatChannelImageNetNormalized(MapTransform):
     mean/std per channel.
     """
 
-    def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False):
+    def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False) -> None:
         super().__init__(keys, allow_missing_keys)
         self.mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
         self.std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
-    def __call__(self, data):
+    def __call__(self, data: Mapping[Hashable, Any]) -> dict[Hashable, Any]:
         d = dict(data)
         for key in self.key_iterator(d):
             img = d[key]
@@ -149,7 +151,7 @@ class SiteDataConfig:
 
 
 class LesionDict:
-    def __init__(self, items: Sequence[Lesion]):
+    def __init__(self, items: Sequence[Lesion]) -> None:
         self.items = list(items)
 
     def contains(self, element_value: str) -> bool:
@@ -170,7 +172,7 @@ def get_lesions(config: dict | None = None) -> LesionDict:
 
 
 def get_labels_from_radiology_row(
-    radiology_row, lesions: LesionDict, value_to_numerical: dict, normal_label: str
+    radiology_row: pd.Series, lesions: LesionDict, value_to_numerical: dict, normal_label: str
 ) -> dict[str, int]:
     yes_str = value_to_numerical.get("1", value_to_numerical.get(1, "Yes"))
     no_str = value_to_numerical.get("0", value_to_numerical.get(0, "No"))
@@ -218,14 +220,8 @@ def get_site_data_config(config: dict | None = None, site_name: str | None = Non
     # per-site wiring was done by the testing harness' Docker mounts.) The deployed run (LOCAL_DEV=false)
     # ignores all of this and pulls data from the trust APIs instead — see _is_local_dev / _load_dataframe.
     site_env = requested_site.replace("-", "").upper() if requested_site else ""  # "site-1" -> "SITE1"
-    images_dir = (
-        (os.environ.get(f"{site_env}_IMAGES_DIR") if site_env else None)
-        or os.environ.get("DEV_IMAGES_DIR")
-    )
-    dataframe = (
-        (os.environ.get(f"{site_env}_DATAFRAME") if site_env else None)
-        or os.environ.get("DEV_DATAFRAME")
-    )
+    images_dir = (os.environ.get(f"{site_env}_IMAGES_DIR") if site_env else None) or os.environ.get("DEV_IMAGES_DIR")
+    dataframe = (os.environ.get(f"{site_env}_DATAFRAME") if site_env else None) or os.environ.get("DEV_DATAFRAME")
     resolved_site = requested_site or "default"
     return SiteDataConfig(site_name=resolved_site, images_dir=images_dir, dataframe=dataframe)
 
@@ -311,7 +307,7 @@ def cap_dataframe(
     return df.iloc[sorted(selected)]
 
 
-def _cap_for_sim(df: pd.DataFrame, cfg: dict, site_name: str, logger=None) -> pd.DataFrame:
+def _cap_for_sim(df: pd.DataFrame, cfg: dict, site_name: str, logger: logging.Logger | None = None) -> pd.DataFrame:
     """Apply the ``MAX_SAMPLES`` cap to a simulator site's dataframe, balanced over the config's classes."""
     max_samples = get_sim_max_samples()
     lesions = cfg.get("LESIONS", {})
@@ -338,7 +334,7 @@ def _load_dataframe(
     project_id: str = "",
     query: str = "",
     config: dict | None = None,
-    logger=None,
+    logger: logging.Logger | None = None,
 ) -> pd.DataFrame:
     """Load the cohort dataframe: local CSV in the simulator, FLIP API on a real trust.
 
@@ -398,7 +394,7 @@ def build_eval_datalist(
     site_name: str | None = None,
     project_id: str | None = None,
     query: str | None = None,
-    logger=None,
+    logger: logging.Logger | None = None,
 ) -> list[dict]:
     """Load ALL samples for evaluation (no train/val/test split)."""
     cfg = config or load_config()
@@ -470,7 +466,7 @@ def build_eval_datalist(
 # ---------------------------------------------------------------------------
 # X-ray evaluation transforms
 # ---------------------------------------------------------------------------
-def _ensure_image_channel_first(image):
+def _ensure_image_channel_first(image: Any) -> np.ndarray:
     array = np.asarray(image)
     if array.ndim == 2:
         return array[None, ...]
@@ -482,7 +478,7 @@ def _ensure_image_channel_first(image):
     return array
 
 
-def get_xray_transforms(input_size: int = 768):
+def get_xray_transforms(input_size: int = 768) -> mt.Compose:
     transforms = [
         # The reader is pinned rather than left to MONAI's auto-detection. LoadImaged tries its
         # registered readers last-registered-first, so which one wins depends on which optional

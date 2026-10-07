@@ -335,9 +335,7 @@ def submit_cohort_query(
                 # own result entry and the batch keeps queuing the rest. db.add is in-memory, so
                 # there is nothing to roll back here; a failure at db.commit() below is handled by
                 # the outer except (which rolls back the whole submit).
-                logger.error(
-                    f"Unable to queue cohort query task for trust {trust.name}: {str(e)}"
-                )
+                logger.error(f"Unable to queue cohort query task for trust {trust.name}: {str(e)}")
                 result.append(TrustDetails(name=trust.name, statusCode=500, message=str(e)))
 
             logger.info(f"Trust: {trust.name} processed")

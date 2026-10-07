@@ -114,16 +114,35 @@ stack, so there is no VITE_-prefixed duplication to keep in sync.
 
 | Variable | Description |
 | --- | --- |
-| `AWS_COGNITO_USER_POOL_ID` | Cognito User Pool ID |
-| `AWS_COGNITO_APP_CLIENT_ID` | Cognito App Client ID |
+| `AUTH_BACKEND` | Identity provider the hub runs: `cognito` (default when unset — stag/prod) or `keycloak` (the dev stack). Must match flip-api's `AUTH_BACKEND`. |
+| `AWS_COGNITO_USER_POOL_ID` | Cognito User Pool ID (required when `AUTH_BACKEND=cognito`) |
+| `AWS_COGNITO_APP_CLIENT_ID` | Cognito App Client ID (required when `AUTH_BACKEND=cognito`) |
 | `AWS_REGION` | AWS region hosting the pool (default `eu-west-2`) |
+| `KEYCLOAK_PUBLIC_URL` | Base URL of Keycloak as the **browser** reaches it, e.g. `http://localhost:8081` (required when `AUTH_BACKEND=keycloak`; emitted as `window.KEYCLOAK_URL`) |
+| `KEYCLOAK_REALM` | Keycloak realm (required when `AUTH_BACKEND=keycloak`) |
+| `KEYCLOAK_CLIENT_ID` | Keycloak public client the UI signs in with (required when `AUTH_BACKEND=keycloak`) |
 | `CENTRAL_HUB_API_URL` | Full base URL of the flip-api backend, including `/api` |
 | `BLACKLISTED_MODEL_FILES` | Comma-separated file names to reject in model uploads |
 | `VITE_LOCAL` | Set to `true` for local mock mode (bypasses Cognito). **Local dev only — see warning below.** |
 | `VITE_DEMO` | Selects the public Ark+ demo bundle (bypasses Cognito, offline Mirage API). **Never set this in the environment — see warning below**; it is inlined automatically by `npm run build:demo` / `npm run demo` (`--mode demo`). |
 
-Authentication is handled through [AWS Cognito](https://docs.aws.amazon.com/cognito/). A valid Cognito User Pool and
-Client ID are required for a production deployment.
+Authentication sits behind a provider seam ([`src/auth/`](src/auth/), FLIP#919): the store, router guard, axios
+interceptor and auth pages speak only the `AuthProvider` contract in `src/auth/provider.ts`, and `getAuthProvider()`
+picks the implementation once at boot from `window.AUTH_BACKEND`.
+
+- **Cognito** (`src/auth/cognito-provider.ts`, stag/prod) — [AWS Cognito](https://docs.aws.amazon.com/cognito/) through
+  `aws-amplify`, the only file allowed to import it (enforced by the `flip-ui/no-amplify-outside-provider` ESLint block).
+  A valid Cognito User Pool and Client ID are required for a production deployment. Every capability is on: temporary-
+  password change, TOTP challenge and in-app enrolment, code-by-email password reset, admin-triggered reset, global
+  sign-out.
+- **Keycloak** (`src/auth/keycloak-provider.ts`, the dev stack) — the OIDC Resource Owner Password grant against the
+  realm's token endpoint, no SDK and no redirect, so the same username/password form works. Tokens live in
+  `localStorage["flip.auth.keycloak.<clientId>"]` and refresh 30 s ahead of expiry. Its capabilities are all off by
+  design: the password grant cannot run Keycloak's required actions (forced password update, TOTP enrolment are
+  browser flows in Keycloak's own UI), and Keycloak answers a wrong password and a missing OTP with the same
+  `invalid_grant`, so an in-app TOTP step cannot be offered honestly. The pages link out to the Keycloak console
+  instead ("Forgot password?" on the login page, the admin "Reset Password" tooltip), and an account with a pending
+  required action gets a "Finish setting up your account in Keycloak" notice with a link.
 
 > **`VITE_LOCAL=true` and `VITE_DEMO=true` must never reach a production build.** Both flags are inlined by Vite at
 > build time and short-circuit the Cognito session check in [`src/utils/auth.ts`](src/utils/auth.ts) plus enable a

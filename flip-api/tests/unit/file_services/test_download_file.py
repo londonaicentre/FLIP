@@ -25,6 +25,7 @@ from flip_api.db.database import get_session
 from flip_api.domain.schemas.file import PresignedDownloadResponse
 from flip_api.file_services.download_file import download_file
 from flip_api.main import app
+from flip_api.utils.s3_client import PresignAudience
 
 bucket = "s3://test-secure-bucket"
 presigned_url = "https://test-secure-bucket.s3.amazonaws.com/presigned-url?X-Amz-Signature=fake"
@@ -100,8 +101,10 @@ def test_download_file_success(
     # Verify the pre-signed URL was generated with the right S3 path, TTL, and
     # a Content-Disposition override so the browser saves under the right name.
     expected_disposition = f"attachment; filename=\"{sample_file_name}\"; filename*=UTF-8''{quote(sample_file_name)}"
+    # The browser opens the URL, so it must be signed for the public endpoint (FLIP#1291).
     mock_s3_client.get_presigned_url.assert_called_once_with(
         f"{bucket}/{sample_model_id}/{sample_file_name}",
+        audience=PresignAudience.BROWSER,
         expiration=mocked_settings.PRE_SIGNED_URL_EXPIRATION_SECONDS,
         response_content_disposition=expected_disposition,
     )

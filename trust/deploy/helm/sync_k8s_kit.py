@@ -33,9 +33,11 @@ This script reads that kit file and:
      infrastructure secrets (XNAT / OMOP / S3) created by the chart untouched.
   2. Writes a Helm values override (``k8s-trust-<CODE>.yaml``) carrying the
      non-secret, deployment-specific settings the chart needs: the hub URL,
-     FL backend, AWS region, the fl-client kit S3 bucket, and the FL kit slot
-     (so the NVFLARE kit path resolves to the slot the hub assigned, not the
-     cosmetic trust name).
+     FL backend, AWS region, trust number, where the FL kit sits on the node,
+     the release image pins, the OMOP vocabulary bucket, the FL-server
+     egress port and — when the kit names one — the trust's governance
+     document (FLIP#1259), read from its ``ACCESS_POLICY_FILE`` and embedded
+     whole (a path on the deploy host means nothing inside a pod).
 
 The plaintext keys are never written to disk — they go straight from the kit
 file into the Kubernetes Secret over kubectl's TLS channel. The generated
@@ -48,11 +50,18 @@ Usage:
 
 import argparse
 import base64
+import hashlib
+import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from types import ModuleType
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # Maps kit env-var name -> Kubernetes Secret key. Only the per-trust secrets
 # the kit owns; infra secrets (xnat-*, omop-*, s3-*) are left as the chart
@@ -103,6 +112,103 @@ def read_env_vars(env_path: Path) -> dict[str, str]:
     return pairs
 
 
+#: The kubectl invocation every call below starts from. `--kube-context` appends
+#: `--context <ctx>` so the whole sync acts on one named cluster rather than whichever
+#: cluster kubectl currently points at (a workstation with several kind clusters).
+KUBECTL: list[str] = ["kubectl"]
+
+
+#: An immutable, pullable image tag — a release or a CI sha tag (scripts/site_upgrade.py).
+IMMUTABLE_IMAGE_TAG = re.compile(r"^(?:v\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?|sha-[0-9a-f]{7})$")
+
+
+class GovernanceDocumentError(RuntimeError):
+    """The kit's governance configuration cannot be deployed: its document is unreadable or
+    invalid, or its site privacy filter is invalid or one this trust's backend would not
+    enforce."""
+
+
+def _site_policy() -> ModuleType:
+    """``flip.nvflare.site_policy``, loaded by path — stdlib-only, and the loader the fl-client runs."""
+    path = REPO_ROOT / "flip-utils" / "flip" / "nvflare" / "site_policy.py"
+    spec = importlib.util.spec_from_file_location("_flip_site_policy", path)
+    if spec is None or spec.loader is None:
+        raise GovernanceDocumentError(f"cannot load the site privacy validator from {path}")
+    module = importlib.util.module_from_spec(spec)
+    # @dataclass resolves its own module through sys.modules, so register before executing.
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except ModuleNotFoundError as e:
+        del sys.modules[spec.name]
+        raise _needs_newer_python(e) from None
+    return module
+
+
+def _needs_newer_python(e: ModuleNotFoundError) -> GovernanceDocumentError:
+    return GovernanceDocumentError(
+        f"validating the kit's governance configuration needs Python 3.11 or newer (tomllib), and this "
+        f"python3 is {sys.version.split()[0]} ({e})"
+    )
+
+
+def _validate_governance(kit: dict[str, str], document: Path | None) -> str | None:
+    """Validate what the pods will enforce, with the services' own loaders, before deploying it.
+
+    A chart-deployed trust otherwise learns of an invalid document from a crash-looping pod, and
+    of a filter its backend ignores from nothing at all. Both loaders are stdlib-only.
+
+    Args:
+        kit: The trust's kit file as a mapping.
+        document: The governance document, or ``None`` when the kit names none.
+
+    Returns:
+        str | None: sha256 of the fl-client's extracted section on NVFLARE (what rolls the
+        fl-client), or ``None`` when there is no document or the backend is not NVFLARE.
+
+    Raises:
+        GovernanceDocumentError: On an invalid document, an invalid FL_SITE_PRIVACY_* value, a
+            filter set in both, or a filter on a backend that does not enforce one.
+    """
+    env = {key: value for key, value in kit.items() if key.startswith("FL_SITE_PRIVACY_")}
+    backend = (kit.get("FL_BACKEND", "").strip() or "nvflare").lower()
+    floor = kit.get("COHORT_QUERY_THRESHOLD", "").strip() or "10"
+    if not floor.isdigit() or int(floor) < 1:
+        raise GovernanceDocumentError(f"COHORT_QUERY_THRESHOLD={floor!r} is not a positive integer")
+    if document is None and not any(value.strip() for value in env.values()):
+        # Nothing to validate — and the validators need tomllib (3.11+), which a trust using
+        # neither control must not: sync-kit runs on the deploy host's own python3.
+        return None
+    site_policy = _site_policy()
+
+    if document is not None:
+        service_root = str(REPO_ROOT / "trust" / "data-access-api")
+        if service_root not in sys.path:
+            sys.path.insert(0, service_root)
+        try:
+            from data_access_api.policy import AccessPolicyError, load_policy
+        except ModuleNotFoundError as e:
+            raise _needs_newer_python(e) from None
+
+        try:
+            load_policy(path=str(document), floor=int(floor))
+        except AccessPolicyError as e:
+            raise GovernanceDocumentError(str(e)) from None
+        env["ACCESS_POLICY_FILE"] = str(document)
+
+    try:
+        site_policy.check_backend(env, backend)
+        site_policy.resolve_policy(env)
+        if document is None or backend != "nvflare":
+            return None
+        with tempfile.TemporaryDirectory() as tmp:
+            extract = Path(tmp) / "governance.fl_privacy.toml"
+            site_policy.extract(str(document), extract)
+            return hashlib.sha256(extract.read_bytes()).hexdigest()
+    except site_policy.SitePolicyError as e:
+        raise GovernanceDocumentError(str(e)) from None
+
+
 def _kubectl_ns(namespace: str) -> list[str]:
     """kubectl namespace args (empty for the default namespace)."""
     return ["-n", namespace] if namespace and namespace != "default" else []
@@ -122,14 +228,20 @@ def stamp_helm_ownership(secret_name: str, namespace: str, release_name: str) ->
     ns = _kubectl_ns(namespace)
     rel_ns = namespace or "default"
     subprocess.run(
-        ["kubectl", "label", "secret", secret_name, *ns,
-         "app.kubernetes.io/managed-by=Helm", "--overwrite"],
+        [*KUBECTL, "label", "secret", secret_name, *ns, "app.kubernetes.io/managed-by=Helm", "--overwrite"],
         check=True,
     )
     subprocess.run(
-        ["kubectl", "annotate", "secret", secret_name, *ns,
-         f"meta.helm.sh/release-name={release_name}",
-         f"meta.helm.sh/release-namespace={rel_ns}", "--overwrite"],
+        [
+            *KUBECTL,
+            "annotate",
+            "secret",
+            secret_name,
+            *ns,
+            f"meta.helm.sh/release-name={release_name}",
+            f"meta.helm.sh/release-namespace={rel_ns}",
+            "--overwrite",
+        ],
         check=True,
     )
 
@@ -148,21 +260,25 @@ def patch_k8s_secret(secret_name: str, namespace: str, entries: dict[str, str], 
         release_name: Helm release name to record as the Secret's owner.
     """
     ns = _kubectl_ns(namespace)
-    exists = subprocess.run(
-        ["kubectl", "get", "secret", secret_name, *ns],
-        capture_output=True, text=True,
-    ).returncode == 0
+    exists = (
+        subprocess.run(
+            [*KUBECTL, "get", "secret", secret_name, *ns],
+            capture_output=True,
+            text=True,
+        ).returncode
+        == 0
+    )
 
     if exists:
         data = {k: base64.b64encode(v.encode()).decode() for k, v in entries.items()}
         patch = json.dumps({"data": data})
         subprocess.run(
-            ["kubectl", "patch", "secret", secret_name, *ns, "--type", "merge", "-p", patch],
+            [*KUBECTL, "patch", "secret", secret_name, *ns, "--type", "merge", "-p", patch],
             check=True,
         )
         verb = "Patched"
     else:
-        args = ["kubectl", "create", "secret", "generic", secret_name, *ns]
+        args = [*KUBECTL, "create", "secret", "generic", secret_name, *ns]
         for k, v in entries.items():
             args += ["--from-literal", f"{k}={v}"]
         subprocess.run(args, check=True)
@@ -184,10 +300,26 @@ def build_secret_entries(kit: dict[str, str]) -> dict[str, str]:
     return entries
 
 
-def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
-    """Render the Helm values override (no secrets) from kit settings."""
+def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: Path | None = None) -> str:
+    """Render the Helm values override (no secrets) from kit settings.
+
+    Args:
+        kit: The trust's kit file as a mapping.
+        code: Trust CODE, used in the generated comments.
+        aws_region: AWS region for the S3-backed Jobs.
+        trust_dir: Directory a relative ``ACCESS_POLICY_FILE`` resolves against — the trust
+            tree, which is what Compose's ``--project-directory trust`` does for its own
+            mount of the same file. Only consulted when the kit names a document.
+
+    Returns:
+        str: The override file's contents.
+
+    Raises:
+        GovernanceDocumentError: If the kit's governance configuration cannot be deployed — an
+            ``ACCESS_POLICY_FILE`` that cannot be read or is invalid, or a site privacy filter
+            that is invalid or would be ignored by this trust's backend.
+    """
     trust_name = kit.get("TRUST_NAME", code)
-    slot = kit.get("FL_KIT_SLOT", "").strip()
     slot_number = kit.get("FL_KIT_SLOT_NUMBER", "").strip()
     hub_url = kit.get("CENTRAL_HUB_API_URL", "")
     fl_backend = kit.get("FL_BACKEND", "nvflare").strip() or "nvflare"
@@ -219,6 +351,33 @@ def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
         f"awsRegion: {aws_region}",
         f"flBackend: {fl_backend}",
         "",
+    ]
+    # The release this site runs (FLIP#1204): the kit's Hub-shared DOCKER_TAG pins every
+    # FLIP-built image via global.image.tag. A dev kit (Hub-shared block commented out)
+    # carries none, and the chart's per-service tags apply. `make upgrade-trust-k8s TAG=`
+    # overrides this with --set at deploy time and site_upgrade.py rewrites the kit, so
+    # the two stay in step.
+    docker_tag = kit.get("DOCKER_TAG", "").strip()
+    if docker_tag:
+        lines += [
+            "global:",
+            "  image:",
+            f"    tag: {docker_tag}",
+            "",
+        ]
+    # The compose opt-outs (OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG) hold one image back from
+    # the release pin; the chart's `image.pin` values are their Kubernetes twin.
+    for kit_key, values_key in (("OMOP_DB_TAG", "omopDb"), ("ORTHANC_TAG", "orthanc"), ("XNAT_TAG", "xnat")):
+        pin = kit.get(kit_key, "").strip()
+        if pin:
+            lines += [f"{values_key}:", "  image:", f"    pin: {pin}", ""]
+    # The FL client follows the kit's DOCKER_FL_TAG (as the compose stack does) only when it
+    # names an immutable image the registry serves — vX.Y.Z or sha-…; a dev kit's locally
+    # built `dev` or the floating `stag` leaves it on the release pin (generate_values.py
+    # fl_client_pin applies the same rule).
+    fl_tag = kit.get("DOCKER_FL_TAG", "").strip()
+    fl_client_pin = fl_tag if IMMUTABLE_IMAGE_TAG.match(fl_tag) else ""
+    lines += [
         "trustApi:",
         "  env:",
         f"    CENTRAL_HUB_API_URL: {hub_url}",
@@ -248,7 +407,28 @@ def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
         "flClient:",
         f"  kitHostPath: {kit_host_path}",
     ]
+    if fl_client_pin:
+        fl_section += ["  image:", f"    pin: {fl_client_pin}"]
+    # The kit's FL_SITE_PRIVACY_* (FLIP#851) reach the chart's flClient.nvflare.sitePrivacy, as
+    # they reach the Compose client, so check-governance's view of the filter is what runs.
+    site_privacy = [
+        (value_key, kit.get(kit_key, "").strip())
+        for value_key, kit_key in (
+            ("policy", "FL_SITE_PRIVACY_POLICY"),
+            ("percentile", "FL_SITE_PRIVACY_PERCENTILE"),
+            ("gamma", "FL_SITE_PRIVACY_GAMMA"),
+        )
+    ]
+    if any(value for _, value in site_privacy):
+        fl_section += ["  nvflare:", "    sitePrivacy:"]
+        fl_section += [f'      {value_key}: "{value}"' for value_key, value in site_privacy if value]
     lines += fl_section
+
+    # The trust's own disclosure floor. The chart passed none before, so every chart-deployed
+    # trust ran at the default 10 while check-governance validated against the kit's value.
+    threshold = kit.get("COHORT_QUERY_THRESHOLD", "").strip()
+    if threshold:
+        lines += ["", "dataAccessApi:", f"  cohortQueryThreshold: {threshold}"]
 
     # FL-server egress (FLIP#593 pt.3): the default-deny egress NetworkPolicy
     # drops the fl-client's outbound gRPC to the FL server unless FL_SERVER_PORT
@@ -284,15 +464,55 @@ def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
             f"    - port: {fl_port}  # fl-client → fl-server gRPC (FL_SERVER_PORT)",
             "      protocol: TCP",
         ]
+
+    # The trust's governance document (FLIP#1259). The kit names a *path* — the same
+    # ACCESS_POLICY_FILE the Compose stack mounts — but a path on the deploy host means
+    # nothing inside a pod, so what travels is the document itself, which the chart renders
+    # into a read-only ConfigMap that data-access-api mounts and the NVFLARE fl-client's
+    # governance-extract init container reads (the client itself sees its section only). A
+    # relative path resolves against the trust tree, as Compose's --project-directory trust
+    # resolves its own mount. Unreadable is a hard error rather than an omission: the release
+    # would otherwise install clean and quietly keep the platform defaults the operator
+    # believes their rules replaced.
+    policy_ref = kit.get("ACCESS_POLICY_FILE", "").strip()
+    policy_path: Path | None = None
+    document = ""
+    if policy_ref:
+        policy_path = Path(policy_ref)
+        if not policy_path.is_absolute():
+            policy_path = ((trust_dir or Path("trust")) / policy_path).resolve()
+        try:
+            document = policy_path.read_text()
+        except OSError as e:
+            raise GovernanceDocumentError(
+                f"ACCESS_POLICY_FILE={policy_ref!r} (resolved to {policy_path}) could not be read: {e}"
+            ) from None
+    fl_privacy_checksum = _validate_governance(kit, policy_path)
+    if policy_path is not None:
+        lines += ["", f"# The governance document itself, read from {policy_ref}:", "governance:"]
+        if fl_privacy_checksum:
+            # Rolls the fl-client only when its own section changes (templates/fl-client.yaml).
+            lines.append(f"  flPrivacyChecksum: {fl_privacy_checksum}")
+        lines.append("  document: |")
+        lines += [f"    {line}" if line.strip() else "" for line in document.splitlines()]
+
     lines.append("")
     return "\n".join(lines)
 
 
-def main(code: str, env: str, namespace: str, secret_name: str,
-         output_dir: Path, aws_region: str, apply_secret: bool,
-         write_override: bool = True, release_name: str | None = None) -> None:
+def main(
+    code: str,
+    env: str,
+    namespace: str,
+    secret_name: str,
+    output_dir: Path,
+    aws_region: str,
+    apply_secret: bool,
+    write_override: bool = True,
+    release_name: str | None = None,
+) -> None:
     release_name = release_name or derive_release_name(secret_name)
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = REPO_ROOT
     kit_path = repo_root / "trust" / f".env.{code}.{env}"
 
     print(f"🔧 Syncing K8s trust kit: {code}  (env={env})")
@@ -303,7 +523,7 @@ def main(code: str, env: str, namespace: str, secret_name: str,
     if not kit_path.exists():
         print(f"❌ Kit file not found: {kit_path}")
         print("   Register the trust first:")
-        print(f"     make new-trust TRUST_CODE={code} TRUST_NAME=\"...\"")
+        print(f'     make new-trust TRUST_CODE={code} TRUST_NAME="..."')
         print(f"     make -C deploy/providers/AWS register-trusts KIT={code} PROD={env}")
         print(f"     make sync-trust-kit KIT={code} PROD={env}")
         sys.exit(1)
@@ -321,10 +541,14 @@ def main(code: str, env: str, namespace: str, secret_name: str,
     # ── 1. Patch the per-trust secrets into the cluster ──────────────────
     entries = build_secret_entries(kit)
     if apply_secret:
-        ns_present = subprocess.run(
-            ["kubectl", "get", "ns", namespace],
-            capture_output=True, text=True,
-        ).returncode == 0
+        ns_present = (
+            subprocess.run(
+                [*KUBECTL, "get", "ns", namespace],
+                capture_output=True,
+                text=True,
+            ).returncode
+            == 0
+        )
         if ns_present:
             print("🔐 Patching per-trust secrets into the Kubernetes Secret…")
             patch_k8s_secret(secret_name, namespace, entries, release_name)
@@ -343,7 +567,15 @@ def main(code: str, env: str, namespace: str, secret_name: str,
     if write_override:
         output_dir.mkdir(parents=True, exist_ok=True)
         override_path = output_dir / rel_override
-        override_path.write_text(render_override(kit, code, aws_region))
+        try:
+            override = render_override(kit, code, aws_region, trust_dir=repo_root / "trust")
+        except GovernanceDocumentError as e:
+            print(f"❌ {e}")
+            print("   Nothing was deployed. A relative ACCESS_POLICY_FILE resolves against trust/, as the")
+            print("   Compose stack's --project-directory trust does. `make -C trust check-governance")
+            print(f"   KIT={code} PROD={env}` validates the document and the kit's FL_SITE_PRIVACY_* in full.")
+            sys.exit(1)
+        override_path.write_text(override)
         print(f"  ✓ Wrote values override: {override_path}")
         print()
     else:
@@ -360,9 +592,7 @@ def main(code: str, env: str, namespace: str, secret_name: str,
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Sync a registered FLIP trust kit into the Kubernetes Helm deployment"
-    )
+    parser = argparse.ArgumentParser(description="Sync a registered FLIP trust kit into the Kubernetes Helm deployment")
     parser.add_argument("--kit", required=True, help="Trust CODE (e.g. Trust_K8s, Trust_2)")
     parser.add_argument(
         "--env",
@@ -388,6 +618,11 @@ if __name__ == "__main__":
     )
     parser.add_argument("--aws-region", default="eu-west-2", help="AWS region for S3 access")
     parser.add_argument(
+        "--kube-context",
+        default="",
+        help="kubectl context to act on (default: kubectl's current context)",
+    )
+    parser.add_argument(
         "--no-apply-secret",
         dest="apply_secret",
         action="store_false",
@@ -400,6 +635,8 @@ if __name__ == "__main__":
         help="Only patch the Kubernetes Secret; do not overwrite the values override file",
     )
     args = parser.parse_args()
+    if args.kube_context:
+        KUBECTL += ["--context", args.kube_context]
 
     # Resolve env suffix the same way the rest of the tooling does.
     if args.env is None:

@@ -6,7 +6,7 @@ Common user functions
 
 Although this page covers functions common to all FLIP users regardless of :ref:`rbac-roles` throughout the various stages involved in preparing an AI model for federated learning, actions related to project process flow are described from the perspective of users with the ``researcher`` role. Users with the ``viewer`` role have read-only access to projects they are assigned to; actions such as creating projects, running queries and uploading files are not available to viewers.
 
-Users with the ``admin`` role may perform all the functions of those with the ``researcher`` role, and are additionally solely responsible for approving and un-staging a project. The Admin Area assigns each user a single role (see :ref:`rbac-roles`). For more information, please refer to the :ref:`admin-project-and-user-management` subsection or the broader :ref:`sys-admin` section.
+Users with the ``admin`` role may perform all the functions of those with the ``researcher`` role, and are additionally responsible for un-staging projects and for approving them at every Trust that has no Trust Admin. Users with the ``trust admin`` role approve or decline projects for their own Trust (see :ref:`trust-admin-guide`). The Admin Area assigns each user a single role (see :ref:`rbac-roles`). For more information, please refer to the :ref:`admin-project-and-user-management` subsection or the broader :ref:`sys-admin` section.
 
 FLIP uses the concept of a *project*, in which multiple AI models can be managed. Projects can have multiple users associated with them, allowing individuals to view and contribute to the project. The typical project flow involves the creation of a project, running a cohort query, staging the project for approval, uploading the model plus any associated files and initiating the training. Once training is complete, the results of training can be downloaded.
 
@@ -279,11 +279,13 @@ Staging allows you to select which Trusts will be requested for approval and inc
 Project Approval
 ================
 
-Once staged for approval, it is the responsibility of the FLIP Central Hub Admin to complete the approval process **offline** and update the FLIP platform with the outcome.
+Once staged for approval, each Trust's decision is made **offline** and recorded in FLIP: by the FLIP Central Hub Admin, or — for a Trust that has one — by that Trust's own Trust Admin (see :ref:`trust-admin-guide`). Trusts decide in their own time, and the project is approved as soon as one approves it.
+
+The 'Trust Approval' section of the project page shows each Trust as *Pending*, *Approved* or *Declined*, with who made the decision and when.
 
 .. note::
 
-   Following approval, any Trusts which have declined to participate in the project will be unavailable and excluded from model training.
+   Trusts which have declined to participate in the project are excluded from the imaging import and from model training. If every Trust declines, the project stays staged: liaise with your FLIP administrator to un-stage it, amend it, and stage it again.
 
 Imaging Project Status
 ======================

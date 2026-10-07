@@ -86,9 +86,7 @@ def test_returns_403_when_user_cannot_modify_model(
     mock_reconcile.assert_not_called()
 
 
-def test_returns_404_when_staged_object_absent(
-    override_auth_dependencies, mocked_settings, mock_s3, mock_reconcile
-):
+def test_returns_404_when_staged_object_absent(override_auth_dependencies, mocked_settings, mock_s3, mock_reconcile):
     """A registration for a file that never landed in S3 must not create a row."""
     mock_session = override_auth_dependencies
     mock_s3.object_exists.return_value = False

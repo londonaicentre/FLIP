@@ -16,18 +16,21 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request, status
 from sqlmodel import Session
 
-from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
+from flip_api.auth.identity import IdentityProvider, get_identity_provider
+from flip_api.auth.trust_authority import decision_maker_for
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import TrustTask
-from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.interfaces.trust import (
     ICreateImagingProject,
     ITrust,
 )
-from flip_api.domain.schemas.status import TaskType
-from flip_api.project_services.services.project_services import get_project, get_users_with_access
-from flip_api.utils.cognito_helpers import get_cognito_users, get_user_pool_id
+from flip_api.domain.schemas.status import ProjectStatus, TaskType
+from flip_api.project_services.services.project_services import (
+    get_approved_trusts_for_project,
+    get_project,
+    get_users_with_access,
+)
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/trust", tags=["trusts_services"])
@@ -48,6 +51,7 @@ async def start_project_imaging_creation(
     trust: ITrust = Body(..., description="Trust information"),
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
+    idp: IdentityProvider = Depends(get_identity_provider),
 ) -> dict[str, str]:
     """
     Queues imaging project creation as a task for the trust.
@@ -61,18 +65,47 @@ async def start_project_imaging_creation(
         trust (ITrust): Trust information.
         db (Session): Database session.
         user_id (UUID): User ID from the request context.
+        idp (IdentityProvider): The identity provider, for the project users' directory records.
+
+    Returns:
+        dict[str, str]: Success message indicating the task has been queued.
+    """
+    # Permissions check — the same per-trust rule as the approval endpoint (FLIP#1258): a trust with a
+    # Trust Admin is decided by them, one without by the hub admin. Checked against the trust named in the
+    # body, so a caller cannot start imaging at a trust they could not have decided.
+    if decision_maker_for(user_id, trust.id, db) is None:
+        logger.error(f"User {user_id} may not start imaging creation for project {project_id} at trust {trust.id}")
+        raise HTTPException(
+            status_code=403,
+            detail=f"User with ID: {user_id} was unable to start XNAT project creation",
+        )
+
+    return await queue_imaging_creation(request=request, project_id=project_id, trust=trust, db=db, idp=idp)
+
+
+async def queue_imaging_creation(
+    request: Request, project_id: UUID, trust: ITrust, db: Session, idp: IdentityProvider
+) -> dict[str, str]:
+    """
+    Queues imaging project creation as a task for the trust, with no authority check of its own.
+
+    The approval fan-out calls this directly rather than through the route above: it dispatches to every
+    approved trust, including ones approved by an earlier call — possibly by another trust's owner — so the
+    user completing the approval need hold no authority at those. Each trust's own recorded approval is what
+    authorised its imaging, so it is refused (409) unless the project is approved and so is this trust.
+
+    Args:
+        request (Request): FastAPI request object.
+        project_id (UUID): ID of the project.
+        trust (ITrust): Trust information.
+        db (Session): Database session.
+        idp (IdentityProvider): The identity provider, for the project users' directory records. Passed in, not
+            a ``Depends()`` default: this is a plain function, so FastAPI never resolves one here.
 
     Returns:
         dict[str, str]: Success message indicating the task has been queued.
     """
     try:
-        # Permissions check
-        if not has_permissions(user_id, [PermissionRef.CAN_APPROVE_PROJECTS], db):
-            raise HTTPException(
-                status_code=403,
-                detail=f"User with ID: {user_id} was unable to start XNAT project creation",
-            )
-
         # Get project details
         project = get_project(project_id, db)
         if not project:
@@ -89,16 +122,24 @@ async def start_project_imaging_creation(
                 detail=f"Project {project_id} was created without imaging; there is no imaging stage to start.",
             )
 
+        # FLIP#1258: imaging pulls a trust's patients' studies, so it follows that trust's own approval — never a
+        # project still awaiting decisions, nor a trust that declined or has not decided.
+        approved_trust_ids = {t.id for t in get_approved_trusts_for_project(project_id, db)}
+        if project.status != ProjectStatus.APPROVED or trust.id not in approved_trust_ids:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Trust {trust.name} has not approved project {project_id}; imaging cannot start there.",
+            )
+
         # Get project users
-        user_pool_id = get_user_pool_id(request)
         users_with_access = [uid for uid in get_users_with_access(project_id, db)]
 
         # Add owner of project to list of users
         users_with_access.append(project.owner_id)
         unique_users = {uid for uid in users_with_access}
 
-        # Get Cognito users
-        cognito_users = get_cognito_users(params={"UserPoolId": user_pool_id})
+        # Get the identity-provider records for them
+        cognito_users = idp.list_users()
 
         # Create request data for trust
         request_data = ICreateImagingProject(

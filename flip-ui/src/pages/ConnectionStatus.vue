@@ -22,6 +22,10 @@
             <div class="mb-4">
                 <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
                     Federation · {{ trusts?.length ?? 0 }} {{ (trusts?.length ?? 0) === 1 ? "trust" : "trusts" }}
+                    <span class="mx-1 text-gray-300 dark:text-gray-600">·</span>
+                    <!-- The release the hub runs (FLIP#1204) — what a site's `make upgrade-onprem-trust`
+                         moves it to, and what the drawer compares each trust's build against. -->
+                    <span data-test="hub-version" class="normal-case tracking-normal">Hub {{ hubVersion ?? "—" }}</span>
                 </p>
                 <div class="flex items-center justify-between gap-4">
                     <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
@@ -676,6 +680,7 @@
     <TrustDetailDrawer
         :trust="selectedTrust"
         :show="!!selectedTrust"
+        :hub-version="hubVersion"
         @close="selectedTrustId = null"
     />
 </template>
@@ -693,7 +698,7 @@ import TrustDetailDrawer from "@/partials/connection/TrustDetailDrawer.vue";
 import AddTrustModal from "@/partials/trusts/AddTrustModal.vue";
 import TrustKitModal from "@/partials/trusts/TrustKitModal.vue";
 import { ICreatedTrust } from "@/services/admin-trusts-service";
-import { getTrustStatuses, ITrustResponse, ServiceStatus } from "@/services/trust-service";
+import { getHubHealth, getTrustStatuses, IHubHealth, ITrustResponse, ServiceStatus } from "@/services/trust-service";
 import { useAuthStore } from "@/store/auth";
 import { deriveTrust,
     deriveTrustState,
@@ -724,6 +729,19 @@ const { data: trusts, mutate: refresh } = useSWRV<ITrustResponse[]>(
         refreshInterval: 15_000
     }
 );
+
+// The hub's own build (FLIP#1204). Changes only on a hub deploy, so a slow poll is plenty;
+// the value is what the header shows and what the drawer flags trust versions against.
+const { data: hubHealth } = useSWRV<IHubHealth>(
+    "hub-health",
+    getHubHealth,
+    {
+        dedupingInterval: 30_000,
+        shouldRetryOnError: false,
+        refreshInterval: 60_000
+    }
+);
+const hubVersion = computed<string | null>(() => hubHealth.value?.version ?? null);
 
 // Labels + pill classes are shared with the drawer via connection-health.ts.
 const stateLabel = (s: TrustState): string => STATE_LABELS[s];
@@ -1075,4 +1093,3 @@ const onKitModalClose = () => {
     createdTrust.value = null;
 };
 </script>
-

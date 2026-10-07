@@ -92,6 +92,7 @@
                             <RoleBadge
                                 v-if="row.roles?.[0]?.rolename"
                                 :role-name="row.roles[0].rolename"
+                                :suffix="row.trustAdminOf?.code ?? row.trustAdminOf?.name"
                                 dense
                                 class="flex-shrink-0"
                             />
@@ -189,7 +190,7 @@
                             primary
                             aria-label="Save User"
                             tooltip="Save User"
-                            :disabled="!selectedUser.dirty"
+                            :disabled="!canSave"
                             @click="saveUser"
                         >
                             <icon-mdi-content-save-outline class="w-4 h-4 mr-2" />
@@ -258,7 +259,7 @@
                                     :key="role.id"
                                     class="flex items-start gap-3 p-3 transition border rounded-md cursor-pointer"
                                     :class="roleCardClasses(role.id)"
-                                    :data-test="`select-${(role.rolename || '').toLowerCase()}-role`"
+                                    :data-test="`select-${roleSlug(role.rolename)}-role`"
                                 >
                                     <input
                                         type="radio"
@@ -268,7 +269,7 @@
                                         :checked="selectedRoleId === role.id"
                                         @change="selectRole(role)"
                                     >
-                                    <span class="flex flex-col min-w-0 gap-1">
+                                    <span class="flex flex-col min-w-0 gap-1 grow">
                                         <span class="flex flex-wrap items-center gap-2">
                                             <RoleBadge :role-name="role.rolename" />
                                             <span
@@ -280,6 +281,36 @@
                                         </span>
                                         <span class="text-sm leading-relaxed text-gray-600 dark:text-gray-300">
                                             {{ role.roledescription }}
+                                        </span>
+                                        <!-- A Trust Admin administers exactly one trust (FLIP#1258). Inside the
+                                             card's <label>: the caption is a span, the select named by aria-label. -->
+                                        <span
+                                            v-if="role.rolename === TRUST_ADMIN_ROLE_NAME && selectedRoleId === role.id"
+                                            class="flex flex-col gap-1 pt-2"
+                                        >
+                                            <span class="text-sm font-medium text-gray-700 dark:text-gray-200" aria-hidden="true">
+                                                Administers
+                                            </span>
+                                            <select
+                                                data-test="trust-admin-trust-select"
+                                                aria-label="Trust this Trust Admin administers"
+                                                class="block w-full py-2 pl-3 pr-8 text-sm text-gray-900 bg-white border border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:text-gray-100 dark:border-gray-700 focus:border-primary-500 focus:ring-primary-500"
+                                                :value="selectedTrustId ?? ''"
+                                                @change="selectTrust(($event.target as HTMLSelectElement).value)"
+                                            >
+                                                <option value="" disabled>
+                                                    Choose a trust
+                                                </option>
+                                                <option v-for="trust in trusts ?? []" :key="trust.id" :value="trust.id">
+                                                    {{ trust.code ? `${trust.name} (${trust.code})` : trust.name }}
+                                                </option>
+                                            </select>
+                                            <span
+                                                v-if="!selectedTrustId"
+                                                class="text-xs text-gray-500 dark:text-gray-300"
+                                            >
+                                                Choose the trust this Trust Admin approves or declines projects for.
+                                            </span>
                                         </span>
                                     </span>
                                 </label>
@@ -309,6 +340,8 @@
                                         data-test="reset-password-btn"
                                         error
                                         block
+                                        :disabled="!authStore.capabilities.adminResetPassword"
+                                        :tooltip="resetPasswordTooltip"
                                         @click="dialogResetPassword = true;"
                                     >
                                         Reset Password
@@ -356,6 +389,7 @@
                             block
                             data-test="mobile-save-user-btn"
                             aria-label="Save User"
+                            :disabled="!canSave"
                             @click="saveUser"
                         >
                             <icon-mdi-content-save-outline class="w-5 h-5 mr-2" />
@@ -375,6 +409,7 @@
         title="Register User"
         :dialog="showRegisterUserModal"
         :roles="allRoles?.roles ?? []"
+        :trusts="trusts ?? []"
         @close-modal="showRegisterUserModal = false"
         @on-success="refreshUsers()"
     />
@@ -425,7 +460,8 @@ import RegisterUserModal from "@/partials/users/RegisterUserModal.vue";
 import RoleBadge from "@/partials/users/RoleBadge.vue";
 import UserAvatar from "@/partials/users/UserAvatar.vue";
 import { routeChange } from "@/router";
-import { getRoles, IRole } from "@/services/role-service";
+import { getRoles, IRole, TRUST_ADMIN_ROLE_NAME } from "@/services/role-service";
+import { getTrustStatuses } from "@/services/trust-service";
 import { getUsers,
     IUser,
     IUserDisabledStateDto,
@@ -487,6 +523,17 @@ const { data: allRoles } = useSWRV(
     }
 );
 
+// The trusts a Trust Admin can be given (FLIP#1258).
+const { data: trusts } = useSWRV(
+    () =>
+        "/trust",
+    getTrustStatuses,
+    {
+        dedupingInterval: 5_000,
+        shouldRetryOnError: false
+    }
+);
+
 // Search filters the loaded page client-side — the hub's /users endpoint has no
 // search parameter. The handoff calls for server-side search only past ~200 users.
 const filteredUsers = computed<IUser[]>(() => {
@@ -526,6 +573,7 @@ const updateUserList = (newPageNumber: number) => {
 };
 
 const setSelectedUser = (user: IUser) => {
+    selectedTrustId.value = user.trustAdminOf?.id ?? null;
     selectedUser.value = {
         ...user,
         roles: user.roles ?? [], // Ensure it's not undefined
@@ -549,6 +597,23 @@ const markProfileDirty = () => {
 
 const selectedRoleId = computed(() => selectedUser.value?.roles?.[0]?.id);
 
+// "Trust Admin" -> "trust-admin", for the role card's data-test.
+const roleSlug = (rolename: string | undefined) => (rolename || "").toLowerCase().replace(/\s+/g, "-");
+
+// The trust a Trust Admin administers; required before a Trust Admin can be saved.
+const selectedTrustId = ref<string | null>(null);
+const trustAdminSelected = computed(() => selectedUser.value?.roles?.[0]?.rolename === TRUST_ADMIN_ROLE_NAME);
+const canSave = computed(() =>
+    !!selectedUser.value?.dirty && !(trustAdminSelected.value && !selectedTrustId.value));
+
+const selectTrust = (trustId: string) => {
+    if (!selectedUser.value || selectedTrustId.value === trustId) return;
+
+    selectedTrustId.value = trustId;
+    selectedUser.value.dirty = true;
+    selectedUser.value.rolesDirty = true;
+};
+
 const selectRole = (role: IRole) => {
     if (!selectedUser.value || selectedRoleId.value === role.id) return;
 
@@ -570,7 +635,7 @@ const roleCardClasses = (roleId: string) =>
         : "border-gray-200 hover:border-gray-300 hover:bg-gray-50 dark:border-dark-border dark:hover:bg-dark-canvas";
 
 const saveUser = async () => {
-    if (!selectedUser.value) return;
+    if (!selectedUser.value || !canSave.value) return;
     try {
         if (selectedUser.value.profileDirty) {
             await updateUserProfile(
@@ -584,7 +649,8 @@ const saveUser = async () => {
         if (selectedUser.value.rolesDirty) {
             await updateUserRoles(
                 selectedUser.value.id,
-                selectedUser.value.roles[0] ? [selectedUser.value.roles[0].id] : []
+                selectedUser.value.roles[0] ? [selectedUser.value.roles[0].id] : [],
+                trustAdminSelected.value ? selectedTrustId.value : null
             );
         }
         selectedUser.value.dirty = false;
@@ -637,16 +703,29 @@ const updateUserState = async (disabled: boolean) => {
     }
 };
 
-const resetPassword = () => {
-    if (selectedUser.value) {
-        dialogResetPassword.value = false;
+// Reset is a Cognito ForgotPassword on the user's behalf; a backend without
+// that (Keycloak) disables the button and says where to go instead. The
+// tooltip sits on AiButton's wrapper, so it still shows on the disabled button.
+const resetPasswordTooltip = authStore.capabilities.adminResetPassword
+    ? ""
+    : "Not available with the Keycloak dev backend — use the Keycloak console";
 
-        authStore.resetPassword(selectedUser.value?.email);
+const resetPassword = async () => {
+    if (!selectedUser.value) return;
+    dialogResetPassword.value = false;
 
+    try {
+        await authStore.resetPassword(selectedUser.value.email);
         Snackbar.success({
             text: "The user's password has been reset.",
             title: "Password reset"
         });
+    } catch {
+        Snackbar.error({
+            text: "There was an error resetting the password, please try again.",
+            title: "Password not reset"
+        });
+        errorStore.setError();
     }
 };
 

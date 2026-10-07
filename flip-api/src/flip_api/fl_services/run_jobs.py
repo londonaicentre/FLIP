@@ -92,39 +92,47 @@ def run_jobs_core(db: Session) -> None:
         job = check_for_queued_jobs(scheduler.id, db)
 
         if not job or not job.id:
-            logger.info({
-                "message": "No jobs waiting, will check again soon... 🔃",
-                "net": scheduler.netId,
-            })
+            logger.info(
+                {
+                    "message": "No jobs waiting, will check again soon... 🔃",
+                    "net": scheduler.netId,
+                }
+            )
             return
 
         # The pickup just advanced every remaining queued model one place.
         log_queue_positions(db)
 
         # Step 3: Prepare and start training
-        logger.info({
-            "message": "About to prepare & start training... 📦",
-            "net": scheduler.netId,
-            "job": job.id,
-            "model": job.model_id,
-        })
+        logger.info(
+            {
+                "message": "About to prepare & start training... 📦",
+                "net": scheduler.netId,
+                "job": job.id,
+                "model": job.model_id,
+            }
+        )
 
         started = prepare_and_start_training(job.model_id, job.id, job.trust_ids, db)
 
         if started:
-            logger.info({
-                "message": "Training started successfully! 🚀",
-                "net": scheduler.netId,
-                "job": job.id,
-                "model": job.model_id,
-            })
+            logger.info(
+                {
+                    "message": "Training started successfully! 🚀",
+                    "net": scheduler.netId,
+                    "job": job.id,
+                    "model": job.model_id,
+                }
+            )
         else:
-            logger.info({
-                "message": "Job aborted before submission; net released. 🛑",
-                "net": scheduler.netId,
-                "job": job.id,
-                "model": job.model_id,
-            })
+            logger.info(
+                {
+                    "message": "Job aborted before submission; net released. 🛑",
+                    "net": scheduler.netId,
+                    "job": job.id,
+                    "model": job.model_id,
+                }
+            )
         return
 
     except Exception as e:

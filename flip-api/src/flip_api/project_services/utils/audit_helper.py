@@ -20,7 +20,7 @@ from flip_api.utils.logger import logger
 
 
 def audit_project_action(
-    project_id: UUID, action: ProjectAuditAction, user_id: UUID, session: Session
+    project_id: UUID, action: ProjectAuditAction, user_id: UUID, session: Session, trust_id: UUID | None = None
 ) -> ProjectsAudit:
     """
     Insert a single audit log into the ProjectsAudit table.
@@ -30,6 +30,7 @@ def audit_project_action(
         action (ProjectAuditAction): The action performed on the project.
         user_id (UUID): The ID of the user performing the action.
         session (Session): SQLModel session.
+        trust_id (UUID | None): The trust a per-trust decision was made for; None for project-wide actions.
 
     Returns:
         ProjectsAudit: The created ProjectsAudit entry.
@@ -40,6 +41,7 @@ def audit_project_action(
         project_id=project_id,
         action=action,
         user_id=user_id,
+        trust_id=trust_id,
     )
 
     session.add(audit_record)

@@ -34,10 +34,10 @@ describe("FLIP demo — administrator approval", () => {
         cy.visit(`/project/${projectId}`);
         cy.demoPause(2000);
 
-        // The researcher staged the project in segment 1 — the admin picks
-        // the trusts to authorise and approves.
+        // The researcher staged the project in segment 1 — the admin approves
+        // every trust and saves the decisions.
         cy.demoCaption("Approval authorises the imaging import at every selected trust", 800);
-        cy.get("[data-test^=\"trust-staged-\"]", { timeout: 90000 })
+        cy.get("[data-test^=\"trust-approve-\"]", { timeout: 90000 })
             .should("have.length.at.least", 1)
             .each(($el) => {
                 cy.wrap($el).scrollIntoView();

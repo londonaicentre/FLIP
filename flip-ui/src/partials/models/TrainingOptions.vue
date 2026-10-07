@@ -123,7 +123,7 @@ const approvedTrusts = projectStore.project?.approvedTrusts;
 const hasImaging = computed(() => projectHasImaging(projectStore.project));
 
 const trustsToSelect: ComputedRef<ITrustsToTrain[] | undefined> = computed(() =>
-    approvedTrusts?.filter(t => t.approved)
+    approvedTrusts?.filter(t => t.status === "APPROVED")
         .map(t =>
             ({
                 trustName: t.name,

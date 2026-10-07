@@ -160,7 +160,7 @@ def test_propagates_registration_error(monkeypatch, session):
 # CLI entry point — `main()` parses argv, calls `register_one_trust`, writes
 # the kit JSON to stdout, and exits 1 on TrustRegistrationError. The body
 # below is what `deploy/providers/AWS/scripts/register-trusts.sh` (and the
-# Makefile's `register-trust-<n>` targets) drive, so it is worth its own
+# root Makefile's `register-trust` target) drive, so it is worth its own
 # coverage.
 # ---------------------------------------------------------------------------
 
@@ -171,9 +171,7 @@ def _patch_session(monkeypatch):
     session_ctx = MagicMock()
     session_ctx.__enter__.return_value = session_mock
     session_ctx.__exit__.return_value = False
-    monkeypatch.setattr(
-        "flip_api.scripts.register_trust.Session", lambda _engine: session_ctx
-    )
+    monkeypatch.setattr("flip_api.scripts.register_trust.Session", lambda _engine: session_ctx)
     return session_mock
 
 
@@ -196,9 +194,7 @@ def test_main_happy_path_prints_kit_json(monkeypatch, capsys):
             }
         ],
     )
-    monkeypatch.setattr(
-        "sys.argv", ["register_trust", "--name", "Open Trust", "--code", "OPEN", "--region", "London"]
-    )
+    monkeypatch.setattr("sys.argv", ["register_trust", "--name", "Open Trust", "--code", "OPEN", "--region", "London"])
 
     cli.main()
 
@@ -289,7 +285,7 @@ from flip_api.trusts_services.services.register_trust import TrustRegistrationEr
 # hub_shared block
 # ---------------------------------------------------------------------------
 
-# Mirror of HUB_SHARED_ENV_KEYS in flip_api/scripts/register_trust.py — kept
+# Mirror of HUB_SHARED_ENV_KEYS in flip-api/src/flip_api/scripts/register_trust.py — kept
 # local (rather than importing the production tuple) so the tests fail loudly
 # if the production list changes without an explicit test update.
 HUB_SHARED_KEYS = (

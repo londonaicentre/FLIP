@@ -38,6 +38,7 @@ import einops
 import nibabel as nib
 import numpy as np
 import nvflare.client as flare
+import pandas as pd
 import torch
 from flip import FLIP
 from flip.constants import FlipMetaKey, ResourceType
@@ -193,7 +194,7 @@ class DiffusionTrainer:
     executor instances — each phase's optimizer state persists across that phase's global rounds.
     """
 
-    def __init__(self, config: dict, project_id: str, query: str):
+    def __init__(self, config: dict, project_id: str, query: str) -> None:
         self.config = config
         self.project_id = project_id
         working_dir = Path(__file__).parent.resolve()
@@ -269,7 +270,7 @@ class DiffusionTrainer:
         self._train_dataset = Dataset(self.train_items, transform=get_train_transforms(config["spatial_shape"]))
         self._val_dataset = Dataset(self.val_items, transform=get_val_transforms(config["spatial_shape"]))
 
-    def get_image_list(self, dataframe) -> tuple[list, list]:
+    def get_image_list(self, dataframe: pd.DataFrame) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
         """Fetch each accession's converted NIfTI images and split into train/validation lists.
 
         Also detects axial anisotropy (thick-slice data) from the first readable image, which
@@ -321,7 +322,7 @@ class DiffusionTrainer:
         val_size = int(self.config["VAL_SPLIT"] * len(datalist))
         return datalist[val_size:], datalist[:val_size]
 
-    def reset_perceptual_to_anisotropic(self):
+    def reset_perceptual_to_anisotropic(self) -> None:
         """If we spot axial anisotropy, we reset the perceptual loss to 2D if it was 3D to have better results."""
         if self.axial_anisotropy and self.losses_ae["perceptual_loss"].spatial_dims == 3:
             # Unreachable while the loss above is built 2-D; kept for a 3-D configuration. Same
@@ -554,9 +555,7 @@ class DiffusionTrainer:
 
                 with autocast(enabled=False, device_type=self.device.type):
                     noise = torch.randn(
-                        [images.shape[0]]
-                        + [self.model.autoencoder.encoder.blocks[-1].out_channels]
-                        + ldm_latent_shape
+                        [images.shape[0]] + [self.model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape
                     ).to(self.device)
                     timesteps = torch.randint(
                         0,
@@ -597,9 +596,7 @@ class DiffusionTrainer:
                 self.model.diffusion_model.eval()
                 with autocast(enabled=False, device_type=self.device.type):
                     noise = torch.randn(
-                        [images.shape[0]]
-                        + [self.model.autoencoder.encoder.blocks[-1].out_channels]
-                        + ldm_latent_shape
+                        [images.shape[0]] + [self.model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape
                     ).to(self.device)
                     timesteps = torch.randint(
                         0,
@@ -696,9 +693,7 @@ def main() -> None:
             flare.send(flare.FLModel(metrics={f"metrics_{task_name}": {"val_loss": val_loss, "val_ssim": val_ssim}}))
 
         elif task_name == VALIDATE_DM_TASK:
-            trainer.model.load_state_dict(
-                {k: v.to(trainer.device) for k, v in weights.items()}, strict=False
-            )
+            trainer.model.load_state_dict({k: v.to(trainer.device) for k, v in weights.items()}, strict=False)
             test_loader = trainer.val_loader(config["BATCH_SIZE_DM"])
             val_loss = validate_dm(
                 trainer.model, test_loader, trainer.optimizers_dm["scheduler"], config, trainer.device, writer

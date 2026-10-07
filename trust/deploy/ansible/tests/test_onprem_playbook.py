@@ -124,9 +124,7 @@ def test_no_usermod_adding_to_docker_group(playbook: list[dict]) -> None:
                         f"via {module}: {cmd!r}"
                     )
         if _user_module_grants_docker(task):
-            pytest.fail(
-                f"Task '{task.get('name', '<unnamed>')}' grants docker group membership via the user module."
-            )
+            pytest.fail(f"Task '{task.get('name', '<unnamed>')}' grants docker group membership via the user module.")
 
 
 @pytest.mark.parametrize(

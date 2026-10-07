@@ -26,8 +26,9 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlmodel import Session, col, select
 
-from flip_api.db.models.user_models import Role, UserProfile, UserRole
-from flip_api.domain.schemas.users import CognitoUser, IRole, IUser
+from flip_api.db.models.main_models import Trust
+from flip_api.db.models.user_models import Role, RoleRef, UserProfile, UserRole
+from flip_api.domain.schemas.users import CognitoUser, IRole, ITrustAdminOf, IUser
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import PagingInfo
 
@@ -66,14 +67,31 @@ def get_user_role_data(
     Returns:
         list[IUser]: List of IUser objects with roles.
     """
-    # Fetch roles for users
+    # Fetch roles for users. Global grants only (FLIP#1260): this feeds the admin user
+    # list, which shows platform roles. A Trust Admin (FLIP#1258) — a global Researcher row
+    # plus a Trust Admin row at one trust — is shown as that one role, with its trust.
     user_ids = [user.id for user in users]
     statement = (
         select(col(UserRole.user_id), Role)
         .join(Role, col(Role.id) == col(UserRole.role_id))
         .where(col(UserRole.user_id).in_(user_ids))
+        .where(col(UserRole.trust_id).is_(None))
     )
     role_results = session.exec(statement).all()
+    admin_rows = session.exec(
+        select(col(UserRole.user_id), Role, Trust)
+        .join(Role, col(Role.id) == col(UserRole.role_id))
+        .join(Trust, col(Trust.id) == col(UserRole.trust_id))
+        .where(col(UserRole.user_id).in_(user_ids))
+        .where(col(UserRole.role_id) == RoleRef.TRUST_ADMIN.value)
+    ).all()
+    trust_admin_map = {
+        str(uid): (
+            IRole(id=role.id, rolename=role.name, roledescription=role.description),
+            ITrustAdminOf(id=trust.id, code=trust.code, name=trust.name),
+        )
+        for uid, role, trust in admin_rows
+    }
     profiles = session.exec(select(UserProfile).where(col(UserProfile.user_id).in_(user_ids))).all()
     user_profiles_map = {str(profile.user_id): profile for profile in profiles}
 
@@ -109,7 +127,12 @@ def get_user_role_data(
             name=user_profiles_map.get(str(user.id), UserProfile(user_id=user.id)).name,
             organisation=user_profiles_map.get(str(user.id), UserProfile(user_id=user.id)).organisation,
             is_disabled=user.is_disabled,
-            roles=user_roles_map.get(str(user.id), []),
+            roles=(
+                [trust_admin_map[str(user.id)][0]]
+                if str(user.id) in trust_admin_map
+                else user_roles_map.get(str(user.id), [])
+            ),
+            trust_admin_of=trust_admin_map[str(user.id)][1] if str(user.id) in trust_admin_map else None,
         )  # type: ignore[call-arg]
         for user in paged_users
     ]

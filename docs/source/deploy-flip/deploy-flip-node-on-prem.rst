@@ -187,7 +187,7 @@ This registers the trust on the prod hub and fills the Kit credentials
 ``FL_KIT_SLOT_NUMBER``, ``EXPECTED_TRUST_ID``) plus as much of the Hub-shared
 block as the hub task's environment carries. The block is built from the
 environment of the one-off ``flip-api`` Fargate task
-(``flip_api/scripts/register_trust.py``, ``HUB_SHARED_ENV_KEYS`` — a filtered
+(``flip-api/src/flip_api/scripts/register_trust.py``, ``HUB_SHARED_ENV_KEYS`` — a filtered
 comprehension that silently skips absent keys), and that task definition
 (``deploy/providers/AWS/locals.tf``) carries only ``TRUST_API_KEY_HEADER`` and
 ``FL_BACKEND`` of the twelve: ``AES_KEY_BASE64`` is read from Secrets Manager at
@@ -229,8 +229,11 @@ encrypted channel — it contains a plaintext API key, AES encryption key, and
 an FL TLS private key.
 
 **4. Extract, configure, and start (trust operator).** Extract the tarball,
-copy the kit into the checkout, edit **only** the Host-local profile, then
-bring the stack up:
+copy the kit into the checkout — a checkout at the **release the hub runs**
+(``git fetch --tags origin && git checkout v<X.Y.Z>``; the admin tells you which,
+and the hub's ``/api/health`` reports it), never a branch tip, because the
+compose files and Makefiles that run the images come from it — edit **only**
+the Host-local profile, then bring the stack up:
 
 .. code-block:: shell
 
@@ -308,7 +311,15 @@ Hub-shared block from the admin's local env file — credentials are preserved:
 
    make sync-trust-kit KIT=<CODE> PROD=true
 
-Re-transmit the refreshed kit to the operator over the same encrypted channel.
+Re-transmit the refreshed kit to the operator over the same encrypted channel. The
+operator replaces only the Hub-shared block and re-applies it with
+``sudo -E make upgrade-onprem-trust KIT=<slot> YES=1`` — not ``up-onprem-trust``, which
+is the first-install verb and resets XNAT.
+
+**Upgrading to a release (later).** Sites move between releases with
+``sudo -E make upgrade-onprem-trust KIT=<slot>`` — the operator's command, defaulting to
+the release the hub runs. See :doc:`/sys-admin/admin-upgrading-sites` for the runbook,
+including when the admin has to re-issue kits first.
 
 ***********************
 Trust authentication

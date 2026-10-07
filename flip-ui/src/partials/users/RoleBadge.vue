@@ -19,7 +19,7 @@
         data-test="role-badge"
     >
         <span class="w-1.5 h-1.5 rounded-full shrink-0" :style="{ backgroundColor: tone.fg }" />
-        {{ roleName }}
+        {{ roleName }}{{ suffix ? ` · ${suffix}` : "" }}
     </span>
 </template>
 
@@ -37,8 +37,13 @@ const props = withDefaults(
         roleName: string;
         /** Tighter padding/font for list rows and tables. */
         dense?: boolean;
+        /** Shown after the role, e.g. the trust a Trust Admin administers. */
+        suffix?: string | null;
     }>(),
-    { dense: false }
+    {
+        dense: false,
+        suffix: null
+    }
 );
 
 const tone = computed(() => roleTone(props.roleName));

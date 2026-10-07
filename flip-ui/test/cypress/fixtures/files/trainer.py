@@ -11,50 +11,44 @@
 #
 
 
-import os
-
 import sys
-sys.path.append('.')
 
-import os
-import pandas as pd
-from flnode.pipeline.opener import Opener
+sys.path.append(".")
+
+from pathlib import Path
+
 import nibabel as nib
 import numpy as np
-import matplotlib.pyplot as plt
-import torch
-from pathlib import Path
+import pandas as pd
+from flnode.pipeline.opener import Opener
 from sklearn.model_selection import train_test_split
+
 
 class MonaiOpener(Opener):
     def __init__(self, data_dir):
         self.data_dir = Path(data_dir)
-        self.image_dir = self.data_dir / 'images'
-        self.label_dir = self.data_dir / 'labels'
-
+        self.image_dir = self.data_dir / "images"
+        self.label_dir = self.data_dir / "labels"
 
     def get_image_and_label_list(self):
         # assumes image and label pairs are stored with identical filnames in data_dir/images and data_dir/labels
-        image_files = list(self.image_dir.glob('*.nii*'))
+        image_files = list(self.image_dir.glob("*.nii*"))
         self.image_and_label_files = []
         self.num_unpaired = 0
         for im in image_files:
             label_file = self.label_dir / im.name
             if label_file.exists():
-                self.image_and_label_files.append(
-                    {'img': str(im),
-                     'seg': str(label_file)})
+                self.image_and_label_files.append({"img": str(im), "seg": str(label_file)})
             else:
                 self.num_unpaired += 1
         self.num_total = len(self.image_and_label_files)
 
     def data_summary(self, logger):
-        if not hasattr(self, 'image_and_label_files'):
+        if not hasattr(self, "image_and_label_files"):
             self.get_image_and_label_list()
 
         # get size of each image
-        image_sizes = [nib.load(f['img']).shape for f in self.image_and_label_files]
-
+        image_sizes = [nib.load(f["img"]).shape for f in self.image_and_label_files]
 
         logger.info(f"Total paired image  and labels: {self.num_total}")
         logger.info(f"Total images with no label found: {self.num_unpaired}")
@@ -79,17 +73,21 @@ class MonaiOpener(Opener):
         # plt.show()
 
     def get_x_y(self, frac_val, frac_test):
-        if not hasattr(self, 'image_and_label_files'):
+        if not hasattr(self, "image_and_label_files"):
             self.get_image_and_label_list()
 
         random_state = 0
-        train, val_and_test = train_test_split(self.image_and_label_files, train_size=1 - frac_val - frac_test, random_state=random_state)
-        val, test = train_test_split(val_and_test, train_size=frac_val/ (frac_val+frac_test), random_state=random_state)
+        train, val_and_test = train_test_split(
+            self.image_and_label_files, train_size=1 - frac_val - frac_test, random_state=random_state
+        )
+        val, test = train_test_split(
+            val_and_test, train_size=frac_val / (frac_val + frac_test), random_state=random_state
+        )
 
         return (train, val, test)
 
     def save_predictions(self, y_pred, path):
-        with open(path, 'w') as fp:
+        with open(path, "w") as fp:
             y_pred.to_csv(fp, index=False)
 
     def get_predictions(self, path):

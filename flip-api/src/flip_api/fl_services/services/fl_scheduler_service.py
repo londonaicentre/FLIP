@@ -292,9 +292,7 @@ def release_scheduler_for_model(model_id: UUID, session: Session) -> int:
     """
     try:
         statement = (
-            select(FLScheduler)
-            .join(FLJob)
-            .where(FLJob.model_id == model_id, FLScheduler.status == NetStatus.BUSY)
+            select(FLScheduler).join(FLJob).where(FLJob.model_id == model_id, FLScheduler.status == NetStatus.BUSY)
         )
         schedulers = session.exec(statement).all()
     except SQLAlchemyError as e:
@@ -469,8 +467,7 @@ def resolve_backend(session: Session, net: INetDetails | None = None) -> FLBacke
         return cast("FLBackend", backend)
 
     raise ValueError(
-        "Cannot determine the active FL backend: no FL nets are registered. "
-        "Check NET_ENDPOINTS and that seeding ran."
+        "Cannot determine the active FL backend: no FL nets are registered. Check NET_ENDPOINTS and that seeding ran."
     )
 
 
@@ -703,9 +700,7 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         # Trust.name here would make validate_client_availability fail with
         # "Clients unavailable: <friendly name>" because the FL server never saw it.
         slot_names = list(
-            session.exec(
-                select(FLKitSlot.slot_name).where(col(FLKitSlot.assigned_to_trust_id).in_(trust_ids))
-            ).all()
+            session.exec(select(FLKitSlot.slot_name).where(col(FLKitSlot.assigned_to_trust_id).in_(trust_ids))).all()
         )
 
         validate_client_availability(slot_names, net_details.endpoint, fl_backend)

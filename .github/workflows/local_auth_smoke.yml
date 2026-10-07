@@ -1,0 +1,174 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# The AWS-free startup path of FLIP#919: boot the hub (flip-db, keycloak, the RustFS
+# object store and flip-api) from the dev compose with no AWS credentials, sign in
+# through the local Keycloak and reach the hub as the seeded admin
+# (flip-api/tests/local_auth_smoke.py), then round-trip a model file through the
+# object store — presigned upload, malware-scan promotion, presigned download, delete
+# (flip-api/tests/local_storage_smoke.py, FLIP#1291). The bundle → fl-api → training →
+# results leg needs FL images and trusts, so it stays a dev-box `make e2e_smoke`.
+name: Local hub smoke (Keycloak + object store, no AWS)
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "flip-api/**"
+      # flip-api's image build copies the fl-apps/ tree.
+      - "fl-apps/**"
+      - "deploy/compose.development.yml"
+      - "deploy/keycloak/**"
+      - "deploy/instance.mk"
+      - "deploy/env_mode.mk"
+      - "deploy/fl_backend.mk"
+      - ".env.development.example"
+      - "Makefile"
+      - ".github/workflows/local_auth_smoke.yml"
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  # Gate for pull requests into develop (pr_paths_changed.yml; PRs into main always
+  # run everything). The list is the push `paths:` filter above, verbatim —
+  # scripts/tests/test_pr_paths_changed.py fails when the two drift.
+  changes:
+    uses: ./.github/workflows/pr_paths_changed.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      paths: |
+        flip-api/**
+        fl-apps/**
+        deploy/compose.development.yml
+        deploy/keycloak/**
+        deploy/instance.mk
+        deploy/env_mode.mk
+        deploy/fl_backend.mk
+        .env.development.example
+        Makefile
+        .github/workflows/local_auth_smoke.yml
+
+  smoke:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    environment: flip
+    timeout-minutes: 25
+    env:
+      COMPOSE: docker compose -p deploy -f deploy/compose.development.yml
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Environment file (no AWS)
+        # The example is the documented starting point; AUTH_BACKEND is unset there,
+        # which already means keycloak in development, and object storage is the RustFS
+        # container, so nothing here reaches AWS (AWS_REGION is only what SigV4 signs
+        # with; the Cognito ids stay commented out). UID/GID are make expressions in the
+        # example, so the shell values are appended for docker compose, which reads the
+        # file as dotenv. (detect-secrets attributes a block scalar's findings to this
+        # line: the fixed dev password below is the allowlisted one.)
+        run: | # pragma: allowlist secret
+          cp .env.development.example .env.development
+          {
+            echo "AWS_REGION=eu-west-2"
+            echo "ADMIN_USER_PASSWORD=Smoke-Test-Pa55word!"  # pragma: allowlist secret
+            echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 }}"
+            echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}"
+            echo "ENV=development"
+            echo "UID=$(id -u)"
+            echo "GID=$(id -g)"
+          } >> .env.development
+
+      - name: Hub networks
+        # flip-api joins the hub network and the hub↔trust-API network (both bridge);
+        # the swarm-only trust overlays are not needed for a hub-only boot.
+        run: |
+          make create-networks-centralhub
+          make -C trust create-networks-core
+
+      - name: Build flip-api from this checkout
+        # Not the GHCR image: a dependency change in pyproject/uv.lock lives in the image
+        # layer, and this job must test the branch. No registry login needed.
+        run: $COMPOSE --env-file .env.development build flip-api
+
+      - name: Object store bucket directories
+        # A top-level directory under RustFS's data dir is a bucket: the same make target
+        # `make up` runs, so the guard every developer's checkout gets is the one CI runs.
+        run: make _ensure-object-store-dir
+
+      - name: Start flip-db, keycloak, the object store and flip-api
+        run: $COMPOSE --env-file .env.development up -d --no-build flip-db keycloak object-store flip-api
+
+      - name: Wait for the hub
+        run: |
+          for _ in $(seq 1 90); do
+            if curl -fsS http://localhost:8080/api/health >/dev/null; then
+              echo "hub is up"; exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::flip-api never became healthy"
+          $COMPOSE --env-file .env.development logs --no-color --tail=200
+          exit 1
+
+      - name: Login smoke
+        run: |
+          admin_email=$(sed -n 's/^ADMIN_EMAIL_1 = "\(.*\)"$/\1/p' flip-api/src/flip_api/utils/constants.py)
+          python3 flip-api/tests/local_auth_smoke.py \
+            --api-url http://localhost:8080/api \
+            --keycloak-url http://localhost:8180 \
+            --username "$admin_email" \
+            --password 'Smoke-Test-Pa55word!'  # pragma: allowlist secret
+
+      - name: Storage smoke
+        # A model needs an APPROVED project with an APPROVED trust, and every approval path
+        # runs through a trust's cohort reply, which this hub-only stack has no trust to give —
+        # so the project and trust the smoke creates are approved here in the database, and
+        # the round trip runs on them.
+        run: | # pragma: allowlist secret
+          set -o pipefail
+          admin_email=$(sed -n 's/^ADMIN_EMAIL_1 = "\(.*\)"$/\1/p' flip-api/src/flip_api/utils/constants.py)
+          ui_port=$(sed -n 's/^UI_PORT=//p' .env.development)
+          smoke="python3 flip-api/tests/local_storage_smoke.py --api-url http://localhost:8080/api \
+            --keycloak-url http://localhost:8180 --ui-origin http://localhost:$ui_port \
+            --username $admin_email --password Smoke-Test-Pa55word!"
+          ids=$($smoke --create-project | tee /dev/stderr) || { echo "::error::creating the smoke project failed (see above)"; exit 1; }
+          project_id=$(printf '%s\n' "$ids" | sed -n 's/^project_id=//p')
+          trust_id=$(printf '%s\n' "$ids" | sed -n 's/^trust_id=//p')
+          if [ -z "$project_id" ] || [ -z "$trust_id" ]; then echo "::error::--create-project printed no project_id/trust_id"; exit 1; fi
+          pg_user=$(sed -n 's/^POSTGRES_USER=//p' .env.development)
+          pg_db=$(sed -n 's/^POSTGRES_DB=//p' .env.development)
+          # ON_ERROR_STOP + a row-count check: psql otherwise exits 0 after a failed -c, and
+          # UPDATE 0 is not an error — either would surface later as "project not approved".
+          # -q drops the UPDATE/INSERT command tags, so only the RETURNING rows are counted.
+          approved=$($COMPOSE --env-file .env.development exec -T flip-db psql -q -v ON_ERROR_STOP=1 --single-transaction -tA \
+            -U "$pg_user" -d "$pg_db" \
+            -c "update projects set status='APPROVED' where id='$project_id' returning id" \
+            -c "insert into project_trust_intersect (id, project_id, trust_id, status, decided_at, decided_as) \
+                values (gen_random_uuid(), '$project_id', '$trust_id', 'APPROVED', now(), 'HUB') returning id" | wc -l)
+          test "$approved" -eq 2 || { echo "::error::approving the smoke project in the database touched $approved rows, expected 2"; exit 1; }
+          $smoke --project-id "$project_id"
+
+      - name: Logs on failure
+        if: failure()
+        run: $COMPOSE --env-file .env.development logs --no-color --tail=300
+
+      - name: Tear down
+        if: always()
+        run: $COMPOSE --env-file .env.development down -v --remove-orphans

@@ -38,7 +38,11 @@ def one_subject_per_accession():
 
     def resolve(query=None, params=None, **kwargs):
         accession_ids = (params or {}).get("accession_ids", [])
-        return pd.DataFrame({"subject_count": [len(set(accession_ids))]})
+        if "COUNT(DISTINCT" in str(query):
+            return pd.DataFrame({"subject_count": [len(set(accession_ids))]})
+        # The imaging lookup /cohort/accession-ids filters its answer through: every value is a
+        # real accession here, unless a test says otherwise.
+        return pd.DataFrame({"accession_id": list(dict.fromkeys(accession_ids))})
 
     with patch("data_access_api.services.cohort.get_records", side_effect=resolve) as stub:
         yield stub
@@ -395,9 +399,7 @@ def test_get_dataframe_rejects_cohort_below_threshold(mock_get_records, mock_dec
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_below_threshold_does_not_disclose_row_count(
-    mock_get_records, mock_decrypt, mock_get_settings
-):
+def test_get_dataframe_below_threshold_does_not_disclose_row_count(mock_get_records, mock_decrypt, mock_get_settings):
     """The refusal must not reveal how many rows matched — 0 and 9 look identical."""
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
     mock_decrypt.return_value = "decrypted-id"
@@ -517,9 +519,7 @@ def test_get_accession_ids_missing_column_propagates_400(mock_get_records, mock_
     ``tests/integration/test_cohort_endpoint.py::test_accession_ids_missing_column_surfaces_get_records_400``.
     """
     mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.side_effect = HTTPException(
-        status_code=400, detail="The column 'accession_id' does not exist."
-    )
+    mock_get_records.side_effect = HTTPException(status_code=400, detail="The column 'accession_id' does not exist.")
 
     response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
 
@@ -533,9 +533,7 @@ def test_get_accession_ids_propagates_http_exception(mock_get_records, mock_decr
     """``get_records`` raises HTTPException for things like undefined tables/columns;
     the wrapping ``except`` clauses must not swallow that into a 500."""
     mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.side_effect = HTTPException(
-        status_code=400, detail="The table 'omop.bogus' does not exist."
-    )
+    mock_get_records.side_effect = HTTPException(status_code=400, detail="The table 'omop.bogus' does not exist.")
 
     response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
 
@@ -729,10 +727,7 @@ def test_validate_query_cte_roundtrip():
 
 def test_validate_query_complex_pg_syntax_roundtrip():
     """PG-specific constructs (aggregate FILTER clauses) survive the round-trip."""
-    query = (
-        "SELECT person_id, COUNT(*) FILTER (WHERE age > 18) AS adult_count "
-        "FROM omop.person GROUP BY person_id"
-    )
+    query = "SELECT person_id, COUNT(*) FILTER (WHERE age > 18) AS adult_count FROM omop.person GROUP BY person_id"
     result = validate_query(query)
     assert "person_id" in result
     assert "adult_count" in result.lower()
@@ -762,9 +757,7 @@ def test_validate_query_rejects_dml_and_ddl(query: str):
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_rejects_many_rows_from_too_few_subjects(
-    mock_get_records, mock_decrypt, mock_get_settings
-):
+def test_get_dataframe_rejects_many_rows_from_too_few_subjects(mock_get_records, mock_decrypt, mock_get_settings):
     """Forty rows covering three people is below a floor of ten.
 
     This is the case the row count used to wave through: the floor exists to stop a response
@@ -803,9 +796,7 @@ def test_get_dataframe_refuses_a_cohort_whose_subjects_cannot_be_counted(
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_counts_subjects_not_rows_at_the_boundary(
-    mock_get_records, mock_decrypt, mock_get_settings
-):
+def test_get_dataframe_counts_subjects_not_rows_at_the_boundary(mock_get_records, mock_decrypt, mock_get_settings):
     """Exactly ten distinct people is allowed however many rows they contribute."""
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
     mock_decrypt.return_value = "decrypted-id"
@@ -962,6 +953,66 @@ def test_get_accession_ids_never_counts_more_subjects_than_rows(
     mock_get_records.return_value = pd.DataFrame({"accession_id": ["ACC1", "ACC2", "ACC3"]})
     one_subject_per_accession.side_effect = None
     one_subject_per_accession.return_value = pd.DataFrame({"subject_count": [12]})
+
+    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 403
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_records")
+def test_get_accession_ids_returns_only_values_that_are_imaging_accessions(
+    mock_get_records, mock_decrypt, mock_get_settings, one_subject_per_accession
+):
+    """Values the floor never counted are never released (review item 7).
+
+    Training code holds the trust-internal key and its own project envelope, so it can POST
+    ``SELECT accession_id FROM omop.image_occurrence UNION ALL SELECT concat(p.person_id, '|',
+    p.year_of_birth) AS accession_id FROM omop.person p``. The real accessions clear the floor
+    on their own; returning every value alongside them handed out row-level person data
+    through a route a ``cohort.dataframe`` deny does not cover.
+    """
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 2
+    mock_decrypt.return_value = "decrypted-id"
+    real = ["ACC1", "ACC2", "ACC3"]
+    smuggled = ["1|1950|8507", "2|1962|8532"]
+    mock_get_records.return_value = pd.DataFrame({"accession_id": real[:2] + smuggled + real[2:]})
+
+    def lookup(query=None, params=None, **kwargs):
+        ids = [i for i in (params or {}).get("accession_ids", []) if i.startswith("ACC")]
+        if "COUNT(DISTINCT" in str(query):
+            return pd.DataFrame({"subject_count": [len(set(ids))]})
+        return pd.DataFrame({"accession_id": ids})
+
+    one_subject_per_accession.side_effect = lookup
+
+    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    assert response.json() == {"accession_ids": real}
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_records")
+def test_get_accession_ids_counts_only_the_values_it_would_release(
+    mock_get_records, mock_decrypt, mock_get_settings, one_subject_per_accession
+):
+    """The row bound on the subject count is taken over the resolved values, not every row:
+    padding a cohort with unresolvable values must not help it clear the floor."""
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 3
+    mock_decrypt.return_value = "decrypted-id"
+    mock_get_records.return_value = pd.DataFrame({"accession_id": ["ACC1", "ACC2", "pad-1", "pad-2"]})
+
+    def lookup(query=None, params=None, **kwargs):
+        ids = [i for i in (params or {}).get("accession_ids", []) if i.startswith("ACC")]
+        if "COUNT(DISTINCT" in str(query):
+            # A lookup that over-reports cannot lift two released values past a floor of three.
+            return pd.DataFrame({"subject_count": [12]})
+        return pd.DataFrame({"accession_id": ids})
+
+    one_subject_per_accession.side_effect = lookup
 
     response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
 

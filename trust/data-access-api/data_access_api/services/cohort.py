@@ -415,8 +415,7 @@ def _validate_query_ast(query: str) -> str:
         function_name = function.name.lower()
         if function_name not in _ALLOWED_FUNCTIONS:
             raise _invalid_query(
-                f"'{function_name}' is not an allowed function. "
-                f"Allowed: {', '.join(sorted(_ALLOWED_FUNCTIONS))}."
+                f"'{function_name}' is not an allowed function. Allowed: {', '.join(sorted(_ALLOWED_FUNCTIONS))}."
             )
 
     for clause_type, label in ((exp.Limit, "LIMIT"), (exp.Offset, "OFFSET")):
@@ -571,6 +570,44 @@ def count_distinct_subjects(df: pd.DataFrame) -> int | None:
     else:
         return None
     return min(len(df), subjects)
+
+
+def keep_imaging_accessions(df: pd.DataFrame) -> pd.DataFrame:
+    """Returns the rows of an accession-id cohort whose value is a real imaging accession.
+
+    ``/cohort/accession-ids`` counts its subjects through ``omop.image_occurrence``, so a value
+    that resolves to no imaging study contributes nothing to the floor. Releasing such values
+    anyway let a cohort smuggle arbitrary columns out under the ``accession_id`` alias — real
+    accessions clearing the floor, and aliased person data riding along with them — past a
+    ``cohort.dataframe`` deny (FLIP#1259). Only the values the floor counted are released. What a
+    real imaging cohort can lose is an accession the trust's PACS holds but its
+    ``omop.image_occurrence`` does not; that value never counted towards the floor either, so the
+    route stops releasing what it was not gating.
+
+    Args:
+        df (pd.DataFrame): The route's ``SELECT accession_id FROM (...)`` result.
+
+    Returns:
+        pd.DataFrame: The rows whose ``accession_id`` is in ``omop.image_occurrence``, in cohort
+        order, duplicates kept.
+    """
+    column = _first_column(df, ACCESSION_ID_COLUMN)
+    ids = [str(value) for value in column.dropna().unique()]
+    if not ids:
+        return df.iloc[0:0]
+
+    lookup = text("""
+    SELECT DISTINCT io.accession_id AS accession_id
+    FROM omop.image_occurrence io
+    WHERE io.accession_id IN :accession_ids
+    """).bindparams(bindparam("accession_ids", expanding=True))
+    result = get_records(query=lookup, params={"accession_ids": ids})
+    if ACCESSION_ID_COLUMN not in result.columns:
+        # Cannot happen against a real database. Fails closed: nothing is known to be imaging.
+        logger.error("Imaging accession lookup returned an unexpected shape; releasing no accession ids")
+        return df.iloc[0:0]
+    known = set(result[ACCESSION_ID_COLUMN].astype(str))
+    return df[column.notna() & column.astype(str).isin(known)]
 
 
 def _first_column(df: pd.DataFrame, column: str) -> pd.Series:
@@ -819,10 +856,12 @@ def verify_cardinality(df: pd.DataFrame, threshold: float = 0.05) -> bool:
         unique_count = df[col].nunique()
         percentage_unique = unique_count / len(df) if len(df) > 0 else 0
         logger.info(f"Column '{col}' has {unique_count} unique values ({percentage_unique:.2%} of total)")
-        if all([
-            unique_count < get_settings().COHORT_QUERY_THRESHOLD,  # Absolute threshold
-            percentage_unique < threshold,  # Relative threshold
-        ]):
+        if all(
+            [
+                unique_count < get_settings().COHORT_QUERY_THRESHOLD,  # Absolute threshold
+                percentage_unique < threshold,  # Relative threshold
+            ]
+        ):
             logger.info(f"Column '{col}' has insufficient unique values ({threshold=}, {unique_count=})")
             return False
     return True

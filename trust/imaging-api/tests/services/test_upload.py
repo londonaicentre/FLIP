@@ -160,9 +160,7 @@ def test_upload_file_exist_ok_false_already_exists(mock_check, headers):
 
     try:
         with pytest.raises(AlreadyExistsError, match="File already exists on XNAT"):
-            upload_file_to_xnat(
-                "PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", temp_path, exist_ok=False, headers=headers
-            )
+            upload_file_to_xnat("PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", temp_path, exist_ok=False, headers=headers)
     finally:
         os.remove(temp_path)
 

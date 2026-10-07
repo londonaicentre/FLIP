@@ -12,40 +12,44 @@
 import monai.transforms as mt
 
 
-def get_train_transforms(spatial_shape: tuple | list):
-    return mt.Compose([
-        mt.LoadImaged(keys=["image"], image_only=True),
-        mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
-        mt.Orientationd(keys=["image"], axcodes="RAS"),
-        mt.Spacingd(
-            keys=["image"],
-            pixdim=(1.5, 1.5, 2.0),
-            mode=("bilinear"),
-        ),
-        mt.ResizeWithPadOrCropd(keys=["image"], spatial_size=spatial_shape),
-        mt.RandAffined(
-            keys=["image"],
-            shear_range=(-0.1, 0.1),
-            scale_range=(0.01, 0.05),
-            rotate_range=(-0.05, 0.05),
-            translate_range=(-0.05, 0.05),
-            prob=1.0,
-            padding_mode="border",
-        ),
-        mt.ScaleIntensityRanged(keys=["image"], a_min=-57, a_max=250, b_min=0.0, b_max=1.0, clip=True),
-    ])
+def get_train_transforms(spatial_shape: tuple | list) -> mt.Compose:
+    return mt.Compose(
+        [
+            mt.LoadImaged(keys=["image"], image_only=True),
+            mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
+            mt.Orientationd(keys=["image"], axcodes="RAS"),
+            mt.Spacingd(
+                keys=["image"],
+                pixdim=(1.5, 1.5, 2.0),
+                mode=("bilinear"),
+            ),
+            mt.ResizeWithPadOrCropd(keys=["image"], spatial_size=spatial_shape),
+            mt.RandAffined(
+                keys=["image"],
+                shear_range=(-0.1, 0.1),
+                scale_range=(0.01, 0.05),
+                rotate_range=(-0.05, 0.05),
+                translate_range=(-0.05, 0.05),
+                prob=1.0,
+                padding_mode="border",
+            ),
+            mt.ScaleIntensityRanged(keys=["image"], a_min=-57, a_max=250, b_min=0.0, b_max=1.0, clip=True),
+        ]
+    )
 
 
-def get_val_transforms(spatial_shape: tuple | list):
-    return mt.Compose([
-        mt.LoadImaged(keys=["image"], image_only=True),
-        mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
-        mt.Orientationd(keys=["image"], axcodes="RAS"),
-        mt.Spacingd(
-            keys=["image"],
-            pixdim=(1.5, 1.5, 2.0),
-            mode=("bilinear"),
-        ),
-        mt.ResizeWithPadOrCropd(keys=["image"], spatial_size=spatial_shape),
-        mt.ScaleIntensityRanged(keys=["image"], a_min=-57, a_max=250, b_min=0.0, b_max=1.0, clip=True),
-    ])
+def get_val_transforms(spatial_shape: tuple | list) -> mt.Compose:
+    return mt.Compose(
+        [
+            mt.LoadImaged(keys=["image"], image_only=True),
+            mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
+            mt.Orientationd(keys=["image"], axcodes="RAS"),
+            mt.Spacingd(
+                keys=["image"],
+                pixdim=(1.5, 1.5, 2.0),
+                mode=("bilinear"),
+            ),
+            mt.ResizeWithPadOrCropd(keys=["image"], spatial_size=spatial_shape),
+            mt.ScaleIntensityRanged(keys=["image"], a_min=-57, a_max=250, b_min=0.0, b_max=1.0, clip=True),
+        ]
+    )

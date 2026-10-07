@@ -15,7 +15,7 @@ import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-import type { IProject } from "@/services/project-service";
+import type { IProject, ITrustDecisions } from "@/services/project-service";
 
 import ProjectPage from "../index.vue";
 
@@ -32,7 +32,7 @@ vi.mock("vue-router", async (importOriginal) => {
 // All service helpers are mocked — we drive the state with the project store
 // and only assert on what the page renders / which mock got called.
 const stageProjectWithTrusts = vi.fn().mockResolvedValue(undefined);
-const approveProject = vi.fn().mockResolvedValue(undefined);
+const approveProject = vi.fn().mockResolvedValue({ projectStatus: "APPROVED" });
 const unstageProject = vi.fn().mockResolvedValue(undefined);
 const editProject = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/services/project-service", () => ({
@@ -44,12 +44,20 @@ vi.mock("@/services/project-service", () => ({
 
 const snackbarSuccess = vi.fn();
 const snackbarError = vi.fn();
+const snackbarWarning = vi.fn();
 vi.mock("@/utils/snackbar", () => ({
     Snackbar: {
         success: (...args: unknown[]) => snackbarSuccess(...args),
-        error: (...args: unknown[]) => snackbarError(...args)
+        error: (...args: unknown[]) => snackbarError(...args),
+        warning: (...args: unknown[]) => snackbarWarning(...args)
     }
 }));
+
+// What the stubbed ProjectApproval emits when its save button is clicked.
+let decisionsToSave: ITrustDecisions = {
+    approved: ["t1"],
+    declined: ["t2"]
+};
 
 // Stub the heavy children — we want to test the page's own logic, not its
 // composition with all the partials.
@@ -78,7 +86,13 @@ const stubs = {
         template: "<ol data-test=\"stub-lifecycle\"><li v-for=\"s in steps\" :key=\"s.id\" :data-test=\"`step-${s.id}`\" :data-completed=\"s.completed\" :data-date=\"s.date\">{{ s.name }}</li></ol>",
         props: ["steps"]
     },
-    ProjectApproval: { template: "<div data-test=\"stub-project-approval\" />" },
+    ProjectApproval: {
+        template: "<div data-test=\"stub-project-approval\"><button data-test=\"stub-save-decisions\" @click=\"save\" /></div>",
+        emits: ["approveProject"],
+        setup(_: unknown, { emit }: { emit: (event: "approveProject", decisions: ITrustDecisions) => void }) {
+            return { save: () => emit("approveProject", decisionsToSave) };
+        }
+    },
     ProjectStaging: {
         // Expose the computed stageable set so tests can assert the parent's
         // exclusion logic (errored / never-responded / empty trusts).
@@ -96,6 +110,7 @@ interface MountOptions {
     project?: IProject | null;
     permissions?: string[];
     userId?: string;
+    trustAdminOf?: { id: string; code: string; name: string } | null;
 }
 
 const baseProject = (): IProject => ({
@@ -113,7 +128,8 @@ const baseProject = (): IProject => ({
 function mountProjectPage({
     project = baseProject(),
     permissions = ["CanCreateProjects", "CanUnstageProjects"],
-    userId = "owner-1"
+    userId = "owner-1",
+    trustAdminOf = null
 }: MountOptions = {}) {
     return mount(ProjectPage, {
         global: {
@@ -125,7 +141,8 @@ function mountProjectPage({
                     auth: {
                         user: {
                             userId,
-                            permissions
+                            permissions,
+                            trustAdminOf
                         }
                     }
                 }
@@ -137,11 +154,17 @@ function mountProjectPage({
 
 beforeEach(() => {
     stageProjectWithTrusts.mockClear();
-    approveProject.mockClear();
+    approveProject.mockReset();
+    approveProject.mockResolvedValue({ projectStatus: "APPROVED" });
+    decisionsToSave = {
+        approved: ["t1"],
+        declined: ["t2"]
+    };
     unstageProject.mockClear();
     editProject.mockClear();
     snackbarSuccess.mockClear();
     snackbarError.mockClear();
+    snackbarWarning.mockClear();
 });
 
 describe("Project page (/project/[id]/index.vue)", () => {
@@ -263,19 +286,219 @@ describe("Project page (/project/[id]/index.vue)", () => {
             {
                 id: "t1",
                 name: "KCH",
-                approved: true,
-                approvedAt: "2026-05-01T10:00:00Z"
+                status: "APPROVED",
+                decidedAt: "2026-05-01T10:00:00Z"
             },
             {
                 id: "t2",
                 name: "UCLH",
-                approved: true,
-                approvedAt: "2026-05-15T10:00:00Z"
+                status: "APPROVED",
+                decidedAt: "2026-05-15T10:00:00Z"
+            },
+            {
+                // Decisions freeze once the project is approved, so the last one — here a decline — is
+                // the save that approved it.
+                id: "t3",
+                name: "GSTT",
+                status: "DECLINED",
+                decidedAt: "2026-05-20T10:00:00Z"
             }
         ];
         const approvedWrapper = mountProjectPage({ project: approvedProject });
         const step04 = approvedWrapper.find("[data-test=step-04]");
         expect(step04.attributes("data-completed")).toBe("true");
+        expect(step04.attributes("data-date")).toBe("2026-05-20T10:00:00Z");
+    });
+
+    test("leaves the Project Approved step undated while the project is still staged", () => {
+        const staged = baseProject();
+        staged.status = "STAGED";
+        staged.approvedTrusts = [{
+            id: "t1",
+            name: "KCH",
+            status: "APPROVED",
+            decidedAt: "2026-05-01T10:00:00Z"
+        }];
+        const wrapper = mountProjectPage({ project: staged });
+
+        expect(wrapper.find("[data-test=step-04]").attributes("data-date")).toBeFalsy();
+    });
+
+    describe("saving trust decisions", () => {
+        const stagedProject = (): IProject => ({
+            ...baseProject(),
+            status: "STAGED",
+            approvedTrusts: [
+                {
+                    id: "t1",
+                    name: "KCH",
+                    status: "PENDING"
+                },
+                {
+                    id: "t2",
+                    name: "UCLH",
+                    status: "PENDING"
+                }
+            ]
+        });
+
+        test("posts the approved and declined trusts and announces the approval", async () => {
+            const wrapper = mountProjectPage({ project: stagedProject() });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(approveProject).toHaveBeenCalledWith(
+                "/step/project/p-123/approve",
+                {
+                    approved: ["t1"],
+                    declined: ["t2"]
+                }
+            );
+            expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Project Approved" }));
+            expect(wrapper.emitted("UpdateProject")).toHaveLength(1);
+        });
+
+        test("says the project stays staged when every trust declined", async () => {
+            decisionsToSave = {
+                approved: [],
+                declined: ["t1", "t2"]
+            };
+            approveProject.mockResolvedValue({ projectStatus: "STAGED" });
+            const wrapper = mountProjectPage({ project: stagedProject() });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "All trusts declined" }));
+            expect(snackbarSuccess.mock.calls[0][0].text).toContain("stays staged");
+            expect(wrapper.emitted("UpdateProject")).toHaveLength(1);
+        });
+
+        test("says the decisions are saved when a decline leaves another trust still to decide", async () => {
+            // Trusts decide one at a time (FLIP#1258): a decline with a trust still pending is not "all declined".
+            decisionsToSave = {
+                approved: [],
+                declined: ["t1"]
+            };
+            approveProject.mockResolvedValue({ projectStatus: "STAGED" });
+            const wrapper = mountProjectPage({ project: stagedProject() });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Trust decisions saved" }));
+            expect(snackbarSuccess.mock.calls[0][0].text).toContain("until a trust approves it");
+        });
+
+        test("says a late decision on an approved project was saved, not that the project was approved", async () => {
+            decisionsToSave = {
+                approved: [],
+                declined: ["t2"]
+            };
+            approveProject.mockResolvedValue({ projectStatus: "APPROVED" });
+            const wrapper = mountProjectPage({
+                project: {
+                    ...stagedProject(),
+                    status: "APPROVED"
+                }
+            });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Trust decisions saved" }));
+        });
+
+        test("announces a trust that approved an already-approved project as joining it", async () => {
+            decisionsToSave = {
+                approved: ["t2"],
+                declined: []
+            };
+            approveProject.mockResolvedValue({
+                projectStatus: "APPROVED",
+                successful: true,
+                details: []
+            });
+            const wrapper = mountProjectPage({
+                project: {
+                    ...stagedProject(),
+                    status: "APPROVED"
+                }
+            });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Trust approved" }));
+        });
+
+        test("warns, naming the trust, when the approval could not start imaging there", async () => {
+            approveProject.mockResolvedValue({
+                projectStatus: "APPROVED",
+                successful: false,
+                details: [
+                    {
+                        trust: "Kings College Hospital",
+                        success: false,
+                        message: "boom"
+                    },
+                    {
+                        trust: "UCLH",
+                        success: true,
+                        message: "Imaging started successfully"
+                    }
+                ]
+            });
+            const wrapper = mountProjectPage({ project: stagedProject() });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(snackbarSuccess).not.toHaveBeenCalled();
+            expect(snackbarWarning).toHaveBeenCalledTimes(1);
+            const { text } = snackbarWarning.mock.calls[0][0];
+            expect(text).toContain("Kings College Hospital");
+            expect(text).not.toContain("UCLH");
+            expect(wrapper.emitted("UpdateProject")).toHaveLength(1);
+        });
+
+        test("treats a response without a known project status as a failure", async () => {
+            approveProject.mockResolvedValue({});
+            const wrapper = mountProjectPage({ project: stagedProject() });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(snackbarSuccess).not.toHaveBeenCalled();
+            expect(snackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Unable to save trust decisions" }));
+        });
+
+        test("shows the hub's reason when it refuses the decisions", async () => {
+            approveProject.mockRejectedValue({
+                response: {
+                    status: 400,
+                    data: { detail: "Unable to approve the project as it has not been staged" }
+                }
+            });
+            const wrapper = mountProjectPage({ project: stagedProject() });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(snackbarError.mock.calls[0][0].text).toBe("Unable to approve the project as it has not been staged");
+        });
+
+        test("reports a failed save without claiming anything was decided", async () => {
+            approveProject.mockRejectedValue(new Error("boom"));
+            const wrapper = mountProjectPage({ project: stagedProject() });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(snackbarSuccess).not.toHaveBeenCalled();
+            expect(snackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Unable to save trust decisions" }));
+        });
     });
 
     test("surfaces the staged date on the Staged step once the project is staged", () => {
@@ -360,6 +583,23 @@ describe("Project page (/project/[id]/index.vue)", () => {
             expect(actions?.className).toContain("items-center");
             expect(actions?.className).toContain("shrink-0");
             expect(actions?.className).not.toContain("flex-col");
+        });
+
+        test("offers no Edit Project to a Trust Admin reading a project they are not on (FLIP#1258)", () => {
+            const staged = baseProject();
+            staged.status = "STAGED";
+            const wrapper = mountProjectPage({
+                project: staged,
+                permissions: ["CanCreateProjects"],
+                userId: "trust-admin-1",
+                trustAdminOf: {
+                    id: "t1",
+                    code: "KCH",
+                    name: "KCH"
+                }
+            });
+
+            expect(wrapper.find("[data-test=edit-project-btn]").exists()).toBe(false);
         });
 
         test("hides the Edit Project label below lg and keeps an aria-label", () => {

@@ -102,13 +102,22 @@ Some tutorial files are kept as byte-identical copies of another file, and two g
   CI workflow (paths `fl-apps/flower/**`, `fl-tutorials/**`), so a new Flower tutorial is covered
   the moment it exists — there is no list and no path filter to extend. Resync by copying the
   template file over the drifted copy.
-- **The Ark+ NVFLARE pair.** The two Ark+ evaluation tutorials share `data_utils.py` and
-  `arkplus_flat_models.py` with each other; nothing in the tree says so, which is why this is the
-  one pair still hand-listed, in [`scripts/check_tutorial_sync.sh`](../scripts/check_tutorial_sync.sh)
-  (`PAIRS`), run by the `fl-apps-check-tutorial-sync.yml` CI workflow on any push/PR touching
-  `fl-tutorials/nvflare/image_evaluation/**`. Resync by copying the baseline app's file over the
-  multimodel copy. Adding another hand-listed pair means extending that workflow's path filters
-  too, or drift on the new path goes uncaught.
+- **Tutorial-to-tutorial pairs still hand-listed.** Two families remain in
+  [`scripts/check_tutorial_sync.sh`](../scripts/check_tutorial_sync.sh) (`PAIRS`), run by the
+  `fl-apps-check-tutorial-sync.yml` CI workflow on any push/PR touching the paths on either side:
+  - **The Ark+ NVFLARE pair.** The two Ark+ evaluation tutorials share `data_utils.py` and
+    `arkplus_flat_models.py` with each other; nothing in the tree says so, so the pairing is
+    hand-listed. Watched paths include `fl-tutorials/nvflare/image_evaluation/**`. Resync by
+    copying the baseline app's file over the multimodel copy.
+  - **The EHR risk-prediction cross-backend pair.** The EHR risk-prediction tutorial exists on
+    both backends and shares its `feature_engineering.py`, `models.py` and `query.sql` as
+    byte-identical copies (same preprocessing/architecture must train on either backend). The
+    NVFLARE copy is the reference; resync by copying it over the Flower copy. Watched paths
+    include `fl-tutorials/nvflare/tabular_classification/**` and
+    `fl-tutorials/flower/ehr_risk_prediction/**`.
+
+  Adding another hand-listed pair means extending that workflow's path filters too, or drift
+  on the new path goes uncaught.
 
 `pyproject.toml` files are deliberately **not** paired — the template's `[tool.uv]` tables pin
 `flip-utils` to the in-image `/opt/flip-utils` source and torch to the cu130 index, neither of which

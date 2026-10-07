@@ -92,10 +92,7 @@ def get_presigned_url_for_upload(
             logger.warning(f"Rejected upload of disallowed file type {suffix!r} for model {model_id}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"File type '{suffix}' is not allowed. "
-                    f"Allowed extensions: {', '.join(allowed_extensions)}"
-                ),
+                detail=(f"File type '{suffix}' is not allowed. Allowed extensions: {', '.join(allowed_extensions)}"),
             )
 
         s3_path = f"{settings.UPLOADED_MODEL_FILES_BUCKET}/{model_id}/{body.fileName}"
@@ -110,10 +107,7 @@ def get_presigned_url_for_upload(
                 content_type=body.contentType,
                 expiration=settings.PRE_SIGNED_URL_EXPIRATION_SECONDS,
             )
-            logger.info(
-                f"Generated pre-signed POST policy bucket={bucket} "
-                f"key_hash={key_hash} model_id={model_id}"
-            )
+            logger.info(f"Generated pre-signed POST policy bucket={bucket} key_hash={key_hash} model_id={model_id}")
             return PresignedUploadResponse(
                 url=policy["url"],
                 fields=policy.get("fields", {}),
@@ -137,8 +131,7 @@ def get_presigned_url_for_upload(
         raise
     except Exception as e:
         logger.error(
-            f"Unhandled error in get_presigned_url_for_upload "
-            f"model_id={model_id} error_type={type(e).__name__}"
+            f"Unhandled error in get_presigned_url_for_upload model_id={model_id} error_type={type(e).__name__}"
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

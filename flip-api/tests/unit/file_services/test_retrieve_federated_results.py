@@ -26,7 +26,7 @@ from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Model
 from flip_api.file_services.retrieve_federated_results import retrieve_federated_results
 from flip_api.main import app
-from flip_api.utils.s3_client import S3Client
+from flip_api.utils.s3_client import PresignAudience, S3Client
 from tests.fixtures.db_fixtures import ModelFactory, ProjectFactory
 from tests.unit._log_policy import _FAKE_SIGNED_URL, _assert_logs_have_no_presigned_url
 
@@ -170,6 +170,8 @@ def test_retrieve_federated_results_endpoint_calls_function(override_dependencie
 
         assert response.status_code == 200
         assert response.json() == expected_output
+        # The browser downloads the results, so the URL is signed for the public endpoint (FLIP#1291).
+        mock_s3.get_presigned_url.assert_called_once_with("model-id/file1.csv", audience=PresignAudience.BROWSER)
 
 
 class TestRetrieveFederatedResults:
@@ -293,7 +295,7 @@ class TestS3Client:
             mock_client.generate_presigned_url.return_value = "https://test-url"
 
             s3_client = S3Client()
-            url = s3_client.get_presigned_url("s3://test-bucket/test-key")
+            url = s3_client.get_presigned_url("s3://test-bucket/test-key", audience=PresignAudience.BROWSER)
 
             assert url == "https://test-url"
             mock_client.generate_presigned_url.assert_called_once()
@@ -309,7 +311,7 @@ class TestS3Client:
 
             s3_client = S3Client()
             with pytest.raises(ClientError) as exc_info:
-                s3_client.get_presigned_url("s3://test-bucket/test-key")
+                s3_client.get_presigned_url("s3://test-bucket/test-key", audience=PresignAudience.BROWSER)
 
             assert "An error occurred (AccessDenied)" in str(exc_info.value)
 
@@ -380,9 +382,7 @@ def test_retrieve_federated_results_redacts_url_when_get_presigned_raises(caplog
             patch("flip_api.file_services.retrieve_federated_results.S3Client") as mock_s3_cls,
         ):
             mock_s3 = MagicMock()
-            mock_s3.list_objects.return_value = [
-                f"s3://test-bucket/uploaded_federated_data/{model_id}/weights.bin"
-            ]
+            mock_s3.list_objects.return_value = [f"s3://test-bucket/uploaded_federated_data/{model_id}/weights.bin"]
             mock_s3.get_presigned_url.side_effect = Exception(_FAKE_SIGNED_URL)
             mock_s3_cls.return_value = mock_s3
 

@@ -11,6 +11,9 @@
 # limitations under the License.
 #
 
+import importlib
+
+from fl_api import app as app_module
 from fl_api.schemas import HealthResponse
 
 
@@ -63,3 +66,20 @@ def test_health_success(client):
 
     assert response.status_code == 200
     HealthResponse.model_validate(response.json())
+
+
+def test_health_names_the_build(client, monkeypatch):
+    """/health reports the baked FLIP_RELEASE, so a running FL API can say which build it is."""
+    monkeypatch.setenv("FLIP_RELEASE", "v9.9.9")
+    assert client.get("/health").json()["version"] == "v9.9.9"
+
+
+def test_openapi_names_the_same_build(monkeypatch):
+    """FastAPI reads the version at app construction, so reload the app module under the release."""
+    monkeypatch.setenv("FLIP_RELEASE", "v9.9.9")
+    try:
+        importlib.reload(app_module)
+        assert app_module.app.version == "v9.9.9"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(app_module)

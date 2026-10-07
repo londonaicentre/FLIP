@@ -65,8 +65,63 @@ export async function getTrusts(): Promise<ITrustResponse[]> {
 // NOT swallowed: a rejection lets SWRV keep the page's loader rather than
 // rendering a misleading empty federation. Creating a trust stays admin-only
 // (see createAdminTrust in admin-trusts-service).
+/** A trust's latest cohort-query answer for a project, as its Trust Admin sees it (FLIP#1258). */
+export interface ITrustCohortCount {
+    recordCount: number | null;
+    // True when the trust withheld a below-threshold count.
+    suppressed: boolean;
+    error: string | null;
+}
+
+/** A project staged at a trust with the trust's decision on it — one row of the My Trust page (FLIP#1258). */
+export interface ITrustDecision {
+    projectId: string;
+    projectName: string;
+    description: string;
+    ownerName: string | null;
+    projectStatus: "UNSTAGED" | "STAGED" | "APPROVED";
+    hasImaging: boolean;
+    stagedAt: string | null;
+    query: string | null;
+    // null when the trust never answered the latest cohort query.
+    cohort: ITrustCohortCount | null;
+    status: "PENDING" | "APPROVED" | "DECLINED";
+    decidedByName: string | null;
+    decidedAt: string | null;
+    decidedAs: "HUB" | "SITE" | null;
+}
+
+export async function getTrustDecisions(trustId: string): Promise<ITrustDecision[]> {
+    const response = await _http.get<ITrustDecision[]>(`/trust/${trustId}/decisions`);
+
+    return Array.isArray(response.data) ? response.data : [];
+}
+
 export async function getTrustStatuses(): Promise<ITrustResponse[]> {
     const response = await _http.get<ITrustResponse[]>("/trust");
 
     return Array.isArray(response.data) ? response.data : [];
 }
+
+export interface IHubHealth {
+    status: string;
+    // The build the hub runs — the CI-baked image tag (v<X.Y.Z> or sha-<short7>), or the
+    // pyproject version for a hub built before FLIP#1204. Absent on older hubs.
+    version?: string;
+}
+
+// The hub's own unauthenticated /health. Connection Status shows its `version` beside
+// the per-trust versions: a site upgrades to the release its hub runs (FLIP#1204).
+export async function getHubHealth(): Promise<IHubHealth> {
+    const response = await _http.get<IHubHealth>("/health");
+
+    return response.data;
+}
+
+// An immutable image tag as the CI publishes them. Only these are comparable across
+// hub and trusts: a pyproject number (0.6.0) is shared by different builds, and
+// XNAT reports its own upstream version.
+const IMAGE_TAG = /^(v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?|sha-[0-9a-f]{7})$/;
+
+export const isImageTag = (value: string | null | undefined): value is string =>
+    typeof value === "string" && IMAGE_TAG.test(value);

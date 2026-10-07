@@ -238,3 +238,249 @@ def test_has_imaging_backfills_true_for_pre_existing_projects(empty_db_engine: E
         ).scalar_one()
     assert has_imaging is True
     assert nullable == "NO"
+
+
+def _insert_intersect_fixture(connection: Connection) -> None:
+    """One project at two trusts: approved at APP, never approved at NOT (pre-#1318 shape)."""
+    connection.execute(
+        text(
+            "INSERT INTO projects (id, name, description, owner_id, deleted, creation_timestamp, status, "
+            "dicom_to_nifti, has_imaging) VALUES ('11111111-1111-1111-1111-111111111111', 'legacy', "
+            "'predates trust decisions', gen_random_uuid(), false, now(), 'APPROVED', true, true)"
+        )
+    )
+    connection.execute(
+        text(
+            "INSERT INTO trust (id, name, code, created_at) VALUES "
+            "('22222222-2222-2222-2222-222222222222', 'Approved Trust', 'APP', now()), "
+            "('33333333-3333-3333-3333-333333333333', 'Not Approved Trust', 'NOT', now())"
+        )
+    )
+    connection.execute(
+        text(
+            "INSERT INTO project_trust_intersect (id, project_id, trust_id, approved, approved_at) VALUES "
+            "(gen_random_uuid(), '11111111-1111-1111-1111-111111111111', "
+            "'22222222-2222-2222-2222-222222222222', true, '2026-03-19 10:30:00'), "
+            "(gen_random_uuid(), '11111111-1111-1111-1111-111111111111', "
+            "'33333333-3333-3333-3333-333333333333', false, NULL)"
+        )
+    )
+
+
+def test_trust_decisions_map_approved_to_approved_and_never_to_declined(empty_db_engine: Engine) -> None:
+    """The FLIP#1318 revision must turn ``approved = false`` into PENDING, never DECLINED.
+
+    A pre-#1318 ``false`` meant "not approved", which covered both "never looked at" and "left out
+    when the others were approved" — there is no way to tell them apart, so none of them may be
+    recorded as a refusal. Historical approvals keep their date and have no recorded approver.
+    """
+    with empty_db_engine.connect() as connection:
+        # pragma: allowlist nextline secret
+        command.upgrade(make_alembic_config(connection), "40f7934c6419")
+    with empty_db_engine.begin() as connection:
+        _insert_intersect_fixture(connection)
+    with empty_db_engine.connect() as connection:
+        # pragma: allowlist nextline secret
+        command.upgrade(make_alembic_config(connection), "b7e3a1c95d20")
+
+    with empty_db_engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT t.code, i.status, i.decided_by, i.decided_at FROM project_trust_intersect i "
+                "JOIN trust t ON t.id = i.trust_id ORDER BY t.code"
+            )
+        ).all()
+    by_code = {row.code: row for row in rows}
+    assert by_code["APP"].status == "APPROVED"
+    assert by_code["APP"].decided_at.isoformat() == "2026-03-19T10:30:00"
+    assert by_code["APP"].decided_by is None
+    assert by_code["NOT"].status == "PENDING"
+    assert by_code["NOT"].decided_at is None
+    assert by_code["NOT"].decided_by is None
+
+
+def test_trust_decisions_downgrade_restores_the_approved_flag(empty_db_engine: Engine) -> None:
+    """Downgrading the FLIP#1318 revision maps APPROVED back to ``approved = true`` and the rest to false."""
+    with empty_db_engine.connect() as connection:
+        # pragma: allowlist nextline secret
+        command.upgrade(make_alembic_config(connection), "40f7934c6419")
+    with empty_db_engine.begin() as connection:
+        _insert_intersect_fixture(connection)
+    with empty_db_engine.connect() as connection:
+        command.upgrade(make_alembic_config(connection), "head")
+    with empty_db_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE project_trust_intersect SET status = 'DECLINED', decided_at = now() "
+                "WHERE trust_id = '33333333-3333-3333-3333-333333333333'"
+            )
+        )
+    with empty_db_engine.connect() as connection:
+        # pragma: allowlist nextline secret
+        command.downgrade(make_alembic_config(connection), "40f7934c6419")
+
+    with empty_db_engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT t.code, i.approved, i.approved_at FROM project_trust_intersect i "
+                "JOIN trust t ON t.id = i.trust_id ORDER BY t.code"
+            )
+        ).all()
+    by_code = {row.code: row for row in rows}
+    assert by_code["APP"].approved is True
+    assert by_code["APP"].approved_at.isoformat() == "2026-03-19T10:30:00"
+    assert by_code["NOT"].approved is False
+    assert by_code["NOT"].approved_at is None
+
+
+def test_trust_admin_revision_adds_decision_maker_and_audit_subject(empty_db_engine: Engine) -> None:
+    """``e8c4a2f71b36`` records who decided (HUB or SITE) and who a trust audit row is about (FLIP#1258).
+
+    Every decision before it was the hub's — nobody could decide for a single trust — so past decisions are
+    backfilled as HUB, and a trust still pending has no decider at all.
+    """
+    # The #1318 fixture targets the pre-#1318 shape; upgrading through b7e3a1c95d20 maps it to APPROVED/PENDING.
+    with empty_db_engine.connect() as connection:
+        # pragma: allowlist nextline secret
+        command.upgrade(make_alembic_config(connection), "40f7934c6419")
+    with empty_db_engine.begin() as connection:
+        _insert_intersect_fixture(connection)
+    with empty_db_engine.connect() as connection:
+        command.upgrade(make_alembic_config(connection), "head")
+
+    with empty_db_engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT t.code, i.decided_as FROM project_trust_intersect i "
+                "JOIN trust t ON t.id = i.trust_id ORDER BY t.code"
+            )
+        ).all()
+        audit_columns = {
+            row.column_name
+            for row in connection.execute(
+                text("SELECT column_name FROM information_schema.columns WHERE table_name = 'trusts_audit'")
+            )
+        }
+        audit_actions = {
+            row.enumlabel
+            for row in connection.execute(
+                text(
+                    "SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
+                    "WHERE t.typname = 'trustauditaction'"
+                )
+            )
+        }
+    by_code = {row.code: row for row in rows}
+    assert by_code["APP"].decided_as == "HUB"
+    assert by_code["NOT"].decided_as is None
+    assert "subject_user_id" in audit_columns
+    assert {"ADMIN_ADDED", "ADMIN_REMOVED"} <= audit_actions
+
+
+def _insert_staged_project_fixture(connection: Connection) -> None:
+    """A STAGED project not yet approved at NOT (pre-#1318 shape): still awaiting its decisions."""
+    connection.execute(
+        text(
+            "INSERT INTO projects (id, name, description, owner_id, deleted, creation_timestamp, status, "
+            "dicom_to_nifti, has_imaging) VALUES ('44444444-4444-4444-4444-444444444444', 'staged', "
+            "'awaiting decisions', gen_random_uuid(), false, now(), 'STAGED', true, true)"
+        )
+    )
+    connection.execute(
+        text(
+            "INSERT INTO project_trust_intersect (id, project_id, trust_id, approved, approved_at) VALUES "
+            "(gen_random_uuid(), '44444444-4444-4444-4444-444444444444', "
+            "'33333333-3333-3333-3333-333333333333', false, NULL)"
+        )
+    )
+
+
+def _decisions_by_project_and_code(connection: Connection) -> dict:
+    rows = connection.execute(
+        text(
+            "SELECT p.name, t.code, i.status, i.decided_by, i.decided_at "
+            "FROM project_trust_intersect i JOIN trust t ON t.id = i.trust_id JOIN projects p ON p.id = i.project_id"
+        )
+    ).all()
+    return {(row.name, row.code): row for row in rows}
+
+
+def _upgrade_legacy_fixtures_to_head(engine: Engine) -> None:
+    with engine.connect() as connection:
+        # pragma: allowlist nextline secret
+        command.upgrade(make_alembic_config(connection), "40f7934c6419")
+    with engine.begin() as connection:
+        _insert_intersect_fixture(connection)
+        _insert_staged_project_fixture(connection)
+    with engine.connect() as connection:
+        command.upgrade(make_alembic_config(connection), "head")
+
+
+def test_trust_admin_revision_closes_trusts_left_pending_on_approved_projects(empty_db_engine: Engine) -> None:
+    """A trust left out of a project approved before trusts decided at their own pace is closed at upgrade.
+
+    From ``e8c4a2f71b36`` a pending trust on an APPROVED project may still approve and join its models, so a
+    legacy one left pending would reopen a long-settled project. It is closed as DECLINED with no decider, date
+    or ``decided_as`` — the mark that nobody declined it. A STAGED project's trusts are still awaiting a decision.
+    """
+    _upgrade_legacy_fixtures_to_head(empty_db_engine)
+
+    with empty_db_engine.connect() as connection:
+        rows = _decisions_by_project_and_code(connection)
+        closed_as = connection.execute(
+            text(
+                "SELECT decided_as FROM project_trust_intersect WHERE project_id = "
+                "'11111111-1111-1111-1111-111111111111' AND trust_id = '33333333-3333-3333-3333-333333333333'"
+            )
+        ).scalar_one()
+    closed = rows[("legacy", "NOT")]
+    assert (closed.status, closed.decided_by, closed.decided_at, closed_as) == ("DECLINED", None, None, None)
+    assert rows[("legacy", "APP")].status == "APPROVED"
+    assert rows[("staged", "NOT")].status == "PENDING"
+
+
+def test_trust_admin_revision_downgrade_reopens_only_the_trusts_it_closed(empty_db_engine: Engine) -> None:
+    """Downgrading returns the closed trusts to PENDING; a decline someone made keeps its decision."""
+    _upgrade_legacy_fixtures_to_head(empty_db_engine)
+    with empty_db_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO trust (id, name, code, created_at) VALUES "
+                "('55555555-5555-5555-5555-555555555555', 'Declining Trust', 'DEC', now())"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO project_trust_intersect (id, project_id, trust_id, status, decided_at, decided_as) "
+                "VALUES (gen_random_uuid(), '11111111-1111-1111-1111-111111111111', "
+                "'55555555-5555-5555-5555-555555555555', 'DECLINED', now(), 'SITE')"
+            )
+        )
+    with empty_db_engine.connect() as connection:
+        # pragma: allowlist nextline secret
+        command.downgrade(make_alembic_config(connection), "c3a7f1eb9402")
+
+    with empty_db_engine.connect() as connection:
+        rows = _decisions_by_project_and_code(connection)
+    assert rows[("legacy", "NOT")].status == "PENDING"
+    assert rows[("legacy", "DEC")].status == "DECLINED"
+    assert rows[("staged", "NOT")].status == "PENDING"
+
+
+def test_trust_admin_revision_downgrades_cleanly(empty_db_engine: Engine) -> None:
+    """Downgrading ``e8c4a2f71b36`` drops the decider column and its type."""
+    with empty_db_engine.connect() as connection:
+        command.upgrade(make_alembic_config(connection), "head")
+    with empty_db_engine.connect() as connection:
+        # pragma: allowlist nextline secret
+        command.downgrade(make_alembic_config(connection), "c3a7f1eb9402")
+    with empty_db_engine.connect() as connection:
+        columns = {
+            row.column_name
+            for row in connection.execute(
+                text("SELECT column_name FROM information_schema.columns WHERE table_name = 'project_trust_intersect'")
+            )
+        }
+        decision_type = connection.execute(text("SELECT 1 FROM pg_type WHERE typname = 'decisionmaker'")).first()
+    assert "decided_as" not in columns
+    assert decision_type is None

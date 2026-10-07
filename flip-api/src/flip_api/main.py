@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
+from flip_api.auth.identity import build_identity_provider
 from flip_api.cohort_services import (
     get_cohort_query_results,
     save_cohort_query,
@@ -84,6 +85,7 @@ from flip_api.step_functions_services import (
 )
 from flip_api.trusts_services import (
     admin_create_trust,
+    get_trust_decisions,
     get_trusts,
     trusts_health_check,
     update_trust_status,
@@ -100,26 +102,26 @@ from flip_api.user_services import (
     set_user_roles,
     update_user,
 )
-from flip_api.utils.cors import get_cors_allowed_origins
 from flip_api.utils.rate_limiter import limiter
 from flip_api.utils.security_headers import SecurityHeadersMiddleware
+from flip_api.utils.version import build_identity
 
-# Module-level holder for the CORS allowlist. Populated from Cognito at app startup (see
-# `lifespan`). CORSMiddleware stores this list by reference and reads it per-request via
-# `origin in self.allow_origins`, so mutating it in place updates the live allowlist without
-# re-registering middleware. Starts empty so module import never touches AWS — tests and any
-# environment without Cognito access can run without mocking boto3 at import time.
+# Module-level holder for the CORS allowlist. Populated from the identity provider at app
+# startup (see `lifespan`). CORSMiddleware stores this list by reference and reads it
+# per-request via `origin in self.allow_origins`, so mutating it in place updates the live
+# allowlist without re-registering middleware. Starts empty so module import never touches
+# the provider — tests and any environment without one can run without mocking at import time.
 _cors_allowed_origins: list[str] = []
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Start scheduler and populate CORS allowlist from Cognito callback URLs.
+    """Start scheduler and populate the CORS allowlist from the identity provider.
 
     Args:
         app (FastAPI): The FastAPI application instance being started.
     """
-    _cors_allowed_origins.extend(get_cors_allowed_origins())
+    _cors_allowed_origins.extend(build_identity_provider().allowed_origins())
     start_scheduler()
     print("Starting up the app...")
     yield
@@ -137,7 +139,7 @@ _docs_enabled = get_settings().ENV != "production"
 app = FastAPI(
     title="FLIP CentralHub API",
     description="Main API for FLIP CentralHub, providing communication between the frontend and backend services.",
-    version="0.1.0",
+    version=build_identity() or "unknown",
     lifespan=lifespan,
     docs_url=f"{API_PREFIX}/docs" if _docs_enabled else None,
     openapi_url=f"{API_PREFIX}/openapi.json" if _docs_enabled else None,
@@ -232,6 +234,7 @@ ROUTERS: tuple[APIRouter, ...] = (
     retrieve_model_step_function.router,
     # Trust services
     admin_create_trust.router,
+    get_trust_decisions.router,
     get_trusts.router,
     trusts_health_check.router,
     update_trust_status.router,
@@ -277,10 +280,15 @@ def root() -> dict[str, str]:
 def health_check() -> dict[str, str]:
     """Health check endpoint to verify the API is running.
 
+    ``version`` names the hub's build (FLIP#1204) — the CI-baked ``FLIP_RELEASE`` image
+    tag, or the pyproject version for a build that carries none. A trust site's
+    ``make upgrade-onprem-trust`` reads it to pick the release the site should run, so it
+    stays on this unauthenticated route, which every trust host can already reach.
+
     Returns:
-        dict[str, str]: ``{"status": "ok", "message": "flip is running"}``.
+        dict[str, str]: ``{"status": "ok", "message": "flip is running", "version": "<build>"}``.
     """
-    return {"status": "ok", "message": "flip is running"}
+    return {"status": "ok", "message": "flip is running", "version": build_identity() or "unknown"}
 
 
 def main() -> None:

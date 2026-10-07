@@ -18,7 +18,7 @@
                 <h2 class="text-lg font-semibold font-heading grow leading-loose">
                     Models
                 </h2>
-                <div v-if="!isViewer && projectStore.project?.status === 'APPROVED'">
+                <div v-if="!isViewer && !readOnly && projectStore.project?.status === 'APPROVED'">
                     <AiButton
                         primary
                         data-test="add-model-btn"
@@ -57,9 +57,13 @@
                         custom
                         :to="`/project/${route.params['projectId']}/model/${model.id}`"
                     >
+                        <!-- A Trust Admin reading the project sees its models but not their pages, which stay with the
+                             project's members (FLIP#1258). -->
                         <div
-                            class="flex transition items-center cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-surface px-6 py-2 gap-2 group"
-                            @click="navigate"
+                            data-test="latest-model-row"
+                            class="flex transition items-center px-6 py-2 gap-2 group"
+                            :class="readOnly ? '' : 'cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-surface'"
+                            @click="readOnly || navigate()"
                         >
                             <div class="flex flex-col gap-0.5 w-full text-xs min-w-0">
                                 <div class="flex items-center justify-between gap-2 min-w-0">
@@ -82,8 +86,9 @@
                                     </template>
                                 </p>
                             </div>
-                            <div>
+                            <div v-if="!readOnly">
                                 <icon-ph-caret-right
+                                    data-test="latest-model-caret"
                                     class="w-4 h-4 text-gray-400 dark:text-gray-300 transition group-hover:translate-x-0.5"
                                     aria-hidden="true"
                                 />
@@ -116,7 +121,7 @@
             </div>
         </template>
         <div
-            v-if="projectStore.project?.status === 'APPROVED' && data?.data?.length"
+            v-if="projectStore.project?.status === 'APPROVED' && data?.data?.length && !readOnly"
             class="inline-flex justify-end w-full px-6 py-4 space-x-2 shrink-0 mt-auto"
         >
             <AiButton light data-test="view-all-models-btn" :link="`/models?project=${route.params['projectId']}`">
@@ -128,6 +133,7 @@
 
 <script setup lang="ts">
 import useSWRV from "swrv";
+import { computed } from "vue";
 import { useRoute } from "vue-router";
 
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
@@ -146,7 +152,8 @@ const modalStore = useModalsStore();
 const projectStore = useProjectStore();
 const route = useRoute();
 
-const { isViewer } = usePermissions();
+const { isViewer, readsOnlyAsTrustAdmin } = usePermissions();
+const readOnly = computed(() => readsOnlyAsTrustAdmin(projectStore.project));
 
 const { data, error } = useSWRV(
     () => {

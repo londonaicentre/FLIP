@@ -38,8 +38,7 @@ class TestFormatDownloadUrl:
     def test_scan_type(self):
         url = format_download_url("PROJ1", "SUBJ1", "EXP1", assessor_type="scan", resource_type="NIFTI")
         expected = (
-            f"{XNAT_URL}/data/projects/PROJ1/subjects/SUBJ1/"
-            "experiments/EXP1/scans/ALL/resources/NIFTI/files?format=zip"
+            f"{XNAT_URL}/data/projects/PROJ1/subjects/SUBJ1/experiments/EXP1/scans/ALL/resources/NIFTI/files?format=zip"
         )
         assert url == expected
 
@@ -404,9 +403,7 @@ class TestDownloadAndUnzipImages:
         net_dir.mkdir()
         with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)):
             with pytest.raises(ValueError, match="Path traversal detected in accession_id"):
-                await download_and_unzip_images(
-                    "hub-proj-1", "../../etc/passwd", "net1", "scan", "NIFTI", headers
-                )
+                await download_and_unzip_images("hub-proj-1", "../../etc/passwd", "net1", "scan", "NIFTI", headers)
 
     @pytest.mark.asyncio
     @patch("imaging_api.services.download.download_file")
@@ -426,13 +423,9 @@ class TestDownloadAndUnzipImages:
             mock_unzip.return_value = os.path.join(expected_net_dir, "ACC1")
 
             with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", tmp):
-                await download_and_unzip_images(
-                    "hub-proj-1", "ACC1", "net-never-seen-before", "scan", "NIFTI", headers
-                )
+                await download_and_unzip_images("hub-proj-1", "ACC1", "net-never-seen-before", "scan", "NIFTI", headers)
 
-            assert os.path.isdir(expected_net_dir), (
-                f"download_and_unzip_images should have created {expected_net_dir}"
-            )
+            assert os.path.isdir(expected_net_dir), f"download_and_unzip_images should have created {expected_net_dir}"
 
     @pytest.mark.asyncio
     @patch("imaging_api.services.download.os.makedirs", side_effect=PermissionError("read-only fs"))
@@ -442,9 +435,7 @@ class TestDownloadAndUnzipImages:
         LocalStorageError with a pointer to the offending path — not as a 404
         with an XNAT URL."""
         with pytest.raises(LocalStorageError, match="Cannot create image download directory"):
-            await download_and_unzip_images(
-                "hub-proj-1", "ACC1", "some-net", "scan", "NIFTI", headers
-            )
+            await download_and_unzip_images("hub-proj-1", "ACC1", "some-net", "scan", "NIFTI", headers)
 
 
 # ── download cache (FLIP#953) ──
@@ -519,8 +510,15 @@ class TestDownloadCache:
     @patch("imaging_api.services.download.get_experiment", return_value={})
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     async def test_sentinel_is_exact_match_per_resource_type(
-        self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, mock_unzip,
-        requested_resource, headers, tmp_path
+        self,
+        mock_get_project,
+        mock_get_exp,
+        mock_get_subj,
+        mock_download,
+        mock_unzip,
+        requested_resource,
+        headers,
+        tmp_path,
     ):
         """A cached NIFTI download must not satisfy a DICOM request, nor an ALL request —
         sentinels match exactly per (assessor, resource)."""

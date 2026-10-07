@@ -81,8 +81,7 @@ def test_scaffolds_kit_with_identity_and_defaults() -> None:
     print("▶ scaffolds trust/.env.<CODE>.<env> with identity + template defaults + placeholders")
     root = _temp_repo()
     try:
-        res = _run(root, "--code", "DEMO", "--name", "DEMO Hospital", "--region", "London",
-                   "--env", "production")
+        res = _run(root, "--code", "DEMO", "--name", "DEMO Hospital", "--region", "London", "--env", "production")
         target = root / "trust" / ".env.DEMO.production"
         _assert(res.returncode == 0, "exit 0", res.stderr)
         _assert(target.exists(), "kit scaffolded at .env.<CODE>.<env>")

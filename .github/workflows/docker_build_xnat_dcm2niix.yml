@@ -14,8 +14,10 @@ name: Build and Push Docker Image for XNAT dcm2niix
 
 on:
   workflow_dispatch:
+  # Release builds (FLIP#1204): every image, at the tag — see AGENTS.md "Docker image builds".
   push:
     branches: [main, develop]
+    tags: ['v*.*.*']
     # Narrower than the other xnat workflows' trust/xnat/** filter: this image
     # shares nothing with the xnat-web/db/nginx build contexts, so only its own
     # directory should trigger a republish.
@@ -54,6 +56,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      # A stable v<X.Y.Z> tag must point at a commit on main — releases are cut there by
+      # release.yml; pre-release (-rc.N) tags are the release-candidate path and pass.
+      - name: Release tag guard
+        uses: ./.github/actions/release-tag-guard
+
       - name: Determine tags
         id: tags
         env:
@@ -79,9 +86,14 @@ jobs:
           [[ -n "$DCM2NIIX_VERSION" ]] || { echo "::error::could not read ARG DCM2NIIX_VERSION from Dockerfile"; exit 1; }
           TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${DCM2NIIX_VERSION}"
 
-          # Branch name sanitization
-          SAFE_REF_NAME=$(echo "$GH_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
-          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"
+          # A release-tag run publishes :v<X.Y.Z> only — see AGENTS.md "Docker image builds".
+          if [[ "$GH_REF" == refs/tags/v* ]]; then
+            TAGS="${REGISTRY}/${IMAGE_NAME}:${GH_REF_NAME}"
+          else
+            # Branch name sanitization
+            SAFE_REF_NAME=$(echo "$GH_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
+            TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"
+          fi
 
           # Branch number (if starts with number)
           if [[ "$GH_REF_NAME" =~ ^[0-9]+ ]]; then

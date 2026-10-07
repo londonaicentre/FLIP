@@ -35,10 +35,7 @@ def _make_cache_key(query: Any, params: Mapping[str, Any] | None = None) -> str:
     query_str = query if isinstance(query, str) else str(query)
     normalized = " ".join(query_str.strip().lower().split())
     if params:
-        normalized_params = {
-            k: sorted(v) if isinstance(v, (list, tuple)) else v
-            for k, v in sorted(params.items())
-        }
+        normalized_params = {k: sorted(v) if isinstance(v, (list, tuple)) else v for k, v in sorted(params.items())}
         normalized += "|" + repr(normalized_params)
     return hashlib.sha256(normalized.encode()).hexdigest()
 

@@ -27,7 +27,7 @@ from flip_api.db.models.main_models import (
 )
 from flip_api.db.models.user_models import Role, UserRole
 from flip_api.domain.interfaces.user import IRoles
-from flip_api.domain.schemas.status import TaskStatus, TaskType
+from flip_api.domain.schemas.status import TaskStatus, TaskType, TrustApprovalStatus
 
 
 @dataclass
@@ -150,7 +150,7 @@ class ProjectTrustIntersectFactory(factory.Factory):
     id = factory.LazyFunction(uuid.uuid4)
     project_id = factory.LazyFunction(uuid.uuid4)
     trust_id = factory.LazyFunction(uuid.uuid4)
-    approved = True
+    status = TrustApprovalStatus.APPROVED
 
 
 class TrustTaskFactory(factory.Factory):

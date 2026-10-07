@@ -14,8 +14,8 @@
 import { ROLE_TONES, roleTone, roleToneName, userInitials } from "@/utils/role-appearance";
 
 describe("ROLE_TONES", () => {
-    it("defines the five handoff tones with fg/bg/ring hex values", () => {
-        expect(Object.keys(ROLE_TONES).sort()).toEqual(["gray", "magenta", "navy", "purple", "steel"]);
+    it("defines the five handoff tones plus brand gold with fg/bg/ring hex values", () => {
+        expect(Object.keys(ROLE_TONES).sort()).toEqual(["gold", "gray", "magenta", "navy", "purple", "steel"]);
         for (const tone of Object.values(ROLE_TONES)) {
             expect(tone.fg).toMatch(/^#[0-9A-F]{6}$/i);
             expect(tone.bg).toMatch(/^#[0-9A-F]{6}$/i);
@@ -25,10 +25,25 @@ describe("ROLE_TONES", () => {
 });
 
 describe("roleToneName", () => {
-    it("maps FLIP's three real roles to their handoff tones", () => {
+    it("maps FLIP's roles to their tones", () => {
         expect(roleToneName("Admin")).toBe("magenta");
         expect(roleToneName("Researcher")).toBe("steel");
         expect(roleToneName("Viewer")).toBe("gray");
+        expect(roleToneName("Trust Admin")).toBe("gold");
+    });
+
+    it("gives Trust Admin the brand yellow: soft gold fill, dark gold text, bright gold ring", () => {
+        expect(ROLE_TONES.gold).toEqual({
+            fg: "#523D05",
+            bg: "#FFD987",
+            ring: "#F4BE1D"
+        });
+    });
+
+    it("never hands an unknown role the Trust Admin gold", () => {
+        for (const name of ["Data Steward", "Manager", "Trust Liaison", "Auditor", "Guest"]) {
+            expect(roleToneName(name)).not.toBe("gold");
+        }
     });
 
     it("is case-insensitive and tolerant of surrounding whitespace", () => {

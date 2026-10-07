@@ -33,6 +33,7 @@ import httpx
 from cryptography.exceptions import InvalidTag
 
 from trust_api.config import get_settings
+from trust_api.services import hub_status
 from trust_api.services.health_collector import current_snapshot
 from trust_api.services.task_handlers import TASK_HANDLERS
 from trust_api.utils.encryption import decrypt, task_context
@@ -152,16 +153,23 @@ async def _send_heartbeat(client: httpx.AsyncClient) -> None:
         if response.is_success:
             logger.debug("Heartbeat sent successfully")
             try:
-                _maybe_announce_identity(response.json())
+                body = response.json()
             except ValueError:
-                pass  # body wasn't JSON; not fatal
+                body = None  # body wasn't JSON; not fatal
+            if isinstance(body, dict):
+                _maybe_announce_identity(body)
+                # The reply also says which build the hub runs and fingerprints its key
+                # (FLIP#1204); /health reports both so an operator sees a stale kit before
+                # a task fails to decrypt.
+                hub_status.record(body)
         else:
-            logger.error(
-                f"Heartbeat rejected by hub: HTTP {response.status_code} — "
-                f"{response.text[:200]}"
-            )
+            logger.error(f"Heartbeat rejected by hub: HTTP {response.status_code} — {response.text[:200]}")
+            # What the hub said last no longer holds (a hub that rotated its key also stops
+            # accepting this trust), so /health must not keep reporting it as current.
+            hub_status.forget()
     except Exception as e:
         logger.error(f"Error sending heartbeat: {e}")
+        hub_status.forget()
 
 
 _REPORT_MAX_RETRIES = 3
@@ -212,8 +220,7 @@ async def _report_task_result(client: httpx.AsyncClient, task_id: str, result: d
             )
         except Exception as e:
             logger.warning(
-                f"Error reporting result for task {task_id} "
-                f"(attempt {attempt + 1}/{_REPORT_MAX_RETRIES}): {e}"
+                f"Error reporting result for task {task_id} (attempt {attempt + 1}/{_REPORT_MAX_RETRIES}): {e}"
             )
         if attempt < _REPORT_MAX_RETRIES - 1:
             delay = _REPORT_RETRY_DELAY_SECONDS * (2**attempt)
@@ -285,9 +292,7 @@ async def run_poller() -> None:
                         await _report_task_result(client, task_id, result)
                     except Exception as e:
                         logger.exception(f"Unhandled error processing task {task_id}: {e}")
-                        await _report_task_result(
-                            client, task_id, {"success": False, "error": str(e)}
-                        )
+                        await _report_task_result(client, task_id, {"success": False, "error": str(e)})
 
             except Exception as e:
                 logger.error(f"Error in polling loop: {e}")

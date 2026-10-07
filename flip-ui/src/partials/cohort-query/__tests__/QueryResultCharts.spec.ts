@@ -124,11 +124,25 @@ describe("QueryResultCharts", () => {
         await flushPromises();
 
         // A fixed h-[500px] made narrow single-column plots absurdly tall; the
-        // card now follows a 4:3 ratio, capped at the old desktop height.
+        // card follows a 4:3 ratio. No height cap: the auto-fill grid bounds the
+        // card width, and a cap clipped wide cards out of their ratio.
         const card = wrapper.find("[data-test='chart-card']");
         expect(card.classes()).toContain("aspect-[4/3]");
-        expect(card.classes()).toContain("max-h-[500px]");
+        expect(card.classes()).not.toContain("max-h-[500px]");
         expect(card.classes()).not.toContain("h-[500px]");
+    });
+
+    test("lays plots out in an auto-fill grid rather than a fixed column count", async () => {
+        const wrapper = mountCharts({ data: RESULTS_WITH_PLOTS });
+        await nextTick();
+        await flushPromises();
+
+        // columns-1 lg:columns-2 capped wide screens at two plots and filled
+        // column-first; the grid adds columns as width allows, filling row-first.
+        const grid = wrapper.find("[data-test='chart-grid']");
+        expect(grid.classes()).toContain("grid");
+        expect(grid.classes()).toContain("grid-cols-[repeat(auto-fill,minmax(min(100%,420px),1fr))]");
+        expect(grid.classes()).not.toContain("lg:columns-2");
     });
 
     test("frames each plot as a flat border box, not a shadowed card", async () => {

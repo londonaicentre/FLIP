@@ -55,7 +55,7 @@ variable "ADMIN_USER_PASSWORD" {
 
 variable "cognito_callback_urls" {
   type        = list(string)
-  description = "OAuth callback URLs for the dev Cognito app client, beyond the http://localhost:<port> origins generated from dev_ui_ports. Doubles as the source for flip-api's CORS allowlist (see flip_api/utils/cors.py:get_cors_allowed_origins), so every UI origin that calls the API in dev must be listed here. Cognito only accepts http:// for the localhost host."
+  description = "OAuth callback URLs for the dev Cognito app client, beyond the http://localhost:<port> origins generated from dev_ui_ports. Doubles as the source for flip-api's CORS allowlist under AUTH_BACKEND=cognito (the Cognito identity provider's allowed_origins(), flip_api/auth/identity/cognito.py), so every UI origin that calls the API in dev against Cognito must be listed here. Cognito only accepts http:// for the localhost host."
   default     = ["https://localhost:443"]
 }
 

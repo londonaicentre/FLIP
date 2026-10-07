@@ -28,10 +28,25 @@ SCRIPT_PATH = DATASETS_DIR / "spleen" / "omop_convert_spleen.py"
 # be one of its keys ("ct spleen" / "spleen ct") or procedure_concept_id becomes NaN and Pandera
 # rejects the table.
 METADATA_COLUMNS = [
-    "Subject", "FileName", "FilePath", "PatientID", "PatientName", "PatientSex",
-    "PatientBirthDate", "AccessionNumber", "Modality", "StudyDate", "StudyTime",
-    "StudyDescription", "StudyInstanceUID", "SeriesInstanceUID",
-    "Manufacturer", "ManufacturerModelName", "SliceThickness", "Rows", "Columns",
+    "Subject",
+    "FileName",
+    "FilePath",
+    "PatientID",
+    "PatientName",
+    "PatientSex",
+    "PatientBirthDate",
+    "AccessionNumber",
+    "Modality",
+    "StudyDate",
+    "StudyTime",
+    "StudyDescription",
+    "StudyInstanceUID",
+    "SeriesInstanceUID",
+    "Manufacturer",
+    "ManufacturerModelName",
+    "SliceThickness",
+    "Rows",
+    "Columns",
 ]
 
 
@@ -76,16 +91,25 @@ def _write_metadata_csv(path: Path, count: int) -> Path:
             nhs = f"{100000000 + index:09d}"
             writer.writerow(
                 {
-                    "Subject": f"spleen_{index}", "FileName": "0000.dcm",
+                    "Subject": f"spleen_{index}",
+                    "FileName": "0000.dcm",
                     "FilePath": f"/tmp/dicom_output/spleen_{index}/0000.dcm",
-                    "PatientID": f"{nhs[:3]} {nhs[3:6]} {nhs[6:]}", "PatientName": f"spleen_{index}",
-                    "PatientSex": "M", "PatientBirthDate": "19500101",
-                    "AccessionNumber": nhs, "Modality": "CT",
-                    "StudyDate": "20200101", "StudyTime": "120000",
-                    "StudyDescription": "Spleen CT", "StudyInstanceUID": f"1.2.3.{index}",
-                    "SeriesInstanceUID": f"1.2.3.{index}.1", "Manufacturer": "ACME",
-                    "ManufacturerModelName": "Scanner9000", "SliceThickness": "5.0",
-                    "Rows": "512", "Columns": "512",
+                    "PatientID": f"{nhs[:3]} {nhs[3:6]} {nhs[6:]}",
+                    "PatientName": f"spleen_{index}",
+                    "PatientSex": "M",
+                    "PatientBirthDate": "19500101",
+                    "AccessionNumber": nhs,
+                    "Modality": "CT",
+                    "StudyDate": "20200101",
+                    "StudyTime": "120000",
+                    "StudyDescription": "Spleen CT",
+                    "StudyInstanceUID": f"1.2.3.{index}",
+                    "SeriesInstanceUID": f"1.2.3.{index}.1",
+                    "Manufacturer": "ACME",
+                    "ManufacturerModelName": "Scanner9000",
+                    "SliceThickness": "5.0",
+                    "Rows": "512",
+                    "Columns": "512",
                 }
             )
     return path
@@ -117,9 +141,7 @@ def test_image_occurrence_carries_the_accession_and_uids(converter: ModuleType, 
     assert image_occurrence["accession_id"].notna().all()
 
 
-def test_split_writes_one_directory_per_trust_without_the_trust_column(
-    converter: ModuleType, tmp_path: Path
-) -> None:
+def test_split_writes_one_directory_per_trust_without_the_trust_column(converter: ModuleType, tmp_path: Path) -> None:
     csv_path = _write_metadata_csv(tmp_path / "dicom_metadata.csv", count=4)
     tables = converter.transform_dicom_metadata_to_omop_tables(str(csv_path))
 

@@ -171,7 +171,7 @@ def test_create_payload_for_project_creation_escapes_xml_control_chars():
         "http://xnat/projects",
         "P1",
         "S1",
-        'evil</name><name>injected',
+        "evil</name><name>injected",
         "less < and & ampersand",
     )
 
@@ -994,7 +994,9 @@ def test_get_experiments_failure(mock_get_project, mock_get, headers):
     # A real XNAT non-200 serves an HTML/plain-text body, so .json() raises. The status must be
     # checked before the body is parsed, otherwise the JSON error masks the true HTTP status.
     mock_get.return_value = MagicMock(
-        status_code=500, text="Error", json=MagicMock(side_effect=ValueError("no json")),
+        status_code=500,
+        text="Error",
+        json=MagicMock(side_effect=ValueError("no json")),
     )
     with pytest.raises(XnatFetchError, match="XNAT experiments fetch failed"):
         get_experiments("TEST", headers)

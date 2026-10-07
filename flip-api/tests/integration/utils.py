@@ -10,21 +10,44 @@
 # limitations under the License.
 #
 
+import os
+
 import boto3
 from botocore.exceptions import ProfileNotFound
 
+from flip_api.auth.identity.keycloak import password_grant
 from flip_api.config import get_settings
 from flip_api.utils.constants import ADMIN_EMAIL_1 as ADMIN_EMAIL
 
 
 def admin_authentication():
     """
-    Authenticate as an admin user.
+    Authenticate as an admin user through the configured identity provider.
+
+    Returns the request headers for the hub. Under ``AUTH_BACKEND=keycloak``
+    this is the same OIDC password grant the UI uses, against the public URL
+    (so the token's ``iss`` is the one flip-api verifies); the refresh token
+    is left in ``FLIP_E2E_REFRESH_TOKEN`` for the smoke's ``_maybe_refresh``.
+    Under cognito it is the IAM-gated admin flow, which needs AWS credentials.
     """
+    settings = get_settings()
+    if settings.AUTH_BACKEND == "keycloak":
+        assert settings.KEYCLOAK_PUBLIC_URL is not None
+        assert settings.ADMIN_USER_PASSWORD is not None
+        tokens = password_grant(
+            settings.KEYCLOAK_PUBLIC_URL,
+            settings.KEYCLOAK_REALM,
+            settings.KEYCLOAK_CLIENT_ID,
+            ADMIN_EMAIL,
+            settings.ADMIN_USER_PASSWORD.get_secret_value(),
+        )
+        os.environ.setdefault("FLIP_E2E_REFRESH_TOKEN", tokens.get("refresh_token", ""))
+        return {"scheme": "Bearer", "authorization": "Bearer " + tokens["access_token"]}
+
     # Build a client using an explicit profile when available.
     # This avoids surprises when pytest runs in a different environment.
-    region = get_settings().AWS_REGION
-    profile = get_settings().AWS_PROFILE
+    region = settings.AWS_REGION
+    profile = settings.AWS_PROFILE
 
     try:
         session = boto3.Session(profile_name=profile)  # loads ~/.aws/config

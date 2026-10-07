@@ -22,6 +22,7 @@ from omop_db_tools.load_dicom_vocab import (
     REQUIRED_VOCAB_FILES,
     dicom_vocabulary_loaded,
     ensure_vocab_dir,
+    load_vocabulary_metadata,
     main,
     safe_insert,
 )
@@ -55,6 +56,28 @@ class TestSafeInsert:
         engine, _ = self._engine([])
         with pytest.raises(ValueError, match="Unsafe SQL identifier"):
             safe_insert("CONCEPT", pd.DataFrame({"Unnamed: 0": [1]}), engine)
+
+
+class TestVocabularyMetadata:
+    """The scaffolding the DICOM vocabulary hangs off; its first concept is what the already-loaded guard probes."""
+
+    def test_inserts_the_scaffolding_concepts_then_the_vocabulary_and_its_classes(self, monkeypatch):
+        inserted = []
+        monkeypatch.setattr(
+            "omop_db_tools.load_dicom_vocab.safe_insert", lambda table, df, engine: inserted.append((table, df))
+        )
+
+        load_vocabulary_metadata(MagicMock())
+
+        assert [table for table, _ in inserted] == ["CONCEPT", "VOCABULARY", "CONCEPT_CLASS"]
+        concepts, vocabulary, classes = (df for _, df in inserted)
+        assert concepts["concept_id"].tolist() == [DICOM_VOCABULARY_CONCEPT_ID, 2128000001, 2128000002]
+        assert vocabulary["vocabulary_id"].tolist() == ["DICOM"]
+        assert vocabulary["vocabulary_concept_id"].tolist() == [DICOM_VOCABULARY_CONCEPT_ID]
+        assert dict(zip(classes["concept_class_id"], classes["concept_class_concept_id"], strict=True)) == {
+            "DICOM Attributes": 2128000001,
+            "DICOM Value Sets": 2128000002,
+        }
 
 
 class TestEnsureVocabDir:

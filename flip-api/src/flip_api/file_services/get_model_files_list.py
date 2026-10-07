@@ -62,17 +62,19 @@ def get_model_files_list(
         # Format response
         result = []
         for file in files:
-            result.append({
-                "id": str(file.id) if file.id else None,
-                "name": file.name,
-                "size": file.size,
-                "type": file.type,
-                "status": file.status,
-                "modelId": str(model_id),
-                "created": file.created.isoformat() if hasattr(file, "created") and file.created else None,
-                "modified": file.modified.isoformat() if hasattr(file, "modified") and file.modified else None,
-                "bandit_findings": file.bandit_findings,
-            })
+            result.append(
+                {
+                    "id": str(file.id) if file.id else None,
+                    "name": file.name,
+                    "size": file.size,
+                    "type": file.type,
+                    "status": file.status,
+                    "modelId": str(model_id),
+                    "created": file.created.isoformat() if hasattr(file, "created") and file.created else None,
+                    "modified": file.modified.isoformat() if hasattr(file, "modified") and file.modified else None,
+                    "bandit_findings": file.bandit_findings,
+                }
+            )
 
         return result
 

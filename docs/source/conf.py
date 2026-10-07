@@ -27,6 +27,7 @@ import sys
 import tomllib
 from pathlib import Path
 
+from sphinx.application import Sphinx
 from sphinx.errors import SphinxError
 from sphinx.util import logging as sphinx_logging
 
@@ -166,8 +167,8 @@ html_sidebars = {
 }
 html_scaled_image_link = False
 html_show_sourcelink = True
-html_favicon = 'assets/favicon.ico'
-html_logo = 'assets/flip-logo.png'
+html_favicon = "assets/favicon.ico"
+html_logo = "assets/flip-logo.png"
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
@@ -186,7 +187,7 @@ GENERATED_ASSETS_DIR = Path(__file__).resolve().parent / "assets" / "generated"
 SKIP_DIAGRAMS_ENV = "FLIP_DOCS_SKIP_DIAGRAMS"
 
 
-def _render_generated_figures(app):
+def _render_generated_figures(app: Sphinx) -> None:
     """Render the Central Hub AWS diagrams before Sphinx reads the sources.
 
     Fails the build when graphviz is missing rather than publishing a page with an empty figure. A developer
@@ -226,7 +227,7 @@ GIFS_DIR = GENERATED_ASSETS_DIR / "gifs"
 SKIP_GIF_FETCH_ENV = "FLIP_DOCS_SKIP_GIF_FETCH"
 
 
-def _fetch_docs_gifs(app):
+def _fetch_docs_gifs(app: Sphinx) -> None:
     """Fetch the pinned docs GIFs before Sphinx reads the sources.
 
     Fails the build when the pinned version cannot be fetched or verified rather than publishing pages with
@@ -259,7 +260,7 @@ def _fetch_docs_gifs(app):
     logger.info("docs GIFs: %s", report.summary())
 
 
-def setup(app):
+def setup(app: Sphinx) -> dict[str, bool]:
     app.connect("builder-inited", _render_generated_figures)
     app.connect("builder-inited", _fetch_docs_gifs)
     return {"parallel_read_safe": True, "parallel_write_safe": True}

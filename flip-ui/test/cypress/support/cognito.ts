@@ -11,10 +11,10 @@
  * limitations under the License.
  */
 
-// cy.login writes a fully-formed AmplifyUser into the `cypress.auth.user`
-// localStorage key. The auth route guard in src/utils/auth.ts checks for this
-// when running under Cypress and populates the auth store directly, bypassing
-// Amplify v6's `fetchAuthSession()` / `fetchUserAttributes()` round-trip.
+// cy.login writes a fully-formed AuthenticatedUser (src/store/auth.ts) into the
+// `cypress.auth.user` localStorage key. The auth route guard in src/utils/auth.ts
+// checks for this when running under Cypress and populates the auth store
+// directly, bypassing the identity provider's session / identity round-trip.
 //
 // Going through the live Amplify flow would require simulating Cognito's SRP
 // handshake, which a static fixture can't do — so the production flow uses
@@ -35,7 +35,10 @@ Cypress.Commands.add("login", (options: LoginOptions | string = {}) => {
     const username = opts.username ?? "HasAdminRole@gmail.com";
     const permissionsFixture = opts.permissionsFixture ?? "user/getPermissions";
 
-    cy.fixture(permissionsFixture).then((perms: { permissions: string[] }) => {
+    cy.fixture(permissionsFixture).then((perms: {
+        permissions: string[];
+        trustAdminOf?: { id: string; code?: string | null; name: string } | null
+    }) => {
         const user = {
             username: DEFAULT_USER_ID,
             userId: DEFAULT_USER_ID,
@@ -43,7 +46,9 @@ Cypress.Commands.add("login", (options: LoginOptions | string = {}) => {
                 sub: DEFAULT_USER_ID,
                 email: username
             },
-            permissions: perms.permissions ?? []
+            permissions: perms.permissions ?? [],
+            // A Trust Admin's trust (FLIP#1258), from the same fixture as their permissions.
+            trustAdminOf: perms.trustAdminOf ?? null
         };
 
         window.localStorage.setItem("cypress.auth.user", JSON.stringify(user));

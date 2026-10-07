@@ -48,12 +48,10 @@ XNAT_SETUP_PATH = "/app/template/XDATScreen_UpdateUser.vm?a=alias123&s=tok3nva1u
 def console_backend(monkeypatch):
     """Pin the console backend for this module, mirroring ``ses_send_email_recorder``.
 
-    ``DevSettings`` already defaults to ``console`` (asserted on the field
-    itself in ``tests/unit/test_config.py``), but a developer may set
-    ``EMAIL_BACKEND=ses`` in ``.env.development`` — the config comment
-    explicitly invites that — which would otherwise turn this whole module red
-    and attempt real SES calls. Pin the code path under test rather than
-    depending on ambient config.
+    ``DevSettings`` pins ``console`` (asserted on the field itself in
+    ``tests/unit/test_config.py``), but the SES round trips in this suite set
+    ``EMAIL_BACKEND=ses`` on the shared settings singleton, so this module pins
+    the code path under test rather than depending on ambient state.
     """
     monkeypatch.setattr(get_settings(), "EMAIL_BACKEND", "console")
 
