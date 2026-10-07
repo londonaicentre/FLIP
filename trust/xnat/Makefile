@@ -647,7 +647,8 @@ xnat-reset:
 # as uid 1001, and on a host where the developer's uid differs the mounted dir is not writable by
 # it, so `tee` reported "Permission denied" and, under pipefail, turned a completed configuration
 # into an aborted bring-up (the dcm2niix step never ran). pipefail is kept — on the host, via
-# bash — so a failing configure script still fails the target.
+# bash — so a failing configure script still fails the target. The log path is anchored on
+# $(XNAT_PATH) (this directory), not the caller's cwd: the test harness runs the recipe from elsewhere.
 xnat-configure:
 	@[ -n "$(XNAT_PROJECT)" ] || (echo "❌ XNAT_PROJECT is required"; exit 1)
 	@echo "⏳ Waiting for $(XNAT_PROJECT)_xnat-web container to be ready..."
@@ -658,8 +659,8 @@ xnat-configure:
 	CONTAINER=$$($(call xnat_web_container_ids,$(XNAT_PROJECT))); \
 	[ -n "$$CONTAINER" ] || { echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container not found at configure time"; exit 1; }; \
 	$(call require_one_xnat_web_container,$(XNAT_PROJECT)); \
-	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-xnat.sh' 2>&1 | tee xnat/config/configure-xnat-$(XNAT_PROJECT).log" && \
-	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-dcm2niix.sh' 2>&1 | tee xnat/config/configure-dcm2niix-$(XNAT_PROJECT).log"
+	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-xnat.sh' 2>&1 | tee $(XNAT_PATH)/xnat/config/configure-xnat-$(XNAT_PROJECT).log" && \
+	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-dcm2niix.sh' 2>&1 | tee $(XNAT_PATH)/xnat/config/configure-dcm2niix-$(XNAT_PROJECT).log"
 
 # Guard: XNAT and the trust core services must share one network. up-trust brings the trust
 # compose up before invoking us, so the trust's real attachment is observable — compare it
