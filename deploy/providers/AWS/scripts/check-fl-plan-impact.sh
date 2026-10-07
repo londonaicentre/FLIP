@@ -33,11 +33,28 @@
 # Usage:
 #     terraform show -json plan.tfplan > plan.json
 #     scripts/check-fl-plan-impact.sh plan.json
+#     scripts/check-fl-plan-impact.sh --advisory-only plan.json   (or ADVISORY_ONLY=true)
 #
 # Exit codes:
 #     0  no watched resource changes — safe to apply unattended
 #     1  a watched resource changes — hold for an operator
 #     2  usage or parse error (never treated as "safe")
+#
+# ADVISORY-ONLY MODE (--advisory-only, or ADVISORY_ONLY=true) never holds: it
+# exits 0 on every readable plan, and reports what the real gate *would* do
+# instead of doing it. It exists for the two places that must warn but must not
+# block (FLIP#1199):
+#   * terraform_plan.yml, on the pull request. This is the last point at which a
+#     human can still sequence FLIP against aicentre-lza-iac, and it is the point
+#     the advisory exists for — but a PR plan has no business failing a check on
+#     an FL-disruptive diff, which is the apply's decision to make.
+#   * terraform_apply.yml, when the gate itself is skipped by an
+#     `fl_quiesced=true` re-dispatch. Quiescing FL says nothing about whether the
+#     networking account has been updated, so the ingress advisory must survive
+#     the attestation that silences the gate.
+# A parse error is still exit 2 in this mode: an unreadable plan means the
+# advisory cannot be trusted to be absent, and saying nothing would read as "no
+# ingress change".
 #
 # Separately, and never affecting the exit code, the script emits an ADVISORY
 # warning when the plan touches the LZA FL ingress (the internal NLB, its static
@@ -52,8 +69,23 @@ die() {
     exit 2
 }
 
-PLAN_JSON="${1:-}"
-[[ -n "${PLAN_JSON}" ]] || die "usage: $0 <plan.json>   (from: terraform show -json plan.tfplan)"
+# ADVISORY_ONLY may arrive as an environment variable (how the workflows set it,
+# beside the other `env:` keys) or as --advisory-only (how a human runs it). The
+# flag wins; anything other than the literal "true" in the variable is off, so a
+# mis-set value fails towards the gate rather than away from it.
+ADVISORY_ONLY="${ADVISORY_ONLY:-false}"
+ARGS=()
+for arg in "$@"; do
+    case "${arg}" in
+    --advisory-only) ADVISORY_ONLY=true ;;
+    -*) die "unknown option: ${arg}" ;;
+    *) ARGS+=("${arg}") ;;
+    esac
+done
+[[ "${ADVISORY_ONLY}" == "true" ]] || ADVISORY_ONLY=false
+
+PLAN_JSON="${ARGS[0]:-}"
+[[ -n "${PLAN_JSON}" ]] || die "usage: $0 [--advisory-only] <plan.json>   (from: terraform show -json plan.tfplan)"
 [[ -f "${PLAN_JSON}" ]] || die "no such file: ${PLAN_JSON}"
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
@@ -219,6 +251,52 @@ if [[ -z "${ecs_hits}" && -z "${efs_hits}" ]]; then
 fi
 
 emit_lza_ingress_advisory
+
+# Advisory-only: report what the gate would do, and do not do it. Said on stdout
+# at exit 0 so a PR plan check and an fl_quiesced re-dispatch stay green, with the
+# resource addresses named so the information is not merely "something would hold".
+if [[ "${ADVISORY_ONLY}" == "true" ]]; then
+    echo "ℹ️  ADVISORY: this plan touches FL infrastructure (${total_changes} resource change(s) total)."
+    if [[ -n "${ecs_hits}" ]]; then
+        echo "   Applying it would interrupt any training run in flight:"
+        while IFS=$'\t' read -r action address; do
+            printf '     %-16s %s\n' "${action}" "${address}"
+        done <<<"${ecs_hits}"
+    fi
+    if [[ -n "${efs_hits}" ]]; then
+        echo "   Applying it would destroy FL job state (bundles, checkpoints, staged results):"
+        while IFS=$'\t' read -r action address; do
+            printf '     %-16s %s\n' "${action}" "${address}"
+        done <<<"${efs_hits}"
+    fi
+    echo "   terraform_apply.yml will hold on merge until FL is quiesced and the apply is"
+    echo "   re-dispatched with fl_quiesced=true. Nothing is held here."
+
+    if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+        {
+            echo "### ℹ️ FL infrastructure would be disturbed by applying this plan"
+            echo
+            echo "**Advisory only** — nothing was held here. On merge,"
+            echo "\`terraform_apply.yml\` holds this plan until FL is quiesced and the apply"
+            echo "is re-dispatched with \`fl_quiesced: true\`."
+            echo
+            echo "| Action | Resource |"
+            echo "| --- | --- |"
+            if [[ -n "${ecs_hits}" ]]; then while IFS=$'\t' read -r action address; do
+                echo "| \`${action}\` | \`${address}\` |"
+            done <<<"${ecs_hits}"; fi
+            if [[ -n "${efs_hits}" ]]; then while IFS=$'\t' read -r action address; do
+                echo "| \`${action}\` | \`${address}\` |"
+            done <<<"${efs_hits}"; fi
+        } >>"${GITHUB_STEP_SUMMARY}"
+    fi
+
+    if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+        echo "::warning title=FL infrastructure would be disturbed by this plan::Applying this plan would recreate FL services or delete EFS, so terraform_apply.yml will hold it on merge until FL is quiesced and the apply is re-dispatched with fl_quiesced=true. Advisory only; nothing was held here. See the job summary."
+    fi
+
+    exit 0
+fi
 
 echo "🛑 This plan would disturb FL infrastructure — holding." >&2
 echo "" >&2

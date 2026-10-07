@@ -295,6 +295,22 @@ jobs:
           terraform show -json tfplan > tfplan.json
           scripts/check-fl-plan-impact.sh tfplan.json
 
+      # The same script, advisory-only, on exactly the runs the gate above skips
+      # (FLIP#1199). `fl_quiesced=true` attests that FL is quiesced — it says
+      # nothing about whether the networking account has been updated, and an NLB
+      # replacement is both FL-disruptive and ingress-changing, so the one apply
+      # most likely to break the cross-repo contract is the one that would
+      # otherwise emit no LZA advisory at all. Never holds and always exits 0: the
+      # attestation is what releases the apply, and this must not re-hold it.
+      - name: Emit the plan advisories (FL gate skipped)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.fl_quiesced }}
+        working-directory: deploy/providers/AWS
+        env:
+          ADVISORY_ONLY: "true"
+        run: |
+          terraform show -json tfplan > tfplan.json
+          scripts/check-fl-plan-impact.sh tfplan.json
+
       # The documented remedy for a held apply — quiesce FL, then re-run — needs
       # a way to say "I have quiesced it", or the re-run holds on the same plan
       # forever. Nothing here verifies the claim: the runner cannot reach

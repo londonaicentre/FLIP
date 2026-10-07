@@ -351,6 +351,118 @@ printf '%s' "${out}" | grep -q '::warning' && no "no advisory annotation without
 printf '%s' "${out}" | grep -q 'LZA FL ingress' && ok "but still warns on stderr" \
     || no "but still warns on stderr" "${out}"
 
+# ADVISORY-ONLY MODE (FLIP#1199). Used by terraform_plan.yml on the PR and by
+# terraform_apply.yml on an fl_quiesced re-dispatch: it must emit everything the
+# gate emits and hold nothing. The one thing it must NOT inherit is the fail-open
+# risk — a plan it cannot parse is still exit 2.
+run_advisory_only() {
+    local title="$1" file="$2"
+    shift 2
+    echo ""
+    echo "-- ${title}"
+    STDOUT="$(ADVISORY_ONLY=true bash "${SCRIPT}" "${file}" 2>"${TEST_ROOT}/err")"
+    RC=$?
+    STDERR="$(cat "${TEST_ROOT}/err")"
+}
+
+run_advisory_flag() {
+    local title="$1" file="$2"
+    echo ""
+    echo "-- ${title}"
+    STDOUT="$(bash "${SCRIPT}" --advisory-only "${file}" 2>"${TEST_ROOT}/err")"
+    RC=$?
+    STDERR="$(cat "${TEST_ROOT}/err")"
+}
+
+fl_disruptive_plan="$(plan_with \
+    "aws_ecs_service fl_server_net_1 aws_ecs_service.fl_server_net_1[0] delete,create")"
+
+run_advisory_only "an FL-disruptive plan does not hold in advisory-only mode" "${fl_disruptive_plan}"
+expect_rc 0 "never holds"
+expect_mentions "ADVISORY" "says it is advisory"
+expect_mentions "aws_ecs_service.fl_server_net_1[0]" "still names the resource"
+expect_mentions "fl_quiesced=true" "still points at the remedy"
+expect_silent_about "holding." "does not claim to have held"
+
+run_advisory_flag "--advisory-only is equivalent to ADVISORY_ONLY=true" "${fl_disruptive_plan}"
+expect_rc 0 "never holds"
+expect_mentions "ADVISORY" "says it is advisory"
+
+#     An EFS delete is the other half of the hold; it must also downgrade.
+run_advisory_only "an EFS delete is advisory too" "$(plan_with \
+    "aws_efs_file_system fl aws_efs_file_system.fl[0] delete")"
+expect_rc 0 "never holds"
+expect_mentions "aws_efs_file_system.fl[0]" "names the file system"
+
+#     The LZA advisory is the reason the mode exists: it must survive, with the
+#     ordering advice intact, on a plan the gate would otherwise have held.
+run_advisory_only "the LZA ingress advisory survives advisory-only mode" "$(plan_with \
+    "aws_lb this module.fl_server_internal_nlb.aws_lb.this[0] delete,create" \
+    "aws_ecs_service fl_server_net_1 aws_ecs_service.fl_server_net_1[0] delete,create")"
+expect_rc 0 "never holds"
+expect_mentions "LZA FL ingress" "carries the ingress advisory"
+expect_mentions "aicentre-lza-iac" "carries the ordering remedy"
+
+#     An ingress-only plan behaves identically in either mode — it was never a
+#     hold — so advisory-only must not start saying an FL hold would happen.
+run_advisory_only "an ingress-only plan reports no FL impact" "$(plan_with \
+    "aws_ssm_parameter lza_fl_nlb_private_ips aws_ssm_parameter.lza_fl_nlb_private_ips[0] update")"
+expect_rc 0 "never holds"
+expect_mentions "LZA FL ingress" "carries the ingress advisory"
+expect_silent_about "would interrupt any training run" "claims no FL impact"
+
+#     A clean plan is clean in either mode.
+run_advisory_only "a clean plan stays silent" "$(plan_with \
+    "aws_s3_bucket logs aws_s3_bucket.logs update")"
+expect_rc 0 "safe to apply"
+expect_silent_about "ADVISORY" "no advisory"
+
+#     FAIL-CLOSED. Advisory-only relaxes the hold, never the input guard: a
+#     document that is not a plan still errors, because "no advisory" from an
+#     unreadable plan is indistinguishable from "no ingress change".
+echo ""
+echo "-- advisory-only still rejects a non-plan document"
+not_a_plan="${TEST_ROOT}/not-a-plan.json"
+printf '{"format_version":"1.2","values":{}}' >"${not_a_plan}"
+STDOUT="$(ADVISORY_ONLY=true bash "${SCRIPT}" "${not_a_plan}" 2>"${TEST_ROOT}/err")"
+RC=$?
+STDERR="$(cat "${TEST_ROOT}/err")"
+expect_rc 2 "parse error is still an error"
+
+echo ""
+echo "-- advisory-only rejects an unknown option"
+STDOUT="$(bash "${SCRIPT}" --nope "${fl_disruptive_plan}" 2>"${TEST_ROOT}/err")"
+RC=$?
+STDERR="$(cat "${TEST_ROOT}/err")"
+expect_rc 2 "unknown option is a usage error"
+
+#     A non-"true" value must not enable the mode: fail towards the gate.
+run_on "ADVISORY_ONLY=yes does not disable the gate" "${fl_disruptive_plan}"
+ADVISORY_ONLY=yes bash "${SCRIPT}" "${fl_disruptive_plan}" >/dev/null 2>&1
+rc=$?
+[[ "${rc}" -eq 1 ]] && ok "a mis-set ADVISORY_ONLY still holds" \
+    || no "a mis-set ADVISORY_ONLY still holds" "got ${rc}"
+
+#     Actions surface for advisory-only: an annotation and a summary that say
+#     the apply WILL hold later, and never that it was held here.
+echo ""
+echo "-- advisory-only writes an 'would be disturbed' summary and annotation"
+summary_adv="${TEST_ROOT}/summary-advisory.md"
+: >"${summary_adv}"
+out="$(ADVISORY_ONLY=true GITHUB_STEP_SUMMARY="${summary_adv}" GITHUB_ACTIONS=true \
+    bash "${SCRIPT}" "${fl_disruptive_plan}" 2>&1)"
+rc=$?
+[[ "${rc}" -eq 0 ]] && ok "advisory-only exits 0 under Actions" \
+    || no "advisory-only exits 0 under Actions" "got ${rc}" "${out}"
+grep -q 'FL infrastructure would be disturbed' "${summary_adv}" && ok "summary states the impact" \
+    || no "summary states the impact" "$(cat "${summary_adv}")"
+grep -q 'fl_quiesced' "${summary_adv}" && ok "summary names the remedy" \
+    || no "summary names the remedy"
+grep -q 'Apply held' "${summary_adv}" && no "summary does not claim a hold" "$(cat "${summary_adv}")" \
+    || ok "summary does not claim a hold"
+printf '%s' "${out}" | grep -q '::warning title=FL infrastructure would be disturbed' \
+    && ok "emits an advisory annotation" || no "emits an advisory annotation" "${out}"
+
 echo ""
 echo "==== ${PASS} passed, ${FAIL} failed ===="
 [[ "${FAIL}" -eq 0 ]]

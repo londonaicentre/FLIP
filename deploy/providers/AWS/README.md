@@ -1392,7 +1392,7 @@ GitHub:
 
 | Workflow | Trigger | Role | What it does |
 | --- | --- | --- | --- |
-| `terraform_plan.yml` | PR touching `deploy/providers/AWS/**` | plan (read-only) | Posts the staging plan as a PR comment |
+| `terraform_plan.yml` | PR touching `deploy/providers/AWS/**` | plan (read-only) | Posts the staging plan as a PR comment, and runs the FL/LZA-ingress advisory (advisory-only — never fails the check) |
 | `terraform_apply.yml` | Push to `develop` / `main` | apply | Applies to staging / production |
 | `terraform_drift.yml` | Nightly 03:00 UTC | plan (read-only) | Raises one issue per environment when reality has drifted |
 
@@ -1567,9 +1567,9 @@ was deleted about an hour later and the staging secrets it contained were
 rotated. Every `tf-via-pr` step now sets `upload-plan: false`, and
 `scripts/tests/test_compose_ci_env.sh` fails the build if any step omits it.
 
-`preserve-plan` is a *different* input and stays `true` in the apply workflow: it
-keeps the plan on the runner's disk so the FL gate and the apply step can read
-it. That never leaves the job.
+`preserve-plan` is a *different* input and stays `true` in both workflows: it
+keeps the plan on the runner's disk so the FL gate and the apply step (apply) and
+the plan-time advisory (plan) can read it. That never leaves the job.
 
 ### Reading a red Terraform CI run
 
@@ -1892,6 +1892,29 @@ nothing to do with the change. Legacy (non-LZA) estates never see it — those
 addresses are `count = 0` without `lza_managed_network`. Confirm the handoff
 afterwards with `aws ssm get-parameters-by-path --path /flip/networking --recursive`.
 
+**The advisory runs before the merge, and on a quiesced re-dispatch.** An advisory
+that only appears mid-apply arrives too late for the half of the advice that
+matters most: *removing or replacing* ingress is supposed to be sequenced by
+updating `aicentre-lza-iac` **first**, and by the time the apply is running that
+ordering is no longer available. So the same script runs in an **advisory-only**
+mode (`ADVISORY_ONLY=true`, or `--advisory-only`) in two more places:
+
+- **`terraform_plan.yml`, on the pull request.** The PR plan is the last point at
+  which the two repositories can be sequenced. The warning annotation lands on the
+  PR's checks beside the tf-via-pr plan comment, with the changed addresses and the
+  ordering in the job summary. (`preserve-plan: true` is what keeps the plan file on
+  the runner for it; `upload-plan` stays `false` — see the warning above.)
+- **`terraform_apply.yml`, on an `fl_quiesced=true` re-dispatch.** That input skips
+  the gate step, and with it the advisory — precisely on the apply that most needs
+  it, since an NLB replacement is both FL-disruptive and ingress-changing. A second
+  step runs the script in advisory-only mode on exactly the runs the gate skips.
+
+Advisory-only never holds: it exits 0 on any readable plan, and on an FL-disruptive
+diff it says what the apply *will* do rather than doing it. It is not a relaxation
+of the input guard — a document that is not a `terraform show -json` plan is still
+an error (exit 2), because "no advisory" from an unreadable plan is
+indistinguishable from "no ingress change". The hold remains the apply's alone.
+
 When it holds:
 
 1. Enable deployment mode on the hub (pauses FL job pickup; queued jobs hold, the
@@ -1907,7 +1930,10 @@ the same FL change and holds again, indefinitely. `fl_quiesced: true` skips the
 gate, and nothing verifies it: the runner cannot reach `GET /fl/quiesce`, so it is
 an operator attestation, recorded as a warning annotation naming whoever
 dispatched the run. Setting it when FL is *not* quiesced kills the in-flight
-training run, which is exactly what the gate exists to prevent.
+training run, which is exactly what the gate exists to prevent. What it does
+**not** skip is the LZA ingress advisory: a separate advisory-only step runs on
+exactly these re-dispatches, because quiescing FL says nothing about whether
+`aicentre-lza-iac` has been updated.
 
 `flip-api` is deliberately outside the watch list: its deploy is a rolling
 replacement (`desired_count` 1, `deployment_minimum_healthy_percent` 100) and the
