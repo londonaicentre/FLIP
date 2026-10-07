@@ -9,13 +9,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""preflight.sh resolves the kit-file env token for every PROD the platform defines.
+"""One PROD -> kit-token map, in deploy/env_mode.mk, for the chart's preflight and sync-kit.
 
-The script used to carry its own ``if`` chain, written before the LZA tokens existed, so
-``PROD=lza-stag`` looked for ``trust/.env.<KIT>.development`` and failed check 4 while the
-Makefile — which derives ENV from ``deploy/env_mode.mk`` — resolved the same kit correctly.
-The Makefile now injects ENV, and the script's own map is the fallback for a direct
-invocation; both halves are pinned here.
+``preflight.sh`` used to carry its own ``if`` chain, written before the LZA tokens existed,
+so ``PROD=lza-stag`` looked for ``trust/.env.<KIT>.development`` and failed check 4 while
+the Makefile — which derives ENV from ``deploy/env_mode.mk`` — resolved the same kit
+correctly. ``sync_k8s_kit.py`` carried a third copy of the same map.
+
+Rather than keep three copies in step, the scripts now hold none: the Makefile injects the
+token (``ENV=`` for preflight, ``--env $(ENV)`` for sync-kit), and a direct invocation with
+``PROD`` set but no token is refused with a message naming the Makefile. ``PROD`` unset still
+means development, which is what a developer running the script bare expects.
 
 Every check the script performs is read-only, and KUBE_CONTEXT is pointed at a context that
 does not exist so no cluster is contacted.
@@ -24,14 +28,17 @@ does not exist so no cluster is contacted.
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 CHART_DIR = Path(__file__).resolve().parents[1]
 PREFLIGHT = CHART_DIR / "scripts" / "preflight.sh"
+SYNC_KIT = CHART_DIR / "sync_k8s_kit.py"
 
-# PROD token -> the token in trust/.env.<CODE>.<token>, per deploy/env_mode.mk.
+# PROD token -> the token in trust/.env.<CODE>.<token>, per deploy/env_mode.mk. The scripts
+# no longer hold this map; it is pinned here only to assert the Makefile injects it.
 ENV_TOKENS = [
     ("", "development"),
     ("stag", "stag"),
@@ -43,15 +50,15 @@ ENV_TOKENS = [
 NO_CLUSTER = {"KUBE_CONTEXT": "preflight-tests-no-such-context"}
 
 
-def _run_preflight(**env: str) -> str:
-    """Run the script with no reachable cluster; return stdout (exit code is immaterial)."""
+def _preflight(**env: str) -> subprocess.CompletedProcess:
+    """Run the script with no reachable cluster."""
     return subprocess.run(
         ["bash", str(PREFLIGHT)],
         capture_output=True,
         text=True,
         timeout=120,
         env={"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(Path.home()), **NO_CLUSTER, **env},
-    ).stdout
+    )
 
 
 def _reported_env(stdout: str) -> str:
@@ -62,37 +69,49 @@ def _reported_env(stdout: str) -> str:
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not installed")
 @pytest.mark.parametrize(("prod", "token"), ENV_TOKENS)
-def test_preflight_resolves_every_env_token(prod, token):
-    """The fallback map covers the LZA estates; before this it fell through to development."""
-    assert _reported_env(_run_preflight(PROD=prod, KIT="ABC")) == token
+def test_preflight_uses_the_injected_token_for_every_env(prod, token):
+    """The Makefile's token is what reaches the script, LZA estates included."""
+    assert _reported_env(_preflight(PROD=prod, ENV=token, KIT="ABC").stdout) == token
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not installed")
 def test_preflight_looks_for_the_lza_kit_file():
     """Check 4 must name the kit an LZA site actually has, not .development."""
-    out = _run_preflight(PROD="lza-stag", KIT="ABC")
+    out = _preflight(PROD="lza-stag", ENV="lza-stag", KIT="ABC").stdout
     assert "trust/.env.ABC.lza-stag" in out, out
     assert "trust/.env.ABC.development" not in out, out
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not installed")
-def test_injected_env_wins_over_the_fallback_map():
-    """The Makefile derives ENV from deploy/env_mode.mk and injects it — one mapping, not two."""
-    assert _reported_env(_run_preflight(PROD="lza", ENV="lza-prod", KIT="ABC")) == "lza-prod"
+def test_preflight_with_prod_but_no_env_is_refused_and_names_the_makefile():
+    """No second copy of the map: a script that guesses is how the LZA tokens drifted."""
+    result = _preflight(PROD="lza-stag", KIT="ABC")
+    assert result.returncode == 1
+    assert "PROD='lza-stag' is set but ENV is not" in result.stdout
+    assert "make -C trust/deploy/helm preflight" in result.stdout
+    # It must refuse rather than fall through to a kit file for the wrong environment.
+    assert "trust/.env.ABC.development" not in result.stdout
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not installed")
-def test_an_unknown_prod_is_refused_not_treated_as_development():
-    """`PROD=production` (a plausible typo) must not silently read a development kit."""
+def test_preflight_without_prod_is_still_development():
+    """A developer running the script bare gets the development kit, as before."""
+    assert _reported_env(_preflight(KIT="ABC").stdout) == "development"
+
+
+def test_sync_kit_with_prod_but_no_env_is_refused_and_names_the_makefile():
+    """sync_k8s_kit.py held a third copy of the map; it now requires --env when PROD is set."""
     result = subprocess.run(
-        ["bash", str(PREFLIGHT)],
+        [sys.executable, str(SYNC_KIT), "--kit", "ABC"],
         capture_output=True,
         text=True,
         timeout=120,
-        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(Path.home()), **NO_CLUSTER, "PROD": "production"},
+        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(Path.home()), "PROD": "lza-stag"},
     )
-    assert result.returncode == 1
-    assert "is not a deployment mode" in result.stdout
+    assert result.returncode != 0
+    message = result.stdout + result.stderr
+    assert "PROD='lza-stag' is set but --env is not" in message, message
+    assert "make -C trust/deploy/helm sync-kit" in message, message
 
 
 @pytest.mark.skipif(shutil.which("make") is None, reason="make is not installed")
@@ -106,3 +125,17 @@ def test_the_makefile_injects_the_env_mode_token_into_preflight(prod, token):
         timeout=60,
     ).stdout
     assert f'ENV="{token}"' in out, out
+
+
+@pytest.mark.skipif(shutil.which("make") is None, reason="make is not installed")
+@pytest.mark.parametrize(("prod", "token"), ENV_TOKENS)
+def test_the_makefile_injects_the_env_mode_token_into_sync_kit(prod, token):
+    """The other half of the single map: sync-kit is given `--env <token>`, never a guess."""
+    out = subprocess.run(
+        ["make", "-n", "-C", str(CHART_DIR), "sync-kit-override", "KIT=ABC", f"PROD={prod}"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    ).stdout
+    assert f"--env {token}" in out, out

@@ -1510,9 +1510,10 @@ tokens existed, so `lza` / `lza-stag` fell through to `development`.
 
 ### Fix
 
-Fixed in-tree: the Makefile derives the token from `deploy/env_mode.mk` (the single source of
-truth) and injects it as `ENV`; the script's fallback map covers all five tokens and refuses
-an unknown `PROD` instead of defaulting to `development`. Expected mapping:
+Fixed in-tree: `deploy/env_mode.mk` is now the only `PROD` → suffix map. The Makefile derives
+the token from it and injects it (`ENV=` into `preflight.sh`, `--env` into `sync_k8s_kit.py`);
+neither script keeps a copy, and running one bare with `PROD` set but no token is refused with
+a message naming the Makefile target, instead of defaulting to `development`. Expected mapping:
 
 | `PROD` | kit file |
 |---|---|

@@ -207,10 +207,11 @@ make -C trust/deploy/helm preflight KIT=<CODE> PROD=stag
 `PROD` takes the platform's five tokens — unset (development), `stag`, `true`,
 `lza`, `lza-stag` — and the Makefile resolves the kit-file suffix through
 `deploy/env_mode.mk`, the single source of truth (`lza` → `trust/.env.<CODE>.lza-prod`,
-`lza-stag` → `.lza-stag`). That resolved token is injected into `scripts/preflight.sh`,
-so the checklist looks for the kit an LZA site actually has; the script keeps a matching
-fallback map for a direct `bash scripts/preflight.sh`, and refuses a `PROD` neither
-knows rather than quietly reading a `development` kit.
+`lza-stag` → `.lza-stag`). That resolved token is injected into `scripts/preflight.sh`
+as `ENV` and into `sync_k8s_kit.py` as `--env`, so the checklist looks for the kit an LZA
+site actually has. Neither script keeps its own copy of that map: run bare with `PROD` set
+and no token, each refuses and names the Makefile target to use, rather than quietly
+reading a `development` kit. With `PROD` unset they still default to development.
 
 Equivalent raw Helm for the install step:
 

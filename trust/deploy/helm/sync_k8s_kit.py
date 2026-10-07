@@ -44,12 +44,17 @@ file into the Kubernetes Secret over kubectl's TLS channel. The generated
 override file (``k8s-trust-*.yaml``) is gitignored and contains no secrets.
 
 Usage:
-  python3 sync_k8s_kit.py --kit Trust_K8s --env stag
-  python3 sync_k8s_kit.py --kit Trust_2          # env auto-detected from $PROD
+  python3 sync_k8s_kit.py --kit Trust_K8s --env lza-stag
+  python3 sync_k8s_kit.py --kit Trust_2                 # no PROD set: the development kit
+
+``--env`` is the ``trust/.env.<KIT>.<suffix>`` token. ``deploy/env_mode.mk`` is the only
+place that maps ``PROD`` to it, and the chart Makefile passes the result as ``--env``; with
+``PROD`` set and no ``--env`` this script refuses rather than keep a second copy of the map.
 """
 
 import argparse
 import base64
+import functools
 import hashlib
 import importlib.util
 import json
@@ -296,6 +301,78 @@ def patch_k8s_secret(secret_name: str, namespace: str, entries: dict[str, str], 
 VALUES_SECRETS_NAME = "values-secrets.yaml"  # pragma: allowlist secret
 
 
+@functools.cache
+def _generate_values() -> ModuleType:
+    """``scripts/generate_values.py``, loaded by path — it is a script, not an installed module.
+
+    ``values-secrets.yaml`` has two writers: that script renders the whole file from the kit,
+    and ``align_values_secrets`` patches the kit-owned slots in place. Sharing its
+    ``yaml_quote`` keeps both writers quoting and escaping identically, so a value carrying a
+    quote or a backslash cannot produce YAML one writer accepts and the other mangles.
+    """
+    path = Path(__file__).resolve().parent / "scripts" / "generate_values.py"
+    spec = importlib.util.spec_from_file_location("_flip_generate_values", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load the values generator from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def yaml_quote(value: str) -> str:
+    """``generate_values.yaml_quote`` — the one quoting rule both writers of the file use."""
+    quoted: str = _generate_values().yaml_quote(value)
+    return quoted
+
+
+def _secrets_data_block(lines: list[str]) -> tuple[int, int, str] | None:
+    """Locate the ``secrets:`` -> ``data:`` mapping in ``values-secrets.yaml``.
+
+    ``align_values_secrets`` must only ever touch that block. A key name such as
+    ``trust-api-key`` is free to appear elsewhere in the file (another top-level section, a
+    comment-led example), and a blind first-match regex would rewrite the wrong line — and
+    write a secret into a slot the chart does not read.
+
+    Args:
+        lines: The file's lines.
+
+    Returns:
+        ``(start, end, indent)`` — the half-open line range of the block's entries and the
+        indent its existing entries use (so an inserted slot matches the file's own layout
+        rather than a hardcoded four spaces). ``None`` when the file carries no such block.
+    """
+    secrets_at = next((i for i, line in enumerate(lines) if re.match(r"^secrets:\s*$", line)), None)
+    if secrets_at is None:
+        return None
+    # The entries of `secrets:` are indented; the section ends at the next line at column 0.
+    section_end = next(
+        (i for i in range(secrets_at + 1, len(lines)) if lines[i].strip() and not lines[i][:1].isspace()),
+        len(lines),
+    )
+    data_match = next(
+        ((i, m) for i in range(secrets_at + 1, section_end) if (m := re.match(r"^(\s+)data:\s*$", lines[i]))),
+        None,
+    )
+    if data_match is None:
+        return None
+    data_at, m = data_match
+    data_indent = m.group(1)
+    # Entries of `data:` are indented deeper than `data:` itself; the block ends at the first
+    # non-blank line that is not.
+    end = next(
+        (i for i in range(data_at + 1, section_end) if lines[i].strip() and not lines[i].startswith(data_indent + " ")),
+        section_end,
+    )
+    entry_indents = [
+        re.match(r"^(\s+)", lines[i]).group(1)  # type: ignore[union-attr]
+        for i in range(data_at + 1, end)
+        if lines[i].strip() and not lines[i].lstrip().startswith("#")
+    ]
+    indent = entry_indents[0] if entry_indents else data_indent + "  "
+    return data_at + 1, end, indent
+
+
 def align_values_secrets(path: Path, entries: dict[str, str]) -> list[str]:
     """Write the kit's per-trust secrets into ``values-secrets.yaml`` as well (FLIP#1366).
 
@@ -340,14 +417,19 @@ def align_values_secrets(path: Path, entries: dict[str, str]) -> list[str]:
     if not path.exists():
         return []
     lines = path.read_text().splitlines()
+    block = _secrets_data_block(lines)
+    if block is None:
+        return []
+    start, end, indent = block
+
     aligned: list[str] = []
     for secret_key, value in entries.items():
         pattern = re.compile(rf"^(\s*){re.escape(secret_key)}:\s.*$")
-        for i, line in enumerate(lines):
-            match = pattern.match(line)
+        for i in range(start, end):
+            match = pattern.match(lines[i])
             if match:
-                replacement = f'{match.group(1)}{secret_key}: "{value}"'
-                if line != replacement:
+                replacement = f"{match.group(1)}{secret_key}: {yaml_quote(value)}"
+                if lines[i] != replacement:
                     lines[i] = replacement
                     aligned.append(secret_key)
                 break
@@ -355,11 +437,8 @@ def align_values_secrets(path: Path, entries: dict[str, str]) -> list[str]:
             # The slot is absent (an older generated file, or a kit that did not carry the
             # key when it was generated). Add it under secrets.data rather than leaving the
             # chart to render a Secret without it.
-            try:
-                data_at = next(i for i, line in enumerate(lines) if re.match(r"^\s{2}data:\s*$", line))
-            except StopIteration:
-                continue
-            lines.insert(data_at + 1, f'    {secret_key}: "{value}"')
+            lines.insert(start, f"{indent}{secret_key}: {yaml_quote(value)}")
+            end += 1
             aligned.append(secret_key)
 
     if aligned:
@@ -683,7 +762,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--env",
         default=None,
-        help="Deployment env suffix (stag|production|development). Default: from $PROD.",
+        help="Deployment env suffix (the trust/.env.<KIT>.<suffix> token, e.g. production, "
+        "lza-stag). Required when PROD is set; the chart Makefile injects it from "
+        "deploy/env_mode.mk. Default without PROD: development.",
     )
     parser.add_argument("--namespace", default="flip-trust", help="Kubernetes namespace")
     parser.add_argument(
@@ -724,21 +805,21 @@ if __name__ == "__main__":
     if args.kube_context:
         KUBECTL += ["--context", args.kube_context]
 
-    # Resolve env suffix the same way the rest of the tooling does (deploy/env_mode.mk).
-    # The LZA estates get their own kit tokens, so a PROD the map does not know must fail
-    # rather than fall through to a `development` kit that does not exist.
+    # The kit-file env token comes from deploy/env_mode.mk via the Makefile, which passes it
+    # as `--env $(ENV)`. That is the only PROD -> token map; this script does not keep a
+    # second copy of it (two copies are how the LZA tokens drifted out of step), so PROD
+    # without --env is an error rather than a guess at a kit file that may not exist.
     if args.env is None:
         prod = os.environ.get("PROD", "")
-        env_by_prod = {
-            "": "development",
-            "stag": "stag",
-            "true": "production",
-            "lza": "lza-prod",
-            "lza-stag": "lza-stag",
-        }
-        if prod not in env_by_prod:
-            sys.exit(f"❌ PROD={prod!r} is not a deployment mode — unset, stag, true, lza or lza-stag")
-        env_suffix = env_by_prod[prod]
+        if prod:
+            sys.exit(
+                f"❌ PROD={prod!r} is set but --env is not.\n"
+                "   PROD maps to the kit-file token in deploy/env_mode.mk only. Run this through\n"
+                "   the chart Makefile, which injects it:\n"
+                "       make -C trust/deploy/helm sync-kit KIT=<KIT> PROD=" + prod + "\n"
+                "   Or pass the token directly:  --env <token>"
+            )
+        env_suffix = "development"
     else:
         env_suffix = args.env
 

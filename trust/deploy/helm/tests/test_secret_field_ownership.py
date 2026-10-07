@@ -33,6 +33,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 CHART_DIR = Path(__file__).resolve().parents[1]
 _SCRIPT = CHART_DIR / "sync_k8s_kit.py"
@@ -53,7 +54,7 @@ secrets:
     aes-key-base64: "stale-aes"
     trust-api-key: "stale-api"
     trust-internal-service-key: "stale-internal"
-    trust-internal-service-key-header: "X-Trust-Internal-Service-Key"
+    trust-internal-service-key-header: X-Trust-Internal-Service-Key
     xnat-admin-password: untouched-xnat
     orthanc-registered-users: "{\\"admin\\": \\"untouched-orthanc\\"}"
 """
@@ -132,6 +133,74 @@ def test_already_aligned_values_are_a_no_op(tmp_path):
 def test_no_values_secrets_file_is_not_an_error(tmp_path):
     """Without it the chart runs secrets.create=false and manages no Secret of its own."""
     assert sync_k8s_kit.align_values_secrets(tmp_path / "values-secrets.yaml", PATCHED) == []
+
+
+def test_a_value_carrying_a_quote_or_a_backslash_round_trips_as_yaml(tmp_path):
+    """Both writers of this file must quote identically, so the value survives the YAML parser.
+
+    `generate_values.py` renders the whole file with `yaml_quote`; `align_values_secrets`
+    patches single lines. Hand-rolled `key: "<value>"` quoting produced invalid YAML — or
+    worse, a silently truncated credential — for a value containing `"` or `\\`.
+    """
+    awkward = 'a"b\\c"d'
+    path = _values_file(tmp_path)
+    sync_k8s_kit.align_values_secrets(path, {**PATCHED, "trust-api-key": awkward})
+
+    parsed = yaml.safe_load(path.read_text())
+    assert parsed["secrets"]["data"]["trust-api-key"] == awkward
+    # The slots the kit also owns are still intact after the awkward neighbour.
+    assert parsed["secrets"]["data"]["aes-key-base64"] == "live-aes"
+    assert parsed["secrets"]["data"]["xnat-admin-password"] == "untouched-xnat"  # pragma: allowlist secret
+
+
+def test_the_same_key_name_outside_secrets_data_is_left_alone(tmp_path):
+    """Matching is scoped to the `secrets:` -> `data:` block, not the first line in the file.
+
+    A first-match regex would rewrite a same-named key in another section — writing a live
+    credential into a slot the chart never reads, and leaving the real slot stale, so the
+    SSA conflict this whole change exists to remove would still fire.
+    """
+    body = (
+        "someOtherComponent:\n"
+        "  env:\n"
+        '    trust-api-key: "not-the-secret"\n'
+        "secrets:\n"
+        "  create: True\n"
+        "  data:\n"
+        '    aes-key-base64: "stale-aes"\n'
+        '    trust-api-key: "stale-api"\n'
+        '    trust-internal-service-key: "stale-internal"\n'
+        "trailing:\n"
+        '  trust-api-key: "also-not-the-secret"\n'
+    )
+    path = _values_file(tmp_path, body)
+    sync_k8s_kit.align_values_secrets(path, PATCHED)
+
+    parsed = yaml.safe_load(path.read_text())
+    assert parsed["secrets"]["data"]["trust-api-key"] == "live-api"
+    assert parsed["someOtherComponent"]["env"]["trust-api-key"] == "not-the-secret"
+    assert parsed["trailing"]["trust-api-key"] == "also-not-the-secret"
+
+
+def test_an_inserted_slot_takes_the_indent_the_block_already_uses(tmp_path):
+    """The insert used to assume a two-space `data:` with four-space entries."""
+    body = "secrets:\n    create: True\n    data:\n        xnat-admin-password: keep\n"
+    path = _values_file(tmp_path, body)
+    sync_k8s_kit.align_values_secrets(path, PATCHED)
+
+    parsed = yaml.safe_load(path.read_text())
+    assert parsed["secrets"]["data"]["trust-api-key"] == "live-api"
+    assert parsed["secrets"]["data"]["xnat-admin-password"] == "keep"  # pragma: allowlist secret
+    assert "        trust-api-key: live-api" in path.read_text().splitlines()
+
+
+def test_a_file_with_no_secrets_data_block_is_left_untouched(tmp_path):
+    """Better to realign nothing than to guess where the chart reads its Secret from."""
+    body = 'someOtherComponent:\n  trust-api-key: "not-the-secret"\n'
+    path = _values_file(tmp_path, body)
+
+    assert sync_k8s_kit.align_values_secrets(path, PATCHED) == []
+    assert path.read_text() == body
 
 
 def test_the_secret_is_merge_patched_never_server_side_applied(monkeypatch):
