@@ -353,6 +353,12 @@ else
         ${upload_offenders}
 fi
 
+# Octal permission bits of a file: GNU stat spells it `-c '%a'`, BSD/macOS stat
+# `-f '%Lp'` — and each rejects the other's flag, so try GNU first.
+file_mode() {
+    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
+}
+
 # 2. HAPPY PATH.
 run_case "complete value set composes" 
 expect_rc 0 "exits 0"
@@ -361,10 +367,10 @@ if [[ -f "${OUT_FILE}" ]]; then
 else
     no "writes the file"
 fi
-if [[ "$(stat -c '%a' "${OUT_FILE}" 2>/dev/null)" == "600" ]]; then
+if [[ "$(file_mode "${OUT_FILE}")" == "600" ]]; then
     ok "file is 0600 (it carries AES_KEY_BASE64 and the DB user)"
 else
-    no "file is 0600" "mode: $(stat -c '%a' "${OUT_FILE}" 2>/dev/null)"
+    no "file is 0600" "mode: $(file_mode "${OUT_FILE}")"
 fi
 
 # 3. AWS_PROFILE is derived, not stored — this is what stops a mis-set GitHub
