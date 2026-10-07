@@ -39,7 +39,7 @@ A FastAPI application serving everything under ``/api``. Its routers map onto th
    * - Prefix
      - Purpose
    * - ``/projects``
-     - Project lifecycle: create, edit, stage, approve, unstage, delete; imaging status and study re-import.
+     - Project lifecycle: create, edit, stage, approve or decline per Trust, unstage, delete; imaging status and study re-import.
    * - ``/cohort``
      - Submit a cohort query to the project's Trusts and read back the aggregated results.
    * - ``/model``, ``/models``
@@ -51,7 +51,7 @@ A FastAPI application serving everything under ``/api``. Its routers map onto th
    * - ``/users``, ``/roles``, ``/site``
      - Users, access requests, MFA status and roles; site banner and details.
    * - ``/trust``, ``/admin/trusts``
-     - Trust roster, connection health and registration.
+     - Trust roster, connection health and registration; a Trust's project decisions, for its Trust Admin.
    * - ``/step``
      - Multi-step orchestrations the UI drives in place of the original AWS Step Functions: approve a
        project and fan imaging creation out to its Trusts, submit a cohort query to them, register a
@@ -215,7 +215,7 @@ Email
 
 The application's own emails (access-request notifications, XNAT credentials) go through
 ``send_templated_email``, which dispatches on ``EMAIL_BACKEND``: ``ses`` in staging and production,
-``console`` — log the would-be message, with secret-shaped fields redacted — by default in development, so a
+``console`` — log the would-be message, with secret-shaped fields redacted — always in development (the only value it accepts there), so a
 local stack needs no SES identity. The identity provider sends its own invitations and password-reset codes
 independently of either: Cognito from the user pool in staging and production, whereas the development
 Keycloak has no mail server, so a newly registered user is given the shared dev password

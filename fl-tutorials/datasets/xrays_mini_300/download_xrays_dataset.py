@@ -20,7 +20,7 @@ REPO_ID = "aicentreflip/flip-fl-base-test-data"
 REPO_SUBDIR = "flip-fl-base-test-data/xrays_mini_300"
 
 
-def download_xrays_dataset(cache_dir, output_dir, repo_id=REPO_ID):
+def download_xrays_dataset(cache_dir: str, output_dir: str, repo_id: str = REPO_ID) -> None:
     """
     Downloads the x-ray reference dataset from Hugging Face and normalises it into the layout the FL tutorial
     harnesses read (accession-resources/, dataframe.csv).

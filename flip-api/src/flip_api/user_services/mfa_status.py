@@ -35,9 +35,9 @@ def get_own_mfa_status(
     discover their enrolment state and be routed to the setup page.
 
     Args:
-        request: FastAPI request object, used to resolve the Cognito user
-            pool id.
+        request: FastAPI request object.
         token_id: ID of the authenticated user (from the bearer token).
+        idp: The configured identity provider.
 
     Returns:
         dict[str, bool]: ``{"enabled": <bool>, "required": <bool>}``.

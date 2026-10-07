@@ -74,8 +74,9 @@ it.
 roles genuinely belong to you:
 
 - **Created by an earlier version of this root**, which declared the resources directly: point `make init` at that
-  state (the same bucket and key). The `moved` blocks in `main.tf` re-address the nine IAM objects into the module
-  with no change. That earlier version did not manage the bucket, so either import it
+  state (the same bucket and key). The `moved` blocks in `main.tf` re-address eight IAM objects into the module
+  with no change; the ninth, the apply role's old `PowerUserAccess` attachment, is not moved and the first apply
+  removes it in favour of the `apply_services` allowlist. That earlier version did not manage the bucket, so either import it
   (`import { to = module.terraform_ci.aws_s3_bucket.state[0] … }`, and likewise for its versioning, public-access
   block and encryption) or set `manage_state_bucket = false`.
 - **Created some other way**: import them with `import` blocks at the module's addresses —

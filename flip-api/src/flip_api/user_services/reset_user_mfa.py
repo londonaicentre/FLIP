@@ -52,6 +52,7 @@ def reset_mfa_for_user(
         request (Request): FastAPI request object.
         db (Session): Database session.
         token_id (UUID): ID of the authenticated user performing the reset.
+        idp (IdentityProvider): The configured identity provider.
 
     Returns:
         dict[str, Any]: Empty dictionary on success.

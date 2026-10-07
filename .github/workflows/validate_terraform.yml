@@ -17,6 +17,8 @@ on:
     branches: [main, develop]
     paths:
       - "deploy/providers/AWS/**"
+      # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
+      - "flip-api/src/flip_api/auth/identity/cognito.py"
       - ".github/workflows/validate_terraform.yml"
       - ".github/workflows/terraform_plan.yml"
       - ".github/workflows/terraform_apply.yml"
@@ -25,6 +27,8 @@ on:
     branches: [main, develop]
     paths:
       - "deploy/providers/AWS/**"
+      # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
+      - "flip-api/src/flip_api/auth/identity/cognito.py"
       - ".github/workflows/validate_terraform.yml"
       - ".github/workflows/terraform_plan.yml"
       - ".github/workflows/terraform_apply.yml"

@@ -235,7 +235,7 @@ git tag on `aicentreflip/trust-data`. The seed markers, what re-seeds, and the p
 
 `make demo-video` records the full end-to-end walkthrough against the **live dev stack** and
 assembles one mp4 (local dev tool, not run in CI; Cypress segments plus off-camera platform waits).
-Prerequisites, the `DEMO_ARGS` flags and the demo Cognito users:
+Prerequisites, the `DEMO_ARGS` flags and the demo users:
 [`flip-api/AGENTS.md`](flip-api/AGENTS.md#demo-video-recorder).
 
 ### Database migrations (flip-api)
@@ -535,7 +535,7 @@ TruffleHog, detect-secrets (also enforced repo-wide by the `Detect Secrets Scan`
 - SSH-over-SSM mandatory (no port 22 exposed).
 - Never bypass TLS (`curl -k` prohibited).
 - Use `AES_KEY_BASE64` for trust communication encryption (AES-256-GCM envelope; see the env var entry above for the key-match and flag-day rules).
-- AWS Cognito for hub auth in stag/prod, per-trust API keys for trust-to-hub auth. Hub user auth is provider-shaped (FLIP#919): `AUTH_BACKEND` selects the identity provider behind one generic OIDC verifier and one `IdentityProvider` interface (`flip-api/src/flip_api/auth/`), `keycloak` being the dev default (the `keycloak` service + `deploy/keycloak/flip-realm.json`, no AWS account needed to sign in) and `cognito` the only value `ProdSettings` accepts. Keep Cognito-specific claims and calls inside the Cognito rules/provider, never in a router; a new cloud's IdP is a new provider module plus a deliberate `ProdSettings` widening. Detail in [`flip-api/AGENTS.md`](flip-api/AGENTS.md#hub-environment-variables).
+- AWS Cognito for hub auth in stag/prod, per-trust API keys for trust-to-hub auth. Hub user auth is provider-shaped (FLIP#919): `AUTH_BACKEND` selects the identity provider behind one generic OIDC verifier and one `IdentityProvider` interface (`flip-api/src/flip_api/auth/`), `keycloak` the only value `DevSettings` accepts (the `keycloak` service + `deploy/keycloak/flip-realm.json`, no AWS account needed to sign in) and `cognito` the only value `ProdSettings` accepts. Keep Cognito-specific claims and calls inside the Cognito rules/provider, never in a router; a new cloud's IdP is a new provider module plus a deliberate `ProdSettings` widening. Detail in [`flip-api/AGENTS.md`](flip-api/AGENTS.md#hub-environment-variables).
 - Internal service key for fl-server-to-hub auth (separate from trust keys).
 - Trust-internal service key for trust-api / imaging-api / fl-client → imaging-api / data-access-api auth (per-trust, never leaves trust env). See **Trust-internal Service Authentication** below.
 - FL clients intentionally have no Central Hub credentials.

@@ -26,7 +26,7 @@ from monai.transforms import (
 )
 
 
-def get_train_transforms():
+def get_train_transforms() -> Compose:
     """Return the MONAI training transforms with augmentation."""
     return Compose(
         [
@@ -63,7 +63,7 @@ def get_train_transforms():
     )
 
 
-def get_val_transforms():
+def get_val_transforms() -> Compose:
     """Return the MONAI validation transforms (same as trainer but with no augmentation)."""
     return Compose(
         [
@@ -85,7 +85,7 @@ def get_val_transforms():
     )
 
 
-def get_sliding_window_inferer(sw_device: torch.device):
+def get_sliding_window_inferer(sw_device: torch.device) -> SlidingWindowInferer:
     """Return a MONAI SlidingWindowInferer for validation and inference."""
     return SlidingWindowInferer(
         sw_batch_size=1,
