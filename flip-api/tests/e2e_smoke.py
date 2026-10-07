@@ -109,6 +109,11 @@ TUTORIALS: dict[str, TutorialCopy] = {
         "Measuring how well the existing Ark+ chest X-ray model recognises chest conditions on each "
         "participating trust's radiographs, without retraining it.",
     ),
+    "3d_prostate_segmentation": TutorialCopy(
+        "3D prostate segmentation",
+        "Outlining the prostate gland and its peripheral and transition zones on T2-weighted MRI, with a "
+        "3D segmentation model trained across the participating trusts' scans.",
+    ),
     "ehr_risk_prediction": TutorialCopy(
         "EHR risk prediction",
         "Predicting which patients will go on to develop type 2 diabetes from their routine electronic "
@@ -927,8 +932,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--stop-after-enrichment",
         action="store_true",
         help="Run cohort → approval → image pull → data enrichment and stop there, creating no model "
-        "and training nothing. For a dataset whose tutorial app does not exist yet (prostate): it "
-        "verifies the data path end to end without one.",
+        "and training nothing: verifies the data path end to end (cohort, pull, labels beside every "
+        "converted image) without the training app.",
     )
     parser.add_argument(
         "--query-file",

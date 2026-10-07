@@ -216,17 +216,23 @@ case "$TUTORIAL" in
     # The MSD build both backends read, honouring NUM_CASES.
     export DEV_IMAGES_DIR="$DATA_ROOT/spleen/images"
     export DEV_DATAFRAME="$DATA_ROOT/spleen/dataframe.csv"
-    DATASET_TARGET=spleen ;;
+    DATASET_TARGET=download-spleen-data ;;
   xray_classification)
     export DEV_IMAGES_DIR="$DATA_ROOT/xrays_mini_300/accession-resources"
     export DEV_DATAFRAME="$DATA_ROOT/xrays_mini_300/dataframe.csv"
-    DATASET_TARGET=xray ;;
+    DATASET_TARGET=download-xray-data ;;
   ehr_risk_prediction)
     # Tabular-only tutorial: no images, so DEV_IMAGES_DIR stays unset (the app never reads it).
     # Every simulated site gets the same CSV; each ClientApp slices out its own person_id-modulo
     # partition, exactly as under the compose stack.
     export DEV_DATAFRAME="$DATA_ROOT/synthea/dataframe.csv"
-    DATASET_TARGET=synthea ;;
+    DATASET_TARGET=download-synthea-data ;;
+  3d_prostate_segmentation)
+    # The XNAT-export-shaped tree prepare_prostate_local_data.py writes from the PI-CAI download
+    # (three scans per study, masks beside each), honouring NUM_CASES.
+    export DEV_IMAGES_DIR="$DATA_ROOT/prostate/images"
+    export DEV_DATAFRAME="$DATA_ROOT/prostate/dataframe.csv"
+    DATASET_TARGET=prepare-prostate-local-data ;;
   *) echo "❌ No data mapping for '$TUTORIAL'"; exit 1 ;;
 esac
 REQUIRED=("$DEV_DATAFRAME")
@@ -243,7 +249,7 @@ fi
 for p in "${REQUIRED[@]}"; do
   if [ ! -e "$p" ]; then
     echo "❌ Dataset missing: $p"
-    echo "   Run: make -C fl-tutorials download-${DATASET_TARGET}-data"
+    echo "   Run: make -C fl-tutorials $DATASET_TARGET"
     exit 1
   fi
 done
@@ -265,8 +271,22 @@ SITES="$(sed -n 's/^flip-min-clients[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\
 if [ -z "$SITES" ]; then echo "❌ No flip-min-clients in $TUTORIAL/pyproject.toml"; exit 1; fi
 
 export LOCAL_DEV=true
+# GPU share per simulated site. Ray hands a ClientApp actor no GPU unless the federation config
+# asks (client-resources-num-gpus, default 0.0 in flwr's RayBackend), which leaves the 3-D
+# tutorials training on the CPU beside an idle GPU. Default: every site gets an equal fraction of
+# one GPU when nvidia-smi sees any, so the sites train concurrently on it; SIM_NUM_GPUS=<fraction
+# per site> overrides, SIM_NUM_GPUS=0 keeps the CPU.
+if [ -z "${SIM_NUM_GPUS:-}" ]; then
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    SIM_NUM_GPUS="$(python3 -c "print(round(1 / $SITES, 2))")"
+  else
+    SIM_NUM_GPUS=0
+  fi
+fi
+FEDERATION_CONFIG="num-supernodes=$SITES client-resources-num-gpus=$SIM_NUM_GPUS"
+
 echo "🧪 Simulating Flower tutorial '$TUTORIAL' (flwr simulator — no containers)"
-echo "   sites=$SITES"
+echo "   sites=$SITES  gpu share per site=$SIM_NUM_GPUS"
 echo "   DEV_IMAGES_DIR=${DEV_IMAGES_DIR:-<unset: tabular-only tutorial>}"
 echo "   DEV_DATAFRAME=$DEV_DATAFRAME"
 echo "   WORKING_DIR=$WORKING_DIR"
@@ -285,7 +305,7 @@ STREAM="$(mktemp)"
 trap 'rm -f "$STREAM"' EXIT
 # A later --run-config on the command line overrides the same keys, so "$@" comes last.
 PYTHONUNBUFFERED=1 "${FLIP_UV[@]}" \
-  flwr run . local --federation-config "num-supernodes=$SITES" --stream \
+  flwr run . local --federation-config "$FEDERATION_CONFIG" --stream \
   ${RUN_CONFIG:+--run-config "$RUN_CONFIG"} "$@" 2>&1 | tee "$STREAM"
 RUN_ID="$(run_id_from "$STREAM")" || { echo "❌ flwr run printed no run id — was the run submitted?"; exit 1; }
 assert_run_completed "$RUN_ID"

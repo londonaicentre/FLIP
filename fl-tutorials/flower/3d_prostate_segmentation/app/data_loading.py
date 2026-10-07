@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
 from logging import INFO
 from pathlib import Path
 from typing import Any
@@ -23,9 +25,84 @@ from flwr.common import log
 from monai.data import Dataset
 from monai.transforms import Compose
 
-from dataset import IMAGE_KEY, PZ_TZ_KEY, WHOLE_GLAND_KEY, build_loader, load_case
+from app.dataset import IMAGE_KEY, PZ_TZ_KEY, WHOLE_GLAND_KEY, build_loader, load_case
 
 SEED = 42
+
+# The DICOM SeriesNumber each PI-CAI modality was written with (datasets/prostate/
+# convert_mha_to_dicom.py, MODALITY_UID_COMPONENT). XNAT numbers a session's scans by SeriesNumber,
+# and its export nests each scan's files under ``scans/<scan id>-<series description>/``, so the
+# folder a pulled ``input_*.nii.gz`` sits in says which series it is.
+SERIES_NUMBER = {"t2w": 1, "adc": 2, "hbv": 3}
+_SCAN_DIR = re.compile(r"^(\d+)(?:-|$)")
+
+
+def select_series(accession_dir: Path, modality: str) -> Path:
+    """Pick the one ``input_*.nii.gz`` of an accession that is the requested series.
+
+    A prostate study pulls three scans (t2w, adc, hbv) — one ``input_<...>.nii.gz`` each, every one
+    with the same ``label_``/``zonal_`` masks beside it after enrichment — and the app trains on one
+    of them. Three signals identify it, tried in order, and a signal that matches more than one file
+    is ambiguous and raises rather than guessing:
+
+    1. **The scan folder.** On the platform the pulled tree is XNAT's export layout,
+       ``<session>/scans/<scan id>-<description>/resources/NIFTI/files/``, and the scan id is the
+       DICOM SeriesNumber (``SERIES_NUMBER``). The simulator layout mirrors it.
+    2. **The file name.** A ``_<modality>`` token in the stem (``input_<accession>_t2w.nii.gz``), the
+       local conversion's naming.
+    3. **Only one candidate**, whatever it is called.
+
+    Args:
+        accession_dir: The folder ``flip.get_by_accession_number`` returned.
+        modality: ``"t2w"``, ``"adc"`` or ``"hbv"``.
+
+    Returns:
+        The selected image path.
+
+    Raises:
+        FileNotFoundError: No ``input_*.nii.gz`` under ``accession_dir`` at all (the blank folder
+            LOCAL_DEV creates for an accession it has no data for).
+        RuntimeError: Several candidates and no signal singles one out, or a signal matches several.
+    """
+    if modality not in SERIES_NUMBER:
+        raise ValueError(f"unknown modality {modality!r}; expected one of {sorted(SERIES_NUMBER)}")
+    candidates = sorted(Path(accession_dir).rglob("input_*.nii.gz"))
+    if not candidates:
+        raise FileNotFoundError(f"no input_*.nii.gz under {accession_dir}")
+
+    def _ambiguous(rule: str, matches: list[Path]) -> RuntimeError:
+        listing = ", ".join(str(m.relative_to(accession_dir)) for m in matches)
+        return RuntimeError(
+            f"{rule} matches {len(matches)} scans for modality={modality!r} under {accession_dir}: {listing}"
+        )
+
+    series_number = SERIES_NUMBER[modality]
+    by_folder = [
+        path
+        for path in candidates
+        if any(
+            (m := _SCAN_DIR.match(part)) and int(m.group(1)) == series_number
+            for part in path.relative_to(accession_dir).parts[:-1]
+        )
+    ]
+    if len(by_folder) == 1:
+        return by_folder[0]
+    if len(by_folder) > 1:
+        raise _ambiguous(f"scan folder {series_number}-*", by_folder)
+
+    by_name = [path for path in candidates if modality in path.name.removesuffix(".nii.gz").split("_")]
+    if len(by_name) == 1:
+        return by_name[0]
+    if len(by_name) > 1:
+        raise _ambiguous(f"file name token _{modality}", by_name)
+
+    if len(candidates) == 1:
+        return candidates[0]
+    listing = ", ".join(str(c.relative_to(accession_dir)) for c in candidates)
+    raise RuntimeError(
+        f"{len(candidates)} input_*.nii.gz under {accession_dir} and none identifiable as modality={modality!r} "
+        f"(no scan folder named {series_number}-*, no _{modality} file-name token): {listing}"
+    )
 
 
 class FLIP_BASE:
@@ -43,9 +120,7 @@ class FLIP_BASE:
             INFO,
             f"Fetching FLIP dataframe project_id={self.project_id} query={self.query}",
         )
-        self.dataframe = self.flip.get_dataframe(
-            project_id=self.project_id, query=self.query
-        )
+        self.dataframe = self.flip.get_dataframe(project_id=self.project_id, query=self.query)
         log(INFO, f"FLIP dataframe has {len(self.dataframe)} rows.")
 
     def get_case_list(
@@ -54,15 +129,9 @@ class FLIP_BASE:
         """Return train/val (or test) datalists of `{IMAGE_KEY, WHOLE_GLAND_KEY, PZ_TZ_KEY}` paths.
 
         Args:
-            modality: Which of the study's three scans (`t2w`, `adc`, `hbv`) to use as the image.
-                query.sql's `image_occurrence` rows carry all three modalities under one shared
-                `accession_id` per its own comment, and neither XNAT's scan resource filenames
-                (`input_<scan_id>.nii.gz`, numbered, not named) nor `flip.xnat`'s `XnatScan` carry a
-                series/modality tag. So there is currently no signal to pick "the t2w one" out of an
-                accession's pulled files — this raises when an accession pulls back more than one
-                `input_*.nii.gz`, rather than silently guessing. Needs either a modality column added
-                to the cohort query (resolved against XNAT scan metadata) or a `flip` capability to
-                fetch one named series.
+            modality: Which of the study's three scans (`t2w`, `adc`, `hbv`) to train on. query.sql
+                returns one row per series under one shared `accession_id`, so each study is pulled
+                once and `select_series` picks the requested scan out of the pulled files.
             val_split: Validation fraction (0-1).
             test_split: Test fraction (0-1).
             is_test: Return only the test split when True; otherwise return `(train, val)`.
@@ -71,9 +140,7 @@ class FLIP_BASE:
             The test datalist, or a `(train, val)` pair of datalists, depending on `is_test`.
         """
         if self.dataframe is None:
-            raise RuntimeError(
-                "FLIP_BASE.dataframe not populated; call fetch_dataframe() first."
-            )
+            raise RuntimeError("FLIP_BASE.dataframe not populated; call fetch_dataframe() first.")
 
         datalist = []
         # One row per modality per study (see query.sql); pull each study's files once.
@@ -89,18 +156,11 @@ class FLIP_BASE:
                 )
                 continue
 
-            images = list(Path(accession_folder).rglob("input_*.nii.gz"))
-            if not images:
+            try:
+                image_path = select_series(Path(accession_folder), modality)
+            except FileNotFoundError:
                 log(INFO, f"⚠️ No input_*.nii.gz for accession_id={accession_id}")
                 continue
-            if len(images) > 1:
-                raise RuntimeError(
-                    f"accession_id={accession_id} pulled {len(images)} input_*.nii.gz files "
-                    f"{[p.name for p in images]} — one per scan (t2w/adc/hbv). Selecting "
-                    f"modality={modality!r} among them isn't possible today; see get_case_list's "
-                    "docstring."
-                )
-            image_path = images[0]
             whole_gland_path = Path(str(image_path).replace("/input_", "/label_"))
             pz_tz_path = Path(str(image_path).replace("/input_", "/zonal_"))
             if not whole_gland_path.exists() or not pz_tz_path.exists():
@@ -147,6 +207,7 @@ def build_dataset(
     datalist: list[dict[str, Any]],
     transform: Compose | None,
     target_spacing: tuple[float, float, float] | None = None,
+    patch_iter: Callable | None = None,
 ) -> Dataset:
     """Wrap a `get_case_list` datalist in a `monai.data.Dataset`, reusing dataset.py's loader.
 
@@ -155,6 +216,10 @@ def build_dataset(
         transform: Applied to the `{"image", "mask", "accession_id"}` dict after loading — e.g.
             `preprocess.build_case_transform(...)`. None for the raw loaded case.
         target_spacing: Passed straight to `dataset.build_loader` — see its docstring.
+        patch_iter: A `monai.transforms.PatchIterd`; when given, `dataset[i]` is the LIST of that
+            case's patches (each carrying `coord`, `img_shape`, `mask_shape`), which
+            `monai.data.list_data_collate` flattens into one batch — the same tiling
+            `PicaiDataset.__getitem__` does for the standalone trainer.
 
     Returns:
         Dataset: `dataset[i]` runs `dataset.py`'s load/orient/resample/combine-masks logic, then
@@ -162,6 +227,20 @@ def build_dataset(
         file paths instead of a `site_dir` scan.
     """
     loader = build_loader(target_spacing)
+
+    def _patchify(data: dict[str, Any]) -> list[dict[str, Any]]:
+        img_shape, mask_shape = tuple(data[IMAGE_KEY].shape), tuple(data["mask"].shape)
+        return [
+            {
+                IMAGE_KEY: patch[IMAGE_KEY],
+                "mask": patch["mask"],
+                "accession_id": data["accession_id"],
+                "coord": coord,
+                "img_shape": img_shape,
+                "mask_shape": mask_shape,
+            }
+            for patch, coord in patch_iter(data)
+        ]
 
     def _load(item: dict[str, Any]) -> dict[str, Any]:
         image, mask = load_case(
@@ -178,7 +257,10 @@ def build_dataset(
             "accession_id": item["accession_id"],
         }
 
-    return Dataset(
-        data=datalist,
-        transform=Compose([_load, transform]) if transform is not None else _load,
-    )
+    steps: list[Callable] = [_load]
+    if transform is not None:
+        steps.append(transform)
+    if patch_iter is not None:
+        # Last, deliberately: Compose maps any later transform over a list output.
+        steps.append(_patchify)
+    return Dataset(data=datalist, transform=Compose(steps) if len(steps) > 1 else _load)

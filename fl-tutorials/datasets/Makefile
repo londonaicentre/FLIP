@@ -68,6 +68,7 @@ PROSTATE_UV := uv run --project prostate
 	verify-brain-mri-omop-tables reproduce-brain-mri-omop build-brain-mri-canonical \
 	verify-brain-mri-dicom seed-brain-mri \
 	download-prostate-data convert-prostate-to-dicom convert-prostate-to-nifti partition-prostate-data \
+	prepare-prostate-local-data upload-prostate-labels \
 	create-prostate-metadata-table fetch-prostate-metadata-table build-prostate-omop-tables \
 	verify-prostate-omop-tables reproduce-prostate-omop build-prostate-canonical package-prostate-dicom
 
@@ -182,6 +183,38 @@ convert-prostate-to-nifti:
 # PicaiSegDataset per simulated FL client. Needs convert-prostate-to-nifti to have run first.
 partition-prostate-data:
 	@$(PROSTATE_UV) python prostate/partition_by_center.py --data-dir $(DATA_DIR)/prostate
+
+# The simulator layout for 3d_prostate_segmentation (Flower): the XNAT export tree a pulled accession
+# has on the platform — scans/<n>-<Description>/ per series with the two enrichment masks beside each
+# image — plus dataframe.csv with query.sql's columns, written straight from the .mha download (no
+# dcm2niix, no Docker). Downloads PROSTATE_LOCAL_FOLDS first (fold 0 = 300 studies, 5 GB) and takes
+# the first NUM_CASES complete studies. PROSTATE_SITE_TREE=<dir> also lays the same files out per
+# contributing centre in the PicaiDataset layout `make plan` reads.
+PROSTATE_LOCAL_FOLDS ?= 0
+prepare-prostate-local-data:
+	@$(MAKE) --no-print-directory download-prostate-data FOLDS="$(PROSTATE_LOCAL_FOLDS)"
+	@PYTHONPATH=. $(PROSTATE_UV) python prostate/prepare_prostate_local_data.py --data-dir $(abspath $(DATA_DIR))/prostate \
+		$(if $(NUM_CASES),--num-cases $(NUM_CASES)) $(if $(PROSTATE_SITE_TREE),--site-tree $(abspath $(PROSTATE_SITE_TREE)))
+	@echo "✅ prostate simulator data ready — make -C fl-tutorials sim-tutorial TUTORIAL=3d_prostate_segmentation FL_BACKEND=flower"
+
+# Data enrichment for a real FLIP project: both picai_labels masks (whole gland -> label_*, zonal
+# PZ/TZ -> zonal_*) into every scan's NIFTI resource on every trust's XNAT — the same contract as
+# upload-spleen-labels above (XNAT_URLS / XNAT_CREDENTIALS_FILES / DRY_RUN / OVERWRITE / ALLOW_NO_OP /
+# REQUIRE_FULL_COVERAGE). The mapping is the identity: a study's DICOM accession IS its label stem.
+PROSTATE_LABELS_DIR ?= $(abspath $(DATA_DIR))/prostate/labels
+PROSTATE_ZONAL_LABELS_DIR ?= $(abspath $(DATA_DIR))/prostate/zonal_labels
+upload-prostate-labels:
+	@[ -n "$(FLIP_PROJECT_ID)" ] || (echo "❌  FLIP_PROJECT_ID is required. Usage: make upload-prostate-labels FLIP_PROJECT_ID=<uuid> [XNAT_URLS=\"http://host1 http://host2\"] [DRY_RUN=1]"; exit 1)
+	@uv run --no-project --with $(FLIP_UTILS_DIR) python prostate/upload_prostate_labels_to_xnat.py \
+		--flip-project-id $(FLIP_PROJECT_ID) \
+		--labels-dir $(PROSTATE_LABELS_DIR) \
+		--zonal-labels-dir $(PROSTATE_ZONAL_LABELS_DIR) \
+		$(foreach url,$(XNAT_URLS),--xnat-url $(url)) \
+		$(foreach cfg,$(XNAT_CREDENTIALS_FILES) $(XNAT_CREDENTIALS_FILE),--credentials-file $(cfg)) \
+		$(if $(OVERWRITE),--overwrite) \
+		$(if $(ALLOW_NO_OP),--allow-no-op) \
+		$(if $(REQUIRE_FULL_COVERAGE),--require-full-coverage) \
+		$(if $(DRY_RUN),--dry-run)
 
 # Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT, so the spleen
 # apps find a label_*.nii.gz beside each pulled input_*.nii.gz. Needs NUM_CASES=41 on the MSD

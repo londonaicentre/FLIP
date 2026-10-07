@@ -10,11 +10,4 @@
 # limitations under the License.
 #
 
-.flwr/
-.venv/
-uv.lock
-# `make plan` scratch: the fingerprint + plan the planner writes. The plan that ships is the copy
-# committed as app/nnUNetPlans_segmentation.json.
-configs/
-cache/
-*_bootstrap.csv
+"""3d-prostate-segmentation: A Flower / MONAI app for 3D prostate zonal segmentation on PI-CAI bpMRI."""

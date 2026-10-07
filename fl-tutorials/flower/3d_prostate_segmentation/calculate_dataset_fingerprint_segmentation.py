@@ -79,7 +79,7 @@ from nnunetv2.utilities.json_export import recursive_fix_for_json_export
 from torch.utils.data import ConcatDataset
 from tqdm import tqdm
 
-from dataset import PicaiDataset
+from app.dataset import PicaiDataset
 
 warnings.filterwarnings("ignore")
 
@@ -144,9 +144,7 @@ class DatasetFingerprintExtractor:
         assert images.ndim == 4
         assert segmentation.ndim == 4
 
-        assert not np.any(
-            np.isnan(segmentation)
-        ), "Segmentation contains NaN values. grrrr.... :-("
+        assert not np.any(np.isnan(segmentation)), "Segmentation contains NaN values. grrrr.... :-("
         assert not np.any(np.isnan(images)), "Images contains NaN values. grrrr.... :-("
 
         rs = np.random.default_rng(seed)
@@ -165,9 +163,7 @@ class DatasetFingerprintExtractor:
             # foreground_pixels. We could also just sample less in those cases but that would than cause these
             # training cases to be underrepresented
             intensities_per_channel.append(
-                rs.choice(foreground_pixels, num_samples, replace=True)
-                if num_fg > 0
-                else []
+                rs.choice(foreground_pixels, num_samples, replace=True) if num_fg > 0 else []
             )
             intensity_statistics_per_channel.append(
                 {
@@ -175,12 +171,8 @@ class DatasetFingerprintExtractor:
                     "median": np.median(foreground_pixels) if num_fg > 0 else np.nan,
                     "min": np.min(foreground_pixels) if num_fg > 0 else np.nan,
                     "max": np.max(foreground_pixels) if num_fg > 0 else np.nan,
-                    "percentile_99_5": (
-                        np.percentile(foreground_pixels, 99.5) if num_fg > 0 else np.nan
-                    ),
-                    "percentile_00_5": (
-                        np.percentile(foreground_pixels, 0.5) if num_fg > 0 else np.nan
-                    ),
+                    "percentile_99_5": (np.percentile(foreground_pixels, 99.5) if num_fg > 0 else np.nan),
+                    "percentile_00_5": (np.percentile(foreground_pixels, 0.5) if num_fg > 0 else np.nan),
                 }
             )
 
@@ -189,9 +181,7 @@ class DatasetFingerprintExtractor:
     @staticmethod
     def analyze_case(
         image: Any, mask: Any, num_samples: int = 10000
-    ) -> tuple[
-        tuple[int, ...], list[float], list[np.ndarray], list[dict[str, float]], float
-    ]:
+    ) -> tuple[tuple[int, ...], list[float], list[np.ndarray], list[dict[str, float]], float]:
         """Compute cropping/spacing/intensity statistics for a single case.
 
         Loads the image and mask data, reorders axes to (c, d, h, w), crops both
@@ -250,9 +240,7 @@ class DatasetFingerprintExtractor:
 
         shape_before_crop = images.shape[1:]
         shape_after_crop = data_cropped.shape[1:]
-        relative_size_after_cropping = np.prod(shape_after_crop) / np.prod(
-            shape_before_crop
-        )
+        relative_size_after_cropping = np.prod(shape_after_crop) / np.prod(shape_before_crop)
         return (
             shape_after_crop,
             spacings_for_nnunet,
@@ -289,15 +277,11 @@ class DatasetFingerprintExtractor:
 
         if not isfile(properties_file) or overwrite_existing:
             # determine how many foreground voxels we need to sample per training case
-            num_foreground_samples_per_case = int(
-                self.num_foreground_voxels_for_intensitystats // len(self.dataloader)
-            )
+            num_foreground_samples_per_case = int(self.num_foreground_voxels_for_intensitystats // len(self.dataloader))
 
             r = []
             with multiprocessing.get_context("spawn").Pool(self.num_processes) as p:
-                for i, (img, mask) in tqdm(
-                    enumerate(self.dataloader), total=len(self.dataloader)
-                ):
+                for i, (img, mask) in tqdm(enumerate(self.dataloader), total=len(self.dataloader)):
                     r.append(
                         p.starmap_async(
                             DatasetFingerprintExtractor.analyze_case,
@@ -308,9 +292,7 @@ class DatasetFingerprintExtractor:
                 # p is pretty nifti. If we kill workers they just respawn but don't do any work.
                 # So we need to store the original pool of workers.
                 workers = list(p._pool)
-                with tqdm(
-                    desc=None, total=len(self.dataloader), disable=self.verbose
-                ) as pbar:
+                with tqdm(desc=None, total=len(self.dataloader), disable=self.verbose) as pbar:
                     while len(remaining) > 0:
                         all_alive = all(j.is_alive() for j in workers)
                         if not all_alive:
@@ -334,8 +316,7 @@ class DatasetFingerprintExtractor:
             shapes_after_crop = [r[0] for r in results]
             spacings = [r[1] for r in results]
             foreground_intensities_per_channel = [
-                np.concatenate([r[2][i] for r in results])
-                for i in range(len(results[0][2]))
+                np.concatenate([r[2][i] for r in results]) for i in range(len(results[0][2]))
             ]
             # we drop this so that the json file is somewhat human readable
             # foreground_intensity_stats_by_case_and_modality = [r[3] for r in results]
@@ -349,12 +330,8 @@ class DatasetFingerprintExtractor:
                     "std": float(np.std(foreground_intensities_per_channel[i])),
                     "min": float(np.min(foreground_intensities_per_channel[i])),
                     "max": float(np.max(foreground_intensities_per_channel[i])),
-                    "percentile_99_5": float(
-                        np.percentile(foreground_intensities_per_channel[i], 99.5)
-                    ),
-                    "percentile_00_5": float(
-                        np.percentile(foreground_intensities_per_channel[i], 0.5)
-                    ),
+                    "percentile_99_5": float(np.percentile(foreground_intensities_per_channel[i], 99.5)),
+                    "percentile_00_5": float(np.percentile(foreground_intensities_per_channel[i], 0.5)),
                 }
 
             fingerprint = {
@@ -414,13 +391,9 @@ class ExperimentPlanner:
 
         # load dataset fingerprint
         if not isfile(join(self.fingerprint_dir, "dataset_fingerprint.json")):
-            raise RuntimeError(
-                "Fingerprint missing for this dataset. Please run data fingerprint extraction first"
-            )
+            raise RuntimeError("Fingerprint missing for this dataset. Please run data fingerprint extraction first")
 
-        self.dataset_fingerprint = load_json(
-            join(self.fingerprint_dir, "dataset_fingerprint.json")
-        )
+        self.dataset_fingerprint = load_json(join(self.fingerprint_dir, "dataset_fingerprint.json"))
 
         self.anisotropy_threshold = ANISO_THRESHOLD
 
@@ -471,20 +444,18 @@ class ExperimentPlanner:
 
         self.unet_vram_target_gb = gpu_memory_target_in_gb
 
-        self.lowres_creation_threshold = (
-            0.25  # if the patch size of fullres is less than 25% of the voxels in the
-        )
+        self.lowres_creation_threshold = 0.25  # if the patch size of fullres is less than 25% of the voxels in the
         # median shape then we need a lowres config as well
 
         self.preprocessor_name = preprocessor_name
         self.plans_identifier = plans_name
         self.overwrite_target_spacing = overwrite_target_spacing
-        assert overwrite_target_spacing is None or len(
-            overwrite_target_spacing
-        ), "if overwrite_target_spacing is used then three floats must be given (as list or tuple)"
-        assert overwrite_target_spacing is None or all(
-            isinstance(i, float) for i in overwrite_target_spacing
-        ), "if overwrite_target_spacing is used then three floats must be given (as list or tuple)"
+        assert overwrite_target_spacing is None or len(overwrite_target_spacing), (
+            "if overwrite_target_spacing is used then three floats must be given (as list or tuple)"
+        )
+        assert overwrite_target_spacing is None or all(isinstance(i, float) for i in overwrite_target_spacing), (
+            "if overwrite_target_spacing is used then three floats must be given (as list or tuple)"
+        )
 
         self.plans = None
 
@@ -523,9 +494,7 @@ class ExperimentPlanner:
         torch.set_num_threads(a)
         return ret
 
-    def determine_resampling(
-        self, *args, **kwargs
-    ) -> tuple[Any, dict[str, Any], Any, dict[str, Any]]:
+    def determine_resampling(self, *args, **kwargs) -> tuple[Any, dict[str, Any], Any, dict[str, Any]]:
         """
         returns what functions to use for resampling data and seg, respectively. Also returns kwargs
         resampling function must be callable(data, current_spacing, new_spacing, **kwargs)
@@ -554,9 +523,7 @@ class ExperimentPlanner:
             resampling_seg_kwargs,
         )
 
-    def determine_segmentation_softmax_export_fn(
-        self, *args, **kwargs
-    ) -> tuple[Any, dict[str, Any]]:
+    def determine_segmentation_softmax_export_fn(self, *args, **kwargs) -> tuple[Any, dict[str, Any]]:
         """
         function must be callable(data, new_shape, current_spacing, new_spacing, **kwargs). The new_shape should be
         used as target. current_spacing and new_spacing are merely there in case we want to use it somehow
@@ -606,21 +573,15 @@ class ExperimentPlanner:
         other_spacings = [target[i] for i in other_axes]
         other_sizes = [target_size[i] for i in other_axes]
 
-        has_aniso_spacing = target[worst_spacing_axis] > (
-            self.anisotropy_threshold * max(other_spacings)
-        )
-        has_aniso_voxels = target_size[
-            worst_spacing_axis
-        ] * self.anisotropy_threshold < min(other_sizes)
+        has_aniso_spacing = target[worst_spacing_axis] > (self.anisotropy_threshold * max(other_spacings))
+        has_aniso_voxels = target_size[worst_spacing_axis] * self.anisotropy_threshold < min(other_sizes)
 
         if has_aniso_spacing and has_aniso_voxels:
             spacings_of_that_axis = np.vstack(spacings)[:, worst_spacing_axis]
             target_spacing_of_that_axis = np.percentile(spacings_of_that_axis, 10)
             # don't let the spacing of that axis get higher than the other axes
             if target_spacing_of_that_axis < max(other_spacings):
-                target_spacing_of_that_axis = (
-                    max(max(other_spacings), target_spacing_of_that_axis) + 1e-5
-                )
+                target_spacing_of_that_axis = max(max(other_spacings), target_spacing_of_that_axis) + 1e-5
             target[worst_spacing_axis] = target_spacing_of_that_axis
         return target
 
@@ -644,19 +605,16 @@ class ExperimentPlanner:
         # modalities = self.dataset_json['channel_names'] if 'channel_names' in self.dataset_json.keys() else \
         #     self.dataset_json['modality']
         modalities = {0: "T2"}
-        normalization_schemes = [
-            get_normalization_scheme(m) for m in modalities.values()
-        ]
+        normalization_schemes = [get_normalization_scheme(m) for m in modalities.values()]
         if self.dataset_fingerprint["median_relative_size_after_cropping"] < (3 / 4.0):
             use_nonzero_mask_for_norm = [
-                i.leaves_pixels_outside_mask_at_zero_if_use_mask_for_norm_is_true
-                for i in normalization_schemes
+                i.leaves_pixels_outside_mask_at_zero_if_use_mask_for_norm_is_true for i in normalization_schemes
             ]
         else:
             use_nonzero_mask_for_norm = [False] * len(normalization_schemes)
-            assert all(
-                i in (True, False) for i in use_nonzero_mask_for_norm
-            ), "use_nonzero_mask_for_norm must be True or False and cannot be None"
+            assert all(i in (True, False) for i in use_nonzero_mask_for_norm), (
+                "use_nonzero_mask_for_norm must be True or False and cannot be None"
+            )
         normalization_schemes = [i.__name__ for i in normalization_schemes]
         return normalization_schemes, use_nonzero_mask_for_norm
 
@@ -681,9 +639,7 @@ class ExperimentPlanner:
         max_spacing_axis = np.argmax(target_spacing)
         remaining_axes = [i for i in list(range(3)) if i != max_spacing_axis]
         transpose_forward = [max_spacing_axis] + remaining_axes
-        transpose_backward = [
-            np.argwhere(np.array(transpose_forward) == i)[0][0] for i in range(3)
-        ]
+        transpose_backward = [np.argwhere(np.array(transpose_forward) == i)[0][0] for i in range(3)]
         return transpose_forward, transpose_backward
 
     def get_plans_for_configuration(
@@ -732,14 +688,9 @@ class ExperimentPlanner:
             Returns:
                 Tuple[int, ...]: Number of feature maps for each stage.
             """
-            return tuple(
-                min(max_num_features, self.unet_base_num_features * 2**i)
-                for i in range(num_stages)
-            )
+            return tuple(min(max_num_features, self.unet_base_num_features * 2**i) for i in range(num_stages))
 
-        def _keygen(
-            patch_size: tuple[int, ...], strides: tuple[tuple[int, ...], ...]
-        ) -> str:
+        def _keygen(patch_size: tuple[int, ...], strides: tuple[tuple[int, ...], ...]) -> str:
             """Build a cache key from a patch size and stride configuration.
 
             Args:
@@ -757,11 +708,7 @@ class ExperimentPlanner:
         #                          if 'channel_names' in self.dataset_json.keys()
         #                          else self.dataset_json['modality'].keys())
         num_input_channels = self.num_channels
-        max_num_features = (
-            self.unet_max_features_2d
-            if len(spacing) == 2
-            else self.unet_max_features_3d
-        )
+        max_num_features = self.unet_max_features_2d if len(spacing) == 2 else self.unet_max_features_3d
         unet_conv_op = convert_dim_to_conv_op(len(spacing))
 
         # print(spacing, median_shape, approximate_n_voxels_dataset)
@@ -775,13 +722,9 @@ class ExperimentPlanner:
         # ideal because large initial patch sizes increase computation time because more iterations in the while loop
         # further down may be required.
         if len(spacing) == 3:
-            initial_patch_size = [
-                round(i) for i in tmp * (256**3 / np.prod(tmp)) ** (1 / 3)
-            ]
+            initial_patch_size = [round(i) for i in tmp * (256**3 / np.prod(tmp)) ** (1 / 3)]
         elif len(spacing) == 2:
-            initial_patch_size = [
-                round(i) for i in tmp * (2048**2 / np.prod(tmp)) ** (1 / 2)
-            ]
+            initial_patch_size = [round(i) for i in tmp * (2048**2 / np.prod(tmp)) ** (1 / 2)]
         else:
             raise RuntimeError()
 
@@ -789,16 +732,9 @@ class ExperimentPlanner:
         # this is different from how nnU-Net v1 does it!
         # todo patch size can still get too large because we pad the patch size to a multiple of 2**n
         if self.resnet:
-            initial_patch_size = np.minimum(
-                initial_patch_size, median_shape[: len(spacing)]
-            )
+            initial_patch_size = np.minimum(initial_patch_size, median_shape[: len(spacing)])
         else:
-            initial_patch_size = np.array(
-                [
-                    min(i, j)
-                    for i, j in zip(initial_patch_size, median_shape[: len(spacing)])
-                ]
-            )
+            initial_patch_size = np.array([min(i, j) for i, j in zip(initial_patch_size, median_shape[: len(spacing)])])
 
         # use that to get the network topology. Note that this changes the patch_size depending on the number of
         # pooling operations (must be divisible by 2**num_pool in each axis)
@@ -808,32 +744,22 @@ class ExperimentPlanner:
             conv_kernel_sizes,
             patch_size,
             shape_must_be_divisible_by,
-        ) = get_pool_and_conv_props(
-            spacing, initial_patch_size, self.unet_featuremap_min_edge_length, 999999
-        )
+        ) = get_pool_and_conv_props(spacing, initial_patch_size, self.unet_featuremap_min_edge_length, 999999)
         num_stages = len(pool_op_kernel_sizes)
 
         norm = get_matching_instancenorm(unet_conv_op)
 
         if self.resnet:
             architecture_kwargs = {
-                "network_class_name": self.unet_class.__module__
-                + "."
-                + self.unet_class.__name__,
+                "network_class_name": self.unet_class.__module__ + "." + self.unet_class.__name__,
                 "arch_kwargs": {
                     "n_stages": num_stages,
-                    "features_per_stage": _features_per_stage(
-                        num_stages, max_num_features
-                    ),
+                    "features_per_stage": _features_per_stage(num_stages, max_num_features),
                     "conv_op": unet_conv_op.__module__ + "." + unet_conv_op.__name__,
                     "kernel_sizes": conv_kernel_sizes,
                     "strides": pool_op_kernel_sizes,
-                    "n_blocks_per_stage": self.unet_blocks_per_stage_encoder[
-                        :num_stages
-                    ],
-                    "n_conv_per_stage_decoder": self.unet_blocks_per_stage_decoder[
-                        : num_stages - 1
-                    ],
+                    "n_blocks_per_stage": self.unet_blocks_per_stage_encoder[:num_stages],
+                    "n_conv_per_stage_decoder": self.unet_blocks_per_stage_decoder[: num_stages - 1],
                     "conv_bias": True,
                     "norm_op": norm.__module__ + "." + norm.__name__,
                     "norm_op_kwargs": {"eps": 1e-5, "affine": True},
@@ -846,21 +772,15 @@ class ExperimentPlanner:
             }
         else:
             architecture_kwargs = {
-                "network_class_name": self.unet_class.__module__
-                + "."
-                + self.unet_class.__name__,
+                "network_class_name": self.unet_class.__module__ + "." + self.unet_class.__name__,
                 "arch_kwargs": {
                     "n_stages": num_stages,
-                    "features_per_stage": _features_per_stage(
-                        num_stages, max_num_features
-                    ),
+                    "features_per_stage": _features_per_stage(num_stages, max_num_features),
                     "conv_op": unet_conv_op.__module__ + "." + unet_conv_op.__name__,
                     "kernel_sizes": conv_kernel_sizes,
                     "strides": pool_op_kernel_sizes,
                     "n_conv_per_stage": self.unet_blocks_per_stage_encoder[:num_stages],
-                    "n_conv_per_stage_decoder": self.unet_blocks_per_stage_decoder[
-                        : num_stages - 1
-                    ],
+                    "n_conv_per_stage_decoder": self.unet_blocks_per_stage_decoder[: num_stages - 1],
                     "conv_bias": True,
                     "norm_op": norm.__module__ + "." + norm.__name__,
                     "norm_op_kwargs": {"eps": 1e-5, "affine": True},
@@ -888,20 +808,16 @@ class ExperimentPlanner:
 
         # how large is the reference for us here (batch size etc)?
         # adapt for our vram target
-        reference = (
-            self.unet_reference_val_2d
-            if len(spacing) == 2
-            else self.unet_reference_val_3d
-        ) * (self.unet_vram_target_gb / self.unet_reference_val_corresp_gb)
+        reference = (self.unet_reference_val_2d if len(spacing) == 2 else self.unet_reference_val_3d) * (
+            self.unet_vram_target_gb / self.unet_reference_val_corresp_gb
+        )
 
         # we enforce a batch size of at least two, reference values may have been computed for different batch sizes.
         # Correct for that in the while loop if statement
         while estimate > reference:
             # patch size seems to be too large, so we need to reduce it. Reduce the axis that currently violates the
             # aspect ratio the most (that is the largest relative to median shape)
-            axis_to_be_reduced = np.argsort(
-                [i / j for i, j in zip(patch_size, median_shape[: len(spacing)])]
-            )[-1]
+            axis_to_be_reduced = np.argsort([i / j for i, j in zip(patch_size, median_shape[: len(spacing)])])[-1]
 
             # we cannot simply reduce that axis by shape_must_be_divisible_by[axis_to_be_reduced] because this
             # may cause us to skip some valid sizes, for example shape_must_be_divisible_by is 64 for a shape of 256.
@@ -915,9 +831,7 @@ class ExperimentPlanner:
             _, _, _, _, shape_must_be_divisible_by = get_pool_and_conv_props(
                 spacing, tmp, self.unet_featuremap_min_edge_length, 999999
             )
-            patch_size[axis_to_be_reduced] -= shape_must_be_divisible_by[
-                axis_to_be_reduced
-            ]
+            patch_size[axis_to_be_reduced] -= shape_must_be_divisible_by[axis_to_be_reduced]
 
             # now recompute topology
             (
@@ -926,9 +840,7 @@ class ExperimentPlanner:
                 conv_kernel_sizes,
                 patch_size,
                 shape_must_be_divisible_by,
-            ) = get_pool_and_conv_props(
-                spacing, patch_size, self.unet_featuremap_min_edge_length, 999999
-            )
+            ) = get_pool_and_conv_props(spacing, patch_size, self.unet_featuremap_min_edge_length, 999999)
 
             num_stages = len(pool_op_kernel_sizes)
             if self.resnet:
@@ -937,15 +849,9 @@ class ExperimentPlanner:
                         "n_stages": num_stages,
                         "kernel_sizes": conv_kernel_sizes,
                         "strides": pool_op_kernel_sizes,
-                        "features_per_stage": _features_per_stage(
-                            num_stages, max_num_features
-                        ),
-                        "n_blocks_per_stage": self.unet_blocks_per_stage_encoder[
-                            :num_stages
-                        ],
-                        "n_conv_per_stage_decoder": self.unet_blocks_per_stage_decoder[
-                            : num_stages - 1
-                        ],
+                        "features_per_stage": _features_per_stage(num_stages, max_num_features),
+                        "n_blocks_per_stage": self.unet_blocks_per_stage_encoder[:num_stages],
+                        "n_conv_per_stage_decoder": self.unet_blocks_per_stage_decoder[: num_stages - 1],
                     }
                 )
             else:
@@ -954,15 +860,9 @@ class ExperimentPlanner:
                         "n_stages": num_stages,
                         "kernel_sizes": conv_kernel_sizes,
                         "strides": pool_op_kernel_sizes,
-                        "features_per_stage": _features_per_stage(
-                            num_stages, max_num_features
-                        ),
-                        "n_conv_per_stage": self.unet_blocks_per_stage_encoder[
-                            :num_stages
-                        ],
-                        "n_conv_per_stage_decoder": self.unet_blocks_per_stage_decoder[
-                            : num_stages - 1
-                        ],
+                        "features_per_stage": _features_per_stage(num_stages, max_num_features),
+                        "n_conv_per_stage": self.unet_blocks_per_stage_encoder[:num_stages],
+                        "n_conv_per_stage_decoder": self.unet_blocks_per_stage_decoder[: num_stages - 1],
                     }
                 )
             if _keygen(patch_size, pool_op_kernel_sizes) in _cache.keys():
@@ -980,23 +880,15 @@ class ExperimentPlanner:
 
         # alright now let's determine the batch size. This will give self.unet_min_batch_size if the while loop was
         # executed. If not, additional vram headroom is used to increase batch size
-        ref_bs = (
-            self.unet_reference_val_corresp_bs_2d
-            if len(spacing) == 2
-            else self.unet_reference_val_corresp_bs_3d
-        )
+        ref_bs = self.unet_reference_val_corresp_bs_2d if len(spacing) == 2 else self.unet_reference_val_corresp_bs_3d
         batch_size = round((reference / estimate) * ref_bs)
 
         # we need to cap the batch size to cover at most 5% of the entire dataset. Overfitting precaution. We cannot
         # go smaller than self.unet_min_batch_size though
         bs_corresponding_to_5_percent = round(
-            approximate_n_voxels_dataset
-            * self.max_dataset_covered
-            / np.prod(patch_size, dtype=np.float64)
+            approximate_n_voxels_dataset * self.max_dataset_covered / np.prod(patch_size, dtype=np.float64)
         )
-        batch_size = max(
-            min(batch_size, bs_corresponding_to_5_percent), self.unet_min_batch_size
-        )
+        batch_size = max(min(batch_size, bs_corresponding_to_5_percent), self.unet_min_batch_size)
 
         (
             resampling_data,
@@ -1004,9 +896,7 @@ class ExperimentPlanner:
             resampling_seg,
             resampling_seg_kwargs,
         ) = self.determine_resampling()
-        resampling_softmax, resampling_softmax_kwargs = (
-            self.determine_segmentation_softmax_export_fn()
-        )
+        resampling_softmax, resampling_softmax_kwargs = self.determine_segmentation_softmax_export_fn()
 
         normalization_schemes, mask_is_used_for_norm = (
             self.determine_normalization_scheme_and_whether_mask_is_used_for_norm()
@@ -1067,8 +957,7 @@ class ExperimentPlanner:
         #                                      self.dataset_json['numTraining'])
 
         approximate_n_voxels_dataset = float(
-            np.prod(new_median_shape_transposed, dtype=np.float64)
-            * len(self.dataloader)
+            np.prod(new_median_shape_transposed, dtype=np.float64) * len(self.dataloader)
         )
         # only run 3d if this is a 3d dataset
         if new_median_shape_transposed[0] != 1:
@@ -1087,62 +976,40 @@ class ExperimentPlanner:
             plan_3d_lowres = None
             lowres_spacing = deepcopy(plan_3d_fullres["spacing"])
 
-            spacing_increase_factor = (
-                1.03  # used to be 1.01 but that is slow with new GPU memory estimation!
-            )
-            while (
-                num_voxels_in_patch / median_num_voxels < self.lowres_creation_threshold
-            ):
+            spacing_increase_factor = 1.03  # used to be 1.01 but that is slow with new GPU memory estimation!
+            while num_voxels_in_patch / median_num_voxels < self.lowres_creation_threshold:
                 # we incrementally increase the target spacing. We start with the anisotropic axis/axes until it/they
                 # is/are similar (factor 2) to the other ax(i/e)s.
                 max_spacing = max(lowres_spacing)
                 if np.any((max_spacing / lowres_spacing) > 2):
-                    lowres_spacing[
-                        (max_spacing / lowres_spacing) > 2
-                    ] *= spacing_increase_factor
+                    lowres_spacing[(max_spacing / lowres_spacing) > 2] *= spacing_increase_factor
                 else:
                     lowres_spacing *= spacing_increase_factor
                 median_num_voxels = np.prod(
-                    plan_3d_fullres["spacing"]
-                    / lowres_spacing
-                    * new_median_shape_transposed,
+                    plan_3d_fullres["spacing"] / lowres_spacing * new_median_shape_transposed,
                     dtype=np.float64,
                 )
 
                 plan_3d_lowres = self.get_plans_for_configuration(
                     lowres_spacing,
                     tuple(
-                        [
-                            round(i)
-                            for i in plan_3d_fullres["spacing"]
-                            / lowres_spacing
-                            * new_median_shape_transposed
-                        ]
+                        [round(i) for i in plan_3d_fullres["spacing"] / lowres_spacing * new_median_shape_transposed]
                     ),
                     self.generate_data_identifier("3d_lowres"),
                     float(np.prod(median_num_voxels) * len(self.dataloader)),
                     _tmp,
                 )
-                num_voxels_in_patch = np.prod(
-                    plan_3d_lowres["patch_size"], dtype=np.int64
-                )
-                current_median_shape = (
-                    plan_3d_fullres["spacing"] / lowres_spacing * new_median_shape_transposed
-                )
+                num_voxels_in_patch = np.prod(plan_3d_lowres["patch_size"], dtype=np.int64)
+                current_median_shape = plan_3d_fullres["spacing"] / lowres_spacing * new_median_shape_transposed
                 print(
                     f"Attempting to find 3d_lowres config. "
                     f"\nCurrent spacing: {lowres_spacing}. "
                     f"\nCurrent patch size: {plan_3d_lowres['patch_size']}. "
                     f"\nCurrent median shape: {current_median_shape}"
                 )
-            if (
-                np.prod(new_median_shape_transposed, dtype=np.float64)
-                / median_num_voxels
-                < 2
-            ):
+            if np.prod(new_median_shape_transposed, dtype=np.float64) / median_num_voxels < 2:
                 rounded_lowres_shape = [
-                    round(i)
-                    for i in plan_3d_fullres["spacing"] / lowres_spacing * new_median_shape_transposed
+                    round(i) for i in plan_3d_fullres["spacing"] / lowres_spacing * new_median_shape_transposed
                 ]
                 print(
                     f"Dropping 3d_lowres config because the image size difference to 3d_fullres is too small. "
@@ -1174,12 +1041,8 @@ class ExperimentPlanner:
         print()
 
         # median spacing and shape, just for reference when printing the plans
-        median_spacing = np.median(self.dataset_fingerprint["spacings"], 0)[
-            transpose_forward
-        ]
-        median_shape = np.median(self.dataset_fingerprint["shapes_after_crop"], 0)[
-            transpose_forward
-        ]
+        median_spacing = np.median(self.dataset_fingerprint["spacings"], 0)[transpose_forward]
+        median_shape = np.median(self.dataset_fingerprint["shapes_after_crop"], 0)[transpose_forward]
 
         plans = {
             "plans_name": self.plans_identifier,
@@ -1198,9 +1061,7 @@ class ExperimentPlanner:
         if plan_3d_lowres is not None:
             plans["configurations"]["3d_lowres"] = plan_3d_lowres
             if plan_3d_fullres is not None:
-                plans["configurations"]["3d_lowres"][
-                    "next_stage"
-                ] = "3d_cascade_fullres"
+                plans["configurations"]["3d_lowres"]["next_stage"] = "3d_cascade_fullres"
             print("3D lowres U-Net configuration:")
             print(plan_3d_lowres)
             print()
@@ -1244,9 +1105,7 @@ class ExperimentPlanner:
             plans["configurations"].update(old_configurations)
 
         save_json(plans, plans_file, sort_keys=False)
-        print(
-            f"Plans were saved to {join(self.output_folder, self.plans_identifier + '.json')}"
-        )
+        print(f"Plans were saved to {join(self.output_folder, self.plans_identifier + '.json')}")
 
     def generate_data_identifier(self, configuration_name: str) -> str:
         """
@@ -1334,9 +1193,7 @@ def run_fingerprint_extractor() -> None:
         site_datasets.append(site_dataset)
 
     picai_dataset = ConcatDataset(site_datasets)
-    print(
-        f"Fingerprinting {len(picai_dataset)} studies across {len(site_datasets)} site(s)"
-    )
+    print(f"Fingerprinting {len(picai_dataset)} studies across {len(site_datasets)} site(s)")
 
     dataloader = monai.data.DataLoader(
         picai_dataset,

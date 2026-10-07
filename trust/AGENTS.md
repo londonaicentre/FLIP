@@ -217,8 +217,9 @@ both agree before packaging). `prostate_project` (PI-CAI fold 0, 300 bpMRI studi
 `source_trust` — ZGT → 1, PCNN → 2, RUMC → 3 waiting for a third trust — in
 `fl-tutorials/datasets/prostate/`) publishes both halves but is not in the default `PROJECTS`: seed it
 with `make -C trust seed-trusts PROJECTS=prostate_project`; its masks reach a project via
-`upload_prostate_labels_to_xnat.py`, and `make -C flip-api e2e_smoke_prostate` drives cohort → pull →
-enrichment (`--stop-after-enrichment`: no prostate training app exists yet). The FL simulator (`make -C fl-tutorials run-tutorial`) is a separate
+`upload_prostate_labels_to_xnat.py` (`make -C fl-tutorials upload-prostate-labels`), and
+`make -C flip-api e2e_smoke_prostate FL_BACKEND=flower` drives cohort → pull → enrichment → training of the
+`flower/3d_prostate_segmentation` app (`EXTRA_ARGS="--stop-after-enrichment"` checks the data path alone). The FL simulator (`make -C fl-tutorials run-tutorial`) is a separate
 path: LOCAL_DEV reads `fl-tutorials/data/` straight from disk and touches no trust service.
 
 **One copy of every artefact; a data version is a git tag.** `aicentreflip/trust-data` holds each

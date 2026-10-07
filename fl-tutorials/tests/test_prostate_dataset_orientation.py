@@ -40,7 +40,7 @@ import pytest
 from nibabel.orientations import apply_orientation, inv_ornt_aff
 from tutorial_apps import TUTORIALS_ROOT
 
-DATASET_PY = TUTORIALS_ROOT / "flower" / "3d_prostate_segmentation" / "dataset.py"
+DATASET_PY = TUTORIALS_ROOT / "flower" / "3d_prostate_segmentation" / "app" / "dataset.py"
 
 PATIENT, STUDY, MODALITY = "10000", "1000000", "t2w"
 ACCESSION = f"{PATIENT}_{STUDY}"
@@ -56,7 +56,7 @@ DCM2NIIX_ROW_FLIP = np.array([[0, 1], [1, -1], [2, 1]], dtype=float)
 
 @pytest.fixture(scope="module")
 def dataset_module() -> ModuleType:
-    """``dataset.py`` loaded from its path — the tutorial is loose scripts, not a package."""
+    """``app/dataset.py`` loaded from its path — third-party imports only, so no ``app`` package is needed."""
     spec = importlib.util.spec_from_file_location("prostate_tutorial_dataset", DATASET_PY)
     assert spec is not None
     assert spec.loader is not None
@@ -182,9 +182,7 @@ def test_target_spacing_resamples_image_and_mask_together(dataset_module: Module
     assert resampled["image"].shape[1:] == resampled["mask"].shape[1:], "mask must follow the image's new grid"
 
     # fingerprint=True skips .as_tensor(), so the resampled spacing can be read straight off the header.
-    pair = dataset_module.PicaiDataset(
-        site_dir, modality=MODALITY, fingerprint=True, target_spacing=target_spacing
-    )[0]
+    pair = dataset_module.PicaiDataset(site_dir, modality=MODALITY, fingerprint=True, target_spacing=target_spacing)[0]
     assert pair["image"].header.get_zooms() == pytest.approx((1.0, *target_spacing))
 
 

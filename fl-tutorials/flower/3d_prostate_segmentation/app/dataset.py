@@ -69,9 +69,7 @@ def build_loader(
         mt.Orientationd(keys=keys, axcodes=AXCODES, labels=None),
     ]
     if target_spacing is not None:
-        steps.append(
-            mt.Spacingd(keys=[IMAGE_KEY], pixdim=target_spacing, mode="nearest")
-        )
+        steps.append(mt.Spacingd(keys=[IMAGE_KEY], pixdim=target_spacing, mode="nearest"))
     steps.append(
         mt.ResampleToMatchd(
             keys=[WHOLE_GLAND_KEY, PZ_TZ_KEY],
@@ -83,9 +81,7 @@ def build_loader(
     return mt.Compose(steps)
 
 
-def load_case(
-    paths: dict[str, Path], loader: mt.Compose
-) -> tuple[MetaTensor, torch.Tensor]:
+def load_case(paths: dict[str, Path], loader: mt.Compose) -> tuple[MetaTensor, torch.Tensor]:
     """Load+orient+resample one case's image and two masks, and combine the masks into one tensor.
 
     Split out of ``PicaiDataset.__getitem__`` so a FLIP-pulled (per-accession, not per-site-folder)
@@ -179,9 +175,7 @@ class PicaiDataset(monai.data.Dataset):
         return mask
 
     @staticmethod
-    def as_fingerprint_pair(
-        image: MetaTensor, mask: torch.Tensor
-    ) -> dict[str, nib.Nifti1Image]:
+    def as_fingerprint_pair(image: MetaTensor, mask: torch.Tensor) -> dict[str, nib.Nifti1Image]:
         """Wrap a loaded scan and its combined mask as the NIfTI pair the fingerprint wants.
 
         Both arrays carry a leading channel axis, so the header gets a matching
@@ -239,9 +233,7 @@ class PicaiDataset(monai.data.Dataset):
         if self.patch_iter is not None:
             # The patch grid is lossy on its own: inference_func has to put the patches back
             # together before scoring, or every metric is per-patch instead of per-volume.
-            img_shape, mask_shape = tuple(data[IMAGE_KEY].shape), tuple(
-                data["mask"].shape
-            )
+            img_shape, mask_shape = tuple(data[IMAGE_KEY].shape), tuple(data["mask"].shape)
             return [
                 {
                     IMAGE_KEY: patch[IMAGE_KEY],

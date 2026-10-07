@@ -225,19 +225,19 @@ e2e_smoke_ehr: TARGET_ARGS := --no-imaging
 e2e_smoke_ehr: e2e_smoke
 
 # Prostate variant: the PI-CAI cohort (prostate_project, seeded into the trusts by
-# `make -C trust seed PROJECTS=prostate_project`), with both picai_labels masks uploaded into
-# every trust's XNAT as the enrichment step. No prostate training app exists yet, so this
-# stops after the enrichment (--stop-after-enrichment: no model, no training) — it verifies
-# the data path end to end: cohort → approval → pull → labels beside every converted image.
-# Prereqs: `make -C fl-tutorials download-prostate-data` (labels + zonal labels; the images
-# are only needed to build the dataset) and XNAT_USER / XNAT_PASS.
+# `make -C trust seed-trusts PROJECTS=prostate_project`), with both picai_labels masks uploaded into
+# every trust's XNAT as the enrichment step, then the Flower 3d_prostate_segmentation app trained
+# on the T2W series. Prereqs: `make -C fl-tutorials download-prostate-data FOLDS=0` (the labels +
+# zonal labels; the images are only needed to build the dataset) and XNAT_USER / XNAT_PASS.
+# Pair with FL_BACKEND=flower. EXTRA_ARGS="--stop-after-enrichment" verifies the data path alone.
 PROSTATE_ENRICHMENT_CWD := ../fl-tutorials/datasets/prostate
 PROSTATE_XNAT_URLS ?= $(SPLEEN_XNAT_URLS)
 PROSTATE_LABELS_DIR ?= $(abspath ../fl-tutorials/data/prostate/labels)
 PROSTATE_ZONAL_LABELS_DIR ?= $(abspath ../fl-tutorials/data/prostate/zonal_labels)
 PROSTATE_ENRICHMENT_CMD := uv run --no-project --with $(abspath ../flip-utils) python upload_prostate_labels_to_xnat.py --flip-project-id $$FLIP_PROJECT_ID --labels-dir $(PROSTATE_LABELS_DIR) --zonal-labels-dir $(PROSTATE_ZONAL_LABELS_DIR) $(foreach url,$(PROSTATE_XNAT_URLS),--xnat-url $(url))
-PROSTATE_ENRICHMENT_ARGS := --data-enrichment-cwd $(PROSTATE_ENRICHMENT_CWD) --data-enrichment-cmd '$(PROSTATE_ENRICHMENT_CMD)' --stop-after-enrichment
+PROSTATE_ENRICHMENT_ARGS := --data-enrichment-cwd $(PROSTATE_ENRICHMENT_CWD) --data-enrichment-cmd '$(PROSTATE_ENRICHMENT_CMD)'
 
+e2e_smoke_prostate: MODEL_FILES_DIR := ../fl-tutorials/flower/3d_prostate_segmentation/app
 e2e_smoke_prostate: QUERY_FILE := ../fl-tutorials/flower/3d_prostate_segmentation/query.sql
 e2e_smoke_prostate: ENRICHMENT_ARGS := $(PROSTATE_ENRICHMENT_ARGS)
 e2e_smoke_prostate: e2e_smoke

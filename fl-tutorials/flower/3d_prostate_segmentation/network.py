@@ -9,6 +9,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# REFERENCE ONLY — nnU-Net's own network construction, as nnunet_train.py / nnunet_infer.py use it. The
+# app builds MONAI's DynUNet from the same plan instead (app/models.py), because the FL images carry MONAI
+# but not nnunetv2.
 # Copied from
 # https://github.com/yoviny/MambaX-Net/blob/main/mambax_net/network/nnunet_arch.py,
 # The code is derived from nnU-Net

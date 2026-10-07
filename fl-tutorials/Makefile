@@ -35,6 +35,7 @@ DATASET_TARGETS := download-xray-data download-weights \
 	verify-brain-mri-omop-tables reproduce-brain-mri-omop build-brain-mri-canonical \
 	verify-brain-mri-dicom seed-brain-mri \
 	download-prostate-data convert-prostate-to-dicom convert-prostate-to-nifti partition-prostate-data \
+	prepare-prostate-local-data upload-prostate-labels \
 	create-prostate-metadata-table fetch-prostate-metadata-table build-prostate-omop-tables \
 	verify-prostate-omop-tables reproduce-prostate-omop build-prostate-canonical package-prostate-dicom
 

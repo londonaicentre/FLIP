@@ -39,33 +39,18 @@ make -C fl-tutorials download-prostate-data            # PI-CAI (FOLDS="0 1 2 3 
 make -C fl-tutorials convert-prostate-to-dicom
 make -C fl-tutorials convert-prostate-to-nifti
 make -C fl-tutorials partition-prostate-data
+make -C fl-tutorials prepare-prostate-local-data NUM_CASES=12   # simulator layout (fold 0, no Docker) for 3d_prostate_segmentation
+make -C fl-tutorials upload-prostate-labels FLIP_PROJECT_ID=<uuid> XNAT_URLS="…"   # data enrichment: both masks into XNAT
 ```
 
 The prostate tutorial needs one more step after partitioning: a **dataset fingerprint** (per-case
 voxel spacing, shape after cropping to the non-zero region, foreground intensity statistics) and
 the **nnU-Net experiment plan** derived from it (target spacing, patch and batch size,
-normalization, U-Net topology). That one is not a Makefile target — it runs from the tutorial's
-own uv project, because it reads the partitioned data through `PicaiDataset`:
-
-```bash
-cd fl-tutorials/flower/3d_prostate_segmentation
-uv sync
-
-# one site
-uv run python calculate_dataset_fingerprint_segmentation.py \
-  --site-dir ../../data/prostate/sites/RUMC \
-  --output-dir configs --modality t2w --num-processes 8 --gpu-memory-GB 8
-
-# or pool several — one fingerprint and one plan over all their studies
-uv run python calculate_dataset_fingerprint_segmentation.py \
-  --site-dir ../../data/prostate/sites/{ZGT,RUMC,PCNN} \
-  --output-dir configs --modality t2w --num-processes 8 --gpu-memory-GB 8
-```
-
-Writes `dataset_fingerprint_segmentation.json` + `nnUNetPlans_segmentation.json` into
-`--output-dir`. Planning per site yields *different architectures*, so pass every participating
-site in one run and give all clients the same plan — see
-[`prostate/README.md`](prostate/README.md#nnu-net-plans) for the measured per-center figures.
+normalisation, U-Net topology). `make plan` in the tutorial directory runs the planner pooled over
+every site and copies the plan into `app/nnUNetPlans_segmentation.json`, from which the app builds
+its network — see
+[`../flower/3d_prostate_segmentation/README.md`](../flower/3d_prostate_segmentation/README.md#nnu-net-plans)
+for why the plan is pooled and the measured per-center figures.
 
 | Dataset | Source | Output under `fl-tutorials/data/` | Consumed by |
 | --- | --- | --- | --- |
@@ -135,7 +120,7 @@ script imports, like the others):
 
 [`prostate/`](prostate/) owns the prostate download/preprocessing scripts. The dataset class that
 reads this data lives with the tutorial instead, at
-`../flower/3d_prostate_segmentation/dataset.py`, as does the nnU-Net planning step above:
+`../flower/3d_prostate_segmentation/app/dataset.py`, as does the nnU-Net planning step above:
 
 - `download_data.py` — fetch the PI-CAI bpMRI images + whole-gland/zonal labels + clinical
   marksheet from Zenodo/GitHub (`FOLDS` narrows which of the 5 ~5GB fold zips to fetch).

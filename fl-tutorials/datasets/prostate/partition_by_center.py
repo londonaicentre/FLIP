@@ -63,9 +63,11 @@ def partition(data_dir: Path) -> None:
         patient_id, study_id, center = row["patient_id"], row["study_id"], row["center"]
         label_path = labels_dir / f"{patient_id}_{study_id}.nii.gz"
         zonal_label_path = zonal_labels_dir / f"{patient_id}_{study_id}.nii.gz"
-        scans = sorted((nifti_dir / patient_id).glob(f"{patient_id}_{study_id}_*.nii.gz")) if (
-            nifti_dir / patient_id
-        ).is_dir() else []
+        scans = (
+            sorted((nifti_dir / patient_id).glob(f"{patient_id}_{study_id}_*.nii.gz"))
+            if (nifti_dir / patient_id).is_dir()
+            else []
+        )
         if not scans or not label_path.exists() or not zonal_label_path.exists():
             skipped += 1
             continue

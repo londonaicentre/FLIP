@@ -1,0 +1,27 @@
+# Per-tutorial run-config overrides for the prostate-segmentation training app.
+#
+# The fl-api reads this file at job-submit time and merges it into the Flower --run-config TOML it
+# passes to `flwr run`. Each key here must already be declared in the standard template's
+# [tool.flwr.app.config] (fl-apps/flower/standard/pyproject.toml) — Flower rejects --run-config
+# overrides for undeclared keys, which is why the prostate-specific settings (which series to train
+# on, train_seg's conf) live in config.json instead.
+#
+# Tuning rationale:
+#  - learning-rate = 0.01, batch-size = 1: nnU-Net's defaults, as nnunet_train.py ran them. A batch
+#    is one VOLUME's worth of patches (the whole wrap-mode grid, ~18 patches of the plan's patch size
+#    per study), not one patch.
+#  - num-server-rounds = 20, local-epochs = 5: 100 passes per client; the polynomial LR decay is
+#    stretched over all of them (task.build_scheduler), so the schedule is the same whatever the
+#    rounds/epochs split. Start here and tune from the first platform run.
+#  - best-model-metric = "test_dice_mean": the mean of the three per-volume test Dice scores
+#    (whole gland / PZ / TZ) client_app.py reports each round; selection makes the evaluate phase run
+#    every round instead of only the last.
+
+num-server-rounds = 20
+local-epochs = 5
+learning-rate = 0.01
+batch-size = 1
+val-split = 0.2
+test-split = 0.2
+best-model-metric = "test_dice_mean"
+best-model-metric-minimize = false

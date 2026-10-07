@@ -14,13 +14,21 @@
 # (https://github.com/DIAGNijmegen/picai_labels). Each fold zip is ~5GB; FOLDS
 # defaults to all 5 folds. Already-downloaded folds/labels (marked by a .done
 # marker written after a successful extract) are skipped on re-run.
+#
+# The download itself is resumable and bounded: a 5 GB transfer over a link that goes quiet
+# must neither restart from zero nor wait forever. urllib.request.urlretrieve did both — no
+# timeout, no Range request — and a fold once hung a few KB short of complete on an idle
+# socket. The fetch below streams into a `.part` file, resumes it with a Range header, gives up
+# on a socket that sends nothing for READ_TIMEOUT seconds, retries with a pause, and refuses
+# to call a file done unless its size matches what the server announced.
 
 import os
 import shutil
-import urllib.request
+import time
 import zipfile
 from pathlib import Path
 
+import requests
 from tqdm import tqdm
 
 ZENODO_FOLD_URL = "https://zenodo.org/records/6624726/files/picai_public_images_fold{fold}.zip?download=1"
@@ -30,15 +38,75 @@ ZONAL_LABELS_SUBDIR = "picai_labels-main/anatomical_delineations/zonal_pz_tz/AI/
 CLINICAL_INFO_FILE = "picai_labels-main/clinical_information/marksheet.csv"
 
 
+CONNECT_TIMEOUT = 30
+READ_TIMEOUT = 120  # seconds with no bytes before the attempt is abandoned and resumed
+ATTEMPTS = 10
+RETRY_PAUSE = 15
+CHUNK = 1 << 20
+
+
+class IncompleteDownload(RuntimeError):
+    """The transfer ended before the announced size was reached."""
+
+
+def _announced_total(response: requests.Response, offset: int) -> int | None:
+    """The full file size the server announced, or None when it did not (chunked/generated bodies)."""
+    content_range = response.headers.get("Content-Range", "")
+    if "/" in content_range:
+        total = content_range.rsplit("/", 1)[1].strip()
+        return int(total) if total.isdigit() else None
+    length = response.headers.get("Content-Length")
+    return offset + int(length) if length and length.isdigit() else None
+
+
+def _fetch_once(session: requests.Session, url: str, part: Path, desc: str) -> None:
+    """One attempt: resume `part` from its current size, stream the rest, verify the size."""
+    have = part.stat().st_size if part.exists() else 0
+    headers = {"Range": f"bytes={have}-"} if have else {}
+    with session.get(url, stream=True, headers=headers, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT)) as response:
+        if have and response.status_code == 416:
+            # Nothing past `have`: the part is complete if the server's total agrees.
+            total = _announced_total(response, 0)
+            if total is not None and total == have:
+                return
+            part.unlink()
+            raise IncompleteDownload(f"{desc}: server has {total} bytes, {have} on disk — restarting")
+        if have and response.status_code == 200:
+            # The server ignored the Range header: it is sending the whole file again.
+            part.unlink()
+            have = 0
+        response.raise_for_status()
+        total = _announced_total(response, have)
+        with (
+            open(part, "ab") as handle,
+            tqdm(total=total, initial=have, unit="B", unit_scale=True, unit_divisor=1024, desc=desc) as bar,
+        ):
+            for chunk in response.iter_content(chunk_size=CHUNK):
+                handle.write(chunk)
+                bar.update(len(chunk))
+    size = part.stat().st_size
+    if total is not None and size != total:
+        raise IncompleteDownload(f"{desc}: {size} of {total} bytes")
+
+
 def download(url: str, dest: Path) -> None:
-    with tqdm(unit="B", unit_scale=True, unit_divisor=1024, desc=dest.name) as bar:
+    """Fetch `url` to `dest`, resuming a previous partial transfer and retrying a stalled one.
 
-        def report(block_num: int, block_size: int, total_size: int) -> None:
-            if bar.total is None and total_size > 0:
-                bar.total = total_size
-            bar.update(block_size)
-
-        urllib.request.urlretrieve(url, dest, reporthook=report)
+    The bytes land in `<dest>.part` and are renamed into place only once the whole file is
+    there, so a `dest` that exists is always complete.
+    """
+    part = dest.with_name(dest.name + ".part")
+    session = requests.Session()
+    for attempt in range(1, ATTEMPTS + 1):
+        try:
+            _fetch_once(session, url, part, dest.name)
+            part.replace(dest)
+            return
+        except (requests.RequestException, IncompleteDownload) as err:
+            if attempt == ATTEMPTS:
+                raise
+            print(f"⚠️  {err} — retrying in {RETRY_PAUSE}s (attempt {attempt}/{ATTEMPTS})", flush=True)
+            time.sleep(RETRY_PAUSE)
 
 
 def extract(zip_path: Path, dest_dir: Path) -> None:
