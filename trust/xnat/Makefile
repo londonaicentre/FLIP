@@ -649,6 +649,9 @@ xnat-reset:
 # into an aborted bring-up (the dcm2niix step never ran). pipefail is kept — on the host, via
 # bash — so a failing configure script still fails the target. The log path is anchored on
 # $(XNAT_PATH) (this directory), not the caller's cwd: the test harness runs the recipe from elsewhere.
+# The `rm -f` first: a log left by a pre-hardening deploy (root-running xnat-web) is root-owned, and
+# `tee` cannot truncate it — it still streams but exits non-zero, which under pipefail would report a
+# completed configure as a failed bring-up. The developer owns the dir, so unlinking it is allowed.
 xnat-configure:
 	@[ -n "$(XNAT_PROJECT)" ] || (echo "❌ XNAT_PROJECT is required"; exit 1)
 	@echo "⏳ Waiting for $(XNAT_PROJECT)_xnat-web container to be ready..."
@@ -659,6 +662,7 @@ xnat-configure:
 	CONTAINER=$$($(call xnat_web_container_ids,$(XNAT_PROJECT))); \
 	[ -n "$$CONTAINER" ] || { echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container not found at configure time"; exit 1; }; \
 	$(call require_one_xnat_web_container,$(XNAT_PROJECT)); \
+	rm -f $(XNAT_PATH)/xnat/config/configure-xnat-$(XNAT_PROJECT).log $(XNAT_PATH)/xnat/config/configure-dcm2niix-$(XNAT_PROJECT).log; \
 	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-xnat.sh' 2>&1 | tee $(XNAT_PATH)/xnat/config/configure-xnat-$(XNAT_PROJECT).log" && \
 	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-dcm2niix.sh' 2>&1 | tee $(XNAT_PATH)/xnat/config/configure-dcm2niix-$(XNAT_PROJECT).log"
 
