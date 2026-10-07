@@ -766,7 +766,8 @@ def test_a_wrong_password_fails_well_short_of_the_xnat_lockout(tmp_path):
 def test_identical_passwords_are_probed_once_per_round(tmp_path):
     """The dev kits set both passwords alike; a second probe of the same password is a wasted failed login."""
     code, _, output = run_configure(
-        tmp_path, {"WRONG_LOGINS": "initial", "XNAT_ADMIN_PASSWORD": "initial"}  # pragma: allowlist secret
+        tmp_path,
+        {"WRONG_LOGINS": "initial", "XNAT_ADMIN_PASSWORD": "initial"},  # pragma: allowlist secret
     )
     assert code == 1, output
     assert logins_probed(tmp_path) == 6
@@ -775,9 +776,7 @@ def test_identical_passwords_are_probed_once_per_round(tmp_path):
 @pytest.mark.parametrize("value", ["0", "9", "6s", "1.5", "08", "abc", ""])
 def test_an_unsafe_attempt_count_is_refused_before_any_login(tmp_path, value):
     """A count outside 1-8 could pass the lockout, and a non-number would never end the loop."""
-    code, _, output = run_configure(
-        tmp_path, {"WRONG_LOGINS": "initial,rotated", "XNAT_AUTH_PROBE_ATTEMPTS": value}
-    )
+    code, _, output = run_configure(tmp_path, {"WRONG_LOGINS": "initial,rotated", "XNAT_AUTH_PROBE_ATTEMPTS": value})
     if value == "":  # unset → the default of 6
         assert "after 6 attempt(s)" in output
         return
