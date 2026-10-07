@@ -238,7 +238,7 @@ neither implies the other.
 
 ```bash
 make -C trust/deploy/helm status         # includes the plugin-roster comparison below
-make -C trust/deploy/helm smoke-cstore   # a real C-STORE, then reads XNAT's receiver log
+make -C trust/deploy/helm smoke-cstore   # a real C-STORE, then checks XNAT's prearchive
 ```
 
 `status` lists `/data/xnat/home/plugins` in the running `xnat-web` pod and compares it
@@ -247,8 +247,15 @@ they disagree. They disagree when the **pod spec** is older than the values — 
 live in an emptyDir refilled by an init container on every pod creation, so a mismatch
 means no upgrade has rolled `xnat-web` since the roster changed. A plugin built for a
 different XNAT core aborts every C-STORE in the importer, which is why `smoke-cstore`
-stores a real object through the PACS and then greps the receiver's `dicom.log` rather
-than trusting a C-ECHO: C-ECHO never reaches the importer and passes throughout. See
+stores a real object through the PACS rather than trusting a C-ECHO: C-ECHO never reaches
+the importer and passes throughout.
+
+`smoke-cstore` passes when Orthanc reports 0 failed instances **and** a new DICOM object
+for the UID just sent appears in XNAT's prearchive (time-boxed poll, matched on
+SOPInstanceUID then StudyInstanceUID). It does **not** require `dicom.log` to grow — not
+every XNAT deployment writes that logger, and demanding it failed a perfectly healthy
+ingest path; growth there is now an extra signal. The importer-crash signatures still fail
+the run, read from `dicom.log` and the container log alike. See
 [TROUBLESHOOTING §2.7](TROUBLESHOOTING.md#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog).
 
 ### 7. (FL training only) Open the FL-server NLB
