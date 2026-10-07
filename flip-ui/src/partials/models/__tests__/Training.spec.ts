@@ -508,7 +508,7 @@ describe("Training reads the real vee-validate form", () => {
                                     approvedTrusts: [{
                                         id: "trust-a",
                                         name: "KCH",
-                                        approved: true
+                                        status: "APPROVED"
                                     }]
                                 }
                             }

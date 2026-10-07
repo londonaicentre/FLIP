@@ -94,41 +94,76 @@ def safe_join(base: Path, *parts: str) -> Path:
     return target
 
 
-def bundle_url_allowed_hosts() -> set[str]:
-    """The hosts ``BUNDLE_URL_ALLOWED_HOSTS`` admits, lower-cased and root-label-stripped.
+def bundle_url_allowed_origins() -> set[tuple[str, str, int]]:
+    """The origins ``BUNDLE_URL_ALLOWED_ORIGINS`` admits, as ``(scheme, host, port)`` triples.
+
+    Each comma-separated entry is a bare origin — ``http://host[:port]`` or ``https://host[:port]``, nothing
+    after the authority, not even a trailing slash. The host is lower-cased and root-label-stripped so it
+    compares against ``urlparse(...).hostname`` after ``validate_bundle_url``'s own strip, and a missing port
+    is the scheme's default, so ``https://h`` and ``https://h:443`` are one origin.
 
     Returns:
-        set[str]: The comma-separated entries with whitespace and any trailing dot removed, lower-cased so they
-        compare against ``urlparse(...).hostname`` (which lower-cases) after ``validate_bundle_url``'s own
-        root-label strip. Empty when the variable is unset or holds only separators.
+        set[tuple[str, str, int]]: One ``(scheme, host, port)`` per entry. Empty when the variable is unset or
+        holds only separators.
+
+    The pre-#1291 ``BUNDLE_URL_ALLOWED_HOSTS`` (bare hosts, https on 443 implied) is still read, as
+    ``https://<host>`` origins: the rename is a flag day between image and environment, and an ECS deploy
+    that swaps only the image (``deploy-centralhub TAG=…``) or only the environment must not leave the list
+    empty — "any public host" — with nothing but a warning. The deployed environments emit both names for one
+    release; the old one goes in a follow-up.
+
+    Raises:
+        ValueError: If an entry is not a bare origin (wrong scheme, no host, a path, query, fragment or
+            userinfo, or an unparseable port). Each app's startup hook parses the list, so a malformed value
+            fails the boot instead of silently admitting nothing — or, worse, everything.
     """
-    return {
-        host.strip().lower().rstrip(".")
-        for host in os.getenv("BUNDLE_URL_ALLOWED_HOSTS", "").split(",")
-        if host.strip().rstrip(".")
-    }
+    default_ports = {"http": 80, "https": 443}
+    origins: set[tuple[str, str, int]] = set()
+    legacy_hosts = [host.strip() for host in os.getenv("BUNDLE_URL_ALLOWED_HOSTS", "").split(",") if host.strip()]
+    entries = [f"https://{host}" for host in legacy_hosts] + os.getenv("BUNDLE_URL_ALLOWED_ORIGINS", "").split(",")
+    for raw in entries:
+        entry = raw.strip()
+        if not entry:
+            continue
+        parsed = urlparse(entry)
+        host = (parsed.hostname or "").rstrip(".")
+        try:
+            port = parsed.port
+        except ValueError:
+            port = -1
+        bare = not (parsed.path or parsed.params or parsed.query or parsed.fragment or parsed.username)
+        if parsed.scheme not in default_ports or not host or port == -1 or not bare:
+            raise ValueError(
+                f"BUNDLE_URL_ALLOWED_ORIGINS entry {entry!r} is not a bare scheme://host[:port] origin "
+                "(http or https, no path, query, fragment or userinfo)."
+            )
+        origins.add((parsed.scheme, host.lower(), port if port is not None else default_ports[parsed.scheme]))
+    return origins
 
 
 def warn_if_bundle_url_allow_list_empty() -> None:
-    """Log, once per process, that the bundle-fetch host allow-list is off and what that leaves in place.
+    """Log, once per process, that the bundle-fetch allow-list is off and what that leaves in place.
 
     Called from each app's startup hook so the boot log carries it where an operator looks, and from
     ``validate_bundle_url`` as the fallback for a process that reached a fetch without the hook. Not fatal: a
     standalone dev harness with no hub legitimately runs without the variable (nothing presigns bundle URLs
     for it), but every deployment that takes uploads from the hub must set it — the deploy composes and the
-    ECS task definition derive it from ``AWS_REGION``, so an empty value there is a wiring regression.
+    ECS task definition derive it from the hub's object-store endpoint, so an empty value there is a wiring
+    regression. A malformed value raises from ``bundle_url_allowed_origins`` here, which is what makes the
+    startup hook fail the boot on one.
     """
+    # The list is parsed before the once-only gate, so a malformed value raises on every call —
+    # the startup hooks rely on that to fail the boot, whatever state the flag is in.
     global _warned_empty_allow_list
-    if _warned_empty_allow_list or bundle_url_allowed_hosts():
+    if bundle_url_allowed_origins() or _warned_empty_allow_list:
         return
     _warned_empty_allow_list = True
     logger.warning(
-        "BUNDLE_URL_ALLOWED_HOSTS is empty: the FL API will fetch an app bundle from ANY public https host a "
+        "BUNDLE_URL_ALLOWED_ORIGINS is empty: the FL API will fetch an app bundle from ANY public https host a "
         "caller names. Only the non-public address check remains (on the URL's host and on what it resolves "
         "to), and that check is a resolve-then-fetch race a DNS-rebinding attacker can win. Set it to the "
-        "object-store host the hub presigns bundle URLs against — s3.<AWS_REGION>.amazonaws.com, which is what "
-        "the deploy composes and the ECS task definition derive — unless this is a standalone dev harness with "
-        "no hub."
+        "object-store origin the hub presigns bundle URLs against — https://s3.<AWS_REGION>.amazonaws.com on "
+        "AWS, http://object-store:9000 in the dev compose — unless this is a standalone dev harness with no hub."
     )
 
 
@@ -185,34 +220,33 @@ def resolve_bundle_host(hostname: str) -> list[ipaddress.IPv4Address | ipaddress
 def validate_bundle_url(url: str) -> str:
     """Reject bundle download URLs that are unsafe to fetch server-side.
 
-    The FL API fetches every ``bundle_urls`` entry server-side, so an unchecked URL is an SSRF vector. The URL
-    must be https, carry a host, use the default https port, and not name a private / loopback / link-local
-    address — as an IP literal in any spelling, or as a DNS name that resolves to one. Requiring https blocks
-    the common ``http://169.254.169.254`` metadata fetch and non-http schemes (flip-api presigns S3 over https
-    in every environment).
+    The FL API fetches every ``bundle_urls`` entry server-side, so an unchecked URL is an SSRF vector. Every
+    URL must carry a host that is not a private / loopback / link-local address as an IP literal in any
+    spelling, and not ``localhost``. Above that, one of two rules applies:
 
-    Two controls sit behind those checks, in this order:
-
-    * **The host allow-list is the primary control.** A comma-separated ``BUNDLE_URL_ALLOWED_HOSTS`` pins
-      fetches to the object-store origin the hub presigns against. flip-api sets
-      ``AWS_ENDPOINT_URL_S3=https://s3.<AWS_REGION>.amazonaws.com`` in every environment, which makes botocore
-      emit path-style presigned URLs — bucket in the path, host exactly ``s3.<AWS_REGION>.amazonaws.com`` —
-      so the deploy composes and the ECS task definition derive the allow-list from ``AWS_REGION`` alone, and
-      the match is exact (case-insensitive, root label ignored): no suffix or wildcard form, because a suffix
-      would admit any bucket in the region. It is consulted **before** the name is resolved, so an attacker-
-      chosen name is never even looked up — a resolver query to an attacker's nameserver is the classic
-      out-of-band confirmation channel of a blind SSRF (FLIP#905). Empty means "any public host", which
-      ``warn_if_bundle_url_allow_list_empty`` reports loudly.
-    * **Resolve-and-recheck is defence in depth.** A DNS name is resolved through ``resolve_bundle_host`` and
-      every returned address, both families, must pass the same range check as an IP literal; a resolution
-      error or an empty answer fails closed ("could not verify" must not mean "allowed" — the fetch would
-      fail anyway). This closes the ``metadata.internal.attacker.example`` shape (a public name pointing at
-      a private address) that no literal parsing can, but it is a resolve-then-fetch pair: the fetch in
-      ``fl_api.utils.upload`` resolves the name again through ``requests``, and a DNS-rebinding attacker who
-      answers public here and private there wins that race. Pinning the connection to the checked address
-      needs a custom transport, which is deliberately not built — with the allow-list set the residual is
-      moot, because only the object-store host is ever resolved at all. IP literals are not resolved; their
-      range check is complete on its own, and ``localhost`` is a literal loopback alias handled the same way.
+    * **The origin allow-list is the primary control.** A comma-separated ``BUNDLE_URL_ALLOWED_ORIGINS``
+      pins fetches to the object-store origin the hub presigns against, as exact ``scheme://host[:port]``
+      triples: ``https://s3.<AWS_REGION>.amazonaws.com`` on AWS, where flip-api's
+      ``AWS_ENDPOINT_URL_S3`` makes botocore emit path-style URLs (bucket in the path, host exactly the
+      regional endpoint — no suffix or wildcard form, because a suffix would admit any bucket in the
+      region), and ``http://object-store:9000`` in the dev compose. A listed origin is operator-declared:
+      it is admitted on the exact match and **not** resolved — the dev store resolves to a private docker
+      address by design, and the list is consulted before any name is looked up, so an attacker-chosen name
+      never even reaches the resolver (a resolver query to an attacker's nameserver is the classic
+      out-of-band confirmation channel of a blind SSRF, FLIP#905).
+    * **Empty list: https on 443, resolve-and-recheck.** With no list set the URL must be https on the
+      default port (which blocks the common ``http://169.254.169.254`` metadata fetch and non-http schemes),
+      a DNS name is resolved through ``resolve_bundle_host`` and every returned address, both families,
+      must pass the same range check as an IP literal; a resolution error or an empty answer fails closed
+      ("could not verify" must not mean "allowed" — the fetch would fail anyway). This closes the
+      ``metadata.internal.attacker.example`` shape (a public name pointing at a private address) that no
+      literal parsing can, but it is a resolve-then-fetch pair: the fetch in ``fl_api.utils.upload``
+      resolves the name again through ``requests``, and a DNS-rebinding attacker who answers public here and
+      private there wins that race. Pinning the connection to the checked address needs a custom transport,
+      which is deliberately not built — the allow-list is the control that matters, and
+      ``warn_if_bundle_url_allow_list_empty`` reports its absence loudly. IP literals are never resolved;
+      their range check is complete on its own, and ``localhost`` is a literal loopback alias handled the
+      same way.
 
     Args:
         url (str): A bundle download URL from the request body.
@@ -221,15 +255,17 @@ def validate_bundle_url(url: str) -> str:
         str: The validated URL, unchanged.
 
     Raises:
-        HTTPException: 400 if the URL is not https, has no host, uses a non-443 port, names a
-            private/loopback/link-local IP literal (in any spelling, root-label included) or ``localhost``,
-            is not on the host allow-list, does not resolve, or resolves to any non-public address.
+        HTTPException: 400 if the URL has no http(s) scheme or no host, names a private/loopback/link-local
+            IP literal (in any spelling, root-label included) or ``localhost``, has an invalid port, is not
+            on the origin allow-list when one is set, or — with no list — is not https on 443, does not
+            resolve, or resolves to any non-public address. 500 if ``BUNDLE_URL_ALLOWED_ORIGINS`` is
+            malformed (the startup hook refuses to boot on that, so this is the bypassed-hook fallback).
     """
     parsed = urlparse(url)
-    if parsed.scheme != "https":
+    if parsed.scheme not in ("http", "https"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Bundle URL must use https: {url!r}.",
+            detail=f"Bundle URL must use http or https: {url!r}.",
         )
 
     # Strip any root label (trailing dots) before the emptiness check and both parsers below. DNS
@@ -253,7 +289,6 @@ def validate_bundle_url(url: str) -> str:
             detail=f"Bundle URL host not allowed: {hostname!r}.",
         )
 
-    # Presigned S3 URLs are always served on 443; a custom port points at an internal service.
     # ``urlparse`` defers port parsing, so a malformed / out-of-range port raises ValueError on
     # access here (not at ``urlparse`` above) — convert it to a clean 400 rather than a 500.
     try:
@@ -263,11 +298,6 @@ def validate_bundle_url(url: str) -> str:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Bundle URL has an invalid port: {url!r}.",
         ) from None
-    if port not in (None, 443):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Bundle URL port not allowed: {port}.",
-        )
 
     # Refuse a host carrying a NUL or other control character before either parser sees it.
     # urlparse passes NUL straight through to .hostname, and resolvers that truncate at NUL would
@@ -302,16 +332,35 @@ def validate_bundle_url(url: str) -> str:
             detail=f"Bundle URL host not allowed: {hostname!r}.",
         )
 
-    # The allow-list comes before resolution on purpose: an off-list name is refused without a single DNS
-    # query, so the API never resolves a name an attacker chose (see the docstring). Exact match only.
-    allowed = bundle_url_allowed_hosts()
-    if allowed and hostname.lower() not in allowed:
+    # The allow-list comes before resolution on purpose: an off-list origin is refused without a single DNS
+    # query, so the API never resolves a name an attacker chose (see the docstring). Exact match only, and a
+    # listed origin is operator-declared, so it is not resolved either.
+    try:
+        allowed = bundle_url_allowed_origins()
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    if allowed:
+        effective_port = port if port is not None else {"http": 80, "https": 443}[parsed.scheme]
+        if (parsed.scheme, hostname.lower(), effective_port) not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Bundle URL origin not allowed: {parsed.scheme}://{hostname}:{effective_port}.",
+            )
+        return url
+
+    warn_if_bundle_url_allow_list_empty()
+
+    # No list: presigned S3 URLs are https on 443; anything else points at an internal service.
+    if parsed.scheme != "https":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Bundle URL host not allowed: {hostname!r}.",
+            detail=f"Bundle URL must use https: {url!r}.",
         )
-    if not allowed:
-        warn_if_bundle_url_allow_list_empty()
+    if port not in (None, 443):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bundle URL port not allowed: {port}.",
+        )
 
     # A DNS name: resolve it and hold every answer to the literal check above. Fail closed on any
     # resolver error — the fetch could not have succeeded either, and an unverifiable host is not a

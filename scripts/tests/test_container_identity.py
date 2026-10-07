@@ -166,7 +166,7 @@ def check_kit_mounters_run_as_host_uid(failures: list[str]) -> None:
                     f"{svc.where}: mounts a written part of the provisioned NVFLARE kit but sets no `user:`. "
                     f"The kit is written by `make provision` as the host user, so a container "
                     f"running as the image's baked uid cannot write it and the entrypoint "
-                    f"crash-loops on `local/`. Add: user: \"${{UID:-1000}}:1000\" (FLIP#1171)."
+                    f'crash-loops on `local/`. Add: user: "${{UID:-1000}}:1000" (FLIP#1171).'
                 )
             elif not svc.user.startswith("${UID"):
                 failures.append(

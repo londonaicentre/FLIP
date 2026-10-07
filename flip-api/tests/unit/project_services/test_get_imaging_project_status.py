@@ -269,9 +269,7 @@ def test_get_imaging_project_status_returns_empty_when_tasks_pending(client: Tes
             "flip_api.project_services.get_imaging_project_status.get_project",
             return_value=mock_project_response_obj,
         ),
-        patch(
-            "flip_api.project_services.get_imaging_project_status.get_imaging_projects", return_value=None
-        ),
+        patch("flip_api.project_services.get_imaging_project_status.get_imaging_projects", return_value=None),
         patch(
             "flip_api.project_services.get_imaging_project_status.has_pending_imaging_tasks", return_value=True
         ) as mock_has_pending,

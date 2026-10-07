@@ -37,9 +37,9 @@ locals {
   # fl_backend.mk), container ports, command, env map and mounts. NVFLARE
   # mirrors compose.production.nvflare.yml; Flower mirrors
   # compose.production.flower.yml.
-  flower_superlink_fleet_port  = 9092
-  flower_superlink_exec_port   = 9093
-  flower_superlink_health_port = 9097
+  flower_superlink_fleet_port   = 9092
+  flower_superlink_control_port = 8000
+  flower_superlink_health_port  = 9097
 
   # Container port the NLB target group forwards to. The EXTERNAL listener
   # port stays var.FL_SERVER_PORT for both backends — compose maps
@@ -287,16 +287,19 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
         "--ssl-certfile", "/certs/server.pem",
         "--ssl-keyfile", "/certs/server.key",
         "--enable-supernode-auth",
+        # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only
+        # unless --host says otherwise; fl-api reaches it over Cloud Map.
+        "--host", "0.0.0.0",
         "--health-server-address", "0.0.0.0:${local.flower_superlink_health_port}",
       ] : null
       linuxParameters = var.fl_backend == "flower" ? { initProcessEnabled = true } : null
 
       # NVFLARE serves client gRPC + admin multiplexed on one port. Flower's
-      # SuperLink splits Fleet (9092, what the NLB forwards to), Exec (9093,
-      # fl-api submits runs here) and health (9097).
+      # SuperLink splits Fleet (9092, what the NLB forwards to), the HTTP
+      # Control API (8000, fl-api submits runs here) and health (9097).
       portMappings = var.fl_backend == "flower" ? [
         { containerPort = local.flower_superlink_fleet_port, protocol = "tcp" },
-        { containerPort = local.flower_superlink_exec_port, protocol = "tcp" },
+        { containerPort = local.flower_superlink_control_port, protocol = "tcp" },
         { containerPort = local.flower_superlink_health_port, protocol = "tcp" },
         ] : [
         { containerPort = var.FL_SERVER_PORT, protocol = "tcp" },

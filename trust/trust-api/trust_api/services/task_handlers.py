@@ -144,9 +144,7 @@ async def _report_cohort_error_to_hub(payload: dict[str, Any], error: str) -> No
             headers={TRUST_API_KEY_HEADER: TRUST_API_KEY},
         )
     except Exception as hub_exc:
-        logger.warning(
-            f"Failed to report cohort error to hub for query_id={query_id}, trust_id={trust_id}: {hub_exc}"
-        )
+        logger.warning(f"Failed to report cohort error to hub for query_id={query_id}, trust_id={trust_id}: {hub_exc}")
 
 
 async def handle_create_imaging(payload: dict[str, Any]) -> dict[str, Any]:

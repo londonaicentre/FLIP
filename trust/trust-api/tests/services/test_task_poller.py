@@ -67,6 +67,7 @@ def test_announce_identity_ignores_response_without_identity():
     with patch.object(task_poller, "EXPECTED_TRUST_ID", "expected-id"):
         _maybe_announce_identity({"message": "Heartbeat recorded"})  # no exit
 
+
 # ---- _poll_for_tasks ----
 
 
@@ -150,6 +151,35 @@ async def test_send_heartbeat_success():
     mock_client.post.assert_called_once()
     call_args = mock_client.post.call_args
     assert "/heartbeat" in call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_send_heartbeat_records_what_the_hub_says_about_itself():
+    """The reply's hub_version / aes_key_fingerprint land in hub_status (FLIP#1204)."""
+    mock_client = AsyncMock()
+    response = MagicMock(is_success=True)
+    response.json.return_value = {"trust_id": "abc", "trust_name": "T", "hub_version": "v0.7.0"}
+    mock_client.post.return_value = response
+
+    with patch("trust_api.services.task_poller.hub_status") as recorder:
+        await _send_heartbeat(mock_client)
+
+    recorder.record.assert_called_once_with(response.json.return_value)
+
+
+@pytest.mark.asyncio
+async def test_send_heartbeat_forgets_the_hub_status_when_rejected_or_unreachable():
+    """A hub that rotated its key rejects the heartbeat; the last "key matches" must not outlive that."""
+    rejected = AsyncMock()
+    rejected.post.return_value = MagicMock(is_success=False, status_code=401, text="bad key")
+    unreachable = AsyncMock()
+    unreachable.post.side_effect = ConnectionError("refused")
+
+    for client in (rejected, unreachable):
+        with patch("trust_api.services.task_poller.hub_status") as recorder:
+            await _send_heartbeat(client)
+        recorder.forget.assert_called_once_with()
+        recorder.record.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -302,7 +332,8 @@ async def test_report_task_result_includes_error_in_result():
     mock_client.post.return_value = mock_response
 
     await _report_task_result(
-        mock_client, "task-123",
+        mock_client,
+        "task-123",
         {"success": False, "error": "Something went wrong"},
     )
 
@@ -322,7 +353,8 @@ async def test_report_task_result_forwards_status_code():
     mock_client.post.return_value = mock_response
 
     await _report_task_result(
-        mock_client, "task-123",
+        mock_client,
+        "task-123",
         {"success": False, "error": "404: Project not found", "status_code": 404},
     )
 
@@ -340,7 +372,8 @@ async def test_report_task_result_omits_absent_status_code():
     mock_client.post.return_value = mock_response
 
     await _report_task_result(
-        mock_client, "task-123",
+        mock_client,
+        "task-123",
         {"success": False, "error": "Something went wrong"},
     )
 

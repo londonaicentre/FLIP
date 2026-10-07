@@ -241,10 +241,14 @@ host-level rule does not close it; scope it at the network the host sits on.
 
    xnat:
      web:
-       service:
+       # The DICOM SCP has its own Service (xnat-web-dicom), separate from the web console's.
+       # Exposing it never exposes the console, which stays ClusterIP — the chart refuses a real
+       # PACS combined with an externally-exposed web.service.type.
+       dicomService:
          type: NodePort
        # Pin the port so the PACS has a stable destination. Must be inside the API server's
-       # --service-node-port-range, or that range widened to admit the DICOM port.
+       # --service-node-port-range, or that range widened to admit the DICOM port. Where you
+       # cannot change that range, use dicomService.type: LoadBalancer and omit this.
        dicomNodePort: 8104
 
    networkPolicies:
@@ -267,9 +271,14 @@ ports, which would widen the one inbound path into the trust from DICOM to every
 
 .. note::
 
-   Setting ``service.type: NodePort`` also sets ``externalTrafficPolicy: Local`` on that Service.
-   Under the default ``Cluster`` policy the PACS's source address is rewritten to the node's before
-   the pod sees it, so the ingress rule above would never match and the C-STORE would be dropped.
+   Setting ``dicomService.type`` to ``NodePort`` or ``LoadBalancer`` also sets
+   ``externalTrafficPolicy: Local`` on that Service. Under the default ``Cluster`` policy the
+   PACS's source address is rewritten to the node's before the pod sees it, so the ingress rule
+   above would never match and the C-STORE would be dropped. ``Local`` preserves the source
+   address only on a pass-through load balancer (MetalLB, an AWS NLB); a proxying load balancer
+   SNATs regardless, and the PACS CIDR will never match — scope the rule to the proxy's address
+   in that case. It also means only nodes running the pod answer, which suits the single-pod
+   trust deployment this targets.
 
 Development: the Mocked PACS
 ============================

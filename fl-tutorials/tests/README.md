@@ -45,9 +45,24 @@ covers `datasets/cxr/omop_convert_cxr.py`, and
 
 Cross-cutting guards that assert a property across several source files
 (`test_dicom_orientation.py`, `test_flower_min_clients_wiring.py`,
-`test_spleen_inference_config_parity.py`, `test_fl_tutorials_make_targets.py`,
-`test_sim_tutorial_stale_guard.py`, `test_sim_tutorial_exit_status.py`) stay at the root of `tests/`, because
+`test_flower_platform_parity.py`, `test_flower_starved_partition.py`,
+`test_flwr_import_paths.py`, `test_offline_apps.py`, `test_ldm_offline_backbone.py`,
+`test_spleen_inference_config_parity.py`, `test_spleen_uploader_paths.py`,
+`test_ehr_feature_engineering.py`, `test_fetch_weights.py`,
+`test_fl_tutorials_make_targets.py`, `test_sim_tutorial_stale_guard.py`,
+`test_sim_tutorial_exit_status.py`) stay at the root of `tests/`, because
 no single source path describes what they cover.
+
+Tutorial-app tests that cover one app file mirror its path the same way:
+`tests/nvflare/image_classification/arkplus_fine_tuning/app_files/test_data_utils.py` covers
+`nvflare/image_classification/arkplus_fine_tuning/app_files/data_utils.py`, and likewise for the two
+Ark+ evaluation apps. All three `data_utils.py` carry the same simulator-only `MAX_SAMPLES` cap, so
+their tests subclass one shared contract, `tests/arkplus_sim_cap_contract.py` (a helper module like
+`tutorial_apps.py`, not collected on its own). Because the three test files share a basename, the
+tutorial directory and its `app_files/` carry an `__init__.py`, which makes each module's import name
+start at the tutorial (`arkplus_fine_tuning.app_files.test_data_utils`). `nvflare/` and `image_*/`
+deliberately do **not** carry one: a package named `nvflare` would shadow the real NVFLARE library
+the apps import.
 
 **Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
 the tutorial apps themselves and runs in flip-utils' environment (`flip-utils[full]` — monai,
@@ -126,7 +141,7 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_kills_only_this_checkouts_processes_in_this_pid_namespace` | `sim-tutorial.sh`'s stale-SuperLink guard, lifted out of the script and run against decoys: it stops the one from this checkout's flip-utils venv, spares one from another checkout, spares one from a worktree nested under this checkout (whose path shares the prefix), and spares one in another PID namespace (a container's, under any runtime — the dev stack's fl-server matches the same `pgrep` pattern). Skips the namespace case where unprivileged `unshare` is unavailable. |
 | `test_guard_decides_containment_by_pid_namespace_not_cgroup_string` | The guard compares `/proc/<pid>/ns/pid`, not a runtime-specific `/proc/<pid>/cgroup` string, which only docker's systemd driver produces. |
 | `test_a_failed_run_fails_the_script` / `test_the_verdict_waits_for_a_terminal_status` / `test_a_run_that_never_ends_is_a_failure_not_a_hang` / `test_an_unknown_run_is_a_failure` / `test_a_failed_query_stops_polling_and_shows_the_reason` / `test_the_status_survives_forced_colour` / `test_a_dead_superlink_fails_the_verdict_without_querying` | `sim-tutorial.sh`'s exit status is the run's: its functions are sourced and run against a fake `uv` whose `flwr ls` answers scripted statuses in flwr's real reply shapes — only `finished:completed` passes; a run that never turns terminal fails after a bounded number of polls; an unknown run fails; any other failed query (flwr reports every one as `success: false` with exit 0) stops the polling and surfaces the message; a rich-coloured reply under `FORCE_COLOR` still parses; and a SuperLink that has gone is reported as such without querying, because `flwr ls` would quietly start a fresh one. `flwr run --stream` alone returns 0 whatever became of the run. |
-| `test_a_listener_this_checkout_did_not_start_is_refused` / `test_a_free_control_port_passes_the_check` / `test_a_port_probe_that_cannot_tell_counts_as_taken` | The script refuses to hand the run to a local SuperLink it did not start: a real listener on a throwaway port set as `FLWR_LOCAL_CONTROL_API_PORT` is refused with its pid and command line (where `ss` can see them), a free port passes silently, and an `ss` that errors counts as taken rather than free. |
+| `test_a_listener_this_checkout_did_not_start_is_refused` / `test_a_free_control_port_passes_the_check` / `test_a_port_probe_that_cannot_tell_counts_as_taken` | The script refuses to hand the run to a local SuperLink it did not start: a real listener on a throwaway port set as `FLWR_LOCAL_SUPERLINK_HTTP_API_PORT` is refused with its pid and command line (where `ss` can see them), a free port passes silently, and an `ss` that errors counts as taken rather than free. |
 | `test_the_port_release_wait_returns_once_the_port_frees` / `test_the_port_release_wait_gives_up_loudly` | After stopping its own leftover SuperLink the script waits for the ports to free, and gives up with a message rather than racing flwr's replacement. |
 | `test_the_library_flag_only_works_when_sourced` | `SIM_TUTORIAL_LIB=1` exported into a real run is refused, not a silent successful no-op. |
 | `test_every_flower_tutorial_has_a_simulator_data_mapping` | Every `fl-tutorials/flower/<tutorial>/app` is named in the script's data-mapping `case`. |

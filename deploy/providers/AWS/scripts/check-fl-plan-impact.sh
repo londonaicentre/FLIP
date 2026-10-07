@@ -157,4 +157,38 @@ cat >&2 <<'EOF'
    Runbook: deploy/providers/AWS/README.md, "Terraform CI: plan on PR, apply on
    merge" > "What an automated apply will not do".
 EOF
+
+# In Actions, stderr alone renders as a bare red X on the step: a hold looks
+# exactly like a broken pipeline until someone opens the log. The distinction
+# matters because holding is the guard working, and because a persistent piece of
+# out-of-band drift makes it recur on every apply until one quiesced apply clears
+# it. Still exit 1 — the apply did not happen and that must not read as green —
+# but say so where it can be seen without digging.
+if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    {
+        echo "### 🛑 Apply held — FL infrastructure would be disturbed"
+        echo
+        echo "This is the guard working, not a build failure. The plan was produced"
+        echo "successfully; it was **not** applied."
+        echo
+        echo "| Action | Resource |"
+        echo "| --- | --- |"
+        [[ -n "${ecs_hits}" ]] && while IFS=$'\t' read -r action address; do
+            echo "| \`${action}\` | \`${address}\` |"
+        done <<<"${ecs_hits}"
+        [[ -n "${efs_hits}" ]] && while IFS=$'\t' read -r action address; do
+            echo "| \`${action}\` | \`${address}\` |"
+        done <<<"${efs_hits}"
+        echo
+        echo "**To proceed:** enable deployment mode on the hub, wait until"
+        echo "\`GET /fl/quiesce\` reports deployment mode ON and no BUSY net, then re-run"
+        echo "\`terraform_apply.yml\` via \`workflow_dispatch\` with \`fl_quiesced: true\`."
+        echo "A plain re-run reads the same plan and holds again."
+    } >>"${GITHUB_STEP_SUMMARY}"
+fi
+
+if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo "::warning title=Apply held — FL infrastructure would be disturbed::The plan succeeded but was not applied, because it would recreate FL services or delete EFS. Quiesce FL, then re-run terraform_apply.yml via workflow_dispatch with fl_quiesced set to true. See the job summary."
+fi
+
 exit 1

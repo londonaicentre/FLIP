@@ -75,7 +75,7 @@ spec:
       {{- end }}
       containers:
         - name: imaging-api
-          image: "{{ .Values.imagingApi.image.repository }}:{{ .Values.imagingApi.image.tag }}"
+          image: "{{ .Values.imagingApi.image.repository }}:{{ include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.imagingApi.image.tag) }}"
           imagePullPolicy: {{ .Values.imagingApi.image.pullPolicy }}
           {{- with .Values.securityContext }}
           securityContext:

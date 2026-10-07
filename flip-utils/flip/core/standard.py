@@ -106,12 +106,14 @@ class FLIPStandardProd(FLIPBase):
         - ``update_status()`` — update model training status
         - ``send_metrics()`` — forward per-client training/evaluation metrics
         - ``send_handled_exception()`` — forward client exception logs
+        - ``send_event()`` — forward structured FL log events
         - ``upload_results_to_s3()`` — upload trained model to S3
+        - ``cleanup()`` — remove a local path after upload
 
     **Client-only** (fl-client on trust side → calls local trust APIs):
         - ``get_dataframe()`` — fetch cohort data from data-access-api
-        - ``get_images()`` — download images from imaging-api
-        - ``download_data_from_s3()`` — download federated data from S3
+        - ``get_by_accession_number()`` — download a study's images/resources from imaging-api
+        - ``add_resource()`` — stage a per-accession resource under the client's images dir
     """
 
     def __init__(self):

@@ -1,0 +1,19 @@
+{
+    "roles": [
+        {
+            "id": "da2d1b85-6bdd-4089-b2fa-3594cc233327",
+            "rolename": "Researcher",
+            "roledescription": "A researcher"
+        },
+        {
+            "id": "8ce0351a-33cc-432b-8d6e-161122c712dd",
+            "rolename": "Admin",
+            "roledescription": "flip Administrator"
+        },
+        {
+            "id": "8a3d6f14-9b52-4e07-a6c8-1d4f7b2e9053",
+            "rolename": "Trust Admin",
+            "roledescription": "Researcher access, plus approving or declining projects for one trust."
+        }
+    ]
+}

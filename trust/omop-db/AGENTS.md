@@ -17,18 +17,18 @@ Two halves of one pipeline (merged from the retired private `flip-omop-db` repo,
    `volumes/Trust_<N>/db_data` (which `trust/deploy/compose_trust.<env>.yml` mounts) and
    `omop_db_tools.import_tables` then loads this trust's `source_trust` slice of the published
    per-project tables (`omop-csv/<project>/`, fetched anonymously from the public HF dataset
-   `aicentreflip/trust-data` at the tag pinned by `trust/.data_version`). No pgdata snapshot is
-   downloaded any more — `make -C trust up-trust` runs the seed at bring-up.
+   `aicentreflip/trust-data` at the tag pinned by `trust/.data_version`). Bring-up downloads no
+   pgdata snapshot — `make -C trust up-trust` runs the seed.
 
 `compose.yml` here is the **standalone build/populate stack** (one empty DB per trust + opt-in pgadmin
 profile; config from gitignored `.env.build`), NOT the runtime trust stack.
 
 ## The vocabulary seeding model (FLIP#842/#843)
 
-No published artifact (image, pgdata tarball, HF dataset) carries the licensed core vocabulary. Every
+No published artifact (image, HF dataset) carries the licensed core vocabulary. Every
 environment loads it ONCE into the running database via `files/load_core_vocab.sh` (client-side
 `COPY FROM STDIN` over TCP — no mounts, no server-side files; idempotent via core-aware guards that
-tolerate the DICOM vocab already present in the tarballs):
+tolerate the DICOM vocab the seed has already loaded):
 
 - **Dev**: `make load-omop-vocab [OMOP_DB_PORT=5436]` (after the stack is up and seeded). Cohort
   queries joining `omop.concept` return nothing until this runs.
@@ -45,7 +45,7 @@ tolerate the DICOM vocab already present in the tarballs):
 - **`trust/.data_version` is THE pin and must not move**: one value for the OMOP and Orthanc mock
   data together, a git tag on `aicentreflip/trust-data` (the dataset holds one copy of every artefact
   at an unversioned path; consumers fetch `resolve/<tag>/<path>`). Its path is hardcoded in
-  `deploy/providers/AWS/Makefile` (→ Ansible `-e trust_data_version=`), both update scripts, this
+  `deploy/providers/AWS/Makefile` (→ Ansible `-e trust_data_version=`), `trust/Makefile`, `trust/seed_trust.sh`, this
   Makefile, `seed_orthanc.py` and the spleen uploader; the Helm chart carries the same value as
   `trustData.version` (`TRUST_DATA_VERSION` in `generate_values.py`). Publish with
   `make -C trust publish-trust-data VERSION=<tag> …`, then bump the pin. Never upload a versioned
@@ -56,8 +56,8 @@ tolerate the DICOM vocab already present in the tarballs):
   `make fetch-vocab-core` from `s3://$(VOCAB_S3_BUCKET)/vocab/` (default `flipdev-aicentre`, org AWS
   needed); external users self-serve an equivalent export from OHDSI Athena under their own licences.
   The DICOM vocab (byte-identical to DICOM2OMOP `files/OMOP CDM Staging/` @ upstream `1ef3354`, Apache
-  2.0, pickle converted to CSV) is freely redistributable: it lives on the HF dataset and stays inside
-  the published tarballs.
+  2.0, pickle converted to CSV) is freely redistributable: it lives on the HF dataset, and the seed loads it
+  before the OMOP rows.
 - **Read-only roles are a security boundary**: `files/create_readonly_users.sql` creates
   `omop_readonly_base` + `data_analyst_reader` (SELECT-only, explicit REVOKEs) — the database half of
   data-access-api's SQL-injection defence-in-depth (`data_access_api/services/cohort.py`). The analyst

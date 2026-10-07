@@ -173,9 +173,11 @@
         owner: ubuntu
         group: ubuntu
         mode: "0755"
-      # /opt/flip/trust holds the per-trust kit file (.env.<slot>) that register-trusts
-      # scp's to the EC2; the trust compose -include's it. Without this dir the scp in
-      # register-trusts.sh fails with "No such file or directory".
+      # /opt/flip/trust is where a per-trust kit file (.env.<slot>) lands if one is ever
+      # delivered to the host out of band. Nothing here or in register-trusts.sh copies one:
+      # `make deploy-trust` / `upgrade-trust-ec2` evaluate the trust compose on the ADMIN
+      # workstation against its local trust/.env.<KIT>.<env> and drive the EC2 daemon over
+      # the ssh docker context, so the kit never has to exist on the instance.
       #
       # /opt/flip/data/trust-<N> are the bind-mount sources for the imaging-api / fl-client
       # images dir. Each trust compose project bind-mounts one of these onto

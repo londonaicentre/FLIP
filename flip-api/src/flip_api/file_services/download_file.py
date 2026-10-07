@@ -23,7 +23,7 @@ from flip_api.db.database import get_session
 from flip_api.db.models.main_models import UploadedFiles
 from flip_api.domain.schemas.file import PresignedDownloadResponse, SafeFileName
 from flip_api.utils.logger import logger
-from flip_api.utils.s3_client import S3Client
+from flip_api.utils.s3_client import PresignAudience, S3Client
 
 router = APIRouter(prefix="/files", tags=["file_services"])
 
@@ -89,8 +89,10 @@ def download_file(
         s3 = S3Client()
         try:
             disposition = f"attachment; filename=\"{file_name}\"; filename*=UTF-8''{quote(file_name)}"
+            # The browser fetches this URL directly, so it is signed for the public endpoint.
             url = s3.get_presigned_url(
                 s3_path,
+                audience=PresignAudience.BROWSER,
                 expiration=get_settings().PRE_SIGNED_URL_EXPIRATION_SECONDS,
                 response_content_disposition=disposition,
             )

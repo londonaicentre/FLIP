@@ -41,7 +41,7 @@ epochs per round).
 
 Unlike most tutorials, this one needs `torchvision` at runtime: the perceptual loss uses `lpips`,
 which calls `torchvision.ops` operators (e.g. `nms`). Those must be built against the **same
-torch** as the `flare-fl-base` image (pinned `torch>=2.11`, cu128, in
+torch** as the `flare-fl-base` image (pinned `torch>=2.13`, cu130, in
 [`flip-utils/pyproject.toml`](../../../../flip-utils/pyproject.toml)). A base image whose
 `torchvision` predates that pin fails at runtime with
 `RuntimeError: operator torchvision::nms does not exist`. (The `app_files/requirements.txt` lists

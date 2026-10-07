@@ -40,13 +40,14 @@ from fl_api.schemas import (
 )
 from fl_api.utils.upload import upload_application
 from fl_api.utils.validation import safe_join, validate_tutorial_folder_name, warn_if_bundle_url_allow_list_empty
+from fl_api.utils.version import build_identity
 
 logger = logging.getLogger("uvicorn")
 
 app = FastAPI(
     title="FLIP FL API (Flower)",
     description="FL API for Flower deployment runtime.",
-    version="0.1.0",
+    version=build_identity() or "unknown",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
@@ -232,7 +233,7 @@ def _parse_runs_payload(payload: dict[str, Any]) -> list[JobMetadata]:
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(status="ok")
+    return HealthResponse(status="ok", version=build_identity() or "unknown")
 
 
 @app.get(

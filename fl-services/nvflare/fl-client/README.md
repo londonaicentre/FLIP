@@ -15,9 +15,10 @@
 
 > See also the README under [fl-server/README.md](../fl-server/README.md)
 
-The FL base image should install the python packages required by the base application, as well as the python packages
-required by the user-uploaded application. At the moment, the user can't specify additional packages to install, but
-this should be added in the future to support custom user environments (see [issue #421](https://github.com/londonaicentre/flip/issues/421)).
+The FL base image installs the python packages required by the base application and the user-uploaded application.
+The NVFLARE client dependencies come pre-baked into the image; users cannot add per-job dependencies on the NVFLARE
+backend. On the Flower backend, dependencies are installed per run by `uv sync` (SuperNodes opt in via
+`--allow-runtime-dependency-installation`) — see `fl-services/flower/README.md`.
 
 ## GPU resource management
 

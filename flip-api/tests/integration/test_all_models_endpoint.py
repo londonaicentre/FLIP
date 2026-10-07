@@ -92,9 +92,7 @@ def _dispatch_run(session, *, model_id: UUID, trusts: list[Trust]) -> FLJob:
 def _approve_trust_for_model(session, *, model_id: UUID, trust_id: UUID) -> None:
     """Record a trust approval the way save_model does — one ModelTrustIntersect
     row per approved trust at model creation. Deliberately NOT a dispatch record."""
-    session.add(
-        ModelTrustIntersect(model_id=model_id, trust_id=trust_id, status=TrustIntersectStatus.INITIALISED)
-    )
+    session.add(ModelTrustIntersect(model_id=model_id, trust_id=trust_id, status=TrustIntersectStatus.INITIALISED))
     session.commit()
 
 
@@ -187,9 +185,7 @@ def test_model_without_run_trusts_returns_empty_trusts(
     writes the fl_job_trust roster the endpoint reads)."""
     user_id = uuid4()
     project = _add_project(session, project_factory, owner_id=user_id, name="Fresh")
-    model = _add_model(
-        session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.PENDING
-    )
+    model = _add_model(session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.PENDING)
     approved = _add_trust(session, trust_factory, name="Approved But Idle", code="ABI")
     _approve_trust_for_model(session, model_id=model.id, trust_id=approved.id)
 
@@ -206,12 +202,20 @@ def test_rows_carry_creation_timestamp_and_list_newest_first(
     user_id = uuid4()
     project = _add_project(session, project_factory, owner_id=user_id, name="Ordered")
     older = model_factory.build(
-        project_id=project.id, owner_id=user_id, name="older", deleted=False,
-        status=ModelStatus.PREPARED, creation_timestamp=datetime(2026, 1, 1, 12, 0, 0),
+        project_id=project.id,
+        owner_id=user_id,
+        name="older",
+        deleted=False,
+        status=ModelStatus.PREPARED,
+        creation_timestamp=datetime(2026, 1, 1, 12, 0, 0),
     )
     newer = model_factory.build(
-        project_id=project.id, owner_id=user_id, name="newer", deleted=False,
-        status=ModelStatus.PREPARED, creation_timestamp=datetime(2026, 6, 1, 12, 0, 0),
+        project_id=project.id,
+        owner_id=user_id,
+        name="newer",
+        deleted=False,
+        status=ModelStatus.PREPARED,
+        creation_timestamp=datetime(2026, 6, 1, 12, 0, 0),
     )
     session.add(older)
     session.add(newer)
@@ -230,12 +234,20 @@ def test_status_filter_narrows_results(client: TestClient, session, project_fact
     user_id = uuid4()
     project = _add_project(session, project_factory, owner_id=user_id, name="Mixed")
     training = _add_model(
-        session, model_factory, project_id=project.id, owner_id=user_id,
-        name="live", status=ModelStatus.RUNNING,
+        session,
+        model_factory,
+        project_id=project.id,
+        owner_id=user_id,
+        name="live",
+        status=ModelStatus.RUNNING,
     )
     _add_model(
-        session, model_factory, project_id=project.id, owner_id=user_id,
-        name="done", status=ModelStatus.RESULTS_UPLOADED,
+        session,
+        model_factory,
+        project_id=project.id,
+        owner_id=user_id,
+        name="done",
+        status=ModelStatus.RESULTS_UPLOADED,
     )
 
     override_verify_token_as(user_id)
@@ -260,9 +272,7 @@ def test_search_matches_project_name(client: TestClient, session, project_factor
     assert _ids(response.json()) == {str(m_retino.id)}
 
 
-def test_excludes_soft_deleted_models_and_projects(
-    client: TestClient, session, project_factory, model_factory
-):
+def test_excludes_soft_deleted_models_and_projects(client: TestClient, session, project_factory, model_factory):
     """Soft-deleted models, and models under a soft-deleted project, are not listed."""
     user_id = uuid4()
     live_project = _add_project(session, project_factory, owner_id=user_id, name="Live")
@@ -317,9 +327,7 @@ def test_invalid_status_param_is_rejected(client: TestClient, session, project_f
     assert response.status_code == 400
 
 
-def test_empty_result_returns_no_rows_and_zero_counts(
-    client: TestClient, session, project_factory, model_factory
-):
+def test_empty_result_returns_no_rows_and_zero_counts(client: TestClient, session, project_factory, model_factory):
     """A search that matches nothing yields an empty page (exercises the no-model-ids trust path)."""
     user_id = uuid4()
     project = _add_project(session, project_factory, owner_id=user_id, name="Sparse")
@@ -333,9 +341,7 @@ def test_empty_result_returns_no_rows_and_zero_counts(
     assert body["statusCounts"] == {}
 
 
-def test_multiple_statuses_filter_the_list_at_once(
-    client: TestClient, session, project_factory, model_factory
-):
+def test_multiple_statuses_filter_the_list_at_once(client: TestClient, session, project_factory, model_factory):
     """A comma-separated ``status`` filters to any of the given statuses (drives the group tiles)."""
     user_id = uuid4()
     project = _add_project(session, project_factory, owner_id=user_id, name="Multi")
@@ -371,15 +377,11 @@ def test_response_carries_per_status_counts(client: TestClient, session, project
     assert counts.get("RUNNING") == 1
 
 
-def test_status_counts_ignore_the_active_status_filter(
-    client: TestClient, session, project_factory, model_factory
-):
+def test_status_counts_ignore_the_active_status_filter(client: TestClient, session, project_factory, model_factory):
     """Tile counts show every status even while the list is filtered to one, so tiles stay usable."""
     user_id = uuid4()
     project = _add_project(session, project_factory, owner_id=user_id, name="Facets")
-    pending = _add_model(
-        session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.PENDING
-    )
+    pending = _add_model(session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.PENDING)
     _add_model(session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.RUNNING)
 
     override_verify_token_as(user_id)
@@ -392,9 +394,7 @@ def test_status_counts_ignore_the_active_status_filter(
     assert body["statusCounts"].get("RUNNING") == 1
 
 
-def test_status_counts_exclude_inaccessible_projects(
-    client: TestClient, session, project_factory, model_factory
-):
+def test_status_counts_exclude_inaccessible_projects(client: TestClient, session, project_factory, model_factory):
     """Counts obey the same access scoping as the list — foreign models never inflate a tile."""
     user_id = uuid4()
     other_id = uuid4()
@@ -414,16 +414,28 @@ def test_queued_models_carry_their_queue_position(client: TestClient, session, p
     admin_id = admin_user(session)
     project = _add_project(session, project_factory, owner_id=admin_id, name="Queue")
     first = _add_model(
-        session, model_factory, project_id=project.id, owner_id=admin_id,
-        name="first-queued", status=ModelStatus.INITIATED,
+        session,
+        model_factory,
+        project_id=project.id,
+        owner_id=admin_id,
+        name="first-queued",
+        status=ModelStatus.INITIATED,
     )
     second = _add_model(
-        session, model_factory, project_id=project.id, owner_id=admin_id,
-        name="second-queued", status=ModelStatus.INITIATED,
+        session,
+        model_factory,
+        project_id=project.id,
+        owner_id=admin_id,
+        name="second-queued",
+        status=ModelStatus.INITIATED,
     )
     picked = _add_model(
-        session, model_factory, project_id=project.id, owner_id=admin_id,
-        name="picked-up", status=ModelStatus.INITIATED,
+        session,
+        model_factory,
+        project_id=project.id,
+        owner_id=admin_id,
+        name="picked-up",
+        status=ModelStatus.INITIATED,
     )
     # The queue is QUEUED jobs by created ascending; the picked job left it despite
     # being the oldest, so it must not occupy a position.
@@ -442,9 +454,7 @@ def test_queued_models_carry_their_queue_position(client: TestClient, session, p
     assert by_name["picked-up"]["queuePosition"] is None
 
 
-def test_project_filter_narrows_the_list_to_that_project(
-    client: TestClient, session, project_factory, model_factory
-):
+def test_project_filter_narrows_the_list_to_that_project(client: TestClient, session, project_factory, model_factory):
     """``?project=`` scopes the estate list to one project the caller can see."""
     user_id = uuid4()
     mine = _add_project(session, project_factory, owner_id=user_id, name="Stroke triage")
@@ -459,9 +469,7 @@ def test_project_filter_narrows_the_list_to_that_project(
     assert _ids(response.json()) == {str(wanted.id)}
 
 
-def test_project_filter_rescopes_status_counts(
-    client: TestClient, session, project_factory, model_factory
-):
+def test_project_filter_rescopes_status_counts(client: TestClient, session, project_factory, model_factory):
     """The tiles describe the project in view, not the estate behind it.
 
     This is the reason the predicate belongs in the service's ``base_conditions`` rather than
@@ -482,21 +490,15 @@ def test_project_filter_rescopes_status_counts(
     assert response.json()["statusCounts"] == {ModelStatus.RUNNING.value: 1}
 
 
-def test_project_filter_composes_with_the_status_filter(
-    client: TestClient, session, project_factory, model_factory
-):
+def test_project_filter_composes_with_the_status_filter(client: TestClient, session, project_factory, model_factory):
     """Rows honour project AND status; counts honour project only, so tiles stay usable."""
     user_id = uuid4()
     project = _add_project(session, project_factory, owner_id=user_id)
-    running = _add_model(
-        session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.RUNNING
-    )
+    running = _add_model(session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.RUNNING)
     _add_model(session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.PENDING)
 
     override_verify_token_as(user_id)
-    response = client.get(
-        MODELS_URL, params={"project": str(project.id), "status": ModelStatus.RUNNING.value}
-    )
+    response = client.get(MODELS_URL, params={"project": str(project.id), "status": ModelStatus.RUNNING.value})
 
     assert response.status_code == 200
     payload = response.json()
@@ -504,9 +506,7 @@ def test_project_filter_composes_with_the_status_filter(
     assert payload["statusCounts"] == {ModelStatus.RUNNING.value: 1, ModelStatus.PENDING.value: 1}
 
 
-def test_project_filter_composes_with_search(
-    client: TestClient, session, project_factory, model_factory
-):
+def test_project_filter_composes_with_search(client: TestClient, session, project_factory, model_factory):
     """Search narrows within the scoped project rather than escaping it."""
     user_id = uuid4()
     project = _add_project(session, project_factory, owner_id=user_id)
@@ -555,9 +555,7 @@ def test_project_filter_for_an_unknown_project_is_not_found(client: TestClient, 
     assert response.status_code == 404
 
 
-def test_unknown_project_is_indistinguishable_from_an_inaccessible_one_for_non_managers(
-    client: TestClient, session
-):
+def test_unknown_project_is_indistinguishable_from_an_inaccessible_one_for_non_managers(client: TestClient, session):
     """A non-manager probing an unknown project id gets the plain no-access 403, never a 404.
 
     Pins the no-enumeration-oracle property: the response — status and detail — is identical to
@@ -596,9 +594,7 @@ def test_admin_can_scope_to_any_project(client: TestClient, session, project_fac
     assert _ids(response.json()) == {str(model.id)}
 
 
-def test_project_options_list_only_accessible_projects(
-    client: TestClient, session, project_factory
-):
+def test_project_options_list_only_accessible_projects(client: TestClient, session, project_factory):
     """The filter dropdown offers owned and granted projects, never anyone else's."""
     user_id = uuid4()
     owned = _add_project(session, project_factory, owner_id=user_id, name="Owned")
@@ -614,9 +610,7 @@ def test_project_options_list_only_accessible_projects(
     assert {option["id"] for option in response.json()} == {str(owned.id), str(granted.id)}
 
 
-def test_project_options_include_projects_without_models(
-    client: TestClient, session, project_factory
-):
+def test_project_options_include_projects_without_models(client: TestClient, session, project_factory):
     """A project with no models is still selectable — it just shows an empty list."""
     user_id = uuid4()
     empty = _add_project(session, project_factory, owner_id=user_id, name="No models yet")
@@ -628,14 +622,10 @@ def test_project_options_include_projects_without_models(
     assert [option["id"] for option in response.json()] == [str(empty.id)]
 
 
-def test_project_options_carry_status_for_the_create_model_gate(
-    client: TestClient, session, project_factory
-):
+def test_project_options_carry_status_for_the_create_model_gate(client: TestClient, session, project_factory):
     """The scoped Create Model button needs the project's status, so the option carries it."""
     user_id = uuid4()
-    project = project_factory.build(
-        owner_id=user_id, name="Staged one", deleted=False, status=ProjectStatus.STAGED
-    )
+    project = project_factory.build(owner_id=user_id, name="Staged one", deleted=False, status=ProjectStatus.STAGED)
     session.add(project)
     session.commit()
 

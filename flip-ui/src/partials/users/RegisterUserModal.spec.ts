@@ -274,6 +274,78 @@ describe("Register User Modal", () => {
             component.unmount();
         });
 
+        describe("as a Trust Admin", () => {
+            const trustAdminRole: IRole = {
+                id: "3",
+                rolename: "Trust Admin",
+                roledescription: "Researcher access, plus one trust's decisions"
+            };
+            const trusts = [
+                {
+                    id: "trust-a",
+                    name: "Decision Trust A",
+                    code: "DTA"
+                }
+            ];
+
+            const openAsTrustAdmin = async () => {
+                mockRegisterUser.mockResolvedValue({ email: "ta@example.test" });
+                const component = mountAndOpen({
+                    roles: [roleA, trustAdminRole],
+                    trusts
+                });
+                await component.setProps({ dialog: true });
+                const setupState = setupStateOf(component);
+                setupState.setFieldValue("name", "Trust Admin Person");
+                setupState.setFieldValue("email", "ta@example.test");
+                setupState.setFieldValue("organisation", "Decision Trust A");
+                setupState.selectedOption = {
+                    id: trustAdminRole.id,
+                    description: trustAdminRole.rolename
+                };
+                await nextTick();
+
+                return {
+                    component,
+                    setupState
+                };
+            };
+
+            it("asks which trust they administer", async () => {
+                const { component } = await openAsTrustAdmin();
+
+                const options = document.body.querySelectorAll("[data-test='register-trust-select'] option:not([disabled])");
+                expect(Array.from(options).map(o => o.textContent?.trim())).toEqual(["Decision Trust A (DTA)"]);
+                component.unmount();
+            });
+
+            it("will not register a Trust Admin without a trust", async () => {
+                const { component, setupState } = await openAsTrustAdmin();
+
+                await setupState.submitAction();
+
+                expect(mockRegisterUser).not.toHaveBeenCalled();
+                expect(setupState.errors.trust).toBe("Please select a trust");
+                component.unmount();
+            });
+
+            it("registers a Trust Admin with the trust they administer", async () => {
+                const { component, setupState } = await openAsTrustAdmin();
+                setupState.setFieldValue("trust", "trust-a");
+
+                await setupState.submitAction();
+
+                expect(mockRegisterUser).toHaveBeenCalledWith({
+                    name: "Trust Admin Person",
+                    organisation: "Decision Trust A",
+                    email: "ta@example.test",
+                    roles: [trustAdminRole.id],
+                    trustId: "trust-a"
+                });
+                component.unmount();
+            });
+        });
+
         it("does not call registerUser when required fields are missing", async () => {
             const component = mountAndOpen({});
             const setupState = setupStateOf(component);

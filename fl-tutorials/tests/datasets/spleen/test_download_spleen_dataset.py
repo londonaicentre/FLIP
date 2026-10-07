@@ -112,9 +112,7 @@ def test_kept_cases_carry_both_an_image_and_a_label(downloader: ModuleType, tmp_
         assert (scans / f"label_spleen_{case}.nii.gz").is_file()
 
 
-def test_macos_resource_forks_are_skipped_without_consuming_a_slot(
-    downloader: ModuleType, tmp_path: Path
-) -> None:
+def test_macos_resource_forks_are_skipped_without_consuming_a_slot(downloader: ModuleType, tmp_path: Path) -> None:
     """The archive ships ``._spleen_<N>.nii.gz`` siblings; they are not cases.
 
     They must not reach the sort either: natsort would happily interleave them with the real

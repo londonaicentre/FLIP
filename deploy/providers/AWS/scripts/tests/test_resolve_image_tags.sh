@@ -446,6 +446,36 @@ else
     no "resolves with no docker binary present" "could not build a minimal PATH for the case"
 fi
 
+# 18. On an LZA estate DOCKER_REGISTRY is the account's ECR pull-through cache of
+#     GHCR, which the runner holds no login for — probing it failed every apply
+#     with "no basic auth credentials". The probe goes to GHCR, where the build
+#     publishes; the cache mirrors it tag for tag. The live images carry the ECR
+#     prefix, and the fallback still reads their tag.
+ECR_GHCR="111122223333.dkr.ecr.eu-west-2.amazonaws.com/ghcr/londonaicentre/"
+fixture "ghcr.io/londonaicentre/flip-api:${SHA_TAG}" \
+    "flip-api:41" "${ECR_GHCR}flip-api:sha-9999999" \
+    "fl-server-net-1:12" "${ECR_GHCR}flare-fl-server:v0.11.0"
+run_resolve "an ECR pull-through registry is probed at its GHCR upstream" DOCKER_REGISTRY="${ECR_GHCR}"
+expect_rc 0 "succeeds"
+expect_tag DOCKER_TAG "${SHA_TAG}"
+expect_tag DOCKER_FL_TAG "v0.11.0"
+if [[ "${STDERR}" == *"looking for ghcr.io/londonaicentre/flip-api:${SHA_TAG}"* ]]; then
+    ok "the probe names the GHCR reference"
+else
+    no "the probe names the GHCR reference" "stderr: ${STDERR}"
+fi
+
+# 18b. Any other registry — ECR without the ghcr/ cache prefix included — is
+#      probed as given, not rewritten.
+ECR_OWN="111122223333.dkr.ecr.eu-west-2.amazonaws.com/flip/"
+fixture "${ECR_OWN}flip-api:${SHA_TAG}
+${ECR_OWN}flare-fl-server:${SHA_TAG}" \
+    "flip-api:41" "${ECR_OWN}flip-api:sha-9999999" \
+    "fl-server-net-1:12" "${ECR_OWN}flare-fl-server:sha-9999999"
+run_resolve "a registry that is not a GHCR cache is probed as given" DOCKER_REGISTRY="${ECR_OWN}"
+expect_tag DOCKER_TAG "${SHA_TAG}"
+expect_tag DOCKER_FL_TAG "${SHA_TAG}"
+
 # 17. An unknown RESOLVE_SHA_TAG must stop rather than be read as falsy — a
 #     typo'd "no" silently reverting plan to the waiting path would reintroduce
 #     the 30-minute stall this flag exists to avoid.

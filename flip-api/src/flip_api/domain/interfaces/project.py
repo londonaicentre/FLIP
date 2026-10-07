@@ -16,7 +16,13 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, validator
 
-from flip_api.domain.schemas.status import ImagingConnectionState, ModelStatus, ProjectStatus
+from flip_api.domain.schemas.status import (
+    DecisionMaker,
+    ImagingConnectionState,
+    ModelStatus,
+    ProjectStatus,
+    TrustApprovalStatus,
+)
 from flip_api.domain.schemas.users import CognitoUser
 
 # Blocks the three characters most likely to enable structural XML injection
@@ -100,11 +106,21 @@ class IProjectResponse(BaseModel):
 
 
 class IApprovedTrust(BaseModel):
+    """A trust a project was staged for, with the decision on it (FLIP#1318)."""
+
     id: UUID
     name: str
     code: str | None = None
-    approved: bool
-    approved_at: str | None = Field(default=None, alias="approvedAt")
+    status: TrustApprovalStatus
+    # The decider's user id and display name, and the date. All null while PENDING; the decider is also
+    # null on approvals made before decisions were attributed, and the name on a decider with no profile.
+    decided_by: UUID | None = Field(default=None, alias="decidedBy")
+    decided_by_name: str | None = Field(default=None, alias="decidedByName")
+    decided_at: str | None = Field(default=None, alias="decidedAt")
+    # HUB or SITE: whether the hub admin or the trust's own Trust Admin decided (FLIP#1258); null while PENDING.
+    decided_as: DecisionMaker | None = Field(default=None, alias="decidedAs")
+    # True when the trust has a Trust Admin, so only they decide it.
+    has_trust_admin: bool = Field(default=False, alias="hasTrustAdmin")
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -214,10 +230,14 @@ class IProjectDetails(BaseModel):
 
 
 class IProjectApproval(BaseModel):
-    project_id: UUID = Field(..., description="The ID of the project to approve.")
+    project_id: UUID = Field(..., description="The ID of the project to decide on.")
     trust_ids: list[UUID] = Field(
         ...,
         description="List of Trust IDs to approve the project for.",
+    )
+    declined_trust_ids: list[UUID] = Field(
+        default_factory=list,
+        description="List of Trust IDs that decline the project.",
     )
 
 
@@ -251,9 +271,7 @@ class IImagingStatusResponse(BaseModel):
     # Whether the newest refresh landed, so a consumer can tell a live 100% from a stale one.
     # Defaults to OK so a trust with no refresh history reads as "nothing wrong yet" rather
     # than as an error.
-    connection_state: ImagingConnectionState = Field(
-        default=ImagingConnectionState.OK, alias="connectionState"
-    )
+    connection_state: ImagingConnectionState = Field(default=ImagingConnectionState.OK, alias="connectionState")
     # When `import_status` was last confirmed against the trust. None when no refresh has ever
     # succeeded for this project.
     last_seen_at: datetime | None = Field(default=None, alias="lastSeenAt")

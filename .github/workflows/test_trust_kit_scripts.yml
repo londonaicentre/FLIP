@@ -51,6 +51,14 @@ on:
       - ".env.development.example"
       - "deploy/fl_backend.mk"
       - ".github/workflows/docker_build_*.yml"
+      - ".github/workflows/fl-docker-build-*.yml"
+      - ".github/workflows/release.yml"
+      - ".github/actions/**"
+      - ".github/tests/**"
+      - "tests/**"
+      - "Makefile"
+      - "trust/Makefile"
+      - "trust/xnat/Makefile"
   pull_request:
     branches: [develop]
 
@@ -72,9 +80,11 @@ jobs:
       # themselves are stdlib-only.
       - name: Install uv
         run: pip install uv
-      - name: Run scripts/ tests
+      # scripts/tests/, plus the repo-level trees that mirror what they test: tests/ for the root
+      # Makefile, .github/tests/ for the workflows and actions. All stdlib-only.
+      - name: Run scripts/, tests/ and .github/tests/
         run: |
-          for test_file in scripts/tests/test_*.py; do
+          for test_file in scripts/tests/test_*.py tests/test_*.py $(find .github/tests -name 'test_*.py' | sort); do
             echo "== $test_file"
             python "$test_file" || exit 1
           done

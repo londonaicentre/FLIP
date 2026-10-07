@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Static guards on the fl-api bundle-fetch host allow-list in the ECS task environment (FLIP#905).
+"""Static guards on the fl-api bundle-fetch origin allow-list in the ECS task environment (FLIP#905).
 
-``BUNDLE_URL_ALLOWED_HOSTS`` is the primary SSRF control in front of the fl-api's server-side bundle
-fetch: the one host it may download an app bundle from. It was set in no environment until FLIP#905,
+``BUNDLE_URL_ALLOWED_ORIGINS`` is the primary SSRF control in front of the fl-api's server-side bundle
+fetch: the one origin it may download an app bundle from. It was set in no environment until FLIP#905,
 which left the allow-list branch of ``validate_bundle_url`` inert everywhere. Nothing at runtime can
 catch a missing or wrong value cheaply — empty means "any public host" and only logs a warning; wrong
 400s every bundle download, i.e. every training run — so the wiring is asserted here, over the ``.tf``
@@ -23,8 +23,9 @@ source, for both fl-api task-environment maps.
 
 The value is not free-standing. flip-api presigns bundle URLs against ``AWS_ENDPOINT_URL_S3``, and a
 regional endpoint makes botocore emit path-style URLs whose host is exactly ``s3.<region>.amazonaws.com``.
-So the allow-list must be that endpoint's host, and ``locals.tf`` derives both from one local
-(``s3_regional_endpoint_host``) so they cannot drift. This suite asserts that derivation rather than a
+So the allow-list must be that endpoint — the same ``https://`` origin, since FLIP#1291 made entries
+scheme-and-port exact — and ``locals.tf`` derives both from one local (``s3_regional_endpoint_host``) so
+they cannot drift. This suite asserts that derivation rather than a
 literal, because a literal that happened to match today would not survive a change to either side.
 """
 
@@ -80,9 +81,14 @@ def test_both_fl_api_task_families_allow_list_the_shared_endpoint() -> None:
     """Every fl-api task environment — NVFLARE and Flower — pins bundle fetches to the presign origin.
 
     ``ecs_tasks.tf`` selects one of the two maps by ``var.fl_backend``, so both must carry the variable
-    or one backend ships with the allow-list inert (FLIP#905).
+    or one backend ships with the allow-list inert (FLIP#905). The value is the exact expression flip-api's
+    ``AWS_ENDPOINT_URL_S3`` uses, because an origin entry is scheme-and-port exact (FLIP#1291).
     """
     for family in ("fl_api", "fl_api_flower"):
+        assert (
+            _attribute(_task_env_map(family), "BUNDLE_URL_ALLOWED_ORIGINS") == f'"https://${{local.{SHARED_LOCAL}}}"'
+        ), family
+        # The pre-#1291 name rides along for one release so an image/environment skew cannot fail open.
         assert _attribute(_task_env_map(family), "BUNDLE_URL_ALLOWED_HOSTS") == f"local.{SHARED_LOCAL}", family
 
 

@@ -11,21 +11,19 @@
  * limitations under the License.
  */
 
-import { fetchAuthSession } from "aws-amplify/auth";
 import axios from "axios";
 import { createPinia, setActivePinia } from "pinia";
 
+import { makeMockAuthProvider, resetMockAuthProvider } from "@/auth/__tests__/mock-provider";
 import { _http } from "@/services/api";
 import { useAuthStore } from "@/store/auth";
 import { stashPostSignOutNotice } from "@/utils/session-teardown";
 import { Snackbar } from "@/utils/snackbar";
 
-vi.mock("aws-amplify/auth", () => ({ fetchAuthSession: vi.fn() }));
-
-// utils/auth registers a Hub.listen at import time; stub it so pulling in
-// api.ts (which transitively imports utils/auth for NO_FORCED_SIGNOUT_PATHS)
-// stays side-effect-free.
-vi.mock("aws-amplify/utils", () => ({ Hub: { listen: vi.fn() } }));
+// The bearer token comes from the identity provider behind the `@/auth`
+// seam; how each backend caches / refreshes it is that provider's own spec.
+const authProvider = makeMockAuthProvider();
+vi.mock("@/auth", () => ({ getAuthProvider: () => authProvider }));
 
 vi.mock("@/router", () => ({
     default: {
@@ -101,7 +99,7 @@ vi.mock("axios", () => ({ default: { create: vi.fn(() => fakeAxiosInstance) } })
 describe("api.ts Http client", () => {
     beforeEach(() => {
         setActivePinia(createPinia());
-        vi.mocked(fetchAuthSession).mockReset();
+        resetMockAuthProvider(authProvider);
         vi.mocked(Snackbar.show).mockReset();
         vi.mocked(stashPostSignOutNotice).mockReset();
         mockStoreSignOut.mockReset();
@@ -131,13 +129,14 @@ describe("api.ts Http client", () => {
     }
 
     describe("request interceptor", () => {
-        it("attaches Bearer token from the current Amplify session", async () => {
-            vi.mocked(fetchAuthSession).mockResolvedValue({ tokens: { accessToken: { toString: () => "token-abc" } } } as never);
+        it("attaches the Bearer token the provider hands out", async () => {
+            authProvider.getAccessToken.mockResolvedValue("token-abc");
             primeHttp();
 
             const cfg = { headers: {} } as Record<string, unknown>;
             const out = await interceptors.requestOnFulfilled!(cfg);
 
+            expect(authProvider.getAccessToken).toHaveBeenCalledTimes(1);
             expect((out.headers as Record<string, string>).Authorization).toBe(
                 "Bearer token-abc"
             );
@@ -149,40 +148,21 @@ describe("api.ts Http client", () => {
             const cfg = { headers: { Authorization: "" } };
             const out = await interceptors.requestOnFulfilled!(cfg);
 
-            expect(fetchAuthSession).not.toHaveBeenCalled();
+            expect(authProvider.getAccessToken).not.toHaveBeenCalled();
             expect((out.headers as Record<string, string>).Authorization).toBe("");
         });
 
-        it("returns the config unchanged when no accessToken is present", async () => {
-            vi.mocked(fetchAuthSession).mockResolvedValue({ tokens: undefined } as never);
+        it("returns the config unchanged when the provider has no token", async () => {
+            // The request goes out unauthenticated and the 401 handler
+            // below owns what happens next; the provider has already
+            // logged why (see its own spec).
+            authProvider.getAccessToken.mockResolvedValue(null);
             primeHttp();
 
             const cfg = { headers: {} } as Record<string, unknown>;
             const out = await interceptors.requestOnFulfilled!(cfg);
 
             expect((out.headers as Record<string, string>).Authorization).toBeUndefined();
-        });
-
-        it("logs a warning when forceRefresh throws so the cause is visible in DevTools", async () => {
-            // First fetchAuthSession returns no tokens, then forceRefresh
-            // throws — without the warn log, the user would just be
-            // signed out by the 401 handler with no clue which Amplify
-            // class fired (TooManyRequestsException, network error, etc.).
-            vi.mocked(fetchAuthSession)
-                .mockResolvedValueOnce({ tokens: undefined } as never)
-                .mockRejectedValueOnce(Object.assign(new Error("throttle"), { name: "TooManyRequestsException" }));
-            const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
-            primeHttp();
-
-            const cfg = { headers: {} } as Record<string, unknown>;
-            const out = await interceptors.requestOnFulfilled!(cfg);
-
-            expect((out.headers as Record<string, string>).Authorization).toBeUndefined();
-            expect(consoleWarn).toHaveBeenCalledWith(
-                "Token forceRefresh failed:",
-                expect.objectContaining({ name: "TooManyRequestsException" })
-            );
-            consoleWarn.mockRestore();
         });
 
         it("rejects when request preparation errors", async () => {

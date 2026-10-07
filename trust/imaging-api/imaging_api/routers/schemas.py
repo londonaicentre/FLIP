@@ -87,6 +87,7 @@ class _AccessionIdRequest(BaseModel):
     def _reject_unsafe_accession_id(cls, v: str) -> str:
         return _validate_url_path_segment(v)
 
+
 # #########################
 # Users
 # #########################
@@ -193,9 +194,7 @@ class CentralHubProject(BaseModel):
     @classmethod
     def _reject_xml_control_chars(cls, v: str) -> str:
         if any(c in v for c in _XML_FORBIDDEN_CHARS):
-            raise ValueError(
-                f"project_name must not contain XML control characters {_XML_FORBIDDEN_CHARS}"
-            )
+            raise ValueError(f"project_name must not contain XML control characters {_XML_FORBIDDEN_CHARS}")
         return v
 
 

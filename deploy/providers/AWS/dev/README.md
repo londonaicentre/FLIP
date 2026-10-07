@@ -1,9 +1,14 @@
 # Dev-account Terraform root
 
-This directory holds the Terraform stack for the **dev AWS account**. It deploys only the services that cannot reasonably run on a developer workstation:
+This directory holds the Terraform stack for the **dev AWS account**. It deploys only the services that do not run on a developer workstation:
 
 - **Cognito** — user pool, hosted-UI domain, app client, seed admin/researcher users
 - **S3** — the three FLIP application buckets (model-file uploads, FL results, app bundles)
+
+> **This root is optional** (FLIP#919). Local development signs in through a Keycloak container and nothing
+> else (flip-api's `DevSettings` pins it), so nothing here is needed to authenticate — the Cognito pool this
+> root creates is not used by the compose stack. Apply it only for the dev S3 buckets, what `make up` still
+> needs AWS for.
 
 Everything else (VPC, EC2, RDS, ALB, NLB, Route53, ACM, IAM, CloudWatch) is intentionally **not** part of this stack; local development runs those services via Docker Compose in this repository's `deploy/` root compose files. SES is not part of it either, and is not run locally at all — see below. The prod/stag stack at `deploy/providers/AWS/` is the source of truth for every non-dev environment.
 
@@ -59,6 +64,10 @@ make destroy         # refused while prevent_destroy is set
 ```
 
 ### Browser-usable UI ports
+
+**Not used by the compose stack** (FLIP#919): development signs in through Keycloak only, and the dev realm
+(`deploy/keycloak/flip-realm.json`) registers whatever `UI_PORT` the env file sets, so any free port works
+there. This section matters only for a client pointed at the dev pool outside the compose stack.
 
 flip-api derives its CORS allowlist from the app client's callback URLs, and Cognito matches those
 exactly (no wildcard, no range), so a UI port is usable in a browser only if it is registered here.

@@ -67,8 +67,7 @@ in the `fl-apps/flower/*` template pyprojects steer the per-run resolution inste
   flip-utils **source** at `/opt/flip-utils` after installing it, and every run builds flip-utils
   from that path. uv never consults PyPI for a name with a source override, so the platform always
   runs the flip-utils matching its images.
-- `torch`/`torchvision` are pinned to PyTorch's cu128 index (PyPI's default cu130 wheels need
-  NVIDIA driver ≥580; FLIP hosts run 575.x).
+- `torch`/`torchvision` are pinned to PyTorch's cu130 index and require NVIDIA driver ≥580.
 
 All other dependencies resolve from PyPI per run, so SuperLink/SuperNode hosts need outbound HTTPS
 to PyPI and `download.pytorch.org`.
@@ -153,8 +152,9 @@ NET_NUMBER=1` / `=2` — same script, same `NUM_SUPERNODES` derivation, just wit
 The SuperLink only accepts SuperNodes whose **public** key it has been told about. Each
 SuperNode's `.pub` key is registered with the SuperLink (and, in the hub, mapped to a trust name)
 by [`register-supernode-keys.sh`](register-supernode-keys.sh) — it runs `flwr supernode register`
-for every `/keys/*.pub`, skipping already-registered keys. This is the Flower analogue of claiming
-a participant slot.
+for every `/keys/*.pub`, naming each node after its trust (`--name`, flwr ≥ 1.38, so the ServerApp
+sees the trust behind every node id through `Grid.get_nodes()`), skipping already-registered
+keys. This is the Flower analogue of claiming a participant slot.
 
 ## Running a network standalone (no hub / trusts)
 

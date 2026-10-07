@@ -36,7 +36,7 @@ FLOWER_FILE="fl-services/flower/fl-api-flower/fl_api/utils/validation.py"
 # guard is covered the moment it is copied across rather than when someone remembers to edit this
 # list -- which is the FLIP#893 failure mode one function later. Naming them here still catches the
 # opposite direction: a rename or deletion that quietly empties the computed set.
-REQUIRED_SHARED_FUNCTIONS=("safe_join" "validate_bundle_url")
+REQUIRED_SHARED_FUNCTIONS=("safe_join" "validate_bundle_url" "bundle_url_allowed_origins" "warn_if_bundle_url_allow_list_empty")
 
 status=0
 

@@ -424,14 +424,16 @@ def check_ecs_cluster() -> None:
     """
     print_status("INFO", "Checking ECS cluster...")
     cluster_names = []
-    success, output = run_aws_command([
-        "ecs",
-        "list-clusters",
-        "--query",
-        "clusterArns",
-        "--output",
-        "json",
-    ])
+    success, output = run_aws_command(
+        [
+            "ecs",
+            "list-clusters",
+            "--query",
+            "clusterArns",
+            "--output",
+            "json",
+        ]
+    )
     if success and output:
         try:
             cluster_names = json.loads(output)
@@ -442,16 +444,18 @@ def check_ecs_cluster() -> None:
         print_status("INFO", "No ECS clusters found (EC2-only deployment)")
         return
 
-    success2, output2 = run_aws_command([
-        "ecs",
-        "describe-clusters",
-        "--clusters",
-        *cluster_names,
-        "--query",
-        "clusters[0].{name:clusterName,status:status,services:activeServicesCount}",
-        "--output",
-        "json",
-    ])
+    success2, output2 = run_aws_command(
+        [
+            "ecs",
+            "describe-clusters",
+            "--clusters",
+            *cluster_names,
+            "--query",
+            "clusters[0].{name:clusterName,status:status,services:activeServicesCount}",
+            "--output",
+            "json",
+        ]
+    )
     if success2 and output2:
         try:
             data = json.loads(output2)
@@ -475,16 +479,18 @@ def check_vpc_endpoints() -> None:
     parameters or secrets, or from writing logs.
     """
     print_status("INFO", "Checking VPC endpoints...")
-    success, output = run_aws_command([
-        "ec2",
-        "describe-vpc-endpoints",
-        "--filters",
-        "Name=vpc-endpoint-type,Values=Interface",
-        "--query",
-        "VpcEndpoints[].{Name:ServiceName,State:State}",
-        "--output",
-        "json",
-    ])
+    success, output = run_aws_command(
+        [
+            "ec2",
+            "describe-vpc-endpoints",
+            "--filters",
+            "Name=vpc-endpoint-type,Values=Interface",
+            "--query",
+            "VpcEndpoints[].{Name:ServiceName,State:State}",
+            "--output",
+            "json",
+        ]
+    )
     if not success or not output:
         print_status("INFO", "Could not query VPC endpoints (may need ec2:DescribeVpcEndpoints)")
         return
@@ -625,20 +631,22 @@ def _filter_log_events(log_group: str, pattern: str, minutes: int = 60) -> tuple
     import time
 
     start_time_ms = int((time.time() - minutes * 60) * 1000)
-    success, output = run_aws_command([
-        "logs",
-        "filter-log-events",
-        "--log-group-name",
-        log_group,
-        "--start-time",
-        str(start_time_ms),
-        "--filter-pattern",
-        pattern,
-        "--query",
-        "events[].message",
-        "--output",
-        "json",
-    ])
+    success, output = run_aws_command(
+        [
+            "logs",
+            "filter-log-events",
+            "--log-group-name",
+            log_group,
+            "--start-time",
+            str(start_time_ms),
+            "--filter-pattern",
+            pattern,
+            "--query",
+            "events[].message",
+            "--output",
+            "json",
+        ]
+    )
     if not success or not output:
         return False, []
     try:
@@ -726,32 +734,36 @@ def check_mfa_config() -> None:
     default is ``true``; absence of an explicit ``false`` is a pass.
     """
     print_status("INFO", "Checking ENFORCE_MFA on flip-api ECS task definition...")
-    success, output = run_aws_command([
-        "ecs",
-        "describe-services",
-        "--cluster",
-        "flip-cluster",
-        "--services",
-        "flip-api",
-        "--query",
-        "services[0].taskDefinition",
-        "--output",
-        "text",
-    ])
+    success, output = run_aws_command(
+        [
+            "ecs",
+            "describe-services",
+            "--cluster",
+            "flip-cluster",
+            "--services",
+            "flip-api",
+            "--query",
+            "services[0].taskDefinition",
+            "--output",
+            "text",
+        ]
+    )
     if not success or not output:
         print_status("INFO", "Could not read flip-api task definition")
         return
 
-    success2, td = run_aws_command([
-        "ecs",
-        "describe-task-definition",
-        "--task-definition",
-        output.strip(),
-        "--query",
-        "taskDefinition.containerDefinitions[0].environment",
-        "--output",
-        "json",
-    ])
+    success2, td = run_aws_command(
+        [
+            "ecs",
+            "describe-task-definition",
+            "--task-definition",
+            output.strip(),
+            "--query",
+            "taskDefinition.containerDefinitions[0].environment",
+            "--output",
+            "json",
+        ]
+    )
     if not success2 or not td:
         print_status("INFO", "Could not read flip-api task definition environment")
         return
@@ -788,22 +800,24 @@ def check_ecs_services_running(net_numbers: list[int]) -> None:
     """
     print_status("INFO", "Checking ECS service rollout state...")
     services = ["flip-api"] + [f"fl-api-net-{n}" for n in net_numbers] + [f"fl-server-net-{n}" for n in net_numbers]
-    success, output = run_aws_command([
-        "ecs",
-        "describe-services",
-        "--cluster",
-        "flip-cluster",
-        "--services",
-        *services,
-        "--query",
-        (
-            "services[].{name:serviceName,status:status,desired:desiredCount,"
-            "running:runningCount,"
-            "deployments:deployments[?status==`PRIMARY`].rolloutState | [0]}"
-        ),
-        "--output",
-        "json",
-    ])
+    success, output = run_aws_command(
+        [
+            "ecs",
+            "describe-services",
+            "--cluster",
+            "flip-cluster",
+            "--services",
+            *services,
+            "--query",
+            (
+                "services[].{name:serviceName,status:status,desired:desiredCount,"
+                "running:runningCount,"
+                "deployments:deployments[?status==`PRIMARY`].rolloutState | [0]}"
+            ),
+            "--output",
+            "json",
+        ]
+    )
     if not success or not output:
         print_status("FAIL", "Could not describe ECS services")
         return
@@ -829,8 +843,7 @@ def check_ecs_services_running(net_numbers: list[int]) -> None:
         else:
             print_status(
                 "FAIL",
-                f"ECS service '{name}' unhealthy: "
-                f"status={status}, {running}/{desired}, rollout={rollout}",
+                f"ECS service '{name}' unhealthy: status={status}, {running}/{desired}, rollout={rollout}",
             )
 
 
@@ -843,14 +856,16 @@ def check_ecs_target_group_health() -> None:
     """
     print_status("INFO", "Checking ECS target group health (ALB + NLB)...")
 
-    success, tgs = run_aws_command([
-        "elbv2",
-        "describe-target-groups",
-        "--query",
-        "TargetGroups[?starts_with(TargetGroupName, `ecs-`)].{name:TargetGroupName,arn:TargetGroupArn}",
-        "--output",
-        "json",
-    ])
+    success, tgs = run_aws_command(
+        [
+            "elbv2",
+            "describe-target-groups",
+            "--query",
+            "TargetGroups[?starts_with(TargetGroupName, `ecs-`)].{name:TargetGroupName,arn:TargetGroupArn}",
+            "--output",
+            "json",
+        ]
+    )
     if not success or not tgs:
         print_status("WARN", "Could not list ECS target groups")
         return
@@ -870,16 +885,18 @@ def check_ecs_target_group_health() -> None:
         arn = tg.get("arn", "")
         if not arn:
             continue
-        success2, health = run_aws_command([
-            "elbv2",
-            "describe-target-health",
-            "--target-group-arn",
-            arn,
-            "--query",
-            "TargetHealthDescriptions[].{id:Target.Id,state:TargetHealth.State,reason:TargetHealth.Reason}",
-            "--output",
-            "json",
-        ])
+        success2, health = run_aws_command(
+            [
+                "elbv2",
+                "describe-target-health",
+                "--target-group-arn",
+                arn,
+                "--query",
+                "TargetHealthDescriptions[].{id:Target.Id,state:TargetHealth.State,reason:TargetHealth.Reason}",
+                "--output",
+                "json",
+            ]
+        )
         if not success2 or not health:
             print_status("WARN", f"Target group '{name}': could not query health")
             continue
@@ -918,21 +935,23 @@ def check_ecs_log_streams(net_numbers: list[int]) -> None:
     threshold_ms = int((time.time() - 60 * 60) * 1000)
 
     for log_group in log_groups:
-        success, output = run_aws_command([
-            "logs",
-            "describe-log-streams",
-            "--log-group-name",
-            log_group,
-            "--order-by",
-            "LastEventTime",
-            "--descending",
-            "--max-items",
-            "1",
-            "--query",
-            "logStreams[0].lastEventTimestamp",
-            "--output",
-            "text",
-        ])
+        success, output = run_aws_command(
+            [
+                "logs",
+                "describe-log-streams",
+                "--log-group-name",
+                log_group,
+                "--order-by",
+                "LastEventTime",
+                "--descending",
+                "--max-items",
+                "1",
+                "--query",
+                "logStreams[0].lastEventTimestamp",
+                "--output",
+                "text",
+            ]
+        )
         # ``--max-items 1`` adds a NextToken line ("None" or token) after the
         # value, so take just the first line.
         first_line = output.strip().split("\n", 1)[0] if output else ""
@@ -1047,31 +1066,35 @@ def main(
 
     # Check Central Hub EC2 instance status
     if central_hub_id:
-        success, output = run_aws_command([
-            "ec2",
-            "describe-instances",
-            "--instance-ids",
-            central_hub_id,
-            "--query",
-            "Reservations[0].Instances[0].State.Name",
-            "--output",
-            "text",
-        ])
+        success, output = run_aws_command(
+            [
+                "ec2",
+                "describe-instances",
+                "--instance-ids",
+                central_hub_id,
+                "--query",
+                "Reservations[0].Instances[0].State.Name",
+                "--output",
+                "text",
+            ]
+        )
         if success and output == "running":
             print_status("PASS", "Central Hub SSM bastion is running")
         else:
             print_status("FAIL", f"Central Hub SSM bastion state: {output}")
 
-        success, ping_status = run_aws_command([
-            "ssm",
-            "describe-instance-information",
-            "--filters",
-            f"Key=InstanceIds,Values={central_hub_id}",
-            "--query",
-            "InstanceInformationList[0].PingStatus",
-            "--output",
-            "text",
-        ])
+        success, ping_status = run_aws_command(
+            [
+                "ssm",
+                "describe-instance-information",
+                "--filters",
+                f"Key=InstanceIds,Values={central_hub_id}",
+                "--query",
+                "InstanceInformationList[0].PingStatus",
+                "--output",
+                "text",
+            ]
+        )
         if success and ping_status == "Online":
             print_status("PASS", "Central Hub bastion is online in SSM")
         else:
@@ -1079,16 +1102,18 @@ def main(
 
     # Check Trust EC2 instance status if it exists
     if trust_id:
-        success, output = run_aws_command([
-            "ec2",
-            "describe-instances",
-            "--instance-ids",
-            trust_id,
-            "--query",
-            "Reservations[0].Instances[0].State.Name",
-            "--output",
-            "text",
-        ])
+        success, output = run_aws_command(
+            [
+                "ec2",
+                "describe-instances",
+                "--instance-ids",
+                trust_id,
+                "--query",
+                "Reservations[0].Instances[0].State.Name",
+                "--output",
+                "text",
+            ]
+        )
         if success and output == "running":
             print_status("PASS", "Trust EC2 instance is running")
         else:
@@ -1096,28 +1121,32 @@ def main(
 
         # Check security groups
     if central_hub_id:
-        success, sg_id = run_aws_command([
-            "ec2",
-            "describe-instances",
-            "--instance-ids",
-            central_hub_id,
-            "--query",
-            "Reservations[0].Instances[0].SecurityGroups[0].GroupId",
-            "--output",
-            "text",
-        ])
-        if success and sg_id:
-            print_status("PASS", f"Security Group: {sg_id}")
-            success, ingress_count = run_aws_command([
+        success, sg_id = run_aws_command(
+            [
                 "ec2",
-                "describe-security-groups",
-                "--group-ids",
-                sg_id,
+                "describe-instances",
+                "--instance-ids",
+                central_hub_id,
                 "--query",
-                "length(SecurityGroups[0].IpPermissions)",
+                "Reservations[0].Instances[0].SecurityGroups[0].GroupId",
                 "--output",
                 "text",
-            ])
+            ]
+        )
+        if success and sg_id:
+            print_status("PASS", f"Security Group: {sg_id}")
+            success, ingress_count = run_aws_command(
+                [
+                    "ec2",
+                    "describe-security-groups",
+                    "--group-ids",
+                    sg_id,
+                    "--query",
+                    "length(SecurityGroups[0].IpPermissions)",
+                    "--output",
+                    "text",
+                ]
+            )
             if success and ingress_count == "0":
                 print_status("PASS", "Central Hub bastion security group has no inbound rules")
             else:
@@ -1127,25 +1156,29 @@ def main(
 
     # Check RDS instance
     print_status("INFO", "Checking RDS database...")
-    success, rds_endpoint = run_aws_command([
-        "rds",
-        "describe-db-instances",
-        "--query",
-        "DBInstances[?contains(DBInstanceIdentifier, 'flip')].Endpoint.Address | [0]",
-        "--output",
-        "text",
-    ])
-    if success and rds_endpoint and rds_endpoint.strip():
-        print_status("PASS", f"RDS endpoint found: {rds_endpoint.strip()}")
-
-        success, rds_status = run_aws_command([
+    success, rds_endpoint = run_aws_command(
+        [
             "rds",
             "describe-db-instances",
             "--query",
-            "DBInstances[?contains(DBInstanceIdentifier, 'flip')].DBInstanceStatus | [0]",
+            "DBInstances[?contains(DBInstanceIdentifier, 'flip')].Endpoint.Address | [0]",
             "--output",
             "text",
-        ])
+        ]
+    )
+    if success and rds_endpoint and rds_endpoint.strip():
+        print_status("PASS", f"RDS endpoint found: {rds_endpoint.strip()}")
+
+        success, rds_status = run_aws_command(
+            [
+                "rds",
+                "describe-db-instances",
+                "--query",
+                "DBInstances[?contains(DBInstanceIdentifier, 'flip')].DBInstanceStatus | [0]",
+                "--output",
+                "text",
+            ]
+        )
         rds_status = (rds_status or "").strip()
         if success and rds_status == "available":
             print_status("PASS", "RDS instance is available")
@@ -1175,14 +1208,16 @@ def main(
 
     # Check Secrets Manager
     print_status("INFO", "Checking Secrets Manager...")
-    success, secret_arn = run_aws_command([
-        "secretsmanager",
-        "list-secrets",
-        "--query",
-        "SecretList[?contains(Name, `FLIP_API`)].ARN",
-        "--output",
-        "text",
-    ])
+    success, secret_arn = run_aws_command(
+        [
+            "secretsmanager",
+            "list-secrets",
+            "--query",
+            "SecretList[?contains(Name, `FLIP_API`)].ARN",
+            "--output",
+            "text",
+        ]
+    )
     if success and secret_arn:
         print_status("PASS", "Secrets Manager secret found")
     else:
@@ -1198,16 +1233,18 @@ def main(
         print_status("INFO", f"Checking ACM certificate: {cert_arn}")
 
         # Check certificate status
-        success, cert_output = run_aws_command([
-            "acm",
-            "describe-certificate",
-            "--certificate-arn",
-            cert_arn,
-            "--query",
-            "Certificate.{Status:Status,DomainName:DomainName,ValidationStatus:DomainValidationOptions[0].ValidationStatus,FailureReason:FailureReason}",
-            "--output",
-            "json",
-        ])
+        success, cert_output = run_aws_command(
+            [
+                "acm",
+                "describe-certificate",
+                "--certificate-arn",
+                cert_arn,
+                "--query",
+                "Certificate.{Status:Status,DomainName:DomainName,ValidationStatus:DomainValidationOptions[0].ValidationStatus,FailureReason:FailureReason}",
+                "--output",
+                "json",
+            ]
+        )
 
         if success:
             try:
@@ -1610,27 +1647,31 @@ def main(
     if trust_id:
         print_status("INFO", "Checking Trust EC2 CloudWatch log groups...")
         trust_log_group = "/aws/ec2/flip-trust"
-        success, output = run_aws_command([
-            "logs",
-            "describe-log-groups",
-            "--log-group-name-prefix",
-            trust_log_group,
-        ])
+        success, output = run_aws_command(
+            [
+                "logs",
+                "describe-log-groups",
+                "--log-group-name-prefix",
+                trust_log_group,
+            ]
+        )
         if success and trust_log_group in output:
             print_status("PASS", f"CloudWatch log group '{trust_log_group}' exists")
 
             # Check for recent log streams
-            success, trust_streams_output = run_aws_command([
-                "logs",
-                "describe-log-streams",
-                "--log-group-name",
-                trust_log_group,
-                "--order-by",
-                "LastEventTime",
-                "--descending",
-                "--max-items",
-                "1",
-            ])
+            success, trust_streams_output = run_aws_command(
+                [
+                    "logs",
+                    "describe-log-streams",
+                    "--log-group-name",
+                    trust_log_group,
+                    "--order-by",
+                    "LastEventTime",
+                    "--descending",
+                    "--max-items",
+                    "1",
+                ]
+            )
             if success:
                 try:
                     trust_streams_data = json.loads(trust_streams_output)

@@ -17,13 +17,29 @@ set -euo pipefail
 mkdir -p ~/.flwr
 cat > ~/.flwr/config.toml <<EOF
 [superlink.local]
-address = "${SUPERLINK_ADDRESS:-superlink:9093}"
+address = "${SUPERLINK_ADDRESS:-superlink:8000}"
 root-certificates = "${SUPERLINK_ROOT_CERTIFICATES:-/certs/ca.crt}"
 EOF
 
-echo "Configured Flower CLI for SuperLink Control API at ${SUPERLINK_ADDRESS:-superlink:9093}"
+echo "Configured Flower CLI for SuperLink Control API at ${SUPERLINK_ADDRESS:-superlink:8000}"
 
-# Optional: TRUST_NAMES and FL_API_ADDRESS for node → trust name registration.
+# Compose starts this one-shot on "superlink started", not "superlink ready", and the SuperLink's
+# HTTP Control API (uvicorn, flwr>=1.37) takes a few seconds to accept connections. A register
+# call made before that returns {"success": false} with exit 0, so the key silently goes
+# unregistered and its SuperNode is refused at activation. Wait for the API to answer first.
+for attempt in $(seq 1 "${SUPERLINK_READY_ATTEMPTS:-60}"); do
+    if flwr supernode ls local --format json 2>/dev/null | grep -q '"success": true'; then
+        break
+    fi
+    if [ "$attempt" -eq "${SUPERLINK_READY_ATTEMPTS:-60}" ]; then
+        echo "ERROR: SuperLink Control API at ${SUPERLINK_ADDRESS:-superlink:8000} did not become ready" >&2
+        exit 1
+    fi
+    sleep 2
+done
+echo "SuperLink Control API is ready."
+
+# TRUST_NAMES names each key's node (one per /keys/*.pub, sorted; required); FL_API_ADDRESS is optional.
 # TRUST_NAMES accepts both JSON list (["Trust_1", "Trust_2"]) and comma-separated (Trust_1,Trust_2).
 raw_trust_names="${TRUST_NAMES:-}"
 # Strip JSON brackets and quotes, then split on commas
@@ -55,7 +71,14 @@ for pub_key in "${pub_keys[@]}"; do
     echo "  Registering ${pub_key}..."
     node_id=""
 
-    if output=$(flwr supernode register "$pub_key" local --format json 2>&1); then
+    # flwr>=1.38 stores --name against the registered key, and the SuperLink hands it to the
+    # ServerApp through Grid.get_nodes() (NodeInfo.name) — the authenticated node → trust
+    # identity FLIP#1270 filters on. Every key must therefore carry a trust name.
+    if [ "$idx" -ge "${#trust_names[@]}" ] || [ -z "${trust_names[$idx]}" ]; then
+        echo "ERROR: no trust name for ${pub_key} (key #$((idx + 1)), TRUST_NAMES has ${#trust_names[@]})" >&2
+        exit 1
+    fi
+    if output=$(flwr supernode register "$pub_key" local --name "${trust_names[$idx]}" --format json 2>&1); then
         # Parse node_id from JSON output: {"success": true, "node-id": <id>}
         # node-id may be quoted ("123") or unquoted (123) depending on Flower version
         node_id=$(echo "$output" | grep -oP '"node-id":\s*"?\K[0-9]+' || true)
@@ -104,6 +127,13 @@ echo "All SuperNode keys registered successfully."
 if [ -n "$fl_api_address" ] && [ ${#trust_names[@]} -gt 0 ]; then
     echo ""
     echo "Registering node → trust name mappings with FL API at ${fl_api_address}..."
+    # Same start-vs-ready race as the SuperLink above: give the FL API a moment to come up.
+    for attempt in $(seq 1 "${FL_API_READY_ATTEMPTS:-30}"); do
+        if python -c "import urllib.request as u; u.urlopen('${fl_api_address}/openapi.json', timeout=3)" 2>/dev/null; then
+            break
+        fi
+        sleep 2
+    done
 
     for i in "${!node_ids[@]}"; do
         nid="${node_ids[$i]}"

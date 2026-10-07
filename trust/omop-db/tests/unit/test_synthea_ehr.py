@@ -423,9 +423,7 @@ class TestFetchSourceTables:
         cache_dir = tmp_path / "cache"
         # The response opens fine but dies mid-read: by then the output file already exists, and a
         # truncated person.csv left behind would be silently "cached" and reused on the next run.
-        monkeypatch.setattr(
-            urllib.request, "urlopen", lambda url, timeout: _FakeResponse(OSError("connection reset"))
-        )
+        monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout: _FakeResponse(OSError("connection reset")))
 
         with pytest.raises(SystemExit, match=r"Could not download .*/person\.csv: connection reset") as excinfo:
             fetch_source_tables(self.BASE_URL, cache_dir)

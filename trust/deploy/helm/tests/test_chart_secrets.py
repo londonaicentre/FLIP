@@ -32,7 +32,6 @@ import re
 import subprocess
 from pathlib import Path
 
-import pytest
 import yaml
 
 CHART_DIR = Path(__file__).resolve().parents[1]

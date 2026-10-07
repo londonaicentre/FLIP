@@ -62,11 +62,13 @@ Key environment variables. Most come from the trust kit file — template at [`.
 | `OMOP_DB_SERVICE_NAME` | Docker service name or hostname of the OMOP database |
 | `OMOP_DB_PORT` | Port of the OMOP database |
 | `DATA_ACCESS_POSTGRES_USER` | PostgreSQL username for OMOP database access |
-| `DATA_ACCESS_POSTGRES_PASSWORD` | PostgreSQL password for OMOP database access |
+| `DATA_ACCESS_POSTGRES_PASSWORD` | PostgreSQL password for OMOP database access. Give it raw, never percent-encoded: the service URL-escapes it when it builds the connection URL |
 | `OMOP_POSTGRES_DB` | Name of the OMOP PostgreSQL database |
 | `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Required on every `/cohort` request. |
+| `COHORT_QUERY_THRESHOLD` | The trust's minimum cohort size in distinct subjects (default `10`; see below) |
+| `ACCESS_POLICY_FILE` | Optional path to the trust's governance document (FLIP#1259, see below). Unset = platform defaults |
 | `CACHE_TTL_DAYS` | Age (days, default `60`) at which a cached result is treated as expired and dropped on the next lookup |
 | `CACHE_MAX_RESULT_ROWS` | Largest result (rows, default `50000`) that is cached at all — anything bigger is returned but not stored, keeping memory bounded |
 | `CACHE_MAX_ENTRIES` | Maximum number of cached results (default `64`); inserting past the limit evicts the oldest entry |
@@ -235,7 +237,23 @@ A cohort exposing neither cannot be gated and is refused. `/cohort/dataframe` re
 query's shape and never its contents. `/cohort/accession-ids` cannot do the same: its refusal must
 stay byte-identical across a zero cohort, a below-threshold one and an uncountable one, so all
 three return the same 403. Accession numbers that resolve to no imaging study contribute no
-subject, so a query aliasing an unrelated column to that name fails closed.
+subject, so a query aliasing an unrelated column to that name fails closed — and they are never
+returned either: `/cohort/accession-ids` releases only the values the floor counted
+(`keep_imaging_accessions`), so a cohort cannot ride person data out under the alias alongside real
+accessions that clear the floor.
+
+### Governance document (FLIP#1259)
+
+A trust may raise the threshold and add permit/deny rules per project and route in a TOML document
+named by `ACCESS_POLICY_FILE` (worked example: [`../governance.example.toml`](../governance.example.toml);
+operator guide: [`../README.md`](../README.md#trust-governance-policy-optional)). The service loads it
+once, at import, and refuses to start on an invalid one (`data_access_api/policy/loader.py`); it logs
+one `[governance] policy ACTIVE from … sha256=…` line (or `[governance] no policy configured`) at
+startup. Each route calls `validate_query` first and then the pure `policy.decide`: any matching deny
+denies, otherwise the strictest matching permit sets the threshold, otherwise — for a route the
+document mentions — the request is denied. A denial answers exactly as a below-threshold cohort does
+(the fixed 403, or a suppressed `/cohort` response) and never runs the query; the rule id goes to the
+log only.
 
 ### Cohort charts
 

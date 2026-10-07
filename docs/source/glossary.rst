@@ -86,5 +86,8 @@ Glossary
       on-premise model, in which case cohort queries operate on the pre-loaded subset rather than the
       full Trust population. See :ref:`tre-deployment`.
 
+    **Trust Admin**
+      A FLIP user who approves or declines projects on behalf of one participating Trust, and otherwise has ``researcher`` access. While a Trust has a Trust Admin, only its Trust Admins decide its projects; a Trust without one is decided by a Central Hub administrator. See :ref:`trust-admin-guide`.
+
     **XNAT**
       XNAT is an open-source imaging informatics platform used in FLIP to store, manage and access imaging data for research workflows. For more information on XNAT, please see the `documentation <https://wiki.xnat.org/documentation>`_.

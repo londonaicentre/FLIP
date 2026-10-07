@@ -109,9 +109,7 @@ def _final_disposition(rules: list[Rule], tag: int) -> str | None:
     [(t, d[0], d[1]) for t, d in PHI_TAGS_REQUIRED.items()],
     ids=[f"{d[0]} ({t:08X})" for t, d in PHI_TAGS_REQUIRED.items()],
 )
-def test_phi_tag_has_required_disposition(
-    anon_rules: list[Rule], tag: int, description: str, expected: str
-) -> None:
+def test_phi_tag_has_required_disposition(anon_rules: list[Rule], tag: int, description: str, expected: str) -> None:
     """Each PHI tag in the allowlist must end up removed/replaced/hashed."""
     actual = _final_disposition(anon_rules, tag)
     assert actual == expected, (
@@ -127,9 +125,7 @@ def test_patient_identity_removed_flag_set(anon_rules: list[Rule]) -> None:
         r for r in anon_rules if isinstance(r, AssignLiteralRule) and r.tag == PATIENT_IDENTITY_REMOVED_TAG
     ]
     assert rules_for_tag, "Patient Identity Removed (0012,0062) must be assigned"
-    assert rules_for_tag[-1].value == "YES", (
-        f"Patient Identity Removed must be 'YES', got {rules_for_tag[-1].value!r}"
-    )
+    assert rules_for_tag[-1].value == "YES", f"Patient Identity Removed must be 'YES', got {rules_for_tag[-1].value!r}"
 
 
 def test_deidentification_method_documented(anon_rules: list[Rule]) -> None:

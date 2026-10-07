@@ -115,17 +115,17 @@ def update_site_details(site_details: ISiteDetails, db: Session) -> None:
 
         db.commit()
 
-        logger.info({
-            "message": "We updated the site details...",
-            "bannerUpdated": bool(site_details.banner),
-            "deploymentMode": site_details.deploymentMode,
-        })
+        logger.info(
+            {
+                "message": "We updated the site details...",
+                "bannerUpdated": bool(site_details.banner),
+                "deploymentMode": site_details.deploymentMode,
+            }
+        )
 
         return
 
     except Exception as e:
         db.rollback()
         logger.exception("Error updating site details")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

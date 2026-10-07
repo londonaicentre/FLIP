@@ -121,9 +121,7 @@ def mock_project_row(mock_project):
         yield mock
 
 
-def test_submit_cohort_query_queues_task(
-    mock_request, sample_query, mock_encrypt, mock_can_modify
-):
+def test_submit_cohort_query_queues_task(mock_request, sample_query, mock_encrypt, mock_can_modify):
     """Submitting a cohort query should create a TrustTask for each trust."""
     mock_trust = MagicMock(id="trust_1", name="Trust A", endpoint="http://trust-a.com")
     mock_trust.name = "Trust A"
@@ -149,9 +147,7 @@ def test_submit_cohort_query_queues_task(
     assert response.trust[0].message == "Task queued"
 
 
-def test_submit_cohort_query_with_multiple_trusts(
-    mock_request, sample_query, mock_encrypt, mock_can_modify
-):
+def test_submit_cohort_query_with_multiple_trusts(mock_request, sample_query, mock_encrypt, mock_can_modify):
     """Should create one task per trust."""
     mock_trust_a = MagicMock(id="trust_1", name="Trust A", endpoint="http://trust-a.com")
     mock_trust_a.name = "Trust A"
@@ -167,9 +163,7 @@ def test_submit_cohort_query_with_multiple_trusts(
     assert all(t.statusCode == 202 for t in response.trust)
 
 
-def test_submit_cohort_query_persists_queried_trust_ids(
-    mock_request, sample_query, mock_encrypt, mock_can_modify
-):
+def test_submit_cohort_query_persists_queried_trust_ids(mock_request, sample_query, mock_encrypt, mock_can_modify):
     """The dispatched trust IDs must land on Queries.queried_trust_ids so the
     per-trust UI can render trusts that errored or never responded — otherwise
     the panel only knows about trusts that posted a QueryResult and loses
@@ -190,9 +184,7 @@ def test_submit_cohort_query_persists_queried_trust_ids(
     assert mock_db.commit.called
 
 
-def test_submit_cohort_query_404s_when_query_row_missing(
-    mock_request, sample_query, mock_encrypt, mock_can_modify
-):
+def test_submit_cohort_query_404s_when_query_row_missing(mock_request, sample_query, mock_encrypt, mock_can_modify):
     """A query_id that resolves to no row of this project is refused before any work.
 
     Previously this warned and carried on, which was tenable when the row only supplied
@@ -349,9 +341,7 @@ def test_submit_cohort_query_no_trusts(mock_can_modify, mock_request, sample_que
     assert "No trusts found" in str(exc_info.value.detail)
 
 
-def test_submit_cohort_query_task_payload_contains_query(
-    mock_request, sample_query, mock_encrypt, mock_can_modify
-):
+def test_submit_cohort_query_task_payload_contains_query(mock_request, sample_query, mock_encrypt, mock_can_modify):
     """The task payload should contain the query details."""
     mock_trust = MagicMock(id="trust_1", name="Trust A", endpoint="http://trust-a.com")
     mock_trust.name = "Trust A"

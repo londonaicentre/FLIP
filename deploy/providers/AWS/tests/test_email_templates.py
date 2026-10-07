@@ -272,12 +272,14 @@ class EmailTemplateTester:
             validation = self.validate_template(template, name)
             rendered, subs = self.substitute_placeholders(template)
 
-            results.append({
-                "name": name,
-                "validation": validation,
-                "substitutions": subs,
-                "rendered_size_kb": len(rendered) / 1024,
-            })
+            results.append(
+                {
+                    "name": name,
+                    "validation": validation,
+                    "substitutions": subs,
+                    "rendered_size_kb": len(rendered) / 1024,
+                }
+            )
 
         return results
 
@@ -357,8 +359,12 @@ def main():
         print(f"\n📧 Starting local HTTP server at http://localhost:{args.port}")
         print("Open the following URLs in your browser:")
         for name in [
-            "invite", "password_reset_code", "password_reset_link",
-            "access_request", "xnat_invite", "xnat_added_to_project",
+            "invite",
+            "password_reset_code",
+            "password_reset_link",
+            "access_request",
+            "xnat_invite",
+            "xnat_added_to_project",
         ]:
             print(f"  • http://localhost:{args.port}/flip_email_{name}.html")
         print("\nPress Ctrl+C to stop the server.\n")

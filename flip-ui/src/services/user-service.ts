@@ -19,8 +19,16 @@ import { Snackbar } from "@/utils/snackbar";
 
 import { _http, IPaginatedResponse } from "./api";
 
+/** The trust a Trust Admin administers (FLIP#1258). */
+export interface ITrustAdminOf {
+    id: string;
+    code?: string | null;
+    name: string;
+}
+
 interface IUserPermissions {
     permissions: string[];
+    trustAdminOf?: ITrustAdminOf | null;
 }
 
 export interface IUser {
@@ -29,6 +37,8 @@ export interface IUser {
     name: string;
     organisation: string;
     roles: IRole[];
+    // Set for a Trust Admin, whose one role is shown with this trust.
+    trustAdminOf?: ITrustAdminOf | null;
     isDisabled: boolean;
 }
 
@@ -36,7 +46,9 @@ export interface IRegisterUserDto {
     email: string,
     name: string,
     organisation: string,
-    roles: string[]
+    roles: string[],
+    // The trust a Trust Admin administers; sent only with the Trust Admin role.
+    trustId?: string
 }
 
 export interface IUserDisabledStateDto {
@@ -120,8 +132,15 @@ export async function getUsers(url: string): Promise<IPaginatedResponse<IUser>> 
     return response.data;
 }
 
-export async function updateUserRoles(userId: string, roleIds: string[]): Promise<string[]> {
-    const response = await _http.post<string[]>(`/users/${userId}/roles`, { roles: roleIds });
+export async function updateUserRoles(
+    userId: string,
+    roleIds: string[],
+    trustId: string | null = null
+): Promise<string[]> {
+    const response = await _http.post<string[]>(`/users/${userId}/roles`, {
+        roles: roleIds,
+        trustId
+    });
 
     return response.data;
 }

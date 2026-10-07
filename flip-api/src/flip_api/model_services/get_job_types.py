@@ -12,7 +12,6 @@
 
 """Endpoint for retrieving available job types and their required files (moved to model_services)."""
 
-
 from uuid import UUID
 
 from fastapi import APIRouter, Depends

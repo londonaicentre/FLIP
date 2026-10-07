@@ -142,9 +142,7 @@ def existing_collections(xnat: requests.Session, xnat_url: str, experiment_id: s
         return []
 
     return [
-        str(row.get("label"))
-        for row in resp.json()["ResultSet"]["Result"]
-        if row.get("xsiType") == ROI_COLLECTION_TYPE
+        str(row.get("label")) for row in resp.json()["ResultSet"]["Result"] if row.get("xsiType") == ROI_COLLECTION_TYPE
     ]
 
 
@@ -187,15 +185,25 @@ def _run_dcmqi(work_dir: Path, image: str) -> None:
     """Run dcmqi's itkimage2segimage over a prepared working directory."""
     result = subprocess.run(
         [
-            "docker", "run", "--rm",
-            "--user", f"{os.getuid()}:{os.getgid()}",
-            "-v", f"{work_dir}:/data", "-w", "/data",
+            "docker",
+            "run",
+            "--rm",
+            "--user",
+            f"{os.getuid()}:{os.getgid()}",
+            "-v",
+            f"{work_dir}:/data",
+            "-w",
+            "/data",
             image,
             "itkimage2segimage",
-            "--inputImageList", "label.nii.gz",
-            "--inputDICOMDirectory", "dicom",
-            "--inputMetadata", "meta.json",
-            "--outputDICOM", "seg.dcm",
+            "--inputImageList",
+            "label.nii.gz",
+            "--inputDICOMDirectory",
+            "dicom",
+            "--inputMetadata",
+            "meta.json",
+            "--outputDICOM",
+            "seg.dcm",
         ],
         capture_output=True,
         text=True,
@@ -272,9 +280,7 @@ def process_experiment(
             label_resp = xnat.get(f"{xnat_url}{scan_uri}/resources/NIFTI/files/{label_name}", timeout=600)
             label_resp.raise_for_status()
             (work_dir / "label.nii.gz").write_bytes(label_resp.content)
-            (work_dir / "meta.json").write_text(
-                json.dumps(_segment_metadata(args.collection_name, args.segment_label))
-            )
+            (work_dir / "meta.json").write_text(json.dumps(_segment_metadata(args.collection_name, args.segment_label)))
 
             _run_dcmqi(work_dir, args.dcmqi_image)
             collection_id = _upload_collection(

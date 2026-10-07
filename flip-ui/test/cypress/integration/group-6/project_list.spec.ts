@@ -172,12 +172,12 @@ describe("project list", () => {
     // assert classes; this is the only layer that sees the real thing. All three are
     // batched into one visit deliberately.
     it("aligns the description column, drops the anchor's bold, and ties the staged dot to the spine", () => {
-        const trust = (code: string, approved: boolean) =>
+        const trust = (code: string, status: "PENDING" | "APPROVED" | "DECLINED") =>
             ({
                 id: code,
                 name: `${code} NHS Foundation Trust`,
                 code,
-                approved
+                status
             });
         // The rows vary in exactly what used to size the `auto` tracks: trust count,
         // next-action text and cohort figure. Newest first, so the STAGED row is row 0
@@ -197,14 +197,19 @@ describe("project list", () => {
                 name: "Stroke triage",
                 description: "Federated stroke triage across participating trusts, with a longer blurb.",
                 status: "STAGED",
-                approvedTrusts: [trust("GSTT", false), trust("KCH", true)],
+                approvedTrusts: [trust("GSTT", "PENDING"), trust("KCH", "APPROVED")],
                 query: { totalCohort: 1234 }
             }),
             project(2, {
                 name: "Chest X-ray screening",
                 description: "Short blurb.",
                 status: "APPROVED",
-                approvedTrusts: [trust("GSTT", true), trust("KCH", true), trust("UCLH", true), trust("OUH", false)],
+                approvedTrusts: [
+                    trust("GSTT", "APPROVED"),
+                    trust("KCH", "APPROVED"),
+                    trust("UCLH", "APPROVED"),
+                    trust("OUH", "PENDING")
+                ],
                 query: { totalCohort: 98765 }
             }),
             project(1, {

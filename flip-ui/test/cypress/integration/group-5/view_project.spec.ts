@@ -109,44 +109,25 @@ describe("Project Page: STAGED", () => {
         cy.url().should("include", `project/${validProject.id}`);
     });
 
-    it("displays an error message if a minimum of one trust is not selected for approval", () => {
-        cy.getBySel("approve-project-btn").click();
-        cy.contains("You must select a minimum of one trust when approving.")
-            .should("be.visible");
+    // ProjectApproval.vue sorts trusts alphabetically by code (fallback: name) — the fixture's
+    // three trusts go GSTT (0, SOMEIDFORKINGS), Kings (1, SOMEIDFORKCH), UCLH (2, SOMEIDFORUCLH).
+    // Trusts decide one at a time (FLIP#1258): Save needs one decision, not all of them.
+    it("enables Save as soon as one trust has a decision", () => {
+        cy.getBySel("approve-project-btn").should("be.disabled");
 
-        cy.getBySel("trust-staged-0").click();
-        cy.contains("You must select a minimum of one trust when approving.")
-            .should("not.exist");
+        cy.getBySel("trust-approve-0").click();
+        cy.getBySel("approve-project-btn").should("not.be.disabled");
     });
 
-    it("successfully approves the project", () => {
+    it("successfully approves the project, recording the trust that declined", () => {
         cy.intercept("POST", `/step/project/${validProject.id}/approve`, {
             statusCode: 200,
-            body: [
-                {
-                    id: "SOMEIDFORKCH",
-                    name: "Kings College Hospital",
-                    endpoint: "localhost"
-                },
-                {
-                    id: "SOMEIDFORUCLH",
-                    name: "University College London Hospitals",
-                    endpoint: "localhost"
-                }
-            ]
+            body: { projectStatus: "APPROVED" }
         }).as("approveProject");
 
-        cy.getBySel("approve-project-btn").click();
-        cy.contains("You must select a minimum of one trust when approving.")
-            .should("be.visible");
-
-        // ProjectApproval.vue sorts trusts alphabetically by code (fallback: name) —
-        // the fixture's three trusts go GSTT (0), Kings (1), UCLH (2). Pick indices
-        // 1 + 2 so the approve body lines up with the test's expected (KCH + UCLH).
-        cy.getBySel("trust-staged-1").click();
-        cy.contains("You must select a minimum of one trust when approving.")
-            .should("not.exist");
-        cy.getBySel("trust-staged-2").click();
+        cy.getBySel("trust-decline-0").click();
+        cy.getBySel("trust-approve-1").click();
+        cy.getBySel("trust-approve-2").click();
 
         cy.getBySel("approve-project-btn").click();
 
@@ -155,7 +136,33 @@ describe("Project Page: STAGED", () => {
         cy.contains("Project Approved")
             .should("be.visible");
 
-        cy.get("@approveProject").its("request.body").should("deep.equal", { "trusts": ["SOMEIDFORKCH", "SOMEIDFORUCLH"] });
+        cy.get("@approveProject").its("request.body").should("deep.equal", {
+            "trusts": ["SOMEIDFORKCH", "SOMEIDFORUCLH"],
+            "declined": ["SOMEIDFORKINGS"]
+        });
+    });
+
+    it("declining every trust keeps the project staged", () => {
+        cy.intercept("POST", `/step/project/${validProject.id}/approve`, {
+            statusCode: 200,
+            body: { projectStatus: "STAGED" }
+        }).as("declineProject");
+
+        cy.getBySel("trust-decline-0").click();
+        cy.getBySel("trust-decline-1").click();
+        cy.getBySel("trust-decline-2").click();
+
+        cy.getBySel("approve-project-btn").click();
+
+        cy.wait("@declineProject");
+
+        cy.contains("All trusts declined")
+            .should("be.visible");
+
+        cy.get("@declineProject").its("request.body").should("deep.equal", {
+            "trusts": [],
+            "declined": ["SOMEIDFORKINGS", "SOMEIDFORKCH", "SOMEIDFORUCLH"]
+        });
     });
 });
 
@@ -186,21 +193,12 @@ describe("Project Page: STAGED with only one trust", () => {
     it("successfully approves the project", () => {
         cy.intercept("POST", `/step/project/${validProject.id}/approve`, {
             statusCode: 200,
-            body: [{
-                id: "SOMEIDFORKCH",
-                name: "Kings College Hospital",
-                endpoint: "localhost"
-            }]
+            body: { projectStatus: "APPROVED" }
         }).as("approveProject");
 
-        cy.getBySel("approve-project-btn").click();
-        cy.contains("You must select a minimum of one trust when approving.")
-            .should("be.visible");
+        cy.getBySel("approve-project-btn").should("be.disabled");
 
-        cy.getBySel("trust-staged-0").click();
-        cy.contains("You must select a minimum of one trust when approving.")
-            .should("not.exist");
-
+        cy.getBySel("trust-approve-0").click();
         cy.getBySel("approve-project-btn").click();
 
         cy.wait("@approveProject");
@@ -208,7 +206,10 @@ describe("Project Page: STAGED with only one trust", () => {
         cy.contains("Project Approved")
             .should("be.visible");
 
-        cy.get("@approveProject").its("request.body").should("deep.equal", { "trusts": ["SOMEIDFORKCH"] });
+        cy.get("@approveProject").its("request.body").should("deep.equal", {
+            "trusts": ["SOMEIDFORKCH"],
+            "declined": []
+        });
     });
 });
 

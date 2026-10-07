@@ -44,8 +44,10 @@ describe("Manage Users as Administrator", () => {
         cy.getBySel("select-admin-role").find("input").check();
         cy.intercept("POST", "/users/**/roles", { statusCode: 200 }).as("postRoles");
         cy.getBySel("save-user-btn").click();
-        cy.wait("@postRoles").its("request.body").should("deep.equal",
-            { roles: [adminRoleId] });
+        cy.wait("@postRoles").its("request.body").should("deep.equal", {
+            roles: [adminRoleId],
+            trustId: null
+        });
     });
 
     it("Should save one selected role for users with existing multiple roles", () => {
@@ -60,8 +62,10 @@ describe("Manage Users as Administrator", () => {
         cy.getBySel("select-admin-role").find("input").check();
         cy.getBySel("select-researcher-role").find("input").check();
         cy.getBySel("save-user-btn").click();
-        cy.wait("@postRoles").its("request.body").should("deep.equal",
-            { roles: [researcherRoleId] });
+        cy.wait("@postRoles").its("request.body").should("deep.equal", {
+            roles: [researcherRoleId],
+            trustId: null
+        });
     });
 
     it("Should show roles as a single selected radio choice", () => {

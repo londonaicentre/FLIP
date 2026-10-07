@@ -131,8 +131,7 @@ For debugging or selective steps:
 
    make github-login
    make aws-login
-   make create-backend                          # one-off bootstrap of the Terraform state bucket
-   make init
+   make init                                    # the state bucket must already exist (see the note below)
    make import-persistent
    make generate-internal-service-key           # fl-server → flip-api key
    make plan
@@ -143,6 +142,13 @@ For debugging or selective steps:
    make register-trusts                         # register trusts on the hub (after deploy-centralhub seeds the FL kit-slot pool)
    make deploy-trust
    make status
+
+.. note::
+
+   ``make init`` expects the Terraform state bucket to exist already. It is not created from this
+   directory: it comes, with the CI plan and apply roles and the permissions boundary, from the
+   ``terraform_ci_bootstrap`` module. In AI Centre's accounts the platform repositories apply it; in an
+   account of your own, apply ``deploy/providers/AWS/ci`` first (see its ``README.md``).
 
 ************
 Status check

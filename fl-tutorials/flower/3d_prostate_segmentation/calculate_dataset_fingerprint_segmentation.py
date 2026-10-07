@@ -405,6 +405,9 @@ class ExperimentPlanner:
         self.output_folder = output_folder
         self.dataloader = dataloader
         self.num_channels = num_channels
+        # Output channels of the planned network (whole gland, PZ, TZ) — the VRAM estimate's
+        # segmentation-head width. Upstream nnU-Net passes the label count here; passing the case
+        # count (len(self.dataloader)) inflated the estimate and shrank the planned patch.
         self.num_output_channels = num_output_channels
         self.suppress_transpose = suppress_transpose
         self.resnet = resnet

@@ -66,9 +66,21 @@ spec:
         {{- include "flip-trust.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: fl-client
         flip/network: {{ .Values.flClient.netId }}
-      {{- if .Values.flClient.gpu.enabled }}
+      {{- $governed := and .Values.governance.document (eq .Values.flBackend "nvflare") }}
+      {{- if or .Values.flClient.gpu.enabled $governed }}
       annotations:
+        {{- if .Values.flClient.gpu.enabled }}
         nvidia.com/gpu: {{ .Values.flClient.gpu.count | quote }}
+        {{- end }}
+        {{- if $governed }}
+        # Editing the client's section of the governance document must roll this pod: a
+        # ConfigMap change restarts nothing by itself, and the section is extracted once, by
+        # the governance-extract init container. sync-kit supplies the digest of that section
+        # alone, so an [access]-only edit leaves a running FL job alone; without it (the
+        # document set some other way) the whole document's checksum stands in, which rolls
+        # the pod more often but never misses a change.
+        checksum/governance: {{ .Values.governance.flPrivacyChecksum | default (include (print $.Template.BasePath "/governance-configmap.yaml") . | sha256sum) }}
+        {{- end }}
       {{- end }}
     spec:
       enableServiceLinks: false
@@ -148,6 +160,43 @@ spec:
           volumeMounts:
             - name: images
               mountPath: {{ .Values.flClient.imagesDir }}
+        {{- if $governed }}
+        # The client's section of the trust governance document (FLIP#1259), and nothing else.
+        # Researcher code runs in the fl-client container as the same user as the client, so a
+        # mounted whole document would hand training code every [access] rule, other projects'
+        # ids included. This step reads the whole document and writes only its [fl_privacy]
+        # table to an emptyDir the client mounts read-only. An invalid document fails it, so the
+        # client never starts on a policy it would refuse (fail closed). Same image as the
+        # client, so the extract is validated by the same loader that later reads it.
+        # A document with no [fl_privacy] section extracts to the bare table without Python, so
+        # an fl-client image older than --extract (an FL tag held back) still starts under an
+        # [access]-only document; one with the section needs the image that can enforce it.
+        - name: governance-extract
+          image: {{ include "flip-trust.flClientImage" . }}
+          imagePullPolicy: {{ .Values.flClient.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              out=/governance/governance.fl_privacy.toml
+              if grep -q fl_privacy /app/governance.toml; then
+                exec python -m flip.nvflare.site_policy --extract /app/governance.toml "$out"
+              fi
+              printf '[fl_privacy]\n' > "$out"
+              echo "[site-privacy] the governance document has no [fl_privacy] section — nothing to extract"
+          volumeMounts:
+            - name: governance
+              mountPath: /app/governance.toml
+              subPath: governance.toml
+              readOnly: true
+            - name: governance-extract
+              mountPath: /governance
+        {{- end }}
       containers:
         - name: fl-client
           image: {{ include "flip-trust.flClientImage" . }}
@@ -199,9 +248,10 @@ spec:
               # envsubst needed: the values are already correct for this deployment).
               cp /app/local/resources.json.default /app/local/resources.json 2>/dev/null || true
               cp /app/local/log_config.json.default /app/local/log_config.json 2>/dev/null || true
-              # Site privacy policy (FLIP#851): render or remove /app/local/privacy.json from
-              # FL_SITE_PRIVACY_*. `set -euo pipefail` above makes an invalid configuration
-              # fail the pod (fail closed) rather than run an unfiltered client.
+              # Site privacy policy (FLIP#851, FLIP#1259): render or remove /app/local/privacy.json
+              # from FL_SITE_PRIVACY_* or the governance document's [fl_privacy.nvflare] section.
+              # `set -euo pipefail` above makes an invalid configuration fail the pod (fail
+              # closed) rather than run an unfiltered client.
               python -m flip.nvflare.site_policy /app/local/privacy.json
               pkill -f nvflare 2>/dev/null || true
               rm -f /app/pid.fl /app/daemon_pid.fl
@@ -214,6 +264,15 @@ spec:
           env:
             - name: UPLOADED_FEDERATED_DATA_BUCKET
               value: {{ .Values.uploadedFederatedDataBucket | default "" | quote }}
+            {{- if $governed }}
+            # The governance document's [fl_privacy.nvflare] section (FLIP#1259), as extracted
+            # by governance-extract. The same filter as FL_SITE_PRIVACY_* below: set it in one
+            # place or the other, since both set stops the client. NVFLARE only — nothing on
+            # Flower reads a site privacy section, so the Flower pod gets neither the document
+            # nor this variable (check-governance and sync-kit fail such a document instead).
+            - name: ACCESS_POLICY_FILE
+              value: /app/governance/governance.fl_privacy.toml
+            {{- end }}
             {{- if eq .Values.flBackend "nvflare" }}
             # Keep policy values in the pod template, rather than only the ConfigMap,
             # so a Helm value change triggers a Deployment rollout.
@@ -266,6 +325,13 @@ spec:
             - name: fl-client-kit
               mountPath: /keys
               subPath: keys
+          {{- end }}
+          {{- if $governed }}
+            # The extract only (see governance-extract). Read-only — a site must not be able
+            # to rewrite its own privacy policy.
+            - name: governance-extract
+              mountPath: /app/governance
+              readOnly: true
           {{- end }}
           resources:
             {{- toYaml .Values.flClient.resources | nindent 12 }}
@@ -331,4 +397,13 @@ spec:
           hostPath:
             path: {{ required "flClient.kitHostPath is required when flClient.enabled — the absolute path ON THE NODE holding this trust's provisioned FL participant kit. Stage it with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then --set flClient.kitHostPath=/opt/flip/fl-kit (stage-kit's default KIT_DEST, and the kit file's FL_KIT_DIR)" .Values.flClient.kitHostPath | quote }}
             type: Directory
+        {{- if $governed }}
+        - name: governance
+          configMap:
+            # Operator-owned; read only by governance-extract, never by the client container.
+            name: {{ include "flip-trust.fullname" . }}-governance
+        - name: governance-extract
+          emptyDir:
+            sizeLimit: 1Mi
+        {{- end }}
 {{- end }}

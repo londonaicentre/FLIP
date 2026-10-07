@@ -28,30 +28,32 @@ request_context: ContextVar[dict | None] = ContextVar("request_context", default
 # ---------------------------------------------------------------------------
 
 # Fields from LogRecord that we handle explicitly or want to exclude from extras
-_BUILTIN_ATTRS = frozenset({
-    "args",
-    "created",
-    "exc_info",
-    "exc_text",
-    "filename",
-    "funcName",
-    "levelname",
-    "levelno",
-    "lineno",
-    "message",
-    "module",
-    "msecs",
-    "msg",
-    "name",
-    "pathname",
-    "process",
-    "processName",
-    "relativeCreated",
-    "stack_info",
-    "thread",
-    "threadName",
-    "taskName",
-})
+_BUILTIN_ATTRS = frozenset(
+    {
+        "args",
+        "created",
+        "exc_info",
+        "exc_text",
+        "filename",
+        "funcName",
+        "levelname",
+        "levelno",
+        "lineno",
+        "message",
+        "module",
+        "msecs",
+        "msg",
+        "name",
+        "pathname",
+        "process",
+        "processName",
+        "relativeCreated",
+        "stack_info",
+        "thread",
+        "threadName",
+        "taskName",
+    }
+)
 
 
 class JSONFormatter(logging.Formatter):

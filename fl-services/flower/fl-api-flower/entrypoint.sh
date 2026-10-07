@@ -22,13 +22,13 @@ mkdir -p /home/app/.flwr
 if [ -n "${SUPERLINK_ROOT_CERTIFICATES:-}" ]; then
 cat >/home/app/.flwr/config.toml <<EOF
 [superlink.local]
-address = "${SUPERLINK_ADDRESS:-superlink:9093}"
+address = "${SUPERLINK_ADDRESS:-superlink:8000}"
 root-certificates = "${SUPERLINK_ROOT_CERTIFICATES}"
 EOF
 else
 cat >/home/app/.flwr/config.toml <<EOF
 [superlink.local]
-address = "${SUPERLINK_ADDRESS:-superlink:9093}"
+address = "${SUPERLINK_ADDRESS:-superlink:8000}"
 insecure = true
 EOF
 fi

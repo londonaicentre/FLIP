@@ -13,6 +13,8 @@
 
 
 
+/* eslint-disable vue/one-component-per-file -- each test mounts AiSwitch inside its own inline form harness */
+
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
 import { Form as VeeForm } from "vee-validate";
@@ -122,7 +124,7 @@ describe("AiSwitch", () => {
     });
 
     // Several switches sharing one name are one checkbox GROUP — the trust pickers in
-    // ProjectApproval (name="trusts") and TrainingOptions (name="trust_ids") — and the field
+    // ProjectStaging (name="trusts") and TrainingOptions (name="trust_ids") — and the field
     // is then an array of the values switched on. Each switch must add or remove only its own
     // value; writing the field directly would collapse the group to the last switch touched
     // (which is exactly what the staging and training e2e specs then fail on).

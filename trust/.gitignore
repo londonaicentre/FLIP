@@ -46,6 +46,10 @@ xnat/plugins/.s3-prefix
 .env.*
 # ...but the omop-db build-pipeline template is documentation, not a live env file.
 !omop-db/.env.build.example
+# A trust's own governance document (FLIP#1259) is site configuration, like its kit file;
+# only the worked example is tracked.
+governance.*.toml
+!governance.example.toml
 
 # Image data folder
 data/**/*.dcm

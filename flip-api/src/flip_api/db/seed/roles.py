@@ -44,6 +44,11 @@ CURRENT_ROLES: list[RoleSeed] = [
         "name": "Viewer",
         "description": "Read-only access to assigned projects. Cannot create, edit, or delete resources.",
     },
+    {
+        "id": RoleRef.TRUST_ADMIN.value,
+        "name": "Trust Admin",
+        "description": "Researcher access, plus approving or declining projects for one trust.",
+    },
 ]
 
 

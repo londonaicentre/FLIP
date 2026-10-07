@@ -86,6 +86,36 @@ class TestCORSConfiguration:
         assert "access-control-allow-origin" not in {k.lower() for k in response.headers.keys()}
 
 
+class TestHealth:
+    """`GET /api/health` names the hub's build so a site can pick the release it should run (FLIP#1204)."""
+
+    def test_health_reports_the_baked_release(self, monkeypatch):
+        monkeypatch.setenv("FLIP_RELEASE", "v9.9.9")
+        body = TestClient(app).get("/api/health").json()
+        assert body["status"] == "ok"
+        assert body["version"] == "v9.9.9"
+
+    def test_health_falls_back_to_the_pyproject_version(self, monkeypatch):
+        monkeypatch.delenv("FLIP_RELEASE", raising=False)
+        body = TestClient(app).get("/api/health").json()
+        assert body["version"] == importlib.import_module("flip_api.utils.version").service_version()
+
+    def test_openapi_names_the_same_build(self, monkeypatch):
+        """FastAPI reads the version at app construction, so reload main under the release."""
+        monkeypatch.setenv("FLIP_RELEASE", "v9.9.9")
+        original_app = main.app
+        try:
+            importlib.reload(main)
+            assert main.app.version == "v9.9.9"
+        finally:
+            # Other tests in the suite hold references to the unreloaded app object while fixtures such as
+            # `fake_idp` resolve `flip_api.main.app` lazily: put the original back (see
+            # test_docs_urls_none_in_production below).
+            monkeypatch.undo()
+            importlib.reload(main)
+            main.app = original_app
+
+
 class TestDocsGating:
     """Swagger UI / OpenAPI / ReDoc must be disabled in production environments."""
 
@@ -105,6 +135,7 @@ class TestDocsGating:
     def test_docs_urls_none_in_production(self, monkeypatch):
         """With ENV=production, the FastAPI app must build with all three URLs unset."""
         monkeypatch.setattr(config, "_settings", SimpleNamespace(ENV="production"))
+        original_app = main.app
         try:
             # FastAPI bakes docs_url/openapi_url/redoc_url into the router at app
             # construction time, so patching the live app object after the fact has
@@ -120,6 +151,12 @@ class TestDocsGating:
             assert client.get("/api/openapi.json").status_code == 404
             assert client.get("/api/redoc").status_code == 404
         finally:
-            # Other tests in the suite hold references to the dev-mode app — restore it.
+            # Other tests in the suite hold references to the dev-mode app object
+            # (module-level `from flip_api.main import app`, module-level
+            # TestClients) while fixtures such as `fake_idp` resolve
+            # `flip_api.main.app` lazily. Reloading rebuilds the module under
+            # dev settings but binds a *new* FastAPI object; put the original
+            # back so both kinds of reference keep meeting the same app.
             monkeypatch.undo()
             importlib.reload(main)
+            main.app = original_app

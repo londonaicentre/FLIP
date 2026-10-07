@@ -16,16 +16,42 @@ from uuid import UUID
 
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security.api_key import APIKeyHeader
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from flip_api.auth import trust_key_cache
 from flip_api.auth.auth_utils import has_permissions
 from flip_api.config import get_settings
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import Model, Projects, ProjectUserAccess, Queries, Trust
-from flip_api.db.models.user_models import PermissionRef
+from flip_api.db.models.main_models import Model, Projects, ProjectTrustIntersect, ProjectUserAccess, Queries, Trust
+from flip_api.db.models.user_models import PermissionRef, RoleRef, UserRole
 from flip_api.utils.get_secrets import get_secret
 from flip_api.utils.logger import logger
+
+
+def is_trust_admin_where_staged(user_id: UUID, project_id: UUID, db: Session) -> bool:
+    """Whether the user is a Trust Admin of a trust the project is staged at (FLIP#1258).
+
+    Deciding on a project needs its details, so a Trust Admin may READ projects staged at their trust — the
+    staging rows are removed on unstaging, so an unstaged project is never covered. Grants no write access: the
+    modify/contribute checks do not consult it.
+
+    Args:
+        user_id (UUID): ID of the user.
+        project_id (UUID): ID of the project.
+        db (Session): Database session.
+
+    Returns:
+        bool: True if the project is staged at a trust the user administers.
+    """
+    row = db.exec(
+        select(ProjectTrustIntersect.id)
+        .join(UserRole, col(UserRole.trust_id) == col(ProjectTrustIntersect.trust_id))
+        .where(ProjectTrustIntersect.project_id == project_id)
+        .where(UserRole.user_id == user_id)
+        .where(UserRole.role_id == RoleRef.TRUST_ADMIN.value)
+        .limit(1)
+    ).first()
+    return row is not None
 
 
 def can_access_project(user_id: UUID, project_id: UUID, db: Session) -> bool:
@@ -67,6 +93,9 @@ def can_access_project(user_id: UUID, project_id: UUID, db: Session) -> bool:
         count = result.first()
 
         if not count:
+            if is_trust_admin_where_staged(user_id, project_id, db):
+                logger.debug(f"User: {user_id} administers a trust project {project_id} is staged at; read access.")
+                return True
             logger.debug(f"User: {user_id} is neither the project owner or an approved user and is not granted access.")
             return False
 
@@ -288,6 +317,10 @@ def can_access_cohort_query(user_id: UUID, query_id: UUID, db: Session) -> bool:
         count = result.first()
 
         if not count:
+            project_id = db.exec(select(Queries.project_id).where(Queries.id == query_id)).first()
+            if project_id is not None and is_trust_admin_where_staged(user_id, project_id, db):
+                logger.debug(f"User: {user_id} administers a trust query {query_id}'s project is staged at; read.")
+                return True
             logger.debug(f"User: {user_id} is neither the project owner or an approved user and is not granted access.")
             return False
 
@@ -447,9 +480,7 @@ def authenticate_trust(
     #      (single compare_digest over equal-length digests; no early-exit
     #      shortcuts that depend on the cached match).
     for candidate in candidates:
-        if candidate.api_key_hash is not None and hmac.compare_digest(
-            provided_hash, candidate.api_key_hash
-        ):
+        if candidate.api_key_hash is not None and hmac.compare_digest(provided_hash, candidate.api_key_hash):
             matched = candidate
 
     if matched is not None:
