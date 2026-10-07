@@ -63,7 +63,6 @@ BASE_ENV=(
     PROD=stag
     AWS_REGION=eu-west-2
     FLIP_TFSTATE_BUCKET_NAME=flip-terraform-state-stag
-    VPC_NAME=flip-vpc
     AICENTRE_BUCKET_NAME=aicentre-stag
     FLIP_APP_BUNDLES_BUCKET_NAME=flip-app-bundles-stag
     FLIP_FL_RESULTS_BUCKET_NAME=flip-fl-results-stag
@@ -75,16 +74,12 @@ BASE_ENV=(
     INTERNAL_SERVICE_KEY_HASH=0000000000000000000000000000000000000000000000000000000000000000
     POSTGRES_DB=flip
     POSTGRES_USER=flipuser
-    API_PORT=8000
-    DB_PORT=5432
     ENFORCE_MFA=true
     FL_ADMIN_DIRECTORY=/workspace
-    FL_API_PORT=8080
     FL_SERVER_PORT=8002
     INTERNAL_SERVICE_KEY_HEADER=X-Internal-Service-Key
     SES_VERIFIED_EMAIL=noreply@example.invalid
     TRUST_API_KEY_HEADER=X-Trust-API-Key
-    UI_PORT=80
     ALB_SUBDOMAIN=api-stag
     NLB_SUBDOMAIN=fl-stag
     DOCKER_REGISTRY=ghcr.io/londonaicentre/
@@ -449,13 +444,13 @@ fi
 
 # 6. ALL missing keys are reported at once — a one-at-a-time script costs a CI
 #    round trip per key.
-run_case "reports every missing key at once" AES_KEY_BASE64 POSTGRES_USER VPC_NAME
+run_case "reports every missing key at once" AES_KEY_BASE64 POSTGRES_USER SES_VERIFIED_EMAIL
 expect_stderr "Missing or empty (3)" "reports the full count"
 expect_stderr "POSTGRES_USER" "names the second"
-expect_stderr "VPC_NAME" "names the third"
+expect_stderr "SES_VERIFIED_EMAIL" "names the third"
 
 # 7. SECRETS ARE NEVER ECHOED.
-run_case "failure output carries no values" VPC_NAME
+run_case "failure output carries no values" SES_VERIFIED_EMAIL
 if [[ "${STDERR}${STDOUT}" == *"not-a-real-password"* || "${STDERR}${STDOUT}" == *"bm90LWEtcmVhbC1rZXk="* ]]; then
     no "no secret value appears in the output" "output leaked a value into the workflow log"
 else
@@ -471,7 +466,7 @@ expect_stderr "AICENTRE_BUCKET_NAME" "names the key"
 
 # 9. MALFORMED VALUES. Make silently keeps trailing whitespace (it strips leading),
 #    and cannot carry an embedded newline at all.
-run_case "trailing whitespace is rejected" 'VPC_NAME=flip-vpc '
+run_case "trailing whitespace is rejected" 'SES_VERIFIED_EMAIL=noreply@example.invalid '
 expect_rc 1 "exits 1"
 expect_stderr "trailing whitespace" "explains why"
 run_case "embedded newline is rejected" 'ADMIN_USER_PASSWORD=one

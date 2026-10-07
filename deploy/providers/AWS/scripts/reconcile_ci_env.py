@@ -309,7 +309,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
     v: dict[str, str] = {
         "AWS_REGION": region,
         "FLIP_TFSTATE_BUCKET_NAME": bucket,
-        "VPC_NAME": st.attrs("aws_vpc", "this").get("tags", {}).get("Name", ""),
         "AICENTRE_BUCKET_NAME": st.attrs("aws_s3_bucket", "aicentre_bucket").get("bucket", ""),
         "FLIP_UI_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_ui").get("bucket", ""),
         # Two shapes, one key (FLIP#1199). On a legacy estate the demo bucket is
@@ -332,13 +331,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "NLB_SUBDOMAIN": st.attrs("aws_route53_record", "fl_server_nlb").get("fqdn", ""),
         "POSTGRES_DB": api_env.get("POSTGRES_DB", ""),
         "POSTGRES_USER": api_env.get("POSTGRES_USER", ""),
-        "DB_PORT": api_env.get("DB_PORT", ""),
-        # Not deployed anywhere — no resource in this root references UI_PORT.
-        # It still has to be present and numeric: the Makefile exports it
-        # unconditionally and Terraform rejects "" for a number variable.
-        "UI_PORT": "443",
-        "API_PORT": first_port(api),
-        "FL_API_PORT": first_port(fl_api),
         "FL_SERVER_PORT": first_port(fl_server),
         "INTERNAL_SERVICE_KEY_HEADER": api_env.get("INTERNAL_SERVICE_KEY_HEADER", ""),
         "TRUST_API_KEY_HEADER": api_env.get("TRUST_API_KEY_HEADER", ""),
