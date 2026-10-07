@@ -120,9 +120,7 @@ class FLIP_BASE:
             INFO,
             f"Fetching FLIP dataframe project_id={self.project_id} query={self.query}",
         )
-        self.dataframe = self.flip.get_dataframe(
-            project_id=self.project_id, query=self.query
-        )
+        self.dataframe = self.flip.get_dataframe(project_id=self.project_id, query=self.query)
         log(INFO, f"FLIP dataframe has {len(self.dataframe)} rows.")
 
     def get_case_list(
@@ -142,9 +140,7 @@ class FLIP_BASE:
             The test datalist, or a `(train, val)` pair of datalists, depending on `is_test`.
         """
         if self.dataframe is None:
-            raise RuntimeError(
-                "FLIP_BASE.dataframe not populated; call fetch_dataframe() first."
-            )
+            raise RuntimeError("FLIP_BASE.dataframe not populated; call fetch_dataframe() first.")
 
         datalist = []
         # One row per modality per study (see query.sql); pull each study's files once.

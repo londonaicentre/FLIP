@@ -184,34 +184,36 @@ def build_augmentations() -> Compose:
     Returns:
         Compose: Operates on a `{"image", "mask"}` dict.
     """
-    return Compose([
-        RandAxisFlipd(prob=0.1, keys=["image", "mask"]),
-        RandRotate90d(prob=0.2, keys=["image", "mask"]),
-        RandGaussianNoised(keys=["image"], prob=0.45),
-        RandShiftIntensityd(keys=["image"], offsets=(10, 20), prob=0.15),
-        RandZoomd(
-            prob=0.25,
-            min_zoom=0.8,
-            max_zoom=1.2,
-            keep_size=True,
-            keys=["image", "mask"],
-        ),
-        RandGaussianSmoothd(
-            keys=["image"],
-            sigma_x=(0.25, 1.5),
-            sigma_y=(0.25, 1.5),
-            sigma_z=(0.25, 1.5),
-            approx="erf",
-            prob=0.15,
-        ),
-        RandCoarseDropoutd(
-            keys=["image"],
-            holes=8,
-            max_holes=15,
-            spatial_size=(30, 30, 5),
-            prob=0.15,
-        ),
-    ])
+    return Compose(
+        [
+            RandAxisFlipd(prob=0.1, keys=["image", "mask"]),
+            RandRotate90d(prob=0.2, keys=["image", "mask"]),
+            RandGaussianNoised(keys=["image"], prob=0.45),
+            RandShiftIntensityd(keys=["image"], offsets=(10, 20), prob=0.15),
+            RandZoomd(
+                prob=0.25,
+                min_zoom=0.8,
+                max_zoom=1.2,
+                keep_size=True,
+                keys=["image", "mask"],
+            ),
+            RandGaussianSmoothd(
+                keys=["image"],
+                sigma_x=(0.25, 1.5),
+                sigma_y=(0.25, 1.5),
+                sigma_z=(0.25, 1.5),
+                approx="erf",
+                prob=0.15,
+            ),
+            RandCoarseDropoutd(
+                keys=["image"],
+                holes=8,
+                max_holes=15,
+                spatial_size=(30, 30, 5),
+                prob=0.15,
+            ),
+        ]
+    )
 
 
 def train_loop():

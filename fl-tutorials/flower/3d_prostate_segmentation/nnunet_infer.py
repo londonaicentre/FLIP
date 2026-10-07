@@ -59,9 +59,7 @@ def infer_loop():
         help="One or more data/prostate/sites/<CENTER> folders to treat as the held-out test set. "
         "Point this at sites the model was not trained on.",
     )
-    parser.add_argument(
-        "--modality", type=str, default="t2w", choices=["t2w", "adc", "hbv"]
-    )
+    parser.add_argument("--modality", type=str, default="t2w", choices=["t2w", "adc", "hbv"])
     parser.add_argument("-conf", "--config", type=str, required=True)
     parser.add_argument("-nw", "--num_workers", type=int, required=True)
     parser.add_argument("--exp_name", type=str, required=True)
@@ -89,17 +87,11 @@ def infer_loop():
     LOGGER.info(f"Experiment name: {exp_name}_inference")
 
     config = load_json(args.config)
-    config["deep_supervision"] = (
-        False  # inference always runs without deep supervision heads
-    )
-    config["batch_size"] = (
-        1  # one volume per batch; its patch grid is the effective batch
-    )
+    config["deep_supervision"] = False  # inference always runs without deep supervision heads
+    config["batch_size"] = 1  # one volume per batch; its patch grid is the effective batch
 
     # Written by calculate_dataset_fingerprint_segmentation.py --output-dir configs.
-    nnunet_plan_path = os.path.join(
-        base_dir, "configs", "nnUNetPlans_segmentation.json"
-    )
+    nnunet_plan_path = os.path.join(base_dir, "configs", "nnUNetPlans_segmentation.json")
     if os.path.exists(nnunet_plan_path):
         plans_manager = PlansManager(nnunet_plan_path)
         configuration_manager = plans_manager.get_configuration("3d_fullres")
@@ -109,9 +101,7 @@ def infer_loop():
     img_mean = plans_manager.foreground_intensity_properties_per_channel["0"]["mean"]
     img_std = plans_manager.foreground_intensity_properties_per_channel["0"]["std"]
     median_size = plans_manager.original_median_shape_after_transp
-    crop_sz, patch_sz = possible_patch_size(
-        median_size, configuration_manager.patch_size
-    )
+    crop_sz, patch_sz = possible_patch_size(median_size, configuration_manager.patch_size)
     spacing = plans_manager.original_median_spacing_after_transp[::-1]
 
     seed_torch(seed=config.get("seed", 42))
@@ -137,12 +127,8 @@ def infer_loop():
     LOGGER.info(f"Using patch size {patch_size}")
 
     # The same preprocessing and the same deterministic patch grid training used — no augmentation.
-    test_transform = build_case_transform(
-        crop_size=(crop_sz[0], crop_sz[1]), image_mean=img_mean, image_std=img_std
-    )
-    patch_iter = PatchIterd(
-        keys=["image", "mask"], patch_size=patch_size, start_pos=(0, 0), mode="wrap"
-    )
+    test_transform = build_case_transform(crop_size=(crop_sz[0], crop_sz[1]), image_mean=img_mean, image_std=img_std)
+    patch_iter = PatchIterd(keys=["image", "mask"], patch_size=patch_size, start_pos=(0, 0), mode="wrap")
 
     # generate_predictions reads only IMAGE_KEY and "accession_id" from the datalist; the loader
     # below is what feeds the metrics pass.
@@ -168,9 +154,7 @@ def infer_loop():
             accession_id = f"{row['patient_id']}_{row['study_id']}"
             test_datalist.append(
                 {
-                    IMAGE_KEY: site_dir
-                    / "nifti"
-                    / f"{accession_id}_{args.modality}.nii.gz",
+                    IMAGE_KEY: site_dir / "nifti" / f"{accession_id}_{args.modality}.nii.gz",
                     "accession_id": accession_id,
                 }
             )
@@ -224,18 +208,14 @@ def infer_loop():
                 mode="nearest",
             ),
             mt.SpatialPadd(keys=["image"], spatial_size=[crop_sz[0], crop_sz[1], -1]),
-            mt.CenterSpatialCropd(
-                keys=["image"], roi_size=[crop_sz[0], crop_sz[1], -1]
-            ),
+            mt.CenterSpatialCropd(keys=["image"], roi_size=[crop_sz[0], crop_sz[1], -1]),
             mt.NormalizeIntensityd(keys="image", subtrahend=img_mean, divisor=img_std),
         ]
     )
 
     # Image-only twin of the training grid: generate_predictions patches a preprocessed volume that
     # carries no mask, so a keys=["image", "mask"] iterator would raise on the missing key.
-    predict_patch_iter = PatchIterd(
-        keys=["image"], patch_size=patch_size, start_pos=(0, 0), mode="wrap"
-    )
+    predict_patch_iter = PatchIterd(keys=["image"], patch_size=patch_size, start_pos=(0, 0), mode="wrap")
 
     LOGGER.info(f"Saving predictions to {predictions_dir}...")
     generate_predictions(

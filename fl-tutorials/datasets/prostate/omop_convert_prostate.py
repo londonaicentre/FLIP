@@ -159,7 +159,9 @@ def transform_metadata_to_omop_tables(
     visit = pd.DataFrame()
     visit["visit_occurrence_id"] = surrogate_ids(PROJECT, len(studies))
     visit["person_id"] = studies["patient_id"].astype("int64")
-    visit["visit_concept_id"] = INPATIENT_VISIT_CONCEPT_ID  # as spleen/cxr; https://athena.ohdsi.org/search-terms/terms/9201
+    visit["visit_concept_id"] = (
+        INPATIENT_VISIT_CONCEPT_ID  # as spleen/cxr; https://athena.ohdsi.org/search-terms/terms/9201
+    )
     visit["visit_start_date"] = study_date
     visit["visit_start_datetime"] = study_datetime
     visit["visit_end_date"] = study_date

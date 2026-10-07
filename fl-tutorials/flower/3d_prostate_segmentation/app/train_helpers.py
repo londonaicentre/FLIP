@@ -272,11 +272,7 @@ def train_seg(
     model.train()
 
     # Detect if model uses channels_last_3d (e.g. SwinUNETR, SegMamba)
-    _use_cl3d = any(
-        p.is_contiguous(memory_format=torch.channels_last_3d)
-        for p in model.parameters()
-        if p.ndim == 5
-    )
+    _use_cl3d = any(p.is_contiguous(memory_format=torch.channels_last_3d) for p in model.parameters() if p.ndim == 5)
 
     train_loss = AverageMeter()
     train_mean_dice = AverageMeter()
@@ -285,9 +281,7 @@ def train_seg(
     train_tz_dice = AverageMeter()
 
     train_dice_metric = DiceMetric(include_background=True, reduction="mean")
-    train_dice_metric_batch = DiceMetric(
-        include_background=True, reduction="mean_batch"
-    )
+    train_dice_metric_batch = DiceMetric(include_background=True, reduction="mean_batch")
 
     train_bar = tqdm(train_loader, total=len(train_loader), disable=None)
     for batch in train_bar:
@@ -340,9 +334,7 @@ def train_seg(
 
         loss.backward()
         if conf.get("max_norm", 12) is not None:
-            torch.nn.utils.clip_grad_norm_(
-                model.parameters(), conf.get("max_norm", 12), conf.get("norm_type", 2)
-            )
+            torch.nn.utils.clip_grad_norm_(model.parameters(), conf.get("max_norm", 12), conf.get("norm_type", 2))
         optimizer.step()
 
         if conf.get("scheduler", "Polynomial") == "OneCycle":
@@ -352,9 +344,7 @@ def train_seg(
 
         # Per-channel order is [whole_gland, pz, tz], matching dataset.py's combine_masks.
         train_metric = train_dice_metric.aggregate()
-        train_metric_wp, train_metric_pz, train_metric_tz = (
-            train_dice_metric_batch.aggregate().detach()
-        )
+        train_metric_wp, train_metric_pz, train_metric_tz = train_dice_metric_batch.aggregate().detach()
         train_dice_metric.reset()
         train_dice_metric_batch.reset()
         train_mean_dice.update(train_metric)
@@ -418,9 +408,7 @@ def train_seg(
         val_dice_metric_batch(logits.detach(), mask.detach())
 
         val_metric = val_dice_metric.aggregate()
-        val_metric_wp, val_metric_pz, val_metric_tz = (
-            val_dice_metric_batch.aggregate().detach()
-        )
+        val_metric_wp, val_metric_pz, val_metric_tz = val_dice_metric_batch.aggregate().detach()
         val_dice_metric.reset()
         val_dice_metric_batch.reset()
 
@@ -476,11 +464,7 @@ def _forward_with_tta_flag(
 
     for flip_dims in tta_views:
         img_f = torch.flip(image, flip_dims) if flip_dims is not None else image
-        mprev_f = (
-            torch.flip(mask_prev, flip_dims)
-            if (flip_dims is not None and mask_prev is not None)
-            else mask_prev
-        )
+        mprev_f = torch.flip(mask_prev, flip_dims) if (flip_dims is not None and mask_prev is not None) else mask_prev
 
         for model in models:
             if dual_scan:
@@ -488,11 +472,7 @@ def _forward_with_tta_flag(
             else:
                 sig = inspect.signature(model.forward)
                 if "mask" in sig.parameters:
-                    img_d = (
-                        torch.cat([img_f, img_f], dim=1)
-                        if img_f.shape[1] == 1
-                        else img_f
-                    )
+                    img_d = torch.cat([img_f, img_f], dim=1) if img_f.shape[1] == 1 else img_f
                     logits = model(img_d, mask)
                 else:
                     logits = model(img_f)
@@ -510,10 +490,7 @@ def _forward_with_tta_flag(
 
 # Keys for gland-region metrics (used by inference_func + callers) ──
 _REGION_METRIC_KEYS: list[str] = [
-    f"{r}_{z}_{m}"
-    for r in ("apex", "mid", "base")
-    for z in ("wp", "pz", "tz")
-    for m in ("dice", "hdf")
+    f"{r}_{z}_{m}" for r in ("apex", "mid", "base") for z in ("wp", "pz", "tz") for m in ("dice", "hdf")
 ]
 
 
@@ -574,9 +551,7 @@ def _gland_region_metrics(
                 # Routine here — a region third with no voxels for a given zone is expected, not
                 # an error; compute_dice/compute_hausdorff_distance already return NaN for it.
                 warnings.simplefilter("ignore", category=UserWarning)
-                dsc = compute_dice(p_vol, g_vol, include_background=True).squeeze(
-                    0
-                )  # (C,)
+                dsc = compute_dice(p_vol, g_vol, include_background=True).squeeze(0)  # (C,)
                 hdf = compute_hausdorff_distance(
                     p_vol,
                     g_vol,
@@ -689,9 +664,7 @@ def recreate_image(
     mask_size: list[tuple[int, ...]],
     coords: list[tuple[list[int], list[int], list[int], list[int]]],
     patches_per_image: list[int] | None = None,
-) -> tuple[
-    list[torch.Tensor], list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]
-]:
+) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
     """
     Recreate full-size images from patches by assembling them according to their coordinates.
 
@@ -730,9 +703,7 @@ def recreate_image(
     if patches_per_image is None:
         # Legacy behavior: assume uniform distribution
         multiplier: int = true_batch_sz // batch_sz
-        patch_indices = [
-            (i * multiplier, (i + 1) * multiplier) for i in range(batch_sz)
-        ]
+        patch_indices = [(i * multiplier, (i + 1) * multiplier) for i in range(batch_sz)]
     else:
         # Variable patches per image
         patch_indices = []
@@ -767,9 +738,7 @@ def recreate_image(
         probs_ = probs[start_idx:end_idx]
         coords_ = coords[start_idx:end_idx]
 
-        for logit, prob, img_patch, mask_patch, coord in zip(
-            logits_, probs_, img, mask, coords_
-        ):
+        for logit, prob, img_patch, mask_patch, coord in zip(logits_, probs_, img, mask, coords_):
             _write_patch(new_img, img_patch, coord)
             _write_patch(new_mask, mask_patch, coord)
             _write_patch(new_logit, logit, coord)
@@ -852,9 +821,7 @@ def inference_func(
         models.append(model)
 
     if not models:
-        raise FileNotFoundError(
-            f"No checkpoints matching '{exp_name}_*.pt' found under {model_path}"
-        )
+        raise FileNotFoundError(f"No checkpoints matching '{exp_name}_*.pt' found under {model_path}")
 
     test_dice_metric = DiceMetric(include_background=True, reduction="mean_channel")
     test_dice_metric_batch = DiceMetric(include_background=True, reduction="none")
@@ -920,9 +887,7 @@ def inference_func(
         # Reassemble the patch grid into whole volumes BEFORE scoring, which is what makes the
         # reported Dice/HD95 per-subject rather than per-patch
         reconstruction_mask_shapes = (
-            [(mask.shape[1], *shape[1:]) for shape in mask_shapes]
-            if dual_scan
-            else mask_shapes
+            [(mask.shape[1], *shape[1:]) for shape in mask_shapes] if dual_scan else mask_shapes
         )
         reconstructed_logits, _, _, reconstructed_masks = recreate_image(
             len(case_names),
@@ -935,12 +900,8 @@ def inference_func(
             coords,
             patches_per_image,
         )
-        logits = torch.stack(
-            [rearrange(v, "c h w d -> c d h w") for v in reconstructed_logits]
-        )
-        mask = torch.stack(
-            [rearrange(v, "c h w d -> c d h w") for v in reconstructed_masks]
-        )
+        logits = torch.stack([rearrange(v, "c h w d -> c d h w") for v in reconstructed_logits])
+        mask = torch.stack([rearrange(v, "c h w d -> c d h w") for v in reconstructed_masks])
 
         metric_logits = logits.detach().cpu()
         metric_mask = mask.detach().cpu()
@@ -956,29 +917,19 @@ def inference_func(
         loss_list.append(loss.detach().cpu().item())
 
         # Regional (apex / mid-gland / base) metrics
-        region_batch = _gland_region_metrics(
-            metric_logits, metric_mask, spacing=spacing
-        )
+        region_batch = _gland_region_metrics(metric_logits, metric_mask, spacing=spacing)
         for k, v_list in region_batch.items():
             _region_accum[k].extend(v_list)
 
     # One float per subject, per zone; channel order [whole_gland, pz, tz].
     test_metric = test_dice_metric.aggregate().detach().cpu().numpy().flatten().tolist()
-    test_metric_wp, test_metric_pz, test_metric_tz = (
-        test_dice_metric_batch.aggregate().detach().cpu().T.tolist()
-    )
-    metric_wp_hdf, metric_pz_hdf, metric_tz_hdf = (
-        test_hdf_metric_batch.aggregate().detach().cpu().T.tolist()
-    )
+    test_metric_wp, test_metric_pz, test_metric_tz = test_dice_metric_batch.aggregate().detach().cpu().T.tolist()
+    metric_wp_hdf, metric_pz_hdf, metric_tz_hdf = test_hdf_metric_batch.aggregate().detach().cpu().T.tolist()
     test_dice_metric.reset()
     test_dice_metric_batch.reset()
     test_hdf_metric_batch.reset()
 
-    img_names = [
-        item
-        for sublist in img_names
-        for item in (sublist if isinstance(sublist, list) else [sublist])
-    ]
+    img_names = [item for sublist in img_names for item in (sublist if isinstance(sublist, list) else [sublist])]
 
     df = pd.DataFrame(
         {
@@ -1021,24 +972,14 @@ def inference_func(
     test_95ci_pz_hdf = _ci95_from_values(metric_pz_hdf)
     test_95ci_tz_hdf = _ci95_from_values(metric_tz_hdf)
 
-    test_95ci_lower_loss, test_95ci_upper_loss = _ci95_bounds(
-        test_loss_mean, test_95ci_loss
-    )
-    test_95ci_lower_dice, test_95ci_upper_dice = _ci95_bounds(
-        test_dice_mean, test_95ci_dice
-    )
+    test_95ci_lower_loss, test_95ci_upper_loss = _ci95_bounds(test_loss_mean, test_95ci_loss)
+    test_95ci_lower_dice, test_95ci_upper_dice = _ci95_bounds(test_dice_mean, test_95ci_dice)
     test_95ci_lower_wp, test_95ci_upper_wp = _ci95_bounds(test_wp_mean, test_95ci_wp)
     test_95ci_lower_pz, test_95ci_upper_pz = _ci95_bounds(test_pz_mean, test_95ci_pz)
     test_95ci_lower_tz, test_95ci_upper_tz = _ci95_bounds(test_tz_mean, test_95ci_tz)
-    test_95ci_lower_wp_hdf, test_95ci_upper_wp_hdf = _ci95_bounds(
-        test_wp_hdf_mean, test_95ci_wp_hdf
-    )
-    test_95ci_lower_pz_hdf, test_95ci_upper_pz_hdf = _ci95_bounds(
-        test_pz_hdf_mean, test_95ci_pz_hdf
-    )
-    test_95ci_lower_tz_hdf, test_95ci_upper_tz_hdf = _ci95_bounds(
-        test_tz_hdf_mean, test_95ci_tz_hdf
-    )
+    test_95ci_lower_wp_hdf, test_95ci_upper_wp_hdf = _ci95_bounds(test_wp_hdf_mean, test_95ci_wp_hdf)
+    test_95ci_lower_pz_hdf, test_95ci_upper_pz_hdf = _ci95_bounds(test_pz_hdf_mean, test_95ci_pz_hdf)
+    test_95ci_lower_tz_hdf, test_95ci_upper_tz_hdf = _ci95_bounds(test_tz_hdf_mean, test_95ci_tz_hdf)
 
     # Regional (apex / mid-gland / base) summary
     _region_metrics_out: dict = {}
@@ -1176,9 +1117,7 @@ def generate_predictions(
         models.append(model)
 
     if not models:
-        raise FileNotFoundError(
-            f"No checkpoints matching '{exp_name}_*.pt' found under {model_path}"
-        )
+        raise FileNotFoundError(f"No checkpoints matching '{exp_name}_*.pt' found under {model_path}")
 
     activate = Activationsd(keys="pred", sigmoid=True)
     invert = Invertd(
@@ -1199,21 +1138,13 @@ def generate_predictions(
             patches, coords = [], []
             for patch, coord in patch_iter({"image": volume}):
                 patch_image = patch["image"]
-                patches.append(
-                    patch_image.as_tensor()
-                    if hasattr(patch_image, "as_tensor")
-                    else patch_image
-                )
+                patches.append(patch_image.as_tensor() if hasattr(patch_image, "as_tensor") else patch_image)
                 coords.append(coord)
 
             # The network takes (b, c, d, h, w); _forward_with_tta_flag passes its argument
             # straight to model(), so the axis order is the caller's job — train_seg rearranges
             # here too.
-            batch = (
-                rearrange(torch.stack(patches), "b c h w d -> b c d h w")
-                .float()
-                .to(device)
-            )
+            batch = rearrange(torch.stack(patches), "b c h w d -> b c d h w").float().to(device)
 
             with torch.no_grad():
                 logits = _forward_with_tta_flag(
@@ -1228,9 +1159,7 @@ def generate_predictions(
 
             logits = rearrange(logits, "b c d h w -> b c h w d").detach().cpu()
 
-            stitched = torch.zeros(
-                (logits.shape[1], *volume.shape[1:]), dtype=logits.dtype
-            )
+            stitched = torch.zeros((logits.shape[1], *volume.shape[1:]), dtype=logits.dtype)
             for logit, coord in zip(logits, coords):
                 _write_patch(stitched, logit, coord)
 
@@ -1238,9 +1167,7 @@ def generate_predictions(
             data = activate(data)
             data = invert(data)
 
-            pred = (
-                (data["pred"] > 0.5).to(torch.uint8).numpy()
-            )  # (C, H, W, D), C=[whole_gland, pz, tz]
+            pred = (data["pred"] > 0.5).to(torch.uint8).numpy()  # (C, H, W, D), C=[whole_gland, pz, tz]
             affine = np.asarray(data["pred"].affine)
 
             nib.Nifti1Image(np.moveaxis(pred, 0, -1), affine).to_filename(

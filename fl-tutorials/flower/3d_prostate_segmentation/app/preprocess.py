@@ -44,11 +44,13 @@ def build_case_transform(crop_size: tuple[int, int], image_mean: float, image_st
         Compose: Applies to a `{"image": tensor, "mask": tensor}` dict (channel-first, any spatial
         shape) and returns that same dict shape.
     """
-    return Compose([
-        SpatialPadd(keys=KEYS, spatial_size=[*crop_size, -1]),
-        CenterSpatialCropd(keys=KEYS, roi_size=[*crop_size, -1]),
-        NormalizeIntensityd(keys="image", subtrahend=image_mean, divisor=image_std),
-    ])
+    return Compose(
+        [
+            SpatialPadd(keys=KEYS, spatial_size=[*crop_size, -1]),
+            CenterSpatialCropd(keys=KEYS, roi_size=[*crop_size, -1]),
+            NormalizeIntensityd(keys="image", subtrahend=image_mean, divisor=image_std),
+        ]
+    )
 
 
 def build_augmentations() -> Compose:
@@ -61,22 +63,24 @@ def build_augmentations() -> Compose:
     Returns:
         Compose: Operates on a `{"image", "mask"}` dict.
     """
-    return Compose([
-        RandAxisFlipd(prob=0.1, keys=KEYS),
-        RandRotate90d(prob=0.2, keys=KEYS),
-        RandGaussianNoised(keys=["image"], prob=0.45),
-        RandShiftIntensityd(keys=["image"], offsets=(10, 20), prob=0.15),
-        RandZoomd(prob=0.25, min_zoom=0.8, max_zoom=1.2, keep_size=True, keys=KEYS),
-        RandGaussianSmoothd(
-            keys=["image"],
-            sigma_x=(0.25, 1.5),
-            sigma_y=(0.25, 1.5),
-            sigma_z=(0.25, 1.5),
-            approx="erf",
-            prob=0.15,
-        ),
-        RandCoarseDropoutd(keys=["image"], holes=8, max_holes=15, spatial_size=(30, 30, 5), prob=0.15),
-    ])
+    return Compose(
+        [
+            RandAxisFlipd(prob=0.1, keys=KEYS),
+            RandRotate90d(prob=0.2, keys=KEYS),
+            RandGaussianNoised(keys=["image"], prob=0.45),
+            RandShiftIntensityd(keys=["image"], offsets=(10, 20), prob=0.15),
+            RandZoomd(prob=0.25, min_zoom=0.8, max_zoom=1.2, keep_size=True, keys=KEYS),
+            RandGaussianSmoothd(
+                keys=["image"],
+                sigma_x=(0.25, 1.5),
+                sigma_y=(0.25, 1.5),
+                sigma_z=(0.25, 1.5),
+                approx="erf",
+                prob=0.15,
+            ),
+            RandCoarseDropoutd(keys=["image"], holes=8, max_holes=15, spatial_size=(30, 30, 5), prob=0.15),
+        ]
+    )
 
 
 def build_patch_iter(patch_size: tuple[int, int, int]) -> Callable[[dict], Iterator[tuple[dict, Any]]]:

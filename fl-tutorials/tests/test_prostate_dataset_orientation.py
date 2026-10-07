@@ -182,9 +182,7 @@ def test_target_spacing_resamples_image_and_mask_together(dataset_module: Module
     assert resampled["image"].shape[1:] == resampled["mask"].shape[1:], "mask must follow the image's new grid"
 
     # fingerprint=True skips .as_tensor(), so the resampled spacing can be read straight off the header.
-    pair = dataset_module.PicaiDataset(
-        site_dir, modality=MODALITY, fingerprint=True, target_spacing=target_spacing
-    )[0]
+    pair = dataset_module.PicaiDataset(site_dir, modality=MODALITY, fingerprint=True, target_spacing=target_spacing)[0]
     assert pair["image"].header.get_zooms() == pytest.approx((1.0, *target_spacing))
 
 

@@ -84,9 +84,19 @@ class TestMain:
 
         code = uploader.main(
             [
-                "--flip-project-id", "abc", "--labels-dir", str(tmp_path / "labels"),
-                "--zonal-labels-dir", str(tmp_path / "zonal_labels"), "--xnat-url", "http://x",
-                "--xnat-user", "u", "--xnat-password", "p", "--dry-run",
+                "--flip-project-id",
+                "abc",
+                "--labels-dir",
+                str(tmp_path / "labels"),
+                "--zonal-labels-dir",
+                str(tmp_path / "zonal_labels"),
+                "--xnat-url",
+                "http://x",
+                "--xnat-user",
+                "u",
+                "--xnat-password",
+                "p",
+                "--dry-run",
             ]  # fmt: skip
         )
 
@@ -107,8 +117,16 @@ class TestMain:
 
         code = uploader.main(
             [
-                "--flip-project-id", "abc", "--labels-dir", str(tmp_path / "labels"),
-                "--xnat-url", "http://x", "--xnat-user", "u", "--xnat-password", "p",
+                "--flip-project-id",
+                "abc",
+                "--labels-dir",
+                str(tmp_path / "labels"),
+                "--xnat-url",
+                "http://x",
+                "--xnat-user",
+                "u",
+                "--xnat-password",
+                "p",
             ]  # fmt: skip
         )
 
