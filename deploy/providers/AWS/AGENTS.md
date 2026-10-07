@@ -183,7 +183,11 @@ Things worth knowing before touching any of it:
   empty and fails the run pointing at the wrong cause. Before any GitHub write it
   verifies the account under the mode's profile (state bucket owner, both roles
   and their `sub` / apply `job_workflow_ref`, the boundary) and reads the role ARNs
-  from IAM; any mismatch stops it.
+  from IAM; any mismatch stops it. It, like `scripts/add_fl_kits.sh`, must stay
+  **bash 3.2 compatible** (the stock macOS `/bin/bash` an admin runs it with): no
+  `declare -A`, no `mapfile`, and an array that can be empty expanded as
+  `${a[@]+"${a[@]}"}` — the `Deploy script tests on macOS bash 3.2` job in
+  `validate_terraform.yml` runs both harnesses there.
 - **Never seed a GitHub environment from a laptop `.env` file without checking it.**
   `scripts/reconcile_ci_env.py --env <e> --compare <file>` rebuilds the Terraform
   inputs from deployed state and reports drift (secrets shown as digests, never
