@@ -52,7 +52,11 @@ top_level_functions() {
     sed -n 's/^def \([A-Za-z_][A-Za-z0-9_]*\).*/\1/p' "$1" | sort -u
 }
 
-mapfile -t SHARED_FUNCTIONS < <(comm -12 <(top_level_functions "$NVFLARE_FILE") <(top_level_functions "$FLOWER_FILE"))
+# A read loop, not mapfile, so the check also runs on macOS's bash 3.2.
+SHARED_FUNCTIONS=()
+while IFS= read -r fname; do
+    SHARED_FUNCTIONS+=("$fname")
+done < <(comm -12 <(top_level_functions "$NVFLARE_FILE") <(top_level_functions "$FLOWER_FILE"))
 
 for required in "${REQUIRED_SHARED_FUNCTIONS[@]}"; do
     if ! printf '%s\n' "${SHARED_FUNCTIONS[@]}" | grep -qx "$required"; then
