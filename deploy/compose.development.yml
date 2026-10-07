@@ -278,6 +278,12 @@ services:
       # Settings.ENFORCE_MFA defaults to True elsewhere. Flip to `true`
       # here (and `make restart`) to test the MFA flow end-to-end locally.
       - ENFORCE_MFA=false
+      # DEMO_*_EMAIL: which Cognito users the boot seed grants the demo RESEARCHER / ADMIN roles to
+      # (flip_api/utils/constants.py reads them from the environment; the example documents them
+      # as overridable). Passed through so a developer can seed their own account as admin of
+      # a local hub instead of needing the shared admin's password.
+      - DEMO_ADMIN_EMAIL=${DEMO_ADMIN_EMAIL:-flip-demo-admin@example.com}
+      - DEMO_RESEARCHER_EMAIL=${DEMO_RESEARCHER_EMAIL:-flip-demo-researcher@example.com}
       # Settings.LOG_LEVEL defaults to INFO so unknown environments emit
       # at INFO. Local dev defaults to DEBUG when LOG_LEVEL is unset
       # (override via LOG_LEVEL in .env.development) so debug-level
