@@ -53,6 +53,7 @@ def delete_user(
         request (Request): The FastAPI request object.
         db (Session): The database session.
         token_id (UUID): ID of the authenticated user performing the delete.
+        idp (IdentityProvider): The configured identity provider.
 
     Returns:
         dict[str, Any]: Empty dictionary on success.

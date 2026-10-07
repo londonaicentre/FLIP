@@ -62,6 +62,7 @@ def _rollback_after_role_failure(
         request (Request): FastAPI request, forwarded to ``delete_user``.
         db (Session): Database session.
         token_id (UUID): Authenticated caller's id.
+        idp (IdentityProvider): The configured identity provider.
 
     Returns:
         HTTPException: 500 to raise from the caller.
@@ -117,6 +118,7 @@ def register_user_step_function_endpoint(
         user_data (IRegisterUser): The user data to register, including email and roles.
         db (Session): The database session.
         token_id (UUID): The ID of the current user making the request.
+        idp (IdentityProvider): The configured identity provider.
 
     Returns:
         IRegisterUserDto: A DTO with the new user's id, email, and roles.

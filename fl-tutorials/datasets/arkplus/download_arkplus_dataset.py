@@ -16,7 +16,9 @@ import shutil
 from huggingface_hub import snapshot_download
 
 
-def download_arkplus_splits(repo_id, cache_dir, output_dir, sites, write_marker):
+def download_arkplus_splits(
+    repo_id: str, cache_dir: str, output_dir: str, sites: list[str], write_marker: bool
+) -> None:
     """
     Downloads the given Ark+ chest X-ray splits from Hugging Face and normalises each into the layout the
     tutorials' .env.app files expect (<output_dir>/<site>/{accession-resources/, sample_get_dataframe_response.csv}).

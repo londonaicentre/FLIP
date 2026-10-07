@@ -52,7 +52,7 @@ Your AWS IAM role/user needs the following permissions for provisioning infrastr
 - **Secrets Manager**: Full access for storing database credentials and API secrets
 - **IAM**: Create and manage roles for EC2 instances and ECS task execution / task roles
 - **Application + Network Load Balancers**: Create and manage both the ALB (HTTPS API traffic) and the NLB (FL server TCP/gRPC traffic)
-- **ECS / Fargate**: `ecs:*` (cluster, task definitions, services). Task images come from **GHCR** (`ghcr.io/londonaicentre/...`) — no AWS-side image registry permissions needed (no ECR mirror). The bootstrap EFS-provisioning image (`amazon/aws-cli`) comes from Docker Hub and is also fetched through the NAT gateway, so private ECR API/DKR endpoints are not required.
+- **ECS / Fargate**: `ecs:*` (cluster, task definitions, services). Task images come from **GHCR** (`ghcr.io/londonaicentre/...`) — no AWS-side image registry permissions needed (no ECR mirror; the LZA modes pull through an in-account ECR cache instead, see "Deploying onto an LZA estate"). The bootstrap EFS-provisioning image (`amazon/aws-cli`) comes from Docker Hub and is also fetched through the NAT gateway, so private ECR API/DKR endpoints are not required.
 - **EFS**: `elasticfilesystem:*` for the shared workspace volumes mounted into FL Fargate tasks
 - **CloudFront + WAFv2**: Create and manage the UI distribution and the WebACL attached to it
 - **ACM**: Issue / import certificates in both `eu-west-2` (ALB origin) and `us-east-1` (CloudFront viewer)

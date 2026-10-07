@@ -268,12 +268,12 @@ no longer runs. Authorised FLIP developers can use the shared development values
 deployers should create their own resources with the
 [Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
 
-**Email needs no configuration in development** (FLIP#919). flip-api defaults to `EMAIL_BACKEND=console` in dev, which
+**Email needs no configuration in development** (FLIP#919). flip-api pins `EMAIL_BACKEND=console` in dev (`DevSettings` rejects `ses` at boot), which
 logs the would-be message (recipient, template name, non-secret payload) instead of calling SES — so the access-request
 and XNAT-credentials paths work with no SES identity, verified address or templates. Staging and production keep
 `EMAIL_BACKEND=ses` and still require `AWS_SES_ADMIN_EMAIL_ADDRESS` / `AWS_SES_SENDER_EMAIL_ADDRESS`; the setting is
 type-narrowed in `ProdSettings`, so the console backend cannot be selected there. Invitations are the identity
-provider's own, not SES's: under the default Keycloak backend dev has no mail server, so a user registered from the
+provider's own, not SES's: under the Keycloak backend (the only one dev accepts) dev has no mail server, so a user registered from the
 Admin Area is given the shared dev password (`ADMIN_USER_PASSWORD`) as a temporary one (flip-api logs that it did,
 never the password) — they sign in once with it, Keycloak's account console
 (`http://localhost:8180/realms/flip/account`) asks for a new password (the UI links there when the sign-in answers

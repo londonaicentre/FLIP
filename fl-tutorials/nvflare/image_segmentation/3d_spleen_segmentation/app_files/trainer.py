@@ -23,6 +23,7 @@ from flip import FLIP
 from flip.constants import ResourceType
 from models import get_model
 from monai.data import DataLoader, Dataset, decollate_batch
+from monai.inferers import SlidingWindowInferer
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from monai.transforms import AsDiscrete
@@ -170,7 +171,7 @@ def validate(
     model: torch.nn.Module,
     loader: DataLoader,
     loss_fn: torch.nn.Module,
-    inferer,
+    inferer: SlidingWindowInferer,
     device: torch.device,
     post_pred: AsDiscrete,
     post_pred_gt: AsDiscrete,
