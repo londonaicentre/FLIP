@@ -89,7 +89,8 @@ jobs:
         # a value minted here with openssl: the stack is runner-local and torn down at
         # the end of the job, and nothing outside this step reads either value (the
         # storage smoke's psql runs inside the flip-db container). Nothing is committed.
-        # The trade-off: a deleted secret passes on a fresh value instead of failing.
+        # Trade-off: if the environment's real secret is ever removed or renamed, an
+        # internal run still passes on a minted value instead of flagging it.
         env:
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
