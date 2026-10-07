@@ -44,7 +44,6 @@ Inputs
 | `key_name` | no | EC2 key pair name (the root passes `aws_key_pair.host_key`) |
 | `instance_type` | no | Defaults to `t3.small`; the root passes `t3.xlarge` |
 | `name_prefix` | no | Used in the `Name` tag (`trust-host-<prefix>`) |
-| `AWS_REGION` | no | Declared but not used by the module |
 
 Output: `instance_id`.
 

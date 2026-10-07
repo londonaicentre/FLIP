@@ -12,31 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-variable "name_prefix" {
-  type    = string
-  default = "trust"
-}
+# No provider block: the calling root configures the provider. The constraints
+# match the root's (../../main.tf), so this module never resolves a provider
+# version the root would not.
 
-variable "instance_type" {
-  type    = string
-  default = "t3.small"
-}
+terraform {
+  required_version = ">= 1.13.1"
 
-variable "key_name" {
-  type    = string
-  default = "~/.ssh/id_rsa"
-}
-
-variable "subnet_id" {
-  type = string
-}
-
-variable "security_group_ids" {
-  description = "Security group IDs to attach to the Trust EC2 instance (required)"
-  type        = list(string)
-}
-
-variable "iam_instance_profile_name" {
-  description = "Name of an existing IAM instance profile to attach to the Trust EC2 instance"
-  type        = string
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
 }

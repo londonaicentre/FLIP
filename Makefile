@@ -14,7 +14,7 @@
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
 		check-aws-access generate-internal-service-key generate-xnat-credentials \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
-		sync-trust-kit sync-trust-kits lock checkov-lint aws-diagram \
+		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
 		demo-video demo-users seed-demo-projects reset-keycloak
@@ -363,6 +363,13 @@ ci:
 # gitignored deploy env files, which contributors don't have.
 checkov-lint:
 	bash deploy/providers/AWS/scripts/checkov_lint.sh
+# Static tflint lint over deploy/providers/AWS: unused declarations, missing provider
+# version constraints, AWS argument values the API would reject. Credential-free;
+# needs tflint at the version pinned in the script, and downloads the pinned AWS
+# ruleset plugin on first run. Runs the script directly for the same reason as
+# checkov-lint.
+tflint-lint:
+	bash deploy/providers/AWS/scripts/tflint_lint.sh
 # Re-render the four committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ — the
 # self-contained pair (central-hub-aws-{network,data}.png) and the LZA pair (-lza-{network,data}) —
 # from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs

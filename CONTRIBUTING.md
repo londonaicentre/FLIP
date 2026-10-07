@@ -429,6 +429,24 @@ broken checkov install can never produce a vacuous green. The script's own guard
 IDs, skip rationale, canary) are regression-tested by `deploy/providers/AWS/scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
 run by the same workflow's `Deploy script tests` job.
 
+### TFLint (Terraform)
+
+`validate_terraform.yml` also runs **tflint** over `deploy/providers/AWS` — the bundled `terraform` ruleset
+(recommended preset) plus the AWS ruleset, configured in `deploy/providers/AWS/.tflint.hcl`. It catches what
+`terraform validate` accepts: a variable nothing reads, a module with no provider version constraint, an AWS
+argument value the API would reject at apply time. Every directory holding `.tf` files is linted on its own, so
+a module is checked even where no root calls it. Run it locally with `make tflint-lint` from the repo root; it
+needs tflint at the version pinned in `deploy/providers/AWS/scripts/tflint_lint.sh` (release binaries on
+GitHub — Homebrew no longer packages it) and downloads the pinned AWS ruleset plugin on first run.
+
+A deliberate exception is acknowledged in-code with `# tflint-ignore: <rule_name> # <why>` on the line above the
+flagged block, never by disabling the rule in `.tflint.hcl` (the rationale needs that second `#`: any other
+separator, such as `-- why`, makes tflint ignore the annotation). Removing an unused root variable means
+removing its whole input chain too: the `TF_VAR_` export in `deploy/providers/AWS/Makefile`, the key in
+`scripts/compose-ci-env.sh`, the three Terraform workflows' `env:` lines and `scripts/reconcile_ci_env.py` — and
+deleting the GitHub environment variables only after that PR merges. Like checkov's, the script self-tests
+against a canary fixture, and its guards are regression-tested by `scripts/tests/test_tflint_lint.sh`.
+
 ### Secret scanning (detect-secrets)
 
 Two scanners run on every PR. TruffleHog (`--only-verified`) fails only on a credential it can confirm is live.
