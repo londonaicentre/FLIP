@@ -76,15 +76,48 @@ module "ec2_security_group" {
   vpc_id        = local.vpc_id
   description   = "Security group for the FLIP Central Hub SSM bastion (no inbound access)"
   ingress_rules = []
+  tags          = { FlipSG = "true" }
 }
 
-# Tag the secgroup module SGs for drift detection.
-# Remove these aws_security_group_tags resources if the secgroup module
-# ever adds a `tags` variable — until then, we tag externally.
-resource "aws_ec2_tag" "ec2_security_group_flip_sg" {
-  resource_id = module.ec2_security_group.security_group.id
-  key         = "FlipSG"
-  value       = "true"
+# The FlipSG drift-detection tag on the secgroup-module groups used to be set
+# by standalone `aws_ec2_tag` resources while the group itself declared no
+# tags, so every apply stripped what the other had restored (#1392). The tag is
+# now the module's `tags` argument. `destroy = false` forgets the old resources
+# rather than deleting the live tag on the way out. Safe to drop these blocks
+# once every state file (stag, prod, both LZA estates) has been applied.
+removed {
+  from = aws_ec2_tag.ec2_security_group_flip_sg
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_ec2_tag.trust_security_group_flip_sg
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_ec2_tag.rds_security_group_flip_sg
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_ec2_tag.alb_security_group_flip_sg
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_ec2_tag.fl_internal_nlb_security_group_flip_sg
+  lifecycle {
+    destroy = false
+  }
 }
 
 # Trust Security Group for Trust EC2 instance
@@ -211,12 +244,7 @@ module "trust_security_group" {
   ingress_rules      = []
   block_all_outbound = true
   egress_rules       = local.trust_egress_rules
-}
-
-resource "aws_ec2_tag" "trust_security_group_flip_sg" {
-  resource_id = module.trust_security_group.security_group.id
-  key         = "FlipSG"
-  value       = "true"
+  tags               = { FlipSG = "true" }
 }
 
 # RDS
@@ -234,12 +262,7 @@ module "rds_security_group" {
     }
   ]
   block_all_outbound = true
-}
-
-resource "aws_ec2_tag" "rds_security_group_flip_sg" {
-  resource_id = module.rds_security_group.security_group.id
-  key         = "FlipSG"
-  value       = "true"
+  tags               = { FlipSG = "true" }
 }
 
 # flip-api reaches Postgres only through RDS Proxy (rds_proxy.tf), never
@@ -556,12 +579,7 @@ module "alb_security_group" {
   vpc_id        = local.vpc_id
   description   = "Security group for FLIP ALB"
   ingress_rules = []
-}
-
-resource "aws_ec2_tag" "alb_security_group_flip_sg" {
-  resource_id = module.alb_security_group.security_group.id
-  key         = "FlipSG"
-  value       = "true"
+  tags          = { FlipSG = "true" }
 }
 
 module "alb" {
