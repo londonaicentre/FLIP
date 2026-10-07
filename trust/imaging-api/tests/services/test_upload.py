@@ -152,6 +152,42 @@ def test_upload_file_to_xnat(mock_put, mock_check_file_exists_in_xnat, headers):
         os.remove(temp_file_path)
 
 
+@patch("imaging_api.services.upload.check_file_exists_in_xnat", return_value=False)
+@patch("imaging_api.services.upload.requests.put")
+def test_upload_file_to_xnat_201_is_success(mock_put, mock_check, headers):
+    mock_put.return_value = MagicMock(status_code=201, ok=True)
+
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        f.write(b"data")
+        temp_path = f.name
+
+    try:
+        uploaded_file = upload_file_to_xnat(
+            "PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", temp_path, exist_ok=False, headers=headers
+        )
+        assert uploaded_file.endswith(f"/files/{os.path.basename(temp_path)}?inbody=true")
+    finally:
+        os.remove(temp_path)
+
+
+@pytest.mark.parametrize("status_code", [401, 403, 404, 413, 500])
+@patch("imaging_api.services.upload.check_file_exists_in_xnat", return_value=False)
+@patch("imaging_api.services.upload.requests.put")
+def test_upload_file_to_xnat_rejected_put_raises(mock_put, mock_check, status_code, headers):
+    # A PUT that XNAT rejects must raise rather than be reported as an uploaded file (#1387)
+    mock_put.return_value = MagicMock(status_code=status_code, ok=False, text="rejected")
+
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        f.write(b"data")
+        temp_path = f.name
+
+    try:
+        with pytest.raises(Exception, match=f"Error uploading file .*: {status_code} rejected"):
+            upload_file_to_xnat("PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", temp_path, exist_ok=False, headers=headers)
+    finally:
+        os.remove(temp_path)
+
+
 @patch("imaging_api.services.upload.check_file_exists_in_xnat", return_value=True)
 def test_upload_file_exist_ok_false_already_exists(mock_check, headers):
     with tempfile.NamedTemporaryFile(delete=False) as f:
