@@ -160,7 +160,8 @@ Docker Swarm, and automatically configures both XNAT instances (service account,
 registration, dcm2niix command). The repo-root `make up` follows the same path after registering the example Trusts.
 
 Every configuration call is checked: a rejected XNAT API call (non-2xx) aborts the deploy with the failing request's
-HTTP status and response body (see `configure-xnat-<stack>.log` inside the container), instead of silently skipping
+HTTP status and response body (see `trust/xnat/xnat/config/configure-xnat-<stack>.log` on the host that ran the
+bring-up — the log is written host-side), instead of silently skipping
 that step. Configuration waits up to 15 minutes for an authenticated DQR plugin endpoint, rather than treating the
 earlier Tomcat login page as proof that plugins are ready. Re-running against an already-configured instance is
 tolerated — the existing service account, PACS registration, and availability intervals are detected and left as-is.
@@ -388,7 +389,8 @@ The development overlay (`docker-compose-stack.development.yml`) sets these cons
   batch-launch, container-service, DICOM Query-Retrieve and OHIF viewer plugin families before startup can continue.
 
 - **XNAT serves its login page but configuration reports plugin-route 404s** — inspect
-  `configure-xnat-<stack>.log` in the container. Once the plugin cache is repaired, rerun the individual Trust with
+  `trust/xnat/xnat/config/configure-xnat-<stack>.log` on the host that ran the bring-up. Once the plugin cache is
+  repaired, rerun the individual Trust with
   `make -C trust/xnat up-xnat KIT=<CODE>`. This target intentionally resets that development XNAT's data. If the
   running instance already has the correct plugins and only configuration needs retrying, use
   `make -C trust/xnat xnat-configure XNAT_PROJECT=xnat<N>` instead.

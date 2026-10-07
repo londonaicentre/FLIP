@@ -144,7 +144,7 @@ class _Host:
 class TestConfigureFindsItsOwnStack:
     def test_execs_into_the_unprefixed_stack_only(self, tmp_path: Path) -> None:
         host = _Host(tmp_path, TWO_STACKS)
-        result = host.run(_recipe("xnat-configure", f"XNAT_PROJECT={STACK}"))
+        result = host.run(_recipe("xnat-configure", f"XNAT_PROJECT={STACK}", f"XNAT_CONFIGURE_LOG_DIR={tmp_path}"))
 
         assert result.returncode == 0, f"xnat-configure failed:\n{result.stdout}{result.stderr}"
         execs = host.execs()
@@ -157,7 +157,7 @@ class TestConfigureFindsItsOwnStack:
     def test_refuses_an_ambiguous_match(self, tmp_path: Path) -> None:
         """Two containers of the wanted service is not a lookup to resolve — it is an error to name."""
         host = _Host(tmp_path, ROLLING_UPDATE)
-        result = host.run(_recipe("xnat-configure", f"XNAT_PROJECT={STACK}"))
+        result = host.run(_recipe("xnat-configure", f"XNAT_PROJECT={STACK}", f"XNAT_CONFIGURE_LOG_DIR={tmp_path}"))
 
         assert result.returncode != 0, "xnat-configure went ahead with two candidate containers"
         assert host.execs() == [], f"docker exec ran despite the ambiguity: {host.execs()}"

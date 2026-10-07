@@ -120,10 +120,13 @@ seed_demo_projects:
 # app reaches it (KEYCLOAK_URL is a docker-network name; ~/.aws is mounted for
 # Cognito). Passwords come from DEMO_RESEARCHER_PASSWORD / DEMO_ADMIN_PASSWORD
 # in the env and are handed to the container per call — the service's explicit
-# environment list does not carry them. `exec` rather than `run`: no orphan
+# environment list does not carry them. The DEMO_*_EMAIL overrides ride along so
+# the users created match the ones the host-side recorder signs in as. `exec`
+# rather than `run`: no orphan
 # removal, so a running FL stack is left alone.
 create_demo_users:
-	$(docker_command) exec -e DEMO_RESEARCHER_PASSWORD -e DEMO_ADMIN_PASSWORD $(service_name) \
+	$(docker_command) exec -e DEMO_RESEARCHER_PASSWORD -e DEMO_ADMIN_PASSWORD \
+		-e DEMO_RESEARCHER_EMAIL -e DEMO_ADMIN_EMAIL $(service_name) \
 		python -m flip_api.scripts.create_demo_users
 # Record the end-to-end demo video against the running dev stack (Dockerised
 # Cypress segments + off-camera waits + ffmpeg assembly). Args via DEMO_ARGS,
@@ -240,7 +243,12 @@ PROSTATE_ENRICHMENT_ARGS := --data-enrichment-cwd $(PROSTATE_ENRICHMENT_CWD) --d
 e2e_smoke_prostate: MODEL_FILES_DIR := ../fl-tutorials/flower/3d_prostate_segmentation/app
 e2e_smoke_prostate: QUERY_FILE := ../fl-tutorials/flower/3d_prostate_segmentation/query.sql
 e2e_smoke_prostate: ENRICHMENT_ARGS := $(PROSTATE_ENRICHMENT_ARGS)
-e2e_smoke_prostate: e2e_smoke
+e2e_smoke_prostate: _require_flower_backend e2e_smoke
+
+# The prostate app exists for Flower only: fail before the ~6 min image pull rather than after it,
+# when an NVFLARE hub would reject the Flower bundle.
+_require_flower_backend:
+	@[ "$(FL_BACKEND)" = flower ] || { echo "❌ e2e_smoke_prostate uploads a Flower app — run it with FL_BACKEND=flower (got '$(FL_BACKEND)')"; exit 1; }
 
 generate-internal-service-key:
 	uv run python -m flip_api.scripts.generate_internal_service_key $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
