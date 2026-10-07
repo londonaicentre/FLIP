@@ -102,6 +102,13 @@ case ",${WRONG_LOGINS:-}," in
   *",${creds#*:},"*) [ -n "$creds" ] && { status=401; body='{"error":"unauthorized"}'; } ;;
 esac
 
+# A first boot still initialising its database: the first N logins fail whatever the password.
+if [ -n "${UNREADY_LOGINS:-}" ] && [ -n "$creds" ]; then
+  seen=$(( $(cat "$UNREADY_COUNT" 2>/dev/null || echo 0) + 1 ))
+  echo "$seen" > "$UNREADY_COUNT"
+  [ "$seen" -le "$UNREADY_LOGINS" ] && { status=401; body='{"error":"unauthorized"}'; }
+fi
+
 [ -n "$outfile" ] && [ "$outfile" != "/dev/null" ] && printf '%s' "$body" > "$outfile"
 if [ "$status_only" = "1" ]; then printf '%s' "$status"; else printf '%s\n%s' "$body" "$status"; fi
 case "$status" in 2*) exit 0 ;; esac
@@ -185,6 +192,7 @@ def run_configure(tmp_path, env_overrides=None, pacs_state=None, scp_state=None)
         "PACS_STATE": str(pacs_file),
         "SCP_STATE": str(scp_file),
         "CREDS_LOG": str(tmp_path / "creds.txt"),
+        "UNREADY_COUNT": str(tmp_path / "unready-count.txt"),
         **(env_overrides or {}),
     }
 
@@ -707,4 +715,24 @@ def test_neither_password_working_stops_before_touching_xnat(tmp_path):
     code, payloads, output = run_configure(tmp_path, {"WRONG_LOGINS": "initial,rotated"})
     assert code == 1, output
     assert "neither admin password authenticates" in output
+    assert not any(m in {"POST", "PUT", "DELETE"} for m, _ in requests_made(payloads))
+
+
+# ── First boot: the login page answers before the database is ready (FLIP#1384) ──────────────
+
+
+def test_first_boot_waits_out_the_window_where_no_password_works(tmp_path):
+    # Two rounds of 401/401 (four logins), then XNAT is ready and the initial password works.
+    code, _, output = run_configure(tmp_path, {"UNREADY_LOGINS": "4"}, pacs_state=MOCK_PACS_REGISTRATION)
+    assert code == 0, output
+    assert "attempt 2/6" in output
+    assert credentials_used(tmp_path, "POST", "/xapi/siteConfig")[0] == "admin:initial"  # the activation call
+
+
+def test_a_wrong_password_fails_well_short_of_the_xnat_lockout(tmp_path):
+    """XNAT locks the account after about 20 failed logins; the retries must not get it there."""
+    code, payloads, output = run_configure(tmp_path, {"WRONG_LOGINS": "initial,rotated"})
+    assert code == 1, output
+    assert "after 6 attempts" in output
+    assert len(credentials_used(tmp_path, "GET", "/xapi/siteConfig/initialized")) == 12
     assert not any(m in {"POST", "PUT", "DELETE"} for m, _ in requests_made(payloads))

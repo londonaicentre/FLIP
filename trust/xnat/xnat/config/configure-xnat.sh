@@ -182,22 +182,35 @@ xnat_curl() {
 # stay bare curl rather than xnat_curl. They carry xnat_curl's deadlines even so, and `|| true` so a
 # timeout reaches the checks below instead of ending the script under set -e with no output: the
 # wall-clock wait above proves XNAT serves the login page, not that an authenticated route answers.)
+# On a first boot it serves that page before its database initialisation finishes, and until then
+# both passwords get 401 (FLIP#1384). So the probe pair is retried a few times before giving up. The
+# cap is a count, not a deadline: each round is up to two failed logins, and XNAT locks the account
+# after about 20, so a genuinely wrong password must fail well short of that.
 ADMIN_PASSWORD_ROTATED=false
-init_pw_status=$(curl -s --connect-timeout 5 --max-time 15 -o /dev/null -w '%{http_code}' \
-  -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
-  "$XNAT_URL/xapi/siteConfig/initialized") || true
-if [[ "${init_pw_status}" != "200" ]]; then
+auth_attempts="${XNAT_AUTH_PROBE_ATTEMPTS:-6}"
+auth_wait="${XNAT_AUTH_PROBE_WAIT_SECONDS:-20}"
+for ((attempt = 1; ; attempt++)); do
+  init_pw_status=$(curl -s --connect-timeout 5 --max-time 15 -o /dev/null -w '%{http_code}' \
+    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
+    "$XNAT_URL/xapi/siteConfig/initialized") || true
+  [[ "${init_pw_status}" == "200" ]] && break
   rotated_probe=$(curl -s --connect-timeout 5 --max-time 15 -w '\n%{http_code}' \
     -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
     "$XNAT_URL/xapi/siteConfig/initialized") || true
   rotated_status="${rotated_probe##*$'\n'}"
   initialized="${rotated_probe%$'\n'*}"
-  if [[ "${rotated_status}" != "200" ]]; then
+  [[ "${rotated_status}" == "200" ]] && break
+  if [[ "$attempt" -ge "$auth_attempts" ]]; then
     echo "ERROR: neither admin password authenticates (initial: HTTP ${init_pw_status:-000}," \
-      "configured: HTTP ${rotated_status:-000})." >&2
+      "configured: HTTP ${rotated_status:-000}) after ${attempt} attempts." >&2
     echo "  Check XNAT_ADMIN_PASSWORD in the kit against this XNAT's admin account." >&2
     exit 1
   fi
+  echo "Neither admin password authenticates yet (XNAT may still be initialising its database)" \
+    "— retrying in ${auth_wait}s (attempt ${attempt}/${auth_attempts})."
+  sleep "$auth_wait"
+done
+if [[ "${init_pw_status}" != "200" ]]; then
   ADMIN_PASSWORD_ROTATED=true
   if [[ "${initialized}" == "true" ]]; then
     echo "XNAT already configured (the initial admin password no longer works) — converging configuration."

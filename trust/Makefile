@@ -51,9 +51,14 @@ KIT_FILE := $(if $(wildcard .env.$(KIT).$(ENV)),.env.$(KIT).$(ENV),.env.$(KIT))
 MAIN_ENV_FILE ?= .env.development
 ifeq ($(ENV),development)
 -include ../$(MAIN_ENV_FILE)
+# DOCKER_FL_REGISTRY is deliberately not in this list: ../deploy/fl_backend.mk defaults it to
+# DOCKER_REGISTRY with `?=` and exports it. Exporting it here first, while the hub env leaves it
+# unset, would DEFINE it as empty, the default would never apply, and a direct
+# `make -C trust up-trust` would pull `flare-fl-client:stag` with no registry (FLIP#1384) — the
+# trap the root Makefile's env export already avoids.
 export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER FL_BACKEND \
        FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY \
-       DOCKER_FL_TAG DOCKER_FL_REGISTRY NLB_SUBDOMAIN FL_SERVER_PORT
+       DOCKER_FL_TAG NLB_SUBDOMAIN FL_SERVER_PORT
 # xnat/Makefile's dev-only plugin cache reads these to reach the artifacts bucket. Unexported they
 # are empty in the `make -C trust up-trust` path (the root Makefile blanket-exports the hub env, so
 # only a top-level `make up` would carry them), and the cache download fails on a bucket-less S3 URI.

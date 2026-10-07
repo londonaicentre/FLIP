@@ -20,6 +20,7 @@ fails here rather than on a live site.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -162,6 +163,57 @@ class Governance(unittest.TestCase):
     def test_a_remote_daemon_without_a_document_is_not_refused(self):
         out = run_target("upgrade-trust", "YES=1", dry=True, env={"DOCKER_HOST": "ssh://flip-trust"})
         assert out.returncode == 0, out.stdout + out.stderr
+
+
+class DevelopmentFlRegistry(unittest.TestCase):
+    """A direct `make -C trust …` in development resolves the FL registry like `make up` (FLIP#1384).
+
+    A dev kit leaves its Hub-shared block commented out and inherits it from the hub's
+    .env.development, which normally sets DOCKER_REGISTRY but not DOCKER_FL_REGISTRY. A bare
+    `export DOCKER_FL_REGISTRY` ahead of fl_backend.mk defines it as empty, so its
+    `?= $(DOCKER_REGISTRY)` never applies and the FL client image loses its registry.
+    """
+
+    HUB_ENV = "DOCKER_REGISTRY=ghcr.io/londonaicentre/\nDOCKER_TAG=stag\nDOCKER_FL_TAG=stag\nFL_BACKEND=nvflare\n"
+    DEV_KIT = KIT.split("# ── Hub-shared")[0] + "# ── Hub-shared (managed) ──\n# DOCKER_FL_REGISTRY=\n"
+
+    def fl_registry(self, *extra: str) -> str:
+        """DOCKER_FL_REGISTRY as trust/Makefile resolves it for a development kit."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in ("deploy/env_mode.mk", "deploy/fl_backend.mk", "deploy/instance.mk", "trust/Makefile"):
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text((Path(__file__).resolve().parents[2] / rel).read_text())
+            (root / ".env.development").write_text(self.HUB_ENV)
+            (root / "trust" / ".env.SCR.development").write_text(self.DEV_KIT)
+            # The caller's DOCKER_*/PROD/MAKEFLAGS would beat the scratch env files.
+            dropped = {"PROD", "MAKEFLAGS"}
+            env = {k: v for k, v in os.environ.items() if not k.startswith("DOCKER_") and k not in dropped}
+            out = subprocess.run(
+                [
+                    "make",
+                    "-s",
+                    "-C",
+                    str(root / "trust"),
+                    "--eval",
+                    "fl-registry: ; @echo [$(DOCKER_FL_REGISTRY)]",
+                    "fl-registry",
+                    "KIT=SCR",
+                    *extra,
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=60,
+            )
+            assert out.returncode == 0, out.stdout + out.stderr
+            return out.stdout.strip().splitlines()[-1]
+
+    def test_fl_registry_defaults_to_the_hub_registry(self):
+        assert self.fl_registry() == "[ghcr.io/londonaicentre/]"
+
+    def test_an_explicit_empty_fl_registry_still_selects_local_images(self):
+        assert self.fl_registry("DOCKER_FL_REGISTRY=") == "[]"
 
 
 if __name__ == "__main__":
