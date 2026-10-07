@@ -101,6 +101,33 @@ until curl --output /dev/null --silent --head --fail \
 done
 echo "XNAT is up!"
 
+# The login page serving is not the same as XDAT being initialised: on a fresh
+# database the web layer answers (and the login page renders) for a minute or so
+# before "Database initialization complete", and every authenticated route answers
+# 401 until then — so the admin-password probes below would read a not-yet-ready
+# XNAT as "neither password authenticates". Wait, bounded, until the initialised
+# endpoint answers 200 for either the initial or the configured password; the
+# probes below then tell the two apart. A genuinely wrong kit password still fails
+# below, after this shorter wait.
+echo "Waiting for XDAT (the database layer) to come up..."
+xdat_start=$SECONDS
+# Bounded by XNAT_XDAT_READINESS_TIMEOUT_SECONDS (default 300; the test harness shortens it).
+xdat_deadline=$((xdat_start + ${XNAT_XDAT_READINESS_TIMEOUT_SECONDS:-300}))
+until [[ "$(curl -s --connect-timeout 5 --max-time 15 -o /dev/null -w '%{http_code}' \
+          -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
+          "$XNAT_URL/xapi/siteConfig/initialized" || true)" == "200" ]] \
+   || [[ "$(curl -s --connect-timeout 5 --max-time 15 -o /dev/null -w '%{http_code}' \
+          -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+          "$XNAT_URL/xapi/siteConfig/initialized" || true)" == "200" ]]; do
+  if [[ "$SECONDS" -ge "$xdat_deadline" ]]; then
+    echo "WARNING: no admin password authenticated within $((SECONDS - xdat_start))s — probing once more below" >&2
+    break
+  fi
+  printf '.'
+  sleep 2
+done
+echo "XDAT is ready."
+
 # NOTE: the plugin-readiness wait deliberately does NOT run here. It cannot: the probe is an
 # authenticated plugin route, and an uninitialized XNAT redirects every authenticated route to
 # /setup, so it can only answer once the site has been initialized below. See FLIP#966 — running
