@@ -83,13 +83,23 @@ jobs:
         # example, so the shell values are appended for docker compose, which reads the
         # file as dotenv. (detect-secrets attributes a block scalar's findings to this
         # line: the fixed dev password below is the allowlisted one.)
+        # The AES key and the Postgres password come from the `flip` environment's
+        # secrets when the run has them. A pull request from a fork never does (GitHub
+        # withholds repository secrets from fork-triggered runs), so each falls back to
+        # a value minted here with openssl: the stack is runner-local and torn down at
+        # the end of the job, and nothing outside this step reads either value (the
+        # storage smoke's psql runs inside the flip-db container). Nothing is committed.
+        # The trade-off: a deleted secret passes on a fresh value instead of failing.
+        env:
+          AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: | # pragma: allowlist secret
           cp .env.development.example .env.development
           {
             echo "AWS_REGION=eu-west-2"
             echo "ADMIN_USER_PASSWORD=Smoke-Test-Pa55word!"  # pragma: allowlist secret
-            echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 }}"
-            echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}"
+            echo "AES_KEY_BASE64=${AES_KEY_BASE64:-$(openssl rand -base64 32)}"
+            echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-$(openssl rand -hex 16)}"
             echo "ENV=development"
             echo "UID=$(id -u)"
             echo "GID=$(id -g)"
