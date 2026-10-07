@@ -10,7 +10,7 @@ FLIP Admin
 Projects
 ********
 
-FLIP Admins are responsible for un-staging projects and completing the Project Approval process.
+FLIP Admins are responsible for un-staging projects and for recording the Project Approval decision at every Trust that has no Trust Admin.
 
 Project Un-staging
 ==================

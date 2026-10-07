@@ -63,6 +63,7 @@ locals {
         }
       },
     ] : [],
+    jsondecode(var.extra_bucket_policy_statements_json),
   )
 }
 
@@ -93,12 +94,16 @@ resource "aws_s3_bucket_public_access_block" "this" {
 resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
   bucket = aws_s3_bucket.this.id
 
+  # kms_master_key_id and the bucket key are meaningful only under SSE-KMS;
+  # under AES256 (see var.sse_algorithm) S3 rejects a key id, so both collapse
+  # to null/false. Every existing caller leaves sse_algorithm at its "aws:kms"
+  # default and so plans exactly as before.
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm     = "aws:kms"
-      kms_master_key_id = var.kms_key_arn
+      sse_algorithm     = var.sse_algorithm
+      kms_master_key_id = var.sse_algorithm == "aws:kms" ? var.kms_key_arn : null
     }
-    bucket_key_enabled = true
+    bucket_key_enabled = var.sse_algorithm == "aws:kms"
   }
 }
 

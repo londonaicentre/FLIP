@@ -51,6 +51,7 @@ def get_users(
         request (Request): FastAPI request object
         db (Session): Database session
         token_id (UUID): ID of the authenticated user
+        idp (IdentityProvider): The configured identity provider
 
     Returns:
         IPagedData[IUser]: Paginated list of Cognito users

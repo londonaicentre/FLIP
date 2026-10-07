@@ -274,6 +274,19 @@ expect_rc 0 "dry run succeeds"
 expect_mentions "- DEMO_ASSETS_BUCKET_NAME" "the demo bucket is required on prod"
 expect_mentions "branch policy: main only" "and prod's branch policy is stated"
 
+# 5b. FLIP#1199: the same asymmetry on the LZA prod mode, where the key gates
+#     module.flip_demo_assets_bucket — the bucket itself — rather than four
+#     CloudFront-side objects. The classification is keyed on ENV, not MODE, and
+#     this pins that: `--mode lza` is prod, so the demo bucket is required there
+#     too, which is what makes the LZA prod environment seedable at all.
+run_case "lza prod treats an absent demo bucket as required" \
+    STUB_SUB="repo:acme/flip:environment:aws-prod" \
+    STUB_APPLY_REF="acme/flip/.github/workflows/terraform_apply.yml@refs/heads/main" -- \
+    --mode lza --env-file "${ENV_FILE}" --repo acme/flip --dry-run
+expect_rc 0 "dry run succeeds"
+expect_mentions "- DEMO_ASSETS_BUCKET_NAME" "the demo bucket is required on LZA prod too"
+expect_mentions "set TF_PROD=lza" "and the LZA prod token is what TF_PROD gets"
+
 # 6. The LZA modes require their extra keys, appended to the same array — the
 #    classification has to survive the append, not just the base list.
 run_case "lza modes require the LZA keys" -- \

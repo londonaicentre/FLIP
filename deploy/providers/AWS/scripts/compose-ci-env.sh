@@ -276,8 +276,12 @@ OPTIONAL_KEYS=(
     # Empty is meaningful and NOT symmetric with the rest of this list: it is the
     # correct value on stag, which hosts no public Ark+ demo, and a destructive
     # one on prod, where `demo_assets_enabled = var.DEMO_ASSETS_BUCKET_NAME != ""`
-    # (cloudfront.tf) gates four live resources plus the /ark_demo/* behaviour.
-    # Optional here so stag composes, recovered from state by reconcile_ci_env.py
+    # (cloudfront.tf) gates four live resources plus the /ark_demo/* behaviour on
+    # a legacy estate — and, since FLIP#1199, the demo-assets BUCKET itself on an
+    # LZA one (module.flip_demo_assets_bucket). Emptying it there plans a destroy
+    # of a bucket carrying prevent_destroy, so the apply fails loudly instead.
+    # Optional here (not per-env, and this script has no prod/stag axis — only
+    # the LZA one) so stag composes, recovered from state by reconcile_ci_env.py
     # so prod's GitHub environment cannot be seeded without it.
     DEMO_ASSETS_BUCKET_NAME
 

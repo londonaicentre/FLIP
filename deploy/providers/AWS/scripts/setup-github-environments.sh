@@ -385,10 +385,15 @@ set_one() {
         }
         # DEMO_ASSETS_BUCKET_NAME is OPTIONAL in the manifest because empty is
         # correct on stag, which hosts no public Ark+ demo. On prod empty is not
-        # a value but a gap: cloudfront.tf gates the demo's bucket policy,
-        # public-access block, OAC and /ark_demo/* behaviour on it being
-        # non-empty, so seeding prod without it destroys all four on the next
-        # apply. Same asymmetry as keys_expected_empty() in reconcile_ci_env.py.
+        # a value but a gap, in either estate — and the mode does not change the
+        # answer, which is why this stays keyed on ENV alone:
+        #   * legacy prod: cloudfront.tf gates the demo's bucket policy,
+        #     public-access block, OAC and /ark_demo/* behaviour on it being
+        #     non-empty, so seeding prod without it destroys all four.
+        #   * LZA prod (FLIP#1199): it gates module.flip_demo_assets_bucket, the
+        #     Terraform-managed bucket itself. prevent_destroy makes that a hard
+        #     apply failure rather than a silent loss — still a broken apply.
+        # Same asymmetry as keys_expected_empty() in reconcile_ci_env.py.
         if [[ "${key}" == "DEMO_ASSETS_BUCKET_NAME" && "${ENV}" == "prod" ]]; then
             MISSING+=("${key}")
             return 0

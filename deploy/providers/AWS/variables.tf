@@ -336,10 +336,20 @@ variable "DEMO_ASSETS_BUCKET_NAME" {
   description = <<-EOT
     S3 bucket holding the public Ark+ demo download bundles (results + model
     files zips), served through CloudFront at /ark_demo/assets/* via OAC.
-    The bucket itself is NOT Terraform-managed (objects are staged manually);
-    Terraform manages only its public-access block, its OAC bucket policy,
-    and the CloudFront origin/behavior. Leave empty (the default) to disable
-    all demo-assets resources — e.g. on stag, which hosts no public demo.
+    Who owns the bucket depends on the estate (FLIP#1199):
+      * legacy (lza_managed_network = false) — NOT Terraform-managed. The
+        bucket predates this stack and objects are staged by hand; Terraform
+        manages only its public-access block, its OAC bucket policy, and the
+        CloudFront origin/behaviour on the in-account distribution.
+      * LZA (lza_managed_network = true) — created and owned by
+        module.flip_demo_assets_bucket (services.tf), with the cross-account
+        OAC grant to the networking account's edge distribution in its policy.
+        Serving it needs a /ark_demo/assets/* behaviour on that edge
+        distribution, which lives in aicentre-lza-iac, not here.
+    Leave empty (the default) to disable all demo-assets resources — e.g. on
+    stag, which hosts no public demo. Clearing it on an LZA estate that already
+    has the bucket proposes a destroy, which prevent_destroy turns into an
+    apply failure rather than silent data loss.
   EOT
   type        = string
   default     = ""

@@ -144,6 +144,35 @@ class TestStateLookup:
         assert st.attrs("aws_s3_bucket", "demo_assets") == {}
         assert st.data_attrs("aws_s3_bucket", "demo_assets")["bucket"] == "flipprod-demo-assets"
 
+    def test_module_attrs_distinguishes_buckets_that_share_a_type_and_name(self, state):
+        # Every caller of modules/flip_s3_bucket contributes an
+        # `aws_s3_bucket.this`, so the module is the only thing that tells the
+        # LZA demo bucket (FLIP#1199) apart from its three siblings.
+        st = rce.State(
+            {
+                "resources": [
+                    {
+                        "mode": "managed",
+                        "module": "module.flip_app_bundles_bucket",
+                        "type": "aws_s3_bucket",
+                        "name": "this",
+                        "instances": [{"attributes": {"bucket": "flip-lza-app-bundles"}}],
+                    },
+                    {
+                        "mode": "managed",
+                        "module": "module.flip_demo_assets_bucket[0]",
+                        "type": "aws_s3_bucket",
+                        "name": "this",
+                        "instances": [{"attributes": {"bucket": "flip-lza-demo-assets"}}],
+                    },
+                ]
+            }
+        )
+        assert st.module_attrs("module.flip_demo_assets_bucket", "aws_s3_bucket", "this")["bucket"] == (
+            "flip-lza-demo-assets"
+        )
+        assert st.module_attrs("module.flip_fl_results_bucket", "aws_s3_bucket", "this") == {}
+
     def test_data_attrs_ignores_the_managed_resource(self, state):
         # flip_ui is managed; asking data_attrs for it must not silently return it.
         assert state.data_attrs("aws_vpc", "this") == {}
@@ -298,8 +327,13 @@ class TestEnvFileParsing:
 # suite green. These drive both, with every AWS call stubbed.
 
 
-def _minimal_state(*, with_trust_host: bool, demo_bucket: str | None) -> dict:
-    """Just enough state for build() to run end to end."""
+def _minimal_state(*, with_trust_host: bool, demo_bucket: str | None, demo_managed: bool = False) -> dict:
+    """Just enough state for build() to run end to end.
+
+    ``demo_managed`` selects the LZA shape of the demo bucket (FLIP#1199): a
+    managed ``aws_s3_bucket.this`` inside ``module.flip_demo_assets_bucket``
+    rather than the legacy ``data.aws_s3_bucket.demo_assets`` lookup.
+    """
     resources: list[dict] = [
         _task_definition(
             "flip_api",
@@ -363,11 +397,33 @@ def _minimal_state(*, with_trust_host: bool, demo_bucket: str | None) -> dict:
     if demo_bucket is not None:
         resources.append(
             {
+                "mode": "managed",
+                "module": "module.flip_demo_assets_bucket[0]",
+                "type": "aws_s3_bucket",
+                "name": "this",
+                "instances": [{"attributes": {"bucket": demo_bucket}}],
+            }
+            if demo_managed
+            else {
                 "mode": "data",
                 "type": "aws_s3_bucket",
                 "name": "demo_assets",
                 "instances": [{"attributes": {"bucket": demo_bucket}}],
             }
+        )
+    if demo_managed:
+        # A sibling bucket from the same module, listed first in state. Reading
+        # aws_s3_bucket.this without filtering on the module would return this
+        # one and seed the LZA prod environment with the WRONG bucket name.
+        resources.insert(
+            0,
+            {
+                "mode": "managed",
+                "module": "module.flip_fl_results_bucket",
+                "type": "aws_s3_bucket",
+                "name": "this",
+                "instances": [{"attributes": {"bucket": "flip-lza-fl-results"}}],
+            },
         )
     return {"resources": resources}
 
@@ -438,15 +494,26 @@ class TestBuild:
         values, _ = rce.build("prod", "prod", "eu-west-2", "flip-terraform-state-prod", "flip-cluster")
         assert values["DEMO_ASSETS_BUCKET_NAME"] == "flipprod-demo-assets"
 
+    def test_demo_bucket_comes_from_the_module_on_an_lza_estate(self, stub_aws):
+        # FLIP#1199: on LZA the bucket is Terraform-managed, so there is no data
+        # source to read. Reading only the lookup recovered "", which
+        # keys_expected_empty() reports as a failed recovery on prod — leaving
+        # the LZA prod environment unseedable.
+        stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket="flip-lza-demo-assets", demo_managed=True))
+        values, _ = rce.build("prod", "lza-prod", "eu-west-2", "flip-terraform-state-lza", "flip-cluster")
+        assert values["DEMO_ASSETS_BUCKET_NAME"] == "flip-lza-demo-assets"
+
 
 class TestExpectedEmpty:
     def test_demo_bucket_may_be_empty_on_stag(self):
         assert "DEMO_ASSETS_BUCKET_NAME" in rce.keys_expected_empty("stag")
 
     def test_demo_bucket_may_not_be_empty_on_prod(self):
-        # Prod carries the Ark+ demo, and cloudfront.tf gates four resources plus
-        # the /ark_demo/* behaviour on the value being non-empty. An empty
-        # recovery there is a failed lookup, and seeding from it destroys them.
+        # Prod carries the Ark+ demo. On legacy, cloudfront.tf gates four
+        # resources plus the /ark_demo/* behaviour on the value being non-empty;
+        # on LZA it gates module.flip_demo_assets_bucket, the bucket itself. An
+        # empty recovery there is a failed lookup, and seeding from it either
+        # destroys the four or fails the apply on prevent_destroy.
         assert "DEMO_ASSETS_BUCKET_NAME" not in rce.keys_expected_empty("prod")
 
     def test_enforce_mfa_may_be_empty_anywhere(self):
