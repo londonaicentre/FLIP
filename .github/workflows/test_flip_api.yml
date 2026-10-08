@@ -81,13 +81,12 @@ jobs:
         run: pip install uv
 
       - name: Setup environment file
-        run: |
+        run: | # pragma: allowlist secret
           cp ../.env.development.example ../.env.development
-          # Override sensitive values with GitHub secrets
-          echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 }}" >> ../.env.development
-          echo "DATA_ACCESS_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-          echo "OMOP_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-          echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
+          # Throwaway values generated per run, not secrets: the integration suite brings its
+          # own Testcontainers Postgres, and a fork PR's run is given no secrets.
+          echo "AES_KEY_BASE64=$(openssl rand -base64 32)" >> ../.env.development
+          echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" >> ../.env.development
           # The GitHub environment can inject empty-string env vars; Pydantic
           # Settings treats explicit env vars (even empty) as an override of
           # the model default. Set ENV explicitly to prevent validation failure.

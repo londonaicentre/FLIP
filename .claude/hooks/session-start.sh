@@ -39,16 +39,35 @@ BASE="$(git merge-base HEAD origin/develop 2>/dev/null || echo develop)"
 CHANGED_DIRS="$(git diff --name-only "$BASE" 2>/dev/null | grep -E '\.(py|toml)$' \
   | sed -E 's#/[^/]+$##' | sort -u)"
 
-declare -A SYNCED
+# Run a command with a time limit. `timeout` is GNU coreutils and absent on macOS, so
+# fall back to Homebrew's gtimeout, then to perl's alarm (perl ships with macOS; the
+# alarm survives the exec and kills the command when it fires).
+run_bounded() {
+  local secs="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$secs" "$@"
+  else
+    perl -e 'alarm shift; exec @ARGV or exit 127' "$secs" "$@"
+  fi
+}
+
+# Projects already synced, one per line. A plain string, not an associative array:
+# macOS's /bin/bash is 3.2, where `declare -A` fails and the path keys collapse to
+# index 0, so only the first project would ever sync.
+SYNCED=""
 if command -v uv >/dev/null 2>&1; then
   for d in $CHANGED_DIRS; do
     # walk up to the nearest dir containing a pyproject.toml
     p="$d"
     while [ -n "$p" ] && [ "$p" != "." ]; do
       if [ -f "$p/pyproject.toml" ]; then
-        if [ -z "${SYNCED[$p]}" ]; then
-          SYNCED[$p]=1
-          ( cd "$p" && timeout 120 uv sync --quiet >/dev/null 2>&1 ) \
+        if ! printf '%s\n' "$SYNCED" | grep -qxF "$p"; then
+          SYNCED="${SYNCED}${p}
+"
+          ( cd "$p" && run_bounded 120 uv sync --quiet >/dev/null 2>&1 ) \
             && echo "uv sync: $p ✓" || echo "uv sync: $p (skipped/timeout)"
         fi
         break
@@ -56,7 +75,7 @@ if command -v uv >/dev/null 2>&1; then
       p="$(dirname "$p")"
     done
   done
-  [ ${#SYNCED[@]} -eq 0 ] && echo "uv sync: no changed Python projects on this branch"
+  [ -z "$SYNCED" ] && echo "uv sync: no changed Python projects on this branch"
 else
   echo "uv: not on PATH"
 fi

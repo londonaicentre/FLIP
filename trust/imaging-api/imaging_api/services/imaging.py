@@ -25,9 +25,9 @@ from imaging_api.routers.schemas import (
 from imaging_api.services.projects import get_project
 from imaging_api.utils.exceptions import NotFoundError
 from imaging_api.utils.logger import logger
+from imaging_api.utils.xnat_url import xnat_url
 
 PACS_ID = get_settings().PACS_ID
-XNAT_URL = get_settings().XNAT_URL
 # Bound every XNAT call: an unbounded request to a wedged XNAT would hang the import (and the
 # health probe) rather than failing. The DQR data-path calls get a far larger bound because they
 # proxy live DIMSE operations against the upstream PACS — a throttled or slow real PACS can hold
@@ -70,7 +70,7 @@ def resolve_pacs_id(headers: dict[str, str]) -> int:
         return _resolved_pacs_id
 
     try:
-        response = requests.get(f"{XNAT_URL}/xapi/pacs", headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
+        response = requests.get(xnat_url("xapi", "pacs"), headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
         response.raise_for_status()
         registrations = response.json()
     except Exception as e:
@@ -176,7 +176,7 @@ def ping_pacs(pacs_id: int, headers: dict[str, str]) -> PacsStatus:
         Exception: If there is an error during the ping request.
     """
     response = requests.get(
-        f"{XNAT_URL}/xapi/pacs/{pacs_id}/status",
+        xnat_url("xapi", "pacs", str(pacs_id), "status"),
         headers=headers,
         timeout=XNAT_REQUEST_TIMEOUT,
     )
@@ -242,7 +242,7 @@ def query_by_accession_number(accession_number: str, headers: dict[str, str]) ->
     study_query = StudyQuery(accessionNumber=accession_number, pacsId=resolve_pacs_id(headers))
 
     response = requests.post(
-        f"{XNAT_URL}/xapi/dqr/query/studies",
+        xnat_url("xapi", "dqr", "query", "studies"),
         headers=headers,
         json=study_query.model_dump(by_alias=True),
         timeout=XNAT_DQR_REQUEST_TIMEOUT,
@@ -316,7 +316,7 @@ def queue_image_import_request(
 
     # Send import request to DQR
     response = requests.post(
-        f"{XNAT_URL}/xapi/dqr/import",
+        xnat_url("xapi", "dqr", "import"),
         headers=headers,
         json=import_request.model_dump(by_alias=True),
         timeout=XNAT_DQR_REQUEST_TIMEOUT,

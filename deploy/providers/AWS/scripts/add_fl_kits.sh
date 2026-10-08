@@ -150,7 +150,12 @@ nets_listing="$(aws s3 ls "${BASE_S3}/")" || {
     echo "❌ Could not list ${BASE_S3}/ — AWS error above (credentials/profile?), not a config issue." >&2
     exit 1
 }
-mapfile -t NETS < <(printf '%s\n' "${nets_listing}" | awk '{print $2}' | grep -oE '^net-[0-9]+' | sort -V)
+# A read loop, not mapfile: an admin runs this on their own machine, and macOS
+# ships bash 3.2, which has no mapfile.
+NETS=()
+while IFS= read -r net; do
+    NETS+=("${net}")
+done < <(printf '%s\n' "${nets_listing}" | awk '{print $2}' | grep -oE '^net-[0-9]+' | sort -V)
 if [[ "${#NETS[@]}" -eq 0 ]]; then
     echo "❌ No net-* prefixes under ${BASE_S3}/ — is FLARE_KIT_DATE correct?" >&2
     exit 1
@@ -210,7 +215,7 @@ fi
 mint_count=$((N - ${#ACTIVATE_NAMES[@]}))
 
 max_num=0
-for name in "${existing_names[@]}"; do
+for name in ${existing_names[@]+"${existing_names[@]}"}; do
     # 10# forces base 10: bash arithmetic reads a leading-zero numeral as octal,
     # so a zero-padded suffix (Trust_008) would crash with "value too great for
     # base" and Trust_010–Trust_017 would silently compute the wrong number.
