@@ -65,7 +65,13 @@ def get_net_status(
         if not clients:
             error_message = f"No response from FL API for net {net_name}"
             logger.error(error_message)
-            raise HTTPException(status_code=502, detail=error_message)
+            return INetStatus(
+                name=net_name,
+                fl_backend=net_info.fl_backend,
+                online=False,
+                registered_clients=0,
+                clients=[],
+            )
 
         # Match by FL kit slot name — the FL net never sees Trust.name. See the equivalent
         # comment in get_status.py for the rationale (an admin-chosen display name is
