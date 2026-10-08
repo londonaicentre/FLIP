@@ -182,8 +182,8 @@ XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archiv
 # to lose in long bring-up output — the same reasoning, and the same shape, as
 # $(ensure_net_dirs) in trust/Makefile. Checked after the chown rather than
 # instead of it as defence in depth, not because the chown itself might be
-# refused: all three branches chown under sudo, and `set -e` aborts on one that
-# fails outright before the guard is reached. What is left for the guard is a
+# refused: every branch chowns under sudo or as the owner itself, and `set -e`
+# aborts on one that fails outright before the guard is reached. What is left for the guard is a
 # chown that did not cover what it was meant to — it applies recursively to
 # $(XNAT_DATA_DIR) while the guard stats each entry of $(XNAT_DATA_DIRS), so those
 # two drifting apart, or a later edit narrowing or dropping the chown on one
@@ -568,13 +568,17 @@ xnat-plugins-download:
 # Data dir defaults vary by PROD — see the XNAT_DATA_DIR comment above
 # for the resolution rule and how to override per-host.
 #
-# All three branches provision under sudo, development included. An unprivileged
-# `mkdir -p` creates the tree owned by the invoking user, and the chown to 1001
-# that follows then fails with EPERM on every host whose developer is not
-# themselves uid 1001 — so the ownership the guard requires could never be
-# reached, and `make up` would abort here. sudo costs nothing extra: the wipe on
-# the line above already needs it, so dev bring-up already prompts, and sudo's
-# credential cache means the mkdir and chown ride the same authentication.
+# The two deployed branches provision under sudo. The development branch does too,
+# unless the invoking user IS the container uid, holds its gid and already owns
+# every directory under the tree — then the wipe, mkdir and chown all succeed
+# unprivileged (unlink needs write on the parent directory, so files a root-running
+# container left behind need no sudo either) and a password prompt would buy
+# nothing. The fallback matters: an unprivileged `mkdir -p` creates the tree owned
+# by the invoking user, and the chown to 1001 that follows then fails with EPERM on
+# every host whose developer is not themselves uid 1001 — so the ownership the
+# guard requires could never be reached, and `make up` would abort here. A
+# root-created directory (a mount source Docker made before the tree existed) also
+# takes the sudo path, since only root can empty it.
 #
 # `set -e` also makes the two `docker context` probes fatal, which is deliberate.
 # Letting them fall through to the local branch (the pre-FLIP#1095 behaviour) means
@@ -622,9 +626,17 @@ xnat-reset:
 		esac; \
 	else \
 		echo "  📍 Using dev data dir: $(XNAT_DATA_DIR)/"; \
-		sudo rm -rf $(XNAT_DATA_DIR); \
-		sudo mkdir -p $(XNAT_DATA_DIRS); \
-		sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
+		if [ "$$(id -u)" = "$(XNAT_CONTAINER_UID)" ] \
+			&& case " $$(id -G) " in *" $(XNAT_CONTAINER_GID) "*) true;; *) false;; esac \
+			&& [ -z "$$(find $(XNAT_DATA_DIR) -type d ! -user $(XNAT_CONTAINER_UID) 2>/dev/null | head -n 1)" ]; then \
+			echo "  🔓 Operator is uid $(XNAT_CONTAINER_UID) and owns every directory in the tree — no sudo needed"; \
+			priv=""; \
+		else \
+			priv="sudo"; \
+		fi; \
+		$$priv rm -rf $(XNAT_DATA_DIR); \
+		$$priv mkdir -p $(XNAT_DATA_DIRS); \
+		$$priv chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
 		$(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_DATA_DIRS)); \
 	fi
 

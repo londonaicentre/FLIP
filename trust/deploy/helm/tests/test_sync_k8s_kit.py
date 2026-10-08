@@ -20,6 +20,7 @@ IPs that rotate on recreation, so a pinned /32 would go stale. A port-only rule
 is immune to that drift and renders deterministically across runs."""
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -173,6 +174,148 @@ def test_render_override_kit_host_path_ignores_blank_fl_kit_dir():
     assert "\nflClient:\n  kitHostPath: /opt/flip/fl-kit\n" in out
 
 
+_DOCUMENT = (
+    "[disclosure]\nmin_cohort_size = 25\n\n"
+    '[[access.rule]]\nid = "withdrawn"\naction = "cohort.accession_ids"\neffect = "deny"\n'
+    'projects = ["3f1c9a70-5e42-4d8b-9c31-7a2e6b4f8d15"]\n\n'
+    '[fl_privacy.nvflare]\npolicy = "percentile"\n'
+)
+
+
+def _override(tmp_path, document: str = _DOCUMENT, **kit: str) -> str:
+    (tmp_path / "governance.toml").write_text(document)
+    return sync_k8s_kit.render_override(
+        {**_FL_KIT, "ACCESS_POLICY_FILE": "governance.toml", **kit}, "Trust_K8s", "eu-west-2", trust_dir=tmp_path
+    )
+
+
+def _checksum(override: str) -> str:
+    return next(line.split(": ", 1)[1] for line in override.splitlines() if "flPrivacyChecksum:" in line)
+
+
+def test_render_override_embeds_the_governance_document(tmp_path):
+    """The kit's ACCESS_POLICY_FILE names a path on the deploy host; the chart needs the
+    document ITSELF (it is rendered into a ConfigMap and mounted read-only — a host path
+    means nothing inside a pod). Relative paths resolve against the trust tree, which is
+    what the Compose stack's --project-directory trust does for its own mount of the same
+    file. Anchored on the block scalar's indentation, because the nesting is the meaning:
+    a document emitted a level deeper would still be readable YAML and would silently
+    become an empty string."""
+    (tmp_path / "policies").mkdir()
+    (tmp_path / "policies" / "governance.Trust_K8s.toml").write_text(
+        '[disclosure]\nmin_cohort_size = 25\n\n[fl_privacy.nvflare]\npolicy = "percentile"\n'
+    )
+    kit = {**_FL_KIT, "ACCESS_POLICY_FILE": "policies/governance.Trust_K8s.toml"}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2", trust_dir=tmp_path)
+
+    assert (
+        "  document: |\n"
+        '    [disclosure]\n    min_cohort_size = 25\n\n    [fl_privacy.nvflare]\n    policy = "percentile"\n'
+    ) in out
+    assert "\ngovernance:\n  flPrivacyChecksum: " in out
+
+
+def test_render_override_accepts_an_absolute_governance_path(tmp_path):
+    """An operator who pointed ACCESS_POLICY_FILE at an absolute path gets that file —
+    resolving it against the trust tree would append a relative path to it and read
+    something else entirely."""
+    document = tmp_path / "governance.toml"
+    document.write_text("[disclosure]\nmin_cohort_size = 30\n")
+    kit = {**_FL_KIT, "ACCESS_POLICY_FILE": str(document)}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2", trust_dir=tmp_path / "elsewhere")
+
+    assert "\n    min_cohort_size = 30\n" in out
+
+
+def test_render_override_fails_loudly_on_an_unreadable_governance_document(tmp_path):
+    """A document named but not readable must stop the sync, not be skipped: the release
+    would otherwise install clean, mount nothing, and enforce the platform defaults the
+    operator believes their rules replaced — the silent-ignore defect this whole feature
+    exists to remove."""
+    kit = {**_FL_KIT, "ACCESS_POLICY_FILE": "governance.Missing.toml"}
+
+    with pytest.raises(sync_k8s_kit.GovernanceDocumentError) as excinfo:
+        sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2", trust_dir=tmp_path)
+
+    assert "ACCESS_POLICY_FILE" in str(excinfo.value)
+    assert "governance.Missing.toml" in str(excinfo.value)
+
+
+def test_render_override_refuses_a_document_data_access_api_would_refuse(tmp_path):
+    """Validated with data-access-api's own loader against the kit's floor, so the pods never
+    crash-loop on a document the deploy accepted."""
+    with pytest.raises(sync_k8s_kit.GovernanceDocumentError, match="below the configured COHORT_QUERY_THRESHOLD"):
+        _override(tmp_path, "[disclosure]\nmin_cohort_size = 20\n", COHORT_QUERY_THRESHOLD="25")
+
+
+def test_render_override_refuses_a_site_privacy_section_on_flower(tmp_path):
+    """Nothing on Flower enforces [fl_privacy.nvflare]; deploying it would read as active."""
+    with pytest.raises(sync_k8s_kit.GovernanceDocumentError, match="nothing on flower enforces it"):
+        _override(tmp_path, FL_BACKEND="flower")
+
+
+def test_render_override_refuses_a_filter_in_both_the_document_and_the_kit(tmp_path):
+    with pytest.raises(sync_k8s_kit.GovernanceDocumentError, match="configured twice"):
+        _override(tmp_path, FL_SITE_PRIVACY_POLICY="percentile")
+
+
+def test_render_override_refuses_a_misspelt_site_privacy_variable():
+    with pytest.raises(sync_k8s_kit.GovernanceDocumentError, match="FL_SITE_PRIVACY_PERCENTIL"):
+        sync_k8s_kit.render_override(
+            {**_FL_KIT, "FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_PERCENTIL": "5"},
+            "Trust_K8s",
+            "eu-west-2",
+        )
+
+
+def test_render_override_passes_the_kits_site_privacy_filter_to_the_chart():
+    """The chart's flClient.nvflare.sitePrivacy was never filled from the kit, so a Helm trust
+    ran unfiltered while check-governance validated the kit's filter."""
+    out = sync_k8s_kit.render_override(
+        {**_FL_KIT, "FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_PERCENTILE": "25"},
+        "Trust_K8s",
+        "eu-west-2",
+    )
+
+    assert '\n  nvflare:\n    sitePrivacy:\n      policy: "percentile"\n      percentile: "25"\n' in out
+
+
+def test_render_override_passes_the_kits_disclosure_floor_to_the_chart():
+    """The chart never passed COHORT_QUERY_THRESHOLD, so every chart-deployed trust ran at 10."""
+    out = sync_k8s_kit.render_override({**_FL_KIT, "COHORT_QUERY_THRESHOLD": "15"}, "Trust_K8s", "eu-west-2")
+
+    assert "\ndataAccessApi:\n  cohortQueryThreshold: 15\n" in out
+
+
+def test_the_fl_client_checksum_tracks_its_section_only(tmp_path):
+    """An [access]-only edit must not roll the fl-client (it interrupts a running job); an edit
+    to its own section must."""
+    base = _checksum(_override(tmp_path))
+    access_edit = _checksum(_override(tmp_path, _DOCUMENT.replace("min_cohort_size = 25", "min_cohort_size = 40")))
+    fl_edit = _checksum(_override(tmp_path, _DOCUMENT + "percentile = 30\n"))
+
+    assert base == access_edit
+    assert base != fl_edit
+
+
+def test_a_flower_trust_gets_no_fl_client_checksum(tmp_path):
+    """Nothing on the Flower client reads the document, so nothing there should roll with it."""
+    out = _override(tmp_path, "[disclosure]\nmin_cohort_size = 25\n", FL_BACKEND="flower")
+
+    assert "flPrivacyChecksum" not in out
+    assert "\ngovernance:\n  document: |\n" in out
+
+
+def test_render_override_omits_governance_without_the_kit_variable():
+    """No ACCESS_POLICY_FILE in the kit ⇒ no governance block, leaving the chart's empty
+    default in place (an unconditional `document:` would deploy the empty string as a
+    document and mount a file the services then refuse to parse)."""
+    out = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
+
+    assert "governance" not in out
+    assert "document:" not in out
+
+
 # ── Helm Secret ownership ────────────────────────────────────────────────
 # The Helm Secret-ownership stamping in sync_k8s_kit.py
 # (FLIP#595) — so a Secret this script creates can be adopted by a subsequent
@@ -277,3 +420,38 @@ def test_stamp_helm_ownership_default_namespace(monkeypatch):
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+def test_a_kit_with_nothing_to_validate_never_loads_the_validators(monkeypatch):
+    """sync-kit runs on the deploy host's python3. The validators import tomllib (3.11+), so a
+    trust with no document and no FL_SITE_PRIVACY_* must not need them — on Ubuntu 22.04's 3.10
+    every sync-kit, deploy-trust-k8s and upgrade-trust-k8s would otherwise crash."""
+
+    def unavailable():
+        raise AssertionError("the validators were loaded for a kit with nothing to validate")
+
+    monkeypatch.setattr(sync_k8s_kit, "_site_policy", unavailable)
+
+    out = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
+
+    assert "governance" not in out
+
+
+def test_an_interpreter_without_tomllib_is_a_clear_refusal(tmp_path, monkeypatch):
+    """With something to validate on a 3.10 host, the sync stops with the reason, not a traceback."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_tomllib(name, *args, **kwargs):
+        if name == "tomllib":
+            raise ModuleNotFoundError("No module named 'tomllib'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_tomllib)
+    monkeypatch.delitem(sys.modules, "tomllib", raising=False)
+
+    with pytest.raises(sync_k8s_kit.GovernanceDocumentError, match="Python 3.11"):
+        sync_k8s_kit.render_override(
+            {**_FL_KIT, "FL_SITE_PRIVACY_POLICY": "percentile"}, "Trust_K8s", "eu-west-2", trust_dir=tmp_path
+        )

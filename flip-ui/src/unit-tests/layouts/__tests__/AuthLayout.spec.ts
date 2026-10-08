@@ -15,6 +15,7 @@ import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import { SignInStep } from "@/auth/provider";
 import AuthLayout from "@/layouts/AuthLayout.vue";
 import { useAuthStore } from "@/store/auth";
 
@@ -42,9 +43,15 @@ vi.mock("@/router", () => ({
     routeChange: { gotoLogin: vi.fn() }
 }));
 
-const mockAmplifySignOut = vi.fn();
+// The store's transitive `@/auth` import would otherwise load the real
+// Cognito provider (and aws-amplify with it); the layout never reaches the
+// provider directly — it goes through the store's `abandonSignIn` action.
+vi.mock("@/auth", async () => {
+    const { makeMockAuthProvider } = await import("@/auth/__tests__/mock-provider");
+    const authProvider = makeMockAuthProvider();
 
-vi.mock("aws-amplify/auth", () => ({ signOut: (...args: unknown[]) => mockAmplifySignOut(...args) }));
+    return { getAuthProvider: () => authProvider };
+});
 
 function mountLayout(route: { name: string; path: string }): VueWrapper {
     currentRoute.name = route.name;
@@ -68,8 +75,6 @@ describe("AuthLayout — Back to log in button", () => {
     beforeEach(() => {
         currentRoute.name = "";
         currentRoute.path = "";
-        mockAmplifySignOut.mockReset();
-        mockAmplifySignOut.mockResolvedValue(undefined);
         // jsdom ignores assignments to window.location.href, so spy on
         // .assign to verify the hard-navigation happens. Stash the real
         // location so we can restore it — otherwise the stub leaks into
@@ -119,22 +124,22 @@ describe("AuthLayout — Back to log in button", () => {
         expect(wrapper.find("[data-test='back-to-login']").exists()).toBe(true);
     });
 
-    test("clicking from mfa-verify resets the store, clears localStorage, and hard-navigates to /auth/login", async () => {
+    test("clicking from mfa-verify abandons the sign-in, resets the store, clears localStorage, and hard-navigates to /auth/login", async () => {
         // Regression: soft Vue Router navigations were getting swallowed
-        // after a failed MFA attempt (Amplify + router-guard could bounce
-        // the user straight back). The handler must do a hard navigation
-        // so nothing can short-circuit it.
+        // after a failed MFA attempt (provider SDK + router-guard could
+        // bounce the user straight back). The handler must do a hard
+        // navigation so nothing can short-circuit it.
         const wrapper = mountLayout({
             name: "auth-mfa-verify",
             path: "/auth/mfa-verify"
         });
         const authStore = useAuthStore();
-        authStore.signInStep = "CONFIRM_SIGN_IN_WITH_TOTP_CODE";
+        authStore.signInStep = SignInStep.TOTP_CODE;
         const localStorageClear = vi.spyOn(Storage.prototype, "clear");
 
         await wrapper.find("[data-test='back-to-login']").trigger("click");
 
-        expect(mockAmplifySignOut).toHaveBeenCalledTimes(1);
+        expect(authStore.abandonSignIn).toHaveBeenCalledTimes(1);
         expect(authStore.$reset).toHaveBeenCalledTimes(1);
         expect(localStorageClear).toHaveBeenCalled();
         expect(locationAssign).toHaveBeenCalledWith("/auth/login");
@@ -142,27 +147,21 @@ describe("AuthLayout — Back to log in button", () => {
         localStorageClear.mockRestore();
     });
 
-    test("does not await Amplify signOut (which can hang on challenge-only sessions)", async () => {
-        // If the previous implementation `await`-ed amplifySignOut and that
-        // call hung on a mid-challenge session, the store reset and
-        // navigation would never fire. The handler must navigate regardless.
-        let resolveSignOut!: () => void;
-        mockAmplifySignOut.mockImplementationOnce(
-            () => new Promise<void>(resolve => { resolveSignOut = resolve; })
-        );
-
+    test("does not wait on the provider sign-out (which can hang on challenge-only sessions)", async () => {
+        // `abandonSignIn` is fire-and-forget by contract (see the store): the
+        // handler is synchronous, so the store reset and navigation fire
+        // regardless of when — or whether — the provider answers.
         const wrapper = mountLayout({
             name: "auth-mfa-verify",
             path: "/auth/mfa-verify"
         });
         const authStore = useAuthStore();
+        (authStore.abandonSignIn as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(() => undefined);
 
         await wrapper.find("[data-test='back-to-login']").trigger("click");
 
         expect(authStore.$reset).toHaveBeenCalledTimes(1);
         expect(locationAssign).toHaveBeenCalledWith("/auth/login");
-
-        resolveSignOut();
         await flushPromises();
     });
 });

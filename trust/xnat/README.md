@@ -74,7 +74,9 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
 - **`up-xnat` is a fresh install; `upgrade-xnat` is the in-place upgrade (FLIP#1204).** `up-xnat`
   blocks on `down-xnat` and then runs `xnat-reset`, which `rm -rf`s `XNAT_DATA_DIR` and recreates
   it — in development *and* in staging/production (local Docker context or remote-over-ssh alike).
-  Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> PROD=<env>` (driven
+  In development the reset runs without `sudo` when the invoking user is the container uid (1001)
+  and already owns every directory in the tree; any other developer, or a root-created directory,
+  gets the `sudo` prompt. Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> PROD=<env>` (driven
   by `make -C trust upgrade-trust`) keeps the data dir: it takes a `pg_dumpall` of `xnat-db` into
   `$XNAT_DATA_DIR/backups/`, refuses to proceed unless the `xnat-data/` tree is owned by the
   container uid (1001 — an archive written by a pre-hardening root `xnat-web` needs one

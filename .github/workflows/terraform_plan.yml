@@ -27,7 +27,7 @@
 #   * Declaring an environment also changes the OIDC `sub` claim to
 #     `repo:ORG/REPO:environment:aws-stag`, which carries no ref. What keeps a PR
 #     from assuming the *apply* role is the `job_workflow_ref` condition in
-#     deploy/providers/AWS/ci/main.tf, not the ref in `sub`.
+#     deploy/providers/AWS/modules/terraform_ci_bootstrap, not the ref in `sub`.
 #
 # The image tags are resolved, not read from configuration. `vars.DOCKER_TAG` is
 # the mutable `:stag`, while an apply writes the immutable `sha-<short7>` pin
@@ -125,7 +125,6 @@ jobs:
           # rather than ref-derived: plans are staging-only by construction.
           EXPECTED_ENV_CLASS: stag
           AWS_REGION: ${{ vars.AWS_REGION }}
-          VPC_NAME: ${{ vars.VPC_NAME }}
           FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}
           AICENTRE_BUCKET_NAME: ${{ vars.AICENTRE_BUCKET_NAME }}
           FLIP_APP_BUNDLES_BUCKET_NAME: ${{ vars.FLIP_APP_BUNDLES_BUCKET_NAME }}
@@ -133,10 +132,6 @@ jobs:
           FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME: ${{ vars.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME }}
           FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
           FLIP_BUCKET_NAME: ${{ vars.FLIP_BUCKET_NAME }}
-          API_PORT: ${{ vars.API_PORT }}
-          DB_PORT: ${{ vars.DB_PORT }}
-          UI_PORT: ${{ vars.UI_PORT }}
-          FL_API_PORT: ${{ vars.FL_API_PORT }}
           FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
           ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
           DEMO_ASSETS_BUCKET_NAME: ${{ vars.DEMO_ASSETS_BUCKET_NAME }}

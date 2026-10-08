@@ -87,3 +87,66 @@ def test_omop_database_url_escapes_the_operator_password(password):
     url = Settings(DATA_ACCESS_POSTGRES_PASSWORD=password).OMOP_DATABASE_URL.get_secret_value()
 
     assert make_url(url).password == password
+
+
+# ── The governance policy is loaded at import (FLIP#1259) ────────────────────────────────
+# config.py loads the document once, when the module is imported, and deliberately lets an
+# invalid one raise: uvicorn then exits instead of serving under defaults nobody chose. These
+# re-import the module under a given environment and restore it afterwards.
+
+
+@pytest.fixture
+def reload_config(monkeypatch):
+    import importlib
+
+    from data_access_api import config
+
+    def _reload(**env: str):
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        return importlib.reload(config)
+
+    yield _reload
+    monkeypatch.undo()
+    importlib.reload(config)
+
+
+def test_an_invalid_document_stops_the_import(reload_config, tmp_path):
+    """Swallowing the error here would leave the service running on the platform defaults
+    while the operator believes their rules are in force."""
+    from data_access_api.policy import AccessPolicyError
+
+    document = tmp_path / "governance.toml"
+    document.write_text("[disclosure]\nmin_cohort_size = 5\n", encoding="utf-8")
+
+    with pytest.raises(AccessPolicyError, match="below the configured COHORT_QUERY_THRESHOLD of 10"):
+        reload_config(ACCESS_POLICY_FILE=str(document), COHORT_QUERY_THRESHOLD="10")
+
+
+def test_the_loaded_document_is_what_get_policy_returns(reload_config, tmp_path):
+    document = tmp_path / "governance.toml"
+    document.write_text("[disclosure]\nmin_cohort_size = 30\n", encoding="utf-8")
+
+    config = reload_config(ACCESS_POLICY_FILE=str(document), COHORT_QUERY_THRESHOLD="10")
+
+    policy = config.get_policy()
+    assert policy is not None
+    assert policy.min_cohort_size == 30
+
+
+def test_the_floor_the_document_is_held_to_is_the_kits_threshold(reload_config, tmp_path):
+    """A document is validated against the configured COHORT_QUERY_THRESHOLD, not a fixed 1 or
+    the default: 20 passes a floor of 10 and must fail a kit floor of 25."""
+    from data_access_api.policy import AccessPolicyError
+
+    document = tmp_path / "governance.toml"
+    document.write_text("[disclosure]\nmin_cohort_size = 20\n", encoding="utf-8")
+
+    with pytest.raises(AccessPolicyError, match="of 25"):
+        reload_config(ACCESS_POLICY_FILE=str(document), COHORT_QUERY_THRESHOLD="25")
+
+
+def test_no_document_means_no_policy(reload_config):
+    config = reload_config(ACCESS_POLICY_FILE="")
+
+    assert config.get_policy() is None

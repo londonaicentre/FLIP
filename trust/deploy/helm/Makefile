@@ -141,7 +141,7 @@ ifneq ($(strip $(TAG)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit patch-kit-secrets xnat-init stage-kit preflight template-egress-variants smoke-cstore
+.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init stage-kit preflight template-egress-variants smoke-cstore
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -219,8 +219,13 @@ up: deploy ## Deploy the trust K8s release (alias for deploy)
 down: undeploy ## Tear down the trust K8s release (alias for undeploy)
 	@true
 
-deploy-trust-k8s: ## Deploy trust services to K8s; KIT= selects the per-trust override file and re-patches secrets
+# With KIT=, the override is regenerated from the kit first (sync-kit-override): it is
+# generated, never edited, and redeploying the file an earlier sync-kit left behind would
+# ship a stale governance document (FLIP#1259) — and a document edit would never reach the
+# pods. upgrade-trust-k8s already regenerates it the same way.
+deploy-trust-k8s: ## Deploy trust services to K8s; KIT= regenerates the per-trust override from the kit and re-patches secrets
 ifdef KIT
+	$(MAKE) sync-kit-override KIT=$(KIT)
 	@rc=0; \
 	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml || rc=$$?; \
 	if [ $$rc -ne 0 ]; then \
@@ -349,6 +354,18 @@ xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is
 	(echo "❌  XNAT init failed — check logs:"; \
 	 $(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \
 	 exit 1)
+
+sync-kit-override: ## Regenerate the k8s-trust-<KIT>.yaml override from the kit (validates its governance document) without touching the cluster Secret
+	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit-override KIT=Trust_K8s PROD=stag"; exit 1)
+	@python3 $(CHART_DIR)/sync_k8s_kit.py \
+		--kit $(KIT) \
+		--env $(ENV) \
+		--namespace $(NAMESPACE) \
+		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
+		--release-name $(RELEASE_NAME) \
+		--output-dir $(CHART_DIR) \
+		$(KUBE_CONTEXT_ARG) \
+		--no-apply-secret
 
 patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Secret WITHOUT overwriting the override YAML (safe after helm upgrade)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make patch-kit-secrets KIT=Trust_K8s PROD=stag"; exit 1)

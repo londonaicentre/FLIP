@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
+from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.db.database import get_session
 from flip_api.domain.interfaces.trust import ITrust
 from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
@@ -30,7 +31,9 @@ from flip_api.utils.project_manager import get_project_by_id
 router = APIRouter(prefix="/step", tags=["step_functions_services"])
 
 
-async def process_trust(request: Request, project_id: UUID, trust: ITrust, db: Session) -> dict[str, Any]:
+async def process_trust(
+    request: Request, project_id: UUID, trust: ITrust, db: Session, idp: IdentityProvider
+) -> dict[str, Any]:
     """
     Process a single trust by starting the imaging project creation.
 
@@ -40,6 +43,8 @@ async def process_trust(request: Request, project_id: UUID, trust: ITrust, db: S
         trust (ITrust): The trust to process (one element of the list returned by
             ``approve_project_endpoint``).
         db (Session): The database session.
+        idp (IdentityProvider): The identity provider, resolved once by the endpoint and handed to
+            ``queue_imaging_creation``, a plain function with no ``Depends()`` of its own.
 
     Returns:
         dict[str, Any]: A dictionary containing the result of the imaging creation for the trust.
@@ -47,7 +52,7 @@ async def process_trust(request: Request, project_id: UUID, trust: ITrust, db: S
     try:
         # Start creating an imaging project for this trust. Not through the route's per-trust authority
         # check: the trusts include any approved by an earlier call, at which this caller may hold none.
-        await queue_imaging_creation(request=request, project_id=project_id, trust=trust, db=db)
+        await queue_imaging_creation(request=request, project_id=project_id, trust=trust, db=db, idp=idp)
 
         return {"trust": trust.name, "success": True, "message": "Imaging started successfully"}
 
@@ -63,6 +68,7 @@ async def approve_project_step_function_endpoint(
     request: Request,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
+    idp: IdentityProvider = Depends(get_identity_provider),
 ) -> dict[str, Any]:
     """
     Records trust decisions on a project and starts image creation on every trust they activate — on the call that
@@ -78,6 +84,7 @@ async def approve_project_step_function_endpoint(
         request (Request): The FastAPI request object.
         db (Session): The database session.
         user_id (UUID): The ID of the current user.
+        idp (IdentityProvider): The identity provider, handed to the per-trust imaging fan-out.
 
     Returns:
         dict[str, Any]: The project's status after the decisions and the result of the imaging creation process.
@@ -126,7 +133,7 @@ async def approve_project_step_function_endpoint(
         if has_imaging:
             logger.info(f"Processing {len(trusts)} trusts for project {project_id}")
             # Execute trust processing in parallel
-            trust_tasks = [process_trust(request, project_id, trust, db) for trust in trusts]
+            trust_tasks = [process_trust(request, project_id, trust, db, idp) for trust in trusts]
             start_image_results = await asyncio.gather(*trust_tasks)
             message = "Project approval workflow completed"
         else:

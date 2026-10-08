@@ -34,15 +34,25 @@ they are filed by two different rules:
 | Deploy a trust to **Kubernetes** (Helm) | [`trust/deploy/helm/`](../trust/deploy/helm/README.md) |
 
 Every compose file in **this** directory is Central-Hub-only — `flip-ui`, `flip-api`, `flip-db`, `pgadmin`,
-and the `fl-api-net-*` / `fl-server-net-*` FL server side. No trust service is defined here. The one place
+`keycloak` (development only: the local identity provider, ephemeral — no volume — importing
+[`keycloak/flip-realm.json`](keycloak/README.md) at every boot with `start-dev --import-realm`; a realm edit
+needs `make reset-keycloak`, since the import skips a realm that already exists), `object-store` (development
+only, FLIP#1291: an S3-compatible RustFS container standing in for the S3 buckets, its data the host-owned
+`./object-store/` where a top-level directory is a bucket — `make up` pre-creates one per bucket name, the
+`jobs/` idiom; every service reaches it through `AWS_ENDPOINT_URL_S3`, the fl-apis admit it as
+`BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000`, and `make clean-object-store` empties it), and the
+`fl-api-net-*` / `fl-server-net-*` FL server side. Nothing in the development stack mounts `~/.aws` or
+reaches an AWS service: sign-in, email and object storage are all local (FLIP#919, FLIP#1291). No trust service is defined here. The one place
 hub compose touches "trust" is **networking**: `compose.development.yml` joins
 `central-hub-trust-apis-network`, `trust-network-1/2` and `fl-net-1/2` as `external: true` — exactly as
 the trust composes do. Neither side *creates* them; `make create-networks` does. There are **six**
-hub-shared networks, split across two Makefiles: the root `create-networks-centralhub` creates
-`deploy_central-hub-network` (the hub-internal network), then forwards to `trust/Makefile`, which owns the
-other five — `deploy_central-hub-trust-apis-network`, `deploy_fl-net-1/2` (bridge) and
-`deploy_trust-network-1/2` (overlay, because XNAT attaches from a swarm stack). Teardown mirrors that
-split: root `remove-networks` removes the hub-internal one and delegates the rest.
+hub-shared networks, split across two Makefiles: the root `create-networks-centralhub` (also run by
+`make central-hub`) creates `deploy_central-hub-network` (the hub-internal network) and
+`deploy_central-hub-trust-apis-network` (flip-api joins both, FLIP#1344), then `create-networks` forwards to
+`trust/Makefile`, which ensures the trust-apis network too (idempotently, for a trust brought up on its own) and
+owns the other four — `deploy_fl-net-1/2` (bridge) and `deploy_trust-network-1/2` (overlay, because XNAT
+attaches from a swarm stack). Teardown: root `remove-networks` removes the hub-internal one and delegates the
+rest.
 
 `fl-net-<N>` is the FL data plane, and carries exactly two services: the hub's `fl-server-net-<N>` and each
 trust's `fl-client-net-<N>`. It is the FL twin of `central-hub-trust-apis-network` (flip-api ↔ trust-api) —
@@ -222,7 +232,11 @@ The MFA gate is controlled by `flip-api`'s `ENFORCE_MFA` setting. The Settings d
 
 The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator. **The flag is intentionally not exposed in `.env.development.example` or AWS Secrets Manager** — the Settings default (`true`) is the canonical secure anchor. `deploy/compose.production.yml` passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so operators can override it from `.env.stag`/`.env.production` for testing (e.g. `ENFORCE_MFA=false`), but it falls back to the secure `true` default when unset — do not commit an override into either env file for a real deployment.
 
+Only `false`, `0`, `no` or `off` (trimmed, any case) turn the gate off. `true`, `1`, `yes`, `on`, empty and unset keep it on, and so does any other value — a typo fails closed, with a warning naming the value in the flip-api log.
+
 The flag is mirrored to the UI via `/users/me/mfa/status` (`required: bool`) so the router guard knows when to skip the enrolment redirect.
+
+Development stacks (Keycloak, the only provider there) keep `ENFORCE_MFA=false`: the browser signs in with the OIDC password grant, which cannot enrol or answer TOTP, so `true` there only logs a warning at boot and locks browser users out. TOTP, forgot-password and admin password resets are done in the Keycloak console (`http://localhost:8180/admin`) instead.
 
 ##### Resetting MFA for another user
 
@@ -266,7 +280,7 @@ This runbook is for the case where **you** have lost access to your TOTP device 
 
 4. The administrator now signs in with their existing password. Because `SOFTWARE_TOKEN_MFA` is no longer in their `UserMFASettingList`, the `flip-api` MFA gate and the `flip-ui` router guard funnel them through the post-auth enrolment page where they register a new authenticator. Their password does not need to be reset.
 
-> **Note:** These two CLI commands have exactly the same server-side effect as clicking **Reset MFA** in the Admin UI — the UI endpoint (`reset_user_mfa` in `flip-api/src/flip_api/utils/cognito_helpers.py`) calls `admin_set_user_mfa_preference` followed by `admin_user_global_sign_out`. The CLI path exists only because it does not require a signed-in FLIP session.
+> **Note:** These two CLI commands have exactly the same server-side effect as clicking **Reset MFA** in the Admin UI — the UI endpoint calls the Cognito identity provider (`_reset_mfa` in `flip-api/src/flip_api/auth/identity/cognito.py`), which runs `admin_set_user_mfa_preference` followed by `admin_user_global_sign_out`. The CLI path exists only because it does not require a signed-in FLIP session.
 >
 > **Warning:** This path is an AWS-level escape hatch and is **not** audit-logged inside FLIP. Use it only for administrator self-recovery. For any user who is not currently locked out of FLIP itself, prefer the Admin UI flow so the reset is captured in the application logs.
 
@@ -330,7 +344,7 @@ Each Dockerfile explicitly drops root privileges by running the application as a
 | xnat-nginx | `nginx` | Pre-existing in the base image (`nginx`) |
 | xnat-db | `postgres` | Pre-existing in the base image (`postgres`) |
 | xnat-socket-proxy | `root` | Upstream `tecnativa/docker-socket-proxy` image — HAProxy connects to the root-owned Docker socket as its owner. Runs under `cap_drop: ALL` with no capabilities added back. |
-| xnat-dcm2niix | `root` | Deliberately keeps the base image's root default, matching the output-file ownership the previous `xnat/dcm2niix` image produced on the Container Service's build mount (XNAT reads the converted NIfTIs back off that mount). Not a compose service: a one-shot container the Container Service launches per scan and then reaps, so it sits outside the `cap_drop` regime below, which the compose files impose. |
+| xnat-dcm2niix | `1001:1001` (numeric; no named user in the image) | `USER 1001:1001` in the dcm2niix Dockerfile — xnat-web's uid, so the NIfTIs it writes onto the Container Service's build mount carry the one owner everything else under `xnat-data` has (XNAT reads them back off that mount), and a service the Container Service can hand arbitrary host mounts does not run as root. Not a compose service: a one-shot container the Container Service launches per scan and then reaps, so it sits outside the `cap_drop` regime below, which the compose files impose. |
 | flip-db / omop-db | `postgres` | Pre-existing in the base image (`postgres`) |
 
 **Bind-mount ownership.** Because XNAT (`xnat`, UID 1001) and Orthanc (`orthanc`, UID 999) no
@@ -357,9 +371,11 @@ storage directory to uid 999 before the first start (through a throwaway alpine 
 caller is not root), so a developer needs no `sudo` to seed it.
 
 XNAT's dev tree deliberately does **not** follow that convention. `xnat-reset` creates
-`trust/xnat/xnat-data-trust<N>/` under `sudo` and chowns it to UID 1001, so on a host whose developer
-is not themselves UID 1001 that tree is readable but not writable: deleting it, or running
-`git clean -fdx` over the checkout, needs `sudo`. Ownership is the whole of the fix here — it is
+`trust/xnat/xnat-data-trust<N>/` owned by UID 1001 — unprivileged when the invoking developer is
+themselves UID 1001 with its GID (the GitHub runner is too) and already owns every directory in the
+tree, under `sudo` otherwise — so on a host whose developer is not UID 1001 that tree is readable
+but not writable: deleting it, or running `git clean -fdx` over the checkout, needs `sudo`.
+Ownership is the whole of the fix here — it is
 what makes XNAT able to ingest at all — and the modes are left at their defaults rather than
 widened to buy back the convenience.
 

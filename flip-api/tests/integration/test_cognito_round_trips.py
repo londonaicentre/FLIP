@@ -10,11 +10,11 @@
 # limitations under the License.
 #
 
-"""Real-Cognito round-trips for ``flip_api.utils.cognito_helpers`` + user_services.
+"""Real-Cognito round-trips for the Cognito identity provider + user_services.
 
 Replaces the all-mocked unit tests for register/delete/update/list users.
 moto's ``cognito-idp`` provider intercepts the boto3 calls that
-``cognito_helpers`` makes, so the production code path runs end-to-end:
+``auth/identity/cognito.py`` makes, so the production code path runs end-to-end:
 ``register_user`` actually creates a user in the moto pool and an audit row
 in the Postgres test container; ``delete_user`` actually removes the Cognito
 user, drops role grants, and writes audit; ``update_user`` flips the

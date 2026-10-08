@@ -16,7 +16,6 @@ A Trust Admin is stored as a global Researcher row plus a Trust Admin row at one
 real tables: which rows exist after each save, and which audit rows the trust accumulates.
 """
 
-from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -51,10 +50,11 @@ def make_trust(session, trust_factory):
     return _make
 
 
-@pytest.fixture(autouse=True)
-def cognito_user_exists():
-    with patch("flip_api.user_services.set_user_roles.get_username", return_value="someone"):
-        yield
+@pytest.fixture
+def idp(fake_idp):
+    """The identity provider knows every user these tests assign roles to."""
+    fake_idp.get_username.return_value = "someone"
+    return fake_idp
 
 
 def _rows(session, user_id):
@@ -68,57 +68,57 @@ def _audit(session, trust_id):
     return [(r.action, r.subject_user_id) for r in rows]
 
 
-def _make_trust_admin(session, user, trust, admin_id):
-    set_user_roles(user, IRoles(roles=[RoleRef.TRUST_ADMIN.value], trust_id=trust.id), session, admin_id)
+def _make_trust_admin(session, user, trust, admin_id, idp):
+    set_user_roles(user, IRoles(roles=[RoleRef.TRUST_ADMIN.value], trust_id=trust.id), session, admin_id, idp=idp)
 
 
-def test_trust_admin_is_saved_as_researcher_plus_the_trust_grant(session, make_trust, admin_id):
+def test_trust_admin_is_saved_as_researcher_plus_the_trust_grant(session, make_trust, admin_id, idp):
     trust = make_trust()
     user = uuid4()
 
-    _make_trust_admin(session, user, trust, admin_id)
+    _make_trust_admin(session, user, trust, admin_id, idp)
 
     assert _rows(session, user) == {(RoleRef.RESEARCHER.value, None), (RoleRef.TRUST_ADMIN.value, trust.id)}
     assert _audit(session, trust.id) == [(TrustAuditAction.ADMIN_ADDED, user)]
 
 
-def test_moving_a_trust_admin_audits_both_trusts(session, make_trust, admin_id):
+def test_moving_a_trust_admin_audits_both_trusts(session, make_trust, admin_id, idp):
     old, new = make_trust(), make_trust()
     user = uuid4()
-    _make_trust_admin(session, user, old, admin_id)
+    _make_trust_admin(session, user, old, admin_id, idp)
 
-    _make_trust_admin(session, user, new, admin_id)
+    _make_trust_admin(session, user, new, admin_id, idp)
 
     assert _rows(session, user) == {(RoleRef.RESEARCHER.value, None), (RoleRef.TRUST_ADMIN.value, new.id)}
     assert (TrustAuditAction.ADMIN_REMOVED, user) in _audit(session, old.id)
     assert (TrustAuditAction.ADMIN_ADDED, user) in _audit(session, new.id)
 
 
-def test_changing_to_another_role_removes_the_trust_grant(session, make_trust, admin_id):
+def test_changing_to_another_role_removes_the_trust_grant(session, make_trust, admin_id, idp):
     trust = make_trust()
     user = uuid4()
-    _make_trust_admin(session, user, trust, admin_id)
+    _make_trust_admin(session, user, trust, admin_id, idp)
 
-    set_user_roles(user, IRoles(roles=[RoleRef.VIEWER.value]), session, admin_id)
+    set_user_roles(user, IRoles(roles=[RoleRef.VIEWER.value]), session, admin_id, idp=idp)
 
     assert _rows(session, user) == {(RoleRef.VIEWER.value, None)}
     assert _audit(session, trust.id)[-1] == (TrustAuditAction.ADMIN_REMOVED, user)
 
 
-def test_resaving_the_same_trust_admin_writes_no_second_audit(session, make_trust, admin_id):
+def test_resaving_the_same_trust_admin_writes_no_second_audit(session, make_trust, admin_id, idp):
     trust = make_trust()
     user = uuid4()
 
-    _make_trust_admin(session, user, trust, admin_id)
-    _make_trust_admin(session, user, trust, admin_id)
+    _make_trust_admin(session, user, trust, admin_id, idp)
+    _make_trust_admin(session, user, trust, admin_id, idp)
 
     assert _audit(session, trust.id) == [(TrustAuditAction.ADMIN_ADDED, user)]
 
 
-def test_permissions_name_the_trust_a_trust_admin_administers(session, make_trust, admin_id):
+def test_permissions_name_the_trust_a_trust_admin_administers(session, make_trust, admin_id, idp):
     trust = make_trust()
     user = uuid4()
-    _make_trust_admin(session, user, trust, admin_id)
+    _make_trust_admin(session, user, trust, admin_id, idp)
 
     response = retrieve_user_permissions(user, session, user)
 
@@ -132,13 +132,13 @@ def test_a_user_who_is_not_a_trust_admin_has_no_trust(session, admin_id):
     assert retrieve_user_permissions(admin_id, session, admin_id).trust_admin_of is None
 
 
-def test_delete_trust_keeps_trust_admins_researcher_role(session, make_trust, admin_id):
+def test_delete_trust_keeps_trust_admins_researcher_role(session, make_trust, admin_id, idp):
     """Deleting a trust removes its Trust Admin rows and nothing else: its admins stay Researchers."""
     from flip_api.scripts.delete_trust import delete_one_trust
 
     trust = make_trust()
     user = uuid4()
-    _make_trust_admin(session, user, trust, admin_id)
+    _make_trust_admin(session, user, trust, admin_id, idp)
 
     delete_one_trust(trust.name, session)
 

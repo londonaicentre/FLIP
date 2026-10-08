@@ -21,7 +21,7 @@ from flip_api.config import get_settings
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Model, Projects
 from flip_api.utils.logger import logger
-from flip_api.utils.s3_client import S3Client
+from flip_api.utils.s3_client import PresignAudience, S3Client
 
 router = APIRouter(prefix="/files", tags=["file_services"])
 
@@ -102,7 +102,8 @@ def retrieve_federated_results(
 
         # Get presigned URLs for each file
         try:
-            result = [s3.get_presigned_url(f) for f in list_objects]
+            # The browser (or a host-side script) downloads the results, so sign for the public endpoint.
+            result = [s3.get_presigned_url(f, audience=PresignAudience.BROWSER) for f in list_objects]
         except Exception as e:
             logger.error(f"Error generating pre-signed URLs for model {model_id} error_type={type(e).__name__}")
             raise HTTPException(

@@ -13,8 +13,6 @@
 from unittest.mock import MagicMock
 from uuid import uuid4
 
-import pytest
-
 from flip_api.db.models.main_models import Trust
 from flip_api.domain.interfaces.trust import ITrust
 from flip_api.trusts_services.services.trust import get_trusts
@@ -55,9 +53,9 @@ def test_get_trusts_without_ids():
     mock_session.exec.assert_called()
 
 
-def test_get_trusts_no_results():
+def test_get_trusts_no_results_is_an_empty_list():
+    """A hub with no trusts registered is a valid state, not an error: every caller loops over the result."""
     mock_session = MagicMock()
     mock_session.exec.return_value.all.return_value = []
 
-    with pytest.raises(ValueError, match="No database response returned"):
-        get_trusts(mock_session)
+    assert get_trusts(mock_session) == []

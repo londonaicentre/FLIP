@@ -160,7 +160,7 @@ def test_propagates_registration_error(monkeypatch, session):
 # CLI entry point — `main()` parses argv, calls `register_one_trust`, writes
 # the kit JSON to stdout, and exits 1 on TrustRegistrationError. The body
 # below is what `deploy/providers/AWS/scripts/register-trusts.sh` (and the
-# Makefile's `register-trust-<n>` targets) drive, so it is worth its own
+# root Makefile's `register-trust` target) drive, so it is worth its own
 # coverage.
 # ---------------------------------------------------------------------------
 

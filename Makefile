@@ -10,14 +10,14 @@
 # limitations under the License.
 #
 
-.PHONY: build build-fl clean up down up-no-trust up-trusts central-hub \
+.PHONY: build build-fl clean clean-object-store up down up-no-trust up-trusts central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
 		check-aws-access generate-internal-service-key generate-xnat-credentials \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
-		sync-trust-kit sync-trust-kits lock checkov-lint aws-diagram \
+		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
-		demo-video demo-users seed-demo-projects
+		demo-video demo-users seed-demo-projects reset-keycloak
 
 # What PROD means — ENV, __DCKR_SUFFIX and the env-file name — is derived once in
 # deploy/env_mode.mk, shared with every other Makefile that reads PROD. The kit-file
@@ -58,6 +58,26 @@ FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 override FL_PROVISIONED_DIR := $(call abs_or_relative_to,$(FL_PROVISIONED_DIR),$(MAKEFILE_DIR))
 override FL_JOBS_DIR := $(call abs_or_relative_to,$(FL_JOBS_DIR),$(MAKEFILE_DIR))
+# The dev object store's data directory (FLIP#1291), bind-mounted into the RustFS
+# container: one sub-directory per bucket — that is how RustFS defines a bucket — created
+# by _ensure-object-store-dir before the store starts, the jobs/ idiom. Per instance
+# (`<instance>-object-store`): two RustFS processes must never share a data directory.
+# Exported so the compose sees the absolute path.
+OBJECT_STORE_DIR ?= $(INSTANCE_PREFIX)object-store
+ifeq ($(strip $(OBJECT_STORE_DIR)),)
+$(error OBJECT_STORE_DIR is empty: set it to a directory (default object-store) or leave it unset)
+endif
+override OBJECT_STORE_DIR := $(call abs_or_relative_to,$(OBJECT_STORE_DIR),$(MAKEFILE_DIR))
+# `clean-object-store` removes this directory, so it must never resolve to the checkout or
+# to anything the checkout lives in (an empty or `.` value would otherwise resolve to the
+# repo root through abs_or_relative_to).
+ifneq ($(filter $(OBJECT_STORE_DIR) $(OBJECT_STORE_DIR)/%,$(MAKEFILE_DIR)),)
+$(error OBJECT_STORE_DIR=$(OBJECT_STORE_DIR) is the checkout or a directory containing it; it must be a directory of its own)
+endif
+ifeq ($(OBJECT_STORE_DIR),/)
+$(error OBJECT_STORE_DIR=/ is not a directory of its own)
+endif
+export OBJECT_STORE_DIR
 
 # Service configuration
 define SERVICE_CONFIG
@@ -133,7 +153,7 @@ build-fl:
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
 # when DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op otherwise.
-up: check-aws-access generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
+up: generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -178,7 +198,7 @@ _check-fl-provisioned:
 		scripts/check-fl-provisioned.sh
 
 # Minimal $(MAKE) up
-up-no-trust: generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
+up-no-trust: generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
@@ -197,7 +217,7 @@ up-trust-ec2: create-networks
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=$(KIT) PROD=${PROD}
 	@echo "✅ Trust services started successfully!"
 
-central-hub: create-networks-centralhub
+central-hub: create-networks-centralhub _ensure-object-store-dir
 	$(MAKE) -C flip-api up
 
 # On-prem operator flow — start a trust on the local host pointing at a
@@ -256,7 +276,7 @@ down-onprem-trust:
 # the operator's behalf because Hub-shared values + FL kit S3 slice both
 # need prod AWS creds the operator doesn't have.
 onboard-onprem-trust:
-	@uv run --no-config scripts/onboard_onprem_trust.py $(KIT) $(ONBOARD_ARGS)
+	@$(MAKE) -C trust onboard-onprem-trust KIT=$(or $(KIT),Trust_2) PROD=$(or $(PROD),true) ONBOARD_ARGS="$(ONBOARD_ARGS)"
 
 # Stop all containers
 down:
@@ -265,6 +285,33 @@ down:
 
 	${DOCKER_COMMAND} down --remove-orphans
 	@echo "🛌 All services stopped successfully!"
+
+# Pre-create the object store's bucket directories, host-owned, before RustFS starts
+# (FLIP#1291): a top-level directory under its data dir IS a bucket, the container runs as
+# the host uid (`user:` in the compose) so it can write what the host created, and docker
+# would otherwise create the mount source root-owned. Idempotent; the three names are the
+# *_BUCKET_NAME values the hub's s3:// settings are built from, each a single path segment.
+# A directory that already exists but is not writable by this uid (created root-owned by a
+# bare `docker compose up`, say) fails here with the remedy, not four layers later as a
+# store that answers healthy and refuses every upload. Development only: the deployed
+# environments run no store, so the target is a no-op there.
+_ensure-object-store-dir:
+	@if [ -n "$(IS_DEPLOYED)" ]; then exit 0; fi; \
+	for var in FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME FLIP_FL_RESULTS_BUCKET_NAME FLIP_APP_BUNDLES_BUCKET_NAME; do \
+		eval "bucket=\$$$$var"; \
+		[ -n "$$bucket" ] || { echo "❌ _ensure-object-store-dir: $$var is empty or unset in $(MAIN_ENV_FILE)" >&2; exit 1; }; \
+		case "$$bucket" in */*|.|..|*'<'*|*'>'*) echo "❌ _ensure-object-store-dir: $$var='$$bucket' is not a bucket name (one path segment, no placeholders)" >&2; exit 1;; esac; \
+		dir="$(OBJECT_STORE_DIR)/$$bucket"; \
+		mkdir -p "$$dir" 2>/dev/null || { echo "❌ _ensure-object-store-dir: cannot create $$dir — if $(OBJECT_STORE_DIR) exists root-owned, run: sudo chown -R $$(id -u):$$(id -g) '$(OBJECT_STORE_DIR)'" >&2; exit 1; }; \
+		[ -w "$$dir" ] || { echo "❌ _ensure-object-store-dir: $$dir is not writable by uid $$(id -u) — run: sudo chown -R $$(id -u):$$(id -g) '$(OBJECT_STORE_DIR)'" >&2; exit 1; }; \
+	done
+
+# Empty the dev object store (FLIP#1291): stop the RustFS service and remove its host
+# directory. `make down` keeps the directory, like the jobs/ dir; this is the purge knob.
+# The parse-time guard on OBJECT_STORE_DIR above is what keeps this `rm -rf` off the checkout.
+clean-object-store:
+	${DOCKER_COMMAND} rm -sf object-store
+	rm -rf "$(OBJECT_STORE_DIR)"
 
 # Clean Docker resources
 clean:
@@ -316,6 +363,13 @@ ci:
 # gitignored deploy env files, which contributors don't have.
 checkov-lint:
 	bash deploy/providers/AWS/scripts/checkov_lint.sh
+# Static tflint lint over deploy/providers/AWS: unused declarations, missing provider
+# version constraints, AWS argument values the API would reject. Credential-free;
+# needs tflint at the version pinned in the script, and downloads the pinned AWS
+# ruleset plugin on first run. Runs the script directly for the same reason as
+# checkov-lint.
+tflint-lint:
+	bash deploy/providers/AWS/scripts/tflint_lint.sh
 # Re-render the four committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ — the
 # self-contained pair (central-hub-aws-{network,data}.png) and the LZA pair (-lza-{network,data}) —
 # from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
@@ -367,8 +421,11 @@ debug-off-all:
 # Hub-shared network names all follow `$(INSTANCE_PREFIX)deploy_<name>`, where `deploy_` names
 # the hub compose project that owns them — the same string compose would generate itself if it
 # still created them, rather than looked them up `external:` (FLIP#957).
+# Every external network the hub-only services join, so `make central-hub` needs no trust
+# create-networks; the trust Makefile ensures trust-apis too, for a standalone trust (idempotent).
 create-networks-centralhub:
 	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_central-hub-network)
+	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_central-hub-trust-apis-network)
 
 create-networks: create-networks-centralhub
 	$(MAKE) -C trust create-networks
@@ -479,6 +536,17 @@ demo-video:
 # DEMO_RESEARCHER_PASSWORD / DEMO_ADMIN_PASSWORD env vars, never committed).
 demo-users:
 	$(MAKE) -C flip-api create_demo_users
+
+# Recreate the dev identity provider from deploy/keycloak/flip-realm.json. The
+# keycloak service keeps no volume and `--import-realm` skips a realm that
+# already exists, so an edit to the realm file only applies to a fresh
+# container: this removes it and the next `make up`/`make central-hub` (or the
+# `up -d keycloak` here) re-imports. Users registered from the Admin Area
+# since the last import are lost with it — they live only in that container.
+reset-keycloak:
+	@echo "🔁 Recreating the keycloak service from deploy/keycloak/flip-realm.json..."
+	$(DOCKER_COMMAND) rm -sf keycloak
+	$(DOCKER_COMMAND) up -d keycloak
 
 # Pre-populate the platform with a curated catalogue of radiology projects in
 # honest lifecycle states (no fabricated metrics/results). Cleanup:
@@ -616,6 +684,8 @@ check-aws-access:
 	fi
 	@if ! aws sts get-caller-identity >/dev/null 2>&1; then \
 		echo "❌ ERROR: AWS is not accessible. Check credentials, profile, and network access."; \
+		echo "   (The dev stack itself needs no AWS: 'make up' no longer runs this check. It guards the"; \
+		echo "    AWS-backed targets — deploy/providers/AWS, FL kit uploads, the trusts' artifact fetches.)"; \
 		exit 1; \
 	fi
 	@echo "✅ AWS access confirmed."

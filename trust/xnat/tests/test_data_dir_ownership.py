@@ -65,6 +65,7 @@ XNAT_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = XNAT_DIR.parents[1]
 MAKEFILE = XNAT_DIR / "Makefile"
 DOCKERFILE = XNAT_DIR / "xnat" / "Dockerfile"
+DCM2NIIX_DOCKERFILE = XNAT_DIR / "dcm2niix" / "Dockerfile"
 AWS_PLAYBOOK = REPO_ROOT / "deploy" / "providers" / "AWS" / "site.yml"
 LOCAL_PLAYBOOK = XNAT_DIR.parent / "deploy" / "ansible" / "onprem.yml"
 # Both plays compose this role; it is the one place the XNAT bind-mount dirs are provisioned.
@@ -111,6 +112,14 @@ class TestUidIsConsistent:
     def test_gid_matches_uid(self) -> None:
         # The Dockerfile creates the group and the user with the same id.
         assert _make_var("XNAT_CONTAINER_GID") == _make_var("XNAT_CONTAINER_UID")
+
+    def test_dcm2niix_image_runs_as_the_container_uid(self) -> None:
+        """The Container Service launches dcm2niix onto xnat-web's build mount; it must write as xnat-web."""
+        match = re.search(r"^USER\s+(\d+):(\d+)\s*$", DCM2NIIX_DOCKERFILE.read_text(), re.MULTILINE)
+        assert match, f"{DCM2NIIX_DOCKERFILE} sets no numeric USER, so dcm2niix runs as root (FLIP#1315)"
+        assert match.groups() == (_make_var("XNAT_CONTAINER_UID"), _make_var("XNAT_CONTAINER_GID")), (
+            "dcm2niix runs as a different id from xnat-web, so its output under xnat-data/build carries a second owner"
+        )
 
     @pytest.mark.parametrize("playbook", [AWS_PLAYBOOK, LOCAL_PLAYBOOK], ids=["aws", "on-prem"])
     def test_playbooks_compose_the_shared_dirs_role(self, playbook: Path) -> None:
@@ -244,13 +253,22 @@ class TestDevBranchProvisionsTheContainerUid:
 
     @staticmethod
     def _sudo_shim(root: Path) -> Path:
-        """A PATH entry whose `sudo` runs the command unprivileged, modelling a non-root developer."""
+        """A PATH entry whose `sudo` runs the command unprivileged, modelling a non-root developer.
+
+        Every invocation is also recorded in ``<root>/sudo-calls`` so a test can assert whether the
+        recipe reached for sudo at all.
+        """
         bin_dir = root / "shim"
         bin_dir.mkdir()
         shim = bin_dir / "sudo"
-        shim.write_text('#!/bin/sh\nexec "$@"\n')
+        shim.write_text(f'#!/bin/sh\necho "$*" >> "{root / "sudo-calls"}"\nexec "$@"\n')
         shim.chmod(0o755)
         return bin_dir
+
+    @staticmethod
+    def _sudo_calls(root: Path) -> list[str]:
+        log = root / "sudo-calls"
+        return log.read_text().splitlines() if log.exists() else []
 
     @staticmethod
     def _dev_recipe(data_dir: Path, expected_uid: int, expected_gid: int) -> str:
@@ -292,6 +310,28 @@ class TestDevBranchProvisionsTheContainerUid:
             created = tmp_path / "data" / "xnat-data" / name
             assert created.is_dir(), f"{name} was not provisioned"
             assert created.stat().st_uid == os.getuid()
+
+    def test_the_owning_operator_needs_no_sudo(self, tmp_path: Path) -> None:
+        """An operator who is the container uid provisions the tree without touching sudo (FLIP#1315).
+
+        This host and the GitHub runner are that operator, so the achievable case above already
+        runs this path; what it does not say is that no password prompt stood in the way.
+        """
+        result = self._run(tmp_path, os.getuid(), os.getgid())
+        assert result.returncode == 0, f"unprivileged provisioning failed:\n{result.stdout}{result.stderr}"
+        assert self._sudo_calls(tmp_path) == [], (
+            "the development branch invoked sudo although the invoking user is the container uid "
+            "and owns the tree — every `make up` prompts for a password it does not need"
+        )
+        assert "no sudo needed" in result.stdout
+
+    def test_a_foreign_owner_goes_through_sudo(self, tmp_path: Path) -> None:
+        """When the operator is not the container uid the wipe, mkdir and chown all run under sudo."""
+        self._run(tmp_path, os.getuid() + 1, os.getgid() + 1)
+        calls = self._sudo_calls(tmp_path)
+        assert [c.split()[0] for c in calls] == ["rm", "mkdir", "chown"], (
+            f"expected the three provisioning steps under sudo, got {calls}"
+        )
 
     def test_an_unreachable_owner_stops_at_the_chown_not_the_guard(self, tmp_path: Path) -> None:
         """A chown the caller cannot perform must fail *as itself*, not as wrong ownership.

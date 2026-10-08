@@ -38,7 +38,11 @@ def one_subject_per_accession():
 
     def resolve(query=None, params=None, **kwargs):
         accession_ids = (params or {}).get("accession_ids", [])
-        return pd.DataFrame({"subject_count": [len(set(accession_ids))]})
+        if "COUNT(DISTINCT" in str(query):
+            return pd.DataFrame({"subject_count": [len(set(accession_ids))]})
+        # The imaging lookup /cohort/accession-ids filters its answer through: every value is a
+        # real accession here, unless a test says otherwise.
+        return pd.DataFrame({"accession_id": list(dict.fromkeys(accession_ids))})
 
     with patch("data_access_api.services.cohort.get_records", side_effect=resolve) as stub:
         yield stub
@@ -949,6 +953,66 @@ def test_get_accession_ids_never_counts_more_subjects_than_rows(
     mock_get_records.return_value = pd.DataFrame({"accession_id": ["ACC1", "ACC2", "ACC3"]})
     one_subject_per_accession.side_effect = None
     one_subject_per_accession.return_value = pd.DataFrame({"subject_count": [12]})
+
+    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 403
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_records")
+def test_get_accession_ids_returns_only_values_that_are_imaging_accessions(
+    mock_get_records, mock_decrypt, mock_get_settings, one_subject_per_accession
+):
+    """Values the floor never counted are never released (review item 7).
+
+    Training code holds the trust-internal key and its own project envelope, so it can POST
+    ``SELECT accession_id FROM omop.image_occurrence UNION ALL SELECT concat(p.person_id, '|',
+    p.year_of_birth) AS accession_id FROM omop.person p``. The real accessions clear the floor
+    on their own; returning every value alongside them handed out row-level person data
+    through a route a ``cohort.dataframe`` deny does not cover.
+    """
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 2
+    mock_decrypt.return_value = "decrypted-id"
+    real = ["ACC1", "ACC2", "ACC3"]
+    smuggled = ["1|1950|8507", "2|1962|8532"]
+    mock_get_records.return_value = pd.DataFrame({"accession_id": real[:2] + smuggled + real[2:]})
+
+    def lookup(query=None, params=None, **kwargs):
+        ids = [i for i in (params or {}).get("accession_ids", []) if i.startswith("ACC")]
+        if "COUNT(DISTINCT" in str(query):
+            return pd.DataFrame({"subject_count": [len(set(ids))]})
+        return pd.DataFrame({"accession_id": ids})
+
+    one_subject_per_accession.side_effect = lookup
+
+    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    assert response.json() == {"accession_ids": real}
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_records")
+def test_get_accession_ids_counts_only_the_values_it_would_release(
+    mock_get_records, mock_decrypt, mock_get_settings, one_subject_per_accession
+):
+    """The row bound on the subject count is taken over the resolved values, not every row:
+    padding a cohort with unresolvable values must not help it clear the floor."""
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 3
+    mock_decrypt.return_value = "decrypted-id"
+    mock_get_records.return_value = pd.DataFrame({"accession_id": ["ACC1", "ACC2", "pad-1", "pad-2"]})
+
+    def lookup(query=None, params=None, **kwargs):
+        ids = [i for i in (params or {}).get("accession_ids", []) if i.startswith("ACC")]
+        if "COUNT(DISTINCT" in str(query):
+            # A lookup that over-reports cannot lift two released values past a floor of three.
+            return pd.DataFrame({"subject_count": [12]})
+        return pd.DataFrame({"accession_id": ids})
+
+    one_subject_per_accession.side_effect = lookup
 
     response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
 

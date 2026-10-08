@@ -26,28 +26,19 @@
  */
 
 import { flushPromises, mount } from "@vue/test-utils";
-import { signOut as amplifySignOut } from "aws-amplify/auth";
 import { createPinia, setActivePinia } from "pinia";
 import useSWRV from "swrv";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h } from "vue";
 
+import { makeMockAuthProvider } from "@/auth/__tests__/mock-provider";
 import { useAuthStore } from "@/store/auth";
 import { leaveToLogin, stashPostSignOutNotice } from "@/utils/session-teardown";
 
-vi.mock("aws-amplify/auth", () => ({
-    confirmResetPassword: vi.fn(),
-    confirmSignIn: vi.fn(),
-    fetchAuthSession: vi.fn(),
-    fetchUserAttributes: vi.fn(),
-    getCurrentUser: vi.fn(),
-    resetPassword: vi.fn(),
-    setUpTOTP: vi.fn(),
-    signIn: vi.fn(),
-    signOut: vi.fn(),
-    updateMFAPreference: vi.fn(),
-    verifyTOTPSetup: vi.fn()
-}));
+// The identity provider behind the store is a bag of spies; its sign-out
+// resolves so the test exercises the store's own teardown path.
+const authProvider = vi.hoisted(() => ({ current: null as unknown }));
+vi.mock("@/auth", () => ({ getAuthProvider: () => authProvider.current }));
 vi.mock("@/services/user-service", () => ({
     getMfaStatus: vi.fn(),
     getUserPermissions: vi.fn()
@@ -86,6 +77,7 @@ const projectList = (fetcher: () => Promise<string[]>) => defineComponent({
 describe("FLIP#995 — sign-out must discard the page", () => {
     beforeEach(() => {
         setActivePinia(createPinia());
+        authProvider.current = makeMockAuthProvider();
         vi.mocked(leaveToLogin).mockReset();
         vi.mocked(stashPostSignOutNotice).mockReset();
     });
@@ -139,7 +131,6 @@ describe("FLIP#995 — sign-out must discard the page", () => {
     });
 
     it("the fix: the real signOut ends in a hard navigation, never a route push", async () => {
-        vi.mocked(amplifySignOut).mockResolvedValue(undefined as never);
         const auth = useAuthStore();
         auth.user = {
             username: "a",

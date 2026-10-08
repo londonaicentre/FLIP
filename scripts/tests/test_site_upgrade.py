@@ -31,6 +31,7 @@ import sys
 import tempfile
 import unittest
 import urllib.error
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -157,6 +158,85 @@ class FetchHubVersion(unittest.TestCase):
         with mock.patch.object(su.urllib.request, "urlopen") as urlopen:
             urlopen.return_value.__enter__.return_value = body
             assert su.fetch_hub_version("https://hub.example/api") is None
+
+
+def _release(tag: str, published: str) -> su.Release:
+    return su.Release(tag, datetime.fromisoformat(published).replace(tzinfo=timezone.utc))
+
+
+V0_9_0 = _release("v0.9.0", "2026-09-24T11:59:01")
+V0_10_0 = _release("v0.10.0", "2026-09-28T20:56:00")
+V0_10_0_COMMIT = "956532ca6e7aa16c45fe08dd6ac2e8d6cf300ea0"  # pragma: allowlist secret
+
+
+def _github_release(tag: str, published: str, draft: bool = False, prerelease: bool = False) -> dict:
+    return {"tag_name": tag, "published_at": published, "draft": draft, "prerelease": prerelease}
+
+
+class FetchReleases(unittest.TestCase):
+    def _fetch(self, payload) -> list:
+        body = io.BytesIO(json.dumps(payload).encode())
+        with mock.patch.object(su.urllib.request, "urlopen") as urlopen:
+            urlopen.return_value.__enter__.return_value = body
+            releases = su.fetch_releases()
+        self.request = urlopen.call_args[0][0]
+        return releases
+
+    def test_keeps_only_published_stable_platform_releases(self):
+        """GitHub marks flip-utils releases "Latest" too; drafts and pre-releases are not releases yet."""
+        releases = self._fetch(
+            [
+                _github_release("flip-utils-v0.10.0", "2026-09-28T20:56:15Z"),
+                _github_release("v0.10.0", "2026-09-28T20:56:00Z"),
+                _github_release("v0.11.0-rc.1", "2026-09-30T09:00:00Z", prerelease=True),
+                _github_release("v0.12.0", "2026-10-01T09:00:00Z", draft=True),
+                _github_release("v0.9.0", "2026-09-24T11:59:01Z"),
+            ]
+        )
+        assert releases == [V0_10_0, V0_9_0]
+        assert self.request.full_url == "https://api.github.com/repos/londonaicentre/FLIP/releases?per_page=100"
+
+    def test_an_unreachable_or_garbled_github_is_releases_unavailable(self):
+        for exc in (urllib.error.URLError("refused"), TimeoutError("timed out"), OSError("no route")):
+            with self.subTest(exc=type(exc).__name__), mock.patch.object(su.urllib.request, "urlopen", side_effect=exc):
+                _raised(su.ReleasesUnavailable, su.fetch_releases)
+        for body in (b"<html>", b'{"message": "API rate limit exceeded"}'):
+            with self.subTest(body=body), mock.patch.object(su.urllib.request, "urlopen") as urlopen:
+                urlopen.return_value.__enter__.return_value = io.BytesIO(body)
+                _raised(su.ReleasesUnavailable, su.fetch_releases)
+
+
+class ReleaseCommit(unittest.TestCase):
+    def test_reads_the_commit_a_release_tag_points_at(self):
+        body = io.BytesIO(V0_10_0_COMMIT.encode())
+        with mock.patch.object(su.urllib.request, "urlopen") as urlopen:
+            urlopen.return_value.__enter__.return_value = body
+            assert su.release_commit("v0.10.0") == V0_10_0_COMMIT
+        request = urlopen.call_args[0][0]
+        assert request.full_url == "https://api.github.com/repos/londonaicentre/FLIP/commits/v0.10.0"
+        assert request.get_header("Accept") == "application/vnd.github.sha"
+
+    def test_none_when_github_cannot_say(self):
+        with mock.patch.object(su.urllib.request, "urlopen", side_effect=urllib.error.URLError("refused")):
+            assert su.release_commit("v0.10.0") is None
+
+
+class NewerRelease(unittest.TestCase):
+    def test_the_newest_release_when_the_target_is_older(self):
+        assert su.newer_release("v0.9.0", [V0_10_0, V0_9_0]) == V0_10_0
+
+    def test_the_newest_is_the_latest_published_whatever_the_order(self):
+        assert su.newer_release("v0.8.0", [V0_9_0, V0_10_0]) == V0_10_0
+
+    def test_none_when_the_target_is_the_newest_or_ahead_of_it(self):
+        """A pre-release of the NEXT release is ahead of the newest; one of the newest is behind it."""
+        assert su.newer_release("v0.10.0", [V0_10_0, V0_9_0]) is None
+        assert su.newer_release("v0.11.0-rc.1", [V0_10_0, V0_9_0]) is None
+        assert su.newer_release("v0.10.0-rc.1", [V0_10_0, V0_9_0]) == V0_10_0
+
+    def test_none_for_a_sha_target_or_no_releases(self):
+        assert su.newer_release("sha-956532c", [V0_10_0]) is None
+        assert su.newer_release("v0.9.0", []) is None
 
 
 class WriteTags(unittest.TestCase):
@@ -316,8 +396,8 @@ class CheckoutTags(unittest.TestCase):
             assert su.describe_checkout(Path("/repo")) == "<unknown>"
 
 
-class Plan(unittest.TestCase):
-    """End-to-end through main(): exit codes are the Makefile's contract."""
+class _PlanHarness(unittest.TestCase):
+    """Runs main() with the registry, the checkout and GitHub stubbed; holds no tests of its own."""
 
     def setUp(self):
         # Every image is published unless a test says otherwise — never probe a registry from a unit test.
@@ -329,11 +409,20 @@ class Plan(unittest.TestCase):
         checkout = mock.patch.object(su, "checkout_tags", return_value=None)
         self.checkout_tags = checkout.start()
         self.addCleanup(checkout.stop)
+        # And GitHub lists no releases unless a test says otherwise — never call it from a unit test.
+        releases = mock.patch.object(su, "fetch_releases", return_value=[])
+        self.fetch_releases = releases.start()
+        self.addCleanup(releases.stop)
+        commit = mock.patch.object(su, "release_commit", return_value=None)
+        self.release_commit = commit.start()
+        self.addCleanup(commit.stop)
 
-    def _run(self, kit: Path, *argv: str, stdin: str = "") -> tuple[int, str]:
+    def _run(self, kit: Path, *argv: str, stdin: str = "", tty: bool = False) -> tuple[int, str]:
         out = io.StringIO()
+        stdin_io = io.StringIO(stdin)
+        stdin_io.isatty = lambda: tty  # type: ignore[method-assign]
         with (
-            mock.patch.object(sys, "stdin", io.StringIO(stdin)),
+            mock.patch.object(sys, "stdin", stdin_io),
             mock.patch.object(sys, "stdout", out),
             mock.patch.object(sys, "argv", ["site_upgrade.py", "plan", "--kit-file", str(kit), *argv]),
         ):
@@ -343,6 +432,10 @@ class Plan(unittest.TestCase):
                 return int(e.code or 0), out.getvalue()
         return 0, out.getvalue()
 
+
+class Plan(_PlanHarness):
+    """End-to-end through main(): exit codes are the Makefile's contract."""
+
     def test_plan_with_yes_writes_and_reports_the_move(self):
         with tempfile.TemporaryDirectory() as tmp:
             kit = _write_kit(Path(tmp), tag="v0.5.0", fl_tag="v0.5.0")
@@ -350,6 +443,7 @@ class Plan(unittest.TestCase):
                 code, out = self._run(kit, "--yes")
             assert code == 0, out
             assert "site v0.5.0 → target v0.6.0 (from the hub)" in out
+            assert "DOCKER_TAG=v0.6.0, DOCKER_FL_TAG=v0.6.0" in out
             assert "DOCKER_TAG=v0.6.0" in kit.read_text()
 
     def test_plan_refuses_a_downgrade_without_force(self):
@@ -546,6 +640,146 @@ class Plan(unittest.TestCase):
             assert "skipping the registry check" in out
             assert "DOCKER_TAG=v0.6.0" in kit.read_text()
         self.missing_images.assert_not_called()
+
+
+class PlanNewerRelease(_PlanHarness):
+    """A newer release than the target: offered when the hub runs it, a warning when it does not.
+
+    Never a new failure: the exit code only changes when the operator chooses to stop.
+    """
+
+    NOTICE = "A more recent release exists: v0.10.0, released 28 Sep 2026 (v0.9.0 was released 24 Sep 2026)"
+    CHOICE = "[C/l]"
+
+    def setUp(self):
+        super().setUp()
+        self.fetch_releases.return_value = [V0_10_0, V0_9_0]
+
+    def test_the_hub_behind_the_newer_release_is_a_warning_not_a_choice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.8.0", fl_tag="v0.8.0")
+            with mock.patch.object(su, "fetch_hub_version", return_value="v0.9.0"):
+                code, out = self._run(kit, stdin="y\n", tty=True)
+            assert code == 0, out
+            assert self.NOTICE in out
+            assert "The Central Hub runs v0.9.0, and a site cannot run ahead of the Central Hub" in out
+            assert "move to v0.10.0 once it has." in out
+            assert self.CHOICE not in out
+            assert "DOCKER_TAG=v0.9.0" in kit.read_text()
+
+    def test_an_explicit_tag_behind_a_hub_on_the_newer_release_offers_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.8.0", fl_tag="v0.8.0")
+            with mock.patch.object(su, "fetch_hub_version", return_value="v0.10.0"):
+                code, out = self._run(kit, "--tag", "v0.9.0", stdin="l\n", tty=True)
+            assert code == su.EXIT_NOT_CONFIRMED, out
+            assert self.NOTICE in out
+            assert "The Central Hub already runs it." in out
+            assert self.CHOICE in out
+            assert "Nothing changed" in out
+            assert "fetch --tags origin" in out
+            assert "checkout v0.10.0" in out
+            assert "TAG=v0.10.0" in out
+            assert "DOCKER_TAG=v0.8.0" in kit.read_text()
+        # Stopped before the checkout and registry guards — they would check the wrong target.
+        self.missing_images.assert_not_called()
+        self.checkout_tags.assert_not_called()
+
+    def test_continue_keeps_the_specified_release(self):
+        for answer in ("c\n", "\n"):
+            with self.subTest(answer=answer), tempfile.TemporaryDirectory() as tmp:
+                kit = _write_kit(Path(tmp), tag="v0.8.0", fl_tag="v0.8.0")
+                with mock.patch.object(su, "fetch_hub_version", return_value="v0.10.0"):
+                    code, out = self._run(kit, "--tag", "v0.9.0", stdin=answer + "y\n", tty=True)
+                assert code == 0, out
+                assert self.CHOICE in out
+                assert "Proceed?" in out  # the final confirmation still stands
+                assert "DOCKER_TAG=v0.9.0" in kit.read_text()
+
+    def test_a_hub_running_the_sha_build_of_the_newer_release_runs_it(self):
+        """A CI-applied hub reports sha-<short7> of the release commit, not the tag."""
+        self.release_commit.return_value = V0_10_0_COMMIT
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.8.0", fl_tag="v0.8.0")
+            with mock.patch.object(su, "fetch_hub_version", return_value="sha-956532c"):
+                code, out = self._run(kit, "--tag", "v0.9.0", stdin="l\n", tty=True)
+            assert code == su.EXIT_NOT_CONFIRMED, out
+            assert "The Central Hub already runs it." in out
+        self.release_commit.assert_called_once_with("v0.10.0")
+
+    def test_a_hub_on_another_sha_build_does_not_run_it(self):
+        self.release_commit.return_value = V0_10_0_COMMIT
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.8.0", fl_tag="v0.8.0")
+            with mock.patch.object(su, "fetch_hub_version", return_value="sha-e7f4925"):
+                code, out = self._run(kit, "--tag", "v0.9.0", stdin="y\n", tty=True)
+            assert code == 0, out
+            assert "The Central Hub runs sha-e7f4925, and a site cannot run ahead of the Central Hub" in out
+            assert self.CHOICE not in out
+
+    def test_a_scripted_run_keeps_the_specified_release_and_says_how_to_move(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.8.0", fl_tag="v0.8.0")
+            with mock.patch.object(su, "fetch_hub_version", return_value="v0.10.0"):
+                code, out = self._run(kit, "--tag", "v0.9.0", "--yes", tty=True)
+            assert code == 0, out
+            assert self.NOTICE in out
+            assert self.CHOICE not in out
+            assert "Continuing to v0.9.0" in out
+            assert "checkout v0.10.0" in out
+            assert "DOCKER_TAG=v0.9.0" in kit.read_text()
+
+    def test_a_dry_run_warns_without_asking(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.8.0", fl_tag="v0.8.0")
+            with mock.patch.object(su, "fetch_hub_version", return_value="v0.10.0"):
+                code, out = self._run(kit, "--tag", "v0.9.0", "--dry-run", tty=True)
+            assert code == 0, out
+            assert self.NOTICE in out
+            assert self.CHOICE not in out
+
+    def test_an_unreadable_hub_is_a_warning_not_a_choice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.8.0", fl_tag="v0.8.0")
+            with mock.patch.object(su, "fetch_hub_version", side_effect=urllib.error.URLError("refused")):
+                code, out = self._run(kit, "--tag", "v0.9.0", stdin="y\n", tty=True)
+            assert code == 0, out
+            assert self.NOTICE in out
+            assert "only once the Central Hub runs it" in out
+            assert self.CHOICE not in out
+            assert "DOCKER_TAG=v0.9.0" in kit.read_text()
+
+    def test_an_unreachable_github_is_one_line_and_changes_nothing(self):
+        self.fetch_releases.side_effect = su.ReleasesUnavailable("URLError: refused")
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.8.0", fl_tag="v0.8.0")
+            code, out = self._run(kit, "--tag", "v0.9.0", "--yes")
+            assert code == 0, out
+            assert "could not check GitHub for a newer release (URLError: refused)" in out
+            assert "DOCKER_TAG=v0.9.0" in kit.read_text()
+
+    def test_no_notice_when_the_target_is_the_newest_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.9.0", fl_tag="v0.9.0")
+            with mock.patch.object(su, "fetch_hub_version", side_effect=AssertionError("no hub call needed")):
+                code, out = self._run(kit, "--tag", "v0.10.0", "--yes")
+            assert code == 0, out
+            assert "more recent release" not in out
+
+    def test_a_sha_target_never_asks_github(self):
+        self.fetch_releases.side_effect = AssertionError("a sha target has no release date")
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp))
+            code, out = self._run(kit, "--tag", "sha-1234567", "--yes")
+            assert code == 0, out
+            assert "more recent release" not in out
+
+    def test_a_refused_downgrade_is_refused_before_github_is_asked(self):
+        self.fetch_releases.side_effect = AssertionError("the downgrade refusal comes first")
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.10.0", fl_tag="v0.10.0")
+            code, out = self._run(kit, "--tag", "v0.9.0", "--yes")
+            assert code == su.EXIT_DOWNGRADE, out
 
 
 if __name__ == "__main__":

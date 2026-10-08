@@ -15,16 +15,12 @@
 
 ## :sparkles: Highlights
 
-- **The web cutover to the LZA estate becomes a switch you choose, not a DNS change** (#749, via #1296) — `RELEASE_WEB_ALIAS` drops the public web name from an account's CloudFront distribution so another estate's edge can serve it. CloudFront picks a distribution by `Host` header and prefers an exact alias over a wildcard, so pointing DNS at the new edge moves nothing for the web on its own; this flag is the moment it moves. **Off everywhere by default** — nothing changes until it is set on a GitHub environment.
-- **Terraform CI can drive the LZA workload accounts** (#1199, via #1273) — `aws-stag` / `aws-prod` select the estate they apply with a `TF_PROD` variable (`stag`, `true`, `lza-stag` or `lza`) and fall back to the self-contained pair when it is unset, which is where they stay for now.
-- **The CI keypair parameter is declared, and `ci/` explains a missing OIDC provider** (#1199, via #1299) — `/flip/ci/host_aws_public_key` becomes a Terraform resource instead of a make target, and `make -C ci plan` stops with who should declare the account's GitHub OIDC provider rather than Terraform's bare "no matching OpenID Connect Provider found".
-- **XNAT on Kubernetes trusts accepts DICOM again** (#1228, via #1231) — `xnat-web` could not roll onto its single-attach volume, so an upgraded pod never went Ready and the old one kept serving plugin jars built for a different XNAT core, aborting every C-STORE while C-ECHO still passed.
-- **Cohort query plots use the width they are given** (#1293, via #1294).
+- **A trust can write its own access rules** (#1297) — an optional governance document, one TOML file per trust (`trust/governance.<CODE>.toml`, worked example `trust/governance.example.toml`), named by `ACCESS_POLICY_FILE` in the kit. `[disclosure]` can raise the trust's cohort floor above `COHORT_QUERY_THRESHOLD` (never lower it); `[access]` permits or denies an operation per project; `[fl_privacy.nvflare]` sets the NVFLARE client's site privacy filter. The document is operator-owned and mounted read-only: the Central Hub cannot set, read or override it. With no document, nothing changes.
+- **Site upgrades say when a newer release exists** (#1332) — the upgrade verbs name a more recent platform release and its date. If the Central Hub already runs it, the operator can stop and move to it; if not, the verb only warns, because a site must not run ahead of the Central Hub.
 
 ## :warning: Breaking Changes
 
-- **`make seed-ci-keypair-param` is gone** (#1299). The parameter it published is now `aws_ssm_parameter.ci_host_aws_public_key` in the main root: in a new account the first laptop apply creates it; in an account that already has it, the first apply adopts it (`overwrite = true`, rewriting the bytes CI has just read — a no-op).
-- **On Kubernetes trusts, upgrading restarts XNAT rather than rolling it** (#1231). `xnat-web` now uses the `Recreate` strategy — a singleton on a `ReadWriteOnce` volume cannot roll — so XNAT is unavailable while the new pod starts. Upgrade outside an image pull.
+None. A trust without a governance document behaves as on v0.10.0, and nothing in this release changes the hub↔site contract.
 
 ## :arrows_counterclockwise: Site upgrade
 
@@ -35,9 +31,10 @@
      flag-day is announced: a payload-cipher change or an FL-framework bump means hub AND sites in one
      Deployment-Mode window, and a site left behind fails every task until it moves. -->
 
-- **Required:** no, if you are on v0.7.0 or later — nothing in this release changes the hub↔site payload contract. **Recommended for Kubernetes trusts** whose XNAT refuses C-STORE while C-ECHO passes (#1231). **Yes, and as a flag day, if you are on v0.6.x or earlier**: you cross v0.7.0's AES-256-GCM change on the way here, and that has no CBC fallback.
-- **Ordering:** hub first, sites at their own pace — *unless* you are coming from v0.6.x, in which case hub and sites move together in one Deployment-Mode window and a site left behind answers every task `Invalid payload: failed authentication`.
-- **Refreshed kit needed:** no — the Hub-shared block is unchanged. (If the hub's AES key or FL kit date changed with your hub deploy, re-sync: `make sync-trust-kit KIT=<CODE> PROD=<env>` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>`.)
+- **Required:** no, if you are on v0.7.0 or later. Upgrade to adopt a governance document (#1297). **Yes, and as a flag day, if you are on v0.6.x or earlier**: you cross v0.7.0's AES-256-GCM change on the way here, and that has no CBC fallback.
+- **Ordering:** sites at their own pace, before or after the hub — the Central Hub is unchanged in this release. From v0.6.x, hub and sites move together in one Deployment-Mode window.
+- **Refreshed kit needed:** no — the Hub-shared block is unchanged.
+- **Adopting a governance document** (optional, after the upgrade): write `trust/governance.<CODE>.toml`, set `ACCESS_POLICY_FILE` in the kit, check it with `make -C trust check-governance KIT=<CODE>`, and apply it with `make -C trust reload-governance KIT=<CODE>` — never `up-trust` / `restart-trust`, which are first-install verbs. `[fl_privacy.nvflare]` and `FL_SITE_PRIVACY_*` together are refused: use one. On Kubernetes, `sync-kit` validates the document and embeds it in the release (`trust/deploy/helm/README.md`). An EC2 trust driven over a remote Docker endpoint refuses a document in this release.
 - **Operator command**, on the trust host, from your FLIP checkout:
   ```bash
   git fetch --tags origin && git checkout {{TAG}}        # the compose files and the verb come from the checkout, not the images
@@ -47,14 +44,15 @@
 
 ## :seedling: New Features
 
-- The public web alias released on a switch of its own, `RELEASE_WEB_ALIAS`, carried through the CI manifest and all three Terraform workflows (#1296).
-- Terraform CI for the LZA workload accounts, with the estate selected by `TF_PROD` and a class check refusing a prod-grade estate on a staging ref (#1273).
-- The CI keypair parameter declared in Terraform, and a `check-oidc-provider` preflight on `make -C ci plan` (#1299).
-- Cohort query plots in a responsive auto-fill grid instead of a fixed two-column layout (#1294).
+- The trust governance document (#1297): `[disclosure] min_cohort_size`, `[access]` permit/deny rules over project (UUID) and operation — any matching deny denies, otherwise the strictest matching permit applies, and an action the document names but no rule matches is denied — and `[fl_privacy.nvflare]` for the NVFLARE site privacy filter. A denial is answered like a below-threshold cohort, so it reveals nothing about the policy; the rule id goes to the trust's own log. Invalid documents stop the service at startup. `[fl_privacy.flower]` is refused, since nothing enforces it on Flower yet.
+- `make -C trust check-governance` validates a document with the same loader the service uses, and `make -C trust reload-governance` applies an edited one to a live trust without touching its data; data-access-api logs one `[governance] … sha256=…` line at startup, which the reload checks (#1297).
+- The site-upgrade verbs name a newer platform release and its date, and offer it when the Central Hub already runs it. GitHub is advisory: a host that cannot reach it prints one line and carries on (#1332).
 
 ## :bug: Bug Fixes
 
-- **Kubernetes trusts**: XNAT aborting every C-STORE because `xnat-web` could not roll onto its `ReadWriteOnce` volume and kept serving stale DQR / Container Service plugin jars; the chart now recreates the pod, and a Helm timeout keeps a slow `xnat-init` hook from leaving the release failed (#1228, via #1231).
+<!-- Update this section if a fix lands before the cut. -->
+
+- The Helm chart ships only the chart. It had no `.helmignore`, so each release record carried the chart's tests, scripts and any local caches, and a stray cache could push the record past the 1 MiB Secret limit (`Too long`) and fail the upgrade (#1339).
 
 ## :white_check_mark: Release checks
 
@@ -66,10 +64,14 @@ Tutorial suite, on a GPU host:
 - [ ] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`
 - [ ] Host and date recorded: <!-- e.g. "RTX 5090 workstation, 24 September 2026" -->
 
+Not run for v0.11.0: the release was cut the same day as its last changes merged, and the suite takes several hours per backend.
+
 Full-platform smoke test, against a running deployment:
 
-- [ ] NVFLARE — `make e2e_smoke`
-- [ ] Flower — `make e2e_smoke FL_BACKEND=flower`
+- [x] NVFLARE — `make e2e_smoke`
+- [x] Flower — `make e2e_smoke FL_BACKEND=flower`
+
+Both passed on 29 September 2026 on the dev stack on an RTX 5090 workstation, against one trust (`--trusts GSTT`), with the hub, the trust services and the FL images (`sha-968a60d`) all at the release commit: create project, cohort query, trust approval, image pull, training, results uploaded and downloaded. Flower reused the NVFLARE run's project.
 
 ## :file_folder: PRs merged in this release
 

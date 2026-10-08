@@ -32,6 +32,7 @@ from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_service
 from flip_api.utils.encryption import PROJECT_ID_CONTEXT
 from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
+from flip_api.utils.s3_client import PresignAudience
 
 
 @pytest.fixture
@@ -1044,8 +1045,9 @@ def test_get_bundle_urls_success(mock_s3, mocked_settings, model_id):
 
     assert urls == ["https://dest/file1.csv", "https://dest/file2.csv"]
     mock_client.list_objects.assert_called_once_with(expected_s3_path)
-    mock_client.get_presigned_url.assert_any_call(files[0])
-    mock_client.get_presigned_url.assert_any_call(files[1])
+    # The fl-api fetches bundles over the docker network, so the URLs are signed for the internal endpoint.
+    mock_client.get_presigned_url.assert_any_call(files[0], audience=PresignAudience.INTERNAL)
+    mock_client.get_presigned_url.assert_any_call(files[1], audience=PresignAudience.INTERNAL)
 
 
 @patch("flip_api.fl_services.services.fl_service.S3Client")
@@ -1087,7 +1089,7 @@ def test_get_bundle_urls_presign_failure(mock_s3, mocked_settings, model_id):
 
     # list called once, presign attempted (it will stop on first exception)
     mock_client.list_objects.assert_called_once()
-    mock_client.get_presigned_url.assert_called_once_with(files[0])
+    mock_client.get_presigned_url.assert_called_once_with(files[0], audience=PresignAudience.INTERNAL)
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")

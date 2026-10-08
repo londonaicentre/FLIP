@@ -451,8 +451,8 @@ def test_upload_app_rejects_non_https_bundle_url(client, upload_dir):
 
 
 def test_upload_app_rejects_disallowed_bundle_host(client, upload_dir, monkeypatch):
-    """When BUNDLE_URL_ALLOWED_HOSTS is set, off-origin bundle URLs are rejected."""
-    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", "objectstore.internal")
+    """When BUNDLE_URL_ALLOWED_ORIGINS is set, off-origin bundle URLs are rejected."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "https://objectstore.internal")
     model_id = str(uuid4())
     body = UploadAppRequest(
         project_id="p",
@@ -502,3 +502,10 @@ def test_startup_reports_empty_bundle_allow_list(monkeypatch):
     with TestClient(app_module.app):
         pass
     assert calls == [True]
+
+
+def test_startup_refuses_a_malformed_bundle_allow_list(monkeypatch):
+    """A BUNDLE_URL_ALLOWED_ORIGINS entry that is not a bare origin fails the boot, not the first fetch (#1291)."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "s3.eu-west-2.amazonaws.com")
+    with pytest.raises(ValueError, match="not a bare scheme://host"), TestClient(app_module.app):
+        pass

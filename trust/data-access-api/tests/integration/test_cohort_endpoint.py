@@ -175,6 +175,26 @@ def test_accession_ids_returns_seeded_ids(http_client):
     assert "ACC-1001" in accession_ids
 
 
+def test_accession_ids_releases_only_values_that_are_imaging_accessions(http_client):
+    """Values aliased to ``accession_id`` that are not imaging accessions are never returned.
+
+    The real accessions clear the floor on their own, so before FLIP#1259's fix every value came
+    back — person-level data riding out under the alias, past a ``cohort.dataframe`` deny.
+    """
+    response = http_client.post(
+        "/cohort/accession-ids",
+        json=_dataframe_payload(
+            "SELECT accession_id FROM omop.image_occurrence "
+            "UNION ALL SELECT concat(p.person_id, '|', p.year_of_birth) AS accession_id FROM omop.person p"
+        ),
+    )
+    assert response.status_code == 200, response.text
+
+    accession_ids = response.json()["accession_ids"]
+    assert len(accession_ids) == 24
+    assert all(value.startswith("ACC-") for value in accession_ids), accession_ids
+
+
 def test_accession_ids_missing_column_surfaces_get_records_400(http_client):
     """A cohort that does not project ``accession_id`` fails inside ``get_records``, not after it.
 

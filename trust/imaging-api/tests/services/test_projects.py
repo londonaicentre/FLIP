@@ -11,10 +11,13 @@
 #
 
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import parse_qs, quote, urlsplit
 from uuid import uuid4
 
 import pytest
+import requests
 
+from imaging_api.config import get_settings
 from imaging_api.db.models import QueuedPacsRequest
 from imaging_api.routers.schemas import CentralHubProject, CentralHubUser, CreatedUser, Project, User
 from imaging_api.services.projects import (
@@ -1070,3 +1073,149 @@ def test_get_subject_id_from_experiment_response_success():
 def test_get_subject_id_from_experiment_response_bad_data():
     with pytest.raises(Exception, match="Failed to parse XNAT experiment data"):
         get_subject_id_from_experiment_response({})
+
+
+def test_identifiers_stay_in_one_segment_at_http_boundary(xnat_path_segment, sent_xnat_requests):
+    raw, encoded = xnat_path_segment
+    with patch("imaging_api.services.projects.get_project"):
+        assert get_experiment(raw, raw, {"X-Request-ID": "trace-1"}) == {}
+
+    assert len(sent_xnat_requests) == 1
+    request = sent_xnat_requests[0]
+    parsed = urlsplit(request.url)
+    assert parsed.path == f"/data/projects/{encoded}/experiments/{encoded}"
+    assert parsed.query == "format=json"
+    assert parsed.fragment == ""
+    assert request.headers["X-Request-ID"] == "trace-1"
+
+
+@pytest.mark.parametrize("invalid", ["", ".", ".."])
+@pytest.mark.parametrize("field", ["project_id", "experiment_id_or_label"])
+def test_empty_and_dot_segments_fail_before_http(field, invalid, sent_xnat_requests):
+    kwargs = {"project_id": "PROJ", "experiment_id_or_label": "EXP", "headers": {}, field: invalid}
+    with pytest.raises(ValueError, match="empty or a dot-segment"):
+        get_experiment(**kwargs)
+    assert sent_xnat_requests == []
+
+
+def test_experiment_lookup_quotes_identifiers_after_real_project_listing(sent_xnat_requests):
+    project_id = "PROJ?format=xml"
+    project = {
+        "ID": project_id,
+        "secondary_ID": "hub-project",
+        "name": "Project",
+        "pi_firstname": "",
+        "pi_lastname": "",
+        "URI": "/data/projects/project",
+    }
+    with patch.object(requests.Response, "json", side_effect=[{"ResultSet": {"Result": [project]}}, {"items": []}]):
+        assert get_experiment(project_id, "ACC#fragment", {}) == {"items": []}
+    assert [urlsplit(request.url).path for request in sent_xnat_requests] == [
+        "/data/projects",
+        "/data/projects/PROJ%3Fformat%3Dxml/experiments/ACC%23fragment",
+    ]
+    assert urlsplit(sent_xnat_requests[1].url).query == "format=json"
+
+
+# ===========================================================================
+# Every request URL goes through xnat_url (#1386): ordinary identifiers produce the same URL the
+# f-strings did. ``sent_xnat_requests`` records the prepared requests, so the comparison is against
+# what Requests would have sent for the old literal, not against a raw string.
+# ===========================================================================
+_XNAT = get_settings().XNAT_URL
+_PROJECT_ID = "6f1c2a9e-3b7d-4c55-9a0e-2d4f8b1c7e10"
+
+
+def _prepared(method: str, url: str) -> str:
+    prepared = requests.Request(method, url).prepare().url
+    assert prepared is not None
+    return prepared
+
+
+@pytest.mark.asyncio
+async def test_delete_project_url_is_unchanged_for_an_ordinary_project_id(sent_xnat_requests):
+    with (
+        patch("imaging_api.services.projects.get_project", return_value=Project(**_PROJECT_DICT)),
+        patch("imaging_api.services.projects.delete_queued_import_requests", new_callable=AsyncMock),
+    ):
+        await delete_project(_PROJECT_ID, {})
+
+    assert [(r.method, r.url) for r in sent_xnat_requests] == [
+        ("DELETE", _prepared("DELETE", f"{_XNAT}/data/projects/{_PROJECT_ID}?removeFiles=true")),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_project_keeps_a_hostile_id_out_of_the_query(sent_xnat_requests):
+    """A project id cannot add or override query parameters on the destructive DELETE."""
+    with (
+        patch("imaging_api.services.projects.get_project", return_value=Project(**_PROJECT_DICT)),
+        patch("imaging_api.services.projects.delete_queued_import_requests", new_callable=AsyncMock),
+    ):
+        await delete_project("PROJ?removeFiles=false&x=", {})
+
+    parsed = urlsplit(sent_xnat_requests[0].url)
+    assert parsed.path == "/data/projects/PROJ%3FremoveFiles%3Dfalse%26x%3D"
+    assert parsed.query == "removeFiles=true"
+
+
+def test_command_lookup_encodes_the_image_as_one_query_value(sent_xnat_requests):
+    image = "registry.example/org/img:1.0"
+    with patch.object(requests.Response, "json", return_value=[{"id": 7, "xnat": [{"name": "dcm2niix-scan"}]}]):
+        assert get_command_info(image, {}) == (7, "dcm2niix-scan")
+
+    parsed = urlsplit(sent_xnat_requests[0].url)
+    assert parsed.path == "/xapi/commands"
+    assert parsed.query == "image=registry.example%2Forg%2Fimg%3A1.0"
+    assert parse_qs(parsed.query) == {"image": [image]}
+    # The hand-quoted form left "/" literal; a query value decodes identically either way.
+    old = urlsplit(_prepared("GET", f"{_XNAT}/xapi/commands?image={quote(image)}"))
+    assert parse_qs(old.query) == parse_qs(parsed.query)
+
+
+def test_command_lookup_image_cannot_inject_query_parameters(sent_xnat_requests):
+    with patch.object(requests.Response, "json", return_value=[{"id": 7, "xnat": [{"name": "w"}]}]):
+        get_command_info("img:1&name=other#frag", {})
+
+    parsed = urlsplit(sent_xnat_requests[0].url)
+    assert parse_qs(parsed.query) == {"image": ["img:1&name=other#frag"]}
+    assert parsed.fragment == ""
+
+
+def test_project_scoped_urls_are_unchanged_for_an_ordinary_project_id(sent_xnat_requests):
+    with (
+        patch("imaging_api.services.projects.get_project"),
+        patch("imaging_api.services.projects.get_command_info", return_value=(7, "dcm2niix-scan")),
+        patch.object(requests.Response, "json", return_value={"ResultSet": {"Result": []}}),
+    ):
+        set_project_prearchive_settings(_PROJECT_ID, {})
+        create_project_event_subscription(_PROJECT_ID, "img:1.0", True, {})
+        get_subjects(_PROJECT_ID, {})
+        get_experiments(_PROJECT_ID, {})
+        get_all_projects({})
+
+    expected = [
+        ("PUT", f"{_XNAT}/data/projects/{_PROJECT_ID}/prearchive_code/4"),
+        ("PUT", f"{_XNAT}/xapi/projects/{_PROJECT_ID}/commands/7/wrappers/dcm2niix-scan/enabled"),
+        ("POST", f"{_XNAT}/xapi/projects/{_PROJECT_ID}/events/subscription"),
+        ("GET", f"{_XNAT}/data/projects/{_PROJECT_ID}/subjects"),
+        ("GET", f"{_XNAT}/data/experiments?project={_PROJECT_ID}"),
+        ("GET", f"{_XNAT}/data/projects"),
+    ]
+    assert [(r.method, r.url) for r in sent_xnat_requests] == [(m, _prepared(m, u)) for m, u in expected]
+
+
+def test_project_scoped_urls_keep_a_hostile_project_id_in_one_segment(sent_xnat_requests, xnat_path_segment):
+    raw, encoded = xnat_path_segment
+    with (
+        patch("imaging_api.services.projects.get_project"),
+        patch.object(requests.Response, "json", return_value={"ResultSet": {"Result": []}}),
+    ):
+        set_project_prearchive_settings(raw, {})
+        get_subjects(raw, {})
+
+    assert [urlsplit(r.url).path for r in sent_xnat_requests] == [
+        f"/data/projects/{encoded}/prearchive_code/4",
+        f"/data/projects/{encoded}/subjects",
+    ]
+    assert all(urlsplit(r.url).query == "" for r in sent_xnat_requests)

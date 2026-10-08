@@ -681,6 +681,16 @@ class TestUpdateXnatUserProfileEdgeCases:
         mock_logger.error.assert_called_once()
         mock_db_session.add.assert_not_called()
 
+    def test_hub_with_no_trusts_queues_nothing(self, mock_db_session: MagicMock):
+        """With the real get_trusts: enabling a user on a hub with no trusts must not raise (FLIP#1345)."""
+        mock_db_session.exec.return_value.all.return_value = []
+        request_data = IUpdateXnatProfile(email="user@example.com", enabled=False)
+
+        update_xnat_user_profile(request_data, mock_db_session)
+
+        mock_db_session.add.assert_not_called()
+        mock_db_session.commit.assert_not_called()
+
 
 class TestGetLatestImagingStatus:
     def test_returns_parsed_status(self, mock_db_session: MagicMock):

@@ -17,12 +17,11 @@ from sqlmodel import Session, col, delete, select
 
 from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
-from flip_api.config import get_settings
+from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef, Role, UserRole, UsersAudit
 from flip_api.domain.interfaces.user import IRoles
 from flip_api.user_services.trust_admin_grants import apply_trust_admin_grant, resolve_role_grants
-from flip_api.utils.cognito_helpers import get_username
 from flip_api.utils.logger import logger
 from flip_api.utils.user_roles import validate_roles
 
@@ -35,6 +34,7 @@ def set_user_roles(
     roles_data: IRoles,
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
+    idp: IdentityProvider = Depends(get_identity_provider),
 ) -> IRoles:
     """
     Set roles for a user.
@@ -47,6 +47,7 @@ def set_user_roles(
         roles_data (IRoles): The roles data containing a list of role IDs to assign to the user.
         db (Session): The database session.
         token_id (UUID): The ID of the user making the request, used for permission checks.
+        idp (IdentityProvider): The configured identity provider.
 
     Returns:
         IRoles: The updated roles data for the user.
@@ -66,17 +67,17 @@ def set_user_roles(
                 detail=f"User with ID: {token_id} was unable to update a user's roles",
             )
 
-        # Validate user existence against Cognito (the source of truth — no
-        # local users table). 404 = genuinely-not-found; 5xx = Cognito read
-        # failure. Surface them as distinct status codes so callers (in
-        # particular ``register_user_step_function``) can decide whether to
-        # treat this as a definitive "role assignment failed" (and roll back
-        # the registration) or a transient "could not verify; retry later".
-        # Non-404 client errors (e.g. a future 400 or 429 from Cognito) must
-        # propagate untouched so caller-side bugs and rate-limit signals
-        # aren't masked behind a generic 503.
+        # Validate user existence against the identity provider (the source
+        # of truth — no local users table). 404 = genuinely-not-found; 5xx =
+        # provider read failure. Surface them as distinct status codes so
+        # callers (in particular ``register_user_step_function``) can decide
+        # whether to treat this as a definitive "role assignment failed" (and
+        # roll back the registration) or a transient "could not verify; retry
+        # later". Non-404 client errors (e.g. a future 400 or 429 from the
+        # provider) must propagate untouched so caller-side bugs and
+        # rate-limit signals aren't masked behind a generic 503.
         try:
-            get_username(str(user_id), get_settings().AWS_COGNITO_USER_POOL_ID)
+            idp.get_username(user_id)
         except HTTPException as exc:
             if exc.status_code == status.HTTP_404_NOT_FOUND:
                 raise HTTPException(
@@ -86,7 +87,7 @@ def set_user_roles(
             if exc.status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Could not verify user existence in Cognito; please try again.",
+                    detail="Could not verify user existence with the identity provider; please try again.",
                 ) from exc
             raise
 

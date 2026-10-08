@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # ///
 # Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,8 +32,9 @@ gets diagnostics instead of a cryptic compose / pydantic failure deeper
 in the stack.
 
 Usage:
-    uv run scripts/onboard_onprem_trust.py [KIT]
-    # KIT defaults to Trust_2 (the conventional on-prem slot).
+    uv run scripts/onboard_onprem_trust.py [KIT] [--kit-file PATH]
+    # KIT defaults to Trust_2; without --kit-file, reads trust/.env.<KIT>.
+    # Make passes its resolved kit path, including the selected environment suffix.
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ import base64
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -57,6 +59,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import site_upgrade  # noqa: E402 — resolves a CI-deployed hub's sha build to this checkout's release
 
 WIDTH = 71
+
+
+def quote_make_assignment(key: str, value: str | Path) -> str:
+    """Escape Make's dollar expansion before quoting the assignment for the shell."""
+    return shlex.quote(f"{key}={value}".replace("$", "$$"))
+
 
 # Hub-shared keys — MUST stay in lockstep with HUB_SHARED_KEYS in
 # scripts/sync_trust_kit.py and HUB_SHARED_ENV_KEYS in
@@ -278,17 +286,18 @@ def check_swarm() -> Check:
     )
 
 
-def check_kit_file(kit: str, kit_file: Path) -> Check:
+def check_kit_file(kit: str, kit_file: Path, kit_path: str | None = None) -> Check:
+    kit_path = kit_path or str(kit_file)
     if kit_file.is_file():
-        return Check("Kit file present", Status.PASS, f"trust/.env.{kit}")
+        return Check("Kit file present", Status.PASS, kit_path)
     return Check(
         "Kit file MISSING",
         Status.FAIL,
-        f"trust/.env.{kit}",
+        kit_path,
         hints=[
             "Ask the FLIP admin to package + send your kit (`make package-onprem-trust-kit",
             f"  KIT={kit}` from deploy/providers/AWS), extract the tarball, then:",
-            f"    cp <extracted-dir>/.env.{kit} trust/.env.{kit}",
+            f"    cp <extracted-dir>/<kit-file> {kit_path}",
         ],
     )
 
@@ -411,7 +420,8 @@ def check_hub_shared_current(kit_vars: dict[str, str], kit_present: bool) -> Che
     return Check(label, Status.PASS, f"key matches the hub (hub runs {hub_release or 'an unreported release'})")
 
 
-def check_kit_credentials(kit_vars: dict[str, str], kit_present: bool, kit: str) -> Check:
+def check_kit_credentials(kit_vars: dict[str, str], kit_present: bool, kit: str, kit_path: str | None = None) -> Check:
+    kit_path = kit_path or f"trust/.env.{kit}"
     if not kit_present:
         return Check("Kit credentials (5 keys)", Status.PENDING, "pending — needs kit file")
     missing = [k for k in KIT_CRED_KEYS if not is_filled(kit_vars.get(k))]
@@ -423,12 +433,14 @@ def check_kit_credentials(kit_vars: dict[str, str], kit_present: bool, kit: str)
         f"{len(missing)} unfilled: {', '.join(missing)}",
         hints=[
             "Ask the FLIP admin to UI-register your trust (Add Trust modal),",
-            f"  paste the 5 lines into trust/.env.{kit}, and re-send the kit.",
+            f"  paste the 5 lines into {kit_path}, and re-send the kit.",
         ],
     )
 
 
-def check_expected_trust_id_self_check(kit_vars: dict[str, str], kit_present: bool, kit: str) -> Check:
+def check_expected_trust_id_self_check(
+    kit_vars: dict[str, str], kit_present: bool, kit: str, kit_path: str | None = None
+) -> Check:
     """Enforce that the kit declares EXPECTED_TRUST_ID for the wrong-host self-check.
 
     trust-api's task_poller compares the trust id the hub returns on first
@@ -441,6 +453,7 @@ def check_expected_trust_id_self_check(kit_vars: dict[str, str], kit_present: bo
     we surface it as its own check so the operator sees the specific risk in
     the readiness output rather than "1 of 5 keys missing".
     """
+    kit_path = kit_path or f"trust/.env.{kit}"
     if not kit_present:
         return Check("EXPECTED_TRUST_ID self-check", Status.PENDING, "pending — needs kit file")
     raw = kit_vars.get("EXPECTED_TRUST_ID", "")
@@ -453,13 +466,14 @@ def check_expected_trust_id_self_check(kit_vars: dict[str, str], kit_present: bo
                 "Without EXPECTED_TRUST_ID, a kit deployed to the wrong host will",
                 "  silently act as the wrong trust until something downstream breaks.",
                 "Re-register on the hub side and re-send the kit, OR ask the admin to",
-                f"  fill the value into trust/.env.{kit} before bringing the stack up.",
+                f"  fill the value into {kit_path} before bringing the stack up.",
             ],
         )
     return Check("EXPECTED_TRUST_ID self-check", Status.PASS, f"set to {raw}")
 
 
-def check_fl_kit_dir_set(kit_vars: dict[str, str], kit_present: bool, kit: str) -> Check:
+def check_fl_kit_dir_set(kit_vars: dict[str, str], kit_present: bool, kit: str, kit_path: str | None = None) -> Check:
+    kit_path = kit_path or f"trust/.env.{kit}"
     if not kit_present:
         return Check("FL_KIT_DIR set", Status.PENDING, "pending — needs kit file")
     fl_kit_dir = kit_vars.get("FL_KIT_DIR", "")
@@ -469,7 +483,7 @@ def check_fl_kit_dir_set(kit_vars: dict[str, str], kit_present: bool, kit: str) 
         "FL_KIT_DIR set",
         Status.FAIL,
         "not set in kit file",
-        hints=[f"Add FL_KIT_DIR=<absolute path> to trust/.env.{kit}"],
+        hints=[f"Add FL_KIT_DIR=<absolute path> to {kit_path}"],
     )
 
 
@@ -549,7 +563,7 @@ def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
     )
 
 
-def check_gpu_capacity(kit_vars: dict[str, str], kit_present: bool, kit: str) -> Check:
+def check_gpu_capacity(kit_vars: dict[str, str], kit_present: bool, kit: str, kit_path: str | None = None) -> Check:
     """Warn when the kit claims more GPUs than the host actually exposes.
 
     The fl-client container expands resources.json from a template using
@@ -563,6 +577,7 @@ def check_gpu_capacity(kit_vars: dict[str, str], kit_present: bool, kit: str) ->
     up with a stale value and just tolerate the fl-client crash-loop while
     they iterate; the rest of the trust services come up regardless.
     """
+    kit_path = kit_path or f"trust/.env.{kit}"
     if not kit_present:
         return Check("fl-client GPU capacity", Status.PENDING, "pending — needs kit file")
     raw = (kit_vars.get("NUM_AVAILABLE_GPUS") or "").strip()
@@ -584,7 +599,7 @@ def check_gpu_capacity(kit_vars: dict[str, str], kit_present: bool, kit: str) ->
             "NUM_AVAILABLE_GPUS unset in kit: the GPU overlay is skipped but fl-client defaults to 1 GPU",
             hints=[
                 "fl-client will crash-loop on `num_of_gpus specified (1) exceeds available GPUs: 0`.",
-                f"Edit trust/.env.{kit} → set NUM_AVAILABLE_GPUS explicitly: 0 (with MEMORY_PER_GPU_IN_GIB=0)",
+                f"Edit {kit_path} → set NUM_AVAILABLE_GPUS explicitly: 0 (with MEMORY_PER_GPU_IN_GIB=0)",
                 "  for CPU-only, or N on a host exposing N NVIDIA GPU(s) to enable passthrough.",
             ],
         )
@@ -595,7 +610,7 @@ def check_gpu_capacity(kit_vars: dict[str, str], kit_present: bool, kit: str) ->
             "fl-client GPU capacity",
             Status.FAIL,
             f"NUM_AVAILABLE_GPUS='{raw}' is not an integer",
-            hints=[f"Edit trust/.env.{kit} → Trust-local credentials section."],
+            hints=[f"Edit {kit_path} → Trust-local credentials section."],
         )
     if kit_gpus <= 0:
         return Check(
@@ -622,10 +637,22 @@ def check_gpu_capacity(kit_vars: dict[str, str], kit_present: bool, kit: str) ->
         f"NUM_AVAILABLE_GPUS={kit_gpus} but host exposes {host_gpus} NVIDIA GPU(s)",
         hints=[
             "fl-client will crash-loop on `num_of_gpus specified exceeds available GPUs`.",
-            f"Edit trust/.env.{kit} → set NUM_AVAILABLE_GPUS=0 and MEMORY_PER_GPU_IN_GIB=0",
+            f"Edit {kit_path} → set NUM_AVAILABLE_GPUS=0 and MEMORY_PER_GPU_IN_GIB=0",
             "  for CPU-only (slow but functional), or move to a host with the expected GPU(s).",
         ],
     )
+
+
+def _governance_document(kit_vars: dict[str, str], repo_root: Path) -> str | None:
+    """The kit's ACCESS_POLICY_FILE as an absolute path, resolved as Compose resolves it.
+
+    Compose runs with ``--project-directory trust``, so a relative path is relative to trust/.
+    """
+    raw = kit_vars.get("ACCESS_POLICY_FILE", "").strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    return str(path if path.is_absolute() else (repo_root / "trust" / path).resolve())
 
 
 def check_site_privacy_policy(
@@ -633,22 +660,27 @@ def check_site_privacy_policy(
     kit_present: bool,
     kit: str,
     repo_root: Path,
+    kit_path: str | None = None,
 ) -> Check:
-    """Validate site-policy variables with the same stdlib-only renderer used at runtime."""
+    """Validate the site privacy filter with the same stdlib-only renderer used at runtime.
+
+    Both sources: the kit's FL_SITE_PRIVACY_* and the governance document's
+    [fl_privacy.nvflare] section (FLIP#1259). The renderer itself fails a filter set in both,
+    and — told the backend — a filter on a backend that would not enforce it.
+    """
+    kit_path = kit_path or f"trust/.env.{kit}"
     label = "Site privacy policy"
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
-    hints = [f"Edit trust/.env.{kit} → Host-local profile; the fl-client fails closed on an invalid policy."]
-    policy_vars = {key: value for key, value in kit_vars.items() if key.startswith("FL_SITE_PRIVACY_")}
-    if kit_vars.get("FL_BACKEND", "").strip().lower() != "nvflare":
-        if any(value.strip() for value in policy_vars.values()):
-            return Check(
-                label,
-                Status.FAIL,
-                "configured but FL_BACKEND is not nvflare; the policy would be ignored",
-                hints=hints,
-            )
-        return Check(label, Status.PASS, "not applicable for this FL backend")
+    hints = [
+        f"Edit {kit_path} (Host-local profile) or the governance document's [fl_privacy.nvflare];"
+        " the fl-client fails closed on an invalid policy."
+    ]
+    env = {key: value for key, value in kit_vars.items() if key.startswith("FL_SITE_PRIVACY_")}
+    document = _governance_document(kit_vars, repo_root)
+    if document is not None:
+        env["ACCESS_POLICY_FILE"] = document
+    backend = kit_vars.get("FL_BACKEND", "").strip().lower() or "nvflare"
 
     renderer = repo_root / "flip-utils" / "flip" / "nvflare" / "site_policy.py"
     # The validation target must not exist: the renderer treats any existing file as a
@@ -657,10 +689,17 @@ def check_site_privacy_policy(
     # provides, not whatever the operator's shell happens to export.
     with tempfile.TemporaryDirectory() as tmp_dir:
         result = subprocess.run(
-            [sys.executable, str(renderer), "--check", str(Path(tmp_dir) / "privacy.json")],
+            [
+                sys.executable,
+                str(renderer),
+                "--check",
+                "--fl-backend",
+                backend,
+                str(Path(tmp_dir) / "privacy.json"),
+            ],
             capture_output=True,
             check=False,
-            env=policy_vars,
+            env=env,
             text=True,
         )
     if result.returncode:
@@ -672,11 +711,73 @@ def check_site_privacy_policy(
     return Check(label, Status.PASS, detail)
 
 
+def check_governance_document(
+    kit_vars: dict[str, str],
+    kit_present: bool,
+    kit: str,
+    repo_root: Path,
+    kit_file: Path | None = None,
+) -> Check:
+    """Validate the governance document's [disclosure]/[access] half with data-access-api's loader.
+
+    data-access-api refuses to start on an invalid document, and this checklist gates
+    ``upgrade-onprem-trust``, so the error belongs here rather than in a crash-looping
+    container. The loader is stdlib-only; it runs on this interpreter with the service tree on
+    PYTHONPATH, installing nothing.
+
+    The detailed-check command preserves the selected kit file instead of resolving it again.
+    """
+    label = "Governance document"
+    kit_file = kit_file or repo_root / "trust" / f".env.{kit}"
+    if not kit_present:
+        return Check(label, Status.PENDING, "pending — needs kit file")
+    document = _governance_document(kit_vars, repo_root)
+    floor = kit_vars.get("COHORT_QUERY_THRESHOLD", "").strip() or "10"
+    if document is None:
+        return Check(label, Status.PASS, f"not configured — platform defaults (COHORT_QUERY_THRESHOLD={floor})")
+
+    service_root = repo_root / "trust" / "data-access-api"
+    result = subprocess.run(
+        [sys.executable, str(service_root / "scripts" / "check_governance.py")],
+        capture_output=True,
+        check=False,
+        env={"ACCESS_POLICY_FILE": document, "COHORT_QUERY_THRESHOLD": floor, "PYTHONPATH": str(service_root)},
+        text=True,
+    )
+    lines = result.stdout.strip().splitlines()
+    if result.returncode:
+        detail = (lines[0] if lines else result.stderr.strip()).removeprefix("❌ ")
+        command = (
+            f"make -C trust check-governance {quote_make_assignment('KIT', kit)} "
+            f"{quote_make_assignment('KIT_FILE', kit_file)}"
+        )
+        if prod := os.environ.get("PROD"):
+            command += f" {quote_make_assignment('PROD', prod)}"
+        return Check(
+            label,
+            Status.FAIL,
+            detail or "governance document validation failed",
+            hints=[
+                f"Edit {document}; data-access-api refuses to start on an invalid document.",
+                f"`{command}` validates both halves with the details.",
+            ],
+        )
+    facts = {line.split(":", 1)[0].strip(): line.split(":", 1)[1].strip() for line in lines if ":" in line}
+    digest = facts.get("sha256", "").split(" ")[0][:12]
+    return Check(
+        label,
+        Status.PASS,
+        f"valid — {facts.get('access rules', '0')} access rule(s), "
+        f"min cohort size {facts.get('effective min cohort size', floor)}, sha256 {digest}",
+    )
+
+
 def check_unrotated_passwords(
     kit_vars: dict[str, str],
     kit_present: bool,
     repo_root: Path,
     kit: str,
+    kit_path: str | None = None,
 ) -> Check:
     """Soft-warn if any Trust-local password still matches the .example template.
 
@@ -686,6 +787,7 @@ def check_unrotated_passwords(
     bringing the stack up. Returns Status.WARN (not FAIL) — defaults are
     technically usable for dev/testing and we don't want to block that path.
     """
+    kit_path = kit_path or f"trust/.env.{kit}"
     if not kit_present:
         return Check("Trust-local passwords", Status.PENDING, "pending — needs kit file")
     # Use FL_KIT_SLOT (the canonical slot name minted by the hub) to find the
@@ -724,7 +826,7 @@ def check_unrotated_passwords(
         f"{len(unchanged)}/{len(TRUST_LOCAL_PASSWORD_KEYS)} still match {template.name} defaults",
         hints=[
             f"Unchanged: {', '.join(unchanged)}",
-            f"For a real on-prem deployment, edit trust/.env.{kit} → Trust-local credentials",
+            f"For a real on-prem deployment, edit {kit_path} → Trust-local credentials",
             "  section and replace with production-grade secrets.",
         ],
     )
@@ -796,25 +898,35 @@ def check_data_dir(
 # ─────────────────────────────────────────────────────────────────────
 
 
-def run_checks(kit: str, repo_root: Path) -> list[Check]:
-    kit_file = repo_root / "trust" / f".env.{kit}"
+def kit_file_label(kit_file: Path, repo_root: Path) -> str:
+    """Show paths inside this checkout relative to its root; preserve external paths."""
+    try:
+        return str(kit_file.relative_to(repo_root))
+    except ValueError:
+        return str(kit_file)
+
+
+def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[Check]:
+    kit_file = kit_file or repo_root / "trust" / f".env.{kit}"
+    kit_path = kit_file_label(kit_file, repo_root)
     kit_vars = read_kit_vars(kit_file)
     kit_present = kit_file.is_file()
     fl_kit_dir = kit_vars.get("FL_KIT_DIR", "")
 
     return [
         check_swarm(),
-        check_kit_file(kit, kit_file),
+        check_kit_file(kit, kit_file, kit_path),
         check_hub_shared(kit_vars, kit_present),
         check_hub_shared_current(kit_vars, kit_present),
-        check_kit_credentials(kit_vars, kit_present, kit),
-        check_expected_trust_id_self_check(kit_vars, kit_present, kit),
-        check_fl_kit_dir_set(kit_vars, kit_present, kit),
+        check_kit_credentials(kit_vars, kit_present, kit, kit_path),
+        check_expected_trust_id_self_check(kit_vars, kit_present, kit, kit_path),
+        check_fl_kit_dir_set(kit_vars, kit_present, kit, kit_path),
         check_fl_kit_dir_exists(fl_kit_dir, kit_present),
         check_fl_kit_contents(kit_vars, kit_present),
-        check_gpu_capacity(kit_vars, kit_present, kit),
-        check_site_privacy_policy(kit_vars, kit_present, kit, repo_root),
-        check_unrotated_passwords(kit_vars, kit_present, repo_root, kit),
+        check_gpu_capacity(kit_vars, kit_present, kit, kit_path),
+        check_site_privacy_policy(kit_vars, kit_present, kit, repo_root, kit_path),
+        check_governance_document(kit_vars, kit_present, kit, repo_root, kit_file),
+        check_unrotated_passwords(kit_vars, kit_present, repo_root, kit, kit_path),
         check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, kit_present, repo_root),
         check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root),
     ]
@@ -832,6 +944,11 @@ def main() -> None:
         help="Slot name (e.g. Trust_2). Defaults to Trust_2 — the conventional on-prem slot.",
     )
     parser.add_argument(
+        "--kit-file",
+        type=Path,
+        help="Kit file selected by Make. Relative paths resolve from the repo root; defaults to trust/.env.<KIT>.",
+    )
+    parser.add_argument(
         "--gate",
         action="store_true",
         help="Running as the gate of a make verb (up-onprem-trust, upgrade-onprem-trust): on READY, "
@@ -840,14 +957,14 @@ def main() -> None:
     args = parser.parse_args()
 
     kit = args.kit or "Trust_2"
-    kit_defaulted = args.kit is None
 
     repo_root = Path(__file__).resolve().parent.parent
+    kit_file = args.kit_file or Path("trust") / f".env.{kit}"
+    if not kit_file.is_absolute():
+        kit_file = repo_root / kit_file
 
     print()
-    heading(f"On-prem trust onboarding checklist — kit trust/.env.{kit}")
-    if kit_defaulted:
-        print(f"  {DIM}(KIT defaulted to Trust_2 — override with: make onboard-onprem-trust KIT=<slot>){RESET}")
+    heading(f"On-prem trust onboarding checklist — kit {kit_file_label(kit_file, repo_root)}")
 
     print()
     ip = fetch_public_ip()
@@ -861,7 +978,7 @@ def main() -> None:
     print(f"  {BOLD}Checks:{RESET}")
     print()
 
-    checks = run_checks(kit, repo_root)
+    checks = run_checks(kit, repo_root, kit_file)
     label_width = max(len(c.label) + 1 for c in checks)  # +1 for the trailing ":"
     for c in checks:
         render_check(c, label_width)
@@ -887,7 +1004,14 @@ def main() -> None:
             print("  Bring the stack up:")
             # sudo -E: the provisioned on-prem login user is deliberately not in the
             # docker group (root-equivalent), so the stack comes up via sudo.
-            print(f"      {BOLD}sudo -E make up-onprem-trust KIT={kit}{RESET}")
+            command = (
+                f"sudo -E make up-onprem-trust {quote_make_assignment('KIT', kit)} "
+                f"{quote_make_assignment('KIT_FILE', kit_file)}"
+            )
+            prod = os.environ.get("PROD", "true")
+            if prod and prod != "true":
+                command += f" {quote_make_assignment('PROD', prod)}"
+            print(f"      {BOLD}{command}{RESET}")
         if n_warn:
             print(
                 f"  {YELLOW}Heads-up:{RESET} review the {YELLOW}⚠️{RESET}  warning(s) above "

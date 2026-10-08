@@ -19,15 +19,21 @@ The operator-side half of ``make upgrade-onprem-trust`` / ``make -C trust upgrad
 Everything that decides *what* to move to happens here, before any container is touched:
 
 1. **Target.** ``--tag`` when given, otherwise the build the hub runs — read from
-   ``GET <CENTRAL_HUB_API_URL>/health`` ``version``, the URL trust-api already polls, so no
-   GitHub egress is needed from the trust host. Defaulting to the hub, not to the newest
-   GitHub release, is deliberate: hub↔site coupling (the FL framework pin, cipher flag-days)
-   means the hub's release is by construction the latest a site *can* run. A hub that does
+   ``GET <CENTRAL_HUB_API_URL>/health`` ``version``, the URL trust-api already polls, so the
+   target never depends on GitHub egress from the trust host. Defaulting to the hub, not to
+   the newest GitHub release, is deliberate: hub↔site coupling (the FL framework pin, cipher
+   flag-days) means the hub's release is by construction the latest a site *can* run. A hub that does
    not report a pullable image tag (built before FLIP#1204, or unreachable) makes this
    script stop and ask for ``TAG=`` rather than guess.
    A hub deployed by the CI Terraform apply runs the ``sha-<short7>`` build of its commit; when
    this checkout sits on that commit and carries its release tag, the release tag is targeted
    instead — it names the same code, and every image is published at it.
+   For a release target, GitHub's release list is read too (5 s, advisory only: an unreachable
+   GitHub prints one line and changes nothing). A newer stable platform release is reported
+   with both release dates. When the hub already runs it (its tag, or the ``sha-`` build of its
+   commit) the operator may stop and move the checkout to it instead (exit 4, nothing
+   changed); otherwise it is a warning, since a site cannot run ahead of the Central Hub.
+   ``--yes`` and ``--dry-run`` never ask.
 2. **Guards**, in this order. The tag must look like an image tag (``v<X.Y.Z>`` or
    ``sha-<short7>`` — never ``prod``/``stag``, which move under a site); a move to an older
    release (a release's own pre-releases included) needs ``--force``; for a release target the
@@ -56,10 +62,10 @@ Usage:
 Exit codes (the Makefile's contract): 0 pinned (or, with ``--dry-run``, resolved and checked
 without pinning); 2 no usable target — pass ``--tag`` (also a malformed ``--fl-tag``, or no hub
 URL to ask); 3 refused downgrade (pass ``--force``); 4 not confirmed (pass ``--yes`` for a
-scripted run); 5 an image is missing at the target tag, or the registry could not be asked
-(the message says which); 6 the checkout is not at the target release
-(``git fetch --tags origin && git checkout <tag>``, then re-run from the new checkout), or git
-could not say which commit it is at.
+scripted run), or stopped to move to a newer release the hub already runs; 5 an image is
+missing at the target tag, or the registry could not be asked (the message says which); 6 the
+checkout is not at the target release (``git fetch --tags origin && git checkout <tag>``, then
+re-run from the new checkout), or git could not say which commit it is at.
 """
 
 from __future__ import annotations
@@ -72,7 +78,9 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -97,6 +105,14 @@ _GIT_TIMEOUT_SECONDS = 10.0
 
 _HUB_TIMEOUT_SECONDS = 10.0
 _MANIFEST_TIMEOUT_SECONDS = 60.0
+
+#: Where platform releases are published. Asked only to tell the operator about a release newer
+#: than the target — the target never comes from here — so it gets a short timeout, and an
+#: unreachable GitHub (a trust host behind an NHS firewall) changes nothing.
+_GITHUB_REPO_API = "https://api.github.com/repos/londonaicentre/FLIP"
+_GITHUB_TIMEOUT_SECONDS = 5.0
+#: A stable platform release. Not `v0.7.0-rc.1`, and not a component release (`flip-utils-v0.10.0`).
+_STABLE_RELEASE = re.compile(r"^v\d+\.\d+\.\d+$")
 
 #: Every repo-built image a compose site pulls (`trust/deploy/compose_trust.production.yml`,
 #: `trust/xnat/docker-compose-stack.yml`, `trust/deploy/compose_trust.production.<backend>.yml`)
@@ -210,6 +226,150 @@ def resolve_target(cli_tag: str | None, hub_url: str) -> tuple[str, str]:
         )
     assert reported is not None
     return reported, "hub"
+
+
+class Release(NamedTuple):
+    """A published stable platform release."""
+
+    tag: str
+    published: datetime
+
+
+class ReleasesUnavailable(Exception):
+    """GitHub could not list the releases: unreachable, rate-limited, or an unexpected answer."""
+
+
+def _github_get(path: str, accept: str) -> bytes:
+    request = urllib.request.Request(
+        f"{_GITHUB_REPO_API}/{path}", headers={"Accept": accept, "X-GitHub-Api-Version": "2022-11-28"}
+    )
+    with urllib.request.urlopen(request, timeout=_GITHUB_TIMEOUT_SECONDS) as response:  # noqa: S310 — fixed https URL
+        return response.read()
+
+
+def fetch_releases() -> list[Release]:
+    """Every published stable platform release on GitHub, newest first.
+
+    Drafts, pre-releases and component releases are left out: GitHub marks ``flip-utils-v0.10.0``
+    "Latest" as readily as the platform's ``v0.10.0``.
+
+    Raises:
+        ReleasesUnavailable: GitHub could not be asked, or did not answer with a release list.
+    """
+    try:
+        body = json.loads(_github_get("releases?per_page=100", "application/vnd.github+json").decode())
+        if not isinstance(body, list):
+            raise ValueError(f"expected a list of releases, got {type(body).__name__}")
+        releases = [
+            Release(r["tag_name"], datetime.fromisoformat(r["published_at"].replace("Z", "+00:00")))
+            for r in body
+            if not r.get("draft")
+            and not r.get("prerelease")
+            and r.get("published_at")
+            and _STABLE_RELEASE.match(r.get("tag_name") or "")
+        ]
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        raise ReleasesUnavailable(f"{type(e).__name__}: {e}") from e
+    return sorted(releases, key=lambda r: r.published, reverse=True)
+
+
+def release_commit(tag: str) -> str | None:
+    """The commit a release tag points at, from GitHub; None when GitHub cannot say."""
+    try:
+        sha = _github_get(f"commits/{tag}", "application/vnd.github.sha").decode().strip()
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return None
+    return sha if re.fullmatch(r"[0-9a-f]{40}", sha) else None
+
+
+def newer_release(target: str, releases: list[Release]) -> Release | None:
+    """The newest (latest published) release when it is ahead of ``target``; None otherwise.
+
+    "Ahead" is release order. FLIP releases are cut from main in version order, so it agrees with
+    the dates, and it keeps a pre-release of the NEXT release, which is ahead of the newest, from
+    being told to go back. A ``sha-`` target has no place in either order.
+    """
+    target_order = _release_order(target)
+    if target_order is None or not releases:
+        return None
+    newest = max(releases, key=lambda r: r.published)
+    newest_order = _release_order(newest.tag)
+    return newest if newest_order is not None and newest_order > target_order else None
+
+
+def _day(moment: datetime) -> str:
+    return f"{moment.day} {moment:%b %Y}"
+
+
+def _runs_release(hub_version: str | None, release: Release) -> bool | None:
+    """Whether a hub reporting ``hub_version`` runs ``release``: its tag, or the ``sha-`` build of its commit.
+
+    None when that cannot be told — no version, or a sha GitHub could not match to the release.
+    """
+    if hub_version is None:
+        return None
+    if hub_version == release.tag:
+        return True
+    if not _SHA_TAG.match(hub_version):
+        return False
+    commit = release_commit(release.tag)
+    return None if commit is None else hub_version == f"sha-{commit[:7]}"
+
+
+def _offer_newer_release(target: str, source: str, hub_url: str, can_ask: bool) -> int | None:
+    """Tell the operator about a release newer than ``target``: the exit code to stop with, or None to go on.
+
+    It is a choice only when the hub already runs the newer release; otherwise a warning, since a
+    site ahead of the Central Hub is the untested pairing the hub default exists to avoid. Moving to it is
+    always a re-run from a new checkout, never done here: the compose files and this very verb
+    come from the checkout, which is still at the older release.
+    """
+    if not _RELEASE_TAG.match(target):
+        return None
+    try:
+        releases = fetch_releases()
+    except ReleasesUnavailable as e:
+        print(f"   ℹ️  could not check GitHub for a newer release ({e}) — carrying on")
+        return None
+    newer = newer_release(target, releases)
+    if newer is None:
+        return None
+    published = {r.tag: r.published for r in releases}
+    was = f" ({target} was released {_day(published[target])})" if target in published else ""
+    print(f"⚠️  A more recent release exists: {newer.tag}, released {_day(newer.published)}{was}.")
+    behind = f"and a site cannot run ahead of the Central Hub — move to {newer.tag} once it has."
+
+    if source == "hub":
+        # The target is the hub's own release: had the hub run the newer one, that would be the target.
+        print(f"   The Central Hub runs {target}, {behind}")
+        return None
+    try:
+        hub_version = fetch_hub_version(hub_url) if hub_url else None
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        hub_version = None
+    runs = _runs_release(hub_version, newer)
+    if runs is None:
+        why = f"it reports {hub_version}" if hub_version else "its version could not be read"
+        print(f"   Move to it only once the Central Hub runs it — a site cannot run ahead of the Central Hub ({why}).")
+        return None
+    if not runs:
+        print(f"   The Central Hub runs {hub_version}, {behind}")
+        return None
+
+    print("   The Central Hub already runs it.")
+    move = f"git -C {_REPO_ROOT} fetch --tags origin && git -C {_REPO_ROOT} checkout {newer.tag}"
+    if not can_ask or not getattr(sys.stdin, "isatty", lambda: False)():
+        print(f"   Continuing to {target}, as specified. To move to {newer.tag} instead: {move}, then re-run")
+        print(f"   with TAG={newer.tag}.")
+        return None
+    answer = input(f"   Continue to {target}, or stop here to move to {newer.tag}? [C/l] ").strip().lower()
+    if answer not in {"l", "latest"}:
+        return None
+    print(f"❌ Stopped. Nothing changed. To move to {newer.tag}, bring the checkout to it, then re-run")
+    print(f"   with TAG={newer.tag}:")
+    print(f"     {move}")
+    print("   (your kit, FL kit and data directories are untracked and stay in place).")
+    return EXIT_NOT_CONFIRMED
 
 
 def site_images(kit: dict[str, str], tag: str, fl_tag: str | None = None) -> list[str]:
@@ -409,6 +569,10 @@ def plan(args: argparse.Namespace) -> int:
             return EXIT_DOWNGRADE
         print("   ⚠️  downgrade forced (FORCE=1) — XNAT database migrations are forward-only; restore from a dump")
 
+    stop = _offer_newer_release(target, source, hub_url, can_ask=not (args.yes or args.dry_run))
+    if stop is not None:
+        return stop
+
     # The compose files, Makefiles and XNAT stack that run the target's images come from this
     # checkout, so a release target must be run from the tree tagged with it. Checked before the
     # registry: a stale tree is the cheaper thing to fix, and the verb itself may differ there.
@@ -467,7 +631,7 @@ def plan(args: argparse.Namespace) -> int:
     if args.dry_run:
         print("   (dry run — kit not modified)")
         return 0
-    pins = f"DOCKER_TAG={target} DOCKER_FL_TAG={fl_tag}" if fl_tag else f"DOCKER_TAG=DOCKER_FL_TAG={target}"
+    pins = f"DOCKER_TAG={target}, DOCKER_FL_TAG={fl_tag or target}"
     if not _confirm(f"   This pins {pins} in {kit_file}.", args.yes):
         print("❌ Not confirmed — nothing changed.")
         return EXIT_NOT_CONFIRMED

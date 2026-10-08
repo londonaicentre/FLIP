@@ -27,6 +27,7 @@ Two rules shape everything below:
   (an NVFLARE 2.9 client cannot join a 2.8 server), the payload cipher, the task contract — so
   the upgrade command defaults to the hub's release, read from the hub's ``/api/health``, and
   refuses to guess when the hub cannot say. "Latest on GitHub" is not the target; the hub is.
+  The command does tell you when a newer release exists, and offers it only once the Central Hub runs it.
 - **The operator triggers it.** Nothing on the hub pushes an upgrade. The prompt is the
   release's *Site upgrade* section (below); the site's operator runs the command when they are
   ready, on their own host, with the same readiness checklist that gated the first install.
@@ -92,7 +93,11 @@ follow.
    - runs the readiness checklist (``make onboard-onprem-trust``) — the same gate as the first
      install, now with a *Hub-shared block current* row that compares your kit's AES key with
      the hub's (as your running trust-api last heard it), and warns when the kit pins a release
-     behind the hub. A kit you have just refreshed passes with a warning that trust-api still
+     behind the hub. The checklist and upgrade use the same kit: the root on-prem
+     verbs default to ``PROD=true``, prefer ``trust/.env.<KIT>.production``, and fall
+     back to ``trust/.env.<KIT>``. Pass ``PROD=stag|lza|lza-stag`` for another
+     deployed environment; the checklist names the selected path in its diagnostics.
+     A kit you have just refreshed passes with a warning that trust-api still
      runs the old key: this upgrade is what recreates it;
    - resolves the target: ``TAG=`` if given, else the hub's ``/api/health`` ``version``. A hub
      deployed by the CI Terraform apply reports the ``sha-`` build of its commit; from a
@@ -100,6 +105,12 @@ follow.
      instead — the same code, and the tag every image is published at. It prints
      ``site <current> → target <release>``. A move to an older release — a release's own
      release candidates included — is refused unless ``FORCE=1``;
+   - looks on GitHub for a platform release newer than the target, and says so with both
+     release dates. If the Central Hub already runs it, you choose: continue to the target, or stop
+     and move to the newer release. Stopping changes nothing and prints the ``git checkout`` to
+     run first, since the command comes from the checkout (``YES=1`` continues without
+     asking). If the Central Hub does not run it yet, it is a warning only: a site cannot run
+     ahead of the Central Hub. A host that cannot reach GitHub prints one line and carries on;
    - confirms this checkout is at the target release (step 3) — a ``sha-`` target is never
      checked, since a CI build has no git tag to be at. If git cannot read the checkout (for
      example "dubious ownership" when it belongs to another user and the upgrade runs under

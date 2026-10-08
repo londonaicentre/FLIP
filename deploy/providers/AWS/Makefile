@@ -119,14 +119,15 @@ export TF_VAR_lza_vpc_name=$(LZA_VPC_NAME)
 endif
 
 # IAM permissions boundary (FLIP#1082, FLIP#1280). The self-contained modes take
-# the variables.tf default, AICentre-FLIPTerraformBoundary, declared by the ci/
-# root. The LZA modes take the platform's AICentre-WorkloadRoleBoundary instead
+# the variables.tf default, AICentre-FLIPTerraformBoundary, declared by
+# modules/terraform_ci_bootstrap (through ci/ or a platform repository). The LZA
+# modes take the platform's AICentre-WorkloadRoleBoundary instead
 # (londonaicentre/lza#51): the accelerator deploys it to every workload account,
 # and an LZA SCP denies creating a role, or attaching or writing a policy onto
 # one, unless the role carries it. So on LZA it is not a choice — without it every
-# role change is denied, from a laptop or from CI. ci/ is not applied there: the
-# platform owns the boundary, and the CI roles with it. An env file that sets the
-# variable still wins: `?=` only supplies the default.
+# role change is denied, from a laptop or from CI. There the platform instantiates
+# the bootstrap module with its own boundary rather than FLIP's. An env file that
+# sets the variable still wins: `?=` only supplies the default.
 ifneq ($(IS_LZA),)
 export TF_VAR_iam_permissions_boundary_name ?= AICentre-WorkloadRoleBoundary
 endif
@@ -207,15 +208,10 @@ export TF_VAR_efs_provision_image=${EFS_PROVISION_IMAGE}
 endif
 export TF_VAR_fl_api_name=${DOCKER_FL_API_NAME}
 export TF_VAR_fl_server_name=${DOCKER_FL_SERVER_NAME}
-export TF_VAR_fl_client_name=${DOCKER_FL_CLIENT_NAME}
 export TF_VAR_fl_backend=${FL_BACKEND}
 export TF_VAR_flare_kit_date=${FLARE_KIT_DATE}
 export TF_VAR_flower_kit_date=${FLOWER_KIT_DATE}
 export TF_VAR_POSTGRES_USER=${POSTGRES_USER}
-export TF_VAR_DB_PORT=${DB_PORT}
-export TF_VAR_UI_PORT=${UI_PORT}
-export TF_VAR_API_PORT=${API_PORT}
-export TF_VAR_FL_API_PORT=${FL_API_PORT}
 export TF_VAR_FL_SERVER_PORT=${FL_SERVER_PORT}
 # On-prem trust IPs allowed through the FL-server NLB security group. An HCL list
 # literal in the env file (LOCAL_TRUST_PUBLIC_IPS, default []); one ingress rule
@@ -233,7 +229,6 @@ export TF_VAR_k8s_trust_public_ips=$(K8S_TRUST_PUBLIC_IPS)
 DEPLOY_TRUST_EC2 ?= true
 export TF_VAR_deploy_trust_ec2=$(DEPLOY_TRUST_EC2)
 export TF_VAR_AWS_REGION=${AWS_REGION}
-export TF_VAR_VPC_NAME=${VPC_NAME}
 # DNS availability (FLIP#749): the LZA account has no Route53 hosted zone until
 # the platform-side DNS migration lands, so .env.lza-prod sets MANAGE_DNS=false
 # for the first bring-up (default CloudFront domain, no custom certs/records) and

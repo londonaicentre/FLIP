@@ -45,3 +45,18 @@ def _kit_file(prod: str) -> str:
 )
 def test_upgrade_reads_the_kit_for_its_environment(prod, suffix):
     assert _kit_file(prod).endswith(f"/trust/.env.ABC.{suffix}")
+
+
+def test_deploy_trust_k8s_regenerates_the_override_from_the_kit_first():
+    """Redeploying the file an earlier sync-kit left behind shipped a stale governance document,
+    and a document edit never reached the pods (FLIP#1259)."""
+    out = subprocess.run(
+        ["make", "-n", "-C", str(CHART_DIR), "deploy-trust-k8s", "KIT=ABC", "PROD=stag"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+    regenerate = out.index("--no-apply-secret")
+    deploy = out.index("helm upgrade --install")
+    assert regenerate < deploy, out

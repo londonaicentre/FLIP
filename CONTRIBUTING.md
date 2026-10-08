@@ -68,7 +68,11 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
   `uv sync`, `uv run --project` or `uv lock` run by hand is unguarded, so keep your uv current rather
   than relying on the check to catch you. (The `uv-lock` pre-commit hook is not a gap here — it pins its
   own uv and runs `uv lock --check`, which verifies and never rewrites.)
-- The AWS CLI configured for SSO access to the development environment
+- The AWS CLI configured for SSO access to the development environment — only the two example Trusts need
+  it (`make up` fetches their XNAT artifacts and OMOP vocabulary from AWS buckets). The hub reaches no AWS
+  service: sign-in is the local Keycloak and object storage the local RustFS container (see
+  [Environment variables](#environment-variables)), so `make central-hub` and `make up-no-trust` boot with no
+  AWS account
 - [act](https://github.com/nektos/act) if you want to run GitHub Actions locally
 - **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:
   ```bash
@@ -234,28 +238,74 @@ For the full local stack, replace every placeholder in these minimum groups befo
 
 | Group | Required development values |
 | --- | --- |
-| AWS session | `AWS_PROFILE`, `AWS_REGION` |
-| Central Hub auth | `AWS_COGNITO_USER_POOL_ID`, `AWS_COGNITO_APP_CLIENT_ID`, `ADMIN_USER_PASSWORD` |
+| AWS region | `AWS_REGION` — what SigV4 signs with; the dev object store accepts any. `AWS_PROFILE` stays commented out unless you run an AWS-backed target (below) |
+| Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it). Development signs in through Keycloak, the identity-provider container in `deploy/compose.development.yml`, and nothing else: there is no `AUTH_BACKEND` to set (flip-api pins `keycloak` in development and `cognito` in staging/production) and no AWS account needed to sign in |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
-| Runtime S3 | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME`, `FLIP_APP_BUNDLES_BUCKET_NAME`, `AICENTRE_BUCKET_NAME` |
-| XNAT artifacts | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins) |
+| Object store | Nothing: `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME` and `FLIP_APP_BUNDLES_BUCKET_NAME` ship with working names, created in the local store at `make up` |
+| FL kits (AWS) | `AICENTRE_BUCKET_NAME` — the participant kits, read by `make stage-fl-kit`; the two shipped dev kits are provisioned in-tree and never fetch it |
+| XNAT artifacts (AWS) | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins) |
 
-Development uses these configured AWS services directly; there is no LocalStack fallback. Authorised FLIP developers
-can use the shared development values. Other deployers should create their own resources with the
+**Object storage needs no configuration in development** (FLIP#1291). `make up` starts `object-store`, an S3-compatible
+[RustFS](https://github.com/rustfs/rustfs) container whose data directory is `./object-store/` (gitignored): a
+top-level directory there is a bucket, so `make up` pre-creates one per bucket name before the store starts, the way
+it pre-creates `jobs/`. flip-api and both fl-servers reach it through boto3's native `AWS_ENDPOINT_URL_S3` with
+static dev keys, and the fl-apis through the presigned bundle URLs flip-api signs for it, so model uploads and
+scanning, FL app bundles, training and results download run the same code as production, against a local store. `ls object-store/<bucket>/` shows the key tree
+(each object in RustFS's own on-disk format); `http://localhost:9001` browses it (sign in with the two keys from
+`deploy/compose.development.yml`, `flip-dev` / `flip-dev-object-store` unless `OBJECT_STORE_ACCESS_KEY` /
+`OBJECT_STORE_SECRET_KEY` are set); `make clean-object-store` empties it; a second stack moves `OBJECT_STORE_PORT` and
+`OBJECT_STORE_CONSOLE_PORT` (and `OBJECT_STORE_DIR` if it must not share the directory). One detail is worth knowing: presigned URLs are signed for the host they will be
+opened from — the browser's for `localhost:9000` (`S3_PUBLIC_ENDPOINT_URL`), the fl-api's for `object-store:9000`,
+which is also the origin its bundle-fetch allow-list admits (`BUNDLE_URL_ALLOWED_ORIGINS`). The store's static keys
+reach flip-api and the fl-servers as plain `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, the only AWS credentials
+the dev stack holds. Staging and production are unchanged: real S3 buckets, the task role, the regional endpoint;
+the public endpoint is unset there, so every audience signs against the one endpoint.
+
+**The dev hub mounts nothing from `~/.aws` and reaches no AWS service** — sign-in (Keycloak), email (console) and
+object storage (RustFS) are all local. The AWS-backed *targets* — `deploy/providers/AWS`, FL kit uploads, the
+Trusts' artifact fetches — read `AWS_PROFILE` as before and are guarded by `make check-aws-access`, which `make up`
+no longer runs. Authorised FLIP developers can use the shared development values for the two artifact buckets; other
+deployers should create their own resources with the
 [Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
 
-**Email needs no configuration in development** (FLIP#919). flip-api defaults to `EMAIL_BACKEND=console` in dev, which
+**Email needs no configuration in development** (FLIP#919). flip-api pins `EMAIL_BACKEND=console` in dev (`DevSettings` rejects `ses` at boot), which
 logs the would-be message (recipient, template name, non-secret payload) instead of calling SES — so the access-request
 and XNAT-credentials paths work with no SES identity, verified address or templates. Staging and production keep
 `EMAIL_BACKEND=ses` and still require `AWS_SES_ADMIN_EMAIL_ADDRESS` / `AWS_SES_SENDER_EMAIL_ADDRESS`; the setting is
-type-narrowed in `ProdSettings`, so the console backend cannot be selected there. Note Cognito still sends real invite
-and password-reset emails in dev — those come from the user pool, not SES.
+type-narrowed in `ProdSettings`, so the console backend cannot be selected there. Invitations are the identity
+provider's own, not SES's: under the Keycloak backend (the only one dev accepts) dev has no mail server, so a user registered from the
+Admin Area is given the shared dev password (`ADMIN_USER_PASSWORD`) as a temporary one (flip-api logs that it did,
+never the password) — they sign in once with it, Keycloak's account console
+(`http://localhost:8180/realms/flip/account`) asks for a new password (the UI links there when the sign-in answers
+"Account is not fully set up"), then they sign in to FLIP. In staging and production the Cognito user pool sends
+real invite and password-reset emails.
+
+**Sign-in in development goes through Keycloak** (FLIP#919). `make up` starts a `keycloak` service that imports the
+dev realm `deploy/keycloak/flip-realm.json` at every boot and keeps no volume. Sign in as any well-known dev identity
+from `flip-api/src/flip_api/utils/constants.py` (e.g. `aicentreflip@gmail.com`) with `ADMIN_USER_PASSWORD`; roles are
+granted by flip-api's boot seed as before. Keycloak's admin console is `http://localhost:8180/admin` (`admin`/`admin`
+unless `KEYCLOAK_ADMIN_USERNAME` / `KEYCLOAK_ADMIN_PASSWORD` are set; `KEYCLOAK_PORT` moves the host port). After
+editing the realm run `make reset-keycloak` — the import skips a realm that already exists. Not available in-app under
+Keycloak, because the browser uses the OIDC password grant, which has no equivalent: TOTP enrolment/challenge (keep
+`ENFORCE_MFA=false`, which the dev compose sets — `true` only logs a warning and locks browser users out),
+forgot-password, and the admin "Reset password" button; use the Keycloak console for those. Everything else —
+register, roles, enable/disable, MFA reset from the admin screen, projects, cohorts, uploads — works the same. Scripts
+that sign in (`make e2e_smoke`, `make -C flip-api create_testing_projects`, `make seed-demo-projects`, `make demo-users`,
+the demo recorder) go through the configured provider, so they need no AWS session either. Details:
+[`deploy/keycloak/README.md`](deploy/keycloak/README.md).
 
 Trusts are registered on the **running hub** with `make register-trusts` (shipped dev roster) or
 `make register-trust KIT=<CODE>` (one trust), which inserts each `trust` row (with its
 `api_key_hash`), claims an FL kit slot, and fills that trust's kit file `trust/.env.<CODE>.<env>`
 carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY`. `make up` runs `register-trusts`
 automatically once the hub is up.
+
+For an on-prem trust, `make onboard-onprem-trust KIT=<CODE>` checks the same kit
+that `up-onprem-trust` and `upgrade-onprem-trust` use: `.env.<CODE>.<env>` first,
+then the legacy `.env.<KIT>`, under `trust/`. These root wrappers default to
+`PROD=true`; pass `PROD=stag`, `lza` or `lza-stag` for another deployed environment.
+The checklist delegates to `make -C trust onboard-onprem-trust`, which passes its
+resolved `KIT_FILE` to the script. A direct script invocation can use `--kit-file PATH`.
 
 Docker services receive these variables via the `env_file` directive in the
 compose file — avoid hardcoding values in Dockerfiles or compose files directly.
@@ -286,7 +336,11 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 ### Setting up AWS access
 
-Some services (e.g. `flip-api`) interact with AWS via `boto3`. You will need AWS credentials configured locally.
+Some services (e.g. `flip-api`) interact with AWS via `boto3` in staging and production. In development none
+of them does: sign-in is the local Keycloak, email the console backend and object storage the local RustFS
+container, so the hub needs no AWS credentials (FLIP#919, FLIP#1291). AWS SSO is needed only for the two
+example Trusts' XNAT-artifact and OMOP-vocabulary fetches, FL kit uploads and the `deploy/providers/AWS`
+targets, which `make check-aws-access` guards.
 
 Configure AWS SSO:
 
@@ -314,8 +368,9 @@ export AWS_PROFILE=<your-profile-name>
 
 ### GitHub Secrets for CI
 
-The CI/CD pipeline requires GitHub repository secrets to run tests and deployments. See
-[.github/SECRETS.md](.github/SECRETS.md) for the complete list, how to generate them, and security best practices.
+Test workflows need no secrets beyond `CODECOV_TOKEN`: the credentials of their throwaway stacks are generated per
+run, so they behave the same on a pull request from a fork. Deployments read GitHub environment secrets. See
+[.github/SECRETS.md](.github/SECRETS.md) for the complete list and how to add one.
 
 ### Running the CI pipeline locally
 
@@ -380,6 +435,24 @@ list — including the classes triaged in FLIP#1058 and deliberately *not* promo
 broken checkov install can never produce a vacuous green. The script's own guards (version pin, unknown check
 IDs, skip rationale, canary) are regression-tested by `deploy/providers/AWS/scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
 run by the same workflow's `Deploy script tests` job.
+
+### TFLint (Terraform)
+
+`validate_terraform.yml` also runs **tflint** over `deploy/providers/AWS` — the bundled `terraform` ruleset
+(recommended preset) plus the AWS ruleset, configured in `deploy/providers/AWS/.tflint.hcl`. It catches what
+`terraform validate` accepts: a variable nothing reads, a module with no provider version constraint, an AWS
+argument value the API would reject at apply time. Every directory holding `.tf` files is linted on its own, so
+a module is checked even where no root calls it. Run it locally with `make tflint-lint` from the repo root; it
+needs tflint at the version pinned in `deploy/providers/AWS/scripts/tflint_lint.sh` (release binaries on
+GitHub — Homebrew no longer packages it) and downloads the pinned AWS ruleset plugin on first run.
+
+A deliberate exception is acknowledged in-code with `# tflint-ignore: <rule_name> # <why>` on the line above the
+flagged block, never by disabling the rule in `.tflint.hcl` (the rationale needs that second `#`: any other
+separator, such as `-- why`, makes tflint ignore the annotation). Removing an unused root variable means
+removing its whole input chain too: the `TF_VAR_` export in `deploy/providers/AWS/Makefile`, the key in
+`scripts/compose-ci-env.sh`, the three Terraform workflows' `env:` lines and `scripts/reconcile_ci_env.py` — and
+deleting the GitHub environment variables only after that PR merges. Like checkov's, the script self-tests
+against a canary fixture, and its guards are regression-tested by `scripts/tests/test_tflint_lint.sh`.
 
 ### Secret scanning (detect-secrets)
 
@@ -568,6 +641,10 @@ make -C trust/deploy/helm validate
 # Place this trust's FL participant kit onto the node, BEFORE deploying
 make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 
+# Regenerate k8s-trust-<KIT>.yaml from the kit (validates its governance document, FLIP#1259)
+# without patching the cluster Secret; deploy-trust-k8s KIT= runs it first
+make -C trust/deploy/helm sync-kit-override KIT=<CODE> PROD=<env>
+
 # Against a live cluster: drive a real C-STORE through the PACS and read XNAT's
 # receiver log (a C-ECHO cannot see an importer crash — FLIP#1228)
 make -C trust/deploy/helm smoke-cstore
@@ -615,7 +692,7 @@ filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 A test belongs in `tests/integration/` **if and only if it touches a real backing service**. Examples of "real backing service":
 
 - A real Postgres (via the `session` fixture or Testcontainers)
-- A real AWS service (S3, Cognito, SES)
+- A real AWS service (S3, Cognito, SES) or a real identity provider (Keycloak under Testcontainers)
 - A running sibling API (trust-api, data-access-api, etc.) reachable over HTTP
 - A real Orthanc / XNAT / OMOP fixture
 
@@ -640,7 +717,7 @@ Two trees sit outside any service and have their own home. `fl-tutorials/tests/`
 
 `flip-api/tests/integration/` boots a throwaway `postgres:16-alpine` container per pytest session via [testcontainers-python](https://github.com/testcontainers/testcontainers-python) (`tests/integration/conftest.py`). The fixture builds the schema by running the **Alembic migrations** (`alembic upgrade head`) — the same DDL dev/prod apply at boot — then seeds permissions / roles / role-permissions once, and truncates per-test tables between tests. Both the existing `session` fixture and FastAPI's `Depends(get_session)` are rewired at the throwaway DB, so a new test only needs to request `session` (raw SQL access) and/or `client` (`TestClient` against the same DB) — no per-test setup required.
 
-CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) are out of scope for this fixture and are skip-marked at the file level until ticket B2 lands.
+CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) run against moto's in-process fake through the session-scoped `aws_mock` fixture (`test_cognito_round_trips.py`, `test_s3_round_trips.py`, `test_ses_round_trips.py`), and `test_keycloak_round_trips.py` boots the pinned Keycloak image under Testcontainers with the committed dev realm (`deploy/keycloak/flip-realm.json`), so the Keycloak provider runs end-to-end — a real register and delete, and a token from Keycloak's password grant through `verify_token`. The AWS-free boot path itself is proven by `.github/workflows/local_auth_smoke.yml`, which starts flip-db, keycloak, the RustFS object store and flip-api from the dev compose on a runner with no AWS credentials, then runs `flip-api/tests/local_auth_smoke.py` (sign in as the seeded admin) and `flip-api/tests/local_storage_smoke.py` (a model file through the store: presigned upload, scan promotion, presigned download, delete — FLIP#1291).
 
 ##### flip-api: database migrations (Alembic)
 
@@ -856,6 +933,9 @@ To create projects in various pipeline stages (`unstaged`, `staged`, `approved`)
 ```bash
 make -C flip-api create_testing_projects
 ```
+
+The script signs in through the configured identity provider — in development the local Keycloak, so it needs
+no AWS session.
 
 To clean up the test data:
 

@@ -60,7 +60,8 @@
 #
 # Reads from the environment:
 #     GIT_SHA                    commit being applied (full sha)
-#     DOCKER_REGISTRY            e.g. ghcr.io/londonaicentre/
+#     DOCKER_REGISTRY            e.g. ghcr.io/londonaicentre/, or an ECR
+#                                pull-through cache of it (probed upstream)
 #     FALLBACK_DOCKER_TAG        configured hub tag (:stag / :prod)
 #     FALLBACK_DOCKER_FL_TAG     configured FL tag
 #     FL_BACKEND                 nvflare | flower — selects the FL image name
@@ -90,6 +91,18 @@ log() { echo "$*" >&2; }
 : "${FALLBACK_DOCKER_TAG:?FALLBACK_DOCKER_TAG is required}"
 : "${FALLBACK_DOCKER_FL_TAG:?FALLBACK_DOCKER_FL_TAG is required}"
 : "${FL_BACKEND:?FL_BACKEND is required}"
+
+# Where the tag is probed. On a platform-managed (LZA) estate DOCKER_REGISTRY is
+# the account's ECR pull-through cache for GHCR
+# (<account>.dkr.ecr.<region>.amazonaws.com/ghcr/<org>/): what ECS pulls from,
+# but not where "published" is decided, and the runner holds no ECR login for it
+# — `docker manifest inspect` there fails with "no basic auth credentials". The
+# cache mirrors GHCR tag for tag, so the probe goes upstream; the tag pinned is
+# the same either way.
+PROBE_REGISTRY="${DOCKER_REGISTRY}"
+if [[ "${DOCKER_REGISTRY}" =~ ^[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/ghcr/(.+)$ ]]; then
+    PROBE_REGISTRY="ghcr.io/${BASH_REMATCH[1]}"
+fi
 
 ECS_CLUSTER="${ECS_CLUSTER:-flip-cluster}"
 RESOLVE_SHA_TAG="${RESOLVE_SHA_TAG:-true}"
@@ -127,7 +140,9 @@ image_exists() {
     out="$(docker manifest inspect "${ref}" 2>&1)" || rc=$?
     [[ "${rc}" -eq 0 ]] && return 0
 
-    local lowered="${out,,}"
+    # tr, not ${out,,}: lowercase expansion is bash 4, and macOS ships bash 3.2.
+    local lowered
+    lowered="$(printf '%s' "${out}" | tr '[:upper:]' '[:lower:]')"
     case "${lowered}" in
         *"manifest unknown"* | *"manifest_unknown"* | *"no such manifest"* | \
             *"not found"* | *"name unknown"* | *"name_unknown"*)
@@ -223,7 +238,7 @@ RESOLVED_TAG=""
 
 resolve() {
     local label="$1" image_name="$2" service="$3" container="$4" fallback="$5"
-    local ref="${DOCKER_REGISTRY}${image_name}:${SHA_TAG}"
+    local ref="${PROBE_REGISTRY}${image_name}:${SHA_TAG}"
     RESOLVED_TAG=""
 
     if [[ "${RESOLVE_SHA_TAG}" == "true" ]]; then

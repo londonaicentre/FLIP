@@ -93,6 +93,62 @@ module "flip_app_bundles_bucket" {
 }
 
 ############################
+# Ark+ demo assets bucket (LZA estates only)
+############################
+#
+# On a self-contained (legacy) account the demo-assets bucket predates this
+# stack and is adopted through `data.aws_s3_bucket.demo_assets` — see the long
+# header in cloudfront.tf. On an LZA estate there is nothing to adopt: the
+# account is new, so the bucket is created here, through the same module as
+# every other FLIP bucket, and `local.demo_assets_managed` (cloudfront.tf)
+# keeps the two shapes mutually exclusive. The legacy plan is unchanged: the
+# count is 0 whenever lza_managed_network is false.
+#
+# Two deliberate departures from the sibling buckets:
+#
+#   * AES256, not the app CMK. CloudFront reads this bucket directly through
+#     OAC, and on LZA that CloudFront lives in ANOTHER account (the networking
+#     account's edge). A cross-account service principal cannot decrypt with
+#     this account's CMK without a key-policy grant, and never with the
+#     AWS-managed aws/s3 key. aws_s3_bucket.flip_ui — the other bucket the edge
+#     reads — is on AES256 for the same reason. The objects are public demo
+#     downloads: there is nothing confidential to protect with a CMK.
+#   * An extra bucket-policy statement rather than a second policy resource:
+#     S3 allows one policy per bucket, and the module already owns it.
+#
+# The grant is scoped to the `ark_demo/assets/*` prefix (not the whole bucket)
+# and carries no s3:ListBucket, so a missing key 403s instead of listing the
+# bucket — identical to the legacy policy. `AWS:SourceArn` is empty until the
+# edge stack exists (the two-phase wiring in README, "Edge wiring is
+# two-phase"); an empty string matches no distribution, so the grant is
+# fail-closed rather than open until the second apply fills it in.
+module "flip_demo_assets_bucket" {
+  count = local.demo_assets_managed ? 1 : 0
+
+  source      = "./modules/flip_s3_bucket"
+  bucket_name = var.DEMO_ASSETS_BUCKET_NAME
+  # No CORS: the bundles are fetched as top-level navigations (a download
+  # link), never by XHR/fetch from the demo SPA.
+  logging_target_bucket = local.access_logs_bucket_name
+  sse_algorithm         = "AES256"
+
+  extra_bucket_policy_statements_json = jsonencode([{
+    Sid       = "AllowCloudFrontOACDemoAssetsPrefix"
+    Effect    = "Allow"
+    Principal = { Service = "cloudfront.amazonaws.com" }
+    Action    = "s3:GetObject"
+    Resource  = "arn:aws:s3:::${var.DEMO_ASSETS_BUCKET_NAME}/ark_demo/assets/*"
+    Condition = {
+      StringEquals = {
+        "AWS:SourceArn" = var.lza_web_edge_distribution_arn
+      }
+    }
+  }])
+
+  depends_on = [aws_s3_bucket_acl.flip_access_logs]
+}
+
+############################
 # AI Centre S3 Bucket
 ############################
 
@@ -216,7 +272,8 @@ module "cognito" {
   #
   # The UI signs in with USER_SRP_AUTH (Cognito's native flow, not an OAuth2
   # redirect), so Cognito itself never redirects to these URLs. flip-api reads
-  # them back instead: its get_cors_allowed_origins() calls
+  # them back instead: the Cognito identity provider's allowed_origins()
+  # (flip_api/auth/identity/cognito.py) calls
   # describe_user_pool_client, normalizes each CallbackURL to a
   # scheme://host[:port] origin, and CORSMiddleware serves that list with
   # allow_credentials=true. Every browser origin that must call the API in

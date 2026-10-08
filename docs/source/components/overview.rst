@@ -63,7 +63,8 @@ Central Hub
 ===========
 
 The web UI (``flip-ui``), the central API (``flip-api``) with its PostgreSQL database, and the hub half of every
-FL net, with Cognito for authentication and S3 for model files and results. See :doc:`component-central-hub`
+FL net, with an OIDC identity provider for authentication — AWS Cognito on AWS, Keycloak in local
+development — and S3 for model files and results. See :doc:`component-central-hub`
 for the services and :ref:`deploy-central-hub` for how they are laid out on AWS.
 
 FL nets

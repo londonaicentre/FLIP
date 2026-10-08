@@ -33,6 +33,7 @@ from data_access_api.services.cohort import (
     get_records,
     get_sex_distribution,
     get_statistics,
+    keep_imaging_accessions,
     make_other_category,
     validate_query,
     verify_cardinality,
@@ -2009,3 +2010,36 @@ def test_get_modality_distribution_survives_an_unexpected_result_shape(mock_read
     mock_read_sql.return_value = pd.DataFrame({"something_else": [1]})
 
     assert get_modality_distribution(pd.DataFrame({"accession_id": ["ACC1"]}))["results"] == []
+
+
+# ---------------------------------------------------------------------------
+# keep_imaging_accessions — what /cohort/accession-ids may release (FLIP#1259)
+# ---------------------------------------------------------------------------
+
+
+@patch("pandas.read_sql")
+def test_keep_imaging_accessions_drops_values_that_are_not_imaging_accessions(mock_read_sql):
+    """Only values omop.image_occurrence knows survive, in cohort order and with duplicates kept."""
+    mock_read_sql.return_value = pd.DataFrame({"accession_id": ["ACC2", "ACC1"]})
+    df = pd.DataFrame({"accession_id": ["ACC1", "1|1950", "ACC2", "ACC1", None]})
+
+    kept = keep_imaging_accessions(df)
+
+    assert kept["accession_id"].tolist() == ["ACC1", "ACC2", "ACC1"]
+    executed = str(mock_read_sql.call_args[0][0])
+    assert "omop.image_occurrence" in executed
+    # Bound, never interpolated, and each distinct value once.
+    assert mock_read_sql.call_args.kwargs["params"]["accession_ids"] == ["ACC1", "1|1950", "ACC2"]
+
+
+@patch("pandas.read_sql")
+def test_keep_imaging_accessions_releases_nothing_on_an_unexpected_shape(mock_read_sql):
+    mock_read_sql.return_value = pd.DataFrame({"something_else": ["ACC1"]})
+
+    assert keep_imaging_accessions(pd.DataFrame({"accession_id": ["ACC1"]})).empty
+
+
+@patch("pandas.read_sql")
+def test_keep_imaging_accessions_skips_the_lookup_for_an_empty_cohort(mock_read_sql):
+    assert keep_imaging_accessions(pd.DataFrame({"accession_id": []})).empty
+    mock_read_sql.assert_not_called()

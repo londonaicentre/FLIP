@@ -638,6 +638,7 @@ def forward_then_check(
         url: URL to probe on the forwarded port
         name: Check name for logging
         expected: Expected HTTP status code(s)
+        namespace: Kubernetes namespace the pod lives in
         timeout: How long to wait for the forward to establish
 
     Returns:

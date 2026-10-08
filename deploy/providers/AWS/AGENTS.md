@@ -30,8 +30,8 @@
 | `parameter_store.tf` | SSM Parameter Store entries |
 | `backend.tf` | S3 backend with S3 native locking (`use_lockfile`) |
 | `variables.tf` | All Terraform variables with defaults |
-| `modules/` | Reusable child modules: `cognito` (user pool + client + domain + seed users), `flip_s3_bucket` (one bucket per tenant with per-caller CORS methods), `secgroup` (security group with egress managed entirely inline), `ses` (sender identity + transactional email templates), `trust_ec2` (the Trust EC2 host) |
-| `ci/` | Separate root (`flip/ci/terraform.tfstate`): the GitHub Actions OIDC plan/apply roles. Applied from a laptop only — see `ci/README.md` |
+| `modules/` | Reusable child modules: `cognito` (user pool + client + domain + seed users), `flip_s3_bucket` (one bucket per tenant with per-caller CORS methods), `secgroup` (security group with egress managed entirely inline), `ses` (sender identity + transactional email templates), `trust_ec2` (the Trust EC2 host), `terraform_ci_bootstrap` (the CI plan/apply roles, the permissions boundary and the state bucket — NOT used by this root; see below) |
+| `ci/` | Adopters' wrapper root around `modules/terraform_ci_bootstrap`, for an account you own: tfvars-driven, local state then `make migrate-state`. Never run in AI Centre's accounts — see `ci/README.md` |
 
 ## AWS Profiles
 
@@ -77,8 +77,9 @@ make apply-fl-kit-slots                       # Targeted plan/apply of the /flip
 make destroy                                  # Selective destroy (preserves Cognito, Secrets, S3)
 make aws-login                                # AWS SSO login
 make print-tf-env                             # Print resolved TF_VAR_* as KEY=value (consumed by the CI workflows)
-make -C ci init/plan/apply                    # GitHub Actions OIDC roles (laptop only — see ci/README.md)
-make -C ci check-oidc-provider               # Does the account have GitHub's OIDC provider? (plan runs it first)
+make -C ci init/plan/apply/migrate-state      # Adopters only: CI bootstrap in your own account (see ci/README.md); AI Centre's accounts are the platform repos'
+make -C ci check-oidc-provider               # Does the account have GitHub's OIDC provider? (plan runs it, and check-not-managed-elsewhere, first)
+make tflint-lint                              # Static tflint lint (terraform recommended preset + AWS ruleset, .tflint.hcl) — CI counterpart is the TFLint job in validate_terraform.yml; acknowledge a deliberate exception in-code with `# tflint-ignore: <rule> # <why>` (the rationale needs that second `#` — `-- why` silently voids the annotation), never by disabling the rule. Run from the REPO ROOT (same parse-time env guard reason as checkov-lint)
 make checkov-lint                             # Static checkov security lint (IAM policy content + promoted posture checks) — CI counterpart is the Checkov Security Lint job in validate_terraform.yml (FLIP#1052, FLIP#1058); suppress deliberate breadth/posture in-code with `# checkov:skip=<ID>:<rationale>`. NB this Makefile's parse-time env guard needs the deploy env file — the REPO-ROOT `make checkov-lint` (or `bash deploy/providers/AWS/scripts/checkov_lint.sh`) runs env-free
 uv run --no-project --with pytest --with jinja2 --with click --with diagrams pytest tests/   # Credential-free static checks over the stack's artefacts (rendered templates, deploy scripts, and Terraform source itself — incl. the Cognito `callback_urls` = browser CORS allowlist invariants). CI counterpart: the AWS deploy tests job in validate_terraform.yml (which also installs graphviz first, so the render smoke test in test_architecture_diagram.py runs instead of skipping). Deps named explicitly rather than `uv sync`d: the dev group pulls ansible-core + pyqt5, the tests need four packages (`diagrams` is imported at module level by architecture/central_hub.py, so it's required for collection even without graphviz installed)
 ```
@@ -89,8 +90,8 @@ Terraform runs in GitHub Actions as well as from a laptop. `terraform_plan.yml`
 plans staging on every PR touching `deploy/providers/AWS/**`; `terraform_apply.yml`
 applies on push to `develop` (stag) and `main` (prod); `terraform_drift.yml` plans
 nightly and raises one issue per environment. All three authenticate via OIDC —
-no long-lived AWS keys in GitHub. **Merging to `main` now changes production
-infrastructure**; the old "don't `make apply` for prod" rule is superseded.
+no long-lived AWS keys in GitHub. **Merging to `main` changes production
+infrastructure.**
 
 Things worth knowing before touching any of it:
 
@@ -112,7 +113,7 @@ Things worth knowing before touching any of it:
   `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN`, which is why repointing an estate is a
   value change. `tests/test_ci_env_target.py` pins the script's token table against
   a real `make` probe of `deploy/env_mode.mk`.
-- **Env values now live in two places** (the operator `.env.<env>` file and the
+- **Env values live in two places** (the operator `.env.<env>` file and the
   GitHub environment) with no automatic link. Missing keys fail loudly; drifted
   ones show up as an unexpected plan diff.
 - **Use `aws-stag` / `aws-prod`, never the existing `flip` environment** — `flip`
@@ -147,21 +148,30 @@ Things worth knowing before touching any of it:
   delete it when the repoint lands. `.github/tests/workflows/test_terraform_stag_pause.py`
   pins the three guards.
 - **Every IAM role this root owns carries a permissions boundary**
-  (`var.iam_permissions_boundary_name`, the policy declared in `ci/`). The CI apply
-  role may only create a role, or write an inline policy onto one, when the role
-  carries it — which is what keeps `PowerUserAccess` + IAM write from being
-  administrator-equivalent. Adding a role means adding its literal name to
-  `var.managed_role_names` in `ci/variables.tf` and re-applying `ci/` from a laptop
-  first, or the apply cannot pass or re-trust it. **The LZA modes use the
+  (`var.iam_permissions_boundary_name`, the policy declared by
+  `modules/terraform_ci_bootstrap`). The CI apply role may only create a role, or
+  write an inline policy onto one, when the role carries it. **The LZA modes use the
   platform's boundary instead**: the Makefile defaults the variable to
   `AICentre-WorkloadRoleBoundary` there (londonaicentre/lza#51), which the
   accelerator deploys to every workload account and an LZA SCP requires on every
-  role — a role change without it is denied, from a laptop or from CI. `ci/` is
-  not applied on LZA; the platform owns the boundary and the CI roles.
-  `tests/test_iam_permissions_boundary.py` pins both defaults (FLIP#1199, FLIP#1280).
+  role — a role change without it is denied, from a laptop or from CI. An env file
+  can still set the variable on any mode; `tests/test_iam_permissions_boundary.py`
+  pins both defaults (FLIP#1199, FLIP#1280).
+- **The CI identity is not this root's.** The plan/apply roles, the boundary (outside
+  LZA) and the state bucket come from `modules/terraform_ci_bootstrap`, which a
+  platform repository (`aicentre-lza-iac` for AI Centre) instantiates per account,
+  **pinned to a FLIP commit SHA**. The module is a published interface: renaming an
+  input, changing a default, a resource address or the boundary's description
+  (ForceNew, attached to every FLIP role) breaks those callers or their imports —
+  `tests/test_terraform_ci_bootstrap.py` pins them. Adding a role to this root means
+  adding its literal name to `managed_role_names` in the module; adding a resource
+  from an AWS service this root does not use yet means adding the service to
+  `apply_service_prefixes`. Either way, merge that, have the platform repository bump
+  its pinned SHA and apply **before** the FLIP change that needs it, or the apply is
+  denied.
 - **The pytest suite under `tests/` runs in CI** as the `AWS deploy tests` job in
   `validate_terraform.yml`. The root `make unit_test` does not reach this directory
-  and `make -C deploy/providers/AWS test` cannot be used (parse-time env guard), so
+  and this directory's Makefile has no `test` target, so
   run it locally with the `uv run --no-project --with …` line above, from this
   directory — that is what CI runs, and `--frozen` would pull the dev group's
   ansible-core and pyqt5 for a suite that needs four packages.
@@ -171,8 +181,14 @@ Things worth knowing before touching any of it:
   as `TF_PROD`, and the script sets that variable along with the two role ARNs. It
   derives the secret-vs-variable split from `terraform_plan.yml` rather than
   hard-coding it — a key stored as a variable but read as `secrets.X` resolves to
-  empty and fails the run pointing at the wrong cause — and refuses when `ci/` is
-  initialised for the other account.
+  empty and fails the run pointing at the wrong cause. Before any GitHub write it
+  verifies the account under the mode's profile (state bucket owner, both roles
+  and their `sub` / apply `job_workflow_ref`, the boundary) and reads the role ARNs
+  from IAM; any mismatch stops it. It, like `scripts/add_fl_kits.sh`, must stay
+  **bash 3.2 compatible** (the stock macOS `/bin/bash` an admin runs it with): no
+  `declare -A`, no `mapfile`, and an array that can be empty expanded as
+  `${a[@]+"${a[@]}"}` — the `Deploy script tests on macOS bash 3.2` job in
+  `validate_terraform.yml` runs both harnesses there.
 - **Never seed a GitHub environment from a laptop `.env` file without checking it.**
   `scripts/reconcile_ci_env.py --env <e> --compare <file>` rebuilds the Terraform
   inputs from deployed state and reports drift (secrets shown as digests, never
@@ -181,6 +197,11 @@ Things worth knowing before touching any of it:
   only the Terraform inputs, so it refuses to overwrite a real operator env file,
   and on `--env prod` it treats an empty `DEMO_ASSETS_BUCKET_NAME` as a failed
   recovery rather than a value — empty there destroys the Ark+ demo resources.
+  The key recovers from one of two places depending on the estate (FLIP#1199):
+  `data.aws_s3_bucket.demo_assets` on legacy, where the bucket is adopted, and
+  `module.flip_demo_assets_bucket`'s `aws_s3_bucket.this` on LZA, where Terraform
+  creates it. The module has to be matched by name, since every `flip_s3_bucket`
+  caller contributes an `aws_s3_bucket.this`.
 
 Full flow, one-time setup and break-glass: [README.md](README.md#terraform-ci-plan-on-pr-apply-on-merge).
 
@@ -191,7 +212,7 @@ Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of 
 ## Infrastructure
 
 - **VPC**: 10.0.0.0/16, 2 AZs, public + private subnets
-- **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1). The FL task families serve **both FL backends** (FLIP#566): `FL_BACKEND` switches image/ports/command/env/mounts — NVFLARE (single port `FL_SERVER_PORT`, EFS kit from `fl-flare-participant-kits/<FLARE_KIT_DATE>`) vs Flower (SuperLink 9092 Fleet/9093 Exec/9097 health, TLS + SuperNode auth, creds from `fl-flower-participant-kits/<FLOWER_KIT_DATE>`, shared `fl_jobs` EFS volume, register-supernode-keys one-shot). The NLB listener stays on `FL_SERVER_PORT` for both; only the target-side port changes.
+- **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1). The FL task families serve **both FL backends** (FLIP#566): `FL_BACKEND` switches image/ports/command/env/mounts — NVFLARE (single port `FL_SERVER_PORT`, EFS kit from `fl-flare-participant-kits/<FLARE_KIT_DATE>`) vs Flower (SuperLink 9092 Fleet/8000 Control API (HTTP since flwr 1.37)/9097 health, TLS + SuperNode auth, creds from `fl-flower-participant-kits/<FLOWER_KIT_DATE>`, shared `fl_jobs` EFS volume, register-supernode-keys one-shot). The NLB listener stays on `FL_SERVER_PORT` for both; only the target-side port changes.
 - **EC2**: Trust host (t3.xlarge, private subnet, SSM-only access)
 - **RDS**: PostgreSQL in private subnets. In production flip-api connects through **RDS Proxy** using **IAM auth** (short-lived per-connection tokens); the proxy uses the RDS-managed master secret to reach the DB, so secret rotation no longer takes flip-api down (FLIP#556). No `rds_iam` Postgres grant is needed.
 - **ALB**: Internal (`internal = true`, private subnets); HTTPS termination for `/api/*` reached via CloudFront VPC origin (no public IP)
@@ -200,7 +221,7 @@ Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of 
 - **Secrets Manager**: `FLIP_API` secret (AES key, DB password, key hashes)
 - **Cognito**: `flip-user-pool` with email auth
 - **Architecture diagrams**: `architecture/central_hub.py` renders the Central Hub pictures (request/FL paths; data/platform services) with the `diagrams` library, one pair per deployment mode (`Variant`): the self-contained `central-hub-aws-{network,data}.png` and the LZA `central-hub-aws-lza-{network,data}.png`. The ReadTheDocs "Deploy the Central Hub on AWS" / "… on AWS (LZA)" pages render them at docs build time; `make aws-diagram` (repo root; `--variant legacy|lza` on the script for one pair) refreshes the four committed copies under `docs/` that the README embeds (runs in docker when `dot` is absent). `tests/test_architecture_diagram.py` pins the script's `TERRAFORM_ADDRESSES` map — ONE superset over both modes — to the root-module `.tf` files both ways: a drawn address that no longer exists fails, and so does any resource of a type in `DRAWN_RESOURCE_TYPES` (ECS services, LBs' target groups, CloudFront, RDS Proxy, EFS, buckets, endpoints, …) or any root `module` that is neither drawn nor listed in `UNDRAWN_MODULES`. A label whose Terraform is gated to one mode goes in `VARIANT_ONLY_LABELS` and may only be drawn in that mode's pictures; every other label must be drawn in both (the renderer's `assert_complete` enforces it per variant, so the graphviz smoke tests catch a shared label left out of one mode). `data` blocks are inventoried for the existence check only (the LZA pictures draw the accelerator VPC/subnets this root looks up) and can never become "must be drawn". **A `.tf` change touching those updates the map in the same PR**; the package is deliberately not called `diagrams/` because `tests/conftest.py` puts this directory on `sys.path`.
-- **Container registry**: **GHCR** (`ghcr.io/londonaicentre/`) for every FLIP image (flip-api, flare-fl-api, flare-fl-server, flower-superlink, trust-api, imaging-api, data-access-api, orthanc, omop-db, XNAT). ECS Fargate task definitions pull directly from GHCR — `var.docker_registry` in `variables.tf` defaults to it; trust EC2 / on-prem hosts do too. **There is no ECR mirror.** A surgical centralhub redeploy is now one command: GH workflow `workflow_dispatch` to build the branch image to GHCR (publishes `sha-<short7>`) → `make deploy-centralhub TAG=sha-<short7>`, which registers new task-definition revisions and repoints the services (FLIP#751 — the previously manual register-task-definition + update-service runbook). The flip-ui bundle ships separately via `make deploy-ui` (it's static assets in S3, not a container image).
+- **Container registry**: **GHCR** (`ghcr.io/londonaicentre/`) for every FLIP image (flip-api, flare-fl-api, flare-fl-server, flower-superlink, trust-api, imaging-api, data-access-api, orthanc, omop-db, XNAT). ECS Fargate task definitions pull directly from GHCR — `var.docker_registry` in `variables.tf` defaults to it; trust EC2 / on-prem hosts do too. **There is no ECR mirror outside LZA**; on the LZA modes `DOCKER_REGISTRY` is the account's ECR pull-through cache of GHCR (FLIP#749), and `scripts/resolve-image-tags.sh` probes that registry's tags upstream on `ghcr.io/<org>/` (the runner has no ECR login; FLIP#1199). A surgical centralhub redeploy is now one command: GH workflow `workflow_dispatch` to build the branch image to GHCR (publishes `sha-<short7>`) → `make deploy-centralhub TAG=sha-<short7>`, which registers new task-definition revisions and repoints the services (FLIP#751 — the previously manual register-task-definition + update-service runbook). The flip-ui bundle ships separately via `make deploy-ui` (it's static assets in S3, not a container image).
 
 ## Verifying a Central-Hub FL redeploy
 

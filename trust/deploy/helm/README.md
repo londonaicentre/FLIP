@@ -191,8 +191,9 @@ reached the node leaves the pod `Pending` on the `hostPath type check failed` ev
 make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=stag
 ```
 
-This runs `helm upgrade --install` with the generated override and then
-`patch-kit-secrets` (injects the per-trust keys into the Helm-owned Secret and
+With `KIT=` this first regenerates `k8s-trust-<CODE>.yaml` from the kit
+(`sync-kit-override`, so a hand edit to that file does not survive), then runs
+`helm upgrade --install` with it and then `patch-kit-secrets` (injects the per-trust keys into the Helm-owned Secret and
 restarts the API deployments). `deploy` depends on `preflight`, so every install
 first runs `scripts/preflight.sh` — five sections covering required tools and
 versions, cluster reachability, the chart files, the trust kit (only when `KIT=`
@@ -301,6 +302,7 @@ PVCs explicitly if you want a clean slate.
 | `environment` | `production` | Deployment environment (production, stag, dev) |
 | `logLevel` | `INFO` | Log level for all services |
 | `flBackend` | `nvflare` | FL backend: `nvflare` or `flower` |
+| `governance.document` | `""` | The trust's governance policy document — the TOML itself, not a path (FLIP#1259). Empty = no document: the platform defaults apply and nothing is mounted. See [Trust governance policy](#trust-governance-policy-flip1259) |
 | `awsRegion` | `eu-west-2` | AWS region for S3 access |
 | `imagePullSecrets` | `[]` | Registry credentials for private images |
 | `namespace.create` | `true` | Whether to create the namespace |
@@ -377,6 +379,63 @@ loaded first so their imaging concepts resolve.
 | `secrets.create` | `false` | Whether the chart creates a Secret resource |
 | `secrets.existingName` | `flip-trust-secrets` | Name of existing Secret |
 | `secrets.data.*` | `""` | Secret key-value pairs (base64 encoded) |
+
+### Trust governance policy (FLIP#1259)
+
+A trust can state its whole runtime access policy in one optional TOML document instead of in the
+individual settings above. Three sections, each read by the service that enforces it:
+
+| Section | Read by | Effect |
+| ------- | ------- | ------ |
+| `[disclosure]` | data-access-api | `min_cohort_size` — may RAISE the kit's `COHORT_QUERY_THRESHOLD`, never lower it |
+| `[access]` | data-access-api | permit/deny rules over project + operation (`cohort.statistics`, `cohort.dataframe`, `cohort.accession_ids`), decided the same way whatever their order |
+| `[fl_privacy.nvflare]` | fl-client (NVFLARE only) | the site update-privacy filter — an alternative to `FL_SITE_PRIVACY_*`, never both |
+
+The document is **optional and additive**. Left empty — the default — the platform defaults apply
+exactly as before: no ConfigMap, no volume, no mount, no env var, and a default install's pod specs
+are the ones they were before this value existed. [`../../governance.example.toml`](../../governance.example.toml)
+is a worked example of every section; [`trust/README.md`](../../README.md#trust-governance-policy-optional)
+explains how rules are decided.
+
+**How it reaches the pods.** The value is the document *itself*, not a path — a path on the deploy
+host means nothing inside a pod. The chart renders it into a ConfigMap
+(`<release>-flip-trust-governance`). `data-access-api` mounts it **read-only** at `/app/governance.toml`,
+with `ACCESS_POLICY_FILE` pointing there. The NVFLARE fl-client never mounts it — researcher code runs
+in that container — but its `governance-extract` init container, in the same image, writes the
+`[fl_privacy]` table alone to an emptyDir the client reads read-only; an invalid document fails the
+init container and the client does not start. The Flower client gets none of it. The file is
+operator-owned, and the hub can neither set nor read it.
+
+Pods roll on what they read: `data-access-api` carries a `checksum/governance` of the whole ConfigMap;
+the fl-client carries `governance.flPrivacyChecksum`, which sync-kit sets to the digest of its section
+alone, so an `[access]`-only edit leaves a running FL job alone. An edit to `[fl_privacy.nvflare]`
+does roll the fl-client and interrupts its job: apply one between runs.
+
+**To deploy one** — through the kit, not by hand:
+
+```sh
+# 1. Point ACCESS_POLICY_FILE at the document in trust/.env.<CODE>.<env> (a path resolved against
+#    trust/, as Compose resolves it), then validate: both halves, through the loaders the services
+#    themselves run, including a site privacy section on a Flower trust and a filter in both places.
+make -C trust check-governance KIT=<CODE> PROD=<env>
+
+# 2. Deploy. Both targets regenerate k8s-trust-<CODE>.yaml from the kit first: sync-kit embeds the
+#    document as governance.document, validates it again, writes flPrivacyChecksum, and carries the
+#    kit's COHORT_QUERY_THRESHOLD and FL_SITE_PRIVACY_* to the chart.
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>    # or upgrade-trust-k8s
+```
+
+Do not set the document with `helm upgrade --set-file governance.document=…`. The next
+`deploy-trust-k8s` or `upgrade-trust-k8s` passes the `-f` files without `--reuse-values`, and a policy
+set that way silently disappears from the release. A document the sync cannot read, or one the
+services would refuse, fails the sync by name, so nothing is deployed.
+
+Only a tighter policy is accepted: an unknown section or key, a misspelt action, a project id that is
+not a UUID, a rule without an `effect`, an empty document, or a `min_cohort_size` below the kit's
+floor stops the service at startup rather than being ignored. On a running trust that reads as a
+`data-access-api` pod that will not come back up, or a `governance-extract` init container whose log
+carries `[site-privacy] FATAL: ...` — see
+[TROUBLESHOOTING §8](TROUBLESHOOTING.md#8-trust-governance-policy-flip1259).
 
 ### Service-Specific Settings
 

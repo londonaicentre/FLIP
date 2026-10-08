@@ -35,6 +35,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [7.8 EFS Sync Permission Issues (Root vs UID 1001)](#78-efs-sync-permission-issues-root-vs-uid-1001)
    - [7.9 Container Image Pull from Private ECR](#79-container-image-pull-from-private-ecr)
    - [7.10 gRPC Async Connect Fails on Kernel 7 (Ubuntu 26.04)](#710-grpc-async-connect-fails-on-kernel-7-ubuntu-2604)
+8. [Trust Governance Policy (FLIP#1259)](#8-trust-governance-policy-flip1259)
 
 ---
 
@@ -860,7 +861,7 @@ make -C trust/deploy/helm up OVERRIDES_FILE=k8s-trust-Trust_MyNew.yaml
 
 `sync-kit` patches the per-trust keys into the Kubernetes Secret and writes the
 secret-free `k8s-trust-Trust_MyNew.yaml` override (hub URL, FL backend, AWS
-region, fl-client bucket, slot-aware kit path). See the chart README Quickstart.
+region, OMOP vocabulary bucket, slot-aware kit path). See the chart README Quickstart.
 
 ### Heartbeat Failure
 
@@ -1321,6 +1322,73 @@ kit (e.g., `/opt/flip/k8s-fl-client-kits/Trust_K8s/startup/`):
 | `GRPC_POLL_STRATEGY` (`epoll1`, `poll`, `none`, `poll_cv2`) | None work |
 | `GRPC_DNS_RESOLVER=native` | No improvement |
 | `channel.channel_ready()` explicit wait | Works locally, but **not needed** — the `agrpc` scheme alone suffices |
+
+---
+
+## 8. Trust Governance Policy (FLIP#1259)
+
+The trust's governance document is carried by the chart as `governance.document` (written by
+sync-kit from the kit's `ACCESS_POLICY_FILE`), rendered into the `<release>-flip-trust-governance`
+ConfigMap and mounted **read-only** at `/app/governance.toml` in the `data-access-api` pod, with
+`ACCESS_POLICY_FILE` pointing at it. The NVFLARE fl-client reads only its `[fl_privacy]` section,
+which its `governance-extract` init container writes to `/app/governance/governance.fl_privacy.toml`;
+the Flower client gets nothing. An empty value means no document at all: nothing is mounted and the
+platform defaults apply.
+
+**Symptom A — a service will not start after a policy edit.** `data-access-api` crash-loops, or the
+NVFLARE fl-client pod sits in `Init:Error` / `Init:CrashLoopBackOff` on its `governance-extract` init
+container. Both fail closed on an invalid document, so the reason is in the container log rather than
+in any Helm output:
+
+```bash
+kubectl logs -n flip-trust deploy/<release>-flip-trust-data-access-api --tail=20
+kubectl logs -n flip-trust deploy/<release>-flip-trust-fl-client-<netId> -c governance-extract --tail=20
+kubectl logs -n flip-trust deploy/<release>-flip-trust-fl-client-<netId> --tail=20
+# the fl-client half prints: [site-privacy] FATAL: <what is wrong, and where>
+```
+
+The usual causes are a key or section the format does not define, a misspelt action, a project id
+that is not a UUID, a rule without an `effect`, a `min_cohort_size` below the kit's floor,
+`gamma <= 0` / `percentile` outside `[0, 100]`, or the site privacy filter set both in
+`[fl_privacy.nvflare]` and in `FL_SITE_PRIVACY_*`. These are deliberately not ignored — a
+silently-dropped access rule is worse than no rule, because the operator believes it is in force.
+Validate before the next deploy (sync-kit also refuses such a document):
+
+```bash
+make -C trust check-governance KIT=<CODE>   # both halves, through the services' own loaders
+```
+
+**Symptom B — the document is right but the pods behave as if it were not there.** Look at what the
+pods actually hold before anything else:
+
+```bash
+kubectl get configmap <release>-flip-trust-governance -n flip-trust \
+  -o jsonpath='{.data.governance\.toml}' | head -5
+kubectl logs -n flip-trust deploy/<release>-flip-trust-data-access-api | grep '\[governance\]'
+kubectl exec -n flip-trust deploy/<release>-flip-trust-data-access-api -- cat /app/governance.toml | head -5
+```
+
+- **The `[governance]` line says `no policy configured`** → `governance.document` was empty in the
+  values Helm actually used. A document set with `--set-file` is dropped by the next
+  `deploy-trust-k8s` / `upgrade-trust-k8s`, which pass the `-f` files without `--reuse-values`: set
+  `ACCESS_POLICY_FILE` in the kit and redeploy through those targets, which regenerate the override
+  from it. `helm get values <release> -n flip-trust` shows what the release holds.
+- **There is no `[governance]` line at all** → the image predates governance support (FLIP#1259) and
+  ignores the document. Move the trust to a release that has it.
+- **The line's `sha256=` is not the ConfigMap's** → the pod runs an older document. Compare with the
+  bytes the pod mounts, not the file on the deploy host: embedding the document in the override can
+  change its trailing blank lines and final newline, so the host file's `sha256sum` need not match.
+  `kubectl get configmap <release>-flip-trust-governance -n flip-trust -o jsonpath='{.data.governance\.toml}'
+  | sha256sum` is the digest the pod should log. Editing the ConfigMap by hand (`kubectl edit
+  configmap`) restarts nothing; redeploy with `deploy-trust-k8s KIT=`, which regenerates the override
+  and rolls the pods.
+- **The fl-client ignores `[fl_privacy.nvflare]`** → check the backend: on Flower nothing reads the
+  section and the chart does not wire it (sync-kit refuses such a document). On NVFLARE the client
+  reads the extract, not the document: `kubectl exec ... fl-client-<netId> -- cat
+  /app/governance/governance.fl_privacy.toml`.
+
+`kubectl exec ... -- cat /app/governance.toml` is the check that settles a dispute: it is the file
+the services actually parse, so it is the policy actually enforced.
 
 ---
 

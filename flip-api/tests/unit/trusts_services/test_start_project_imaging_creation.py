@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import json
 import uuid
 from unittest import mock
 from unittest.mock import MagicMock
@@ -38,7 +39,6 @@ user_id = uuid.uuid4()
 user_name = "user one"
 user_email = "user1@example.com"
 user_encrypted_setup_path = "encrypted_setup_path"
-user_pool_id = uuid.uuid4()
 # =============================================================================================
 
 
@@ -104,15 +104,6 @@ def mock_get_approved_trusts():
 
 
 @pytest.fixture
-def mock_get_user_pool_id():
-    with mock.patch(
-        "flip_api.trusts_services.start_project_imaging_creation.get_user_pool_id"
-    ) as mock_get_user_pool_id:
-        mock_get_user_pool_id.return_value = user_pool_id
-        yield mock_get_user_pool_id
-
-
-@pytest.fixture
 def mock_get_users_with_access():
     with mock.patch(
         "flip_api.trusts_services.start_project_imaging_creation.get_users_with_access"
@@ -122,19 +113,17 @@ def mock_get_users_with_access():
 
 
 @pytest.fixture
-def mock_get_cognito_users():
-    with mock.patch(
-        "flip_api.trusts_services.start_project_imaging_creation.get_cognito_users"
-    ) as mock_get_cognito_users:
-        mock_get_cognito_users.return_value = [
-            CognitoUser(id=user_id, email=user_email, is_disabled=False),
-        ]
-        yield mock_get_cognito_users
+def mock_list_users(fake_idp):
+    """The identity-provider double, primed with the directory the handler lists."""
+    fake_idp.list_users.return_value = [
+        CognitoUser(id=user_id, email=user_email, is_disabled=False),
+    ]
+    return fake_idp
 
 
 # Test case for permission failure
 @pytest.mark.asyncio
-async def test_permission_failure(mock_request, mock_get_session, mock_has_permissions):
+async def test_permission_failure(mock_request, mock_get_session, mock_has_permissions, fake_idp):
     # Simulate permission denial
     mock_has_permissions.return_value = None
 
@@ -145,6 +134,7 @@ async def test_permission_failure(mock_request, mock_get_session, mock_has_permi
             trust=trust_example,
             db=mock_get_session,
             user_id=user_id,
+            idp=fake_idp,
         )
 
     assert exc_info.value.status_code == 403
@@ -153,7 +143,7 @@ async def test_permission_failure(mock_request, mock_get_session, mock_has_permi
 
 # Test case for project not found
 @pytest.mark.asyncio
-async def test_project_not_found(mock_request, mock_get_session, mock_has_permissions, mock_get_project):
+async def test_project_not_found(mock_request, mock_get_session, mock_has_permissions, mock_get_project, fake_idp):
     # Simulate project not found
     mock_get_project.return_value = None
 
@@ -164,6 +154,7 @@ async def test_project_not_found(mock_request, mock_get_session, mock_has_permis
             trust=trust_example,
             db=mock_get_session,
             user_id=user_id,
+            idp=fake_idp,
         )
 
     assert exc_info.value.status_code == 404
@@ -180,9 +171,9 @@ async def test_successful_imaging_creation(
     mock_get_session,
     mock_has_permissions,
     mock_get_project,
-    mock_get_user_pool_id,
     mock_get_users_with_access,
-    mock_get_cognito_users,
+    mock_list_users,
+    fake_idp,
 ):
     response = await start_project_imaging_creation(
         request=mock_request,
@@ -190,12 +181,19 @@ async def test_successful_imaging_creation(
         trust=trust_example,
         db=mock_get_session,
         user_id=user_id,
+        idp=fake_idp,
     )
 
     assert response["success"] == "Imaging project creation task queued successfully"
     # Verify task was added and committed
     mock_get_session.add.assert_called_once()
     mock_get_session.commit.assert_called_once()
+
+    # The directory is listed once and narrowed to the project's members for the trust payload.
+    fake_idp.list_users.assert_called_once_with()
+    task = mock_get_session.add.call_args[0][0]
+    payload = json.loads(task.payload)
+    assert [u["id"] for u in payload["users"]] == [str(user_id)]
 
 
 @pytest.mark.asyncio
@@ -204,13 +202,13 @@ async def test_queue_imaging_creation_does_not_check_the_caller(
     mock_get_session,
     mock_has_permissions,
     mock_get_project,
-    mock_get_user_pool_id,
     mock_get_users_with_access,
-    mock_get_cognito_users,
+    mock_list_users,
+    fake_idp,
 ):
     """The approval fan-out's entry point: a trust approved by an earlier call is queued whoever completes approval."""
     response = await queue_imaging_creation(
-        request=mock_request, project_id=project_id, trust=trust_example, db=mock_get_session
+        request=mock_request, project_id=project_id, trust=trust_example, db=mock_get_session, idp=fake_idp
     )
 
     assert response["success"] == "Imaging project creation task queued successfully"
@@ -225,9 +223,9 @@ async def test_db_error_during_task_creation(
     mock_get_session,
     mock_has_permissions,
     mock_get_project,
-    mock_get_user_pool_id,
     mock_get_users_with_access,
-    mock_get_cognito_users,
+    mock_list_users,
+    fake_idp,
 ):
     mock_get_session.add.side_effect = Exception("DB write failed")
 
@@ -238,6 +236,7 @@ async def test_db_error_during_task_creation(
             trust=trust_example,
             db=mock_get_session,
             user_id=user_id,
+            idp=fake_idp,
         )
 
     assert exc_info.value.status_code == 500
@@ -252,12 +251,10 @@ async def test_dicom_to_nifti_false_forwarded_to_trust(
     mock_get_session,
     mock_has_permissions,
     mock_get_project,
-    mock_get_user_pool_id,
     mock_get_users_with_access,
-    mock_get_cognito_users,
+    mock_list_users,
+    fake_idp,
 ):
-    import json
-
     # Override fixture to set dicom_to_nifti=False
     mock_get_project.return_value.dicom_to_nifti = False
 
@@ -267,6 +264,7 @@ async def test_dicom_to_nifti_false_forwarded_to_trust(
         trust=trust_example,
         db=mock_get_session,
         user_id=user_id,
+        idp=fake_idp,
     )
 
     # Verify the task payload includes dicom_to_nifti=False
@@ -282,9 +280,9 @@ async def test_project_without_imaging_is_refused_with_409(
     mock_get_session,
     mock_has_permissions,
     mock_get_project,
-    mock_get_user_pool_id,
     mock_get_users_with_access,
-    mock_get_cognito_users,
+    mock_list_users,
+    fake_idp,
 ):
     """FLIP#1071: a direct call cannot start an imaging stage the project was created without."""
     mock_get_project.return_value.has_imaging = False
@@ -296,6 +294,7 @@ async def test_project_without_imaging_is_refused_with_409(
             trust=trust_example,
             db=mock_get_session,
             user_id=user_id,
+            idp=fake_idp,
         )
 
     assert excinfo.value.status_code == 409
@@ -313,6 +312,7 @@ async def test_imaging_follows_the_trusts_approval(
     mock_get_session,
     mock_get_project,
     mock_get_approved_trusts,
+    fake_idp,
     project_status,
     approved_trusts,
 ):
@@ -322,7 +322,7 @@ async def test_imaging_follows_the_trusts_approval(
 
     with pytest.raises(HTTPException) as excinfo:
         await queue_imaging_creation(
-            request=mock_request, project_id=project_id, trust=trust_example, db=mock_get_session
+            request=mock_request, project_id=project_id, trust=trust_example, db=mock_get_session, idp=fake_idp
         )
 
     assert excinfo.value.status_code == 409

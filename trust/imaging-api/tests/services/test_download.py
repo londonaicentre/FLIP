@@ -16,6 +16,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -653,3 +654,28 @@ class TestDownloadFileLocalWriteFailure:
 
         with pytest.raises(NotFoundError, match="No data found at"):
             download_file("http://xnat/missing", "/tmp/irrelevant.zip", {})
+
+
+def test_identifiers_stay_in_one_segment_at_http_boundary(xnat_path_segment, tmp_path, sent_xnat_requests):
+    raw, encoded = xnat_path_segment
+    url = format_download_url(raw, raw, raw, resource_type=raw)
+    download_file(url, str(tmp_path / "images.zip"), {"X-Request-ID": "trace-1"})
+
+    assert len(sent_xnat_requests) == 1
+    request = sent_xnat_requests[0]
+    parsed = urlsplit(request.url)
+    assert parsed.path == (
+        f"/data/projects/{encoded}/subjects/{encoded}/experiments/{encoded}/scans/ALL/resources/{encoded}/files"
+    )
+    assert parsed.query == "format=zip"
+    assert parsed.fragment == ""
+    assert request.headers["X-Request-ID"] == "trace-1"
+
+
+@pytest.mark.parametrize("invalid", ["", ".", ".."])
+@pytest.mark.parametrize("field", ["project_id", "subject_id", "experiment_id_or_label", "resource_type"])
+def test_empty_and_dot_segments_fail_before_http(field, invalid, sent_xnat_requests):
+    kwargs = {"project_id": "PROJ", "subject_id": "SUBJ", "experiment_id_or_label": "EXP", field: invalid}
+    with pytest.raises(ValueError, match="empty or a dot-segment"):
+        format_download_url(**kwargs)
+    assert sent_xnat_requests == []

@@ -46,6 +46,7 @@ from check_local_status import (  # noqa: E402
     discover_trust_kits,
     instance_prefix,
     parse_compose_containers,
+    unexpected_exits,
 )
 
 PASS = 0
@@ -240,6 +241,22 @@ def test_parse_compose_containers() -> None:
     stray = parse_compose_containers("\tsome-stray-container\tUp 1 hour")
     _assert(stray == {}, "row with no service label is dropped", f"got {stray!r}")
     _assert(parse_compose_containers("") == {}, "empty output -> empty map")
+
+
+def test_a_completed_governance_extract_is_not_an_unexpected_exit() -> None:
+    """fl-governance-init is a one-shot that exits 0 by design (FLIP#1259); only a failed one, or
+    any other exited container, is worth a warning."""
+    listing = "\n".join(
+        [
+            "trust1-fl-governance-init-1\tExited (0) 3 minutes ago",
+            "trust2-fl-governance-init-1\tExited (1) 3 minutes ago",
+            "deploy-fl-server-net-2-1\tExited (137) 2 minutes ago",
+        ]
+    )
+    names = unexpected_exits(listing)
+    _assert("trust1-fl-governance-init-1" not in names, "a completed extract is expected", str(names))
+    _assert("trust2-fl-governance-init-1" in names, "a failed extract is reported", str(names))
+    _assert("deploy-fl-server-net-2-1" in names, "any other exit is reported", str(names))
 
 
 def main() -> None:

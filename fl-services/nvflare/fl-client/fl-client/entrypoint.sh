@@ -53,12 +53,13 @@ echo "✅ log_config.json written to ${LOG_CFG}"
 #################################################################
 ###### Site privacy policy #####################################
 #################################################################
-# Renders /app/local/privacy.json from FL_SITE_PRIVACY_* (or removes a stale
-# render when unset). An invalid configuration must NOT fall through to an
-# unfiltered client: fail closed and stop the container.
+# Renders /app/local/privacy.json from FL_SITE_PRIVACY_* or the governance
+# document's [fl_privacy.nvflare] section (or removes a stale render when neither
+# is set). An invalid configuration must NOT fall through to an unfiltered
+# client: fail closed and stop the container.
 echo "🔧 Rendering site privacy policy..."
 if ! python -m flip.nvflare.site_policy /app/local/privacy.json; then
-    echo "❌ [entrypoint] invalid FL_SITE_PRIVACY_* configuration — refusing to start fl-client (fail closed)" >&2
+    echo "❌ [entrypoint] invalid site privacy configuration (FL_SITE_PRIVACY_* or the governance document) — refusing to start fl-client (fail closed)" >&2
     exit 1
 fi
 #################################################################

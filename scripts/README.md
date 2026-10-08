@@ -62,7 +62,8 @@ ports, bind dirs) always survive a re-run.
 - **`site_upgrade.py`** (invoked by `make -C trust upgrade-trust`, and by the AWS/Helm twins —
   see `AGENTS.md` "Site release upgrades") — the **plan-and-guard-and-pin** phase of a site release
   upgrade (FLIP#1204). Resolves the target tag against what the hub reports on `/api/health`
-  (defaults to that; `--tag vX.Y.Z` or `--tag sha-<short7>` overrides), runs the guards (image tag
+  (defaults to that; `--tag vX.Y.Z` or `--tag sha-<short7>` overrides), says when GitHub lists a newer
+  release (offering to stop and move to it only when the hub already runs it), runs the guards (image tag
   shape, downgrade → `--force`, release-tag checkout match → `--allow-checkout-drift`, every image
   actually built at the tag via `docker manifest inspect`, operator confirmation unless `--yes`),
   and — if everything passes — rewrites `DOCKER_TAG` / `DOCKER_FL_TAG` in the kit's Hub-shared

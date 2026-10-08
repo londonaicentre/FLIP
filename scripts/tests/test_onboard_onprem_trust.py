@@ -35,6 +35,9 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import os
+import shlex
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -177,7 +180,7 @@ def test_7_site_privacy_rejects_unsupported_backend() -> None:
         SCRIPTS_DIR.parent,
     )
     _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
-    _assert("ignored" in result.detail, "detail explains that Flower ignores the policy")
+    _assert("nothing on flower enforces it" in result.detail, "detail explains that Flower ignores the policy")
 
 
 def test_8_site_privacy_not_configured_reports_cleanly() -> None:
@@ -396,6 +399,211 @@ def test_19_hub_on_its_release_sha_build_is_not_behind() -> None:
     _assert(other.status == mod.Status.WARN, "an unrelated sha is still reported", other.detail)
 
 
+EXAMPLE_DOCUMENT = SCRIPTS_DIR.parent / "trust" / "governance.example.toml"
+
+
+def _document(text: str) -> str:
+    handle = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False, encoding="utf-8")
+    handle.write(text)
+    handle.close()
+    return handle.name
+
+
+def test_20_governance_document_valid_passes_with_its_digest() -> None:
+    """The checklist that gates upgrade-onprem-trust validates the [disclosure]/[access] half."""
+    print("▶ valid governance document -> PASS, names the digest")
+    result = mod.check_governance_document(
+        {"FL_BACKEND": "nvflare", "ACCESS_POLICY_FILE": str(EXAMPLE_DOCUMENT)}, True, "TEST", SCRIPTS_DIR.parent
+    )
+    _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
+    _assert("sha256 " in result.detail, "detail carries the digest the service logs", result.detail)
+
+
+def test_21_governance_document_below_the_floor_fails() -> None:
+    print("▶ governance document lowering the kit floor -> FAIL")
+    document = _document("[disclosure]\nmin_cohort_size = 5\n")
+    result = mod.check_governance_document(
+        {"ACCESS_POLICY_FILE": document, "COHORT_QUERY_THRESHOLD": "10"}, True, "TEST", SCRIPTS_DIR.parent
+    )
+    _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
+    _assert("below the configured COHORT_QUERY_THRESHOLD" in result.detail, "detail is the loader's", result.detail)
+
+
+def test_22_governance_document_not_configured_passes() -> None:
+    print("▶ no governance document -> PASS, platform defaults")
+    result = mod.check_governance_document({"COHORT_QUERY_THRESHOLD": "12"}, True, "TEST", SCRIPTS_DIR.parent)
+    _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
+    _assert("COHORT_QUERY_THRESHOLD=12" in result.detail, "detail names the floor in force", result.detail)
+
+
+def test_23_site_privacy_reads_the_documents_section() -> None:
+    """A document with gamma = 0 used to PASS "no site privacy policy configured" here, then crash-loop the client."""
+    print("▶ fail-open gamma in the document -> FAIL")
+    document = _document('[fl_privacy.nvflare]\npolicy = "percentile"\ngamma = 0\n')
+    result = mod.check_site_privacy_policy(
+        {"FL_BACKEND": "nvflare", "ACCESS_POLICY_FILE": document}, True, "TEST", SCRIPTS_DIR.parent
+    )
+    _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
+    _assert("gamma" in result.detail, "detail names the parameter", result.detail)
+
+
+def test_24_site_privacy_in_both_sources_fails() -> None:
+    print("▶ filter in both the document and the kit -> FAIL")
+    result = mod.check_site_privacy_policy(
+        {"FL_BACKEND": "nvflare", "ACCESS_POLICY_FILE": str(EXAMPLE_DOCUMENT), "FL_SITE_PRIVACY_POLICY": "percentile"},
+        True,
+        "TEST",
+        SCRIPTS_DIR.parent,
+    )
+    _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
+    _assert("configured twice" in result.detail, "detail says why", result.detail)
+
+
+def test_25_documents_nvflare_section_on_flower_fails() -> None:
+    print("▶ [fl_privacy.nvflare] on a Flower trust -> FAIL")
+    result = mod.check_site_privacy_policy(
+        {"FL_BACKEND": "flower", "ACCESS_POLICY_FILE": str(EXAMPLE_DOCUMENT)}, True, "TEST", SCRIPTS_DIR.parent
+    )
+    _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
+
+
+def test_26_a_relative_document_resolves_against_trust() -> None:
+    """Compose resolves ACCESS_POLICY_FILE against trust/ (--project-directory trust); so does the checklist."""
+    print("▶ relative ACCESS_POLICY_FILE -> resolved against trust/")
+    result = mod.check_governance_document(
+        {"ACCESS_POLICY_FILE": "./governance.example.toml"}, True, "TEST", SCRIPTS_DIR.parent
+    )
+    _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
+
+
+def test_27_selected_kit_controls_values_and_filename_hints() -> None:
+    """Read the suffixed kit, even when an unsuffixed kit with different values exists."""
+    print("▶ selected kit controls values and filename hints")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        trust = root / "trust"
+        trust.mkdir()
+        (trust / ".env.SITE").write_text("EXPECTED_TRUST_ID=wrong-file\n")
+        selected = trust / ".env.SITE.production"
+        selected.write_text(
+            "EXPECTED_TRUST_ID=selected-file\nNUM_AVAILABLE_GPUS=invalid\n"  # pragma: allowlist secret (synthetic kit)
+        )
+        passed = mod.Check("external probe", mod.Status.PASS, "mocked")
+        with (
+            mock.patch.object(mod, "check_swarm", return_value=passed),
+            mock.patch.object(mod, "check_hub_shared_current", return_value=passed),
+            mock.patch.object(mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "invalid")),
+        ):
+            checks = mod.run_checks("SITE", root, selected)
+        present = next(check for check in checks if check.label == "Kit file present")
+        _assert(present.status == mod.Status.PASS, "selected file is present")
+        _assert(present.detail == "trust/.env.SITE.production", "names the selected file", present.detail)
+        identity = next(check for check in checks if check.label == "EXPECTED_TRUST_ID self-check")
+        _assert(identity.detail == "set to selected-file", "reads the selected kit's values", identity.detail)
+        hints = "\n".join(hint for check in checks for hint in check.hints)
+        _assert("trust/.env.SITE.production" in hints, "edit hints name the selected kit", hints)
+        _assert("trust/.env.SITE " not in hints and "trust/.env.SITE," not in hints, "no legacy-path advice", hints)
+        missing = mod.check_kit_file("SITE", selected.with_name("missing.production"))
+        _assert(missing.status == mod.Status.FAIL, "missing explicit file still fails readiness")
+
+
+def test_28_missing_file_heading_and_advice_name_the_selected_path() -> None:
+    """Missing suffixed kits give actionable diagnostics without silently checking a legacy kit."""
+    print("▶ selected missing kit is named in the heading and advice")
+    selected = SCRIPTS_DIR.parent / "trust/.env.MISSING.production"
+    out = io.StringIO()
+    exit_code = None
+    with (
+        mock.patch.object(sys, "argv", ["prog", "MISSING", "--kit-file", str(selected), "--gate"]),
+        mock.patch.object(sys, "stdout", out),
+        mock.patch.object(mod, "fetch_public_ip", return_value=None),
+        mock.patch.object(mod, "check_swarm", return_value=mod.Check("swarm", mod.Status.PASS, "mocked")),
+    ):
+        try:
+            mod.main()
+        except SystemExit as error:
+            exit_code = error.code
+    _assert(exit_code == 1, "missing selected kit exits 1")
+    _assert(out.getvalue().count("trust/.env.MISSING.production") >= 3, "heading and hints name selected path")
+    _assert("Status: NOT READY" in out.getvalue(), "reports NOT READY")
+
+
+def test_29_ready_command_preserves_and_quotes_the_selected_kit() -> None:
+    """Copying the READY command must deploy the kit that was checked, including custom filenames."""
+    print("▶ READY command preserves and shell-quotes the selected kit")
+    selected_paths = (
+        SCRIPTS_DIR.parent / "trust/.env.SITE.stag",
+        Path("/opt/operator kits/kit's file; echo unsafe"),
+        Path('/opt/operator kits/$HOME `echo unsafe` "file"'),
+    )
+    for selected in selected_paths:
+        for prod in (None, "true", "stag", "lza", "lza-stag"):
+            out = io.StringIO()
+            exit_code = None
+            with (
+                mock.patch.dict(os.environ, {} if prod is None else {"PROD": prod}, clear=True),
+                mock.patch.object(sys, "argv", ["prog", "SITE", "--kit-file", str(selected)]),
+                mock.patch.object(sys, "stdout", out),
+                mock.patch.object(mod, "fetch_public_ip", return_value=None),
+                mock.patch.object(mod, "run_checks", return_value=[mod.Check("x", mod.Status.PASS, "mocked")]),
+            ):
+                try:
+                    mod.main()
+                except SystemExit as error:
+                    exit_code = error.code
+            text = out.getvalue().replace(mod.BOLD, "").replace(mod.RESET, "")
+            command = next(line.strip() for line in text.splitlines() if "sudo -E make up-onprem-trust" in line)
+            _assert(exit_code == 0, f"{selected.name}: READY exits 0")
+            expected = ["sudo", "-E", "make", "up-onprem-trust", "KIT=SITE", f"KIT_FILE={selected}".replace("$", "$$")]
+            if prod and prod != "true":
+                expected.append(f"PROD={prod}")
+            _assert(
+                shlex.split(command) == expected,
+                f"{selected.name}: selected path remains one argument and PROD={prod} is preserved",
+                command,
+            )
+
+
+def test_30_governance_action_preserves_and_quotes_the_selected_kit() -> None:
+    """Detailed governance checks must read the same kit as the failed readiness check."""
+    print("▶ failed governance advice preserves and shell-quotes the selected kit")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        selected = root / 'trust/kit\'s $HOME `echo unsafe` "file".production'
+        selected.parent.mkdir()
+        selected.write_text("ACCESS_POLICY_FILE=./governance.toml\n")
+        passed = mod.Check("external probe", mod.Status.PASS, "mocked")
+        for prod in (None, "true", "stag", "lza", "lza-stag"):
+            with (
+                mock.patch.dict(os.environ, {} if prod is None else {"PROD": prod}, clear=True),
+                mock.patch.object(mod, "check_swarm", return_value=passed),
+                mock.patch.object(mod, "check_hub_shared_current", return_value=passed),
+                mock.patch.object(
+                    mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "❌ bad policy\n", "")
+                ),
+            ):
+                checks = mod.run_checks("SITE", root, selected)
+            result = next(check for check in checks if check.label == "Governance document")
+            _assert(result.status == mod.Status.FAIL, "governance validation still fails")
+            hint = next(hint for hint in result.hints if "check-governance" in hint)
+            command = hint[1 : hint.rfind("`")]
+            expected = [
+                "make",
+                "-C",
+                "trust",
+                "check-governance",
+                "KIT=SITE",
+                f"KIT_FILE={selected}".replace("$", "$$"),
+            ]
+            if prod:
+                expected.append(f"PROD={prod}")
+            _assert(
+                shlex.split(command) == expected,
+                "detailed-check advice keeps the selected path as one argument and preserves PROD",
+                command,
+            )
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -419,6 +627,17 @@ def main() -> None:
     test_17_hub_shared_current_judges_the_kit_not_the_running_key()
     test_18_a_gate_never_suggests_a_command()
     test_19_hub_on_its_release_sha_build_is_not_behind()
+    test_20_governance_document_valid_passes_with_its_digest()
+    test_21_governance_document_below_the_floor_fails()
+    test_22_governance_document_not_configured_passes()
+    test_23_site_privacy_reads_the_documents_section()
+    test_24_site_privacy_in_both_sources_fails()
+    test_25_documents_nvflare_section_on_flower_fails()
+    test_26_a_relative_document_resolves_against_trust()
+    test_27_selected_kit_controls_values_and_filename_hints()
+    test_28_missing_file_heading_and_advice_name_the_selected_path()
+    test_29_ready_command_preserves_and_quotes_the_selected_kit()
+    test_30_governance_action_preserves_and_quotes_the_selected_kit()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

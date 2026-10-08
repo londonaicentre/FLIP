@@ -63,7 +63,6 @@ BASE_ENV=(
     PROD=stag
     AWS_REGION=eu-west-2
     FLIP_TFSTATE_BUCKET_NAME=flip-terraform-state-stag
-    VPC_NAME=flip-vpc
     AICENTRE_BUCKET_NAME=aicentre-stag
     FLIP_APP_BUNDLES_BUCKET_NAME=flip-app-bundles-stag
     FLIP_FL_RESULTS_BUCKET_NAME=flip-fl-results-stag
@@ -75,16 +74,12 @@ BASE_ENV=(
     INTERNAL_SERVICE_KEY_HASH=0000000000000000000000000000000000000000000000000000000000000000
     POSTGRES_DB=flip
     POSTGRES_USER=flipuser
-    API_PORT=8000
-    DB_PORT=5432
     ENFORCE_MFA=true
     FL_ADMIN_DIRECTORY=/workspace
-    FL_API_PORT=8080
     FL_SERVER_PORT=8002
     INTERNAL_SERVICE_KEY_HEADER=X-Internal-Service-Key
     SES_VERIFIED_EMAIL=noreply@example.invalid
     TRUST_API_KEY_HEADER=X-Trust-API-Key
-    UI_PORT=80
     ALB_SUBDOMAIN=api-stag
     NLB_SUBDOMAIN=fl-stag
     DOCKER_REGISTRY=ghcr.io/londonaicentre/
@@ -353,6 +348,12 @@ else
         ${upload_offenders}
 fi
 
+# Octal permission bits of a file: GNU stat spells it `-c '%a'`, BSD/macOS stat
+# `-f '%Lp'` — and each rejects the other's flag, so try GNU first.
+file_mode() {
+    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
+}
+
 # 2. HAPPY PATH.
 run_case "complete value set composes" 
 expect_rc 0 "exits 0"
@@ -361,10 +362,10 @@ if [[ -f "${OUT_FILE}" ]]; then
 else
     no "writes the file"
 fi
-if [[ "$(stat -c '%a' "${OUT_FILE}" 2>/dev/null)" == "600" ]]; then
+if [[ "$(file_mode "${OUT_FILE}")" == "600" ]]; then
     ok "file is 0600 (it carries AES_KEY_BASE64 and the DB user)"
 else
-    no "file is 0600" "mode: $(stat -c '%a' "${OUT_FILE}" 2>/dev/null)"
+    no "file is 0600" "mode: $(file_mode "${OUT_FILE}")"
 fi
 
 # 3. AWS_PROFILE is derived, not stored — this is what stops a mis-set GitHub
@@ -449,13 +450,13 @@ fi
 
 # 6. ALL missing keys are reported at once — a one-at-a-time script costs a CI
 #    round trip per key.
-run_case "reports every missing key at once" AES_KEY_BASE64 POSTGRES_USER VPC_NAME
+run_case "reports every missing key at once" AES_KEY_BASE64 POSTGRES_USER SES_VERIFIED_EMAIL
 expect_stderr "Missing or empty (3)" "reports the full count"
 expect_stderr "POSTGRES_USER" "names the second"
-expect_stderr "VPC_NAME" "names the third"
+expect_stderr "SES_VERIFIED_EMAIL" "names the third"
 
 # 7. SECRETS ARE NEVER ECHOED.
-run_case "failure output carries no values" VPC_NAME
+run_case "failure output carries no values" SES_VERIFIED_EMAIL
 if [[ "${STDERR}${STDOUT}" == *"not-a-real-password"* || "${STDERR}${STDOUT}" == *"bm90LWEtcmVhbC1rZXk="* ]]; then
     no "no secret value appears in the output" "output leaked a value into the workflow log"
 else
@@ -471,7 +472,7 @@ expect_stderr "AICENTRE_BUCKET_NAME" "names the key"
 
 # 9. MALFORMED VALUES. Make silently keeps trailing whitespace (it strips leading),
 #    and cannot carry an embedded newline at all.
-run_case "trailing whitespace is rejected" 'VPC_NAME=flip-vpc '
+run_case "trailing whitespace is rejected" 'SES_VERIFIED_EMAIL=noreply@example.invalid '
 expect_rc 1 "exits 1"
 expect_stderr "trailing whitespace" "explains why"
 run_case "embedded newline is rejected" 'ADMIN_USER_PASSWORD=one

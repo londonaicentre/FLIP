@@ -1,0 +1,6 @@
+# Written by `make migrate-state` from backend.s3.tf.example.
+backend.tf
+# Per-account inputs; see terraform.tfvars.example.
+terraform.tfvars
+*.tfvars
+plan.tfplan
