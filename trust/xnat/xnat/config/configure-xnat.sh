@@ -196,8 +196,10 @@ if ! [[ "$auth_attempts" =~ ^[1-8]$ ]]; then
     "failed admin login, and XNAT locks the account after about 20), got '${auth_attempts}'" >&2
   exit 1
 fi
-if ! [[ "$auth_wait" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: XNAT_AUTH_PROBE_WAIT_SECONDS must be a whole number of seconds, got '${auth_wait}'" >&2
+# At least a second: a zero wait still spends a failed login per round but gives XNAT no time to
+# finish initialising, which is all the retry is for.
+if ! [[ "$auth_wait" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: XNAT_AUTH_PROBE_WAIT_SECONDS must be a whole number of seconds from 1, got '${auth_wait}'" >&2
   exit 1
 fi
 ADMIN_PASSWORD_ROTATED=false

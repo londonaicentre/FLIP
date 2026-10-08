@@ -64,16 +64,20 @@ class ComposeAndProvision(unittest.TestCase):
 
 
 class MakeUpGuard(unittest.TestCase):
-    def guard(self, mode: int, key_gid: str | None = None):
-        """Run check-fl-provisioned.sh on a scratch net-1 workspace whose FL API key has ``mode``."""
+    def guard(self, mode: int | None, key_gid: str | None = None):
+        """Run check-fl-provisioned.sh on a scratch net-1 workspace whose FL API key has ``mode``.
+
+        ``mode=None`` leaves the FL API kit out, as an interrupted provision would.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             startup = Path(tmp, "net-1", "services")
             (startup / "fl-server-net-1" / "startup").mkdir(parents=True)
             (startup / "fl-server-net-1" / "startup" / "start.sh").write_text("")
-            key = startup / "flip-fl-api-net-1" / "startup" / "client.key"
-            key.parent.mkdir(parents=True)
-            key.write_text("key")
-            key.chmod(mode)
+            if mode is not None:
+                key = startup / "flip-fl-api-net-1" / "startup" / "client.key"
+                key.parent.mkdir(parents=True)
+                key.write_text("key")
+                key.chmod(mode)
             env = {
                 **os.environ,
                 "FL_BACKEND": "nvflare",
@@ -96,6 +100,13 @@ class MakeUpGuard(unittest.TestCase):
     def test_a_key_owned_by_another_group_is_refused(self):
         result = self.guard(0o640, key_gid=str(os.getgid() + 1))
         assert result.returncode == 1, result.stderr
+
+    def test_a_missing_key_is_refused_with_the_fix(self):
+        """The server-kit marker passes without an FL API kit, which the compose file still mounts."""
+        result = self.guard(None)
+        assert result.returncode == 1, result.stderr
+        assert "admin key is missing" in result.stderr
+        assert "make -C fl-services/nvflare provision" in result.stderr
 
     def test_outside_development_the_key_is_not_checked(self):
         result = self.guard(0o600, key_gid="")

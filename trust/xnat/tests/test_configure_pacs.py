@@ -785,8 +785,10 @@ def test_an_unsafe_attempt_count_is_refused_before_any_login(tmp_path, value):
     assert logins_probed(tmp_path) == 0
 
 
-def test_a_non_numeric_wait_is_refused_before_any_login(tmp_path):
-    code, _, output = run_configure(tmp_path, {"XNAT_AUTH_PROBE_WAIT_SECONDS": "20s"})
+@pytest.mark.parametrize("value", ["20s", "0", "00", "-1", "1.5"])
+def test_an_unusable_wait_is_refused_before_any_login(tmp_path, value):
+    """A zero wait would spend the failed logins without giving XNAT any time to initialise."""
+    code, _, output = run_configure(tmp_path, {"XNAT_AUTH_PROBE_WAIT_SECONDS": value})
     assert code == 1, output
     assert "XNAT_AUTH_PROBE_WAIT_SECONDS must be" in output
     assert logins_probed(tmp_path) == 0

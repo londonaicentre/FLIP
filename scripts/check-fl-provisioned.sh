@@ -91,17 +91,29 @@ fi
 # NVFLARE writes private keys 0600, and in development the FL API reads its admin key through the
 # host group (group_add in deploy/compose.development.nvflare.yml). `make provision` opens the key to
 # that group; a workspace provisioned before it did, or by another user, leaves a key the FL API
-# cannot open, and it would die at boot with a bare PermissionError (FLIP#1384).
+# cannot open, and it would die at boot with a bare PermissionError (FLIP#1384). The marker above is
+# the FL server's kit, so a workspace with no FL API kit (an interrupted or partial provision) passes
+# it; the compose file mounts that kit for every net, so a missing key is the same boot failure.
 if [ "${FL_BACKEND}" = nvflare ] && [ -n "${FL_API_KEY_GID:-}" ]; then
+    absent=""
     unreadable=""
     for net in ${nets}; do
         key="${FL_PROVISIONED_DIR}/${net}/services/flip-fl-api-${net}/startup/client.key"
-        [ -f "${key}" ] || continue
+        if [ ! -f "${key}" ]; then
+            absent="${absent} ${key}"
+            continue
+        fi
         read -r gid mode < <(stat -c '%g %a' "${key}")
         if [ "${gid}" != "${FL_API_KEY_GID}" ] || [ $(( 8#${mode} & 040 )) -eq 0 ]; then
             unreadable="${unreadable} ${key}"
         fi
     done
+    if [ -n "${absent}" ]; then
+        echo "❌ The NVFLARE FL API admin key is missing (the workspace has no complete FL API kit):" >&2
+        for key in ${absent}; do echo "     ${key}" >&2; done
+        echo "   Re-provision:  make -C fl-services/nvflare provision NET_NUMBER=<N>" >&2
+        exit 1
+    fi
     if [ -n "${unreadable}" ]; then
         echo "❌ The NVFLARE FL API cannot read its admin key (it needs group ${FL_API_KEY_GID}, mode 640):" >&2
         for key in ${unreadable}; do echo "     ${key}" >&2; done
