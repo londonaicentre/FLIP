@@ -18,7 +18,7 @@ exclude-newer-span = "P3D"
 constraints = [
     { name = "anyio", specifier = ">=4.14.2" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
-    { name = "urllib3", specifier = ">=2.7.0" },
+    { name = "urllib3", specifier = ">=2.8.0" },
 ]
 
 [[package]]
