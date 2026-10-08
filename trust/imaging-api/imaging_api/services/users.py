@@ -15,14 +15,12 @@ import urllib.parse
 
 import requests
 
-from imaging_api.config import get_settings
 from imaging_api.routers.schemas import CentralHubUser, CreatedUser, CreateUser, User
 from imaging_api.utils.encryption import XNAT_SETUP_PATH_CONTEXT, encrypt
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
 from imaging_api.utils.logger import logger
 from imaging_api.utils.passwords import generate_complex_password
-
-XNAT_URL = get_settings().XNAT_URL
+from imaging_api.utils.xnat_url import xnat_url
 
 # Host-less "set your own password" path a newly created XNAT user follows. It is deliberately
 # host-less: XNAT is only reachable from inside the trust enclave, so the hub emails this path and
@@ -44,7 +42,7 @@ def get_xnat_users(headers: dict[str, str]) -> list[User]:
     Raises:
         Exception: If XNAT returns a non-200 response.
     """
-    response = requests.get(f"{XNAT_URL}/xapi/users/profiles", headers=headers)
+    response = requests.get(xnat_url("xapi", "users", "profiles"), headers=headers)
     users = [User(**user) for user in response.json()]
 
     if response.status_code == 200:
@@ -179,10 +177,10 @@ def issue_setup_token(username: str, headers: dict[str, str]) -> str:
         str: The host-less setup path, e.g. ``/app/template/XDATScreen_UpdateUser.vm?a=…&s=…``.
 
     Raises:
+        ValueError: If the username is empty or a dot-segment.
         Exception: If XNAT returns a non-200 response when issuing the token.
     """
-    quoted_username = urllib.parse.quote(username, safe="")
-    response = requests.get(f"{XNAT_URL}/data/services/tokens/issue/user/{quoted_username}", headers=headers)
+    response = requests.get(xnat_url("data", "services", "tokens", "issue", "user", username), headers=headers)
     if response.status_code != 200:
         raise Exception(f"Error: XNAT setup-token issuance failed: {response.status_code} - {response.text}")
 
@@ -272,7 +270,7 @@ def create_user(user: CreateUser, headers: dict[str, str]) -> User:
     """
     logger.info(f"Creating user '{user.username}' on XNAT")
 
-    response = requests.post(f"{XNAT_URL}/xapi/users", headers=headers, json=user.model_dump())
+    response = requests.post(xnat_url("xapi", "users"), headers=headers, json=user.model_dump())
 
     if response.status_code == 201:
         logger.info(f"User '{user.username}' created successfully on XNAT")
@@ -307,7 +305,7 @@ def add_user_to_project(user: User, project_id: str, headers: dict[str, str]) ->
     logger.info(f"Adding user '{user.username}' to project '{project_id}'")
 
     response = requests.put(
-        f"{XNAT_URL}/data/projects/{project_id}/users/Members/{user.username}",
+        xnat_url("data", "projects", project_id, "users", "Members", user.username),
         headers=headers,
     )
 

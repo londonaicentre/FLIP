@@ -208,15 +208,10 @@ export TF_VAR_efs_provision_image=${EFS_PROVISION_IMAGE}
 endif
 export TF_VAR_fl_api_name=${DOCKER_FL_API_NAME}
 export TF_VAR_fl_server_name=${DOCKER_FL_SERVER_NAME}
-export TF_VAR_fl_client_name=${DOCKER_FL_CLIENT_NAME}
 export TF_VAR_fl_backend=${FL_BACKEND}
 export TF_VAR_flare_kit_date=${FLARE_KIT_DATE}
 export TF_VAR_flower_kit_date=${FLOWER_KIT_DATE}
 export TF_VAR_POSTGRES_USER=${POSTGRES_USER}
-export TF_VAR_DB_PORT=${DB_PORT}
-export TF_VAR_UI_PORT=${UI_PORT}
-export TF_VAR_API_PORT=${API_PORT}
-export TF_VAR_FL_API_PORT=${FL_API_PORT}
 export TF_VAR_FL_SERVER_PORT=${FL_SERVER_PORT}
 # On-prem trust IPs allowed through the FL-server NLB security group. An HCL list
 # literal in the env file (LOCAL_TRUST_PUBLIC_IPS, default []); one ingress rule
@@ -234,7 +229,6 @@ export TF_VAR_k8s_trust_public_ips=$(K8S_TRUST_PUBLIC_IPS)
 DEPLOY_TRUST_EC2 ?= true
 export TF_VAR_deploy_trust_ec2=$(DEPLOY_TRUST_EC2)
 export TF_VAR_AWS_REGION=${AWS_REGION}
-export TF_VAR_VPC_NAME=${VPC_NAME}
 # DNS availability (FLIP#749): the LZA account has no Route53 hosted zone until
 # the platform-side DNS migration lands, so .env.lza-prod sets MANAGE_DNS=false
 # for the first bring-up (default CloudFront domain, no custom certs/records) and

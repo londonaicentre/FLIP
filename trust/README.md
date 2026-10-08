@@ -349,6 +349,13 @@ If you are operating a trust on a host that does not have the hub's
 `.env.<env>` file (e.g. an on-prem deployment or a third-party trust), you
 need only your trust's kit file (`trust/.env.<CODE>.<env>`).
 
+The root `onboard-onprem-trust`, `up-onprem-trust` and `upgrade-onprem-trust`
+wrappers default to production. Their readiness checklist checks the same file
+as deployment: `trust/.env.<KIT>.<env>` when present, otherwise `trust/.env.<KIT>`.
+Its heading and fix hints name that selected path, so a suffixed kit needs no
+unsuffixed copy. Pass the same `PROD` value to the checklist and deployment when
+joining stag or an LZA environment.
+
 ### One-time setup
 
 1. The hub admin scaffolds and registers your kit
