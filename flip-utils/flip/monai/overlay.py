@@ -135,9 +135,8 @@ class ImagingKey(_Strict):
     """One datalist key (``image``, ``label``, ...) and the files that feed it.
 
     An object rather than a bare string so a later per-key form (``{resource: SEG}``) can be added
-    without breaking a v0.1 overlay. It is not in v0.1: ``get_by_accession_number`` returns only the
-    last requested resource's path (``flip/core/standard.py``), so per-key resources would silently
-    read the wrong files until that is fixed.
+    without breaking a v0.1 overlay. It is not in v0.1: per-key resources rely on imaging-api putting
+    every resource type of an accession in one folder, a contract that is not yet asserted (FLIP#1400).
     """
 
     pattern: Annotated[str, Field(min_length=1)]
