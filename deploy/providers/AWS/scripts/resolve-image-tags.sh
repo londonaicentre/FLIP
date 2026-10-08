@@ -82,6 +82,17 @@
 #     valid reference, so ecs_tasks.tf's `"${registry}flip-api:${tag}"` needs no
 #     change) while what is pulled is immutable.
 #
+# A DIGEST IS PER-REPOSITORY, SO EVERY IMAGE IS RESOLVED SEPARATELY. There are
+# three of them — the hub (flip-api), the FL server and the FL API — and
+# `flare-fl-api:v1.2.3` and `flare-fl-server:v1.2.3` are different blobs with
+# different digests. Resolving the FL pair as one value and applying the server's
+# digest to the API would mint `flare-fl-api:v1.2.3@sha256:<fl-server digest>`:
+# ECS pulls by digest and ignores the tag, so fl-api-net-1 fails with
+# CannotPullContainer after a green resolve and a green apply, and `active_tag`
+# then reads the bad reference back on every later infrastructure-only apply.
+# Hence three outputs (DOCKER_TAG / DOCKER_FL_TAG / DOCKER_FL_API_TAG) and
+# Terraform's separate `fl_api_image_tag` variable.
+#
 # When RELEASE_TAG is unset, nothing below behaves differently — the release path
 # is entirely additive and ships dark until a caller sets it.
 #
@@ -108,6 +119,7 @@
 # Writes `KEY=value` lines to stdout:
 #     DOCKER_TAG=...
 #     DOCKER_FL_TAG=...
+#     DOCKER_FL_API_TAG=...
 
 set -euo pipefail
 
@@ -166,9 +178,17 @@ fi
 # Must match the `sha-<short7>` tag docker_build_*.yml publishes.
 SHA_TAG="sha-${GIT_SHA:0:7}"
 
+# Must match deploy/fl_backend.mk's DOCKER_FL_SERVER_NAME / DOCKER_FL_API_NAME,
+# which are what Terraform receives as var.fl_server_name / var.fl_api_name.
 case "${FL_BACKEND}" in
-    nvflare) FL_SERVER_IMAGE="flare-fl-server" ;;
-    flower) FL_SERVER_IMAGE="flower-superlink" ;;
+    nvflare)
+        FL_SERVER_IMAGE="flare-fl-server"
+        FL_API_IMAGE="flare-fl-api"
+        ;;
+    flower)
+        FL_SERVER_IMAGE="flower-superlink"
+        FL_API_IMAGE="flower-fl-api"
+        ;;
     *) die "FL_BACKEND must be 'nvflare' or 'flower' (got '${FL_BACKEND}')" ;;
 esac
 
@@ -217,28 +237,35 @@ wait_for_image() {
 
 # Digest `ref` currently resolves to, into IMAGE_DIGEST (`sha256:<64 hex>`).
 #
-# `docker manifest inspect --verbose` reports the descriptor of what the tag
-# points at — the manifest *list* digest for a multi-arch image, which is the one
-# a pull of `repo@sha256:…` must use. Fatal on anything unexpected: a digest is
-# the whole point of the release pin, so a missing or malformed one must stop the
-# run rather than quietly degrade to a mutable tag pin.
+# This must be the digest of what the TAG points at — the manifest *list* digest
+# for a multi-arch image — because that is the reference `repo:tag@digest` pulls.
+# `docker manifest inspect --verbose` cannot give it: for a manifest list it
+# returns one entry per platform and each `.Descriptor.digest` is that
+# platform's manifest (and the first entry is frequently an `unknown/unknown`
+# attestation, not amd64). Pinning one of those would pin a single-platform —
+# often non-runnable — artefact. `docker buildx imagetools inspect` reports the
+# top-level descriptor directly, in one shape for both single manifests and
+# lists.
+#
+# Fatal on anything unexpected: a digest is the whole point of the release pin,
+# so a missing or malformed one must stop the run rather than quietly degrade to
+# a mutable tag pin.
 IMAGE_DIGEST=""
 
 image_digest() {
     local ref="$1" out rc=0
     IMAGE_DIGEST=""
-    out="$(docker manifest inspect --verbose "${ref}" 2>&1)" || rc=$?
+    out="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "${ref}" 2>&1)" || rc=$?
     [[ "${rc}" -eq 0 ]] ||
-        die "docker manifest inspect --verbose ${ref} failed (exit ${rc}) while resolving the release digest. Output:
+        die "docker buildx imagetools inspect ${ref} failed (exit ${rc}) while resolving the release digest. Output:
    ${out}"
 
-    # --verbose returns an object for a single manifest and an array for a
-    # manifest list; both carry .Descriptor.digest.
-    IMAGE_DIGEST="$(jq -r 'if type == "array" then .[0].Descriptor.digest else .Descriptor.digest end // empty' <<<"${out}" 2>/dev/null)" ||
-        die "could not parse the manifest of ${ref} while resolving the release digest"
+    # --format prints the digest alone, but a warning line on stderr merged into
+    # a caller's log is easy to produce; take the last non-empty line.
+    IMAGE_DIGEST="$(printf '%s\n' "${out}" | sed -n 's/^[[:space:]]*\(sha256:[0-9a-f]\{64\}\)[[:space:]]*$/\1/p' | tail -n 1)"
 
     [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] ||
-        die "no usable digest for ${ref} (got '${IMAGE_DIGEST}').
+        die "no usable digest for ${ref} (got '${out}').
    Refusing to pin the mutable tag instead: a republished :${RELEASE_TAG} would then change what
    production runs with no apply and no audit trail (FLIP#751)."
 }
@@ -346,8 +373,12 @@ resolve() {
             # production on the previous release and report success.
             local release_ref="${PROBE_REGISTRY}${image_name}:${RELEASE_TAG}"
             log "🔎 ${label}: resolving release ${RELEASE_TAG} — ${release_ref}"
-            wait_for_image "${release_ref}" ||
-                die "${label}: ${release_ref} is not published after ${GHCR_WAIT_SECONDS}s.
+            # A single probe, not wait_for_image: the caller sets RELEASE_TAG
+            # only after the release builds concluded, so the image is either
+            # there now or this run is already wrong. Waiting the full
+            # GHCR_WAIT_SECONDS would only delay a certain failure.
+            image_exists "${release_ref}" ||
+                die "${label}: ${release_ref} is not published.
    RELEASE_TAG was set, so this image is expected to exist; refusing to fall back to the sha tag or
    to the running one, which would leave this environment on the previous release with a green run.
    Re-run the release build for ${image_name} at ${RELEASE_TAG} (release.yml dispatches it), then
@@ -393,8 +424,13 @@ resolve "hub images" "flip-api" "flip-api" "flip-api" "${FALLBACK_DOCKER_TAG}"
 hub_tag="${RESOLVED_TAG}"
 # The fl-server container is named for its net, not for the service role
 # (ecs_tasks.tf:275) — same string as the service, which is easy to mis-assume.
-resolve "FL images" "${FL_SERVER_IMAGE}" "fl-server-net-1" "fl-server-net-1" "${FALLBACK_DOCKER_FL_TAG}"
+resolve "FL server image" "${FL_SERVER_IMAGE}" "fl-server-net-1" "fl-server-net-1" "${FALLBACK_DOCKER_FL_TAG}"
 fl_tag="${RESOLVED_TAG}"
+# Resolved separately from the server: same release tag, different repository,
+# therefore a different digest. See the header.
+resolve "FL API image" "${FL_API_IMAGE}" "fl-api-net-1" "fl-api-net-1" "${FALLBACK_DOCKER_FL_TAG}"
+fl_api_tag="${RESOLVED_TAG}"
 
 echo "DOCKER_TAG=${hub_tag}"
 echo "DOCKER_FL_TAG=${fl_tag}"
+echo "DOCKER_FL_API_TAG=${fl_api_tag}"

@@ -254,7 +254,16 @@ def live_image_tag(service: str, container: str, cluster: str, profile: str, reg
         profile,
         region,
     )
-    return split_image(image)[1] if image and image != "None" else ""
+    tag = split_image(image)[1] if image and image != "None" else ""
+    # Strip any digest: `v<X.Y.Z>@sha256:…` is the pin a release APPLY writes
+    # into a task definition (FLIP#1283), but this value goes into the operator
+    # env file, where the Makefile reuses DOCKER_TAG for the three TRUST_IMAGES
+    # and for `-e omop_db_tag` (the omop-db and orthanc images). Those are
+    # different repositories, so flip-api's digest makes every one of them
+    # unpullable — `make deploy-trust` reports them all missing and
+    # seed-trust-data / ansible-init fail. The tag alone is the right record
+    # here; CI re-resolves the digest pin from live ECS on every run.
+    return tag.partition("@")[0]
 
 
 def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tuple[dict, dict]:

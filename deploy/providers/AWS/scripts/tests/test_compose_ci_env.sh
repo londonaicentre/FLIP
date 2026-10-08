@@ -230,12 +230,15 @@ for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
     # Keys appearing as `KEY: ${{ vars.X }}` / `${{ secrets.X }}` in the workflow.
     wf_keys="$(grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*:[[:space:]]+\$\{\{[[:space:]]*(vars|secrets)\.' "${wf_path}" |
         sed -E 's/^[[:space:]]+([A-Z0-9_]+):.*/\1/' | LC_ALL=C sort -u)"
-    # DOCKER_TAG / DOCKER_FL_TAG are exempt in all three: every workflow now runs
+    # DOCKER_TAG / DOCKER_FL_TAG / DOCKER_FL_API_TAG are exempt in all three:
+    # every workflow now runs
     # resolve-image-tags.sh and inherits its output through $GITHUB_ENV, so a
     # `vars.DOCKER_TAG` line in the compose step would override the resolved tag
     # and put the mutable one back. The assertion below requires the resolver
     # instead, so the exemption cannot be used to simply drop the key.
-    exempt='^(FLARE_KIT_DATE|FLOWER_KIT_DATE|DOCKER_TAG|DOCKER_FL_TAG)$'
+    # (DOCKER_FL_API_TAG has no GitHub variable at all — it exists only as the
+    # resolver's third output, FLIP#1283.)
+    exempt='^(FLARE_KIT_DATE|FLOWER_KIT_DATE|DOCKER_TAG|DOCKER_FL_TAG|DOCKER_FL_API_TAG)$'
     wanted="$(echo "${manifest}" | grep -vE "${exempt}")"
     absent="$(LC_ALL=C comm -23 <(echo "${wanted}") <(echo "${wf_keys}"))"
     if [[ -z "${absent}" ]]; then

@@ -197,6 +197,13 @@ endif
 
 export TF_VAR_docker_image_tag=${DOCKER_TAG}
 export TF_VAR_flip_fl_image_tag=${DOCKER_FL_TAG}
+# The FL API's own tag (FLIP#1283). Only CI's resolve-image-tags.sh sets it — a
+# release apply pins `v<X.Y.Z>@sha256:…`, and that digest is fl-api's, not
+# fl-server's. Exported only when set so every other caller keeps variables.tf's
+# empty default, which ecs_tasks.tf reads as "same tag as the FL server".
+ifneq ($(DOCKER_FL_API_TAG),)
+export TF_VAR_fl_api_image_tag=${DOCKER_FL_API_TAG}
+endif
 export TF_VAR_docker_registry=${DOCKER_REGISTRY}
 # One-shot EFS-provision utility image (default amazon/aws-cli from Docker Hub
 # in variables.tf). The LZA account has no internet egress, so .env.lza-prod

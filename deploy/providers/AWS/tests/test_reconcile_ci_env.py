@@ -296,6 +296,33 @@ class TestSplitImage:
         assert rce.split_image("registry.example:5000/flip-api") == ("", "")
 
 
+class TestLiveImageTag:
+    """The env-file value, which is NOT the task definition's reference.
+
+    `DOCKER_TAG` in an operator env file is reused by the Makefile for the three
+    TRUST_IMAGES (trust-api, imaging-api, data-access-api) and for `-e
+    omop_db_tag` (omop-db + orthanc). A digest belongs to one repository, so
+    writing flip-api's `v1.2.3@sha256:…` there makes every one of those images
+    unpullable. CI re-resolves the digest pin from live ECS on every run, so the
+    tag alone is the right record here.
+    """
+
+    @staticmethod
+    def _tag(monkeypatch, image: str) -> str:
+        calls = iter(["arn:aws:ecs:::task-definition/flip-api:41", image])
+        monkeypatch.setattr(rce, "aws", lambda *a, **k: next(calls))
+        return rce.live_image_tag("flip-api", "flip-api", "flip-cluster", "p", "r")
+
+    def test_plain_tag_is_unchanged(self, monkeypatch):
+        assert self._tag(monkeypatch, "ghcr.io/londonaicentre/flip-api:sha-badcff1") == "sha-badcff1"
+
+    def test_release_digest_pin_is_written_as_the_tag_alone(self, monkeypatch):
+        assert self._tag(monkeypatch, "ghcr.io/londonaicentre/flip-api:v1.2.3@sha256:" + "a" * 64) == "v1.2.3"
+
+    def test_bare_digest_reference_yields_nothing(self, monkeypatch):
+        assert self._tag(monkeypatch, "ghcr.io/londonaicentre/flip-api@sha256:" + "a" * 64) == ""
+
+
 class TestContainerHelpers:
     def test_env_of_flattens_the_name_value_pairs(self, state):
         env = rce.env_of(state.container("flip_api", "flip-api"))

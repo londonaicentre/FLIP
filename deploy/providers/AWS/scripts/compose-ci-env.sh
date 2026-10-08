@@ -260,6 +260,13 @@ OPTIONAL_KEYS=(
     JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB
     JOB_RESOURCE_SPEC_NUM_GPUS
 
+    # Not stored in either GitHub environment and not normally in an env file:
+    # CI's resolve-image-tags.sh emits it into $GITHUB_ENV, and the Makefile
+    # exports TF_VAR_fl_api_image_tag only when it is set (FLIP#1283). Listed as
+    # optional so the Makefile/manifest drift guard is satisfied and so an
+    # operator CAN pin it by hand if they ever need to.
+    DOCKER_FL_API_TAG
+
     # Empty is meaningful and NOT symmetric with the rest of this list: it is the
     # correct value on stag, which hosts no public Ark+ demo, and a destructive
     # one on prod, where `demo_assets_enabled = var.DEMO_ASSETS_BUCKET_NAME != ""`
