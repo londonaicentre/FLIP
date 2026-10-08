@@ -335,7 +335,11 @@ restart: down up
 #       1000) then cannot mkdir inside it. The failure surfaces four layers away as a 500 on
 #       /upload_app and an opaque model ERROR, with the PermissionError only in the FL API's
 #       own log — so a tree that has never run `make up` fails every FL job until this runs.
-restart-fl: _ensure-fl-jobs-dir
+# NOTE: _ensure-object-store-dir likewise (FLIP#1402). On Flower, step 4's register-supernode-keys
+#       services depend on object-store, so compose recreates it from this tree; without
+#       ./object-store the bind mount is refused and make stops after step 1 has removed every
+#       FL client, leaving the stack with none. As a prerequisite it fails before anything stops.
+restart-fl: _ensure-fl-jobs-dir _ensure-object-store-dir
 	@echo "🔄 Restarting FL services ($(FL_BACKEND))..."
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
