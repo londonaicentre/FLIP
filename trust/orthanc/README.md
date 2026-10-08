@@ -103,7 +103,8 @@ on every CT instance, which makes MONAI Deploy's loader drop the series — see
 `docs/source/working-with-flip-apps/package-model-as-map.rst`; the shared writer
 that replaced it stamps both). Absent tags stay absent; populated ones are
 untouched. Published sets (`dicom/`): `cxr_project` (8,332 studies, at every tag
-from `20260729` on) and `prostate_project`. `spleen_project`'s set (41 studies,
+from `20260729` on) and `prostate_project` (300 bpMRI studies, three series
+each, 19,768 instances — see `fl-tutorials/datasets/prostate/` — from `20260902`). `spleen_project`'s set (41 studies,
 3,650 instances, filled) is on the tags up to the FLIP#1221 cut only: from then on
 spleen — like `brain_mri_project` — regenerates its DICOMs locally from the public
 MSD archive and publishes only its tables, so there is nothing to package. All

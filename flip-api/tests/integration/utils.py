@@ -70,23 +70,43 @@ def admin_authentication():
         return {"scheme": "Bearer", "authorization": "Bearer " + response["AuthenticationResult"]["AccessToken"]}
 
     except client.exceptions.InvalidParameterException as e:
-        if "USER_PASSWORD_AUTH" in str(e):
-            # If USER_PASSWORD_AUTH is not enabled, try ADMIN_INITIATE_AUTH
-            response = client.admin_initiate_auth(
-                UserPoolId=get_settings().AWS_COGNITO_USER_POOL_ID,
+        if "USER_PASSWORD_AUTH" not in str(e):
+            raise  # another parameter error (a missing PASSWORD, say): surface it, never return None
+        # FLIP's pool never allows USER_PASSWORD_AUTH (deploy/providers/AWS/modules/cognito/main.tf
+        # lists USER_AUTH, SRP and ADMIN_USER_PASSWORD only), so the first call always lands here.
+        # USER_PASSWORD_AUTH is not enabled on the app client. Try the choice-based USER_AUTH
+        # flow next (ALLOW_USER_AUTH, answered with the password): it is a client-side flow,
+        # so it works with any AWS credentials — a developer's SSO role has no
+        # cognito-idp:AdminInitiateAuth, which the ADMIN_NO_SRP_AUTH fallback below needs.
+        try:
+            response = client.initiate_auth(
                 ClientId=get_settings().AWS_COGNITO_APP_CLIENT_ID,
-                AuthFlow="ADMIN_NO_SRP_AUTH",
+                AuthFlow="USER_AUTH",
                 AuthParameters={
                     "USERNAME": ADMIN_EMAIL,
+                    "PREFERRED_CHALLENGE": "PASSWORD",
                     "PASSWORD": get_settings().ADMIN_USER_PASSWORD.get_secret_value(),
                 },
             )
+            if "AuthenticationResult" in response:
+                return {
+                    "scheme": "Bearer",
+                    "authorization": "Bearer " + response["AuthenticationResult"]["AccessToken"],
+                }
+        except client.exceptions.InvalidParameterException:
+            pass  # USER_AUTH not enabled either; fall through to the admin flow
+        # Last resort: ADMIN_INITIATE_AUTH (needs cognito-idp:AdminInitiateAuth on the caller)
+        response = client.admin_initiate_auth(
+            UserPoolId=get_settings().AWS_COGNITO_USER_POOL_ID,
+            ClientId=get_settings().AWS_COGNITO_APP_CLIENT_ID,
+            AuthFlow="ADMIN_NO_SRP_AUTH",
+            AuthParameters={
+                "USERNAME": ADMIN_EMAIL,
+                "PASSWORD": get_settings().ADMIN_USER_PASSWORD.get_secret_value(),
+            },
+        )
 
-            return {
-                "scheme": "Bearer",
-                "authorization": "Bearer " + response["AuthenticationResult"]["AccessToken"],
-            }
-
-    else:
-        # surface other parameter errors
-        raise
+        return {
+            "scheme": "Bearer",
+            "authorization": "Bearer " + response["AuthenticationResult"]["AccessToken"],
+        }
