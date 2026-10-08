@@ -37,8 +37,8 @@
 
 | Alias | Environment | Account alias |
 | ------- | ------------- | --------- |
-| `stag` | Staging, self-contained estate (`PROD=stag`) | `flipstag` (legacy; retiring with the LZA migration) |
-| `prod` | Production, self-contained estate (`PROD=true`) | `flipprod` (legacy; retiring with the LZA migration) |
+| `stag` | Staging, self-contained estate (`PROD=stag`) | `flipstag` (account closed 2026-09-28) |
+| `prod` | Production, self-contained estate (`PROD=true`) | `flipprod` (account closed 2026-10-06) |
 | `lza-stag` | LZA staging (`PROD=lza-stag`; `FLIPAdminAccess` permission set) | staging workload account (live; CI-applied via `aws-stag`, `TF_PROD=lza-stag`) |
 | `lza-prod` | LZA production (`PROD=lza`; `FLIPAdminAccess` permission set) | `FLIPProduction` |
 | `dev` | Development (the `dev/` root: Cognito + SES; `FlipDeveloperAccess` permission set) | `flipdev` |
@@ -54,7 +54,7 @@ edited.
 ```bash
 make full-deploy PROD=stag                   # Full staging deploy
 make full-deploy PROD=true                    # Full prod deploy
-make init/plan/apply PROD=lza                 # BREAK-GLASS ONLY on the LZA estate — CI applies it (plan on PR, apply on push; see "Terraform CI" below and README "Repointing CI at the LZA accounts"), and the next CI run reverts a laptop apply. LZA estate, platform-managed network (env-gated; full-deploy chains untested there — see README "Deploying onto an LZA estate"). PROD=lza-stag = staging semantics on the same mode (requires LZA_VPC_NAME in .env.lza-stag)
+make init/plan/apply PROD=lza                 # BREAK-GLASS ONLY on the LZA estate — CI applies it (apply on push to `main`, nightly drift; see "Terraform CI" below and README "Repointing CI at the LZA accounts"), and the next CI run reverts a laptop apply. LZA estate, platform-managed network (env-gated; full-deploy chains untested there — see README "Deploying onto an LZA estate"). PROD=lza-stag = staging semantics on the same mode (requires LZA_VPC_NAME in .env.lza-stag)
 make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<ip>]  # Hybrid with on-prem trust
 make full-deploy-hub-only PROD=<stag|true>    # Hub only, NO cloud Trust EC2 (all trusts on-prem, e.g. GPU hosts) — see README "Hub-only Deployment"
 make init/plan/apply                          # Terraform workflow
