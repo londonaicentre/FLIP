@@ -454,6 +454,16 @@ removing its whole input chain too: the `TF_VAR_` export in `deploy/providers/AW
 deleting the GitHub environment variables only after that PR merges. Like checkov's, the script self-tests
 against a canary fixture, and its guards are regression-tested by `scripts/tests/test_tflint_lint.sh`.
 
+### Azure trust node checks (Terraform)
+
+`deploy/providers/azure` (FLIP#1390) carries its own credential-free checks: `make -C deploy/providers/azure test`
+runs `terraform test` with a mocked `azurerm` provider in every root and module plus the static pytest guards, and
+`make -C deploy/providers/azure lint` runs `terraform fmt` and tflint with the azurerm ruleset. CI runs both, plus
+checkov, in the "Azure node checks" job of `validate_terraform.yml`. The static guards enforce the cost and safety
+rules a plan cannot show: no target skips Terraform's confirmation, every provider block and `az` call names the
+subscription explicitly, no real subscription or tenant IDs in tracked files, no inbound NSG rules, and the VM's NIC
+always behind its own NSG. Deliberate checkov or tflint exceptions are written in-code with a reason, as for AWS.
+
 ### Secret scanning (detect-secrets)
 
 Two scanners run on every PR. TruffleHog (`--only-verified`) fails only on a credential it can confirm is live.

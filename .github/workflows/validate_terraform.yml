@@ -17,6 +17,7 @@ on:
     branches: [main, develop]
     paths:
       - "deploy/providers/AWS/**"
+      - "deploy/providers/azure/**"
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
       # test_trust_kit_staging.py reads the shared kit-staging role site.yml composes.
@@ -29,6 +30,7 @@ on:
     branches: [main, develop]
     paths:
       - "deploy/providers/AWS/**"
+      - "deploy/providers/azure/**"
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
       # test_trust_kit_staging.py reads the shared kit-staging role site.yml composes.
@@ -225,3 +227,48 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: bash deploy/providers/AWS/scripts/tflint_lint.sh
+
+  # Azure trust node (FLIP#1390): fmt, validate and `terraform test` with a mocked azurerm
+  # provider in every root and module, the static pytest guards (no auto-approve, every
+  # provider and az call names its subscription, no real IDs, no inbound rules), tflint with
+  # the azurerm ruleset, and checkov with in-code, reasoned skips. Credential-free: nothing
+  # here talks to Azure.
+  azure:
+    name: Azure node checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~> 1.13"
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: v0.64.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Terraform tests and static guards
+        working-directory: deploy/providers/azure
+        run: make test
+
+      - name: Lint
+        working-directory: deploy/providers/azure
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: make lint
+
+      - name: Checkov
+        run: |
+          pip install checkov==3.3.14
+          checkov -d deploy/providers/azure --framework terraform --skip-download --compact --quiet

@@ -90,3 +90,12 @@ run "budget_needs_an_email" {
 
   expect_failures = [var.alert_emails]
 }
+
+run "state_has_soft_delete" {
+  command = plan
+
+  assert {
+    condition     = azurerm_storage_account.state.blob_properties[0].delete_retention_policy[0].days >= 7 && azurerm_storage_account.state.blob_properties[0].container_delete_retention_policy[0].days >= 7
+    error_message = "State blobs and containers must be recoverable for at least 7 days after deletion."
+  }
+}

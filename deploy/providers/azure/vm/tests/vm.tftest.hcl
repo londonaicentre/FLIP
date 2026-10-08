@@ -149,3 +149,12 @@ run "nic_nsg_also_guards_a_site_subnet" {
     error_message = "With a site subnet the NIC still carries its own rule-less NSG."
   }
 }
+
+run "data_disk_has_no_public_network_access" {
+  command = plan
+
+  assert {
+    condition     = azurerm_managed_disk.data.public_network_access_enabled == false && azurerm_managed_disk.data.network_access_policy == "DenyAll"
+    error_message = "The data disk must not be exportable over the public network."
+  }
+}

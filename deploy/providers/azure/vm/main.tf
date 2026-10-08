@@ -76,6 +76,7 @@ resource "azurerm_network_interface_security_group_association" "nic" {
 }
 
 resource "azurerm_linux_virtual_machine" "node" {
+  # checkov:skip=CKV_AZURE_50:Run Command, the node's only way in, needs the guest agent's extension handling; no extensions are installed
   name                            = "${var.name_prefix}-node"
   location                        = var.location
   resource_group_name             = azurerm_resource_group.node.name
@@ -120,13 +121,16 @@ resource "azurerm_linux_virtual_machine" "node" {
 }
 
 resource "azurerm_managed_disk" "data" {
-  name                 = "${var.name_prefix}-node-data"
-  location             = var.location
-  resource_group_name  = azurerm_resource_group.node.name
-  storage_account_type = "StandardSSD_LRS"
-  create_option        = "Empty"
-  disk_size_gb         = var.data_disk_size_gb
-  tags                 = local.tags
+  # checkov:skip=CKV_AZURE_93:Platform-managed encryption at rest; a customer-managed key needs Key Vault, which a trial node does not justify
+  name                          = "${var.name_prefix}-node-data"
+  location                      = var.location
+  resource_group_name           = azurerm_resource_group.node.name
+  storage_account_type          = "StandardSSD_LRS"
+  create_option                 = "Empty"
+  disk_size_gb                  = var.data_disk_size_gb
+  public_network_access_enabled = false
+  network_access_policy         = "DenyAll"
+  tags                          = local.tags
 }
 
 resource "azurerm_virtual_machine_data_disk_attachment" "data" {

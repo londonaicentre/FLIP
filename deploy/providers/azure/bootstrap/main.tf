@@ -33,6 +33,11 @@ resource "azurerm_resource_group" "bootstrap" {
 
 # tflint-ignore: azurerm_resources_missing_prevent_destroy # make destroy-bootstrap must be able to remove it on a trial; blob versioning protects the state
 resource "azurerm_storage_account" "state" {
+  # checkov:skip=CKV2_AZURE_1:Platform-managed encryption; a customer-managed key needs Key Vault, which a trial node does not justify
+  # checkov:skip=CKV2_AZURE_33:No private endpoint: the operator reaches state from their own machine, Entra ID only, shared keys off
+  # checkov:skip=CKV_AZURE_59:Public endpoint kept for the operator's machine; anonymous access and shared keys are both off
+  # checkov:skip=CKV_AZURE_206:LRS on purpose: versioned, recreatable Terraform state on a trial
+  # checkov:skip=CKV_AZURE_33:No queues are used
   name                            = var.state_storage_account_name
   resource_group_name             = azurerm_resource_group.bootstrap.name
   location                        = azurerm_resource_group.bootstrap.location
@@ -46,11 +51,20 @@ resource "azurerm_storage_account" "state" {
 
   blob_properties {
     versioning_enabled = true
+
+    delete_retention_policy {
+      days = 7
+    }
+
+    container_delete_retention_policy {
+      days = 7
+    }
   }
 }
 
 # tflint-ignore: azurerm_resources_missing_prevent_destroy # make destroy-bootstrap must be able to remove it on a trial; blob versioning protects the state
 resource "azurerm_storage_container" "state" {
+  # checkov:skip=CKV2_AZURE_21:Blob read logging needs a paid Log Analytics workspace; state access is Entra ID only
   name                  = "tfstate"
   storage_account_id    = azurerm_storage_account.state.id
   container_access_type = "private"
