@@ -9,15 +9,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The C-STORE smoke's verdict: prearchive evidence, not dicom.log growth.
+"""The C-STORE smoke's verdict: received.log and prearchive evidence, not dicom.log growth.
 
-The check used to require XNAT's ``dicom.log`` to gain lines. The k3s trust never writes that
-logger — the file stays 0 bytes while every store lands in the prearchive — so a healthy DICOM
-path reported "dicom.log gained no lines" and failed. These tests pin the replacement: a new
-prearchive object carrying the sent UID is the success evidence, dicom.log growth is a bonus,
-and the FLIP#1228 importer signatures still fail the run however much else landed.
+The check used to require XNAT's ``dicom.log`` to gain lines. That is the receiver's ERROR log —
+successful receipts go to ``received.log`` — and the k3s trust never writes it at all (0 bytes
+while every store lands in the prearchive), so a healthy DICOM path failed. These tests pin the
+replacement: a new prearchive object carrying the sent UID, else a new ``received.log`` line, is
+the success evidence; ``dicom.log`` growth is never a success route; and the FLIP#1228 importer
+signatures still fail the run however much else landed.
 
-No cluster: ``decide()`` takes the evidence as a dict.
+They also pin the anonymised shape this trust actually runs: ``configure-xnat.sh`` sets
+``anonymizationEnabled: true`` and ``anon_script.das`` hashes the Study/Series/SOP UIDs, so the
+stored object cannot carry the UIDs read from Orthanc and the UID match never fires.
+
+No cluster: ``decide()`` takes the evidence as a dict, ``build_evidence()`` as an env mapping.
 """
 
 import importlib.util
@@ -40,6 +45,15 @@ sys.modules["cstore_verdict"] = cstore_verdict
 _spec.loader.exec_module(cstore_verdict)
 
 decide = cstore_verdict.decide
+parse_scan = cstore_verdict.parse_scan
+build_evidence = cstore_verdict.build_evidence
+
+# One real received.log line from the k3s trust, shape preserved: timestamp, SCP thread, calling
+# AE, peer, and the prearchive file the receiver wrote.
+RECEIVED_LINE = (
+    "2026-10-06 15:22:14,030 [dicom-scp-4] - ORTHANC@/10.42.0.15:54890:"
+    "/data/xnat/prearchive/20261006_152213859/FAK86136985/SCANS/967247/DICOM/1.2.826.0.1.3680043-967247-1.dcm"
+)
 
 
 def evidence(**overrides: object) -> dict:
@@ -49,14 +63,28 @@ def evidence(**overrides: object) -> dict:
         "store_instance_count": 1,
         "receiver_log_lines": [],
         "dicom_log_new_lines": 0,
+        "received_log_lines": [],
         "prearchive_matches": ["/data/xnat/prearchive/20261006_1/P/SCANS/1/DICOM/1.2.3-1.dcm"],
         "prearchive_match_mode": "sop",
         "prearchive_new": ["/data/xnat/prearchive/20261006_1/P/SCANS/1/DICOM/1.2.3-1.dcm"],
         "sop_uid": "1.2.3",
         "study_uid": "1.2.4",
+        "timed_out": False,
+        "timeout_seconds": 90,
     }
     base.update(overrides)
     return base
+
+
+def anonymised_evidence(**overrides: object) -> dict:
+    """A healthy run on THIS trust: anon hashed the UIDs, so only received.log identifies it."""
+    return evidence(
+        prearchive_matches=[],
+        prearchive_match_mode="",
+        prearchive_new=["/data/xnat/prearchive/20261006_152213859/FAK/SCANS/1/DICOM/2.25.8812-1.dcm"],
+        received_log_lines=[RECEIVED_LINE],
+        **overrides,
+    )
 
 
 # ── The false negative this replaces ─────────────────────────────────────────────────
@@ -68,17 +96,65 @@ def test_a_silent_dicom_log_does_not_fail_a_store_that_reached_the_prearchive() 
 
     assert verdict.passed, verdict.reason
     assert any("prearchive" in note for note in verdict.notes)
-    assert any("does not write that logger" in note for note in verdict.notes), (
+    assert any("error log" in note for note in verdict.notes), (
         "a pass with a silent dicom.log does not explain why its silence is not a failure"
     )
 
 
-def test_dicom_log_growth_is_reported_as_an_extra_signal_when_the_logger_is_active() -> None:
-    """Where the logger IS written, its growth stays a positive signal — just not a requirement."""
+def test_dicom_log_growth_is_context_not_a_second_tick() -> None:
+    """Where the logger IS written it records errors, so growth is reported, never celebrated."""
     verdict = decide(evidence(dicom_log_new_lines=12))
 
     assert verdict.passed
-    assert any("dicom.log also gained 12" in note for note in verdict.notes)
+    note = next(n for n in verdict.notes if "dicom.log gained 12" in n)
+    assert "errors only" in note, "dicom.log growth is presented as if it were success evidence"
+    assert "✓" not in note
+
+
+# ── The receiver FLIP actually configures: anonymised UIDs ───────────────────────────
+
+
+def test_an_anonymised_receiver_passes_on_the_received_log_line() -> None:
+    """anon_script.das hashUIDs the Study/Series/SOP UIDs, so no UID match is possible.
+
+    Without received.log every healthy run would poll to the deadline and pass on "some object
+    arrived", which a concurrent DQR/C-MOVE import satisfies just as well.
+    """
+    verdict = decide(anonymised_evidence())
+
+    assert verdict.passed, verdict.reason
+    assert "received.log" in verdict.reason
+    assert any(RECEIVED_LINE in note for note in verdict.notes)
+    assert not any("arrival time only" in note for note in verdict.notes), (
+        "an anonymised run still passes on arrival time — the fallback is the normal path again"
+    )
+
+
+def test_the_anonymised_pass_explains_why_no_uid_matched() -> None:
+    verdict = decide(anonymised_evidence())
+
+    assert any("hashes the Study/Series/SOP UIDs" in note for note in verdict.notes)
+
+
+def test_an_importer_failure_beats_a_received_log_line() -> None:
+    verdict = decide(anonymised_evidence(receiver_log_lines=["java.lang.AbstractMethodError: x"]))
+
+    assert not verdict.passed
+
+
+def test_build_evidence_prefers_this_senders_received_log_lines() -> None:
+    """A busy trust writes received.log for DQR imports too; those lines are not this transfer."""
+    other = RECEIVED_LINE.replace("ORTHANC@", "SOMEPACS@")
+    built = build_evidence({"NEW_RECEIVED": f"{other}\n{RECEIVED_LINE}\n", "SENDER_AE": "ORTHANC"})
+
+    assert built["received_log_lines"] == [RECEIVED_LINE]
+
+
+def test_build_evidence_keeps_every_line_when_the_sender_ae_never_appears() -> None:
+    """A wrong or renamed AE must degrade to "any new line", never to no evidence at all."""
+    built = build_evidence({"NEW_RECEIVED": f"{RECEIVED_LINE}\n", "SENDER_AE": "NOTORTHANC"})
+
+    assert built["received_log_lines"] == [RECEIVED_LINE]
 
 
 # ── The regression this smoke exists for (FLIP#1228) ─────────────────────────────────
@@ -137,34 +213,69 @@ def test_an_unparsable_store_report_fails() -> None:
 # ── Weaker and absent evidence ───────────────────────────────────────────────────────
 
 
-def test_a_new_object_without_a_uid_match_passes_but_says_the_match_was_by_time() -> None:
-    """XNAT can rewrite UIDs on receive; time-only evidence is real but weaker, and says so."""
+def test_a_new_object_without_a_uid_or_receipt_passes_but_says_it_proves_little() -> None:
+    """The genuine last resort: real evidence, but a concurrent import looks identical."""
     verdict = decide(
         evidence(prearchive_matches=[], prearchive_match_mode="", prearchive_new=["/data/xnat/prearchive/x.dcm"])
     )
 
     assert verdict.passed
-    assert any("arrival time only" in note for note in verdict.notes)
+    note = next(n for n in verdict.notes if "arrival time only" in n)
+    assert "concurrent import would look the same" in note
 
 
-def test_dicom_log_growth_alone_still_passes() -> None:
-    """A deployment that imports straight past the prearchive keeps its old success route."""
+def test_dicom_log_growth_alone_does_not_pass() -> None:
+    """dicom.log records errors, not receipts — its growth can never be success evidence.
+
+    Treating it as success passed any importer error outside the three named signatures as
+    "the receiver logged the transfer".
+    """
     verdict = decide(
-        evidence(prearchive_matches=[], prearchive_match_mode="", prearchive_new=[], dicom_log_new_lines=4)
+        evidence(
+            prearchive_matches=[],
+            prearchive_match_mode="",
+            prearchive_new=[],
+            received_log_lines=[],
+            dicom_log_new_lines=4,
+        )
     )
 
-    assert verdict.passed
-    assert any("no new prearchive object" in note for note in verdict.notes)
+    assert not verdict.passed, "dicom.log growth alone still passes — but that logger is errors-only"
+    assert "TROUBLESHOOTING.md" in verdict.remedy
 
 
 def test_no_receiver_side_evidence_at_all_fails() -> None:
     """A green association with nothing on the receiver is the false confidence to catch."""
     verdict = decide(
-        evidence(prearchive_matches=[], prearchive_match_mode="", prearchive_new=[], dicom_log_new_lines=0)
+        evidence(
+            prearchive_matches=[],
+            prearchive_match_mode="",
+            prearchive_new=[],
+            received_log_lines=[],
+            dicom_log_new_lines=0,
+        )
     )
 
     assert not verdict.passed
     assert "no new prearchive object" in verdict.reason
+    assert "TROUBLESHOOTING.md" in verdict.remedy
+
+
+def test_a_timed_out_poll_says_so_and_names_the_window() -> None:
+    """An operator who waited 90s for nothing should be told that is what happened."""
+    verdict = decide(
+        evidence(
+            prearchive_matches=[],
+            prearchive_match_mode="",
+            prearchive_new=[],
+            received_log_lines=[],
+            timed_out=True,
+            timeout_seconds=90,
+        )
+    )
+
+    assert not verdict.passed
+    assert "within 90s" in verdict.reason
     assert "TROUBLESHOOTING.md" in verdict.remedy
 
 
@@ -173,6 +284,89 @@ def test_a_study_uid_match_names_the_study_uid() -> None:
 
     assert verdict.passed
     assert any("StudyInstanceUID 1.2.4" in note for note in verdict.notes)
+
+
+# ── Malformed evidence produces a verdict, not a traceback ───────────────────────────
+
+
+def test_evidence_that_is_not_an_object_fails_cleanly() -> None:
+    verdict = decide([])  # type: ignore[arg-type]
+
+    assert not verdict.passed
+    assert "not an object" in verdict.reason
+
+
+def test_an_unparsable_dicom_log_count_does_not_crash() -> None:
+    verdict = decide(evidence(dicom_log_new_lines="abc"))
+
+    assert verdict.passed
+
+
+def test_an_empty_evidence_object_fails_on_the_missing_store_report() -> None:
+    verdict = decide({})
+
+    assert not verdict.passed
+    assert "FailedInstancesCount" in verdict.reason
+
+
+# ── The scan parser: SOP beats Study beats arrival time ──────────────────────────────
+
+
+def test_parse_scan_prefers_a_sop_match_over_a_study_match_listed_first() -> None:
+    """`find` lists in directory order, so the stronger match is not necessarily first."""
+    result = parse_scan("study\t/pa/A.dcm\nsop\t/pa/B.dcm\n")
+
+    assert result.mode == "sop"
+    assert result.matches == ["/pa/B.dcm"]
+    assert result.new_files == ["/pa/A.dcm", "/pa/B.dcm"]
+
+
+def test_parse_scan_keeps_every_match_at_the_winning_mode() -> None:
+    result = parse_scan("sop\t/pa/A.dcm\nsop\t/pa/B.dcm\nstudy\t/pa/C.dcm\n")
+
+    assert result.mode == "sop"
+    assert result.matches == ["/pa/A.dcm", "/pa/B.dcm"]
+
+
+def test_parse_scan_reports_time_only_files_as_new_but_not_as_matches() -> None:
+    result = parse_scan("time\t/pa/A.dcm\ntime\t/pa/B.dcm\n")
+
+    assert result.mode == ""
+    assert result.matches == []
+    assert result.new_files == ["/pa/A.dcm", "/pa/B.dcm"]
+
+
+@pytest.mark.parametrize("junk", ["", "no tab here\n", "weird\t\n", "\t/pa/A.dcm\n"])
+def test_parse_scan_ignores_lines_it_cannot_read(junk: str) -> None:
+    result = parse_scan(junk)
+
+    assert result.new_files == []
+    assert result.matches == []
+
+
+def test_build_evidence_applies_the_same_precedence() -> None:
+    built = build_evidence({"SCAN": "study\t/pa/A.dcm\nsop\t/pa/B.dcm\n", "FAILED_COUNT": "0"})
+
+    assert built["prearchive_match_mode"] == "sop"
+    assert built["prearchive_matches"] == ["/pa/B.dcm"]
+    assert built["prearchive_new"] == ["/pa/A.dcm", "/pa/B.dcm"]
+
+
+def test_build_evidence_reads_the_store_counts_and_the_timeout_flag() -> None:
+    built = build_evidence({"FAILED_COUNT": "0", "INSTANCE_COUNT": "3", "TIMED_OUT": "1", "PREARCHIVE_TIMEOUT": "90"})
+
+    assert built["store_failed_count"] == 0
+    assert built["store_instance_count"] == 3
+    assert built["timed_out"] is True
+    assert built["timeout_seconds"] == 90
+
+
+def test_build_evidence_reports_an_unparsable_store_count_as_unknown() -> None:
+    built = build_evidence({"FAILED_COUNT": "", "PREARCHIVE_TIMEOUT": "not-a-number"})
+
+    assert built["store_failed_count"] is None
+    assert built["timeout_seconds"] == 0
+    assert not decide(built).passed
 
 
 # ── The CLI the shell script actually calls ──────────────────────────────────────────
@@ -202,6 +396,40 @@ def test_the_cli_exits_non_zero_on_an_importer_failure() -> None:
     assert "importer failure" in result.stderr
 
 
+def test_the_cli_reads_the_environment_the_shell_hands_it() -> None:
+    """`--from-env` is the whole handoff — the shell does no parsing of its own."""
+    result = subprocess.run(
+        [sys.executable, str(VERDICT_PY), "--from-env"],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "FAILED_COUNT": "0",
+            "INSTANCE_COUNT": "1",
+            "NEW_RECEIVED": RECEIVED_LINE,
+            "SENDER_AE": "ORTHANC",
+            "PREARCHIVE_TIMEOUT": "90",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "received.log" in result.stdout
+
+
+def test_the_cli_from_env_fails_a_run_with_no_receiver_evidence() -> None:
+    result = subprocess.run(
+        [sys.executable, str(VERDICT_PY), "--from-env"],
+        env={"PATH": "/usr/bin:/bin", "FAILED_COUNT": "0", "TIMED_OUT": "1", "PREARCHIVE_TIMEOUT": "90"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "within 90s" in result.stderr
+
+
 # ── The shell script that gathers the evidence ───────────────────────────────────────
 
 
@@ -214,6 +442,31 @@ def test_the_smoke_script_checks_the_prearchive_and_no_longer_requires_log_growt
     assert "dicom.log gained no lines" not in script, (
         "the smoke still fails on a silent dicom.log — the false negative this fixes"
     )
+
+
+def test_the_smoke_reads_received_log_from_a_line_count_mark() -> None:
+    """The UID match cannot fire on an anonymising receiver; received.log is the evidence."""
+    script = (CHART_DIR / "scripts" / "smoke-cstore.sh").read_text()
+
+    assert "received.log" in script, "the smoke never reads the log XNAT writes successful receipts to"
+    assert "RECEIVED_MARK" in script, "received.log is read whole, so a trust's months of history would pass every run"
+
+
+def test_the_smoke_builds_no_evidence_of_its_own() -> None:
+    """Precedence and parsing live in cstore_verdict.py, where tests cover them."""
+    script = (CHART_DIR / "scripts" / "smoke-cstore.sh").read_text()
+
+    assert "--from-env" in script, "the smoke does not use the tested evidence builder"
+    assert "import json" not in script, "the smoke still carries inline Python that no test covers"
+
+
+def test_the_container_log_window_starts_at_the_store_not_at_the_read() -> None:
+    """An elapsed --since is measured when the log is READ — after a full poll, so it misses
+    the first seconds, which is exactly where an importer AbstractMethodError is logged."""
+    script = (CHART_DIR / "scripts" / "smoke-cstore.sh").read_text()
+
+    assert "--since-time=" in script, "the container log window is relative to the read, not to the store"
+    assert "RUN_START_RFC3339" in script
 
 
 def test_the_prearchive_window_uses_the_receivers_own_clock_in_epoch_seconds() -> None:
@@ -238,3 +491,18 @@ def test_the_smoke_asks_orthanc_for_the_uids_it_will_match_on() -> None:
     forged = "the smoke matches the prearchive on arrival time alone, which a concurrent import can forge"
     assert "SOPInstanceUID" in script, forged
     assert "StudyInstanceUID" in script, forged
+
+
+def test_the_receiver_really_is_configured_to_hash_the_uids() -> None:
+    """The premise of the received.log evidence, asserted against the config that creates it.
+
+    If anonymisation is ever turned off, or the hashUID lines leave anon_script.das, the UID
+    match becomes the normal path again and this file's priorities should be revisited.
+    """
+    repo_root = CHART_DIR.parent.parent.parent
+    configure = (repo_root / "trust" / "xnat" / "xnat" / "config" / "configure-xnat.sh").read_text()
+    anon = (repo_root / "trust" / "xnat" / "xnat" / "config" / "anon_script.das").read_text()
+
+    assert "anonymizationEnabled: true" in configure
+    for tag in ("(0020,000D)", "(0020,000E)", "(0008,0018)"):
+        assert f"{tag} := hashUID[{tag}]" in anon, f"{tag} is no longer hashed on receive"

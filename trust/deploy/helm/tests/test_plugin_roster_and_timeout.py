@@ -569,7 +569,9 @@ def test_the_smoke_names_a_reason_for_each_failed_substitution() -> None:
             collected.append(lines[index])
         return "\n".join(collected)
 
-    for assignment in ("ORTHANC_CREDS=$(", "LOG_MARK=$(", "INSTANCE_ID=$(orthanc_curl"):
+    # The substitutions that run a remote command. `LOG_MARK`/`RECEIVED_MARK`/`RUN_START` are
+    # now split out of `MARKS`/`CLOCK` by local awk, which cannot fail on a cluster.
+    for assignment in ("ORTHANC_CREDS=$(", "MARKS=$(", "CLOCK=$(", "INSTANCE_ID=$(orthanc_curl"):
         starts = [i for i, line in enumerate(lines) if line.lstrip().startswith(assignment)]
         assert starts, f"{assignment}…) has gone — re-check this guard"
         statement = logical_line_at(starts[0])

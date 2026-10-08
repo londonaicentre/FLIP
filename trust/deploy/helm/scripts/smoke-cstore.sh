@@ -25,16 +25,29 @@
 #
 # WHAT COUNTS AS SUCCESS
 #
-# Orthanc reporting 0 failed instances AND a new DICOM object appearing in XNAT's
-# prearchive for the UID that was just sent (time-boxed poll, matched on
-# SOPInstanceUID, else StudyInstanceUID). It originally required `dicom.log` to gain
-# lines instead — but that logger is not written by every XNAT deployment: on the k3s
-# trust the file stays 0 bytes while every store lands in the prearchive correctly, so a
-# healthy ingest path reported failure. `dicom.log` growth is now an extra positive
-# signal where the logger is active, never a requirement. The FLIP#1228 regression
-# signatures still fail the run outright, read from both dicom.log and the xnat-web
-# container log. The decision itself lives in scripts/cstore_verdict.py (unit-tested;
-# this script only gathers the evidence).
+# Orthanc reporting 0 failed instances AND receiver-side evidence that the object
+# landed, time-boxed poll, strongest first:
+#
+#   1. a new prearchive object carrying the SOPInstanceUID (else StudyInstanceUID)
+#      that was sent;
+#   2. a new line in XNAT's `received.log` since the mark taken before the store;
+#   3. a new prearchive object by arrival time alone — a genuine last resort, and
+#      reported as such.
+#
+# (2) is the normal path on a FLIP-configured receiver: configure-xnat.sh sets
+# `anonymizationEnabled: true` and anon_script.das rewrites the Study, Series and SOP
+# UIDs through hashUID, so the object XNAT stores does NOT carry the UIDs Orthanc holds
+# and (1) cannot match. Without (2) every healthy run would fall through to (3) and pass
+# on "something arrived", which a concurrent DQR/C-MOVE import also satisfies.
+#
+# `received.log` is where XNAT records a successful receipt; `dicom.log` is its ERROR
+# log. The original check required `dicom.log` to gain lines — the wrong logger, and one
+# this deployment never writes at all (0 bytes while every store imports correctly), so
+# a healthy ingest path reported failure. Its growth is now reported as context and is
+# never a success route. The FLIP#1228 regression signatures still fail the run
+# outright, read from both dicom.log and the xnat-web container log. The decision itself
+# lives in scripts/cstore_verdict.py (unit-tested; this script only gathers evidence,
+# and hands it over through the environment so no untested logic lives here).
 #
 # HOW IT SENDS
 #
@@ -79,6 +92,14 @@ ORTHANC_URL="${ORTHANC_URL:-http://orthanc:8042}"
 # Override to store a known instance rather than whichever one Orthanc lists first.
 INSTANCE_ID="${INSTANCE_ID:-}"
 DICOM_LOG="${DICOM_LOG:-/data/xnat/home/logs/dicom.log}"
+# Where XNAT records a SUCCESSFUL receipt: one line per object, naming the calling AE and
+# the file it wrote, both AFTER the receiver's anonymisation script has run. That is what
+# makes it the evidence that survives hashUID; dicom.log above is the error log.
+RECEIVED_LOG="${RECEIVED_LOG:-/data/xnat/home/logs/received.log}"
+# Orthanc's own calling AE, as it appears at the head of a received.log line ("<AE>@/ip:port:").
+# Used only to prefer this sender's lines over a concurrent import's; an empty or wrong value
+# degrades to "any new line", never to a failure.
+SENDER_AE="${SENDER_AE:-ORTHANC}"
 # Where XNAT parks received objects before they are archived. The positive evidence this
 # smoke now requires lives here.
 PREARCHIVE_DIR="${PREARCHIVE_DIR:-/data/xnat/prearchive}"
@@ -168,25 +189,36 @@ ORTHANC_CREDS=$("${KUBECTL[@]}" get secret "$SECRET_NAME" -n "$NAMESPACE" \
 [ -n "$ORTHANC_CREDS" ] || fail "could not read a user out of ${SECRET_NAME}/orthanc-registered-users"
 
 # ── 1. Mark the receiver, so only what this transfer produced is judged ──────────────
-# A trust that has been running for weeks has old errors in dicom.log and old studies in
-# the prearchive; scanning either whole would fail on history and hide today's result.
-LOG_MARK=$("${KUBECTL[@]}" exec -n "$NAMESPACE" "$XNAT_POD" -- \
-  sh -c "wc -l < '${DICOM_LOG}' 2>/dev/null || echo 0" | tr -d '[:space:]') \
-  || fail "could not read ${DICOM_LOG} in ${XNAT_POD} — without a mark this smoke cannot tell this transfer's log lines from the pod's history"
+# A trust that has been running for weeks has old errors in dicom.log, old receipts in
+# received.log and old studies in the prearchive; scanning any of them whole would fail
+# on history and hide today's result. One exec reads both marks.
+MARKS=$("${KUBECTL[@]}" exec -n "$NAMESPACE" "$XNAT_POD" -- \
+  env D="$DICOM_LOG" R="$RECEIVED_LOG" sh -c \
+  'printf "%s %s\n" "$(wc -l < "$D" 2>/dev/null || echo 0)" "$(wc -l < "$R" 2>/dev/null || echo 0)"') \
+  || fail "could not read ${DICOM_LOG} / ${RECEIVED_LOG} in ${XNAT_POD} — without a mark this smoke cannot tell this transfer's log lines from the pod's history"
+LOG_MARK=$(printf '%s' "$MARKS" | awk '{print $1+0}')
+RECEIVED_MARK=$(printf '%s' "$MARKS" | awk '{print $2+0}')
 LOG_MARK="${LOG_MARK:-0}"
-info "   ${DICOM_LOG} is ${LOG_MARK} lines before the store"
+RECEIVED_MARK="${RECEIVED_MARK:-0}"
+info "   ${DICOM_LOG} is ${LOG_MARK} lines, ${RECEIVED_LOG} is ${RECEIVED_MARK} lines before the store"
 
-# The receiver's OWN clock, as epoch seconds. Epoch is absolute, so `find -newermt @N`
-# below compares like with like however the container's TZ is set (the trust's XNAT runs
-# UTC while the operator may not) — never format a local timestamp and hand it across.
-RUN_START=$("${KUBECTL[@]}" exec -n "$NAMESPACE" "$XNAT_POD" -- date -u +%s | tr -d '[:space:]') \
+# The receiver's OWN clock, as epoch seconds AND as the RFC3339 instant that epoch denotes.
+# Epoch is absolute, so `find -newermt @N` below compares like with like however the
+# container's TZ is set (the trust's XNAT runs UTC while the operator may not) — never
+# format a local timestamp and hand it across. The RFC3339 form is for `kubectl logs
+# --since-time`: an elapsed `--since=Ns` window is measured from when the log is READ, which
+# on a run that polls to the deadline is long after the store, and would drop exactly the
+# first seconds in which an importer AbstractMethodError is thrown.
+CLOCK=$("${KUBECTL[@]}" exec -n "$NAMESPACE" "$XNAT_POD" -- sh -c \
+  'S=$(date -u +%s); S=$((S-1)); printf "%s %s\n" "$S" "$(date -u -d "@$S" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"') \
   || fail "could not read the clock in ${XNAT_POD} — without it this smoke cannot tell a new prearchive object from an old one"
+# One second of slack is already subtracted above: `date` truncates and a file written in
+# the same second can carry a marginally earlier mtime than the string we just read.
+RUN_START=$(printf '%s' "$CLOCK" | awk '{print $1}' | tr -d '[:space:]')
+RUN_START_RFC3339=$(printf '%s' "$CLOCK" | awk '{print $2}' | tr -d '[:space:]')
 case "$RUN_START" in
   ''|*[!0-9]*) fail "the clock in ${XNAT_POD} did not return epoch seconds (got '${RUN_START}')" ;;
 esac
-# One second of slack: `date` truncates and a file written in the same second can carry a
-# marginally earlier mtime than the string we just read.
-RUN_START=$((RUN_START - 1))
 
 # ── 2. Pick something to send ────────────────────────────────────────────────────────
 if [ -z "$INSTANCE_ID" ]; then
@@ -209,10 +241,11 @@ case "$INSTANCE_ID" in
 esac
 info "   storing instance ${INSTANCE_ID} → modality ${ORTHANC_MODALITY}"
 
-# The UIDs that identify the object on the receiving side. Matching the prearchive on
-# these rather than on arrival time alone is what makes the positive evidence specific to
-# *this* transfer — a concurrent import cannot forge them. A lookup failure is not fatal:
-# the check degrades to arrival time, which is still better than the dicom.log it replaces.
+# The UIDs that identify the object on the receiving side, where the receiver stores what
+# it was given. On a FLIP-configured receiver it does not — anonymizationEnabled +
+# anon_script.das hash the Study/Series/SOP UIDs — so this match is a bonus for receivers
+# without that script, and received.log carries the evidence here. A lookup failure is not
+# fatal for the same reason.
 instance_tag() {
   orthanc_curl "${ORTHANC_URL}/instances/${INSTANCE_ID}$1" 2>/dev/null \
     | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1 || true
@@ -252,9 +285,9 @@ fi
 # the association at the network layer and only then hands the object to the importer, so
 # a plugin/core mismatch shows up here and nowhere else.
 #
-# The evidence is the prearchive, not dicom.log: that logger is silent on deployments that
-# do not configure it (the k3s trust writes 0 bytes to it while importing perfectly), so
-# requiring its growth failed a healthy path. The import is asynchronous, so poll.
+# The evidence is received.log and the prearchive, not dicom.log: dicom.log is the error
+# log (and stays 0 bytes on this deployment), so its growth is never success. The import
+# is asynchronous, so poll.
 sleep "$SETTLE_SECONDS"
 
 # One remote command per poll: list the DICOM objects written since RUN_START, and for
@@ -280,13 +313,25 @@ prearchive_scan() {
     ' 2>/dev/null || true
 }
 
+# Everything received.log gained since the mark. This survives the receiver's anonymisation
+# script, which is why it and not the UID match is the primary evidence here.
+received_since_mark() {
+  "${KUBECTL[@]}" exec -n "$NAMESPACE" "$XNAT_POD" -- \
+    sh -c "tail -n +$((RECEIVED_MARK + 1)) '${RECEIVED_LOG}' 2>/dev/null || true" 2>/dev/null || true
+}
+
 SCAN=""
+NEW_RECEIVED=""
+TIMED_OUT=1
 DEADLINE=$((SECONDS + PREARCHIVE_TIMEOUT))
 while :; do
   SCAN=$(prearchive_scan)
-  # Stop as soon as a UID-matched object is there; otherwise keep polling until the box
-  # expires, so a time-only match is only reported when nothing better ever arrives.
-  if printf '%s\n' "$SCAN" | grep -Eq '^(sop|study)[[:space:]]'; then
+  NEW_RECEIVED=$(received_since_mark)
+  # Stop as soon as there is conclusive evidence — a UID-matched object or a logged receipt.
+  # Otherwise keep polling until the box expires, so the arrival-time-only reading is
+  # reported only when nothing better ever arrives.
+  if printf '%s\n' "$SCAN" | grep -Eq '^(sop|study)[[:space:]]' || [ -n "${NEW_RECEIVED//[[:space:]]/}" ]; then
+    TIMED_OUT=0
     break
   fi
   [ "$SECONDS" -lt "$DEADLINE" ] || break
@@ -297,48 +342,30 @@ NEW_LOG=$("${KUBECTL[@]}" exec -n "$NAMESPACE" "$XNAT_POD" -- \
   sh -c "tail -n +$((LOG_MARK + 1)) '${DICOM_LOG}' 2>/dev/null || true")
 # The container log too: on a deployment that never writes dicom.log, an importer
 # AbstractMethodError still surfaces on stdout, and that regression must keep failing.
-POD_LOG=$("${KUBECTL[@]}" logs -n "$NAMESPACE" "$XNAT_POD" --since="${PREARCHIVE_TIMEOUT}s" --tail=2000 2>/dev/null || true)
+# The window starts at RUN_START, not "the last PREARCHIVE_TIMEOUT seconds": this line runs
+# after SETTLE_SECONDS plus a possibly-full poll, so an elapsed window would begin well
+# after the store and miss the crash entirely. `--since` is only the fallback for a
+# receiver whose `date` could not produce an RFC3339 instant.
+if [ -n "$RUN_START_RFC3339" ]; then
+  POD_LOG=$("${KUBECTL[@]}" logs -n "$NAMESPACE" "$XNAT_POD" --since-time="$RUN_START_RFC3339" --tail=2000 2>/dev/null || true)
+else
+  POD_LOG=$("${KUBECTL[@]}" logs -n "$NAMESPACE" "$XNAT_POD" --since="$((SETTLE_SECONDS + PREARCHIVE_TIMEOUT + 30))s" --tail=2000 2>/dev/null || true)
+fi
 
 command -v "$PYTHON" >/dev/null 2>&1 \
   || fail "${PYTHON} not found — the smoke's verdict logic (scripts/cstore_verdict.py) needs a Python 3 interpreter; set PYTHON=<path>"
 
-# Hand the evidence to the unit-tested decision function, which prints the verdict and
-# owns the exit status. Everything above only gathers; nothing above judges.
+# Hand the evidence to the unit-tested decision function, which parses it, prints the verdict
+# and owns the exit status. Everything above only gathers; nothing above judges, and no
+# parsing happens here — `cstore_verdict.build_evidence` reads these variables itself, so the
+# precedence rules it applies are the ones its tests cover.
 set +e
-NEW_LOG="$NEW_LOG" POD_LOG="$POD_LOG" SCAN="$SCAN" \
+NEW_LOG="$NEW_LOG" POD_LOG="$POD_LOG" SCAN="$SCAN" NEW_RECEIVED="$NEW_RECEIVED" \
   FAILED_COUNT="$FAILED_COUNT" INSTANCE_COUNT="$INSTANCE_COUNT" \
-  SOP_UID="$SOP_UID" STUDY_UID="$STUDY_UID" \
-  "$PYTHON" -c '
-import json, os, sys
-
-def num(name):
-    raw = os.environ.get(name, "").strip()
-    return int(raw) if raw.isdigit() else None
-
-log_lines = [ln for ln in os.environ.get("NEW_LOG", "").splitlines() if ln.strip()]
-pod_lines = [ln for ln in os.environ.get("POD_LOG", "").splitlines() if ln.strip()]
-matches, new = [], []
-for line in os.environ.get("SCAN", "").splitlines():
-    if "\t" not in line:
-        continue
-    mode, path = line.split("\t", 1)
-    new.append(path)
-    if mode in ("sop", "study"):
-        matches.append((mode, path))
-mode = matches[0][0] if matches else ""
-json.dump({
-    "store_failed_count": num("FAILED_COUNT"),
-    "store_instance_count": num("INSTANCE_COUNT"),
-    "receiver_log_lines": log_lines + pod_lines,
-    "dicom_log_new_lines": len(log_lines),
-    "prearchive_matches": [p for m, p in matches if m == mode],
-    "prearchive_match_mode": mode,
-    "prearchive_new": new,
-    "sop_uid": os.environ.get("SOP_UID", ""),
-    "study_uid": os.environ.get("STUDY_UID", ""),
-}, sys.stdout)
-' | "$PYTHON" "${SCRIPT_DIR}/cstore_verdict.py"
-STATUS=${PIPESTATUS[1]}
+  SOP_UID="$SOP_UID" STUDY_UID="$STUDY_UID" SENDER_AE="$SENDER_AE" \
+  TIMED_OUT="$TIMED_OUT" PREARCHIVE_TIMEOUT="$PREARCHIVE_TIMEOUT" \
+  "$PYTHON" "${SCRIPT_DIR}/cstore_verdict.py" --from-env
+STATUS=$?
 set -e
 exit "$STATUS"
 

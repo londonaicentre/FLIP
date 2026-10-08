@@ -250,12 +250,17 @@ different XNAT core aborts every C-STORE in the importer, which is why `smoke-cs
 stores a real object through the PACS rather than trusting a C-ECHO: C-ECHO never reaches
 the importer and passes throughout.
 
-`smoke-cstore` passes when Orthanc reports 0 failed instances **and** a new DICOM object
-for the UID just sent appears in XNAT's prearchive (time-boxed poll, matched on
-SOPInstanceUID then StudyInstanceUID). It does **not** require `dicom.log` to grow — not
-every XNAT deployment writes that logger, and demanding it failed a perfectly healthy
-ingest path; growth there is now an extra signal. The importer-crash signatures still fail
-the run, read from `dicom.log` and the container log alike. See
+`smoke-cstore` passes when Orthanc reports 0 failed instances **and** XNAT shows receiver-side
+evidence that the object landed — polled, strongest first: a new prearchive object carrying the
+UID just sent (`SOPInstanceUID`, else `StudyInstanceUID`), else a new line in XNAT's
+`received.log` since the mark taken before the store, else (last resort, reported as such) a new
+prearchive object by arrival time alone. The `received.log` line is the normal path here: the
+FLIP receiver runs with `anonymizationEnabled: true` and `anon_script.das` hashes the
+Study/Series/SOP UIDs, so the stored object does not carry the UIDs Orthanc holds and the UID
+match cannot fire. It does **not** require `dicom.log` to grow — that is the receiver's *error*
+log, not its receipt log, and this deployment never writes it at all; its growth is reported as
+context and is never a success route. The importer-crash signatures still fail the run, read
+from `dicom.log` and the container log alike. See
 [TROUBLESHOOTING §2.7](TROUBLESHOOTING.md#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog).
 
 ### 7. (FL training only) Open the FL-server NLB

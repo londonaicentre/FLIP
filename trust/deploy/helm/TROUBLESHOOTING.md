@@ -704,23 +704,40 @@ kubectl exec -n flip-trust "$xnat_pod" -- curl -sf -u <admin> localhost:8080/xap
 make -C trust/deploy/helm smoke-cstore
 ```
 
-**What `smoke-cstore` judges.** Success is Orthanc reporting `0` failed instances **and** a
-new DICOM object appearing in XNAT's prearchive (`/data/xnat/prearchive`) for the UID that
-was just sent — polled for up to `PREARCHIVE_TIMEOUT` seconds, matched on `SOPInstanceUID`,
-else `StudyInstanceUID`, else (last resort, reported as such) arrival time against the
-*receiver's own* clock. It used to require `dicom.log` to gain lines instead, which this
-deployment never writes — the file stays 0 bytes while every store imports correctly, so a
-healthy path failed with "dicom.log gained no lines". `dicom.log` growth is now an extra
-positive signal where the logger is active, never a requirement. The importer signatures
-(`AbstractMethodError`, `NoSuchMethodError`, `unable to read DICOM object null`) still fail
-the run outright, read from both `dicom.log` and the `xnat-web` container log.
+**What `smoke-cstore` judges.** Success is Orthanc reporting `0` failed instances **and**
+receiver-side evidence that the object landed, polled for up to `PREARCHIVE_TIMEOUT` seconds,
+strongest first:
+
+1. a new DICOM object in XNAT's prearchive (`/data/xnat/prearchive`) carrying the
+   `SOPInstanceUID`, else the `StudyInstanceUID`, that was sent — matched against the
+   *receiver's own* clock;
+2. a new line in `/data/xnat/home/logs/received.log` since the line-count mark taken before the
+   store (preferring lines whose calling AE is `SENDER_AE`, default `ORTHANC`);
+3. a new prearchive object by arrival time alone — a genuine last resort, reported as such,
+   since a concurrent DQR/C-MOVE import looks identical.
+
+(2) is the normal path on a FLIP trust. `configure-xnat.sh` sets `anonymizationEnabled: true` on
+the SCP receiver and `anon_script.das` rewrites `(0020,000D)`, `(0020,000E)` and `(0008,0018)`
+through `hashUID`, so the object XNAT stores does **not** carry the UIDs Orthanc holds and (1)
+cannot match. `received.log` is written after that rewrite.
+
+It used to require `dicom.log` to gain lines instead. That is the wrong file twice over: XNAT
+records successful receipts in `received.log` and keeps `dicom.log` for *errors*, and this
+deployment never writes `dicom.log` at all (0 bytes while every store imports correctly), so a
+healthy path failed with "dicom.log gained no lines". Its growth is now reported as context and
+can never pass a run on its own. The importer signatures (`AbstractMethodError`,
+`NoSuchMethodError`, `unable to read DICOM object null`) still fail the run outright, read from
+both `dicom.log` and the `xnat-web` container log — whose window starts at the store (`kubectl
+logs --since-time`), not at the moment the log is read, so a crash in the first seconds after
+the association is not missed on a run that polls to the deadline.
 
 Knobs: `INSTANCE_ID=<orthanc id>` (send a known instance), `PREARCHIVE_DIR`,
 `PREARCHIVE_TIMEOUT` (default 90s), `PREARCHIVE_INTERVAL`, `SETTLE_SECONDS`, `DICOM_LOG`,
-`KUBE_CONTEXT`. The verdict itself is `scripts/cstore_verdict.py`, unit-tested in
-`tests/test_cstore_verdict.py` with no cluster.
+`RECEIVED_LOG`, `SENDER_AE`, `KUBE_CONTEXT`. The verdict itself is `scripts/cstore_verdict.py`,
+unit-tested in `tests/test_cstore_verdict.py` with no cluster — including the evidence builder,
+so the shell script holds no parsing of its own.
 
-A failing run that names *no new prearchive object and no receiver log activity* means the
+A failing run that names *no received.log line and no new prearchive object* means the
 association went somewhere that is not this XNAT — check the SCP receiver Orthanc dialled
 (§2.1) before suspecting the plugins.
 
