@@ -79,6 +79,7 @@ make aws-login                                # AWS SSO login
 make print-tf-env                             # Print resolved TF_VAR_* as KEY=value (consumed by the CI workflows)
 make -C ci init/plan/apply/migrate-state      # Adopters only: CI bootstrap in your own account (see ci/README.md); AI Centre's accounts are the platform repos'
 make -C ci check-oidc-provider               # Does the account have GitHub's OIDC provider? (plan runs it, and check-not-managed-elsewhere, first)
+make tflint-lint                              # Static tflint lint (terraform recommended preset + AWS ruleset, .tflint.hcl) — CI counterpart is the TFLint job in validate_terraform.yml; acknowledge a deliberate exception in-code with `# tflint-ignore: <rule> # <why>` (the rationale needs that second `#` — `-- why` silently voids the annotation), never by disabling the rule. Run from the REPO ROOT (same parse-time env guard reason as checkov-lint)
 make checkov-lint                             # Static checkov security lint (IAM policy content + promoted posture checks) — CI counterpart is the Checkov Security Lint job in validate_terraform.yml (FLIP#1052, FLIP#1058); suppress deliberate breadth/posture in-code with `# checkov:skip=<ID>:<rationale>`. NB this Makefile's parse-time env guard needs the deploy env file — the REPO-ROOT `make checkov-lint` (or `bash deploy/providers/AWS/scripts/checkov_lint.sh`) runs env-free
 uv run --no-project --with pytest --with jinja2 --with click --with diagrams pytest tests/   # Credential-free static checks over the stack's artefacts (rendered templates, deploy scripts, and Terraform source itself — incl. the Cognito `callback_urls` = browser CORS allowlist invariants). CI counterpart: the AWS deploy tests job in validate_terraform.yml (which also installs graphviz first, so the render smoke test in test_architecture_diagram.py runs instead of skipping). Deps named explicitly rather than `uv sync`d: the dev group pulls ansible-core + pyqt5, the tests need four packages (`diagrams` is imported at module level by architecture/central_hub.py, so it's required for collection even without graphviz installed)
 ```
@@ -199,7 +200,11 @@ Things worth knowing before touching any of it:
   empty and fails the run pointing at the wrong cause. Before any GitHub write it
   verifies the account under the mode's profile (state bucket owner, both roles
   and their `sub` / apply `job_workflow_ref`, the boundary) and reads the role ARNs
-  from IAM; any mismatch stops it.
+  from IAM; any mismatch stops it. It, like `scripts/add_fl_kits.sh`, must stay
+  **bash 3.2 compatible** (the stock macOS `/bin/bash` an admin runs it with): no
+  `declare -A`, no `mapfile`, and an array that can be empty expanded as
+  `${a[@]+"${a[@]}"}` — the `Deploy script tests on macOS bash 3.2` job in
+  `validate_terraform.yml` runs both harnesses there.
 - **Never seed a GitHub environment from a laptop `.env` file without checking it.**
   `scripts/reconcile_ci_env.py --env <e> --compare <file>` rebuilds the Terraform
   inputs from deployed state and reports drift (secrets shown as digests, never
@@ -208,6 +213,11 @@ Things worth knowing before touching any of it:
   only the Terraform inputs, so it refuses to overwrite a real operator env file,
   and on `--env prod` it treats an empty `DEMO_ASSETS_BUCKET_NAME` as a failed
   recovery rather than a value — empty there destroys the Ark+ demo resources.
+  The key recovers from one of two places depending on the estate (FLIP#1199):
+  `data.aws_s3_bucket.demo_assets` on legacy, where the bucket is adopted, and
+  `module.flip_demo_assets_bucket`'s `aws_s3_bucket.this` on LZA, where Terraform
+  creates it. The module has to be matched by name, since every `flip_s3_bucket`
+  caller contributes an `aws_s3_bucket.this`.
 
 Full flow, one-time setup and break-glass: [README.md](README.md#terraform-ci-plan-on-pr-apply-on-merge).
 
