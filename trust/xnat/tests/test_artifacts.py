@@ -92,7 +92,8 @@ def _curl_serving(upstream: Path, log: Path | None = None) -> str:
     record = f'echo "$url" >> "{log}"; ' if log else ""
     return (
         'out=""; url=""; while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; '
-        '--retry|--retry-delay) shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac; done; '
+        "--retry|--retry-delay|--connect-timeout|--speed-limit|--speed-time) shift 2 ;; "
+        '-*) shift ;; *) url="$1"; shift ;; esac; done; '
         f'{record}cp "{upstream}/${{url##*/}}" "$out"'
     )
 
@@ -251,6 +252,23 @@ def test_fetch_downloads_a_cold_cache_from_the_manifest_urls(tmp_path: Path) -> 
     assert result.returncode == 0, result.stdout + result.stderr
     assert sorted(p.name for p in cache.iterdir()) == sorted(FIXTURE_PLUGINS)
     assert log.read_text().split() == [f"https://example.invalid/dl/{name}" for name in FIXTURE_PLUGINS]
+
+
+def test_fetch_bounds_a_stalled_download(tmp_path: Path) -> None:
+    """A host that accepts the connection and goes quiet must fail the download, not hang the build."""
+    upstream, manifest = _make_upstream(tmp_path)
+    args = tmp_path / "curl.args"
+    cache = tmp_path / "cache"
+
+    curl = f'echo "$*" >> "{args}"; ' + _curl_serving(upstream)
+    result = _run("fetch", "plugin", cache, _env(tmp_path, manifest, curl))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = args.read_text().splitlines()
+    assert len(calls) == len(FIXTURE_PLUGINS), calls
+    for call in calls:
+        assert re.search(r"--connect-timeout [1-9]", call), call
+        assert re.search(r"--speed-limit [1-9]\d* --speed-time [1-9]", call), call
 
 
 def test_fetch_keeps_matching_files_and_downloads_nothing(tmp_path: Path) -> None:

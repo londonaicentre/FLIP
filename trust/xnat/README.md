@@ -380,6 +380,14 @@ The development overlay (`docker-compose-stack.development.yml`) sets these cons
   repository root (add `ARTIFACTS_DIR=<dir>` on a host with no internet route), then `make up` again. The message lists
   each file that is missing, has the wrong checksum or is not in the manifest.
 
+- **`Download failed` or a checksum mismatch from `xnat_artifacts.sh`** — the WAR and plugins come straight from
+  their upstream hosts (api.bitbucket.org, xnat.org, GitHub), with no FLIP mirror in between, so an upstream outage or a
+  re-published file stops `prepare-artifacts`, the local image build and the CI `xnat-web` build alike. Open the URL from
+  the message: if the host is down, retry later (in CI, re-run the workflow). Locally, a copy of the files from another
+  machine works now: `make -C trust prepare-artifacts ARTIFACTS_DIR=<dir>`, still checked against the manifest. A
+  checksum mismatch means the upstream file changed; do not edit the manifest to match until the new file is
+  confirmed to be the intended release.
+
 - **XNAT serves its login page but configuration reports plugin-route 404s** — inspect
   `configure-xnat-<stack>.log` in the container. Once the plugin cache is repaired, rerun the individual Trust with
   `make -C trust/xnat up-xnat KIT=<CODE>`. This target intentionally resets that development XNAT's data. If the

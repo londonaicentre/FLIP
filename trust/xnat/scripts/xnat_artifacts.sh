@@ -144,7 +144,11 @@ fetch_one() {
   else
     command -v curl >/dev/null 2>&1 || { echo "❌ curl is required to download ${names[i]}." >&2; return 1; }
     echo "⬇️  Downloading ${names[i]}..."
-    if ! curl -fsSL --retry 3 --retry-delay 2 -o "${part}" "${urls[i]}"; then
+    # Stall limits rather than a total deadline: a host that accepts the connection and then goes
+    # quiet fails here instead of hanging the caller (prepare-artifacts, the image builds), while a
+    # slow but steady link on a trust network still finishes.
+    if ! curl -fsSL --connect-timeout 20 --speed-limit 1024 --speed-time 60 --retry 3 --retry-delay 2 \
+      -o "${part}" "${urls[i]}"; then
       rm -f "${part}"
       echo "❌ Download failed: ${urls[i]}" >&2
       return 1
