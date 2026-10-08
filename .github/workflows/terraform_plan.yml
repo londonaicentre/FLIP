@@ -247,11 +247,15 @@ jobs:
       # apply is already running — and for a REMOVED or REPLACED ingress the
       # remedy is "update aicentre-lza-iac FIRST", which is advice only a
       # pre-merge reader can take. So it runs here too, in advisory-only mode:
-      # it never holds and always exits 0, because a PR plan failing a check on
-      # an FL-disruptive diff is the apply's decision, not this job's. The
-      # warning annotation lands on the PR's checks beside the tf-via-pr plan
-      # comment; the detail goes to the job summary.
+      # it never holds, and it exits 0 on every readable plan — an unreadable
+      # plan fails the step, which is correct (it fails closed rather than
+      # claiming "no advisory"). A PR plan failing a check on an FL-disruptive
+      # diff is the apply's decision, not this job's, and `continue-on-error`
+      # keeps a broken advisory from turning the PR check red. The warning
+      # annotation lands on the PR's checks beside the tf-via-pr plan comment;
+      # the detail goes to the job summary.
       - name: Advisory — LZA FL ingress and FL impact
+        continue-on-error: true
         working-directory: deploy/providers/AWS
         env:
           ADVISORY_ONLY: "true"

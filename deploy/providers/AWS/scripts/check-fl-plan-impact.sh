@@ -177,22 +177,25 @@ if ! jq -e 'has("resource_changes")' "${PLAN_JSON}" >/dev/null 2>&1; then
     die "${PLAN_JSON} has no 'resource_changes' key — not a 'terraform show -json' plan document"
 fi
 
+# Each jq run is guarded with `|| die` so a malformed plan document — a null
+# `resource_changes`, an entry with no `change.actions` — exits 2 (the documented
+# parse-error code) rather than letting `set -e` surface jq's own exit 5.
 ecs_hits="$(jq_hits ".resource_changes[]
     | select(${ecs_selector})
     | select(${ACTION_FILTER})
-    | \"\\(.change.actions | join(\"+\"))\\t\\(.address)\"")"
+    | \"\\(.change.actions | join(\"+\"))\\t\\(.address)\"")" || die "${PLAN_JSON} could not be read as a plan document (ECS selector)"
 
 efs_hits="$(jq_hits ".resource_changes[]
     | select(${efs_selector})
     | select(.change.actions | any(. == \"delete\"))
-    | \"\\(.change.actions | join(\"+\"))\\t\\(.address)\"")"
+    | \"\\(.change.actions | join(\"+\"))\\t\\(.address)\"")" || die "${PLAN_JSON} could not be read as a plan document (EFS selector)"
 
 lza_hits="$(jq_hits ".resource_changes[]
     | select(${lza_selector})
     | select(${ACTION_FILTER})
-    | \"\\(.change.actions | join(\"+\"))\\t\\(.address)\"")"
+    | \"\\(.change.actions | join(\"+\"))\\t\\(.address)\"")" || die "${PLAN_JSON} could not be read as a plan document (LZA ingress selector)"
 
-total_changes="$(jq "[.resource_changes[] | select(${ACTION_FILTER})] | length" "${PLAN_JSON}")"
+total_changes="$(jq "[.resource_changes[] | select(${ACTION_FILTER})] | length" "${PLAN_JSON}")" || die "${PLAN_JSON} could not be read as a plan document (change count)"
 
 # Advisory only — emitted on every path, never consulted for the exit code.
 emit_lza_ingress_advisory() {
@@ -216,7 +219,7 @@ emit_lza_ingress_advisory() {
    Confirm the handoff parameters afterwards:
      aws ssm get-parameters-by-path --path /flip/networking --recursive
 
-   This is advisory — the apply is NOT held by it.
+   Advisory only: this does not hold any apply.
 EOF
 
     if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
@@ -224,7 +227,7 @@ EOF
             echo "### ⚠️ LZA FL ingress changed — update the networking account"
             echo
             echo "This plan touches the workload side of the cross-repo ingress contract."
-            echo "It is **advisory**: the apply was not held by this."
+            echo "**Advisory only:** this does not hold any apply."
             echo
             echo "| Action | Resource |"
             echo "| --- | --- |"
@@ -239,7 +242,7 @@ EOF
     fi
 
     if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
-        echo "::warning title=LZA FL ingress changed — networking account must follow::This plan changes the internal FL NLB, its static private IPs, its listeners or the /flip/networking/* handoff parameters. The networking account (aicentre-lza-iac) edge must be updated in the right order — adding ingress: FLIP first; removing or replacing it: networking account first. Advisory only; the apply was not held by this. See the job summary."
+        echo "::warning title=LZA FL ingress changed — networking account must follow::This plan changes the internal FL NLB, its static private IPs, its listeners or the /flip/networking/* handoff parameters. The networking account (aicentre-lza-iac) edge must be updated in the right order — adding ingress: FLIP first; removing or replacing it: networking account first. Advisory only: this does not hold any apply. See the job summary."
     fi
 }
 

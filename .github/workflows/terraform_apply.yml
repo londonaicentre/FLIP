@@ -295,10 +295,15 @@ jobs:
       # nothing about whether the networking account has been updated, and an NLB
       # replacement is both FL-disruptive and ingress-changing, so the one apply
       # most likely to break the cross-repo contract is the one that would
-      # otherwise emit no LZA advisory at all. Never holds and always exits 0: the
-      # attestation is what releases the apply, and this must not re-hold it.
+      # otherwise emit no LZA advisory at all. It exits 0 on every readable plan;
+      # an unreadable plan fails the step (it fails closed rather than claiming
+      # "no advisory"), which is why `continue-on-error: true` is set here: the
+      # attestation is what releases the apply, and a broken advisory — an
+      # unexpected plan shape, a jq error, a future selector bug — must not take
+      # away the one documented way past a gate that is holding or failing.
       - name: Emit the plan advisories (FL gate skipped)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.fl_quiesced }}
+        continue-on-error: true
         working-directory: deploy/providers/AWS
         env:
           ADVISORY_ONLY: "true"
@@ -317,7 +322,7 @@ jobs:
           ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
-          echo "::warning title=FL gate skipped::${ACTOR} dispatched this apply with fl_quiesced=true, so scripts/check-fl-plan-impact.sh was not run. An in-flight training run is killed if that attestation is wrong."
+          echo "::warning title=FL gate skipped::${ACTOR} dispatched this apply with fl_quiesced=true, so the FL gate did not hold this apply (scripts/check-fl-plan-impact.sh ran advisory-only). An in-flight training run is killed if that attestation is wrong."
 
       # tf-via-pr moves `plan-file` onto its own working path, so hand it a copy
       # rather than the file it is about to overwrite.

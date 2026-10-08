@@ -41,12 +41,37 @@ import unittest
 from pathlib import Path
 
 WORKFLOWS = Path(__file__).resolve().parents[2] / "workflows"
-SCRIPT = "scripts/check-fl-plan-impact.sh"
+SCRIPT_NAME = "check-fl-plan-impact.sh"
+SCRIPT = f"scripts/{SCRIPT_NAME}"
 QUIESCED_IF = "github.event_name == 'workflow_dispatch' && inputs.fl_quiesced"
 
 # An *invocation*, not a mention: the quiesce-attestation step names the script inside a warning
-# annotation, and counting that as a call would make the gate look duplicated.
-INVOCATION = re.compile(rf"^\s*(?:bash\s+)?{re.escape(SCRIPT)}\b", re.MULTILINE)
+# annotation, and counting that as a call would make the gate look duplicated. Any path shape counts
+# as a call, though — ``scripts/x.sh``, ``bash scripts/x.sh``, ``./scripts/x.sh`` — so that moving
+# the call to a different spelling cannot make it invisible to this test.
+INVOCATION = re.compile(rf"^\s*(?:bash\s+)?[\w./-]*{re.escape(SCRIPT_NAME)}\b", re.MULTILINE)
+
+# ``ADVISORY_ONLY`` as a YAML key, whatever the value: a literal ``"true"``, a quoted string, or an
+# expression such as ``${{ … && 'true' || 'false' }}``. The *presence* of the key is what the
+# negative checks below care about — an expression on the gate step is exactly the mutation that
+# would silently disable the FL hold while a literal-only regex kept passing.
+ADVISORY_KEY = re.compile(r"^\s*ADVISORY_ONLY:\s*(?P<value>.*?)\s*$", re.MULTILINE)
+# A step writing the variable into the job environment for *later* steps, which would turn the gate
+# itself advisory without any ``env:`` key being visible on it.
+ADVISORY_VIA_GITHUB_ENV = re.compile(r"^.*\bADVISORY_ONLY\b.*GITHUB_ENV.*$", re.MULTILINE)
+
+
+def strip_comments(text: str) -> str:
+    """Blank out whole-line comments, keeping line numbering and offsets intact.
+
+    Both YAML comments and shell comments inside ``run:`` blocks are prose, not configuration:
+    a comment mentioning ``--advisory-only`` must never count as running the script that way.
+    """
+    return "\n".join("" if line.lstrip().startswith("#") else line for line in text.split("\n"))
+
+
+def workflow_text(workflow: str) -> str:
+    return strip_comments((WORKFLOWS / workflow).read_text())
 
 
 def steps(workflow: str) -> list[str]:
@@ -54,11 +79,19 @@ def steps(workflow: str) -> list[str]:
 
     Only one job per workflow here declares steps, so the blocks need no job filter.
     """
-    text = (WORKFLOWS / workflow).read_text()
+    text = workflow_text(workflow)
     starts = [m.start() for m in re.finditer(r"^      - name: ", text, re.MULTILINE)]
     assert starts, f"{workflow}: no steps found — has the indentation changed?"
     bounds = starts + [len(text)]
     return [text[a:b] for a, b in zip(bounds, bounds[1:])]
+
+
+def preamble(workflow: str) -> str:
+    """Everything before the first step: workflow-level and job-level keys, including ``env:``."""
+    text = workflow_text(workflow)
+    first = re.search(r"^      - name: ", text, re.MULTILINE)
+    assert first, f"{workflow}: no steps found — has the indentation changed?"
+    return text[: first.start()]
 
 
 def name_of(step: str) -> str:
@@ -87,8 +120,9 @@ def is_advisory_only(step: str) -> bool:
     Either surface counts — the ``ADVISORY_ONLY`` environment variable or the ``--advisory-only``
     flag — because the script accepts both and the workflows should be free to pick.
     """
-    env_set = re.search(r'^\s+ADVISORY_ONLY: "?true"?\s*$', step, re.MULTILINE)
-    return bool(env_set) or "--advisory-only" in step
+    found = ADVISORY_KEY.search(step)
+    env_set = bool(found) and found["value"].strip("\"'") == "true"
+    return env_set or "--advisory-only" in step
 
 
 def with_input(step: str, key: str) -> str | None:
@@ -167,6 +201,72 @@ class ApplyWorkflowKeepsTheAdvisoryOnARedispatch(unittest.TestCase):
         assert condition(gate) == f"!({condition(quiesced[0])})", (
             "the gate and the quiesced advisory must cover exactly complementary runs"
         )
+
+
+class AdvisoryModeCannotLeakOntoTheGate(unittest.TestCase):
+    """The mutations that silently disable the FL hold.
+
+    ``ADVISORY_ONLY`` reaching the gate step turns the apply's only FL protection into a printout.
+    The positive tests above cannot see that: they ask whether an advisory exists, not whether the
+    variable is confined to it. Each check here corresponds to a one-line edit that would otherwise
+    pass review and CI.
+    """
+
+    WORKFLOWS_UNDER_TEST = ("terraform_apply.yml", "terraform_plan.yml")
+
+    def test_no_workflow_or_job_level_advisory_only(self) -> None:
+        """A job-level ``env:`` would apply the variable to every step, the gate included."""
+        for workflow in self.WORKFLOWS_UNDER_TEST:
+            with self.subTest(workflow=workflow):
+                found = ADVISORY_KEY.search(preamble(workflow))
+                assert not found, (
+                    f"{workflow} sets ADVISORY_ONLY outside a step ({found[0].strip()!r} at "
+                    "workflow or job level): it would reach the gate step and the FL hold would "
+                    "never fire. Set it in the advisory step's own env: only"
+                )
+
+    def test_the_gate_step_has_no_advisory_only_key_at_all(self) -> None:
+        """Not merely ``!= "true"``: an expression could evaluate to true on some runs."""
+        for workflow in self.WORKFLOWS_UNDER_TEST:
+            for step in script_steps(workflow):
+                if is_advisory_only(step):
+                    continue
+                with self.subTest(workflow=workflow, step=name_of(step)):
+                    found = ADVISORY_KEY.search(step)
+                    assert not found, (
+                        f"{workflow} step {name_of(step)!r} is the holding gate but carries "
+                        f"ADVISORY_ONLY ({found[0].strip()!r}); any value that resolves to 'true' "
+                        "disables the hold. The gate must carry no ADVISORY_ONLY key"
+                    )
+
+    def test_no_step_exports_advisory_only_to_the_job_environment(self) -> None:
+        """``echo ADVISORY_ONLY=true >> "$GITHUB_ENV"`` has no ``env:`` key for the checks to see."""
+        for workflow in self.WORKFLOWS_UNDER_TEST:
+            with self.subTest(workflow=workflow):
+                found = ADVISORY_VIA_GITHUB_ENV.search(workflow_text(workflow))
+                assert not found, (
+                    f"{workflow} writes ADVISORY_ONLY into $GITHUB_ENV ({found[0].strip()!r}): "
+                    "later steps, including the gate, would inherit it invisibly"
+                )
+
+    def test_a_comment_is_not_evidence_of_advisory_mode(self) -> None:
+        """The matching runs on comment-stripped text, so prose cannot stand in for config."""
+        step = "      - name: Fake\n        run: |\n          # runs with --advisory-only\n"
+        assert not is_advisory_only(strip_comments(step)), (
+            "a comment mentioning --advisory-only counts as advisory mode; a step whose env: was "
+            "deleted would still pass"
+        )
+
+    def test_an_invocation_is_recognised_whatever_its_path_spelling(self) -> None:
+        for call in (
+            f"          {SCRIPT} tfplan.json",
+            f"          ./{SCRIPT} tfplan.json",
+            f"          bash {SCRIPT} tfplan.json",
+        ):
+            with self.subTest(call=call.strip()):
+                assert INVOCATION.search(call), f"{call.strip()!r} is not recognised as a call"
+        mention = '          echo "::warning::scripts/check-fl-plan-impact.sh was not run"'
+        assert not INVOCATION.search(mention), "a mention inside an echo counts as an invocation"
 
 
 if __name__ == "__main__":
