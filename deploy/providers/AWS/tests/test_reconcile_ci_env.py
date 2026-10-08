@@ -303,7 +303,7 @@ class TestRedaction:
         assert out.startswith("sha256:")
 
     def test_non_secret_values_are_shown_verbatim(self):
-        assert rce.shown("VPC_NAME", "flip-vpc") == "flip-vpc"
+        assert rce.shown("SES_VERIFIED_EMAIL", "noreply@example.com") == "noreply@example.com"
 
     def test_empty_is_labelled_not_digested(self):
         assert rce.shown("AES_KEY_BASE64", "") == "(empty)"
@@ -534,7 +534,7 @@ class TestMain:
         "FLARE_KIT_DATE": "20260512",
         "FLOWER_KIT_DATE": "",
         "ENFORCE_MFA": "",
-        "VPC_NAME": "flip-vpc",
+        "SES_VERIFIED_EMAIL": "noreply@example.com",
         "DEMO_ASSETS_BUCKET_NAME": "",
     }
 
@@ -555,10 +555,10 @@ class TestMain:
         # Only one backend is ever provisioned, so the other's kit date is
         # legitimately empty. A genuinely missing key alongside it proves the
         # warning block is being produced at all.
-        values = {**self.BASE, "VPC_NAME": ""}
+        values = {**self.BASE, "SES_VERIFIED_EMAIL": ""}
         self._run(monkeypatch, "stag", values)
         warning = capsys.readouterr().out.split("Not recovered", 1)[1]
-        assert "VPC_NAME" in warning
+        assert "SES_VERIFIED_EMAIL" in warning
         assert "FLOWER_KIT_DATE" not in warning
 
     def test_out_omits_an_unrecovered_prod_demo_bucket(self, monkeypatch, tmp_path):

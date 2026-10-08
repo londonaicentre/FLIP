@@ -126,14 +126,35 @@ set_gh() {
     printf '%s' "${value}" | gh "${kind}" set "${key}" --env "${GH_ENV}" --repo "${REPO}" >/dev/null
 }
 
+# Bash 3.2 compatible on purpose: this runs on an admin's machine, and macOS
+# ships bash 3.2 — no associative arrays (`declare -A`), no `mapfile`, and under
+# `set -u` an empty array's "${a[@]}" is an unbound-variable error (bash < 4.4).
+# So the env file's values live in prefixed shell variables (`__val_<KEY>`,
+# `__rawtf_<tf_var>`; every key matches a shell-name pattern), lists are read
+# with `read_lines`, and an array that can be empty is expanded as
+# ${a[@]+"${a[@]}"}.
+value_of() { # <KEY> — the env file's value, empty when unset
+    local name="__val_$1"
+    printf '%s' "${!name:-}"
+}
+has_value() { # <KEY> — set in the env file, even to the empty string
+    local name="__val_$1"
+    [[ -n "${!name+set}" ]]
+}
+read_lines() { # <array name> — read stdin into it, one element per line (mapfile -t)
+    local __line
+    eval "$1=()"
+    while IFS= read -r __line; do
+        eval "$1+=(\"\${__line}\")"
+    done
+}
+
 # Read the env file the way make does: last assignment wins, value verbatim.
-declare -A VALUES=()
-declare -A RAW_TF_VALUES=()
 while IFS= read -r line; do
     if [[ "${line}" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
-        VALUES["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
+        printf -v "__val_${BASH_REMATCH[1]}" '%s' "${BASH_REMATCH[2]}"
     elif [[ "${line}" =~ ^export[[:space:]]+TF_VAR_([A-Za-z0-9_]+)=(.*)$ ]]; then
-        RAW_TF_VALUES["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
+        printf -v "__rawtf_${BASH_REMATCH[1]}" '%s' "${BASH_REMATCH[2]}"
     fi
 done <"${ENV_FILE}"
 
@@ -141,7 +162,7 @@ done <"${ENV_FILE}"
 # (compose-ci-env.sh's LZA_RAW_TF_VARS) are written in the operator's file the
 # way make hands them to Terraform: `export TF_VAR_networking_ingress_cidrs=…`.
 # Read that spelling back under the GitHub key; a plain `KEY=` line still wins.
-mapfile -t RAW_TF_VARS < <(
+read_lines RAW_TF_VARS < <(
     sed -n '/^LZA_RAW_TF_VARS=(/,/^)/p' "${HERE}/compose-ci-env.sh" |
         grep -oE '"[A-Z][A-Z0-9_]*:[a-z0-9_]+"' | tr -d '"'
 )
@@ -149,8 +170,9 @@ mapfile -t RAW_TF_VARS < <(
 for pair in "${RAW_TF_VARS[@]}"; do
     key="${pair%%:*}"
     tf_var="${pair##*:}"
-    if [[ -z "${VALUES[${key}]+set}" && -n "${RAW_TF_VALUES[${tf_var}]+set}" ]]; then
-        VALUES["${key}"]="${RAW_TF_VALUES[${tf_var}]}"
+    raw_name="__rawtf_${tf_var}"
+    if ! has_value "${key}" && [[ -n "${!raw_name+set}" ]]; then
+        printf -v "__val_${key}" '%s' "${!raw_name}"
     fi
 done
 
@@ -205,7 +227,7 @@ PARTITION="$(cut -d: -f2 <<<"${CALLER_ARN}")"
 # The one value that ties the env file to an account. Asking S3 to check the
 # owner proves the env file and the profile describe the same estate: a stag env
 # file with the prod profile, or the reverse, stops here.
-STATE_BUCKET="${VALUES[FLIP_TFSTATE_BUCKET_NAME]:-}"
+STATE_BUCKET="$(value_of FLIP_TFSTATE_BUCKET_NAME)"
 [[ -n "${STATE_BUCKET}" ]] || die "FLIP_TFSTATE_BUCKET_NAME is not set in ${ENV_FILE}"
 aws_q s3api head-bucket --bucket "${STATE_BUCKET}" --expected-bucket-owner "${ACCOUNT}" >/dev/null 2>&1 ||
     die "the state bucket '${STATE_BUCKET}' (FLIP_TFSTATE_BUCKET_NAME in ${ENV_FILE}) is not in the
@@ -363,18 +385,19 @@ echo "   set TF_PLAN_ROLE_ARN, TF_APPLY_ROLE_ARN"
 # Still anchored to a `KEY: ${{ … }}` line inside an `env:` block, which is what
 # keeps `role-to-assume: ${{ vars.TF_PLAN_ROLE_ARN }}` out of the list — that one
 # is read from IAM above, not from the operator's env file.
-mapfile -t SECRET_KEYS < <(
+read_lines SECRET_KEYS < <(
     grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*:[[:space:]]+\$\{\{[[:space:]]*secrets\.[A-Z0-9_]+' "${PLAN_WORKFLOW}" |
         sed -E 's/.*secrets\.//' | sort -u
 )
-mapfile -t VARIABLE_KEYS < <(
+read_lines VARIABLE_KEYS < <(
     grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*:[[:space:]]+\$\{\{[[:space:]]*vars\.[A-Z0-9_]+' "${PLAN_WORKFLOW}" |
         sed -E 's/.*vars\.//' | sort -u
 )
 ((${#SECRET_KEYS[@]} > 0)) || die "found no 'secrets.' references in ${PLAN_WORKFLOW} — has its env block changed shape?"
 
 set_one() {
-    local kind="$1" key="$2" value="${VALUES[$2]:-}"
+    local kind="$1" key="$2" value
+    value="$(value_of "$2")"
     if [[ -z "${value}" ]]; then
         # ENFORCE_MFA is legitimately empty in production — locals.tf omits it
         # from the task env so flip-api's secure default applies.
@@ -415,13 +438,13 @@ set_one() {
 # lists, not one: the keys every mode needs, and the LZA keys that only the two
 # platform-managed modes require (the self-contained ones legitimately leave them
 # out). Both are read here, the second only when this mode is an LZA one.
-mapfile -t REQUIRED_KEYS < <(
+read_lines REQUIRED_KEYS < <(
     sed -n '/^REQUIRED_KEYS=(/,/^)/p' "${HERE}/compose-ci-env.sh" |
         grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*$' | sed -E 's/^[[:space:]]+//'
 )
 ((${#REQUIRED_KEYS[@]} > 0)) || die "could not read REQUIRED_KEYS from compose-ci-env.sh"
 if ((IS_LZA)); then
-    mapfile -t LZA_KEYS < <(
+    read_lines LZA_KEYS < <(
         sed -n '/^LZA_REQUIRED_KEYS=(/,/^)/p' "${HERE}/compose-ci-env.sh" |
             grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*$' | sed -E 's/^[[:space:]]+//'
     )
@@ -434,7 +457,7 @@ MISSING=()
 OPTIONAL_ABSENT=()
 UNSET_HERE=()
 for key in "${SECRET_KEYS[@]}"; do set_one secret "${key}"; done
-for key in "${VARIABLE_KEYS[@]}"; do
+for key in ${VARIABLE_KEYS[@]+"${VARIABLE_KEYS[@]}"}; do
     # Written in step 2 from --mode, never from the env file.
     [[ "${key}" == "TF_PROD" ]] && continue
     set_one variable "${key}"
@@ -460,7 +483,7 @@ fi
 # apply would have switched MFA off. List those keys; deleting stays the
 # operator's call, since a few (the demo bucket on prod) are absent by mistake.
 # Reads only, so a dry run makes the same check.
-UNSET_HERE+=("${OPTIONAL_ABSENT[@]}" "${MISSING[@]}")
+UNSET_HERE+=(${OPTIONAL_ABSENT[@]+"${OPTIONAL_ABSENT[@]}"} ${MISSING[@]+"${MISSING[@]}"})
 if ((${#UNSET_HERE[@]} > 0)); then
     held=""
     if held="$(

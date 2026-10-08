@@ -1416,6 +1416,27 @@ harness; it also runs standalone with plain `bash`. Known limitation: the IAM ch
 **literal** `"*"` — an interpolated bucket-root grant (`"${aws_s3_bucket.x.arn}/*"` on `s3:GetObject`) still
 needs human review.
 
+## TFLint
+
+`terraform validate` checks syntax and schema; tflint catches what it accepts — a variable nothing reads, a
+module with no provider version constraint, an AWS argument value the API would reject at apply time. CI runs it
+in the `TFLint` job of `validate_terraform.yml`; the configuration is [`.tflint.hcl`](.tflint.hcl) (the bundled
+`terraform` ruleset with the recommended preset, plus the pinned AWS ruleset).
+
+```bash
+make tflint-lint                           # from the REPO ROOT (env-free)
+bash scripts/tflint_lint.sh                # or directly, from this directory
+```
+
+It needs tflint at the version pinned in [`scripts/tflint_lint.sh`](scripts/tflint_lint.sh) (GitHub release
+binaries; Homebrew no longer packages it) and downloads the AWS ruleset plugin on first run (`GITHUB_TOKEN`
+lifts the anonymous rate limit). Every directory holding `.tf` files — both roots, `ci/` and each module — is
+linted on its own. A deliberate exception is acknowledged in-code with `# tflint-ignore: <rule_name> # <why>` on
+the line above the flagged block, never by disabling the rule (any separator other than that second `#`, such as
+`-- why`, makes tflint ignore the annotation). Like the checkov lint, the script
+first asserts tflint still flags a canary fixture (`scripts/tests/tflint_canary/`), and its guards are
+regression-tested by `scripts/tests/test_tflint_lint.sh` (tflint stubbed) in the `Deploy script tests` job.
+
 ## Hybrid Deployment: Adding an On-Premises Trust
 
 To connect a local (on-premises) Trust host to the AWS Central Hub:
@@ -1704,13 +1725,13 @@ stale in this README.
 Run against staging this found a batch of differences from the checked-out
 `.env.stag`, including a renamed UI bucket (`flipstag` → `flip-ui-stag`) that
 plans as `must be replaced` against a `prevent_destroy` lifecycle rule, a stale
-`FLARE_KIT_DATE`, an out-of-date `API_PORT`, and rotated service keys. Several
+`FLARE_KIT_DATE`, and rotated service keys. Several
 were not stale but **absent**, which is worse: the Makefile exports
 `DEPLOY_TRUST_EC2`, `LOCAL_TRUST_PUBLIC_IPS`, `K8S_TRUST_PUBLIC_IPS`,
 `JOB_RESOURCE_SPEC_*` and `FL_KIT_SLOT_NAMES` either unconditionally or behind a
 `?=` default, so an absent key arrives at Terraform as `""` or as the Makefile's
-own default and **does not** fall back to the `variables.tf` one — the same trap
-as `UI_PORT`. `LOCAL_TRUST_PUBLIC_IPS` empty would have dropped the on-prem
+own default and **does not** fall back to the `variables.tf` one.
+`LOCAL_TRUST_PUBLIC_IPS` empty would have dropped the on-prem
 trust's NLB ingress rule.
 
 The three whose Makefile default is *destructive* rather than merely wrong —
@@ -2189,7 +2210,7 @@ Ingress at the load balancers (not at any EC2 SG — both EC2 hosts are in priva
 Ports referenced internally only (no internet-facing ingress; reached only from inside the VPC or from the load balancers):
 
 - **8000** — `flip-api` ECS task port (ALB target group target port). Not exposed externally.
-- **`FL_API_PORT`** — `fl-api-net-1` ECS task port. Cloud Map internal only; no LB and no external ingress.
+- **8000** — `fl-api-net-1` ECS task port (`local.api_container_port`). Cloud Map internal only; no LB and no external ingress.
 - **5432** — RDS PostgreSQL. Reachable only from the Central Hub bastion SG and the `flip-api` ECS task SG.
 - **Trust API** — no inbound port needed; trusts poll the hub outbound.
 

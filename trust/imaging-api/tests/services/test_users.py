@@ -12,10 +12,13 @@
 
 import re
 from unittest.mock import MagicMock, patch
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import pytest
+import requests
 
+from imaging_api.config import get_settings
 from imaging_api.routers.schemas import CentralHubUser, CreatedUser, CreateUser, User
 from imaging_api.services.users import (
     add_user_to_project,
@@ -385,6 +388,31 @@ def test_issue_setup_token_raises_on_unexpected_200_body(mock_get, body, text, h
         issue_setup_token("alice", headers)
 
 
+def test_issue_setup_token_quotes_username_at_http_boundary(xnat_path_segment, sent_xnat_requests):
+    raw, encoded = xnat_path_segment
+    with patch.object(
+        requests.Response,
+        "json",
+        return_value={"alias": "alias", "secret": "secret"},  # pragma: allowlist secret (synthetic setup token)
+    ):
+        assert issue_setup_token(raw, {"X-Request-ID": "trace-1"}) == (
+            "/app/template/XDATScreen_UpdateUser.vm?a=alias&s=secret"
+        )
+    assert len(sent_xnat_requests) == 1
+    request = sent_xnat_requests[0]
+    parsed = urlsplit(request.url)
+    assert parsed.path == f"/data/services/tokens/issue/user/{encoded}"
+    assert parsed.query == parsed.fragment == ""
+    assert request.headers["X-Request-ID"] == "trace-1"
+
+
+@pytest.mark.parametrize("username", ["", ".", ".."])
+def test_issue_setup_token_rejects_empty_and_dot_username_before_http(username, sent_xnat_requests):
+    with pytest.raises(ValueError, match="empty or a dot-segment"):
+        issue_setup_token(username, {})
+    assert sent_xnat_requests == []
+
+
 # ---------------------------------------------------------------------------
 # issue_invite
 # ---------------------------------------------------------------------------
@@ -459,3 +487,38 @@ def test_add_user_to_project_failure(mock_exists, mock_put, headers):
 
     with pytest.raises(Exception, match="could not be added to project"):
         add_user_to_project(user, "PROJ1", headers)
+
+
+# ---------------------------------------------------------------------------
+# Request URLs go through xnat_url (#1386)
+# ---------------------------------------------------------------------------
+_XNAT = get_settings().XNAT_URL
+
+
+def test_user_request_urls_are_unchanged_for_ordinary_identifiers(sent_xnat_requests):
+    project_id = "6f1c2a9e-3b7d-4c55-9a0e-2d4f8b1c7e10"
+    with (
+        patch("imaging_api.services.users.user_exists", return_value=True),
+        patch.object(requests.Response, "json", return_value=[]),
+    ):
+        add_user_to_project(User(**_SAMPLE_USER_DICT), project_id, {})
+        get_xnat_users({})
+
+    expected = [
+        ("PUT", f"{_XNAT}/data/projects/{project_id}/users/Members/alice"),
+        ("GET", f"{_XNAT}/xapi/users/profiles"),
+    ]
+    assert [(r.method, r.url) for r in sent_xnat_requests] == [
+        (m, requests.Request(m, u).prepare().url) for m, u in expected
+    ]
+
+
+def test_add_user_to_project_keeps_identifiers_in_one_segment(sent_xnat_requests, xnat_path_segment):
+    raw, encoded = xnat_path_segment
+    user = User(**{**_SAMPLE_USER_DICT, "username": raw})
+    with patch("imaging_api.services.users.user_exists", return_value=True):
+        add_user_to_project(user, raw, {})
+
+    parsed = urlsplit(sent_xnat_requests[0].url)
+    assert parsed.path == f"/data/projects/{encoded}/users/Members/{encoded}"
+    assert parsed.query == parsed.fragment == ""

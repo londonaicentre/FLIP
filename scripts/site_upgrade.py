@@ -631,7 +631,7 @@ def plan(args: argparse.Namespace) -> int:
     if args.dry_run:
         print("   (dry run — kit not modified)")
         return 0
-    pins = f"DOCKER_TAG={target} DOCKER_FL_TAG={fl_tag}" if fl_tag else f"DOCKER_TAG=DOCKER_FL_TAG={target}"
+    pins = f"DOCKER_TAG={target}, DOCKER_FL_TAG={fl_tag or target}"
     if not _confirm(f"   This pins {pins} in {kit_file}.", args.yes):
         print("❌ Not confirmed — nothing changed.")
         return EXIT_NOT_CONFIRMED

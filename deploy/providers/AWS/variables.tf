@@ -26,10 +26,6 @@ variable "environment" {
   }
 }
 
-variable "VPC_NAME" {
-  type = string
-}
-
 variable "lza_managed_network" {
   description = "Run against the LZA-provisioned (platform-managed) network instead of creating one (FLIP#749). true skips the VPC module (and with it NAT/IGW/EIPs), the VPC endpoints, the DHCP options, and the legacy /flip/networking/* SSM params (fl_ingress_lza.tf publishes the LZA edge-handoff set under that prefix instead), and discovers the AWSAccelerator VPC + subnets by Name tag instead (see network_lza.tf). Orthogonal to var.environment: the LZA account is prod-grade, so it deploys with environment=prod AND this flag. Set via PROD=lza in the Makefile."
   type        = bool
@@ -232,18 +228,11 @@ variable "fl_server_name" {
   default     = "flare-fl-server"
 }
 
-variable "fl_client_name" {
-  description = "FL client Docker image name (backend-specific: flare-fl-client or flower-fl-client)"
-  type        = string
-  default     = "flare-fl-client"
-}
-
 variable "fl_backend" {
   description = "FL backend: nvflare or flower"
   type        = string
   default     = "nvflare"
 }
-
 
 variable "flare_kit_date" {
   description = "Date stamp for the NVFLARE provisioned kit (e.g. 20260429), used to construct the S3 path for cert syncing"
@@ -380,18 +369,6 @@ variable "flip_cognito_admin_email" {
   type        = string
 }
 
-variable "DB_PORT" {
-  description = "Port for the FLIP database central hub"
-  type        = number
-  default     = 5432
-}
-
-variable "UI_PORT" {
-  description = "Port for FLIP UI"
-  type        = number
-  default     = 443
-}
-
 variable "ALB_HTTPS_PORT" {
   description = "HTTPS port for ALB external access"
   type        = number
@@ -404,24 +381,11 @@ variable "ALB_HTTP_PORT" {
   default     = 80
 }
 
-variable "API_PORT" {
-  description = "Port for FLIP API"
-  type        = number
-  default     = 8080
-}
-
-variable "FL_API_PORT" {
-  description = "Port for FLIP FL API"
-  type        = number
-  default     = 8000
-}
-
 variable "FL_SERVER_PORT" {
   description = "Port for FLIP FL Server"
   type        = number
   default     = 8002
 }
-
 
 variable "manage_dns" {
   description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (first LZA bring-up, before the zone moves in the platform DNS migration — FLIP#749) skips the zone lookup, every Route53 record, and both DNS-validated ACM certs: CloudFront then serves on its default *.cloudfront.net domain with the default viewer certificate (allowed only when no aliases are set), and the CloudFront→ALB origin leg falls back to plain HTTP over the private VPC-origin ENI, because an ALB HTTPS listener needs an ISSUED certificate and issuance needs DNS validation (legacy; on LZA the same gating applies to the internal NLB's web listener — TCP until a cert can be ISSUED, then TLS). Legacy prod/stag keep the default true."
@@ -450,18 +414,6 @@ variable "flip_nlb_subdomain" {
 variable "SES_VERIFIED_EMAIL" {
   description = "SES verified email address for FLIP"
   type        = string
-}
-
-variable "XNAT_PORT" {
-  description = "Port for XNAT service"
-  type        = number
-  default     = 8104
-}
-
-variable "PACS_UI_PORT" {
-  description = "Port for Orthanc PACS UI"
-  type        = number
-  default     = 8042
 }
 
 variable "TRUST_API_KEY_HEADER" {

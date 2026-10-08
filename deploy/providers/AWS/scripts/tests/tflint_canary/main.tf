@@ -12,31 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-variable "name_prefix" {
-  type    = string
-  default = "trust"
+# Canary fixture for scripts/tflint_lint.sh — NOT deployed infrastructure. It
+# declares a variable nothing reads; the lint harness asserts tflint flags it
+# (terraform_unused_declarations) before linting the real tree, so a broken
+# install or config can never produce a vacuous green. No module references this
+# directory, and it creates no resources, so checkov has nothing to check here.
+
+terraform {
+  required_version = ">= 1.13.1"
 }
 
-variable "instance_type" {
-  type    = string
-  default = "t3.small"
-}
-
-variable "key_name" {
-  type    = string
-  default = "~/.ssh/id_rsa"
-}
-
-variable "subnet_id" {
-  type = string
-}
-
-variable "security_group_ids" {
-  description = "Security group IDs to attach to the Trust EC2 instance (required)"
-  type        = list(string)
-}
-
-variable "iam_instance_profile_name" {
-  description = "Name of an existing IAM instance profile to attach to the Trust EC2 instance"
+variable "tflint_canary_unused" {
+  description = "Deliberately unused."
   type        = string
+  default     = ""
 }
