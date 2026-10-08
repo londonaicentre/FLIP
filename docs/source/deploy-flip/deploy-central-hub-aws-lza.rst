@@ -167,14 +167,14 @@ Deploying
 *********
 
 **CI applies this estate.** The Terraform pipeline plans the LZA staging root on
-every pull request touching ``deploy/providers/AWS/**``, applies it on a push to
-``develop``, and plans nightly to report drift — all authenticated by GitHub OIDC
-with no long-lived AWS keys. Pointing a GitHub environment at an account is a
-value change (the ``TF_PROD`` mode token plus the two role ARNs), described under
-"Repointing CI at the LZA accounts" in the deployment README. The LZA
-**production** repoint is in progress (`FLIP#1199
-<https://github.com/londonaicentre/FLIP/issues/1199>`_): merges to ``main`` still
-apply to the self-contained production account today.
+every pull request into ``main`` or ``develop`` touching ``deploy/providers/AWS/**``,
+applies it on a push to ``develop``, and plans nightly to report drift — all
+authenticated by GitHub OIDC with no long-lived AWS keys. Pointing a GitHub
+environment at an account is a value change (the ``TF_PROD`` mode token plus the two
+role ARNs), described under "Repointing CI at the LZA accounts" in the deployment
+README. Production is on LZA too (`FLIP#1199
+<https://github.com/londonaicentre/FLIP/issues/1199>`_, repointed 2026-10-06):
+merges to ``main`` apply to LZA production.
 
 ``PROD=lza`` selects ``.env.lza-prod``, production semantics (``TF_VAR_environment=prod``, so RDS deletion
 protection and the final snapshot stay on) and deploys from ``origin/main``; ``PROD=lza-stag`` selects
@@ -182,8 +182,7 @@ protection and the final snapshot stay on) and deploys from ``origin/main``; ``P
 (``trust/.env.<CODE>.lza-prod`` / ``.lza-stag``), so self-contained kits are never overwritten.
 
 The same targets run from a laptop as the **break-glass** path — when CI is wedged,
-for the one-off account bootstrap steps that must precede the first CI plan, and
-for LZA production until it is repointed:
+and for the one-off account bootstrap steps that must precede the first CI plan:
 
 .. code-block:: shell
 
