@@ -18,8 +18,14 @@ Usage:
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -28,6 +34,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from image_workflows import IMAGE_WORKFLOWS, WORKFLOWS, code_text, step_block  # noqa: E402
 
 RELEASE_WORKFLOW = WORKFLOWS / "release.yml"
+# The wait is a file rather than an inline `run:` block so it can be executed
+# against a stub `gh` below — it is the step that decides whether production is
+# re-pinned to the release.
+WAIT_SCRIPT = WORKFLOWS.parent / "scripts" / "wait-for-release-builds.sh"
 
 
 class ReleaseDispatchesTheBuilds(unittest.TestCase):
@@ -98,22 +108,34 @@ class ReleaseWaitsThenDispatchesTheApply(unittest.TestCase):
         wait = step_block(self.text, "Wait for the release builds to go green")
         assert "steps.dispatch.outputs.workflows" in wait
         assert "steps.dispatch.outputs.started_at" in wait
+        assert "wait-for-release-builds.sh" in wait
 
     def test_the_wait_is_bounded_and_a_timeout_fails_the_release(self) -> None:
         """An unbounded wait hangs the job; a timeout that passed would dispatch an apply whose
         release images do not exist, and the resolver would then stop production's apply."""
         wait = step_block(self.text, "Wait for the release builds to go green")
         assert "BUILD_WAIT_SECONDS" in wait
-        assert "deadline=" in wait
-        assert "$SECONDS -ge $deadline" in wait
-        timeout = next(line for line in wait.splitlines() if "timed out" in line)
+        script = WAIT_SCRIPT.read_text()
+        assert "deadline=" in script
+        assert '"${SECONDS}" -ge "${deadline}"' in script
+        timeout = next(line for line in script.splitlines() if "timed out" in line)
         assert "::error::" in timeout, timeout
-        assert wait.count("exit 1") >= 2, "both the timeout and a red build must fail the job"
+        assert script.count("exit 1") >= 2, "both the timeout and a red build must fail the job"
 
     def test_a_red_build_is_a_red_release(self) -> None:
-        wait = step_block(self.text, "Wait for the release builds to go green")
-        assert 'conclusion" == "success"' in wait, "only a concluded success may clear a workflow"
-        assert "red+=(" in wait
+        script = WAIT_SCRIPT.read_text()
+        assert '${conclusion}" == "success"' in script, "only a concluded success may clear a workflow"
+        assert "red+=(" in script
+
+    def test_the_wait_identifies_the_dispatched_runs_not_the_branch_builds(self) -> None:
+        """`--commit` alone matches main's branch builds of the same commit — including the five
+        image workflows that run from `workflow_run` minutes after STARTED_AT. Only the runs this
+        step dispatched present event=workflow_dispatch AND headBranch=<tag>."""
+        script = WAIT_SCRIPT.read_text()
+        assert "event,headBranch" in script
+        assert r".event == \"workflow_dispatch\"" in script
+        assert r".headBranch == \"${TAG}\"" in script
+        assert r".createdAt >= \"${STARTED_AT}\"" in script
 
     def test_the_apply_is_dispatched_on_main_never_at_the_tag(self) -> None:
         """The apply role's trust policy pins job_workflow_ref to refs/heads/{develop,main}; a
@@ -123,6 +145,18 @@ class ReleaseWaitsThenDispatchesTheApply(unittest.TestCase):
         assert "--ref refs/tags" not in step
         assert '--ref "$TAG"' not in step
 
+    def test_a_failed_dispatch_is_loud_and_names_the_manual_command(self) -> None:
+        step = step_block(self.text, "Dispatch the production Terraform apply at the release tag")
+        assert "::error::could not dispatch terraform_apply.yml" in step
+        assert "gh workflow run terraform_apply.yml --repo" in step, "the operator needs the exact command"
+
+    def test_the_dispatch_refuses_when_main_moved_on(self) -> None:
+        """The dispatch runs main AS IT IS, up to the whole build wait after the tag. A hotfix
+        merged during the wait would get the release's images applied over its code."""
+        step = step_block(self.text, "Dispatch the production Terraform apply at the release tag")
+        assert 'gh api "repos/${{ github.repository }}/commits/main"' in step
+        assert '"$MAIN_SHA" != "$HEAD_SHA"' in step
+
     def test_the_apply_is_dispatched_only_after_the_wait(self) -> None:
         order = [
             self.text.index("- name: Build every image at the release tag"),
@@ -130,6 +164,14 @@ class ReleaseWaitsThenDispatchesTheApply(unittest.TestCase):
             self.text.index("- name: Dispatch the production Terraform apply at the release tag"),
         ]
         assert order == sorted(order), "dispatch → wait → apply is the whole point of the ordering"
+
+    def test_the_release_is_created_after_the_apply_is_dispatched(self) -> None:
+        """Both are gated on the release not existing, so the Release must be the LAST thing to
+        happen: created first, a failed dispatch leaves a re-run skipping the wait and the
+        dispatch and going green with production still on the previous release."""
+        assert self.text.index("- name: Dispatch the production Terraform apply at the release tag") < self.text.index(
+            "- name: Create GitHub Release"
+        )
 
     def test_the_new_steps_are_skipped_when_the_release_already_exists(self) -> None:
         """Same re-run contract as the builds: keyed on the release, not the tag."""
@@ -139,6 +181,240 @@ class ReleaseWaitsThenDispatchesTheApply(unittest.TestCase):
         ):
             with self.subTest(step=step):
                 assert "if: steps.release_check.outputs.exists == 'false'" in step_block(self.text, step)
+
+
+class TheWaitScriptRuns(unittest.TestCase):
+    """The wait decides whether production is re-pinned, so it is executed here rather than
+    grepped: a substring check is satisfied by an `echo`, and an inverted condition passes it.
+
+    `gh` is stubbed with a script that answers from a JSON fixture keyed by workflow name.
+    """
+
+    STUB = """#!/usr/bin/env bash
+# Stub `gh run list`: echo the fixture for the requested --workflow, after applying the
+# --jq filter with real jq, so the script's own selection logic is what is under test.
+wf=""
+jqf=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --workflow) wf="$2"; shift ;;
+    --jq) jqf="$2"; shift ;;
+  esac
+  shift
+done
+if [[ -f "${FIXTURE_DIR}/fail" ]]; then
+  echo "HTTP 502: Bad gateway" >&2
+  exit 1
+fi
+fx="${FIXTURE_DIR}/${wf}.json"
+[[ -f "$fx" ]] || fx="${FIXTURE_DIR}/default.json"
+jq -c "$jqf" < "$fx"
+"""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        stub = self.bin / "gh"
+        stub.write_text(self.STUB)
+        stub.chmod(0o755)
+        self.fixtures = self.tmp / "fx"
+        self.fixtures.mkdir()
+
+    @staticmethod
+    def run_entry(name: str, **over) -> dict:
+        run = {
+            "databaseId": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "createdAt": "2026-01-01T12:00:00Z",
+            "url": f"https://example.invalid/{name}",
+            "event": "workflow_dispatch",
+            "headBranch": "v1.2.3",
+        }
+        run.update(over)
+        return run
+
+    def write(self, workflow: str, runs: list[dict]) -> None:
+        (self.fixtures / f"{workflow}.json").write_text(json.dumps(runs))
+
+    def wait(self, workflows: str = "a.yml", **env) -> subprocess.CompletedProcess:
+        environ = {
+            **os.environ,
+            "PATH": f"{self.bin}:{os.environ['PATH']}",
+            "FIXTURE_DIR": str(self.fixtures),
+            "TAG": "v1.2.3",
+            "HEAD_SHA": "a" * 40,
+            "STARTED_AT": "2026-01-01T11:00:00Z",
+            "WORKFLOWS": workflows,
+            "BUILD_WAIT_SECONDS": "2",
+            "BUILD_POLL_SECONDS": "1",
+        }
+        environ.update({k: str(v) for k, v in env.items()})
+        return subprocess.run(["bash", str(WAIT_SCRIPT)], capture_output=True, text=True, env=environ, timeout=120)
+
+    def test_a_green_dispatched_run_clears_the_wait(self) -> None:
+        self.write("a.yml", [self.run_entry("a")])
+        result = self.wait()
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "every dispatched build at v1.2.3 is green" in result.stdout
+
+    def test_a_branch_build_of_the_same_commit_is_ignored(self) -> None:
+        """THE BUG. A `workflow_run`-triggered build of the tagged commit, newer than STARTED_AT
+        and green, must NOT clear the wait: the `:v1.2.3` build may still be running."""
+        self.write(
+            "a.yml",
+            [
+                self.run_entry("branch", event="workflow_run", headBranch="main", createdAt="2026-01-01T13:00:00Z"),
+                self.run_entry("push", event="push", headBranch="main", createdAt="2026-01-01T12:30:00Z"),
+            ],
+        )
+        result = self.wait()
+        assert result.returncode != 0, result.stdout
+        assert "timed out" in result.stdout
+
+    def test_a_skipped_branch_run_does_not_fail_a_good_release(self) -> None:
+        """The other half: a branch run that ended `skipped` because main's tests went red must
+        not be reported as a failed release build."""
+        self.write(
+            "a.yml",
+            [
+                self.run_entry("branch", event="workflow_run", headBranch="main", conclusion="skipped"),
+                self.run_entry("tag"),
+            ],
+        )
+        result = self.wait()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "skipped" not in result.stdout
+
+    def test_runs_older_than_started_at_are_ignored(self) -> None:
+        """A previous release attempt's runs on the same commit, at the same tag."""
+        self.write("a.yml", [self.run_entry("old", createdAt="2026-01-01T09:00:00Z")])
+        result = self.wait()
+        assert result.returncode != 0
+        assert "timed out" in result.stdout
+
+    def test_a_pending_run_is_waited_for_then_cleared(self) -> None:
+        self.write("a.yml", [self.run_entry("a", status="in_progress", conclusion=None)])
+        result = self.wait(BUILD_WAIT_SECONDS=1)
+        assert result.returncode != 0
+        assert "waiting on 1" in result.stdout
+
+    def test_a_failed_build_fails_the_release_and_names_it(self) -> None:
+        self.write("a.yml", [self.run_entry("a", conclusion="failure")])
+        result = self.wait()
+        assert result.returncode != 0
+        assert "::error::release build failed: a.yml (failure)" in result.stdout
+        assert "NOT re-pinned" in result.stdout
+
+    def test_a_timeout_names_the_pending_workflows(self) -> None:
+        self.write("a.yml", [self.run_entry("a")])
+        self.write("b.yml", [])
+        result = self.wait(workflows="a.yml b.yml")
+        assert result.returncode != 0
+        assert "timed out" in result.stdout
+        assert "b.yml" in result.stdout
+        assert "::error::" in result.stdout
+
+    def test_one_transient_poll_failure_is_not_a_failed_release(self) -> None:
+        """A single 502 used to abort the wait under `set -e`, costing a rebuild of all twelve
+        images. It must read as 'still pending' instead."""
+        self.write("a.yml", [self.run_entry("a")])
+        (self.fixtures / "fail").write_text("")
+        result = self.wait(BUILD_WAIT_SECONDS=1, BUILD_POLL_MAX_FAILURES=50)
+        assert result.returncode != 0
+        assert "treating as pending" in result.stdout
+        assert "consecutive failures" not in result.stdout
+        assert "timed out" in result.stdout
+
+    def test_a_run_of_poll_failures_stops_the_release(self) -> None:
+        self.write("a.yml", [self.run_entry("a")])
+        (self.fixtures / "fail").write_text("")
+        result = self.wait(BUILD_WAIT_SECONDS=30, BUILD_POLL_MAX_FAILURES=2)
+        assert result.returncode != 0
+        assert "consecutive failures listing workflow runs" in result.stdout
+        assert "not a failed build" in result.stdout
+
+    def test_an_empty_roster_is_a_failure_not_a_silent_pass(self) -> None:
+        result = self.wait(workflows="")
+        assert result.returncode != 0
+        assert "no builds were dispatched" in result.stdout
+
+
+class TheReleaseTagValidationRuns(unittest.TestCase):
+    """terraform_apply.yml's validate step, executed over tag × ref × repository state.
+
+    Extracted from the workflow and run with a real git repository behind it, because the
+    rollback guard (`the tag must BE this commit`) cannot be checked by reading the YAML.
+    """
+
+    def setUp(self) -> None:
+        text = code_text(WORKFLOWS / "terraform_apply.yml")
+        step = step_block(text, "Validate the release tag")
+        body = step[step.index("run: |") + len("run: |") :]
+        self.script = textwrap.dedent(body)
+        self.repo = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        git = ["git", "-C", str(self.repo)]
+        subprocess.run(git + ["init", "-q", "-b", "main"], check=True)
+        subprocess.run(git + ["config", "user.email", "t@example.invalid"], check=True)
+        subprocess.run(git + ["config", "user.name", "t"], check=True)
+        (self.repo / "f").write_text("1")
+        subprocess.run(git + ["add", "-A"], check=True)
+        subprocess.run(git + ["commit", "-qm", "one"], check=True)
+        self.tagged = subprocess.run(
+            git + ["rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        subprocess.run(git + ["tag", "v1.2.3"], check=True)
+        (self.repo / "f").write_text("2")
+        subprocess.run(git + ["commit", "-qam", "two"], check=True)
+        self.newer = subprocess.run(
+            git + ["rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    def validate(self, tag: str, ref: str, sha: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", "-c", self.script],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "RELEASE_TAG": tag,
+                "GITHUB_REF_NAME": ref,
+                "GITHUB_SHA": sha,
+            },
+            timeout=60,
+        )
+
+    def test_a_stable_tag_on_main_at_its_own_commit_passes(self) -> None:
+        result = self.validate("v1.2.3", "main", self.tagged)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_a_tag_that_is_not_this_commit_is_refused(self) -> None:
+        """THE ROLLBACK. A hotfix merged during the build wait moves main; applying the older
+        release's images over it is a silent production rollback."""
+        result = self.validate("v1.2.3", "main", self.newer)
+        assert result.returncode != 0
+        assert "roll production back" in result.stdout
+
+    def test_an_unknown_tag_is_refused(self) -> None:
+        result = self.validate("v9.9.9", "main", self.tagged)
+        assert result.returncode != 0
+        assert "does not resolve to a commit" in result.stdout
+
+    def test_only_main_is_accepted(self) -> None:
+        result = self.validate("v1.2.3", "develop", self.tagged)
+        assert result.returncode != 0
+        assert "only valid on main" in result.stdout
+
+    def test_unstable_and_malformed_tags_are_refused(self) -> None:
+        for tag in ("v1.2", "1.2.3", "v1.2.3-rc1", "latest", " v1.2.3", "refs/tags/v1.2.3"):
+            with self.subTest(tag=tag):
+                result = self.validate(tag, "main", self.tagged)
+                assert result.returncode != 0, result.stdout
+                assert "stable release tag" in result.stdout
 
 
 class ReleaseKeepsMinimalPermissions(unittest.TestCase):

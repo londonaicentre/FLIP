@@ -139,7 +139,23 @@ jobs:
           # is not in it.
           [[ "${GITHUB_REF_NAME}" == "main" ]] ||
             { echo "::error::release_tag is only valid on main (prod); got ref ${GITHUB_REF_NAME}"; exit 1; }
-          echo "Pinning release ${RELEASE_TAG}."
+
+          # THE TAG MUST BE THIS COMMIT. The dispatch runs main as it is when the
+          # dispatch fires, up to the whole build wait after the tag was cut. If a
+          # hotfix B merged during that window, B's own push apply has pinned
+          # sha-B; applying release A's images on top of B's code is a silent
+          # rollback of production. Checking the tag against the commit actually
+          # checked out turns that into a red run before any AWS call.
+          #
+          # Recovery is to cut a release from the newer commit, not to re-run
+          # this: by then the older release's images are genuinely not what main
+          # is.
+          TAG_SHA="$(git rev-parse -q --verify "${RELEASE_TAG}^{commit}" 2>/dev/null || true)"
+          [[ -n "${TAG_SHA}" ]] ||
+            { echo "::error::${RELEASE_TAG} does not resolve to a commit in this checkout"; exit 1; }
+          [[ "${TAG_SHA}" == "${GITHUB_SHA}" ]] ||
+            { echo "::error::${RELEASE_TAG} is ${TAG_SHA}, but this run is applying ${GITHUB_SHA} — main moved on after the tag was cut. Applying ${RELEASE_TAG}'s images over newer code would roll production back; cut a release from ${GITHUB_SHA} instead."; exit 1; }
+          echo "Pinning release ${RELEASE_TAG} (${TAG_SHA})."
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
