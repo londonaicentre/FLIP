@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build up down up-trust down-trust restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
+.PHONY: build up down up-trust down-trust selftest-node restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
@@ -469,6 +469,13 @@ SITE_PRIVACY_KIT_ENV = $(foreach v,$(sort $(filter FL_SITE_PRIVACY_%,$(.VARIABLE
 # NVFLARE's fl-clients read their section through the one-shot fl-governance-init service
 # (compose_trust.*.nvflare.yml). Flower has no such service and nothing that reads the file.
 GOVERNANCE_INIT = $(if $(filter nvflare,$(FL_BACKEND)),fl-governance-init)
+
+# Hubless self-test of this host's trust stack (FLIP#1390): a kit that needs no hub, the
+# production stack as slot 1, health/seed/auth/C-STORE/FL-client checks, a report under
+# /opt/flip/selftest, then teardown (SELFTEST_KEEP_UP=1 keeps it up). Run as root on an
+# Azure node by `flip-node selftest <backend>`; needs no AWS and no hub.
+selftest-node:
+	@bash ../scripts/selftest_node.sh "$(FL_BACKEND)"
 
 check-governance:
 	$(require_kit_file)
