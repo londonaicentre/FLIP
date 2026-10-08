@@ -1,0 +1,117 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Static guards for deploy/providers/azure (FLIP#1390).
+
+Payment safety and the no-IDs rule are enforced here, where no runtime test can see them:
+no auto-approve, every provider pinned to var.subscription_id, no real GUIDs in tracked files,
+and the node's NIC always behind its own NSG.
+"""
+
+from __future__ import annotations
+
+import re
+
+import pytest
+from conftest import AZURE_DIR
+from tf_blocks import hcl_block
+
+MAKEFILE = AZURE_DIR / "Makefile"
+TESTS_DIR = AZURE_DIR / "tests"
+GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+ROOTS = ["bootstrap", "vm"]
+TARGETS = [
+    "bootstrap",
+    "init",
+    "plan",
+    "apply",
+    "destroy",
+    "destroy-bootstrap",
+    "status",
+    "reprovision",
+    "selftest",
+    "logs",
+    "report",
+    "stop",
+    "start",
+    "test",
+    "lint",
+    "help",
+]
+
+
+def _tracked_files():
+    suffixes = {".tf", ".hcl", ".tftpl", ".sh", ".md", ".py", ".yml", ""}
+    return sorted(
+        p
+        for p in AZURE_DIR.rglob("*")
+        if p.is_file() and ".terraform" not in p.parts and p.suffix in suffixes and p.name != ".terraform.lock.hcl"
+    )
+
+
+def test_discovery_finds_the_roots():
+    for root in ROOTS:
+        assert (AZURE_DIR / root / "versions.tf").exists(), root
+    assert MAKEFILE in _tracked_files()
+
+
+@pytest.mark.parametrize("target", TARGETS)
+def test_makefile_has_target(target):
+    assert re.search(rf"^{re.escape(target)}:", MAKEFILE.read_text(), re.M), f"missing target {target}"
+
+
+def test_no_auto_approve_anywhere():
+    # The guard's own tests name the flag, so they are not scanned.
+    for path in _tracked_files():
+        if TESTS_DIR in path.parents:
+            continue
+        assert "auto-approve" not in path.read_text(errors="ignore"), f"{path} must not skip Terraform's confirmation"
+
+
+@pytest.mark.parametrize("root", ROOTS)
+def test_provider_targets_the_named_subscription(root):
+    text = (AZURE_DIR / root / "versions.tf").read_text()
+    assert re.search(r"subscription_id\s*=\s*var\.subscription_id", text), (
+        f"{root} must set subscription_id = var.subscription_id"
+    )
+
+
+def test_no_real_guids_in_tracked_files():
+    for path in _tracked_files():
+        for guid in GUID.findall(path.read_text(errors="ignore")):
+            assert guid == "00000000-0000-0000-0000-000000000000", f"{path} contains a GUID: {guid}"
+
+
+def test_every_az_call_names_the_subscription():
+    lines = [line for line in MAKEFILE.read_text().splitlines() if re.search(r"\baz (vm|account show)\b", line)]
+    assert lines, "the Makefile drives az; the guard must see its calls"
+    for line in lines:
+        assert "--subscription" in line, f"az call without --subscription: {line.strip()}"
+
+
+def test_no_inbound_security_rules_anywhere():
+    for path in AZURE_DIR.rglob("*.tf"):
+        text = path.read_text()
+        assert "azurerm_network_security_rule" not in text, f"{path} adds an NSG rule"
+        assert not re.search(r'direction\s*=\s*"Inbound"', text), f"{path} adds an inbound rule"
+
+
+def test_the_nic_is_always_behind_its_own_nsg():
+    main = (AZURE_DIR / "vm" / "main.tf").read_text()
+    block = hcl_block(main, 'resource "azurerm_network_interface_security_group_association" "nic"')
+    assert block, "the NIC must be associated with its own NSG"
+    assert "count" not in block and "for_each" not in block, "the association must exist in every mode"
+    assert "azurerm_network_interface.node.id" in block and "azurerm_network_security_group.nic.id" in block
+
+
+def test_gitignore_hides_state_and_tfvars():
+    ignored = (AZURE_DIR / ".gitignore").read_text()
+    for pattern in ("*.tfvars", "*.tfstate", "**/.terraform/*"):
+        assert pattern in ignored, pattern
