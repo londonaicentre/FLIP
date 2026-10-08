@@ -104,7 +104,13 @@ fi
 ORTHANC_AUTH="$(grep -E '^ORTHANC_USERNAME=' "${KIT_OUT}" 2>/dev/null | cut -d= -f2-):$(grep -E '^ORTHANC_PASSWORD=' "${KIT_OUT}" 2>/dev/null | cut -d= -f2-)"
 XNAT_CTR="$(docker ps --filter status=running --format '{{.Names}}' | grep -E 'xnat-web' | head -1)"
 DICOM_LOG=/data/xnat/home/logs/dicom.log
-dicom_log_lines() { docker exec "${XNAT_CTR}" sh -c "wc -l < ${DICOM_LOG} 2>/dev/null || echo 0" 2>/dev/null || echo 0; }
+# Only digits survive: the count comes from inside a container and is later used in shell
+# arithmetic, which would otherwise evaluate (and run) whatever the container printed.
+dicom_log_lines() {
+    local count
+    count="$(docker exec "${XNAT_CTR}" sh -c "wc -l < ${DICOM_LOG} 2>/dev/null || echo 0" 2>/dev/null | tr -dc '0-9')"
+    echo "${count:-0}"
+}
 before="$(dicom_log_lines)"
 instance="$(curl -fsS -u "${ORTHANC_AUTH}" "http://127.0.0.1:8042/instances?since=0&limit=1" 2>/dev/null | tr -d '[]" \n')"
 store="$(curl -fsS -u "${ORTHANC_AUTH}" -X POST "http://127.0.0.1:8042/modalities/XNAT/store" \

@@ -60,6 +60,7 @@ def _run(
     write_markers: bool = True,
     fl_running: bool = True,
     store_ok: bool = True,
+    wc_reply: str = "",
 ) -> tuple[subprocess.CompletedProcess, dict | None, Path]:
     tmp = Path(tempfile.mkdtemp(prefix=f"selftest-{case}-"))
     bin_dir, out, data = tmp / "bin", tmp / "out", tmp / "data"
@@ -88,13 +89,20 @@ def _run(
     )
     counter = tmp / "wc.count"
     fl_line = "echo trust1-fl-client-1" if fl_running else ":"
+    # What the stubbed XNAT container answers to `wc -l`: a growing count, or a fixed reply
+    # (to prove container output is never evaluated by the runner).
+    wc_arm = (
+        f"  *\"wc -l\"*) printf '%s\\n' '{wc_reply}';;\n"
+        if wc_reply
+        else f'  *"wc -l"*) n=$(cat "{counter}" 2>/dev/null || echo 10); echo $n; echo $((n + 5)) > "{counter}";;\n'
+    )
     _stub(
         bin_dir,
         "docker",
         f'echo "docker $*" >> "{calls}"\n'
         f'if [ "$1" = ps ]; then echo trust1_xnat-web.1; {fl_line}; fi\n'
         'if [ "$1" = exec ]; then case "$*" in\n'
-        f'  *"wc -l"*) n=$(cat "{counter}" 2>/dev/null || echo 10); echo $n; echo $((n + 5)) > "{counter}";;\n'
+        f"{wc_arm}"
         '  *tail*) echo "INFO stored instance";;\n'
         "esac; fi\nexit 0",
     )
@@ -159,6 +167,12 @@ def main() -> int:
     _assert(
         result.returncode != 0 and _check(report, "xnat c-store").get("ok") is False, "a failed C-STORE is a failure"
     )
+
+    print("container_output_is_never_evaluated")
+    canary = Path(tempfile.mkdtemp()) / "PWNED"
+    result, report, _ = _run("inject", wc_reply=f"a[$(touch {canary})]")
+    _assert(not canary.exists(), "a crafted line count from the XNAT container runs nothing")
+    _assert(_check(report, "xnat c-store").get("ok") is False, "and the C-STORE check fails instead")
 
     print("rejects_unknown_backend")
     bad = subprocess.run(["bash", str(SCRIPT), "pytorch"], capture_output=True, text=True)
