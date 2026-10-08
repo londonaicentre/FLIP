@@ -180,9 +180,12 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
     actions = [
       "cognito-idp:AdminCreateUser",
       "cognito-idp:AdminDeleteUser",
+      "cognito-idp:AdminDisableUser",
+      "cognito-idp:AdminEnableUser",
       "cognito-idp:AdminGetUser",
       "cognito-idp:AdminInitiateAuth",
       "cognito-idp:AdminRespondToAuthChallenge",
+      "cognito-idp:AdminSetUserMFAPreference",
       "cognito-idp:AdminSetUserPassword",
       "cognito-idp:AdminUserGlobalSignOut",
       "cognito-idp:DescribeUserPool",

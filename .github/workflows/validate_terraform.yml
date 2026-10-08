@@ -17,6 +17,8 @@ on:
     branches: [main, develop]
     paths:
       - "deploy/providers/AWS/**"
+      # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
+      - "flip-api/src/flip_api/auth/identity/cognito.py"
       - ".github/workflows/validate_terraform.yml"
       - ".github/workflows/terraform_plan.yml"
       - ".github/workflows/terraform_apply.yml"
@@ -25,6 +27,8 @@ on:
     branches: [main, develop]
     paths:
       - "deploy/providers/AWS/**"
+      # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
+      - "flip-api/src/flip_api/auth/identity/cognito.py"
       - ".github/workflows/validate_terraform.yml"
       - ".github/workflows/terraform_plan.yml"
       - ".github/workflows/terraform_apply.yml"
@@ -92,6 +96,7 @@ jobs:
           - test_add_fl_kits.sh
           - test_checkov_lint.sh
           - test_check_fl_plan_impact.sh
+          - test_tflint_lint.sh
           - test_compose_ci_env.sh
           - test_resolve_image_tags.sh
           - test_setup_github_environments.sh
@@ -101,6 +106,31 @@ jobs:
 
       - name: Run ${{ matrix.harness }}
         run: bash deploy/providers/AWS/scripts/tests/${{ matrix.harness }}
+
+  # setup-github-environments.sh and add_fl_kits.sh are run by a repo admin on
+  # their own machine, often a Mac, whose /bin/bash is 3.2: no `declare -A`, no
+  # `mapfile`, and an empty "${a[@]}" is an unbound-variable error under
+  # `set -u`. The Linux job above runs bash 5 and cannot see any of that, so the
+  # harnesses that drive an operator-run script (and compose-ci-env.sh's, which
+  # contributors run locally) also run here on the stock macOS bash.
+  script-tests-macos:
+    name: Deploy script tests on macOS bash 3.2
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        harness:
+          - test_add_fl_kits.sh
+          - test_compose_ci_env.sh
+          - test_setup_github_environments.sh
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Run ${{ matrix.harness }} under /bin/bash
+        run: |
+          /bin/bash --version | head -1
+          /bin/bash deploy/providers/AWS/scripts/tests/${{ matrix.harness }}
 
   # Credential-free pytest checks over the stack's static artefacts: rendered
   # Jinja templates, the deploy helper scripts, and Terraform source itself
@@ -165,3 +195,29 @@ jobs:
 
       - name: Run checkov lint
         run: bash deploy/providers/AWS/scripts/checkov_lint.sh
+
+  # Static tflint lint: the bundled terraform ruleset (recommended preset) plus
+  # the AWS ruleset, configured in deploy/providers/AWS/.tflint.hcl. Catches what
+  # validate accepts — a variable nothing reads, a module with no provider
+  # version constraint, an AWS argument value the API would reject. Every
+  # directory with .tf files is linted on its own, so a module is checked even
+  # where no root calls it. No credentials, no init, no plan. Like checkov-lint,
+  # the script certifies itself against a canary fixture first. GITHUB_TOKEN
+  # only lifts the anonymous rate limit on the plugin download.
+  tflint-lint:
+    name: TFLint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          # Keep in sync with TFLINT_VERSION in scripts/tflint_lint.sh.
+          tflint_version: v0.64.0
+
+      - name: Run tflint lint
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash deploy/providers/AWS/scripts/tflint_lint.sh

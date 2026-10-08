@@ -15,7 +15,6 @@ from typing import Annotated
 import requests
 from fastapi import APIRouter, Depends, HTTPException
 
-from imaging_api.config import get_settings
 from imaging_api.routers.schemas import CreateUser, UpdateUser, User
 from imaging_api.services.users import (
     add_user_to_project,
@@ -27,8 +26,7 @@ from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.exceptions import NotFoundError
 from imaging_api.utils.internal_auth import authenticate_internal_service
 from imaging_api.utils.logger import logger
-
-XNAT_URL = get_settings().XNAT_URL
+from imaging_api.utils.xnat_url import xnat_url
 
 router = APIRouter(prefix="/users", tags=["Users"], dependencies=[Depends(authenticate_internal_service)])
 
@@ -94,7 +92,7 @@ def update_user_profile(update_profile_request: UpdateUser, headers: XNATAuthHea
         raise HTTPException(status_code=500, detail=str(e))
 
     response = requests.put(
-        f"{XNAT_URL}/xapi/users/{username}",
+        xnat_url("xapi", "users", username),
         headers=headers,
         json=update_profile_request.model_dump(mode="json"),
     )

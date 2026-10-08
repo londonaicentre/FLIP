@@ -53,6 +53,7 @@ def edit_project_endpoint(
         project_details (IEditProject): Details of the project to edit.
         user_id (UUID): The ID of the user making the request.
         db (Session): The database session.
+        idp (IdentityProvider): The configured identity provider.
 
     Returns:
         Projects: The updated project details.

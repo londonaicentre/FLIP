@@ -184,7 +184,9 @@ image_exists() {
     out="$(docker manifest inspect "${ref}" 2>&1)" || rc=$?
     [[ "${rc}" -eq 0 ]] && return 0
 
-    local lowered="${out,,}"
+    # tr, not ${out,,}: lowercase expansion is bash 4, and macOS ships bash 3.2.
+    local lowered
+    lowered="$(printf '%s' "${out}" | tr '[:upper:]' '[:lower:]')"
     case "${lowered}" in
         *"manifest unknown"* | *"manifest_unknown"* | *"no such manifest"* | \
             *"not found"* | *"name unknown"* | *"name_unknown"*)

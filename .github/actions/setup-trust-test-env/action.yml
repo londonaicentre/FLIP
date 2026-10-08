@@ -25,18 +25,21 @@ inputs:
       step with trust/*/.python-version and requires-python (all 3.12).
     required: false
     default: "3.12"
+  # The three values below are test-only and never read from secrets, so a fork PR's run
+  # (which is given no secrets) behaves like any other. Left empty, each is generated for
+  # the run; a caller passes one only to match a stack that pins it (compose.test.yml).
   trust-api-key:
-    description: TRUST_API_KEY value (CI fallback when secret is unset)
+    description: TRUST_API_KEY value; empty generates a throwaway one
     required: false
-    default: "test-trust-api-key-for-ci"
+    default: ""
   aes-key-base64:
-    description: AES_KEY_BASE64 value (CI fallback when secret is unset)
+    description: AES_KEY_BASE64 value (32 bytes, base64); empty generates a throwaway one
     required: false
-    default: "QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA="  # pragma: allowlist secret
+    default: ""
   postgres-password:
-    description: Postgres password used for both DATA_ACCESS / OMOP roles
+    description: Postgres password used for the hub, DATA_ACCESS and OMOP roles; empty generates a throwaway one
     required: false
-    default: "test_password"
+    default: ""
 
 runs:
   using: composite
@@ -53,13 +56,20 @@ runs:
     - name: Setup environment file
       shell: bash
       working-directory: ${{ github.workspace }}
+      env:
+        INPUT_TRUST_API_KEY: ${{ inputs.trust-api-key }}
+        INPUT_AES_KEY_BASE64: ${{ inputs.aes-key-base64 }}
+        INPUT_POSTGRES_PASSWORD: ${{ inputs.postgres-password }}
       run: | # pragma: allowlist secret
+        trust_api_key=${INPUT_TRUST_API_KEY:-$(openssl rand -hex 16)}
+        aes_key=${INPUT_AES_KEY_BASE64:-$(openssl rand -base64 32)}
+        postgres_password=${INPUT_POSTGRES_PASSWORD:-$(openssl rand -hex 16)}
         cp .env.development.example .env.development
-        echo "TRUST_API_KEY=${{ inputs.trust-api-key }}" >> .env.development
-        echo "AES_KEY_BASE64=${{ inputs.aes-key-base64 }}" >> .env.development  # pragma: allowlist secret
-        echo "DATA_ACCESS_POSTGRES_PASSWORD=${{ inputs.postgres-password }}" >> .env.development
-        echo "OMOP_POSTGRES_PASSWORD=${{ inputs.postgres-password }}" >> .env.development
-        echo "POSTGRES_PASSWORD=${{ inputs.postgres-password }}" >> .env.development
+        echo "TRUST_API_KEY=$trust_api_key" >> .env.development
+        echo "AES_KEY_BASE64=$aes_key" >> .env.development
+        echo "DATA_ACCESS_POSTGRES_PASSWORD=$postgres_password" >> .env.development
+        echo "OMOP_POSTGRES_PASSWORD=$postgres_password" >> .env.development
+        echo "POSTGRES_PASSWORD=$postgres_password" >> .env.development
         # The GitHub environment can inject empty-string env vars; Pydantic Settings
         # treats explicit env vars (even empty) as an override, so pin ENV=development
         # explicitly so the Literal field doesn't fail validation in CI.

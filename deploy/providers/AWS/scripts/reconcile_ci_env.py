@@ -119,6 +119,27 @@ class State:
                     return instances[0].get("attributes") or {}
         return {}
 
+    def module_attrs(self, module_prefix: str, rtype: str, name: str) -> dict:
+        """Attributes of a managed resource inside a specific module instance.
+
+        `attrs` ignores the module an address sits in, which is fine while the
+        type/name pair is unique. It is not here: every caller of
+        `modules/flip_s3_bucket` contributes an `aws_s3_bucket.this`, so reading
+        the demo-assets bucket by type/name alone would hand back whichever of
+        the four buckets state happens to list first. The module is the only
+        thing that distinguishes them, so it is matched — on a module boundary,
+        exactly as `has_module_resource` does.
+        """
+        for r in self.doc.get("resources", []):
+            if r.get("mode") != "managed" or r.get("type") != rtype or r.get("name") != name:
+                continue
+            module = r.get("module") or ""
+            if module == module_prefix or module.startswith((f"{module_prefix}[", f"{module_prefix}.")):
+                instances = r.get("instances") or []
+                if instances:
+                    return instances[0].get("attributes") or {}
+        return {}
+
     def has_module_resource(self, module_prefix: str, rtype: str, name: str) -> bool:
         """Whether a managed resource of this type/name exists inside a module.
 
@@ -299,12 +320,20 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
     v: dict[str, str] = {
         "AWS_REGION": region,
         "FLIP_TFSTATE_BUCKET_NAME": bucket,
-        "VPC_NAME": st.attrs("aws_vpc", "this").get("tags", {}).get("Name", ""),
         "AICENTRE_BUCKET_NAME": st.attrs("aws_s3_bucket", "aicentre_bucket").get("bucket", ""),
         "FLIP_UI_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_ui").get("bucket", ""),
-        # Read from the *data* source: the demo bucket is not Terraform-managed
-        # (objects are staged by hand), so only the lookup records its name.
-        "DEMO_ASSETS_BUCKET_NAME": st.data_attrs("aws_s3_bucket", "demo_assets").get("bucket", ""),
+        # Two shapes, one key (FLIP#1199). On a legacy estate the demo bucket is
+        # not Terraform-managed (objects are staged by hand), so the `data`
+        # lookup is the only record of the name that was passed in. On an LZA
+        # estate Terraform creates it, and the name lives on the managed
+        # resource inside module.flip_demo_assets_bucket. Exactly one of the two
+        # exists in any given state, so the fallback cannot pick the wrong one —
+        # and reading only the data source would have recovered "" on LZA, which
+        # keys_expected_empty() treats as a failed recovery on prod.
+        "DEMO_ASSETS_BUCKET_NAME": (
+            st.data_attrs("aws_s3_bucket", "demo_assets").get("bucket", "")
+            or st.module_attrs("module.flip_demo_assets_bucket", "aws_s3_bucket", "this").get("bucket", "")
+        ),
         "FLIP_APP_BUNDLES_BUCKET_NAME": bucket_of("flip_app_bundles_bucket"),
         "FLIP_FL_RESULTS_BUCKET_NAME": bucket_of("flip_fl_results_bucket"),
         "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": bucket_of("flip_model_files_uploads_bucket"),
@@ -313,13 +342,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "NLB_SUBDOMAIN": st.attrs("aws_route53_record", "fl_server_nlb").get("fqdn", ""),
         "POSTGRES_DB": api_env.get("POSTGRES_DB", ""),
         "POSTGRES_USER": api_env.get("POSTGRES_USER", ""),
-        "DB_PORT": api_env.get("DB_PORT", ""),
-        # Not deployed anywhere — no resource in this root references UI_PORT.
-        # It still has to be present and numeric: the Makefile exports it
-        # unconditionally and Terraform rejects "" for a number variable.
-        "UI_PORT": "443",
-        "API_PORT": first_port(api),
-        "FL_API_PORT": first_port(fl_api),
         "FL_SERVER_PORT": first_port(fl_server),
         "INTERNAL_SERVICE_KEY_HEADER": api_env.get("INTERNAL_SERVICE_KEY_HEADER", ""),
         "TRUST_API_KEY_HEADER": api_env.get("TRUST_API_KEY_HEADER", ""),
@@ -368,8 +390,11 @@ def keys_expected_empty(env: str) -> set[str]:
     ``DEMO_ASSETS_BUCKET_NAME`` is the asymmetric one, and getting it wrong is
     destructive rather than merely wrong. Empty is correct on **stag**, which
     hosts no public Ark+ demo. On **prod** it gates four live resources plus the
-    ``/ark_demo/*`` CloudFront behaviour (``demo_assets_enabled =
-    var.DEMO_ASSETS_BUCKET_NAME != ""``), so an empty recovered value there means
+    ``/ark_demo/*`` CloudFront behaviour on a legacy estate, and the bucket
+    itself on an LZA one (``module.flip_demo_assets_bucket``, FLIP#1199) — where
+    an empty value plans a destroy that ``prevent_destroy`` turns into a failed
+    apply. Either way the gate is ``var.DEMO_ASSETS_BUCKET_NAME != ""``, so an
+    empty recovered value on prod means
     the lookup failed, not that there is no demo — and seeding the GitHub
     environment from it would destroy the demo on the next apply. Treated as
     not-recovered on prod, and omitted from ``--out`` rather than written blank,
