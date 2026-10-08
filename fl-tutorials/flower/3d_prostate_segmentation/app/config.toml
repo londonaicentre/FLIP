@@ -10,15 +10,19 @@
 #  - learning-rate = 0.01, batch-size = 1: nnU-Net's defaults, as nnunet_train.py ran them. A batch
 #    is one VOLUME's worth of patches (the whole wrap-mode grid, ~18 patches of the plan's patch size
 #    per study), not one patch.
-#  - num-server-rounds = 20, local-epochs = 5: 100 passes per client; the polynomial LR decay is
-#    stretched over all of them (task.build_scheduler), so the schedule is the same whatever the
-#    rounds/epochs split. Start here and tune from the first platform run.
+#  - num-server-rounds = 5, local-epochs = 2: ten passes per client, about two hours on the dev
+#    stack (two clients sharing one RTX 8000 ran ~9 min per epoch on the slower site plus a
+#    per-round evaluate). The polynomial LR decay is stretched over all passes
+#    (task.build_scheduler), so the schedule is the same whatever the rounds/epochs split — raise
+#    both for a real study: the first platform run used 20 x 5 (16 h) and reached a per-volume
+#    test Dice of 0.84 (whole gland 0.90, TZ 0.86, PZ 0.76); after two rounds of five the
+#    per-patch validation Dice was 0.56, so ten passes is a pipeline proof, not a benchmark.
 #  - best-model-metric = "test_dice_mean": the mean of the three per-volume test Dice scores
 #    (whole gland / PZ / TZ) client_app.py reports each round; selection makes the evaluate phase run
 #    every round instead of only the last.
 
-num-server-rounds = 20
-local-epochs = 5
+num-server-rounds = 5
+local-epochs = 2
 learning-rate = 0.01
 batch-size = 1
 val-split = 0.2
