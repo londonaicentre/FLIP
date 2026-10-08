@@ -249,7 +249,6 @@ def test_an_unknown_token_is_refused_by_the_script() -> None:
 COMPOSE_ENV = {
     "AWS_REGION": "eu-west-2",
     "FLIP_TFSTATE_BUCKET_NAME": "flip-terraform-state-stag",
-    "VPC_NAME": "flip-vpc",
     "AICENTRE_BUCKET_NAME": "probe-aicentre",
     "FLIP_APP_BUNDLES_BUCKET_NAME": "probe-bundles",
     "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",
@@ -261,15 +260,11 @@ COMPOSE_ENV = {
     "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
     "POSTGRES_DB": "flip",
     "POSTGRES_USER": "flip",
-    "API_PORT": "8000",
-    "DB_PORT": "5432",
     "FL_ADMIN_DIRECTORY": "/app",
-    "FL_API_PORT": "8001",
     "FL_SERVER_PORT": "8002",
     "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
     "TRUST_API_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
     "SES_VERIFIED_EMAIL": "probe@example.com",
-    "UI_PORT": "80",
     "ALB_SUBDOMAIN": "alb",
     "NLB_SUBDOMAIN": "nlb",
     "DOCKER_REGISTRY": "example.com/",

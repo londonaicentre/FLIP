@@ -17,11 +17,6 @@ variable "name_prefix" {
   default = "trust"
 }
 
-variable "AWS_REGION" {
-  type    = string
-  default = "eu-west-2"
-}
-
 variable "instance_type" {
   type    = string
   default = "t3.small"

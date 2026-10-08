@@ -18,14 +18,12 @@ between segments, reusing tests/e2e_smoke.py's wait functions. Finally the
 segment mp4s are cropped + concatenated into one walkthrough video by
 flip-ui/scripts/assemble-demo-video.sh.
 
-The recording is genuine end to end: real Cognito sign-ins through the UI,
-real trust round-trips, real S3 presigned uploads, real federated training.
+The recording is genuine end to end: real sign-ins through the UI (Keycloak in dev),
+real trust round-trips, real presigned uploads to the object store, real federated training.
 
 Prerequisites:
     - Full dev stack up (`make up`) with trusts registered and Orthanc seeded.
-    - A live AWS SSO session (`aws sso login --sso-session FLIP`) — presigned
-      uploads/downloads and the admin token fallback need it.
-    - Demo Cognito users (optional but recommended): `make demo-users`, then
+    - Demo users (optional but recommended): `make demo-users`, then
       restart flip-api so seeding grants their roles. Without them the
       segments fall back to the well-known admin for both parts.
 

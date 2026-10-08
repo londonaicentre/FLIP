@@ -60,6 +60,7 @@ def get_current_user(
         request (Request): FastAPI request object for headers.
         db (Session): Database session.
         token_id (UUID): User ID from authentication token.
+        idp (IdentityProvider): The configured identity provider.
 
     Returns:
         CognitoUser: The caller's own user details.
@@ -121,6 +122,7 @@ def lookup_project_member(
         email (EmailStr): Email address of the prospective project member.
         db (Session): Database session.
         token_id (UUID): User ID from authentication token.
+        idp (IdentityProvider): The configured identity provider.
 
     Returns:
         ProjectMemberLookup: The user's ID, email and disabled status.
@@ -189,6 +191,7 @@ def get_user(
         request (Request): FastAPI request object for headers.
         db (Session): Database session.
         token_id (UUID): User ID from authentication token.
+        idp (IdentityProvider): The configured identity provider.
 
     Returns:
         CognitoUser: User details if found

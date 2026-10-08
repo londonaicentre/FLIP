@@ -57,6 +57,7 @@ def update_user_endpoint(
         request (Request): The FastAPI request object
         db (Session): The database session
         token_id (UUID): The ID of the token used for authentication
+        idp (IdentityProvider): The configured identity provider
 
     Returns:
         UpdateUserResponse: The updated user fields

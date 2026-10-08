@@ -144,6 +144,35 @@ class TestStateLookup:
         assert st.attrs("aws_s3_bucket", "demo_assets") == {}
         assert st.data_attrs("aws_s3_bucket", "demo_assets")["bucket"] == "flipprod-demo-assets"
 
+    def test_module_attrs_distinguishes_buckets_that_share_a_type_and_name(self, state):
+        # Every caller of modules/flip_s3_bucket contributes an
+        # `aws_s3_bucket.this`, so the module is the only thing that tells the
+        # LZA demo bucket (FLIP#1199) apart from its three siblings.
+        st = rce.State(
+            {
+                "resources": [
+                    {
+                        "mode": "managed",
+                        "module": "module.flip_app_bundles_bucket",
+                        "type": "aws_s3_bucket",
+                        "name": "this",
+                        "instances": [{"attributes": {"bucket": "flip-lza-app-bundles"}}],
+                    },
+                    {
+                        "mode": "managed",
+                        "module": "module.flip_demo_assets_bucket[0]",
+                        "type": "aws_s3_bucket",
+                        "name": "this",
+                        "instances": [{"attributes": {"bucket": "flip-lza-demo-assets"}}],
+                    },
+                ]
+            }
+        )
+        assert st.module_attrs("module.flip_demo_assets_bucket", "aws_s3_bucket", "this")["bucket"] == (
+            "flip-lza-demo-assets"
+        )
+        assert st.module_attrs("module.flip_fl_results_bucket", "aws_s3_bucket", "this") == {}
+
     def test_data_attrs_ignores_the_managed_resource(self, state):
         # flip_ui is managed; asking data_attrs for it must not silently return it.
         assert state.data_attrs("aws_vpc", "this") == {}
@@ -267,6 +296,33 @@ class TestSplitImage:
         assert rce.split_image("registry.example:5000/flip-api") == ("", "")
 
 
+class TestLiveImageTag:
+    """The env-file value, which is NOT the task definition's reference.
+
+    `DOCKER_TAG` in an operator env file is reused by the Makefile for the three
+    TRUST_IMAGES (trust-api, imaging-api, data-access-api) and for `-e
+    omop_db_tag` (omop-db + orthanc). A digest belongs to one repository, so
+    writing flip-api's `v1.2.3@sha256:…` there makes every one of those images
+    unpullable. CI re-resolves the digest pin from live ECS on every run, so the
+    tag alone is the right record here.
+    """
+
+    @staticmethod
+    def _tag(monkeypatch, image: str) -> str:
+        calls = iter(["arn:aws:ecs:::task-definition/flip-api:41", image])
+        monkeypatch.setattr(rce, "aws", lambda *a, **k: next(calls))
+        return rce.live_image_tag("flip-api", "flip-api", "flip-cluster", "p", "r")
+
+    def test_plain_tag_is_unchanged(self, monkeypatch):
+        assert self._tag(monkeypatch, "ghcr.io/londonaicentre/flip-api:sha-badcff1") == "sha-badcff1"
+
+    def test_release_digest_pin_is_written_as_the_tag_alone(self, monkeypatch):
+        assert self._tag(monkeypatch, "ghcr.io/londonaicentre/flip-api:v1.2.3@sha256:" + "a" * 64) == "v1.2.3"
+
+    def test_bare_digest_reference_yields_nothing(self, monkeypatch):
+        assert self._tag(monkeypatch, "ghcr.io/londonaicentre/flip-api@sha256:" + "a" * 64) == ""
+
+
 class TestContainerHelpers:
     def test_env_of_flattens_the_name_value_pairs(self, state):
         env = rce.env_of(state.container("flip_api", "flip-api"))
@@ -290,7 +346,7 @@ class TestRedaction:
         assert out.startswith("sha256:")
 
     def test_non_secret_values_are_shown_verbatim(self):
-        assert rce.shown("VPC_NAME", "flip-vpc") == "flip-vpc"
+        assert rce.shown("SES_VERIFIED_EMAIL", "noreply@example.com") == "noreply@example.com"
 
     def test_empty_is_labelled_not_digested(self):
         assert rce.shown("AES_KEY_BASE64", "") == "(empty)"
@@ -314,8 +370,13 @@ class TestEnvFileParsing:
 # suite green. These drive both, with every AWS call stubbed.
 
 
-def _minimal_state(*, with_trust_host: bool, demo_bucket: str | None) -> dict:
-    """Just enough state for build() to run end to end."""
+def _minimal_state(*, with_trust_host: bool, demo_bucket: str | None, demo_managed: bool = False) -> dict:
+    """Just enough state for build() to run end to end.
+
+    ``demo_managed`` selects the LZA shape of the demo bucket (FLIP#1199): a
+    managed ``aws_s3_bucket.this`` inside ``module.flip_demo_assets_bucket``
+    rather than the legacy ``data.aws_s3_bucket.demo_assets`` lookup.
+    """
     resources: list[dict] = [
         _task_definition(
             "flip_api",
@@ -379,11 +440,33 @@ def _minimal_state(*, with_trust_host: bool, demo_bucket: str | None) -> dict:
     if demo_bucket is not None:
         resources.append(
             {
+                "mode": "managed",
+                "module": "module.flip_demo_assets_bucket[0]",
+                "type": "aws_s3_bucket",
+                "name": "this",
+                "instances": [{"attributes": {"bucket": demo_bucket}}],
+            }
+            if demo_managed
+            else {
                 "mode": "data",
                 "type": "aws_s3_bucket",
                 "name": "demo_assets",
                 "instances": [{"attributes": {"bucket": demo_bucket}}],
             }
+        )
+    if demo_managed:
+        # A sibling bucket from the same module, listed first in state. Reading
+        # aws_s3_bucket.this without filtering on the module would return this
+        # one and seed the LZA prod environment with the WRONG bucket name.
+        resources.insert(
+            0,
+            {
+                "mode": "managed",
+                "module": "module.flip_fl_results_bucket",
+                "type": "aws_s3_bucket",
+                "name": "this",
+                "instances": [{"attributes": {"bucket": "flip-lza-fl-results"}}],
+            },
         )
     return {"resources": resources}
 
@@ -454,15 +537,26 @@ class TestBuild:
         values, _ = rce.build("prod", "prod", "eu-west-2", "flip-terraform-state-prod", "flip-cluster")
         assert values["DEMO_ASSETS_BUCKET_NAME"] == "flipprod-demo-assets"
 
+    def test_demo_bucket_comes_from_the_module_on_an_lza_estate(self, stub_aws):
+        # FLIP#1199: on LZA the bucket is Terraform-managed, so there is no data
+        # source to read. Reading only the lookup recovered "", which
+        # keys_expected_empty() reports as a failed recovery on prod — leaving
+        # the LZA prod environment unseedable.
+        stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket="flip-lza-demo-assets", demo_managed=True))
+        values, _ = rce.build("prod", "lza-prod", "eu-west-2", "flip-terraform-state-lza", "flip-cluster")
+        assert values["DEMO_ASSETS_BUCKET_NAME"] == "flip-lza-demo-assets"
+
 
 class TestExpectedEmpty:
     def test_demo_bucket_may_be_empty_on_stag(self):
         assert "DEMO_ASSETS_BUCKET_NAME" in rce.keys_expected_empty("stag")
 
     def test_demo_bucket_may_not_be_empty_on_prod(self):
-        # Prod carries the Ark+ demo, and cloudfront.tf gates four resources plus
-        # the /ark_demo/* behaviour on the value being non-empty. An empty
-        # recovery there is a failed lookup, and seeding from it destroys them.
+        # Prod carries the Ark+ demo. On legacy, cloudfront.tf gates four
+        # resources plus the /ark_demo/* behaviour on the value being non-empty;
+        # on LZA it gates module.flip_demo_assets_bucket, the bucket itself. An
+        # empty recovery there is a failed lookup, and seeding from it either
+        # destroys the four or fails the apply on prevent_destroy.
         assert "DEMO_ASSETS_BUCKET_NAME" not in rce.keys_expected_empty("prod")
 
     def test_enforce_mfa_may_be_empty_anywhere(self):
@@ -483,7 +577,7 @@ class TestMain:
         "FLARE_KIT_DATE": "20260512",
         "FLOWER_KIT_DATE": "",
         "ENFORCE_MFA": "",
-        "VPC_NAME": "flip-vpc",
+        "SES_VERIFIED_EMAIL": "noreply@example.com",
         "DEMO_ASSETS_BUCKET_NAME": "",
     }
 
@@ -504,10 +598,10 @@ class TestMain:
         # Only one backend is ever provisioned, so the other's kit date is
         # legitimately empty. A genuinely missing key alongside it proves the
         # warning block is being produced at all.
-        values = {**self.BASE, "VPC_NAME": ""}
+        values = {**self.BASE, "SES_VERIFIED_EMAIL": ""}
         self._run(monkeypatch, "stag", values)
         warning = capsys.readouterr().out.split("Not recovered", 1)[1]
-        assert "VPC_NAME" in warning
+        assert "SES_VERIFIED_EMAIL" in warning
         assert "FLOWER_KIT_DATE" not in warning
 
     def test_out_omits_an_unrecovered_prod_demo_bucket(self, monkeypatch, tmp_path):

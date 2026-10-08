@@ -47,6 +47,7 @@ def set_user_roles(
         roles_data (IRoles): The roles data containing a list of role IDs to assign to the user.
         db (Session): The database session.
         token_id (UUID): The ID of the user making the request, used for permission checks.
+        idp (IdentityProvider): The configured identity provider.
 
     Returns:
         IRoles: The updated roles data for the user.

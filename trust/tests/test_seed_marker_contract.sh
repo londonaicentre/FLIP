@@ -54,7 +54,21 @@ cd "${TRUST_DIR}"
 # nested make here.
 unset MAKEFLAGS MFLAGS MAKELEVEL
 
-TEST_ROOT="$(mktemp -d)"
+# Bash 3.2 compatible, so it also runs on macOS's /bin/bash: no mapfile and no
+# associative arrays. read_lines <array name> reads stdin into the array, one
+# element per line (mapfile -t).
+read_lines() {
+    local __line
+    eval "$1=()"
+    while IFS= read -r __line; do
+        eval "$1+=(\"\${__line}\")"
+    done
+}
+
+# Resolved (`pwd -P`): on macOS mktemp hands out /var/folders/…, a symlink to
+# /private/var/…, and every path abs_path returns is resolved — an unresolved root
+# would make each marker look like it lies outside the sandbox.
+TEST_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 KITS=()
 cleanup() {
     local kit
@@ -126,14 +140,21 @@ writer_marker_line() {
     ) | grep -F "printf 'projects=%s" | grep -F '.seeded' | head -1
 }
 
+# Absolute, symlink-resolved form of a path whose tail need not exist yet. GNU
+# `realpath -m`; macOS's realpath has no -m, so fall back to python3, whose
+# os.path.realpath tolerates missing components the same way.
+abs_path() {
+    realpath -m "$1" 2>/dev/null || python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"
+}
+
 # The marker path a writer line redirects into (`> path` or `> "path"`), absolute.
 writer_path() {
-    [[ "$1" =~ \>\ *\"?([^\"\ ]*\.seeded) ]] && realpath -m "${BASH_REMATCH[1]}"
+    [[ "$1" =~ \>\ *\"?([^\"\ ]*\.seeded) ]] && abs_path "${BASH_REMATCH[1]}"
 }
 # Every marker the reader `cat`s in a dry-run transcript, absolute, sorted.
 reader_paths() {
     grep -o "cat '[^']*\.seeded'" <<<"$1" | sed "s/^cat '//; s/'\$//" \
-        | while read -r p; do realpath -m "${p}"; done | sort -u
+        | while read -r p; do abs_path "${p}"; done | sort -u
 }
 # Whether the reader's own echo (not the recipe text that quotes it) reported a store
 # as already seeded: the executed line starts with the tick, the printed recipe with `echo`.
@@ -180,7 +201,7 @@ lacks "  ...without CLEAR=1 (no marker to supersede)" "${pacs_cmd}" " CLEAR=1"
 if reported_seeded "${out}" OMOP SEEDCONTRACT1 || reported_seeded "${out}" PACS SEEDCONTRACT1; then
     no "  ...and reports nothing as already seeded"; else ok "  ...and reports nothing as already seeded"; fi
 
-mapfile -t markers1 < <(seed_via_writers SEEDCONTRACT1 "spleen_project")
+read_lines markers1 < <(seed_via_writers SEEDCONTRACT1 "spleen_project")
 check "both writers put a marker in the sandbox" "${#markers1[@]}" "2"
 check "the reader inspects exactly those two files" \
     "$(printf '%s\n' "${markers1[@]}" | sort -u | tr '\n' ' ')" "$(reader_paths "${out}" | tr '\n' ' ')"
@@ -207,7 +228,7 @@ out="$(HF_TRUST_DATA_REVISION=main dry_ensure SEEDCONTRACT1 "spleen_project")"
 contains "an overridden revision supersedes a pinned marker" "$(dispatched "${out}" omop-db)" "seed-omop TRUST_INDEX=1"
 contains "  ...clearing Orthanc first" "$(dispatched "${out}" orthanc)" " CLEAR=1"
 export HF_TRUST_DATA_REVISION=main
-mapfile -t markers_main < <(seed_via_writers SEEDCONTRACT1 "spleen_project")
+read_lines markers_main < <(seed_via_writers SEEDCONTRACT1 "spleen_project")
 check "both writers re-marked under the override" "${#markers_main[@]}" "2"
 check "  ...recording version=main (omop)" "$(grep -c '^version=main$' "${markers_main[0]}")" "1"
 check "  ...recording version=main (orthanc)" "$(grep -c '^version=main$' "${markers_main[1]:-/dev/null}")" "1"
@@ -222,7 +243,7 @@ contains "  ...and re-seeds once the override is dropped" "$(dispatched "${out}"
 echo "slot 2: its markers are its own"
 seed_via_writers SEEDCONTRACT1 "spleen_project" >/dev/null   # back at the pinned version
 new_kit SEEDCONTRACT2 2
-mapfile -t markers2 < <(seed_via_writers SEEDCONTRACT2 "spleen_project")
+read_lines markers2 < <(seed_via_writers SEEDCONTRACT2 "spleen_project")
 check "both writers put a marker in the sandbox" "${#markers2[@]}" "2"
 if [[ "${markers2[0]:-}" != "${markers1[0]:-}" && "${markers2[1]:-}" != "${markers1[1]:-}" ]]; then
     ok "seeding slot 2 marks slot 2, not slot 1"
@@ -241,12 +262,13 @@ check "  ...with source_trust=2 in the payload" "$(grep -c '^source_trust=2$' "$
 # Real dev trusts use this layout, so no marker is written: the writers are asked
 # directly (seed-omop / seed-orthanc) and their paths compared with the reader's.
 echo "default layout: reader and writers name the same files"
-declare -A default_path
+# default_path_<component>_<slot>, one plain variable each (no declare -A in bash 3.2).
 for slot in 1 2; do
     kit="SEEDCONTRACTD${slot}"
     new_kit "${kit}" "${slot}" default
     reads="$(reader_paths "$(dry_ensure "${kit}" "spleen_project")")"
-    check "slot ${slot}: the reader inspects two markers" "$(wc -l <<<"${reads}")" "2"
+    # tr: BSD wc pads the count with spaces.
+    check "slot ${slot}: the reader inspects two markers" "$(wc -l <<<"${reads}" | tr -d ' ')" "2"
     for component in omop-db orthanc; do
         target="seed-${component%-db}"
         cmd="$(dispatched "$(make -n "${target}" KIT="${kit}" PROJECTS="spleen_project" FL_BACKEND=nvflare \
@@ -257,14 +279,18 @@ for slot in 1 2; do
         else
             no "slot ${slot}: ${target} writes '${wpath}', the reader looks at: $(tr '\n' ' ' <<<"${reads}")"
         fi
-        default_path["${component}${slot}"]="${wpath}"
+        printf -v "default_path_${component//-/_}_${slot}" '%s' "${wpath}"
     done
 done
 for component in omop-db orthanc; do
-    if [[ -n "${default_path[${component}1]}" && "${default_path[${component}1]}" != "${default_path[${component}2]}" ]]; then
+    path1_var="default_path_${component//-/_}_1"
+    path2_var="default_path_${component//-/_}_2"
+    path1="${!path1_var:-}"
+    path2="${!path2_var:-}"
+    if [[ -n "${path1}" && "${path1}" != "${path2}" ]]; then
         ok "${component}: slot 2's default marker is not slot 1's"
     else
-        no "${component}: slot 1 and slot 2 share a default marker (${default_path[${component}1]})"
+        no "${component}: slot 1 and slot 2 share a default marker (${path1})"
     fi
 done
 

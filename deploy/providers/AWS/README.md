@@ -52,7 +52,7 @@ Your AWS IAM role/user needs the following permissions for provisioning infrastr
 - **Secrets Manager**: Full access for storing database credentials and API secrets
 - **IAM**: Create and manage roles for EC2 instances and ECS task execution / task roles
 - **Application + Network Load Balancers**: Create and manage both the ALB (HTTPS API traffic) and the NLB (FL server TCP/gRPC traffic)
-- **ECS / Fargate**: `ecs:*` (cluster, task definitions, services). Task images come from **GHCR** (`ghcr.io/londonaicentre/...`) — no AWS-side image registry permissions needed (no ECR mirror). The bootstrap EFS-provisioning image (`amazon/aws-cli`) comes from Docker Hub and is also fetched through the NAT gateway, so private ECR API/DKR endpoints are not required.
+- **ECS / Fargate**: `ecs:*` (cluster, task definitions, services). Task images come from **GHCR** (`ghcr.io/londonaicentre/...`) — no AWS-side image registry permissions needed (no ECR mirror; the LZA modes pull through an in-account ECR cache instead, see "Deploying onto an LZA estate"). The bootstrap EFS-provisioning image (`amazon/aws-cli`) comes from Docker Hub and is also fetched through the NAT gateway, so private ECR API/DKR endpoints are not required.
 - **EFS**: `elasticfilesystem:*` for the shared workspace volumes mounted into FL Fargate tasks
 - **CloudFront + WAFv2**: Create and manage the UI distribution and the WebACL attached to it
 - **ACM**: Issue / import certificates in both `eu-west-2` (ALB origin) and `us-east-1` (CloudFront viewer)
@@ -283,32 +283,45 @@ make deploy-ark-demo PROD=stag|true
 
 The public Ark+ demo (flip-ui `npm run build:demo`) offers multi-hundred-MB result and model-file
 zips for download. These are served by the **same CloudFront distribution** at `/ark_demo/assets/*`
-from a dedicated S3 bucket (prod: `flipprod-demo-assets`) that is **not public**: CloudFront reads
+from a dedicated S3 bucket (prod: `flip-lza-demo-assets`) that is **not public**: CloudFront reads
 it via OAC exactly like the flip-ui bucket, all four public-access blocks are on, and the bucket
 policy grants `s3:GetObject` on the `ark_demo/assets/*` prefix to this distribution only. Serving
 through CloudFront (instead of the public-prefix S3 URL the demo used pre-rollout) puts the WAF
 rate-limit rule in the download path and moves anonymous egress from raw S3 rates to CloudFront's.
 
-The bucket itself is intentionally **not Terraform-managed** — bundles are staged manually per demo
-release and the bucket must survive `make destroy`. Terraform manages only the access edges
-(public-access block, OAC bucket policy, CloudFront origin + behaviour), all gated on
-`DEMO_ASSETS_BUCKET_NAME` in `.env.production` (leave unset on stag — no demo, no resources).
+On a **legacy, self-contained account** the bucket itself was intentionally **not Terraform-managed** —
+it predated this stack, bundles were staged manually per demo release and it had to survive
+`make destroy`. Terraform manages only the access edges (public-access block, OAC bucket policy,
+CloudFront origin + behaviour), all gated on `DEMO_ASSETS_BUCKET_NAME` (leave unset where there is no
+demo — no demo, no resources). No live estate is in this shape any more: `aws-prod` was repointed at
+LZA prod on 2026-10-06 and the legacy prod account, which held `flipprod-demo-assets`, was closed the
+same day. The branch is kept because `lza_managed_network = false` is still the self-contained shape
+a fresh standalone account gets (see FLIP#1199's follow-up on collapsing the two).
 
-Rollout / new-bundle staging:
+On an **LZA estate** both halves of that are different (FLIP#1199, and see "Ark+ demo on LZA" below):
+there is no bucket to adopt, so Terraform *creates* it through the usual `flip_s3_bucket` module as
+`module.flip_demo_assets_bucket` (`flip-lza-demo-assets` / `flip-lza-stag-demo-assets`), and there is
+no in-account CloudFront to hang an origin on, so all six legacy-side resources above are gated off
+(`local.demo_assets_external`). The serving edge is the networking account's distribution, which
+reads the bucket over cross-account OAC exactly as it reads the flip-ui bucket.
+
+Rollout / new-bundle staging (the shape below is the current, LZA one; the legacy equivalent read
+`flipprod-demo-assets` / `--profile prod` / `PROD=true` and is gone with its account):
 
 ```bash
 # Stage bundles under the prefix the CloudFront behaviour maps to
-aws s3 cp s3://flipprod-demo-assets/ark_demo/<bundle>.zip \
-          s3://flipprod-demo-assets/ark_demo/assets/<bundle>.zip --profile prod   # server-side copy
+aws s3 cp s3://flip-lza-demo-assets/ark_demo/<bundle>.zip \
+          s3://flip-lza-demo-assets/ark_demo/assets/<bundle>.zip --profile lza-prod  # server-side copy
 
-# DEMO_ASSETS_BUCKET_NAME=flipprod-demo-assets in .env.production, then:
+# DEMO_ASSETS_BUCKET_NAME=flip-lza-demo-assets in .env.lza-prod / the aws-prod
+# GitHub environment, then (LZA is CI-applied; the manual form is break-glass):
 cd deploy/providers/AWS
-make plan PROD=true    # expect: +OAC, +PAB, +bucket policy, ~distribution (origin + behaviour)
-make apply PROD=true
+make plan PROD=lza     # expect: +module.flip_demo_assets_bucket (bucket, versioning, PAB, policy)
+make apply PROD=lza
 
 # Verify: CloudFront serves, raw S3 is sealed
 curl -sI https://app.flip.aicentre.co.uk/ark_demo/assets/<bundle>.zip   # 200
-curl -sI https://flipprod-demo-assets.s3.eu-west-2.amazonaws.com/ark_demo/<bundle>.zip  # 403
+curl -sI https://flip-lza-demo-assets.s3.eu-west-2.amazonaws.com/ark_demo/<bundle>.zip  # 403
 ```
 
 The demo UI's download URLs live in `flip-ui/src/demo/bootstrap.ts` (model-files zips) and
@@ -357,8 +370,8 @@ that page before a public launch.
 Three ordered behaviours now exist for the demo, evaluated in this precedence order (CloudFront
 uses the first `path_pattern` match, so order matters):
 1. `/api/*` → ALB (existing, real-app API)
-2. `/ark_demo/assets/*` → `flipprod-demo-assets` bucket (download bundles, no CSP — direct file
-   downloads, not HTML)
+2. `/ark_demo/assets/*` → the demo-assets bucket (`flip-lza-demo-assets`) (download bundles, no CSP —
+   direct file downloads, not HTML)
 3. `/ark_demo/*` → `flip-ui` bucket, same origin as the real app but with the strict demo CSP above
 
 The shared `spa_rewrite` CloudFront Function (attached to both the default behaviour and
@@ -375,6 +388,60 @@ report-only. Still verify after a (re)deploy, alongside the 200/403 pair above:
 
 ```bash
 curl -sI https://app.flip.aicentre.co.uk/ark_demo/ | grep -i content-security-policy   # expect: connect-src 'none' present
+```
+
+#### Ark+ demo on LZA (FLIP#1199)
+
+The demo moved to LZA prod with the rest of the hub: `aws-prod` was repointed at LZA prod on
+2026-10-06 and the legacy prod account was closed the same day. What this repository can do there, it
+does; what it cannot, it names.
+
+**In this repository's scope — the bucket.** `module.flip_demo_assets_bucket` (services.tf) creates
+`flip-lza-demo-assets` (stag: `flip-lza-stag-demo-assets`) when `DEMO_ASSETS_BUCKET_NAME` is set and
+`lza_managed_network` is true: versioned, server-access-logged to `ACCESS_LOGS_BUCKET_NAME`, all four
+public-access blocks on, `prevent_destroy`, and a bucket policy carrying DenyHTTP plus a
+`s3:GetObject` grant on the `ark_demo/assets/*` prefix to `TF_VAR_lza_web_edge_distribution_arn`. It
+is **SSE-S3 (AES256), not the app CMK** — the reader is a CloudFront service principal in another
+account, which cannot decrypt with this account's CMK (and never with the AWS-managed `aws/s3` key).
+`aws_s3_bucket.flip_ui`, the other bucket the edge reads, is AES256 for the same reason. The objects
+are public demo downloads; there is nothing confidential for a CMK to protect.
+
+Set in `.env.lza-prod` (and the `aws-prod` GitHub environment, which is what CI composes from):
+
+```bash
+DEMO_ASSETS_BUCKET_NAME=flip-lza-demo-assets
+```
+
+Then stage bundles under the prefix the behaviour maps to, exactly as on legacy:
+
+```bash
+aws s3 cp <bundle>.zip s3://flip-lza-demo-assets/ark_demo/assets/<bundle>.zip --profile lza-prod
+```
+
+**NOT in this repository — the serving edge, which is a networking-account change.** On LZA the workload
+CloudFront distribution is gated off (the `GRCLOUDFRONTVPCORIGIN` SCP; see "Deploying onto an LZA
+estate"), and the public edge is the networking account's distribution from
+[aicentre-lza-iac](https://github.com/londonaicentre/aicentre-lza-iac). Three of the demo's four
+CloudFront-side pieces therefore have to be declared *there*, mirroring `cloudfront.tf`:
+
+1. an **origin** for `flip-lza-demo-assets` with its own OAC (signing `always`, sigv4);
+2. an ordered behaviour `/ark_demo/assets/*` → that origin, `CachingOptimized`, listed **before**
+   `/ark_demo/*` (CloudFront takes the first matching `path_pattern`, so the broader SPA pattern
+   would otherwise swallow every download);
+3. an ordered behaviour `/ark_demo/*` → the flip-ui origin with the strict demo response-headers
+   policy (`connect-src 'none'`, `style-src 'self'`) and the prefix-aware `spa_rewrite` function, so
+   a deep link falls back to `/ark_demo/index.html` rather than the real app's `/index.html`.
+
+Until those land, `make deploy-ark-demo PROD=lza` will publish the SPA to the `ark_demo/` prefix of
+the UI bucket but the demo will be served by the **default** behaviour — report-only CSP, and every
+`/ark_demo/assets/*` download 404s. The Makefile's existing guard (it refuses when the live
+distribution has no `/ark_demo/*` behaviour) is the thing that will say so; do not work around it.
+Verification once the edge is wired is unchanged apart from the hostname:
+
+```bash
+curl -sI https://<edge>/ark_demo/assets/<bundle>.zip                       # 200
+curl -sI https://flip-lza-demo-assets.s3.eu-west-2.amazonaws.com/ark_demo/assets/<bundle>.zip  # 403
+curl -sI https://<edge>/ark_demo/ | grep -i content-security-policy        # connect-src 'none'
 ```
 
 **Vite `assetsDir` collision (already fixed, worth knowing about):** Vite's default `assetsDir`
@@ -979,6 +1046,12 @@ FLIP_FL_RESULTS_BUCKET_NAME=flip-lza-fl-results
 FLIP_APP_BUNDLES_BUCKET_NAME=flip-lza-app-bundles
 AICENTRE_BUCKET_NAME=flip-lza-aicentre
 FLIP_UI_BUCKET_NAME=flip-lza-ui
+# The public Ark+ demo download bundles. Unlike every other bucket here this one
+# is created by Terraform ONLY on LZA (module.flip_demo_assets_bucket); on legacy
+# the same key names a bucket the stack merely adopts. Required on prod —
+# setup-github-environments.sh refuses to seed aws-prod without it. Leave unset
+# in .env.lza-stag: staging hosts no public demo.
+DEMO_ASSETS_BUCKET_NAME=flip-lza-demo-assets
 # The two log buckets default to subdomain-derived names
 # (flip-access-logs-/flip-cf-logs-<ALB_SUBDOMAIN>) — but ALB_SUBDOMAIN keeps its
 # post-cutover value here, so those derived names are still owned by legacy
@@ -1343,6 +1416,27 @@ harness; it also runs standalone with plain `bash`. Known limitation: the IAM ch
 **literal** `"*"` — an interpolated bucket-root grant (`"${aws_s3_bucket.x.arn}/*"` on `s3:GetObject`) still
 needs human review.
 
+## TFLint
+
+`terraform validate` checks syntax and schema; tflint catches what it accepts — a variable nothing reads, a
+module with no provider version constraint, an AWS argument value the API would reject at apply time. CI runs it
+in the `TFLint` job of `validate_terraform.yml`; the configuration is [`.tflint.hcl`](.tflint.hcl) (the bundled
+`terraform` ruleset with the recommended preset, plus the pinned AWS ruleset).
+
+```bash
+make tflint-lint                           # from the REPO ROOT (env-free)
+bash scripts/tflint_lint.sh                # or directly, from this directory
+```
+
+It needs tflint at the version pinned in [`scripts/tflint_lint.sh`](scripts/tflint_lint.sh) (GitHub release
+binaries; Homebrew no longer packages it) and downloads the AWS ruleset plugin on first run (`GITHUB_TOKEN`
+lifts the anonymous rate limit). Every directory holding `.tf` files — both roots, `ci/` and each module — is
+linted on its own. A deliberate exception is acknowledged in-code with `# tflint-ignore: <rule_name> # <why>` on
+the line above the flagged block, never by disabling the rule (any separator other than that second `#`, such as
+`-- why`, makes tflint ignore the annotation). Like the checkov lint, the script
+first asserts tflint still flags a canary fixture (`scripts/tests/tflint_canary/`), and its guards are
+regression-tested by `scripts/tests/test_tflint_lint.sh` (tflint stubbed) in the `Deploy script tests` job.
+
 ## Hybrid Deployment: Adding an On-Premises Trust
 
 To connect a local (on-premises) Trust host to the AWS Central Hub:
@@ -1631,13 +1725,13 @@ stale in this README.
 Run against staging this found a batch of differences from the checked-out
 `.env.stag`, including a renamed UI bucket (`flipstag` → `flip-ui-stag`) that
 plans as `must be replaced` against a `prevent_destroy` lifecycle rule, a stale
-`FLARE_KIT_DATE`, an out-of-date `API_PORT`, and rotated service keys. Several
+`FLARE_KIT_DATE`, and rotated service keys. Several
 were not stale but **absent**, which is worse: the Makefile exports
 `DEPLOY_TRUST_EC2`, `LOCAL_TRUST_PUBLIC_IPS`, `K8S_TRUST_PUBLIC_IPS`,
 `JOB_RESOURCE_SPEC_*` and `FL_KIT_SLOT_NAMES` either unconditionally or behind a
 `?=` default, so an absent key arrives at Terraform as `""` or as the Makefile's
-own default and **does not** fall back to the `variables.tf` one — the same trap
-as `UI_PORT`. `LOCAL_TRUST_PUBLIC_IPS` empty would have dropped the on-prem
+own default and **does not** fall back to the `variables.tf` one.
+`LOCAL_TRUST_PUBLIC_IPS` empty would have dropped the on-prem
 trust's NLB ingress rule.
 
 The three whose Makefile default is *destructive* rather than merely wrong —
@@ -2168,7 +2262,7 @@ Ingress at the load balancers (not at any EC2 SG — both EC2 hosts are in priva
 Ports referenced internally only (no internet-facing ingress; reached only from inside the VPC or from the load balancers):
 
 - **8000** — `flip-api` ECS task port (ALB target group target port). Not exposed externally.
-- **`FL_API_PORT`** — `fl-api-net-1` ECS task port. Cloud Map internal only; no LB and no external ingress.
+- **8000** — `fl-api-net-1` ECS task port (`local.api_container_port`). Cloud Map internal only; no LB and no external ingress.
 - **5432** — RDS PostgreSQL. Reachable only from the Central Hub bastion SG and the `flip-api` ECS task SG.
 - **Trust API** — no inbound port needed; trusts poll the hub outbound.
 

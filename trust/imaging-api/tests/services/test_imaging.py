@@ -14,7 +14,9 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
+from imaging_api.config import get_settings
 from imaging_api.routers.schemas import ImportStudyRequest
 from imaging_api.services.imaging import (
     XNAT_DQR_REQUEST_TIMEOUT,
@@ -23,6 +25,7 @@ from imaging_api.services.imaging import (
     ping_pacs,
     query_by_accession_number,
     queue_image_import_request,
+    resolve_pacs_id,
 )
 from imaging_api.utils.exceptions import NotFoundError
 
@@ -573,3 +576,29 @@ def test_import_request_ae_title_follows_settings():
     )
 
     assert request.ae_title == get_settings().XNAT_AETITLE
+
+
+# --- Request URLs go through xnat_url (#1386) -----------------------------------------
+
+
+def test_pacs_urls_are_unchanged_and_take_an_integer_id(sent_xnat_requests):
+    """The PACS id is an int; it reaches the path as its decimal string, exactly as the f-string put it."""
+    status = {
+        "id": 1,
+        "pacsId": 3,
+        "successful": True,
+        "pingTime": 1,
+        "created": 1,
+        "enabled": True,
+        "disabled": 0,
+        "timestamp": 1,
+    }
+    with patch.object(requests.Response, "json", side_effect=[[{"id": 3}], status]):
+        pacs_id = resolve_pacs_id({})
+        ping_pacs(pacs_id, {})
+
+    xnat = get_settings().XNAT_URL
+    assert [(r.method, r.url) for r in sent_xnat_requests] == [
+        ("GET", requests.Request("GET", f"{xnat}/xapi/pacs").prepare().url),
+        ("GET", requests.Request("GET", f"{xnat}/xapi/pacs/3/status").prepare().url),
+    ]

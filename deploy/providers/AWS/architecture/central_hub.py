@@ -172,6 +172,9 @@ TERRAFORM_ADDRESSES: dict[str, tuple[str, ...]] = {
     "Model files bucket": ("module.flip_model_files_uploads_bucket",),
     "FL results bucket": ("module.flip_fl_results_bucket",),
     "App bundles bucket": ("module.flip_app_bundles_bucket",),
+    # LZA-only as a *drawn* box: on the legacy estate the same bucket exists but is adopted through a data
+    # lookup rather than created here (cloudfront.tf), and the map inventories what this root manages.
+    "Demo assets bucket": ("module.flip_demo_assets_bucket",),
     "Participant kits bucket": ("aws_s3_bucket.aicentre_bucket",),
     "Access logs buckets": ("aws_s3_bucket.flip_access_logs", "aws_s3_bucket.cloudfront_logs"),
     "CloudWatch Logs": (
@@ -216,6 +219,7 @@ VARIANT_ONLY_LABELS: dict[Variant, frozenset[str]] = {
             "Private zone fl-server-net-1",
             "SSM handoff",
             "ECR pull-through cache",
+            "Demo assets bucket",
         }
     ),
 }
@@ -509,6 +513,9 @@ def _draw_data(drawn: _Drawn, variant: Variant) -> None:
         if variant is Variant.LZA:
             # The legacy network picture draws these two at its edge; the LZA network picture has no room for them.
             drawn.node("Access logs buckets", S3, caption="Access logs\nbucket")
+            # Terraform-managed only on LZA (FLIP#1199); read by the networking account's edge over cross-account
+            # OAC, which is why it carries no edge of its own in this picture — the edge is in another repository.
+            drawn.node("Demo assets bucket", S3, caption="Ark+ demo assets\nbucket (public downloads)")
 
     with Cluster("Regional services"):
         cognito = drawn.node("Cognito", Cognito, caption="Cognito\n(user pool, TOTP MFA)")
