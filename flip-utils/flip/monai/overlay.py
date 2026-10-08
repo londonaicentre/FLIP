@@ -147,6 +147,11 @@ class ImagingKey(_Strict):
         _reject_placeholder(value, "flip.imaging.keys.*.pattern")
         if "/" in value or "\\" in value or ".." in value:
             raise ValueError(f"pattern is a file-name glob matched inside one accession folder, got {value!r}")
+        # Exactly one '*' and no other glob syntax: the text '*' matches in the image file is the stem
+        # that names every sibling, so pairing is a substitution, never a second search that could
+        # match zero or several files (see flip.monai.datalist).
+        if value.count("*") != 1 or any(ch in value for ch in "?[]"):
+            raise ValueError(f"pattern must contain exactly one '*' and no '?', '[' or ']', got {value!r}")
         return value
 
 

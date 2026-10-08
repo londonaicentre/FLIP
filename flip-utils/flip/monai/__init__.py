@@ -18,14 +18,18 @@ run; an exported bundle has no ``configs/train.json`` and cannot be fed back in.
 Imports neither torch nor MONAI, and must not import :mod:`flip.export` (which requires torch).
 """
 
+from flip.monai.datalist import DatalistError, DatalistReport, build_datalist
 from flip.monai.overlay import BundleSource, MonaiFlipOverlay, OverlayError, load_overlay, parse_overlay
 from flip.monai.skeleton import SkeletonError, generate_skeleton
 
 __all__ = [
     "BundleSource",
+    "DatalistError",
+    "DatalistReport",
     "MonaiFlipOverlay",
     "OverlayError",
     "SkeletonError",
+    "build_datalist",
     "generate_skeleton",
     "load_overlay",
     "parse_overlay",
