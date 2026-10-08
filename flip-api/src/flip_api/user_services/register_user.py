@@ -88,6 +88,7 @@ def register_user(
         request (Request): The FastAPI request object.
         db (Session): The database session.
         token_id (UUID): ID of the authenticated user making the request.
+        idp (IdentityProvider): The configured identity provider.
 
     Returns:
         IUserResponse: Created user data including the new Cognito sub.

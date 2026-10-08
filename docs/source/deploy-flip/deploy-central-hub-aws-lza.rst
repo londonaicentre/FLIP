@@ -133,9 +133,11 @@ account, and the estate around it, need:
   workload load balancer's web and FL ports;
 - ECR pull-through cache rules, ``ghcr/`` (backed by a read-only GHCR token held in Secrets Manager) and
   ``ecr-public/``;
-- the Terraform-CI bootstrap: the Terraform state bucket, the GitHub OIDC provider, the CI plan and apply
-  roles and the permissions boundary every FLIP role carries. The platform repository applies them from
-  FLIP's ``terraform_ci_bootstrap`` module, pinned to a FLIP commit. The bucket is versioned, blocks public
+- the Terraform-CI bootstrap: the Terraform state bucket, the GitHub OIDC provider and the CI plan and apply
+  roles. The platform repository applies them from FLIP's ``terraform_ci_bootstrap`` module, pinned to a FLIP
+  commit. The permissions boundary every FLIP role carries is the accelerator's own
+  ``AICentre-WorkloadRoleBoundary``, which an SCP requires on every workload role and which the LZA modes of
+  the Makefile select by default; the module references it rather than declaring FLIP's. The bucket is versioned, blocks public
   access, refuses unencrypted transport and keeps a bounded version history; it is encrypted with S3-managed
   keys, or on production with the AWS-managed KMS key;
 - an Identity Center permission set for the operator, with a matching ``lza-prod`` or ``lza-stag`` profile

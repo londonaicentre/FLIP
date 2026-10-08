@@ -140,7 +140,6 @@ jobs:
           # workflow guards against.
           EXPECTED_ENV_CLASS: ${{ github.ref_name == 'main' && 'prod' || 'stag' }}
           AWS_REGION: ${{ vars.AWS_REGION }}
-          VPC_NAME: ${{ vars.VPC_NAME }}
           FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}
           AICENTRE_BUCKET_NAME: ${{ vars.AICENTRE_BUCKET_NAME }}
           FLIP_APP_BUNDLES_BUCKET_NAME: ${{ vars.FLIP_APP_BUNDLES_BUCKET_NAME }}
@@ -148,10 +147,6 @@ jobs:
           FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME: ${{ vars.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME }}
           FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
           FLIP_BUCKET_NAME: ${{ vars.FLIP_BUCKET_NAME }}
-          API_PORT: ${{ vars.API_PORT }}
-          DB_PORT: ${{ vars.DB_PORT }}
-          UI_PORT: ${{ vars.UI_PORT }}
-          FL_API_PORT: ${{ vars.FL_API_PORT }}
           FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
           ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
           DEMO_ASSETS_BUCKET_NAME: ${{ vars.DEMO_ASSETS_BUCKET_NAME }}

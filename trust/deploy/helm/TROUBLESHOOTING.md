@@ -861,7 +861,7 @@ make -C trust/deploy/helm up OVERRIDES_FILE=k8s-trust-Trust_MyNew.yaml
 
 `sync-kit` patches the per-trust keys into the Kubernetes Secret and writes the
 secret-free `k8s-trust-Trust_MyNew.yaml` override (hub URL, FL backend, AWS
-region, fl-client bucket, slot-aware kit path). See the chart README Quickstart.
+region, OMOP vocabulary bucket, slot-aware kit path). See the chart README Quickstart.
 
 ### Heartbeat Failure
 

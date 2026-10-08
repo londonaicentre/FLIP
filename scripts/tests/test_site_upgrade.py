@@ -443,6 +443,7 @@ class Plan(_PlanHarness):
                 code, out = self._run(kit, "--yes")
             assert code == 0, out
             assert "site v0.5.0 → target v0.6.0 (from the hub)" in out
+            assert "DOCKER_TAG=v0.6.0, DOCKER_FL_TAG=v0.6.0" in out
             assert "DOCKER_TAG=v0.6.0" in kit.read_text()
 
     def test_plan_refuses_a_downgrade_without_force(self):
