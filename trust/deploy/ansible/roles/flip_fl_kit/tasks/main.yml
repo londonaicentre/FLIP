@@ -10,6 +10,16 @@
 # limitations under the License.
 #
 ---
+- name: check the FL kit inputs
+  ansible.builtin.assert:
+    that:
+      - fl_kit_source in ["s3", "precreate", "none"]
+      - fl_backend is defined and fl_backend in ["nvflare", "flower"]
+    fail_msg: >-
+      fl_kit_source must be s3, precreate or none (got {{ fl_kit_source | default('unset') }}) and
+      fl_backend must be nvflare or flower (got {{ fl_backend | default('unset') }}).
+      Pass -e fl_backend=<nvflare|flower>; a wrong value wipes and stages the wrong kit layout.
+
 - name: ensure FL kit directory exists
   file:
     path: "{{ fl_kit_dir }}"

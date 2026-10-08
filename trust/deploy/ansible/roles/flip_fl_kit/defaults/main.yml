@@ -17,7 +17,8 @@
 fl_kit_dir: /opt/flip/fl-kit
 flip_owner: ubuntu
 flip_group: ubuntu
-fl_backend: nvflare
+# fl_backend has no default on purpose: the play must say nvflare or flower (the first task
+# checks it), because the wrong backend wipes and re-stages the wrong kit layout.
 
 # Where the kit comes from:
 #   s3        — the EC2 path: sync this host's slot out of the hub's participant-kit

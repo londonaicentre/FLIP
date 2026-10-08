@@ -17,12 +17,9 @@ flip_dir: /opt/flip
 # it owns the images tree.
 flip_owner: ubuntu
 flip_group: ubuntu
-# Which FL backend this trust will run. Only affects the ownership of the
-# per-net images bind sources (the Flower client runs as a different UID from
-# imaging-api). Getting it wrong is not fatal — `make -C trust up-trust` runs
-# $(ensure_net_dirs) and re-applies the right ownership — but it leaves the
-# first bring-up to do the fixing.
-fl_backend: nvflare
+# fl_backend (nvflare | flower) has no default on purpose: it decides the ownership of the
+# per-net images bind sources (the Flower client runs as a different UID from imaging-api),
+# so the play must set it, and the role's first task checks it.
 
 # Extra owner-owned directories under flip_dir a deployment needs (the EC2 play
 # adds /opt/flip/trust, where a kit file delivered out of band would land).

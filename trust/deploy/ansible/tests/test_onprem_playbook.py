@@ -71,6 +71,10 @@ def _role_tasks(name: str, seen: set[str] | None = None):
     yield nothing; the task that pulls them in is still yielded by the caller.
     """
     seen = seen if seen is not None else set()
+    if "." in name:
+        # A galaxy role (namespace.role): not ours to walk, even when ansible-galaxy has
+        # installed it beside the local flip_* roles.
+        return
     tasks_dir = ROLES_DIR / name / "tasks"
     main = tasks_dir / "main.yml"
     if not main.is_file():
