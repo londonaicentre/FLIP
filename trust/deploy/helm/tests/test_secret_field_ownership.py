@@ -400,7 +400,7 @@ def test_main_realigns_the_values_file_when_it_patches_the_secret(tmp_path, monk
     kit.write_text(
         "TRUST_API_KEY=live-api\n"
         "TRUST_INTERNAL_SERVICE_KEY=live-internal\n"
-        "TRUST_INTERNAL_SERVICE_KEY_HEADER=X-Trust-Internal-Service-Key\n"
+        "TRUST_INTERNAL_SERVICE_KEY_HEADER=X-Trust-Internal-Service-Key\n"  # pragma: allowlist secret
         "AES_KEY_BASE64=live-aes\n"
         "CENTRAL_HUB_API_URL=http://hub.example.com/api\n"
     )
@@ -421,7 +421,7 @@ def test_main_realigns_the_values_file_when_it_patches_the_secret(tmp_path, monk
         code="ABC",
         env="development",
         namespace="flip-trust",
-        secret_name="trust-release-flip-trust-secrets",
+        secret_name="trust-release-flip-trust-secrets",  # pragma: allowlist secret
         output_dir=out_dir,
         aws_region="eu-west-2",
         apply_secret=True,
