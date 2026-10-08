@@ -104,7 +104,10 @@ check_backend() {
 }
 
 cmd="${1:-}"
-[ -n "${cmd}" ] && shift || usage
+if [ -z "${cmd}" ]; then
+    usage
+fi
+shift
 case "${cmd}" in
     provision) provision "${1:-}" ;;
     reprovision) start_unit flip-reprovision /usr/local/sbin/flip-node provision "${1:-}" ;;
