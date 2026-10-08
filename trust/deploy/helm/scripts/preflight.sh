@@ -37,18 +37,21 @@ KIT="${KIT:-}"
 OVERRIDES_FILE="${OVERRIDES_FILE:-}"
 
 # The kit-file env token. `deploy/env_mode.mk` is the single source of truth for what PROD
-# means, and the chart Makefile injects the token it derives as ENV. Keeping a second copy
-# of that map here is what let the LZA tokens drift out of step in the first place, so there
-# is no second copy: a direct `bash preflight.sh` with PROD set must pass ENV too, and with
-# PROD unset the mode is development.
-ENV_SUFFIX="${ENV:-}"
+# means, and the chart Makefile injects the token it derives as KIT_ENV. Keeping a second
+# copy of that map here is what let the LZA tokens drift out of step in the first place, so
+# there is no second copy: a direct `bash preflight.sh` with PROD set must pass KIT_ENV too,
+# and with PROD unset the mode is development.
+#
+# KIT_ENV, not ENV: `ENV` is the POSIX shell's own startup-file variable, so an operator who
+# exports `ENV=~/.shrc` would have it read as a kit token by a direct `bash preflight.sh`.
+ENV_SUFFIX="${KIT_ENV:-}"
 if [ -z "$ENV_SUFFIX" ]; then
     if [ -n "$PROD" ]; then
-        printf "  ✖  PROD='%s' is set but ENV is not.\n" "$PROD"
+        printf "  ✖  PROD='%s' is set but KIT_ENV is not.\n" "$PROD"
         printf "      PROD maps to the kit-file token in deploy/env_mode.mk only, and this script\n"
         printf "      does not keep a second copy of that map. Run it through the Makefile, which\n"
-        printf "      injects ENV:  make -C trust/deploy/helm preflight KIT=<KIT> PROD=%s\n" "$PROD"
-        printf "      Or pass the token directly:  ENV=<token> bash scripts/preflight.sh\n"
+        printf "      injects KIT_ENV:  make -C trust/deploy/helm preflight KIT=<KIT> PROD=%s\n" "$PROD"
+        printf "      Or pass the token directly:  KIT_ENV=<token> bash scripts/preflight.sh\n"
         exit 1
     fi
     ENV_SUFFIX="development"

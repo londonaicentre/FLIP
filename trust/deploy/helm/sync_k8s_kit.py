@@ -60,6 +60,7 @@ import importlib.util
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -326,6 +327,37 @@ def yaml_quote(value: str) -> str:
     return quoted
 
 
+class ValuesSecretsError(RuntimeError):
+    """``values-secrets.yaml`` is a shape this script cannot realign safely.
+
+    Raised instead of writing a file whose parsed result would not be the one slot the
+    chart renders — a duplicate key, or a slot written as a block scalar. Silence there is
+    the worst outcome: the operator is told the realign succeeded, and the next
+    ``helm upgrade`` still dies on the SSA conflict (or, worse, deploys a wrong credential).
+    """
+
+
+def _is_comment(line: str) -> bool:
+    """A whole-line YAML comment. These never end a block — they sit inside one."""
+    return line.lstrip().startswith("#")
+
+
+def _slot_pattern(secret_key: str) -> re.Pattern[str]:
+    """The key's own line in ``secrets.data``.
+
+    ``(\\s.*)?$`` rather than ``\\s.*$``: a hand-filled file routinely carries an EMPTY slot
+    (``trust-api-key:`` with nothing after the colon), which the stricter form did not match
+    — so the key was treated as absent, a second copy was inserted above it, and
+    ``yaml.safe_load`` then read the *last* one: ``None``.
+    """
+    return re.compile(rf"^(\s*){re.escape(secret_key)}:(\s.*)?$")
+
+
+#: A value that opens a block scalar (``key: |``, ``key: >-``, …). Its real value is the
+#: indented continuation below, which a single-line rewrite would orphan.
+_BLOCK_SCALAR = re.compile(r"^[|>][-+]?\d*$")
+
+
 def _secrets_data_block(lines: list[str]) -> tuple[int, int, str] | None:
     """Locate the ``secrets:`` -> ``data:`` mapping in ``values-secrets.yaml``.
 
@@ -333,6 +365,13 @@ def _secrets_data_block(lines: list[str]) -> tuple[int, int, str] | None:
     ``trust-api-key`` is free to appear elsewhere in the file (another top-level section, a
     comment-led example), and a blind first-match regex would rewrite the wrong line — and
     write a secret into a slot the chart does not read.
+
+    Comments are part of the block, not the end of it. A hand-edited file commonly carries a
+    note at column 0 (or at the ``data:`` indent) between the slots; treating it as a
+    boundary cut the block short, hid the real slot below it, and a duplicate was inserted
+    whose *stale* neighbour then won the parse. Trailing comments on the two header lines
+    (``secrets:  # generated``) are allowed for the same reason: without that, the whole
+    block went unfound and the realign silently did nothing.
 
     Args:
         lines: The file's lines.
@@ -342,16 +381,21 @@ def _secrets_data_block(lines: list[str]) -> tuple[int, int, str] | None:
         indent its existing entries use (so an inserted slot matches the file's own layout
         rather than a hardcoded four spaces). ``None`` when the file carries no such block.
     """
-    secrets_at = next((i for i, line in enumerate(lines) if re.match(r"^secrets:\s*$", line)), None)
+    secrets_at = next((i for i, line in enumerate(lines) if re.match(r"^secrets:\s*(#.*)?$", line)), None)
     if secrets_at is None:
         return None
-    # The entries of `secrets:` are indented; the section ends at the next line at column 0.
+    # The entries of `secrets:` are indented; the section ends at the next line at column 0 —
+    # a comment there is a note about the block, not the start of a new top-level key.
     section_end = next(
-        (i for i in range(secrets_at + 1, len(lines)) if lines[i].strip() and not lines[i][:1].isspace()),
+        (
+            i
+            for i in range(secrets_at + 1, len(lines))
+            if lines[i].strip() and not lines[i][:1].isspace() and not _is_comment(lines[i])
+        ),
         len(lines),
     )
     data_match = next(
-        ((i, m) for i in range(secrets_at + 1, section_end) if (m := re.match(r"^(\s+)data:\s*$", lines[i]))),
+        ((i, m) for i in range(secrets_at + 1, section_end) if (m := re.match(r"^(\s+)data:\s*(#.*)?$", lines[i]))),
         None,
     )
     if data_match is None:
@@ -359,18 +403,50 @@ def _secrets_data_block(lines: list[str]) -> tuple[int, int, str] | None:
     data_at, m = data_match
     data_indent = m.group(1)
     # Entries of `data:` are indented deeper than `data:` itself; the block ends at the first
-    # non-blank line that is not.
+    # non-blank, non-comment line that is not.
     end = next(
-        (i for i in range(data_at + 1, section_end) if lines[i].strip() and not lines[i].startswith(data_indent + " ")),
+        (
+            i
+            for i in range(data_at + 1, section_end)
+            if lines[i].strip() and not _is_comment(lines[i]) and not lines[i].startswith(data_indent + " ")
+        ),
         section_end,
     )
     entry_indents = [
         re.match(r"^(\s+)", lines[i]).group(1)  # type: ignore[union-attr]
         for i in range(data_at + 1, end)
-        if lines[i].strip() and not lines[i].lstrip().startswith("#")
+        if lines[i].strip() and not _is_comment(lines[i])
     ]
     indent = entry_indents[0] if entry_indents else data_indent + "  "
     return data_at + 1, end, indent
+
+
+def _write_atomically(path: Path, text: str) -> None:
+    """Replace ``path`` in one step, never leaving a half-written credentials file.
+
+    ``path.write_text`` truncates and then writes, and this runs *after* the cluster has
+    been patched: an interruption in that window leaves the file empty, which is not a stale
+    file but no file at all — ``templates/secrets.yaml`` omits an empty slot, so the next
+    deploy would roll out pods with no trust credentials.
+
+    The temp file is created in the same directory (``os.replace`` is only atomic within a
+    filesystem) with mode 0600, carries over the original's mode, and is fsynced before the
+    rename so the rename cannot land ahead of the data.
+    """
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def align_values_secrets(path: Path, entries: dict[str, str]) -> list[str]:
@@ -413,21 +489,41 @@ def align_values_secrets(path: Path, entries: dict[str, str]) -> list[str]:
 
     Returns:
         list[str]: The Secret key NAMES realigned (never values), for the operator log.
+
+    Raises:
+        ValuesSecretsError: The file cannot be realigned into a state the chart would render
+            as the values just patched — a slot held as a block scalar, or a key still
+            present twice in ``secrets.data`` afterwards. Nothing is written in that case.
     """
     if not path.exists():
         return []
     lines = path.read_text().splitlines()
     block = _secrets_data_block(lines)
     if block is None:
+        # Not an error (the operator may deliberately manage the Secret elsewhere), but it
+        # cannot pass silently either: the keys were just patched into the cluster, so the
+        # chart's rendered values now disagree with the live ones.
+        print(f"  ⚠  {path} has no `secrets:` -> `data:` block — nothing was realigned.")
+        print("     The keys just patched into the cluster are NOT in this file, so the next")
+        print("     `helm upgrade` will conflict on them (server-side apply). Regenerate it with")
+        print("     scripts/generate_values.py, or add the block by hand and re-run.")
         return []
     start, end, indent = block
 
     aligned: list[str] = []
     for secret_key, value in entries.items():
-        pattern = re.compile(rf"^(\s*){re.escape(secret_key)}:\s.*$")
+        pattern = _slot_pattern(secret_key)
         for i in range(start, end):
             match = pattern.match(lines[i])
             if match:
+                if _BLOCK_SCALAR.match((match.group(2) or "").split("#")[0].strip()):
+                    # The value is the indented continuation below this line; rewriting the
+                    # line alone would orphan it, and the orphan parses as a sibling mapping
+                    # or a syntax error. Refuse rather than guess how far it runs.
+                    raise ValuesSecretsError(
+                        f"{path}: the `{secret_key}` slot is written as a block scalar. Rewrite it as a "
+                        "single-line value (the generated file always does) and re-run."
+                    )
                 replacement = f"{match.group(1)}{secret_key}: {yaml_quote(value)}"
                 if lines[i] != replacement:
                     lines[i] = replacement
@@ -441,9 +537,22 @@ def align_values_secrets(path: Path, entries: dict[str, str]) -> list[str]:
             end += 1
             aligned.append(secret_key)
 
+    # A key left in secrets.data twice is the failure mode this function is least able to
+    # report any other way: YAML's last-one-wins means the operator is told "Realigned" while
+    # the chart renders the OTHER copy, and the upgrade conflicts exactly as before. Checked
+    # against the final lines, before anything is written.
+    for secret_key in entries:
+        pattern = _slot_pattern(secret_key)
+        if sum(1 for i in range(start, end) if pattern.match(lines[i])) > 1:
+            raise ValuesSecretsError(
+                f"{path}: `{secret_key}` appears more than once under `secrets.data`. YAML keeps the "
+                "last one, so the chart would render a value this sync did not set. Delete the "
+                "duplicate slots, leaving one, and re-run."
+            )
+
     if aligned:
-        # Rewrite in place (the file is already 0600 and gitignored); never widen the mode.
-        path.write_text("\n".join(lines) + "\n")
+        # Replace in one step, preserving the file's 0600 mode; never widen it.
+        _write_atomically(path, "\n".join(lines) + "\n")
     return aligned
 
 
@@ -711,7 +820,13 @@ def main(
             patch_k8s_secret(secret_name, namespace, entries, release_name)
             # Keep the chart's own view of these keys identical, or the next Helm 4
             # `upgrade` conflicts on them (server-side apply) — see align_values_secrets.
-            realigned = align_values_secrets(output_dir / VALUES_SECRETS_NAME, entries)
+            try:
+                realigned = align_values_secrets(output_dir / VALUES_SECRETS_NAME, entries)
+            except ValuesSecretsError as e:
+                print(f"❌ {e}")
+                print("   The cluster Secret WAS patched; only the values file was left untouched.")
+                print("   Fix the file and re-run this command — it is idempotent.")
+                sys.exit(1)
             if realigned:
                 # Static message on purpose: CodeQL's clear-text-logging query treats anything
                 # derived from the secrets mapping, or a name containing "secret", as sensitive.
