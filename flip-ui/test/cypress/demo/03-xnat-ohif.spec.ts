@@ -50,9 +50,33 @@ function scrollToSegmentedSlice(): void {
     });
 }
 
-// XNAT enforces a per-user session cap and pops a blocking "User session
-// ended" dialog when an older session gets culled mid-page. Dismiss it if
-// present so it never lingers in the recording.
+// XNAT's "User session ended" dialog is driven by a sticky cookie, and dismissing it does not
+// clear that cookie -- which is why it used to come back again and again in the recording.
+//
+// The mechanism, from XNAT's own scripts/xnat/app/sessionTimer.js:
+//
+//   * `SESSION_ACTIVE` is set from `window.loggedIn` on every page load, so it is **false** while
+//     the browser is sitting on the login page -- which is exactly where a scripted login starts.
+//   * The timer's interval sees `SESSION_ACTIVE === 'false'` and calls `redirectToLogin()`, which
+//     shows the dialog **and sets `SESSION_TIMED_OUT=true`**.
+//   * On every later load the interval checks `SESSION_TIMED_OUT` first and re-shows the dialog.
+//     The dialog's own OK handler is `window.location.reload()`, so dismissing it reloads straight
+//     back into it.
+//   * The only code that ever sets the cookie back to 'false' is `renewSession()`, reached by
+//     clicking "renew" on the *warning* dialog -- which a demo run never sees.
+//
+// So the cure is the cookie, not the button. Note the time-based branch cannot be the cause here:
+// XNAT sets `SESSION_EXPIRATION_TIME` to a bare expiry timestamp while the script parses it as
+// "startTime,duration", so `duration` is NaN, `endTime` is NaN, and `NaN <= Date.now()` is false.
+// It is not a per-user session cap either: `concurrentMaxSessions` is 1000 here, and nothing is
+// being culled.
+function clearSessionTimeoutCookies(): void {
+    cy.setCookie("SESSION_TIMED_OUT", "false");
+    cy.setCookie("SESSION_DIALOG_OPEN", "false");
+    cy.setCookie("SESSION_DIALOG_CANCELLED", "false");
+}
+
+// Dismiss the dialog if it is already up, then clear the cookie that would bring it back.
 function dismissSessionDialog(): void {
     cy.get("body").then(($body) => {
         const ok = $body.find("button:contains('OK'):visible");
@@ -60,13 +84,13 @@ function dismissSessionDialog(): void {
             cy.wrap(ok.first()).click({ force: true });
         }
     });
+    clearSessionTimeoutCookies();
 }
 
-// Dismissing the dialog does not always clear XNAT's timeout widget: when it
-// reads a stale expiration cookie it greys the whole page out behind a
-// "Session Expired" mask, which then films as a washed-out screen. A fresh
-// full-page load re-stamps the cookie and repaints; do it only when the mask
-// is actually up so the happy path costs nothing.
+// The dialog can leave XNAT's shade behind it, greying the whole page out as "Session Expired",
+// which films as a washed-out screen. A fresh full-page load re-runs the timer with
+// window.loggedIn true and repaints; do it only when the mask is actually up so the happy path
+// costs nothing.
 function clearSessionMask(): void {
     dismissSessionDialog();
     cy.get("body").then(($body) => {
@@ -90,6 +114,12 @@ describe("FLIP demo — XNAT + OHIF at the trust", () => {
         const xnatExperimentLabel = requireEnv("DEMO_XNAT_EXPERIMENT_LABEL");
 
         cy.visit("/");
+        // Clear the sticky timeout cookies *before* the login, not just after. On the login page
+        // `window.loggedIn` is false, so the timer sets SESSION_ACTIVE=false and its first interval
+        // tick raises the dialog and latches SESSION_TIMED_OUT=true -- which then follows the
+        // browser through the login and every page after it. Clearing here is what stops the dialog
+        // being raised at all; the guards below are the fallback if the tick beats us to it.
+        clearSessionTimeoutCookies();
         cy.demoCaption("Meanwhile, inside the trust: the cohort's imaging has been imported into XNAT", 1200);
         requireSecret("DEMO_XNAT_PASSWORD").then((password) => {
             cy.get("form#login_form", { timeout: 60000 }).within(() => {
@@ -101,9 +131,13 @@ describe("FLIP demo — XNAT + OHIF at the trust", () => {
 
         // XNAT's post-login landing page — hold long enough to take it in.
         cy.url({ timeout: 60000 }).should("not.include", "Login.vm");
-        // Under a scripted login XNAT's timeout widget can read a stale
-        // session-expiration cookie and grey the page out as "expired"; a
-        // fresh full-page load re-stamps the cookie and clears the overlay.
+        // The login page's tick may already have latched the cookie; clear it before the reload so
+        // the reloaded page does not read it back and re-raise the dialog on the fresh session.
+        clearSessionTimeoutCookies();
+        // A full load after login re-runs the timer with window.loggedIn true, so SESSION_ACTIVE is
+        // re-stamped true and the page repaints without the expired mask. (The expiration cookie is
+        // not the culprit: XNAT sets it to a bare timestamp, the script parses it as
+        // "startTime,duration", and the resulting NaN endTime can never trip the time-based check.)
         cy.reload();
         cy.demoCaption("The trust's XNAT home — imaging lives here, inside the hospital", 600);
         clearSessionMask();
