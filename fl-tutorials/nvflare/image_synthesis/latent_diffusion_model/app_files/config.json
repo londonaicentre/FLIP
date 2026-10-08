@@ -4,7 +4,7 @@
     "AUTOENCODER_CONFIG": "autoencoder_config.yaml",
     "AGGREGATE_ONLY_REGEX": "^diffusion_model\\.",
     "GLOBAL_ROUNDS": 2,
-    "LOCAL_ROUNDS": 300,
+    "LOCAL_ROUNDS": 3,
     "VALIDATE_EVERY": 5,
     "LR_START": 0.0001,
     "LR_END": 1e-06,
@@ -12,7 +12,7 @@
     "GRAD_CLIP_NORM": 1.0,
     "VAL_SPLIT": 0.2,
     "BATCH_SIZE": 2,
-    "SAVE_DEBUG_SAMPLES": false,
+    "SAVE_DEBUG_SAMPLES": true,
     "MODALITIES": [
         "FLAIR",
         "T1w",
