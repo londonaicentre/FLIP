@@ -79,9 +79,11 @@ def test_provision_formats_a_blank_disk_and_runs_the_play(tmp_path):
     assert result.returncode == 0, result.stderr
     calls = log.read_text()
     assert "mkfs.ext4" in calls
-    assert "git clone" in calls and "0123456789abcdef0123456789abcdef01234567" in calls
+    assert "git clone" in calls
+    assert "0123456789abcdef0123456789abcdef01234567" in calls
     assert "ansible-galaxy install -r" in calls
-    assert "ansible-playbook -i localhost, -c local" in calls and "fl_backend=nvflare" in calls
+    assert "ansible-playbook -i localhost, -c local" in calls
+    assert "fl_backend=nvflare" in calls
     assert "LABEL=flipdata" in Path(env["FLIP_FSTAB"]).read_text()
 
 
@@ -101,7 +103,8 @@ def test_fstab_entry_is_not_duplicated(tmp_path):
 def test_selftest_rejects_unknown_backend(tmp_path):
     env, _ = _setup(tmp_path, disk_present=True, has_fs=True)
     result = _run(env, "selftest", "pytorch")
-    assert result.returncode != 0 and "nvflare or flower" in result.stderr
+    assert result.returncode != 0
+    assert "nvflare or flower" in result.stderr
 
 
 def test_selftest_starts_a_detached_unit(tmp_path):
@@ -113,4 +116,5 @@ def test_selftest_starts_a_detached_unit(tmp_path):
 def test_unknown_command_prints_usage(tmp_path):
     env, _ = _setup(tmp_path, disk_present=True, has_fs=True)
     result = _run(env, "explode")
-    assert result.returncode == 2 and "usage:" in result.stderr.lower()
+    assert result.returncode == 2
+    assert "usage:" in result.stderr.lower()

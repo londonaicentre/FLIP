@@ -75,7 +75,7 @@ run "rejects_a_non_guid_subscription" {
   command = plan
 
   variables {
-    subscription_id = "KCL-IT-SVD"
+    subscription_id = "my-subscription-name"
   }
 
   expect_failures = [var.subscription_id]

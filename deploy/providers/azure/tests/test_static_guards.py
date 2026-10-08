@@ -107,11 +107,40 @@ def test_the_nic_is_always_behind_its_own_nsg():
     main = (AZURE_DIR / "vm" / "main.tf").read_text()
     block = hcl_block(main, 'resource "azurerm_network_interface_security_group_association" "nic"')
     assert block, "the NIC must be associated with its own NSG"
-    assert "count" not in block and "for_each" not in block, "the association must exist in every mode"
-    assert "azurerm_network_interface.node.id" in block and "azurerm_network_security_group.nic.id" in block
+    assert "count" not in block, "the association must exist in every mode"
+    assert "for_each" not in block, "the association must exist in every mode"
+    assert "azurerm_network_interface.node.id" in block
+    assert "azurerm_network_security_group.nic.id" in block
 
 
 def test_gitignore_hides_state_and_tfvars():
     ignored = (AZURE_DIR / ".gitignore").read_text()
     for pattern in ("*.tfvars", "*.tfstate", "**/.terraform/*"):
         assert pattern in ignored, pattern
+
+
+def _recipe(target: str) -> str:
+    match = re.search(rf"^{re.escape(target)}:[^\n]*\n((?:\t[^\n]*\n)+)", MAKEFILE.read_text(), re.M)
+    assert match, f"no recipe for {target}"
+    return match.group(1)
+
+
+def test_apply_shows_the_plan_and_asks_before_applying():
+    recipe = _recipe("apply")
+    assert "show vm.tfplan" in recipe, "apply must show the saved plan first"
+    assert "read -r" in recipe, "apply must wait for an answer: a saved plan applies without a prompt"
+    assert '"yes"' in recipe, "apply must require a typed yes"
+    assert recipe.index("read -r") < recipe.index("apply vm.tfplan"), "the question comes before the apply"
+
+
+def test_bootstrap_budget_starts_this_month():
+    assert "budget_start_date=$(shell date -u +%Y-%m-01T00:00:00Z)" in _recipe("bootstrap"), (
+        "a monthly budget's start date must be in the current month, or bootstrap fails"
+    )
+
+
+def test_destroy_bootstrap_refuses_while_the_node_exists():
+    recipe = _recipe("destroy-bootstrap")
+    assert "az group exists" in recipe, "destroy-bootstrap must check for the node first"
+    assert "--subscription" in recipe, "the check must name the subscription"
+    assert recipe.index("az group exists") < recipe.index("destroy"), "the check comes before the destroy"

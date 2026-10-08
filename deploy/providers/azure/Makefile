@@ -54,6 +54,7 @@ bootstrap: ## One-off: state storage, budget alert, static outbound IP (STATE_SA
 	$(TF) -chdir=bootstrap apply \
 		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
 		-var "state_storage_account_name=$(STATE_SA)" \
+		-var "budget_start_date=$(shell date -u +%Y-%m-01T00:00:00Z)" \
 		$(if $(ALERT_EMAIL),-var 'alert_emails=["$(ALERT_EMAIL)"]',-var create_budget=false)
 
 init: ## Point the vm root at the bootstrap's state storage
@@ -76,8 +77,12 @@ plan: ## Plan the node (FLIP_REF must be pushed to GitHub)
 		-var "admin_ssh_public_key=$$(cat $(SSH_PUBLIC_KEY_FILE))" \
 		-var "flip_ref=$(FLIP_REF)" -var "fl_backend=$(FL_BACKEND)"
 
-apply: ## Apply the saved plan (asks first; shows the outbound IP)
+apply: ## Show the saved plan and the target subscription, then apply it only after a typed yes
 	$(require_subscription)
+	$(TF) -chdir=vm show vm.tfplan
+	@echo ""
+	@echo "Target subscription: $$(az account show --subscription "$(SUB_ID)" --query '[name, id]' -o tsv | paste -sd ' ' -)"
+	@read -r -p "Apply this plan? Type yes to continue: " answer; [ "$$answer" = "yes" ] || { echo "Not applied."; exit 1; }
 	$(TF) -chdir=vm apply vm.tfplan
 	@echo "Outbound IP: $$($(BOOT) egress_public_ip_address)"
 
@@ -88,8 +93,10 @@ destroy: ## Destroy the node, keep bootstrap and the outbound IP (asks first)
 		-var "egress_public_ip_id=$$($(BOOT) egress_public_ip_id)" \
 		-var "admin_ssh_public_key=$$(cat $(SSH_PUBLIC_KEY_FILE))" -var "flip_ref=$(FLIP_REF)"
 
-destroy-bootstrap: ## Destroy everything bootstrap made (run destroy first; asks first)
+destroy-bootstrap: ## Destroy everything bootstrap made (refuses while the node exists; asks first)
 	$(require_subscription)
+	@if [ "$$(az group exists --subscription "$(SUB_ID)" -n $(NODE_RG))" = "true" ]; then \
+		echo "❌ $(NODE_RG) still exists. Run make destroy first: removing the state now would leave a node spending credit with no state."; exit 1; fi
 	$(TF) -chdir=bootstrap destroy -var "subscription_id=$(SUB_ID)" \
 		-var "state_storage_account_name=$$($(BOOT) state_storage_account_name)" -var create_budget=false
 

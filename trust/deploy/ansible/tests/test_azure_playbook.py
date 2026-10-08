@@ -30,7 +30,8 @@ PLAY = ANSIBLE_DIR / "azure.yml"
 
 def _play() -> dict:
     plays = yaml.safe_load(PLAY.read_text())
-    assert isinstance(plays, list) and len(plays) == 1, "azure.yml holds exactly one play"
+    assert isinstance(plays, list), "azure.yml holds a list of plays"
+    assert len(plays) == 1, "azure.yml holds exactly one play"
     return plays[0]
 
 
@@ -64,13 +65,15 @@ def test_no_aws_anywhere():
 
 def test_no_docker_group_grant():
     play_vars = _play()["vars"]
-    assert "flip_docker_users" not in play_vars and "docker_users" not in play_vars
+    assert "flip_docker_users" not in play_vars
+    assert "docker_users" not in play_vars
 
 
 def test_uv_is_pinned():
     play_vars = _play()["vars"]
     version = str(play_vars["uv_version"])
-    assert version.count(".") == 2 and version.replace(".", "").isdigit(), version
+    assert version.count(".") == 2, version
+    assert version.replace(".", "").isdigit(), version
     names = [t["name"] for t in _play()["tasks"]]
     assert any("uv" in n for n in names)
 
