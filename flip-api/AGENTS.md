@@ -18,7 +18,7 @@ Central Hub REST API. FastAPI + psycopg2 + SQLModel (sync sessions). Handles use
 | `src/flip_api/domain/schemas/` | Pydantic request/response schemas |
 | `src/flip_api/domain/interfaces/` | Repository interfaces (Dependency Inversion) |
 | `src/flip_api/auth/` | Provider-agnostic auth (FLIP#919): `token_verifier.py` (one generic OIDC verifier; per-backend `TokenRules` for Cognito and Keycloak), `dependencies.py` (`verify_token` + the MFA gate), `identity/` (the `IdentityProvider` seam — `base.py` interface, `cognito.py`, `keycloak.py`, `http.py` the one error→status translation, `factory.py` selects by `AUTH_BACKEND`), access manager, trust/internal-service auth |
-| `src/flip_api/scripts/` | Trust registration + deletion CLIs (`register_trust.py`, `delete_trust.py`), internal-service-key + trust-key + XNAT-credential generation, demo user seeding (`create_demo_users.py`), env utils |
+| `src/flip_api/scripts/` | Trust registration + deletion CLIs (`register_trust.py`, `delete_trust.py`), internal-service-key + trust-key + XNAT-credential generation, demo user seeding (`create_demo_users.py`), cohort-snapshot backfill (`backfill_cohort_snapshots.py`), env utils |
 
 ## Service Modules
 
@@ -59,6 +59,7 @@ make migration_current         # alembic current
 make demo_video    # record the end-to-end demo video against the running stack (tests/demo_video.py; DEMO_ARGS=...)
 make create_demo_users         # provision the demo Cognito users (DEMO_*_PASSWORD from env; restart flip-api after)
 make seed_demo_projects        # seed the curated radiology catalogue (EXTRA_ARGS="--cleanup" removes it)
+make backfill_cohort_snapshots # queue PERSIST_COHORT for approved projects with no snapshot record (EXTRA_ARGS="--dry-run")
 ```
 
 ## Conventions
@@ -186,7 +187,8 @@ none (IAM DB auth). Run it through the root target so `PROD` selects the env fil
 **Tabular-only projects (no imaging stage — FLIP#1071).** A project created with "Includes imaging data"
 off (`has_imaging=false`, creation-time and immutable like `dicom_to_nifti`) is approved without the
 CREATE_IMAGING fan-out: no XNAT project, no accession-ids call, no pull, and `GET /projects/{id}/image/status`
-returns `200 []`. The EHR risk-prediction tutorials are the first such cohort: `make e2e_smoke_ehr [FL_BACKEND=flower]`
+returns `200 []`. Each approved trust still gets its PERSIST_COHORT task (FLIP#857, `queue_cohort_snapshot`):
+training reads the cohort through `/cohort/dataframe`, which serves only the membership frozen at approval. The EHR risk-prediction tutorials are the first such cohort: `make e2e_smoke_ehr [FL_BACKEND=flower]`
 (root or `-C flip-api`) picks that tutorial for the backend and pins `--no-imaging`, which creates the project
 with the flag off and skips the image-pull wait (the smoke reads `has_imaging` back off the project, so
 `--project-id` reuse honours it too; `make e2e_smoke EXTRA_ARGS="--no-imaging"` is the generic form). The flag
@@ -216,6 +218,32 @@ Before trusting either run, confirm the live container actually carries your cod
 runs old images otherwise): `docker exec deploy-fl-api-net-1-1 cat fl_api/utils/upload.py`
 (the compose SERVICE name — dev containers set no `container_name`, so they are named by the project). See
 [`fl-services/AGENTS.md`](../fl-services/AGENTS.md) for `make build-fl` / `:dev` image details.
+
+## Approved-cohort snapshots (FLIP#857)
+
+At approval the hub queues a PERSIST_COHORT task per approved trust (before CREATE_IMAGING, and for tabular
+projects too); the trust freezes the approved cohort's membership, and its row-level routes then serve only those
+members (the cohort can shrink, never grow). The hub keeps one `cohort_snapshot_status` row per (project, trust)
+with the approval-time facts, written by the task's post-processing (retried by the stale-task recovery job).
+
+- `GET /projects/{id}/cohort-snapshots` — one entry per approved trust with `status` `frozen` / `pending` /
+  `failed`, derived from the latest PERSIST_COHORT task (`project_services/services/cohort_snapshot_service.py`).
+  `failed` carries a category-only `error`, never the trust's raw error text; it also covers a trust that was never
+  asked (a project approved before the feature). Training at a trust never frozen is refused there. A `frozen` trust
+  whose last re-check (`include_frozen`) failed stays `frozen` with an `error` saying so — the hub cannot tell whether
+  it still holds its membership. A result the hub cannot parse fails the task (category "could not be read") rather
+  than leaving the trust `pending`; a trust's first record after its XNAT project exists resets that project's
+  reimport budget, so a late freeze still gets its studies pulled.
+- `POST /projects/{id}/cohort-snapshots` — re-queues PERSIST_COHORT on an APPROVED project at each approved trust
+  the caller may decide (the approval authority: that trust's Trust Admin, else the hub admin) whose snapshot is
+  missing or failed. Pending trusts are reported, never re-queued; frozen ones too unless `?include_frozen=true` —
+  the recovery for a trust that lost its snapshot store, which the hub cannot see. That is safe because a trust never
+  replaces a membership it holds (it answers with the frozen facts); only one that lost its record re-freezes.
+- `make backfill_cohort_snapshots` — the fleet-wide form for projects approved before the feature: queues
+  PERSIST_COHORT at every approved trust of every APPROVED project with no `cohort_snapshot_status` row (pending
+  trusts skipped, so it is idempotent). Runs `flip_api.scripts.backfill_cohort_snapshots` via `docker compose exec`
+  in the running flip-api container; `EXTRA_ARGS="--dry-run"` previews, `EXTRA_ARGS="--include-frozen"` also
+  re-queues trusts with a record (the fleet-wide store-loss recovery).
 
 ## Demo Video Recorder
 

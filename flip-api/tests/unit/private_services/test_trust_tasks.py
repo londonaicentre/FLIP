@@ -486,6 +486,48 @@ def test_email_failure_does_not_fail_task_submission(mock_send_emails, trust_id,
     app.dependency_overrides.pop(get_session, None)
 
 
+@pytest.mark.parametrize(
+    ("task_type", "expected_handler"),
+    [(TaskType.PERSIST_COHORT, "snapshot"), (TaskType.CREATE_IMAGING, "imaging")],
+)
+@patch("flip_api.private_services.trust_tasks.handle_snapshot_task_completed")
+@patch("flip_api.private_services.trust_tasks.handle_imaging_task_completed")
+def test_completed_result_is_post_processed_by_its_own_type_handler(
+    mock_imaging, mock_snapshot, task_type, expected_handler, trust_id, task_id, mock_auth
+):
+    """A PERSIST_COHORT result records the cohort snapshot; CREATE_IMAGING still goes to the imaging handler."""
+    mock_task = _mock_task_owned_by(trust_id, task_id, task_type)
+    mock_db = MagicMock()
+    mock_db.exec.return_value.first.return_value = mock_task
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    response = client.post(f"/api/tasks/{task_id}/result", json={"success": True, "result": '{"row_count": 3}'})
+
+    assert response.status_code == 200
+    handlers = {"snapshot": mock_snapshot, "imaging": mock_imaging}
+    called = handlers.pop(expected_handler)
+    (not_called,) = handlers.values()
+    called.assert_called_once_with(mock_task, mock_db)
+    not_called.assert_not_called()
+    assert mock_task.needs_post_processing is False
+    app.dependency_overrides.pop(get_session, None)
+
+
+@patch("flip_api.private_services.trust_tasks.handle_snapshot_task_completed")
+def test_failed_persist_cohort_result_is_not_post_processed(mock_snapshot, trust_id, task_id, mock_auth):
+    mock_task = _mock_task_owned_by(trust_id, task_id, TaskType.PERSIST_COHORT)
+    mock_db = MagicMock()
+    mock_db.exec.return_value.first.return_value = mock_task
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    response = client.post(f"/api/tasks/{task_id}/result", json={"success": False, "result": '{"error": "x"}'})
+
+    assert response.status_code == 200
+    mock_snapshot.assert_not_called()
+    assert mock_task.status == TaskStatus.FAILED
+    app.dependency_overrides.pop(get_session, None)
+
+
 def test_snapshot_bounds_surface_in_the_openapi_schema():
     """The declarative bounds exist so a generated client sees them too — an
     imperative validator enforced the same rules but published nothing."""

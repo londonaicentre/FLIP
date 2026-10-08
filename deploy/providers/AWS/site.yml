@@ -242,6 +242,29 @@
       loop: "{{ net_trust_dirs | product(['/net-1', '/net-2']) | map('join') | list | unique }}"
       tags: flkit
 
+    # The approved-cohort membership stores (FLIP#857), the production compose default: one per
+    # slot, since records are keyed by project alone and trusts sharing a host must not share one.
+    # Each must be writable by data-access-api's in-image uid 1000 or every freeze fails and
+    # every approved project is refused row-level data. `make upgrade-trust-ec2` also
+    # prepares the registered slot's, for a host provisioned before the store existed. Keep in
+    # sync with onprem.yml and the trust Makefile's $(ensure_snapshot_dir).
+    - name: create the approved-cohort membership stores (owned by data-access-api's uid 1000)
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ '1000' if item != '/opt/flip/cohort-snapshots' else 'root' }}"
+        group: "{{ '1000' if item != '/opt/flip/cohort-snapshots' else 'root' }}"
+        mode: "{{ '0750' if item != '/opt/flip/cohort-snapshots' else '0755' }}"
+      vars:
+        # Same slot derivation as the images dirs above.
+        snapshot_dirs: >-
+          {{ ['/opt/flip/cohort-snapshots/trust-1', '/opt/flip/cohort-snapshots/trust-2']
+             + (['/opt/flip/cohort-snapshots/trust-' ~ trust_num]
+                if trust_num is defined and trust_num | string | length > 0
+                else []) }}
+      loop: "{{ (['/opt/flip/cohort-snapshots'] + snapshot_dirs) | unique }}"
+      tags: flkit
+
     # XNAT containers run as the in-image `xnat` user (UID 1001) after the
     # Docker-hardening pass on `trust/xnat/xnat/Dockerfile`. Bind-mounted host
     # paths must be writable by that UID or first-boot writes (archive ingest,

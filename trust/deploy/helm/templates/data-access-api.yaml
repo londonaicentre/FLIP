@@ -34,6 +34,11 @@ data:
   DATA_ACCESS_POSTGRES_USER: {{ .Values.dataAccessApi.env.DATA_ACCESS_POSTGRES_USER | quote }}
   ENV: {{ .Values.environment | quote }}
   LOG_LEVEL: {{ .Values.logLevel | quote }}
+  {{- if .Values.dataAccessApi.snapshots.enabled }}
+  # Approved-cohort membership store (FLIP#857) — the PVC mount below. Row-level serving is
+  # fail-closed without it.
+  COHORT_SNAPSHOT_DIR: "/snapshots"
+  {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -45,6 +50,12 @@ metadata:
     app.kubernetes.io/component: data-access-api
 spec:
   replicas: {{ .Values.dataAccessApi.replicas }}
+  {{- if and .Values.dataAccessApi.snapshots.enabled (eq .Values.dataAccessApi.snapshots.accessMode "ReadWriteOnce") }}
+  # A ReadWriteOnce store attaches to one node: a surge pod scheduled elsewhere would wait on the
+  # volume forever and stall the rollout, so the old pod goes first.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "flip-trust.selectorLabels" . | nindent 6 }}
@@ -65,6 +76,13 @@ spec:
     spec:
       enableServiceLinks: false
       serviceAccountName: {{ include "flip-trust.fullname" . }}-data-access-api
+      {{- if .Values.dataAccessApi.snapshots.enabled }}
+      securityContext:
+        # Makes the snapshot PVC group-writable for the image's non-root user — without it a
+        # fresh volume mounts root-owned, every freeze fails, and fail-closed serving refuses
+        # every project.
+        fsGroup: {{ .Values.dataAccessApi.snapshots.fsGroup }}
+      {{- end }}
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
 {{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
@@ -122,8 +140,13 @@ spec:
             - name: ACCESS_POLICY_FILE
               value: /app/governance.toml
             {{- end }}
-          {{- if .Values.governance.document }}
+          {{- if or .Values.dataAccessApi.snapshots.enabled .Values.governance.document }}
           volumeMounts:
+            {{- if .Values.dataAccessApi.snapshots.enabled }}
+            - name: cohort-snapshots
+              mountPath: /snapshots
+            {{- end }}
+            {{- if .Values.governance.document }}
             - name: governance
               mountPath: /app/governance.toml
               # subPath, not a directory mount: /app is the service's own tree, and a
@@ -131,6 +154,7 @@ spec:
               # must never be able to rewrite its own policy.
               subPath: governance.toml
               readOnly: true
+            {{- end }}
           {{- end }}
           resources:
             {{- toYaml .Values.dataAccessApi.resources | nindent 12 }}
@@ -148,14 +172,43 @@ spec:
             initialDelaySeconds: {{ .Values.dataAccessApi.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.dataAccessApi.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.dataAccessApi.probes.readiness.timeoutSeconds }}
-      {{- if .Values.governance.document }}
-      # /app/governance.toml is the filename the Compose stack mounts, so one document
-      # means the same thing on either deployment shape.
+      {{- if or .Values.dataAccessApi.snapshots.enabled .Values.governance.document }}
       volumes:
+        {{- if .Values.dataAccessApi.snapshots.enabled }}
+        - name: cohort-snapshots
+          persistentVolumeClaim:
+            claimName: {{ include "flip-trust.fullname" . }}-cohort-snapshots
+        {{- end }}
+        {{- if .Values.governance.document }}
+        # /app/governance.toml is the filename the Compose stack mounts, so one document
+        # means the same thing on either deployment shape.
         - name: governance
           configMap:
             name: {{ include "flip-trust.fullname" . }}-governance
+        {{- end }}
       {{- end }}
+{{- if .Values.dataAccessApi.snapshots.enabled }}
+---
+# Approved-cohort membership store (FLIP#857): one record per approved project UUID (the query
+# of record + person/accession ids, no clinical values) — back this PV up with the OMOP volume.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-cohort-snapshots
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-access-api
+spec:
+  accessModes:
+    - {{ .Values.dataAccessApi.snapshots.accessMode }}
+  {{- if .Values.dataAccessApi.snapshots.storageClassName }}
+  storageClassName: {{ .Values.dataAccessApi.snapshots.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.dataAccessApi.snapshots.size }}
+{{- end }}
 ---
 apiVersion: v1
 kind: Service

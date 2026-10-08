@@ -10,13 +10,18 @@
 # limitations under the License.
 #
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from log_config import LoggingMiddleware
 
 from data_access_api.config import get_policy, get_settings
 from data_access_api.policy import describe_policy
-from data_access_api.routers.cohort import router as cohort_router
+from data_access_api.routers.cohort import read_router as cohort_read_router
+from data_access_api.routers.cohort import write_router as cohort_write_router
 from data_access_api.routers.health import router as health_router
+from data_access_api.services.cohort_snapshot import ensure_store
 
 # Importing the logger configures structured logging.
 from data_access_api.utils.logger import logger
@@ -27,6 +32,17 @@ from data_access_api.utils.logger import logger
 # INFO so a trust running at TRUST_LOG_LEVEL=WARNING still prints it — without it
 # reload-governance would report an image that ignores the document.
 logger.warning(describe_policy(get_policy(), floor=get_settings().COHORT_QUERY_THRESHOLD))
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # Boot-time check of the approved-cohort snapshot store (FLIP#857): creates the
+    # directory, sweeps stale write debris, probes writability. Never raises — a broken
+    # store must not take the service down; the row-level routes then refuse projects
+    # whose artefact cannot be read (fail-closed) while statistics keep serving.
+    ensure_store()
+    yield
+
 
 # Disable Swagger / OpenAPI / ReDoc in production. Data-access-api executes SQL
 # against OMOP under a service account; leaking its route + schema map to anyone
@@ -41,9 +57,11 @@ app = FastAPI(
     docs_url="/docs" if _docs_enabled else None,
     openapi_url="/openapi.json" if _docs_enabled else None,
     redoc_url="/redoc" if _docs_enabled else None,
+    lifespan=lifespan,
 )
 
 app.add_middleware(LoggingMiddleware)
 
-app.include_router(cohort_router)
+app.include_router(cohort_read_router)
+app.include_router(cohort_write_router)
 app.include_router(health_router)

@@ -32,7 +32,8 @@ from data_access_api.main import app
 from data_access_api.policy import parse_policy
 from data_access_api.routers.cohort import _BELOW_THRESHOLD_DETAIL
 from data_access_api.routers.schema import StatisticsResponse
-from tests.conftest import AUTH_HEADERS
+from data_access_api.services.cohort_snapshot import Snapshot
+from tests.conftest import AUTH_HEADERS, WRITE_AUTH_HEADERS
 
 client = TestClient(app)
 
@@ -49,6 +50,20 @@ P_OTHER = "0e000000-0000-4000-8000-000000000003"
 
 def _policy(text: str, floor: int = 5):
     return parse_policy(text, floor=floor, source="test")
+
+
+def _membership(person_ids: list[str] | None = None, accession_ids: list[str] | None = None) -> Snapshot:
+    """An approved cohort's frozen membership (FLIP#857): the row-level routes serve only this."""
+    return Snapshot(
+        query="SELECT 1",
+        query_hash="0" * 64,
+        person_ids=person_ids,
+        accession_ids=accession_ids,
+        row_count=100,
+        subject_count=100,
+        columns=[],
+        created_at="2026-09-29T00:00:00+00:00",
+    )
 
 
 def _large_cohort() -> pd.DataFrame:
@@ -123,8 +138,9 @@ def test_accession_ids_policy_denial_uses_the_fixed_refusal_text(
 @patch("data_access_api.routers.cohort.validate_query", return_value="SELECT 1")
 @patch("data_access_api.routers.cohort.count_distinct_subjects", return_value=30)
 @patch("data_access_api.routers.cohort.get_records")
+@patch("data_access_api.routers.cohort.get_snapshot", return_value=_membership(person_ids=[str(i) for i in range(100)]))
 def test_dataframe_rule_threshold_raise_refuses_a_cohort_that_clears_the_kit_floor(
-    mock_get_records, mock_count, mock_validate, mock_get_settings, mock_get_policy, mock_decrypt
+    mock_get_snapshot, mock_get_records, mock_count, mock_validate, mock_get_settings, mock_get_policy, mock_decrypt
 ):
     """A permit rule may raise the floor: 30 subjects clears the kit's 5 but not the rule's 50."""
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 5
@@ -153,8 +169,9 @@ def test_dataframe_rule_threshold_raise_refuses_a_cohort_that_clears_the_kit_flo
 @patch("data_access_api.routers.cohort.validate_query", return_value="SELECT 1")
 @patch("data_access_api.routers.cohort.count_distinct_subjects", return_value=30)
 @patch("data_access_api.routers.cohort.get_records")
+@patch("data_access_api.routers.cohort.get_snapshot", return_value=_membership(person_ids=[str(i) for i in range(100)]))
 def test_dataframe_permitted_by_policy_returns_data(
-    mock_get_records, mock_count, mock_validate, mock_get_settings, mock_get_policy, mock_decrypt
+    mock_get_snapshot, mock_get_records, mock_count, mock_validate, mock_get_settings, mock_get_policy, mock_decrypt
 ):
     """The permit path still returns rows — the gate adds a condition, it does not block."""
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 5
@@ -340,6 +357,8 @@ def test_statistics_denial_logs_the_project_it_blocked(
 # decide() used to run before validate_query, so an invalid query got a 400 when permitted
 # but a 403 (or a suppressed 200 on /cohort) when a rule denied it: a deterministic probe for
 # "a rule covers this project". The query's shape is now judged first, whatever the policy.
+# Only /cohort takes its SQL from the caller: the row-level routes run the query of record
+# frozen at approval (FLIP#857) and never judge the caller's, so the probe does not exist there.
 
 _DENY_ALL = """
 [[access.rule]]
@@ -357,8 +376,6 @@ effect = "deny"
             "cohort.statistics",
             {"encrypted_project_id": "sealed", "query_id": "q1", "query_name": "q", "query": "x", "trust_id": "t1"},
         ),
-        ("/cohort/dataframe", "cohort.dataframe", {"encrypted_project_id": "sealed", "query": "x"}),
-        ("/cohort/accession-ids", "cohort.accession_ids", {"encrypted_project_id": "sealed", "query": "x"}),
     ],
 )
 @patch("data_access_api.routers.cohort.decrypt", return_value=P_DENIED)
@@ -413,17 +430,15 @@ def test_statistics_applies_the_policy_threshold(
 
 
 @patch("data_access_api.routers.cohort.decrypt", return_value=P_ALLOWED)
-@patch("data_access_api.routers.cohort.validate_query", return_value="SELECT 1")
+@patch("data_access_api.routers.cohort.get_snapshot")
 @patch("data_access_api.routers.cohort.get_policy")
 @patch("data_access_api.routers.cohort.get_settings")
-@patch("data_access_api.routers.cohort.get_records")
 def test_accession_ids_applies_the_policy_threshold(
-    mock_get_records, mock_get_settings, mock_get_policy, mock_validate, mock_decrypt
+    mock_get_settings, mock_get_policy, mock_get_snapshot, mock_decrypt
 ):
     """20 subjects clear the kit's 5 but not the document's 30."""
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 5
-    accessions = [f"ACC{i}" for i in range(20)]
-    mock_get_records.return_value = pd.DataFrame({"accession_id": accessions})
+    mock_get_snapshot.return_value = _membership(accession_ids=[f"ACC{i}" for i in range(20)])
 
     def lookup(query=None, params=None, **kwargs):
         ids = (params or {}).get("accession_ids", [])
@@ -486,3 +501,80 @@ def test_statistics_refuses_an_envelope_it_cannot_open_when_a_rule_needs_the_pro
     assert response.status_code == 400
     assert "failed authentication" in response.json()["detail"]
     mock_get_records.assert_not_called()
+
+
+@patch("data_access_api.routers.cohort.snapshot_enabled", return_value=True)
+@patch("data_access_api.routers.cohort.decrypt", return_value=P_DENIED)
+@patch("data_access_api.routers.cohort.get_policy")
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.load_snapshot")
+@patch("data_access_api.routers.cohort.save_snapshot")
+@patch("data_access_api.routers.cohort.get_records")
+def test_snapshot_policy_denial_freezes_nothing_and_uses_the_fixed_refusal_text(
+    mock_get_records,
+    mock_save_snapshot,
+    mock_load_snapshot,
+    mock_get_settings,
+    mock_get_policy,
+    mock_decrypt,
+    mock_enabled,
+    caplog,
+):
+    """The freeze reports a project's counts to the hub, so a project denied statistics is not frozen."""
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 5
+    mock_get_policy.return_value = _policy(
+        """
+        [[access.rule]]
+        id = "no-counts"
+        action = "cohort.statistics"
+        effect = "deny"
+        """
+    )
+
+    with caplog.at_level("WARNING"):
+        response = client.post(
+            "/cohort/snapshot", json={"encrypted_project_id": "sealed", "query": "SELECT 1"}, headers=WRITE_AUTH_HEADERS
+        )
+
+    assert response.status_code == 403
+    assert response.json() == _FIXED_REFUSAL
+    assert "no-counts" in caplog.text
+    assert "no-counts" not in response.text
+    # Denied before anything is read or run: an existing record's facts are not disclosed either.
+    mock_load_snapshot.assert_not_called()
+    mock_get_records.assert_not_called()
+    mock_save_snapshot.assert_not_called()
+
+
+@patch("data_access_api.routers.cohort.snapshot_enabled", return_value=True)
+@patch("data_access_api.routers.cohort.decrypt", return_value=P_ALLOWED)
+@patch("data_access_api.routers.cohort.get_policy")
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.validate_query", return_value="SELECT 1")
+@patch("data_access_api.routers.cohort.count_distinct_subjects", return_value=20)
+@patch("data_access_api.routers.cohort.load_snapshot", return_value=None)
+@patch("data_access_api.routers.cohort.save_snapshot")
+@patch("data_access_api.routers.cohort.get_records")
+def test_snapshot_applies_the_policy_threshold(
+    mock_get_records,
+    mock_save_snapshot,
+    mock_load_snapshot,
+    mock_count,
+    mock_validate,
+    mock_get_settings,
+    mock_get_policy,
+    mock_decrypt,
+    mock_enabled,
+):
+    """20 subjects clear the kit's 5 but not the document's 30: nothing is frozen, so no count reaches the hub."""
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 5
+    mock_get_policy.return_value = _policy("[disclosure]\nmin_cohort_size = 30")
+    mock_get_records.return_value = _large_cohort()
+
+    response = client.post(
+        "/cohort/snapshot", json={"encrypted_project_id": "sealed", "query": "SELECT 1"}, headers=WRITE_AUTH_HEADERS
+    )
+
+    assert response.status_code == 403
+    assert response.json() == _FIXED_REFUSAL
+    mock_save_snapshot.assert_not_called()

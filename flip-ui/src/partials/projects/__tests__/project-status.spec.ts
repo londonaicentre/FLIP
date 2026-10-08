@@ -51,6 +51,9 @@ vi.mock("swrv", () => ({
 vi.mock("@/composables/useErrorHandler", () => ({ default: vi.fn() }));
 
 const stubs = {
+    // Has its own useSWRV call; stubbed so this spec's single-ref swrv mock stays
+    // scoped to the imaging-status fetch. Covered by cohort-snapshot-summary.spec.ts.
+    CohortSnapshotSummary: { template: "<div data-test='cohort-snapshot-stub' />" },
     "icon-ph-check-bold": { template: "<span data-test-icon='check' />" },
     "icon-ph-clock": { template: "<span data-test-icon='clock' />" },
     "icon-ph-warning-circle-fill": { template: "<span data-test-icon='exclamation' />" },

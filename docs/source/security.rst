@@ -142,6 +142,16 @@ trust receives a different value, limiting the effect of disclosure to one trust
 rotation is performed by issuing a new trust kit and restarting the trust-side services
 together so callers and receivers change atomically.
 
+Because the FL client legitimately holds this key — it reads the approved cohort and pulls
+imaging — the key alone cannot separate reading a project's cohort from *defining* it. The
+two ``data-access-api`` routes that record or delete the frozen cohort therefore carry a
+second gate on top of the shared key: proof of possessing the trust's payload-encryption key
+(``AES_KEY_BASE64``). ``trust-api`` sends that proof when it records an approved cohort and
+``data-access-api`` checks it; ``imaging-api`` also holds the key but never calls these routes,
+and the FL client does not hold it. The proof is a one-way digest of the key, not the key itself, so it never appears on the
+wire or in logs. A caller that presents a valid shared key but not this proof is refused. No
+additional secret is provisioned; the control reuses a possession boundary that already exists.
+
 **************************
 The clinical data boundary
 **************************
@@ -163,9 +173,14 @@ independent controls would each have to fail before anything unintended could ex
   reveal that a handful of patients matched — the threshold is the trust's own
   disclosure floor (default 10), set by each trust in its deployment kit: trusts need
   not agree on a shared value, and the hub cannot lower it;
-- cached results are scoped to the requesting project and expire in minutes, so no
-  project is served another's data and no result outlives a withdrawal of consent or a
-  correction to a record.
+- row-level data is released only for the **cohort frozen at project approval**: each
+  Trust records the approved query and the patient and study identifiers it returned (no
+  clinical values), and from then on serves only that query, restricted to those
+  identifiers, ignoring any SQL supplied at request time. The cohort a project trains on
+  can therefore never grow beyond what was approved, and training code cannot run queries
+  of its own. It can shrink: a patient removed from the Trust's database — for instance
+  after an opt-out — drops out on the next fetch, and a cohort that falls below the
+  disclosure threshold stops being served.
 
 This is achieved **without restricting researchers to a fixed menu of queries** —
 arbitrary analytical SQL remains available. The constraint is on the shape and privilege
