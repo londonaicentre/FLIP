@@ -53,15 +53,33 @@ def _stub(bin_dir: Path, name: str, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
+def _fake_dev_kit(root: Path, backend: str) -> Path:
+    """A provisioned dev kit tree as `make -C fl-services/<backend> provision` leaves it."""
+    if backend == "nvflare":
+        slot = root / "net-1" / "services" / "Trust_1"
+        for sub in ("local", "startup", "transfer"):
+            (slot / sub).mkdir(parents=True)
+        (slot / "startup" / "fed_client.json").write_text("{}")
+    else:
+        (root / "net-1" / "certificates").mkdir(parents=True)
+        (root / "net-1" / "keys").mkdir(parents=True)
+        (root / "net-1" / "certificates" / "ca.crt").write_text("ca")
+        (root / "net-1" / "keys" / "supernode_credentials_1").write_text("key")
+    return root
+
+
 def _run(
     case: str,
     *,
+    backend: str = "nvflare",
     failing_port: str = "",
     write_markers: bool = True,
-    fl_running: bool = True,
+    fl_states: tuple[str, str] = ("true false 0", "true false 0"),
     store_ok: bool = True,
     wc_reply: str = "",
-) -> tuple[subprocess.CompletedProcess, dict | None, Path]:
+    stale_kit: bool = False,
+    bad_template: bool = False,
+) -> tuple[subprocess.CompletedProcess, dict | None, Path, Path]:
     tmp = Path(tempfile.mkdtemp(prefix=f"selftest-{case}-"))
     bin_dir, out, data = tmp / "bin", tmp / "out", tmp / "data"
     bin_dir.mkdir()
@@ -74,6 +92,9 @@ def _run(
         else ":"
     )
     _stub(bin_dir, "make", f'echo "make $*" >> "{calls}"; case "$*" in *up-trust*) {markers};; esac; exit 0')
+    for tool in ("chown", "chgrp"):
+        _stub(bin_dir, tool, f'echo "{tool} $*" >> "{calls}"; exit 0')
+    _stub(bin_dir, "sleep", "exit 0")
     store_reply = '{"FailedInstancesCount":0}' if store_ok else '{"FailedInstancesCount":1}'
     _stub(
         bin_dir,
@@ -88,7 +109,8 @@ def _run(
         "esac\nexit 0",
     )
     counter = tmp / "wc.count"
-    fl_line = "echo trust1-fl-client-1" if fl_running else ":"
+    states = tmp / "fl-states"
+    states.write_text("\n".join(fl_states) + "\n")
     # What the stubbed XNAT container answers to `wc -l`: a growing count, or a fixed reply
     # (to prove container output is never evaluated by the runner).
     wc_arm = (
@@ -96,28 +118,42 @@ def _run(
         if wc_reply
         else f'  *"wc -l"*) n=$(cat "{counter}" 2>/dev/null || echo 10); echo $n; echo $((n + 5)) > "{counter}";;\n'
     )
+    # `docker inspect` answers the FL client's state, one line per call (running restarting count).
     _stub(
         bin_dir,
         "docker",
         f'echo "docker $*" >> "{calls}"\n'
-        f'if [ "$1" = ps ]; then echo trust1_xnat-web.1; {fl_line}; fi\n'
+        'if [ "$1" = ps ]; then echo trust1_xnat-web.1; echo trust1-fl-client-net-1-1; fi\n'
+        f'if [ "$1" = inspect ]; then head -1 "{states}"; '
+        f'tail -n +2 "{states}" > "{states}.n"; mv "{states}.n" "{states}"; fi\n'
+        'if [ "$1" = logs ]; then echo "fl-client log line"; fi\n'
         'if [ "$1" = exec ]; then case "$*" in\n'
         f"{wc_arm}"
         '  *tail*) echo "INFO stored instance";;\n'
         "esac; fi\nexit 0",
     )
+    kit_out = tmp / ".env.SELFTEST.production"
+    if stale_kit:
+        kit_out.write_text("STALE_KIT=1\n")
     env = {
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "SELFTEST_OUT": str(out),
         "SELFTEST_DATA_ROOT": str(data),
         "SELFTEST_SKIP_PROVISION": "1",
-        "SELFTEST_KIT_OUT": str(tmp / ".env.SELFTEST.production"),
+        "SELFTEST_KIT_OUT": str(kit_out),
+        "SELFTEST_DEV_KIT_DIR": str(_fake_dev_kit(tmp / "devkit", backend)),
+        "SELFTEST_FL_KIT_DIR": str(tmp / "fl-kit"),
+        "SELFTEST_FL_SETTLE_SECONDS": "0",
     }
-    result = subprocess.run(["bash", str(SCRIPT), "nvflare"], env=env, capture_output=True, text=True, timeout=120)
-    reports = sorted(out.glob("selftest-nvflare-*.json")) if out.exists() else []
+    if bad_template:
+        template = tmp / "template"
+        template.write_text("SOMETHING_NEW=<run-make-register-trust>\n")
+        env["SELFTEST_KIT_TEMPLATE"] = str(template)
+    result = subprocess.run(["bash", str(SCRIPT), backend], env=env, capture_output=True, text=True, timeout=120)
+    reports = sorted(out.glob(f"selftest-{backend}-*.json")) if out.exists() else []
     report = json.loads(reports[-1].read_text()) if reports else None
-    return result, report, calls
+    return result, report, calls, tmp
 
 
 def _check(report: dict | None, name: str) -> dict:
@@ -129,7 +165,7 @@ def _check(report: dict | None, name: str) -> dict:
 
 def main() -> int:
     print("all_checks_pass")
-    result, report, calls = _run("ok")
+    result, report, calls, tmp = _run("ok")
     _assert(result.returncode == 0, "exits 0", result.stdout + result.stderr)
     _assert(report is not None and report["ok"] is True, "report ok=true")
     for name in (
@@ -146,31 +182,64 @@ def main() -> int:
         _assert(_check(report, name).get("ok") is True, f"check '{name}' passed", json.dumps(_check(report, name)))
     _assert(calls.exists() and "down-trust KIT=SELFTEST PROD=true" in calls.read_text(), "stack torn down afterwards")
 
+    print("fl_kit_is_staged_for_the_nvflare_client")
+    staged = tmp / "fl-kit" / "net-1" / "services" / "Trust_1" / "startup" / "fed_client.json"
+    _assert(staged.exists(), "the slot is copied out of the root-owned dev kit")
+    _assert(
+        f"chown -R 1000:1000 {tmp / 'fl-kit' / 'net-1'}" in calls.read_text(), "and handed to the client's uid 1000"
+    )
+    kit = (tmp / ".env.SELFTEST.production").read_text()
+    _assert(f"FL_KIT_DIR={tmp / 'fl-kit'}" in kit, "the kit points the stack at the staged copy")
+
+    print("fl_kit_is_staged_for_the_flower_supernode")
+    result, report, calls, tmp = _run("flower", backend="flower")
+    key = tmp / "fl-kit" / "net-1" / "keys" / "supernode_credentials_1"
+    ca = tmp / "fl-kit" / "net-1" / "certificates" / "ca.crt"
+    _assert(key.exists() and ca.exists(), "key and CA certificate staged")
+    _assert(key.exists() and (key.stat().st_mode & 0o777) == 0o640, "the private key is 0640")
+    _assert(ca.exists() and (ca.stat().st_mode & 0o777) == 0o644, "the CA certificate is 0644")
+    _assert(f"chgrp 49999 {key}" in calls.read_text(), "the key's group is the supernode's gid 49999")
+
+    print("crash_looping_fl_client_fails_run")
+    result, report, _, _ = _run("loop", fl_states=("true false 3", "true false 4"))
+    check = _check(report, "fl client running")
+    _assert(result.returncode != 0 and check.get("ok") is False, "a restart between samples is a failure")
+    _assert("fl-client log line" in check.get("detail", ""), "the failure carries the client's last log lines")
+
+    print("failed_kit_step_never_starts_a_stale_kit")
+    result, report, calls, tmp = _run("stale", stale_kit=True, bad_template=True)
+    _assert(not (tmp / ".env.SELFTEST.production").exists(), "the previous run's kit is removed")
+    _assert("up-trust" not in calls.read_text(), "up-trust is not run")
+    _assert(
+        _check(report, "stack up").get("ok") is False and "skipped" in _check(report, "stack up").get("detail", ""),
+        "stack up is recorded as skipped",
+    )
+
     print("health_failure_fails_run")
-    result, report, _ = _run("health", failing_port="8010")
+    result, report, _, _ = _run("health", failing_port="8010")
     _assert(result.returncode != 0, "exits non-zero")
     _assert(report is not None and report["ok"] is False, "report ok=false")
     _assert(_check(report, "data-access-api health").get("ok") is False, "names the failing service")
 
     print("missing_seed_marker_fails_run")
-    result, report, _ = _run("seed", write_markers=False)
+    result, report, _, _ = _run("seed", write_markers=False)
     _assert(result.returncode != 0 and _check(report, "omop seeded").get("ok") is False, "unseeded OMOP is a failure")
 
     print("stopped_fl_client_fails_run")
-    result, report, _ = _run("fl", fl_running=False)
+    result, report, _, _ = _run("fl", fl_states=("false false 3", "false false 3"))
     _assert(
         result.returncode != 0 and _check(report, "fl client running").get("ok") is False, "no FL client is a failure"
     )
 
     print("failed_cstore_fails_run")
-    result, report, _ = _run("cstore", store_ok=False)
+    result, report, _, _ = _run("cstore", store_ok=False)
     _assert(
         result.returncode != 0 and _check(report, "xnat c-store").get("ok") is False, "a failed C-STORE is a failure"
     )
 
     print("container_output_is_never_evaluated")
     canary = Path(tempfile.mkdtemp()) / "PWNED"
-    result, report, _ = _run("inject", wc_reply=f"a[$(touch {canary})]")
+    result, report, _, _ = _run("inject", wc_reply=f"a[$(touch {canary})]")
     _assert(not canary.exists(), "a crafted line count from the XNAT container runs nothing")
     _assert(_check(report, "xnat c-store").get("ok") is False, "and the C-STORE check fails instead")
 
