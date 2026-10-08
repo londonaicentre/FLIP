@@ -58,6 +58,23 @@ resource "azurerm_network_interface" "node" {
   }
 }
 
+# The NIC's own NSG, rule-less on purpose and present in every mode. Azure lets inbound
+# traffic through only if both the subnet's NSG and this one allow it, so even a site subnet
+# (existing_subnet_id) with a permissive NSG cannot expose the node. Azure's default rules
+# deny inbound from the internet.
+resource "azurerm_network_security_group" "nic" {
+  name                = "${var.name_prefix}-node-nic-nsg"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.node.name
+  security_rule       = []
+  tags                = local.tags
+}
+
+resource "azurerm_network_interface_security_group_association" "nic" {
+  network_interface_id      = azurerm_network_interface.node.id
+  network_security_group_id = azurerm_network_security_group.nic.id
+}
+
 resource "azurerm_linux_virtual_machine" "node" {
   name                            = "${var.name_prefix}-node"
   location                        = var.location

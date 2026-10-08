@@ -122,3 +122,30 @@ run "auto_shutdown_can_be_turned_off" {
     error_message = "auto_shutdown_enabled=false removes the schedule."
   }
 }
+
+# Inbound needs both the subnet's NSG and the NIC's NSG to allow it. The NIC gets its own
+# rule-less NSG in every mode, so a site subnet (existing_subnet_id) with a permissive NSG
+# still cannot expose the node.
+run "nic_has_its_own_nsg_with_no_rules" {
+  command = plan
+
+  assert {
+    condition     = length(azurerm_network_security_group.nic.security_rule) == 0
+    error_message = "The NIC's NSG must have no rules (Azure's defaults deny internet inbound)."
+  }
+}
+
+# The association itself is checked statically (tests/test_static_guards.py): its IDs are
+# unknown at plan, and a mocked apply cannot produce IDs the provider accepts.
+run "nic_nsg_also_guards_a_site_subnet" {
+  command = plan
+
+  variables {
+    existing_subnet_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/trust-rg/providers/Microsoft.Network/virtualNetworks/trust-vnet/subnets/flip"
+  }
+
+  assert {
+    condition     = azurerm_network_security_group.nic.name == "flipaz-node-nic-nsg" && length(azurerm_network_security_group.nic.security_rule) == 0
+    error_message = "With a site subnet the NIC still carries its own rule-less NSG."
+  }
+}
