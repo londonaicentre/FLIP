@@ -1,0 +1,115 @@
+{
+    "schema": "https://github.com/Project-MONAI/MONAI-extra-test-data/releases/download/0.8.1/meta_schema_20240725.json",
+    "version": "0.6.1",
+    "changelog": {
+        "0.6.1": "enhance metadata with improved descriptions",
+        "0.6.0": "update to huggingface hosting",
+        "0.5.9": "use monai 1.4 and update large files",
+        "0.5.8": "update to use monai 1.3.2",
+        "0.5.7": "update to use monai 1.3.1",
+        "0.5.6": "add load_pretrain flag for infer",
+        "0.5.5": "add checkpoint loader for infer",
+        "0.5.4": "update to use monai 1.3.0",
+        "0.5.3": "fix the wrong GPU index issue of multi-node",
+        "0.5.2": "remove error dollar symbol in readme",
+        "0.5.1": "add RAM warning",
+        "0.5.0": "update the README file with the ONNX-TensorRT conversion",
+        "0.4.9": "update TensorRT descriptions",
+        "0.4.8": "update deterministic training results",
+        "0.4.7": "update the TensorRT part in the README file",
+        "0.4.6": "fix mgpu finalize issue",
+        "0.4.5": "enable deterministic training",
+        "0.4.4": "add the command of executing inference with TensorRT models",
+        "0.4.3": "fix figure and weights inconsistent error",
+        "0.4.2": "use torch 1.13.1",
+        "0.4.1": "update the readme file with TensorRT convert",
+        "0.4.0": "fix multi-gpu train config typo",
+        "0.3.9": "adapt to BundleWorkflow interface",
+        "0.3.8": "add name tag",
+        "0.3.7": "restructure readme to match updated template",
+        "0.3.6": "enhance readme with details of model training",
+        "0.3.5": "update to use monai 1.0.1",
+        "0.3.4": "enhance readme on commands example",
+        "0.3.3": "fix license Copyright error",
+        "0.3.2": "improve multi-gpu logging",
+        "0.3.1": "add multi-gpu evaluation config",
+        "0.3.0": "update license files",
+        "0.2.0": "unify naming",
+        "0.1.1": "disable image saving during evaluation",
+        "0.1.0": "complete the model package",
+        "0.0.1": "initialize the model package structure"
+    },
+    "monai_version": "1.4.0",
+    "pytorch_version": "2.4.0",
+    "numpy_version": "1.24.4",
+    "required_packages_version": {
+        "nibabel": "5.2.1",
+        "pytorch-ignite": "0.4.11",
+        "tensorboard": "2.17.0"
+    },
+    "supported_apps": {},
+    "name": "Spleen CT Segmentation",
+    "task": "Automated Spleen Segmentation in CT Images",
+    "description": "A 3D segmentation model for spleen delineation in CT images. The model processes 96x96x96 pixel patches and provides segmentation masks for spleen tissue. Trained on the Medical Segmentation Decathlon dataset.",
+    "authors": "MONAI team",
+    "copyright": "Copyright (c) MONAI Consortium",
+    "data_source": "Task09_Spleen.tar from http://medicaldecathlon.com/",
+    "data_type": "nibabel",
+    "image_classes": "single channel data, intensity scaled to [0, 1]",
+    "label_classes": "single channel data, 1 is spleen, 0 is everything else",
+    "pred_classes": "2 channels OneHot data, channel 1 is spleen, channel 0 is background",
+    "eval_metrics": {
+        "mean_dice": 0.961
+    },
+    "intended_use": "This is an example, not to be used for diagnostic purposes",
+    "references": [
+        "Xia, Yingda, et al. '3D Semi-Supervised Learning with Uncertainty-Aware Multi-View Co-Training. arXiv preprint arXiv:1811.12506 (2018). https://arxiv.org/abs/1811.12506.",
+        "Kerfoot E., Clough J., Oksuz I., Lee J., King A.P., Schnabel J.A. (2019) Left-Ventricle Quantification Using Residual U-Net. In: Pop M. et al. (eds) Statistical Atlases and Computational Models of the Heart. Atrial Segmentation and LV Quantification Challenges. STACOM 2018. Lecture Notes in Computer Science, vol 11395. Springer, Cham. https://doi.org/10.1007/978-3-030-12029-0_40"
+    ],
+    "network_data_format": {
+        "inputs": {
+            "image": {
+                "type": "image",
+                "format": "hounsfield",
+                "modality": "CT",
+                "num_channels": 1,
+                "spatial_shape": [
+                    96,
+                    96,
+                    96
+                ],
+                "dtype": "float32",
+                "value_range": [
+                    0,
+                    1
+                ],
+                "is_patch_data": true,
+                "channel_def": {
+                    "0": "image"
+                }
+            }
+        },
+        "outputs": {
+            "pred": {
+                "type": "image",
+                "format": "segmentation",
+                "num_channels": 2,
+                "spatial_shape": [
+                    96,
+                    96,
+                    96
+                ],
+                "dtype": "float32",
+                "value_range": [
+                    0,
+                    1
+                ],
+                "is_patch_data": true,
+                "channel_def": {
+                    "0": "background",
+                    "1": "spleen"
+                }
+            }
+        }
+    }
+}

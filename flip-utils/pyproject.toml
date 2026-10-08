@@ -53,6 +53,7 @@ dependencies = [
     "pandas>=2.3.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
+    "pyyaml>=6.0.2",  # flip.monai reads monai-flip.yaml overlays (FLIP#1105)
     "requests>=2.33.0",
     "tqdm>=4.67.1",
 ]
@@ -184,6 +185,7 @@ dev = [
     "pytest>=8.4.2",
     "pytest-cov>=7.0.0",
     "ruff>=0.14.2",
+    "types-pyyaml>=6.0.12",
     "types-requests>=2.32.4.20260107",
 ]
 
