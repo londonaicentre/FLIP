@@ -194,7 +194,6 @@ REQUIRED_KEYS=(
     # Backend + provider wiring (Makefile `init`, TF_VAR_AWS_REGION)
     AWS_REGION
     FLIP_TFSTATE_BUCKET_NAME
-    VPC_NAME
 
     # Buckets — all four carry Makefile placeholder guards
     AICENTRE_BUCKET_NAME
@@ -217,23 +216,11 @@ REQUIRED_KEYS=(
     POSTGRES_USER
 
     # Service wiring baked into the ECS task definitions (locals.tf)
-    API_PORT
-    DB_PORT
     FL_ADMIN_DIRECTORY
-    FL_API_PORT
     FL_SERVER_PORT
     INTERNAL_SERVICE_KEY_HEADER
     SES_VERIFIED_EMAIL
     TRUST_API_KEY_HEADER
-    # UI_PORT is referenced by no resource in this root (the UI is served from S3
-    # via CloudFront, not a port), so it looks omittable — but the Makefile exports
-    # it unconditionally, which turns an absent key into TF_VAR_UI_PORT="" and
-    # Terraform rejects that for a `number` variable:
-    #     Unsuitable value for var.UI_PORT … a number is required
-    # Verified against a real prod plan. The same reasoning keeps every other
-    # numeric key required; only JOB_RESOURCE_SPEC_* may be absent, because the
-    # Makefile guards those exports behind `ifneq`.
-    UI_PORT
 
     # DNS
     ALB_SUBDOMAIN
