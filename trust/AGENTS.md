@@ -112,7 +112,7 @@ refusal that protects the live credentials. `sync_k8s_kit.align_values_secrets` 
 in step; never pass `--force-conflicts` or `--take-ownership` to work around it, and never
 server-side-apply a subset of that Secret (it prunes the keys it does not list).
 `PROD` → kit-file token comes only from `deploy/env_mode.mk`: the chart Makefile injects it
-as `ENV` / `--env` into the preflight script and `sync_k8s_kit.py`, which refuse a `PROD`
+as `KIT_ENV` / `--env` into the preflight script and `sync_k8s_kit.py`, which refuse a `PROD`
 without it instead of keeping their own map (`lza` → `.lza-prod`, `lza-stag` → `.lza-stag`).
 
 ## Commands (from `trust/`)
