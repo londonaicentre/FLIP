@@ -334,8 +334,10 @@ def upload_file_to_xnat(
     # Upload the file
     with open(file_path, "rb") as file:
         response = requests.put(url, headers=headers, data=file)
-        logger.info(f"Successfully uploaded file: {file_path}")
-        return url
 
-    if response.status_code != 200:
-        raise Exception(f"Error uploading file {file_path}: {response.text}")
+    # XNAT may answer a file PUT with 200 or 201, so accept any 2xx
+    if not response.ok:
+        raise Exception(f"Error uploading file {file_path}: {response.status_code} {response.text}")
+
+    logger.info(f"Successfully uploaded file: {file_path}")
+    return url
