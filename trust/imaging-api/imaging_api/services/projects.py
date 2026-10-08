@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-import urllib.parse
 import uuid
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
@@ -43,7 +42,9 @@ XNAT_URL = get_settings().XNAT_URL
 # mutates a process-global mapping; doing it here (rather than per-call) makes
 # the global-state nature explicit and avoids re-registering on every project
 # creation. The URI matches the value passed to create_payload_for_project_creation
-# from create_project, so the serializer emits the historical xmlns:xnat="…" form.
+# from create_project, so the serializer emits the historical xmlns:xnat="…" form. It is a namespace
+# URI rather than a request, the one f-string over XNAT_URL that tests/utils/test_no_raw_xnat_urls.py
+# exempts (#1386).
 ET.register_namespace("xnat", f"{XNAT_URL}/data/projects")
 
 
@@ -115,7 +116,7 @@ def get_all_projects(headers: dict[str, str]) -> list[Project]:
         Exception: If the HTTP request to XNAT fails, or if XNAT returns a non-200 response.
     """
     try:
-        response = requests.get(f"{XNAT_URL}/data/projects", headers=headers)
+        response = requests.get(xnat_url("data", "projects"), headers=headers)
     except Exception as e:
         raise Exception(f"Error: XNAT projects fetch failed: {str(e)}")
 
@@ -189,7 +190,7 @@ def create_project(
         AlreadyExistsError: If a project with the same ID already exists in XNAT.
         Exception: If there is an error during the creation of the project.
     """
-    xnat_projects_uri = f"{XNAT_URL}/data/projects"
+    xnat_projects_uri = xnat_url("data", "projects")
 
     payload = create_payload_for_project_creation(
         xnat_projects_uri,
@@ -254,7 +255,13 @@ def set_project_prearchive_settings(project_id: str, headers: dict[str, str]) ->
         Exception: If there is an error during the process of setting the project prearchive settings.
     """
     response = requests.put(
-        f"{XNAT_URL}/data/projects/{project_id}/prearchive_code/{ProjectPreArchiveSettings.SEND_ALL_TO_ARCHIVE_AND_IGNORE_EXISTING}",
+        xnat_url(
+            "data",
+            "projects",
+            project_id,
+            "prearchive_code",
+            str(ProjectPreArchiveSettings.SEND_ALL_TO_ARCHIVE_AND_IGNORE_EXISTING.value),
+        ),
         headers=headers,
     )
     if response.status_code == 200:
@@ -441,7 +448,7 @@ def _no_command_message(container: str, headers: dict[str, str]) -> str:
     probe_text = ""
     status: int | None = None
     try:
-        probe = requests.get(f"{XNAT_URL}/xapi/commands", headers=headers, timeout=_DIAGNOSTIC_TIMEOUT_SECONDS)
+        probe = requests.get(xnat_url("xapi", "commands"), headers=headers, timeout=_DIAGNOSTIC_TIMEOUT_SECONDS)
         probe_text = probe.text
         status = probe.status_code
         if probe.status_code != 200:
@@ -556,8 +563,7 @@ def get_command_info(container: str, headers: dict[str, str]) -> tuple[int, str]
         Exception: If the command cannot be fetched from XNAT, or the command that matches carries
             no ``xnat`` wrapper to launch.
     """
-    container_name_formatted = urllib.parse.quote(container)
-    response = requests.get(f"{XNAT_URL}/xapi/commands?image={container_name_formatted}", headers=headers)
+    response = requests.get(xnat_url("xapi", "commands", query={"image": container}), headers=headers)
     if response.status_code != 200:
         # Credentials that are wrong from the start fail here, before the diagnostic helper below is
         # ever reached, and XNAT answers with a whole Tomcat error page. Bound it in the raised
@@ -619,7 +625,7 @@ def create_project_event_subscription(project_id: str, container: str, active: b
     # Enable the command at the project level — required by XNAT to validate the action key
     # in project-scoped event subscriptions
     response = requests.put(
-        f"{XNAT_URL}/xapi/projects/{project_id}/commands/{command_id}/wrappers/{wrapper_name}/enabled",
+        xnat_url("xapi", "projects", project_id, "commands", str(command_id), "wrappers", wrapper_name, "enabled"),
         headers=headers,
     )
     if response.status_code != 200:
@@ -644,7 +650,7 @@ def create_project_event_subscription(project_id: str, container: str, active: b
     }
 
     response = requests.post(
-        f"{XNAT_URL}/xapi/projects/{project_id}/events/subscription",
+        xnat_url("xapi", "projects", project_id, "events", "subscription"),
         headers=headers,
         json=subscription_payload,
     )
@@ -763,7 +769,7 @@ async def delete_queued_import_requests(project_id: str, headers: dict[str, str]
     )
 
     import_delete_response = requests.post(
-        f"{XNAT_URL}/xapi/dqr/import/queue",
+        xnat_url("xapi", "dqr", "import", "queue"),
         headers=headers,
         json=queued_imports_ids,
     )
@@ -802,7 +808,7 @@ async def delete_project(project_id: str, headers: dict[str, str]) -> Project:
     # Check if project exists
     project = get_project(project_id, headers)
 
-    response = requests.delete(f"{XNAT_URL}/data/projects/{project_id}?removeFiles=true", headers=headers)
+    response = requests.delete(xnat_url("data", "projects", project_id, query={"removeFiles": "true"}), headers=headers)
 
     # Check status code and log response
     if response.status_code != 200:
@@ -832,7 +838,7 @@ def get_subjects(project_id: str, headers: dict[str, str]) -> list[Subject]:
     """
     get_project(project_id, headers)
 
-    response = requests.get(f"{XNAT_URL}/data/projects/{project_id}/subjects", headers=headers)
+    response = requests.get(xnat_url("data", "projects", project_id, "subjects"), headers=headers)
     subjects = [Subject(**subject) for subject in response.json()["ResultSet"]["Result"]]
 
     if response.status_code == 200:
@@ -862,7 +868,7 @@ def get_experiments(project_id: str, headers: dict[str, str]) -> list[Experiment
     # element security, so sessions whose modality is not registered there (e.g.
     # xnat:dxSessionData for chest X-rays) are silently omitted — making the import look stuck
     # at "0 imported". The global listing returns identical fields without that filter.
-    response = requests.get(f"{XNAT_URL}/data/experiments", params={"project": project_id}, headers=headers)
+    response = requests.get(xnat_url("data", "experiments"), params={"project": project_id}, headers=headers)
 
     # Check the status before parsing: a non-200 XNAT response carries an HTML/plain-text body, so
     # parsing it as JSON first would raise and mask the real HTTP status.
