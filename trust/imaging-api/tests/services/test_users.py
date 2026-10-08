@@ -12,9 +12,11 @@
 
 import re
 from unittest.mock import MagicMock, patch
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import pytest
+import requests
 
 from imaging_api.routers.schemas import CentralHubUser, CreatedUser, CreateUser, User
 from imaging_api.services.users import (
@@ -383,6 +385,31 @@ def test_issue_setup_token_raises_on_unexpected_200_body(mock_get, body, text, h
     expected = r"setup-token issuance failed: 200 - unexpected response body .*" + re.escape(text)
     with pytest.raises(Exception, match=expected):
         issue_setup_token("alice", headers)
+
+
+def test_issue_setup_token_quotes_username_at_http_boundary(xnat_path_segment, sent_xnat_requests):
+    raw, encoded = xnat_path_segment
+    with patch.object(
+        requests.Response,
+        "json",
+        return_value={"alias": "alias", "secret": "secret"},  # pragma: allowlist secret (synthetic setup token)
+    ):
+        assert issue_setup_token(raw, {"X-Request-ID": "trace-1"}) == (
+            "/app/template/XDATScreen_UpdateUser.vm?a=alias&s=secret"
+        )
+    assert len(sent_xnat_requests) == 1
+    request = sent_xnat_requests[0]
+    parsed = urlsplit(request.url)
+    assert parsed.path == f"/data/services/tokens/issue/user/{encoded}"
+    assert parsed.query == parsed.fragment == ""
+    assert request.headers["X-Request-ID"] == "trace-1"
+
+
+@pytest.mark.parametrize("username", ["", ".", ".."])
+def test_issue_setup_token_rejects_empty_and_dot_username_before_http(username, sent_xnat_requests):
+    with pytest.raises(ValueError, match="empty or a dot-segment"):
+        issue_setup_token(username, {})
+    assert sent_xnat_requests == []
 
 
 # ---------------------------------------------------------------------------

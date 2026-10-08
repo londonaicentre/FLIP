@@ -21,6 +21,7 @@ from imaging_api.utils.encryption import XNAT_SETUP_PATH_CONTEXT, encrypt
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
 from imaging_api.utils.logger import logger
 from imaging_api.utils.passwords import generate_complex_password
+from imaging_api.utils.xnat_url import xnat_url
 
 XNAT_URL = get_settings().XNAT_URL
 
@@ -179,10 +180,10 @@ def issue_setup_token(username: str, headers: dict[str, str]) -> str:
         str: The host-less setup path, e.g. ``/app/template/XDATScreen_UpdateUser.vm?a=…&s=…``.
 
     Raises:
+        ValueError: If the username is empty or a dot-segment.
         Exception: If XNAT returns a non-200 response when issuing the token.
     """
-    quoted_username = urllib.parse.quote(username, safe="")
-    response = requests.get(f"{XNAT_URL}/data/services/tokens/issue/user/{quoted_username}", headers=headers)
+    response = requests.get(xnat_url("data", "services", "tokens", "issue", "user", username), headers=headers)
     if response.status_code != 200:
         raise Exception(f"Error: XNAT setup-token issuance failed: {response.status_code} - {response.text}")
 

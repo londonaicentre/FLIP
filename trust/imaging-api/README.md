@@ -62,6 +62,10 @@ or `ALL` — a closed allow-list matching flip-utils' `ResourceType` enum, since
 XNAT download URL; anything else is a 422) and `force_refresh` (default `false`). `accession_id`, like `scan_id` and
 `resource_id` on the upload route, must be a single RFC 3986 path segment (unreserved characters only, not `.` or
 `..`); other values are rejected with a 422 before any XNAT request is made (#908).
+Download, experiment lookup, upload and setup-token URLs use the shared `xnat_url` builder (#1193). It quotes raw
+path segments and encodes query parameters separately, protecting direct service calls as well as validated routes.
+Empty identifiers and exact dot-segments are rejected before HTTP dispatch because URL quoting alone does not
+prevent their normalization.
 
 Downloads are cached on the trust host. Extraction lands in
 `<BASE_IMAGES_DOWNLOAD_DIR>/<net_id>/<central_hub_project_id>/<accession_id>/` and a completeness sentinel
