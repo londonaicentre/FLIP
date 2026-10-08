@@ -1,0 +1,68 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# azure.yml
+#
+# Run ON an Azure trust node by its own flip-node helper (cloud-init at first boot, then
+# `make -C deploy/providers/azure reprovision`):
+#   ansible-playbook -i localhost, -c local trust/deploy/ansible/azure.yml \
+#     -e flip_owner=azureuser -e fl_backend=nvflare
+# The node holds no credentials for the hub's cloud, so the OMOP vocabulary role and the
+# bucket-based FL kit download are not used; seeding pulls the public trust data instead.
+
+---
+- name: Provision an Azure Trust node
+  hosts: all
+  connection: local
+  become: true
+  vars:
+    flip_dir: /opt/flip
+    flip_owner: azureuser
+    flip_group: "{{ flip_owner }}"
+    fl_backend: nvflare
+    fl_kit_source: none
+    flip_base_packages: [curl, unzip, tar, openssl, git, make, python3]
+    flip_app_dirs:
+      - "{{ flip_dir }}/trust"
+      - "{{ flip_dir }}/logs"
+      - "{{ flip_dir }}/selftest"
+    flip_images_base_dirs: ["{{ flip_dir }}/data/trust-1"]
+    flip_observability_volume_dirs: true
+    # The version the repo's own images pin (ghcr.io/astral-sh/uv:0.11.16).
+    uv_version: "0.11.16"
+  roles:
+    - flip_base_packages
+    - flip_docker
+    - flip_trust_dirs
+    - flip_fl_kit
+    - flip_observability_config
+  tasks:
+    - name: Install uv {{ uv_version }} (seeding and FL kit provisioning run uv on the host)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        curl -LsSf "https://astral.sh/uv/{{ uv_version }}/install.sh" -o /tmp/uv-install.sh
+        UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh /tmp/uv-install.sh
+        rm -f /tmp/uv-install.sh
+      args:
+        executable: /bin/bash
+        creates: /usr/local/bin/uv
+
+    - name: Read the Docker swarm state
+      ansible.builtin.command: docker info --format "{{ '{{' }} .Swarm.LocalNodeState {{ '}}' }}"
+      register: swarm_state
+      changed_when: false
+
+    - name: Initialise a single-node swarm (XNAT runs as a swarm stack)
+      ansible.builtin.command: docker swarm init --advertise-addr 127.0.0.1
+      when: swarm_state.stdout | trim != "active"
