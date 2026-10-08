@@ -11,7 +11,7 @@
 #
 
 .PHONY: build up down up-trust down-trust restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
-	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
+	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
 	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance
@@ -40,6 +40,7 @@ include ../deploy/env_mode.mk
 # once the prod-deploy phase migrates those kits to the CODE+env naming.
 KIT_FILE := $(if $(wildcard .env.$(KIT).$(ENV)),.env.$(KIT).$(ENV),.env.$(KIT))
 -include $(KIT_FILE)
+KIT_FILE_LABEL = $(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),trust/$(KIT_FILE))
 
 # Dev only: the kit's Hub-shared block is commented out (inert) — those values
 # are inherited from the hub's .env.development (the single source) to avoid a
@@ -320,14 +321,14 @@ define require_kit_file
 	    echo "❌ KIT is required. Usage: make $@ KIT=<name>  (e.g. KIT=Trust_1)"; exit 1; \
 	fi; \
 	if [ ! -f "$(KIT_FILE)" ]; then \
-	    echo "❌ Kit file trust/$(KIT_FILE) not found."; \
-	    echo "   Copy trust/$(KIT_FILE).example to trust/$(KIT_FILE), then run"; \
+	    echo "❌ Kit file $(KIT_FILE_LABEL) not found."; \
+	    echo "   Copy $(KIT_FILE_LABEL).example to $(KIT_FILE_LABEL), then run"; \
 	    echo "   'make register-trusts' (from the repo root) to fill in the credentials."; \
 	    exit 1; \
 	fi; \
 	if grep -qE '^[A-Z0-9_]+=<run-make-' $(KIT_FILE); then \
 	    n=$$(grep -cE '^[A-Z0-9_]+=<run-make-' $(KIT_FILE)); \
-	    echo "❌ Kit file trust/$(KIT_FILE) still has $$n unfilled <run-make-…> placeholder(s)."; \
+	    echo "❌ Kit file $(KIT_FILE_LABEL) still has $$n unfilled <run-make-…> placeholder(s)."; \
 	    echo "   Local hub: run 'make register-trusts' (from the repo root)."; \
 	    echo "   On-prem trust against a remote hub:"; \
 	    echo "     run 'make onboard-onprem-trust KIT=$(KIT)' (from the repo root)"; \
@@ -353,7 +354,7 @@ endef
 # which is exactly the distinction that matters. Evaluated in the recipe, not at parse time, so
 # down-trust / build / help still work against a kit that carries the bad value.
 XNAT_AETITLE_SET_EMPTY := $(if $(filter undefined,$(origin XNAT_AETITLE)),,$(if $(strip $(XNAT_AETITLE)),,yes))
-XNAT_AETITLE_SOURCE := $(if $(filter file,$(origin XNAT_AETITLE)),$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),trust/$(KIT_FILE)),the $(origin XNAT_AETITLE))
+XNAT_AETITLE_SOURCE := $(if $(filter file,$(origin XNAT_AETITLE)),$(KIT_FILE_LABEL),the $(origin XNAT_AETITLE))
 require-xnat-aetitle:
 	@$(if $(XNAT_AETITLE_SET_EMPTY),$(error XNAT_AETITLE is set but empty in $(XNAT_AETITLE_SOURCE). It is XNAT's own AE title (SCP receiver, DQR calling AE and C-MOVE destination): set it, or drop the line to take the default 'XNAT'),:)
 
@@ -383,7 +384,8 @@ require-xnat-aetitle:
 # older compose, or a stack brought up without --env-file), the owner cannot be
 # identified, so refuse rather than let the protection lapse silently.
 define check_slot_not_taken
-	@ids=$$(docker ps -a --filter "label=com.docker.compose.project=$(TRUST_PROJECT)" -q 2>/dev/null); \
+	@kit_file='$(subst ','"'"',$(KIT_FILE))'; kit_label='$(subst ','"'"',$(KIT_FILE_LABEL))'; \
+	ids=$$(docker ps -a --filter "label=com.docker.compose.project=$(TRUST_PROJECT)" -q 2>/dev/null); \
 	occupied=$$(docker ps -a --filter "label=com.docker.compose.project=$(TRUST_PROJECT)" \
 		--format '{{.Label "com.docker.compose.project.environment_file"}}' 2>/dev/null | grep -v '^$$' | head -1); \
 	if [ -n "$$ids" ] && [ -z "$$occupied" ]; then \
@@ -392,30 +394,35 @@ define check_slot_not_taken
 		echo "❌ Compose project '$(TRUST_PROJECT)' (FL kit slot $(TRUST_NUM)) already has containers,"; \
 		echo "   but they carry no com.docker.compose.project.environment_file label, so the kit that"; \
 		echo "   owns them cannot be identified. Refusing rather than risk recreating another"; \
-		echo "   trust's stack under $(KIT_FILE)."; \
+		echo "   trust's stack under $$kit_file."; \
 		echo "   Owning project directory: $${owner:-<unknown>}"; \
 		echo "   List them with:"; \
 		echo "       docker ps -a --filter label=com.docker.compose.project=$(TRUST_PROJECT)"; \
 		echo "   then remove them ('docker compose -p $(TRUST_PROJECT) down') if they are stale, or"; \
-		echo "   set FL_KIT_SLOT_NUMBER=<free> in trust/$(KIT_FILE) to move this trust to a free slot."; \
+		echo "   set FL_KIT_SLOT_NUMBER=<free> in $$kit_label to move this trust to a free slot."; \
 		exit 1; \
 	fi; \
-	if [ -n "$$occupied" ] && [ "$$(basename "$$occupied")" != "$(KIT_FILE)" ]; then \
+	if [ -n "$$occupied" ] && [ "$$(basename "$$occupied")" != "$$(basename "$$kit_file")" ]; then \
 		echo "❌ FL kit slot $(TRUST_NUM) is already in use on this host."; \
 		echo "   Compose project '$(TRUST_PROJECT)' is held by trust $$(basename "$$occupied"),"; \
-		echo "   but you asked to operate on $(KIT_FILE). Acting on this project would hand those"; \
+		echo "   but you asked to operate on $$kit_file. Acting on this project would hand those"; \
 		echo "   containers to the wrong kit — recreating or tearing down another trust's stack."; \
 		echo ""; \
 		echo "   Slots are assigned per-hub, so a second stack (FLIP_INSTANCE) restarts at 1"; \
 		echo "   and collides with the default stack. Pick a free slot:"; \
 		echo "       docker ps -a --format '{{.Label \"com.docker.compose.project\"}}' | sort -u"; \
-		echo "   then set FL_KIT_SLOT_NUMBER=<free> in trust/$(KIT_FILE) and re-run."; \
+		echo "   then set FL_KIT_SLOT_NUMBER=<free> in $$kit_label and re-run."; \
 		exit 1; \
 	fi
 endef
 
 build:
 	$(TRUST_VARS) $(TRUST_BUILD_VARS) ${DOCKER_COMPOSE_CMD} -p $(or $(TRUST_PROJECT),trust) build
+
+# The root on-prem verbs delegate here so readiness checks exactly the kit that
+# up-trust / upgrade-trust will read, including env suffixes and KIT_FILE overrides.
+onboard-onprem-trust:
+	@PROD="$(PROD)" uv run --no-config ../scripts/onboard_onprem_trust.py $(KIT) --kit-file '$(subst ','"'"',$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),$(CURDIR)/$(KIT_FILE)))' $(ONBOARD_ARGS)
 
 # Bring up the trust stack selected by KIT (e.g. KIT=Trust_1). Reads
 # trust/.env.<KIT> for that trust's ports / dirs / credentials. The
@@ -436,7 +443,7 @@ build:
 up-trust: require-xnat-aetitle create-networks
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
-	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
+	@echo "⚙️ Using kit file $(KIT_FILE_LABEL)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(check_slot_not_taken)
 	$(refuse_remote_governance)
@@ -475,7 +482,7 @@ GOVERNANCE_INIT = $(if $(filter nvflare,$(FL_BACKEND)),fl-governance-init)
 check-governance:
 	$(require_kit_file)
 ifeq ($(strip $(ACCESS_POLICY_FILE)),)
-	@echo "ℹ️  No ACCESS_POLICY_FILE set in trust/$(KIT_FILE) — no governance document to check."
+	@echo "ℹ️  No ACCESS_POLICY_FILE set in $(KIT_FILE_LABEL) — no governance document to check."
 	@echo "   Platform defaults apply: COHORT_QUERY_THRESHOLD=$(or $(COHORT_QUERY_THRESHOLD),10) and FL_SITE_PRIVACY_* only."
 	@echo "   To adopt one, copy trust/governance.example.toml and point ACCESS_POLICY_FILE at it."
 	@echo "🔍 Validating FL_SITE_PRIVACY_* with the fl-client's own loader (FL_BACKEND=$(FL_BACKEND))..."
@@ -509,7 +516,7 @@ define refuse_remote_governance
 	  fi; \
 	  case "$$host" in tcp://localhost[:/]*|tcp://localhost|tcp://127.0.0.1*|tcp://\[::1\]*) host="";; esac; \
 	  case "$$host" in ssh://*|tcp://*) \
-	    echo "❌ ACCESS_POLICY_FILE is set in trust/$(KIT_FILE), but Docker points at a remote daemon ($$host)."; \
+	    echo "❌ ACCESS_POLICY_FILE is set in $(KIT_FILE_LABEL), but Docker points at a remote daemon ($$host)."; \
 	    echo "   Compose would resolve the document on this machine, and the trust host would mount a path"; \
 	    echo "   it does not have. A governance document is not supported on a remotely driven trust (EC2):"; \
 	    echo "   run compose on the trust host itself, or unset ACCESS_POLICY_FILE."; \
@@ -671,7 +678,7 @@ up-trust-ec2: require-xnat-aetitle
 	$(check_slot_not_taken)
 	$(refuse_remote_governance)
 	@echo "🚢 Starting Trust services on EC2 (KIT=$(KIT))..."
-	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
+	@echo "⚙️ Using kit file $(KIT_FILE_LABEL)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	@echo "🖥️  EC2 trust runs CPU-only by design — GPU overlay omitted + NUM_AVAILABLE_GPUS forced to 0 (t3.xlarge has no GPU)."
 	$(TRUST_VARS) NUM_AVAILABLE_GPUS=0 DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always

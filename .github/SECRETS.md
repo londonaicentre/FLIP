@@ -13,104 +13,41 @@
 
 # GitHub Secrets Configuration for CI
 
-This document describes the GitHub secrets required for the CI/CD pipeline.
+This document describes which secrets the CI/CD pipeline reads, and which values it deliberately does not.
 
-## Overview
+## Test workflows: generated credentials, not secrets
 
-The CI workflows use a hybrid approach for environment configuration:
+The test workflows bring up throwaway stacks (Testcontainers Postgres, the `trust/deploy/compose.test.yml` stack,
+the local hub smoke). Their credentials only have to be consistent within one run, so they are **generated per run**
+rather than read from secrets:
 
-1. **Base configuration**: Copied from `.env.development.example` (checked into version control)
-2. **Sensitive overrides**: Set via GitHub repository secrets (not in version control)
+| Value | Generated with |
+|---|---|
+| `AES_KEY_BASE64` | `openssl rand -base64 32` (32 bytes, as every `get_aes_key()` requires) |
+| `POSTGRES_PASSWORD` (and the trust-side `DATA_ACCESS_` / `OMOP_POSTGRES_PASSWORD`) | `openssl rand -hex 16` |
+| `TRUST_API_KEY` | `openssl rand -hex 16` |
 
-This approach minimizes the number of secrets to manage while keeping sensitive data secure.
+- **Where:** `test_flip_api.yml`, `local_auth_smoke.yml`, and `.github/actions/setup-trust-test-env` (shared by the
+  trust-api and data-access-api jobs).
+- **Pinned values:** the trust integration jobs pass the AES key and database password that `compose.test.yml` pins
+  for its stack, because the containerised data-access-api and omop-db must agree with the test process.
+- **Why not secrets:** a pull request from a fork is given no secrets, so any test that needs one either fails (the
+  local hub smoke did) or silently runs in a different configuration from a same-repo PR. Generated values make every
+  run alike, and leave nothing for a test job to leak.
 
-## Required GitHub Secrets
+Do not reintroduce `secrets.*` for a value a test stack only needs to be self-consistent.
 
-Configure these secrets in your GitHub repository settings (Settings → Secrets and variables → Actions):
+## Secrets CI does read
 
-### 1. `AES_KEY_BASE64`
+| Secret | Where it lives | Used by |
+|---|---|---|
+| `CODECOV_TOKEN` | `flip` environment | coverage upload in the test workflows |
+| `HF_TOKEN` | `flip` environment | `regenerate_docs_gifs.yml` (publishes the docs GIFs, gated to `develop`) |
+| Terraform inputs (`AES_KEY_BASE64`, `ADMIN_USER_PASSWORD`, `INTERNAL_SERVICE_KEY`, …) | `aws-stag` / `aws-prod` environments | `terraform_plan/apply/drift.yml` (see below) |
+| `GITHUB_TOKEN` | provided by Actions | image publishing, releases, PR automation |
 
-**Description**: Base64-encoded 32-byte AES-256 encryption key used by trust services (imaging-api, data-access-api, trust-api).
-
-**How to generate**:
-
-```bash
-# Generate a random 32-byte key and encode it in base64
-openssl rand -base64 32
-```
-
-**Example value**: `dGVzdC1hZXMta2V5LWZvci1jaS10ZXN0aW5nLTMyYnl0ZXM=`
-
-**Used by**:
-
-- `imaging_api.yml`
-- `data_access_api.yml`
-- `trust_api.yml`
-- `central_hub_api.yml`
-
----
-
-### 2. `TRUST_API_KEY`
-
-**Description**: Per-trust API key for authenticating trust-to-hub service calls. Each trust gets a unique key; the hub stores the SHA-256 hash in the `trust` table's `api_key_hash` column and validates incoming keys with constant-time comparison.
-
-**How to generate**:
-
-```bash
-make register-trusts
-```
-
-**Example value**: `test-trust-api-key-for-ci`
-
-**Used by** (trust-side CI only):
-
-- `trust_api.yml`
-- `imaging_api.yml`
-- `data_access_api.yml`
-
-> **Note**: The central hub (`flip-api`) validates per-trust keys against the SHA-256 hash in the `trust` table's `api_key_hash` column. The plaintext key lives only in the trust's kit file (`trust/.env.<CODE>.<env>`), never on the hub.
-
----
-
-### 3. Database Passwords (Optional)
-
-These are set to static values in CI but could be made into secrets if needed:
-
-- `POSTGRES_PASSWORD`: PostgreSQL password for central hub database (currently hardcoded to `test_password` in CI)
-- `OMOP_POSTGRES_PASSWORD`: OMOP database password (currently hardcoded to `test_password` in CI)
-- `DATA_ACCESS_POSTGRES_PASSWORD`: Data access user password (currently hardcoded to `test_password` in CI)
-
-## Fallback Values
-
-All secrets have fallback values that will be used if the secret is not configured:
-
-- `AES_KEY_BASE64`: Falls back to `dGVzdC1hZXMta2V5LWZvci1jaS10ZXN0aW5nLTMyYnl0ZXM=`
-- `TRUST_API_KEY`: Falls back to `test-trust-api-key-for-ci` (trust-side CI workflows only)
-
-This ensures CI doesn't break if secrets are missing, but these fallback values should **never** be used in production.
-
-## How CI Workflows Use Secrets
-
-Each CI workflow follows this pattern:
-
-```yaml
-- name: Setup environment file
-  run: |
-    cp .env.development.example .env.development
-    # Override sensitive values with GitHub secrets
-    echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 }}" >> .env.development
-    # TRUST_API_KEY is only needed in trust-side workflows (trust-api, imaging-api, data-access-api)
-    echo "TRUST_API_KEY=${{ secrets.TRUST_API_KEY }}" >> .env.development
-    echo "DATA_ACCESS_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-    echo "OMOP_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-    echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-```
-
-This approach:
-
-1. Copies the example file (contains safe default values)
-2. Appends secret values to override placeholders
-3. Makes the complete `.env.development` file available to tests
+The Terraform `AES_KEY_BASE64` is the platform's real hub↔trust key. It is unrelated to the throwaway test keys above
+and must never be copied into a test workflow.
 
 ## Local Development
 
@@ -122,18 +59,19 @@ For local development, developers should:
    cp .env.development.example .env.development
    ```
 
-2. Update the placeholder values with their own credentials
+2. Update the placeholder values with their own credentials (`openssl rand -base64 32` for `AES_KEY_BASE64`)
 
 3. **Never commit `.env.development`** (it's in `.gitignore`)
 
-## Adding New Secrets
+## Adding a New Secret
 
-When adding a new secret requirement:
+Prefer generating the value in the workflow when only a throwaway stack consumes it (see above). When CI genuinely
+needs a credential:
 
 1. Add the placeholder value to `.env.development.example`
-2. Add the secret to GitHub repository settings
-3. Update the relevant CI workflow(s) to override the value
-4. Document the secret in this file
+2. Add the secret to the GitHub environment the job uses (not a repository secret)
+3. Reference it only from the job that needs it
+4. Document it in this file
 
 ## Terraform environment secrets (not repository secrets)
 
@@ -165,7 +103,7 @@ admin, `--dry-run` first, from a machine holding the operator's `.env.<env>` fil
 ## Security Notes
 
 - ✅ `.env.development` is in `.gitignore` and should never be committed
-- ✅ All sensitive values should come from GitHub secrets, not hardcoded in workflows
+- ✅ Real credentials come from GitHub environment secrets, never hardcoded in workflows
+- ✅ Test-stack credentials are generated per run, never read from secrets
 - ✅ The `.env.development.example` file should only contain placeholder or localhost values
-- ⚠️ Fallback values in workflows are for CI convenience only - never use them in production
 - ⚠️ Rotate secrets periodically following your organization's security policies

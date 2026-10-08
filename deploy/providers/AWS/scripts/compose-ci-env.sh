@@ -194,7 +194,6 @@ REQUIRED_KEYS=(
     # Backend + provider wiring (Makefile `init`, TF_VAR_AWS_REGION)
     AWS_REGION
     FLIP_TFSTATE_BUCKET_NAME
-    VPC_NAME
 
     # Buckets — all four carry Makefile placeholder guards
     AICENTRE_BUCKET_NAME
@@ -217,23 +216,11 @@ REQUIRED_KEYS=(
     POSTGRES_USER
 
     # Service wiring baked into the ECS task definitions (locals.tf)
-    API_PORT
-    DB_PORT
     FL_ADMIN_DIRECTORY
-    FL_API_PORT
     FL_SERVER_PORT
     INTERNAL_SERVICE_KEY_HEADER
     SES_VERIFIED_EMAIL
     TRUST_API_KEY_HEADER
-    # UI_PORT is referenced by no resource in this root (the UI is served from S3
-    # via CloudFront, not a port), so it looks omittable — but the Makefile exports
-    # it unconditionally, which turns an absent key into TF_VAR_UI_PORT="" and
-    # Terraform rejects that for a `number` variable:
-    #     Unsuitable value for var.UI_PORT … a number is required
-    # Verified against a real prod plan. The same reasoning keeps every other
-    # numeric key required; only JOB_RESOURCE_SPEC_* may be absent, because the
-    # Makefile guards those exports behind `ifneq`.
-    UI_PORT
 
     # DNS
     ALB_SUBDOMAIN
@@ -276,8 +263,12 @@ OPTIONAL_KEYS=(
     # Empty is meaningful and NOT symmetric with the rest of this list: it is the
     # correct value on stag, which hosts no public Ark+ demo, and a destructive
     # one on prod, where `demo_assets_enabled = var.DEMO_ASSETS_BUCKET_NAME != ""`
-    # (cloudfront.tf) gates four live resources plus the /ark_demo/* behaviour.
-    # Optional here so stag composes, recovered from state by reconcile_ci_env.py
+    # (cloudfront.tf) gates four live resources plus the /ark_demo/* behaviour on
+    # a legacy estate — and, since FLIP#1199, the demo-assets BUCKET itself on an
+    # LZA one (module.flip_demo_assets_bucket). Emptying it there plans a destroy
+    # of a bucket carrying prevent_destroy, so the apply fails loudly instead.
+    # Optional here (not per-env, and this script has no prod/stag axis — only
+    # the LZA one) so stag composes, recovered from state by reconcile_ci_env.py
     # so prod's GitHub environment cannot be seeded without it.
     DEMO_ASSETS_BUCKET_NAME
 

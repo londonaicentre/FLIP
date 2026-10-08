@@ -66,7 +66,6 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
-    environment: flip
     timeout-minutes: 25
     env:
       COMPOSE: docker compose -p deploy -f deploy/compose.development.yml
@@ -81,26 +80,18 @@ jobs:
         # container, so nothing here reaches AWS (AWS_REGION is only what SigV4 signs
         # with; the Cognito ids stay commented out). UID/GID are make expressions in the
         # example, so the shell values are appended for docker compose, which reads the
-        # file as dotenv. (detect-secrets attributes a block scalar's findings to this
-        # line: the fixed dev password below is the allowlisted one.)
-        # The AES key and the Postgres password come from the `flip` environment's
-        # secrets when the run has them. A pull request from a fork never does (GitHub
-        # withholds repository secrets from fork-triggered runs), so each falls back to
-        # a value minted here with openssl: the stack is runner-local and torn down at
-        # the end of the job, and nothing outside this step reads either value (the
-        # storage smoke's psql runs inside the flip-db container). Nothing is committed.
-        # Trade-off: if the environment's real secret is ever removed or renamed, an
-        # internal run still passes on a minted value instead of flagging it.
-        env:
-          AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        # file as dotenv. The AES key and DB password are generated per run rather than read
+        # from secrets: the stack lives and dies inside this job, and a fork PR's run is
+        # given no secrets, so the smoke must not need any. (detect-secrets attributes a
+        # block scalar's findings to this line: the fixed dev password below is the
+        # allowlisted one.)
         run: | # pragma: allowlist secret
           cp .env.development.example .env.development
           {
             echo "AWS_REGION=eu-west-2"
             echo "ADMIN_USER_PASSWORD=Smoke-Test-Pa55word!"  # pragma: allowlist secret
-            echo "AES_KEY_BASE64=${AES_KEY_BASE64:-$(openssl rand -base64 32)}"
-            echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-$(openssl rand -hex 16)}"
+            echo "AES_KEY_BASE64=$(openssl rand -base64 32)"
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
             echo "ENV=development"
             echo "UID=$(id -u)"
             echo "GID=$(id -g)"
