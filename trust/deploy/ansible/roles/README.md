@@ -37,11 +37,21 @@ assert over site.yml). Tags on the EC2 play are `flkit`, `data`, `seed`, `omop`,
 `flip_trust_dirs` carry `flkit` themselves so a re-stage lays them down again.
 
 Role lookup: `onprem.yml` finds `./roles` beside itself; `site.yml` finds them through
-`deploy/providers/AWS/ansible.cfg` (`roles_path`), which also keeps the `ansible-galaxy` install
-location on the path for `geerlingguy.docker`.
+`deploy/providers/AWS/ansible.cfg` (`roles_path`). Its first entry is `~/.ansible/roles`, because
+`ansible-galaxy` installs into the first entry and would otherwise drop `geerlingguy.docker` into this
+directory (galaxy-style `namespace.role` dirs here are gitignored, and the test walker skips them).
+
+Inputs every play must set: `fl_backend` (`nvflare` | `flower`) has no role default, and
+`flip_fl_kit` / `flip_trust_dirs` check it (and `fl_kit_source`) in their first task, so a missing or
+misspelt value stops the play instead of re-owning the net-N dirs or staging the wrong kit.
+`flip_owner` / `flip_group` default to `ubuntu` in four roles; set them at play level for any other
+login user (the Azure play does).
 
 Guards over this tree (all static, no host needed): `../tests/test_onprem_playbook.py` walks the
-on-prem play *through* its roles (docker-group grant, per-net dir ownership, `fl_backend` default);
+on-prem play *through* its roles (docker-group grant, per-net dir ownership);
+`../tests/test_roles_contract.py` pins the input checks above;
+`deploy/providers/AWS/tests/test_site_roles.py` pins how `site.yml` composes the roles (EC2 docker group,
+S3 kit source under the `flkit` tag, per-slot images trees, galaxy installs outside the checkout);
 `trust/xnat/tests/test_data_dir_ownership.py` pins the XNAT bind-mount uid in `flip_trust_dirs` to
 `trust/xnat/Makefile`; `deploy/providers/AWS/tests/test_trust_kit_staging.py` pins the FLIP#965
 properties of the two S3 stages in `flip_fl_kit/tasks/s3.yml`.

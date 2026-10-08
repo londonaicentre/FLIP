@@ -10,6 +10,15 @@
 # limitations under the License.
 #
 ---
+- name: check fl_backend
+  ansible.builtin.assert:
+    that:
+      - fl_backend is defined and fl_backend in ["nvflare", "flower"]
+    fail_msg: >-
+      fl_backend must be nvflare or flower (got {{ fl_backend | default('unset') }}): it decides the
+      ownership of the net-N images dirs. Pass -e fl_backend=<nvflare|flower>.
+  tags: flkit
+
 # The images base dirs are the bind-mount sources for the imaging-api / fl-client
 # images dir. Each trust compose project bind-mounts one of these onto
 # /app/data/images via BASE_IMAGES_DOWNLOAD_DIR, then imaging-api creates
