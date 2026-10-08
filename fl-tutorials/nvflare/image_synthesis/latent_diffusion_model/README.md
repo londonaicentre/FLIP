@@ -140,31 +140,23 @@ initialised diffusion model — and fills in the autoencoder half from your uplo
 two models stay separate everywhere else: each is trained by its own job, and the autoencoder's
 weights are never updated here.
 
-### Two ways this handoff breaks silently
+### Checking that the autoencoder weights loaded
 
-Both are worth knowing about, because **neither raises an error** — the persistor's load is
-`strict=False`, so a mismatch is tolerated and the diffusion model simply trains against a
-randomly-initialised encoder while reporting entirely plausible losses:
+If the autoencoder weights don't load, training still runs and the losses still look normal, but
+the diffusion model is learning from a randomly initialised encoder. The server loads the checkpoint
+with `strict=False`, so two mistakes can cause this without any error:
 
-1. **The submodule name.** Both networks must call the submodule `autoencoder`, so its parameters are
-   keyed `autoencoder.*` in both state dicts. Renaming it in either `models.py` breaks the handoff.
-2. **A checkpoint and a config that don't match each other.** `autoencoder_config.yaml` *is* the
-   architecture the weights were trained for. Replace one of the pair without the other and the
-   persistor loads nothing.
+1. **Renaming the `autoencoder` submodule** in either tutorial's `models.py`. The weights are saved
+   under `autoencoder.*`, so with a different name none of them match.
+2. **Using a `pretrained_autoencoder.pt` and an `autoencoder_config.yaml` from different runs.**
+   Most mismatches change a tensor shape and fail with an error, but some settings, such as
+   `norm_num_groups`, don't, so the wrong config loads without complaint. Always generate the two
+   files together with `make prepare-checkpoint`.
 
-The second is why the architecture is recorded at extraction time rather than transcribed by hand,
-and why it comes from the `autoencoder` tutorial's `models.autoencoder_kwargs` rather than from its
-`config.json`: a config value that is never passed through to the network would go unnoticed.
-`norm_num_groups` is the worst case of this whole class — it repartitions every GroupNorm **without changing a single
-parameter shape**, so the wrong value loads the checkpoint cleanly under `strict=True` and the only
-symptom is latents that are quietly wrong. No check made after the fact can recover it; it has to be
-written down by the run that trained the weights, which is what this design does.
-
-`fl-tutorials/tests/test_image_synthesis_config_parity.py` guards both statically, and
-`prepare-checkpoint` re-verifies the pair on every invocation. At run time, check the server log for
-`Loaded backbone into initial global model from …` and confirm the **missing-key count** covers only
-the diffusion model (130 of the network's 624 tensors are the autoencoder's); a larger count is the
-symptom of either failure above.
+To confirm the weights loaded, find `Loaded backbone into initial global model from …` in the server
+log. `missing` should only count the diffusion model's tensors, which aren't in the checkpoint: 496
+with the shipped config. The autoencoder adds another 130, so a number above 496 means some of its
+weights were not loaded.
 
 ## How the frozen autoencoder reaches the clients
 
