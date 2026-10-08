@@ -137,6 +137,14 @@ Things worth knowing before touching any of it:
   in the image's baked `FLIP_RELEASE`, which `/api/health` and the heartbeat report.
   A missing release image is **fatal**, with deliberately no fallback to the sha or
   running tag (either would leave the previous release in place behind a green run).
+  Each FL image is resolved and digested against its own repository and service:
+  the resolver emits `DOCKER_TAG`, `DOCKER_FL_TAG` (fl-server) and
+  `DOCKER_FL_API_TAG` (fl-api, Terraform `fl_api_image_tag`, empty = same as
+  `flip_fl_image_tag`), so fl-api is never pinned with fl-server's digest. Digests
+  come from `docker buildx imagetools inspect --format '{{.Manifest.Digest}}'`
+  (the index digest for multi-platform images), and `reconcile_ci_env.py` writes
+  only the tag part to an env file, since the Makefile reuses `DOCKER_TAG` for
+  the trust images.
   It is ignored when `RESOLVE_SHA_TAG=false` (plan, drift). `active_tag()` reads a
   running `repo:tag@sha256:…` back whole, so an infrastructure-only apply keeps the
   pin; a bare `repo@sha256:…` still yields no tag, since Terraform interpolates
