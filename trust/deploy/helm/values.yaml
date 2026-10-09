@@ -542,6 +542,10 @@ omopDb:
     storageClassName: ""
     size: 10Gi
     accessMode: ReadWriteOnce
+    # Keep Postgres's data in this subdirectory of the volume (e.g. "pgdata"). Needed on a
+    # freshly formatted cloud disk (Azure Disk, EBS), whose lost+found at the root makes initdb
+    # refuse to start. Leave empty on an existing volume: its data is at the root.
+    pgdataSubdir: ""
   resources:
     requests:
       memory: "512Mi"
@@ -826,6 +830,8 @@ xnat:
       storageClassName: ""
       size: 20Gi
       accessMode: ReadWriteOnce
+      # As omopDb.persistence.pgdataSubdir: "pgdata" on a fresh cloud disk, empty on an existing volume.
+      pgdataSubdir: ""
     resources:
       requests:
         memory: "512Mi"
