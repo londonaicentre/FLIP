@@ -35,6 +35,8 @@ SUB_ID = $(shell az account show --subscription "$(AZ_SUBSCRIPTION)" --query id 
 BOOT = $(TF) -chdir=bootstrap output -raw
 NODE_RG = $(NAME_PREFIX)-node-rg
 NODE_VM = $(NAME_PREFIX)-node
+AKS_RG = $(NAME_PREFIX)-aks-rg
+AKS_NAME = $(NAME_PREFIX)-aks
 
 define require_subscription
 	@[ -n "$(AZ_SUBSCRIPTION)" ] || { echo "❌ AZ_SUBSCRIPTION=<trial subscription name or id> is required (never the CLI default)."; exit 1; }
@@ -47,7 +49,7 @@ define run_on_node
 		--command-id RunShellScript --scripts "$(1)" --query 'value[0].message' -o tsv
 endef
 
-.PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload selftest-kit join logs report stop start test lint
+.PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload selftest-kit join aks-init aks-plan aks-apply aks-destroy aks-credentials aks-stop aks-start logs report stop start test lint
 
 help: ## Show this help message
 	@echo "FLIP Azure trust node commands:"
@@ -156,8 +158,58 @@ start: ## Start a deallocated VM
 	$(require_subscription)
 	az vm start --subscription "$(SUB_ID)" -g $(NODE_RG) -n $(NODE_VM)
 
+# ── AKS: the same trust on a one-node managed cluster (the flip-trust chart) ─────────────────
+# The cluster's load balancer egresses from the bootstrap IP, which the VM's NIC holds in
+# public_ip mode, and the trial quota fits one 4-vCPU node: never run the two together.
+
+aks-init: ## Point the aks root at the bootstrap's state storage
+	$(require_subscription)
+	$(TF) -chdir=aks init -input=false -reconfigure \
+		-backend-config="subscription_id=$(SUB_ID)" \
+		-backend-config="resource_group_name=$$($(BOOT) resource_group_name)" \
+		-backend-config="storage_account_name=$$($(BOOT) state_storage_account_name)" \
+		-backend-config="container_name=$$($(BOOT) state_container_name)" \
+		-backend-config="key=aks.tfstate" \
+		-backend-config="use_azuread_auth=true"
+
+aks-plan: ## Plan the AKS cluster (its API server admits only your IP)
+	$(require_subscription)
+	$(TF) -chdir=aks plan -out=aks.tfplan \
+		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
+		-var "egress_public_ip_id=$$($(BOOT) egress_public_ip_id)" -var "operator_ip=$(OPERATOR_IP)"
+
+aks-apply: ## Show the saved AKS plan and the subscription, then apply it only after a typed yes
+	$(require_subscription)
+	@if [ "$$(az group exists --subscription "$(SUB_ID)" -n $(NODE_RG))" = "true" ]; then \
+		echo "❌ $(NODE_RG) exists: the VM holds the outbound IP and the trial's vCPUs. make destroy first."; exit 1; fi
+	$(TF) -chdir=aks show aks.tfplan
+	@echo ""
+	@echo "Target subscription: $$(az account show --subscription "$(SUB_ID)" --query '[name, id]' -o tsv | paste -sd ' ' -)"
+	@read -r -p "Apply this plan? Type yes to continue: " answer; [ "$$answer" = "yes" ] || { echo "Not applied."; exit 1; }
+	$(TF) -chdir=aks apply aks.tfplan
+
+aks-destroy: ## Destroy the AKS cluster, keep bootstrap and the outbound IP (asks first)
+	$(require_subscription)
+	$(TF) -chdir=aks destroy \
+		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
+		-var "egress_public_ip_id=$$($(BOOT) egress_public_ip_id)" -var "operator_ip=$(OPERATOR_IP)"
+
+aks-credentials: ## Fetch kubectl credentials (Entra sign-in through kubelogin)
+	$(require_subscription)
+	@command -v kubelogin >/dev/null || { echo "❌ kubelogin is required (brew install Azure/kubelogin/kubelogin)"; exit 1; }
+	az aks get-credentials --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME) --overwrite-existing
+	kubelogin convert-kubeconfig -l azurecli
+
+aks-stop: ## Stop the cluster (its node stops billing; disks and the IP stay)
+	$(require_subscription)
+	az aks stop --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME)
+
+aks-start: ## Start a stopped cluster
+	$(require_subscription)
+	az aks start --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME)
+
 test: ## Credential-free checks: terraform test in every root and module, plus pytest
-	@for d in bootstrap modules/network modules/kit_drop vm; do \
+	@for d in bootstrap modules/network modules/kit_drop vm aks; do \
 		echo "── $$d"; ( cd $$d && $(TF) init -backend=false -input=false >/dev/null && $(TF) validate -no-color && $(TF) test -no-color ) || exit 1; \
 	done
 	uv run --no-project --with pytest pytest tests/ -q
