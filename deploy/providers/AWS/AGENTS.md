@@ -43,9 +43,11 @@
 | `lza-prod` | LZA production (`PROD=lza`; `FLIPAdminAccess` permission set) | `FLIPProduction` |
 | `dev` | Development (the `dev/` root: Cognito + SES; `FlipDeveloperAccess` permission set) | `flipdev` |
 
-The last two are where FLIP's estate is being migrated to; the `stag` / `prod` aliases
-the CI workflows default to are the LZA pair once `TF_PROD` is set (`README`,
-"Repointing CI at the LZA accounts"). Profile names are local aliases in
+The `lza-stag` / `lza-prod` profiles are where FLIP's estate now lives; the `aws-stag` /
+`aws-prod` GitHub environments the CI workflows read carry `TF_PROD=lza-stag` /
+`TF_PROD=lza`, so both legs target the LZA pair (`README`, "Repointing CI at the LZA
+accounts"). The `stag` / `prod` aliases above remain only as the workflows'
+pre-`TF_PROD` fallback. Profile names are local aliases in
 `~/.aws/config` — one that encodes the old account ID has to be re-created, not
 edited.
 
