@@ -333,12 +333,18 @@ def test_the_cstore_smoke_reads_the_receiver_log() -> None:
 
     C-ECHO passed throughout FLIP#1228. A smoke that checks the store returned success and
     stops there would have passed too, because the abort happens in the importer after the
-    association is established.
+    association is established. The importer-failure patterns now live in
+    ``scripts/cstore_verdict.py`` (see tests/test_cstore_verdict.py), which judges the
+    receiver's log; the shell gathers it.
     """
     script = (CHART_DIR / "scripts" / "smoke-cstore.sh").read_text()
+    verdict = (CHART_DIR / "scripts" / "cstore_verdict.py").read_text()
 
-    assert "AbstractMethodError" in script, "the smoke does not look for the importer crash it exists to catch"
+    assert "AbstractMethodError" in verdict, "the smoke does not look for the importer crash it exists to catch"
     assert "dicom.log" in script, "the smoke never reads the receiver's own log"
+    container_log = "the smoke never reads the receiver's container log"
+    assert "kubectl" in script, container_log
+    assert "logs" in script, container_log
     assert "FailedInstancesCount" in script, "the smoke does not check whether the transfer itself succeeded"
 
 
@@ -563,7 +569,9 @@ def test_the_smoke_names_a_reason_for_each_failed_substitution() -> None:
             collected.append(lines[index])
         return "\n".join(collected)
 
-    for assignment in ("ORTHANC_CREDS=$(", "LOG_MARK=$(", "INSTANCE_ID=$(orthanc_curl"):
+    # The substitutions that run a remote command. `LOG_MARK`/`RECEIVED_MARK`/`RUN_START` are
+    # now split out of `MARKS`/`CLOCK` by local awk, which cannot fail on a cluster.
+    for assignment in ("ORTHANC_CREDS=$(", "MARKS=$(", "CLOCK=$(", "INSTANCE_ID=$(orthanc_curl"):
         starts = [i for i, line in enumerate(lines) if line.lstrip().startswith(assignment)]
         assert starts, f"{assignment}…) has gone — re-check this guard"
         statement = logical_line_at(starts[0])

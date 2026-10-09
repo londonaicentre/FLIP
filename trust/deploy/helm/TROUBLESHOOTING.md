@@ -676,7 +676,7 @@ kubectl exec -n flip-trust "$xnat_pod" -- ls -la /data/xnat/home/plugins
 make -C trust/deploy/helm status        # FAILs naming both the expected and the found version
 
 # Exercise the path the roster is on, rather than just the socket
-make -C trust/deploy/helm smoke-cstore  # real C-STORE via the PACS, then reads dicom.log
+make -C trust/deploy/helm smoke-cstore  # real C-STORE via the PACS, then checks XNAT's prearchive
 ```
 
 **Fix.** Get one `helm upgrade` to complete, from a checkout that carries both the roster and
@@ -703,6 +703,59 @@ kubectl exec -n flip-trust "$xnat_pod" -- ls -la /data/xnat/home/plugins   # mti
 kubectl exec -n flip-trust "$xnat_pod" -- curl -sf -u <admin> localhost:8080/xapi/dqr/settings
 make -C trust/deploy/helm smoke-cstore
 ```
+
+**What `smoke-cstore` judges.** Success is Orthanc reporting `0` failed instances **and**
+receiver-side evidence that the object landed, polled for up to `PREARCHIVE_TIMEOUT` seconds,
+strongest first:
+
+1. a new DICOM object in XNAT's prearchive (`/data/xnat/prearchive`) carrying the
+   `SOPInstanceUID`, else the `StudyInstanceUID`, that was sent — matched against the
+   *receiver's own* clock;
+2. a new line in `/data/xnat/home/logs/received.log` since the line-count mark taken before the
+   store — that is, *a new receipt during the window, preferring lines from `SENDER_AE`
+   (default `ORTHANC`) when they are distinguishable*. It does not identify the object: a DQR /
+   C-MOVE retrieval reaches XNAT from the same Orthanc under the same calling AE, so **a
+   concurrent import from the same PACS cannot be told apart**. Matching the stored object
+   properly — by a value `anon_script.das` leaves intact, or by the hashed SOP UID in the stored
+   file name — is a follow-up. The importer-crash signatures below are unaffected: they fail the
+   run whichever import hits them;
+3. a new prearchive object by arrival time alone — a genuine last resort, reported as such,
+   since a concurrent DQR/C-MOVE import looks identical.
+
+**Exit codes: 0 pass, 1 failure, 2 inconclusive.** (3) on its own is only honest evidence where
+`received.log` does not exist on the receiver; there it stays a pass (exit 0) with its warning.
+Where `received.log` *does* exist and gained no line for this store, the receiver's own success
+logger stayed silent through a transfer it records every receipt of — so arrival time alone is
+neither a pass nor a demonstrated failure, and the run exits **2**. The script probes that
+existence explicitly when it takes the pre-store mark: `wc -l` reports `0` for a missing file and
+an empty one alike, which cannot tell the two apart. `make -C trust/deploy/helm smoke-cstore`
+maps 2 to a loud warning and still exits 0, so an inconclusive run does not break a deploy — but
+anything reading `$?` from the script directly sees a status that is not "passed".
+
+(2) is the normal path on a FLIP trust. `configure-xnat.sh` sets `anonymizationEnabled: true` on
+the SCP receiver and `anon_script.das` rewrites `(0020,000D)`, `(0020,000E)` and `(0008,0018)`
+through `hashUID`, so the object XNAT stores does **not** carry the UIDs Orthanc holds and (1)
+cannot match. `received.log` is written after that rewrite.
+
+It used to require `dicom.log` to gain lines instead. That is the wrong file twice over: XNAT
+records successful receipts in `received.log` and keeps `dicom.log` for *errors*, and this
+deployment never writes `dicom.log` at all (0 bytes while every store imports correctly), so a
+healthy path failed with "dicom.log gained no lines". Its growth is now reported as context and
+can never pass a run on its own. The importer signatures (`AbstractMethodError`,
+`NoSuchMethodError`, `unable to read DICOM object null`) still fail the run outright, read from
+both `dicom.log` and the `xnat-web` container log — whose window starts at the store (`kubectl
+logs --since-time`), not at the moment the log is read, so a crash in the first seconds after
+the association is not missed on a run that polls to the deadline.
+
+Knobs: `INSTANCE_ID=<orthanc id>` (send a known instance), `PREARCHIVE_DIR`,
+`PREARCHIVE_TIMEOUT` (default 90s), `PREARCHIVE_INTERVAL`, `SETTLE_SECONDS`, `DICOM_LOG`,
+`RECEIVED_LOG`, `SENDER_AE`, `KUBE_CONTEXT`. The verdict itself is `scripts/cstore_verdict.py`,
+unit-tested in `tests/test_cstore_verdict.py` with no cluster — including the evidence builder,
+so the shell script holds no parsing of its own.
+
+A failing run that names *no received.log line and no new prearchive object* means the
+association went somewhere that is not this XNAT — check the SCP receiver Orthanc dialled
+(§2.1) before suspecting the plugins.
 
 ---
 
@@ -924,7 +977,8 @@ machine and in `trust/deploy/helm/scripts/`. Key scripts:
 | Script | Purpose |
 |--------|---------|
 | `sync_k8s_kit.py` | Sync a registered trust kit into the cluster (Secret + override) |
-| `smoke-cstore.sh` | Drive a real C-STORE through the PACS and read XNAT's receiver log (§2.7) |
+| `smoke-cstore.sh` | Drive a real C-STORE through the PACS and verify XNAT received it (§2.7) |
+| `cstore_verdict.py` | The smoke's verdict logic, unit-tested without a cluster (§2.7) |
 | `check_status.py` | Full deployment smoke, including the plugin-roster comparison (§2.7) |
 
 ### Available Tools on DCMTK Pod
