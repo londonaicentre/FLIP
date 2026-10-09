@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# No provider block: the calling root configures the provider. The constraint matches the
+# roots', so this module never resolves a provider version the roots would not.
+
 terraform {
   required_version = ">= 1.13.1"
-
-  # Settings (resource group, storage account, container, key, subscription) are passed at
-  # `terraform init` by the Makefile from the bootstrap outputs.
-  backend "azurerm" {}
 
   required_providers {
     azurerm = {
@@ -25,15 +24,4 @@ terraform {
       version = "~> 4.0"
     }
   }
-}
-
-# Always the trial subscription named by the caller, never the CLI default. Compute,
-# Network and Storage were registered by hand; DevTestLab backs the auto-shutdown schedule.
-provider "azurerm" {
-  features {}
-  subscription_id = var.subscription_id
-  # The kit drop has shared keys off, so the provider's storage calls must use Entra.
-  storage_use_azuread             = true
-  resource_provider_registrations = "none"
-  resource_providers_to_register  = ["Microsoft.DevTestLab"]
 }

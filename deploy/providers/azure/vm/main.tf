@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+data "azurerm_client_config" "current" {}
+
 locals {
+  # Deterministic and globally unique without a random provider; the subscription id stays out
+  # of tracked files because only its hash is used.
+  kit_storage_account_name = "${var.name_prefix}kit${substr(sha1(var.subscription_id), 0, 8)}"
+  kit_drop_url             = var.kit_drop_enabled ? "https://${local.kit_storage_account_name}.blob.core.windows.net/kits" : ""
   tags = {
     project = "flip"
     purpose = "azure-trust-node"
@@ -24,6 +30,7 @@ locals {
     ref              = var.flip_ref
     admin_user       = var.admin_username
     fl_backend       = var.fl_backend
+    kit_drop_url     = local.kit_drop_url
     flip_node_script = file("${path.module}/templates/flip-node.sh")
   })
 }
@@ -152,4 +159,17 @@ resource "azurerm_dev_test_global_vm_shutdown_schedule" "node" {
   notification_settings {
     enabled = false
   }
+}
+
+module "kit_drop" {
+  source                = "../modules/kit_drop"
+  count                 = var.kit_drop_enabled ? 1 : 0
+  name_prefix           = var.name_prefix
+  location              = var.location
+  resource_group_name   = azurerm_resource_group.node.name
+  storage_account_name  = local.kit_storage_account_name
+  allowed_subnet_ids    = [module.network.subnet_id]
+  allowed_ips           = [var.operator_ip]
+  reader_principal_id   = azurerm_linux_virtual_machine.node.identity[0].principal_id
+  uploader_principal_id = data.azurerm_client_config.current.object_id
 }

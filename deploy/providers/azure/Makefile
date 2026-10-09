@@ -26,6 +26,9 @@ SSH_PUBLIC_KEY_FILE ?= $(HOME)/.ssh/id_ed25519.pub
 FLIP_REF ?= $(shell git rev-parse HEAD)
 UNIT ?= flip-provision
 LINES ?= 80
+# The public IP kits are uploaded from: the kit drop's firewall admits only it and the node
+# subnet. Looked up lazily, by the targets that pass it.
+OPERATOR_IP ?= $(shell curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null)
 
 # Resolved lazily, only by the targets that need Azure.
 SUB_ID = $(shell az account show --subscription "$(AZ_SUBSCRIPTION)" --query id -o tsv 2>/dev/null)
@@ -44,7 +47,7 @@ define run_on_node
 		--command-id RunShellScript --scripts "$(1)" --query 'value[0].message' -o tsv
 endef
 
-.PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest logs report stop start test lint
+.PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload logs report stop start test lint
 
 help: ## Show this help message
 	@echo "FLIP Azure trust node commands:"
@@ -78,7 +81,7 @@ plan: ## Plan the node (FLIP_REF must be pushed to GitHub)
 		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
 		-var "egress_public_ip_id=$$($(BOOT) egress_public_ip_id)" \
 		-var "admin_ssh_public_key=$$(cat $(SSH_PUBLIC_KEY_FILE))" \
-		-var "flip_ref=$(FLIP_REF)" -var "fl_backend=$(FL_BACKEND)"
+		-var "flip_ref=$(FLIP_REF)" -var "fl_backend=$(FL_BACKEND)" -var "operator_ip=$(OPERATOR_IP)"
 
 apply: ## Show the saved plan and the target subscription, then apply it only after a typed yes
 	$(require_subscription)
@@ -94,7 +97,8 @@ destroy: ## Destroy the node, keep bootstrap and the outbound IP (asks first)
 	$(TF) -chdir=vm destroy \
 		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
 		-var "egress_public_ip_id=$$($(BOOT) egress_public_ip_id)" \
-		-var "admin_ssh_public_key=$$(cat $(SSH_PUBLIC_KEY_FILE))" -var "flip_ref=$(FLIP_REF)"
+		-var "admin_ssh_public_key=$$(cat $(SSH_PUBLIC_KEY_FILE))" -var "flip_ref=$(FLIP_REF)" \
+		-var "operator_ip=$(OPERATOR_IP)"
 
 destroy-bootstrap: ## Destroy everything bootstrap made (refuses while the node exists; asks first)
 	$(require_subscription)
@@ -115,6 +119,17 @@ selftest: ## Start the hubless self-test on the node (FL_BACKEND=nvflare|flower)
 	$(require_subscription)
 	@$(call run_on_node,flip-node selftest $(FL_BACKEND))
 
+kit-upload: ## Put a kit tarball in the node's kit drop (TARBALL=<path> [NAME=<blob name>]); it expires in a day
+	$(require_subscription)
+	@[ -f "$(TARBALL)" ] || { echo "❌ TARBALL=<path to a kit tarball> is required."; exit 1; }
+	@url=$$($(TF) -chdir=vm output -raw kit_drop_url 2>/dev/null); \
+	[ -n "$$url" ] || { echo "❌ No kit drop: apply the vm root with kit_drop_enabled=true first."; exit 1; }; \
+	az storage blob upload --subscription "$(SUB_ID)" --auth-mode login --overwrite --only-show-errors \
+		--blob-url "$$url/$(or $(NAME),$(notdir $(TARBALL)))" --file "$(TARBALL)" -o none || { \
+		echo "❌ Upload refused. A 403 usually means your IP ($(OPERATOR_IP)) is not the one the kit drop's firewall allows"; \
+		echo "   (re-run make plan && make apply to update it), or your role assignment is still propagating."; exit 1; }; \
+	echo "✅ Uploaded as $(or $(NAME),$(notdir $(TARBALL))); the blob is deleted a day after upload."
+
 logs: ## Tail a node unit's log (UNIT=flip-selftest-nvflare LINES=80)
 	$(require_subscription)
 	@$(call run_on_node,flip-node logs $(UNIT) $(LINES))
@@ -132,7 +147,7 @@ start: ## Start a deallocated VM
 	az vm start --subscription "$(SUB_ID)" -g $(NODE_RG) -n $(NODE_VM)
 
 test: ## Credential-free checks: terraform test in every root and module, plus pytest
-	@for d in bootstrap modules/network vm; do \
+	@for d in bootstrap modules/network modules/kit_drop vm; do \
 		echo "── $$d"; ( cd $$d && $(TF) init -backend=false -input=false >/dev/null && $(TF) validate -no-color && $(TF) test -no-color ) || exit 1; \
 	done
 	uv run --no-project --with pytest pytest tests/ -q

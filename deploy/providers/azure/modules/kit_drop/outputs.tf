@@ -12,24 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-output "vm_name" {
-  value = azurerm_linux_virtual_machine.node.name
+output "storage_account_name" {
+  value = azurerm_storage_account.this.name
 }
 
-output "resource_group_name" {
-  value = azurerm_resource_group.node.name
+output "container_name" {
+  value = azurerm_storage_container.kits.name
 }
 
-output "principal_id" {
-  value = azurerm_linux_virtual_machine.node.identity[0].principal_id
-}
-
-output "cloud_init" {
-  description = "The rendered first-boot cloud-init. No secrets: settings and the flip-node helper only."
-  value       = local.cloud_init
-}
-
-output "kit_drop_url" {
-  description = "Where kit-upload puts kits and flip-node fetches them (empty when the kit drop is off)."
-  value       = local.kit_drop_url
+output "container_url" {
+  description = "Where kits are uploaded and fetched from."
+  value       = "${azurerm_storage_account.this.primary_blob_endpoint}${azurerm_storage_container.kits.name}"
 }

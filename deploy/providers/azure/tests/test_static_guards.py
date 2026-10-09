@@ -37,6 +37,7 @@ TARGETS = [
     "status",
     "reprovision",
     "selftest",
+    "kit-upload",
     "logs",
     "report",
     "stop",
@@ -90,7 +91,7 @@ def test_no_real_guids_in_tracked_files():
 
 
 def test_every_az_call_names_the_subscription():
-    lines = [line for line in MAKEFILE.read_text().splitlines() if re.search(r"\baz (vm|account show)\b", line)]
+    lines = [line for line in MAKEFILE.read_text().splitlines() if re.search(r"\baz (vm|account show|storage)\b", line)]
     assert lines, "the Makefile drives az; the guard must see its calls"
     for line in lines:
         assert "--subscription" in line, f"az call without --subscription: {line.strip()}"
@@ -151,3 +152,16 @@ def test_bootstrap_keeps_its_region_and_puts_the_ip_with_the_node():
     assert 'location=$(BOOTSTRAP_LOCATION)' in recipe, "bootstrap's own region must not move with the node"
     assert 'egress_location=$(LOCATION)' in recipe, "the outbound IP must sit in the node's region"
 
+
+
+def test_plan_and_destroy_let_the_operator_through_the_kit_drop_firewall():
+    text = MAKEFILE.read_text()
+    for target in ("plan", "destroy"):
+        body = text.split(f"\n{target}:", 1)[1].split("\n\n", 1)[0]
+        assert "operator_ip=$(OPERATOR_IP)" in body, f"{target} must pass operator_ip"
+
+
+def test_kit_upload_uses_entra_never_a_key():
+    body = MAKEFILE.read_text().split("\nkit-upload:", 1)[1].split("\n\n", 1)[0]
+    assert "--auth-mode login" in body, "kit-upload must authenticate with Entra (the kit drop has shared keys off)"
+    assert "az storage blob upload" in body

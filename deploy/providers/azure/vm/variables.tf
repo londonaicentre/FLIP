@@ -124,3 +124,20 @@ variable "auto_shutdown_timezone" {
   type        = string
   default     = "GMT Standard Time"
 }
+
+variable "kit_drop_enabled" {
+  description = "Create the kit drop: a private container the node downloads its kit from with its own identity."
+  type        = bool
+  default     = true
+}
+
+variable "operator_ip" {
+  description = "The public IP kits are uploaded from, let through the kit drop's firewall (the Makefile looks it up)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.kit_drop_enabled || can(cidrhost("${var.operator_ip}/32", 0))
+    error_message = "operator_ip must be an IPv4 address when the kit drop is on, or uploads are refused by its firewall."
+  }
+}
