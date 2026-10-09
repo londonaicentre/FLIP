@@ -26,7 +26,7 @@ REPO_ID = "aicentreflip/flip-fl-base-test-data"
 REPO_CHECKPOINT_SUBDIR = "flip-fl-base-test-data/checkpoints"
 
 
-def download_spleen_checkpoint(cache_dir, checkpoint_dir, repo_id=REPO_ID):
+def download_spleen_checkpoint(cache_dir: str, checkpoint_dir: str, repo_id: str = REPO_ID) -> None:
     """Download the evaluation-tutorial checkpoint and place it as ``model.pt``.
 
     Args:

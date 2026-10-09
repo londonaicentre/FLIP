@@ -10,8 +10,8 @@
 # limitations under the License.
 #
 
-.PHONY: build up down up-trust down-trust restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
-	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
+.PHONY: build up down prepare-artifacts up-trust down-trust restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
+	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
 	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance
@@ -40,6 +40,7 @@ include ../deploy/env_mode.mk
 # once the prod-deploy phase migrates those kits to the CODE+env naming.
 KIT_FILE := $(if $(wildcard .env.$(KIT).$(ENV)),.env.$(KIT).$(ENV),.env.$(KIT))
 -include $(KIT_FILE)
+KIT_FILE_LABEL = $(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),trust/$(KIT_FILE))
 
 # Dev only: the kit's Hub-shared block is commented out (inert) — those values
 # are inherited from the hub's .env.development (the single source) to avoid a
@@ -51,37 +52,13 @@ KIT_FILE := $(if $(wildcard .env.$(KIT).$(ENV)),.env.$(KIT).$(ENV),.env.$(KIT))
 MAIN_ENV_FILE ?= .env.development
 ifeq ($(ENV),development)
 -include ../$(MAIN_ENV_FILE)
+# DOCKER_FL_REGISTRY is deliberately absent: ../deploy/fl_backend.mk defaults it with `?=
+# $(DOCKER_REGISTRY)` and exports it. Exported here first while unset, it is defined as empty, the
+# default never applies and the FL images lose their registry (FLIP#1384).
 export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER FL_BACKEND \
        FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY \
-       DOCKER_FL_TAG DOCKER_FL_REGISTRY NLB_SUBDOMAIN FL_SERVER_PORT
-# xnat/Makefile's dev-only plugin cache reads these to reach the artifacts bucket. Unexported they
-# are empty in the `make -C trust up-trust` path (the root Makefile blanket-exports the hub env, so
-# only a top-level `make up` would carry them), and the cache download fails on a bucket-less S3 URI.
-# AWS_PROFILE/AWS_REGION belong here for the same reason: without them the bucket NAME reaches the
-# sub-make but the credentials to read it do not, and the plugin sync dies on
-#   fatal error: Unable to locate credentials
-export FLIP_ARTIFACTS_BUCKET_NAME
-# The two AWS names are exported only when actually defined. A bare `export AWS_PROFILE` on an
-# undefined name does not pass a value through — it DEFINES the variable as empty (origin=file) and
-# exports `AWS_PROFILE=` to every child, which is the same trap the sed change at Makefile:43-47
-# removes from the root. `-include ../$(MAIN_ENV_FILE)` silently skips a missing file, and a
-# developer may legitimately comment either key out to fall through to the default profile or to
-# ambient SSO credentials — so both are routinely undefined here. An empty value is worse than an
-# absent one for the AWS CLI, because absent and empty fail differently:
-#   AWS_PROFILE absent → "Unable to locate credentials"          (falls back to the default chain)
-#   AWS_PROFILE=       → "The config profile () could not be found"
-#   AWS_REGION  absent → resolves region from the profile in ~/.aws/config
-#   AWS_REGION=        → shadows it, giving "Invalid endpoint: https://s3..amazonaws.com"
-# ifdef treats a defined-but-empty value as undefined, so an `AWS_PROFILE=` line in an env file is
-# also left un-exported. The one case this cannot cover: if the CALLER exports an empty value, make
-# forwards it to children regardless of anything written here.
-ifdef AWS_PROFILE
-export AWS_PROFILE
-endif
-ifdef AWS_REGION
-export AWS_REGION
-endif
-# UID/GID/UNAME come from the same hub .env and must be exported for the same reason:
+       DOCKER_FL_TAG NLB_SUBDOMAIN FL_SERVER_PORT
+# UID/GID/UNAME come from the same hub .env and must be exported too:
 # the dev compose runs imaging-api, data-access-api and trust-api as `user: "${UID}:${GID}"`
 # so they can write host-owned bind mounts (notably BASE_IMAGES_DOWNLOAD_DIR, which this
 # Makefile mkdir's as the host user). Unexported they interpolate to "", compose renders
@@ -311,14 +288,14 @@ define require_kit_file
 	    echo "❌ KIT is required. Usage: make $@ KIT=<name>  (e.g. KIT=Trust_1)"; exit 1; \
 	fi; \
 	if [ ! -f "$(KIT_FILE)" ]; then \
-	    echo "❌ Kit file trust/$(KIT_FILE) not found."; \
-	    echo "   Copy trust/$(KIT_FILE).example to trust/$(KIT_FILE), then run"; \
+	    echo "❌ Kit file $(KIT_FILE_LABEL) not found."; \
+	    echo "   Copy $(KIT_FILE_LABEL).example to $(KIT_FILE_LABEL), then run"; \
 	    echo "   'make register-trusts' (from the repo root) to fill in the credentials."; \
 	    exit 1; \
 	fi; \
 	if grep -qE '^[A-Z0-9_]+=<run-make-' $(KIT_FILE); then \
 	    n=$$(grep -cE '^[A-Z0-9_]+=<run-make-' $(KIT_FILE)); \
-	    echo "❌ Kit file trust/$(KIT_FILE) still has $$n unfilled <run-make-…> placeholder(s)."; \
+	    echo "❌ Kit file $(KIT_FILE_LABEL) still has $$n unfilled <run-make-…> placeholder(s)."; \
 	    echo "   Local hub: run 'make register-trusts' (from the repo root)."; \
 	    echo "   On-prem trust against a remote hub:"; \
 	    echo "     run 'make onboard-onprem-trust KIT=$(KIT)' (from the repo root)"; \
@@ -344,7 +321,7 @@ endef
 # which is exactly the distinction that matters. Evaluated in the recipe, not at parse time, so
 # down-trust / build / help still work against a kit that carries the bad value.
 XNAT_AETITLE_SET_EMPTY := $(if $(filter undefined,$(origin XNAT_AETITLE)),,$(if $(strip $(XNAT_AETITLE)),,yes))
-XNAT_AETITLE_SOURCE := $(if $(filter file,$(origin XNAT_AETITLE)),$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),trust/$(KIT_FILE)),the $(origin XNAT_AETITLE))
+XNAT_AETITLE_SOURCE := $(if $(filter file,$(origin XNAT_AETITLE)),$(KIT_FILE_LABEL),the $(origin XNAT_AETITLE))
 require-xnat-aetitle:
 	@$(if $(XNAT_AETITLE_SET_EMPTY),$(error XNAT_AETITLE is set but empty in $(XNAT_AETITLE_SOURCE). It is XNAT's own AE title (SCP receiver, DQR calling AE and C-MOVE destination): set it, or drop the line to take the default 'XNAT'),:)
 
@@ -374,7 +351,8 @@ require-xnat-aetitle:
 # older compose, or a stack brought up without --env-file), the owner cannot be
 # identified, so refuse rather than let the protection lapse silently.
 define check_slot_not_taken
-	@ids=$$(docker ps -a --filter "label=com.docker.compose.project=$(TRUST_PROJECT)" -q 2>/dev/null); \
+	@kit_file='$(subst ','"'"',$(KIT_FILE))'; kit_label='$(subst ','"'"',$(KIT_FILE_LABEL))'; \
+	ids=$$(docker ps -a --filter "label=com.docker.compose.project=$(TRUST_PROJECT)" -q 2>/dev/null); \
 	occupied=$$(docker ps -a --filter "label=com.docker.compose.project=$(TRUST_PROJECT)" \
 		--format '{{.Label "com.docker.compose.project.environment_file"}}' 2>/dev/null | grep -v '^$$' | head -1); \
 	if [ -n "$$ids" ] && [ -z "$$occupied" ]; then \
@@ -383,30 +361,43 @@ define check_slot_not_taken
 		echo "❌ Compose project '$(TRUST_PROJECT)' (FL kit slot $(TRUST_NUM)) already has containers,"; \
 		echo "   but they carry no com.docker.compose.project.environment_file label, so the kit that"; \
 		echo "   owns them cannot be identified. Refusing rather than risk recreating another"; \
-		echo "   trust's stack under $(KIT_FILE)."; \
+		echo "   trust's stack under $$kit_file."; \
 		echo "   Owning project directory: $${owner:-<unknown>}"; \
 		echo "   List them with:"; \
 		echo "       docker ps -a --filter label=com.docker.compose.project=$(TRUST_PROJECT)"; \
 		echo "   then remove them ('docker compose -p $(TRUST_PROJECT) down') if they are stale, or"; \
-		echo "   set FL_KIT_SLOT_NUMBER=<free> in trust/$(KIT_FILE) to move this trust to a free slot."; \
+		echo "   set FL_KIT_SLOT_NUMBER=<free> in $$kit_label to move this trust to a free slot."; \
 		exit 1; \
 	fi; \
-	if [ -n "$$occupied" ] && [ "$$(basename "$$occupied")" != "$(KIT_FILE)" ]; then \
+	if [ -n "$$occupied" ] && [ "$$(basename "$$occupied")" != "$$(basename "$$kit_file")" ]; then \
 		echo "❌ FL kit slot $(TRUST_NUM) is already in use on this host."; \
 		echo "   Compose project '$(TRUST_PROJECT)' is held by trust $$(basename "$$occupied"),"; \
-		echo "   but you asked to operate on $(KIT_FILE). Acting on this project would hand those"; \
+		echo "   but you asked to operate on $$kit_file. Acting on this project would hand those"; \
 		echo "   containers to the wrong kit — recreating or tearing down another trust's stack."; \
 		echo ""; \
 		echo "   Slots are assigned per-hub, so a second stack (FLIP_INSTANCE) restarts at 1"; \
 		echo "   and collides with the default stack. Pick a free slot:"; \
 		echo "       docker ps -a --format '{{.Label \"com.docker.compose.project\"}}' | sort -u"; \
-		echo "   then set FL_KIT_SLOT_NUMBER=<free> in trust/$(KIT_FILE) and re-run."; \
+		echo "   then set FL_KIT_SLOT_NUMBER=<free> in $$kit_label and re-run."; \
 		exit 1; \
 	fi
 endef
 
 build:
 	$(TRUST_VARS) $(TRUST_BUILD_VARS) ${DOCKER_COMPOSE_CMD} -p $(or $(TRUST_PROJECT),trust) build
+
+# The root on-prem verbs delegate here so readiness checks exactly the kit that
+# up-trust / upgrade-trust will read, including env suffixes and KIT_FILE overrides.
+onboard-onprem-trust:
+	@PROD="$(PROD)" uv run --no-config ../scripts/onboard_onprem_trust.py $(KIT) --kit-file '$(subst ','"'"',$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),$(CURDIR)/$(KIT_FILE)))' $(ONBOARD_ARGS)
+
+# Prepare the third-party artifacts a development trust needs before `make up` (FLIP#1292): the
+# XNAT plugins its dev stack bind-mounts. They are public upstream downloads, pinned with their
+# checksums in xnat/artifacts.manifest, so no AWS access is involved. `make up` only checks the
+# cache and fails pointing here. ARTIFACTS_DIR=<dir> copies the files from a local directory
+# instead, for a host with no internet route. Run it again after a pull that changes the manifest.
+prepare-artifacts:
+	$(MAKE) -C xnat xnat-plugins-download
 
 # Bring up the trust stack selected by KIT (e.g. KIT=Trust_1). Reads
 # trust/.env.<KIT> for that trust's ports / dirs / credentials. The
@@ -427,7 +418,7 @@ build:
 up-trust: require-xnat-aetitle create-networks
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
-	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
+	@echo "⚙️ Using kit file $(KIT_FILE_LABEL)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(check_slot_not_taken)
 	$(refuse_remote_governance)
@@ -466,7 +457,7 @@ GOVERNANCE_INIT = $(if $(filter nvflare,$(FL_BACKEND)),fl-governance-init)
 check-governance:
 	$(require_kit_file)
 ifeq ($(strip $(ACCESS_POLICY_FILE)),)
-	@echo "ℹ️  No ACCESS_POLICY_FILE set in trust/$(KIT_FILE) — no governance document to check."
+	@echo "ℹ️  No ACCESS_POLICY_FILE set in $(KIT_FILE_LABEL) — no governance document to check."
 	@echo "   Platform defaults apply: COHORT_QUERY_THRESHOLD=$(or $(COHORT_QUERY_THRESHOLD),10) and FL_SITE_PRIVACY_* only."
 	@echo "   To adopt one, copy trust/governance.example.toml and point ACCESS_POLICY_FILE at it."
 	@echo "🔍 Validating FL_SITE_PRIVACY_* with the fl-client's own loader (FL_BACKEND=$(FL_BACKEND))..."
@@ -500,7 +491,7 @@ define refuse_remote_governance
 	  fi; \
 	  case "$$host" in tcp://localhost[:/]*|tcp://localhost|tcp://127.0.0.1*|tcp://\[::1\]*) host="";; esac; \
 	  case "$$host" in ssh://*|tcp://*) \
-	    echo "❌ ACCESS_POLICY_FILE is set in trust/$(KIT_FILE), but Docker points at a remote daemon ($$host)."; \
+	    echo "❌ ACCESS_POLICY_FILE is set in $(KIT_FILE_LABEL), but Docker points at a remote daemon ($$host)."; \
 	    echo "   Compose would resolve the document on this machine, and the trust host would mount a path"; \
 	    echo "   it does not have. A governance document is not supported on a remotely driven trust (EC2):"; \
 	    echo "   run compose on the trust host itself, or unset ACCESS_POLICY_FILE."; \
@@ -662,7 +653,7 @@ up-trust-ec2: require-xnat-aetitle
 	$(check_slot_not_taken)
 	$(refuse_remote_governance)
 	@echo "🚢 Starting Trust services on EC2 (KIT=$(KIT))..."
-	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
+	@echo "⚙️ Using kit file $(KIT_FILE_LABEL)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	@echo "🖥️  EC2 trust runs CPU-only by design — GPU overlay omitted + NUM_AVAILABLE_GPUS forced to 0 (t3.xlarge has no GPU)."
 	$(TRUST_VARS) NUM_AVAILABLE_GPUS=0 DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always

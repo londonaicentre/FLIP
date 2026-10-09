@@ -69,6 +69,7 @@ def get_project_details_endpoint(
         project_id (UUID): The ID of the project to retrieve details for.
         db (Session): The database session.
         current_user_id (UUID): The ID of the currently authenticated user.
+        idp (IdentityProvider): The configured identity provider.
 
     Returns:
         IReturnedProject: An object containing detailed information about the project.

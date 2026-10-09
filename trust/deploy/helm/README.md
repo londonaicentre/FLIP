@@ -191,8 +191,9 @@ reached the node leaves the pod `Pending` on the `hostPath type check failed` ev
 make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=stag
 ```
 
-This runs `helm upgrade --install` with the generated override and then
-`patch-kit-secrets` (injects the per-trust keys into the Helm-owned Secret and
+With `KIT=` this first regenerates `k8s-trust-<CODE>.yaml` from the kit
+(`sync-kit-override`, so a hand edit to that file does not survive), then runs
+`helm upgrade --install` with it and then `patch-kit-secrets` (injects the per-trust keys into the Helm-owned Secret and
 restarts the API deployments). `deploy` depends on `preflight`, so every install
 first runs `scripts/preflight.sh` — five sections covering required tools and
 versions, cluster reachability, the chart files, the trust kit (only when `KIT=`

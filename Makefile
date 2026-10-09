@@ -14,7 +14,7 @@
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
 		check-aws-access generate-internal-service-key generate-xnat-credentials \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
-		sync-trust-kit sync-trust-kits lock checkov-lint aws-diagram \
+		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
 		demo-video demo-users seed-demo-projects reset-keycloak
@@ -192,10 +192,11 @@ _ensure-fl-jobs-dir:
 # Fail fast (NVFLARE) when the per-net startup kits are missing — delegated to
 # scripts/check-fl-provisioned.sh (see that script for the why/how). Net IDs
 # come from NET_ENDPOINTS (same source as _ensure-fl-jobs-dir); the check is a no-op
-# for non-NVFLARE backends.
+# for non-NVFLARE backends. In development it also checks that the NVFLARE FL API can read its
+# admin key through the host group (FL_API_KEY_GID, FLIP#1384).
 _check-fl-provisioned:
 	@FL_BACKEND='$(FL_BACKEND)' NET_ENDPOINTS='$(NET_ENDPOINTS)' FL_PROVISIONED_DIR='$(FL_PROVISIONED_DIR)' \
-		scripts/check-fl-provisioned.sh
+		FL_API_KEY_GID='$(if $(filter development,$(ENV)),$(DOCKER_GID))' scripts/check-fl-provisioned.sh
 
 # Minimal $(MAKE) up
 up-no-trust: generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
@@ -276,7 +277,7 @@ down-onprem-trust:
 # the operator's behalf because Hub-shared values + FL kit S3 slice both
 # need prod AWS creds the operator doesn't have.
 onboard-onprem-trust:
-	@uv run --no-config scripts/onboard_onprem_trust.py $(KIT) $(ONBOARD_ARGS)
+	@$(MAKE) -C trust onboard-onprem-trust KIT=$(or $(KIT),Trust_2) PROD=$(or $(PROD),true) ONBOARD_ARGS="$(ONBOARD_ARGS)"
 
 # Stop all containers
 down:
@@ -335,7 +336,11 @@ restart: down up
 #       1000) then cannot mkdir inside it. The failure surfaces four layers away as a 500 on
 #       /upload_app and an opaque model ERROR, with the PermissionError only in the FL API's
 #       own log — so a tree that has never run `make up` fails every FL job until this runs.
-restart-fl: _ensure-fl-jobs-dir
+# NOTE: _ensure-object-store-dir likewise (FLIP#1402). On Flower, step 4's register-supernode-keys
+#       services depend on object-store, so compose recreates it from this tree; without
+#       ./object-store the bind mount is refused and make stops after step 1 has removed every
+#       FL client, leaving the stack with none. As a prerequisite it fails before anything stops.
+restart-fl: _ensure-fl-jobs-dir _ensure-object-store-dir
 	@echo "🔄 Restarting FL services ($(FL_BACKEND))..."
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
@@ -363,6 +368,13 @@ ci:
 # gitignored deploy env files, which contributors don't have.
 checkov-lint:
 	bash deploy/providers/AWS/scripts/checkov_lint.sh
+# Static tflint lint over deploy/providers/AWS: unused declarations, missing provider
+# version constraints, AWS argument values the API would reject. Credential-free;
+# needs tflint at the version pinned in the script, and downloads the pinned AWS
+# ruleset plugin on first run. Runs the script directly for the same reason as
+# checkov-lint.
+tflint-lint:
+	bash deploy/providers/AWS/scripts/tflint_lint.sh
 # Re-render the four committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ — the
 # self-contained pair (central-hub-aws-{network,data}.png) and the LZA pair (-lza-{network,data}) —
 # from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs

@@ -44,13 +44,13 @@ constraint-dependencies = [
     "idna>=3.15",                # CVE-2026-45409
     "protobuf>=6.33.5",          # CVE-2026-0994, CVE-2025-4565
     "pygments>=2.20.0",          # CVE-2026-4539
-    "pyjwt>=2.12.0",             # CVE-2026-32597
+    "pyjwt>=2.15.0",             # GHSA-42vr-xj54-vc7v, GHSA-x33g-cr3x-6449, CVE-2026-32597
     "python-dotenv>=1.2.2",      # CVE-2026-28684
     "python-multipart>=0.0.27",  # CVE-2026-42561, CVE-2026-24486, CVE-2026-40347
     "requests>=2.33.0",          # CVE-2026-25645, CVE-2024-47081
     "starlette>=1.2.1",          # CVE-2026-48710, CVE-2025-62727
-    "urllib3>=2.7.0",            # CVE-2026-44431, CVE-2025-66471/66418, CVE-2025-50182/50181
-    "werkzeug>=3.1.6",           # CVE-2026-27199, CVE-2026-21860, CVE-2025-66221, CVE-2024-49767/49766
+    "urllib3>=2.8.0",            # GHSA-8988-9cw3-xx77, GHSA-gh4c-6fx4-qh6g, GHSA-vxq7-64xx-v4gw, CVE-2026-44431, CVE-2025-66471/66418, CVE-2025-50182/50181
+    "werkzeug>=3.1.9",           # GHSA-g6x2-hccm-hh4m, CVE-2026-27199, CVE-2026-21860, CVE-2025-66221, CVE-2024-49767/49766
 ]
 
 [tool.coverage.report]

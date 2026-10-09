@@ -68,12 +68,10 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
   `uv sync`, `uv run --project` or `uv lock` run by hand is unguarded, so keep your uv current rather
   than relying on the check to catch you. (The `uv-lock` pre-commit hook is not a gap here — it pins its
   own uv and runs `uv lock --check`, which verifies and never rewrites.)
-- The XNAT plugins for the two example Trusts. AI Centre developers fill the cache from the development bucket with
-  the AWS CLI and an SSO profile; everyone else downloads the four public upstream jars once (see
-  [Trust artifacts that cannot be redistributed](#trust-artifacts-that-cannot-be-redistributed)). The hub reaches no AWS
-  service: sign-in is the local Keycloak and object storage the local RustFS container (see
-  [Environment variables](#environment-variables)), so `make central-hub` and `make up-no-trust` boot with no
-  AWS account
+- No AWS account for `make up`: sign-in is the local Keycloak, object storage the local RustFS container (see
+  [Environment variables](#environment-variables)), and the two example Trusts' XNAT plugins are public upstream
+  downloads that `make -C trust prepare-artifacts` fetches once, checksum-verified. The AWS CLI with SSO is only for
+  the AWS-backed targets: the optional OMOP vocabulary load, FL kit uploads and `deploy/providers/AWS`
 - [act](https://github.com/nektos/act) if you want to run GitHub Actions locally
 - **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:
   ```bash
@@ -243,10 +241,8 @@ For the full local stack, replace every placeholder in these minimum groups befo
 | Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it). Development signs in through Keycloak, the identity-provider container in `deploy/compose.development.yml`, and nothing else: there is no `AUTH_BACKEND` to set (flip-api pins `keycloak` in development and `cognito` in staging/production) and no AWS account needed to sign in |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Object store | Nothing: `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME` and `FLIP_APP_BUNDLES_BUCKET_NAME` ship with working names, created in the local store at `make up` |
-| XNAT artifacts | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins). Without bucket access, provision the plugins by hand and set any non-placeholder name (see [Trust artifacts that cannot be redistributed](#trust-artifacts-that-cannot-be-redistributed)) |
-
-`AICENTRE_BUCKET_NAME` is not in that list: the two shipped dev kits are provisioned in-tree and never fetch it (see
-[What still needs AWS in development](#what-still-needs-aws-in-development)).
+| FL kits (AWS) | `AICENTRE_BUCKET_NAME` — the participant kits, read by `make stage-fl-kit`; the two shipped dev kits are provisioned in-tree and never fetch it |
+| XNAT plugins | Nothing to set. Run `make -C trust prepare-artifacts` once before the first `make up`: it downloads the plugins from their public upstream URLs, checksum-verified, with no AWS access (see [`trust/xnat/README.md`](trust/xnat/README.md#plugins)) |
 
 **Object storage needs no configuration in development** (FLIP#1291). `make up` starts `object-store`, an S3-compatible
 [RustFS](https://github.com/rustfs/rustfs) container whose data directory is `./object-store/` (gitignored): a
@@ -265,10 +261,10 @@ the dev stack holds. Staging and production are unchanged: real S3 buckets, the 
 the public endpoint is unset there, so every audience signs against the one endpoint.
 
 **The dev hub mounts nothing from `~/.aws` and reaches no AWS service** — sign-in (Keycloak), email (console) and
-object storage (RustFS) are all local. The AWS-backed *targets* — `deploy/providers/AWS`, FL kit uploads, the
-Trusts' artifact fetches — read `AWS_PROFILE` as before and are guarded by `make check-aws-access`, which `make up`
-no longer runs. Authorised FLIP developers can use the shared development values for the artifact buckets; other
-developers fetch the artifacts from their upstream sources (below), and deployers create their own resources with the
+object storage (RustFS) are all local, and so are the Trusts' XNAT plugins once `make -C trust prepare-artifacts` has
+downloaded them from upstream. The AWS-backed *targets* — `deploy/providers/AWS`, FL kit uploads, the optional OMOP
+vocabulary fetch — read `AWS_PROFILE` as before and are guarded by `make check-aws-access`, which `make up` no longer
+runs. Authorised FLIP developers can use the shared development values for those; other deployers should create their own resources with the
 [Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
 
 #### What still needs AWS in development
@@ -276,50 +272,19 @@ developers fetch the artifacts from their upstream sources (below), and deployer
 | Capability | Needs | Without AWS |
 | --- | --- | --- |
 | Hub: sign-in, email, model files, FL bundles, training, results | Nothing | Keycloak, the console email backend and RustFS are local |
-| First `make up` of the example Trusts (XNAT plugin cache) | `FLIP_ARTIFACTS_BUCKET_NAME` + AWS CLI, until the cache is filled | Hand-provision the four plugin jars once — [below](#trust-artifacts-that-cannot-be-redistributed) |
-| Building the XNAT images locally (`make -C trust/xnat build`) | The WAR from the same bucket | Download the WAR into `trust/xnat/xnat/build-artifacts/`; most developers pull the published `xnat-*` images and never build |
-| OMOP core vocabulary (`make -C trust/omop-db load-omop-vocab`, optional) | `VOCAB_S3_BUCKET` + AWS CLI | Build the bundle from OHDSI Athena under your own licences. `make up` never loads it: seeding loads the public DICOM vocabulary, so the shipped tutorials run, but cohort queries that join `omop.concept` for other vocabularies return nothing |
+| The example Trusts' XNAT plugins (first `make up`) | Nothing | `make -C trust prepare-artifacts` downloads them from upstream, checksum-verified |
+| Building the XNAT images locally (`make -C trust/xnat build`) | Nothing | The build downloads the WAR and plugins from upstream the same way; most developers pull the published `xnat-*` images and never build |
+| OMOP core vocabulary (`make -C trust/omop-db load-omop-vocab`, optional) | `VOCAB_S3_BUCKET` + AWS CLI | Request an export from [OHDSI Athena](https://athena.ohdsi.org/) under your own licences (UK editions via NHS TRUD) and load it as described in [`trust/omop-db/README.md`](trust/omop-db/README.md#the-core-vocabulary-bundle). `make up` never loads it: seeding loads the public DICOM vocabulary, so the shipped tutorials run, but cohort queries that join `omop.concept` for other vocabularies return nothing |
 | Participant kits for remote or EC2 Trusts (`make -C deploy/providers/AWS stage-fl-kit`, the `upload-kits-to-s3` / `upload-creds-to-s3` targets in `fl-services/<backend>/`) | `AICENTRE_BUCKET_NAME` | Not needed on one host: the two dev kits are provisioned in-tree |
 | Testing SES or Cognito themselves | A staging environment | Not testable in development: flip-api pins `EMAIL_BACKEND=console` and `AUTH_BACKEND=keycloak` there |
 | `deploy/providers/AWS` (Terraform, EC2 Trusts, hub deploys) | AWS credentials | — |
 
-#### Trust artifacts that cannot be redistributed
-
-The XNAT WAR and plugins and the OMOP core vocabulary are third-party artifacts that FLIP does not republish. The
-organisation buckets are a mirror for AI Centre developers; everyone else fetches the same files from upstream once.
-
-**XNAT plugins** (needed for the first `make up`). Download the roster for `XNAT_VERSION` (1.10.0; the versions and
-why each is pinned are in [`trust/xnat/README.md`](trust/xnat/README.md#plugin-compatibility)) into
-`trust/xnat/xnat/plugins/` (gitignored), then record that the cache matches this XNAT version:
-
-```bash
-cd trust/xnat/xnat/plugins
-curl -fLO https://api.bitbucket.org/2.0/repositories/xnatx/xnatx-batch-launch-plugin/downloads/batch-launch-0.9.0-xpl.jar
-curl -fLO https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar
-curl -fLO https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar
-curl -fLO https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.8.0-fat.jar
-echo 'xnat-1.10.0/plugins' > .s3-prefix
-```
-
-These are the same URLs the Helm chart downloads at pod start (`xnat.web.plugins.urls` in
-`trust/deploy/helm/values.yaml`). With a complete, stamped cache `make up` skips S3 entirely; it still rejects an unset
-or placeholder `FLIP_ARTIFACTS_BUCKET_NAME` before checking the cache, so set it to any other value (e.g. `none`) until
-FLIP#1292 separates the fetch from bring-up.
-
-**XNAT WAR** (only for `make -C trust/xnat build`): download
-`https://api.bitbucket.org/2.0/repositories/xnatdev/xnat-web/downloads/xnat-web-1.10.0.war` into
-`trust/xnat/xnat/build-artifacts/`.
-
-**OMOP core vocabulary** (optional): request an export from [OHDSI Athena](https://athena.ohdsi.org/) under your own
-licences (UK editions via NHS TRUD) and load it as described in
-[`trust/omop-db/README.md`](trust/omop-db/README.md#the-core-vocabulary-bundle).
-
-**Email needs no configuration in development** (FLIP#919). flip-api defaults to `EMAIL_BACKEND=console` in dev, which
+**Email needs no configuration in development** (FLIP#919). flip-api pins `EMAIL_BACKEND=console` in dev (`DevSettings` rejects `ses` at boot), which
 logs the would-be message (recipient, template name, non-secret payload) instead of calling SES — so the access-request
 and XNAT-credentials paths work with no SES identity, verified address or templates. Staging and production keep
 `EMAIL_BACKEND=ses` and still require `AWS_SES_ADMIN_EMAIL_ADDRESS` / `AWS_SES_SENDER_EMAIL_ADDRESS`; the setting is
 type-narrowed in `ProdSettings`, so the console backend cannot be selected there. Invitations are the identity
-provider's own, not SES's: under the default Keycloak backend dev has no mail server, so a user registered from the
+provider's own, not SES's: under the Keycloak backend (the only one dev accepts) dev has no mail server, so a user registered from the
 Admin Area is given the shared dev password (`ADMIN_USER_PASSWORD`) as a temporary one (flip-api logs that it did,
 never the password) — they sign in once with it, Keycloak's account console
 (`http://localhost:8180/realms/flip/account`) asks for a new password (the UI links there when the sign-in answers
@@ -345,6 +310,13 @@ Trusts are registered on the **running hub** with `make register-trusts` (shippe
 `api_key_hash`), claims an FL kit slot, and fills that trust's kit file `trust/.env.<CODE>.<env>`
 carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY`. `make up` runs `register-trusts`
 automatically once the hub is up.
+
+For an on-prem trust, `make onboard-onprem-trust KIT=<CODE>` checks the same kit
+that `up-onprem-trust` and `upgrade-onprem-trust` use: `.env.<CODE>.<env>` first,
+then the legacy `.env.<KIT>`, under `trust/`. These root wrappers default to
+`PROD=true`; pass `PROD=stag`, `lza` or `lza-stag` for another deployed environment.
+The checklist delegates to `make -C trust onboard-onprem-trust`, which passes its
+resolved `KIT_FILE` to the script. A direct script invocation can use `--kit-file PATH`.
 
 Docker services receive these variables via the `env_file` directive in the
 compose file — avoid hardcoding values in Dockerfiles or compose files directly.
@@ -377,9 +349,8 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 Some services (e.g. `flip-api`) interact with AWS via `boto3` in staging and production. In development none
 of them does: sign-in is the local Keycloak, email the console backend and object storage the local RustFS
-container, so the hub needs no AWS credentials (FLIP#919, FLIP#1291). AWS SSO is needed only for filling the
-example Trusts' artifact caches from the organisation buckets (which external developers replace with the upstream
-downloads, see [Trust artifacts that cannot be redistributed](#trust-artifacts-that-cannot-be-redistributed)), FL kit
+container, so the hub needs no AWS credentials (FLIP#919, FLIP#1291), and the example Trusts' XNAT plugins
+are public upstream downloads (FLIP#1292). AWS SSO is needed only for the optional OMOP vocabulary fetch, FL kit
 uploads and the `deploy/providers/AWS` targets, which `make check-aws-access` guards.
 
 Configure AWS SSO:
@@ -408,8 +379,9 @@ export AWS_PROFILE=<your-profile-name>
 
 ### GitHub Secrets for CI
 
-The CI/CD pipeline requires GitHub repository secrets to run tests and deployments. See
-[.github/SECRETS.md](.github/SECRETS.md) for the complete list, how to generate them, and security best practices.
+Test workflows need no secrets beyond `CODECOV_TOKEN`: the credentials of their throwaway stacks are generated per
+run, so they behave the same on a pull request from a fork. Deployments read GitHub environment secrets. See
+[.github/SECRETS.md](.github/SECRETS.md) for the complete list and how to add one.
 
 ### Running the CI pipeline locally
 
@@ -474,6 +446,24 @@ list — including the classes triaged in FLIP#1058 and deliberately *not* promo
 broken checkov install can never produce a vacuous green. The script's own guards (version pin, unknown check
 IDs, skip rationale, canary) are regression-tested by `deploy/providers/AWS/scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
 run by the same workflow's `Deploy script tests` job.
+
+### TFLint (Terraform)
+
+`validate_terraform.yml` also runs **tflint** over `deploy/providers/AWS` — the bundled `terraform` ruleset
+(recommended preset) plus the AWS ruleset, configured in `deploy/providers/AWS/.tflint.hcl`. It catches what
+`terraform validate` accepts: a variable nothing reads, a module with no provider version constraint, an AWS
+argument value the API would reject at apply time. Every directory holding `.tf` files is linted on its own, so
+a module is checked even where no root calls it. Run it locally with `make tflint-lint` from the repo root; it
+needs tflint at the version pinned in `deploy/providers/AWS/scripts/tflint_lint.sh` (release binaries on
+GitHub — Homebrew no longer packages it) and downloads the pinned AWS ruleset plugin on first run.
+
+A deliberate exception is acknowledged in-code with `# tflint-ignore: <rule_name> # <why>` on the line above the
+flagged block, never by disabling the rule in `.tflint.hcl` (the rationale needs that second `#`: any other
+separator, such as `-- why`, makes tflint ignore the annotation). Removing an unused root variable means
+removing its whole input chain too: the `TF_VAR_` export in `deploy/providers/AWS/Makefile`, the key in
+`scripts/compose-ci-env.sh`, the three Terraform workflows' `env:` lines and `scripts/reconcile_ci_env.py` — and
+deleting the GitHub environment variables only after that PR merges. Like checkov's, the script self-tests
+against a canary fixture, and its guards are regression-tested by `scripts/tests/test_tflint_lint.sh`.
 
 ### Secret scanning (detect-secrets)
 

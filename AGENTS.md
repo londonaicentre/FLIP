@@ -194,6 +194,7 @@ uv run mypy .              # Static type checking
 git ls-files -z -- '*.py' '*.pyi' | xargs -0 uvx ruff@0.14.7 check --force-exclude           # CI's lint_python.yml, from the repo root
 git ls-files -z -- '*.py' '*.pyi' | xargs -0 uvx ruff@0.14.7 format --check --force-exclude  # ...and its format check (drop --check to apply)
 make checkov-lint          # Static checkov security lint over deploy/providers/AWS (credential-free; FLIP#1052/#1058)
+make tflint-lint           # Static tflint lint over deploy/providers/AWS (unused declarations, provider constraints, AWS values; credential-free)
 ```
 
 ### Debugging
@@ -235,7 +236,7 @@ git tag on `aicentreflip/trust-data`. The seed markers, what re-seeds, and the p
 
 `make demo-video` records the full end-to-end walkthrough against the **live dev stack** and
 assembles one mp4 (local dev tool, not run in CI; Cypress segments plus off-camera platform waits).
-Prerequisites, the `DEMO_ARGS` flags and the demo Cognito users:
+Prerequisites, the `DEMO_ARGS` flags and the demo users:
 [`flip-api/AGENTS.md`](flip-api/AGENTS.md#demo-video-recorder).
 
 ### Database migrations (flip-api)
@@ -273,6 +274,7 @@ make generate-internal-service-key    # Generate fl-server-to-hub key
 Per-trust lifecycle, run from `trust/` (KIT handling differs per target: `down-fl-clients` loops over every registered kit; `down-fl-clients-kit` and `down-trust-ec2` require `KIT=<CODE>`; the `debug-*` targets default to the first dev kit when KIT is omitted):
 
 ```bash
+make -C trust prepare-artifacts        # Download the dev XNAT plugins from upstream, checksum-pinned in trust/xnat/artifacts.manifest (no AWS; ARTIFACTS_DIR=<dir> offline). `make up` only checks the cache (#1292)
 make -C trust down-fl-clients          # Stop + remove FL client containers for every registered kit, rest of the stack stays up
 make -C trust down-fl-clients-kit KIT=<CODE>  # Same, one kit
 make -C trust down-trust-ec2 KIT=<CODE>       # Stop trust services + XNAT on an EC2-hosted trust
@@ -429,7 +431,7 @@ the compose files' container-identity contract, plus the repo-level `tests/` (ro
 `docker_build_*.yml` (per-service GHCR publish; the application images and
 `docker_build_omop_db.yml` are gated on that service's test workflow, while
 `docker_build_orthanc.yml` and `docker_build_xnat_{db,dcm2niix,nginx,web}.yml` publish
-straight from a push — see "Docker image builds" below), `validate_terraform.yml` (fmt/validate + a checkov security lint over `deploy/providers/AWS/**` — IAM policy content plus promoted posture checks; static, credential-free; local run `make checkov-lint` **from the repo root** (the AWS Makefile's parse-time env guard blocks the `-C` form for contributors), deliberate breadth/posture suppressed in-code with `# checkov:skip=<ID>:<rationale>` — FLIP#1052, FLIP#1058; plus an `AWS deploy tests` job running the credential-free pytest suite in `deploy/providers/AWS/tests/` over the stack's static artefacts — rendered templates, deploy scripts, and Terraform source itself, including the Cognito `callback_urls` = browser CORS allowlist invariants), `terraform_plan.yml`, `terraform_apply.yml`, `terraform_drift.yml`, `lint_python.yml` (`ruff check` + `ruff format --check` over every tracked Python file — the only lint that reaches the trees outside a service directory (`scripts/`, `deploy/providers/AWS/`, `trust/deploy/`, `.github/tests/`, `docs/`, `fl-apps/`) and the only format check covering the whole repo (flip-utils, `trust/orthanc` and the trust data tools also check their own); unfiltered, ruff pinned, files from `git ls-files` so a gitignored path cannot hide a tracked file, no auto-fix; flip-api's generated Alembic revisions are excluded from both, in `flip-api/pyproject.toml`; shape pinned by `.github/tests/workflows/test_lint_python.py` — FLIP#1326), `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+straight from a push — see "Docker image builds" below), `validate_terraform.yml` (fmt/validate + a tflint lint (`make tflint-lint`, same repo-root rule as checkov) + a checkov security lint over `deploy/providers/AWS/**` — IAM policy content plus promoted posture checks; static, credential-free; local run `make checkov-lint` **from the repo root** (the AWS Makefile's parse-time env guard blocks the `-C` form for contributors), deliberate breadth/posture suppressed in-code with `# checkov:skip=<ID>:<rationale>` — FLIP#1052, FLIP#1058; plus an `AWS deploy tests` job running the credential-free pytest suite in `deploy/providers/AWS/tests/` over the stack's static artefacts — rendered templates, deploy scripts, and Terraform source itself, including the Cognito `callback_urls` = browser CORS allowlist invariants), `terraform_plan.yml`, `terraform_apply.yml`, `terraform_drift.yml`, `lint_python.yml` (`ruff check` + `ruff format --check` over every tracked Python file — the only lint that reaches the trees outside a service directory (`scripts/`, `deploy/providers/AWS/`, `trust/deploy/`, `.github/tests/`, `docs/`, `fl-apps/`) and the only format check covering the whole repo (flip-utils, `trust/orthanc` and the trust data tools also check their own); unfiltered, ruff pinned, files from `git ls-files` so a gitignored path cannot hide a tracked file, no auto-fix; flip-api's generated Alembic revisions are excluded from both, in `flip-api/pyproject.toml`; shape pinned by `.github/tests/workflows/test_lint_python.py` — FLIP#1326), `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
 
 Further workflows, grouped: **unit tests** — `unit-tests.yml` (flip-utils + the NVFLARE
 fl-api-base, on push) and `unit-tests-heavy.yml` (flip-utils, GPU-adjacent suite, push or
@@ -535,7 +537,7 @@ TruffleHog, detect-secrets (also enforced repo-wide by the `Detect Secrets Scan`
 - SSH-over-SSM mandatory (no port 22 exposed).
 - Never bypass TLS (`curl -k` prohibited).
 - Use `AES_KEY_BASE64` for trust communication encryption (AES-256-GCM envelope; see the env var entry above for the key-match and flag-day rules).
-- AWS Cognito for hub auth in stag/prod, per-trust API keys for trust-to-hub auth. Hub user auth is provider-shaped (FLIP#919): `AUTH_BACKEND` selects the identity provider behind one generic OIDC verifier and one `IdentityProvider` interface (`flip-api/src/flip_api/auth/`), `keycloak` being the dev default (the `keycloak` service + `deploy/keycloak/flip-realm.json`, no AWS account needed to sign in) and `cognito` the only value `ProdSettings` accepts. Keep Cognito-specific claims and calls inside the Cognito rules/provider, never in a router; a new cloud's IdP is a new provider module plus a deliberate `ProdSettings` widening. Detail in [`flip-api/AGENTS.md`](flip-api/AGENTS.md#hub-environment-variables).
+- AWS Cognito for hub auth in stag/prod, per-trust API keys for trust-to-hub auth. Hub user auth is provider-shaped (FLIP#919): `AUTH_BACKEND` selects the identity provider behind one generic OIDC verifier and one `IdentityProvider` interface (`flip-api/src/flip_api/auth/`), `keycloak` the only value `DevSettings` accepts (the `keycloak` service + `deploy/keycloak/flip-realm.json`, no AWS account needed to sign in) and `cognito` the only value `ProdSettings` accepts. Keep Cognito-specific claims and calls inside the Cognito rules/provider, never in a router; a new cloud's IdP is a new provider module plus a deliberate `ProdSettings` widening. Detail in [`flip-api/AGENTS.md`](flip-api/AGENTS.md#hub-environment-variables).
 - Internal service key for fl-server-to-hub auth (separate from trust keys).
 - Trust-internal service key for trust-api / imaging-api / fl-client → imaging-api / data-access-api auth (per-trust, never leaves trust env). See **Trust-internal Service Authentication** below.
 - FL clients intentionally have no Central Hub credentials.

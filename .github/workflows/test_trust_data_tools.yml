@@ -106,3 +106,24 @@ jobs:
       # FL_BACKEND; a dev checkout gets it from .env.development, CI has no such file.
       - name: Dataset publisher + seed procedure + seed-marker contract — unit tests + lint
         run: make -C trust test-trust-data-tools FL_BACKEND=nvflare
+
+  # The seed-marker contract again, on the stock macOS /bin/bash (3.2) and BSD
+  # userland that contributors run it with: no mapfile / declare -A, no
+  # `realpath -m`, a padded `wc -l`, /var a symlink to /private/var. The Linux job
+  # above cannot see any of that. Dry-run only, so it needs nothing installed.
+  seed-marker-contract-macos:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Seed-marker contract under /bin/bash
+        working-directory: trust
+        env:
+          FL_BACKEND: nvflare
+        run: |
+          /bin/bash --version | head -1
+          /bin/bash tests/test_seed_marker_contract.sh

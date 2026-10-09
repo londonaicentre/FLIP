@@ -124,7 +124,6 @@ chmod +x "${TEST_ROOT}/bin/gh" "${TEST_ROOT}/bin/aws"
 # the ones being asserted. Values are markers, never real ones.
 ENV_FILE="${TEST_ROOT}/partial.env"
 cat >"${ENV_FILE}" <<'ENVFILE'
-VPC_NAME=flip-vpc
 AICENTRE_BUCKET_NAME=aicentre-stag
 POSTGRES_DB=flip
 ADMIN_USER_PASSWORD=SECRETVALUEMARKER
@@ -161,7 +160,7 @@ run_case() {
         STUB_BUCKET="flip-terraform-state-stag" \
         STUB_SUB="${STAG_SUB}" \
         STUB_APPLY_REF="${STAG_REF}" \
-        "${overrides[@]}" \
+        ${overrides[@]+"${overrides[@]}"} \
         bash "${SCRIPT}" "$@" 2>"${TEST_ROOT}/err")"
     RC=$?
     STDERR="$(cat "${TEST_ROOT}/err")"
@@ -274,6 +273,19 @@ expect_rc 0 "dry run succeeds"
 expect_mentions "- DEMO_ASSETS_BUCKET_NAME" "the demo bucket is required on prod"
 expect_mentions "branch policy: main only" "and prod's branch policy is stated"
 
+# 5b. FLIP#1199: the same asymmetry on the LZA prod mode, where the key gates
+#     module.flip_demo_assets_bucket — the bucket itself — rather than four
+#     CloudFront-side objects. The classification is keyed on ENV, not MODE, and
+#     this pins that: `--mode lza` is prod, so the demo bucket is required there
+#     too, which is what makes the LZA prod environment seedable at all.
+run_case "lza prod treats an absent demo bucket as required" \
+    STUB_SUB="repo:acme/flip:environment:aws-prod" \
+    STUB_APPLY_REF="acme/flip/.github/workflows/terraform_apply.yml@refs/heads/main" -- \
+    --mode lza --env-file "${ENV_FILE}" --repo acme/flip --dry-run
+expect_rc 0 "dry run succeeds"
+expect_mentions "- DEMO_ASSETS_BUCKET_NAME" "the demo bucket is required on LZA prod too"
+expect_mentions "set TF_PROD=lza" "and the LZA prod token is what TF_PROD gets"
+
 # 6. The LZA modes require their extra keys, appended to the same array — the
 #    classification has to survive the append, not just the base list.
 run_case "lza modes require the LZA keys" -- \
@@ -318,7 +330,7 @@ fi
 #     command; keys the file does set are not; nothing is deleted.
 HELD_SECRET_NAMES="INTERNAL_SERVICE_KEY_HASH AES_KEY_BASE64" # pragma: allowlist secret — names, not values
 run_case "keys the file leaves unset but the environment holds are listed" \
-    STUB_GH_VARIABLES="ENFORCE_MFA JOB_RESOURCE_SPEC_NUM_GPUS VPC_NAME TF_PROD" \
+    STUB_GH_VARIABLES="ENFORCE_MFA JOB_RESOURCE_SPEC_NUM_GPUS AICENTRE_BUCKET_NAME TF_PROD" \
     STUB_GH_SECRETS="${HELD_SECRET_NAMES}" -- \
     --mode stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
 expect_rc 0 "dry run succeeds"
@@ -326,7 +338,7 @@ expect_mentions "Still set on aws-stag" "under its own heading"
 expect_mentions "gh variable delete ENFORCE_MFA --env aws-stag --repo acme/flip" "the skipped ENFORCE_MFA is listed"
 expect_mentions "gh variable delete JOB_RESOURCE_SPEC_NUM_GPUS" "and an optional key the file omits"
 expect_mentions "gh secret delete INTERNAL_SERVICE_KEY_HASH" "a secret gets the secret command"
-expect_silent_about "delete VPC_NAME" "a key the file sets is not listed"
+expect_silent_about "delete AICENTRE_BUCKET_NAME" "a key the file sets is not listed"
 expect_silent_about "delete AES_KEY_BASE64" "nor a secret it sets"
 expect_silent_about "delete TF_PROD" "nor TF_PROD, which the script writes itself"
 expect_no_gh_writes

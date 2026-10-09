@@ -46,11 +46,13 @@ reaches an AWS service: sign-in, email and object storage are all local (FLIP#91
 hub compose touches "trust" is **networking**: `compose.development.yml` joins
 `central-hub-trust-apis-network`, `trust-network-1/2` and `fl-net-1/2` as `external: true` — exactly as
 the trust composes do. Neither side *creates* them; `make create-networks` does. There are **six**
-hub-shared networks, split across two Makefiles: the root `create-networks-centralhub` creates
-`deploy_central-hub-network` (the hub-internal network), then forwards to `trust/Makefile`, which owns the
-other five — `deploy_central-hub-trust-apis-network`, `deploy_fl-net-1/2` (bridge) and
-`deploy_trust-network-1/2` (overlay, because XNAT attaches from a swarm stack). Teardown mirrors that
-split: root `remove-networks` removes the hub-internal one and delegates the rest.
+hub-shared networks, split across two Makefiles: the root `create-networks-centralhub` (also run by
+`make central-hub`) creates `deploy_central-hub-network` (the hub-internal network) and
+`deploy_central-hub-trust-apis-network` (flip-api joins both, FLIP#1344), then `create-networks` forwards to
+`trust/Makefile`, which ensures the trust-apis network too (idempotently, for a trust brought up on its own) and
+owns the other four — `deploy_fl-net-1/2` (bridge) and `deploy_trust-network-1/2` (overlay, because XNAT
+attaches from a swarm stack). Teardown: root `remove-networks` removes the hub-internal one and delegates the
+rest.
 
 `fl-net-<N>` is the FL data plane, and carries exactly two services: the hub's `fl-server-net-<N>` and each
 trust's `fl-client-net-<N>`. It is the FL twin of `central-hub-trust-apis-network` (flip-api ↔ trust-api) —

@@ -205,9 +205,9 @@ trusts to include.
 
 #. Select the trusts whose data you need
 #. Click **Stage Project** — this locks the project awaiting administrator approval
-#. A FLIP administrator approves the project — approval triggers the DICOM pull from each trust's
-   PACS to the local XNAT cache, and is required before any files can be uploaded or training can
-   start
+#. A FLIP administrator (or a trust's own Trust Admin) approves the project — approval triggers the DICOM
+   pull from each approving trust's PACS to the local XNAT cache, and is required before any files can
+   be uploaded or training can start
 
 Image pull can take minutes to hours depending on cohort size. You are notified when it
 completes.

@@ -93,7 +93,11 @@ follow.
    - runs the readiness checklist (``make onboard-onprem-trust``) — the same gate as the first
      install, now with a *Hub-shared block current* row that compares your kit's AES key with
      the hub's (as your running trust-api last heard it), and warns when the kit pins a release
-     behind the hub. A kit you have just refreshed passes with a warning that trust-api still
+     behind the hub. The checklist and upgrade use the same kit: the root on-prem
+     verbs default to ``PROD=true``, prefer ``trust/.env.<KIT>.production``, and fall
+     back to ``trust/.env.<KIT>``. Pass ``PROD=stag|lza|lza-stag`` for another
+     deployed environment; the checklist names the selected path in its diagnostics.
+     A kit you have just refreshed passes with a warning that trust-api still
      runs the old key: this upgrade is what recreates it;
    - resolves the target: ``TAG=`` if given, else the hub's ``/api/health`` ``version``. A hub
      deployed by the CI Terraform apply reports the ``sha-`` build of its commit; from a

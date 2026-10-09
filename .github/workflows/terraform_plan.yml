@@ -125,7 +125,6 @@ jobs:
           # rather than ref-derived: plans are staging-only by construction.
           EXPECTED_ENV_CLASS: stag
           AWS_REGION: ${{ vars.AWS_REGION }}
-          VPC_NAME: ${{ vars.VPC_NAME }}
           FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}
           AICENTRE_BUCKET_NAME: ${{ vars.AICENTRE_BUCKET_NAME }}
           FLIP_APP_BUNDLES_BUCKET_NAME: ${{ vars.FLIP_APP_BUNDLES_BUCKET_NAME }}
@@ -133,10 +132,6 @@ jobs:
           FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME: ${{ vars.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME }}
           FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
           FLIP_BUCKET_NAME: ${{ vars.FLIP_BUCKET_NAME }}
-          API_PORT: ${{ vars.API_PORT }}
-          DB_PORT: ${{ vars.DB_PORT }}
-          UI_PORT: ${{ vars.UI_PORT }}
-          FL_API_PORT: ${{ vars.FL_API_PORT }}
           FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
           ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
           DEMO_ASSETS_BUCKET_NAME: ${{ vars.DEMO_ASSETS_BUCKET_NAME }}
@@ -235,6 +230,9 @@ jobs:
           validate: true
           format: true
           comment-pr: on-diff
+          # Keeps the plan file in the working directory for the advisory step
+          # below. Local to the runner — unrelated to upload-plan.
+          preserve-plan: true
           # MUST stay false. tf-via-pr defaults this to true, and the plan file
           # it uploads is a zip containing the full tfstate — which holds
           # AES_KEY_BASE64, INTERNAL_SERVICE_KEY and ADMIN_USER_PASSWORD in
@@ -243,3 +241,24 @@ jobs:
           # diff, and terraform_apply.yml re-plans from scratch rather than
           # consuming a plan produced here.
           upload-plan: false
+
+      # The advisory, where it is still actionable (FLIP#1199). The apply runs
+      # the same script as a gate, but by then the merge has happened and the
+      # apply is already running — and for a REMOVED or REPLACED ingress the
+      # remedy is "update aicentre-lza-iac FIRST", which is advice only a
+      # pre-merge reader can take. So it runs here too, in advisory-only mode:
+      # it never holds, and it exits 0 on every readable plan — an unreadable
+      # plan fails the step, which is correct (it fails closed rather than
+      # claiming "no advisory"). A PR plan failing a check on an FL-disruptive
+      # diff is the apply's decision, not this job's, and `continue-on-error`
+      # keeps a broken advisory from turning the PR check red. The warning
+      # annotation lands on the PR's checks beside the tf-via-pr plan comment;
+      # the detail goes to the job summary.
+      - name: Advisory — LZA FL ingress and FL impact
+        continue-on-error: true
+        working-directory: deploy/providers/AWS
+        env:
+          ADVISORY_ONLY: "true"
+        run: |
+          terraform show -json tfplan > tfplan.json
+          scripts/check-fl-plan-impact.sh tfplan.json
