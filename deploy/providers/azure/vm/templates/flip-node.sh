@@ -27,12 +27,13 @@ FLIP_NODE_BIN="${FLIP_NODE_BIN:-/usr/local/sbin/flip-node}"
 IMDS_TOKEN_URL="${FLIP_IMDS_TOKEN_URL:-http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://storage.azure.com/}"
 FETCH_ATTEMPTS="${FLIP_FETCH_ATTEMPTS:-10}"
 FETCH_BACKOFF_SECONDS="${FLIP_FETCH_BACKOFF_SECONDS:-30}"
+FL_KIT_DIR="${FLIP_FL_KIT_DIR:-${FLIP_DIR}/fl-kit}"
 
 # shellcheck disable=SC1090
 source "${NODE_ENV}"
 
 usage() {
-    echo "usage: flip-node provision [REF] | reprovision [REF] | status | fetch-kit NAME.tar.gz | selftest nvflare|flower | logs UNIT [LINES] | report nvflare|flower" >&2
+    echo "usage: flip-node provision [REF] | reprovision [REF] | status | fetch-kit NAME.tar.gz | selftest nvflare|flower | join NAME.tar.gz KIT PROD | logs UNIT [LINES] | report nvflare|flower" >&2
     exit 2
 }
 
@@ -160,6 +161,70 @@ run_selftest() {
         make -C "${REPO_DIR}/trust" selftest-node "FL_BACKEND=${backend}"
 }
 
+# Stage an FL kit where the stack reads it, owned for the client that reads it: neither runs as
+# root. NVFLARE's client is uid 1000 and writes into its slot's local/; Flower's supernode is
+# gid 49999 and must read its private key.
+stage_fl_kit() {
+    local backend="$1" src="$2"
+    rm -rf "${FL_KIT_DIR}/net-1"
+    mkdir -p "${FL_KIT_DIR}"
+    cp -R "${src}/net-1" "${FL_KIT_DIR}/net-1"
+    if [ "${backend}" = nvflare ]; then
+        chown -R 1000:1000 "${FL_KIT_DIR}/net-1"
+    else
+        chmod 0644 "${FL_KIT_DIR}"/net-1/certificates/*
+        local key
+        for key in "${FL_KIT_DIR}"/net-1/keys/*; do
+            chgrp 49999 "${key}"
+            chmod 0640 "${key}"
+        done
+    fi
+}
+
+check_join_args() { # NAME KIT PROD
+    if ! [[ "${2:-}" =~ ^[A-Za-z0-9_]+$ ]] || ! [[ "${3:-}" =~ ^[a-z-]+$ ]] ||
+        ! [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.tar\.gz$ ]]; then
+        echo "usage: flip-node join NAME.tar.gz KIT PROD (e.g. join flip-trust-kit-AZ1-20261009.tar.gz AZ1 lza-stag)" >&2
+        exit 2
+    fi
+}
+
+# Install a hub-registered kit (package-onprem-trust-kit's tarball, via the kit drop) and bring
+# the trust up through the on-prem verb, whose checklist gates the start.
+run_join() {
+    local name="$1" kit="$2" prod="$3" src backend kit_file
+    fetch_kit "${name}"
+    src="${FLIP_DIR}/kits/${name%.tar.gz}"
+    if [ ! -f "${src}/.env.${kit}" ] || [ ! -d "${src}/fl-kit/net-1" ]; then
+        echo "ERROR: ${name} has no .env.${kit} and fl-kit/; is KIT the code it was packaged for?" >&2
+        exit 1
+    fi
+    backend="$(sed -n 's/^FL_BACKEND=//p' "${src}/.env.${kit}" | tail -1)"
+    case "${backend}" in
+        nvflare | flower) ;;
+        *)
+            echo "ERROR: .env.${kit} names no FL_BACKEND (nvflare or flower)." >&2
+            exit 1
+            ;;
+    esac
+    kit_file="${REPO_DIR}/trust/.env.${kit}"
+    install -m 0600 "${src}/.env.${kit}" "${kit_file}"
+    # The node's own settings go last so they win over the template's (the kit file is make syntax).
+    cat >> "${kit_file}" <<NODE
+
+# ── Node-local settings, written by flip-node join ──
+NUM_AVAILABLE_GPUS=0
+MEMORY_PER_GPU_IN_GIB=0
+FL_KIT_DIR=${FL_KIT_DIR}
+OMOP_DATA_DIR=${FLIP_DIR}/data/${kit}/omop/db_data
+ORTHANC_STORAGE_DIR=${FLIP_DIR}/data/${kit}/orthanc-storage
+BASE_IMAGES_DOWNLOAD_DIR=${FLIP_DIR}/data/${kit}
+XNAT_DATA_DIR=${FLIP_DIR}/xnat
+NODE
+    stage_fl_kit "${backend}" "${src}/fl-kit"
+    make -C "${REPO_DIR}" up-onprem-trust "KIT=${kit}" "PROD=${prod}"
+}
+
 start_unit() {
     local unit="$1"
     shift
@@ -191,6 +256,14 @@ case "${cmd}" in
         systemctl list-units 'flip-*' --all --no-pager || true
         ;;
     fetch-kit) fetch_kit "${1:-}" ;;
+    join)
+        check_join_args "$@"
+        start_unit "flip-join-$2" "${FLIP_NODE_BIN}" run-join "$1" "$2" "$3"
+        ;;
+    run-join)
+        check_join_args "$@"
+        run_join "$1" "$2" "$3"
+        ;;
     run-selftest)
         check_backend "${1:-}"
         run_selftest "$1"

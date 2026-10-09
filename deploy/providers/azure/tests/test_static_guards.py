@@ -39,6 +39,7 @@ TARGETS = [
     "selftest",
     "kit-upload",
     "selftest-kit",
+    "join",
     "logs",
     "report",
     "stop",

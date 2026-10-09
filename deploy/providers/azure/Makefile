@@ -47,7 +47,7 @@ define run_on_node
 		--command-id RunShellScript --scripts "$(1)" --query 'value[0].message' -o tsv
 endef
 
-.PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload selftest-kit logs report stop start test lint
+.PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload selftest-kit join logs report stop start test lint
 
 help: ## Show this help message
 	@echo "FLIP Azure trust node commands:"
@@ -134,6 +134,11 @@ selftest-kit: ## Pack a self-test FL kit here and put it in the kit drop (FL_BAC
 	bash scripts/pack-selftest-kit.sh $(FL_BACKEND) build/selftest-$(FL_BACKEND).tar.gz
 	$(MAKE) kit-upload TARBALL=build/selftest-$(FL_BACKEND).tar.gz NAME=selftest-$(FL_BACKEND).tar.gz
 	@rm -f build/selftest-$(FL_BACKEND).tar.gz
+
+join: ## Install a hub-registered kit on the node and bring the trust up (NAME=<blob> KIT=<code> PROD=lza-stag)
+	$(require_subscription)
+	@[ -n "$(NAME)" ] && [ -n "$(KIT)" ] && [ -n "$(PROD)" ] || { echo "❌ NAME=<uploaded kit blob> KIT=<trust code> PROD=<env> are required."; exit 1; }
+	@$(call run_on_node,flip-node join $(NAME) $(KIT) $(PROD))
 
 logs: ## Tail a node unit's log (UNIT=flip-selftest-nvflare LINES=80)
 	$(require_subscription)
