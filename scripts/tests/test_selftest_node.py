@@ -112,12 +112,14 @@ def _run(
     counter = tmp / "wc.count"
     states = tmp / "fl-states"
     states.write_text("\n".join(fl_states) + "\n")
-    # What the stubbed XNAT container answers to `wc -l`: a growing count, or a fixed reply
-    # (to prove container output is never evaluated by the runner).
+    # What the stubbed XNAT container answers to `wc -l`: dicom.log stays put (XNAT writes it only
+    # on an importer problem) while received.log grows, or a fixed reply (to prove container output
+    # is never evaluated by the runner).
     wc_arm = (
         f"  *\"wc -l\"*) printf '%s\\n' '{wc_reply}';;\n"
         if wc_reply
-        else f'  *"wc -l"*) r=$(( $(cat "{counter}.reads" 2>/dev/null || echo 0) + 1 )); echo $r > "{counter}.reads"; '
+        else '  *"wc -l"*dicom.log*) echo 7;;\n'
+        f'  *"wc -l"*) r=$(( $(cat "{counter}.reads" 2>/dev/null || echo 0) + 1 )); echo $r > "{counter}.reads"; '
         f'n=$(cat "{counter}" 2>/dev/null || echo 10); echo $n; [ $r -gt {log_lag} ] && echo $((n + 5)) > "{counter}";;\n'
     )
     # `docker inspect` answers the FL client's state, one line per call (running restarting count).
@@ -218,10 +220,15 @@ def main() -> int:
     )
 
     print("xnat_imports_after_the_store_returns")
-    # XNAT writes dicom.log asynchronously: the store has returned but the line lands a few reads later.
+    # XNAT records the receipt asynchronously: the store has returned but the line lands a few reads later.
     result, report, _, _ = _run("lag", log_lag=3)
     _assert(_check(report, "xnat c-store").get("ok") is True, "a log that grows late still passes",
             json.dumps(_check(report, "xnat c-store")))
+
+    print("a_store_xnat_never_received_fails_run")
+    result, report, _, _ = _run("unreceived", log_lag=1000)
+    check = _check(report, "xnat c-store")
+    _assert(check.get("ok") is False and "received.log" in check.get("detail", ""), "names the missing receipt")
 
     print("health_failure_fails_run")
     result, report, _, _ = _run("health", failing_port="8010")

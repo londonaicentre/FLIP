@@ -140,30 +140,34 @@ else
 fi
 
 # A real C-STORE from Orthanc to XNAT's receiver (the prod compose configures the XNAT
-# modality), then XNAT's dicom.log must have grown with no importer error: the same test as
-# the Helm chart's smoke-cstore, because a C-ECHO would pass while every store aborts.
+# modality), because a C-ECHO would pass while every store aborts. Receipt is read from
+# received.log, which XNAT's SCP writes one line per object it accepts; dicom.log is scanned
+# for the importer failures the Helm chart's smoke-cstore looks for. dicom.log alone is no
+# evidence: XNAT writes it only when something goes wrong, so a working store leaves it empty.
 ORTHANC_AUTH="$(grep -E '^ORTHANC_USERNAME=' "${KIT_OUT}" 2>/dev/null | cut -d= -f2-):$(grep -E '^ORTHANC_PASSWORD=' "${KIT_OUT}" 2>/dev/null | cut -d= -f2-)"
 XNAT_CTR="$(docker ps --filter status=running --format '{{.Names}}' | grep -E 'xnat-web' | head -1)"
+RECEIVED_LOG=/data/xnat/home/logs/received.log
 DICOM_LOG=/data/xnat/home/logs/dicom.log
 # Only digits survive: the count comes from inside a container and is later used in shell
 # arithmetic, which would otherwise evaluate (and run) whatever the container printed.
-dicom_log_lines() {
+log_lines() {
     local count
-    count="$(docker exec "${XNAT_CTR}" sh -c "wc -l < ${DICOM_LOG} 2>/dev/null || echo 0" 2>/dev/null | tr -dc '0-9')"
+    count="$(docker exec "${XNAT_CTR}" sh -c "wc -l < $1 2>/dev/null || echo 0" 2>/dev/null | tr -dc '0-9')"
     echo "${count:-0}"
 }
-before="$(dicom_log_lines)"
+before="$(log_lines "${RECEIVED_LOG}")"
+dicom_before="$(log_lines "${DICOM_LOG}")"
 instance="$(curl -fsS -u "${ORTHANC_AUTH}" "http://127.0.0.1:8042/instances?since=0&limit=1" 2>/dev/null | tr -d '[]" \n')"
 store="$(curl -fsS -u "${ORTHANC_AUTH}" -X POST "http://127.0.0.1:8042/modalities/XNAT/store" \
     -d "{\"Resources\":[\"${instance}\"],\"Synchronous\":true}" 2>/dev/null || true)"
-# XNAT logs the import after the store has returned, so poll for the log to grow rather than read
-# it once (the Helm smoke sleeps a fixed SETTLE_SECONDS for the same reason).
-after="$(dicom_log_lines)"
+# XNAT records the receipt after the store has returned, so poll for it rather than read once
+# (the Helm smoke sleeps a fixed SETTLE_SECONDS for the same reason).
+after="$(log_lines "${RECEIVED_LOG}")"
 for ((waited = 0; waited < ${SELFTEST_CSTORE_SETTLE_SECONDS:-30} && after <= before; waited++)); do
     sleep 1
-    after="$(dicom_log_lines)"
+    after="$(log_lines "${RECEIVED_LOG}")"
 done
-errors="$(docker exec "${XNAT_CTR}" sh -c "tail -n +$((before + 1)) ${DICOM_LOG} 2>/dev/null" 2>/dev/null |
+errors="$(docker exec "${XNAT_CTR}" sh -c "tail -n +$((dicom_before + 1)) ${DICOM_LOG} 2>/dev/null" 2>/dev/null |
     grep -cE 'AbstractMethodError|NoSuchMethodError|unable to read DICOM object null' || true)"
 if [ -z "${XNAT_CTR}" ]; then
     record "xnat c-store" false "no running xnat-web container"
@@ -171,10 +175,12 @@ elif [ -z "${instance}" ]; then
     record "xnat c-store" false "Orthanc has no instance to send (did seeding run?)"
 elif [[ "${store}" != *'"FailedInstancesCount" : 0'* && "${store}" != *'"FailedInstancesCount":0'* ]]; then
     record "xnat c-store" false "Orthanc's store to XNAT did not succeed: ${store:0:160}"
-elif [ "${after}" -le "${before}" ] || [ "${errors:-0}" -gt 0 ]; then
-    record "xnat c-store" false "XNAT dicom.log went ${before}->${after} lines with ${errors:-0} importer errors"
+elif [ "${errors:-0}" -gt 0 ]; then
+    record "xnat c-store" false "XNAT's importer logged ${errors} failure(s) in dicom.log"
+elif [ "${after}" -le "${before}" ]; then
+    record "xnat c-store" false "XNAT never recorded the object: received.log stayed at ${before} lines"
 else
-    record "xnat c-store" true "1 instance stored; dicom.log grew ${before}->${after} with no importer error"
+    record "xnat c-store" true "1 instance received (received.log ${before}->${after}); no importer error in dicom.log"
 fi
 
 # A container on `restart: unless-stopped` is briefly "running" between crashes, so one look
