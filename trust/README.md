@@ -88,6 +88,11 @@ PACS_QR_PORT=4242
 
 `XNAT_AETITLE` is applied to XNAT's SCP receiver, its DQR calling AE and the C-MOVE destination it
 hands the PACS, so all three agree and the PACS's return-leg association is addressed correctly.
+XNAT configuration waits for the admin account as well as the login page, within one
+900-second startup budget. A first-boot 401 can mean its database is still initializing;
+the bounded retries keep rejected logins below the account-lockout threshold. See
+[`xnat/README.md`](xnat/README.md#first-boot-readiness) for failure diagnostics.
+
 `up-trust` / `up-trust-ec2` run a `require-xnat-aetitle` guard first: the variable may be absent
 (the default `XNAT` applies) but **must not be present-and-empty** — that fails the bring-up naming
 the kit file, before any data fixture is fetched. The remaining `PACS_*` and `DQR_*` variables

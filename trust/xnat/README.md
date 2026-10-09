@@ -88,6 +88,21 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
   backend, and skipping only the first-boot admin password rotation (the service account is
   re-requested and an existing one left as-is).
 
+## First-boot readiness
+
+`configure-xnat.sh` gives the login page and admin authentication one shared 900-second
+wait. A fresh database can serve `Login.vm` before its admin account exists, so the script
+retries `/xapi/siteConfig/initialized` before choosing first-boot activation or convergence.
+The plugin readiness wait still runs after activation, when authenticated plugin routes
+can stop redirecting to setup.
+
+Both password candidates share one admin account. Authentication retries allow at most six
+rejected logins in total (three when the passwords match), with no reset on transport or
+server errors. After an early retry, the last attempts are reserved near the deadline to
+allow slow database initialization without consuming XNAT's account-lockout allowance.
+Persistent credential rejection stops with a kit-password diagnostic before any configuration
+POST/PUT/DELETE; transport and server failures time out under the same deadline.
+
 ## Setup
 
 Note you need Orthanc running in order to startup XNAT and configure it properly (see [orthanc](../orthanc/)).

@@ -148,7 +148,9 @@ OPERATOR_RECEIVER = '{"id":9,"aeTitle":"WARDCT","port":11113,"identifier":"dicom
 SQUATTING_RECEIVER = '{"id":9,"aeTitle":"WARDCT","port":8104,"identifier":"dicomObjectIdentifier"}'
 
 
-def run_configure(tmp_path, env_overrides=None, pacs_state=None, scp_state=None):
+def run_configure(
+    tmp_path, env_overrides=None, pacs_state=None, scp_state=None, *, curl_stub=STUB_CURL, virtual_clock=False
+):
     """Runs configure-xnat.sh against the stub and returns (exit code, payloads, combined output).
 
     Args:
@@ -156,15 +158,17 @@ def run_configure(tmp_path, env_overrides=None, pacs_state=None, scp_state=None)
         env_overrides (dict | None): Environment for the run, layered over BASE_ENV.
         pacs_state (str | None): JSON array the stub starts with as XNAT's PACS registrations.
         scp_state (str | None): JSON array the stub starts with as XNAT's SCP receivers.
+        curl_stub (str): Replacement curl program for an execution test.
+        virtual_clock (bool): Advance Bash SECONDS when sleep is called; no wall-clock wait.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True)  # parents: tests that run twice pass a nested tmp_path
     stub = bin_dir / "curl"
-    stub.write_text(STUB_CURL)
+    stub.write_text(curl_stub)
     stub.chmod(0o755)
-    # The script's fixed "wait for XNAT to settle" sleep is 10s of dead time per run, and the
-    # readiness loops it guards are already satisfied instantly by the stub. Stubbing sleep keeps
-    # the suite at seconds rather than minutes; nothing here is testing the waits.
+    # The script's fixed "wait for XNAT to settle" sleep is 10s of dead time per run. The
+    # ordinary stub answers readiness instantly; cases that keep readiness pending use
+    # virtual_clock below so the script's deadline advances with its sleeps.
     no_sleep = bin_dir / "sleep"
     no_sleep.write_text("#!/bin/sh\nexit 0\n")
     no_sleep.chmod(0o755)
@@ -185,10 +189,24 @@ def run_configure(tmp_path, env_overrides=None, pacs_state=None, scp_state=None)
         "PACS_STATE": str(pacs_file),
         "SCP_STATE": str(scp_file),
         "CREDS_LOG": str(tmp_path / "creds.txt"),
+        "SLEEP_LOG": str(tmp_path / "sleeps.txt"),
         **(env_overrides or {}),
     }
 
-    result = subprocess.run(["bash", str(SCRIPT)], cwd=CONFIG_DIR, env=env, capture_output=True, text=True, timeout=120)
+    command = ["bash", str(SCRIPT)]
+    if virtual_clock:
+        # These functions run in the script's own shell, so sleep advances the same SECONDS
+        # that its deadline reads. Only subprocess curl is stubbed; the real configure body runs.
+        command = [
+            "bash",
+            "-c",
+            "TEST_CLOCK=0; SECONDS=0; "
+            'sleep() { printf "%s\\n" "$1" >> "$SLEEP_LOG"; TEST_CLOCK=$((TEST_CLOCK + $1)); SECONDS=$TEST_CLOCK; }; '
+            'curl() { SECONDS=$TEST_CLOCK; AUTH_NOW=$TEST_CLOCK command curl "$@"; }; source "$1"',
+            "configure-test",
+            str(SCRIPT),
+        ]
+    result = subprocess.run(command, cwd=CONFIG_DIR, env=env, capture_output=True, text=True, timeout=120)
     body = payloads.read_text() if payloads.exists() else ""
     return result.returncode, body, result.stdout + result.stderr
 
@@ -704,7 +722,7 @@ def test_first_boot_activates_with_the_initial_password_and_rotates_it(tmp_path)
 
 
 def test_neither_password_working_stops_before_touching_xnat(tmp_path):
-    code, payloads, output = run_configure(tmp_path, {"WRONG_LOGINS": "initial,rotated"})
+    code, payloads, output = run_configure(tmp_path, {"WRONG_LOGINS": "initial,rotated"}, virtual_clock=True)
     assert code == 1, output
     assert "neither admin password authenticates" in output
     assert not any(m in {"POST", "PUT", "DELETE"} for m, _ in requests_made(payloads))

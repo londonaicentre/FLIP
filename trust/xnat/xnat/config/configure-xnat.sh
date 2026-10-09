@@ -86,12 +86,20 @@ command -v jq >/dev/null || { echo "ERROR: jq is required by configure-xnat.sh" 
 
 # Wait for XNAT to be available (wall-clock bounded, and each probe carries
 # its own timeout, so a dead or wedged XNAT fails the deploy loudly instead
-# of printing dots forever — same shape as configure-dcm2niix.sh).
+# of printing dots forever — same shape as configure-dcm2niix.sh). The same
+# deadline also covers the admin/DB readiness wait below: Tomcat can serve
+# Login.vm before the fresh database has created the admin account.
 echo "Waiting for XNAT to be available..."
 wait_start=$SECONDS
 deadline=$((wait_start + 900))
-until curl --output /dev/null --silent --head --fail \
-  --connect-timeout 5 --max-time 10 "$XNAT_URL/app/template/Login.vm"; do
+login_page_ready() {
+  local remaining=$((deadline - SECONDS))
+  (( remaining > 0 )) || return 1
+  (( remaining <= 10 )) || remaining=10
+  curl --output /dev/null --silent --head --fail \
+    --connect-timeout 5 --max-time "$remaining" "$XNAT_URL/app/template/Login.vm"
+}
+until login_page_ready; do
   if [[ "$SECONDS" -ge "$deadline" ]]; then
     echo "ERROR: XNAT did not become available within $((SECONDS - wait_start))s" >&2
     exit 1
@@ -178,27 +186,107 @@ xnat_curl() {
 # NOTE: when the configured admin password equals the initial one (the dev kits do this), every run
 # is a first boot — so the conflict-prone calls below (service account, PACS registration,
 # availability intervals) carry their own already-configured guards rather than relying on the mode.
-# (These probes check status codes explicitly — a non-200 here is a signal, not an error, so they
-# stay bare curl rather than xnat_curl. They carry xnat_curl's deadlines even so, and `|| true` so a
-# timeout reaches the checks below instead of ending the script under set -e with no output: the
-# wall-clock wait above proves XNAT serves the login page, not that an authenticated route answers.)
+# A 401/401 just after Login.vm answers is inconclusive: on first boot the DB can still be
+# creating the admin account. Probe the non-plugin siteConfig route until a credential works,
+# BEFORE activation; moving the plugin wait here would deadlock an uninitialized site (#966).
+#
+# Both passwords belong to ONE admin account. Across this wait, at most three rejected logins
+# per distinct candidate (six total) are allowed, never reset by transport/404/5xx responses.
+# This leaves headroom below XNAT's 20-attempt account lockout for the later plugin wait. Equal passwords are one candidate, not two failed logins at every poll.
+admin_passwords=("$XNAT_ADMIN_INITIAL_PASSWORD")
+[[ "$XNAT_ADMIN_PASSWORD" == "$XNAT_ADMIN_INITIAL_PASSWORD" ]] || admin_passwords+=("$XNAT_ADMIN_PASSWORD")
+credential_rejections=(0 0)
+admin_statuses=("000" "000")
+total_rejections=0
+last_admin_probe_at=$((deadline - 1))
 ADMIN_PASSWORD_ROTATED=false
-init_pw_status=$(curl -s --connect-timeout 5 --max-time 15 -o /dev/null -w '%{http_code}' \
-  -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
-  "$XNAT_URL/xapi/siteConfig/initialized") || true
-if [[ "${init_pw_status}" != "200" ]]; then
-  rotated_probe=$(curl -s --connect-timeout 5 --max-time 15 -w '\n%{http_code}' \
-    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
-    "$XNAT_URL/xapi/siteConfig/initialized") || true
-  rotated_status="${rotated_probe##*$'\n'}"
-  initialized="${rotated_probe%$'\n'*}"
-  if [[ "${rotated_status}" != "200" ]]; then
-    echo "ERROR: neither admin password authenticates (initial: HTTP ${init_pw_status:-000}," \
-      "configured: HTTP ${rotated_status:-000})." >&2
-    echo "  Check XNAT_ADMIN_PASSWORD in the kit against this XNAT's admin account." >&2
+initialized=""
+echo "Waiting for the XNAT admin account to be ready..."
+
+while true; do
+  rejected_this_round=false
+  for index in "${!admin_passwords[@]}"; do
+    # Do not replay a credential whose rejection allowance was already spent.
+    (( credential_rejections[index] < 3 )) || continue
+    # Reserve each candidate's last trial independently. One password's 5xx responses
+    # must not let the other's transient 401s spend all its attempts before DB init ends.
+    if (( credential_rejections[index] == 2 && SECONDS < last_admin_probe_at )); then
+      continue
+    fi
+    remaining=$((deadline - SECONDS))
+    if (( remaining <= 0 )); then
+      echo "ERROR: XNAT admin authentication did not become ready within $((SECONDS - wait_start))s" >&2
+      echo "  initial: HTTP ${admin_statuses[0]}, configured: HTTP ${admin_statuses[1]}" >&2
+      exit 1
+    fi
+    probe_timeout=$remaining
+    (( probe_timeout <= 15 )) || probe_timeout=15
+    curl_exit=0
+    response=$(curl -s --connect-timeout 5 --max-time "$probe_timeout" -w '\n%{http_code}' \
+      -u "${XNAT_ADMIN_USER}:${admin_passwords[index]}" \
+      "$XNAT_URL/xapi/siteConfig/initialized") || curl_exit=$?
+    status="${response##*$'\n'}"
+    status=${status//$'\r'/}
+    admin_statuses[index]="$status"
+    if (( ${#admin_passwords[@]} == 1 )); then
+      admin_statuses[1]="$status"
+    fi
+    if [[ "$status" == "200" && "$curl_exit" == 0 && "$SECONDS" -lt "$deadline" ]]; then
+      initialized="${response%$'\n'*}"
+      initialized=${initialized//$'\r'/}
+      [[ "$index" == 0 ]] || ADMIN_PASSWORD_ROTATED=true
+      break 2
+    fi
+    # A server may have rejected the login before curl times out reading its body.
+    # Charge that refusal even on curl failure, while requiring a complete 200 above.
+    if [[ "$status" == "401" || "$status" == "403" ]]; then
+      credential_rejections[index]=$((credential_rejections[index] + 1))
+      total_rejections=$((total_rejections + 1))
+      rejected_this_round=true
+    fi
+  done
+
+  probes_left=0
+  eligible_candidates=0
+  for index in "${!admin_passwords[@]}"; do
+    probes_left=$((probes_left + 3 - credential_rejections[index]))
+    if (( credential_rejections[index] < 2 ||
+          (credential_rejections[index] < 3 && SECONDS >= last_admin_probe_at) )); then
+      eligible_candidates=$((eligible_candidates + 1))
+    fi
+  done
+  if (( probes_left == 0 )); then
+    echo "ERROR: neither admin password authenticates (initial: HTTP ${admin_statuses[0]}," \
+      "configured: HTTP ${admin_statuses[1]})." >&2
+    echo "  Check XNAT_ADMIN_INITIAL_PASSWORD / XNAT_ADMIN_PASSWORD in the kit against this XNAT's admin account." >&2
+    echo "  Stopping after $total_rejections rejected logins to avoid locking the admin account." >&2
     exit 1
   fi
-  ADMIN_PASSWORD_ROTATED=true
+
+  remaining=$((deadline - SECONDS))
+  if (( remaining <= 0 )); then
+    echo "ERROR: XNAT admin authentication did not become ready within $((SECONDS - wait_start))s" >&2
+    echo "  initial: HTTP ${admin_statuses[0]}, configured: HTTP ${admin_statuses[1]}" >&2
+    exit 1
+  fi
+  sleep_for=5
+  if [[ "$rejected_this_round" == true ]]; then
+    sleep_for=60
+  fi
+  until_last_trial=$((last_admin_probe_at - SECONDS))
+  if (( eligible_candidates == 0 )); then
+    sleep_for=$until_last_trial
+  elif (( until_last_trial > 0 && sleep_for > until_last_trial )); then
+    # Wake for the reserved trial even when a different candidate is still being polled.
+    sleep_for=$until_last_trial
+  fi
+  (( sleep_for >= 0 )) || sleep_for=0
+  (( sleep_for <= remaining )) || sleep_for=$remaining
+  echo "  Admin account not ready (initial: HTTP ${admin_statuses[0]}, configured: HTTP ${admin_statuses[1]}); retrying..."
+  sleep "$sleep_for"
+done
+
+if [[ "$ADMIN_PASSWORD_ROTATED" == true ]]; then
   if [[ "${initialized}" == "true" ]]; then
     echo "XNAT already configured (the initial admin password no longer works) — converging configuration."
   else

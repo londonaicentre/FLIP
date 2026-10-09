@@ -36,6 +36,10 @@ protect the XNAT database credentials (FLIP-PT-056).
   images ship different ones: dash for xnat-web, busybox ash for xnat-db). The
   reject cases also assert the `psql` stub was *never* called, which is what pins
   the guard ahead of any database contact.
+- **Admin readiness** (`test_admin_readiness.py`) — executes the configuration script through
+  first-boot 401 responses, late database initialization, configured/migrated instances,
+  rejected credentials and transient transport/server failures. A Bash virtual clock exercises
+  the shared login/auth deadline and account rejection budget without a live XNAT or real waits.
 - **Startup reliability** (`test_startup.py`) — executes the plugin cache/download
   guard and authenticated plugin-readiness wait with stubbed AWS/curl commands,
   checks aggregate Make targets propagate failures, and pins root-relative paths
