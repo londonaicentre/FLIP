@@ -129,6 +129,30 @@ Things worth knowing before touching any of it:
   Every lookup **fails closed**: absence is recognised only from ECS's own
   `failures[].reason == "MISSING"`, so an expired session or a wrong `ECS_CLUSTER`
   stops the run instead of reading as "empty account" and emitting the mutable tag.
+- **`RELEASE_TAG` (`v<X.Y.Z>`, FLIP#1283) makes the resolver release-aware.** When
+  set, every hub/FL image resolves to that release instead of `sha-<short7>` and is
+  pinned by **digest** as `v<X.Y.Z>@sha256:…`: `:v<X.Y.Z>` is republished by design
+  and ECS pulls at task start, so a bare tag pin would weaken the FLIP#751
+  immutability guarantee. The release name stays visible in the task definition and
+  in the image's baked `FLIP_RELEASE`, which `/api/health` and the heartbeat report.
+  A missing release image is **fatal**, with deliberately no fallback to the sha or
+  running tag (either would leave the previous release in place behind a green run).
+  Each FL image is resolved and digested against its own repository and service:
+  the resolver emits `DOCKER_TAG`, `DOCKER_FL_TAG` (fl-server) and
+  `DOCKER_FL_API_TAG` (fl-api, Terraform `fl_api_image_tag`, empty = same as
+  `flip_fl_image_tag`), so fl-api is never pinned with fl-server's digest. Digests
+  come from `docker buildx imagetools inspect --format '{{.Manifest.Digest}}'`
+  (the index digest for multi-platform images), and `reconcile_ci_env.py` writes
+  only the tag part to an env file, since the Makefile reuses `DOCKER_TAG` for
+  the trust images.
+  A release image not yet published is waited for (`GHCR_WAIT_SECONDS`), but fl-server
+  and fl-api share one wait budget: once one exhausts it the other probes once, so the
+  worst case is two waits for three images, not three.
+  It is ignored when `RESOLVE_SHA_TAG=false` (plan, drift). `active_tag()` reads a
+  running `repo:tag@sha256:…` back whole, so an infrastructure-only apply keeps the
+  pin; a bare `repo@sha256:…` still yields no tag, since Terraform interpolates
+  `repo:<tag>`. Nothing sets `RELEASE_TAG` yet: `release.yml` dispatching
+  `terraform_apply.yml` after the release builds are green is PR 2 of FLIP#1283.
 - **An apply holds if the plan touches FL** (`scripts/check-fl-plan-impact.sh`):
   `fl-server-net-1` / `fl-api-net-1` task definitions or services, or any EFS
   deletion. `flip-api` is deliberately not watched. The hub cannot be asked
