@@ -145,6 +145,7 @@ reload. More detail is in [Running the stack](CONTRIBUTING.md#running-the-stack-
 | Goal | Guide |
 | --- | --- |
 | Understand the platform and its security model | [ReadTheDocs](https://londonaicentreflip.readthedocs.io/en/latest/) |
+| Run the whole platform locally, step by step | [Run FLIP locally for development](docs/source/deploy-flip/deploy-local-dev.rst) |
 | Set up a development environment or contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Run or adapt a federated-learning example | [FL tutorials](fl-tutorials/README.md) |
 | Build a FLIP application | [Working with FLIP apps](https://londonaicentreflip.readthedocs.io/en/latest/working-with-flip-apps.html) |
