@@ -145,6 +145,9 @@ Things worth knowing before touching any of it:
   (the index digest for multi-platform images), and `reconcile_ci_env.py` writes
   only the tag part to an env file, since the Makefile reuses `DOCKER_TAG` for
   the trust images.
+  A release image not yet published is waited for (`GHCR_WAIT_SECONDS`), but fl-server
+  and fl-api share one wait budget: once one exhausts it the other probes once, so the
+  worst case is two waits for three images, not three.
   It is ignored when `RESOLVE_SHA_TAG=false` (plan, drift). `active_tag()` reads a
   running `repo:tag@sha256:…` back whole, so an infrastructure-only apply keeps the
   pin; a bare `repo@sha256:…` still yields no tag, since Terraform interpolates
