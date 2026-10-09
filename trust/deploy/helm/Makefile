@@ -245,8 +245,21 @@ smoke-cstore: ## Send a real C-STORE through the PACS and verify XNAT received i
 	## path those jars are on. Both are needed: a roster can match while the importer is
 	## broken for some other reason, and a C-ECHO can pass while every store aborts.
 	## Requires a seeded Orthanc (it stores an instance the PACS already holds).
+	## Exit 2 from the script is INCONCLUSIVE — the only evidence was a prearchive object's
+	## arrival time while received.log exists and gained no line. Not a pass, and not enough
+	## to fail a deploy on, so it is surfaced as a loud warning and this target still exits 0.
+	## 1 (a real failure) and 0 (a pass) are passed straight through.
 	@NAMESPACE=$(NAMESPACE) RELEASE_NAME=$(RELEASE_NAME) KUBE_CONTEXT=$(KUBE_CONTEXT) \
-		$(CHART_DIR)/scripts/smoke-cstore.sh
+		$(CHART_DIR)/scripts/smoke-cstore.sh; \
+	status=$$?; \
+	if [ $$status -eq 2 ]; then \
+		printf '\033[0;33m%s\033[0m\n' \
+			"⚠️  C-STORE smoke INCONCLUSIVE (exit 2) — the receiver showed only an arrival-time match" \
+			"⚠️  while received.log exists and gained no line. This is NOT a verified DICOM path:" \
+			"⚠️  re-run with the PACS idle, and see TROUBLESHOOTING.md §2.7 before trusting it." >&2; \
+		exit 0; \
+	fi; \
+	exit $$status
 
 # Move a deployed Kubernetes trust to a release, data intact (FLIP#1204). A plain
 # `helm upgrade` with the pin set: PVCs survive it, the init hooks short-circuit on

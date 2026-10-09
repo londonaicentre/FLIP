@@ -28,6 +28,7 @@ No cluster: ``decide()`` takes the evidence as a dict, ``build_evidence()`` as a
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -219,15 +220,116 @@ def test_an_unparsable_store_report_fails() -> None:
 # ── Weaker and absent evidence ───────────────────────────────────────────────────────
 
 
-def test_a_new_object_without_a_uid_or_receipt_passes_but_says_it_proves_little() -> None:
-    """The genuine last resort: real evidence, but a concurrent import looks identical."""
+def test_a_new_object_without_a_uid_or_receipt_passes_when_received_log_does_not_exist() -> None:
+    """The genuine last resort: real evidence, but a concurrent import looks identical.
+
+    A receiver with no ``received.log`` at all cannot produce stronger evidence, so arrival time
+    is the best there is and the run still passes (exit 0) with its warning.
+    """
     verdict = decide(
-        evidence(prearchive_matches=[], prearchive_match_mode="", prearchive_new=["/data/xnat/prearchive/x.dcm"])
+        evidence(
+            prearchive_matches=[],
+            prearchive_match_mode="",
+            prearchive_new=["/data/xnat/prearchive/x.dcm"],
+            received_log_exists=False,
+        )
     )
 
     assert verdict.passed
+    assert not verdict.inconclusive
+    assert verdict.exit_code == 0
     note = next(n for n in verdict.notes if "arrival time only" in n)
     assert "concurrent import would look the same" in note
+    assert any("not present on this receiver" in n for n in verdict.notes), (
+        "the pass does not say why arrival time was allowed to be enough"
+    )
+
+
+# ── Arrival time beside a present, silent received.log: inconclusive, not a pass ─────
+
+
+def _arrival_time_only(**overrides: object) -> dict:
+    return evidence(
+        prearchive_matches=[],
+        prearchive_match_mode="",
+        prearchive_new=["/data/xnat/prearchive/x.dcm"],
+        received_log_lines=[],
+        **overrides,
+    )
+
+
+def test_arrival_time_only_with_a_present_received_log_is_inconclusive_not_a_pass() -> None:
+    """received.log exists and stayed silent through a store it records every receipt of.
+
+    Exiting 0 there told every caller "the DICOM path works" on evidence a concurrent DQR/C-MOVE
+    import satisfies just as well, with the doubt carried only by a warning line nobody reads.
+    """
+    verdict = decide(_arrival_time_only(received_log_exists=True))
+
+    assert not verdict.passed
+    assert verdict.inconclusive
+    assert verdict.exit_code == 2
+    assert "inconclusive" in verdict.reason
+    assert "received.log exists" in verdict.reason
+
+
+def test_the_inconclusive_verdict_still_names_the_arrival_time_weakness_and_a_remedy() -> None:
+    verdict = decide(_arrival_time_only(received_log_exists=True))
+
+    assert any("arrival time only" in n for n in verdict.notes)
+    assert any("exit 2" in n for n in verdict.notes)
+    assert "TROUBLESHOOTING.md §2.7" in verdict.remedy
+
+
+def test_a_received_log_line_beats_the_inconclusive_path() -> None:
+    """Present AND written to is the normal healthy run — exit 0, never 2."""
+    verdict = decide(anonymised_evidence(received_log_exists=True))
+
+    assert verdict.passed
+    assert not verdict.inconclusive
+    assert verdict.exit_code == 0
+
+
+def test_a_uid_match_beats_the_inconclusive_path() -> None:
+    verdict = decide(evidence(received_log_exists=True, received_log_lines=[]))
+
+    assert verdict.passed
+    assert verdict.exit_code == 0
+
+
+def test_an_importer_failure_beats_the_inconclusive_path() -> None:
+    """A real failure stays exit 1: 2 must never soften a FLIP#1228 regression."""
+    verdict = decide(
+        _arrival_time_only(received_log_exists=True, receiver_log_lines=["java.lang.AbstractMethodError: x"])
+    )
+
+    assert not verdict.passed
+    assert not verdict.inconclusive
+    assert verdict.exit_code == 1
+
+
+def test_no_evidence_at_all_stays_a_failure_even_with_a_present_received_log() -> None:
+    """Nothing arrived is a failure, not an inconclusive — exit 1."""
+    verdict = decide(
+        evidence(
+            prearchive_matches=[],
+            prearchive_match_mode="",
+            prearchive_new=[],
+            received_log_lines=[],
+            received_log_exists=True,
+            timed_out=True,
+        )
+    )
+
+    assert not verdict.inconclusive
+    assert verdict.exit_code == 1
+
+
+def test_build_evidence_reads_the_received_log_existence_probe() -> None:
+    """`wc -l` cannot tell a missing received.log from an empty one — hence a separate probe."""
+    assert build_evidence({"RECEIVED_LOG_PRESENT": "1"})["received_log_exists"] is True
+    assert build_evidence({"RECEIVED_LOG_PRESENT": "0"})["received_log_exists"] is False
+    assert build_evidence({})["received_log_exists"] is False
 
 
 def test_dicom_log_growth_alone_does_not_pass() -> None:
@@ -434,6 +536,128 @@ def test_the_cli_from_env_fails_a_run_with_no_receiver_evidence() -> None:
 
     assert result.returncode == 1
     assert "within 90s" in result.stderr
+
+
+def test_the_cli_exits_two_on_the_inconclusive_case() -> None:
+    """2 is the whole point: a caller reading `$?` must not see "passed"."""
+    result = _run_cli(
+        evidence(
+            prearchive_matches=[],
+            prearchive_match_mode="",
+            prearchive_new=["/data/xnat/prearchive/x.dcm"],
+            received_log_lines=[],
+            received_log_exists=True,
+        )
+    )
+
+    assert result.returncode == 2, result.stderr
+    assert "INCONCLUSIVE" in result.stderr
+    assert "C-STORE smoke passed" not in result.stdout
+
+
+def test_the_cli_from_env_exits_two_when_the_probe_says_received_log_exists() -> None:
+    """End to end over the handoff the shell actually uses."""
+    result = subprocess.run(
+        [sys.executable, str(VERDICT_PY), "--from-env"],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "FAILED_COUNT": "0",
+            "INSTANCE_COUNT": "1",
+            "SCAN": "time\t/data/xnat/prearchive/x.dcm\n",
+            "RECEIVED_LOG_PRESENT": "1",
+            "PREARCHIVE_TIMEOUT": "90",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2, result.stderr
+    assert "INCONCLUSIVE" in result.stderr
+
+
+def test_the_cli_from_env_still_exits_zero_when_received_log_is_absent() -> None:
+    result = subprocess.run(
+        [sys.executable, str(VERDICT_PY), "--from-env"],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "FAILED_COUNT": "0",
+            "INSTANCE_COUNT": "1",
+            "SCAN": "time\t/data/xnat/prearchive/x.dcm\n",
+            "RECEIVED_LOG_PRESENT": "0",
+            "PREARCHIVE_TIMEOUT": "90",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_the_smoke_probes_received_logs_existence_at_the_mark() -> None:
+    """A line count cannot tell a missing received.log from an empty one.
+
+    The whole exit-2 rule turns on that difference, so the mark must carry an explicit probe and
+    hand it to the verdict.
+    """
+    script = (CHART_DIR / "scripts" / "smoke-cstore.sh").read_text()
+
+    assert "RECEIVED_LOG_PRESENT" in script, "the smoke never probes whether received.log exists"
+    assert '[ -f "$R" ]' in script, "existence is still inferred from wc, which reports 0 for missing and empty alike"
+    assert 'RECEIVED_LOG_PRESENT="$RECEIVED_LOG_PRESENT"' in script, (
+        "the probe is taken but never handed to cstore_verdict.py"
+    )
+
+
+def test_the_smoke_header_documents_the_three_exit_codes() -> None:
+    script = (CHART_DIR / "scripts" / "smoke-cstore.sh").read_text()
+
+    assert "2 = inconclusive" in script
+
+
+def _smoke_recipe() -> str:
+    makefile = (CHART_DIR / "Makefile").read_text()
+    return makefile[makefile.index("smoke-cstore:") :].split("\n\n")[0]
+
+
+@pytest.mark.parametrize(("script_exit", "make_should_fail"), [(0, False), (1, True), (2, False)])
+def test_make_smoke_cstore_maps_exit_2_to_a_warning_and_passes_0_and_1_through(
+    script_exit: int, make_should_fail: bool
+) -> None:
+    """The shipped recipe, run against a stub script, for each status it can receive.
+
+    2 must not fail Make — an inconclusive run is not a reason to break a deploy — but it must
+    not be silent either, and 1 must still fail. (Make reports a failed recipe with its own
+    status 2, so a real failure is asserted as "non-zero", not as a specific code.)
+    """
+    make = shutil.which("make")
+    if make is None:
+        pytest.skip("make not installed")  # pragma: no cover - make is present in CI and on dev boxes
+        raise AssertionError  # pragma: no cover - unreachable; narrows `make` for type checkers
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "scripts").mkdir()
+        stub = root / "scripts" / "smoke-cstore.sh"
+        stub.write_text(f"#!/bin/sh\nexit {script_exit}\n")
+        stub.chmod(0o755)
+        mk = root / "Makefile"
+        mk.write_text(
+            f"CHART_DIR := {root}\nNAMESPACE := ns\nRELEASE_NAME := rel\nKUBE_CONTEXT :=\n\n{_smoke_recipe()}\n"
+        )
+
+        result = subprocess.run(  # noqa: S603
+            [make, "-f", str(mk), "smoke-cstore"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=tmp,
+        )
+
+    assert (result.returncode != 0) is make_should_fail, result.stderr
+    if script_exit == 2:
+        assert "INCONCLUSIVE" in result.stderr, "an inconclusive run is swallowed silently"
 
 
 # ── The shell script that gathers the evidence ───────────────────────────────────────

@@ -33,6 +33,25 @@ WHAT COUNTS AS POSITIVE EVIDENCE, STRONGEST FIRST
 3. A new prearchive object by arrival time alone. A genuine last resort, reported as such: a
    concurrent DQR or C-MOVE import lands objects in the same window.
 
+WHEN (3) IS ALL THERE IS, THE ANSWER IS "INCONCLUSIVE", NOT "PASS"
+
+(3) only ever means *something arrived*. Whether that is honest enough to call a pass turns on
+one fact: does ``received.log`` exist on the receiver? If it does and it gained no line, then the
+receiver's own success logger stayed silent through a transfer it should have recorded, and the
+arrival-time object is as likely to be a concurrent import. That run exits **2 — inconclusive**,
+distinct from both a pass and a real failure, so a caller cannot read "the DICOM path works" out
+of a warning nobody read. If ``received.log`` does not exist (a receiver that never writes it, or
+a path this check could not see), arrival time is genuinely the best evidence available and the
+run still exits 0 with the warning it always carried.
+
+The shell probes that existence explicitly at the mark step: ``wc -l < "$R" || echo 0`` reports
+``0`` for a missing file and for an empty one alike, which cannot tell the two cases apart.
+
+EXIT CODES
+
+0 = pass, 1 = failure, 2 = inconclusive (arrival-time-only evidence with a silent, present
+``received.log``). ``make smoke-cstore`` maps 2 to a loud warning rather than a Make failure.
+
 The regression this smoke exists for (FLIP#1228 — a plugin built against a different XNAT core)
 is unchanged: any of ``AbstractMethodError`` / ``NoSuchMethodError`` / ``unable to read DICOM
 object null`` in the receiver's logs fails the run outright, whatever else landed.
@@ -66,6 +85,16 @@ class Verdict:
     notes: list[str] = field(default_factory=list)
     # Operator-facing next step; empty on a pass.
     remedy: str = ""
+    # Neither a pass nor a failure: the evidence does not settle whether the object arrived.
+    # Reported separately so a caller can treat it as a warning without reading it as success.
+    inconclusive: bool = False
+
+    @property
+    def exit_code(self) -> int:
+        """0 pass, 1 failure, 2 inconclusive — the status the CLI exits with."""
+        if self.inconclusive:
+            return 2
+        return 0 if self.passed else 1
 
 
 _PLUGIN_REMEDY = (
@@ -80,6 +109,15 @@ _NO_EVIDENCE_REMEDY = (
     "prearchive file and no receiver log activity. Check that the SCP receiver Orthanc dialled "
     "is this XNAT (make status, TROUBLESHOOTING.md §2.1) and that the prearchive path is the "
     "one this check scanned."
+)
+
+
+_INCONCLUSIVE_REMEDY = (
+    "received.log exists on the receiver and gained no line for this store, so the receiver's own "
+    "success logger stayed silent while an object appeared in the prearchive — which a concurrent "
+    "DQR/C-MOVE import explains just as well. Re-run with the PACS otherwise idle, or raise "
+    "PREARCHIVE_TIMEOUT if the importer is slow; if received.log is genuinely not this receiver's "
+    "receipt log, point RECEIVED_LOG at the one that is. See TROUBLESHOOTING.md §2.7."
 )
 
 
@@ -196,6 +234,11 @@ def build_evidence(env: Mapping[str, str]) -> dict:
         "study_uid": env.get("STUDY_UID", ""),
         "timed_out": (env.get("TIMED_OUT") or "").strip() == "1",
         "timeout_seconds": _as_int(env.get("PREARCHIVE_TIMEOUT")),
+        # Whether received.log was present on the receiver at the mark. The mark's line count
+        # cannot carry this: `wc -l < "$R" || echo 0` yields 0 for a missing file and for an
+        # empty one alike, and the difference is what makes arrival-time-only evidence either
+        # "the best available" (absent) or "the success logger stayed silent" (present).
+        "received_log_exists": (env.get("RECEIVED_LOG_PRESENT") or "").strip() == "1",
     }
 
 
@@ -216,6 +259,9 @@ def decide(evidence: dict) -> Verdict:
     ``sop_uid`` / ``study_uid`` str — the UIDs that were sent, for the message.
     ``timed_out``            bool — the poll expired without conclusive evidence.
     ``timeout_seconds``      int — the poll's time box, for the message.
+    ``received_log_exists``  bool — received.log was present on the receiver at the mark. When it
+                             is, arrival-time-only evidence is INCONCLUSIVE (exit 2) rather than a
+                             pass: the receiver's own success logger stayed silent.
     """
     if not isinstance(evidence, Mapping):
         # A list, a string or a bare number reaching here is a bug in the caller, not a DICOM
@@ -234,6 +280,7 @@ def decide(evidence: dict) -> Verdict:
     study_uid = evidence.get("study_uid") or ""
     timed_out = bool(evidence.get("timed_out"))
     timeout_seconds = _as_int(evidence.get("timeout_seconds"))
+    received_log_exists = bool(evidence.get("received_log_exists"))
 
     # 1. The sender's own verdict. An unparsable report is a failure: it is indistinguishable
     #    from a store that never happened, and passing on it would restore the false confidence
@@ -310,14 +357,41 @@ def decide(evidence: dict) -> Verdict:
         # Weakest real evidence: something landed in the window but the receipt was never logged
         # and no UID matched. A concurrent DQR/C-MOVE import lands objects in the same window, so
         # say plainly that this does not identify the object as the one that was sent.
+        #
+        # Whether that is a pass turns on received.log's EXISTENCE. Present and silent means the
+        # receiver's own success logger said nothing about a transfer it records every receipt of
+        # — too weak to call a pass, not evidence enough to call a failure: exit 2, inconclusive.
+        # Absent, arrival time is honestly the best evidence this receiver offers, so exit 0 with
+        # the warning that has always been on it.
+        weak_note = (
+            f"⚠ matched by arrival time only — none of the {len(new_files)} new object(s) "
+            f"carried the sent UID ({sop_uid or study_uid or 'unknown'}) and received.log "
+            "gained no line, so a concurrent import would look the same"
+        )
+        if received_log_exists:
+            return Verdict(
+                False,
+                "inconclusive: the only evidence is a prearchive object's arrival time, and "
+                "received.log exists on the receiver but gained no line for this store",
+                notes=[
+                    stored,
+                    weak_note,
+                    "ℹ received.log is present on the receiver, so its silence is a real signal — "
+                    "this run is reported as inconclusive (exit 2), neither a pass nor a failure",
+                    *new_files[:5],
+                    dicom_log_note(),
+                ],
+                remedy=_INCONCLUSIVE_REMEDY,
+                inconclusive=True,
+            )
         return Verdict(
             True,
             "a new prearchive object appeared during the run with no importer failure",
             notes=[
                 stored,
-                f"⚠ matched by arrival time only — none of the {len(new_files)} new object(s) "
-                f"carried the sent UID ({sop_uid or study_uid or 'unknown'}) and received.log "
-                "gained no line, so a concurrent import would look the same",
+                weak_note,
+                "ℹ received.log is not present on this receiver, so arrival time is the strongest "
+                "evidence available here",
                 *new_files[:5],
                 dicom_log_note(),
             ],
@@ -341,10 +415,16 @@ def decide(evidence: dict) -> Verdict:
 
 
 def main() -> int:
-    """Print the verdict for one run; exit 0 (pass) or 1 (fail).
+    """Print the verdict for one run; exit 0 (pass), 1 (fail) or 2 (inconclusive).
 
     Evidence comes from the environment with ``--from-env`` (how the shell script calls it, so
     no untested Python lives there) or as JSON on stdin.
+
+    2 is its own status on purpose: an arrival-time-only reading beside a present-but-silent
+    ``received.log`` was previously exit 0 plus a warning line, which any caller — CI, a script,
+    an operator reading ``$?`` — reads as "the DICOM path works". ``make smoke-cstore`` turns 2
+    into a loud warning rather than a Make failure, so the human signal survives without
+    breaking a deploy on evidence that proves nothing either way.
     """
     if "--from-env" in sys.argv[1:]:
         evidence = build_evidence(os.environ)
@@ -355,16 +435,18 @@ def main() -> int:
             print(f"✗ could not parse the smoke evidence: {exc}", file=sys.stderr)
             return 1
     verdict = decide(evidence)
-    red, green, reset = "\033[0;31m", "\033[0;32m", "\033[0m"
+    red, green, yellow, reset = "\033[0;31m", "\033[0;32m", "\033[0;33m", "\033[0m"
     for note in verdict.notes:
         print(note)
     if verdict.passed:
         print(f"{green}✅ C-STORE smoke passed — {verdict.reason}{reset}")
-        return 0
-    print(f"{red}✗ {verdict.reason}{reset}", file=sys.stderr)
+        return verdict.exit_code
+    colour = yellow if verdict.inconclusive else red
+    marker = "⚠ C-STORE smoke INCONCLUSIVE —" if verdict.inconclusive else "✗"
+    print(f"{colour}{marker} {verdict.reason}{reset}", file=sys.stderr)
     if verdict.remedy:
-        print(f"{red}{verdict.remedy}{reset}", file=sys.stderr)
-    return 1
+        print(f"{colour}{verdict.remedy}{reset}", file=sys.stderr)
+    return verdict.exit_code
 
 
 if __name__ == "__main__":

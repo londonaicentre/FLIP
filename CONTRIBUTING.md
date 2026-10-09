@@ -645,7 +645,9 @@ make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 make -C trust/deploy/helm sync-kit-override KIT=<CODE> PROD=<env>
 
 # Against a live cluster: drive a real C-STORE through the PACS and read XNAT's
-# receiver log (a C-ECHO cannot see an importer crash — FLIP#1228)
+# receiver log (a C-ECHO cannot see an importer crash — FLIP#1228). Exits 0 pass, 1 fail,
+# 2 inconclusive (arrival-time-only evidence while received.log exists and stayed silent);
+# the Make target turns 2 into a loud warning rather than a failure.
 make -C trust/deploy/helm smoke-cstore
 ```
 

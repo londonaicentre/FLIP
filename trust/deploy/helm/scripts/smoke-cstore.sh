@@ -32,7 +32,8 @@
 #      that was sent;
 #   2. a new line in XNAT's `received.log` since the mark taken before the store;
 #   3. a new prearchive object by arrival time alone — a genuine last resort, and
-#      reported as such.
+#      reported as such. If received.log EXISTS on the receiver and gained nothing,
+#      that reading is reported as inconclusive (exit 2) rather than a pass.
 #
 # (2) is the normal path on a FLIP-configured receiver: configure-xnat.sh sets
 # `anonymizationEnabled: true` and anon_script.das rewrites the Study, Series and SOP
@@ -68,7 +69,14 @@
 #   KUBE_CONTEXT=kind-flip make -C trust/deploy/helm smoke-cstore   # pick the cluster
 #
 # Exit codes: 0 = the store completed and the receiver logged no importer failure.
-#             1 = anything else (with the reason named).
+#             1 = a real failure (with the reason named).
+#             2 = inconclusive: the ONLY evidence was a prearchive object's arrival time, while
+#                 received.log exists on the receiver and gained no line for this store. That is
+#                 not enough to call a pass (a concurrent DQR/C-MOVE import looks identical and
+#                 the receiver's own success logger stayed silent) and not enough to call a
+#                 failure. `make smoke-cstore` maps 2 to a loud warning, not a Make failure.
+#                 With received.log ABSENT, arrival time is the best evidence available and the
+#                 run still exits 0 with its warning.
 
 set -euo pipefail
 
@@ -192,17 +200,29 @@ ORTHANC_CREDS=$("${KUBECTL[@]}" get secret "$SECRET_NAME" -n "$NAMESPACE" \
 # A trust that has been running for weeks has old errors in dicom.log, old receipts in
 # received.log and old studies in the prearchive; scanning any of them whole would fail
 # on history and hide today's result. One exec reads both marks.
+#
+# The fourth field is an EXISTENCE probe on received.log, not a count: `wc -l < "$R" || echo 0`
+# answers 0 for a missing file and for an empty one alike, and the verdict needs to tell them
+# apart. A present-but-silent received.log beside an arrival-time-only prearchive object is
+# inconclusive (exit 2); an absent one leaves arrival time as the best evidence there is.
 MARKS=$("${KUBECTL[@]}" exec -n "$NAMESPACE" "$XNAT_POD" -- \
   env D="$DICOM_LOG" R="$RECEIVED_LOG" sh -c \
-  'printf "%s %s %s\n" "$(wc -l < "$D" 2>/dev/null || echo 0)" "$(wc -l < "$R" 2>/dev/null || echo 0)" "$(wc -c < "$R" 2>/dev/null || echo 0)"') \
+  'printf "%s %s %s %s\n" "$(wc -l < "$D" 2>/dev/null || echo 0)" "$(wc -l < "$R" 2>/dev/null || echo 0)" "$(wc -c < "$R" 2>/dev/null || echo 0)" "$(if [ -f "$R" ]; then echo 1; else echo 0; fi)"') \
   || fail "could not read ${DICOM_LOG} / ${RECEIVED_LOG} in ${XNAT_POD} — without a mark this smoke cannot tell this transfer's log lines from the pod's history"
 LOG_MARK=$(printf '%s' "$MARKS" | awk '{print $1+0}')
 RECEIVED_MARK=$(printf '%s' "$MARKS" | awk '{print $2+0}')
 RECEIVED_BYTES=$(printf '%s' "$MARKS" | awk '{print $3+0}')
+RECEIVED_LOG_PRESENT=$(printf '%s' "$MARKS" | awk '{print $4+0}')
 LOG_MARK="${LOG_MARK:-0}"
 RECEIVED_MARK="${RECEIVED_MARK:-0}"
 RECEIVED_BYTES="${RECEIVED_BYTES:-0}"
+RECEIVED_LOG_PRESENT="${RECEIVED_LOG_PRESENT:-0}"
 info "   ${DICOM_LOG} is ${LOG_MARK} lines, ${RECEIVED_LOG} is ${RECEIVED_MARK} lines before the store"
+if [ "$RECEIVED_LOG_PRESENT" = "1" ]; then
+  info "   ${RECEIVED_LOG} exists — a run with no new line there and only an arrival-time match is inconclusive (exit 2)"
+else
+  info "   ${RECEIVED_LOG} does not exist on this receiver — arrival time is the weakest evidence this run can reach"
+fi
 
 # The receiver's OWN clock, as epoch seconds AND as the RFC3339 instant that epoch denotes.
 # Epoch is absolute, so `find -newermt @N` below compares like with like however the
@@ -375,6 +395,7 @@ NEW_LOG="$NEW_LOG" POD_LOG="$POD_LOG" SCAN="$SCAN" NEW_RECEIVED="$NEW_RECEIVED" 
   FAILED_COUNT="$FAILED_COUNT" INSTANCE_COUNT="$INSTANCE_COUNT" \
   SOP_UID="$SOP_UID" STUDY_UID="$STUDY_UID" SENDER_AE="$SENDER_AE" \
   TIMED_OUT="$TIMED_OUT" PREARCHIVE_TIMEOUT="$PREARCHIVE_TIMEOUT" \
+  RECEIVED_LOG_PRESENT="$RECEIVED_LOG_PRESENT" \
   "$PYTHON" "${SCRIPT_DIR}/cstore_verdict.py" --from-env
 STATUS=$?
 set -e

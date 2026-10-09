@@ -722,6 +722,16 @@ strongest first:
 3. a new prearchive object by arrival time alone — a genuine last resort, reported as such,
    since a concurrent DQR/C-MOVE import looks identical.
 
+**Exit codes: 0 pass, 1 failure, 2 inconclusive.** (3) on its own is only honest evidence where
+`received.log` does not exist on the receiver; there it stays a pass (exit 0) with its warning.
+Where `received.log` *does* exist and gained no line for this store, the receiver's own success
+logger stayed silent through a transfer it records every receipt of — so arrival time alone is
+neither a pass nor a demonstrated failure, and the run exits **2**. The script probes that
+existence explicitly when it takes the pre-store mark: `wc -l` reports `0` for a missing file and
+an empty one alike, which cannot tell the two apart. `make -C trust/deploy/helm smoke-cstore`
+maps 2 to a loud warning and still exits 0, so an inconclusive run does not break a deploy — but
+anything reading `$?` from the script directly sees a status that is not "passed".
+
 (2) is the normal path on a FLIP trust. `configure-xnat.sh` sets `anonymizationEnabled: true` on
 the SCP receiver and `anon_script.das` rewrites `(0020,000D)`, `(0020,000E)` and `(0008,0018)`
 through `hashUID`, so the object XNAT stores does **not** carry the UIDs Orthanc holds and (1)
