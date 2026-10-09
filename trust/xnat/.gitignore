@@ -23,7 +23,11 @@ gradle.properties
 *.log
 *-data/
 xnat/plugins/*.jar
+# Stamp left by the old S3-synced plugin cache (FLIP#1292). `fetch` removes it, but `make up` only
+# checks the cache, so a warm cache keeps it until the next prepare-artifacts. Drop after a release.
 xnat/plugins/.s3-prefix
+xnat/plugins/.*.part
+xnat/build-artifacts/.*.part
 xnat/build-artifacts/*.war
 
 xnat/webapps
