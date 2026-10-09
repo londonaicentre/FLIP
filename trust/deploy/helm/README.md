@@ -34,6 +34,9 @@ server; no inbound ports are exposed from the K8s cluster.
 - **Kubernetes cluster** 1.28+ (EKS, AKS, or on-prem)
 - **Helm** 4.x (the CI-tested version; 3.16+ also works)
 - **kubectl** configured with cluster access
+- **Python 3** with **PyYAML** (`pip install pyyaml`) on whichever host runs `sync-kit` /
+  `patch-kit-secrets` — those realign `values-secrets.yaml` and verify the result by
+  parsing it, and refuse to write the file if they cannot
 - **NVIDIA GPU Operator** (if GPU workloads are enabled)
 - **External Secrets Operator** or **Secrets Store CSI Driver** (recommended for
   production secrets management)
@@ -249,6 +252,15 @@ matching `values-secrets.yaml` slots with exactly what they patched, which makes
 apply a no-op on those fields. Nothing else in the file is touched (the hand-filled XNAT /
 Orthanc slots, the comments and the `0600` mode all survive), and the kit remains the single
 source of truth for the per-trust keys.
+
+The realign is **verified by parsing, not by matching lines**: after the in-place edit the
+result is `yaml.safe_load`ed and compared with the values just patched, and a key that
+parses as more than one entry under `secrets.data` — however it is quoted or spaced — is
+refused with nothing written. A slot whose value continues on the line(s) below it (a block
+scalar in any form, or a scalar wrapped across lines) is refused for the same reason: a
+single-line rewrite would orphan the continuation. A refusal always reports that the cluster
+Secret **was** patched and only the file was left behind; fix the file and re-run, the
+command is idempotent.
 
 Three fixes that look right and are not:
 

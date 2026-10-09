@@ -331,7 +331,8 @@ class ValuesSecretsError(RuntimeError):
     """``values-secrets.yaml`` is a shape this script cannot realign safely.
 
     Raised instead of writing a file whose parsed result would not be the one slot the
-    chart renders — a duplicate key, or a slot written as a block scalar. Silence there is
+    chart renders — a duplicate key, or a slot whose value continues on the lines below it.
+    Silence there is
     the worst outcome: the operator is told the realign succeeded, and the next
     ``helm upgrade`` still dies on the SSA conflict (or, worse, deploys a wrong credential).
     """
@@ -353,9 +354,120 @@ def _slot_pattern(secret_key: str) -> re.Pattern[str]:
     return re.compile(rf"^(\s*){re.escape(secret_key)}:(\s.*)?$")
 
 
-#: A value that opens a block scalar (``key: |``, ``key: >-``, …). Its real value is the
-#: indented continuation below, which a single-line rewrite would orphan.
-_BLOCK_SCALAR = re.compile(r"^[|>][-+]?\d*$")
+@functools.cache
+def _yaml() -> ModuleType:
+    """PyYAML, imported on use — the realign is verified by parsing, not by more regex.
+
+    The rest of this script is stdlib-only and runs under a bare ``python3``. This one step
+    needs a real parser: the only trustworthy statement about a hand-edited file is what
+    ``yaml.safe_load`` makes of it, because that is what Helm reads. Without it we cannot
+    tell whether the file we are about to write says what we meant, so we refuse rather than
+    write an unverified credentials file.
+    """
+    try:
+        import yaml
+    except ModuleNotFoundError as e:  # pragma: no cover - environment-dependent
+        raise ValuesSecretsError(
+            f"{VALUES_SECRETS_NAME} cannot be verified: PyYAML is not installed. The realign is "
+            "checked by parsing the result (not by matching lines), so without it this script "
+            "will not write the file. Install it (`pip install pyyaml`) and re-run."
+        ) from e
+    return yaml
+
+
+def _continues_below(lines: list[str], i: int, end: int) -> bool:
+    """Does the slot at ``lines[i]`` carry its value on the lines below it?
+
+    A single-line rewrite of such a slot orphans the continuation, which then parses as a
+    sibling mapping, as part of the *new* value, or as a syntax error — in every case the
+    file says something we did not mean, and the operator is told "Realigned".
+
+    Indentation is the whole test, deliberately: it holds for block scalars with any
+    indicator or tag (``|``, ``>-``, ``|2-``, ``!!str |``) and for continued quoted or plain
+    scalars alike, so there is no list of forms to keep widening. Blank lines and comments
+    are skipped — they belong to whatever follows them, not to this slot.
+    """
+    for j in range(i + 1, end):
+        if not lines[j].strip() or _is_comment(lines[j]):
+            continue
+        slot_indent = len(lines[i]) - len(lines[i].lstrip())
+        return (len(lines[j]) - len(lines[j].lstrip())) > slot_indent
+    return False
+
+
+def _data_mapping_node(text: str) -> object | None:
+    """The composed ``secrets.data`` mapping node — duplicate keys still present.
+
+    ``safe_load`` applies YAML's last-one-wins and so cannot report a duplicate; the node
+    tree ``compose`` returns keeps every key, which is what makes the occurrence count
+    below a fact about the file rather than about our own regex.
+    """
+    yaml = _yaml()
+    try:
+        root = yaml.compose(text)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(root, yaml.MappingNode):
+        return None
+    for key, value in root.value:
+        if getattr(key, "value", None) == "secrets" and isinstance(value, yaml.MappingNode):
+            for inner_key, inner_value in value.value:
+                if getattr(inner_key, "value", None) == "data" and isinstance(inner_value, yaml.MappingNode):
+                    return inner_value
+    return None
+
+
+def _verify_realigned(path: Path, text: str, entries: dict[str, str]) -> None:
+    """Refuse unless the edited text *parses* as the values we meant to write.
+
+    This replaces the line-matching duplicate check, which could only ever see the shapes
+    its own pattern matched: a quoted key (``"trust-api-key": old``), a space before the
+    colon, or an explicit ``? key`` / ``: value`` pair all went unmatched, so a second copy
+    was inserted and YAML's last-one-wins handed the chart the stale value — the operator
+    reading "Realigned" while the next ``helm upgrade`` died on the same SSA conflict.
+
+    Parsing the result answers the only question that matters — *what will Helm read?* — in
+    one place, for every quoting, spacing and key style at once.
+
+    Raises:
+        ValuesSecretsError: The parse failed, the block went missing, a kit-owned key does
+            not read back as the value just patched, or a key appears more than once.
+    """
+    yaml = _yaml()
+    try:
+        parsed = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        raise ValuesSecretsError(f"{path}: the realigned file is not valid YAML ({e}). Nothing was written.") from e
+
+    data = (parsed or {}).get("secrets", {}).get("data") if isinstance(parsed, dict) else None
+    if not isinstance(data, dict):
+        raise ValuesSecretsError(
+            f"{path}: after the realign the file has no `secrets.data` mapping, so the chart would "
+            "render none of the keys just patched. Nothing was written."
+        )
+
+    node = _data_mapping_node(text)
+    occurrences: dict[str, int] = {}
+    if node is not None:
+        for key_node, _ in node.value:  # type: ignore[attr-defined]
+            name = getattr(key_node, "value", None)
+            if isinstance(name, str):
+                occurrences[name] = occurrences.get(name, 0) + 1
+
+    for secret_key, value in entries.items():
+        if occurrences.get(secret_key, 0) > 1:
+            raise ValuesSecretsError(
+                f"{path}: `{secret_key}` appears more than once under `secrets.data` (it parses as "
+                f"{occurrences[secret_key]} entries — quoting and spacing do not change that). YAML keeps "
+                "the last one, so the chart would render a value this sync did not set. Delete the "
+                "duplicate slots, leaving one, and re-run."
+            )
+        if data.get(secret_key) != value:
+            raise ValuesSecretsError(
+                f"{path}: after the realign `{secret_key}` does not parse as the value just patched into "
+                "the cluster, so the next `helm upgrade` would still conflict on it. Rewrite the slot as a "
+                "single-line `key: value` entry (the generated file always does) and re-run."
+            )
 
 
 def _secrets_data_block(lines: list[str]) -> tuple[int, int, str] | None:
@@ -431,7 +543,9 @@ def _write_atomically(path: Path, text: str) -> None:
 
     The temp file is created in the same directory (``os.replace`` is only atomic within a
     filesystem) with mode 0600, carries over the original's mode, and is fsynced before the
-    rename so the rename cannot land ahead of the data.
+    rename so the rename cannot land ahead of the data. The parent directory is fsynced
+    after the rename too, so the rename itself survives a power loss rather than leaving the
+    old file behind while the operator has been told the realign is done.
     """
     mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
@@ -447,6 +561,11 @@ def _write_atomically(path: Path, text: str) -> None:
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+    dir_fd = os.open(str(path.parent), os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def align_values_secrets(path: Path, entries: dict[str, str]) -> list[str]:
@@ -492,8 +611,9 @@ def align_values_secrets(path: Path, entries: dict[str, str]) -> list[str]:
 
     Raises:
         ValuesSecretsError: The file cannot be realigned into a state the chart would render
-            as the values just patched — a slot held as a block scalar, or a key still
-            present twice in ``secrets.data`` afterwards. Nothing is written in that case.
+            as the values just patched — a slot whose value continues on the lines below it,
+            or a key that still parses as more than one entry (or as the wrong value)
+            afterwards. Nothing is written in that case.
     """
     if not path.exists():
         return []
@@ -516,13 +636,16 @@ def align_values_secrets(path: Path, entries: dict[str, str]) -> list[str]:
         for i in range(start, end):
             match = pattern.match(lines[i])
             if match:
-                if _BLOCK_SCALAR.match((match.group(2) or "").split("#")[0].strip()):
-                    # The value is the indented continuation below this line; rewriting the
-                    # line alone would orphan it, and the orphan parses as a sibling mapping
-                    # or a syntax error. Refuse rather than guess how far it runs.
+                if _continues_below(lines, i, end):
+                    # The value runs on below this line — a block scalar with any indicator
+                    # or tag, or a continued quoted/plain scalar. Rewriting the line alone
+                    # orphans the rest, and the orphan parses as a sibling mapping, as part
+                    # of the new value, or as a syntax error. Refuse rather than guess how
+                    # far it runs.
                     raise ValuesSecretsError(
-                        f"{path}: the `{secret_key}` slot is written as a block scalar. Rewrite it as a "
-                        "single-line value (the generated file always does) and re-run."
+                        f"{path}: the `{secret_key}` slot's value continues on the line(s) below it "
+                        "(a block scalar, or a value wrapped across lines). Rewrite it as a single-line "
+                        "value (the generated file always does) and re-run."
                     )
                 replacement = f"{match.group(1)}{secret_key}: {yaml_quote(value)}"
                 if lines[i] != replacement:
@@ -537,22 +660,16 @@ def align_values_secrets(path: Path, entries: dict[str, str]) -> list[str]:
             end += 1
             aligned.append(secret_key)
 
-    # A key left in secrets.data twice is the failure mode this function is least able to
-    # report any other way: YAML's last-one-wins means the operator is told "Realigned" while
-    # the chart renders the OTHER copy, and the upgrade conflicts exactly as before. Checked
-    # against the final lines, before anything is written.
-    for secret_key in entries:
-        pattern = _slot_pattern(secret_key)
-        if sum(1 for i in range(start, end) if pattern.match(lines[i])) > 1:
-            raise ValuesSecretsError(
-                f"{path}: `{secret_key}` appears more than once under `secrets.data`. YAML keeps the "
-                "last one, so the chart would render a value this sync did not set. Delete the "
-                "duplicate slots, leaving one, and re-run."
-            )
+    # Everything above is a line edit; this is the check that it *means* what we intended.
+    # Parsing the result is the only statement about a hand-edited file that holds for every
+    # quoting, spacing and key style at once — a line-matching duplicate check could only
+    # ever see the shapes its own pattern matched. Run before anything is written.
+    text = "\n".join(lines) + "\n"
+    _verify_realigned(path, text, entries)
 
     if aligned:
         # Replace in one step, preserving the file's 0600 mode; never widen it.
-        _write_atomically(path, "\n".join(lines) + "\n")
+        _write_atomically(path, text)
     return aligned
 
 
@@ -826,6 +943,14 @@ def main(
                 print(f"❌ {e}")
                 print("   The cluster Secret WAS patched; only the values file was left untouched.")
                 print("   Fix the file and re-run this command — it is idempotent.")
+                sys.exit(1)
+            except OSError as e:
+                # The write itself failed (read-only mount, full disk, no permission). The
+                # same message matters even more here: the cluster is already patched, and
+                # a bare traceback would not say so.
+                print(f"❌ Could not write {output_dir / VALUES_SECRETS_NAME}: {e}")
+                print("   The cluster Secret WAS patched; only the values file was left untouched.")
+                print("   Fix the permissions or free the space and re-run — it is idempotent.")
                 sys.exit(1)
             if realigned:
                 # Static message on purpose: CodeQL's clear-text-logging query treats anything

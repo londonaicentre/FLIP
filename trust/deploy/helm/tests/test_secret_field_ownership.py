@@ -433,3 +433,172 @@ def test_main_realigns_the_values_file_when_it_patches_the_secret(tmp_path, monk
         assert data[key] == PATCHED[key], f"main() did not realign {key}"
         assert _occurrences(values, key) == 1
     assert "Realigned" in capsys.readouterr().out
+
+
+# ── The realign is verified by parsing, not by matching lines (FLIP#1366 review r3) ──
+# Each shape below is an ordinary hand-edit that the line-matching slot pattern did not
+# recognise. The slot therefore looked absent, a second copy went in above it, and YAML's
+# last-one-wins handed the chart the STALE value — while the operator was told "Realigned"
+# and the next `helm upgrade` died on the same SSA conflict. Widening the pattern per shape
+# is a losing game, so the check is now: parse the result and compare it with what we meant
+# to write. These tests are written as the shapes, not as the pattern, on purpose.
+
+_UNMATCHED_KEY_SHAPES = {
+    "double-quoted key": '    "trust-api-key": "stale"\n',
+    "single-quoted key": "    'trust-api-key': stale\n",
+    "space before the colon": "    trust-api-key : stale\n",
+    "explicit key": "    ? trust-api-key\n    : stale\n",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_UNMATCHED_KEY_SHAPES), ids=sorted(_UNMATCHED_KEY_SHAPES))
+def test_a_key_written_in_another_style_is_refused_not_silently_duplicated(tmp_path, shape):
+    """Quoting and spacing do not change what Helm reads, so they must not change this check."""
+    body = "secrets:\n  create: True\n  data:\n" + _UNMATCHED_KEY_SHAPES[shape] + '    aes-key-base64: "stale-aes"\n'
+    path = _values_file(tmp_path, body)
+
+    with pytest.raises(sync_k8s_kit.ValuesSecretsError) as excinfo:
+        sync_k8s_kit.align_values_secrets(path, PATCHED)
+
+    assert "trust-api-key" in str(excinfo.value), excinfo.value
+    assert path.read_text() == body, "a refusal must write nothing at all"
+
+
+@pytest.mark.parametrize("shape", sorted(_UNMATCHED_KEY_SHAPES), ids=sorted(_UNMATCHED_KEY_SHAPES))
+def test_the_refused_shapes_are_exactly_the_ones_that_used_to_pass_silently(shape):
+    """Guards the premise: each shape really does parse as the stale value when written out.
+
+    Without this, a future change could "fix" the shapes by making them unrepresentable and
+    the refusal tests above would still pass while testing nothing.
+    """
+    body = "secrets:\n  create: True\n  data:\n" + _UNMATCHED_KEY_SHAPES[shape]
+    assert yaml.safe_load(body)["secrets"]["data"]["trust-api-key"] == "stale"
+
+
+_MULTILINE_SHAPES = {
+    "block scalar": "    trust-api-key: |\n      stale\n",
+    "indented block scalar": "    trust-api-key: |2-\n      stale\n",
+    "folded, chomped": "    trust-api-key: >-\n      stale\n",
+    "tagged block scalar": "    trust-api-key: !!str |\n      stale\n",
+    "continued double-quoted": '    trust-api-key: "sta\n      le"\n',
+    "continued plain scalar": "    trust-api-key: sta\n      le\n",
+    "continuation after a blank line": "    trust-api-key: |\n\n      stale\n",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_MULTILINE_SHAPES), ids=sorted(_MULTILINE_SHAPES))
+def test_a_value_that_continues_below_the_slot_is_refused(tmp_path, shape):
+    """Rewriting the slot line alone orphans the rest, which then parses INTO the new value.
+
+    `|2-` and `!!str |` are the two the old block-scalar regex missed outright; a quoted or
+    plain scalar wrapped onto the next line was never covered at all. The test is the
+    indentation, which is what every one of these forms has in common.
+    """
+    body = "secrets:\n  create: True\n  data:\n" + _MULTILINE_SHAPES[shape]
+    path = _values_file(tmp_path, body)
+
+    with pytest.raises(sync_k8s_kit.ValuesSecretsError) as excinfo:
+        sync_k8s_kit.align_values_secrets(path, PATCHED)
+
+    assert "trust-api-key" in str(excinfo.value), excinfo.value
+    assert path.read_text() == body, "a refusal must write nothing at all"
+
+
+def test_a_wrongly_realigned_file_is_never_written_even_if_every_line_edit_looked_right(tmp_path):
+    """The check is on the parsed result, so it holds for shapes nobody has thought of yet."""
+    path = _values_file(tmp_path)
+    with pytest.raises(sync_k8s_kit.ValuesSecretsError):
+        sync_k8s_kit._verify_realigned(path, 'secrets:\n  data:\n    trust-api-key: "not-what-we-wrote"\n', PATCHED)
+
+
+def test_main_exits_1_and_says_the_cluster_was_already_patched_when_the_file_is_refused(tmp_path, monkeypatch, capsys):
+    """The order matters to the operator: the Secret is patched BEFORE the file is realigned.
+
+    A refusal that only said "duplicate key" would leave them believing nothing had changed,
+    when the cluster is already on the new keys and only the values file is behind.
+    """
+    kit = tmp_path / "trust" / ".env.ABC.development"
+    kit.parent.mkdir(parents=True)
+    kit.write_text(
+        "TRUST_API_KEY=live-api\n"
+        "TRUST_INTERNAL_SERVICE_KEY=live-internal\n"
+        "TRUST_INTERNAL_SERVICE_KEY_HEADER=X-Trust-Internal-Service-Key\n"  # pragma: allowlist secret
+        "AES_KEY_BASE64=live-aes\n"
+        "CENTRAL_HUB_API_URL=http://hub.example.com/api\n"
+    )
+    out_dir = tmp_path / "chart"
+    out_dir.mkdir()
+    values = out_dir / sync_k8s_kit.VALUES_SECRETS_NAME
+    body = 'secrets:\n  create: True\n  data:\n    "trust-api-key": "stale"\n'
+    values.write_text(body)
+    values.chmod(0o600)
+
+    class _Ok:
+        returncode = 0
+        stdout = ""
+
+    monkeypatch.setattr(sync_k8s_kit, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(sync_k8s_kit.subprocess, "run", lambda *a, **k: _Ok())
+
+    with pytest.raises(SystemExit) as excinfo:
+        sync_k8s_kit.main(
+            code="ABC",
+            env="development",
+            namespace="flip-trust",
+            secret_name="trust-release-flip-trust-secrets",  # pragma: allowlist secret
+            output_dir=out_dir,
+            aws_region="eu-west-2",
+            apply_secret=True,
+            write_override=False,
+        )
+
+    assert excinfo.value.code == 1
+    out = capsys.readouterr().out
+    assert "WAS patched" in out, out
+    assert values.read_text() == body
+
+
+def test_main_reports_a_failed_write_without_losing_the_cluster_was_patched_message(tmp_path, monkeypatch, capsys):
+    """An OSError here used to surface as a traceback, hiding the one fact the operator needs."""
+    kit = tmp_path / "trust" / ".env.ABC.development"
+    kit.parent.mkdir(parents=True)
+    kit.write_text(
+        "TRUST_API_KEY=live-api\n"
+        "TRUST_INTERNAL_SERVICE_KEY=live-internal\n"
+        "TRUST_INTERNAL_SERVICE_KEY_HEADER=X-Trust-Internal-Service-Key\n"  # pragma: allowlist secret
+        "AES_KEY_BASE64=live-aes\n"
+        "CENTRAL_HUB_API_URL=http://hub.example.com/api\n"
+    )
+    out_dir = tmp_path / "chart"
+    out_dir.mkdir()
+    values = out_dir / sync_k8s_kit.VALUES_SECRETS_NAME
+    values.write_text(GENERATED)
+    values.chmod(0o600)
+
+    class _Ok:
+        returncode = 0
+        stdout = ""
+
+    def _no_space(*a, **k):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(sync_k8s_kit, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(sync_k8s_kit.subprocess, "run", lambda *a, **k: _Ok())
+    monkeypatch.setattr(sync_k8s_kit, "_write_atomically", _no_space)
+
+    with pytest.raises(SystemExit) as excinfo:
+        sync_k8s_kit.main(
+            code="ABC",
+            env="development",
+            namespace="flip-trust",
+            secret_name="trust-release-flip-trust-secrets",  # pragma: allowlist secret
+            output_dir=out_dir,
+            aws_region="eu-west-2",
+            apply_secret=True,
+            write_override=False,
+        )
+
+    assert excinfo.value.code == 1
+    out = capsys.readouterr().out
+    assert "WAS patched" in out, out
+    assert "No space left on device" in out, out
