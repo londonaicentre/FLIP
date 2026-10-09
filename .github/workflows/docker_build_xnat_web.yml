@@ -27,23 +27,20 @@ permissions:
 
 jobs:
   build-and-push:
-    # Skip on forks: they cannot assume the upstream AWS OIDC role or push to
-    # ghcr.io/londonaicentre, so this whole build-and-publish job would otherwise
-    # show a spurious CI failure on fork pushes. Upstream publishing is unchanged.
+    # Skip on forks: they cannot push to ghcr.io/londonaicentre, so this whole
+    # build-and-publish job would otherwise show a spurious CI failure on fork
+    # pushes. Upstream publishing is unchanged.
     if: github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
     permissions: # override top-level read-only default to allow GHCR push
-      id-token: write # required for OIDC
       contents: read
       packages: write
-    environment: flip
     defaults:
       run:
         working-directory: ./trust/xnat/xnat
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: londonaicentre/xnat-web
-      FLIP_ARTIFACTS_BUCKET_NAME: flipdev-artifacts
       # Credential and SMTP env values are NOT passed as build args — they are
       # injected at container start from the deployment env file so they are
       # never written into image layers (verifiable via docker history --no-trunc).
@@ -73,13 +70,6 @@ jobs:
           [[ -n "$XNAT_VERSION" ]] || { echo "::error::XNAT_VERSION not set in trust/xnat/.env"; exit 1; }
           echo "Using XNAT version: $XNAT_VERSION"
           echo "XNAT_VERSION=$XNAT_VERSION" >> "$GITHUB_ENV"
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6.2.1
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
-          role-session-name: ${{ vars.AWS_ROLE_SESSION_NAME }}
-          aws-region: ${{ vars.AWS_REGION }}
 
       - name: Determine tags
         id: tags
@@ -144,16 +134,16 @@ jobs:
           GH_ACTOR: ${{ github.actor }}
         run: echo "$GH_TOKEN" | docker login $REGISTRY -u "$GH_ACTOR" --password-stdin
 
-      # The S3 artifact set is keyed by XNAT version — s3://<bucket>/xnat-<version>/{war, plugins/} —
-      # so branches on different XNAT versions (e.g. main vs develop across an upgrade) each build
-      # against their own WAR + plugin roster.
+      # The WAR and plugins are public upstream downloads that FLIP does not redistribute
+      # (FLIP#1292). trust/xnat/artifacts.manifest pins each URL with its SHA-256, the same
+      # roster the dev cache and the local build use, so a changed or truncated upstream file
+      # fails the build instead of being baked into the image. Its WAR line follows the
+      # XNAT_VERSION read above (pinned by trust/xnat/tests).
       - name: Download XNAT WAR
-        run: aws s3 cp "s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat-${XNAT_VERSION}/xnat-web-${XNAT_VERSION}.war" "build-artifacts/xnat-web-${XNAT_VERSION}.war"
+        run: ../scripts/xnat_artifacts.sh fetch war build-artifacts
 
       - name: Download XNAT plugins
-        # The whole prefix is the roster (DQR, Container Service, Batch Launch, OHIF viewer) — the
-        # same four families trust/xnat/scripts/ensure_plugins.sh requires for the dev cache.
-        run: aws s3 sync "s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat-${XNAT_VERSION}/plugins/" plugins/
+        run: ../scripts/xnat_artifacts.sh fetch plugin plugins
 
       - name: Build Docker image
         env:
