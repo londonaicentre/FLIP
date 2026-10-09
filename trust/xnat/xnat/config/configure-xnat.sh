@@ -182,15 +182,30 @@ xnat_curl() {
 # stay bare curl rather than xnat_curl. They carry xnat_curl's deadlines even so, and `|| true` so a
 # timeout reaches the checks below instead of ending the script under set -e with no output: the
 # wall-clock wait above proves XNAT serves the login page, not that an authenticated route answers.)
+# Both probes are retried for a few rounds: XNAT opens its HTTP port a few seconds before it creates
+# the admin's auth record, and until then refuses every login whatever the password (FLIP#1390: the
+# record landed 4.4s after Tomcat started, and a single probe failed a fresh node every time). The
+# rounds are capped well under XNAT's maxFailedLogins (20, then a one-hour lockout that refuses the
+# right password too): a kit with a genuinely wrong password spends at most 2 x rounds attempts.
 ADMIN_PASSWORD_ROTATED=false
-init_pw_status=$(curl -s --connect-timeout 5 --max-time 15 -o /dev/null -w '%{http_code}' \
-  -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
-  "$XNAT_URL/xapi/siteConfig/initialized") || true
-if [[ "${init_pw_status}" != "200" ]]; then
+admin_probe_rounds="${XNAT_ADMIN_PROBE_ROUNDS:-6}"
+admin_probe_interval="${XNAT_ADMIN_PROBE_INTERVAL_SECONDS:-5}"
+for ((round = 1; round <= admin_probe_rounds; round++)); do
+  init_pw_status=$(curl -s --connect-timeout 5 --max-time 15 -o /dev/null -w '%{http_code}' \
+    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
+    "$XNAT_URL/xapi/siteConfig/initialized") || true
+  [[ "${init_pw_status}" == "200" ]] && break
   rotated_probe=$(curl -s --connect-timeout 5 --max-time 15 -w '\n%{http_code}' \
     -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
     "$XNAT_URL/xapi/siteConfig/initialized") || true
   rotated_status="${rotated_probe##*$'\n'}"
+  [[ "${rotated_status}" == "200" ]] && break
+  if ((round < admin_probe_rounds)); then
+    echo "Neither admin password authenticates yet (round ${round}/${admin_probe_rounds}); retrying..."
+    sleep "$admin_probe_interval"
+  fi
+done
+if [[ "${init_pw_status}" != "200" ]]; then
   initialized="${rotated_probe%$'\n'*}"
   if [[ "${rotated_status}" != "200" ]]; then
     echo "ERROR: neither admin password authenticates (initial: HTTP ${init_pw_status:-000}," \

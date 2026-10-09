@@ -1104,3 +1104,35 @@ def test_abs_or_relative_to_only_joins_relative_values(tmp_path: Path, value: st
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == expected
+
+
+def test_a_trust_on_any_slot_gets_its_own_network(tmp_path: Path) -> None:
+    """up-trust attaches to deploy_trust-network-<slot>; create-networks only ever made 1 and 2.
+
+    A trust the hub gave slot Trust_3 (the Azure node on LZA stag, FLIP#1390) created every
+    container and then failed "network deploy_trust-network-3 not found". Driven against a stub
+    docker so the test proves the network is created, not that a recipe mentions it.
+    """
+    trust_dir = _kit_tree(tmp_path)
+    (trust_dir / ".env.AZ1.development").write_text("FL_KIT_SLOT=Trust_3\nFL_KIT_SLOT_NUMBER=3\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    record = tmp_path / "docker-calls"
+    _write_executable(
+        bin_dir / "docker",
+        f'#!/bin/sh\necho "$@" >> "{record}"\n[ "$1 $2" = "network inspect" ] && exit 1\nexit 0\n',
+    )
+    env = _make_env({**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"})
+
+    result = subprocess.run(
+        ["make", "-f", str(REPO_ROOT / "trust" / "Makefile"), "create-trust-network", "KIT=AZ1", "FL_BACKEND=nvflare"],
+        cwd=trust_dir, env=env, check=False, capture_output=True, text=True, timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "network create --driver overlay --attachable deploy_trust-network-3" in record.read_text()
+
+    up_trust = next(
+        line for line in (REPO_ROOT / "trust" / "Makefile").read_text().splitlines() if line.startswith("up-trust:")
+    )
+    assert "create-trust-network" in up_trust.split(":", 1)[1], "up-trust must create its network before compose"

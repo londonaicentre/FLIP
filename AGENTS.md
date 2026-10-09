@@ -31,7 +31,8 @@ FLIP/
 │       └── ansible/    # roles/ — ONE set of trust-host roles (base packages, docker, dirs with the uid rules, FL kit by source s3|precreate|none, observability config, S3 vocab) composed by onprem.yml (site-owned host; no data — `make -C trust up-trust` seeds it) and by deploy/providers/AWS/site.yml (EC2; adds inventory/AWS CLI/bastion/CloudWatch and its own seed play, finds the roles via its ansible.cfg). onprem.yml is still driven by `make -C deploy/providers/AWS provision-local-trust` (needs the hub env file — the known exception to "providers = Terraform only")
 ├── deploy/             # Central Hub Docker Compose files (dev/prod, flower/nvflare) + deploy/keycloak/ (the dev identity provider's realm, FLIP#919); FL network provisioning lives under fl-services/<backend>/
 │   └── providers/      # Infrastructure provisioning ONLY (Terraform per cloud); node shapes live under trust/deploy/
-│       └── AWS/        # Terraform/OpenTofu IaC for the hub + optional trust EC2, plus the EC2 host play site.yml
+│       ├── AWS/        # Terraform/OpenTofu IaC for the hub + optional trust EC2, plus the EC2 host play site.yml
+│       └── azure/      # Azure trust node, VM track (#1390): bootstrap root (state, budget alert, static egress IP), modules/network, vm root whose cloud-init installs flip-node (provisions with trust/deploy/ansible/azure.yml, runs the hubless self-test); driven by its own Makefile over Run Command, AZ_SUBSCRIPTION mandatory
 ├── docs/               # Sphinx documentation (ReadTheDocs)
 └── scripts/            # Utility scripts (incl. check-fl-provisioned.sh — the `make up` FL-kit guard)
 ```
@@ -196,6 +197,26 @@ git ls-files -z -- '*.py' '*.pyi' | xargs -0 uvx ruff@0.14.7 format --check --fo
 make checkov-lint          # Static checkov security lint over deploy/providers/AWS (credential-free; FLIP#1052/#1058)
 make tflint-lint           # Static tflint lint over deploy/providers/AWS (unused declarations, provider constraints, AWS values; credential-free)
 ```
+
+### Azure trust node (FLIP#1390)
+
+```bash
+make -C deploy/providers/azure help                                   # every target
+make -C deploy/providers/azure bootstrap AZ_SUBSCRIPTION="<name>" STATE_SA=<unique> ALERT_EMAIL=<you>
+make -C deploy/providers/azure init plan apply AZ_SUBSCRIPTION="<name>"
+make -C deploy/providers/azure selftest-kit AZ_SUBSCRIPTION="<name>" FL_BACKEND=nvflare  # pack the FL kit HERE, put it in the kit drop
+make -C deploy/providers/azure selftest report AZ_SUBSCRIPTION="<name>" FL_BACKEND=nvflare  # node fetches that kit and self-tests on it
+make -C deploy/providers/azure kit-upload AZ_SUBSCRIPTION="<name>" TARBALL=<flip-trust-kit-….tar.gz>
+make -C deploy/providers/azure join AZ_SUBSCRIPTION="<name>" NAME=<blob> KIT=<kit> PROD=<env>  # install a hub-registered kit + up-onprem-trust
+make -C deploy/providers/azure destroy AZ_SUBSCRIPTION="<name>"
+make -C deploy/providers/azure test lint                              # credential-free checks (CI: validate_terraform.yml "Azure node checks")
+make -C trust selftest-node FL_BACKEND=nvflare                        # on the node itself: hubless self-test + report
+```
+
+`AZ_SUBSCRIPTION` is mandatory and never defaults to the CLI's subscription; no target skips
+Terraform's confirmation. The node receives kits only through the **kit drop** (`modules/kit_drop`: shared
+keys off, firewall = node subnet + operator IP, one-day blob expiry), fetched with its managed identity — never
+provisioned on the node and never in a Run Command parameter. Detail: [`deploy/providers/azure/README.md`](deploy/providers/azure/README.md).
 
 ### Debugging
 
