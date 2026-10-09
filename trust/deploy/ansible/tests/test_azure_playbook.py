@@ -87,3 +87,18 @@ def test_swarm_is_initialised_idempotently():
 
 def test_images_tree_matches_the_selftest_slot():
     assert _play()["vars"]["flip_images_base_dirs"] == ["{{ flip_dir }}/data/trust-1"]
+
+
+def test_yq_is_pinned_and_checksummed():
+    # The NVFLARE dev-kit provisioning (generate-project-yaml.sh, restructure-lib.sh) runs
+    # mikefarah's Go yq v4 on the host; the first live self-test failed without it.
+    play = _play()
+    assert str(play["vars"]["yq_version"]).count(".") == 2
+    sha = str(play["vars"]["yq_sha256"])
+    assert len(sha) == 64, "a full SHA-256"
+    assert all(c in "0123456789abcdef" for c in sha)
+    tasks = [t for t in play["tasks"] if "yq" in t["name"]]
+    assert len(tasks) == 1, "exactly one yq install task"
+    get_url = tasks[0].get("ansible.builtin.get_url") or {}
+    assert "mikefarah/yq/releases/download/v{{ yq_version }}/yq_linux_amd64" in get_url.get("url", "")
+    assert get_url.get("checksum") == "sha256:{{ yq_sha256 }}"
