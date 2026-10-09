@@ -513,7 +513,7 @@ Two ways to load it:
 
 | You have… | Do this |
 | --- | --- |
-| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships the dev one, and trust roles have no cross-account read. |
+| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships the dev one, and trust roles have no cross-account read. `sync-kit` now skips the load, with a warning, when it still sees that dev default outside development (#881), and `NO_VOCAB_LOAD=1` keeps it out entirely on a cluster with no route to AWS (AKS, FLIP#1390) — the hook would otherwise fail and, being post-install, fail the whole release. |
 | Your own licences | Build an equivalent bundle from [OHDSI Athena](https://athena.ohdsi.org/) / [NHS TRUD](https://isd.digital.nhs.uk/) (see `trust/omop-db/README.md`), put it in a bucket you control, and set `omopDb.vocabLoad.s3Bucket` / `bundleName`. Or run `trust/omop-db/files/load_core_vocab.sh` against the database directly. |
 
 Run both targets with `-C trust/deploy/helm` (or from that directory):

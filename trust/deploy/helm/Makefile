@@ -364,6 +364,7 @@ sync-kit-override: ## Regenerate the k8s-trust-<KIT>.yaml override from the kit 
 		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
 		--release-name $(RELEASE_NAME) \
 		--output-dir $(CHART_DIR) \
+		$(if $(NO_VOCAB_LOAD),--no-vocab-load) \
 		$(KUBE_CONTEXT_ARG) \
 		--no-apply-secret
 
@@ -376,6 +377,7 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
 		--release-name $(RELEASE_NAME) \
 		--output-dir $(CHART_DIR) \
+		$(if $(NO_VOCAB_LOAD),--no-vocab-load) \
 		$(KUBE_CONTEXT_ARG) \
 		--no-write-override
 	@for svc in trust-api data-access-api imaging-api; do \
@@ -394,4 +396,5 @@ sync-kit: ## Sync a registered trust KIT into the cluster (patches Secret + writ
 		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
 		--release-name $(RELEASE_NAME) \
 		--output-dir $(CHART_DIR) \
+		$(if $(NO_VOCAB_LOAD),--no-vocab-load) \
 		$(KUBE_CONTEXT_ARG)
