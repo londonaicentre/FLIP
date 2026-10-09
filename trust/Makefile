@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build up down up-trust down-trust selftest-node restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
+.PHONY: build up down up-trust down-trust create-trust-network selftest-node restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
@@ -431,7 +431,7 @@ onboard-onprem-trust:
 # seed markers differ from the kit's PROJECTS / data version, and its up-xnat step runs
 # xnat-reset, which wipes the XNAT archive and database — never run it, or
 # restart-trust, to move a live site to a release; that is upgrade-trust (FLIP#1204).
-up-trust: require-xnat-aetitle create-networks
+up-trust: require-xnat-aetitle create-networks create-trust-network
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file $(KIT_FILE_LABEL)"
@@ -965,6 +965,14 @@ create-networks-trust-2:
 	@{ docker network inspect $(INSTANCE_PREFIX)deploy_trust-network-2 >/dev/null 2>&1 || docker network create --driver overlay --attachable $(INSTANCE_PREFIX)deploy_trust-network-2; }
 
 create-networks: create-networks-core create-networks-trust-1 create-networks-trust-2
+
+# The loaded kit's own overlay network, whatever slot the hub assigned. create-networks makes
+# only the two dev trusts' (1 and 2); a trust on Trust_3 or above (an on-prem or Azure node,
+# FLIP#1390) otherwise created every container and then failed "network
+# deploy_trust-network-3 not found".
+create-trust-network:
+	@[ -n "$(TRUST_NUM)" ] || { echo "❌ KIT=<CODE> with FL_KIT_SLOT_NUMBER set is required"; exit 1; }
+	@{ docker network inspect $(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM) >/dev/null 2>&1 || docker network create --driver overlay --attachable $(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM); }
 
 # Every network here carries the instance prefix, so an instance owns all of them and
 # removing them is unconditional. (Before the trust networks were prefixed they were
