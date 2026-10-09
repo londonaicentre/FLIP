@@ -42,7 +42,7 @@
         "@headlessui/vue": "^1.7.0",
         "@vueuse/core": "^8.7.5",
         "aws-amplify": "^6.15.3",
-        "axios": "^1.16.0",
+        "axios": "^1.20.0",
         "codemirror": "^5.65.19",
         "codemirror-editor-vue3": "^2.1.7",
         "date-fns": "^2.25.0",
@@ -59,7 +59,7 @@
         "underscore": "^1.13.4",
         "uuid": "^14.0.0",
         "vee-validate": "^4.5.8",
-        "vue": "^3.2.16",
+        "vue": "^3.5.42",
         "vue-router": "^4.0.11",
         "vue-tippy": "^6.3.1",
         "yup": "^0.32.9"
@@ -71,7 +71,6 @@
         "@pinia/testing": "^0.1.3",
         "@stylistic/eslint-plugin": "^5.10.0",
         "@tailwindcss/forms": "^0.5.2",
-        "@tailwindcss/typography": "^0.5.4",
         "@types/jest": "^29.5.11",
         "@types/lucene": "^2.1.3",
         "@types/mime": "^2.0.3",
@@ -121,7 +120,7 @@
         "vue-tsc": "^3.0.3"
     },
     "overrides": {
-        "undici": ">=7.28.0 <8.0.0",
+        "undici": ">=7.29.1 <8.0.0",
         "xml2js": ">=0.5.0",
         "lodash": "^4.18.1",
         "lodash-es": "^4.18.1",
@@ -138,7 +137,8 @@
         "nanoid": ">=3.3.18 <4.0.0",
         "@babel/core": ">=7.29.6 <8.0.0",
         "svgo": ">=3.3.5 <4.0.0",
-        "joi": ">=17.13.6 <18.0.0"
+        "joi": ">=17.13.6 <18.0.0",
+        "source-map-js": ">=1.2.2"
     },
     "babel": {
         "presets": [
