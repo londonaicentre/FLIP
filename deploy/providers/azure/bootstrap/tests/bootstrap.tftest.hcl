@@ -99,3 +99,32 @@ run "state_has_soft_delete" {
     error_message = "State blobs and containers must be recoverable for at least 7 days after deletion."
   }
 }
+
+# The VM's NIC (or NAT gateway) must be in the same region as the outbound IP, so the IP
+# follows the node's region while the state storage stays put: moving the node then
+# replaces only the IP, never the state account.
+run "egress_ip_follows_the_node_region" {
+  command = plan
+
+  variables {
+    egress_location = "westeurope"
+  }
+
+  assert {
+    condition     = azurerm_public_ip.egress.location == "westeurope"
+    error_message = "The outbound IP goes in egress_location."
+  }
+  assert {
+    condition     = azurerm_resource_group.bootstrap.location == "uksouth" && azurerm_storage_account.state.location == "uksouth"
+    error_message = "State storage stays in the bootstrap location."
+  }
+}
+
+run "egress_ip_defaults_to_the_bootstrap_region" {
+  command = plan
+
+  assert {
+    condition     = azurerm_public_ip.egress.location == "uksouth"
+    error_message = "Without egress_location the IP sits with the bootstrap."
+  }
+}

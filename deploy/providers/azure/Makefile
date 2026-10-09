@@ -17,7 +17,10 @@
 SHELL := /bin/bash
 TF := terraform
 NAME_PREFIX ?= flipaz
+# The node's region. The outbound IP follows it; the bootstrap's state storage stays in
+# BOOTSTRAP_LOCATION, so moving the node replaces only the IP.
 LOCATION ?= uksouth
+BOOTSTRAP_LOCATION ?= uksouth
 FL_BACKEND ?= nvflare
 SSH_PUBLIC_KEY_FILE ?= $(HOME)/.ssh/id_ed25519.pub
 FLIP_REF ?= $(shell git rev-parse HEAD)
@@ -52,8 +55,8 @@ bootstrap: ## One-off: state storage, budget alert, static outbound IP (STATE_SA
 	@[ -n "$(STATE_SA)" ] || { echo "❌ STATE_SA=<3-24 lowercase letters/digits, globally unique> is required."; exit 1; }
 	$(TF) -chdir=bootstrap init -input=false
 	$(TF) -chdir=bootstrap apply \
-		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
-		-var "state_storage_account_name=$(STATE_SA)" \
+		-var "subscription_id=$(SUB_ID)" -var "location=$(BOOTSTRAP_LOCATION)" -var "egress_location=$(LOCATION)" \
+		-var "name_prefix=$(NAME_PREFIX)" -var "state_storage_account_name=$(STATE_SA)" \
 		-var "budget_start_date=$(shell date -u +%Y-%m-01T00:00:00Z)" \
 		$(if $(ALERT_EMAIL),-var 'alert_emails=["$(ALERT_EMAIL)"]',-var create_budget=false)
 

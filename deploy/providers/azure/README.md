@@ -63,6 +63,15 @@ make destroy   AZ_SUBSCRIPTION="$SUB"
 
 Repeat `selftest` / `logs` / `report` with `FL_BACKEND=flower`. `make help` lists every target.
 
+## Choosing a region
+
+`LOCATION` (default `uksouth`) is the node's region, and the outbound IP follows it; the
+bootstrap's state storage stays in `BOOTSTRAP_LOCATION` (default `uksouth`), so moving the node
+replaces only the IP. Free Trial subscriptions often cannot create 4-vCPU VMs in the busy UK
+regions (`SkuNotAvailable` / `NotAvailableForSubscription`); check what yours allows with
+`az vm list-skus --subscription "$SUB" --location <region> --size Standard_D4 --all -o table`,
+then pass the same `LOCATION=<region>` to `bootstrap` (to move the IP) and to `plan`.
+
 ## When something goes wrong
 
 - **The budget alert is rejected.** Some trial offers do not support budgets. Rerun

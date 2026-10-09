@@ -144,3 +144,10 @@ def test_destroy_bootstrap_refuses_while_the_node_exists():
     assert "az group exists" in recipe, "destroy-bootstrap must check for the node first"
     assert "--subscription" in recipe, "the check must name the subscription"
     assert recipe.index("az group exists") < recipe.index("destroy"), "the check comes before the destroy"
+
+
+def test_bootstrap_keeps_its_region_and_puts_the_ip_with_the_node():
+    recipe = _recipe("bootstrap")
+    assert 'location=$(BOOTSTRAP_LOCATION)' in recipe, "bootstrap's own region must not move with the node"
+    assert 'egress_location=$(LOCATION)' in recipe, "the outbound IP must sit in the node's region"
+

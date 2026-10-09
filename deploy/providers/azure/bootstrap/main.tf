@@ -82,7 +82,7 @@ resource "azurerm_role_assignment" "state_blob" {
 resource "azurerm_public_ip" "egress" {
   name                = "${var.name_prefix}-egress-ip"
   resource_group_name = azurerm_resource_group.bootstrap.name
-  location            = azurerm_resource_group.bootstrap.location
+  location            = var.egress_location != "" ? var.egress_location : azurerm_resource_group.bootstrap.location
   allocation_method   = "Static"
   sku                 = "Standard"
   tags                = local.tags
