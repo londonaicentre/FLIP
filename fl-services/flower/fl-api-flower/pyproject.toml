@@ -13,7 +13,7 @@
 
 [project]
 name = "flip-fl-api-flower"
-version = "0.10.0"
+version = "0.12.0"
 description = "FL API for Flower deployment runtime."
 requires-python = ">=3.12,<3.14"
 dependencies = [
