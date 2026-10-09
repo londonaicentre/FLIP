@@ -15,7 +15,7 @@
 
 ## :sparkles: Highlights
 
-- **The development stack needs no AWS account** (#1274, #1337, #1403) — the dev hub signs users in through a local Keycloak instead of Cognito, and stores files in a local S3-compatible RustFS store instead of S3, so a new contributor can run `make up` without AWS SSO. flip-api picks its identity provider with `AUTH_BACKEND`: `keycloak` is the only value a dev hub accepts and `cognito` the only value a production hub accepts, and production defaults to it, so a deployed hub needs no new configuration. A CI smoke boots the hub, logs in through Keycloak and round-trips a file through the object store without AWS.
+- **The development stack needs no AWS account** (#1274, #1337, #1374, #1385, #1403) — the dev hub signs users in through a local Keycloak instead of Cognito and stores files in a local S3-compatible RustFS store instead of S3, and the dev trusts download the XNAT WAR and plugins from upstream, checked against pinned SHA-256s, instead of from an S3 bucket. A new contributor can run `make up` without AWS SSO. flip-api picks its identity provider with `AUTH_BACKEND`: `keycloak` is the only value a dev hub accepts and `cognito` the only value a production hub accepts, and production defaults to it, so a deployed hub needs no new configuration. A CI smoke boots the hub, logs in through Keycloak and round-trips a file through the object store without AWS.
 - **Flower 1.38** (#1272) — the Flower backend moves from 1.36 to 1.38. Each SuperNode is now registered with its trust's name, which the ServerApp can see. The SuperLink's Control API moves from gRPC on 9093 to HTTP on 8000, Flower's default.
 - **Terraform CI for Landing Zone (LZA) accounts** (#1300, #1357, #1358, #1364) — a least-privilege CI bootstrap module, unattended plan/apply/drift for `PROD=lza` and `PROD=lza-stag`, and a Terraform-managed Ark+ demo-assets bucket.
 
@@ -46,6 +46,7 @@
 ## :seedling: New Features
 
 - `AUTH_BACKEND` and an `IdentityProvider` interface in flip-api (`flip_api/auth/identity/`), with Keycloak and Cognito providers behind one OIDC verifier. flip-ui follows the same setting (#1274).
+- `trust/xnat/artifacts.manifest` lists the XNAT WAR and plugins with their SHA-256s and upstream URLs, and is used by the dev cache, `make build` and CI. `make -C trust prepare-artifacts` fetches and verifies them; `ARTIFACTS_DIR=<dir>` copies them from a local directory instead, for an offline host (#1374).
 - A dev object store (RustFS) behind the unchanged boto3 code, with presigned-URL audiences, an origin allow-list, and `make clean-object-store` (#1337).
 - Flower SuperNodes are registered with `--name <trust>`. Key registration waits for the SuperLink Control API instead of racing it on a cold start (#1272).
 - imaging-api builds every XNAT URL through one segment-quoting helper (#1352, #1399).
@@ -59,6 +60,7 @@
 - **imaging-api no longer reports a rejected XNAT file upload as a success.** A PUT that XNAT refused was logged as uploaded and returned in the success list. It now raises with XNAT's status code (#1397).
 - The `FlipSG` tag on security groups no longer flips on every Terraform apply, which had caused a permanent plan diff and gaps in the drift alarm (#1393).
 - dcm2niix runs as the XNAT uid, and the dev `xnat-reset` skips `sudo` when the operator already owns the tree (#1317).
+- A fresh dev stack comes up: four bring-up failures fixed, including the Keycloak health check (#1385).
 - `make central-hub` creates `central-hub-trust-apis-network` on a fresh host (#1347). The on-prem readiness checklist resolves the kit through Make (#1355).
 - The dev env example no longer pads `AWS_REGION` with trailing spaces, which made every presign return 500 on a fresh dev hub. `make restart-fl` creates the object-store dir before stopping any FL client (#1403).
 - Every tracked shell script works on macOS bash 3.2 (#1395).
