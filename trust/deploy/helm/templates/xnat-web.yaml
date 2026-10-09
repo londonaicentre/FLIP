@@ -75,6 +75,14 @@ metadata:
   labels:
     {{- include "flip-trust.labels" . | nindent 4 }}
     app.kubernetes.io/component: xnat-web
+  {{- with .Values.xnat.web.dicomService.annotations }}
+  # How a managed cluster picks the load balancer, e.g. an internal one on AKS (FLIP#1390). Quoted:
+  # Kubernetes refuses a non-string annotation, and `true` in a values file is a boolean.
+  annotations:
+    {{- range $key, $value := . }}
+    {{ $key }}: {{ $value | toString | quote }}
+    {{- end }}
+  {{- end }}
 spec:
   type: {{ .Values.xnat.web.dicomService.type }}
   {{- if ne .Values.xnat.web.dicomService.type "ClusterIP" }}

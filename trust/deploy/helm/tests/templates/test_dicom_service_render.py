@@ -216,3 +216,15 @@ def test_the_mocked_orthanc_install_may_still_expose_the_console() -> None:
     rendered = _render("xnat.web.service.type=NodePort")
 
     assert rendered.returncode == 0, f"the web-console guard fired on a mocked-Orthanc install:\n{rendered.stderr}"
+
+
+def test_dicom_service_carries_operator_annotations() -> None:
+    """A managed cluster picks its load balancer by annotation: on AKS an internal one, so the DICOM
+    receiver gets an address on the trust's network rather than a public IP (FLIP#1390)."""
+    annotation = "service.beta.kubernetes.io/azure-load-balancer-internal"
+    services = _services(
+        "xnat.web.dicomService.type=LoadBalancer",
+        f"xnat.web.dicomService.annotations.{annotation.replace('.', chr(92) + '.')}=true",
+    )
+    assert services["xnat-web-dicom"]["metadata"]["annotations"] == {annotation: "true"}
+    assert "annotations" not in _services()["xnat-web-dicom"]["metadata"], "none unless asked for"
