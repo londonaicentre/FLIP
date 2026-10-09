@@ -507,3 +507,6 @@ flip-utils/**/*.ts
 # Unanchored on purpose: the generator's --output-dir defaults to the current
 # directory, so the file lands wherever it is run from, not only in the chart dir.
 **/values-secrets.yaml
+
+# Galaxy roles (namespace.role) installed beside the shared trust-host roles (FLIP#1213)
+trust/deploy/ansible/roles/*.*/

@@ -53,6 +53,9 @@ outputs every trust needs in order to reach it — the NLB security-group rules 
 S3 — and its Makefile carries the targets that hand them over:
 
 - `provision-local-trust` runs `trust/deploy/ansible/onprem.yml` on the host and stages the FL kit from S3.
+  `AWS/site.yml` and `onprem.yml` compose the same roles (`trust/deploy/ansible/roles/`, found from here via
+  `AWS/ansible.cfg`); `site.yml` keeps only what an AWS-hosted trust has on top — the Terraform-derived
+  inventory, the AWS CLI, the SSM bastion, the CloudWatch agent, the S3 kit source and the S3-sourced vocabulary.
   This is the one known exception to the rule above: the play itself needs nothing from AWS, but its driver
   lives in this Makefile, which parses the hub env file at load and so cannot run on a host that holds only
   its kit file. Splitting the two halves is tracked under [#1213](https://github.com/londonaicentre/FLIP/issues/1213).
