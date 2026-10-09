@@ -751,6 +751,10 @@ xnat:
     # LoadBalancer — the only two options that reach a PACS outside the cluster.
     dicomService:
       type: ClusterIP
+      # Annotations for the DICOM Service, chiefly to choose the load balancer a managed cluster
+      # creates for type LoadBalancer. On AKS keep the receiver off the internet with
+      #   service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+      annotations: {}
     image:
       repository: ghcr.io/londonaicentre/xnat-web
       tag: stag
