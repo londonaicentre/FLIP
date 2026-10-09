@@ -136,6 +136,22 @@ Things worth knowing before touching any of it:
   the internal key, and the DB is in a private subnet — so the plan is asked instead.
   Release a held apply by re-dispatching `terraform_apply.yml` with the
   `fl_quiesced: true` input; a plain re-run reads the same plan and holds again.
+- **A plan that touches the LZA FL ingress gets an advisory, never a hold**
+  (`WATCHED_LZA_INGRESS_PREFIXES` in the same script: the internal FL NLB, its
+  security group and ingress rules, and the `/flip/networking/*` edge-handoff
+  parameters). The networking account's edge reads those addresses, so order matters:
+  adding ingress applies FLIP first; removing or replacing it applies the networking
+  account (`aicentre-lza-iac`) first. Legacy mode never fires it (every watched address
+  is `count = 0` there), and the exit code is unchanged (FLIP#1199).
+- **The advisory also runs where the gate does not.** `ADVISORY_ONLY=true` /
+  `--advisory-only` makes the same script exit 0 on every readable plan and report
+  what the gate *would* do (a parse error is still exit 2). Two callers:
+  `terraform_plan.yml` runs it on the PR plan (`preserve-plan: true` keeps the plan
+  file for it), because "update `aicentre-lza-iac` first" is only actionable before
+  the merge; and `terraform_apply.yml` runs it on an `fl_quiesced=true` re-dispatch,
+  where the gate step is skipped, since an NLB replacement is both FL-disruptive and
+  ingress-changing and so is the apply most likely to need the warning. Neither
+  call can hold; the hold is still the gate's alone (FLIP#1199).
 - **`aws-prod` admits `main` alone.** An environment's secrets are readable by any
   workflow that names it and runs on an admitted branch, before any AWS call, so
   admitting the default branch would hand the production secrets to every workflow
