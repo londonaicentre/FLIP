@@ -25,6 +25,8 @@ import pytest
 import yaml
 
 CHART_DIR = Path(__file__).resolve().parents[2]
+# <release fullname>-fl-kit for the release these tests render.
+DEFAULT_KIT_SECRET = "trust-release-flip-trust-fl-kit"  # pragma: allowlist secret
 
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm is not installed")
 
@@ -60,7 +62,7 @@ def test_a_secret_kit_needs_no_node_path_and_is_staged_into_a_pod_volume(backend
     volumes = _volumes(pod)
     assert "hostPath" not in volumes["fl-client-kit"]
     assert "emptyDir" in volumes["fl-client-kit"]
-    assert volumes["fl-client-kit-secret"]["secret"]["secretName"] == "trust-release-flip-trust-fl-kit"
+    assert volumes["fl-client-kit-secret"]["secret"]["secretName"] == DEFAULT_KIT_SECRET
     stage = _init(pod, "stage-fl-kit")
     mounts = {m["name"]: m for m in stage["volumeMounts"]}
     assert mounts["fl-client-kit-secret"].get("readOnly") is True
@@ -86,4 +88,4 @@ def test_staging_lets_the_flower_supernode_read_its_key():
 
 def test_the_secret_name_can_be_chosen():
     pod = _fl_client("flClient.kit.source=secret", "flClient.kit.secretName=my-kit")
-    assert _volumes(pod)["fl-client-kit-secret"]["secret"]["secretName"] == "my-kit"
+    assert _volumes(pod)["fl-client-kit-secret"]["secret"]["secretName"] == "my-kit"  # pragma: allowlist secret
