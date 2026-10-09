@@ -143,9 +143,9 @@ Things worth knowing before touching any of it:
   `main` rather than by widening the policy.
 - **`TF_STAG_DISABLED=true` (repository variable) pauses the staging leg** of plan,
   apply and drift, so a develop merge cannot rebuild a staging estate that has been
-  torn down; production never reads it. **It is not set today**: it was deleted when
-  `aws-stag` was repointed at LZA staging (`TF_PROD=lza-stag`), so all three staging
-  legs run against LZA staging. The guards remain for the next teardown;
+  torn down; production never reads it. **Leave it unset while a staging estate exists**:
+  it was deleted when `aws-stag` was repointed at LZA staging (`TF_PROD=lza-stag`), so
+  all three staging legs run against LZA staging. The guards remain for the next teardown;
   `.github/tests/workflows/test_terraform_stag_pause.py` pins them.
 - **Every IAM role this root owns carries a permissions boundary**
   (`var.iam_permissions_boundary_name`, the policy declared by
