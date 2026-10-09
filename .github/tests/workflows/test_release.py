@@ -38,6 +38,7 @@ RELEASE_WORKFLOW = WORKFLOWS / "release.yml"
 # against a stub `gh` below — it is the step that decides whether production is
 # re-pinned to the release.
 WAIT_SCRIPT = WORKFLOWS.parent / "scripts" / "wait-for-release-builds.sh"
+CONFIRM_SCRIPT = WORKFLOWS.parent / "scripts" / "confirm-release-apply.sh"
 
 
 class ReleaseDispatchesTheBuilds(unittest.TestCase):
@@ -340,6 +341,142 @@ jq -c "$jqf" < "$fx"
         result = self.wait(workflows="")
         assert result.returncode != 0
         assert "no builds were dispatched" in result.stdout
+
+    def test_no_failure_message_tells_the_operator_to_re_run_the_release(self) -> None:
+        """A re-run goes back through the dispatch step: it rebuilds all twelve images and
+        republishes :v<X.Y.Z> with different digests from the ones sites already pulled. Every
+        message must name the manual apply instead."""
+        self.write("a.yml", [self.run_entry("a", conclusion="failure")])
+        red = self.wait()
+        self.write("a.yml", [])
+        timeout = self.wait(BUILD_WAIT_SECONDS=1)
+        (self.fixtures / "fail").write_text("")
+        outage = self.wait(BUILD_WAIT_SECONDS=30, BUILD_POLL_MAX_FAILURES=2)
+        for result in (red, timeout, outage):
+            assert result.returncode != 0
+            instructs_rerun = re.search(r"(?<!do not )re-run this workflow(?! will not help)", result.stdout.lower())
+            assert not instructs_rerun, result.stdout
+            assert "gh workflow run terraform_apply.yml --ref main -f release_tag=v1.2.3" in result.stdout
+
+    def test_an_empty_pending_list_does_not_trip_set_u_on_old_bash(self) -> None:
+        """`pending=("${still[@]}")` on an empty array is unbound-variable on bash < 4.4 (macOS),
+        so the loop must break before the assignment."""
+        source = WAIT_SCRIPT.read_text()
+        assert 'pending=("${still[@]}")' in source
+        assert source.index("${#still[@]} -eq 0 ]] && break") < source.index('pending=("${still[@]}")')
+
+
+class TheApplyConfirmationRuns(unittest.TestCase):
+    """A successful `gh workflow run` is not a run: `tf-apply-main` holds one pending run, so
+    the next apply queued on main replaces a queued release apply and the release goes green
+    with production on the previous version. The script is executed, not grepped."""
+
+    STUB = """#!/usr/bin/env bash
+# Stub `gh`: `run list` answers from a JSON fixture (through real jq, so the script's own
+# filter is under test); `workflow run` records the dispatch and swaps in the next fixture.
+sub="$1"; shift
+if [[ "$sub" == "workflow" ]]; then
+  echo "dispatch" >> "${FIXTURE_DIR}/dispatches"
+  [[ -f "${FIXTURE_DIR}/after.json" ]] && mv "${FIXTURE_DIR}/after.json" "${FIXTURE_DIR}/runs.json"
+  exit "$(cat "${FIXTURE_DIR}/dispatch-exit" 2>/dev/null || echo 0)"
+fi
+jqf=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in --jq) jqf="$2"; shift ;; esac
+  shift
+done
+jq -c "$jqf" < "${FIXTURE_DIR}/runs.json"
+"""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        stub = self.bin / "gh"
+        stub.write_text(self.STUB)
+        stub.chmod(0o755)
+        self.fixtures = self.tmp / "fx"
+        self.fixtures.mkdir()
+
+    @staticmethod
+    def run_entry(**over) -> dict:
+        run = {
+            "databaseId": 9,
+            "status": "completed",
+            "conclusion": "success",
+            "createdAt": "2026-01-01T12:00:00Z",
+            "url": "https://example.invalid/apply",
+        }
+        run.update(over)
+        return run
+
+    def write(self, runs: list[dict], name: str = "runs") -> None:
+        (self.fixtures / f"{name}.json").write_text(json.dumps(runs))
+
+    def confirm(self, **env) -> subprocess.CompletedProcess:
+        environ = {
+            **os.environ,
+            "PATH": f"{self.bin}:{os.environ['PATH']}",
+            "FIXTURE_DIR": str(self.fixtures),
+            "REPO": "londonaicentre/FLIP",
+            "TAG": "v1.2.3",
+            "STARTED_AT": "2026-01-01T11:00:00Z",
+            "APPLY_CONFIRM_SECONDS": "2",
+            "APPLY_CONFIRM_POLL_SECONDS": "1",
+        }
+        environ.update({k: str(v) for k, v in env.items()})
+        return subprocess.run([
+            "bash", str(CONFIRM_SCRIPT)], capture_output=True, text=True, env=environ, timeout=120)
+
+    def dispatches(self) -> int:
+        path = self.fixtures / "dispatches"
+        return len(path.read_text().splitlines()) if path.exists() else 0
+
+    def test_a_running_apply_confirms_the_release(self) -> None:
+        self.write([self.run_entry(status="in_progress", conclusion=None)])
+        result = self.confirm()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "is running" in result.stdout
+        assert self.dispatches() == 0
+
+    def test_a_concluded_apply_is_not_re_dispatched(self) -> None:
+        """Its outcome is its own run's to report; failing here would only block the Release."""
+        self.write([self.run_entry(conclusion="failure")])
+        result = self.confirm()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert self.dispatches() == 0
+
+    def test_a_cancelled_queued_apply_is_dispatched_again(self) -> None:
+        self.write([self.run_entry(conclusion="cancelled")])
+        self.write([self.run_entry(status="in_progress", conclusion=None, createdAt="2099-01-01T00:00:00Z")], "after")
+        result = self.confirm()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "was cancelled before it ran" in result.stdout
+        assert self.dispatches() == 1
+
+    def test_a_second_cancellation_fails_the_release(self) -> None:
+        self.write([self.run_entry(conclusion="cancelled")])
+        self.write([self.run_entry(conclusion="cancelled", createdAt="2099-01-01T00:00:00Z")], "after")
+        result = self.confirm()
+        assert result.returncode != 0
+        assert "cancelled twice" in result.stdout
+        assert "NOT re-pinned" in result.stdout
+
+    def test_a_still_queued_apply_warns_rather_than_failing_the_release(self) -> None:
+        """Queuing behind a long push apply is legitimate — the release is not wrong."""
+        self.write([self.run_entry(status="queued", conclusion=None)])
+        result = self.confirm()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "::warning::" in result.stdout
+        assert "still queued" in result.stdout
+
+    def test_release_runs_the_confirmation_after_the_dispatch(self) -> None:
+        text = code_text(WORKFLOWS / "release.yml")
+        dispatch = text.index("Dispatch the production Terraform apply")
+        confirm = text.index("Confirm the release apply actually ran")
+        assert dispatch < confirm
+        assert "confirm-release-apply.sh" in text
 
 
 class TheReleaseTagValidationRuns(unittest.TestCase):

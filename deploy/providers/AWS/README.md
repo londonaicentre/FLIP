@@ -2022,12 +2022,23 @@ Three constraints are easy to break and worth keeping in mind:
 - **`release_tag` is a `main`/prod input.** The estate is chosen by the ref
   (`develop` → stag, `main` → prod), and a release is a prod event by
   definition, so the workflow rejects `release_tag` on any other ref.
-- **The two applies serialise, they do not race.** Both land in the concurrency
-  group `tf-apply-main` with `cancel-in-progress: false`, so the release
-  dispatch queues behind an in-flight push apply and applies second — which is
-  the order that matters, since it pins the release over the sha. In practice
-  the push apply is long finished by then: the wait in step 2 has just spent the
-  builds' lifetime.
+- **A running apply is never interrupted — a queued one can be.** Both applies
+  land in the concurrency group `tf-apply-main` with `cancel-in-progress:
+  false`, so the release dispatch queues behind an in-flight push apply and
+  applies second, which is the order that matters since it pins the release over
+  the sha. In practice the push apply is long finished by then: the wait in step
+  2 has just spent the builds' lifetime.
+
+  `cancel-in-progress: false` only protects the run that is already *running*.
+  GitHub keeps one pending run per group, so a run queued later on `main`
+  replaces one queued earlier. **If you re-dispatch `terraform_apply.yml` while a
+  release is in flight — most often the `fl_quiesced: true` re-dispatch of a held
+  apply — pass `release_tag: v<X.Y.Z>` as well.** Without it your run takes the
+  queued release apply's place, `release.yml` stays green and production is left
+  on the previous release. `release.yml` now watches for exactly that: its
+  "Confirm the release apply actually ran" step re-dispatches the apply once if
+  the queued one was cancelled before it started, and fails the release if it
+  happens twice.
 
 It also bypasses the `deploy/providers/AWS/**` path filter, which is the point: a
 release that touches no infrastructure would otherwise never re-pin the hub.

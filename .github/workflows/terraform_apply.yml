@@ -50,11 +50,19 @@
 #     policy: a dispatch at refs/tags/v<X.Y.Z> presents job_workflow_ref at the
 #     tag and fails to assume the role.
 #   * The release dispatch and the ordinary push apply of the same commit share
-#     the concurrency group `tf-apply-main` with cancel-in-progress: false, so
-#     they serialise rather than race, and the release one — fired after a wait
-#     the length of an image build — applies second. That is the order that
+#     the concurrency group `tf-apply-main` with cancel-in-progress: false, so a
+#     running apply is never interrupted, and the release one — fired after a
+#     wait the length of an image build — applies second. That is the order that
 #     matters: the push apply pins `sha-<short7>`, the release apply pins
 #     `v<X.Y.Z>@sha256:…` over it.
+#     `cancel-in-progress: false` protects the RUNNING apply, not a QUEUED one.
+#     GitHub holds at most one pending run per group, so whatever is queued next
+#     on main displaces what was queued before it. If you re-dispatch this
+#     workflow while a release is in flight — the usual case being an
+#     `fl_quiesced: true` re-dispatch of a held apply — pass `release_tag` too,
+#     or your run silently takes the release apply's place and production stays
+#     on the previous release. release.yml's "Confirm the release apply actually
+#     ran" step catches that case and re-dispatches once (FLIP#1283).
 #
 # A release apply that changes the FL task-definition tag trips hazard B's gate
 # and holds for an operator's `fl_quiesced: true` re-dispatch, exactly as any

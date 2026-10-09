@@ -95,8 +95,12 @@ jobs:
               run: |
                   # The instant before the first dispatch, so the wait step can tell our runs
                   # from a previous release attempt's runs on the same commit (a re-run after a
-                  # failed notes step dispatches all twelve again).
-                  echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+                  # failed notes step dispatches all twelve again). Backdated 30s: this is the
+                  # runner's clock and createdAt is GitHub's, and a runner running fast would
+                  # otherwise filter out its own first dispatch and wait for it forever. 30s is
+                  # far below the gap to a previous attempt, so it costs the filter nothing.
+                  echo "started_at=$(date -u -d '30 seconds ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+                    || date -u -v-30S +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
                   dispatched=()
                   failed=()
                   for wf in \
@@ -241,16 +245,19 @@ jobs:
             #
             # Ordering against the push-triggered apply of this same commit: both land in the
             # concurrency group `tf-apply-main` with cancel-in-progress: false, so this dispatch
-            # queues behind the in-flight push apply rather than racing it, and applies second.
-            # Second is the correct order — the push apply pins `sha-<short7>`, this one pins
-            # `v<X.Y.Z>@sha256:…` on top. In practice the push apply is long finished: the wait
-            # above has just spent the builds' lifetime.
+            # queues behind the in-flight push apply rather than cancelling it, and applies
+            # second. Second is the correct order — the push apply pins `sha-<short7>`, this one
+            # pins `v<X.Y.Z>@sha256:…` on top. In practice the push apply is long finished: the
+            # wait above has just spent the builds' lifetime. Note that the group protects a
+            # RUNNING apply only: a queued one is displaced by the next run queued on main, which
+            # is what the confirm step below exists to catch.
             #
             # The main-HEAD check is the cheap half of the rollback guard. The apply re-checks it
             # authoritatively (terraform_apply.yml refuses unless the tag IS the commit it has
             # checked out), but failing here means the operator is told before a production apply
             # is queued rather than after.
             - name: Dispatch the production Terraform apply at the release tag
+              id: apply_dispatch
               if: steps.release_check.outputs.exists == 'false'
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -263,11 +270,28 @@ jobs:
                     echo "::error::main is now $MAIN_SHA but $TAG is $HEAD_SHA — something merged during the build wait. A release apply would run main's current code with $TAG's images, rolling production back. Cut a release from $MAIN_SHA instead."
                     exit 1
                   fi
+                  echo "apply_started_at=$(date -u -d '30 seconds ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+                    || date -u -v-30S +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
                   if ! gh workflow run terraform_apply.yml --ref refs/heads/main -f release_tag="$TAG"; then
                     echo "::error::could not dispatch terraform_apply.yml for $TAG — production was NOT re-pinned. Re-run this workflow, or dispatch it by hand: gh workflow run terraform_apply.yml --repo ${{ github.repository }} --ref refs/heads/main -f release_tag=$TAG"
                     exit 1
                   fi
                   echo "dispatched terraform_apply.yml on refs/heads/main with release_tag=$TAG"
+
+            # A successful dispatch is not a run. `tf-apply-main` keeps one pending run, so the
+            # next apply queued on main — an operator's `fl_quiesced: true` re-dispatch of a held
+            # push apply, say — replaces the queued release apply, and without this step the
+            # release goes green with production still on the previous one (FLIP#1283).
+            - name: Confirm the release apply actually ran
+              if: steps.release_check.outputs.exists == 'false'
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  REPO: ${{ github.repository }}
+                  TAG: ${{ steps.version.outputs.tag }}
+                  STARTED_AT: ${{ steps.apply_dispatch.outputs.apply_started_at }}
+                  APPLY_CONFIRM_SECONDS: ${{ vars.RELEASE_APPLY_CONFIRM_SECONDS || 900 }}
+                  APPLY_CONFIRM_POLL_SECONDS: ${{ vars.RELEASE_APPLY_CONFIRM_POLL_SECONDS || 15 }}
+              run: bash "$GITHUB_WORKSPACE/.github/scripts/confirm-release-apply.sh"
 
             - name: Create GitHub Release
               if: steps.release_check.outputs.exists == 'false'

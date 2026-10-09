@@ -47,6 +47,16 @@
 #     BUILD_WAIT_SECONDS       total budget (default 5400)
 #     BUILD_POLL_SECONDS       gap between polls (default 30)
 #     BUILD_POLL_MAX_FAILURES  consecutive poll failures tolerated (default 10)
+#
+# WHAT A RE-RUN COSTS. Every message below used to end "re-run this workflow".
+# That is rarely the right advice: the GitHub Release does not exist yet when the
+# wait fails, so a re-run goes back through the dispatch step and rebuilds all
+# twelve images, overwriting `:v<X.Y.Z>` with fresh digests (the builds are not
+# reproducible). Any site that already pulled `:v<X.Y.Z>` then holds a different
+# digest from the one the hub pins. And a red build is usually fixed by a new
+# commit, which a re-run of the old run cannot pick up and which the main-HEAD
+# check would refuse anyway. So the messages name the manual path instead: wait
+# for the builds to go green on their own, then dispatch the apply by hand.
 
 set -euo pipefail
 
@@ -57,6 +67,13 @@ WORKFLOWS="${WORKFLOWS:-}"
 BUILD_WAIT_SECONDS="${BUILD_WAIT_SECONDS:-5400}"
 BUILD_POLL_SECONDS="${BUILD_POLL_SECONDS:-30}"
 BUILD_POLL_MAX_FAILURES="${BUILD_POLL_MAX_FAILURES:-10}"
+
+# The images are already building (or built); what is lost is only this job's
+# knowledge of them. Re-running this workflow would re-dispatch all twelve and
+# republish :TAG with new digests, so point at the apply instead.
+manual_apply_hint() {
+    echo "::notice::Do NOT re-run this workflow to recover: the Release does not exist yet, so a re-run re-dispatches all twelve builds and republishes ${TAG} with different digests than any site has already pulled. Watch the builds at the tag instead, and once they are green dispatch the apply yourself: gh workflow run terraform_apply.yml --ref main -f release_tag=${TAG}"
+}
 
 read -r -a pending <<<"${WORKFLOWS}"
 [[ ${#pending[@]} -gt 0 ]] || {
@@ -103,18 +120,23 @@ while :; do
     if [[ "${poll_failed}" -eq 1 ]]; then
         consecutive_failures=$((consecutive_failures + 1))
         if [[ "${consecutive_failures}" -ge "${BUILD_POLL_MAX_FAILURES}" ]]; then
-            echo "::error::${consecutive_failures} consecutive failures listing workflow runs — giving up on ${TAG}. This is an API or token problem, not a failed build; production was NOT re-pinned, and the images may well be fine. Re-run this workflow."
+            echo "::error::${consecutive_failures} consecutive failures listing workflow runs — giving up on ${TAG}. This is an API or token problem, not a failed build; production was NOT re-pinned, and the images may well be fine."
+            manual_apply_hint
             exit 1
         fi
     else
         consecutive_failures=0
     fi
 
+    # Break before the assignment rather than after it: `("${still[@]}")` on an
+    # empty array is an unbound-variable error under `set -u` on bash < 4.4,
+    # which is what a Mac still ships (FLIP#1395 fixed the same shape).
+    [[ ${#still[@]} -eq 0 ]] && break
     pending=("${still[@]}")
-    [[ ${#pending[@]} -eq 0 ]] && break
 
     if [[ "${SECONDS}" -ge "${deadline}" ]]; then
-        echo "::error::timed out after ${BUILD_WAIT_SECONDS}s waiting for ${pending[*]} at ${TAG} — production was NOT re-pinned to ${TAG}; re-run this workflow once they finish"
+        echo "::error::timed out after ${BUILD_WAIT_SECONDS}s waiting for ${pending[*]} at ${TAG} — production was NOT re-pinned to ${TAG}"
+        manual_apply_hint
         exit 1
     fi
     echo "⏳ waiting on ${#pending[@]}: ${pending[*]}"
@@ -123,7 +145,7 @@ done
 
 if [[ ${#red[@]} -gt 0 ]]; then
     printf '::error::release build failed: %s\n' "${red[@]}"
-    echo "::error::production was NOT re-pinned to ${TAG} — fix and re-run this workflow"
+    echo "::error::production was NOT re-pinned to ${TAG}. A re-run of this workflow will not help: it cannot pick up a fix (that is a new commit, which the main-HEAD check would refuse at this tag), and it would republish ${TAG} from the same red source. Fix forward with a new release, or — if the build was flaky rather than wrong — re-run just the failed build workflows at the tag and then dispatch the apply: gh workflow run terraform_apply.yml --ref main -f release_tag=${TAG}"
     exit 1
 fi
 echo "every dispatched build at ${TAG} is green"
