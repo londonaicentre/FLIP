@@ -185,6 +185,25 @@ The failure mode if you miss one is loud rather than silent: an unknown value is
 Helm, but a missing `flClient.kitHostPath` fails the render by name, and a kit that never
 reached the node leaves the pod `Pending` on the `hostPath type check failed` event above.
 
+
+#### On a managed cluster (AKS): the kit from a Secret
+
+A managed node pool replaces nodes at will, so nothing may live on one. Put the kit in a Secret
+instead and deploy with `flClient.kit.source=secret` (FLIP#1390):
+
+```bash
+make -C trust/deploy/helm kit-secret KIT_SRC=<the slot's kit directory> KUBE_CONTEXT=<kube context>
+# then deploy with --set flClient.kit.source=secret  (kitHostPath is not needed)
+```
+
+`kit-secret` makes one key per mounted file (`startup__client.key`, `keys__supernode_credentials_3`,
+...) in `<release>-flip-trust-fl-kit` (`flClient.kit.secretName` overrides it) and refuses a kit
+missing its backend's files, a nested directory, or more than a Secret's 1 MiB. At pod start the
+`stage-fl-kit` init container copies the files into the pod's own kit volume, because a Secret
+volume is read-only and NVFLARE writes into `local/`, `startup/` and `transfer/`; it hands them to
+uid 1000 (NVFLARE) or makes the Flower key readable by gid 49999. That volume lives as long as the
+pod, so anything NVFLARE leaves in `transfer/` goes with it.
+
 ### 5. Install / upgrade the chart
 
 ```bash

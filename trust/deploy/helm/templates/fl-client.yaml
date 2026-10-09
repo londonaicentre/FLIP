@@ -126,6 +126,60 @@ spec:
         # own image (already required by this pod — no extra registry
         # dependency) with an explicit root securityContext: chown/chmod need
         # root, but privilege is scoped to exactly the three file capabilities.
+        {{- if eq (.Values.flClient.kit.source | default "hostPath") "secret" }}
+        # The kit from a Secret (flClient.kit.source: secret; FLIP#1390): a managed node pool
+        # replaces nodes at will, so nothing may live on one. A Secret volume is read-only, and
+        # NVFLARE writes into local/, chmods its startup/ scripts and saves into transfer/, so the
+        # files are copied into the pod's kit volume and handed to the client's user. Keys are
+        # <subdir>__<file> (a Secret key cannot hold a slash); `make kit-secret` builds them.
+        - name: stage-fl-kit
+          image: {{ include "flip-trust.flClientImage" . }}
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - DAC_OVERRIDE
+                - FOWNER
+            seccompProfile:
+              type: RuntimeDefault
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              for f in /kit-secret/*; do
+                key="$(basename "$f")"
+                case "$key" in *__*) ;; *) echo "kit Secret key '$key' is not <subdir>__<file>" >&2; exit 1 ;; esac
+                dir="${key%%__*}"
+                file="${key#*__}"
+                case "$dir" in ""|.|..) echo "kit Secret key '$key' names an unsafe directory" >&2; exit 1 ;; esac
+                case "$file" in ""|.|..|*/*) echo "kit Secret key '$key' names an unsafe file" >&2; exit 1 ;; esac
+                mkdir -p "/kit/$dir"
+                cp "$f" "/kit/$dir/$file"
+              done
+              {{- if eq .Values.flBackend "flower" }}
+              chmod 0755 /kit /kit/certificates /kit/keys
+              chmod 0644 /kit/certificates/*
+              chgrp 49999 /kit/keys/*
+              chmod 0640 /kit/keys/*
+              {{- else }}
+              mkdir -p /kit/local /kit/startup /kit/transfer
+              chown -R 1000:1000 /kit
+              chmod -R go-rwx /kit
+              {{- end }}
+              echo "FL kit staged from the Secret:"; ls -lR /kit | sed -n '1,40p'
+          volumeMounts:
+            - name: fl-client-kit-secret
+              mountPath: /kit-secret
+              readOnly: true
+            - name: fl-client-kit
+              mountPath: /kit
+        {{- end }}
         - name: images-init
           image: {{ include "flip-trust.flClientImage" . }}
           securityContext:
@@ -389,6 +443,15 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: {{ .Values.flClient.shmSize }}
+        {{- if eq (.Values.flClient.kit.source | default "hostPath") "secret" }}
+        # Filled by stage-fl-kit from the Secret below; lives as long as the pod.
+        - name: fl-client-kit
+          emptyDir: {}
+        - name: fl-client-kit-secret
+          secret:
+            secretName: {{ .Values.flClient.kit.secretName | default (printf "%s-fl-kit" (include "flip-trust.fullname" .)) }}
+            defaultMode: 0400
+        {{- else }}
         - name: fl-client-kit
           # Pre-provisioned on the node. The chart cannot fetch it: a trust holds no
           # FLIP credentials, and the kit arrives out-of-band (see values.yaml).
@@ -397,6 +460,7 @@ spec:
           hostPath:
             path: {{ required "flClient.kitHostPath is required when flClient.enabled — the absolute path ON THE NODE holding this trust's provisioned FL participant kit. Stage it with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then --set flClient.kitHostPath=/opt/flip/fl-kit (stage-kit's default KIT_DEST, and the kit file's FL_KIT_DIR)" .Values.flClient.kitHostPath | quote }}
             type: Directory
+        {{- end }}
         {{- if $governed }}
         - name: governance
           configMap:

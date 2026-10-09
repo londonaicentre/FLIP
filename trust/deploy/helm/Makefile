@@ -141,7 +141,7 @@ ifneq ($(strip $(TAG)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init stage-kit preflight template-egress-variants smoke-cstore
+.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit preflight template-egress-variants smoke-cstore
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -167,6 +167,11 @@ preflight: ## Check all prerequisites before deploying (tools, cluster, files, k
 	 HELM="$(HELM_BIN)" \
 	 KUBE_CONTEXT="$(KUBE_CONTEXT)" \
 	 bash $(CHART_DIR)/scripts/preflight.sh
+
+kit-secret: ## Put this trust's FL kit in a Secret for flClient.kit.source=secret (managed node pools, e.g. AKS)
+	@[ -n "$(KIT_SRC)" ] || { echo "❌ KIT_SRC=<the slot's kit directory: local/ startup/ … or certificates/ keys/> is required"; exit 1; }
+	python3 $(CHART_DIR)/scripts/kit_secret.py --kit-src $(KIT_SRC) \
+		--name $(RELEASE_NAME)-flip-trust-fl-kit --namespace $(NAMESPACE) | $(KUBECTL) apply -f -
 
 stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE deploy)
 	## The chart never fetches the kit — a trust holds no FLIP AWS credentials, and the
