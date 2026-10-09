@@ -24,7 +24,7 @@
 | `source/components/` | Per-component deep dives: `overview` (component map), `component-central-hub` (hub services, deployment-agnostic), `component-fl-nets` (nets, scheduler, job types, config, privacy filters), `component-trust-apis` (trust-api / imaging-api / data-access-api), OMOP, XNAT, PACS, logging stack |
 | `source/sys-admin/` | Admin tasks (user roles, project/user management, platform support) |
 | `source/user-guides/` | User guide files |
-| `source/deploy-flip/` | Per-target deployment guides: `deploy-central-hub` (modes table + shared sections) with children `deploy-central-hub-aws` (self-contained, the legacy generated diagrams) and `deploy-central-hub-aws-lza` (platform-managed, the LZA generated diagrams); TRE; on-prem |
+| `source/deploy-flip/` | Per-target deployment guides: `deploy-local-dev` (the one-host `make up` walkthrough: env file, AWS SSO for the example Trusts' artifacts, first sign-in), `deploy-central-hub` (modes table + shared sections) with children `deploy-central-hub-aws` (self-contained, the legacy generated diagrams) and `deploy-central-hub-aws-lza` (platform-managed, the LZA generated diagrams); TRE; on-prem |
 | `source/working-with-flip-apps/` | Step-by-step FLARE / Flower app authoring |
 
 ## Paired pages
