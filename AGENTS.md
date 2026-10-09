@@ -204,14 +204,19 @@ make tflint-lint           # Static tflint lint over deploy/providers/AWS (unuse
 make -C deploy/providers/azure help                                   # every target
 make -C deploy/providers/azure bootstrap AZ_SUBSCRIPTION="<name>" STATE_SA=<unique> ALERT_EMAIL=<you>
 make -C deploy/providers/azure init plan apply AZ_SUBSCRIPTION="<name>"
-make -C deploy/providers/azure selftest report AZ_SUBSCRIPTION="<name>" FL_BACKEND=nvflare
+make -C deploy/providers/azure selftest-kit AZ_SUBSCRIPTION="<name>" FL_BACKEND=nvflare  # pack the FL kit HERE, put it in the kit drop
+make -C deploy/providers/azure selftest report AZ_SUBSCRIPTION="<name>" FL_BACKEND=nvflare  # node fetches that kit and self-tests on it
+make -C deploy/providers/azure kit-upload AZ_SUBSCRIPTION="<name>" TARBALL=<flip-trust-kit-….tar.gz>
+make -C deploy/providers/azure join AZ_SUBSCRIPTION="<name>" NAME=<blob> KIT=<kit> PROD=<env>  # install a hub-registered kit + up-onprem-trust
 make -C deploy/providers/azure destroy AZ_SUBSCRIPTION="<name>"
 make -C deploy/providers/azure test lint                              # credential-free checks (CI: validate_terraform.yml "Azure node checks")
 make -C trust selftest-node FL_BACKEND=nvflare                        # on the node itself: hubless self-test + report
 ```
 
 `AZ_SUBSCRIPTION` is mandatory and never defaults to the CLI's subscription; no target skips
-Terraform's confirmation. Detail: [`deploy/providers/azure/README.md`](deploy/providers/azure/README.md).
+Terraform's confirmation. The node receives kits only through the **kit drop** (`modules/kit_drop`: shared
+keys off, firewall = node subnet + operator IP, one-day blob expiry), fetched with its managed identity — never
+provisioned on the node and never in a Run Command parameter. Detail: [`deploy/providers/azure/README.md`](deploy/providers/azure/README.md).
 
 ### Debugging
 
