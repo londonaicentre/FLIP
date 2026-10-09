@@ -194,12 +194,14 @@ ORTHANC_CREDS=$("${KUBECTL[@]}" get secret "$SECRET_NAME" -n "$NAMESPACE" \
 # on history and hide today's result. One exec reads both marks.
 MARKS=$("${KUBECTL[@]}" exec -n "$NAMESPACE" "$XNAT_POD" -- \
   env D="$DICOM_LOG" R="$RECEIVED_LOG" sh -c \
-  'printf "%s %s\n" "$(wc -l < "$D" 2>/dev/null || echo 0)" "$(wc -l < "$R" 2>/dev/null || echo 0)"') \
+  'printf "%s %s %s\n" "$(wc -l < "$D" 2>/dev/null || echo 0)" "$(wc -l < "$R" 2>/dev/null || echo 0)" "$(wc -c < "$R" 2>/dev/null || echo 0)"') \
   || fail "could not read ${DICOM_LOG} / ${RECEIVED_LOG} in ${XNAT_POD} — without a mark this smoke cannot tell this transfer's log lines from the pod's history"
 LOG_MARK=$(printf '%s' "$MARKS" | awk '{print $1+0}')
 RECEIVED_MARK=$(printf '%s' "$MARKS" | awk '{print $2+0}')
+RECEIVED_BYTES=$(printf '%s' "$MARKS" | awk '{print $3+0}')
 LOG_MARK="${LOG_MARK:-0}"
 RECEIVED_MARK="${RECEIVED_MARK:-0}"
+RECEIVED_BYTES="${RECEIVED_BYTES:-0}"
 info "   ${DICOM_LOG} is ${LOG_MARK} lines, ${RECEIVED_LOG} is ${RECEIVED_MARK} lines before the store"
 
 # The receiver's OWN clock, as epoch seconds AND as the RFC3339 instant that epoch denotes.
@@ -315,9 +317,18 @@ prearchive_scan() {
 
 # Everything received.log gained since the mark. This survives the receiver's anonymisation
 # script, which is why it and not the UID match is the primary evidence here.
+# If the file rotated between the mark and the read, the line-count mark points past the end of
+# the new file and `tail -n +N` would read nothing — a false fail. Detect it by the byte size
+# recorded with the mark: a file smaller than it was has been rotated or truncated, so read it
+# from line 1 instead.
 received_since_mark() {
   "${KUBECTL[@]}" exec -n "$NAMESPACE" "$XNAT_POD" -- \
-    sh -c "tail -n +$((RECEIVED_MARK + 1)) '${RECEIVED_LOG}' 2>/dev/null || true" 2>/dev/null || true
+    env R="${RECEIVED_LOG}" M="$RECEIVED_MARK" B="$RECEIVED_BYTES" sh -c '
+      now=$(wc -c < "$R" 2>/dev/null || echo 0)
+      from=$((M + 1))
+      [ "$now" -lt "$B" ] && from=1
+      tail -n +"$from" "$R" 2>/dev/null || true
+    ' 2>/dev/null || true
 }
 
 SCAN=""

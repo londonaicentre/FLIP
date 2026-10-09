@@ -712,7 +712,13 @@ strongest first:
    `SOPInstanceUID`, else the `StudyInstanceUID`, that was sent — matched against the
    *receiver's own* clock;
 2. a new line in `/data/xnat/home/logs/received.log` since the line-count mark taken before the
-   store (preferring lines whose calling AE is `SENDER_AE`, default `ORTHANC`);
+   store — that is, *a new receipt during the window, preferring lines from `SENDER_AE`
+   (default `ORTHANC`) when they are distinguishable*. It does not identify the object: a DQR /
+   C-MOVE retrieval reaches XNAT from the same Orthanc under the same calling AE, so **a
+   concurrent import from the same PACS cannot be told apart**. Matching the stored object
+   properly — by a value `anon_script.das` leaves intact, or by the hashed SOP UID in the stored
+   file name — is a follow-up. The importer-crash signatures below are unaffected: they fail the
+   run whichever import hits them;
 3. a new prearchive object by arrival time alone — a genuine last resort, reported as such,
    since a concurrent DQR/C-MOVE import looks identical.
 

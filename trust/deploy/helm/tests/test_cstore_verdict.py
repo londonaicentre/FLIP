@@ -27,8 +27,10 @@ No cluster: ``decide()`` takes the evidence as a dict, ``build_evidence()`` as a
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -143,7 +145,11 @@ def test_an_importer_failure_beats_a_received_log_line() -> None:
 
 
 def test_build_evidence_prefers_this_senders_received_log_lines() -> None:
-    """A busy trust writes received.log for DQR imports too; those lines are not this transfer."""
+    """A different sender's receipts are set aside where the AE is distinguishable.
+
+    This narrows the evidence; it does not identify the object. An import from the *same* PACS
+    arrives under the same calling AE and cannot be told apart.
+    """
     other = RECEIVED_LINE.replace("ORTHANC@", "SOMEPACS@")
     built = build_evidence({"NEW_RECEIVED": f"{other}\n{RECEIVED_LINE}\n", "SENDER_AE": "ORTHANC"})
 
@@ -450,6 +456,37 @@ def test_the_smoke_reads_received_log_from_a_line_count_mark() -> None:
 
     assert "received.log" in script, "the smoke never reads the log XNAT writes successful receipts to"
     assert "RECEIVED_MARK" in script, "received.log is read whole, so a trust's months of history would pass every run"
+
+
+def test_the_smoke_rereads_received_log_from_line_1_when_it_rotated() -> None:
+    """A rotation between the mark and the read leaves `tail -n +N` reading nothing — a false fail.
+
+    The snippet is lifted out of the script itself and run, so this covers the shipped shell.
+    """
+    script = (CHART_DIR / "scripts" / "smoke-cstore.sh").read_text()
+    assert "RECEIVED_BYTES" in script, "the mark records no size, so a rotation cannot be detected"
+    body = script.split('env R="${RECEIVED_LOG}" M="$RECEIVED_MARK" B="$RECEIVED_BYTES" sh -c \'')[1]
+    body = body.split("'")[0]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "received.log"
+
+        def run(mark: int, size: int) -> str:
+            return subprocess.run(  # noqa: S603
+                ["sh", "-c", body],
+                env={**os.environ, "R": str(log), "M": str(mark), "B": str(size)},
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+
+        # Not rotated: only the lines after the mark come back.
+        log.write_text("old-1\nold-2\nnew-1\n")
+        assert run(2, 12) == "new-1\n"
+
+        # Rotated: the file is smaller than the mark's size, so read it whole.
+        log.write_text("fresh-1\n")
+        assert run(2, 12) == "fresh-1\n"
 
 
 def test_the_smoke_builds_no_evidence_of_its_own() -> None:

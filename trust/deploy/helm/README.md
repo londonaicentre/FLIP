@@ -257,7 +257,10 @@ UID just sent (`SOPInstanceUID`, else `StudyInstanceUID`), else a new line in XN
 prearchive object by arrival time alone. The `received.log` line is the normal path here: the
 FLIP receiver runs with `anonymizationEnabled: true` and `anon_script.das` hashes the
 Study/Series/SOP UIDs, so the stored object does not carry the UIDs Orthanc holds and the UID
-match cannot fire. It does **not** require `dicom.log` to grow — that is the receiver's *error*
+match cannot fire. That line means *a new receipt during the window, preferring lines from
+`SENDER_AE` when they are distinguishable* — it does not identify the object, and a concurrent
+import from the same PACS cannot be told apart (proper matching of the stored object is a
+follow-up). It does **not** require `dicom.log` to grow — that is the receiver's *error*
 log, not its receipt log, and this deployment never writes it at all; its growth is reported as
 context and is never a success route. The importer-crash signatures still fail the run, read
 from `dicom.log` and the container log alike. See

@@ -154,14 +154,26 @@ def build_evidence(env: Mapping[str, str]) -> dict:
     """Turn the shell script's raw environment strings into the dict ``decide()`` expects.
 
     Lives here, beside the decision it feeds, so the shell holds no logic that no test covers.
+
+    ``received.log`` evidence means *a new receipt during the window, preferring lines from
+    ``SENDER_AE`` when they are distinguishable* — it does not establish that the receipt is this
+    smoke's object. A concurrent import from the same PACS cannot be told apart.
     """
     scan = parse_scan(env.get("SCAN", ""))
     dicom_log_lines = _nonblank(env.get("NEW_LOG", ""))
     pod_lines = _nonblank(env.get("POD_LOG", ""))
     received_lines = _nonblank(env.get("NEW_RECEIVED", ""))
     sender_ae = (env.get("SENDER_AE") or "").strip()
-    # Prefer the lines this sender wrote where the AE is known and present: on a busy trust a
-    # DQR/C-MOVE import writes received.log too, and those lines are not this transfer.
+    # Prefer lines whose calling AE is SENDER_AE when they are distinguishable, so an unrelated
+    # sender's receipts are set aside. This narrows the evidence; it does not identify the object.
+    # A DQR/C-MOVE retrieval reaches XNAT from the same Orthanc under the same calling AE, no line
+    # carries the AE on some receivers (the fallback below keeps all lines), and the shell's poll
+    # stop condition tests the unfiltered set. So what this evidence shows is a new receipt during
+    # the window, preferring SENDER_AE lines when they are distinguishable — not that the object
+    # received is the one this smoke sent. A concurrent import from the same PACS cannot be told
+    # apart; matching the stored object properly (a value anon_script.das leaves intact, or the
+    # hashed SOP UID in the stored file name) is a follow-up. The importer-crash signatures are
+    # unaffected: they fail the run whichever import hits them.
     if sender_ae:
         mine = [line for line in received_lines if f"{sender_ae}@" in line]
         if mine:
@@ -283,6 +295,8 @@ def decide(evidence: dict) -> Verdict:
         notes = [
             stored,
             *received_note(),
+            "ℹ a new receipt during the window, preferring lines from the sending AE where they "
+            "are distinguishable — a concurrent import from the same PACS cannot be told apart",
             f"ℹ no prearchive object carried the sent UID ({sop_uid or study_uid or 'unknown'}) — "
             "expected on this receiver, whose anonymisation script hashes the Study/Series/SOP UIDs",
             dicom_log_note(),
