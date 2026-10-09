@@ -118,6 +118,10 @@ on-prem trust:
    ``DOCKER_FL_REGISTRY`` to ``ghcr.io/londonaicentre/``, ``DOCKER_TAG`` to a tag every trust image
    exists at (``stag`` on staging) and, on the LZA staging edge, ``FL_SERVER_PORT=8003``.
 
+   A test trust seeded with the published mock data on slot ``Trust_3`` or above also needs
+   ``SOURCE_TRUST=1`` (or ``2``) in its kit: the mock data has two partitions, and the slot number
+   is only the default choice of partition.
+
 The tarball then goes to the node through the kit drop, and ``join`` installs it:
 
 .. code-block:: bash
