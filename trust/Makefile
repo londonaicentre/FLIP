@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build up down up-trust down-trust restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
+.PHONY: build up down prepare-artifacts up-trust down-trust restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
@@ -52,37 +52,13 @@ KIT_FILE_LABEL = $(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),trust/$(KIT_FILE))
 MAIN_ENV_FILE ?= .env.development
 ifeq ($(ENV),development)
 -include ../$(MAIN_ENV_FILE)
+# DOCKER_FL_REGISTRY is deliberately absent: ../deploy/fl_backend.mk defaults it with `?=
+# $(DOCKER_REGISTRY)` and exports it. Exported here first while unset, it is defined as empty, the
+# default never applies and the FL images lose their registry (FLIP#1384).
 export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER FL_BACKEND \
        FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY \
-       DOCKER_FL_TAG DOCKER_FL_REGISTRY NLB_SUBDOMAIN FL_SERVER_PORT
-# xnat/Makefile's dev-only plugin cache reads these to reach the artifacts bucket. Unexported they
-# are empty in the `make -C trust up-trust` path (the root Makefile blanket-exports the hub env, so
-# only a top-level `make up` would carry them), and the cache download fails on a bucket-less S3 URI.
-# AWS_PROFILE/AWS_REGION belong here for the same reason: without them the bucket NAME reaches the
-# sub-make but the credentials to read it do not, and the plugin sync dies on
-#   fatal error: Unable to locate credentials
-export FLIP_ARTIFACTS_BUCKET_NAME
-# The two AWS names are exported only when actually defined. A bare `export AWS_PROFILE` on an
-# undefined name does not pass a value through — it DEFINES the variable as empty (origin=file) and
-# exports `AWS_PROFILE=` to every child, which is the same trap the sed change at Makefile:43-47
-# removes from the root. `-include ../$(MAIN_ENV_FILE)` silently skips a missing file, and a
-# developer may legitimately comment either key out to fall through to the default profile or to
-# ambient SSO credentials — so both are routinely undefined here. An empty value is worse than an
-# absent one for the AWS CLI, because absent and empty fail differently:
-#   AWS_PROFILE absent → "Unable to locate credentials"          (falls back to the default chain)
-#   AWS_PROFILE=       → "The config profile () could not be found"
-#   AWS_REGION  absent → resolves region from the profile in ~/.aws/config
-#   AWS_REGION=        → shadows it, giving "Invalid endpoint: https://s3..amazonaws.com"
-# ifdef treats a defined-but-empty value as undefined, so an `AWS_PROFILE=` line in an env file is
-# also left un-exported. The one case this cannot cover: if the CALLER exports an empty value, make
-# forwards it to children regardless of anything written here.
-ifdef AWS_PROFILE
-export AWS_PROFILE
-endif
-ifdef AWS_REGION
-export AWS_REGION
-endif
-# UID/GID/UNAME come from the same hub .env and must be exported for the same reason:
+       DOCKER_FL_TAG NLB_SUBDOMAIN FL_SERVER_PORT
+# UID/GID/UNAME come from the same hub .env and must be exported too:
 # the dev compose runs imaging-api, data-access-api and trust-api as `user: "${UID}:${GID}"`
 # so they can write host-owned bind mounts (notably BASE_IMAGES_DOWNLOAD_DIR, which this
 # Makefile mkdir's as the host user). Unexported they interpolate to "", compose renders
@@ -414,6 +390,14 @@ build:
 # up-trust / upgrade-trust will read, including env suffixes and KIT_FILE overrides.
 onboard-onprem-trust:
 	@PROD="$(PROD)" uv run --no-config ../scripts/onboard_onprem_trust.py $(KIT) --kit-file '$(subst ','"'"',$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),$(CURDIR)/$(KIT_FILE)))' $(ONBOARD_ARGS)
+
+# Prepare the third-party artifacts a development trust needs before `make up` (FLIP#1292): the
+# XNAT plugins its dev stack bind-mounts. They are public upstream downloads, pinned with their
+# checksums in xnat/artifacts.manifest, so no AWS access is involved. `make up` only checks the
+# cache and fails pointing here. ARTIFACTS_DIR=<dir> copies the files from a local directory
+# instead, for a host with no internet route. Run it again after a pull that changes the manifest.
+prepare-artifacts:
+	$(MAKE) -C xnat xnat-plugins-download
 
 # Bring up the trust stack selected by KIT (e.g. KIT=Trust_1). Reads
 # trust/.env.<KIT> for that trust's ports / dirs / credentials. The

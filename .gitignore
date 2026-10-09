@@ -42,6 +42,8 @@ MANIFEST
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
+# ...but the XNAT artifact roster (trust/xnat/README.md "Plugins") is source.
+!trust/xnat/artifacts.manifest
 *.spec
 
 # Installer logs

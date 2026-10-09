@@ -36,8 +36,12 @@ protect the XNAT database credentials (FLIP-PT-056).
   images ship different ones: dash for xnat-web, busybox ash for xnat-db). The
   reject cases also assert the `psql` stub was *never* called, which is what pins
   the guard ahead of any database contact.
-- **Startup reliability** (`test_startup.py`) — executes the plugin cache/download
-  guard and authenticated plugin-readiness wait with stubbed AWS/curl commands,
+- **Third-party artifacts** (`test_artifacts.py`) — pins `artifacts.manifest` (well-formed
+  lines, the WAR at the `.env` XNAT version, one jar per required plugin family, the same plugin
+  URLs as the Helm chart) and executes `xnat_artifacts.sh` `check`/`fetch` against fixture
+  manifests with a stubbed `curl` and an `aws` stub that must never run.
+- **Startup reliability** (`test_startup.py`) — executes the dev plugin-cache check ordering
+  and authenticated plugin-readiness wait with stubbed curl commands,
   checks aggregate Make targets propagate failures, and pins root-relative paths
   passed to the end-to-end smoke test.
 
