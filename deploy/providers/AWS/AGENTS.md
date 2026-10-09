@@ -37,15 +37,17 @@
 
 | Alias | Environment | Account alias |
 | ------- | ------------- | --------- |
-| `stag` | Staging, self-contained estate (`PROD=stag`) | `flipstag` (legacy; retiring with the LZA migration) |
-| `prod` | Production, self-contained estate (`PROD=true`) | `flipprod` (legacy; retiring with the LZA migration) |
-| `lza-stag` | LZA staging (`PROD=lza-stag`; `FLIPAdminAccess` permission set) | staging workload account (provisioning tracked on FLIP#749) |
+| `stag` | Staging, self-contained estate (`PROD=stag`) | `flipstag` (account closed 2026-09-28) |
+| `prod` | Production, self-contained estate (`PROD=true`) | `flipprod` (account closed 2026-10-06) |
+| `lza-stag` | LZA staging (`PROD=lza-stag`; `FLIPAdminAccess` permission set) | staging workload account (live; CI-applied via `aws-stag`, `TF_PROD=lza-stag`) |
 | `lza-prod` | LZA production (`PROD=lza`; `FLIPAdminAccess` permission set) | `FLIPProduction` |
 | `dev` | Development (the `dev/` root: Cognito + SES; `FlipDeveloperAccess` permission set) | `flipdev` |
 
-The last two are where FLIP's estate is being migrated to; the `stag` / `prod` aliases
-the CI workflows default to are the LZA pair once `TF_PROD` is set (`README`,
-"Repointing CI at the LZA accounts"). Profile names are local aliases in
+The `lza-stag` / `lza-prod` profiles are where FLIP's estate now lives; the `aws-stag` /
+`aws-prod` GitHub environments the CI workflows read carry `TF_PROD=lza-stag` /
+`TF_PROD=lza`, so both legs target the LZA pair (`README`, "Repointing CI at the LZA
+accounts"). The `stag` / `prod` aliases above remain only as the workflows'
+pre-`TF_PROD` fallback. Profile names are local aliases in
 `~/.aws/config` — one that encodes the old account ID has to be re-created, not
 edited.
 
@@ -54,7 +56,7 @@ edited.
 ```bash
 make full-deploy PROD=stag                   # Full staging deploy
 make full-deploy PROD=true                    # Full prod deploy
-make init/plan/apply PROD=lza                 # LZA estate, platform-managed network (env-gated; full-deploy chains untested there — see README "Deploying onto an LZA estate"). PROD=lza-stag = staging semantics on the same mode (requires LZA_VPC_NAME in .env.lza-stag)
+make init/plan/apply PROD=lza                 # BREAK-GLASS ONLY on the LZA estate — CI applies it (apply on push to `main`, nightly drift; see "Terraform CI" below and README "Repointing CI at the LZA accounts"), and the next CI run reverts a laptop apply. LZA estate, platform-managed network (env-gated; full-deploy chains untested there — see README "Deploying onto an LZA estate"). PROD=lza-stag = staging semantics on the same mode (requires LZA_VPC_NAME in .env.lza-stag)
 make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<ip>]  # Hybrid with on-prem trust
 make full-deploy-hub-only PROD=<stag|true>    # Hub only, NO cloud Trust EC2 (all trusts on-prem, e.g. GPU hosts) — see README "Hub-only Deployment"
 make init/plan/apply                          # Terraform workflow
@@ -159,10 +161,10 @@ Things worth knowing before touching any of it:
   `main` rather than by widening the policy.
 - **`TF_STAG_DISABLED=true` (repository variable) pauses the staging leg** of plan,
   apply and drift, so a develop merge cannot rebuild a staging estate that has been
-  torn down; production never reads it. Set while the legacy staging account is
-  gone and `aws-stag` has not yet been repointed at LZA staging (`TF_PROD=lza-stag`);
-  delete it when the repoint lands. `.github/tests/workflows/test_terraform_stag_pause.py`
-  pins the three guards.
+  torn down; production never reads it. **Leave it unset while a staging estate exists**:
+  it was deleted when `aws-stag` was repointed at LZA staging (`TF_PROD=lza-stag`), so
+  all three staging legs run against LZA staging. The guards remain for the next teardown;
+  `.github/tests/workflows/test_terraform_stag_pause.py` pins them.
 - **Every IAM role this root owns carries a permissions boundary**
   (`var.iam_permissions_boundary_name`, the policy declared by
   `modules/terraform_ci_bootstrap`). The CI apply role may only create a role, or

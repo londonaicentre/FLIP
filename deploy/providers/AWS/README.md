@@ -683,9 +683,6 @@ roll the sha-pinned image forward again. And because `make apply` applies the sa
 a plan generated **before** a CLI deploy snapshots the older revision and applying it would roll
 the image back — re-run `make plan` after any `make deploy-centralhub`.
 
-> **Prod rollout note:** switch *production* deploys to this flow only after the 24 Jul 2026 DECAF
-> deadline (BDMS is live on legacy prod until then). Staging can adopt it immediately.
-
 ### Changing the browser CORS allowlist (Cognito `callback_urls`)
 
 The Cognito app client's `callback_urls` **is** this environment's browser CORS allowlist. The UI
@@ -885,6 +882,24 @@ See [`dev/README.md`](./dev/README.md) for the first-time setup workflow (the de
 
 ### Deploying onto an LZA estate (PROD=lza)
 
+> [!IMPORTANT]
+> **This estate is applied by CI, not from a laptop.** `terraform_plan.yml` plans LZA staging on every PR
+> into `main` or `develop` touching `deploy/providers/AWS/**`, `terraform_apply.yml` applies `PROD=lza-stag`
+> on push to `develop` and `PROD=lza` on push to `main`, and `terraform_drift.yml` plans nightly — all
+> through OIDC, with no long-lived keys. See
+> [Repointing CI at the LZA accounts](#repointing-ci-at-the-lza-accounts) for how an environment is pointed
+> at an account, and [Terraform CI](#terraform-ci-plan-on-pr-apply-on-merge) for the pipeline itself.
+>
+> **Both estates are on LZA.** `aws-stag` carries `TF_PROD=lza-stag` and `aws-prod` carries `TF_PROD=lza`
+> (repointed 2026-10-06, [FLIP#1199](https://github.com/londonaicentre/FLIP/issues/1199)), so a merge to
+> `develop` applies to the LZA staging account and a merge to `main` applies to LZA production. The first
+> CI-applied production apply is the next `develop`→`main` release.
+>
+> The `make init` / `make plan` / `make apply PROD=lza` runbook below is therefore **break-glass**: read it
+> for what the mode does and what the account must provide, and run it by hand only under the conditions in
+> [Break-glass](#break-glass). A laptop apply against a CI-applied account is reverted by the next CI run and
+> shows up as drift in between.
+
 This Terraform root supports **two deployment modes**, both permanently:
 
 | Mode | Selected by | Network | Ingress |
@@ -900,7 +915,7 @@ the network, guardrails and edge are owned by the accelerator pipeline rather th
 The two are one root module, not a fork: every LZA adaptation is gated behind `var.lza_managed_network` (set from
 the LZA `PROD` values), so with `PROD=true`/`PROD=stag` the resolved configuration is identical to before — the
 self-contained environments are never touched by LZA work. The AI Centre's own LZA targets are the
-**FLIPProduction** workload account in `eu-west-2` (the `lza-prod` profile alias, running alongside legacy prod)
+**FLIPProduction** workload account in `eu-west-2` (the `lza-prod` profile alias)
 and a staging workload account reached as `lza-stag`.
 
 Environment (prod vs stag semantics) and network mode are **orthogonal axes**, and the two `PROD` values set them
@@ -1040,7 +1055,8 @@ DOCKER_REGISTRY=<account-id>.dkr.ecr.eu-west-2.amazonaws.com/ghcr/londonaicentre
 EFS_PROVISION_IMAGE=<account-id>.dkr.ecr.eu-west-2.amazonaws.com/ecr-public/aws-cli/aws-cli:2.22.35
 
 # Bucket names are globally unique and the legacy flipprod-* names stay taken
-# while the old account lives — the LZA env uses its own flip-lza-* namespace.
+# while the old account's buckets are being released — the LZA env uses its own
+# flip-lza-* namespace.
 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME=flip-lza-model-files-uploads
 FLIP_FL_RESULTS_BUCKET_NAME=flip-lza-fl-results
 FLIP_APP_BUNDLES_BUCKET_NAME=flip-lza-app-bundles
@@ -1140,6 +1156,10 @@ nightly drift job in between. It is deliberately a separate switch from `MANAGE_
 window instead of whenever a release reaches production.
 
 > [!IMPORTANT]
+> **Done for both estates** — staging 2026-09-28, production 2026-10-06, both legacy accounts now closed. The
+> section is kept as the order of operations for any future estate move; there is no legacy account left to run
+> it against here.
+>
 > **Release the alias before repointing CI.** The alias lives on the *legacy* distribution, so the apply that drops
 > it has to target the legacy account. `TF_PROD` on a GitHub environment selects the estate that environment
 > applies (see "Repointing CI at the LZA accounts" below); unset, it falls back to the legacy pair. Once
@@ -1204,8 +1224,20 @@ IP) — and the parent domain's DNS host delegates the subdomain to the zone's f
 servers. The FL name (`fl.app.flip.example.org`) is the same shape aliasing the edge NLB. The
 concrete cutover runbook stays in the private platform repos.
 
-**State of the LZA path** (tracked on #749):
+**State of the LZA path** (tracked on #749 and, for the CI legs, [#1199](https://github.com/londonaicentre/FLIP/issues/1199)):
 
+- **LZA staging is CI-applied** (since 2026-10-05). `aws-stag` carries `TF_PROD=lza-stag` and the LZA staging
+  plan/apply/drift roles, so PR plans, `develop` applies and the nightly drift run all target the LZA staging
+  account, with both apply guards intact (`resolve-image-tags.sh` sha pinning and the
+  `check-fl-plan-impact.sh` FL-quiesce hold). `TF_STAG_DISABLED` was deleted at the repoint.
+- **LZA production is CI-applied** (repointed 2026-10-06). `aws-prod` carries `TF_PROD=lza` and the LZA
+  production plan/apply/drift roles, so a merge to `main` applies to the LZA production account and the
+  nightly `main` drift leg plans LZA prod. The legacy production account was closed the same day (legacy
+  staging on 2026-09-28). How an environment is pointed at an account is in
+  [Repointing CI at the LZA accounts](#repointing-ci-at-the-lza-accounts).
+- **No LZA-production plan on release PRs.** `terraform_plan.yml` is staging-only by construction, so a PR
+  into `main` gets a staging diff, not a production one; the nightly `main` drift run is the only production
+  plan anyone reads.
 - **Multi-AZ has landed platform-side** (verified against the live account 2026-08-24): both AZs carry an
   `-app-*`, a `-data-*` and a `-tgw-*` subnet, which clears the earlier single-AZ constraints — the live
   `flip-db-subnet-group` spans both AZs, and the TGW attachment now rides `tgw-a` **and** `tgw-b`, so traffic
@@ -1780,8 +1812,8 @@ AWS_PROFILE=stag LOCK=false make plan \
 ```bash
 # 1. Nothing to publish by hand: /flip/ci/host_aws_public_key, the EC2 keypair
 #    public key CI writes to ~/.ssh before planning, is declared in
-#    parameter_store.tf and created by the main root's own apply. In these two
-#    accounts it already existed from the retired seed-ci-keypair-param target;
+#    parameter_store.tf and created by the main root's own apply. Where the
+#    parameter already exists (an account seeded out of band, or a re-apply),
 #    `overwrite = true` adopts it on the first apply, rewriting the bytes CI has
 #    just read from it — a no-op.
 
@@ -1800,10 +1832,12 @@ AWS_PROFILE=stag LOCK=false make plan \
 #    ARNs it writes are read from IAM.
 #    --mode is the same PROD token the workflows read as TF_PROD, and this script
 #    sets that variable: it is what selects the env file, the profile and the keys
-#    the run requires. See "Repointing CI at the LZA accounts" for the LZA pair.
-bash scripts/setup-github-environments.sh --mode stag --env-file ../../../.env.stag --dry-run
-bash scripts/setup-github-environments.sh --mode stag --env-file ../../../.env.stag
-bash scripts/setup-github-environments.sh --mode true --env-file ../../../.env.production
+#    the run requires. Both FLIP environments run on LZA accounts; see "Repointing
+#    CI at the LZA accounts" for the full per-account order these two commands sit
+#    at the end of.
+bash scripts/setup-github-environments.sh --mode lza-stag --env-file ../../../.env.lza-stag --dry-run
+bash scripts/setup-github-environments.sh --mode lza-stag --env-file ../../../.env.lza-stag
+bash scripts/setup-github-environments.sh --mode lza --env-file ../../../.env.lza-prod
 ```
 
 Requires repo admin. It prints key names only — values go from the local env file
@@ -1892,19 +1926,17 @@ apply run:
   passes; from the second apply onward it behaves as on any other estate.
 - Every name in `.env.lza-stag` is reused from the legacy estate
   (`flip-terraform-state-stag`, `flipstag-*`, `flip-access-logs-*`) — bucket names
-  are globally unique, and reusing them works **only because the legacy accounts are
-  being emptied and closed**. If the two estates have to coexist, each of those names
-  needs changing in the env file *and* on the environment, `FLIP_TFSTATE_BUCKET_NAME`
-  included, or the first apply stops on
+  are globally unique, and reusing them worked **only because the legacy accounts were
+  emptied and closed** (staging 2026-09-28, production 2026-10-06). If two estates have
+  to coexist, each of those names needs changing in the env file *and* on the
+  environment, `FLIP_TFSTATE_BUCKET_NAME` included, or the first apply stops on
   `BucketAlreadyExists`/`AlreadyExists`.
 
-**Rollback is `TF_PROD`.** Setting it back to the legacy token (with the
-account-scoped values put back) returns the pipeline to the old estate; the
-workflows take effect on their next run, and no code changes either way. Record the
-legacy values *before* overwriting them: variables can be read back
-(`gh variable list --env aws-stag`), secrets cannot — `gh secret list` shows names
-only, so their values have to come from the operator's `.env.stag` /
-`.env.production`.
+**`TF_PROD` was the rollback, while there was something to roll back to.** Setting
+it back to the legacy token returned the pipeline to the old estate with no code
+change either way. Both legacy accounts are now closed (staging 2026-09-28,
+production 2026-10-06), so that route is gone: a repoint today is forward-only, and
+recovery is the break-glass laptop apply against the LZA account.
 
 **Two things the Terraform pipeline does not cover.** `docker_build_xnat_web.yml`
 assumes the older, over-broad role `GitHubAction-AssumeRoleWithAction-FLIP`
@@ -2037,12 +2069,37 @@ since any image-tag change updates the task definition.
 ### Break-glass
 
 The pipeline is additive — the laptop workflow is unchanged and remains the
-recovery path.
+recovery path, for the legacy **and** the LZA accounts. Use the profile and `PROD`
+token of the estate you mean (see
+[Repointing CI at the LZA accounts](#repointing-ci-at-the-lza-accounts) for the
+full mode table):
 
-- **CI is wedged / the role is broken.** `AWS_PROFILE=stag make init plan apply`
-  as before. The CI roles are owned by the platform repositories, outside this
-  root's state, so a bad main-state apply cannot lock CI out of the apply that
-  would fix it; a broken role is fixed there.
+| Estate | Break-glass command |
+| --- | --- |
+| LZA staging | `AWS_PROFILE=lza-stag make init plan apply PROD=lza-stag` |
+| LZA production | `AWS_PROFILE=lza-prod make init plan apply PROD=lza` |
+
+The legacy staging and legacy production rows are gone: those accounts are closed
+(staging 2026-09-28, production 2026-10-06), so `PROD=stag` / `PROD=true` have no
+estate to reach (removal of the modes themselves is tracked on
+[FLIP#1377](https://github.com/londonaicentre/FLIP/issues/1377)). Each remaining row
+needs that estate's env file (`.env.lza-stag` / `.env.lza-prod`) present locally; the
+Makefile's guard refuses to run on a mismatched `AWS_PROFILE`.
+
+**A laptop apply is only ever a recovery action on a CI-applied account.** Both
+LZA estates are applied by CI, so a hand-run there is
+reverted by the next run and reported by the nightly drift job meanwhile. Run one
+only when:
+
+- **CI is wedged / the role is broken.** The CI roles are owned by the platform
+  repositories, outside this root's state, so a bad main-state apply cannot lock CI
+  out of the apply that would fix it; a broken role is fixed there.
+- **The change must not go through CI at all** — the targeted one-offs the repoint
+  runbook calls for, such as creating `/flip/ci/host_aws_public_key` in a new LZA
+  account before CI can plan there.
+
+Two more pipeline-level escapes:
+
 - **A plan is stuck on the state lock.** PR plans run with `-lock=false` and never
   take it. An apply does; `make force-unlock LOCK_ID=<id>` releases it.
 - **An apply must not run.** Disable `terraform_apply.yml` in the Actions tab, or
