@@ -97,6 +97,13 @@ case "${FAIL_ON_URL:-__none__}" in
   *) case "$url" in *"$FAIL_ON_URL"*) status="${FAIL_STATUS:-500}"; body='{"error":"stub failure"}' ;; esac ;;
 esac
 
+# A freshly started XNAT answers HTTP before it has created the admin's auth record, and refuses every
+# login until it has: the first AUTH_NOT_READY_FOR authenticated calls get a 401 whatever the password.
+if [ -n "$creds" ] && [ -n "${AUTH_NOT_READY_FOR:-}" ]; then
+  n=$(( $(cat "$PAYLOADS.auth" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$PAYLOADS.auth"
+  [ "$n" -le "$AUTH_NOT_READY_FOR" ] && { status=401; body='{"error":"unauthorized"}'; }
+fi
+
 # XNAT refuses a password it does not hold (comma-separated list, e.g. the rotated-away initial one).
 case ",${WRONG_LOGINS:-}," in
   *",${creds#*:},"*) [ -n "$creds" ] && { status=401; body='{"error":"unauthorized"}'; } ;;
@@ -708,3 +715,23 @@ def test_neither_password_working_stops_before_touching_xnat(tmp_path):
     assert code == 1, output
     assert "neither admin password authenticates" in output
     assert not any(m in {"POST", "PUT", "DELETE"} for m, _ in requests_made(payloads))
+
+
+# XNAT 1.10 opens its HTTP port a few seconds before it creates the admin's auth record (FLIP#1390:
+# 4.4s on an Azure D4s_v5), so the login page answers while every login still 401s.
+ADMIN_PROBE = "/xapi/siteConfig/initialized"
+
+
+def test_an_admin_account_not_yet_ready_is_waited_for(tmp_path):
+    # Two full rounds (initial + rotated each) refused before the auth record exists.
+    code, _, output = run_configure(tmp_path, {"AUTH_NOT_READY_FOR": "4"}, pacs_state=MOCK_PACS_REGISTRATION)
+    assert code == 0, output
+    assert credentials_used(tmp_path, "PUT", "/xapi/users/admin") == ["admin:initial"], "first boot not detected"
+
+
+def test_a_wrong_password_gives_up_before_xnat_locks_the_account(tmp_path):
+    """XNAT locks an account after 20 failed logins, and a locked admin refuses the right password too."""
+    code, _, output = run_configure(tmp_path, {"WRONG_LOGINS": "initial,rotated"})
+    assert code == 1, output
+    probes = credentials_used(tmp_path, "GET", ADMIN_PROBE)
+    assert 2 < len(probes) <= 12, f"{len(probes)} admin login attempts"
