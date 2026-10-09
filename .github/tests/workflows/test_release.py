@@ -426,8 +426,7 @@ jq -c "$jqf" < "${FIXTURE_DIR}/runs.json"
             "APPLY_CONFIRM_POLL_SECONDS": "1",
         }
         environ.update({k: str(v) for k, v in env.items()})
-        return subprocess.run([
-            "bash", str(CONFIRM_SCRIPT)], capture_output=True, text=True, env=environ, timeout=120)
+        return subprocess.run(["bash", str(CONFIRM_SCRIPT)], capture_output=True, text=True, env=environ, timeout=120)
 
     def dispatches(self) -> int:
         path = self.fixtures / "dispatches"
