@@ -62,8 +62,18 @@ build:
 
 # Dev: provision net-<NET_NUMBER> startup kits into DEV_WORKSPACE_DIR (gitignored),
 # where the dev compose mounts expect them.
+# NVFLARE writes every private key 0600. The FL server and clients run as the host uid in
+# dev and read theirs as owner, but the FL API runs as the image's user, so its admin key
+# is opened to the provisioning user's group and the container joins that group (group_add
+# in deploy/compose.development.nvflare.yml) — the 640 + group_add Flower's dev SuperNodes
+# use (FLIP#1384). The root `make up` checks the key still matches.
+FL_API_ADMIN_KEY = $(DEV_WORKSPACE_DIR)/net-$(NET_NUMBER)/services/flip-fl-api-net-$(NET_NUMBER)/startup/client.key
 provision:
 	$(SCRIPTS)/provision-network.sh $(PROVISION)/net-$(NET_NUMBER)_project_dev.yml $(NET_NUMBER) $(DEV_WORKSPACE_DIR)
+	@test -f $(FL_API_ADMIN_KEY) || { echo "❌ Provisioning produced no FL API admin key at $(FL_API_ADMIN_KEY)" \
+		"(check the admin participant in $(PROVISION)/net-$(NET_NUMBER)_project_dev.yml)" >&2; exit 1; }
+	chgrp $$(id -g) $(FL_API_ADMIN_KEY)
+	chmod 640 $(FL_API_ADMIN_KEY)
 
 provision-2-nets:
 	$(MAKE) provision NET_NUMBER=1

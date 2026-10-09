@@ -689,6 +689,18 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	## digest-ONLY reference (no tag at all) has nothing to replace and is refused.
 	@set -e; \
 	export AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION); \
+	base_ref() { \
+	  _img="$$1"; _svc="$$2"; _base="$$_img"; \
+	  case "$$_img" in \
+	  *@*) \
+	    _base="$${_img%@*}"; \
+	    case "$$_base" in \
+	    *:*) ;; \
+	    *) echo "❌ $$_svc: digest-only image '$$_img' — cannot swap a tag onto it" >&2; return 1;; \
+	    esac;; \
+	  esac; \
+	  printf '%s' "$$_base"; \
+	}; \
 	echo "⚠️  FL quiesce reminder (FLIP#770): replacing fl-server-net-1 kills any in-flight"; \
 	echo "   training run and strands its model at TRAINING_STARTED with its net stuck BUSY."; \
 	echo "   Before deploying: enable Deployment Mode (Admin → Deployments) — it pauses FL job"; \
@@ -725,15 +737,7 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  image=$$(printf '%s' "$$td_json" | jq -r --arg name "$$service" \
 	    '.taskDefinition.containerDefinitions[] | select(.name == $$name).image'); \
 	  [ -n "$$image" ] || { echo "❌ $$service: no container named '$$service' in $$current_td"; exit 1; }; \
-	  base_image="$$image"; \
-	  case "$$image" in \
-	  *@*) \
-	    base_image="$${image%@*}"; \
-	    case "$$base_image" in \
-	    *:*) ;; \
-	    *) echo "❌ $$service: digest-only image '$$image' — cannot swap a tag onto it"; exit 1;; \
-	    esac;; \
-	  esac; \
+	  base_image=$$(base_ref "$$image" "$$service") || exit 1; \
 	  new_image="$${base_image%:*}:$$TAG"; \
 	  case "$$new_image" in \
 	  ghcr.io/*) \
@@ -798,7 +802,8 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  image=$$(printf '%s' "$$td_json" | jq -r --arg name "$$service" \
 	    '.taskDefinition.containerDefinitions[] | select(.name == $$name).image'); \
 	  [ -n "$$image" ] || { echo "❌ $$service: no container named '$$service' in $$current_td"; exit 1; }; \
-	  new_image="$${image%:*}:$$TAG"; \
+	  new_image=$$(base_ref "$$image" "$$service") || { warn_mixed; exit 1; }; \
+	  new_image="$${new_image%:*}:$$TAG"; \
 	  jq_prog='.taskDefinition.containerDefinitions |= map(if .name == $$name then .image = $$image else . end)'; \
 	  jq_prog="$$jq_prog | (.taskDefinition | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,"; \
 	  jq_prog="$$jq_prog .compatibilities, .registeredAt, .registeredBy, .deregisteredAt))"; \

@@ -170,10 +170,11 @@ jobs:
       # This workflow fires on `deploy/providers/AWS/**`; the image builds fire on
       # service paths. An infrastructure-only merge therefore publishes no
       # `sha-<short7>` image at all, and waiting the full budget for one that
-      # cannot exist adds up to GHCR_WAIT_SECONDS per image — half an hour of
-      # idle runner on the commonest kind of apply. So the budget is spent only
-      # when this push actually touched a path that builds one of the two images
-      # the resolver looks for.
+      # cannot exist burns GHCR_WAIT_SECONDS of idle runner on the commonest kind
+      # of apply. The resolver looks for three images (flip-api, fl-server,
+      # fl-api), but the two FL ones are published by one workflow and share a
+      # single budget, so the worst case is two waits, not three. So the budget is
+      # spent only when this push actually touched a path that builds one of them.
       - name: Decide how long to wait for this commit's images
         id: wait
         env:
