@@ -197,6 +197,13 @@ endif
 
 export TF_VAR_docker_image_tag=${DOCKER_TAG}
 export TF_VAR_flip_fl_image_tag=${DOCKER_FL_TAG}
+# The FL API's own tag (FLIP#1283). Only CI's resolve-image-tags.sh sets it — a
+# release apply pins `v<X.Y.Z>@sha256:…`, and that digest is fl-api's, not
+# fl-server's. Exported only when set so every other caller keeps variables.tf's
+# empty default, which ecs_tasks.tf reads as "same tag as the FL server".
+ifneq ($(DOCKER_FL_API_TAG),)
+export TF_VAR_fl_api_image_tag=${DOCKER_FL_API_TAG}
+endif
 export TF_VAR_docker_registry=${DOCKER_REGISTRY}
 # One-shot EFS-provision utility image (default amazon/aws-cli from Docker Hub
 # in variables.tf). The LZA account has no internet egress, so .env.lza-prod
@@ -677,8 +684,23 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	## FL job pickup) and wait for any running job to finish; GET /fl/quiesce reports both.
 	## On prod (PROD=true) the reminder also asks for interactive confirmation; stag proceeds
 	## without prompting so scripted staging deploys stay non-interactive.
+	## A release apply pins `repo:v<X.Y.Z>@sha256:…` (FLIP#1283) — the release name is still
+	## there to swap TAG onto, so the digest is stripped and the deploy proceeds; only a
+	## digest-ONLY reference (no tag at all) has nothing to replace and is refused.
 	@set -e; \
 	export AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION); \
+	base_ref() { \
+	  _img="$$1"; _svc="$$2"; _base="$$_img"; \
+	  case "$$_img" in \
+	  *@*) \
+	    _base="$${_img%@*}"; \
+	    case "$$_base" in \
+	    *:*) ;; \
+	    *) echo "❌ $$_svc: digest-only image '$$_img' — cannot swap a tag onto it" >&2; return 1;; \
+	    esac;; \
+	  esac; \
+	  printf '%s' "$$_base"; \
+	}; \
 	echo "⚠️  FL quiesce reminder (FLIP#770): replacing fl-server-net-1 kills any in-flight"; \
 	echo "   training run and strands its model at TRAINING_STARTED with its net stuck BUSY."; \
 	echo "   Before deploying: enable Deployment Mode (Admin → Deployments) — it pauses FL job"; \
@@ -715,10 +737,8 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  image=$$(printf '%s' "$$td_json" | jq -r --arg name "$$service" \
 	    '.taskDefinition.containerDefinitions[] | select(.name == $$name).image'); \
 	  [ -n "$$image" ] || { echo "❌ $$service: no container named '$$service' in $$current_td"; exit 1; }; \
-	  case "$$image" in \
-	  *@*) echo "❌ $$service: digest-pinned image '$$image' — cannot swap a tag onto it"; exit 1;; \
-	  esac; \
-	  new_image="$${image%:*}:$$TAG"; \
+	  base_image=$$(base_ref "$$image" "$$service") || exit 1; \
+	  new_image="$${base_image%:*}:$$TAG"; \
 	  case "$$new_image" in \
 	  ghcr.io/*) \
 	    repo=$${new_image#ghcr.io/}; repo=$${repo%:*}; \
@@ -782,7 +802,8 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  image=$$(printf '%s' "$$td_json" | jq -r --arg name "$$service" \
 	    '.taskDefinition.containerDefinitions[] | select(.name == $$name).image'); \
 	  [ -n "$$image" ] || { echo "❌ $$service: no container named '$$service' in $$current_td"; exit 1; }; \
-	  new_image="$${image%:*}:$$TAG"; \
+	  new_image=$$(base_ref "$$image" "$$service") || { warn_mixed; exit 1; }; \
+	  new_image="$${new_image%:*}:$$TAG"; \
 	  jq_prog='.taskDefinition.containerDefinitions |= map(if .name == $$name then .image = $$image else . end)'; \
 	  jq_prog="$$jq_prog | (.taskDefinition | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,"; \
 	  jq_prog="$$jq_prog .compatibilities, .registeredAt, .registeredBy, .deregisteredAt))"; \
