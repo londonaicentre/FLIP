@@ -36,10 +36,25 @@ PROD="${PROD:-}"
 KIT="${KIT:-}"
 OVERRIDES_FILE="${OVERRIDES_FILE:-}"
 
-# Resolve env suffix (same logic as the Makefile)
-if   [ "$PROD" = "true" ]; then ENV_SUFFIX="production"
-elif [ "$PROD" = "stag"  ]; then ENV_SUFFIX="stag"
-else                              ENV_SUFFIX="development"
+# The kit-file env token. `deploy/env_mode.mk` is the single source of truth for what PROD
+# means, and the chart Makefile injects the token it derives as KIT_ENV. Keeping a second
+# copy of that map here is what let the LZA tokens drift out of step in the first place, so
+# there is no second copy: a direct `bash preflight.sh` with PROD set must pass KIT_ENV too,
+# and with PROD unset the mode is development.
+#
+# KIT_ENV, not ENV: `ENV` is the POSIX shell's own startup-file variable, so an operator who
+# exports `ENV=~/.shrc` would have it read as a kit token by a direct `bash preflight.sh`.
+ENV_SUFFIX="${KIT_ENV:-}"
+if [ -z "$ENV_SUFFIX" ]; then
+    if [ -n "$PROD" ]; then
+        printf "  ✖  PROD='%s' is set but KIT_ENV is not.\n" "$PROD"
+        printf "      PROD maps to the kit-file token in deploy/env_mode.mk only, and this script\n"
+        printf "      does not keep a second copy of that map. Run it through the Makefile, which\n"
+        printf "      injects KIT_ENV:  make -C trust/deploy/helm preflight KIT=<KIT> PROD=%s\n" "$PROD"
+        printf "      Or pass the token directly:  KIT_ENV=<token> bash scripts/preflight.sh\n"
+        exit 1
+    fi
+    ENV_SUFFIX="development"
 fi
 
 # ── Colour support ─────────────────────────────────────────────────────────────
@@ -147,7 +162,10 @@ else
     # Warn about stale SSO session early. Not for the FL kit — that is staged onto the
     # node beforehand and the cluster holds no credentials — but the OMOP vocab-load
     # Job reads the operator AWS config through a host mount.
-    if [ "$PROD" = "stag" ] || [ "$PROD" = "true" ]; then
+    # Every deployed environment, not just the legacy pair: an LZA site reads its
+    # vocabulary bundle from its own bucket the same way (deploy/env_mode.mk's
+    # DEPLOYED_PROD_VALUES).
+    if [ -n "$PROD" ]; then
         AWS_PROFILE_CHECK="${AWS_PROFILE:-flipstag}"
         if ! aws sts get-caller-identity --profile "$AWS_PROFILE_CHECK" >/dev/null 2>&1; then
             warn "AWS SSO session not active for profile '${AWS_PROFILE_CHECK}'"

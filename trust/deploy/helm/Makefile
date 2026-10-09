@@ -160,6 +160,7 @@ update-deps: ## Update Helm chart dependencies
 
 preflight: ## Check all prerequisites before deploying (tools, cluster, files, kit)
 	@PROD="$(PROD)" \
+	 KIT_ENV="$(ENV)" \
 	 KIT="$(KIT)" \
 	 NAMESPACE="$(NAMESPACE)" \
 	 RELEASE_NAME="$(RELEASE_NAME)" \
@@ -203,6 +204,18 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	  docker exec "$$node" sh -c 'chmod -R go-rwx "$(KIT_DEST)" && chown -R $(KIT_UID):$(KIT_UID) "$(KIT_DEST)"' && \
 	  echo "✅ Kit staged. Deploy with --set flClient.kitHostPath=$(KIT_DEST)"
 
+# Deliberately NO --force-conflicts here. Helm 4 applies the release server-side, and
+# `patch-kit-secrets` writes the kit's per-trust keys into the same Secret with field
+# manager `kubectl-patch`, so an upgrade that would CHANGE one of those keys is refused
+# with `Apply failed with N conflicts: conflict with "kubectl-patch"` and the release
+# stays on its last working revision. That refusal is a safety property, not a defect:
+# forcing it would overwrite the trust's live API key with whatever values-secrets.yaml
+# happens to hold — a stale value, or none at all (templates/secrets.yaml omits an empty
+# slot) — and the trust would poll the hub with a dead credential after a routine
+# redeploy. The conflict is removed at the source instead: sync-kit / patch-kit-secrets
+# realign values-secrets.yaml with what they patch, so helm's apply is a no-op on those
+# fields (sync_k8s_kit.align_values_secrets). Helm 3 never applies server-side and is
+# unaffected either way, so no version switch is needed.
 deploy: preflight ## Deploy the Helm chart to the cluster
 	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
