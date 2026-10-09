@@ -38,6 +38,7 @@ TARGETS = [
     "reprovision",
     "selftest",
     "kit-upload",
+    "selftest-kit",
     "logs",
     "report",
     "stop",
@@ -165,3 +166,13 @@ def test_kit_upload_uses_entra_never_a_key():
     body = MAKEFILE.read_text().split("\nkit-upload:", 1)[1].split("\n\n", 1)[0]
     assert "--auth-mode login" in body, "kit-upload must authenticate with Entra (the kit drop has shared keys off)"
     assert "az storage blob upload" in body
+
+
+def test_selftest_kit_packs_here_and_uploads_under_the_name_the_node_fetches():
+    body = MAKEFILE.read_text().split("\nselftest-kit:", 1)[1].split("\n\n", 1)[0]
+    assert "scripts/pack-selftest-kit.sh $(FL_BACKEND)" in body
+    assert "NAME=selftest-$(FL_BACKEND).tar.gz" in body, "flip-node run-selftest fetches selftest-<backend>.tar.gz"
+
+
+def test_packed_kits_are_never_committed():
+    assert "build/" in (AZURE_DIR / ".gitignore").read_text().splitlines()

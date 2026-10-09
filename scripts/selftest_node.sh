@@ -51,13 +51,21 @@ FL_KIT_DIR="${SELFTEST_FL_KIT_DIR:-/opt/flip/fl-kit}"
 PREP_OK=true
 
 echo "== Self-test (${BACKEND}) started ${STARTED}"
-if [ "${SELFTEST_SKIP_PROVISION:-0}" != 1 ]; then
-    if make -C "${REPO_ROOT}/fl-services/${BACKEND}" provision >/dev/null; then
-        record "dev fl kit" true "${DEV_KIT_DIR}"
+# A production node never provisions: it receives its slot's kit (SELFTEST_SKIP_PROVISION=1 with
+# SELFTEST_DEV_KIT_DIR pointing at the delivered fl-kit/). Provisioning here is for hosts that
+# carry the development tooling.
+if [ "${SELFTEST_SKIP_PROVISION:-0}" = 1 ]; then
+    if [ -d "${DEV_KIT_DIR}/net-1" ]; then
+        record "fl kit delivered" true "${DEV_KIT_DIR}"
     else
-        record "dev fl kit" false "make -C fl-services/${BACKEND} provision failed"
+        record "fl kit delivered" false "no FL kit at ${DEV_KIT_DIR}"
         PREP_OK=false
     fi
+elif make -C "${REPO_ROOT}/fl-services/${BACKEND}" provision >/dev/null; then
+    record "dev fl kit" true "${DEV_KIT_DIR}"
+else
+    record "dev fl kit" false "make -C fl-services/${BACKEND} provision failed"
+    PREP_OK=false
 fi
 
 # The dev kit is provisioned by root, but neither FL client runs as root: the NVFLARE client

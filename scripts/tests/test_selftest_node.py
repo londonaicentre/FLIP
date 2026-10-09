@@ -80,6 +80,7 @@ def _run(
     stale_kit: bool = False,
     bad_template: bool = False,
     log_lag: int = 0,
+    no_kit: bool = False,
 ) -> tuple[subprocess.CompletedProcess, dict | None, Path, Path]:
     tmp = Path(tempfile.mkdtemp(prefix=f"selftest-{case}-"))
     bin_dir, out, data = tmp / "bin", tmp / "out", tmp / "data"
@@ -146,7 +147,7 @@ def _run(
         "SELFTEST_DATA_ROOT": str(data),
         "SELFTEST_SKIP_PROVISION": "1",
         "SELFTEST_KIT_OUT": str(kit_out),
-        "SELFTEST_DEV_KIT_DIR": str(_fake_dev_kit(tmp / "devkit", backend)),
+        "SELFTEST_DEV_KIT_DIR": str(tmp / "missing-kit") if no_kit else str(_fake_dev_kit(tmp / "devkit", backend)),
         "SELFTEST_FL_KIT_DIR": str(tmp / "fl-kit"),
         "SELFTEST_FL_SETTLE_SECONDS": "0",
     }
@@ -229,6 +230,15 @@ def main() -> int:
     result, report, _, _ = _run("unreceived", log_lag=1000)
     check = _check(report, "xnat c-store")
     _assert(check.get("ok") is False and "received.log" in check.get("detail", ""), "names the missing receipt")
+
+    print("a_delivered_kit_is_checked_before_anything_starts")
+    result, report, calls, tmp = _run("delivered")
+    _assert(_check(report, "fl kit delivered").get("ok") is True, "a delivered kit is recorded",
+            json.dumps(_check(report, "fl kit delivered")))
+    result, report, calls, tmp = _run("nokit", no_kit=True)
+    check = _check(report, "fl kit delivered")
+    _assert(check.get("ok") is False and "missing-kit" in check.get("detail", ""), "a missing kit names where it looked")
+    _assert("up-trust" not in calls.read_text(), "and the stack is not started")
 
     print("health_failure_fails_run")
     result, report, _, _ = _run("health", failing_port="8010")

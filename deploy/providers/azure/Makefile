@@ -47,7 +47,7 @@ define run_on_node
 		--command-id RunShellScript --scripts "$(1)" --query 'value[0].message' -o tsv
 endef
 
-.PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload logs report stop start test lint
+.PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload selftest-kit logs report stop start test lint
 
 help: ## Show this help message
 	@echo "FLIP Azure trust node commands:"
@@ -115,7 +115,7 @@ reprovision: ## Re-run the play on the node (REF=<sha|vX.Y.Z> to move the code)
 	$(require_subscription)
 	@$(call run_on_node,flip-node reprovision $(REF))
 
-selftest: ## Start the hubless self-test on the node (FL_BACKEND=nvflare|flower)
+selftest: ## Start the hubless self-test on the node, on the kit selftest-kit delivered (FL_BACKEND=nvflare|flower)
 	$(require_subscription)
 	@$(call run_on_node,flip-node selftest $(FL_BACKEND))
 
@@ -129,6 +129,11 @@ kit-upload: ## Put a kit tarball in the node's kit drop (TARBALL=<path> [NAME=<b
 		echo "❌ Upload refused. A 403 usually means your IP ($(OPERATOR_IP)) is not the one the kit drop's firewall allows"; \
 		echo "   (re-run make plan && make apply to update it), or your role assignment is still propagating."; exit 1; }; \
 	echo "✅ Uploaded as $(or $(NAME),$(notdir $(TARBALL))); the blob is deleted a day after upload."
+
+selftest-kit: ## Pack a self-test FL kit here and put it in the kit drop (FL_BACKEND=nvflare|flower)
+	bash scripts/pack-selftest-kit.sh $(FL_BACKEND) build/selftest-$(FL_BACKEND).tar.gz
+	$(MAKE) kit-upload TARBALL=build/selftest-$(FL_BACKEND).tar.gz NAME=selftest-$(FL_BACKEND).tar.gz
+	@rm -f build/selftest-$(FL_BACKEND).tar.gz
 
 logs: ## Tail a node unit's log (UNIT=flip-selftest-nvflare LINES=80)
 	$(require_subscription)

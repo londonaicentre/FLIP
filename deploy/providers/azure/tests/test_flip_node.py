@@ -115,7 +115,9 @@ def test_selftest_rejects_unknown_backend(tmp_path):
 def test_selftest_starts_a_detached_unit(tmp_path):
     env, log = _setup(tmp_path, disk_present=True, has_fs=True)
     assert _run(env, "selftest", "flower").returncode == 0
-    assert "systemd-run --unit=flip-selftest-flower" in log.read_text()
+    calls = log.read_text()
+    assert "systemd-run --unit=flip-selftest-flower" in calls
+    assert f"{env['FLIP_NODE_BIN']} run-selftest flower" in calls, "the unit runs the installed flip-node"
 
 
 def test_unknown_command_prints_usage(tmp_path):
@@ -231,3 +233,27 @@ def test_provision_refreshes_flip_node_from_the_checkout(tmp_path):
     installed = Path(env["FLIP_NODE_BIN"])
     assert installed.read_text() == "#!/bin/bash\necho new\n"
     assert installed.stat().st_mode & stat.S_IXUSR
+
+
+def test_run_selftest_runs_on_the_delivered_kit(tmp_path):
+    """A production node never provisions: the self-test fetches the kit the operator packed."""
+    env, log = _setup(tmp_path, disk_present=True, has_fs=True)
+    tarball = _tarball(tmp_path / "src.tar.gz", {"fl-kit/net-1/certificates/ca.crt": "ca"})
+    _stub_curl(env, tmp_path, tarball)
+    _stub(Path(env["PATH"].split(":")[0]), "make", f'echo "make $* SKIP=$SELFTEST_SKIP_PROVISION KIT=$SELFTEST_DEV_KIT_DIR" >> "{log}"')
+    result = _run(env, "run-selftest", "flower")
+    assert result.returncode == 0, result.stderr
+    kit = Path(env["FLIP_DIR"]) / "kits" / "selftest-flower" / "fl-kit"
+    assert f"selftest-node FL_BACKEND=flower SKIP=1 KIT={kit}" in log.read_text()
+
+
+def test_run_selftest_stops_when_no_kit_was_delivered(tmp_path):
+    env, log = _setup(tmp_path, disk_present=True, has_fs=True)
+    env["FLIP_FETCH_ATTEMPTS"] = "1"
+    tarball = _tarball(tmp_path / "src.tar.gz", {"fl-kit/x": "1"})
+    _stub_curl(env, tmp_path, tarball, refusals=99)
+    _stub(Path(env["PATH"].split(":")[0]), "make", f'echo "make $*" >> "{log}"')
+    result = _run(env, "run-selftest", "nvflare")
+    assert result.returncode != 0
+    assert "deploy/providers/azure selftest-kit FL_BACKEND=nvflare" in result.stderr, "the error says how to deliver one"
+    assert not log.exists() or "selftest-node" not in log.read_text()

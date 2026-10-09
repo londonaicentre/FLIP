@@ -147,6 +147,19 @@ fetch_kit() {
     echo "Kit ${name} extracted to ${dest}"
 }
 
+# The self-test runs on a kit the operator packed and delivered (make selftest-kit), as a real
+# trust runs on the kit its hub admin sends: the node carries no provisioning tooling.
+run_selftest() {
+    local backend="$1"
+    if ! (fetch_kit "selftest-${backend}.tar.gz"); then
+        echo "ERROR: no ${backend} self-test kit could be fetched. From the operator's machine:" >&2
+        echo "       make -C deploy/providers/azure selftest-kit FL_BACKEND=${backend}" >&2
+        exit 1
+    fi
+    SELFTEST_SKIP_PROVISION=1 SELFTEST_DEV_KIT_DIR="${FLIP_DIR}/kits/selftest-${backend}/fl-kit" \
+        make -C "${REPO_DIR}/trust" selftest-node "FL_BACKEND=${backend}"
+}
+
 start_unit() {
     local unit="$1"
     shift
@@ -171,16 +184,20 @@ fi
 shift
 case "${cmd}" in
     provision) provision "${1:-}" ;;
-    reprovision) start_unit flip-reprovision /usr/local/sbin/flip-node provision "${1:-}" ;;
+    reprovision) start_unit flip-reprovision "${FLIP_NODE_BIN}" provision "${1:-}" ;;
     status)
         cloud-init status --long || true
         if [ -f "${FLIP_DIR}/.provisioned" ]; then echo "provisioned: $(cat "${FLIP_DIR}/.provisioned")"; else echo "provisioned: no"; fi
         systemctl list-units 'flip-*' --all --no-pager || true
         ;;
     fetch-kit) fetch_kit "${1:-}" ;;
+    run-selftest)
+        check_backend "${1:-}"
+        run_selftest "$1"
+        ;;
     selftest)
         check_backend "${1:-}"
-        start_unit "flip-selftest-$1" make -C "${REPO_DIR}/trust" selftest-node "FL_BACKEND=$1"
+        start_unit "flip-selftest-$1" "${FLIP_NODE_BIN}" run-selftest "$1"
         ;;
     logs)
         [ -n "${1:-}" ] || usage

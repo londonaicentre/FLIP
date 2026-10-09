@@ -18,3 +18,5 @@
 crash.log
 crash.*.log
 .terraform.lock.hcl
+# Packed kits carry FL credentials.
+build/
